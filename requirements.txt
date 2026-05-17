@@ -1,0 +1,8 @@
+# Minimal Python deps. Per-day tasks install more in dedicated venvs
+# (e.g. day3 creates .venv-chroma for chromadb). Pin versions when you
+# fix them; don't pre-pin speculatively.
+
+openai            # vLLM OpenAI-compatible client
+jsonschema        # schema validation in wrapper.verify_log_integrity
+pydantic          # request/response models
+requests          # semantic scholar API

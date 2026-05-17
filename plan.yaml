@@ -1,0 +1,2969 @@
+<!--
+This file is generated from `week1_days_31-37_plan.md`. The source plan is
+the authoritative human-readable document. Discrepancies between this file
+and the source must be resolved in favor of the source. The agent executing
+this plan must read the preamble before parsing the frontmatter. Block 1
+tasks are human_only and the agent MUST NOT execute them. Day 7 publication
+is gated on human review. Version pins are inviolate (e.g. the vLLM image
+tag is `vllm/vllm-openai:gemma4-cu130`, NOT `:gemma4`; CUDA must be 13.0,
+NOT 13.2). The state file is authoritative on resume.
+-->
+
+---
+plan_id: week1_phase1_days_31_37
+version: 1
+source_plan: week1_days_31-37_plan.md
+program_doc: research_program_v2.pdf
+total_days: 7
+phase: 1
+researcher: huchi
+graduated_autonomy_level: 1
+state_file: ./run_state/week1.state.json
+run_log: ./run_state/week1.run.jsonl
+required_tools:
+  - bash
+  - file_read
+  - file_write
+  - http_request
+  - jsonl_append
+human_gate_protocol: blocking_print_and_halt
+generated_from: week1_days_31-37_plan.md
+generated_at: 2026-05-10T00:00:00Z
+---
+
+# Agent Plan — Week 1 (Days 31–37 of Phase 1)
+
+> **Reading order for the executing agent.** (1) Preamble above. (2) This
+> overview. (3) The state-file schema. (4) The day section corresponding to
+> `state.current_day`. The agent MUST NOT skip ahead, MUST NOT execute
+> Block 1 tasks under any circumstances, and MUST halt at every task tagged
+> `human_gate` or `human_only`.
+
+## Operating contract (read once at start)
+
+- **Block 1 is human-only.** The agent prints the reading and problem set,
+  records that Block 1 began, and halts until the human marks it complete.
+  The agent does not assist, summarize, derive, or solve. This rule does not
+  bend.
+- **Version pins are verbatim.** Any image tag, weights hash, CUDA version,
+  package name, or backend flag from the source plan appears unchanged in
+  this file's `command` and `preconditions`. If the agent's environment does
+  not match a pinned value, the task fails — it does not "best-effort"
+  substitute.
+- **Validations are independent.** Each bullet under a source "Validation:"
+  line is a separate check with its own `pass_signal` / `fail_signal`. The
+  agent reports each independently. Mismatches are never silently coerced
+  into passes.
+- **Hard checkpoints abort the day.** A failed task with
+  `hard_checkpoint: true` causes the agent to write a `day_aborted` event to
+  the run log and stop work for that day. The next day's Block 2 is gated on
+  the prior day's success unless the source explicitly allows continuation.
+- **Day 7 publication is human-gated.** The agent runs the experiment,
+  produces the analysis artifacts, and HALTS before any publication step.
+- **Logging is mandatory.** Every agent-executable task appends a JSONL line
+  to `./run_state/week1.run.jsonl`.
+- **Resume is state-file-authoritative.** On startup the agent reads
+  `./run_state/week1.state.json` and resumes at the first incomplete task
+  in `current_day`.
+
+## State-file schema
+
+The agent reads and writes `./run_state/week1.state.json` with this shape:
+
+```json
+{
+  "plan_id": "week1_phase1_days_31_37",
+  "started_at": "<ISO 8601 timestamp>",
+  "current_day": "day_<N>",
+  "completed_tasks": ["day1_block1_reading", "..."],
+  "aborted_days": [],
+  "human_gates_pending": ["day7_publication_review"],
+  "fallbacks_taken": {"day1_nemoclaw": "plain_docker"},
+  "metric_log": {
+    "day1_tokens_per_sec": null,
+    "day2_jsonl_malformed_count": null,
+    "day3_needle_score": null,
+    "day4_tool_call_invocation_rate": null,
+    "day5_papers_ingested": null,
+    "day6_orchestrator_5_of_5": null,
+    "day7_coop_rate_vs_tft": null
+  }
+}
+```
+
+The agent appends to `completed_tasks` only after a task's validation passes
+(or, for `human_only` tasks, after the human marks it complete). On a hard
+checkpoint failure, the agent appends `current_day` to `aborted_days` and
+halts.
+
+## Run-log entry schema
+
+Every agent-executable task appends to
+`./run_state/week1.run.jsonl` an object with at minimum:
+
+```json
+{
+  "timestamp": "<ISO 8601>",
+  "day_id": "day_<N>",
+  "task_id": "<id>",
+  "status": "started | passed | failed | aborted | human_gate_blocked",
+  "observable_actual": "<string or structured>",
+  "observable_expected": "<string or structured>",
+  "duration_ms": 0,
+  "fallback_taken": null
+}
+```
+
+State transitions (day start, day abort, fallback selection, human gate
+hit) are logged as their own entries with `task_id` set to the transition
+name (e.g. `day3_start`, `day1_aborted`, `day7_publication_gate_hit`).
+
+---
+
+## Pre-flight (BEFORE day_1)
+
+> The source plan lists pre-flight items with 24–48 hr lead times.
+> The agent verifies these at the start of day_1 and refuses to proceed
+> with day_1 Block 2 if any are missing.
+
+```yaml
+- task_id: preflight_credentials_staged
+  type: agent_executable
+  human_only: false
+  description: |
+    Verify presence of required credentials as environment variables or
+    in the credentials file referenced by the source plan: Semantic
+    Scholar API key, Anthropic API key, HuggingFace token (read scope),
+    GitHub PAT, NVIDIA build.nvidia.com API key.
+  preconditions: []
+  command: |
+    test -n "$SEMANTIC_SCHOLAR_API_KEY" && \
+    test -n "$ANTHROPIC_API_KEY" && \
+    test -n "$HF_TOKEN" && \
+    test -n "$GITHUB_TOKEN" && \
+    test -n "$NVIDIA_API_KEY"
+  expected_observable:
+    kind: shell_exit_code
+    value: 0
+  validation:
+    - check: all five credentials present
+      pass_signal: shell exit code 0
+      fail_signal: shell exit code non-zero; missing variable named in stderr
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Pre-flight credential check failed. Stage missing credentials per
+      source plan "Pre-flight" section, then resume. Semantic Scholar key
+      has 24-48 hr application turnaround — apply first if not already.
+  hard_checkpoint: true
+  estimated_minutes: 2
+  log_to: run_log
+
+- task_id: preflight_software_prestaged
+  type: agent_executable
+  human_only: false
+  description: |
+    Verify pre-staged software bookmarks and clones. The vLLM image tag
+    bookmarked MUST be `vllm/vllm-openai:gemma4-cu130` — NOT `:gemma4`,
+    which is dev and crashes on FP4 GEMM. The OpenShell cluster image
+    bookmarked MUST be `ghcr.io/nvidia/openshell/cluster:0.0.13`
+    (or current stable). Clones present: NVIDIA/dgx-spark-playbooks,
+    matt-langston/autoresearch, google-deepmind/open_spiel, the GRA repo.
+    Weights present: Gemma 4 26B-A4B-NVFP4 (~12 GB), BGE-M3 (~1–2 GB).
+  preconditions:
+    - preflight_credentials_staged
+  command: |
+    grep -F "vllm/vllm-openai:gemma4-cu130" infra/bookmarks.txt && \
+    grep -F "ghcr.io/nvidia/openshell/cluster:0.0.13" infra/bookmarks.txt && \
+    test -d clones/dgx-spark-playbooks && \
+    test -d clones/autoresearch && \
+    test -d clones/open_spiel && \
+    test -d clones/game-reasoning-arena && \
+    test -d /mnt/models/gemma-4-26b-a4b-nvfp4 && \
+    test -d /mnt/models/bge-m3
+  expected_observable:
+    kind: shell_exit_code
+    value: 0
+  validation:
+    - check: vLLM image tag is the correct cu130 variant
+      pass_signal: grep finds the literal string `vllm/vllm-openai:gemma4-cu130`
+      fail_signal: grep finds `:gemma4` without `-cu130`, or no entry at all
+    - check: OpenShell cluster image pinned
+      pass_signal: grep finds `ghcr.io/nvidia/openshell/cluster:0.0.13`
+      fail_signal: grep returns non-zero
+    - check: all four repos cloned
+      pass_signal: each `test -d` passes
+      fail_signal: any directory missing
+    - check: weights present
+      pass_signal: both `/mnt/models/...` directories exist
+      fail_signal: either missing
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Pre-flight software staging incomplete. Re-read source plan
+      "Pre-flight" section and complete missing items. Do NOT substitute
+      `:gemma4` for `:gemma4-cu130`.
+  hard_checkpoint: true
+  estimated_minutes: 5
+  log_to: run_log
+
+- task_id: preflight_failure_walkthroughs
+  type: human_only
+  human_only: true
+  description: |
+    15-min mental rehearsal of each failure mode listed in the source
+    plan: NemoClaw gateway start failure → plain Docker fallback;
+    vLLM image throws "Failed to run cutlass FP4 gemm" → wrong tag,
+    fix and retry; filesystem cache fills memory → cron drop_caches;
+    CUDA auto-updates to 13.2 → roll back via Dashboard before any
+    inference.
+  artifact_expected: written notes (private)
+  agent_action: print_reminder_and_wait
+  agent_message: |
+    Pre-flight: walk through the four documented failure modes before
+    starting Day 1. ~15 min each, mental rehearsal only. Mark this
+    complete after the rehearsal.
+  blocking: true
+
+- task_id: preflight_physical_setup
+  type: human_only
+  human_only: true
+  description: |
+    Open desk/shelf placement, 6"+ clearance all sides, ambient temp
+    ≤ 30 °C, UPS or surge protector inline, network on switch (not
+    USB-C).
+  agent_action: print_reminder_and_wait
+  blocking: true
+```
+
+---
+
+## day_1: hardware online, stack verified
+
+<!-- machine-readable -->
+```yaml
+day_id: day_1
+program_day: 31
+date_offset: T+0
+success_criterion: |
+  vLLM serves Gemma 4 26B MoE; curl returns coherent text; tokens/sec
+  recorded; NemoClaw onboarded OR explicit fallback decision logged.
+failure_mode: |
+  NemoClaw stuck at gateway start past 4-hr budget, or vLLM image throws
+  cutlass FP4 error.
+recovery_path: |
+  Drop NemoClaw to plain-Docker fallback; do not let setup eat tomorrow's
+  foundations block.
+prerequisites:
+  - preflight_credentials_staged
+  - preflight_software_prestaged
+  - preflight_failure_walkthroughs
+  - preflight_physical_setup
+unblocks:
+  - day_2
+wall_clock_window:
+  block_1: "08:30–10:00"
+  block_2: "10:30–12:30"
+  block_3: "13:30–14:30"
+  ambient: "14:30–15:30"
+  end_of_day: "15:30–16:00"
+  nemoclaw_overflow: "16:00–18:00"
+```
+
+### block_1_foundations (90 min, human_only=true)
+
+```yaml
+- task_id: day1_block1_reading
+  type: human_only
+  human_only: true
+  description: |
+    Osborne & Rubinstein, A Course in Game Theory, Ch. 6 §6.1–6.3
+    (extensive games with perfect information; Nash and subgame-perfect
+    equilibrium intro).
+  artifact_expected: handwritten_notes
+  agent_action: print_reminder_and_wait
+  agent_message: |
+    Block 1 starts now. No-AI rule absolute. Pen and paper.
+    Reading: Osborne & Rubinstein Ch. 6 §6.1–6.3.
+    Problem set: O&R 6.1, 6.2, 6.3 — by hand.
+    Mark this task complete only after the time window has elapsed and
+    the problems are attempted.
+  blocking: true
+
+- task_id: day1_block1_problemset
+  type: human_only
+  human_only: true
+  description: |
+    O&R 6.1, 6.2, 6.3 — by hand. Bridges Phase 1 weeks 1-4
+    (strategic-form) into the repeated-game machinery needed on Day 7.
+  artifact_expected: handwritten_solutions
+  agent_action: none
+  blocking: false
+```
+
+### block_2_build (2 hr, agent_executable)
+
+```yaml
+- task_id: day1_block2_unbox
+  type: human_assisted
+  human_only: false
+  description: |
+    Unbox + place + power. Open desk/shelf, 6"+ clearance, ambient
+    ≤ 30 °C, UPS inline. (Source 0:00–0:20.) Physical placement is
+    human; the agent verifies dashboard reachability post-placement.
+  preconditions:
+    - day1_block1_reading
+    - preflight_physical_setup
+  command: |
+    # Human action: unbox and place. Agent verifies after.
+    ping -c 3 "${DGX_SPARK_LAN_IP}" && \
+    curl -fsS "http://${DGX_SPARK_LAN_IP}/" >/dev/null
+  expected_observable:
+    kind: log_pattern
+    value: |
+      power LED solid; fan at low RPM audible; DGX Dashboard reachable
+      on local IP.
+  validation:
+    - check: power LED solid
+      pass_signal: human confirms via print_reminder_and_wait sub-prompt
+      fail_signal: human reports LED off / blinking
+    - check: fan at low RPM audible
+      pass_signal: human confirms
+      fail_signal: human reports no fan or high RPM
+    - check: DGX Dashboard reachable on local IP
+      pass_signal: curl returns 2xx OR ping succeeds
+      fail_signal: curl returns connection refused / timeout
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Dashboard unreachable. From another LAN host, run:
+        arp -a | grep -i nvidia
+      Identify the Spark's MAC and IP, set DGX_SPARK_LAN_IP, re-run.
+  hard_checkpoint: false
+  estimated_minutes: 20
+  log_to: run_log
+
+- task_id: day1_block2_firmware
+  type: agent_assisted
+  human_only: false
+  description: |
+    Firmware baseline + auto-update lock. Apply ALL pending firmware
+    (Jan 2026 thermal, Feb 2026 ConnectX-7 idle, April 2026 release).
+    Settings → Updates → Manual approval only. Pin CUDA 13.0; 13.2
+    produces gibberish on multiple models. (Source 0:20–0:50.)
+    Agent prepares the verification command; human applies firmware
+    and toggles the manual-approval setting via the Dashboard UI.
+  preconditions:
+    - day1_block2_unbox
+  command: |
+    # Run AFTER human applies firmware updates and locks auto-update.
+    nvidia-smi | head -3
+  expected_observable:
+    kind: log_pattern
+    value: |
+      Output shows GB10, CUDA 13.0, ~25W idle.
+  validation:
+    - check: GPU is GB10
+      pass_signal: nvidia-smi output contains "GB10"
+      fail_signal: GB10 not found in output
+    - check: CUDA version is exactly 13.0
+      pass_signal: nvidia-smi output contains "CUDA Version: 13.0"
+      fail_signal: output contains "13.2" or any other version
+    - check: idle power ~25W
+      pass_signal: power draw value parses to a number ≤ 35 W under no load
+      fail_signal: power draw > 35 W with no inference running
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      If CUDA reads 13.2, ROLL BACK via Dashboard before any inference.
+      The 13.2 release produces gibberish output on low-bit quantized
+      models. After rollback, re-verify with nvidia-smi | head -3.
+  hard_checkpoint: true
+  estimated_minutes: 30
+  log_to: run_log
+
+- task_id: day1_block2_docker_config
+  type: agent_executable
+  human_only: false
+  description: |
+    Cache cron + Docker daemon config. Root crontab entry to clear
+    filesystem cache every 30 min (prevents documented slowdown to
+    ~16 tok/s). `/etc/docker/daemon.json` adds `"cgroupns": "host"`
+    (community NemoClaw fix); restart docker. (Source 0:50–1:10.)
+  preconditions:
+    - day1_block2_firmware
+  command: |
+    sudo bash -c 'crontab -l 2>/dev/null | { cat; echo "*/30 * * * * sync && echo 3 | tee /proc/sys/vm/drop_caches > /dev/null"; } | crontab -' && \
+    sudo python3 -c 'import json,pathlib; p=pathlib.Path("/etc/docker/daemon.json"); d=json.loads(p.read_text()) if p.exists() else {}; d["cgroupns"]="host"; p.write_text(json.dumps(d, indent=2))' && \
+    sudo systemctl restart docker
+  expected_observable:
+    kind: log_pattern
+    value: |
+      `docker info | grep -i cgroup` shows `host`;
+      `crontab -l -u root` shows the drop_caches entry.
+  validation:
+    - check: docker cgroup namespace is host
+      pass_signal: `docker info | grep -i cgroup` output contains `host`
+      fail_signal: output does not contain `host` or grep returns no lines
+    - check: root crontab contains drop_caches entry
+      pass_signal: `sudo crontab -l -u root` contains "drop_caches"
+      fail_signal: entry missing
+  on_failure:
+    action: retry_once
+    human_message: |
+      Docker daemon config or cron entry failed to apply. Re-run the
+      task. If it fails again, inspect /etc/docker/daemon.json and root
+      crontab manually before proceeding to vllm_serve.
+  hard_checkpoint: false
+  estimated_minutes: 20
+  log_to: run_log
+
+- task_id: day1_block2_vllm_serve
+  type: agent_executable
+  human_only: false
+  description: |
+    vLLM Gemma 4 26B MoE up. Pull `vllm/vllm-openai:gemma4-cu130`
+    (NOT `:gemma4` — that's dev and crashes on FP4 GEMM). Launch with
+    `--moe-backend marlin` and NVFP4 weights pre-staged at
+    `/mnt/models/gemma-4-26b-a4b-nvfp4`. (Source 1:10–1:50.)
+  preconditions:
+    - day1_block2_docker_config
+    - preflight_software_prestaged
+  command: |
+    docker pull vllm/vllm-openai:gemma4-cu130 && \
+    docker run -d --name vllm-gemma4 --gpus all \
+      -v /mnt/models/gemma-4-26b-a4b-nvfp4:/models/gemma-4-26b-a4b-nvfp4:ro \
+      -p 8000:8000 \
+      vllm/vllm-openai:gemma4-cu130 \
+      --model /models/gemma-4-26b-a4b-nvfp4 \
+      --served-model-name gemma-4-26b-a4b \
+      --moe-backend marlin && \
+    sleep 60 && \
+    docker logs vllm-gemma4 2>&1 | tee /tmp/vllm_startup.log
+  expected_observable:
+    kind: startup_log_match
+    value: |
+      Three required strings in startup log:
+      (1) `Using NvFp4LinearBackend.FLASHINFER_CUTLASS for NVFP4 GEMM`
+      (2) `Using 'MARLIN' NvFp4 MoE backend`  ← if this says
+          `CUTLASS_FP4` instead, STOP — the flag did not pick up.
+      (3) `Using default MoE config. Performance might be sub-optimal!`
+          is acceptable but means ~24% slower than tuned baseline; log
+          and continue.
+  validation:
+    - check: image tag is the cu130 variant (NOT plain :gemma4)
+      pass_signal: docker pull command used `:gemma4-cu130` literally
+      fail_signal: pull command used `:gemma4` or any other tag
+    - check: NVFP4 linear backend log line present
+      pass_signal: /tmp/vllm_startup.log contains "Using NvFp4LinearBackend.FLASHINFER_CUTLASS for NVFP4 GEMM"
+      fail_signal: that string not found
+    - check: MoE backend is MARLIN, not CUTLASS_FP4
+      pass_signal: log contains "Using 'MARLIN' NvFp4 MoE backend"
+      fail_signal: log contains "Using 'CUTLASS_FP4' NvFp4 MoE backend" — this is the silent failure mode; the --moe-backend marlin flag did not take effect
+    - check: default-MoE-config warning recorded if present
+      pass_signal: presence of "Using default MoE config" string written into metric_log as a non-fatal note
+      fail_signal: n/a — informational
+    - check: curl test round-trip
+      pass_signal: |
+        curl http://localhost:8000/v1/chat/completions \
+          -H 'Content-Type: application/json' \
+          -d '{"model":"gemma-4-26b-a4b","messages":[{"role":"user","content":"Reply with the single word: ok"}]}'
+        returns response with content == "ok", usage.completion_tokens
+        reasonable, round-trip < 3 s.
+      fail_signal: curl 5xx, content != "ok", or round-trip ≥ 3 s
+  on_failure:
+    action: abort_day
+    human_message: |
+      vLLM did not come up cleanly with validated startup logs and curl
+      response. This is the Day 1 hard checkpoint. Stop Block 2. Do NOT
+      use afternoon to debug at the cost of tomorrow's Block 1. The agent
+      writes day_aborted to the run log and halts.
+      Common causes:
+        - Pulled `:gemma4` instead of `:gemma4-cu130` → fix and retry
+        - MARLIN flag did not pick up; log shows CUTLASS_FP4 → image
+          version skew, file an issue, fall back to per-source
+          troubleshooting
+        - CUDA is 13.2 (should have been caught in firmware step) → roll
+          back
+  hard_checkpoint: true
+  estimated_minutes: 40
+  log_to: run_log
+
+- task_id: day1_block2_bench
+  type: agent_executable
+  human_only: false
+  description: |
+    Tokens/sec micro-bench. 5-prompt sweep at 256 tok output target;
+    record decode tok/s in `bench/day1.csv`. (Source 1:50–2:00.)
+  preconditions:
+    - day1_block2_vllm_serve
+  command: |
+    python3 scripts/bench_tokens_per_sec.py \
+      --endpoint http://localhost:8000/v1 \
+      --model gemma-4-26b-a4b \
+      --num-prompts 5 \
+      --max-tokens 256 \
+      --output bench/day1.csv
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      Single-stream decode tok/s in [50, 110] (matches public
+      benchmarks). Below 40 tok/s is a fault.
+  validation:
+    - check: 5 rows recorded in bench/day1.csv
+      pass_signal: `wc -l bench/day1.csv` returns 6 (header + 5 rows)
+      fail_signal: any other count
+    - check: median tok/s ≥ 40
+      pass_signal: median of decode tok/s column ≥ 40
+      fail_signal: median < 40
+    - check: median tok/s in expected band [50, 110]
+      pass_signal: median in [50, 110] — record to metric_log
+      fail_signal: median outside band — informational, not fatal unless < 40
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      tok/s below 40. Investigate in this order:
+        1. Filesystem cache full → run cache-clear cron manually.
+        2. Thermal throttling → check thermal log.
+        3. Confirm NVFP4 weights, not BF16, were loaded.
+      Record investigation in notes/day1-bench-debug.md before retrying.
+  hard_checkpoint: false
+  estimated_minutes: 10
+  log_to: run_log
+  metric_log_key: day1_tokens_per_sec
+```
+
+#### Block 2 → Block 3 buffer
+
+```yaml
+- soft_buffer:
+    name: day1_lunch_and_slack
+    duration_minutes: 60
+    note: |
+      Informational only. 12:30–13:30 covers lunch plus the source's
+      30-min slack budget. The agent does not enforce wall-clock; it
+      simply does not start Block 3 tasks before this buffer would have
+      elapsed when running in real-time mode.
+```
+
+### block_3_read_write (60 min, mixed)
+
+```yaml
+- task_id: day1_block3_reading
+  type: human_only
+  human_only: true
+  description: |
+    Lu et al. 2024, "The AI Scientist" (Sakana), pp. 1–12 — the
+    optimistic case for autoresearch.
+  agent_action: print_reminder_and_wait
+  blocking: true
+
+- task_id: day1_block3_journal
+  type: human_assisted
+  human_only: false
+  description: |
+    Public journal post (200–500 words): "Day 1 of the apparatus —
+    what I shipped, what I'm afraid will break."
+  word_target: 200-500
+  visibility: public
+  agent_action: stub_post_with_data_inserts
+  agent_message: |
+    Generate a post stub with the day's measurements pre-filled
+    (median tok/s from bench/day1.csv, NemoClaw status,
+    one specific risk you identified). Human writes the prose.
+  data_to_insert:
+    - median_tok_per_sec_from_bench_day1
+    - nemoclaw_status (working | fallback | deferred)
+    - vllm_image_tag_actual
+  exclude_from_public:
+    - exact error messages
+    - exact config lines that mattered
+    - GB10 idiosyncrasies not yet on any blog post
+  preconditions:
+    - day1_block2_bench
+  log_to: run_log
+```
+
+### ambient_listening
+
+```yaml
+- task_id: day1_ambient
+  type: human_only
+  human_only: true
+  description: |
+    Dwarkesh Patel — most recent episode with someone working on agent
+    infrastructure (Sholto Douglas, Trenton Bricken, or current). Walk.
+    No notes.
+  blocking: false
+  notes_required: false
+```
+
+### block_2_overflow_nemoclaw_router (try-then-fallback)
+
+```yaml
+- task_id: day1_block2_nemoclaw_router
+  type: agent_executable
+  human_only: false
+  description: |
+    NemoClaw is alpha (per validation pass) with multiple documented
+    Spark-specific failure modes. Attempt onboarding; if not healthy
+    within the 90-min cap, take plain-Docker fallback. (Source: NemoClaw
+    overflow into 16:00–18:00 OR Day 2 morning Block 2.)
+  preconditions:
+    - day1_block2_vllm_serve
+  command: |
+    # Probe: is the NemoClaw README's onboarding sequence even runnable?
+    test -f clones/dgx-spark-playbooks/nvidia/nemoclaw/README.md && \
+    node --version | grep -E '^v22' && \
+    which nemoclaw
+  branches:
+    on_success: day1_block2_nemoclaw_primary
+    on_failure: day1_block2_nemoclaw_fallback
+    timeout_minutes: 90
+    on_timeout: day1_block2_nemoclaw_fallback
+  log_to: run_log
+
+- task_id: day1_block2_nemoclaw_primary
+  type: agent_assisted
+  human_only: false
+  description: |
+    Primary NemoClaw onboarding via official playbook (NOT the generic
+    install guide). Sequence with the four community fixes baked in:
+    Node.js v22; manual `sudo npm link`; install OpenShell from tar.gz
+    release (binary URL in docs is 404); confirm `cgroupns=host` already
+    in daemon.json; run `nemoclaw setup-spark` if your release still
+    requires it; then `nemoclaw onboard` non-interactive.
+  preconditions:
+    - day1_block2_nemoclaw_router
+  command: |
+    # See dgx-spark-playbooks/nvidia/nemoclaw/README.md for the exact
+    # command sequence. The agent prepares scaffolding; the human
+    # executes per the playbook because the install steps are
+    # release-version-sensitive.
+  expected_observable:
+    kind: log_pattern
+    value: |
+      `nemoclaw status` shows gateway healthy; spawn `echo hello` test
+      container; output captured by gateway.
+  validation:
+    - check: gateway healthy
+      pass_signal: `nemoclaw status` exits 0 and prints "healthy"
+      fail_signal: any non-zero exit or absence of "healthy"
+    - check: hello-world container output captured
+      pass_signal: gateway logs contain the "hello" output from the
+        spawned container
+      fail_signal: gateway returns no output or test container fails to
+        start
+  on_failure:
+    action: use_fallback
+    fallback_task_id: day1_block2_nemoclaw_fallback
+    human_message: |
+      NemoClaw onboarding failed. Document exact failure (k3s version,
+      error string) in `notes/nemoclaw-day1-fail.md`, then proceed with
+      the plain-Docker fallback. Revisit NemoClaw at end of Week 1 with
+      fresh eyes. Hard cap was 90 min today.
+  hard_checkpoint: false
+  estimated_minutes: 90
+  log_to: run_log
+
+- task_id: day1_block2_nemoclaw_fallback
+  type: agent_executable
+  human_only: false
+  description: |
+    Plain-Docker fallback for sandboxed agent execution. Used either
+    when NemoClaw onboarding fails or when the 90-min cap expires.
+  preconditions:
+    - day1_block2_nemoclaw_router
+  command: |
+    # Verify the security-hardened plain-Docker invocation works:
+    docker run --rm \
+      --security-opt seccomp=infra/seccomp/default.json \
+      --security-opt no-new-privileges \
+      --cap-drop=ALL \
+      alpine:latest echo "fallback ok"
+  expected_observable:
+    kind: shell_exit_code
+    value: 0
+  validation:
+    - check: hardened docker container starts and prints expected text
+      pass_signal: stdout is "fallback ok" and exit 0
+      fail_signal: any other outcome
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Plain-Docker fallback failed. Even the fallback path is broken.
+      Stop and inspect docker daemon, seccomp profile, and capabilities.
+  hard_checkpoint: false
+  estimated_minutes: 15
+  log_to: run_log
+  state_update: fallbacks_taken.day1_nemoclaw = "plain_docker"
+```
+
+### end_of_day
+
+```yaml
+- task_id: day1_end_of_day_artifacts
+  type: agent_executable
+  human_only: false
+  description: |
+    Verify and commit end-of-day artifacts. Pre-stage Day 2.
+  preconditions:
+    - all block_2 tasks for day_1 complete or explicitly aborted
+    - day1_block3_journal
+  command: |
+    git add bench/day1.csv infra/docker-daemon.json infra/cron-cache-clear.sh notes/day1-setup.md && \
+    git commit -m "day 1: hardware online, vLLM Gemma 4 serving" && \
+    mkdir -p agent_wrapper && \
+    test -f agent_wrapper/wrapper.py || cat > agent_wrapper/wrapper.py <<'PY'
+"""
+Day 2 will fill this in. Module docstring lists the JSONL fields the
+wrapper intends to log:
+- timestamp (ISO 8601)
+- request_id (uuid4)
+- model
+- model_version (image digest)
+- temperature
+- top_p
+- seed
+- prompt_messages (full array)
+- completion
+- usage (input/output tokens)
+- latency_ms
+- host_metadata (CUDA driver, vLLM image tag)
+- caller_tag
+- parent_request_id (null for now; chains start Day 4)
+"""
+PY
+  validation:
+    - check: files committed
+      pass_signal: `git log -1 --format=%H` returns commit hash; `git status` clean
+      fail_signal: nothing to commit OR working tree dirty
+    - check: jsonl integrity
+      pass_signal: |
+        no JSONL produced today (vLLM stateless on Day 1; logging starts
+        Day 2). Mark as N/A.
+      fail_signal: n/a
+    - check: public journal URL recorded
+      pass_signal: journal/index.md updated with today's post link
+      fail_signal: index unchanged
+    - check: tomorrow's first task pre-staged
+      pass_signal: agent_wrapper/wrapper.py exists with the required
+        module docstring listing JSONL fields
+      fail_signal: file missing or docstring fields incomplete
+  log_to: run_log
+```
+
+---
+
+## day_2: Python wrapper + JSONL logging
+
+```yaml
+day_id: day_2
+program_day: 32
+date_offset: T+1
+success_criterion: |
+  Every Gemma 4 call goes through `wrapper.py`; every call writes a
+  schema-valid JSONL line; 50+ test calls captured; determinism verified.
+failure_mode: |
+  vLLM stops responding (thermal? OOM?).
+recovery_path: |
+  cache-clear, restart container, check thermal log; if recurring, cap
+  KV cache to ~30 GB.
+prerequisites:
+  - day_1
+unblocks:
+  - day_3
+wall_clock_window:
+  block_1: "08:30–10:00"
+  block_2: "10:30–12:30"
+  block_3: "13:30–14:30"
+  ambient: "14:30–15:30"
+  end_of_day: "15:30–16:00"
+```
+
+### block_1_foundations (90 min, human_only=true)
+
+```yaml
+- task_id: day2_block1_reading
+  type: human_only
+  human_only: true
+  description: |
+    O&R Ch. 6 §6.4–6.5 + start Ch. 7 (subgame perfect equilibrium,
+    one-deviation principle).
+  artifact_expected: handwritten_notes
+  agent_action: print_reminder_and_wait
+  agent_message: |
+    Block 1 starts now. No-AI rule absolute. Pen and paper.
+    Reading: O&R Ch. 6 §6.4–6.5 + start Ch. 7.
+    Problem set: O&R 6.7, 6.10, 7.1. Derive the one-deviation principle
+    by hand.
+  blocking: true
+
+- task_id: day2_block1_problemset
+  type: human_only
+  human_only: true
+  description: |
+    O&R 6.7, 6.10, 7.1. The one-deviation principle is one of those
+    things you have to derive once by hand to actually understand.
+  artifact_expected: handwritten_solutions
+  agent_action: none
+  blocking: false
+```
+
+### block_2_build (2 hr, agent_executable)
+
+```yaml
+- task_id: day2_block2_jsonl_schema
+  type: human_assisted
+  human_only: false
+  description: |
+    JSONL schema lock-in. Write the schema on paper first, then commit
+    as `schema/calls.jsonl.schema.json`. Required fields: timestamp
+    (ISO 8601), request_id (uuid4), model, model_version (image digest),
+    temperature, top_p, seed, prompt_messages (full array), completion,
+    usage (input/output tokens), latency_ms, host_metadata (CUDA driver,
+    vLLM image tag), caller_tag, parent_request_id (null for now;
+    chains start Day 4). (Source 0:00–0:30.)
+  preconditions:
+    - day2_block1_reading
+  command: null  # Schema authoring is human; agent validates output.
+  expected_observable:
+    kind: file_exists
+    value: schema/calls.jsonl.schema.json
+  validation:
+    - check: schema file exists and is valid JSON Schema
+      pass_signal: |
+        `python3 -c "import jsonschema, json; jsonschema.Draft202012Validator.check_schema(json.load(open('schema/calls.jsonl.schema.json')))"`
+        exits 0
+      fail_signal: schema fails to load or check_schema raises
+    - check: required fields present
+      pass_signal: schema's `required` array contains all 14 listed fields
+      fail_signal: any required field missing from schema
+    - check: jq parses an example line
+      pass_signal: `jq -e . tests/example_call.jsonl` exits 0
+      fail_signal: jq parse error
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      JSONL schema check failed. Every call is a research observation;
+      reproducibility hinges on metadata completeness. Resolve before
+      proceeding to wrapper implementation.
+  hard_checkpoint: true
+  estimated_minutes: 30
+  log_to: run_log
+
+- task_id: day2_block2_wrapper_implementation
+  type: agent_assisted
+  human_only: false
+  description: |
+    Thin Python wrapper around vLLM's OpenAI-compatible client. Intercept
+    request + response, append JSONL. Two modes: append-only (production)
+    and in-memory (tests). Sync and async variants (async needed for
+    OpenClaw on Day 6). One required helper: `verify_log_integrity(path)`
+    reads back, schema-validates each line, returns count of malformed
+    lines (target: 0). Code budget ~100 lines. Resist abstraction — this
+    is plumbing. (Source 0:30–1:30.)
+  preconditions:
+    - day2_block2_jsonl_schema
+  command: null  # Agent prepares scaffolding; human (or sub-agent with
+                 # file-write tools) writes the implementation. Source
+                 # plan explicitly scopes code beyond simple validation
+                 # out; preserve that constraint.
+  expected_observable:
+    kind: file_exists
+    value: agent_wrapper/wrapper.py with sync, async, and verify_log_integrity functions
+  validation:
+    - check: wrapper exposes sync interface
+      pass_signal: |
+        `python3 -c "from agent_wrapper.wrapper import call_sync; print(call_sync)"`
+        exits 0
+      fail_signal: ImportError or AttributeError
+    - check: wrapper exposes async interface
+      pass_signal: |
+        `python3 -c "from agent_wrapper.wrapper import call_async; print(call_async)"`
+        exits 0
+      fail_signal: ImportError or AttributeError
+    - check: verify_log_integrity exposed
+      pass_signal: |
+        `python3 -c "from agent_wrapper.wrapper import verify_log_integrity; print(verify_log_integrity)"`
+        exits 0
+      fail_signal: ImportError or AttributeError
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Wrapper interface incomplete. Resist over-abstraction; ~100 lines
+      is the code budget. Production = append-only; tests = in-memory.
+  hard_checkpoint: false
+  estimated_minutes: 60
+  log_to: run_log
+
+- task_id: day2_block2_50call_sweep
+  type: agent_executable
+  human_only: false
+  description: |
+    50-call validation sweep + determinism check. Script: 50 calls,
+    varied temperature {0.0, 0.3, 0.7, 1.0}, varied prompt categories
+    {arithmetic, factual, opinion, code, refusal}. (Source 1:30–2:00.)
+  preconditions:
+    - day2_block2_wrapper_implementation
+  command: |
+    python3 tests/test_50_calls.py --output logs/day2.jsonl && \
+    python3 -c "from agent_wrapper.wrapper import verify_log_integrity; n=verify_log_integrity('logs/day2.jsonl'); print(f'malformed={n}'); assert n==0"
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      50 schema-valid JSONL lines, 0 malformed; aggregate tok/s ≥ 40;
+      identical outputs at T=0 across 3 calls; identical outputs at
+      T=1, seed=42, across 3 calls.
+  validation:
+    - check: 50 schema-valid JSONL lines
+      pass_signal: `wc -l logs/day2.jsonl` returns 50
+      fail_signal: any other count
+    - check: 0 malformed lines
+      pass_signal: verify_log_integrity returns 0
+      fail_signal: returns > 0
+    - check: aggregate tok/s ≥ 40
+      pass_signal: aggregate decode tok/s computed from latency_ms and
+        usage.completion_tokens across all 50 calls is ≥ 40
+      fail_signal: < 40
+    - check: T=0 determinism across 3 calls of the same prompt
+      pass_signal: 3 identical completions on the designated T=0
+        determinism prompt
+      fail_signal: any divergence — vLLM is deterministic at T=0; if
+        outputs differ, seed/determinism is broken
+    - check: T=1 seed=42 determinism across 3 calls of the same prompt
+      pass_signal: 3 identical completions on the designated
+        T=1, seed=42 prompt — verifies seed is actually plumbed through
+      fail_signal: any divergence — seed plumbing is broken
+  on_failure:
+    action: abort_day
+    human_message: |
+      Determinism check failed. Do NOT proceed to Day 3 until fixed.
+      Check vLLM launch flags for unset seed; check wrapper's seed
+      passthrough; check that the test harness sends identical request
+      bodies across the 3 trials. Halt the day's progression and resume
+      this task once root cause is identified.
+  hard_checkpoint: true
+  estimated_minutes: 30
+  log_to: run_log
+  metric_log_key: day2_jsonl_malformed_count
+```
+
+#### Block 2 → Block 3 buffer
+
+```yaml
+- soft_buffer:
+    name: day2_lunch_and_slack
+    duration_minutes: 60
+```
+
+### block_3_read_write (60 min, mixed)
+
+```yaml
+- task_id: day2_block3_reading
+  type: human_only
+  human_only: true
+  description: |
+    Critical response to Sakana — Melanie Mitchell's blog post + one
+    selected Twitter thread (e.g., Matt Welsh).
+  agent_action: print_reminder_and_wait
+  blocking: true
+
+- task_id: day2_block3_journal
+  type: human_assisted
+  human_only: false
+  description: |
+    Public journal post (200–300 words): "What does it mean for a
+    research apparatus to 'work'? Reading Sakana skeptics on Day 2."
+  word_target: 200-300
+  visibility: public
+  agent_action: stub_post_with_data_inserts
+  agent_message: |
+    Generate a post stub with today's measurements pre-filled
+    (50-call sweep result, malformed count, determinism pass/fail).
+    Human writes the prose on the gap between automation-of-search and
+    contribution-to-knowledge.
+  data_to_insert:
+    - day2_jsonl_malformed_count
+    - day2_aggregate_tok_per_sec
+    - determinism_check_T0_pass
+    - determinism_check_T1_seed42_pass
+  exclude_from_public:
+    - your own taxonomy of failure modes (private)
+    - which apply to your design, which don't (private)
+  preconditions:
+    - day2_block2_50call_sweep
+  log_to: run_log
+```
+
+### ambient_listening
+
+```yaml
+- task_id: day2_ambient
+  type: human_only
+  human_only: true
+  description: |
+    EconTalk with Al Roth on market design (program list).
+  blocking: false
+  notes_required: false
+```
+
+### end_of_day
+
+```yaml
+- task_id: day2_end_of_day_artifacts
+  type: agent_executable
+  human_only: false
+  description: |
+    Verify and commit end-of-day artifacts. Pre-stage Day 3.
+    Per program: "all data, code, logs committed to public repo from
+    Day 1 post-arrival" — public; redact only API keys.
+  preconditions:
+    - all block_2 tasks for day_2 complete or explicitly aborted
+    - day2_block3_journal
+  command: |
+    git add agent_wrapper/wrapper.py schema/calls.jsonl.schema.json tests/test_50_calls.py logs/day2.jsonl && \
+    git commit -m "day 2: wrapper + JSONL logging; determinism verified"
+  validation:
+    - check: files committed
+      pass_signal: `git log -1 --format=%H` returns commit; `git status` clean
+      fail_signal: dirty tree or nothing to commit
+    - check: jsonl integrity
+      pass_signal: verify_log_integrity('logs/day2.jsonl') returns 0
+      fail_signal: returns > 0
+    - check: public journal URL recorded
+      pass_signal: journal/index.md updated
+      fail_signal: not updated
+    - check: tomorrow's first task pre-staged
+      pass_signal: |
+        ChromaDB install commands queued in `setup/day3_chroma.sh`;
+        BGE-M3 weights confirmed at /mnt/models/bge-m3.
+      fail_signal: either missing
+  log_to: run_log
+```
+
+---
+
+## day_3: ChromaDB + BGE-M3 + first textbook ingest
+
+```yaml
+day_id: day_3
+program_day: 33
+date_offset: T+2
+success_criterion: |
+  ChromaDB running with BGE-M3 (per validation pass adjustment 1);
+  Osborne & Rubinstein PDF chunked, embedded, retrieved;
+  needle-in-haystack benchmark passes at 8K tokens.
+failure_mode: |
+  PDF extraction garbles math (mid-equation breaks, OCR artifacts).
+recovery_path: |
+  Escalate pypdfium2 → pymupdf → nougat (math-heavy OCR via Docker
+  container).
+prerequisites:
+  - day_2
+unblocks:
+  - day_4
+wall_clock_window:
+  block_1: "08:30–10:00"
+  block_2: "10:30–12:30"
+  block_3: "13:30–14:30"
+  ambient: "14:30–15:30"
+  end_of_day: "15:30–16:00"
+```
+
+### block_1_foundations (90 min, human_only=true)
+
+```yaml
+- task_id: day3_block1_reading
+  type: human_only
+  human_only: true
+  description: |
+    Weibull, Evolutionary Game Theory, Ch. 1 §1.1–1.4 (population
+    states, evolutionary stability, ESS). Note: Weibull is denser than
+    Osborne. Allow yourself to spend Block 1 on §1.1–1.2 alone if the
+    algebra needs slow checking.
+  agent_action: print_reminder_and_wait
+  agent_message: |
+    Block 1 starts now. No-AI rule absolute. Pen and paper.
+    Reading: Weibull Ch. 1 §1.1–1.4.
+    Problem set: Weibull 1.1, 1.2, 1.3.
+  blocking: true
+
+- task_id: day3_block1_problemset
+  type: human_only
+  human_only: true
+  description: |
+    Weibull 1.1, 1.2, 1.3.
+  agent_action: none
+  blocking: false
+```
+
+### block_2_build (2 hr, agent_executable)
+
+```yaml
+- task_id: day3_block2_chroma_install
+  type: agent_executable
+  human_only: false
+  description: |
+    ChromaDB install + BGE-M3 wired. Fresh venv. `pip install chromadb`
+    (pin to current stable). Replace default embedding function with
+    BGE-M3 (568M, MIT, 8K context). Validation pass flagged that the
+    default `all-MiniLM-L6-v2` drops to 0.4–0.6 retrieval accuracy at
+    4K characters — unacceptable for dense math textbooks.
+    (Source 0:00–0:20.)
+  preconditions:
+    - day3_block1_reading
+    - preflight_software_prestaged
+  command: |
+    python3 -m venv .venv-chroma && \
+    source .venv-chroma/bin/activate && \
+    pip install chromadb && \
+    chroma run --path ./chroma_db &
+    sleep 5 && \
+    python3 scripts/chroma_init_with_bge_m3.py \
+      --bge-m3-weights /mnt/models/bge-m3 \
+      --collection-name day3_test
+  expected_observable:
+    kind: log_pattern
+    value: |
+      chroma server starts; test collection metadata shows
+      `embedding_function: BGE-M3`.
+  validation:
+    - check: chroma server running
+      pass_signal: process listening on the chroma default port
+      fail_signal: no listener
+    - check: embedding function is BGE-M3 (NOT all-MiniLM-L6-v2)
+      pass_signal: collection metadata field `embedding_function` ==
+        "BGE-M3"
+      fail_signal: any other value, especially "all-MiniLM-L6-v2"
+    - check: 10-doc test collection populated
+      pass_signal: test collection count == 10
+      fail_signal: any other count
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      ChromaDB or BGE-M3 not wired. Do NOT fall back to default
+      embedding — it drops to 0.4–0.6 retrieval accuracy at 4K chars
+      and the rest of the week's retrieval-dependent work depends on
+      better than that.
+  hard_checkpoint: true
+  estimated_minutes: 20
+  log_to: run_log
+
+- task_id: day3_block2_chunking_and_ingest_script
+  type: agent_assisted
+  human_only: false
+  description: |
+    Chunking strategy + ingest script. Strategy: semantic chunking by
+    section/subsection (PDF table of contents → boundaries); fallback to
+    fixed 1500-token / 200-overlap when ToC absent. NEVER split
+    mid-equation: regex guard for unmatched `$...$`,
+    `\begin{equation}` / `\end{equation}` pairs. `ingest/textbook.py`:
+    input PDF → chunks → ChromaDB with metadata (book, chapter, section,
+    page range, chunk index). (Source 0:20–0:50.)
+  preconditions:
+    - day3_block2_chroma_install
+  command: null  # Implementation is human / sub-agent; the agent here
+                 # runs the dry-run validation only.
+  expected_observable:
+    kind: file_exists
+    value: ingest/textbook.py and ingest/chunking.py with the equation-guard regex
+  validation:
+    - check: dry-run on Osborne Ch. 1 only
+      pass_signal: |
+        `python3 ingest/textbook.py --pdf books/osborne_rubinstein.pdf
+         --chapters 1 --dry-run` prints chunk count, mean length, max
+         length; 5 random chunks contain no broken `$...$` or unmatched
+         equation environments
+      fail_signal: any chunk shows mid-equation break OR script errors
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Equation-guard regex did not catch a mid-equation split. Tighten
+      regex; re-run dry-run before full ingest. The full ingest is the
+      next task — do not proceed until dry-run is clean.
+  hard_checkpoint: false
+  estimated_minutes: 30
+  log_to: run_log
+
+- task_id: day3_block2_full_ingest
+  type: agent_executable
+  human_only: false
+  description: |
+    Full Osborne & Rubinstein ingest. Run on full PDF (you've read
+    Ch 1-5; embedding the whole book gives the loop access to Ch 6-8 —
+    that's intentional). Expect ~1500–3000 chunks; ~50 MB embedding
+    storage. (Source 0:50–1:30.)
+  preconditions:
+    - day3_block2_chunking_and_ingest_script
+  command: |
+    python3 ingest/textbook.py --pdf books/osborne_rubinstein.pdf \
+      --collection osborne_rubinstein \
+      --output-manifest chroma_db/manifest.json
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      Collection count in [1500, 3000]; query "subgame perfect
+      equilibrium" returns top-1 from Ch 6-7.
+  validation:
+    - check: chunk count in expected range
+      pass_signal: collection count in [1500, 3000]
+      fail_signal: count outside band
+    - check: relevant retrieval works
+      pass_signal: query "subgame perfect equilibrium" returns top-1
+        result with chapter metadata in {6, 7}
+      fail_signal: top-1 not from Ch 6-7
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Ingest count or retrieval out of expected band. Investigate
+      chunking aggressiveness or check that BGE-M3 is actually loaded
+      (re-run the day3_block2_chroma_install validation).
+  hard_checkpoint: false
+  estimated_minutes: 40
+  log_to: run_log
+
+- task_id: day3_block2_needle_haystack
+  type: agent_executable
+  human_only: false
+  description: |
+    Needle-in-haystack benchmark. Insert a known synthetic sentence
+    into an 8K-token chunk: "The Schelling-Hardin lemma states that
+    goats prefer left turns." Query "Schelling-Hardin lemma" → expected
+    top-1 retrieval, score ≥ 0.6 (BGE-M3 should hit ~0.92 at 8K per
+    validation pass). (Source 1:30–2:00.)
+  preconditions:
+    - day3_block2_full_ingest
+  command: |
+    python3 tests/needle_in_haystack.py \
+      --collection day3_needle_test \
+      --needle "The Schelling-Hardin lemma states that goats prefer left turns." \
+      --haystack-tokens 8000 \
+      --output bench/day3_needle.json
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      Top-1 retrieval score ≥ 0.85 → proceed; < 0.7 → investigate.
+      ≥ 0.6 is the floor; BGE-M3 expected to hit ~0.92.
+  validation:
+    - check: top-1 retrieval is the needle sentence
+      pass_signal: top-1 hit's text contains "Schelling-Hardin lemma"
+      fail_signal: top-1 is some other passage
+    - check: top-1 score ≥ 0.85 (proceed band)
+      pass_signal: score ≥ 0.85 → record and proceed
+      fail_signal: score < 0.85 → investigate before Day 4
+    - check: top-1 score not below 0.7 (investigation floor)
+      pass_signal: score ≥ 0.7
+      fail_signal: score < 0.7 — investigate: chunking too aggressive,
+        wrong embedding actually loaded, collection rebuilt without
+        BGE-M3
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Needle score below 0.7. Investigation order:
+        1. Was the collection actually rebuilt with BGE-M3? Re-check
+           manifest.json.
+        2. Is chunking splitting the needle from its surrounding 8K
+           context? Inspect the chunks containing the needle.
+        3. Is the haystack actually 8K tokens?
+      Do not advance to Day 4 with a broken retrieval layer.
+  hard_checkpoint: false
+  estimated_minutes: 30
+  log_to: run_log
+  metric_log_key: day3_needle_score
+```
+
+#### Block 2 → Block 3 buffer
+
+```yaml
+- soft_buffer:
+    name: day3_lunch_and_slack
+    duration_minutes: 60
+```
+
+### block_3_read_write (60 min, mixed)
+
+```yaml
+- task_id: day3_block3_reading
+  type: human_only
+  human_only: true
+  description: |
+    Hart & Mas-Colell 2000, "A Simple Adaptive Procedure Leading to
+    Correlated Equilibrium" — sets up MW intuition for Day 6.
+  agent_action: print_reminder_and_wait
+  blocking: true
+
+- task_id: day3_block3_journal
+  type: human_assisted
+  human_only: false
+  description: |
+    Public journal post (200–300 words): "Reading the textbook into the
+    loop — what gets preserved, what gets compressed."
+  word_target: 200-300
+  visibility: public
+  agent_action: stub_post_with_data_inserts
+  data_to_insert:
+    - day3_chunk_count
+    - day3_needle_score
+    - embedding_model_name (must read "BGE-M3")
+  exclude_from_public:
+    - specific retrieval failures observed (private)
+    - hypotheses for each failure (private)
+  preconditions:
+    - day3_block2_needle_haystack
+  log_to: run_log
+```
+
+### ambient_listening
+
+```yaml
+- task_id: day3_ambient
+  type: human_only
+  human_only: true
+  description: |
+    ML Street Talk or The Gradient — recent episode on retrieval / RAG /
+    agents.
+  blocking: false
+```
+
+### end_of_day
+
+```yaml
+- task_id: day3_end_of_day_artifacts
+  type: agent_executable
+  human_only: false
+  description: |
+    Verify and commit end-of-day artifacts. Pre-stage Day 4.
+    Note: chroma_db/ itself is gitignored (too large); manifest.json is
+    committed.
+  preconditions:
+    - all block_2 tasks for day_3 complete
+    - day3_block3_journal
+  command: |
+    git add ingest/textbook.py ingest/chunking.py chroma_db/manifest.json && \
+    git commit -m "day 3: ChromaDB + BGE-M3 + Osborne ingest; needle benchmark"
+  validation:
+    - check: files committed
+      pass_signal: commit hash returned; status clean
+      fail_signal: dirty
+    - check: manifest contains BGE-M3 and source PDF hash
+      pass_signal: chroma_db/manifest.json fields embedding_model ==
+        "BGE-M3" and source_pdf_sha256 present
+      fail_signal: either missing
+    - check: public journal URL recorded
+      pass_signal: journal/index.md updated
+      fail_signal: not updated
+    - check: tomorrow's first task pre-staged
+      pass_signal: |
+        Tool schema sketch for the mock function exists at
+        `tools/mock_payoffs.schema.json` (stub OK); mock payoff dicts
+        written down on paper (human attests).
+      fail_signal: schema file missing
+  log_to: run_log
+```
+
+---
+
+## day_4: first tool call (function calling)
+
+```yaml
+day_id: day_4
+program_day: 34
+date_offset: T+3
+success_criterion: |
+  Gemma 4 receives a tool definition, decides to call it, returns valid
+  JSON args, harness executes, result feeds into a second call. Full
+  round-trip logged via the wrapper. Robustness rate measured.
+failure_mode: |
+  Gemma 4 produces malformed JSON or hallucinates tool names.
+recovery_path: |
+  Tighten system prompt; JSON Schema validator with retry-once;
+  if persistent, switch to vLLM's `guided_json` constrained decoding.
+prerequisites:
+  - day_3
+unblocks:
+  - day_5
+wall_clock_window:
+  block_1: "08:30–10:00"
+  block_2: "10:30–12:30"
+  block_3: "13:30–14:30"
+  ambient: "14:30–15:30"
+  end_of_day: "15:30–16:00"
+```
+
+### block_1_foundations (90 min, human_only=true)
+
+```yaml
+- task_id: day4_block1_reading
+  type: human_only
+  human_only: true
+  description: |
+    Weibull Ch. 1 §1.5–end + Ch. 2 §2.1 (replicator dynamics intro).
+  agent_action: print_reminder_and_wait
+  agent_message: |
+    Block 1 starts now. No-AI rule absolute. Pen and paper.
+    Reading: Weibull §1.5–end + §2.1.
+    Problem set: derive replicator dynamics for hawk-dove BY HAND.
+    This is a named Phase 1 problem set item.
+  blocking: true
+
+- task_id: day4_block1_problemset
+  type: human_only
+  human_only: true
+  description: |
+    Derive replicator dynamics for hawk-dove by hand. (Named Phase 1
+    problem set item; today is the right day for it.)
+  agent_action: none
+  blocking: false
+```
+
+### block_2_build (2 hr, agent_executable)
+
+```yaml
+- task_id: day4_block2_mock_tool
+  type: agent_assisted
+  human_only: false
+  description: |
+    Mock tool definition. One tool: `get_payoff_matrix(game_name: str)
+    -> dict` returning fixed matrices for `prisoners_dilemma`,
+    `stag_hunt`, `matching_pennies`. Tool schema in OpenAI
+    function-calling JSON format. Implementation: ~20 lines, hardcoded
+    dicts. (Source 0:00–0:30.)
+  preconditions:
+    - day4_block1_reading
+  command: null  # Authoring step. Agent runs unit test below after.
+  expected_observable:
+    kind: file_exists
+    value: tools/mock_payoffs.py with get_payoff_matrix; tools/mock_payoffs.schema.json
+  validation:
+    - check: unit test the tool function directly
+      pass_signal: |
+        `python3 -c "from tools.mock_payoffs import get_payoff_matrix; m=get_payoff_matrix('prisoners_dilemma'); import json; json.dumps(m)"`
+        exits 0 and returns a dict containing payoffs (3,3),(0,5),(5,0),(1,1)
+      fail_signal: not JSON-serializable OR matrix wrong
+    - check: schema is OpenAI function-calling format
+      pass_signal: |
+        schema has `type: "function"`, a `function` object with `name`,
+        `description`, and `parameters` (JSON Schema)
+      fail_signal: shape doesn't match
+  on_failure:
+    action: retry_once
+    human_message: |
+      Mock tool implementation incomplete or schema malformed. Re-author
+      per the source's exact specification — three games, hardcoded
+      matrices.
+  hard_checkpoint: false
+  estimated_minutes: 30
+  log_to: run_log
+
+- task_id: day4_block2_wrapper_tools
+  type: agent_assisted
+  human_only: false
+  description: |
+    Wire into wrapper. Extend `wrapper.py` with `call_with_tools(
+    messages, tools)`: send initial request with `tools` parameter;
+    if `tool_calls` non-empty, schema-validate args, execute tool,
+    append `role: "tool"` message with result, recurse (max depth 3).
+    Log every step to JSONL with `parent_request_id` linking the chain.
+    (Source 0:30–1:15.)
+  preconditions:
+    - day4_block2_mock_tool
+  command: null  # Wrapper extension is authored; validation is the
+                 # end-to-end test below.
+  expected_observable:
+    kind: file_exists
+    value: agent_wrapper/wrapper.py exposing call_with_tools
+  validation:
+    - check: schema-validate tool_calls field on every response
+      pass_signal: |
+        Wrapper logs schema validation outcome per response; malformed
+        JSON is logged and surfaced — NOT silently retried on Day 1
+        of tool calling.
+      fail_signal: silent retry on malformed JSON
+    - check: max recursion depth 3
+      pass_signal: function signature or constant enforces depth ≤ 3
+      fail_signal: no depth bound
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Wrapper tool-call extension does not surface malformed JSON. You
+      need to SEE the failure rate today. Do not silently retry until
+      you've measured.
+  hard_checkpoint: false
+  estimated_minutes: 45
+  log_to: run_log
+
+- task_id: day4_block2_e2e_test
+  type: agent_executable
+  human_only: false
+  description: |
+    End-to-end test. Prompt: "What is the payoff matrix for prisoner's
+    dilemma? Use the available tool to answer accurately." Expected:
+    Gemma calls `get_payoff_matrix(game_name="prisoners_dilemma")`,
+    gets result, summarizes in natural language. (Source 1:15–1:50.)
+  preconditions:
+    - day4_block2_wrapper_tools
+  command: |
+    python3 tests/test_tool_call_e2e.py --output logs/day4_e2e.jsonl
+  expected_observable:
+    kind: log_pattern
+    value: |
+      JSONL has 2 linked entries (initial → tool call request, then
+      second call → final answer). Tool call args are valid JSON, valid
+      against tool schema. Final answer mentions the
+      (3,3),(0,5),(5,0),(1,1) numbers from the mock matrix.
+  validation:
+    - check: 2 linked JSONL entries
+      pass_signal: 2 lines in logs/day4_e2e.jsonl with matching
+        parent_request_id chain
+      fail_signal: 1 line, or unlinked entries
+    - check: tool call args valid JSON
+      pass_signal: `tool_calls[0].function.arguments` parses as JSON
+        and validates against tools/mock_payoffs.schema.json
+      fail_signal: parse fails or schema-validate fails
+    - check: final answer mentions the four payoff numbers
+      pass_signal: final assistant message contains all of "3,3",
+        "0,5", "5,0", "1,1" (or numeric equivalents)
+      fail_signal: any number missing — Gemma may have guessed instead
+        of using the tool result
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Gemma sometimes guesses instead of calling the tool. Tighten
+      system message ("You MUST use the tool"). If still failing, try
+      `tool_choice="required"` if the vLLM image supports it. If still
+      failing, log the gap as a measured reliability finding (it's a
+      Day 1 of tool calling — see the failure, don't paper over it) and
+      proceed to robustness micro-test.
+  hard_checkpoint: false
+  estimated_minutes: 35
+  log_to: run_log
+
+- task_id: day4_block2_robustness
+  type: agent_executable
+  human_only: false
+  description: |
+    Robustness micro-test. Re-run same prompt 5 times at temp=0.3.
+    Count: how many actually invoked the tool? Per program's
+    robustness-as-first-class principle: log the rate. If <80%, you have
+    a real reliability gap to characterize, not a bug to silently fix.
+    (Source 1:50–2:00.)
+  preconditions:
+    - day4_block2_e2e_test
+  command: |
+    python3 tests/test_tool_call_robustness.py --n 5 --temperature 0.3 \
+      --output logs/day4_robust.jsonl
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      Tool invocation rate over 5 trials at T=0.3.
+  validation:
+    - check: 5 trials recorded
+      pass_signal: 5 lines (or 5 chains) in logs/day4_robust.jsonl
+      fail_signal: any other count
+    - check: tool invocation rate computed and logged
+      pass_signal: rate written to metric_log as
+        day4_tool_call_invocation_rate
+      fail_signal: not written
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Robustness measurement did not record. The whole point of this
+      micro-test is to characterize reliability — re-run and ensure the
+      rate lands in metric_log. A low rate is a finding, not a bug to
+      silently fix.
+  hard_checkpoint: false
+  estimated_minutes: 10
+  log_to: run_log
+  metric_log_key: day4_tool_call_invocation_rate
+```
+
+#### Block 2 → Block 3 buffer
+
+```yaml
+- soft_buffer:
+    name: day4_lunch_and_slack
+    duration_minutes: 60
+```
+
+### block_3_read_write (60 min, mixed)
+
+```yaml
+- task_id: day4_block3_reading
+  type: human_only
+  human_only: true
+  description: |
+    Camerer Ch. 4 §4.1–4.2 (learning models, EWA introduction).
+  agent_action: print_reminder_and_wait
+  blocking: true
+
+- task_id: day4_block3_journal
+  type: human_assisted
+  human_only: false
+  description: |
+    Public journal post (200–400 words): "First tool call — and the
+    gap between 'works' and 'works reliably.'"
+  word_target: 200-400
+  visibility: public
+  agent_action: stub_post_with_data_inserts
+  data_to_insert:
+    - day4_tool_call_invocation_rate
+    - one_example_full_chain_request_id (from logs/day4_e2e.jsonl)
+  exclude_from_public:
+    - prompt-tuning ideas (private)
+    - whether `guided_json` is worth the complexity (private)
+  preconditions:
+    - day4_block2_robustness
+  log_to: run_log
+```
+
+### ambient_listening
+
+```yaml
+- task_id: day4_ambient
+  type: human_only
+  human_only: true
+  description: |
+    Complexity Podcast on evolution of cooperation (program list) —
+    pairs with this morning's Weibull/replicator content.
+  blocking: false
+```
+
+### end_of_day
+
+```yaml
+- task_id: day4_end_of_day_artifacts
+  type: agent_executable
+  human_only: false
+  description: |
+    Verify and commit. Pre-stage Day 5: confirm Semantic Scholar API
+    key working (test query); decide ML-Intern install plan vs.
+    fallback.
+  preconditions:
+    - all block_2 tasks for day_4 complete
+    - day4_block3_journal
+  command: |
+    git add tools/mock_payoffs.py tools/mock_payoffs.schema.json \
+            agent_wrapper/wrapper.py tests/test_tool_call_e2e.py \
+            tests/test_tool_call_robustness.py logs/day4_e2e.jsonl \
+            logs/day4_robust.jsonl && \
+    git commit -m "day 4: first tool call; robustness measured"
+  validation:
+    - check: files committed
+      pass_signal: commit hash returned; status clean
+      fail_signal: dirty
+    - check: jsonl integrity
+      pass_signal: |
+        verify_log_integrity('logs/day4_e2e.jsonl') == 0 AND
+        verify_log_integrity('logs/day4_robust.jsonl') == 0 AND
+        total entries across day 4 ≥ 30
+      fail_signal: malformed > 0 OR total < 30
+    - check: public journal URL recorded
+      pass_signal: journal/index.md updated
+      fail_signal: not updated
+    - check: tomorrow's first task pre-staged — Semantic Scholar key
+      pass_signal: |
+        `python3 scripts/test_semantic_scholar.py` returns a paper for
+        a known arxiv_id query
+      fail_signal: API call fails (key missing, rate-limited at 0 RPS,
+        or network)
+    - check: tomorrow's first task pre-staged — ML-Intern decision
+      pass_signal: |
+        notes/day5_ml_intern_plan.md exists and states either "attempt"
+        or "skip — direct API fallback"
+      fail_signal: file missing
+  log_to: run_log
+```
+
+---
+
+## day_5: arXiv pipeline → ChromaDB
+
+```yaml
+day_id: day_5
+program_day: 35
+date_offset: T+4
+success_criterion: |
+  A daily-cron-able script pulls new cs.MA / cs.GT / econ.TH abstracts,
+  embeds with BGE-M3, appends to a `papers_recent` ChromaDB collection.
+  ≥50 papers ingested on first run. Retrieval works.
+failure_mode: |
+  ML-Intern install fails on ARM64.
+recovery_path: |
+  Fall back to direct Semantic Scholar API + simple Python — slightly
+  less smart, definitely works.
+prerequisites:
+  - day_4
+unblocks:
+  - day_6
+wall_clock_window:
+  block_1: "08:30–10:00"
+  block_2: "10:30–12:30"
+  block_3: "13:30–14:30"
+  ambient: "14:30–15:30"
+  end_of_day: "15:30–16:00"
+```
+
+### block_1_foundations (90 min, human_only=true)
+
+```yaml
+- task_id: day5_block1_reading
+  type: human_only
+  human_only: true
+  description: |
+    Cesa-Bianchi & Lugosi, Prediction, Learning, and Games, Ch. 1
+    §1.1–1.4 (Hannan consistency, regret framework).
+  agent_action: print_reminder_and_wait
+  agent_message: |
+    Block 1 starts now. No-AI rule absolute. Pen and paper.
+    Reading: C-B & L Ch. 1 §1.1–1.4.
+    Problem set: C-B & L Ex. 1.1, 1.2 — internalize the regret bound's
+    proof structure; you'll prove MW formally tomorrow.
+  blocking: true
+
+- task_id: day5_block1_problemset
+  type: human_only
+  human_only: true
+  description: |
+    C-B & L Ex. 1.1, 1.2.
+  agent_action: none
+  blocking: false
+```
+
+### block_2_build (2 hr, agent_executable, with router)
+
+```yaml
+- task_id: day5_block2_ml_intern_router
+  type: agent_executable
+  human_only: false
+  description: |
+    Decision point: ML-Intern path or fallback path? ML-Intern is more
+    complete (literature workflow templates, doom-loop detection) but
+    ARM64-untested per validation pass. Fallback is direct Semantic
+    Scholar API + Python — definitely works. Try ML-Intern for 45 min;
+    if not running by 0:45, fall back.
+  preconditions:
+    - day5_block1_reading
+    - preflight_credentials_staged
+  command: |
+    # Probe: can ML-Intern even install on this ARM64 host?
+    test -d clones/ml-intern || git clone <url> clones/ml-intern && \
+    cd clones/ml-intern && python3 -m pip install -r requirements.txt --dry-run
+  branches:
+    on_success: day5_block2_ml_intern_attempt
+    on_failure: day5_block2_pipeline_fallback
+    timeout_minutes: 45
+    on_timeout: day5_block2_pipeline_fallback
+  log_to: run_log
+
+- task_id: day5_block2_ml_intern_attempt
+  type: agent_assisted
+  human_only: false
+  description: |
+    ML-Intern attempt. Clone, install per README, set env vars
+    (`ANTHROPIC_API_KEY`, `HF_TOKEN`, `GITHUB_TOKEN`,
+    `LOCAL_LLM_BASE_URL=http://localhost:8000/v1`), run hello-world.
+    Validate one literature query returns ≥3 papers.
+    (Source 0:00–0:45 with hard 45-min cap.)
+  preconditions:
+    - day5_block2_ml_intern_router
+  command: |
+    cd clones/ml-intern && \
+    pip install -r requirements.txt && \
+    ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+    HF_TOKEN="$HF_TOKEN" \
+    GITHUB_TOKEN="$GITHUB_TOKEN" \
+    LOCAL_LLM_BASE_URL="http://localhost:8000/v1" \
+    python3 examples/hello_world.py && \
+    python3 examples/literature_query.py --topic "LLM agents repeated games" --output /tmp/ml_intern_test.json
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      Hello-world succeeds; one literature query returns ≥3 papers.
+  validation:
+    - check: hello-world exits 0
+      pass_signal: shell exit 0
+      fail_signal: any non-zero
+    - check: literature query returns ≥3 papers
+      pass_signal: parsed JSON has ≥3 entries
+      fail_signal: < 3
+  on_failure:
+    action: use_fallback
+    fallback_task_id: day5_block2_pipeline_fallback
+    human_message: |
+      ML-Intern install failed within 45-min cap. Falling back to
+      direct Semantic Scholar API path. Do not lose Day 5 to ML-Intern
+      install.
+  hard_checkpoint: false
+  estimated_minutes: 45
+  log_to: run_log
+  state_update_on_failure: fallbacks_taken.day5_ml_intern = "direct_api"
+
+- task_id: day5_block2_pipeline_fallback
+  type: agent_assisted
+  human_only: false
+  description: |
+    Direct Semantic Scholar API path. Skip ML-Intern; continue with
+    direct API + Python. Used either if ML-Intern attempt fails or if
+    the router timed out.
+  preconditions:
+    - day5_block2_ml_intern_router
+  command: null  # Implementation in pipeline/arxiv_scraper.py is
+                 # authored; the pipeline-implementation task below
+                 # runs and validates it.
+  expected_observable:
+    kind: file_exists
+    value: pipeline/arxiv_scraper.py and pipeline/embed_and_store.py
+  validation:
+    - check: scripts present
+      pass_signal: both files exist
+      fail_signal: either missing
+  hard_checkpoint: false
+  estimated_minutes: 10
+  log_to: run_log
+  state_update: fallbacks_taken.day5_ml_intern = "direct_api"
+
+- task_id: day5_block2_pipeline_implementation
+  type: agent_executable
+  human_only: false
+  description: |
+    Pipeline implementation. Source: Semantic Scholar API. With key:
+    1 RPS dedicated; without: 5000/5min shared pool. Exponential
+    backoff is required by current policy. Filters: arXiv categories
+    `cs.MA`, `cs.GT`, `econ.TH`. Date range: last 7 days for Day 5
+    first run; last 24 hrs for daily cron. For each paper: title,
+    abstract, authors, arxiv_id, semantic_scholar_id, citation_count.
+    Embed abstract (not full paper) with BGE-M3. Insert into
+    `papers_recent` collection; deduplicate on arxiv_id.
+    (Source 0:45–1:30.)
+  preconditions:
+    - day5_block2_pipeline_fallback OR day5_block2_ml_intern_attempt
+  command: |
+    python3 pipeline/arxiv_scraper.py \
+      --categories cs.MA,cs.GT,econ.TH \
+      --since-days 7 \
+      --output /tmp/papers_day5.jsonl && \
+    python3 pipeline/embed_and_store.py \
+      --input /tmp/papers_day5.jsonl \
+      --collection papers_recent \
+      --bge-m3-weights /mnt/models/bge-m3
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      First run ≥30 papers across the three categories
+      (target ≥50 per success criterion); manual cross-check 2 papers
+      on arxiv.org by ID.
+  validation:
+    - check: ≥30 papers ingested
+      pass_signal: papers_recent collection count delta ≥ 30
+      fail_signal: < 30
+    - check: ≥50 papers ingested (success criterion target)
+      pass_signal: count delta ≥ 50 — record to metric_log
+      fail_signal: 30 ≤ count < 50 → continue but record as below target
+    - check: 2 random papers cross-checked manually
+      pass_signal: human attests 2 picked papers exist on arxiv.org
+      fail_signal: human flags hallucinated arxiv_id
+    - check: BGE-M3 used for embeddings
+      pass_signal: collection metadata embedding_function == "BGE-M3"
+      fail_signal: any other value
+    - check: dedup on arxiv_id
+      pass_signal: no duplicate arxiv_id in collection
+      fail_signal: duplicates present
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Pipeline ingest count below 30 OR cross-check failed. Common
+      causes: rate-limited (no exponential backoff), wrong category
+      filters, embedding model not BGE-M3.
+  hard_checkpoint: false
+  estimated_minutes: 45
+  log_to: run_log
+  metric_log_key: day5_papers_ingested
+
+- task_id: day5_block2_retrieval_test
+  type: agent_executable
+  human_only: false
+  description: |
+    Retrieval test. Query: "LLM agents in repeated games." Expected:
+    top-3 includes ≥1 paper with relevant abstract. Sanity check that
+    the literature layer will be useful for Day 7's experiment context.
+    Log query latency (target sub-second). (Source 1:30–2:00.)
+  preconditions:
+    - day5_block2_pipeline_implementation
+  command: |
+    python3 tests/test_papers_retrieval.py \
+      --query "LLM agents in repeated games" \
+      --top-k 3 \
+      --output bench/day5_retrieval.json
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      Top-3 includes ≥1 paper whose abstract is genuinely relevant
+      (human review); query latency sub-second.
+  validation:
+    - check: latency sub-second
+      pass_signal: query latency_ms < 1000
+      fail_signal: ≥ 1000
+    - check: ≥1 relevant paper in top-3
+      pass_signal: human attests at least 1 of top-3 is relevant
+      fail_signal: human says all 3 are off-topic
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Retrieval test failed. The literature layer is meant to feed
+      Day 7's experiment context. Investigate before Day 6.
+  hard_checkpoint: false
+  estimated_minutes: 15
+  log_to: run_log
+```
+
+#### Block 2 → Block 3 buffer
+
+```yaml
+- soft_buffer:
+    name: day5_lunch_and_slack
+    duration_minutes: 60
+```
+
+### block_3_read_write (60 min, mixed)
+
+```yaml
+- task_id: day5_block3_reading
+  type: human_only
+  human_only: true
+  description: |
+    Aher, Arriaga & Kalai 2023, "Using LLMs to Replicate Human Subject
+    Studies" — directly relevant to Day 7.
+  agent_action: print_reminder_and_wait
+  blocking: true
+
+- task_id: day5_block3_journal
+  type: human_assisted
+  human_only: false
+  description: |
+    Public journal post (200–400 words): "Pipe arXiv into the loop —
+    first findings about my own field." Pick 1–2 papers from today's
+    pipeline and write what you learned.
+  word_target: 200-400
+  visibility: public
+  agent_action: stub_post_with_data_inserts
+  data_to_insert:
+    - day5_papers_ingested
+    - 1_or_2_picked_papers (title, arxiv_id) from papers_recent
+  exclude_from_public:
+    - forecast about which directions in recent literature will
+      dead-end (private)
+  preconditions:
+    - day5_block2_retrieval_test
+  log_to: run_log
+```
+
+### ambient_listening
+
+```yaml
+- task_id: day5_ambient
+  type: human_only
+  human_only: true
+  description: |
+    Rationally Speaking or similar on epistemics (program list).
+  blocking: false
+```
+
+### end_of_day
+
+```yaml
+- task_id: day5_end_of_day_artifacts
+  type: agent_executable
+  human_only: false
+  description: |
+    Verify and commit. Cron scheduled for 03:00 local; not yet enabled
+    (Day 6 enables it). Pre-stage Day 6.
+  preconditions:
+    - all block_2 tasks for day_5 complete
+    - day5_block3_journal
+  command: |
+    git add pipeline/arxiv_scraper.py pipeline/embed_and_store.py \
+            cron/daily-arxiv.sh logs/day5.jsonl && \
+    git commit -m "day 5: arxiv pipeline -> ChromaDB; first ingest"
+  validation:
+    - check: files committed
+      pass_signal: commit hash; status clean
+      fail_signal: dirty
+    - check: cron file present but NOT yet enabled
+      pass_signal: cron/daily-arxiv.sh exists; `crontab -l` does NOT
+        yet contain it
+      fail_signal: file missing OR cron already installed (Day 6
+        enables)
+    - check: public journal URL recorded
+      pass_signal: journal/index.md updated
+      fail_signal: not updated
+    - check: tomorrow's first task pre-staged
+      pass_signal: |
+        OpenClaw install plan exists at notes/day6_openclaw_plan.md;
+        worker contract sketched on paper (human attests).
+      fail_signal: plan file missing
+  log_to: run_log
+```
+
+---
+
+## day_6: OpenClaw orchestrator + first worker
+
+```yaml
+day_id: day_6
+program_day: 36
+date_offset: T+5
+success_criterion: |
+  Orchestrator spawns one worker (NemoClaw sandbox if up, plain Docker
+  otherwise); worker calls Gemma 4 via wrapper; structured result
+  returned; full round-trip in JSONL with linked `parent_request_id`
+  chain.
+failure_mode: |
+  OpenClaw + NemoClaw integration is the most-untested combination in
+  the architecture.
+recovery_path: |
+  Fall back to Python `multiprocessing` for orchestration today;
+  isolation gets re-added in Week 2.
+prerequisites:
+  - day_5
+unblocks:
+  - day_7
+wall_clock_window:
+  block_1: "08:30–10:00"
+  block_2: "10:30–12:30"
+  block_3: "13:30–14:30"
+  ambient: "14:30–15:30"
+  end_of_day: "15:30–16:00"
+```
+
+### block_1_foundations (90 min, human_only=true)
+
+```yaml
+- task_id: day6_block1_reading
+  type: human_only
+  human_only: true
+  description: |
+    C-B & L Ch. 1 §1.5–end + Ch. 2 §2.1–2.3 (multiplicative weights
+    derivation).
+  agent_action: print_reminder_and_wait
+  agent_message: |
+    Block 1 starts now. No-AI rule absolute. Pen and paper.
+    Reading: C-B & L Ch. 1 §1.5–end + §2.1–2.3.
+    PROBLEM SET: implement Multiplicative Weights from scratch on paper
+    — write the algorithm, prove the regret bound. This is on the
+    program's Phase 1 problem set list, scheduled for this period.
+    Do NOT look at code. Do NOT look at course notes. Derive it.
+    This is the keystone problem of the no-regret content.
+  blocking: true
+
+- task_id: day6_block1_problemset
+  type: human_only
+  human_only: true
+  description: |
+    Implement Multiplicative Weights from scratch on paper — write the
+    algorithm, prove the regret bound. Phase 1 keystone problem.
+  artifact_expected: handwritten_proof
+  agent_action: none
+  blocking: false
+```
+
+### block_2_build (2 hr, agent_executable, with branching)
+
+```yaml
+- task_id: day6_block2_worker_contract
+  type: human_assisted
+  human_only: false
+  description: |
+    Define the interface: input = `{task_id, task_type, payload,
+    parent_request_id}`; output = `{task_id, status, result, errors,
+    jsonl_log_path}`. Every architectural promise about "agents" hinges
+    on a clean worker contract. Get it wrong now, pay for it forever.
+    Commit `schema/worker_contract.schema.json`. (Source 0:00–0:20.)
+  preconditions:
+    - day6_block1_reading
+  command: null  # Schema authoring is human; agent validates.
+  expected_observable:
+    kind: file_exists
+    value: schema/worker_contract.schema.json
+  validation:
+    - check: schema is valid JSON Schema
+      pass_signal: |
+        `python3 -c "import jsonschema, json; jsonschema.Draft202012Validator.check_schema(json.load(open('schema/worker_contract.schema.json')))"`
+        exits 0
+      fail_signal: schema fails validation
+    - check: input fields exactly task_id, task_type, payload,
+        parent_request_id
+      pass_signal: input schema's required array == those four
+      fail_signal: extra or missing fields
+    - check: output fields exactly task_id, status, result, errors,
+        jsonl_log_path
+      pass_signal: output schema's required array == those five
+      fail_signal: extra or missing fields
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Worker contract incomplete or misshaped. The contract is load-
+      bearing for everything downstream; do not paper over it.
+  hard_checkpoint: true
+  estimated_minutes: 20
+  log_to: run_log
+
+- task_id: day6_block2_orchestrator_router
+  type: agent_executable
+  human_only: false
+  description: |
+    Decide whether OpenClaw can use the NemoClaw sandbox or must use
+    the plain-Docker / multiprocessing fallback. Reads
+    state.fallbacks_taken.day1_nemoclaw to seed the decision; probes
+    NemoClaw if not yet decided.
+  preconditions:
+    - day6_block2_worker_contract
+    - preflight_software_prestaged
+  command: |
+    nemoclaw status 2>/dev/null | grep -q healthy || echo "fallback"
+  branches:
+    on_success: day6_block2_orchestrator_with_nemoclaw
+    on_failure: day6_block2_orchestrator_with_fallback
+    timeout_minutes: 10
+    on_timeout: day6_block2_orchestrator_with_fallback
+  log_to: run_log
+
+- task_id: day6_block2_orchestrator_with_nemoclaw
+  type: agent_assisted
+  human_only: false
+  description: |
+    OpenClaw orchestrator using NemoClaw sandbox for worker isolation.
+    Install OpenClaw per its README; pin version. One task type:
+    `summarize_paper(arxiv_id)` — retrieves abstract from
+    `papers_recent`, asks Gemma 4 to summarize in 100 words, returns
+    summary. Orchestrator: receives task, spawns worker (NemoClaw
+    container), waits with 60 s timeout, logs both sides.
+    (Source 0:20–1:00.)
+  preconditions:
+    - day6_block2_orchestrator_router
+  command: null
+  expected_observable:
+    kind: log_pattern
+    value: |
+      One worker, one task end-to-end; JSONL has 3 linked entries
+      (orchestrator dispatch → worker invocation → orchestrator
+      receipt).
+  validation:
+    - check: 3 linked JSONL entries
+      pass_signal: logs/orchestrator.jsonl contains 3 entries with
+        matching parent_request_id chain for the test task
+      fail_signal: any other count
+    - check: 60 s timeout enforced
+      pass_signal: orchestrator code path includes a 60-s timeout
+      fail_signal: no timeout or different value
+  on_failure:
+    action: use_fallback
+    fallback_task_id: day6_block2_orchestrator_with_fallback
+    human_message: |
+      OpenClaw + NemoClaw integration failed. Per source: this is the
+      most-untested combination. Falling back to Python multiprocessing
+      for orchestration today; isolation gets re-added in Week 2.
+  hard_checkpoint: false
+  estimated_minutes: 40
+  log_to: run_log
+
+- task_id: day6_block2_orchestrator_with_fallback
+  type: agent_assisted
+  human_only: false
+  description: |
+    OpenClaw orchestrator using Python `multiprocessing` for worker
+    spawn — no isolation, but functional. Used either when
+    OpenClaw+NemoClaw integration fails or when the router selected
+    fallback. Same task type, same logging, same timeout discipline.
+  preconditions:
+    - day6_block2_orchestrator_router
+  command: null
+  expected_observable:
+    kind: log_pattern
+    value: |
+      One worker, one task end-to-end; JSONL has 3 linked entries.
+  validation:
+    - check: 3 linked JSONL entries
+      pass_signal: same as primary path
+      fail_signal: same as primary path
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Even the fallback orchestrator failed. Stop and inspect; this is
+      a Day 6 hard problem because Day 7 needs the orchestrator.
+  hard_checkpoint: false
+  estimated_minutes: 40
+  log_to: run_log
+  state_update: fallbacks_taken.day6_orchestrator_isolation = "multiprocessing"
+
+- task_id: day6_block2_robustness_mini
+  type: agent_executable
+  human_only: false
+  description: |
+    Robustness mini-suite. Spawn 5 workers sequentially (concurrency is
+    a Week 2 problem). All 5 must succeed; log timing. Spawn 1 worker
+    with deliberately malformed input; orchestrator must reject cleanly
+    without crashing. (Source 1:00–1:30.)
+  preconditions:
+    - day6_block2_orchestrator_with_nemoclaw OR
+      day6_block2_orchestrator_with_fallback
+  command: |
+    python3 tests/test_orchestrator_5_sequential.py \
+      --output logs/day6_5seq.jsonl && \
+    python3 tests/test_orchestrator_malformed_input.py \
+      --output logs/day6_malformed.jsonl
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      5/5 success on valid input; clean rejection on invalid; no
+      orphan processes (`ps aux | grep worker`).
+  validation:
+    - check: 5/5 sequential success
+      pass_signal: 5 worker tasks all status=passed
+      fail_signal: any status != passed
+    - check: clean rejection on malformed input
+      pass_signal: orchestrator returned a structured error response;
+        worker did not crash; orchestrator did not crash
+      fail_signal: stack trace, hang, or accepted bad input
+    - check: no orphan worker processes after run
+      pass_signal: `ps aux | grep -c worker` excluding grep itself == 0
+      fail_signal: any leftover worker process
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Robustness mini-suite failed. Either the success path is flaky
+      or input validation is broken. Day 7 cannot run on a flaky
+      orchestrator.
+  hard_checkpoint: true
+  estimated_minutes: 30
+  log_to: run_log
+  metric_log_key: day6_orchestrator_5_of_5
+
+- task_id: day6_block2_inspect_run_cli
+  type: agent_assisted
+  human_only: false
+  description: |
+    `tools/inspect_run.py` CLI. Each successful task writes to
+    `logs/orchestrator.jsonl`. Add a CLI: input = `task_id`, output =
+    full causal chain (orchestrator → worker → wrapper → vLLM call).
+    This is the "reproducibility" promise made operational.
+    (Source 1:30–2:00.)
+  preconditions:
+    - day6_block2_robustness_mini
+  command: |
+    python3 tools/inspect_run.py --task-id "$(jq -r '.task_id' logs/day6_5seq.jsonl | head -1)"
+  expected_observable:
+    kind: log_pattern
+    value: |
+      Full chain prints: orchestrator dispatch line, worker invocation
+      line, wrapper request/response line, vLLM call line.
+  validation:
+    - check: pick a task_id, run CLI, full chain prints
+      pass_signal: stdout contains all four levels with matching IDs
+      fail_signal: missing any level or chain broken
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      inspect_run.py cannot reconstruct the full chain. The
+      reproducibility promise is broken. Fix before Day 7.
+  hard_checkpoint: false
+  estimated_minutes: 30
+  log_to: run_log
+```
+
+#### Block 2 → Block 3 buffer
+
+```yaml
+- soft_buffer:
+    name: day6_lunch_and_slack
+    duration_minutes: 60
+```
+
+### block_3_read_write (60 min, mixed)
+
+```yaml
+- task_id: day6_block3_reading
+  type: human_only
+  human_only: true
+  description: |
+    Horton 2023, "Large Language Models as Simulated Economic Agents"
+    (homo silicus) — required reading for tomorrow.
+  agent_action: print_reminder_and_wait
+  blocking: true
+
+- task_id: day6_block3_journal
+  type: human_assisted
+  human_only: false
+  description: |
+    Public journal post (200–400 words): "Day 6 — orchestrator + worker,
+    the smallest possible loop." Include one diagram of the call chain
+    (text, ASCII, or SVG).
+  word_target: 200-400
+  visibility: public
+  agent_action: stub_post_with_data_inserts
+  data_to_insert:
+    - day6_orchestrator_5_of_5
+    - fallbacks_taken.day6_orchestrator_isolation (if set)
+    - one_full_chain_excerpt (from inspect_run.py)
+  exclude_from_public:
+    - architectural decisions you regret (private)
+    - Week 2 planning items derived from regrets (private)
+  preconditions:
+    - day6_block2_inspect_run_cli
+  log_to: run_log
+```
+
+### ambient_listening
+
+```yaml
+- task_id: day6_ambient
+  type: human_only
+  human_only: true
+  description: |
+    ML Street Talk or Dwarkesh recent episode on multi-agent systems.
+  blocking: false
+```
+
+### end_of_day
+
+```yaml
+- task_id: day6_end_of_day_artifacts
+  type: agent_executable
+  human_only: false
+  description: |
+    Verify and commit. Enable the arXiv cron (03:00 nightly). Pre-stage
+    Day 7.
+  preconditions:
+    - all block_2 tasks for day_6 complete
+    - day6_block3_journal
+  command: |
+    git add orchestrator/openclaw_runner.py workers/summarize_paper.py \
+            schema/worker_contract.schema.json tools/inspect_run.py \
+            logs/orchestrator.jsonl logs/day6.jsonl && \
+    git commit -m "day 6: orchestrator + 1 worker; inspect_run CLI" && \
+    sudo bash -c '(crontab -l 2>/dev/null; cat cron/daily-arxiv.sh) | crontab -'
+  validation:
+    - check: files committed
+      pass_signal: commit hash; status clean
+      fail_signal: dirty
+    - check: arxiv cron enabled
+      pass_signal: `sudo crontab -l` contains the arxiv pipeline entry
+        scheduled for 03:00
+      fail_signal: not present or not 03:00
+    - check: jsonl integrity
+      pass_signal: verify_log_integrity('logs/orchestrator.jsonl') == 0
+      fail_signal: > 0
+    - check: public journal URL recorded
+      pass_signal: journal/index.md updated
+      fail_signal: not updated
+    - check: tomorrow's first task pre-staged
+      pass_signal: |
+        OpenSpiel cloned on the Spark; `chat_game.py` skimmed (human
+        attests); the four fixed strategies (TFT, grim trigger, all-C,
+        all-D) sketched as Python stubs in
+        `experiments/exp001_repeated_pd/strategies_stubs.py`.
+      fail_signal: stubs file missing
+  log_to: run_log
+```
+
+---
+
+## day_7: first synthetic-tier experiment + retrospective
+
+```yaml
+day_id: day_7
+program_day: 37
+date_offset: T+6
+success_criterion: |
+  LLM agent plays 100 rounds of repeated PD against each of {TFT, grim
+  trigger, all-C, all-D, mirror-LLM}; full per-round logs captured;
+  cooperation rates summarized; behavior compared to fixed strategies.
+  Result REQUIRES HUMAN REVIEW (you) before publication — this is the
+  graduated-autonomy gate.
+failure_mode: |
+  LLM produces invalid actions (not C/D) or refuses to play.
+recovery_path: |
+  Tighten system prompt; parser with retry-once policy; if still
+  failing, restrict via vLLM `guided_json`.
+prerequisites:
+  - day_6
+unblocks: []  # Week 2 planning is a separate task per the prompt's constraint.
+wall_clock_window:
+  block_1: "08:30–10:00"
+  block_2: "10:30–12:30"
+  block_3: "13:30–14:30"
+  ambient: "14:30–15:30"
+  end_of_day: "15:30–16:00"
+  retrospective: "16:00–16:30"
+```
+
+### block_1_foundations (90 min, human_only=true)
+
+```yaml
+- task_id: day7_block1_reading
+  type: human_only
+  human_only: true
+  description: |
+    Camerer Ch. 4 §4.3 (cognitive hierarchy + level-k for repeated
+    games) + Fudenberg & Levine Ch. 1 §1.1–1.2 (learning-in-games
+    framing — soft start, deeper engagement next week).
+  agent_action: print_reminder_and_wait
+  agent_message: |
+    Block 1 starts now. No-AI rule absolute. Pen and paper.
+    Reading: Camerer Ch. 4 §4.3 + F&L Ch. 1 §1.1–1.2.
+    Problem set: finish MW proof from Day 6 if not complete; otherwise
+    Camerer 4.1, 4.2.
+    TODAY IS EXPERIMENT DAY. Do NOT let impatience to start it eat the
+    foundations block. This is the program's principle.
+  blocking: true
+
+- task_id: day7_block1_problemset
+  type: human_only
+  human_only: true
+  description: |
+    Finish MW proof from Day 6 if not complete; otherwise Camerer 4.1,
+    4.2.
+  agent_action: none
+  blocking: false
+```
+
+### block_2_build (2 hr, agent_executable, with explicit human_gate at end)
+
+```yaml
+- task_id: day7_block2_openspiel_up
+  type: agent_executable
+  human_only: false
+  description: |
+    OpenSpiel + Game Reasoning Arena up. Per validation pass adjustment
+    3: use OpenSpiel + GRA, not a custom game env. Saves 1–2 weeks.
+    (Source 0:00–0:20.)
+  preconditions:
+    - day7_block1_reading
+    - preflight_software_prestaged
+  command: |
+    python3 -c "import pyspiel; game = pyspiel.load_game('matrix_pd'); print(game)" && \
+    python3 tests/test_gra_random_vs_random.py \
+      --game matrix_pd --episodes 5 --output bench/day7_random.json
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      pyspiel loads matrix_pd; GRA random-vs-random yields ~50%
+      cooperation rate over 5 episodes.
+  validation:
+    - check: pyspiel imports and loads matrix_pd
+      pass_signal: shell exit 0 and game object printed
+      fail_signal: ImportError or load_game error
+    - check: random vs. random yields ~50% cooperation
+      pass_signal: cooperation rate in [0.3, 0.7] over 5 episodes
+        (sanity band — exact 0.5 is unlikely with 5 episodes)
+      fail_signal: rate outside [0.3, 0.7] — env or agent registry
+        broken
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      OpenSpiel or GRA not functional. The whole experiment depends
+      on this; investigate before continuing Block 2.
+  hard_checkpoint: true
+  estimated_minutes: 20
+  log_to: run_log
+
+- task_id: day7_block2_strategies_and_llm_agent
+  type: agent_assisted
+  human_only: false
+  description: |
+    Fixed strategies + LLM agent. TFT, grim trigger, all-C, all-D as
+    GRA agents (~10 lines each). LLM agent: takes history (list of
+    `(own_action, opp_action)` tuples), prompts Gemma 4 with rules +
+    history + asks for next move, parses output.
+
+    CRITICAL: the LLM agent's prompt must NOT include the words
+    "tit-for-tat" or any strategy names. That contaminates the
+    experiment. Provide rules and history only.
+
+    Parser: retry once on malformed output, then play D as default
+    (and log the parse failure as a tracked observation, not a silent
+    fix). (Source 0:20–0:50.)
+  preconditions:
+    - day7_block2_openspiel_up
+  command: |
+    # Dry-run: 1 episode of LLM vs. all-D, 10 rounds.
+    python3 experiments/exp001_repeated_pd/dry_run_llm_vs_all_d.py \
+      --rounds 10 --output bench/day7_dryrun.json
+  expected_observable:
+    kind: log_pattern
+    value: |
+      LLM should switch to D within a few rounds.
+  validation:
+    - check: LLM agent prompt does NOT contain forbidden strings
+      pass_signal: |
+        `grep -E "tit-for-tat|tit for tat|grim trigger|all-C|all-D" experiments/exp001_repeated_pd/llm_agent.py`
+        returns no matches in user-facing prompt strings
+      fail_signal: any match — contaminated experiment, do not run
+    - check: parser retry-once + log-as-observation policy
+      pass_signal: parser code logs malformed-output events to JSONL
+        with a distinct status before defaulting to D; no silent fix
+      fail_signal: silent default without log entry
+    - check: dry-run shows LLM switches to D within first ~5 rounds
+      pass_signal: in 10-round dry-run, LLM action is D for the
+        majority of the last 5 rounds when facing all-D
+      fail_signal: LLM stays cooperating against all-D — reasoning is
+        not tracking opponent
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Either the prompt is contaminated with strategy names (do not
+      run) or the LLM is not tracking its opponent in the dry-run
+      (parser broken or model misconfigured). Fix before the
+      500-round run.
+  hard_checkpoint: true
+  estimated_minutes: 30
+  log_to: run_log
+
+- task_id: day7_block2_precompute_expected_range
+  type: human_only
+  human_only: true
+  description: |
+    Sanity-check safeguard (per validation pass). Pre-compute expected
+    cooperation rate range for LLM vs. TFT BEFORE the run, write it
+    down. Source plan's stated range: roughly 60–95% over 100 rounds.
+    After the run, check actual against this. If outside the range,
+    do not declare success — investigate. Safeguards against silent
+    model misconfiguration (e.g., wrong MoE backend producing nonsense
+    outputs that parse but don't reason).
+  agent_action: print_reminder_and_wait
+  agent_message: |
+    Before starting the 500-round experiment: write your expected
+    cooperation-rate range for LLM vs. TFT on paper. Source's published
+    range is roughly 60–95% over 100 rounds. Mark this complete after
+    you have written it down. The agent will compare actual to your
+    range after the run.
+  blocking: true
+
+- task_id: day7_block2_run_experiment
+  type: agent_executable
+  human_only: false
+  description: |
+    Run the experiment. 100 rounds × 5 opponents (TFT, grim trigger,
+    all-C, all-D, mirror-LLM) = 500 rounds total. Each round: full
+    prompt + completion logged via wrapper to JSONL. Each opponent:
+    cooperation rate, payoff trajectory, switch points logged. Run
+    sequentially through Day 6's orchestrator (its first real use).
+    Expected runtime: ~20–40 min depending on tok/s and prompt length.
+    (Source 0:50–1:30.)
+  preconditions:
+    - day7_block2_strategies_and_llm_agent
+    - day7_block2_precompute_expected_range
+  command: |
+    python3 experiments/exp001_repeated_pd/run.py \
+      --opponents tft,grim_trigger,all_c,all_d,mirror_llm \
+      --rounds 100 \
+      --output-dir experiments/exp001_repeated_pd/results/ \
+      --jsonl-log logs/exp001.jsonl \
+      --via-orchestrator
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      500 rounds completed; per-opponent cooperation rate, mean payoff,
+      switch points logged.
+  validation:
+    - check: 500 rounds completed
+      pass_signal: results/cooperation_rates.csv has 5 rows × 100
+        round columns OR equivalent structure with 500 round records
+      fail_signal: missing rounds
+    - check: LLM-vs-TFT cooperation rate inside human's pre-computed
+      range
+      pass_signal: actual rate within the range written in
+        notes/day7_expected_range.md
+      fail_signal: rate OUTSIDE the human's pre-written range — do
+        NOT declare success; investigate (this is the silent-model-
+        misconfiguration safeguard)
+    - check: parse failures logged as observations, not silent fixes
+      pass_signal: parse_failure events visible in logs/exp001.jsonl
+      fail_signal: no parse_failure events AND non-zero default-D
+        plays
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Experiment did not complete cleanly OR LLM cooperation rate
+      against TFT is outside your pre-computed range. Both are
+      blocking issues. Investigate the silent-failure-mode question
+      first: is the MoE backend still MARLIN? Re-run vLLM startup-log
+      check from day1_block2_vllm_serve. Then look at parse failures
+      and prompt drift.
+  hard_checkpoint: true
+  estimated_minutes: 40
+  log_to: run_log
+  metric_log_key: day7_coop_rate_vs_tft
+
+- task_id: day7_block2_quicklook
+  type: agent_executable
+  human_only: false
+  description: |
+    Quick-look analysis. Per-opponent cooperation rate, mean payoff,
+    plot of cumulative payoff over rounds. Compare LLM to "rational"
+    benchmark (TFT vs. TFT cooperates fully; all-C vs. all-D loses
+    every round). Eyeball: does the LLM track the opponent, or is it
+    constant? (Source 1:30–2:00.)
+  preconditions:
+    - day7_block2_run_experiment
+  command: |
+    python3 experiments/exp001_repeated_pd/quicklook.py \
+      --input experiments/exp001_repeated_pd/results/ \
+      --output-dir experiments/exp001_repeated_pd/plots/ \
+      --analysis-md experiments/exp001_repeated_pd/analysis/quicklook.md
+  expected_observable:
+    kind: file_exists
+    value: |
+      experiments/exp001_repeated_pd/plots/* (cumulative payoff plots)
+      and analysis/quicklook.md (per-opponent summary).
+  validation:
+    - check: 5 cumulative-payoff plots produced
+      pass_signal: 5 plot files in experiments/exp001_repeated_pd/plots/
+      fail_signal: any other count
+    - check: per-opponent cooperation rate + mean payoff in
+      quicklook.md
+      pass_signal: 5 opponents × 2 metrics tabulated
+      fail_signal: incomplete
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Quicklook analysis incomplete. The data exists in logs and
+      results/; re-run the analysis script.
+  hard_checkpoint: false
+  estimated_minutes: 30
+  log_to: run_log
+
+- task_id: day7_publication_review_gate
+  type: human_only
+  human_only: true
+  description: |
+    GRADUATED-AUTONOMY GATE. Per source: "DO NOT publish today. Per
+    graduated-autonomy principle: human (you) reviews before
+    publication. Tomorrow's Block 3 or a follow-up day is the right
+    time for the public results post. Today's journal post is the
+    retrospective, not the result announcement."
+
+    The agent MUST NOT auto-publish results. The agent halts here,
+    prints the gate notice, and writes a `human_gates_pending` entry.
+  agent_action: halt_and_print_message
+  agent_message: |
+    HUMAN REVIEW GATE — DAY 7 EXPERIMENT RESULTS
+
+    The experiment is complete. The agent will NOT publish results
+    today. Per the graduated-autonomy architecture for Phase 1:
+
+      • Today's public post is the WEEKLY RETROSPECTIVE, not the
+        results announcement.
+      • Results publication happens on a follow-up day, after you
+        review:
+          - logs/exp001.jsonl integrity
+          - cooperation rates against your pre-computed expected range
+          - parse-failure events
+          - whether the LLM tracked opponents in the per-round logs
+
+    The agent has updated state.human_gates_pending with
+    "day7_publication_review". Resume publication only after you
+    explicitly mark this gate complete.
+  blocking: true
+  state_update: human_gates_pending += "day7_publication_review"
+```
+
+#### Block 2 → Block 3 buffer
+
+```yaml
+- soft_buffer:
+    name: day7_lunch_and_slack
+    duration_minutes: 60
+```
+
+### block_3_read_write (60 min, mixed; week-synthesis post longer than usual)
+
+```yaml
+- task_id: day7_block3_reading
+  type: human_only
+  human_only: true
+  description: |
+    30-min skim of one paper from this week's arXiv pipeline directly
+    related to today's experiment.
+  agent_action: print_reminder_and_wait
+  blocking: true
+
+- task_id: day7_block3_journal_weekly_synthesis
+  type: human_assisted
+  human_only: false
+  description: |
+    Public weekly synthesis post (600–1000 words): "Apparatus v0 —
+    Week 1, what worked, what didn't." Hardware online, stack stable
+    (or not — be honest), seven specific things that took longer than
+    planned, what the first PD run produced (PRELIMINARY, with the
+    explicit caveat that you haven't reviewed the data carefully yet),
+    what you'll change for Week 2.
+
+    NOTE: this post is a retrospective with a preliminary mention of
+    the experiment, NOT the experiment results announcement. The
+    publication review gate (day7_publication_review_gate) governs
+    the results announcement, which happens on a later day.
+  word_target: 600-1000
+  visibility: public
+  agent_action: stub_post_with_data_inserts
+  agent_message: |
+    Generate a weekly-synthesis post stub with this week's
+    measurements pre-filled and an explicit "preliminary, not yet
+    reviewed" caveat banner around any reference to Day 7 results.
+  data_to_insert:
+    - day1_tokens_per_sec
+    - day2_jsonl_malformed_count (target 0)
+    - day3_needle_score
+    - day4_tool_call_invocation_rate
+    - day5_papers_ingested
+    - day6_orchestrator_5_of_5
+    - fallbacks_taken (full dict)
+    - day7_coop_rate_vs_tft (with "preliminary" tag and link to gate)
+  exclude_from_public:
+    - bug tickets to yourself (private)
+    - architectural debts to address (private)
+  preconditions:
+    - day7_block2_quicklook
+    - day7_publication_review_gate
+  log_to: run_log
+```
+
+### ambient_listening
+
+```yaml
+- task_id: day7_ambient
+  type: human_only
+  human_only: true
+  description: |
+    A keynote or talk on game theory + LLMs from a recent venue
+    (Simons, NeurIPS workshop, AAMAS) — sets the frame for Week 2's
+    expansion to public goods + stag hunt.
+  blocking: false
+```
+
+### end_of_day
+
+```yaml
+- task_id: day7_end_of_day_artifacts
+  type: agent_executable
+  human_only: false
+  description: |
+    Verify and commit end-of-week artifacts. Capture experiment.lock.
+    Record `week2_plan_seed.md` (input to next week's separate
+    planning task — the agent does NOT write Week 2's plan).
+  preconditions:
+    - all block_2 tasks for day_7 complete
+    - day7_block3_journal_weekly_synthesis
+  command: |
+    git add experiments/exp001_repeated_pd/ logs/exp001.jsonl && \
+    python3 scripts/write_experiment_lock.py \
+      --output experiments/exp001_repeated_pd/experiment.lock && \
+    git add experiments/exp001_repeated_pd/experiment.lock week2_plan_seed.md && \
+    git commit -m "day 7: first synthetic-tier experiment; week 1 retro"
+  validation:
+    - check: experiment.lock present and complete
+      pass_signal: |
+        experiment.lock contains: vLLM image digest, Gemma 4 weights
+        hash, OpenSpiel version, GRA version, BGE-M3 hash, seed.
+      fail_signal: any field missing
+    - check: files committed
+      pass_signal: commit hash; status clean
+      fail_signal: dirty
+    - check: weekly retrospective public journal URL recorded
+      pass_signal: journal/index.md updated with the long-form post
+      fail_signal: not updated
+    - check: week2_plan_seed.md exists with 5–10 bullets
+      pass_signal: file present, ≥5 bullets, ≤10
+      fail_signal: missing or out-of-range
+    - check: human_gates_pending still contains the publication review
+      pass_signal: state.human_gates_pending contains
+        "day7_publication_review"
+      fail_signal: gate has been silently cleared without explicit
+        human action
+  log_to: run_log
+```
+
+### day_7_retrospective (final 30 min, ~16:00–16:30)
+
+```yaml
+- task_id: day7_retrospective
+  type: human_assisted
+  human_only: false
+  description: |
+    Pen-and-notebook retrospective. Walk through:
+      • What I shipped (every artifact, chronologically).
+      • What broke (every error message, every workaround that survived
+        as code, every "I'll fix this later" that didn't get fixed).
+      • What surprised me (3× as long, 0.3× as long).
+      • What I changed in the plan vs. the original day-1 design
+        (explicit deviations).
+      • Where Week 1 deviates from the research program document
+        (concrete: BGE-M3 per adjustment 1, OpenSpiel + GRA per
+        adjustment 3, etc.).
+      • What Week 2 needs to do — top 5 priorities, each with a
+        one-sentence success criterion.
+    This retrospective is the input to Week 2 planning, which is a
+    separate task per the prompt's constraint.
+  agent_action: print_questions_and_append_answers_to_run_log
+  agent_message: |
+    The agent's role in this retrospective is bounded:
+      1. Print the six prompt questions (the bullets above).
+      2. Wait for human responses, one at a time.
+      3. Append each response to ./run_state/week1.run.jsonl as a
+         retrospective_answer event.
+      4. Do NOT write the retrospective. Do NOT summarize. Do NOT
+         interpret.
+  preconditions:
+    - day7_end_of_day_artifacts
+  blocking: true
+  log_to: run_log
+```
+
+---
+
+# Appendix A — Deviations from research program v2
+
+> Copied verbatim from the source plan's "Cross-cutting notes" section
+> ("Where this plan extends or deviates from the research program
+> document"). Preserved as appendix, NOT converted to tasks.
+
+1. **Embedding model**: Program does not specify; this plan pins BGE-M3
+   per validation pass adjustment 1.
+2. **Synthetic tier engine**: Program doesn't specify implementation;
+   this plan uses OpenSpiel + Game Reasoning Arena per adjustment 3
+   (saves 1-2 weeks).
+3. **CUDA pinning**: Program is hardware-agnostic; this plan adds
+   explicit CUDA 13.0 pin and auto-update lock per adjustment 4 (avoids
+   documented CUDA 13.2 gibberish bug on low-bit quants).
+4. **Qwen 3.6**: Program lists multiple models; this plan defers Qwen 3.6
+   introduction to Week 2-3 per adjustment 2 (avoids configuration
+   matrix masking bugs in Week 1).
+5. **NemoClaw fallback**: Program assumes NemoClaw works; this plan
+   reserves a plain-Docker fallback path per validation pass risk #1
+   (NemoClaw is alpha as of May 2026).
+6. **Daily journal cadence**: Program calls for weekly synthesis posts;
+   this plan has a daily 200-500 word public post from Block 3, with the
+   Day 7 weekly synthesis at the longer 600-1000 word target. The daily
+   posts make the apparatus's outputs the primary research data, per
+   program's stated intent.
+7. **Day 7 human-review gate**: Program's Day 7 ladder says "first
+   synthetic-tier experiment, full logs captured, behavior compared to
+   fixed strategies." This plan adds the explicit graduated-autonomy
+   gate: results are not published the same day; human review precedes
+   publication. This implements the "graduated autonomy architecture"
+   principle from the user's existing system memory.
+
+**What this plan deliberately does NOT do in Week 1:**
+
+- No Polymarket API calls. Polymarket is design-only in Phase 1 per the
+  program; live calls are Phase 2-3.
+- No autoresearch overnight runs. Defer to Week 2 — too much variance
+  with the rest of the stack still settling.
+- No second model. Qwen 3.6 deferred per adjustment 2.
+- No concurrency. Sequential workers only on Day 6.
+- No fully autonomous loop. Day 7 produces a result that requires human
+  review.
+- No fine-tuning.
+
+---
+
+# Appendix B — Cross-day reading and problem set ledger
+
+> Consolidated from the source plan's "Cross-cutting notes" section.
+
+**Reading targets (Days 31–37):**
+
+- O&R Ch. 6 (days 1–2), Ch. 7 (day 2)
+- Weibull Ch. 1 (days 3–4), Ch. 2 §2.1 (day 4)
+- Cesa-Bianchi & Lugosi Ch. 1 (day 5), Ch. 2 §2.1–2.3 (day 6)
+- Camerer Ch. 4 §4.1–4.3 (days 4, 7)
+- Fudenberg & Levine Ch. 1 §1.1–1.2 (day 7)
+- Sakana paper + critical responses (days 1–2)
+- Hart & Mas-Colell 2000 (day 3)
+- Aher et al. 2023 (day 5)
+- Horton 2023 (day 6)
+- Covers Days 31–60 reading list opening; full Weibull Ch. 2–3,
+  F&L Ch. 2–4, AGT Ch. 4 are Week 2–3.
+
+**Problem set targets:**
+
+- O&R Ch. 6–7 problems (days 1–2)
+- Weibull Ch. 1 problems (day 3)
+- Replicator dynamics for hawk-dove by hand (day 4) — program-listed
+- C-B & L Ch. 1 exercises (day 5)
+- **Multiplicative Weights from scratch + regret bound proof (day 6)**
+  — program-listed keystone item
+- Camerer Ch. 4 problems (day 7)
+
+**Daily slack budget:** 30 min between Block 2 and Block 3 (10:30 →
+12:30 build; 13:30 → Block 3) plus the natural buffer between Block 3
+and Ambient. If a build task overruns, take the slack before cutting
+Block 3. Never cut Block 1.
+
+---
+
+# Appendix C — Agent operating rules (concise restatement)
+
+**1. No Block 1.**
+Every Block 1 task is `human_only: true`. The agent prints the reading
+and problem set, sets a wall-clock timer, and HALTS. The agent does not
+execute, assist, summarize, derive, or solve. This rule does not bend.
+There is no "let the agent help just this once" condition.
+
+**2. Version pins are inviolate.**
+- vLLM image: `vllm/vllm-openai:gemma4-cu130` (NOT `:gemma4`).
+- OpenShell cluster: `ghcr.io/nvidia/openshell/cluster:0.0.13`.
+- CUDA: 13.0 (NOT 13.2 — gibberish on low-bit quants).
+- Embedding: BGE-M3 (NOT all-MiniLM-L6-v2).
+- vLLM MoE backend flag: `--moe-backend marlin`; startup log MUST
+  contain `Using 'MARLIN' NvFp4 MoE backend`. If the log shows
+  `CUTLASS_FP4`, the flag did not pick up — STOP.
+- Weights path: `/mnt/models/gemma-4-26b-a4b-nvfp4` (NVFP4, not BF16).
+
+**3. Human gates are blocking.**
+The Day 7 publication review gate (`day7_publication_review_gate`) is
+the most important. The agent does NOT auto-publish results. The agent
+HALTS and prints the gate notice. The gate clears only when a human
+explicitly marks it complete; the agent does not poll, infer, or
+proceed.
+
+**4. Validations are never silently coerced.**
+Each bullet under a source "Validation:" line is a separate check with
+its own `pass_signal` / `fail_signal`. Mismatches between
+`expected_observable` and actual output are reported; they are never
+recoded as passes. "Below band but close" is a failure unless the
+source explicitly bands it as informational.
+
+**5. State file is authoritative on resume.**
+At startup, the agent reads `./run_state/week1.state.json` and resumes
+at the first incomplete task in `current_day`. Earlier days are not
+re-run. `human_gates_pending` is honored across restarts.
+
+**6. Hard checkpoints abort the day.**
+Tasks tagged `hard_checkpoint: true` write `day_aborted` to the run log
+on failure and halt the day. The next day's Block 2 is gated on the
+prior day's success unless the source explicitly allows continuation.
+
+**7. Fallbacks are explicit, logged, and time-capped.**
+NemoClaw → plain Docker (90-min cap, Day 1). ML-Intern → direct
+Semantic Scholar API (45-min cap, Day 5). OpenClaw+NemoClaw → Python
+multiprocessing (Day 6). Each fallback selection writes to
+`state.fallbacks_taken`.
+
+**8. Logging is mandatory.**
+Every agent-executable task appends to `./run_state/week1.run.jsonl`
+with `{timestamp, day_id, task_id, status, observable_actual,
+observable_expected, duration_ms}`. State transitions and fallback
+selections are logged as their own entries.
+
+**9. Code-generation is bounded.**
+The source plan is explicit that code beyond simple validation is out
+of scope for this conversion. Tasks marked `agent_assisted` with
+`command: null` indicate the agent prepares scaffolding only; the
+human (or a sub-agent with explicit file-write authority) writes the
+implementation.
+
+**10. The retrospective is the human's.**
+On Day 7, the agent prints the retrospective questions and appends the
+human's answers to the run log. The agent does NOT write, summarize,
+or interpret the retrospective.

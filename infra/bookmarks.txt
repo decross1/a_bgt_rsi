@@ -1,0 +1,5 @@
+# Pre-staged software bookmarks. Verified by preflight_software_prestaged.
+# Version pins are inviolate — see CLAUDE.md and plan.yaml Appendix C.
+
+vllm/vllm-openai:gemma4-cu130
+ghcr.io/nvidia/openshell/cluster:0.0.13

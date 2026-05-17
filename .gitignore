@@ -1,0 +1,48 @@
+# Secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.venv-*/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Plan-specific large assets — kept off git per Day 3 end-of-day note
+books/
+clones/
+chroma_db/
+!chroma_db/manifest.json
+!chroma_db/.gitkeep
+
+# Local model weights (would be at /mnt/models/* on Spark; never tracked)
+models/
+
+# Run-time outputs — not tracked by default; per-day end-of-day tasks
+# git add specific files explicitly.
+logs/*.jsonl
+bench/*.csv
+bench/*.json
+*.tmp
+/tmp/
+
+# Keep the empty dirs themselves
+!logs/.gitkeep
+!bench/.gitkeep
