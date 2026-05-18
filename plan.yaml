@@ -168,7 +168,9 @@ name (e.g. `day3_start`, `day1_aborted`, `day7_publication_gate_hit`).
     which is dev and crashes on FP4 GEMM. The OpenShell cluster image
     bookmarked MUST be `ghcr.io/nvidia/openshell/cluster:0.0.13`
     (or current stable). Clones present: NVIDIA/dgx-spark-playbooks,
-    matt-langston/autoresearch, google-deepmind/open_spiel, the GRA repo.
+    karpathy/autoresearch (canonical upstream — NOT matt-langston's
+    dual-Spark fork; see DECISIONS.md D-009), google-deepmind/open_spiel,
+    SLAMPAI/game_reasoning_arena.
     Weights present: Gemma 4 26B-A4B-NVFP4 (~19 GB on disk — 18.8 GB
     across 2 safetensors shards; the source "~12 GB" was a stale
     pre-release estimate), BGE-M3 (~1–2 GB), and the MTP drafter

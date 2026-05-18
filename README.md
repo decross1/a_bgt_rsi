@@ -1,9 +1,13 @@
 # a_bgt_rsi — Week 1 research apparatus
 
-Phase 1 / Week 1 (Days 31–37) of the research program. The authoritative
-plan is `plan.yaml`. The source human-readable plan is
-`week1_days_31-37_plan.md` (not in this repo yet — bring it over if you
-need to resolve a discrepancy; the source wins).
+Phase 1 / Week 1 (Days 31–37) of the research program.
+
+**New here? Start with `PROJECT_CONTEXT.md`** — the canonical orientation
+document — then `ARCHITECTURE.md`, then `DECISIONS.md`, then `plan.yaml`.
+
+The authoritative machine-readable plan is `plan.yaml`; the operating
+contract for Claude Code is `CLAUDE.md`. Source planning documents live in
+`docs/sources/` and win on any conflict with the summaries above.
 
 ## Target environment
 
@@ -31,8 +35,12 @@ day 1 is human-only — Claude prints the reading + problem set and halts.
 ## Layout
 
 ```
+PROJECT_CONTEXT.md         # canonical orientation — read this first
+ARCHITECTURE.md            # apparatus architecture walkthrough
+DECISIONS.md               # architectural/operational decision log
 plan.yaml                  # authoritative machine-readable plan
 CLAUDE.md                  # operating contract for Claude Code
+current_day.md             # active-day progress tracker
 .env.example               # required credentials
 
 run_state/                 # state file + run log (JSONL)
@@ -53,6 +61,8 @@ scripts/                   # bench, chroma init, semantic scholar test, lock wri
 notes/                     # per-day debugging / decision notes
 journal/                   # daily public-post index
 setup/                     # per-day setup shell scripts
+docs/diagrams/             # canonical SVG architecture diagrams
+docs/sources/              # source planning documents (authoritative)
 
 books/                     # gitignored — PDFs
 clones/                    # gitignored — third-party repos
