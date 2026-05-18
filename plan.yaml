@@ -16,7 +16,7 @@ source_plan: week1_days_31-37_plan.md
 program_doc: research_program_v2.pdf
 total_days: 7
 phase: 1
-researcher: huchi
+researcher: decross1
 graduated_autonomy_level: 1
 state_file: ./run_state/week1.state.json
 run_log: ./run_state/week1.run.jsonl
@@ -454,26 +454,26 @@ wall_clock_window:
       vllm/vllm-openai:v0.20.0 \
       --model /models/gemma-4-26b-a4b-nvfp4 \
       --served-model-name gemma-4-26b-a4b \
-      --moe-backend marlin && \
+      --moe-backend marlin \
+      --max-num-batched-tokens 8192 && \
     sleep 60 && \
     docker logs vllm-gemma4 2>&1 | tee /tmp/vllm_startup.log
   expected_observable:
     kind: startup_log_match
     value: |
-      Three required strings in startup log:
-      (1) `Using NvFp4LinearBackend.FLASHINFER_CUTLASS for NVFP4 GEMM`
-      (2) `Using 'MARLIN' NvFp4 MoE backend`  ← if this says
+      Two required strings in startup log:
+      (1) `Using 'MARLIN' NvFp4 MoE backend`  ← if this says
           `CUTLASS_FP4` instead, STOP — the flag did not pick up.
-      (3) `Using default MoE config. Performance might be sub-optimal!`
+      (2) `Using default MoE config. Performance might be sub-optimal!`
           is acceptable but means ~24% slower than tuned baseline; log
           and continue.
+      (No FLASHINFER/CUTLASS NVFP4-GEMM line is expected: GB10 (SM12x)
+      has no native FP4, so vLLM correctly uses the Marlin weight-only
+      FP4 path. Corrected 2026-05-18 — see run log 05:50 entry.)
   validation:
-    - check: image tag is the cu130 variant (NOT plain :gemma4)
+    - check: image tag is `:v0.20.0` (NOT plain :gemma4)
       pass_signal: docker pull command used `:v0.20.0` literally
       fail_signal: pull command used `:gemma4` or any other tag
-    - check: NVFP4 linear backend log line present
-      pass_signal: /tmp/vllm_startup.log contains "Using NvFp4LinearBackend.FLASHINFER_CUTLASS for NVFP4 GEMM"
-      fail_signal: that string not found
     - check: MoE backend is MARLIN, not CUTLASS_FP4
       pass_signal: log contains "Using 'MARLIN' NvFp4 MoE backend"
       fail_signal: log contains "Using 'CUTLASS_FP4' NvFp4 MoE backend" — this is the silent failure mode; the --moe-backend marlin flag did not take effect

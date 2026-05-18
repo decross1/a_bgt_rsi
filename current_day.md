@@ -127,3 +127,14 @@ Carried into Day 2 / later:
   fallback; #11 fallback verified (seccomp + no-new-privileges +
   cap-drop); #8 journal stub written (`journal/day1.md`); #12
   end-of-day artifacts committed. **Day 1 complete.**
+- 2026-05-18: post-Day-1 `plan.yaml` corrections applied (human-approved,
+  3 of the "Plan bugs found" items): (1) `researcher` field `huchi` →
+  `decross1`; (2) `day1_block2_vllm_serve` command gains
+  `--max-num-batched-tokens 8192` (84c); (3) the un-passable
+  `FLASHINFER_CUTLASS for NVFP4 GEMM` startup-log check removed from the
+  task #6 `expected_observable` and `validation` blocks (84d) — GB10/SM12x
+  has no native FP4, so vLLM uses the Marlin weight-only path and never
+  emits that line; the MARLIN MoE-backend check remains. Still open: the
+  authoritative source plan `week1_days_31-37_plan.md` referenced by
+  `CLAUDE.md`/`plan.yaml` is not in the repo — needs to be committed or
+  the contract amended to name `plan.yaml` canonical (human decision).
