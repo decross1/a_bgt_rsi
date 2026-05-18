@@ -169,18 +169,23 @@ name (e.g. `day3_start`, `day1_aborted`, `day7_publication_gate_hit`).
     bookmarked MUST be `ghcr.io/nvidia/openshell/cluster:0.0.13`
     (or current stable). Clones present: NVIDIA/dgx-spark-playbooks,
     matt-langston/autoresearch, google-deepmind/open_spiel, the GRA repo.
-    Weights present: Gemma 4 26B-A4B-NVFP4 (~12 GB), BGE-M3 (~1–2 GB).
+    Weights present: Gemma 4 26B-A4B-NVFP4 (~19 GB on disk — 18.8 GB
+    across 2 safetensors shards; the source "~12 GB" was a stale
+    pre-release estimate), BGE-M3 (~1–2 GB), and the MTP drafter
+    google/gemma-4-26B-A4B-it-assistant (~870 MB BF16).
   preconditions:
     - preflight_credentials_staged
   command: |
     grep -F "vllm/vllm-openai:gemma4-cu130" infra/bookmarks.txt && \
     grep -F "ghcr.io/nvidia/openshell/cluster:0.0.13" infra/bookmarks.txt && \
+    grep -F "hf:google/gemma-4-26B-A4B-it-assistant" infra/bookmarks.txt && \
     test -d clones/dgx-spark-playbooks && \
     test -d clones/autoresearch && \
     test -d clones/open_spiel && \
     test -d clones/game-reasoning-arena && \
     test -d /mnt/models/gemma-4-26b-a4b-nvfp4 && \
-    test -d /mnt/models/bge-m3
+    test -d /mnt/models/bge-m3 && \
+    test -d /mnt/models/gemma-4-26b-a4b-it-assistant
   expected_observable:
     kind: shell_exit_code
     value: 0
@@ -191,12 +196,18 @@ name (e.g. `day3_start`, `day1_aborted`, `day7_publication_gate_hit`).
     - check: OpenShell cluster image pinned
       pass_signal: grep finds `ghcr.io/nvidia/openshell/cluster:0.0.13`
       fail_signal: grep returns non-zero
+    - check: MTP drafter bookmarked
+      pass_signal: grep finds `hf:google/gemma-4-26B-A4B-it-assistant`
+      fail_signal: grep returns non-zero
     - check: all four repos cloned
       pass_signal: each `test -d` passes
       fail_signal: any directory missing
     - check: weights present
       pass_signal: both `/mnt/models/...` directories exist
       fail_signal: either missing
+    - check: MTP drafter present
+      pass_signal: `test -d /mnt/models/gemma-4-26b-a4b-it-assistant` passes
+      fail_signal: directory missing
   on_failure:
     action: escalate_to_human
     human_message: |
@@ -422,10 +433,22 @@ wall_clock_window:
   type: agent_executable
   human_only: false
   description: |
-    vLLM Gemma 4 26B MoE up. Pull `vllm/vllm-openai:gemma4-cu130`
-    (NOT `:gemma4` — that's dev and crashes on FP4 GEMM). Launch with
-    `--moe-backend marlin` and NVFP4 weights pre-staged at
-    `/mnt/models/gemma-4-26b-a4b-nvfp4`. (Source 1:10–1:50.)
+    vLLM Gemma 4 26B MoE up, with MTP speculative decoding. Pull
+    `vllm/vllm-openai:gemma4-cu130` (NOT `:gemma4` — that's dev and
+    crashes on FP4 GEMM). Launch with `--moe-backend marlin` and NVFP4
+    weights pre-staged at `/mnt/models/gemma-4-26b-a4b-nvfp4`. Enable
+    MTP (Multi-Token Prediction) speculative decoding via the official
+    google/gemma-4-26B-A4B-it-assistant drafter (~1.84x speedup on
+    GB10). Two MTP preconditions: (a) bind-mount the patched
+    `infra/vllm_patches/gemma4_mtp.py` over the container copy — the
+    preview image's bundled gemma4_mtp.py has two bugs on quantized
+    targets (intermediate_size read from the wrong config layer →
+    half-size drafter MLP; quant_config wrongly propagated to the BF16
+    drafter Linears → packing mismatch); both fixes are at the head of
+    vLLM PR #41745. (b) Mount the drafter checkpoint read-only into the
+    container. The drafter MUST pair with the IT target (which the
+    NVFP4 release is) — pairing with a base target is a 38% slowdown.
+    (Source 1:10–1:50; MTP findings 2026-05-18.)
   preconditions:
     - day1_block2_docker_config
     - preflight_software_prestaged
@@ -433,11 +456,14 @@ wall_clock_window:
     docker pull vllm/vllm-openai:gemma4-cu130 && \
     docker run -d --name vllm-gemma4 --gpus all \
       -v /mnt/models/gemma-4-26b-a4b-nvfp4:/models/gemma-4-26b-a4b-nvfp4:ro \
+      -v /mnt/models/gemma-4-26b-a4b-it-assistant:/models/gemma-4-26b-a4b-it-assistant:ro \
+      -v $(pwd)/infra/vllm_patches/gemma4_mtp.py:/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/gemma4_mtp.py \
       -p 8000:8000 \
       vllm/vllm-openai:gemma4-cu130 \
       --model /models/gemma-4-26b-a4b-nvfp4 \
       --served-model-name gemma-4-26b-a4b \
-      --moe-backend marlin && \
+      --moe-backend marlin \
+      --speculative-config '{"method":"mtp","model":"/models/gemma-4-26b-a4b-it-assistant","num_speculative_tokens":4}' && \
     sleep 60 && \
     docker logs vllm-gemma4 2>&1 | tee /tmp/vllm_startup.log
   expected_observable:
@@ -471,6 +497,12 @@ wall_clock_window:
         returns response with content == "ok", usage.completion_tokens
         reasonable, round-trip < 3 s.
       fail_signal: curl 5xx, content != "ok", or round-trip ≥ 3 s
+    - check: MTP path engaged (not generic draft_model)
+      pass_signal: /tmp/vllm_startup.log contains a SpeculativeConfig line with method='mtp'
+      fail_signal: log shows method='draft_model' — the vLLM release predates the Gemma 4 MTP support PR and is treating the assistant as a generic draft model; upgrade the image or pin a newer tag
+    - check: MTP drafter loaded
+      pass_signal: /tmp/vllm_startup.log shows the assistant checkpoint loading (model files from /models/gemma-4-26b-a4b-it-assistant)
+      fail_signal: drafter not loaded — speculative decoding is silently disabled
   on_failure:
     action: abort_day
     human_message: |
@@ -507,8 +539,13 @@ wall_clock_window:
   expected_observable:
     kind: metric_threshold
     value: |
-      Single-stream decode tok/s in [50, 110] (matches public
-      benchmarks). Below 40 tok/s is a fault.
+      Single-stream decode tok/s in [80, 130] with MTP gamma=4. Below
+      50 tok/s indicates MTP did not engage (check startup log for
+      method='mtp' and acceptance-rate metrics). Hard floor remains
+      40 tok/s — that is the "is the hardware fundamentally broken"
+      floor, not a "MTP is working" floor. Reference (GB10, public
+      benchmarks): NVFP4 baseline ~52 tok/s, NVFP4 + MTP gamma=4
+      ~96 tok/s — ~96 tok/s is the expected single-stream number.
   validation:
     - check: 5 rows recorded in bench/day1.csv
       pass_signal: `wc -l bench/day1.csv` returns 6 (header + 5 rows)
@@ -516,9 +553,12 @@ wall_clock_window:
     - check: median tok/s ≥ 40
       pass_signal: median of decode tok/s column ≥ 40
       fail_signal: median < 40
-    - check: median tok/s in expected band [50, 110]
-      pass_signal: median in [50, 110] — record to metric_log
+    - check: median tok/s in expected band [80, 130]
+      pass_signal: median in [80, 130] — record to metric_log
       fail_signal: median outside band — informational, not fatal unless < 40
+    - check: MTP engaged (decode tok/s ≥ 50)
+      pass_signal: median ≥ 50 — consistent with MTP speculative decoding active
+      fail_signal: median in [40, 50) — MTP likely did not engage; investigate startup log for method='mtp'; informational, do not abort the day
   on_failure:
     action: escalate_to_human
     human_message: |
@@ -2919,6 +2959,9 @@ There is no "let the agent help just this once" condition.
   contain `Using 'MARLIN' NvFp4 MoE backend`. If the log shows
   `CUTLASS_FP4`, the flag did not pick up — STOP.
 - Weights path: `/mnt/models/gemma-4-26b-a4b-nvfp4` (NVFP4, not BF16).
+- MTP drafter: `google/gemma-4-26B-A4B-it-assistant` staged at
+  `/mnt/models/gemma-4-26b-a4b-it-assistant` (BF16, ~870 MB). Pair only
+  with the IT target — pairing with a base target is a 38% slowdown.
 
 **3. Human gates are blocking.**
 The Day 7 publication review gate (`day7_publication_review_gate`) is
