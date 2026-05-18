@@ -93,3 +93,24 @@ per-node generic detail dump, raw-JSONL toggle, malformed-cycle banner);
 - Whether MTP speculative decoding is actually expected to be on. If it
   is, the running vLLM is not exporting the metrics for it — worth a
   flag to the apparatus build.
+
+## Step 6.4 — live WebSocket /api/live (2026-05-18)
+
+Added `WS /api/live` to the backend: tail-based (byte offset + 0.5 s
+poll, no inotify), forward-only — lines present before a client
+connects are not replayed. One message per new line, `{source, line}`.
+The handler races a `pump` task against a `drain` task so a client
+disconnect is noticed promptly. Added `JsonlTailer.seek_to_end()`,
+`websockets` to `requirements-ui.txt`, and the frontend `api/ws.ts`
+auto-reconnecting client (unused until the 6.5 dashboard consumes it).
+2 backend tests added (24 tests total); smoke-tested against the live
+sampler stream.
+
+### Decisions
+
+- **Forward-only stream** (one of `ui_plan.md` §9's open questions): the
+  WS does not backfill the last N seconds on connect. The 6.5 dashboard
+  will seed its sparklines from a one-shot history fetch instead, or
+  this can be revisited if backfill proves nicer.
+- Poll interval 0.5 s (telemetry is 1 Hz) to keep lag well under a
+  sample period.

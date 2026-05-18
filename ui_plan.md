@@ -35,8 +35,8 @@
   memory fields rather than discarding the whole `gpu` object (§4.1,
   §5.1). Confirmed against real hardware (idle: 0% util, 38 °C, ~5.5 W).
 - Steps 6.1 (sampler), 6.2 (backend HTTP + chain walker + fixture
-  generator), and 6.3 (frontend call-chain inspector) are built; all
-  22 Python + 2 frontend tests pass.
+  generator), 6.3 (frontend call-chain inspector), and 6.4 (live
+  WebSocket /api/live) are built; 22 Python + 2 frontend tests pass.
 - vLLM `/metrics` names verified against the running server (now
   `vllm/vllm-openai:v0.20.0`): KV cache is `vllm:kv_cache_usage_perc`
   (not `gpu_cache_usage_perc`), prefix-cache hit rate is computed from
