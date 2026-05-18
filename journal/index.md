@@ -5,7 +5,7 @@ synthesis (600–1000 words). Each row links to the published post.
 
 | Day | Program day | Title | URL |
 | --- | ----------- | ----- | --- |
-| 1   | 31          | TBD   |     |
+| 1   | 31          | Day 1 — what I shipped, what I'm afraid will break | draft: `journal/day1.md` |
 | 2   | 32          | TBD   |     |
 | 3   | 33          | TBD   |     |
 | 4   | 34          | TBD   |     |

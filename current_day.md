@@ -6,9 +6,11 @@ _Active-day tracker. Authoritative plan: `plan.yaml`. State:
 **Day goal:** vLLM serves Gemma 4 26B MoE; curl returns coherent text;
 tokens/sec recorded; NemoClaw onboarded or fallback logged.
 
-**Status as of 2026-05-18:** pre-flight + Block 1 done; Block 2 tasks
-#3–#6 done — **vLLM v0.20.0 is serving Gemma 4** on `localhost:8000`.
-Next: task #7 (tok/s benchmark).
+**Status as of 2026-05-18:** ✅ **Day 1 complete.** vLLM v0.20.0 serves
+Gemma 4 on `localhost:8000`; all Block 2 tasks closed; journal stub +
+end-of-day artifacts committed. Next: Day 2 (Python wrapper + JSONL
+logging) — start deliberately. NOTE: bench was 32 tok/s, below the 40
+floor — human-accepted as the Day-1 baseline (see below).
 
 ## Pre-flight
 
@@ -37,29 +39,35 @@ human attestation, 2026-05-18 — no AI involvement.
 | 4 | `day1_block2_firmware` | **yes** | ✅ passed — GB10, CUDA 13.0, 5 W idle |
 | 5 | `day1_block2_docker_config` | no | ✅ passed — cron + cgroupns (plan bug noted) |
 | 6 | `day1_block2_vllm_serve` | **yes** | ✅ passed — vLLM v0.20.0 serving; MARLIN MoE; curl ok 1.45 s |
-| 7 | `day1_block2_bench` | no | ⬜ |
-| 9 | `day1_block2_nemoclaw_router` | no | ⬜ |
-| 10 | `day1_block2_nemoclaw_primary` | no | ⬜ |
-| 11 | `day1_block2_nemoclaw_fallback` | no | ⬜ |
+| 7 | `day1_block2_bench` | no | ⚠️ 32 tok/s — below 40 floor; human-accepted as Day-1 baseline |
+| 9 | `day1_block2_nemoclaw_router` | no | ✅ probe → plain-Docker fallback branch |
+| 10 | `day1_block2_nemoclaw_primary` | no | ⏭️ skipped (router branched to fallback) |
+| 11 | `day1_block2_nemoclaw_fallback` | no | ✅ passed — hardened Docker sandbox verified |
 
 ## Block 3 / end of day
 
 | # | Task | Status |
 |---|------|--------|
-| 8 | `day1_block3_journal` | ⬜ |
-| 12 | `day1_end_of_day_artifacts` | ⬜ |
+| 8 | `day1_block3_journal` | ✅ stub generated — `journal/day1.md` |
+| 12 | `day1_end_of_day_artifacts` | ✅ artifacts committed |
 
-## Open blockers / next steps
+## Day 1 complete — next steps
 
-Pre-flight, Block 1, and Block 2 tasks #3–#6 are complete — **vLLM
-v0.20.0 is serving Gemma 4** on `localhost:8000`. Remaining for Day 1:
+**Day 1 is done.** All pre-flight, Block 1, and Block 2 tasks closed;
+journal stub + end-of-day artifacts committed. vLLM v0.20.0 serves
+Gemma 4 on `localhost:8000`. `state.json current_day` left at `day_1`
+— advance to `day_2` deliberately when starting Day 2.
 
-1. **Task #7** — tok/s micro-benchmark (`scripts/bench_tokens_per_sec.py`
-   to be written; expected band [50,110], hard floor 40).
-2. **Tasks #9–#11** — NemoClaw probe + onboard (90-min cap) or the
-   hardened plain-Docker fallback.
-3. **Task #8** — journal stub; **task #12** — end-of-day artifacts.
-4. **Day 2** is gated on Day 1's vLLM server — now satisfied.
+Carried into Day 2 / later:
+
+1. **Day 2** — Python wrapper around vLLM; every call writes
+   schema-valid JSONL; determinism verified. Day 2's Block 2 was gated
+   on Day 1's vLLM server — now satisfied.
+2. **tok/s 32 vs plan floor 40** — accepted as the Day-1 baseline;
+   throughput tuning is an optimization-pass item (`notes/day1-bench-debug.md`).
+3. **MTP** — deferred to Week 2+ (D-019).
+4. **`plan.yaml` validation fixes** — `day1_block2_docker_config` and
+   `day1_block2_vllm_serve` check #2 (see Plan bugs below).
 
 ## Plan bugs found (Block 2)
 
@@ -114,3 +122,8 @@ v0.20.0 is serving Gemma 4** on `localhost:8000`. Remaining for Day 1:
   v0.20.0 serves Gemma 4 (MARLIN MoE, curl ok 1.45 s) — task #6 passed,
   abort lifted. MTP deferred to Week 2+ (D-019). Re-pin applied across
   `plan.yaml` / `CLAUDE.md` / `infra/bookmarks.txt` / docs.
+- 2026-05-18: Day 1 closed — #7 bench 32 tok/s logged as a fault then
+  human-accepted as the Day-1 baseline; #9 router → plain-Docker
+  fallback; #11 fallback verified (seccomp + no-new-privileges +
+  cap-drop); #8 journal stub written (`journal/day1.md`); #12
+  end-of-day artifacts committed. **Day 1 complete.**
