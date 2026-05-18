@@ -38,8 +38,17 @@ export interface RecentTask {
 
 export interface Health {
   ok: boolean;
+  hostname: string;
   telemetry_last_seen: string | null;
   version: string;
+}
+
+// run_state/week1.state.json passthrough — only the fields the UI reads.
+export interface AppState {
+  plan_id?: string;
+  current_day?: string;
+  completed_tasks?: string[];
+  [key: string]: unknown;
 }
 
 // --- telemetry (mirrors ui/schema/telemetry.jsonl.schema.json) ---

@@ -34,9 +34,11 @@
   number-or-null; the sampler keeps util/temp/power and nulls the
   memory fields rather than discarding the whole `gpu` object (§4.1,
   §5.1). Confirmed against real hardware (idle: 0% util, 38 °C, ~5.5 W).
-- Steps 6.1 (sampler), 6.2 (backend HTTP + chain walker + fixture
-  generator), 6.3 (frontend call-chain inspector), and 6.4 (live
-  WebSocket /api/live) are built; 22 Python + 2 frontend tests pass.
+- **Build steps 6.1–6.7 are all built** — sampler, backend (HTTP +
+  WebSocket), call-chain inspector, and the live dashboard (5 zones,
+  sparklines seeded from `/api/telemetry/recent`, colour-coded
+  thresholds, healthy-baseline card, click-through to the inspector).
+  23 Python + 3 frontend tests pass.
 - vLLM `/metrics` names verified against the running server (now
   `vllm/vllm-openai:v0.20.0`): KV cache is `vllm:kv_cache_usage_perc`
   (not `gpu_cache_usage_perc`), prefix-cache hit rate is computed from
@@ -496,7 +498,7 @@ If any of these come up while you're building, write the question to
 - Whether to expose experiment-level views (cooperation rates, per-round behavior) in v1 or defer to a v2 results-browser plan.
 - Whether the inspector should let users diff two chains side-by-side (powerful, but doubles the layout work).
 - The "healthy baseline" card should be data-driven (read from `bench/day1.csv` and `run_state/week1.state.json`'s `metric_log`) — §5.3 already commits to this. The open part is only timing: it requires the apparatus to have committed `bench/day1.csv` (day 1) and populated `metric_log`. Until then the documented constants in §5.3 stand in. Note the constants have already drifted once (idle power 25 W estimate vs. ~5 W measured), which is the argument for data-driven.
-- Whether the WebSocket should backfill the last N seconds of telemetry on connect, or only stream forward.
+- ~~Whether the WebSocket should backfill the last N seconds of telemetry on connect, or only stream forward.~~ **Resolved (steps 6.4-6.5):** the WebSocket is forward-only; the dashboard seeds 5 minutes of sparkline history from `GET /api/telemetry/recent` on load instead.
 
 ## 10. Mocking vs. waiting (build sequencing)
 

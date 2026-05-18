@@ -10,6 +10,7 @@ Point at fixture logs:  UI_LOGS_DIR=/tmp/fixture_logs ui/backend/run.sh
 import asyncio
 import json
 import os
+import socket
 import subprocess
 from pathlib import Path
 
@@ -34,6 +35,38 @@ def _git_sha():
     return proc.stdout.strip() or "unknown" if proc.returncode == 0 else "unknown"
 
 
+def _tail_lines(path, limit):
+    """Return up to `limit` parsed JSON objects from the end of a JSONL file.
+
+    Reads a bounded window from the end rather than the whole file, so it
+    stays cheap as telemetry.jsonl grows.
+    """
+    path = Path(path)
+    if not path.exists():
+        return []
+    try:
+        size = path.stat().st_size
+        window = min(size, limit * 1024)          # ~1 KB/line is generous
+        with open(path, "rb") as fh:
+            fh.seek(size - window)
+            data = fh.read()
+    except OSError:
+        return []
+    lines = data.decode("utf-8", errors="replace").splitlines()
+    if window < size and lines:
+        lines = lines[1:]                          # drop the partial first line
+    out = []
+    for line in lines[-limit:]:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
 def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                state_file=DEFAULT_STATE):
     app = FastAPI(title="UI backend — orchestrator dashboard", version=_git_sha())
@@ -52,6 +85,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
             if ts:
                 seen["telemetry_ts"] = ts
         return {"ok": True,
+                "hostname": socket.gethostname(),
                 "telemetry_last_seen": seen["telemetry_ts"],
                 "version": _git_sha()}
 
@@ -67,6 +101,12 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     @app.get("/api/recent_tasks")
     def recent(limit: int = 50):
         return {"tasks": recent_tasks(store, limit)}
+
+    @app.get("/api/telemetry/recent")
+    def telemetry_recent(limit: int = 300):
+        """Last N telemetry samples, so the dashboard can seed its sparklines."""
+        capped = min(max(limit, 1), 2000)
+        return {"samples": _tail_lines(telemetry_file, capped)}
 
     @app.get("/api/state")
     def state():

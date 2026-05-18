@@ -3,9 +3,10 @@
 React + Vite + TypeScript + Tailwind SPA: the dashboard and call-chain
 inspector. See `ui_plan.md` §5.3. Dark mode only.
 
-Build status: the **call-chain inspector** (`/chain/:taskId`, step 6.3)
-is built. The full **live dashboard** (`/`, step 6.5) is not — `/`
-currently shows a recent-task list as inspector entry points.
+Build status: both views are built — the **live dashboard** (`/`, steps
+6.5-6.7: health strip, orchestrator queue, vLLM panel, process grid,
+baseline card) and the **call-chain inspector** (`/chain/:taskId`,
+step 6.3). Telemetry streams over the `/api/live` WebSocket.
 
 ## Run (dev)
 

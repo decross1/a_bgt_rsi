@@ -3,7 +3,13 @@
 // localhost -> backend at localhost:8700) and over the LAN (browser at
 // 10.0.0.73 -> backend at 10.0.0.73:8700). The backend allows CORS.
 
-import type { ChainResponse, Health, RecentTask } from "../types/schemas";
+import type {
+  AppState,
+  ChainResponse,
+  Health,
+  RecentTask,
+  TelemetrySample,
+} from "../types/schemas";
 
 export const API_BASE = `http://${window.location.hostname}:8700`;
 
@@ -29,3 +35,8 @@ export const getRecentTasks = (limit = 50) =>
   getJSON<{ tasks: RecentTask[] }>(`/api/recent_tasks?limit=${limit}`);
 
 export const getHealth = () => getJSON<Health>("/api/health");
+
+export const getState = () => getJSON<AppState>("/api/state");
+
+export const getRecentTelemetry = (limit = 300) =>
+  getJSON<{ samples: TelemetrySample[] }>(`/api/telemetry/recent?limit=${limit}`);

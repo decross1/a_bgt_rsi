@@ -9,7 +9,7 @@ Three pieces, three directories:
 |---|---|---|
 | `sampler/` | 1 Hz daemon → `ui/logs/telemetry.jsonl` | **built** (step 6.1) |
 | `backend/` | FastAPI: reads JSONL logs, serves HTTP + WebSocket | **built** (steps 6.2, 6.4) |
-| `frontend/` | React SPA: dashboard + chain inspector | inspector **built** (6.3); dashboard is 6.5 |
+| `frontend/` | React SPA: dashboard + chain inspector | **built** (steps 6.3, 6.5-6.7) |
 
 Everything lives under `ui/`. The sampler is read-only with respect to
 the apparatus and depends on nothing the week-1 build produces, so it

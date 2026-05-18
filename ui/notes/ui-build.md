@@ -114,3 +114,40 @@ sampler stream.
   this can be revisited if backfill proves nicer.
 - Poll interval 0.5 s (telemetry is 1 Hz) to keep lag well under a
   sample period.
+
+## Steps 6.5-6.7 — live dashboard (2026-05-18)
+
+Built the dashboard at `/`: header (hostname, apparatus day, live/stale
+indicator), the 5-tile health strip (GPU util/mem/temp/power, CPU temp)
+with 5-min sparklines and colour-coded thresholds, the orchestrator
+queue (running + recent, rows link into the inspector — that is step
+6.6), the vLLM internals panel (queue, KV-cache, prefix-cache, MTP,
+decode tok/s), the per-process grid, and the healthy-baseline reference
+card (step 6.7). Telemetry streams over the WebSocket via the
+`useTelemetryStream` hook, seeded from a new `GET /api/telemetry/recent`
+endpoint so sparklines populate on first paint. 1 frontend test added
+(3 total); 23 Python tests pass. **All of ui_plan.md §6 (steps 6.1-6.7)
+is now built.**
+
+### Decisions
+
+- Added `GET /api/telemetry/recent?limit=N` (bounded tail read) so the
+  dashboard seeds 5 minutes of sparkline history instantly rather than
+  waiting 5 minutes for the forward-only WS to fill it.
+- Added `hostname` to `/api/health` for the dashboard header.
+- Baseline card is hardcoded constants for now (CUDA 13.0, idle ≈5 W,
+  tok/s floor 40, MTP deferred). `ui_plan.md` §9 still wants it
+  data-driven from `bench/day1.csv` once the apparatus commits that.
+
+### Surprises
+
+- `CLAUDE.md` (apparatus-side) now records **MTP deferred** and the
+  vLLM image re-pinned to `v0.20.0`. The baseline card and the MTP
+  tile reflect this: the tile shows "metric absent", expected decode
+  tok/s is the NVFP4 baseline (~52), not the MTP figure (~96).
+
+### Open
+
+- The orchestrator queue has no "Waiting" section: `orchestrator.jsonl`
+  (§4.3) records dispatches, not a pending-queue depth. Shown as
+  Running + Recent only. Revisit if the day-6 schema exposes a queue.

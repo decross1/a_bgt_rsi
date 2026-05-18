@@ -1,83 +1,97 @@
-// Landing page. The full live dashboard (GPU/vLLM/process panels) is
-// build step 6.5; for now this lists recent tasks as inspector entry
-// points. See ui_plan.md section 5.3.
+// Live dashboard: is the Spark healthy and what is the apparatus doing?
+// See ui_plan.md section 5.3. Telemetry arrives over the /api/live
+// WebSocket (ui/hooks/useTelemetryStream); the orchestrator queue polls.
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { getHealth, getRecentTasks } from "../api/http";
-import type { Health, RecentTask } from "../types/schemas";
+import BaselineCard from "../components/BaselineCard";
+import HealthStrip from "../components/HealthStrip";
+import OrchestratorQueue from "../components/OrchestratorQueue";
+import ProcessGrid from "../components/ProcessGrid";
+import VllmPanel from "../components/VllmPanel";
+import { getHealth, getState } from "../api/http";
+import { useTelemetryStream } from "../hooks/useTelemetryStream";
+import type { AppState, Health } from "../types/schemas";
 
-function statusClass(status: string | null): string {
-  switch (status) {
-    case "passed":
-      return "text-emerald-400";
-    case "failed":
-    case "aborted":
-      return "text-red-400";
-    case "started":
-      return "text-amber-400";
-    default:
-      return "text-zinc-500";
-  }
+function useNow(intervalMs = 1000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
 }
 
 export default function Dashboard() {
-  const [tasks, setTasks] = useState<RecentTask[] | null>(null);
+  const { samples, latest, connected } = useTelemetryStream();
   const [health, setHealth] = useState<Health | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<AppState | null>(null);
+  const now = useNow();
 
   useEffect(() => {
-    getRecentTasks()
-      .then((d) => setTasks(d.tasks))
-      .catch((e) => setError(String(e)));
-    getHealth()
-      .then(setHealth)
-      .catch(() => {
-        /* health is best-effort on this page */
-      });
+    const loadHealth = () => getHealth().then(setHealth).catch(() => {});
+    loadHealth();
+    getState().then(setState).catch(() => {});
+    const id = setInterval(loadHealth, 10000);
+    return () => clearInterval(id);
   }, []);
 
+  const lastSeen = latest?.timestamp ?? health?.telemetry_last_seen ?? null;
+  const ageMs = lastSeen ? now - Date.parse(lastSeen) : null;
+  const stale = ageMs != null && ageMs > 5000;
+  const readErrors = latest?.read_errors
+    ? Object.keys(latest.read_errors)
+    : [];
+
   return (
-    <div className="mx-auto max-w-4xl p-6">
-      <div className="rounded border border-zinc-800 bg-zinc-900/40 p-3 text-sm text-zinc-400">
-        The live dashboard (GPU / vLLM / process panels) is build step 6.5. This
-        page lists recent orchestrator tasks — click one to open its call-chain
-        inspector.
-        {health && (
-          <span className="ml-1 text-zinc-500">
-            Backend {health.version}; telemetry last seen{" "}
-            {health.telemetry_last_seen ?? "never"}.
-          </span>
+    <div className="mx-auto max-w-7xl p-5">
+      {/* header */}
+      <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
+        <span className="font-mono text-zinc-200">
+          {health?.hostname ?? "spark"}
+        </span>
+        {state?.current_day && (
+          <span className="text-zinc-500">apparatus: {state.current_day}</span>
         )}
+        <span className="text-zinc-500">backend {health?.version ?? "?"}</span>
+        <span className={connected ? "text-emerald-400" : "text-red-400"}>
+          {connected ? "● live" : "● disconnected"}
+        </span>
+        <span className={stale ? "text-red-400" : "text-zinc-500"}>
+          telemetry{" "}
+          {ageMs != null ? `${(ageMs / 1000).toFixed(0)} s ago` : "—"}
+        </span>
       </div>
 
-      <h2 className="mt-5 text-xs font-medium uppercase tracking-wide text-zinc-500">
-        Recent tasks
-      </h2>
-      {error && <div className="mt-2 text-sm text-red-400">{error}</div>}
-      {tasks && tasks.length === 0 && (
-        <div className="mt-2 text-sm text-zinc-500">
-          No orchestrator tasks yet — the apparatus has not reached day 6. Point
-          the backend at fixtures to see sample data (see ui/backend/README.md).
+      {readErrors.length > 0 && (
+        <div className="mt-2 text-xs text-amber-500/80">
+          telemetry read issues: {readErrors.join(", ")}
         </div>
       )}
-      {tasks && tasks.length > 0 && (
-        <div className="mt-2 divide-y divide-zinc-800 rounded border border-zinc-800">
-          {tasks.map((t) => (
-            <Link
-              key={t.task_id}
-              to={`/chain/${encodeURIComponent(t.task_id)}`}
-              className="flex items-center gap-3 px-3 py-2 hover:bg-zinc-800/60"
-            >
-              <span className={`text-xs ${statusClass(t.status)}`}>●</span>
-              <span className="font-mono text-sm text-zinc-100">{t.task_id}</span>
-              <span className="text-xs text-zinc-500">{t.task_type}</span>
-              <span className="ml-auto font-mono text-xs text-zinc-600">
-                {t.dispatch_ts}
-              </span>
-            </Link>
-          ))}
+
+      {samples.length === 0 && (
+        <div className="mt-4 rounded border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-500">
+          Waiting for telemetry — is the sampler running?
         </div>
       )}
+
+      <div className="mt-4">
+        <HealthStrip samples={samples} />
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-4">
+        <OrchestratorQueue />
+        <VllmPanel samples={samples} />
+      </div>
+
+      <div className="mt-4">
+        <BaselineCard />
+      </div>
+
+      <div className="mt-4">
+        <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+          Tracked processes
+        </h2>
+        <ProcessGrid samples={samples} />
+      </div>
     </div>
   );
 }

@@ -50,3 +50,9 @@ def test_chain_not_found(tmp_path):
 def test_state_passthrough(tmp_path):
     body = _client(tmp_path).get("/api/state").json()
     assert body["current_day"] == "day_1"
+
+
+def test_telemetry_recent(tmp_path):
+    body = _client(tmp_path).get("/api/telemetry/recent?limit=10").json()
+    assert len(body["samples"]) == 1
+    assert body["samples"][0]["timestamp"] == "2026-05-18T10:00:00.000+00:00"
