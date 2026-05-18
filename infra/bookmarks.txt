@@ -1,6 +1,7 @@
 # Pre-staged software bookmarks. Verified by preflight_software_prestaged.
 # Version pins are inviolate — see CLAUDE.md and plan.yaml Appendix C.
 
-vllm/vllm-openai:gemma4-cu130
+vllm/vllm-openai:v0.20.0
+# digest sha256:04563c302537a91aa49ebdfbceda96111c5712275999b7e8804fa598f0b5641d (D-020)
 ghcr.io/nvidia/openshell/cluster:0.0.13
 hf:google/gemma-4-26B-A4B-it-assistant

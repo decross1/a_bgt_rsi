@@ -152,7 +152,7 @@ branches. The operating contract for the executing agent is in `CLAUDE.md`.
 ## 5. Critical operational facts
 
 ### Version pins (inviolate)
-- **vLLM image:** `vllm/vllm-openai:gemma4-cu130` — NOT `:gemma4` (dev,
+- **vLLM image:** `vllm/vllm-openai:v0.20.0` — NOT `:gemma4` (dev,
   crashes on FP4 GEMM). Tag-naming does NOT imply one is a superset of the
   other; capture the image digest at first boot and pin the digest, not just
   the tag — the tag is a moving target.
@@ -281,7 +281,7 @@ for Day 1:
    gets un-sudoed docker access.
 2. Stage `infra/vllm_patches/gemma4_mtp.py` from the head of vLLM
    PR #41745 (the MTP bugfix — see D-019).
-3. Pull `vllm/vllm-openai:gemma4-cu130`; **capture the image digest**
+3. Pull `vllm/vllm-openai:v0.20.0`; **capture the image digest**
    (D-017) and pin it in `run_state/`.
 4. Launch vLLM with `--moe-backend marlin` plus the MTP
    `--speculative-config`; VERIFY the MARLIN and `method='mtp'` startup

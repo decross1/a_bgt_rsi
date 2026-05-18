@@ -22,7 +22,7 @@ the frontmatter. The source human-readable plan is
    bend. There is no "let the agent help just this once" condition.
 
 2. **Version pins are verbatim.**
-   - vLLM image: `vllm/vllm-openai:gemma4-cu130` (NOT `:gemma4`).
+   - vLLM image: `vllm/vllm-openai:v0.20.0` (NOT `:gemma4`).
    - OpenShell cluster: `ghcr.io/nvidia/openshell/cluster:0.0.13`.
    - CUDA: 13.0 (NOT 13.2 — gibberish on low-bit quants).
    - Embedding: BGE-M3 (NOT all-MiniLM-L6-v2).

@@ -7,8 +7,8 @@ _Active-day tracker. Authoritative plan: `plan.yaml`. State:
 tokens/sec recorded; NemoClaw onboarded or fallback logged.
 
 **Status as of 2026-05-18:** pre-flight + Block 1 done; Block 2 tasks
-#3–#5 done. Next: task #6 (vLLM serve) — blocked on docker group access
-+ `gemma4_mtp.py` staging.
+#3–#6 done — **vLLM v0.20.0 is serving Gemma 4** on `localhost:8000`.
+Next: task #7 (tok/s benchmark).
 
 ## Pre-flight
 
@@ -36,7 +36,7 @@ human attestation, 2026-05-18 — no AI involvement.
 | 3 | `day1_block2_unbox` | no | ✅ passed — ping 10.0.0.73 ok |
 | 4 | `day1_block2_firmware` | **yes** | ✅ passed — GB10, CUDA 13.0, 5 W idle |
 | 5 | `day1_block2_docker_config` | no | ✅ passed — cron + cgroupns (plan bug noted) |
-| 6 | `day1_block2_vllm_serve` | **yes** | ⬜ |
+| 6 | `day1_block2_vllm_serve` | **yes** | ✅ passed — vLLM v0.20.0 serving; MARLIN MoE; curl ok 1.45 s |
 | 7 | `day1_block2_bench` | no | ⬜ |
 | 9 | `day1_block2_nemoclaw_router` | no | ⬜ |
 | 10 | `day1_block2_nemoclaw_primary` | no | ⬜ |
@@ -51,19 +51,15 @@ human attestation, 2026-05-18 — no AI involvement.
 
 ## Open blockers / next steps
 
-Pre-flight, Block 1, and Block 2 tasks #3–#5 are complete. Remaining:
+Pre-flight, Block 1, and Block 2 tasks #3–#6 are complete — **vLLM
+v0.20.0 is serving Gemma 4** on `localhost:8000`. Remaining for Day 1:
 
-1. **Docker group access** — `decross1` is not in the `docker` group,
-   so `docker` commands fail without sudo. Task #6's plan command runs
-   `docker` un-sudoed. Fix: `sudo usermod -aG docker decross1`, then
-   **restart the Claude Code session** so the new group takes effect
-   for the agent.
-2. **`infra/vllm_patches/gemma4_mtp.py` not staged** — must be fetched
-   from vLLM PR #41745 head before `day1_block2_vllm_serve` (task #6).
-3. **Tasks #6–#12 unrun** — vLLM serve (HARD CHECKPOINT), tok/s
-   benchmark, NemoClaw, end-of-day artifacts.
-4. **Day 2 is gated on Day 1's vLLM server** — Day 2's 50-call sweep
-   needs the running endpoint.
+1. **Task #7** — tok/s micro-benchmark (`scripts/bench_tokens_per_sec.py`
+   to be written; expected band [50,110], hard floor 40).
+2. **Tasks #9–#11** — NemoClaw probe + onboard (90-min cap) or the
+   hardened plain-Docker fallback.
+3. **Task #8** — journal stub; **task #12** — end-of-day artifacts.
+4. **Day 2** is gated on Day 1's vLLM server — now satisfied.
 
 ## Plan bugs found (Block 2)
 
@@ -73,6 +69,13 @@ Pre-flight, Block 1, and Block 2 tasks #3–#5 are complete. Remaining:
   validation `docker info | grep -i cgroup` → `host` also cannot pass:
   `docker info` never reports cgroup namespace mode. Both warrant a
   `plan.yaml` fix (pending human approval).
+- `day1_block2_vllm_serve`: (a) the original pinned image
+  `:gemma4-cu130` (vLLM 0.19.1.dev6) could not load the NVFP4
+  checkpoint — re-pinned to `:v0.20.0` (D-020). (b) MTP deferred to
+  Week 2+ — needs a post-PR-#41745 image (D-019). (c) v0.20.0 needs
+  `--max-num-batched-tokens 8192` (multimodal MM-budget). (d) validation
+  check #2 expects a `FLASHINFER_CUTLASS for NVFP4 GEMM` log line the
+  GB10 never emits (no native FP4, SM12x) — needs correcting in `plan.yaml`.
 
 ## Decisions log
 
@@ -104,3 +107,10 @@ Pre-flight, Block 1, and Block 2 tasks #3–#5 are complete. Remaining:
   #4 (firmware) passed — nvidia-smi GB10 / CUDA 13.0 / 5 W idle; #5
   (docker_config) passed with a noted plan bug — invalid daemon.json
   key `cgroupns` corrected to `default-cgroupns-mode`; docker daemon up.
+- 2026-05-18: task #6 — MTP launch failed (image predated PR #41745);
+  baseline launch on `:gemma4-cu130` also failed (NVFP4 expert
+  `input_scale` KeyError); `day_1` aborted, then recovered. vLLM image
+  re-pinned `:gemma4-cu130` → `:v0.20.0` (human-authorized, D-020);
+  v0.20.0 serves Gemma 4 (MARLIN MoE, curl ok 1.45 s) — task #6 passed,
+  abort lifted. MTP deferred to Week 2+ (D-019). Re-pin applied across
+  `plan.yaml` / `CLAUDE.md` / `infra/bookmarks.txt` / docs.

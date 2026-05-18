@@ -1,6 +1,6 @@
 # vLLM patches
 
-Files here are bind-mounted over the stock `vllm/vllm-openai:gemma4-cu130`
+Files here are bind-mounted over the stock `vllm/vllm-openai:v0.20.0`
 image at container launch (see `day1_block2_vllm_serve` in `plan.yaml`).
 
 ## `gemma4_mtp.py` — REQUIRED, NOT YET STAGED
