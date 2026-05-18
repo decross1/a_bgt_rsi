@@ -6,8 +6,9 @@ _Active-day tracker. Authoritative plan: `plan.yaml`. State:
 **Day goal:** vLLM serves Gemma 4 26B MoE; curl returns coherent text;
 tokens/sec recorded; NemoClaw onboarded or fallback logged.
 
-**Status as of 2026-05-18:** all Day 1 pre-flight + Block 1 complete.
-Block 2 — the technical build (hardware, vLLM, benchmark) — NOT yet run.
+**Status as of 2026-05-18:** pre-flight + Block 1 done; Block 2 tasks
+#3–#5 done. Next: task #6 (vLLM serve) — blocked on docker group access
++ `gemma4_mtp.py` staging.
 
 ## Pre-flight
 
@@ -32,9 +33,9 @@ human attestation, 2026-05-18 — no AI involvement.
 
 | # | Task | Hard checkpoint | Status |
 |---|------|-----------------|--------|
-| 3 | `day1_block2_unbox` | no | ⬜ blocked on pre-flight |
-| 4 | `day1_block2_firmware` | **yes** | ⬜ |
-| 5 | `day1_block2_docker_config` | no | ⬜ |
+| 3 | `day1_block2_unbox` | no | ✅ passed — ping 10.0.0.73 ok |
+| 4 | `day1_block2_firmware` | **yes** | ✅ passed — GB10, CUDA 13.0, 5 W idle |
+| 5 | `day1_block2_docker_config` | no | ✅ passed — cron + cgroupns (plan bug noted) |
 | 6 | `day1_block2_vllm_serve` | **yes** | ⬜ |
 | 7 | `day1_block2_bench` | no | ⬜ |
 | 9 | `day1_block2_nemoclaw_router` | no | ⬜ |
@@ -50,19 +51,28 @@ human attestation, 2026-05-18 — no AI involvement.
 
 ## Open blockers / next steps
 
-Pre-flight (all 4 tasks) and Block 1 are complete. **Day 1 Block 2 —
-the technical build — has NOT been run.** It is the real Day 1 work and
-remains entirely pending:
+Pre-flight, Block 1, and Block 2 tasks #3–#5 are complete. Remaining:
 
-1. **Block 2 agent tasks #3–#12 unrun** — hardware verify (`nvidia-smi`,
-   dashboard reachability), Docker config, vLLM serve (HARD CHECKPOINT),
-   tok/s benchmark, NemoClaw onboarding, end-of-day artifacts. None
-   executed; none can be marked done without actually running them.
+1. **Docker group access** — `decross1` is not in the `docker` group,
+   so `docker` commands fail without sudo. Task #6's plan command runs
+   `docker` un-sudoed. Fix: `sudo usermod -aG docker decross1`, then
+   **restart the Claude Code session** so the new group takes effect
+   for the agent.
 2. **`infra/vllm_patches/gemma4_mtp.py` not staged** — must be fetched
    from vLLM PR #41745 head before `day1_block2_vllm_serve` (task #6).
-3. **Day 2 is gated on Day 1's vLLM server** — Day 2's 50-call sweep
-   needs the running endpoint, so Day 2 cannot start until Block 2's
-   vLLM hard checkpoint passes.
+3. **Tasks #6–#12 unrun** — vLLM serve (HARD CHECKPOINT), tok/s
+   benchmark, NemoClaw, end-of-day artifacts.
+4. **Day 2 is gated on Day 1's vLLM server** — Day 2's 50-call sweep
+   needs the running endpoint.
+
+## Plan bugs found (Block 2)
+
+- `day1_block2_docker_config`: the command writes an invalid
+  `daemon.json` key `cgroupns` (dockerd rejects it) — corrected to
+  `default-cgroupns-mode` in `setup/day1_docker_config.sh`. Its
+  validation `docker info | grep -i cgroup` → `host` also cannot pass:
+  `docker info` never reports cgroup namespace mode. Both warrant a
+  `plan.yaml` fix (pending human approval).
 
 ## Decisions log
 
@@ -90,3 +100,7 @@ remains entirely pending:
   (decross1) — preflight_failure_walkthroughs, preflight_physical_setup,
   day1_block1_reading, day1_block1_problemset. Recorded in state file +
   run log. Day 1 Block 2 (the technical build) remains unrun.
+- 2026-05-18: Block 2 #3 (unbox) passed — ping 10.0.0.73 3/3, 0% loss;
+  #4 (firmware) passed — nvidia-smi GB10 / CUDA 13.0 / 5 W idle; #5
+  (docker_config) passed with a noted plan bug — invalid daemon.json
+  key `cgroupns` corrected to `default-cgroupns-mode`; docker daemon up.
