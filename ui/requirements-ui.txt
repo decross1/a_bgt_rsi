@@ -1,0 +1,20 @@
+# UI layer dependencies. Separate from the apparatus's requirements.txt by
+# design (ui_plan.md operating-contract rule 5). Install:
+#   pip install -r ui/requirements-ui.txt
+#
+# Versions are intentionally unpinned until first verified install; pin
+# them then (rule 5: pin when you fix them, do not pre-pin speculatively).
+
+# --- sampler (ui/sampler) ---
+psutil
+requests
+
+# --- backend (ui/backend) ---
+fastapi
+uvicorn
+websockets   # uvicorn WebSocket support for /api/live
+
+# --- dev / test only ---
+pytest
+jsonschema
+httpx       # FastAPI TestClient

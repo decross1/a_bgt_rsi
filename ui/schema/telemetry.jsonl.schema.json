@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "telemetry.jsonl.schema.json",
+  "title": "telemetry.jsonl",
+  "description": "One sample per line, ~1 Hz, written by ui/sampler. See ui_plan.md section 4.1. gpu/host/vllm are object-or-null: a source that fails to read is written as null (never omitted) so every line carries the same key set.",
+  "type": "object",
+  "required": ["timestamp", "gpu", "host", "vllm", "processes", "read_errors"],
+  "additionalProperties": false,
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601, sampler-local clock."
+    },
+    "gpu": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/gpu" }],
+      "description": "null when the nvidia-smi read failed (see read_errors)."
+    },
+    "host": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/host" }],
+      "description": "null when the psutil host read failed."
+    },
+    "vllm": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/vllm" }],
+      "description": "null when the vLLM /metrics scrape failed or core gauges were absent."
+    },
+    "processes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/process" },
+      "description": "Per tracked PID; may be empty if nothing matched."
+    },
+    "read_errors": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "object", "additionalProperties": { "type": "string" } }
+      ],
+      "description": "Keys are source names (nvidia-smi, vllm-metrics, psutil, thermal, sampler); values are error strings. null when no source failed. Populated on every line a source is failing, not just the first."
+    }
+  },
+  "$defs": {
+    "gpu": {
+      "type": "object",
+      "description": "Each field is number-or-null: GB10 unified memory makes nvidia-smi report [N/A] for memory, which is written as null while util/temp/power are kept.",
+      "required": ["util_pct", "mem_used_mb", "mem_total_mb", "temp_c", "power_w"],
+      "additionalProperties": false,
+      "properties": {
+        "util_pct": { "type": ["number", "null"], "minimum": 0, "maximum": 100 },
+        "mem_used_mb": { "type": ["number", "null"], "minimum": 0 },
+        "mem_total_mb": { "type": ["number", "null"], "minimum": 0 },
+        "temp_c": { "type": ["number", "null"] },
+        "power_w": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "host": {
+      "type": "object",
+      "required": ["cpu_pct", "mem_used_mb", "cpu_temp_c", "load_avg"],
+      "additionalProperties": false,
+      "properties": {
+        "cpu_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "mem_used_mb": { "type": "number", "minimum": 0 },
+        "cpu_temp_c": {
+          "type": ["number", "null"],
+          "description": "Mean of /sys/class/thermal zones; null if unreadable."
+        },
+        "load_avg": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "1/5/15 minute load average."
+        }
+      }
+    },
+    "vllm": {
+      "type": "object",
+      "required": [
+        "running_requests",
+        "waiting_requests",
+        "gpu_cache_usage_pct",
+        "gpu_prefix_cache_hit_rate",
+        "tokens_per_sec_decode",
+        "mtp_acceptance_rate",
+        "mtp_draft_tokens",
+        "mtp_accepted_tokens"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "running_requests": { "type": "number", "minimum": 0 },
+        "waiting_requests": { "type": "number", "minimum": 0 },
+        "gpu_cache_usage_pct": { "type": "number", "minimum": 0 },
+        "gpu_prefix_cache_hit_rate": { "type": ["number", "null"] },
+        "tokens_per_sec_decode": {
+          "type": ["number", "null"],
+          "description": "User-visible output tok/s; rate of vllm:generation_tokens_total. null while priming or just after a counter reset."
+        },
+        "mtp_acceptance_rate": {
+          "type": ["number", "null"],
+          "description": "0-1; fraction of drafted tokens accepted. Primary MTP-health signal. null if MTP off or the metric is absent."
+        },
+        "mtp_draft_tokens": {
+          "type": ["number", "null"],
+          "description": "Drafted tokens over the sample interval."
+        },
+        "mtp_accepted_tokens": {
+          "type": ["number", "null"],
+          "description": "Accepted drafted tokens over the sample interval."
+        }
+      }
+    },
+    "process": {
+      "type": "object",
+      "required": ["pid", "name", "cpu_pct", "rss_mb", "threads"],
+      "additionalProperties": false,
+      "properties": {
+        "pid": { "type": "number" },
+        "name": { "type": "string" },
+        "cpu_pct": { "type": "number" },
+        "rss_mb": { "type": "number", "minimum": 0 },
+        "threads": { "type": "number" }
+      }
+    }
+  }
+}

@@ -1,0 +1,94 @@
+// TypeScript mirrors of the backend's JSON responses. See ui_plan.md
+// sections 4.2-4.3, 5.2. Call-log payload fields are deliberately left
+// open (`raw`) so a future day-2 schema addition does not break the UI.
+
+export interface ChainNode {
+  kind: "dispatch" | "call";
+  request_id: string | null;
+  parent_request_id: string | null;
+  caller_tag?: string | null;
+  task_id?: string;
+  task_type?: string | null;
+  status?: string | null;
+  worker_pid?: number | null;
+  timestamp: string | null;
+  latency_ms: number | null;
+  parse_error?: boolean;
+  raw: Record<string, unknown>;
+  children: ChainNode[];
+}
+
+export interface ChainResponse {
+  task_id: string;
+  found: boolean;
+  malformed: boolean;
+  root: ChainNode | null;
+  node_count: number;
+  total_latency_ms: number;
+}
+
+export interface RecentTask {
+  task_id: string;
+  task_type: string | null;
+  status: string | null;
+  worker_pid: number | null;
+  dispatch_ts: string | null;
+  receipt_ts: string | null;
+}
+
+export interface Health {
+  ok: boolean;
+  telemetry_last_seen: string | null;
+  version: string;
+}
+
+// --- telemetry (mirrors ui/schema/telemetry.jsonl.schema.json) ---
+
+export interface GpuSample {
+  util_pct: number | null;
+  mem_used_mb: number | null;
+  mem_total_mb: number | null;
+  temp_c: number | null;
+  power_w: number | null;
+}
+
+export interface HostSample {
+  cpu_pct: number;
+  mem_used_mb: number;
+  cpu_temp_c: number | null;
+  load_avg: [number, number, number];
+}
+
+export interface VllmSample {
+  running_requests: number;
+  waiting_requests: number;
+  gpu_cache_usage_pct: number;
+  gpu_prefix_cache_hit_rate: number | null;
+  tokens_per_sec_decode: number | null;
+  mtp_acceptance_rate: number | null;
+  mtp_draft_tokens: number | null;
+  mtp_accepted_tokens: number | null;
+}
+
+export interface ProcessSample {
+  pid: number;
+  name: string;
+  cpu_pct: number;
+  rss_mb: number;
+  threads: number;
+}
+
+export interface TelemetrySample {
+  timestamp: string;
+  gpu: GpuSample | null;
+  host: HostSample | null;
+  vllm: VllmSample | null;
+  processes: ProcessSample[];
+  read_errors: Record<string, string> | null;
+}
+
+// Message shape from the /api/live WebSocket.
+export interface LiveMessage {
+  source: "telemetry" | "orchestrator";
+  line: Record<string, unknown>;
+}
