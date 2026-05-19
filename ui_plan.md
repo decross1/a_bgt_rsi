@@ -21,6 +21,46 @@
 
 ## 0. Revision log
 
+**r4 (2026-05-19)** — improvement pass over the built steps 6.1–6.7
+(Track D); resolves two of the three §9 open questions:
+
+- **Tool-call rendering shape resolved (§9 first bullet).** Both shapes
+  are now supported and converge to one inspector tree. Separate
+  call-log lines (own `request_id` / `parent_request_id`) are handled by
+  the ordinary chain walk; tool calls embedded in a wrapper record's
+  `tool_calls` array are synthesized by the chain walker into
+  `kind="tool"`, `embedded=true` child nodes with `request_id=null`. So
+  a chain renders the same tree — and the same `node_count` and
+  `total_latency_ms` — regardless of how the wrapper logged its tool
+  use: embedded-tool latency is summed exactly as a separate-line tool
+  call's latency already is, so the total does not depend on the
+  logging shape. (`total_latency_ms` remains a labelled rough sum, not
+  wall-clock; §5.3.) Both shapes have test coverage
+  (`test_embedded_tool_calls_reconstructed`; the frontend embedded-badge
+  test). The embedded key is assumed to be
+  `tool_calls`; if the day-4 schema names it otherwise, only
+  `EMBEDDED_TOOL_KEY` in `backend/chain.py` changes.
+- **Healthy-baseline card is now data-driven (§9 fourth bullet).** The
+  card no longer hardcodes day-1 numbers. A new `GET /api/baseline`
+  endpoint (`backend/baseline.py`) sources decode tok/s from
+  `bench/day1.csv` (median of the `decode_tok_per_s` sweep) and
+  `run_state/week1.state.json`'s `metric_log.day1_tokens_per_sec`, and
+  falls back to the documented §5.3 constants when neither exists yet.
+  Every card row is annotated `source: "measured"` or
+  `source: "documented"`; measured rows also carry the documented
+  expectation alongside, so a drift like the current day-1 ~32 tok/s
+  vs the documented [80,130] band is visible at a glance. Idle power
+  and the threshold rows stay documented — no committed measurement
+  source exists for them.
+- **Inspector chain-diffing deferred to v2 (§9 third bullet).** A
+  side-by-side two-chain diff would roughly double the inspector's
+  layout work (a second tree column, node-alignment heuristics, a diff
+  model for opaque generically-rendered payloads) for marginal value:
+  the week-1 CLI already covers it — `diff <(tools/inspect_run.py
+  --task-id X) <(tools/inspect_run.py --task-id Y)` gives a researcher a
+  textual chain diff today. v1 stays single-chain; revisit in the v2
+  results-browser plan (`ui/ui_plan_v2.md`) if a UI diff is still wanted.
+
 **r3 (2026-05-18)** — changes made while building step 6.1:
 
 - **Everything is under `ui/`**, with no exceptions. The telemetry
@@ -423,7 +463,7 @@ this; both `/api/chain` and `/api/live` use it.
 
 **Inspector layout**:
 - Header: task_id, task_type, status, total latency (the **sum** of all wrapper-call `latency_ms` in the chain — meaningful because day-6 workers run sequentially; label it as a sum, not wall-clock).
-- Tree (collapsible nodes): orchestrator dispatch at root → worker invocation → wrapper calls → tool calls. Parse failures and retries get a distinct visual treatment (a small badge, not a color flash). A chain flagged `malformed` by the backend (cycle) renders with a clear banner.
+- Tree (collapsible nodes): orchestrator dispatch at root → worker invocation → wrapper calls → tool calls. Tool calls render as tree nodes whether they were logged as separate call-log lines or embedded in a wrapper record's `tool_calls` array — the backend synthesizes embedded ones into `kind="tool"`, `embedded=true` nodes (§0 r4). Embedded tool nodes carry an `embedded` badge and are excluded from the raw-JSONL dump (they are not their own log lines). Parse failures and retries get a distinct visual treatment (a small badge, not a color flash). A chain flagged `malformed` by the backend (cycle) renders with a clear banner.
 - Each node expandable to show: timestamp, latency_ms, request_id, parent_request_id. For wrapper-call nodes, also: model, temperature, seed, full `prompt_messages`, full `completion`, `usage`. Render these fields generically — iterate the object, do not hardcode a field list — so a schema addition does not break the view.
 - A "raw JSONL" toggle dumps the underlying log lines for engineers who want to grep.
 
@@ -494,10 +534,10 @@ A piece is done when:
 If any of these come up while you're building, write the question to
 `ui/notes/ui-build.md` and continue with a reasonable default. Don't block.
 
-- Whether tool calls are logged as their own call-log lines (with their own `request_id`) or embedded inside a wrapper call's record. The inspector renders them as tree nodes if separate, as a sub-section of one node if embedded. Decide once the day-4 tool-call work lands; until then build the tree to handle both shapes.
-- Whether to expose experiment-level views (cooperation rates, per-round behavior) in v1 or defer to a v2 results-browser plan.
-- Whether the inspector should let users diff two chains side-by-side (powerful, but doubles the layout work).
-- The "healthy baseline" card should be data-driven (read from `bench/day1.csv` and `run_state/week1.state.json`'s `metric_log`) — §5.3 already commits to this. The open part is only timing: it requires the apparatus to have committed `bench/day1.csv` (day 1) and populated `metric_log`. Until then the documented constants in §5.3 stand in. Note the constants have already drifted once (idle power 25 W estimate vs. ~5 W measured), which is the argument for data-driven.
+- ~~Whether tool calls are logged as their own call-log lines (with their own `request_id`) or embedded inside a wrapper call's record.~~ **Resolved (r4).** Both shapes are supported; the chain walker synthesizes embedded `tool_calls` into `kind="tool"` child nodes so the inspector tree is shape-agnostic. Both shapes have test coverage. See §0 r4. The remaining unknown — the exact embedded key name — is isolated to `EMBEDDED_TOOL_KEY` in `backend/chain.py` and is a one-line change when the day-4 schema lands.
+- Whether to expose experiment-level views (cooperation rates, per-round behavior) in v1 or defer to a v2 results-browser plan. **Direction (r4):** deferred to v2; a one-page sketch of the v2 results browser and its data contracts is drafted at `ui/ui_plan_v2.md`. Not built in v1.
+- ~~Whether the inspector should let users diff two chains side-by-side (powerful, but doubles the layout work).~~ **Resolved (r4): deferred to v2.** It would roughly double the inspector layout work for marginal value — the week-1 CLI already gives a textual chain diff via `diff <(tools/inspect_run.py --task-id X) <(tools/inspect_run.py --task-id Y)`. See §0 r4.
+- ~~The "healthy baseline" card should be data-driven (read from `bench/day1.csv` and `run_state/week1.state.json`'s `metric_log`).~~ **Resolved (r4): implemented.** `GET /api/baseline` sources decode tok/s from `bench/day1.csv` + `metric_log` and falls back to the §5.3 documented constants per-row; each row is annotated measured vs documented. See §0 r4. Idle power and the threshold rows stay documented — no committed measurement source exists for them yet; revisit if one lands.
 - ~~Whether the WebSocket should backfill the last N seconds of telemetry on connect, or only stream forward.~~ **Resolved (steps 6.4-6.5):** the WebSocket is forward-only; the dashboard seeds 5 minutes of sparkline history from `GET /api/telemetry/recent` on load instead.
 
 ## 10. Mocking vs. waiting (build sequencing)

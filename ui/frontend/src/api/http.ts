@@ -5,6 +5,7 @@
 
 import type {
   AppState,
+  BaselineResponse,
   ChainResponse,
   Health,
   RecentTask,
@@ -40,3 +41,5 @@ export const getState = () => getJSON<AppState>("/api/state");
 
 export const getRecentTelemetry = (limit = 300) =>
   getJSON<{ samples: TelemetrySample[] }>(`/api/telemetry/recent?limit=${limit}`);
+
+export const getBaseline = () => getJSON<BaselineResponse>("/api/baseline");

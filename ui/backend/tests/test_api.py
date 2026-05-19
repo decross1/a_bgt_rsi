@@ -18,8 +18,11 @@ def _client(tmp_path):
     }) + "\n")
     state = tmp_path / "state.json"
     state.write_text(json.dumps({"plan_id": "test", "current_day": "day_1"}))
+    bench = tmp_path / "day1.csv"
+    bench.write_text("prompt_idx,completion_tokens,elapsed_s,decode_tok_per_s\n"
+                     "0,256,8.0,32.0\n", encoding="utf-8")
     return TestClient(create_app(logs_dir=logs, telemetry_file=telemetry,
-                                 state_file=state))
+                                 state_file=state, bench_csv=bench))
 
 
 def test_health(tmp_path):
@@ -50,6 +53,16 @@ def test_chain_not_found(tmp_path):
 def test_state_passthrough(tmp_path):
     body = _client(tmp_path).get("/api/state").json()
     assert body["current_day"] == "day_1"
+
+
+def test_baseline_endpoint(tmp_path):
+    body = _client(tmp_path).get("/api/baseline").json()
+    rows = {r["key"]: r for r in body["rows"]}
+    # decode tok/s is measured from the bench csv written by _client
+    assert rows["decode_tok_per_s"]["source"] == "measured"
+    assert "32.0 tok/s" in rows["decode_tok_per_s"]["value"]
+    # rows with no committed measurement source stay documented
+    assert rows["stack"]["source"] == "documented"
 
 
 def test_telemetry_recent(tmp_path):

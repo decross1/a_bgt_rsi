@@ -62,8 +62,37 @@ class LogStore:
         self.orch_by_task[task_id] = record      # latest line for a task wins
 
 
-def _call_node(record):
+# Tool calls reach the inspector in one of two shapes (ui_plan.md section 9,
+# resolved r4): either as their own call-log lines carrying a request_id and a
+# parent_request_id (handled by the ordinary parent_request_id walk), or
+# embedded as a `tool_calls` array inside a wrapper call's record. The two are
+# unified here: an embedded tool-call object is synthesized into a child node
+# (kind="tool", embedded=True, request_id=None) so a chain renders the same
+# tree, and the same node_count / total_latency_ms, regardless of how the
+# wrapper logged its tool use. Embedded-tool latency is summed into
+# total_latency_ms exactly as a separate-line tool call's latency already is —
+# the alternative (excluding it) would make the total depend on the logging
+# shape. total_latency_ms stays a labelled rough sum, not wall-clock.
+EMBEDDED_TOOL_KEY = "tool_calls"
+
+
+def _tool_node(tool, parent_request_id):
     return {
+        "kind": "tool",
+        "request_id": None,                      # embedded — no own request_id
+        "parent_request_id": parent_request_id,
+        "caller_tag": tool.get("name") or tool.get("caller_tag") or "tool",
+        "timestamp": tool.get("timestamp"),
+        "latency_ms": tool.get("latency_ms"),
+        "parse_error": bool(tool.get("parse_error")),
+        "embedded": True,
+        "raw": tool,                             # opaque passthrough for the inspector
+        "children": [],
+    }
+
+
+def _call_node(record):
+    node = {
         "kind": "call",
         "request_id": record.get("request_id"),
         "parent_request_id": record.get("parent_request_id"),
@@ -71,9 +100,16 @@ def _call_node(record):
         "timestamp": record.get("timestamp"),
         "latency_ms": record.get("latency_ms"),
         "parse_error": bool(record.get("parse_error")),
+        "embedded": False,
         "raw": record,                           # opaque passthrough for the inspector
         "children": [],
     }
+    embedded = record.get(EMBEDDED_TOOL_KEY)
+    if isinstance(embedded, list):
+        for tool in embedded:
+            if isinstance(tool, dict):
+                node["children"].append(_tool_node(tool, record.get("request_id")))
+    return node
 
 
 def build_chain(store, task_id):
@@ -125,6 +161,9 @@ def build_chain(store, task_id):
     def tally(node):
         counters["nodes"] += 1
         latency = node.get("latency_ms")
+        # Every node with a numeric latency contributes — including tool nodes,
+        # embedded or separate-line — so the total does not depend on how the
+        # wrapper logged its tools (see EMBEDDED_TOOL_KEY comment above).
         if isinstance(latency, (int, float)):
             counters["latency"] += latency
         for child in node["children"]:
