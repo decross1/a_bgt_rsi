@@ -1,12 +1,23 @@
 <!--
-This file is generated from `week1_days_31-37_plan.md`. The source plan is
-the authoritative human-readable document. Discrepancies between this file
-and the source must be resolved in favor of the source. The agent executing
-this plan must read the preamble before parsing the frontmatter. Block 1
-tasks are human_only and the agent MUST NOT execute them. Day 7 publication
-is gated on human review. Version pins are inviolate (e.g. the vLLM image
-tag is `vllm/vllm-openai:v0.20.0`, NOT `:gemma4`; CUDA must be 13.0,
-NOT 13.2). The state file is authoritative on resume.
+This plan was generated from the source human-readable plan
+`week1_days_31-37_plan.md`. That source document is NOT yet committed to
+the repo; until it is, THIS FILE (`plan.yaml`) is the canonical,
+authoritative plan — where any summary document disagrees with it on task
+content, plan.yaml wins. The agent executing this plan must read the
+preamble before parsing the frontmatter. Block 1 tasks are human_only and
+the agent MUST NOT execute them. Day 7 publication is gated on human
+review. Version pins are inviolate (e.g. the vLLM image tag is
+`vllm/vllm-openai:v0.20.0`, NOT `:gemma4` and NOT `:gemma4-cu130`; CUDA
+must be 13.0, NOT 13.2). The state file is authoritative on resume.
+
+This plan is executed across up to three parallel Claude Code worktrees.
+Track A (Main) owns the critical path and is the only track permitted to
+write run_state/, logs/, agent_wrapper/, bench/, and chroma_db/, and the
+only track permitted to call LOCAL_LLM_BASE_URL. Tracks B (tests +
+schemas) and C (pipeline + ops) draft future-day files ahead of time per
+AGENT_PLAN.md. Tasks without an explicit `track:` field default to track
+A. Tasks tagged `track: B` or `track: C` are drafted in a side worktree
+on an earlier day and merged in by Track A on the day they're consumed.
 -->
 
 ---
@@ -29,6 +40,47 @@ required_tools:
 human_gate_protocol: blocking_print_and_halt
 generated_from: week1_days_31-37_plan.md
 generated_at: 2026-05-10T00:00:00Z
+parallel_execution:
+  enabled: true
+  tracks:
+    A:
+      role: main_critical_path
+      file_writes:
+        - run_state/**
+        - logs/**
+        - bench/**
+        - chroma_db/**
+        - agent_wrapper/**
+        - "*"  # default catch-all
+      may_call_llm: true
+    B:
+      role: tests_and_schemas
+      file_writes:
+        - tests/**
+        - schema/**
+        - notes/track-b-*.md
+      may_call_llm: false
+      mock_llm_required: true
+    C:
+      role: pipeline_and_ops
+      file_writes:
+        - ingest/**
+        - pipeline/**
+        - cron/**
+        - scripts/**
+        - tools/**
+        - infra/**
+        - experiments/exp001_repeated_pd/strategies*.py
+        - experiments/exp001_repeated_pd/quicklook.py
+        - tests/test_chunking.py
+        - tests/test_arxiv_scraper.py
+        - tests/test_inspect_run.py
+        - tests/test_quicklook.py
+        - tests/test_strategies.py
+        - notes/track-c-*.md
+      may_call_llm: false
+      mock_llm_required: true
+merge_protocol: see_AGENT_PLAN.md
 ---
 
 # Agent Plan — Week 1 (Days 31–37 of Phase 1)
@@ -2840,6 +2892,112 @@ wall_clock_window:
 
 ---
 
+## side_track_tasks: work Tracks B and C produce ahead of time
+
+> Each entry below is a STANDALONE task assigned to a side worktree
+> (Track B or C). Its output is consumed by a Track A task on a later
+> day. Track A merges the side branch before starting the consuming
+> task and validates the merged files as inputs. See `AGENT_PLAN.md`
+> for the per-day schedule, per-track prompts, and merge protocol.
+
+```yaml
+side_track_tasks:
+
+  - task_id: track_b_day2_draft_day3_4_tests
+    track: B
+    day_drafted_on: day_2
+    consumed_by:
+      - day3_block2_needle_haystack
+      - day4_block2_e2e_test
+      - day4_block2_robustness
+    files_to_write:
+      - tests/needle_in_haystack.py
+      - tests/test_tool_call_e2e.py
+      - tests/test_tool_call_robustness.py
+    preconditions:
+      - day2_block2_jsonl_schema  # Track A locks schema first
+    completion_signal: "TRACK B COMPLETE — ready to merge"
+
+  - task_id: track_c_day2_draft_chunking
+    track: C
+    day_drafted_on: day_2  # evening
+    consumed_by:
+      - day3_block2_chunking_and_ingest_script
+    files_to_write:
+      - ingest/chunking.py
+      - tests/test_chunking.py
+    preconditions: []
+    completion_signal: "TRACK C COMPLETE — ready to merge"
+
+  - task_id: track_b_day3_draft_day5_6_scaffolds
+    track: B
+    day_drafted_on: day_3
+    consumed_by:
+      - day5_block2_retrieval_test
+      - day6_block2_robustness_mini
+      - day6_block2_worker_contract
+    files_to_write:
+      - tests/test_papers_retrieval.py
+      - tests/test_orchestrator_5_sequential.py
+      - tests/test_orchestrator_malformed_input.py
+      - schema/worker_contract.schema.json
+    preconditions: []
+    completion_signal: "TRACK B COMPLETE — ready to merge"
+
+  - task_id: track_c_day3_draft_arxiv_pipeline
+    track: C
+    day_drafted_on: day_3
+    consumed_by:
+      - day5_block2_pipeline_implementation
+    files_to_write:
+      - pipeline/arxiv_scraper.py
+      - pipeline/embed_and_store.py
+      - tests/test_arxiv_scraper.py
+    preconditions: []
+    completion_signal: "TRACK C COMPLETE — ready to merge"
+
+  - task_id: track_c_day4_draft_pd_strategies
+    track: C
+    day_drafted_on: day_4
+    consumed_by:
+      - day7_block2_strategies_and_llm_agent
+    files_to_write:
+      - experiments/exp001_repeated_pd/strategies.py
+      - tests/test_strategies.py
+    preconditions: []
+    completion_signal: "TRACK C COMPLETE — ready to merge"
+
+  - task_id: track_c_day5_draft_inspect_run
+    track: C
+    day_drafted_on: day_5
+    consumed_by:
+      - day6_block2_inspect_run_cli
+    files_to_write:
+      - tools/inspect_run.py
+      - tests/test_inspect_run.py
+    preconditions: []
+    completion_signal: "TRACK C COMPLETE — ready to merge"
+
+  - task_id: track_c_day6_draft_quicklook
+    track: C
+    day_drafted_on: day_6
+    consumed_by:
+      - day7_block2_quicklook
+    files_to_write:
+      - experiments/exp001_repeated_pd/quicklook.py
+      - tests/test_quicklook.py
+    preconditions: []
+    completion_signal: "TRACK C COMPLETE — ready to merge"
+```
+
+> **Per-task `track` assignment.** Every numbered Day 1–7 task in the
+> day sections above runs on **Track A** (the default). The only
+> exceptions are `human_only` tasks (Block 1, the human gates, the
+> retrospective), which no track executes. The side-track work above
+> is the complete set of Track B / C deliverables.
+
+---
+
 # Appendix A — Deviations from research program v2
 
 > Copied verbatim from the source plan's "Cross-cutting notes" section
@@ -2989,3 +3147,29 @@ implementation.
 On Day 7, the agent prints the retrospective questions and appends the
 human's answers to the run log. The agent does NOT write, summarize,
 or interpret the retrospective.
+
+**11. Track boundaries are enforced.**
+Track A may write anywhere. Tracks B and C may write only the paths in
+their `file_writes` allowlist (see the `parallel_execution` frontmatter
+block and `AGENT_PLAN.md`). A side track that writes outside its
+allowlist must STOP, revert the unauthorized changes, and refuse to
+commit. The human audits boundary violations and tightens the
+side-track system prompt.
+
+**12. Side tracks never call the LLM.**
+`LOCAL_LLM_BASE_URL` is reserved for Track A. Tracks B and C set
+`MOCK_LLM=1` in their environment and any test that would otherwise
+hit the endpoint stubs the response. A side track that attempts a real
+LLM call must STOP and surface the attempt to the human.
+
+**13. Merge order is deterministic.**
+Side-track branches are merged by Track A in the order their
+`consumed_by` task is scheduled. The merge happens BEFORE Track A
+starts the consuming task, so Track A validates merged files as inputs
+rather than authoring them under time pressure.
+
+**14. Side tracks do not advance the day.**
+Only Track A updates `state.current_day` and `state.completed_tasks`.
+Side-track completion is signaled by a string in stdout, not a state
+update. Track A records the merge in `run_state/week1.run.jsonl` as a
+`side_track_merged` event.

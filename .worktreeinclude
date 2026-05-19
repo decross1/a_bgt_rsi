@@ -1,0 +1,12 @@
+# Files copied into every Claude Code worktree.
+# Uses .gitignore syntax. Only files that match AND are gitignored are
+# copied (so tracked files are never duplicated).
+#
+# Side worktrees (Tracks B and C) need .env to know which credentials
+# exist but are forbidden from calling the LLM endpoint per
+# AGENT_PLAN.md. They get run_state/* as read-only context so they
+# can see what day Track A is on.
+
+.env
+run_state/week1.state.json
+run_state/week1.run.jsonl

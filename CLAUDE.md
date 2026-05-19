@@ -1,17 +1,29 @@
 # Operating contract for Claude Code
 
-The authoritative plan is `plan.yaml`. Read its preamble before parsing
-the frontmatter. The source human-readable plan is
-`week1_days_31-37_plan.md`; discrepancies resolve in favor of the source.
+New sessions read `START_HERE.md` first for orientation. The canonical
+plan is `plan.yaml`. The human-only blocker list is `HUMAN_PLAN.md`. The
+parallel-execution orchestration plan is `AGENT_PLAN.md`. The original
+source human-readable plan (`week1_days_31-37_plan.md`) is not yet
+committed to the repo; until it is, `plan.yaml` plus this contract are
+the operative authority — where a summary disagrees with `plan.yaml` on
+task content, `plan.yaml` wins.
 
-## How to start a session
+This file is read by **Track A (Main)** sessions by default. Track B
+and Track C sessions receive their own scoped prompts at launch (see
+`AGENT_PLAN.md` "Per-track prompts"). If you are not certain which
+track you are, you are Track A.
 
-1. Read `plan.yaml` preamble + Appendix C (these rules, restated).
-2. Read `run_state/week1.state.json`. Resume at the first incomplete
+## How to start a Track A session
+
+1. Read this file (`CLAUDE.md`) in full.
+2. Read `plan.yaml` preamble + Appendix C.
+3. Read `AGENT_PLAN.md` — at minimum the file-boundary rules and the
+   "Per-day parallel schedule" section for today.
+4. Read `run_state/week1.state.json`. Resume at the first incomplete
    task in `current_day`. Earlier days are not re-run.
-3. If `human_gates_pending` is non-empty, do NOT proceed past the gate
+5. If `human_gates_pending` is non-empty, do NOT proceed past the gate
    until a human explicitly marks it complete.
-4. Append every agent-executable task to `run_state/week1.run.jsonl`
+6. Append every agent-executable task to `run_state/week1.run.jsonl`
    per the run-log entry schema in `plan.yaml`.
 
 ## Inviolate rules
@@ -22,7 +34,8 @@ the frontmatter. The source human-readable plan is
    bend. There is no "let the agent help just this once" condition.
 
 2. **Version pins are verbatim.**
-   - vLLM image: `vllm/vllm-openai:v0.20.0` (NOT `:gemma4`).
+   - vLLM image: `vllm/vllm-openai:v0.20.0` (NOT `:gemma4`, NOT
+     `:gemma4-cu130` — see DECISIONS.md D-020).
    - OpenShell cluster: `ghcr.io/nvidia/openshell/cluster:0.0.13`.
    - CUDA: 13.0 (NOT 13.2 — gibberish on low-bit quants).
    - Embedding: BGE-M3 (NOT all-MiniLM-L6-v2).
@@ -72,11 +85,42 @@ the frontmatter. The source human-readable plan is
     retrospective questions and append the human's answers to the run
     log. Do NOT write, summarize, or interpret the retrospective.
 
+## Parallel-track rules (Track A)
+
+Track A is the only track that may:
+
+- Write to `run_state/`, `logs/`, `bench/`, `chroma_db/`,
+  `agent_wrapper/`.
+- Call `LOCAL_LLM_BASE_URL` (the vLLM endpoint).
+- Make end-of-day commits and tag releases.
+- Clear human gates (only after the human explicitly attests).
+- Decide whether to merge or discard a side-track branch.
+
+If a Track B or C session has finished and printed `TRACK <X> COMPLETE
+— ready to merge`:
+
+1. Verify file boundaries were respected (`git diff --name-only
+   main..worktree-<branch>` should show only files in that track's
+   allowed list).
+2. Merge with `git merge --no-ff worktree-<branch>` from the main
+   checkout.
+3. Run validation tests on the merged files before consuming them in
+   today's task.
+4. If validation fails, Track A's version of any conflicting file
+   wins; discard the side track's conflicting edits with `git checkout
+   --ours <path>`.
+
+If a side track has gone idle without printing the completion message,
+do not merge it. Treat it as work-in-progress that needs the human's
+attention.
+
 ## Things that are NOT in scope for Week 1
 
 - Polymarket API calls (design-only in Phase 1).
 - Autoresearch overnight runs (Week 2+).
 - Second model — Qwen 3.6 deferred to Week 2–3.
-- Concurrency — sequential workers only on Day 6.
+- Concurrency in workers — sequential only on Day 6.
 - Fully autonomous loop — Day 7 result requires human review.
 - Fine-tuning.
+- Week 2 planning is a separate task; do not begin it after the Day 7
+  retrospective even if asked.

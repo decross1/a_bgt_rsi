@@ -46,3 +46,9 @@ bench/*.json
 # Keep the empty dirs themselves
 !logs/.gitkeep
 !bench/.gitkeep
+
+# Claude Code worktrees (parallel sessions per AGENT_PLAN.md)
+.claude/worktrees/
+
+# Side-track scratch logs (notes/track-*.md and notes/track-*.log)
+notes/track-*.log

@@ -1,11 +1,12 @@
 # Project Context — a_bgt_rsi
 
 > **What this document is.** The single canonical orientation document for the
-> `a_bgt_rsi` repository. A future researcher or Claude instance opening this
-> repo cold should read this first, then `ARCHITECTURE.md`, then `DECISIONS.md`,
-> then `plan.yaml`. Source planning documents (`docs/sources/research_program_v2.pdf`,
-> `docs/sources/week1_days_31-37_plan.md`, `docs/sources/research_apparatus_technical_plan_v1.md`)
-> win where this summary conflicts with them.
+> `a_bgt_rsi` repository. A new session should read `START_HERE.md` first
+> for orientation, then this file, then `ARCHITECTURE.md`, `DECISIONS.md`,
+> and `plan.yaml`. The original source planning documents
+> (`research_program_v2.pdf`, `week1_days_31-37_plan.md`,
+> `research_apparatus_technical_plan_v1.md`) are not yet committed under
+> `docs/sources/`; `plan.yaml` is canonical for task content.
 
 ---
 

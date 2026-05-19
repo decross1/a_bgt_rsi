@@ -2,12 +2,15 @@
 
 Phase 1 / Week 1 (Days 31–37) of the research program.
 
-**New here? Start with `PROJECT_CONTEXT.md`** — the canonical orientation
-document — then `ARCHITECTURE.md`, then `DECISIONS.md`, then `plan.yaml`.
+**New here? Start with `START_HERE.md`** — the single orientation
+document — then `PROJECT_CONTEXT.md`, `ARCHITECTURE.md`, `DECISIONS.md`,
+and `plan.yaml`.
 
-The authoritative machine-readable plan is `plan.yaml`; the operating
-contract for Claude Code is `CLAUDE.md`. Source planning documents live in
-`docs/sources/` and win on any conflict with the summaries above.
+`plan.yaml` is the canonical machine-readable plan; the operating
+contract for Claude Code is `CLAUDE.md`. The original source planning
+documents (`week1_days_31-37_plan.md` and the others referenced under
+`docs/sources/`) are **not yet committed** to the repo — until they
+are, `plan.yaml` plus `CLAUDE.md` are the operative authority.
 
 ## Target environment
 
@@ -17,7 +20,27 @@ contract for Claude Code is `CLAUDE.md`. Source planning documents live in
 - Gemma 4 26B-A4B-NVFP4 weights at `/mnt/models/gemma-4-26b-a4b-nvfp4`
 - BGE-M3 weights at `/mnt/models/bge-m3`
 
-Full version pins in `plan.yaml` "Pre-flight" + Appendix C.
+Full version pins in `START_HERE.md` §4 and `plan.yaml` Appendix C.
+
+## Documentation layout
+
+Five documents define how Week 1 runs. They have different audiences;
+know which one to read for which question.
+
+| Document | Audience | Use it for |
+| --- | --- | --- |
+| `START_HERE.md` | Everyone | Orientation, current state, document map, version pins |
+| `plan.yaml` | Claude Code (machine) | Canonical task definitions, validations, hard checkpoints, state schema |
+| `HUMAN_PLAN.md` | The researcher | Daily blockers, Block 1 readings, manual touchpoints inside Block 2, human gates, end-of-day attestations |
+| `AGENT_PLAN.md` | Researcher + Claude Code | Parallel-execution orchestration: which worktree runs which task on which day, per-track system prompts, merge protocol |
+| `CLAUDE.md` | Claude Code (Track A) | Operating contract: inviolate rules, parallel-track rules, what's out of scope |
+
+Day-by-day, the researcher reads `HUMAN_PLAN.md` for what's on their
+plate and `AGENT_PLAN.md` for which terminals to open. Each Claude Code
+session reads `CLAUDE.md` (Track A) or its per-track prompt (Tracks B
+and C), then resumes from `run_state/week1.state.json`. `plan.yaml` is
+canonical for task content; see `START_HERE.md` §3 for the full
+document map and authority rules.
 
 ## Quick start (on the Spark)
 
@@ -25,21 +48,34 @@ Full version pins in `plan.yaml` "Pre-flight" + Appendix C.
 git clone git@github.com:decross1/a_bgt_rsi.git
 cd a_bgt_rsi
 cp .env.example .env  # fill in the 5 credentials
+
+# One-time parallel-execution setup (see AGENT_PLAN.md):
+# .gitignore already ignores .claude/worktrees/; .worktreeinclude is
+# committed and copies .env into new worktrees. Verify with:
+claude --worktree smoke-test   # then `exit` inside the session
+
+# Begin Day 1 (Track A only; Day 1 has no side tracks):
 claude                # then ask it to begin day_1 per plan.yaml
 ```
 
-Claude reads `CLAUDE.md` and `plan.yaml`, then resumes from
-`run_state/week1.state.json`. Pre-flight checks run first; Block 1 of
-day 1 is human-only — Claude prints the reading + problem set and halts.
+Claude reads `START_HERE.md`, `CLAUDE.md`, and `plan.yaml`, then
+resumes from `run_state/week1.state.json`. Pre-flight checks run first;
+Block 1 of day 1 is human-only — Claude prints the reading + problem
+set and halts. From Day 2 onward, open multiple terminals per
+`AGENT_PLAN.md`'s per-day schedule (Track A in one, Tracks B and/or C
+in others).
 
 ## Layout
 
 ```
-PROJECT_CONTEXT.md         # canonical orientation — read this first
+START_HERE.md              # orientation + document map — read this first
+PROJECT_CONTEXT.md         # full project background
 ARCHITECTURE.md            # apparatus architecture walkthrough
 DECISIONS.md               # architectural/operational decision log
-plan.yaml                  # authoritative machine-readable plan
+plan.yaml                  # canonical machine-readable task plan
 CLAUDE.md                  # operating contract for Claude Code
+HUMAN_PLAN.md              # the researcher's daily blocker list
+AGENT_PLAN.md              # parallel-execution orchestration plan
 current_day.md             # active-day progress tracker
 .env.example               # required credentials
 
@@ -62,7 +98,7 @@ notes/                     # per-day debugging / decision notes
 journal/                   # daily public-post index
 setup/                     # per-day setup shell scripts
 docs/diagrams/             # canonical SVG architecture diagrams
-docs/sources/              # source planning documents (authoritative)
+docs/sources/              # original source planning docs (not yet committed)
 
 books/                     # gitignored — PDFs
 clones/                    # gitignored — third-party repos

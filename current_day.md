@@ -109,12 +109,14 @@ Notes:
 
 ## Open items (human decision)
 
-- The authoritative source plan `week1_days_31-37_plan.md` referenced
-  by `CLAUDE.md` / `plan.yaml` is **not in the repo**. Commit it, or
-  amend the contract to name `plan.yaml` canonical.
-- Uncommitted post-Day-1 working-tree edits: `DECISIONS.md`,
-  `notes/day1-bench-debug.md`, `scripts/bench_tokens_per_sec.py` —
-  decide whether to commit before Day 2 artifacts land.
+- ✅ Resolved 2026-05-19: the source plan `week1_days_31-37_plan.md` is
+  not committed to the repo, so `plan.yaml` is now named the canonical
+  plan across `START_HERE.md`, `CLAUDE.md`, `plan.yaml`, `README.md`,
+  `HUMAN_PLAN.md`, and `AGENT_PLAN.md`. If the source doc is later
+  added under `docs/sources/`, revisit which wins on conflict.
+- ⏸️ Pending human decision: resolve the day_2 throughput abort — see
+  the Block 2 section above (accept the ~32 tok/s structural baseline
+  and re-derive the 40 floor, or pull MTP forward from Week 2).
 
 ## Decisions log
 
