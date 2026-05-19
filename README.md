@@ -16,7 +16,7 @@ are, `plan.yaml` plus `CLAUDE.md` are the operative authority.
 
 - NVIDIA DGX Spark (GB10, ARM64)
 - CUDA **13.0** (NOT 13.2 — gibberish on low-bit quants)
-- vLLM image `vllm/vllm-openai:v0.20.0` (NOT `:gemma4`)
+- vLLM image `vllm/vllm-openai:v0.21.0` (NOT `:gemma4`)
 - Gemma 4 26B-A4B-NVFP4 weights at `/mnt/models/gemma-4-26b-a4b-nvfp4`
 - BGE-M3 weights at `/mnt/models/bge-m3`
 

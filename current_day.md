@@ -7,15 +7,15 @@ _Active-day tracker. Authoritative plan: `plan.yaml`. State:
 writes a schema-valid JSONL line; 50+ test calls captured; determinism
 verified (T=0 and T=1/seed=42).
 
-**Status as of 2026-05-18:** ⛔ **Day 2 ABORTED.** Block 2 tasks #1
-(schema) and #2 (wrapper) passed; #3 (50-call sweep) failed validation
-check #3 — aggregate throughput 29.75 tok/s vs the 40 floor (4 of 5
-checks passed; determinism + logging are clean). HUMAN DECISION
-(decross1): the abort is **not** lifted — tok/s ≥ 40 is treated as
-truly blocking. **Day 3 is gated** until throughput is tuned to ≥ 40
-and the sweep re-run passes all 5 checks. Block 3 (#4–#7) does not run.
-Next work: investigate/tune vLLM throughput, then re-run
-`day2_block2_50call_sweep`.
+**Status as of 2026-05-19:** ✅ **Day 2 Block 2 complete; abort
+resolved.** Tasks #1 (schema), #2 (wrapper), #3 (50-call sweep) all
+pass. #3 first failed check #3 (aggregate 29.75 tok/s vs the 40 floor)
+and aborted day_2; the abort was resolved by enabling MTP speculative
+decoding (re-pin to `vllm/vllm-openai:v0.21.0` — D-022). The sweep
+re-run scores aggregate **56.09 tok/s** with all 5 checks passing;
+single-stream decode 32 → 69 tok/s. day_2 abort **LIFTED**
+(human-attested, decross1, 2026-05-19). Next: Block 3 (#4–#7) — #4
+reading is human-only.
 
 **Failure mode / recovery:** vLLM stops responding (thermal? OOM?) →
 cache-clear, restart container, check thermal log; if recurring, cap
@@ -51,20 +51,19 @@ KV cache to ~30 GB.
 |---|------|-----------------|--------|
 | 1 | `day2_block2_jsonl_schema` | **yes** | ✅ passed — `schema/calls.jsonl.schema.json` + `tests/example_call.jsonl`; all 3 checks pass |
 | 2 | `day2_block2_wrapper_implementation` | no | ✅ passed — `agent_wrapper/wrapper.py` (~100 LOC); 3 import checks pass via `.venv/bin/python` |
-| 3 | `day2_block2_50call_sweep` | **yes** (abort_day) | ❌ FAILED — 4/5 checks pass; #3 tok/s 29.75 < 40. **day_2 ABORTED** |
+| 3 | `day2_block2_50call_sweep` | **yes** (abort_day) | ✅ passed — re-run on MTP / v0.21.0; 5/5 checks pass, aggregate 56.09 tok/s. (First run 2026-05-18 failed #3 → aborted; resolved via D-022) |
 
-**Investigation (`scripts/analyze_day2_throughput.py`):** the 29.75
-tok/s is genuine, not a short-completion artifact. Linear fit
-`latency_ms = 59.7 + 31.15·output_tokens` → 60 ms fixed overhead,
-decode-only rate **32.10 tok/s**; longest completions also plateau at
-~31.7. Structural GB10/FP4 ceiling, matching Day-1's 32.03. The 40
-floor (and the [80,130] band) assume MTP speculative decoding, which
-is deferred to Week 2+ (D-019).
-
-**⏸️ PENDING HUMAN DECISION (next session):** resolve the day_2 abort —
-(a) accept ~32 tok/s as the structural baseline + lift the abort +
-flag `plan.yaml`'s MTP-dependent 40 floor / [80,130] band for
-correction, or (b) pull MTP forward from Week 2 to actually reach ≥40.
+**Resolution (2026-05-19) — MTP speculative decoding (D-022).**
+Investigation (`scripts/analyze_day2_throughput.py`) established the
+29.75 tok/s was a genuine weight-bandwidth-bound ceiling on the v0.20.0
+stack, not a measurement artifact — so the fix had to be a real
+throughput lever. Empirical image introspection found v0.20.0 ships no
+Gemma 4 MTP support; v0.21.0 is the first vLLM release with PR #41745.
+Re-pinned the image to `vllm/vllm-openai:v0.21.0` and enabled MTP
+(`--speculative-config method=mtp`, official drafter). Result: decode
+32.21 → 69.44 tok/s, sweep aggregate **56.09** (≥ 40), all 5 checks
+pass, determinism intact. Launch script `setup/day2_vllm_serve_mtp.sh`;
+bench `bench/mtp.csv`.
 
 Notes:
 - Task #1 is `command: null` — schema authoring is the human's; the
@@ -104,8 +103,9 @@ Notes:
    (cause assessed structural: GB10 SM12x has no native FP4). Day 2's
    #3 sweep re-checks an *aggregate* tok/s ≥ 40 floor — watch this; it
    may surface the same shortfall.
-2. **MTP** — deferred to Week 2+ (D-019).
-3. **vLLM image** re-pinned to `vllm/vllm-openai:v0.20.0` (D-020).
+2. **MTP** — ENABLED 2026-05-19 (D-022); was deferred (D-019).
+3. **vLLM image** re-pinned to `vllm/vllm-openai:v0.21.0` (D-022;
+   was `:v0.20.0` / D-020); MTP speculative decoding enabled.
 
 ## Open items (human decision)
 
@@ -114,12 +114,18 @@ Notes:
   plan across `START_HERE.md`, `CLAUDE.md`, `plan.yaml`, `README.md`,
   `HUMAN_PLAN.md`, and `AGENT_PLAN.md`. If the source doc is later
   added under `docs/sources/`, revisit which wins on conflict.
-- ⏸️ Pending human decision: resolve the day_2 throughput abort — see
-  the Block 2 section above (accept the ~32 tok/s structural baseline
-  and re-derive the 40 floor, or pull MTP forward from Week 2).
+- ✅ Resolved 2026-05-19: the day_2 throughput abort — enabled MTP
+  speculative decoding (re-pin to v0.21.0, D-022); the 50-call sweep
+  re-run passes all 5 checks (aggregate 56.09 tok/s). Abort lifted,
+  human-attested (decross1).
 
 ## Decisions log
 
+- 2026-05-19: day_2 abort RESOLVED. Empirically found vLLM v0.20.0
+  lacks Gemma 4 MTP (PR #41745); re-pinned to `vllm/vllm-openai:v0.21.0`
+  and enabled MTP speculative decoding (D-022). 50-call sweep re-run:
+  aggregate 56.09 tok/s, all 5 checks pass; decode 32 → 69 tok/s.
+  day_2 abort lifted (human-attested, decross1).
 - 2026-05-19: day_2 Block 2 — #1 schema + #2 wrapper passed; #3
   50-call sweep failed validation check #3 (tok/s 29.75 < 40), other
   4 checks passed. `day_2` aborted (hard checkpoint). Human chose to

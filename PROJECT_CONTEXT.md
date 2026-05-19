@@ -153,7 +153,7 @@ branches. The operating contract for the executing agent is in `CLAUDE.md`.
 ## 5. Critical operational facts
 
 ### Version pins (inviolate)
-- **vLLM image:** `vllm/vllm-openai:v0.20.0` — NOT `:gemma4` (dev,
+- **vLLM image:** `vllm/vllm-openai:v0.21.0` — NOT `:gemma4` (dev,
   crashes on FP4 GEMM). Tag-naming does NOT imply one is a superset of the
   other; capture the image digest at first boot and pin the digest, not just
   the tag — the tag is a moving target.

@@ -34,8 +34,9 @@ track you are, you are Track A.
    bend. There is no "let the agent help just this once" condition.
 
 2. **Version pins are verbatim.**
-   - vLLM image: `vllm/vllm-openai:v0.20.0` (NOT `:gemma4`, NOT
-     `:gemma4-cu130` — see DECISIONS.md D-020).
+   - vLLM image: `vllm/vllm-openai:v0.21.0` (NOT `:gemma4`,
+     `:gemma4-cu130`, or `:v0.20.0` — see DECISIONS.md D-022; v0.21.0
+     enables Gemma 4 MTP speculative decoding).
    - OpenShell cluster: `ghcr.io/nvidia/openshell/cluster:0.0.13`.
    - CUDA: 13.0 (NOT 13.2 — gibberish on low-bit quants).
    - Embedding: BGE-M3 (NOT all-MiniLM-L6-v2).

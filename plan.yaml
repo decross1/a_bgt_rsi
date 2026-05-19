@@ -7,8 +7,8 @@ content, plan.yaml wins. The agent executing this plan must read the
 preamble before parsing the frontmatter. Block 1 tasks are human_only and
 the agent MUST NOT execute them. Day 7 publication is gated on human
 review. Version pins are inviolate (e.g. the vLLM image tag is
-`vllm/vllm-openai:v0.20.0`, NOT `:gemma4` and NOT `:gemma4-cu130`; CUDA
-must be 13.0, NOT 13.2). The state file is authoritative on resume.
+`vllm/vllm-openai:v0.21.0` (NOT `:gemma4`/`:gemma4-cu130`/`:v0.20.0` —
+see DECISIONS.md D-022); CUDA must be 13.0, NOT 13.2). The state file is authoritative on resume.
 
 This plan is executed across up to three parallel Claude Code worktrees.
 Track A (Main) owns the critical path and is the only track permitted to
@@ -3088,7 +3088,8 @@ execute, assist, summarize, derive, or solve. This rule does not bend.
 There is no "let the agent help just this once" condition.
 
 **2. Version pins are inviolate.**
-- vLLM image: `vllm/vllm-openai:v0.20.0` (NOT `:gemma4`).
+- vLLM image: `vllm/vllm-openai:v0.21.0` (NOT `:gemma4`,
+  `:gemma4-cu130`, or `:v0.20.0` — see D-022; enables Gemma 4 MTP).
 - OpenShell cluster: `ghcr.io/nvidia/openshell/cluster:0.0.13`.
 - CUDA: 13.0 (NOT 13.2 — gibberish on low-bit quants).
 - Embedding: BGE-M3 (NOT all-MiniLM-L6-v2).

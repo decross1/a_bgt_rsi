@@ -83,8 +83,8 @@ bottleneck is identified. See `DECISIONS.md` "Dual model routing excluded."
 ### 2.3 Serving: vLLM
 
 OpenAI-compatible endpoint on `localhost:8000`. Pinned image
-`vllm/vllm-openai:v0.20.0`, vLLM version ≥ 0.19 (the April 2026 release
-that shipped SM121 NVFP4 fixes broken since March). The `:gemma4` tag
+`vllm/vllm-openai:v0.21.0`, vLLM 0.21.0 — the first release with Gemma 4
+MTP speculative decoding (PR #41745; see DECISIONS.md D-022). The `:gemma4` tag
 without `-cu130` is the dev image and crashes on FP4 GEMM — do not use it.
 Tag naming does not imply one tag is a superset of another; the Day-1 plan
 captures the image digest and pins the digest, not just the tag.
@@ -427,10 +427,10 @@ After any rebuild or system restore, before serving inference, verify:
 4. Root crontab contains the 30-minute `drop_caches` entry.
 5. `docker info` works; if `/etc/docker/daemon.json` is present, it uses
    `default-cgroupns-mode: host` (not `cgroupns: host`).
-6. `docker images` shows `vllm/vllm-openai:v0.20.0` AND the digest
+6. `docker images` shows `vllm/vllm-openai:v0.21.0` AND the digest
    matches the one pinned in `run_state/`.
 7. `ls /mnt/models/gemma-4-26b-a4b-nvfp4` shows the NVFP4 weights.
-8. `vllm/vllm-openai:v0.20.0 --version` reports ≥ 0.19.
+8. `vllm/vllm-openai:v0.21.0 --version` reports 0.21.0.
 9. First serve: startup log contains
    `Using NvFp4LinearBackend.FLASHINFER_CUTLASS for NVFP4 GEMM` AND
    `Using 'MARLIN' NvFp4 MoE backend`. If MoE shows `CUTLASS_FP4`, STOP.

@@ -68,9 +68,8 @@ Set `DGX_SPARK_LAN_IP` after the Spark is on your network.
   Gemma 4 26B-A4B-NVFP4 (~12 GB) → `/mnt/models/gemma-4-26b-a4b-nvfp4`;
   BGE-M3 (~1–2 GB) → `/mnt/models/bge-m3`.
 - [ ] Bookmarks file confirms the **inviolate version pins**:
-  - `vllm/vllm-openai:v0.20.0` (NOT `:gemma4` and NOT `:gemma4-cu130` —
-    those are dev/preview tags that fail on the FP4 checkpoint; see
-    `DECISIONS.md` D-020)
+  - `vllm/vllm-openai:v0.21.0` (NOT `:gemma4`, `:gemma4-cu130`, or
+    `:v0.20.0` — see `DECISIONS.md` D-022; v0.21.0 enables Gemma 4 MTP)
   - `ghcr.io/nvidia/openshell/cluster:0.0.13`
 
 ### Failure-mode rehearsal (15 min each, written notes private)

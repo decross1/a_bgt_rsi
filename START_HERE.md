@@ -37,24 +37,18 @@ authoritative state is `run_state/week1.state.json`._
 - **Day 1 — complete.** All 12 tasks closed. NemoClaw onboarding was
   skipped via the planned plain-Docker fallback. Decode throughput
   measured at ~32 tok/s (see below).
-- **Day 2 — ABORTED.** Block 2 task #1 (JSONL schema) and #2 (wrapper)
-  passed. Task #3 (50-call sweep) failed validation check #3 only:
-  aggregate throughput **29.75 tok/s** against a **40 tok/s** floor;
-  the other 4 checks — line count, malformed count, and both
-  determinism checks — passed. Task #3 is a hard checkpoint, so the
-  day aborted.
-- **Human decision (logged).** The abort was **not** lifted. tok/s ≥ 40
-  is being treated as truly blocking; **Day 3 is gated** until
-  throughput reaches ≥ 40 and the sweep re-runs clean on all 5 checks.
-- **Open question for the next session.** Investigation (D-021,
-  `scripts/analyze_day2_throughput.py`) found ~32 tok/s is a genuine
-  structural GB10/FP4 memory-bandwidth ceiling, not a measurement
-  artifact. The 40 floor was calibrated from a ~52 tok/s estimate that
-  does not transfer to this hardware + vLLM 0.20.0 + Marlin FP4 path.
-  Resolution is a **pending human decision**: either accept the
-  structural baseline and re-derive the floor, or pull MTP speculative
-  decoding forward from Week 2 (D-019). Do not silently relax the
-  check.
+- **Day 2 — Block 2 complete.** Tasks #1 (JSONL schema), #2 (wrapper)
+  and #3 (50-call sweep) all pass. #3 first failed on throughput
+  (aggregate 29.75 tok/s vs the 40 floor) and aborted the day; the
+  abort was resolved 2026-05-19 (below). Block 3 (#4 reading, #5
+  journal, #6 ambient, #7 end-of-day) is still pending — #4 is
+  human-only.
+- **Throughput resolved via MTP (D-022).** Decode was weight-bandwidth-
+  bound at ~32 tok/s on the v0.20.0 image. Fix: re-pin to
+  `vllm/vllm-openai:v0.21.0` (first release with Gemma 4 MTP, PR
+  #41745) and enable MTP speculative decoding. Result: single-stream
+  decode 32 → 69 tok/s, the 50-call sweep aggregate 29.75 → 56.09; all
+  5 checks pass; the day_2 abort was lifted (human-attested).
 
 ---
 
@@ -97,7 +91,7 @@ These are verbatim. If the environment does not match, the task
 
 | Pin | Value | Note |
 | --- | --- | --- |
-| vLLM image | `vllm/vllm-openai:v0.20.0` | NOT `:gemma4` and NOT `:gemma4-cu130`. D-020: `:gemma4-cu130` shipped vLLM 0.19.1.dev6 and `KeyError`s on the NVFP4 checkpoint; v0.20.0 serves it cleanly. Pin the image **digest**, not just the tag (D-017). |
+| vLLM image | `vllm/vllm-openai:v0.21.0` | NOT `:gemma4`, `:gemma4-cu130`, or `:v0.20.0`. D-022: v0.21.0 is the first release with PR #41745 (Gemma 4 MTP) and runs MTP speculative decoding. Pin the image **digest**, not just the tag (D-017). |
 | OpenShell cluster | `ghcr.io/nvidia/openshell/cluster:0.0.13` | |
 | CUDA | `13.0` | NOT 13.2 — produces gibberish on low-bit quants. |
 | Embedding model | BGE-M3 (`BAAI/bge-m3`) | NOT ChromaDB's default `all-MiniLM-L6-v2`. |
