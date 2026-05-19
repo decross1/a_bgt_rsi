@@ -3,7 +3,10 @@
 // open (`raw`) so a future day-2 schema addition does not break the UI.
 
 export interface ChainNode {
-  kind: "dispatch" | "call";
+  // "tool" nodes are tool calls — either separate call-log lines or, when
+  // `embedded` is true, synthesized from a wrapper record's tool_calls array
+  // (ui_plan.md section 9, resolved r4).
+  kind: "dispatch" | "call" | "tool";
   request_id: string | null;
   parent_request_id: string | null;
   caller_tag?: string | null;
@@ -14,6 +17,7 @@ export interface ChainNode {
   timestamp: string | null;
   latency_ms: number | null;
   parse_error?: boolean;
+  embedded?: boolean;
   raw: Record<string, unknown>;
   children: ChainNode[];
 }
@@ -94,6 +98,22 @@ export interface TelemetrySample {
   vllm: VllmSample | null;
   processes: ProcessSample[];
   read_errors: Record<string, string> | null;
+}
+
+// --- healthy-baseline card (/api/baseline) ---
+
+export interface BaselineRow {
+  key: string;
+  label: string;
+  value: string;
+  // "measured" — sourced from bench/day1.csv or run_state metric_log;
+  // "documented" — the ui_plan.md section 5.3 constant, no measurement yet.
+  source: "measured" | "documented";
+  documented?: string; // expected figure, present on measured rows
+}
+
+export interface BaselineResponse {
+  rows: BaselineRow[];
 }
 
 // Message shape from the /api/live WebSocket.

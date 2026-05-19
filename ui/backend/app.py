@@ -17,6 +17,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from .baseline import compute_baseline
 from .chain import LogStore, build_chain, recent_tasks
 from .tailer import JsonlTailer
 
@@ -24,6 +25,7 @@ _REPO = Path(__file__).resolve().parents[2]
 DEFAULT_LOGS_DIR = _REPO / "logs"                       # apparatus call/orchestrator logs
 DEFAULT_TELEMETRY = _REPO / "ui" / "logs" / "telemetry.jsonl"
 DEFAULT_STATE = _REPO / "run_state" / "week1.state.json"
+DEFAULT_BENCH_CSV = _REPO / "bench" / "day1.csv"        # day-1 throughput sweep
 
 
 def _git_sha():
@@ -68,7 +70,7 @@ def _tail_lines(path, limit):
 
 
 def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
-               state_file=DEFAULT_STATE):
+               state_file=DEFAULT_STATE, bench_csv=DEFAULT_BENCH_CSV):
     app = FastAPI(title="UI backend — orchestrator dashboard", version=_git_sha())
     # Permissive CORS for local dev (Vite serves the SPA on another port).
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
@@ -107,6 +109,15 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         """Last N telemetry samples, so the dashboard can seed its sparklines."""
         capped = min(max(limit, 1), 2000)
         return {"samples": _tail_lines(telemetry_file, capped)}
+
+    @app.get("/api/baseline")
+    def baseline():
+        """Healthy-baseline card rows, each annotated measured vs documented.
+
+        Data-driven from bench/day1.csv and run_state metric_log when those
+        exist; documented constants otherwise (ui_plan.md sections 5.3, 9).
+        """
+        return compute_baseline(bench_csv, state_file)
 
     @app.get("/api/state")
     def state():
@@ -170,4 +181,5 @@ app = create_app(
     logs_dir=_env_path("UI_LOGS_DIR", DEFAULT_LOGS_DIR),
     telemetry_file=_env_path("UI_TELEMETRY_FILE", DEFAULT_TELEMETRY),
     state_file=_env_path("UI_STATE_FILE", DEFAULT_STATE),
+    bench_csv=_env_path("UI_BENCH_CSV", DEFAULT_BENCH_CSV),
 )

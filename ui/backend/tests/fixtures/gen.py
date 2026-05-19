@@ -23,17 +23,27 @@ _BASE_TS = datetime(2026, 5, 18, 10, 0, 0, tzinfo=timezone.utc)
 
 
 class Call:
-    """One synthetic wrapper/tool call node in a chain."""
+    """One synthetic wrapper/tool call node in a chain.
 
-    def __init__(self, caller_tag, latency_ms, children=None, parse_error=False):
+    `embedded_tools` carries the second tool-call shape (ui_plan.md section 9):
+    a list of dicts written into the wrapper record's `tool_calls` field rather
+    than emitted as their own call-log lines. The chain walker synthesizes them
+    into child nodes that count toward node_count and total_latency_ms, exactly
+    as separate-line tool calls do.
+    """
+
+    def __init__(self, caller_tag, latency_ms, children=None, parse_error=False,
+                 embedded_tools=None):
         self.caller_tag = caller_tag
         self.latency_ms = latency_ms
         self.children = children or []
         self.parse_error = parse_error
+        self.embedded_tools = embedded_tools or []
 
 
-def call(caller_tag, latency_ms, children=None, parse_error=False):
-    return Call(caller_tag, latency_ms, children, parse_error)
+def call(caller_tag, latency_ms, children=None, parse_error=False,
+         embedded_tools=None):
+    return Call(caller_tag, latency_ms, children, parse_error, embedded_tools)
 
 
 # Hand-defined chains with known shapes so tests can assert exact
@@ -58,6 +68,18 @@ TASKS = [
     dict(task_id="day6_task_03", task_type="needle_probe",
          status="started", worker_pid=20177, log_file="day6_5seq.jsonl",
          tree=call("worker", 250, [call("wrapper", 250)])),
+    dict(task_id="day6_task_04", task_type="needle_probe",
+         status="passed", worker_pid=20210, log_file="day6_5seq.jsonl",
+         tree=call("worker", 1400, [
+             call("wrapper", 900, embedded_tools=[
+                 {"name": "semantic_scholar_search", "latency_ms": 88,
+                  "arguments": {"query": "repeated prisoner's dilemma"},
+                  "result": "3 papers"},
+                 {"name": "chroma_query", "latency_ms": 42,
+                  "arguments": {"k": 5}, "result": "5 hits"},
+             ]),
+             call("wrapper", 360),
+         ])),
     dict(task_id="exp001_round_07", task_type="exp001_repeated_pd",
          status="passed", worker_pid=21003, log_file="exp001.jsonl",
          tree=call("worker", 3200, [
@@ -68,11 +90,17 @@ TASKS = [
 
 
 def _count(node):
-    return 1 + sum(_count(child) for child in node.children)
+    # Embedded tools become tree nodes (counted), separate-line children recurse.
+    return (1
+            + sum(_count(child) for child in node.children)
+            + len(node.embedded_tools))
 
 
 def _latency_sum(node):
-    return node.latency_ms + sum(_latency_sum(child) for child in node.children)
+    # Mirrors build_chain.tally: every node contributes, embedded tools too.
+    return (node.latency_ms
+            + sum(_latency_sum(child) for child in node.children)
+            + sum(tool.get("latency_ms", 0) for tool in node.embedded_tools))
 
 
 def expected_manifest():
@@ -119,6 +147,10 @@ def _call_record(node, request_id, parent_request_id, ts, rng):
     }
     if node.parse_error:
         record["parse_error"] = True
+    if node.embedded_tools:
+        # Second tool-call shape: tools embedded in the wrapper record rather
+        # than emitted as their own call-log lines (ui_plan.md section 9).
+        record["tool_calls"] = [dict(tool) for tool in node.embedded_tools]
     return record
 
 

@@ -61,7 +61,9 @@ function TreeNode({ node }: { node: ChainNode }) {
   const label =
     node.kind === "dispatch"
       ? `dispatch · ${node.task_type ?? "task"}`
-      : node.caller_tag ?? "call";
+      : node.kind === "tool"
+        ? `tool · ${node.caller_tag ?? "tool"}`
+        : node.caller_tag ?? "call";
 
   return (
     <div data-testid="chain-node">
@@ -88,6 +90,11 @@ function TreeNode({ node }: { node: ChainNode }) {
           {node.parse_error && (
             <span className="rounded bg-red-950 px-1.5 py-0.5 text-xs text-red-300">
               parse error
+            </span>
+          )}
+          {node.kind === "tool" && node.embedded && (
+            <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
+              embedded
             </span>
           )}
           <span className="ml-auto font-mono text-xs text-zinc-500">

@@ -46,6 +46,25 @@ def test_nested_tool_calls_reconstructed(tmp_path):
     assert [c["caller_tag"] for c in first_wrapper["children"]] == ["tool", "tool"]
 
 
+def test_embedded_tool_calls_reconstructed(tmp_path):
+    # day6_task_04 logs its tools embedded in a wrapper record's `tool_calls`
+    # field rather than as separate call-log lines (ui_plan.md section 9).
+    write_fixtures(tmp_path)
+    chain = build_chain(LogStore(tmp_path), "day6_task_04")
+    worker = chain["root"]["children"][0]
+    first_wrapper = worker["children"][0]
+    tools = first_wrapper["children"]
+    assert [t["kind"] for t in tools] == ["tool", "tool"]
+    assert all(t["embedded"] is True for t in tools)
+    assert all(t["request_id"] is None for t in tools)        # embedded — no own id
+    assert [t["caller_tag"] for t in tools] == [
+        "semantic_scholar_search", "chroma_query"]
+    # embedded tools count as nodes, and their latency is summed exactly as a
+    # separate-line tool call's is — so the total does not depend on the shape.
+    assert chain["node_count"] == 6
+    assert chain["total_latency_ms"] == 1400 + 900 + 88 + 42 + 360
+
+
 def test_recent_tasks_latest_first(tmp_path):
     write_fixtures(tmp_path)
     tasks = recent_tasks(LogStore(tmp_path), limit=10)

@@ -33,8 +33,15 @@ export default function Inspector() {
     };
   }, [taskId]);
 
+  // Embedded tool nodes are not their own log lines (they live inside a
+  // wrapper record), so the raw-JSONL dump skips them to stay 1:1 with the log.
   const rawLines = useMemo(
-    () => (data ? flatten(data.root).map((n) => JSON.stringify(n.raw)) : []),
+    () =>
+      data
+        ? flatten(data.root)
+            .filter((n) => !n.embedded)
+            .map((n) => JSON.stringify(n.raw))
+        : [],
     [data],
   );
 

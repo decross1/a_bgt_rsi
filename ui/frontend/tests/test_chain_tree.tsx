@@ -38,6 +38,37 @@ describe("ChainTree", () => {
     expect(screen.getAllByTestId("chain-node")).toHaveLength(5);
   });
 
+  it("renders an embedded tool call as a node with an embedded badge", () => {
+    // ui_plan.md section 9 (resolved r4): embedded tool calls arrive as
+    // synthesized kind="tool" children alongside the wrapper that owns them.
+    const tool: ChainNode = {
+      kind: "tool",
+      request_id: null,
+      parent_request_id: "wrapper-x",
+      caller_tag: "semantic_scholar_search",
+      timestamp: null,
+      latency_ms: 88,
+      embedded: true,
+      raw: { name: "semantic_scholar_search" },
+      children: [],
+    };
+    const root: ChainNode = {
+      kind: "dispatch",
+      request_id: "root",
+      parent_request_id: null,
+      task_id: "t3",
+      timestamp: null,
+      latency_ms: null,
+      raw: {},
+      children: [{ ...call("wrapper"), children: [tool] }],
+    };
+    render(<ChainTree root={root} />);
+    // dispatch + wrapper + tool = 3 nodes
+    expect(screen.getAllByTestId("chain-node")).toHaveLength(3);
+    expect(screen.getByText("embedded")).toBeInTheDocument();
+    expect(screen.getByText("tool · semantic_scholar_search")).toBeInTheDocument();
+  });
+
   it("flags a parse-error node", () => {
     const root: ChainNode = {
       kind: "dispatch",

@@ -151,3 +151,119 @@ is now built.**
 - The orchestrator queue has no "Waiting" section: `orchestrator.jsonl`
   (§4.3) records dispatches, not a pending-queue depth. Shown as
   Running + Recent only. Revisit if the day-6 schema exposes a queue.
+
+## P0 — resolve ui_plan.md §9 open questions (2026-05-19)
+
+Track D improvement pass. The §6 build ladder (6.1–6.7) is complete;
+this is the first of the improvement priorities.
+
+### Tool-call rendering shape (§9 first bullet) — resolved
+
+Audited `chain.py` and `ChainTree.tsx` against both shapes:
+- **Separate call-log lines** (tool calls with their own `request_id` /
+  `parent_request_id`): already handled — the ordinary
+  `parent_request_id` walk attaches them as children. Covered by
+  `gen.py`'s `day6_task_01` / `exp001_round_07` fixtures and
+  `test_nested_tool_calls_reconstructed`.
+- **Embedded in a wrapper record** (`tool_calls` array): was NOT
+  covered — the walker ignored it and the inspector would only have
+  dumped it inside the generic `raw` JSON.
+
+Resolution: both shapes now converge to one inspector tree. The chain
+walker synthesizes embedded `tool_calls` entries into `kind="tool"`,
+`embedded=true` child nodes (`request_id=null`). Embedded-tool latency
+is summed into `total_latency_ms` exactly as a separate-line tool
+call's latency already is — so a chain's `node_count` and
+`total_latency_ms` do not depend on which shape the wrapper used.
+(`total_latency_ms` stays a labelled rough sum, not wall-clock.) The
+frontend renders `kind="tool"` nodes with a `tool · <name>` label and
+an `embedded` badge; the raw-JSONL dump skips embedded nodes since they
+are not their own log lines.
+
+(Initially this excluded embedded latency from the total to avoid
+double-counting; a code review caught that it left the total
+shape-dependent — separate-line tool calls were still summed — and
+broke the "converge" claim. Corrected to sum both.)
+
+Added: `gen.py` `day6_task_04` fixture (embedded shape, inserted before
+`exp001_round_07` so the latest-dispatch test is unaffected),
+`test_embedded_tool_calls_reconstructed` (backend), and a frontend
+embedded-badge test. `ui_plan.md` bumped r3 → r4.
+
+### Inspector chain-diffing (§9 third bullet) — deferred to v2
+
+Formally deferred. A side-by-side two-chain diff would roughly double
+the inspector layout work for marginal value — the week-1 CLI already
+gives a textual diff via
+`diff <(tools/inspect_run.py --task-id X) <(tools/inspect_run.py --task-id Y)`.
+Rationale committed to `ui_plan.md` §0 r4.
+
+### Experiment-level views (§9 second bullet) — deferred, sketched
+
+Not built. Drafted `ui/ui_plan_v2.md`: a one-page sketch of a v2
+results browser (per-experiment cooperation rates, per-round behavior,
+opponent breakdown) and the data contracts it needs. Key finding: v2
+is blocked on an experiment-result *schema* that does not exist yet —
+filed for Track A in `notes/track-d-observations.md`. Placed the sketch
+under `ui/` rather than the repo root to stay inside Track D's write
+boundary.
+
+## P1 — data-driven healthy-baseline card (2026-05-19)
+
+The baseline card hardcoded day-1 constants (idle ~5 W, tok/s floor 40,
+CUDA 13.0). §5.3 and §9 both call for it to be data-driven. Done.
+
+New `backend/baseline.py` + `GET /api/baseline`: sources decode tok/s
+from `bench/day1.csv` (median of the `decode_tok_per_s` column) and
+`run_state/week1.state.json`'s `metric_log.day1_tokens_per_sec`. Each
+returned row is annotated `source: "measured"` or `source:
+"documented"`; measured rows also carry the documented expectation so
+drift is visible. The endpoint degrades to the documented §5.3
+constants per-row when a source file is absent or unparseable — Track A
+may still be on day 1.
+
+`BaselineCard.tsx` now fetches `/api/baseline` and renders a measured /
+documented badge per row, with the expected figure shown beneath
+measured rows. It seeds with the documented constants and keeps them if
+the backend is unreachable, so the card never goes blank.
+
+### Surprises
+
+- Both source files already exist on disk: `bench/day1.csv` (5-prompt
+  sweep) and `metric_log.day1_tokens_per_sec` = 32.03. So the decode
+  row is **measured** today, not documented. The measured ~32 tok/s
+  sits well below the documented expected band [80,130] and even the
+  NVFP4-no-MTP ~52 figure — exactly the kind of drift the data-driven
+  card is meant to surface. The card shows both side by side; it does
+  not interpret the gap (operating-contract rule 8). `metric_log` also
+  records MTP deferred to Week 2+, consistent with the dashboard's
+  existing "MTP metric absent" tile.
+
+Tests: `backend/tests/test_baseline.py` (6 cases — measured, documented
+fallback, state-only, unpopulated metric_log, malformed csv, non-decode
+rows stay documented), `test_baseline_endpoint` in `test_api.py`, and
+`frontend/tests/test_baseline_card.tsx` (measured badge + unreachable
+fallback). 31 Python + 6 frontend tests pass.
+
+### Decisions
+
+- Only the decode-tok/s row goes data-driven. Idle power and the
+  temp/power threshold bands have no committed measurement source
+  (`bench/day1.csv` carries no power column; `metric_log` has no idle
+  figure) — they stay `documented`. If a source lands later, add a row
+  branch in `compute_baseline`.
+
+### Questions for the human
+
+- **Embedded tool-call key name.** The §9-resolution (r4) for the
+  embedded tool-call shape assumes the wrapper record carries its tools
+  under a `tool_calls` key. The day-4 tool-call work has not landed, so
+  this is a guess. If day 4 uses a different key, the fix is one line
+  (`EMBEDDED_TOOL_KEY` in `backend/chain.py`) — no rework — but please
+  confirm the key name when day 4 lands. Also filed in
+  `notes/track-d-observations.md` for Track A.
+- **v2 results browser is contract-blocked.** `ui/ui_plan_v2.md`
+  sketches the deferred experiment results browser. It cannot be built
+  until the apparatus commits an experiment-result schema (experiment
+  id, round index, agent/opponent actions, payoff). Not a v1 blocker;
+  a heads-up for whoever scopes v2 and for the day-7 experiment work.
