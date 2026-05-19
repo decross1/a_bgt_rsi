@@ -87,3 +87,16 @@ Files written: `tests/needle_in_haystack.py`,
 `notes/track-b-day3-4-scaffolds.md`. No writes to `run_state/`,
 `agent_wrapper/`, `logs/`, `bench/`, `chroma_db/`, or `schema/`. No
 calls to the vLLM endpoint. The day was not advanced.
+
+## Ship record (2026-05-19)
+
+- Code-review pass: no blocking findings. Fixed one whitespace-fragility
+  bug in `needle_found` and one import-style nit; re-verified.
+- Full verification green: all three scaffolds compile and pass in mock
+  mode; the 12 emitted JSONL records validate against Track A's real
+  `calls.jsonl.schema.json` (read from commit `b6fba26`).
+- Branch `worktree-day2-tests` pushed to `origin`. PR to be opened at
+  `https://github.com/decross1/a_bgt_rsi/pull/new/worktree-day2-tests`
+  (the `gh` CLI is not installed in this environment).
+- `DECISIONS.md` (repo root) is project-owned and outside Track B's
+  write scope, so this ship outcome is recorded here instead.
