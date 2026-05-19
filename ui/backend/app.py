@@ -25,7 +25,8 @@ _REPO = Path(__file__).resolve().parents[2]
 DEFAULT_LOGS_DIR = _REPO / "logs"                       # apparatus call/orchestrator logs
 DEFAULT_TELEMETRY = _REPO / "ui" / "logs" / "telemetry.jsonl"
 DEFAULT_STATE = _REPO / "run_state" / "week1.state.json"
-DEFAULT_BENCH_CSV = _REPO / "bench" / "day1.csv"        # day-1 throughput sweep
+DEFAULT_BENCH_CSV = _REPO / "bench" / "day1.csv"        # day-1 throughput sweep (pre-MTP)
+DEFAULT_MTP_CSV = _REPO / "bench" / "mtp.csv"           # MTP-enabled sweep (D-022)
 
 
 def _git_sha():
@@ -70,7 +71,8 @@ def _tail_lines(path, limit):
 
 
 def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
-               state_file=DEFAULT_STATE, bench_csv=DEFAULT_BENCH_CSV):
+               state_file=DEFAULT_STATE, bench_csv=DEFAULT_BENCH_CSV,
+               mtp_csv=DEFAULT_MTP_CSV):
     app = FastAPI(title="UI backend — orchestrator dashboard", version=_git_sha())
     # Permissive CORS for local dev (Vite serves the SPA on another port).
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
@@ -114,10 +116,11 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     def baseline():
         """Healthy-baseline card rows, each annotated measured vs documented.
 
-        Data-driven from bench/day1.csv and run_state metric_log when those
-        exist; documented constants otherwise (ui_plan.md sections 5.3, 9).
+        Data-driven from bench/mtp.csv (MTP-enabled), bench/day1.csv and
+        run_state metric_log when those exist; documented constants
+        otherwise (ui_plan.md sections 5.3, 9).
         """
-        return compute_baseline(bench_csv, state_file)
+        return compute_baseline(bench_csv, state_file, mtp_csv)
 
     @app.get("/api/state")
     def state():
@@ -182,4 +185,5 @@ app = create_app(
     telemetry_file=_env_path("UI_TELEMETRY_FILE", DEFAULT_TELEMETRY),
     state_file=_env_path("UI_STATE_FILE", DEFAULT_STATE),
     bench_csv=_env_path("UI_BENCH_CSV", DEFAULT_BENCH_CSV),
+    mtp_csv=_env_path("UI_MTP_CSV", DEFAULT_MTP_CSV),
 )

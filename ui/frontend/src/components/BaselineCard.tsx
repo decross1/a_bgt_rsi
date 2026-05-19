@@ -1,8 +1,8 @@
 // Healthy-baseline reference card (ui_plan.md sections 5.3, 9). Data-driven:
 // rows come from GET /api/baseline, which sources decode tok/s from
-// bench/day1.csv + run_state metric_log when those exist and falls back to
-// documented constants otherwise. Each row is annotated measured vs
-// documented so the operator can see which numbers are real.
+// bench/mtp.csv (MTP-enabled), bench/day1.csv + run_state metric_log when
+// those exist and falls back to documented constants otherwise. Each row is
+// annotated measured vs documented so the operator can see which are real.
 import { useEffect, useState } from "react";
 import { getBaseline } from "../api/http";
 import type { BaselineRow } from "../types/schemas";
@@ -13,7 +13,7 @@ const FALLBACK_ROWS: BaselineRow[] = [
   {
     key: "decode_tok_per_s",
     label: "Decode tok/s",
-    value: "NVFP4 baseline ≈52; MTP (≈96) deferred; hard floor 40; expected band [80,130]",
+    value: "MTP-engaged expected band [80,130], single-stream ≈96; NVFP4-only ≈52; hard floor 40; MTP-engaged signal ≥50",
     source: "documented",
   },
   {
@@ -43,7 +43,7 @@ const FALLBACK_ROWS: BaselineRow[] = [
   {
     key: "stack",
     label: "Stack",
-    value: "CUDA 13.0 · MARLIN NVFP4 MoE · vLLM v0.20.0",
+    value: "CUDA 13.0 · MARLIN NVFP4 MoE · vLLM v0.21.0 · MTP enabled (Gemma 4 drafter, num_speculative_tokens=4)",
     source: "documented",
   },
 ];
@@ -58,7 +58,7 @@ function SourceBadge({ source }: { source: BaselineRow["source"] }) {
       }
       title={
         measured
-          ? "sourced from bench/day1.csv or run_state metric_log"
+          ? "sourced from bench/mtp.csv, bench/day1.csv or run_state metric_log"
           : "documented constant from ui_plan.md section 5.3 — no measurement yet"
       }
     >
@@ -87,7 +87,7 @@ export default function BaselineCard() {
   return (
     <div className="rounded border border-zinc-800 bg-zinc-900/40 p-4">
       <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-        Healthy baseline (day 1)
+        Healthy baseline
       </h2>
       <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
         {rows.map((row) => (

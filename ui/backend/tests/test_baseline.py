@@ -72,6 +72,47 @@ def test_malformed_bench_csv_degrades(tmp_path):
     assert row["source"] == "documented"
 
 
+def test_decode_row_uses_mtp_csv_when_present(tmp_path):
+    # bench/mtp.csv is the MTP-enabled sweep (D-022) — it drives the row,
+    # with the pre-MTP day-1 bench kept alongside for contrast.
+    day1 = tmp_path / "day1.csv"
+    mtp = tmp_path / "mtp.csv"
+    state = tmp_path / "week1.state.json"
+    _write_bench(day1, [31.34, 32.05, 32.03])
+    _write_bench(mtp, [74.51, 89.81, 69.44, 65.45, 65.06])
+    _write_state(state, 32.03)
+
+    row = _row(compute_baseline(day1, state, mtp), "decode_tok_per_s")
+    assert row["source"] == "measured"
+    assert "MTP-engaged" in row["value"]
+    assert "mtp.csv" in row["value"]
+    assert "pre-MTP day-1" in row["value"]
+    assert row["documented"]
+
+
+def test_decode_row_ignores_absent_mtp_csv(tmp_path):
+    # mtp_csv given but the file does not exist — fall back to the day-1 bench.
+    day1 = tmp_path / "day1.csv"
+    _write_bench(day1, [32.0])
+    row = _row(compute_baseline(day1, tmp_path / "missing.json",
+                                tmp_path / "missing_mtp.csv"), "decode_tok_per_s")
+    assert row["source"] == "measured"
+    assert "MTP-engaged" not in row["value"]
+
+
+def test_decode_row_mtp_only_no_day1(tmp_path):
+    # mtp.csv present, no day-1 bench, state metric_log populated.
+    mtp = tmp_path / "mtp.csv"
+    state = tmp_path / "week1.state.json"
+    _write_bench(mtp, [74.51, 89.81])
+    _write_state(state, 32.03)
+    row = _row(compute_baseline(tmp_path / "missing.csv", state, mtp),
+               "decode_tok_per_s")
+    assert row["source"] == "measured"
+    assert "MTP-engaged" in row["value"]
+    assert "pre-MTP state metric_log" in row["value"]
+
+
 def test_non_decode_rows_stay_documented(tmp_path):
     _write_bench(tmp_path / "day1.csv", [32.0])
     result = compute_baseline(tmp_path / "day1.csv", tmp_path / "missing.json")

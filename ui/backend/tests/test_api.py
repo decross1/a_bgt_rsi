@@ -21,8 +21,11 @@ def _client(tmp_path):
     bench = tmp_path / "day1.csv"
     bench.write_text("prompt_idx,completion_tokens,elapsed_s,decode_tok_per_s\n"
                      "0,256,8.0,32.0\n", encoding="utf-8")
+    # mtp.csv is left to individual tests to create — points at tmp_path so
+    # the repo's real bench/mtp.csv never leaks into a test.
+    mtp = tmp_path / "mtp.csv"
     return TestClient(create_app(logs_dir=logs, telemetry_file=telemetry,
-                                 state_file=state, bench_csv=bench))
+                                 state_file=state, bench_csv=bench, mtp_csv=mtp))
 
 
 def test_health(tmp_path):
@@ -56,13 +59,30 @@ def test_state_passthrough(tmp_path):
 
 
 def test_baseline_endpoint(tmp_path):
+    # No mtp.csv created — decode row falls back to the pre-MTP day-1 bench.
     body = _client(tmp_path).get("/api/baseline").json()
     rows = {r["key"]: r for r in body["rows"]}
     # decode tok/s is measured from the bench csv written by _client
     assert rows["decode_tok_per_s"]["source"] == "measured"
     assert "32.0 tok/s" in rows["decode_tok_per_s"]["value"]
+    assert "MTP-engaged" not in rows["decode_tok_per_s"]["value"]
     # rows with no committed measurement source stay documented
     assert rows["stack"]["source"] == "documented"
+
+
+def test_baseline_endpoint_uses_mtp_csv(tmp_path):
+    # bench/mtp.csv present — the MTP-enabled sweep drives the decode row.
+    (tmp_path / "mtp.csv").write_text(
+        "prompt_idx,prompt_tokens,completion_tokens,ttft_s,"
+        "decode_tok_per_s,e2e_tok_per_s\n"
+        "0,23,256,0.13,74.51,72.0\n1,24,256,0.12,89.81,86.4\n",
+        encoding="utf-8")
+    body = _client(tmp_path).get("/api/baseline").json()
+    row = {r["key"]: r for r in body["rows"]}["decode_tok_per_s"]
+    assert row["source"] == "measured"
+    assert "MTP-engaged" in row["value"]
+    assert "mtp.csv" in row["value"]
+    assert "pre-MTP day-1" in row["value"]          # day-1 bench rides alongside
 
 
 def test_telemetry_recent(tmp_path):

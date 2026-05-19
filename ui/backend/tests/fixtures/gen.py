@@ -143,7 +143,7 @@ def _call_record(node, request_id, parent_request_id, ts, rng):
         "usage": {"input_tokens": rng.randint(80, 600),
                   "output_tokens": rng.randint(20, 240)},
         "host_metadata": {"cuda_driver": "13.0",
-                          "vllm_image_tag": "vllm/vllm-openai:gemma4-cu130"},
+                          "vllm_image_tag": "vllm/vllm-openai:v0.21.0"},
     }
     if node.parse_error:
         record["parse_error"] = True

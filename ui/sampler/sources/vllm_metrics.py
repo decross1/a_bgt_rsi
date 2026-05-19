@@ -11,7 +11,7 @@ import time
 import requests
 
 # Candidate metric names, most-preferred first. Names drift between vLLM
-# releases (ui_plan.md section 7) -- verified against vLLM v0.20.0.
+# releases (ui_plan.md section 7) -- core gauges verified against v0.20.0.
 _RUNNING = ["vllm:num_requests_running"]
 _WAITING = ["vllm:num_requests_waiting"]
 # KV-cache usage gauge: renamed kv_cache_usage_perc in newer vLLM.
@@ -21,11 +21,19 @@ _PREFIX_HIT_GAUGE = ["vllm:gpu_prefix_cache_hit_rate"]
 _PREFIX_QUERIES = ["vllm:prefix_cache_queries_total"]
 _PREFIX_HITS = ["vllm:prefix_cache_hits_total"]
 _GEN_TOKENS = ["vllm:generation_tokens_total"]
-# Speculative-decoding / MTP counters -- absent unless the build exports
-# them; the mtp_* fields stay null when missing.
+# Speculative-decoding / MTP counters. As of D-022 the apparatus runs MTP on
+# vLLM v0.21.0 (--speculative-config method=mtp), so these are expected to be
+# present. The v1 engine exports per-counter totals (no acceptance-rate
+# gauge) -- when the gauge is absent, read() derives the rate from the
+# accepted/draft deltas. The candidate lists cover the v1 counter names
+# (Prometheus appends _total) and their unsuffixed forms; the exact v0.21.0
+# names still want a live-server check (see ui/notes/ui-build.md). The mtp_*
+# fields stay null if a build exports none of them.
 _SPEC_ACCEPT_RATE = ["vllm:spec_decode_draft_acceptance_rate"]
-_SPEC_DRAFT = ["vllm:spec_decode_num_draft_tokens_total"]
-_SPEC_ACCEPTED = ["vllm:spec_decode_num_accepted_tokens_total"]
+_SPEC_DRAFT = ["vllm:spec_decode_num_draft_tokens_total",
+               "vllm:spec_decode_num_draft_tokens"]
+_SPEC_ACCEPTED = ["vllm:spec_decode_num_accepted_tokens_total",
+                  "vllm:spec_decode_num_accepted_tokens"]
 
 
 def parse_prometheus(text):

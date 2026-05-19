@@ -10,16 +10,40 @@
 > schemas in `schema/`) but do NOT share source files outside `ui/`.
 > Read the operating contract below before doing anything.
 >
-> **Revision r2 (2026-05-18).** Revised after two reviews against the
-> repo and `plan.yaml`. Changes are summarized in §0. The most
-> consequential: the apparatus does not produce a single
-> `logs/calls.jsonl` — call logs are per-day files (§4.2); and the
-> stack now runs MTP speculative decoding, which adds a first-class
-> health signal the dashboard must surface (§4.1, §5.3).
+> **Revision r5 (2026-05-19).** All build steps (6.1–6.7) plus three
+> improvement passes are done; full history is in §0. The latest pass
+> (r5) syncs the UI to apparatus decision D-022 — MTP speculative
+> decoding enabled, vLLM re-pinned `v0.20.0` → `v0.21.0` — so the
+> baseline card and the MTP tile reflect MTP being on, not deferred.
 
 ---
 
 ## 0. Revision log
+
+**r5 (2026-05-19)** — MTP-sync pass (Track D), bringing the UI in line
+with apparatus decision D-022 (day 2: throughput abort resolved by
+enabling MTP speculative decoding and re-pinning vLLM `v0.20.0` →
+`v0.21.0`; decode 32 → 69 tok/s). The UI's earlier steps were built
+while MTP was deferred, so this pass corrects the data sources and
+copy. All under `ui/`.
+
+- **Baseline card sources `bench/mtp.csv`.** `GET /api/baseline`
+  (`backend/baseline.py`) now takes the MTP-enabled sweep as a third
+  decode source; when `bench/mtp.csv` exists the decode row reports the
+  MTP-engaged median (~69 tok/s) and keeps the pre-MTP `bench/day1.csv`
+  / `metric_log` figure (~32) alongside as `pre-MTP …`. The documented
+  constants dropped "MTP (≈96) deferred"; the stack row reads `vLLM
+  v0.21.0 · MTP enabled`. `BaselineCard`'s unreachable-backend fallback
+  rows match, and the card title dropped "(day 1)" — the decode row is
+  now a day-2 measurement.
+- **MTP tile colour-coded.** The vLLM panel's MTP-acceptance tile is
+  green at ≥50% (the §5.3 "MTP engaged" signal), amber below, gray when
+  the metric is absent ("MTP off / metric absent"). The sampler's
+  speculative-decoding candidate names were broadened to the v1
+  engine's counters (with/without the Prometheus `_total` suffix); the
+  exact v0.21.0 names still want a live-server check (`ui-build.md`).
+- The §0 banner at the top of this file was stale at r2 through the
+  r3/r4 passes; corrected to r5.
 
 **r4 (2026-05-19)** — improvement pass over the built steps 6.1–6.7
 (Track D); resolves two of the three §9 open questions:
