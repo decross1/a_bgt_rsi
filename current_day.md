@@ -14,8 +14,13 @@ and aborted day_2; the abort was resolved by enabling MTP speculative
 decoding (re-pin to `vllm/vllm-openai:v0.21.0` — D-022). The sweep
 re-run scores aggregate **56.09 tok/s** with all 5 checks passing;
 single-stream decode 32 → 69 tok/s. day_2 abort **LIFTED**
-(human-attested, decross1, 2026-05-19). Next: Block 3 (#4–#7) — #4
-reading is human-only.
+(human-attested, decross1, 2026-05-19).
+
+**Day 2 COMPLETE (2026-05-19).** Block 3: reading (#4) + ambient (#6)
+human-attested; journal (#5) stub at `journal/day2.md` — prose is the
+human's to write + publish; end-of-day (#7) artifacts committed and
+Day 3 pre-staged (`setup/day3_chroma.sh`). `current_day` advances to
+`day_3` on the next session's resume — day_3 Block 1 is human-only (HALT).
 
 **Failure mode / recovery:** vLLM stops responding (thermal? OOM?) →
 cache-clear, restart container, check thermal log; if recurring, cap
@@ -81,10 +86,10 @@ Notes:
 
 | # | Task | Type | Status |
 |---|------|------|--------|
-| 4 | `day2_block3_reading` | human-only, blocking | ⏳ pending — Melanie Mitchell on Sakana + one Twitter thread |
-| 5 | `day2_block3_journal` | human-assisted | ⏳ pending — public post 200–300 words; agent stubs with data inserts |
-| 6 | `day2_ambient` | human-only | ⏳ pending — EconTalk: Al Roth on market design |
-| 7 | `day2_end_of_day_artifacts` | agent-executable | ⏳ pending — commit artifacts; pre-stage Day 3 |
+| 4 | `day2_block3_reading` | human-only, blocking | ✅ passed — human attestation (decross1) 2026-05-19 |
+| 5 | `day2_block3_journal` | human-assisted | ✅ stub generated — `journal/day2.md`, data inserts pre-filled; prose + publication is the human's |
+| 6 | `day2_ambient` | human-only | ✅ passed — human attestation (decross1) 2026-05-19 |
+| 7 | `day2_end_of_day_artifacts` | agent-executable | ✅ passed — `logs/day2.jsonl` + journal + run_state committed; Day 3 pre-staged (`setup/day3_chroma.sh`) |
 
 ## Validation gates (Day 2)
 
@@ -121,6 +126,12 @@ Notes:
 
 ## Decisions log
 
+- 2026-05-19: day_2 Block 3 + end-of-day. Reading (#4) and ambient (#6)
+  human-attested complete (decross1). Journal (#5) stub generated at
+  `journal/day2.md` — prose left to the human (human_assisted).
+  End-of-day (#7): `logs/day2.jsonl` committed (verify_log_integrity=0),
+  Day 3 pre-staged (`setup/day3_chroma.sh`; BGE-M3 weights confirmed at
+  `/mnt/models/bge-m3`). **day_2 complete.**
 - 2026-05-19: day_2 abort RESOLVED. Empirically found vLLM v0.20.0
   lacks Gemma 4 MTP (PR #41745); re-pinned to `vllm/vllm-openai:v0.21.0`
   and enabled MTP speculative decoding (D-022). 50-call sweep re-run:
