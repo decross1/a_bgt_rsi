@@ -54,18 +54,24 @@ MALFORMED_CASES = [
 
 def get_client(orchestrator_log):
     """Return (client, mode). Prefers the real Day 6 OrchestratorClient;
-    falls back to the mock only when it is absent AND MOCK_LLM=1."""
-    cls = load_orchestrator_client()
+    falls back to the mock only when it is genuinely absent AND
+    MOCK_LLM=1. A real orchestrator that exists but fails to load is a
+    hard failure -- never masked by the mock."""
+    cls, load_err = load_orchestrator_client()
     if cls is not None:
         return cls(), "real"
+    if load_err is not None:
+        print(f"FAIL: {load_err}\nThe real orchestrator exists but is "
+              "broken; refusing to fall back to the mock.", file=sys.stderr)
+        sys.exit(2)
     if os.environ.get("MOCK_LLM"):
         log = orchestrator_log or os.path.join(
             tempfile.gettempdir(), "track_b_orchestrator_malformed.jsonl")
         Path(log).write_text("")  # fresh log per run
         return MockOrchestratorClient(log_path=log), "mock"
-    print("FAIL: orchestrator/openclaw_runner.py not found and MOCK_LLM "
-          "is unset. Build the Day 6 orchestrator, or run with MOCK_LLM=1.",
-          file=sys.stderr)
+    print("FAIL: orchestrator/openclaw_runner.py does not exist yet "
+          "(Day 6 builds it) and MOCK_LLM is unset. Run with MOCK_LLM=1 "
+          "to exercise this scaffold.", file=sys.stderr)
     sys.exit(2)
 
 

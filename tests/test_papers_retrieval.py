@@ -163,6 +163,9 @@ def main():
                          "this. Plan target is 1000 ms.")
     args = ap.parse_args()
 
+    if args.top_k < 1:
+        ap.error("--top-k must be >= 1")
+
     mock = bool(os.environ.get("MOCK_LLM"))
 
     t0 = time.perf_counter()

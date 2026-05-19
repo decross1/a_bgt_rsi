@@ -141,7 +141,10 @@ written JSON — not gated by the script, per the plan.
   `notes/track-b-day5-6-scaffolds.md`.
 - On Day 6, `tests/_orchestrator_contract.py` will pick up the real
   `OrchestratorClient` automatically once `orchestrator/openclaw_runner.py`
-  exists — no test edit needed if the assumed API holds.
+  exists — no test edit needed if the assumed API holds. If that file
+  exists but fails to import, the tests exit non-zero with the load
+  error; they never fall back to the mock over a broken real
+  orchestrator (so a broken Day 6 build cannot pass as green).
 - The Day 6 command writes test output to `logs/` (e.g.
   `logs/day6_5seq.jsonl`); the `--output` default is a tempdir path so a
   Track B smoke run never writes to `logs/`.

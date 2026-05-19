@@ -62,26 +62,39 @@ def _utc_now():
 # Loading the real orchestrator (Day 6) -- with no __init__.py required.
 # --------------------------------------------------------------------------
 def load_orchestrator_client():
-    """Return the real OrchestratorClient class, or None if Day 6 has not
-    built orchestrator/openclaw_runner.py yet.
+    """Return (OrchestratorClient_class, load_error).
 
-    Tries a normal package import first, then a direct file load (so the
-    test works whether or not Day 6 adds orchestrator/__init__.py)."""
-    try:
-        from orchestrator.openclaw_runner import OrchestratorClient  # noqa
-        return OrchestratorClient
-    except Exception:  # ImportError, or the file imports something missing
-        pass
+      - (cls, None)  -- the real Day 6 orchestrator is available.
+      - (None, None) -- orchestrator/openclaw_runner.py does not exist yet
+                        (pre-Day-6); the caller MAY fall back to the mock.
+      - (None, str)  -- the file EXISTS but failed to load. The caller must
+                        SURFACE this and never fall back to the mock: a
+                        broken real orchestrator must not pass as a mock.
+
+    Absent vs. broken is decided by the file's existence, not by a caught
+    exception -- so a broken Day 6 orchestrator can never masquerade as
+    'not built yet'. Tries a normal package import first, then a direct
+    file load (so it works whether or not Day 6 adds
+    orchestrator/__init__.py)."""
     path = REPO_ROOT / "orchestrator" / "openclaw_runner.py"
     if not path.exists():
-        return None
+        return None, None
+    try:
+        from orchestrator.openclaw_runner import OrchestratorClient  # noqa
+        return OrchestratorClient, None
+    except Exception:  # not a package / no __init__.py -- try a file load
+        pass
     try:
         spec = importlib.util.spec_from_file_location("openclaw_runner", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        return getattr(mod, "OrchestratorClient", None)
-    except Exception:
-        return None
+    except Exception as exc:
+        return None, (f"{path} exists but failed to import: "
+                      f"{type(exc).__name__}: {exc}")
+    cls = getattr(mod, "OrchestratorClient", None)
+    if cls is None:
+        return None, f"{path} loaded but defines no OrchestratorClient"
+    return cls, None
 
 
 # --------------------------------------------------------------------------
