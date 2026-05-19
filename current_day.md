@@ -1,140 +1,135 @@
-# Current day — day_1: hardware online, stack verified
+# Current day — day_2: Python wrapper + JSONL logging
 
 _Active-day tracker. Authoritative plan: `plan.yaml`. State:
 `run_state/week1.state.json`. Run log: `run_state/week1.run.jsonl`._
 
-**Day goal:** vLLM serves Gemma 4 26B MoE; curl returns coherent text;
-tokens/sec recorded; NemoClaw onboarded or fallback logged.
+**Day goal:** Every Gemma 4 call goes through `wrapper.py`; every call
+writes a schema-valid JSONL line; 50+ test calls captured; determinism
+verified (T=0 and T=1/seed=42).
 
-**Status as of 2026-05-18:** ✅ **Day 1 complete.** vLLM v0.20.0 serves
-Gemma 4 on `localhost:8000`; all Block 2 tasks closed; journal stub +
-end-of-day artifacts committed. Next: Day 2 (Python wrapper + JSONL
-logging) — start deliberately. NOTE: bench was 32 tok/s, below the 40
-floor — human-accepted as the Day-1 baseline (see below).
+**Status as of 2026-05-18:** ⛔ **Day 2 ABORTED.** Block 2 tasks #1
+(schema) and #2 (wrapper) passed; #3 (50-call sweep) failed validation
+check #3 — aggregate throughput 29.75 tok/s vs the 40 floor (4 of 5
+checks passed; determinism + logging are clean). HUMAN DECISION
+(decross1): the abort is **not** lifted — tok/s ≥ 40 is treated as
+truly blocking. **Day 3 is gated** until throughput is tuned to ≥ 40
+and the sweep re-run passes all 5 checks. Block 3 (#4–#7) does not run.
+Next work: investigate/tune vLLM throughput, then re-run
+`day2_block2_50call_sweep`.
 
-## Pre-flight
+**Failure mode / recovery:** vLLM stops responding (thermal? OOM?) →
+cache-clear, restart container, check thermal log; if recurring, cap
+KV cache to ~30 GB.
 
-| Task | Type | Status |
-|------|------|--------|
-| `preflight_credentials_staged` | agent | ✅ passed — 5 keys in `~/.config/bgt_rsi/secrets` |
-| `preflight_software_prestaged` | agent (hard checkpoint) | ✅ passed — 3 bookmarks, 4 clones, 3 model dirs |
-| `preflight_failure_walkthroughs` | human-only | ✅ done (human attestation 2026-05-18) |
-| `preflight_physical_setup` | human-only | ✅ done (human attestation 2026-05-18) |
+## Wall-clock windows
+
+| Block | Window |
+|-------|--------|
+| Block 1 — Foundations | 08:30–10:00 |
+| Block 2 — Build | 10:30–12:30 |
+| Block 3 — Read/Write | 13:30–14:30 |
+| Ambient | 14:30–15:30 |
+| End of day | 15:30–16:00 |
 
 ## Block 1 — Foundations (human-only, NO AI)
 
-> HALT. Reading: O&R *A Course in Game Theory* Ch. 6 §6.1–6.3.
-> Problem set: O&R 6.1, 6.2, 6.3 — pen and paper, by hand.
+> HALT. Reading: O&R *A Course in Game Theory* Ch. 6 §6.4–6.5 + start
+> Ch. 7 (subgame perfect equilibrium, one-deviation principle).
+> Problem set: O&R 6.7, 6.10, 7.1 — pen and paper, by hand. Derive the
+> one-deviation principle by hand.
 > Claude does not assist, summarize, or solve. Mark complete only after
-> the time window elapses.
+> the time window elapses (human attestation).
 
-✅ `day1_block1_reading` + `day1_block1_problemset` marked complete by
-human attestation, 2026-05-18 — no AI involvement.
+| Task | Type | Status |
+|------|------|--------|
+| `day2_block1_reading` | human-only, blocking | ✅ passed — human attestation (decross1) 2026-05-18 |
+| `day2_block1_problemset` | human-only | ✅ passed — human attestation (decross1) 2026-05-18 |
 
 ## Block 2 — Build (agent-executable)
 
 | # | Task | Hard checkpoint | Status |
 |---|------|-----------------|--------|
-| 3 | `day1_block2_unbox` | no | ✅ passed — ping 10.0.0.73 ok |
-| 4 | `day1_block2_firmware` | **yes** | ✅ passed — GB10, CUDA 13.0, 5 W idle |
-| 5 | `day1_block2_docker_config` | no | ✅ passed — cron + cgroupns (plan bug noted) |
-| 6 | `day1_block2_vllm_serve` | **yes** | ✅ passed — vLLM v0.20.0 serving; MARLIN MoE; curl ok 1.45 s |
-| 7 | `day1_block2_bench` | no | ⚠️ 32 tok/s — below 40 floor; human-accepted as Day-1 baseline |
-| 9 | `day1_block2_nemoclaw_router` | no | ✅ probe → plain-Docker fallback branch |
-| 10 | `day1_block2_nemoclaw_primary` | no | ⏭️ skipped (router branched to fallback) |
-| 11 | `day1_block2_nemoclaw_fallback` | no | ✅ passed — hardened Docker sandbox verified |
+| 1 | `day2_block2_jsonl_schema` | **yes** | ✅ passed — `schema/calls.jsonl.schema.json` + `tests/example_call.jsonl`; all 3 checks pass |
+| 2 | `day2_block2_wrapper_implementation` | no | ✅ passed — `agent_wrapper/wrapper.py` (~100 LOC); 3 import checks pass via `.venv/bin/python` |
+| 3 | `day2_block2_50call_sweep` | **yes** (abort_day) | ❌ FAILED — 4/5 checks pass; #3 tok/s 29.75 < 40. **day_2 ABORTED** |
+
+**Investigation (`scripts/analyze_day2_throughput.py`):** the 29.75
+tok/s is genuine, not a short-completion artifact. Linear fit
+`latency_ms = 59.7 + 31.15·output_tokens` → 60 ms fixed overhead,
+decode-only rate **32.10 tok/s**; longest completions also plateau at
+~31.7. Structural GB10/FP4 ceiling, matching Day-1's 32.03. The 40
+floor (and the [80,130] band) assume MTP speculative decoding, which
+is deferred to Week 2+ (D-019).
+
+**⏸️ PENDING HUMAN DECISION (next session):** resolve the day_2 abort —
+(a) accept ~32 tok/s as the structural baseline + lift the abort +
+flag `plan.yaml`'s MTP-dependent 40 floor / [80,130] band for
+correction, or (b) pull MTP forward from Week 2 to actually reach ≥40.
+
+Notes:
+- Task #1 is `command: null` — schema authoring is the human's; the
+  agent only validates the output (valid JSON Schema, 14 required
+  fields, jq parses an example line).
+- Task #2 is `agent_assisted` / `command: null` — agent prepares
+  scaffolding; the human (or a sub-agent with file-write authority)
+  writes the implementation. Resist abstraction — ~100-line code
+  budget. `agent_wrapper/wrapper.py` already exists from Day-1
+  pre-staging; reconcile against the locked schema before extending.
+- Task #3 `on_failure: abort_day` — a determinism divergence halts the
+  day; Day 3 does not start until it is fixed.
 
 ## Block 3 / end of day
 
-| # | Task | Status |
-|---|------|--------|
-| 8 | `day1_block3_journal` | ✅ stub generated — `journal/day1.md` |
-| 12 | `day1_end_of_day_artifacts` | ✅ artifacts committed |
+| # | Task | Type | Status |
+|---|------|------|--------|
+| 4 | `day2_block3_reading` | human-only, blocking | ⏳ pending — Melanie Mitchell on Sakana + one Twitter thread |
+| 5 | `day2_block3_journal` | human-assisted | ⏳ pending — public post 200–300 words; agent stubs with data inserts |
+| 6 | `day2_ambient` | human-only | ⏳ pending — EconTalk: Al Roth on market design |
+| 7 | `day2_end_of_day_artifacts` | agent-executable | ⏳ pending — commit artifacts; pre-stage Day 3 |
 
-## Day 1 complete — next steps
+## Validation gates (Day 2)
 
-**Day 1 is done.** All pre-flight, Block 1, and Block 2 tasks closed;
-journal stub + end-of-day artifacts committed. vLLM v0.20.0 serves
-Gemma 4 on `localhost:8000`. `state.json current_day` left at `day_1`
-— advance to `day_2` deliberately when starting Day 2.
+- **#1 schema:** valid JSON Schema (Draft 2020-12); `required` array
+  has all 14 fields; `jq` parses `tests/example_call.jsonl`.
+- **#3 sweep:** `wc -l logs/day2.jsonl` = 50; `verify_log_integrity`
+  returns 0; aggregate decode tok/s ≥ 40; 3 identical completions at
+  T=0; 3 identical completions at T=1/seed=42.
+- **#7 end-of-day:** files committed + clean tree; `verify_log_integrity`
+  = 0; `journal/index.md` updated; Day 3 pre-staged
+  (`setup/day3_chroma.sh` queued, BGE-M3 weights at `/mnt/models/bge-m3`).
 
-Carried into Day 2 / later:
+## Carried in from Day 1
 
-1. **Day 2** — Python wrapper around vLLM; every call writes
-   schema-valid JSONL; determinism verified. Day 2's Block 2 was gated
-   on Day 1's vLLM server — now satisfied.
-2. **tok/s 32 vs plan floor 40** — accepted as the Day-1 baseline;
-   throughput tuning is an optimization-pass item (`notes/day1-bench-debug.md`).
-3. **MTP** — deferred to Week 2+ (D-019).
-4. **`plan.yaml` validation fixes** — `day1_block2_docker_config` and
-   `day1_block2_vllm_serve` check #2 (see Plan bugs below).
+1. **tok/s 32 vs plan floor 40** — accepted as the Day-1 baseline
+   (cause assessed structural: GB10 SM12x has no native FP4). Day 2's
+   #3 sweep re-checks an *aggregate* tok/s ≥ 40 floor — watch this; it
+   may surface the same shortfall.
+2. **MTP** — deferred to Week 2+ (D-019).
+3. **vLLM image** re-pinned to `vllm/vllm-openai:v0.20.0` (D-020).
 
-## Plan bugs found (Block 2)
+## Open items (human decision)
 
-- `day1_block2_docker_config`: the command writes an invalid
-  `daemon.json` key `cgroupns` (dockerd rejects it) — corrected to
-  `default-cgroupns-mode` in `setup/day1_docker_config.sh`. Its
-  validation `docker info | grep -i cgroup` → `host` also cannot pass:
-  `docker info` never reports cgroup namespace mode. Both warrant a
-  `plan.yaml` fix (pending human approval).
-- `day1_block2_vllm_serve`: (a) the original pinned image
-  `:gemma4-cu130` (vLLM 0.19.1.dev6) could not load the NVFP4
-  checkpoint — re-pinned to `:v0.20.0` (D-020). (b) MTP deferred to
-  Week 2+ — needs a post-PR-#41745 image (D-019). (c) v0.20.0 needs
-  `--max-num-batched-tokens 8192` (multimodal MM-budget). (d) validation
-  check #2 expects a `FLASHINFER_CUTLASS for NVFP4 GEMM` log line the
-  GB10 never emits (no native FP4, SM12x) — needs correcting in `plan.yaml`.
+- The authoritative source plan `week1_days_31-37_plan.md` referenced
+  by `CLAUDE.md` / `plan.yaml` is **not in the repo**. Commit it, or
+  amend the contract to name `plan.yaml` canonical.
+- Uncommitted post-Day-1 working-tree edits: `DECISIONS.md`,
+  `notes/day1-bench-debug.md`, `scripts/bench_tokens_per_sec.py` —
+  decide whether to commit before Day 2 artifacts land.
 
 ## Decisions log
 
-- 2026-05-18: `/mnt/models` chosen as the shared cross-project model
-  store on the DGX Spark (owner `decross1`, mode 755 — readable by other
-  processes and by container `:ro` bind mounts).
-- 2026-05-18: stale `human_gates_pending` entry cleared after
-  `preflight_credentials_staged` passed; moved to `completed_tasks`.
-- 2026-05-18: `clones/dgx-spark-playbooks` and `clones/open_spiel`
-  cloned successfully.
-- 2026-05-18: applied human-approved MTP / model-stack update to
-  `plan.yaml` (6 edits — weights size ~19 GB, MTP drafter pinned,
-  `day1_block2_vllm_serve` launch + validation extended, tok/s band
-  → [80, 130], Appendix C + `infra/bookmarks.txt` updated).
-- 2026-05-18: `/mnt/models` created (sudo; owner decross1, mode 755);
-  staged gemma-4-26b-a4b-nvfp4 (18 GB), bge-m3 (4.3 GB), and the
-  gemma-4-26b-a4b-it-assistant MTP drafter (832 MB) via huggingface_hub
-  (`.venv-staging`).
-- 2026-05-18: cloned the final 2 repos per human decision —
-  `clones/autoresearch` = karpathy/autoresearch (substitutes the plan's
-  matt-langston/autoresearch), `clones/game-reasoning-arena` =
-  SLAMPAI/game_reasoning_arena. `preflight_software_prestaged` passed
-  (exit 0); task #2 complete.
-- 2026-05-18: human-only tasks marked complete by human attestation
-  (decross1) — preflight_failure_walkthroughs, preflight_physical_setup,
-  day1_block1_reading, day1_block1_problemset. Recorded in state file +
-  run log. Day 1 Block 2 (the technical build) remains unrun.
-- 2026-05-18: Block 2 #3 (unbox) passed — ping 10.0.0.73 3/3, 0% loss;
-  #4 (firmware) passed — nvidia-smi GB10 / CUDA 13.0 / 5 W idle; #5
-  (docker_config) passed with a noted plan bug — invalid daemon.json
-  key `cgroupns` corrected to `default-cgroupns-mode`; docker daemon up.
-- 2026-05-18: task #6 — MTP launch failed (image predated PR #41745);
-  baseline launch on `:gemma4-cu130` also failed (NVFP4 expert
-  `input_scale` KeyError); `day_1` aborted, then recovered. vLLM image
-  re-pinned `:gemma4-cu130` → `:v0.20.0` (human-authorized, D-020);
-  v0.20.0 serves Gemma 4 (MARLIN MoE, curl ok 1.45 s) — task #6 passed,
-  abort lifted. MTP deferred to Week 2+ (D-019). Re-pin applied across
-  `plan.yaml` / `CLAUDE.md` / `infra/bookmarks.txt` / docs.
-- 2026-05-18: Day 1 closed — #7 bench 32 tok/s logged as a fault then
-  human-accepted as the Day-1 baseline; #9 router → plain-Docker
-  fallback; #11 fallback verified (seccomp + no-new-privileges +
-  cap-drop); #8 journal stub written (`journal/day1.md`); #12
-  end-of-day artifacts committed. **Day 1 complete.**
-- 2026-05-18: post-Day-1 `plan.yaml` corrections applied (human-approved,
-  3 of the "Plan bugs found" items): (1) `researcher` field `huchi` →
-  `decross1`; (2) `day1_block2_vllm_serve` command gains
-  `--max-num-batched-tokens 8192` (84c); (3) the un-passable
-  `FLASHINFER_CUTLASS for NVFP4 GEMM` startup-log check removed from the
-  task #6 `expected_observable` and `validation` blocks (84d) — GB10/SM12x
-  has no native FP4, so vLLM uses the Marlin weight-only path and never
-  emits that line; the MARLIN MoE-backend check remains. Still open: the
-  authoritative source plan `week1_days_31-37_plan.md` referenced by
-  `CLAUDE.md`/`plan.yaml` is not in the repo — needs to be committed or
-  the contract amended to name `plan.yaml` canonical (human decision).
+- 2026-05-19: day_2 Block 2 — #1 schema + #2 wrapper passed; #3
+  50-call sweep failed validation check #3 (tok/s 29.75 < 40), other
+  4 checks passed. `day_2` aborted (hard checkpoint). Human chose to
+  treat #3 as blocking; throughput investigation
+  (`scripts/analyze_day2_throughput.py`) confirmed ~32 tok/s is a
+  structural GB10/FP4 ceiling. Resolution deferred to next session.
+- 2026-05-18: created project venv `.venv` (gitignored) and installed
+  `requirements.txt` (openai 2.37.0, jsonschema 4.26.0, pydantic 2.13.4,
+  requests 2.34.2). The plan's bare `python3` commands lack these deps;
+  per human decision, Day-2 Python commands run as `.venv/bin/python`.
+- 2026-05-18: `current_day` advanced `day_1` → `day_2` on resume
+  (`resume-state`). All 12 Day-1 tasks complete (#10 skipped via the
+  NemoClaw → plain-Docker fallback branch). State transition logged to
+  `week1.run.jsonl`. Resume point: `day2_block1_reading` — HALTED at
+  Block 1 per Inviolate Rule 1 (No Block 1).
