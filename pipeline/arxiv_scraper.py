@@ -170,14 +170,15 @@ def fetch_papers(categories, since_days, api_key=None):
 
     seen = set()
     deduped = []
-    for category in categories:
+    for index, category in enumerate(categories):
+        if index > 0:
+            time.sleep(_REQUEST_SPACING_S)  # spacing between categories
         for paper in _search_category(category, date_range, headers):
             arxiv_id = paper["arxiv_id"]
             if arxiv_id in seen:
                 continue
             seen.add(arxiv_id)
             deduped.append(paper)
-        time.sleep(_REQUEST_SPACING_S)  # spacing between categories
     log.info("fetched %d unique papers across %d categories",
              len(deduped), len(categories))
     return deduped

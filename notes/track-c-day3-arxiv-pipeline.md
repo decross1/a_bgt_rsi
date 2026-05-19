@@ -8,8 +8,9 @@ plan specifies as the recovery for a failed ML-Intern install.
 
 - `pipeline/arxiv_scraper.py` — stage 1: scrape recent abstracts to JSONL.
 - `pipeline/embed_and_store.py` — stage 2: embed abstracts, store in ChromaDB.
-- `tests/test_arxiv_scraper.py` — 6 tests, all pass (`python3 -m unittest
-  tests.test_arxiv_scraper`).
+- `tests/test_arxiv_scraper.py` — 6 tests; `tests/test_embed_and_store.py`
+  — 11 tests. All 17 pass (`python3 -m unittest tests.test_arxiv_scraper
+  tests.test_embed_and_store`).
 
 ## Decisions / things Track A should know
 

@@ -99,19 +99,24 @@ def load_papers(input_path):
 
 
 def dedupe(papers, existing_ids):
-    """Drop papers already in the collection or with no embeddable abstract.
+    """Drop papers already stored, lacking an id, or lacking an abstract.
 
-    De-dup key is arxiv_id. Within-batch duplicates and papers whose
-    abstract is missing/empty are also dropped (the abstract is what we
-    embed). Returns (kept, n_dup_skipped, n_no_abstract).
+    De-dup key is arxiv_id. Dropped, each into its own counter:
+    within-batch and against-collection duplicates; papers carrying no
+    arxiv_id; and papers whose abstract is missing/empty (the abstract is
+    what we embed). Returns (kept, n_dup, n_no_id, n_no_abstract).
     """
     kept = []
     seen = set(existing_ids)
     n_dup = 0
+    n_no_id = 0
     n_no_abstract = 0
     for paper in papers:
         arxiv_id = paper.get("arxiv_id")
-        if not arxiv_id or arxiv_id in seen:
+        if not arxiv_id:
+            n_no_id += 1
+            continue
+        if arxiv_id in seen:
             n_dup += 1
             continue
         abstract = (paper.get("abstract") or "").strip()
@@ -120,9 +125,10 @@ def dedupe(papers, existing_ids):
             continue
         seen.add(arxiv_id)
         kept.append(paper)
-    log.info("dedupe: %d new, %d duplicates skipped, %d without an abstract",
-             len(kept), n_dup, n_no_abstract)
-    return kept, n_dup, n_no_abstract
+    log.info("dedupe: %d new, %d duplicates, %d without an id, "
+             "%d without an abstract",
+             len(kept), n_dup, n_no_id, n_no_abstract)
+    return kept, n_dup, n_no_id, n_no_abstract
 
 
 def get_collection(db_path, collection_name):
@@ -191,7 +197,7 @@ def main(argv=None):
     collection = get_collection(args.db_path, args.collection)
 
     existing_ids = collection.get()["ids"]
-    kept, _, _ = dedupe(papers, existing_ids)
+    kept, _, _, _ = dedupe(papers, existing_ids)
     n_stored = store(collection, kept, embedder)
 
     log.info("done: %d papers added, collection now holds %d",
