@@ -1,14 +1,14 @@
 {
   "plan_id": "week1_phase1_days_31_37",
   "started_at": "2026-05-17T00:00:00Z",
-  "current_day": "day_1",
-  "completed_tasks": ["preflight_credentials_staged", "preflight_software_prestaged", "preflight_failure_walkthroughs", "preflight_physical_setup", "day1_block1_reading", "day1_block1_problemset", "day1_block2_unbox", "day1_block2_firmware", "day1_block2_docker_config", "day1_block2_vllm_serve", "day1_block2_bench", "day1_block2_nemoclaw_router", "day1_block2_nemoclaw_primary", "day1_block2_nemoclaw_fallback", "day1_block3_journal", "day1_end_of_day_artifacts"],
-  "aborted_days": [],
+  "current_day": "day_2",
+  "completed_tasks": ["preflight_credentials_staged", "preflight_software_prestaged", "preflight_failure_walkthroughs", "preflight_physical_setup", "day1_block1_reading", "day1_block1_problemset", "day1_block2_unbox", "day1_block2_firmware", "day1_block2_docker_config", "day1_block2_vllm_serve", "day1_block2_bench", "day1_block2_nemoclaw_router", "day1_block2_nemoclaw_primary", "day1_block2_nemoclaw_fallback", "day1_block3_journal", "day1_end_of_day_artifacts", "day2_block1_reading", "day2_block1_problemset", "day2_block2_jsonl_schema", "day2_block2_wrapper_implementation"],
+  "aborted_days": ["day_2"],
   "human_gates_pending": [],
   "fallbacks_taken": {"day1_block2_vllm_serve": "MTP deferred to Week 2+ — NVFP4 baseline; pinned vLLM image 0.19.1.dev6 predates merged PR #41745 MTP support", "day1_nemoclaw": "NemoClaw onboarding skipped (binary not installed) — hardened plain-Docker fallback verified working"},
   "metric_log": {
     "day1_tokens_per_sec": 32.03,
-    "day2_jsonl_malformed_count": null,
+    "day2_jsonl_malformed_count": 0,
     "day3_needle_score": null,
     "day4_tool_call_invocation_rate": null,
     "day5_papers_ingested": null,

@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/decross1/a_bgt_rsi/schema/calls.jsonl.schema.json",
+  "title": "Gemma 4 call record",
+  "description": "One line of logs/dayN.jsonl. Every call to the model through wrapper.py produces exactly one record matching this schema. Each record is a research observation; reproducibility depends on metadata completeness.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "timestamp",
+    "request_id",
+    "model",
+    "model_version",
+    "temperature",
+    "top_p",
+    "seed",
+    "prompt_messages",
+    "completion",
+    "usage",
+    "latency_ms",
+    "host_metadata",
+    "caller_tag",
+    "parent_request_id"
+  ],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 / RFC 3339, UTC, when the request was issued."
+    },
+    "request_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "uuid4 uniquely identifying this call."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Model name as served, e.g. 'gemma-4-26b-a4b-nvfp4'."
+    },
+    "model_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "vLLM container image digest, e.g. 'sha256:04563c30...'."
+    },
+    "temperature": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2,
+      "description": "Sampling temperature sent in the request."
+    },
+    "top_p": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Nucleus sampling top_p sent in the request."
+    },
+    "seed": {
+      "type": ["integer", "null"],
+      "description": "RNG seed sent in the request; null when no seed was set."
+    },
+    "prompt_messages": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Full chat message array exactly as sent.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "content"],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["system", "user", "assistant", "tool"]
+          },
+          "content": { "type": "string" }
+        }
+      }
+    },
+    "completion": {
+      "type": "string",
+      "description": "Full text of the model's completion."
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input_tokens", "output_tokens"],
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "latency_ms": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Wall-clock request round-trip in milliseconds."
+    },
+    "host_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cuda_driver", "vllm_image_tag"],
+      "properties": {
+        "cuda_driver": {
+          "type": "string",
+          "description": "CUDA driver version, e.g. '13.0'."
+        },
+        "vllm_image_tag": {
+          "type": "string",
+          "description": "vLLM image tag, e.g. 'vllm/vllm-openai:v0.20.0'."
+        }
+      }
+    },
+    "caller_tag": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifies what issued the call, e.g. 'test_50_calls'."
+    },
+    "parent_request_id": {
+      "type": ["string", "null"],
+      "description": "request_id of the parent call in a chain; null until call chains begin on Day 4.",
+      "oneOf": [
+        { "type": "string", "format": "uuid" },
+        { "type": "null" }
+      ]
+    }
+  }
+}
