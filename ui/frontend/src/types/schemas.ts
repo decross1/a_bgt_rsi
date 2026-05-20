@@ -106,7 +106,7 @@ export interface BaselineRow {
   key: string;
   label: string;
   value: string;
-  // "measured" — sourced from bench/day1.csv or run_state metric_log;
+  // "measured" — sourced from bench/mtp.csv, bench/day1.csv or metric_log;
   // "documented" — the ui_plan.md section 5.3 constant, no measurement yet.
   source: "measured" | "documented";
   documented?: string; // expected figure, present on measured rows

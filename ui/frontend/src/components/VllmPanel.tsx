@@ -81,13 +81,20 @@ export default function VllmPanel({ samples }: { samples: TelemetrySample[] }) {
             label="MTP acceptance"
             value={
               vllm.mtp_acceptance_rate == null
-                ? "metric absent"
+                ? "MTP off / metric absent"
                 : `${fmtRatioPct(vllm.mtp_acceptance_rate, 1)} %`
             }
+            // Chosen heuristic: ≥50% draft-token acceptance reads as healthy
+            // MTP, below it as poor (decode tok/s then suffers). ui_plan.md
+            // §5.3 says to color "against the baseline card's expected range",
+            // but the card has no acceptance-rate row — so this threshold is
+            // ours, not the plan's. Open question in ui/notes/ui-build.md.
             valueClass={
               vllm.mtp_acceptance_rate == null
                 ? "text-zinc-600"
-                : "text-zinc-100"
+                : vllm.mtp_acceptance_rate >= 0.5
+                  ? "text-emerald-400"
+                  : "text-amber-400"
             }
             spark={
               vllm.mtp_acceptance_rate != null ? (

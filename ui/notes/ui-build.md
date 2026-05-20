@@ -267,3 +267,97 @@ fallback). 31 Python + 6 frontend tests pass.
   until the apparatus commits an experiment-result schema (experiment
   id, round index, agent/opponent actions, payoff). Not a v1 blocker;
   a heads-up for whoever scopes v2 and for the day-7 experiment work.
+
+## P2 — MTP sync pass (2026-05-19)
+
+The UI was built (steps 6.1–6.7, P0, P1) while the apparatus had MTP
+deferred and vLLM pinned to `v0.20.0`. Day 2 then closed by resolving
+its throughput abort: **D-022 enabled MTP speculative decoding and
+re-pinned vLLM `v0.20.0` → `v0.21.0`** (decode 32 → 69 tok/s, sweep
+aggregate 56.09). This pass brings the UI's data sources and copy in
+line with that. All under `ui/`; nothing apparatus-side touched.
+
+### Baseline card → MTP (`backend/baseline.py`, `BaselineCard.tsx`)
+
+`bench/mtp.csv` (the MTP-enabled sweep, committed by D-022) is now a
+decode-tok/s source. `compute_baseline` takes a third `mtp_csv` arg;
+when the file exists it drives the decode row (median ≈69 tok/s over
+the 5-prompt sweep) and the pre-MTP `bench/day1.csv` / `metric_log`
+figure (~32) rides alongside as `pre-MTP …` so the speed-up is visible.
+`/api/baseline` wires it via `DEFAULT_MTP_CSV` / `UI_MTP_CSV`.
+
+Stale `DOCUMENTED` strings fixed: decode row dropped "MTP (≈96)
+deferred"; the stack row now reads `vLLM v0.21.0 · MTP enabled`. The
+`BaselineCard` fallback rows (used only when the backend is
+unreachable) were updated to match, and the card title dropped
+"(day 1)" since the decode row is now a day-2 measurement.
+
+### MTP tile + sampler (`VllmPanel.tsx`, `sampler/sources/vllm_metrics.py`)
+
+The MTP acceptance tile no longer renders flat: a present rate is
+green at ≥50% (the §5.3 "MTP engaged" signal) and amber below; the
+null label is now "MTP off / metric absent". The sampler's
+speculative-decoding candidate names were broadened to cover the v1
+engine's counter names with and without the Prometheus `_total`
+suffix, and the "verified against v0.20.0" comment corrected.
+
+### Surprises / open
+
+- **The measured MTP decode (~69 tok/s) still sits below the
+  documented expected band [80,130]** — between the hard floor (40)
+  and the band. The card shows measured and documented side by side;
+  it does not interpret the gap (operating-contract rule 8). This is
+  the same drift the data-driven card is built to surface.
+- **vLLM v0.21.0 spec-decode metric names are not verified live.** The
+  candidate-name lists in `vllm_metrics.py` are a best effort against
+  the v1 engine's exported counters; the sampler can only be confirmed
+  against a running v0.21.0 `/metrics` endpoint. Until then the MTP
+  tile may still show "metric absent" even with MTP on. Filed as a
+  live-check item — not a code blocker (the candidate-list pattern
+  absorbs a rename without a rewrite).
+- **Open question — what MTP acceptance rate counts as healthy?** The
+  MTP tile colours green/amber at a `≥0.5` (50%) draft-acceptance
+  threshold. `ui_plan.md` §5.3 says to colour "against the baseline
+  card's expected range", but the baseline card has no acceptance-rate
+  row and §5.3's "MTP-engaged signal ≥ 50" is a *decode tok/s* figure,
+  not an acceptance fraction. So the 0.5 boundary in `VllmPanel.tsx` is
+  a chosen heuristic, not plan-derived. For the human: confirm a real
+  expected acceptance range (it depends on `num_speculative_tokens=4`
+  and the Gemma 4 drafter) — then the threshold should move to the
+  data-driven baseline card alongside the decode-tok/s row.
+
+### Real schema + day-2 logs (`backend/tests/test_real_schema.py`)
+
+The chain walker was built against fixtures while only the structural
+call-log fields were pinned. The apparatus has since committed
+`schema/calls.jsonl.schema.json` and the first real call log,
+`logs/day2.jsonl` (50 standalone calls — `parent_request_id` null,
+chains start day 4). The backend's `DEFAULT_LOGS_DIR` already points at
+the real `logs/`, so the gap was test coverage, not wiring. Added
+`test_real_schema.py`:
+
+- structural fields the walker keys on are present + required in the
+  committed schema (a real schema-drift guard — fails loudly on a
+  rename);
+- every `logs/day2.jsonl` record validates against the committed
+  schema (`jsonschema` Draft 2020-12);
+- `LogStore` ingests the real day-2 log, indexing all 50 by
+  `request_id`, with no orchestrator dispatches (none until day 6).
+
+All three skip cleanly if Track A has not committed the artifacts, so
+the suite still passes on a fresh checkout. Also fixed `gen.py`'s
+fixture `vllm_image_tag` — it carried `vllm/vllm-openai:gemma4-cu130`,
+a CLAUDE.md rule-2 forbidden tag; now `v0.21.0`, matching the real
+`logs/day2.jsonl`. Fixtures are otherwise left structural-narrow by
+design (ui_plan.md §10) — they were not validated against the real
+schema because they intentionally model future shapes (embedded
+`tool_calls`, `parse_error`) the day-2 schema's `additionalProperties:
+false` would reject.
+
+Tests: `test_baseline.py` +3 (mtp source, absent-mtp fallback,
+mtp-only), `test_api.py` +1 (`test_baseline_endpoint_uses_mtp_csv`;
+`_client` now isolates the real `bench/mtp.csv`), new
+`frontend/tests/test_vllm_panel.tsx` (3 — MTP tile null/green/amber),
+new `backend/tests/test_real_schema.py` (3 — see above).
+38 Python + 9 frontend tests pass; `npm run build` clean.
+`ui_plan.md` bumped r4 → r5.
