@@ -1,56 +1,36 @@
 #!/usr/bin/env python3
 """
-Day 4 task -- tool-call robustness sweep.
+Day 4 task -- tool-call robustness sweep (plan.yaml day4_block2_robustness).
 
-Runs the prisoner's-dilemma prompt through call_with_tools N times at a
-fixed temperature and reports the tool-invocation rate: the fraction of
-runs in which the model actually called the tool (rather than answering
-from parametric knowledge). All call records are written to a JSONL log.
+Re-runs the prisoner's-dilemma prompt N times at temperature=0.3 and reports
+the tool-invocation rate: the fraction of runs in which the model called
+get_payoff_matrix at least once rather than answering from parametric memory.
+The rate is written to run_state/week1.state.json metric_log.day4_tool_call_invocation_rate.
 
-    MOCK_LLM=1 python tests/test_tool_call_robustness.py \
-        --n 5 --temperature 0.7 --output logs/tool_call_robustness.jsonl
+A rate below 0.8 is a FINDING to characterize, not a bug to silently fix
+(plan.yaml's robustness-as-first-class principle).
 
-MOCK_LLM=1 reuses the hardcoded chain from test_tool_call_e2e, so every
-mock run invokes the tool -- the mock rate is deterministically 1.0. The
-rate only becomes informative against the real model: that is the point
-of running at temperature > 0.
+    .venv/bin/python tests/test_tool_call_robustness.py --n 5 --temperature 0.3 \
+        --output logs/day4_robust.jsonl
 
-call_with_tools has NO published signature yet. Assumptions are tagged
-`DAY4-CONTRACT`. See notes/track-b-day3-4-scaffolds.md.
-
-A run counts as a tool invocation if any of its call records carries a
-message with role "tool" -- a schema-grounded signal that does not
-depend on call_with_tools' (still unspecified) return shape.
-
-Owned by Track B (tests). Does not touch run_state/; never calls vLLM
-directly -- the real path delegates to the wrapper.
+Owned by Track A (Day 4).
 """
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# Reuse the prompt, tools, mock chain and schema helpers from the e2e test.
-from test_tool_call_e2e import (  # noqa: E402
-    PD_MESSAGES, PD_TOOLS, _check_record, _load_validator, mock_tool_chain,
-)
+from jsonschema import Draft202012Validator
 
-MOCK = bool(os.environ.get("MOCK_LLM"))
+from agent_wrapper.wrapper import call_with_tools, ToolCallError, verify_log_integrity  # noqa: E402
+from tests.test_tool_call_e2e import PD_MESSAGES, TOOLS  # noqa: E402
 
-try:  # DAY4-CONTRACT: agent_wrapper.wrapper.call_with_tools
-    from agent_wrapper.wrapper import call_with_tools  # noqa: E402
-    _HAVE_REAL = True
-except Exception:
-    call_with_tools = None
-    _HAVE_REAL = False
-
-
-def _read_jsonl(path):
-    with open(path) as fh:
-        return [json.loads(line) for line in fh if line.strip()]
+REPO = Path(__file__).resolve().parent.parent
+SCHEMA_PATH = REPO / "schema" / "calls.jsonl.schema.json"
+STATE_PATH = REPO / "run_state" / "week1.state.json"
+_VALIDATOR = Draft202012Validator(json.loads(SCHEMA_PATH.read_text()))
 
 
 def _run_invoked_tool(records):
@@ -61,73 +41,71 @@ def _run_invoked_tool(records):
     )
 
 
+def _read_jsonl(path):
+    return [json.loads(l) for l in Path(path).read_text().splitlines() if l]
+
+
+def _update_state_metric(metric_value):
+    """Atomically merge day4_tool_call_invocation_rate into state metric_log."""
+    state = json.loads(STATE_PATH.read_text())
+    state.setdefault("metric_log", {})["day4_tool_call_invocation_rate"] = metric_value
+    STATE_PATH.write_text(json.dumps(state, indent=2) + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--n", type=int, default=5, help="Number of runs (default 5).")
-    ap.add_argument("--temperature", type=float, default=0.7,
-                    help="Sampling temperature for every run (default 0.7).")
-    ap.add_argument("--output", default="logs/tool_call_robustness.jsonl",
-                    help="JSONL path for all call records across all runs.")
-    ap.add_argument("--min-rate", type=float, default=None,
-                    help="If set, exit non-zero when the tool-invocation rate "
-                         "falls below this threshold. Default: report only.")
+    ap.add_argument("--n", type=int, default=5)
+    ap.add_argument("--temperature", type=float, default=0.3)
+    ap.add_argument("--output", default="logs/day4_robust.jsonl")
+    ap.add_argument("--max-tokens", type=int, default=512)
     args = ap.parse_args()
-
-    if not MOCK and not _HAVE_REAL:
-        print("call_with_tools is not implemented yet (Day 4). "
-              "Re-run with MOCK_LLM=1 to exercise this scaffold.", file=sys.stderr)
-        sys.exit(1)
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text("")  # truncate -- a re-run starts clean
+    out.write_text("")
 
-    if MOCK:
-        print(f"MOCK_LLM=1 -- {args.n} deterministic runs (mock always invokes)")
-
-    invocations = 0
+    invoked_count = 0
+    run_record_counts = []
+    tool_errors = 0
     for i in range(args.n):
-        before = sum(1 for _ in out.open())
-        if MOCK:
-            recs = mock_tool_chain(args.temperature,
-                                   caller_tag=f"test_tool_call_robustness/run{i}")
-            with out.open("a") as fh:
-                for rec in recs:
-                    fh.write(json.dumps(rec) + "\n")
-        else:
-            # DAY4-CONTRACT: real call appends its chain records to log_path.
-            call_with_tools(PD_MESSAGES, PD_TOOLS, temperature=args.temperature,
-                            caller_tag=f"test_tool_call_robustness/run{i}",
-                            log_path=str(out))
+        before = len(out.read_text().splitlines()) if out.exists() else 0
+        try:
+            chain = call_with_tools(
+                PD_MESSAGES, TOOLS,
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+                caller_tag=f"test_tool_call_robustness/run{i}",
+                log_path=str(out),
+            )
+        except ToolCallError as exc:
+            # We do NOT silently retry. Note the error and keep going so we
+            # measure the full rate over N trials.
+            tool_errors += 1
+            print(f"  run {i + 1}/{args.n}: ToolCallError ({exc})")
+            run_record_counts.append("err")
+            continue
         run_records = _read_jsonl(out)[before:]
+        run_record_counts.append(len(run_records))
         invoked = _run_invoked_tool(run_records)
-        invocations += invoked
+        invoked_count += int(invoked)
         print(f"  run {i + 1}/{args.n}: {'tool invoked' if invoked else 'no tool'} "
               f"({len(run_records)} record(s))")
 
-    rate = invocations / args.n if args.n else 0.0
+    rate = invoked_count / args.n if args.n else 0.0
 
-    # Validate every record that was written.
-    validator = _load_validator()
-    malformed = 0
-    for rec in _read_jsonl(out):
-        try:
-            _check_record(rec, validator)
-        except Exception as exc:
-            malformed += 1
-            print(f"  [warn] malformed record: {exc}", file=sys.stderr)
+    malformed = verify_log_integrity(str(out))
 
     print(f"\nruns                : {args.n}  @ temperature={args.temperature}")
-    print(f"tool invocations    : {invocations}")
+    print(f"tool invocations    : {invoked_count}")
     print(f"tool-invocation rate: {rate:.2f}")
-    print(f"records written     : {sum(1 for _ in out.open())}  (malformed: {malformed})")
+    print(f"tool errors raised  : {tool_errors}")
+    print(f"records written     : {len(out.read_text().splitlines())}  (malformed: {malformed})")
+
+    _update_state_metric(rate)
+    print(f"wrote metric_log.day4_tool_call_invocation_rate={rate:.2f} -> {STATE_PATH}")
 
     if malformed:
         print("MALFORMED RECORDS WRITTEN", file=sys.stderr)
-        sys.exit(1)
-    if args.min_rate is not None and rate < args.min_rate:
-        print(f"TOOL-INVOCATION RATE {rate:.2f} BELOW --min-rate {args.min_rate}",
-              file=sys.stderr)
         sys.exit(1)
 
 

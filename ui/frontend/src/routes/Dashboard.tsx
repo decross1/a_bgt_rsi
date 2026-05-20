@@ -3,9 +3,11 @@
 // WebSocket (ui/hooks/useTelemetryStream); the orchestrator queue polls.
 import { useEffect, useState } from "react";
 import BaselineCard from "../components/BaselineCard";
+import Day4ChainList from "../components/Day4ChainList";
 import HealthStrip from "../components/HealthStrip";
 import OrchestratorQueue from "../components/OrchestratorQueue";
 import ProcessGrid from "../components/ProcessGrid";
+import RobustnessPanel from "../components/RobustnessPanel";
 import VllmPanel from "../components/VllmPanel";
 import { getHealth, getState } from "../api/http";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
@@ -80,6 +82,11 @@ export default function Dashboard() {
       <div className="mt-4 grid grid-cols-2 gap-4">
         <OrchestratorQueue />
         <VllmPanel samples={samples} />
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-4">
+        <Day4ChainList />
+        <RobustnessPanel />
       </div>
 
       <div className="mt-4">

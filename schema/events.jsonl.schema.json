@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/decross1/a_bgt_rsi/schema/events.jsonl.schema.json",
+  "title": "Run-log event record",
+  "description": "One line of run_state/events.jsonl. Captures typed events distinct from per-call records (which live in logs/dayN.jsonl). Discriminated on event_type. Two members live here today: 'human_intervention' (P1) captures human action inside an otherwise-agent task; 'calibration_entry' (P3) captures the human's pre-experiment expected range vs the observed post-experiment value.",
+  "type": "object",
+  "oneOf": [
+    {
+      "title": "human_intervention",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_type",
+        "timestamp",
+        "task_id",
+        "subtype",
+        "reason",
+        "context_hash"
+      ],
+      "properties": {
+        "event_type": {
+          "const": "human_intervention",
+          "description": "Discriminator. Must be the literal 'human_intervention'."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 / RFC 3339, UTC, when the intervention occurred."
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifier of the agent_executable task in plan.yaml that was interrupted, e.g. 'day4_block2_e2e_test'."
+        },
+        "subtype": {
+          "type": "string",
+          "enum": [
+            "edit_prompt",
+            "edit_code",
+            "reject",
+            "redirect",
+            "manual_decision"
+          ],
+          "description": "Kind of intervention: edit_prompt (human rewrote a prompt), edit_code (human edited agent-written code), reject (human discarded an agent output), redirect (human steered the agent onto a different sub-path), manual_decision (human chose between options the agent surfaced)."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Free-text, human-supplied reason for the intervention."
+        },
+        "context_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Hash of the task state at the moment of intervention; enables N generated / M survived / K edits accounting in the preprint."
+        }
+      }
+    },
+    {
+      "title": "calibration_entry",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_type",
+        "timestamp",
+        "experiment_id",
+        "metric_name",
+        "pre_experiment_expected_range",
+        "post_experiment_observed",
+        "within_range",
+        "human_attestation"
+      ],
+      "properties": {
+        "event_type": {
+          "const": "calibration_entry",
+          "description": "Discriminator. Must be the literal 'calibration_entry'."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 / RFC 3339, UTC, when the calibration entry was recorded."
+        },
+        "experiment_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifier of the experiment whose outcome is being calibrated, e.g. 'exp001_repeated_pd'."
+        },
+        "metric_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the metric the human pre-stated a range for, e.g. 'coop_rate_vs_tft'."
+        },
+        "pre_experiment_expected_range": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "number" },
+          "description": "[low, high] range elicited from the human BEFORE the experiment ran. Both elements are numbers; order is [low, high]."
+        },
+        "post_experiment_observed": {
+          "type": "number",
+          "description": "Scalar value observed for metric_name once the experiment ran."
+        },
+        "within_range": {
+          "type": "boolean",
+          "description": "Whether post_experiment_observed fell inside pre_experiment_expected_range. Recorded explicitly so consumers do not have to re-derive it from the range."
+        },
+        "human_attestation": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Free-text attestation from the human who supplied the range, including any caveats about how it was chosen."
+        }
+      }
+    }
+  ]
+}

@@ -10,15 +10,77 @@
 > schemas in `schema/`) but do NOT share source files outside `ui/`.
 > Read the operating contract below before doing anything.
 >
-> **Revision r5 (2026-05-19).** All build steps (6.1–6.7) plus three
+> **Revision r6 (2026-05-20).** All build steps (6.1–6.7) plus four
 > improvement passes are done; full history is in §0. The latest pass
-> (r5) syncs the UI to apparatus decision D-022 — MTP speculative
-> decoding enabled, vLLM re-pinned `v0.20.0` → `v0.21.0` — so the
-> baseline card and the MTP tile reflect MTP being on, not deferred.
+> (r6, Track D day-4) adds: a wrapper-rooted chain walker
+> (`build_chain_by_request_id`) and `/api/chain_by_request/{rid}` for
+> day-4 tool-call chains that land before day 6's orchestrator; a
+> day-4 chain list on the dashboard linking into the inspector; a
+> robustness panel reading `logs/day4_robust.jsonl` (invocation rate,
+> per-trial outcomes, median latency); an events viewer at `/events`
+> reading `logs/events.jsonl` (day-3.5 surface, generic by event_type);
+> forward-compatible `retrieval_context` rendering on call nodes; and a
+> red banner + per-node badge for malformed-JSON `tool_calls` payloads.
 
 ---
 
 ## 0. Revision log
+
+**r6 (2026-05-20)** — Track D day-4 sync. Day 3.5 has not landed in
+Track A yet (schema/calls.jsonl.schema.json carries no `retrieval_context`,
+no `logs/events.jsonl`); day 4 has not landed either
+(no `logs/day4_e2e.jsonl`, no `logs/day4_robust.jsonl`). This pass
+builds forward-compatible support against synthesized fixtures so the
+UI lights up when Track A's artifacts arrive — no apparatus-side code
+touched. All under `ui/`.
+
+- **Wrapper-rooted chain walker.** Day-4 tool-call chains begin before
+  the day-6 orchestrator, so they have no dispatch root. New
+  `build_chain_by_request_id(store, request_id)` walks from a wrapper
+  request_id; new `GET /api/chain_by_request/{request_id}` exposes it;
+  new route `/chain/req/:requestId` reuses the inspector. The
+  dispatch-rooted shape (`/api/chain/{task_id}`) is unchanged.
+- **Day-4 chain list.** New `GET /api/day4/chains` lists wrapper-rooted
+  records from `logs/day4_e2e.jsonl` (parent_request_id null), each
+  with node_count, total_latency_ms, and a `malformed_tool_calls`
+  count. The dashboard's `Day4ChainList` component renders the listing
+  and links into the inspector; rows with parse errors get a red
+  `malformed` badge.
+- **Malformed-JSON tool_calls banner.** `_call_node` now flags
+  `tool_calls_malformed: true` when `tool_calls` is the wrong type
+  (e.g. a string left by an upstream serializer). The inspector shows
+  a red banner counting affected nodes; `ChainTree` shows a per-node
+  `malformed tool_calls` badge. No silent format-fixing — the raw
+  record is shown as stored.
+- **retrieval_context (day-3.5).** New optional list on call records.
+  The walker passes it through as a first-class field only when it is a
+  list of objects (wrong-shape values are dropped to avoid leaking a
+  typed contract to the UI). `ChainTree` renders a small collapsible
+  table per node and a `ctx N` badge.
+- **Robustness panel.** New `GET /api/robustness` reads
+  `logs/day4_robust.jsonl` and returns invocation_rate,
+  median_latency_ms, per-outcome counts, and the trial list (median
+  uses `statistics.median`, so even-length lists average the two
+  middle values). `RobustnessPanel` renders the summary + a per-trial
+  table on the dashboard.
+- **Events viewer.** New `GET /api/events` reads `logs/events.jsonl`
+  generically — the schema has not been committed yet, so the reader
+  enforces only `event_type` and passes the rest through. New route
+  `/events` (`EventsViewer`) renders type-aware cards for
+  `human_intervention` and `calibration_entry` with a type filter, and
+  falls back to a generic dump for any other event_type that lands.
+- **Fixtures.** `write_day4_fixtures()` extends `gen.py` with three
+  day-4 wrapper-rooted chains (one carrying a deliberately corrupted
+  `tool_calls` string), 10 robustness trials (8 invocations, 2 missed,
+  1 timeout), and the two known event types. 15 new backend tests
+  cover the walker, readers, and endpoints; 8 new frontend tests cover
+  the dashboard panel, events viewer, and chain-tree badges.
+- **Available-false defaults everywhere.** Each new endpoint degrades
+  to `available: false` when its source file is absent, so the
+  dashboard panels show "not present yet" rather than 500s while Track
+  A is still pre-day-4.
+
+53 Python + 17 frontend tests pass; `npm run build` is clean.
 
 **r5 (2026-05-19)** — MTP-sync pass (Track D), bringing the UI in line
 with apparatus decision D-022 (day 2: throughput abort resolved by

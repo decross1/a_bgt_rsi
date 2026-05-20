@@ -1,0 +1,19 @@
+{
+  "type": "function",
+  "function": {
+    "name": "get_payoff_matrix",
+    "description": "Return the payoff matrix for a named 2-player 2-action symmetric game. The result is an object with row_actions (list of strings), col_actions (list of strings), and matrix (2x2 array of [row_payoff, col_payoff] pairs). matrix[i][j] is the payoff pair when the row player plays row_actions[i] and the column player plays col_actions[j].",
+    "parameters": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "game_name": {
+          "type": "string",
+          "enum": ["prisoners_dilemma", "stag_hunt", "matching_pennies"],
+          "description": "Name of the game to fetch."
+        }
+      },
+      "required": ["game_name"]
+    }
+  }
+}

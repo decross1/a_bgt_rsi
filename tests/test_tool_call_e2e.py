@@ -1,267 +1,158 @@
 #!/usr/bin/env python3
 """
-Day 4 task -- end-to-end tool-call check.
+Day 4 end-to-end tool-call test (plan.yaml day4_block2_e2e_test).
 
-Runs the prisoner's-dilemma prompt through call_with_tools and confirms
-the run produces exactly two schema-valid JSONL records linked by
-parent_request_id: the call where the model emits a tool call, and the
-follow-up call that consumes the tool result and summarizes.
+Sends a prisoner's-dilemma prompt through agent_wrapper.wrapper.call_with_tools
+against the live vLLM endpoint. Expects:
 
-    MOCK_LLM=1 python tests/test_tool_call_e2e.py --output logs/tool_call_e2e.jsonl
+  1. Two linked JSONL records in logs/day4_e2e.jsonl: turn 1 (model emits a
+     get_payoff_matrix tool_call) and turn 2 (model summarizes the result).
+  2. The tool_calls.arguments string parses as JSON and validates against
+     tools/mock_payoffs.schema.json's function.parameters subschema.
+  3. The final assistant message contains all of 3, 3 / 0, 5 / 5, 0 / 1, 1
+     -- i.e. the model surfaced the tool result instead of guessing.
 
-MOCK_LLM=1 returns a hardcoded tool call + summary so this scaffold is
-authorable and testable before Day 4's call_with_tools exists. Without
-MOCK_LLM the test imports the real call_with_tools from the wrapper.
+Each check is reported independently; the test exits non-zero on any failure.
 
-call_with_tools has NO published signature yet (the wrapper docstring
-only reserves the name for Day 4). This file assumes a contract; every
-assumption is tagged `DAY4-CONTRACT` -- grep for it. If Day 4 lands a
-different shape, update the tagged lines. See
-notes/track-b-day3-4-scaffolds.md.
+Usage:
+    .venv/bin/python tests/test_tool_call_e2e.py --output logs/day4_e2e.jsonl
 
-Owned by Track B (tests). Does not touch run_state/; never calls vLLM
-directly -- the real path delegates to the wrapper.
+Owned by Track A (Day 4). Reads tools/mock_payoffs.py + .schema.json.
 """
 import argparse
 import json
-import os
+import re
 import sys
-import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-MOCK = bool(os.environ.get("MOCK_LLM"))
+from jsonschema import Draft202012Validator
 
-# Real call_with_tools may not exist yet (Day 4). Import defensively so
-# the mock path stays runnable on a pre-Day-4 branch.
-try:  # DAY4-CONTRACT: function lives at agent_wrapper.wrapper.call_with_tools
-    from agent_wrapper.wrapper import call_with_tools  # noqa: E402
-    _HAVE_REAL = True
-except Exception:  # ImportError, or wrapper stub / missing schema file
-    call_with_tools = None
-    _HAVE_REAL = False
+from agent_wrapper.wrapper import call_with_tools, verify_log_integrity  # noqa: E402
+from tools.mock_payoffs import get_payoff_matrix  # noqa: E402
 
+REPO = Path(__file__).resolve().parent.parent
+TOOL_SCHEMA = json.loads((REPO / "tools" / "mock_payoffs.schema.json").read_text())
 
-# --------------------------------------------------------------------------
-# Prisoner's dilemma prompt + tool
-# --------------------------------------------------------------------------
 PD_SYSTEM = (
-    "You are a game-theory assistant. Use the provided tools to compute "
-    "concrete payoffs before you answer."
+    "You are a game-theory assistant with access to a payoff-matrix tool. "
+    "You MUST call the get_payoff_matrix tool to look up matrices before you "
+    "answer; do not state any payoff numbers from memory."
 )
 PD_USER = (
-    "Two suspects are interrogated separately in the prisoner's dilemma. "
-    "Determine the prison sentence each receives when both choose to defect, "
-    "then state which strategy is dominant and why. Call the prisoner_payoff "
-    "tool to get the numbers before you answer."
+    "What is the payoff matrix for the prisoner's dilemma? Use the available "
+    "tool to look it up, then state all four payoff pairs in your answer."
 )
 PD_MESSAGES = [
     {"role": "system", "content": PD_SYSTEM},
     {"role": "user", "content": PD_USER},
 ]
 
-# Classic prisoner's dilemma payoff table: years served by (a, b).
-_PAYOFF = {
-    ("cooperate", "cooperate"): (1, 1),
-    ("cooperate", "defect"): (3, 0),
-    ("defect", "cooperate"): (0, 3),
-    ("defect", "defect"): (2, 2),
-}
+TOOLS = [{"spec": TOOL_SCHEMA, "impl": get_payoff_matrix}]
+
+# Plan-stipulated payoff pairs. Accept both comma-form ("3,3", "3, 3") and the
+# bare two-number adjacency form ("3 3"), since formatting wobbles by model.
+EXPECTED_PAYOFFS = [(3, 3), (0, 5), (5, 0), (1, 1)]
 
 
-def prisoner_payoff(player_a, player_b):
-    """Return prison sentences (years) for each prisoner given both choices."""
-    years_a, years_b = _PAYOFF[(player_a, player_b)]
-    return {"player_a_years": years_a, "player_b_years": years_b}
-
-
-_PD_TOOL_SPEC = {
-    "type": "function",
-    "function": {
-        "name": "prisoner_payoff",
-        "description": "Prison sentence in years for each prisoner given both choices.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "player_a": {"type": "string", "enum": ["cooperate", "defect"]},
-                "player_b": {"type": "string", "enum": ["cooperate", "defect"]},
-            },
-            "required": ["player_a", "player_b"],
-        },
-    },
-}
-# DAY4-CONTRACT: call_with_tools(messages, tools, ...) expects `tools` as a
-# list of {"spec": <openai-tool-schema>, "impl": <callable>}.
-PD_TOOLS = [{"spec": _PD_TOOL_SPEC, "impl": prisoner_payoff}]
-
-
-# --------------------------------------------------------------------------
-# Schema validation -- validate against schema/calls.jsonl.schema.json if
-# present (Track A owns it); structural check only if it is not.
-# --------------------------------------------------------------------------
-_REQUIRED_FIELDS = [
-    "timestamp", "request_id", "model", "model_version", "temperature",
-    "top_p", "seed", "prompt_messages", "completion", "usage", "latency_ms",
-    "host_metadata", "caller_tag", "parent_request_id",
-]
-
-
-def _load_validator():
-    schema_path = (Path(__file__).resolve().parent.parent
-                   / "schema" / "calls.jsonl.schema.json")
-    try:
-        import jsonschema
-        return jsonschema.Draft202012Validator(json.loads(schema_path.read_text()))
-    except Exception as exc:
-        print(f"  [warn] call schema not validated ({exc}); structural check only",
-              file=sys.stderr)
-        return None
-
-
-def _check_record(rec, validator):
-    if validator is not None:
-        validator.validate(rec)
-    else:
-        missing = [f for f in _REQUIRED_FIELDS if f not in rec]
-        assert not missing, f"record missing fields: {missing}"
-
-
-# --------------------------------------------------------------------------
-# Mock tool-call chain -- two schema-valid records linked by parent_request_id.
-# --------------------------------------------------------------------------
-def _now():
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _approx_tokens(text):
-    return len(text.split())
-
-
-def _mock_record(messages, completion, *, caller_tag, parent_request_id,
-                 temperature, request_id=None):
-    return {
-        "timestamp": _now(),
-        "request_id": request_id or str(uuid.uuid4()),
-        "model": "gemma-4-26b-a4b",
-        "model_version": "MOCK-no-gpu",
-        "temperature": temperature,
-        "top_p": 1.0,
-        "seed": None,
-        "prompt_messages": [{"role": m["role"], "content": m["content"]}
-                            for m in messages],
-        "completion": completion,
-        "usage": {
-            "input_tokens": sum(_approx_tokens(m["content"]) for m in messages),
-            "output_tokens": _approx_tokens(completion),
-        },
-        "latency_ms": 0.0,
-        "host_metadata": {"cuda_driver": "13.0",
-                          "vllm_image_tag": "vllm/vllm-openai:v0.20.0"},
-        "caller_tag": caller_tag,
-        "parent_request_id": parent_request_id,
-    }
-
-
-def mock_tool_chain(temperature, caller_tag="test_tool_call_e2e"):
-    """Simulate one call_with_tools run: model emits a tool call, the tool
-    runs, the result is fed back, the model summarizes. Returns 2 records."""
-    # Turn 1: the model decides to call the tool.
-    tool_call_text = ('TOOL_CALL prisoner_payoff '
-                      '{"player_a": "defect", "player_b": "defect"}')
-    rec1 = _mock_record(PD_MESSAGES, tool_call_text,
-                        caller_tag=f"{caller_tag}/step1",
-                        parent_request_id=None, temperature=temperature)
-
-    # The tool executes against the same impl the real path would use.
-    tool_result = prisoner_payoff("defect", "defect")
-
-    # Turn 2: assistant tool-call turn + tool result fed back; model summarizes.
-    # Tool results travel in prompt_messages under role "tool" -- the call
-    # schema's role enum allows it; there is no separate tool_calls field.
-    followup = PD_MESSAGES + [
-        {"role": "assistant", "content": tool_call_text},
-        {"role": "tool", "content": json.dumps(tool_result)},
-    ]
-    summary = (
-        "When both prisoners defect, each serves 2 years. Defection is the "
-        "dominant strategy: whatever the other prisoner does, defecting yields "
-        "a sentence no longer than cooperating -- and shorter if the other "
-        "cooperates -- even though mutual cooperation (1 year each) is jointly "
-        "better than mutual defection."
-    )
-    rec2 = _mock_record(followup, summary,
-                        caller_tag=f"{caller_tag}/step2",
-                        parent_request_id=rec1["request_id"],
-                        temperature=temperature)
-    return [rec1, rec2]
+def _has_pair(text, a, b):
+    # Match "3,3" / "3, 3" / "(3, 3)" / "3 and 3" / "3 3" (bare adjacency).
+    return bool(re.search(
+        rf"\b{a}\s*,\s*{b}\b|\b{a}\s*and\s*{b}\b|\(\s*{a}\s*,\s*{b}\s*\)|\b{a}\s+{b}\b",
+        text,
+    ))
 
 
 def _read_jsonl(path):
-    with open(path) as fh:
-        return [json.loads(line) for line in fh if line.strip()]
+    return [json.loads(l) for l in Path(path).read_text().splitlines() if l]
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--output", default="logs/tool_call_e2e.jsonl",
-                    help="JSONL path for the two call records.")
+    ap.add_argument("--output", default="logs/day4_e2e.jsonl")
     ap.add_argument("--temperature", type=float, default=0.0)
+    ap.add_argument("--max-tokens", type=int, default=512)
     args = ap.parse_args()
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("")  # truncate -- a re-run starts clean
 
-    if MOCK:
-        print("MOCK_LLM=1 -- using hardcoded tool call + summary")
-        records = mock_tool_chain(args.temperature)
-        with out.open("a") as fh:
-            for rec in records:
-                fh.write(json.dumps(rec) + "\n")
-    else:
-        if not _HAVE_REAL:
-            print("call_with_tools is not implemented yet (Day 4). "
-                  "Re-run with MOCK_LLM=1 to exercise this scaffold.",
-                  file=sys.stderr)
-            sys.exit(1)
-        # DAY4-CONTRACT: real call writes its own chain records to log_path.
-        call_with_tools(PD_MESSAGES, PD_TOOLS, temperature=args.temperature,
-                        caller_tag="test_tool_call_e2e", log_path=str(out))
-        records = _read_jsonl(out)
+    chain = call_with_tools(
+        PD_MESSAGES, TOOLS,
+        temperature=args.temperature,
+        max_tokens=args.max_tokens,
+        caller_tag="test_tool_call_e2e",
+        log_path=str(out),
+    )
 
-    # ---- Checks (each reported independently; the test gates on all). ----
-    validator = _load_validator()
+    records = _read_jsonl(out)
     failures = []
 
+    # Check 1: two linked JSONL entries.
     if len(records) != 2:
-        failures.append(f"expected 2 JSONL records, got {len(records)}")
-
-    for i, rec in enumerate(records):
-        try:
-            _check_record(rec, validator)
-        except Exception as exc:
-            failures.append(f"record {i} invalid: {exc}")
-
-    if len(records) == 2:
+        failures.append(f"expected exactly 2 records, got {len(records)} "
+                        f"(in-memory chain length={len(chain)})")
+    else:
         parent, child = records
         if parent["parent_request_id"] is not None:
-            failures.append("first record should have parent_request_id == null")
+            failures.append("first record's parent_request_id should be null")
         if child["parent_request_id"] != parent["request_id"]:
             failures.append("second record's parent_request_id does not match "
-                             "the first record's request_id")
+                            "first record's request_id")
         else:
-            print(f"chain linked: {parent['request_id']} -> {child['request_id']}")
-        tool_turn = any(m["role"] == "tool" for m in child["prompt_messages"])
-        if not tool_turn:
-            failures.append("second record carries no tool-result message")
+            print(f"chain: {parent['request_id']} -> {child['request_id']}")
+
+    # Check 2: tool_calls.arguments parse + validate against the tool schema.
+    if records:
+        first_completion = records[0]["completion"]
+        try:
+            tcs = json.loads(first_completion)
+        except json.JSONDecodeError as exc:
+            failures.append(f"first record completion is not JSON: {exc}")
+            tcs = None
+        if not isinstance(tcs, list) or not tcs:
+            failures.append("first record completion is not a non-empty "
+                            "tool_calls list (model may not have called the tool)")
+        else:
+            tc = tcs[0]
+            try:
+                args_obj = json.loads(tc["function"]["arguments"])
+            except json.JSONDecodeError as exc:
+                failures.append(f"tool_calls[0].function.arguments not JSON: {exc}")
+                args_obj = None
+            if args_obj is not None:
+                v = Draft202012Validator(TOOL_SCHEMA["function"]["parameters"])
+                errs = list(v.iter_errors(args_obj))
+                if errs:
+                    failures.append(f"tool_calls[0].function.arguments fails "
+                                    f"schema: {errs[0].message}; args={args_obj!r}")
+                else:
+                    print(f"tool args validated: {args_obj}")
+
+    # Check 3: the final assistant message contains all four PD payoff pairs.
+    if len(records) >= 2:
+        final = records[-1]["completion"]
+        missing = [pair for pair in EXPECTED_PAYOFFS
+                   if not _has_pair(final, *pair)]
+        if missing:
+            failures.append(f"final answer missing payoff pair(s): {missing} "
+                            f"(final={final!r})")
+        else:
+            print("final answer mentions all four payoff pairs")
+
+    # Schema integrity on the persisted log.
+    malformed = verify_log_integrity(str(out))
+    if malformed:
+        failures.append(f"{malformed} malformed records in {out}")
 
     if failures:
+        print("\nFAIL:", file=sys.stderr)
         for f in failures:
-            print(f"FAIL: {f}", file=sys.stderr)
+            print(f"  - {f}", file=sys.stderr)
         sys.exit(1)
-    print(f"PASS: 2 linked schema-valid records written to {out}")
+    print(f"\nPASS: 2 linked schema-valid records in {out}")
 
 
 if __name__ == "__main__":
