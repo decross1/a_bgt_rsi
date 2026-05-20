@@ -49,18 +49,37 @@ def test_chain_by_request_id_unknown(tmp_path):
     assert result["found"] is False
 
 
-def test_malformed_tool_calls_flagged_as_parse_error(tmp_path):
+def test_malformed_tool_calls_flagged_specifically(tmp_path):
     # day4_chain_malformed deliberately writes tool_calls as a string. The
-    # walker must surface parse_error rather than silently format-fixing.
+    # walker surfaces tool_calls_malformed on the wrapper and counts ONLY
+    # that — not the child's generic parse_error — toward the banner. The
+    # two failure modes are kept distinct so the banner does not conflate
+    # an unrelated wrapper parse error with corrupted tool_calls.
     manifest = write_day4_fixtures(tmp_path)
     rid = manifest["chains"]["day4_chain_malformed"]
     result = build_chain_by_request_id(LogStore(tmp_path), rid)
     assert result["found"] is True
-    # parse_error on the wrapper itself: 1 (wrapper) + 1 (child marked
-    # parse_error in the fixture) = 2 malformed nodes.
-    assert result["malformed_tool_calls"] == 2
-    assert result["root"]["parse_error"] is True
     assert result["root"]["tool_calls_malformed"] is True
+    assert result["root"]["parse_error"] is True            # explicit on record
+    # Only the wrapper has tool_calls_malformed; the child has parse_error
+    # but not tool_calls_malformed, so the count is 1.
+    assert result["malformed_tool_calls"] == 1
+
+
+def test_parse_error_distinct_from_tool_calls_malformed(tmp_path):
+    # day6_task_02 (existing fixture) has a wrapper with parse_error=True but
+    # NO tool_calls. After the decoupling, that chain must not count toward
+    # malformed_tool_calls — the banner must not fire on this chain.
+    write_fixtures(tmp_path)
+    from backend.chain import build_chain
+    result = build_chain(LogStore(tmp_path), "day6_task_02")
+    assert result["found"] is True
+    assert result["malformed_tool_calls"] == 0
+    # The per-node parse_error badge is still there for the affected node;
+    # just no chain-level banner.
+    flagged = [n for n in result["root"]["children"][0]["children"]
+               if n["parse_error"]]
+    assert len(flagged) == 1
 
 
 def test_retrieval_context_passed_through(tmp_path):
@@ -142,6 +161,37 @@ def test_api_day4_chains_endpoint(tmp_path):
     assert names == {"wrapper"}
     # one of them carries the malformed flag.
     assert sum(c["malformed_tool_calls"] for c in body["chains"]) >= 1
+
+
+def test_api_day4_chains_excludes_day2_standalone_calls(tmp_path):
+    # Regression: day-2 records all carry parent_request_id=null per the schema
+    # (chains start day 4). A cross-file enumeration would surface those as
+    # "day-4 chains". The endpoint is scoped to day4_e2e.jsonl specifically.
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    write_day4_fixtures(logs)
+    # Write a few synthetic day-2 records — same standalone-call shape as the
+    # real logs/day2.jsonl: parent_request_id=null, no tool_calls children.
+    day2 = "\n".join(json.dumps({
+        "request_id": f"day2-{i}", "parent_request_id": None,
+        "caller_tag": "test_50_calls/sweep", "timestamp": f"2026-05-19T03:57:0{i}Z",
+        "latency_ms": 100,
+    }) for i in range(3))
+    (logs / "day2.jsonl").write_text(day2 + "\n")
+    telemetry = tmp_path / "telemetry.jsonl"
+    telemetry.write_text("")
+    state = tmp_path / "state.json"
+    state.write_text("{}")
+    bench = tmp_path / "day1.csv"
+    bench.write_text("decode_tok_per_s\n")
+    mtp = tmp_path / "mtp.csv"
+    client = TestClient(create_app(logs_dir=logs, telemetry_file=telemetry,
+                                   state_file=state, bench_csv=bench, mtp_csv=mtp))
+    body = client.get("/api/day4/chains").json()
+    listed = {c["request_id"] for c in body["chains"]}
+    # day-2 records must not leak in; only the three day-4 wrapper roots.
+    assert not any(rid.startswith("day2-") for rid in listed)
+    assert len(listed) == len(DAY4_E2E_CHAINS)
 
 
 def test_api_chain_by_request_endpoint(tmp_path):

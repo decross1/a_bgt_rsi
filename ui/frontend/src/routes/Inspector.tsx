@@ -92,9 +92,8 @@ export default function Inspector() {
         >
           <span className="font-medium">Malformed tool_calls detected.</span>{" "}
           {malformedToolCount} node{malformedToolCount === 1 ? "" : "s"} in this
-          chain carry a corrupted payload (tool_calls is not a JSON array, or the
-          wrapper flagged a parse error). The inspector surfaces the raw record as
-          stored — it does not silently format-fix.
+          chain carry a tool_calls payload that is not a JSON array. The inspector
+          surfaces the raw record as stored — it does not silently format-fix.
         </div>
       )}
       {data.malformed && (

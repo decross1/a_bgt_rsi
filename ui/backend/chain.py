@@ -94,9 +94,10 @@ def _tool_node(tool, parent_request_id):
 def _call_node(record):
     embedded = record.get(EMBEDDED_TOOL_KEY)
     # A wrapper recorded its tool_calls as the wrong type (e.g. a string left by
-    # an upstream serializer bug) — surface as a parse error rather than silently
-    # rendering nothing. This is the malformed-JSON tool_calls case the day-4
-    # inspector banner is meant to flag.
+    # an upstream serializer bug). Tracked as its own flag and rendered as its
+    # own badge — kept separate from `parse_error` (the record's explicit flag)
+    # so the inspector banner can react to malformed_tool_calls specifically
+    # rather than to any parse_error in the chain.
     tool_calls_malformed = embedded is not None and not isinstance(embedded, list)
     node = {
         "kind": "call",
@@ -105,7 +106,7 @@ def _call_node(record):
         "caller_tag": record.get("caller_tag"),
         "timestamp": record.get("timestamp"),
         "latency_ms": record.get("latency_ms"),
-        "parse_error": bool(record.get("parse_error")) or tool_calls_malformed,
+        "parse_error": bool(record.get("parse_error")),
         "tool_calls_malformed": tool_calls_malformed,
         # Day-3.5 schema addition (optional). Pass through if present and shaped
         # like a list — the inspector renders each retrieval doc generically.
@@ -184,20 +185,21 @@ def build_chain(store, task_id):
     return {"task_id": task_id, "found": True, "malformed": malformed,
             "root": root, "node_count": counters["nodes"],
             "total_latency_ms": counters["latency"],
-            "malformed_tool_calls": _count_parse_errors(root)}
+            "malformed_tool_calls": _count_malformed_tool_calls(root)}
 
 
-def _count_parse_errors(node):
-    """Count nodes whose record had a parse_error or a malformed tool_calls field.
+def _count_malformed_tool_calls(node):
+    """Count nodes whose tool_calls payload was the wrong shape.
 
-    Drives the inspector's red banner: any node in the chain flagged as a parse
-    error contributes. The banner counts these explicitly rather than only
-    reacting to the chain-level malformed cycle flag — they are different
-    failures (cycle vs. corrupted payload).
+    Drives the inspector's red banner — narrowly: only nodes flagged
+    `tool_calls_malformed` contribute. Generic `parse_error` (a wrapper that
+    failed for some reason unrelated to tool_calls) is a per-node badge, not a
+    banner-level signal. Conflating the two would fire the banner on any
+    failed wrapper, which misrepresents the cause.
     """
-    total = 1 if node.get("parse_error") else 0
+    total = 1 if node.get("tool_calls_malformed") else 0
     for child in node.get("children", []):
-        total += _count_parse_errors(child)
+        total += _count_malformed_tool_calls(child)
     return total
 
 
@@ -252,7 +254,7 @@ def build_chain_by_request_id(store, root_request_id):
             "malformed": malformed, "root": root,
             "node_count": counters["nodes"],
             "total_latency_ms": counters["latency"],
-            "malformed_tool_calls": _count_parse_errors(root)}
+            "malformed_tool_calls": _count_malformed_tool_calls(root)}
 
 
 def recent_tasks(store, limit=50):

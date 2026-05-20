@@ -121,28 +121,40 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     def day4_chains():
         """Root wrapper request_ids from day4_e2e.jsonl, newest last.
 
-        These are records in day4_e2e.jsonl whose parent_request_id is null —
-        the entry points the inspector links into. malformed_tool_calls counts
-        nodes with corrupted payloads so the chain listing can flag them.
+        Scoped to day4_e2e.jsonl specifically rather than the cross-file
+        LogStore index: day-2 records all carry parent_request_id=null
+        (chains start day 4 per the schema), so a cross-file enumeration
+        would surface ~50 day-2 standalone calls as "day-4 chains".
         """
         store.refresh()
         path = Path(logs_dir) / "day4_e2e.jsonl"
         if not path.exists():
             return {"available": False, "chains": []}
         chains = []
-        for record in store.calls_by_id.values():
-            if (record.get("parent_request_id") is None
-                    and isinstance(record.get("request_id"), str)):
-                rid = record["request_id"]
-                walk = build_chain_by_request_id(store, rid)
-                chains.append({
-                    "request_id": rid,
-                    "caller_tag": record.get("caller_tag"),
-                    "timestamp": record.get("timestamp"),
-                    "node_count": walk["node_count"],
-                    "total_latency_ms": walk["total_latency_ms"],
-                    "malformed_tool_calls": walk["malformed_tool_calls"],
-                })
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if (record.get("parent_request_id") is None
+                            and isinstance(record.get("request_id"), str)):
+                        rid = record["request_id"]
+                        walk = build_chain_by_request_id(store, rid)
+                        chains.append({
+                            "request_id": rid,
+                            "caller_tag": record.get("caller_tag"),
+                            "timestamp": record.get("timestamp"),
+                            "node_count": walk["node_count"],
+                            "total_latency_ms": walk["total_latency_ms"],
+                            "malformed_tool_calls": walk["malformed_tool_calls"],
+                        })
+        except OSError:
+            return {"available": False, "chains": []}
         chains.sort(key=lambda c: c.get("timestamp") or "", reverse=True)
         return {"available": True, "chains": chains}
 
