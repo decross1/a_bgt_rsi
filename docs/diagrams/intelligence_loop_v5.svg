@@ -1,0 +1,155 @@
+<svg width="100%" viewBox="0 0 760 1020" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrow-p2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#3C3489" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+
+<!-- Title -->
+<text x="380" y="22" text-anchor="middle" font-size="14" font-weight="600" fill="#444441">Intelligence loop · v5</text>
+<text x="380" y="38" text-anchor="middle" font-size="11" fill="#888780">Eight original steps (Phase 1, solid) · Phase 2 additions in indigo</text>
+
+<!-- Autonomous zone -->
+<rect x="38" y="56" width="600" height="780" rx="16" fill="none" stroke="#B4B2A9" stroke-width="0.5" stroke-dasharray="6 4"/>
+<text x="338" y="76" text-anchor="middle" font-size="12" fill="#888780">Apparatus loop · runs on DGX Spark</text>
+
+<!-- Step 1: Literature scan -->
+<rect x="170" y="92" width="336" height="50" rx="8" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="338" y="112" text-anchor="middle" font-size="13" font-weight="500" fill="#633806">1. Literature scan</text>
+<text x="338" y="130" text-anchor="middle" font-size="11" fill="#854F0B">arXiv nightly + Semantic Scholar + foundational corpus</text>
+
+<line x1="338" y1="142" x2="338" y2="160" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- NEW: Meta-review synthesis (between 1 and 2) — Phase 2 -->
+<rect x="170" y="160" width="336" height="54" rx="8" fill="#EEEDFE" stroke="#3C3489" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="338" y="178" text-anchor="middle" font-size="13" font-weight="500" fill="#3C3489">1.5  Meta-review synthesis  ·  Phase 2</text>
+<text x="338" y="194" text-anchor="middle" font-size="11" fill="#534AB7">Distil last-N loop-memory entries → 3–5 conditioning bullets</text>
+<text x="338" y="208" text-anchor="middle" font-size="10" fill="#534AB7">Active read of Layer 3 — what kept winning / losing</text>
+
+<line x1="338" y1="214" x2="338" y2="232" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- Step 2: Hypothesis -->
+<rect x="170" y="232" width="336" height="50" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="338" y="252" text-anchor="middle" font-size="13" font-weight="500" fill="#3C3489">2. Generate hypothesis</text>
+<text x="338" y="270" text-anchor="middle" font-size="11" fill="#534AB7">Synthesize literature + data → research question</text>
+
+<line x1="338" y1="282" x2="338" y2="300" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- NEW: Critic / red-team (between 2 and 3) — Phase 2 -->
+<rect x="170" y="300" width="336" height="54" rx="8" fill="#EEEDFE" stroke="#3C3489" stroke-width="1.2" stroke-dasharray="5 3"/>
+<text x="338" y="318" text-anchor="middle" font-size="13" font-weight="500" fill="#3C3489">2.5  Critic / red-team  ·  Phase 2</text>
+<text x="338" y="334" text-anchor="middle" font-size="11" fill="#534AB7">Same model, devil's-advocate prompt</text>
+<text x="338" y="348" text-anchor="middle" font-size="10" fill="#534AB7">Falsify before spending experiment budget · ≤ 2 retries</text>
+
+<!-- Critic → back to Step 2 (retry edge) -->
+<path d="M170 327 L100 327 L100 257 L170 257" fill="none" stroke="#3C3489" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#arrow-p2)"/>
+<text x="92" y="295" text-anchor="middle" font-size="9" fill="#3C3489" transform="rotate(-90, 92, 295)">retry if falsified</text>
+
+<line x1="338" y1="354" x2="338" y2="372" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- Step 3: Experiment -->
+<rect x="170" y="372" width="336" height="62" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="338" y="390" text-anchor="middle" font-size="13" font-weight="500" fill="#085041">3. Run experiment in one tier</text>
+<text x="338" y="406" text-anchor="middle" font-size="11" fill="#0F6E56">Synthetic · semi-synthetic · or applied</text>
+<text x="338" y="424" text-anchor="middle" font-size="10" fill="#3C3489">Phase 2: per-hypothesis compute budget · early-stop</text>
+
+<!-- Autoresearch branch -->
+<line x1="170" y1="402" x2="110" y2="402" stroke="#888780" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="110" y1="402" x2="110" y2="429" stroke="#888780" stroke-width="1"/>
+<rect x="68" y="429" width="84" height="34" rx="6" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="110" y="449" text-anchor="middle" font-size="10" font-weight="500" fill="#633806">Autoresearch</text>
+<text x="110" y="459" text-anchor="middle" font-size="9" fill="#854F0B">if model needed</text>
+
+<line x1="338" y1="434" x2="338" y2="452" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- Step 4: Robustness battery -->
+<rect x="170" y="452" width="336" height="54" rx="8" fill="#E8E6DF" stroke="#888780" stroke-width="0.5"/>
+<text x="338" y="470" text-anchor="middle" font-size="13" font-weight="500" fill="#444441">4. Robustness battery</text>
+<text x="338" y="486" text-anchor="middle" font-size="11" fill="#5F5E5A">Vary prompt · seed · model version → does finding hold?</text>
+<text x="338" y="500" text-anchor="middle" font-size="10" fill="#5F5E5A">Falsification, not exploration · see §6 step 4 note</text>
+
+<line x1="338" y1="506" x2="338" y2="524" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- Step 5: Cross-tier replication -->
+<rect x="170" y="524" width="336" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1"/>
+<text x="338" y="544" text-anchor="middle" font-size="13" font-weight="500" fill="#085041">5. Cross-tier replication</text>
+<text x="338" y="562" text-anchor="middle" font-size="11" fill="#0F6E56">Test finding in other tier(s) · does it generalize?</text>
+<text x="338" y="576" text-anchor="middle" font-size="10" fill="#0F6E56">Tier-specific failure = diagnostic signal, not discard</text>
+
+<line x1="338" y1="580" x2="338" y2="598" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- Step 6: Novelty check -->
+<rect x="170" y="598" width="336" height="76" rx="8" fill="#F5E6F9" stroke="#7B3F9E" stroke-width="0.5"/>
+<text x="338" y="616" text-anchor="middle" font-size="13" font-weight="500" fill="#5B2D76">6. Novelty evaluation</text>
+<text x="338" y="632" text-anchor="middle" font-size="11" fill="#7B3F9E">Check all 3 knowledge layers: foundational · live · loop memory</text>
+<text x="338" y="646" text-anchor="middle" font-size="11" fill="#7B3F9E">Novel · rediscovery · nonsense · unclear</text>
+<text x="338" y="660" text-anchor="middle" font-size="10" fill="#3C3489">Phase 1: human-sampled · Phase 2: generator ≠ scorer (Qwen 3.6)</text>
+<text x="338" y="672" text-anchor="middle" font-size="10" fill="#3C3489">Phase 2: structured-claim search alongside BGE-M3 retrieval</text>
+
+<line x1="338" y1="674" x2="338" y2="692" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- Step 7: Log -->
+<rect x="170" y="692" width="336" height="60" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="338" y="710" text-anchor="middle" font-size="13" font-weight="500" fill="#0C447C">7. Log to research journal</text>
+<text x="338" y="726" text-anchor="middle" font-size="11" fill="#185FA5">Claim · prior · search · assessment · what would change it</text>
+<text x="338" y="740" text-anchor="middle" font-size="10" fill="#3C3489">Plus: retrieval_context (doc_ids, hashes) for reproducibility</text>
+
+<!-- Monthly red flags -->
+<rect x="552" y="394" width="146" height="78" rx="6" fill="none" stroke="#993C1D" stroke-width="0.5" stroke-dasharray="3 3"/>
+<text x="625" y="410" text-anchor="middle" font-size="10" fill="#993C1D">Monthly red flags:</text>
+<text x="625" y="424" text-anchor="middle" font-size="10" fill="#993C1D">Reading w/o doing?</text>
+<text x="625" y="438" text-anchor="middle" font-size="10" fill="#993C1D">Doing w/o thinking?</text>
+<text x="625" y="452" text-anchor="middle" font-size="10" fill="#993C1D">Novel findings in 30d?</text>
+<text x="625" y="466" text-anchor="middle" font-size="10" fill="#993C1D">Am I the bottleneck?</text>
+<line x1="506" y1="419" x2="552" y2="419" stroke="#993C1D" stroke-width="0.5" stroke-dasharray="3 3"/>
+
+<!-- Cross-tier annotation -->
+<rect x="552" y="494" width="146" height="44" rx="6" fill="none" stroke="#0F6E56" stroke-width="0.5" stroke-dasharray="3 3"/>
+<text x="625" y="510" text-anchor="middle" font-size="10" fill="#0F6E56">Strongest signal:</text>
+<text x="625" y="524" text-anchor="middle" font-size="10" fill="#0F6E56">succeeds in one tier,</text>
+<text x="625" y="534" text-anchor="middle" font-size="10" fill="#0F6E56">fails in another</text>
+<line x1="506" y1="514" x2="552" y2="514" stroke="#0F6E56" stroke-width="0.5" stroke-dasharray="3 3"/>
+
+<!-- Degradation metrics callout — NEW -->
+<rect x="552" y="558" width="146" height="92" rx="6" fill="none" stroke="#3C3489" stroke-width="0.6" stroke-dasharray="3 3"/>
+<text x="625" y="574" text-anchor="middle" font-size="10" font-weight="500" fill="#3C3489">Degradation metrics</text>
+<text x="625" y="586" text-anchor="middle" font-size="9" fill="#534AB7">(Phase 1: log; Phase 2: gate)</text>
+<text x="625" y="600" text-anchor="middle" font-size="9" fill="#534AB7">hypothesis : experiment ratio</text>
+<text x="625" y="612" text-anchor="middle" font-size="9" fill="#534AB7">model canary task</text>
+<text x="625" y="624" text-anchor="middle" font-size="9" fill="#534AB7">retrieval-context audit</text>
+<text x="625" y="636" text-anchor="middle" font-size="9" fill="#534AB7">researcher calibration log</text>
+
+<!-- Autonomy boundary -->
+<line x1="38" y1="800" x2="722" y2="800" stroke="#888780" stroke-width="1" stroke-dasharray="8 4"/>
+<text x="380" y="820" text-anchor="middle" font-size="12" fill="#888780">Human judgment required below</text>
+
+<line x1="338" y1="752" x2="338" y2="840" stroke="#5F5E5A" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+<!-- Human review -->
+<rect x="150" y="840" width="376" height="80" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
+<text x="338" y="862" text-anchor="middle" font-size="13" font-weight="500" fill="#712B13">8. Human evaluation</text>
+<text x="338" y="878" text-anchor="middle" font-size="11" fill="#993C1D">Validate novelty · approve trade · update rubric</text>
+<text x="338" y="894" text-anchor="middle" font-size="11" fill="#993C1D">Publish to journal · cold-email experts if warranted</text>
+<text x="338" y="910" text-anchor="middle" font-size="10" fill="#3C3489">Phase 2: clears the experiment-outcome → loop-memory edge</text>
+
+<!-- Return loop -->
+<path d="M150 880 L52 880 L52 117 L168 117" fill="none" stroke="#888780" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+<text x="38" y="480" text-anchor="middle" font-size="12" fill="#888780" transform="rotate(-90, 38, 480)">Continuous loop</text>
+
+<!-- FEEDBACK LOOP A: Human assessment → loop memory (Phase 1, existing) -->
+<path d="M526 880 L678 880 L678 200 L526 200" fill="none" stroke="#993C1D" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+<text x="694" y="540" text-anchor="middle" font-size="11" fill="#993C1D" transform="rotate(90, 694, 540)">Human assessments → Layer 3 (Phase 1)</text>
+
+<!-- FEEDBACK LOOP B: Experiment outcome → loop memory (Phase 2, NEW) — branches from Step 3 outcome through gate -->
+<path d="M506 403 L538 403 L538 870 L526 870" fill="none" stroke="#3C3489" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#arrow-p2)"/>
+<text x="546" y="635" text-anchor="middle" font-size="10" fill="#3C3489" transform="rotate(-90, 546, 635)">Phase 2: experiment outcome — gated by Step 8</text>
+
+<!-- Legend -->
+<text x="38" y="950" font-size="11" fill="#888780">Solid borders = Phase 1 (in design or planned for Week 1–4). Dashed indigo borders = Phase 2 additions (compute budget,</text>
+<text x="38" y="966" font-size="11" fill="#888780">critic, meta-review synthesis, experiment-outcome feedback, novelty-scorer separation, structured-claim search).</text>
+<text x="38" y="984" font-size="11" fill="#888780">All Phase 2 additions respect graduated autonomy: the experiment-outcome edge is gated by Step 8 (human review).</text>
+<text x="38" y="1002" font-size="11" fill="#888780">Reference: ARCHITECTURE.md §6 (loop steps) and §6.5 (degradation metrics).</text>
+</svg>

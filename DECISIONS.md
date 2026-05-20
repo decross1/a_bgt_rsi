@@ -587,6 +587,180 @@ verifying startup logs (per D-017).
 
 ---
 
+## D-023 — Day-3 needle benchmark accepted at 0.72; the 0.85 score bar is mis-calibrated to the scaffold
+
+**Date locked.** 2026-05-19, Day-3 needle-benchmark gate; human-attested
+(decross1).
+**Decision.** `day3_block2_needle_haystack` is accepted as passing and
+day_3 advances to Block 3. The benchmark scored top-1 retrieval
+**0.7221** at the plan-default 96-token chunk size: validation check 1
+(top-1 is the needle) and check 3 (score ≥ 0.70 floor) pass; check 2
+(score ≥ 0.85 "proceed" band) fails. The human cleared the
+`day3_needle_score_gate` on the evidence below; check 2's 0.85 bar is
+recorded as **mis-calibrated to the Track B scaffold's haystack design**,
+not as a retrieval-layer defect.
+**Alternatives.**
+- Hold at the gate until the benchmark clears 0.85 — rejected: no chunk
+  size clears both rank-1 and 0.85 (see below), so the bar is
+  unreachable for this haystack; holding would block on an artifact.
+- Shrink `--chunk-tokens` until score ≥ 0.85 — rejected as gaming: it
+  would not reflect production retrieval (textbook chunks are ~70 words).
+- Fix the scaffold's haystack first (varied filler, needle-dominated
+  unit) then re-run — deferred: optional cleanup, not gating; can be
+  done by Track B later without blocking Day 4.
+**Rationale.** A chunk-size sweep (16/32/64/96/128/256 tokens) plus a
+paraphrase query characterised the score: the needle is retrieved at
+**rank 1 at every realistic chunk size (32–256) and under a paraphrase
+query** (genuine semantic recall, no lexical reliance). Score is cleanly
+dilution-bound — 0.83 → 0.77 → 0.72 as chunks grow — exactly as
+needle-share-of-chunk predicts; a retrieval defect would show wrong
+chunks or random scores. The best passing size (ct=32) peaks at 0.83,
+still < 0.85; the only finer size (ct=16) fails rank-1 at 0.34 — an HNSW
+approximate-search pathology caused by 500 byte-identical filler chunks
+(a synthetic-data artifact; real corpora have no such duplicates). No
+chunk size clears both rank-1 and 0.85. The plan's "~0.92 expected"
+assumed a needle-dominated retrieval unit the scaffold never produces.
+The retrieval layer itself — ChromaDB + BGE-M3, cosine space — is sound
+and validated.
+**Operational notes.** Needle collection verified: `embedding_function:
+BGE-M3`, `hnsw.space: cosine`, weights `/mnt/models/bge-m3`. Artifacts:
+`bench/day3_needle.json` (official run), `notes/day3-needle-characterization.md`
+(the sweep). The Track B scaffold `tests/needle_in_haystack.py` had its
+real-client branch wired by Track A on Day 3 (HttpClient :8001, BGE-M3,
+cosine). A future cleanup — varied filler instead of one repeated
+sentence — would make the benchmark well-posed; tracked as an open item.
+**Reversibility.** Easy — the gate decision is a judgement on one
+metric; if Day-4+ retrieval underperforms, revisit the embedding/chunking
+layer. The 0.85 bar can be re-derived against a fixed scaffold.
+
+---
+
+## D-024 — Architecture v5 diagrams adopted from adversarial review
+
+**Date locked.** 2026-05-20
+**Decision.** Adopt `docs/diagrams/architecture_v5.svg` and
+`docs/diagrams/intelligence_loop_v5.svg` as the canonical diagrams. The
+v4 diagrams are kept in `docs/diagrams/` per the versioning convention
+(`docs/diagrams/README.md`).
+
+**v5 changes (loop diagram).**
+- Critic / red-team node inserted between Step 2 (generate) and Step 3
+  (experiment); retry edge bounded at ≤ 2 cycles. Phase 2.
+- Meta-review synthesis node inserted between Step 1 (literature scan)
+  and Step 2 (generate). Phase 2.
+- Experiment-outcome → loop-memory feedback edge added, gated by Step 8
+  (human review). Phase 2.
+- Step 6 (novelty evaluation) annotated with Phase 1 human-sampling
+  requirement and Phase 2 generator-scorer separation + structured-
+  claim search.
+- Step 7 (log) annotated with `retrieval_context` reproducibility field
+  (schema work scheduled as Day 3.5).
+- Step 3 (experiment) annotated with per-hypothesis compute budget
+  (Phase 2).
+- Step 4 (robustness battery) annotated to clarify falsification ≠
+  exploration.
+- Degradation-metrics callout added on the right side
+  (hypothesis:experiment ratio, model canary, retrieval-context audit,
+  researcher calibration log).
+
+**v5 changes (architecture diagram).**
+- Orchestrator block expanded with Phase-2 annotation: compute budget,
+  cost-aware bandit reward, critic + meta-review worker dispatch.
+- `retrieval_context` reproducibility annotation under experiment logs.
+- Phase-2 experiment-outcome feedback edge annotated (drawn fully in
+  the loop diagram).
+
+**Alternatives.**
+- Leave v4 unchanged; capture additions in prose only. Rejected: the
+  diagrams are referenced by both `ARCHITECTURE.md` and
+  `PROJECT_CONTEXT.md` and are the first read for any new contributor;
+  insights that don't make it onto the diagrams effectively don't
+  exist.
+- Redesign from scratch (v5 as full redraw). Rejected: the v5 deltas
+  are additive and clearly labeled Phase 2; a full redraw would lose
+  the clean separation between Phase 1 (in flight) and Phase 2
+  (planned).
+
+**Rationale.** The 2026-05-19 adversarial review (see
+`notes/research/2026-05-19-adversarial-review/1_adversarial_review_memo.md`)
+identified seven structural critiques of the Google AI co-scientist
+that hold against this project's intended Phase 2 architecture. The v5
+diagrams make the Phase 2 additions visible without redesigning Phase 1
+elements that have already shipped or are mid-implementation.
+v4 is preserved as a baseline showing the pre-review architecture.
+
+**Operational notes.** `ARCHITECTURE.md` §6 reference updated to point
+at `intelligence_loop_v5.svg`. `PROJECT_CONTEXT.md` and `START_HERE.md`
+will be updated as a follow-up; the v4 SVGs remain present so existing
+references do not break.
+
+**Reversibility.** Trivial. Revert the `ARCHITECTURE.md` reference and
+the `docs/diagrams/README.md` "current" pointer to v4. v5 files can be
+moved to `docs/diagrams/retired/`.
+
+---
+
+## D-025 — ARCHITECTURE.md patches from adversarial review
+
+**Date locked.** 2026-05-20
+**Decision.** Apply the patches in
+`notes/research/2026-05-19-adversarial-review/3a_architecture_md_patches.md`
+to `ARCHITECTURE.md`: replace §6 with the labeled-Phase-1/Phase-2
+version, insert §6.5 "Degradation metrics," add the active-vs-passive
+paragraph to §4.4, add the compute-budgeting / critic / meta-review
+paragraphs to §5.1, and add the two negative-scope bullets to §8.
+
+Schedule the three additive run-log schema changes (P1
+`human_intervention` event, P2 `retrieval_context` field on call records,
+P3 `calibration_entry` event) as **Day 3.5** in `plan.yaml`, since they
+amend Day-2 schema work that has already shipped. Day 3.5 is the
+retroactive-amendment slot per the user's instruction that "amendments
+to day 1, 2, or 3 go in as a new day 3.5."
+
+**Alternatives.**
+- Apply only the §6 changes and defer the rest. Rejected: §6.5
+  degradation metrics and the §4.4 active-vs-passive paragraph are
+  inseparable from the §6 Phase-2 additions (the meta-review worker
+  closes the active-read gap in §4.4; the degradation metrics ride on
+  the new annotations on steps 3/7/8).
+- Don't apply; carry insights in supplementary memos only. Rejected for
+  the same reason as the diagram patches — insights that aren't in the
+  canonical architecture document effectively don't exist for any
+  future reader.
+- Treat P1/P2/P3 as Week-2 proposals and not touch Week 1 at all.
+  Rejected by user direction: Day 3.5 captures the retroactive
+  amendments to Days 1–3 cleanly, and P2's `retrieval_context` field
+  is load-bearing on the project's reproducibility commitment which
+  needs to be in place before Day 4 tool-call work hardens.
+
+**Rationale.** Same source as D-024 — the architecture document is the
+canonical written walkthrough of the apparatus; if Phase 2 additions
+are not in it, they don't exist for any future reader. The Day 3.5
+schema-work entries make the additive run-log changes traceable on the
+same Week-1 cadence as the other days, and respect the inviolate rule
+that version pins, human-only blocks, and hard checkpoints do not
+change.
+
+**Operational notes.** Six patches in
+`3a_architecture_md_patches.md`; patch 6 was already folded into
+patch 1, so five patches landed (1: §6 replacement; 2: §6.5 insert;
+3: §5.1 additions; 4: §8 negative-scope bullets; 5: §4.4 active-vs-
+passive paragraph). Day 3.5 added to `plan.yaml` with three
+agent-executable tasks
+(`day3_5_block2_retrieval_context_field`,
+ `day3_5_block2_events_schema`,
+ `day3_5_block2_wrapper_retrieval_passthrough`) and one human-only
+prose task (`day3_5_block3_claudemd_prose`) — CLAUDE.md edits remain
+the human's prerogative per the operating contract.
+
+**Reversibility.** Easy. `git revert` the integration commit. The Day
+3.5 plan.yaml entries are additive; they can be deleted without
+affecting Days 1–7. The schema changes (when Day 3.5 executes) are
+additive and nullable — older logs without the new field remain
+valid.
+
+---
+
 ## Open decisions (pending)
 
 These are tracked but not yet locked in. Move to the main list with an ID

@@ -1435,6 +1435,227 @@ wall_clock_window:
 
 ---
 
+## day_3_5: retroactive amendments from adversarial review (D-024 / D-025)
+
+```yaml
+day_id: day_3_5
+program_day: 33.5
+date_offset: T+2.5
+inserted: 2026-05-20
+inserted_by: code-review and adversarial-review integration
+inserted_reason: |
+  The 2026-05-19 adversarial architecture review (see
+  notes/research/2026-05-19-adversarial-review/) surfaced three additive
+  schema changes that amend Day-2 JSONL deliverables which have already
+  shipped (retrieval_context field on call records; human_intervention
+  and calibration_entry typed events on a sibling events.jsonl). Per the
+  user's direction "amendments to day 1, 2, or 3 go in as a new day 3.5,"
+  these are scheduled here rather than back-edited into Days 1-3 or
+  deferred to Week 2. Day 3.5 does NOT alter any Day 1-3 success
+  criteria, version pins, hard checkpoints, or human-only blocks; it is
+  strictly additive.
+success_criterion: |
+  schema/calls.jsonl.schema.json carries the optional retrieval_context
+  field; schema/events.jsonl.schema.json exists and validates the two
+  new typed events; the wrapper passes a (possibly null) retrieval_context
+  through to the log; tests for both schemas pass.
+failure_mode: |
+  Existing Day-2 JSONL logs (logs/day2.jsonl) fail validation against
+  the updated calls.jsonl schema because the retrieval_context addition
+  was made non-optional, OR the new events schema accepts malformed
+  events.
+recovery_path: |
+  retrieval_context MUST be optional and nullable; rerun
+  jsonschema.Draft202012Validator over logs/day1.jsonl and logs/day2.jsonl
+  to confirm zero validation regressions. If the events schema is
+  malformed, revert the file and re-derive from
+  notes/research/2026-05-19-adversarial-review/5_frozen_plan_change_proposals.md.
+prerequisites:
+  - day_3
+unblocks:
+  - day_4
+wall_clock_window:
+  block_2: "executes alongside or after Day 3 end-of-day; Day 4 not blocked"
+  block_3: "human prose review of CLAUDE.md addendum (separable, can defer)"
+```
+
+### block_2_build (~2.5 hr, agent_executable)
+
+```yaml
+- task_id: day3_5_block2_retrieval_context_field
+  type: agent_executable
+  human_only: false
+  description: |
+    Extend schema/calls.jsonl.schema.json to allow an OPTIONAL nullable
+    retrieval_context field on each call record. Field is a list of
+    objects, each {doc_id: string, content_hash: string, chunk_offset:
+    integer, chunk_length: integer}. Field is NOT in the required[] array
+    so existing Day-1 / Day-2 logs remain valid. Add a test that
+    re-validates logs/day1.jsonl and logs/day2.jsonl against the updated
+    schema (must pass with zero changes to the existing log files).
+  agent_assisted: true
+  command: null
+  preconditions:
+    - schema/calls.jsonl.schema.json exists (Day 2 deliverable)
+  validation:
+    - check: schema is valid JSON Schema 2020-12
+      pass_signal: jsonschema.Draft202012Validator.check_schema() returns
+      fail_signal: schema rejected
+    - check: existing log files re-validate
+      pass_signal: every record in logs/day1.jsonl and logs/day2.jsonl
+        passes the updated schema
+      fail_signal: any record fails validation
+    - check: retrieval_context field is optional and nullable
+      pass_signal: field absent from required[]; when present, type
+        accepts array or null
+      fail_signal: field required, or only allows one of array/null
+  on_failure: revert schema; do not advance to next task
+  log_to: run_log
+  rationale: |
+    Reproducibility commitment in PROJECT_CONTEXT.md §3 — "every model
+    call is a research observation" — is not load-bearing unless the
+    retrieved literature that conditioned the prompt is pinned in the
+    log. Retrieval drifts as the corpus grows. See D-025 and missed
+    gap M1 in the adversarial review memo.
+
+- task_id: day3_5_block2_events_schema
+  type: agent_executable
+  human_only: false
+  description: |
+    Create schema/events.jsonl.schema.json as a sibling to calls.jsonl
+    that validates two typed event records. Schema is a root oneOf with
+    two members:
+
+      1. human_intervention event: required fields {event_type ==
+         "human_intervention", timestamp, task_id, subtype, reason,
+         context_hash}. subtype enum: edit_prompt | edit_code | reject |
+         redirect | manual_decision.
+
+      2. calibration_entry event: required fields {event_type ==
+         "calibration_entry", timestamp, experiment_id, metric_name,
+         pre_experiment_expected_range, post_experiment_observed,
+         within_range, human_attestation}.
+
+    Both members are additionalProperties:false. Add tests that
+    exercise each event-type happy path and at least two malformed
+    cases per type.
+  agent_assisted: true
+  command: null
+  preconditions:
+    - day3_5_block2_retrieval_context_field
+  validation:
+    - check: schema is valid JSON Schema 2020-12
+      pass_signal: jsonschema.Draft202012Validator.check_schema() returns
+      fail_signal: schema rejected
+    - check: happy-path event of each type validates
+      pass_signal: both example records pass
+      fail_signal: either fails
+    - check: event_type discriminator routes correctly
+      pass_signal: a human_intervention payload with calibration_entry's
+        required fields fails validation, and vice versa
+      fail_signal: cross-type confusion not caught
+  on_failure: revert schema; do not advance to next task
+  log_to: run_log
+  rationale: |
+    P1 (human_intervention) and P3 (calibration_entry) from the
+    adversarial review's frozen-plan change proposals. P1 supports
+    preprint defensibility (count of human edits inside agent tasks);
+    P3 turns the Day-7 hard-checkpoint's pre/post expected-range
+    comparison into a publishable calibration metric over time. See
+    D-025.
+
+- task_id: day3_5_block2_wrapper_retrieval_passthrough
+  type: agent_executable
+  human_only: false
+  description: |
+    Update agent_wrapper/ so that every wrapper.py call accepts an
+    optional retrieval_context kwarg (list[{doc_id, content_hash,
+    chunk_offset, chunk_length}] or None) and writes it to the call
+    record. Default null. Update agent_wrapper/ tests to cover the
+    null-default and a populated-list case. The wrapper change must
+    preserve the Day-2 success-criterion: the 50-call sweep still
+    produces zero malformed records under the updated schema. No
+    behavioral change for callers that do not pass retrieval_context.
+  agent_assisted: true
+  command: null
+  preconditions:
+    - day3_5_block2_retrieval_context_field
+    - day3_5_block2_events_schema
+  validation:
+    - check: wrapper accepts and forwards retrieval_context
+      pass_signal: unit test confirms the field is present in the
+        written record when supplied, and absent (or null) when not
+      fail_signal: field missing or wrapper raises on the new kwarg
+    - check: Day-2 50-call sweep regression
+      pass_signal: a re-run of the 50-call sweep (or equivalent
+        regression fixture) emits zero malformed records under the
+        updated schema
+      fail_signal: any malformed record
+    - check: no changes to existing wrapper signatures break callers
+      pass_signal: existing test suite passes unchanged
+      fail_signal: any existing test fails
+  on_failure: revert wrapper change; do not advance to Day 4
+  log_to: run_log
+  rationale: |
+    P2 from the adversarial review's frozen-plan change proposals. The
+    schema work alone is inert unless the wrapper actually populates
+    the field; the wrapper change is the load-bearing implementation.
+```
+
+### block_3_human_review (~30 min, human_only=true)
+
+```yaml
+- task_id: day3_5_block3_claudemd_prose
+  type: human_only
+  human_only: true
+  description: |
+    Add prose to CLAUDE.md explaining when the agent should emit a
+    human_intervention event and when it should populate
+    retrieval_context. The schema and wrapper work in Block 2 enables
+    the events; the operating-contract prose tells Claude when to use
+    them. Per the inviolate rule that CLAUDE.md edits are the human's
+    prerogative, Block 2 must NOT touch CLAUDE.md.
+  agent_action: print_reminder_and_wait
+  agent_message: |
+    Day 3.5 Block 3 is a human-only CLAUDE.md prose update. Reference:
+    notes/research/2026-05-19-adversarial-review/5_frozen_plan_change_proposals.md
+    has the proposed event semantics. No-AI rule absolute on the CLAUDE.md
+    edit itself.
+  blocking: false
+```
+
+### end_of_day_3_5 (~15 min, agent_executable)
+
+```yaml
+- task_id: day3_5_end_of_day_artifacts
+  type: agent_executable
+  human_only: false
+  description: |
+    Verify Day-3.5 schema and wrapper changes, commit, advance state.
+  preconditions:
+    - day3_5_block2_retrieval_context_field
+    - day3_5_block2_events_schema
+    - day3_5_block2_wrapper_retrieval_passthrough
+  command: |
+    git add schema/calls.jsonl.schema.json schema/events.jsonl.schema.json \
+            agent_wrapper/ tests/ && \
+    git commit -m "day 3.5: retroactive schema amendments from adversarial review (D-024/D-025)"
+  validation:
+    - check: files committed
+      pass_signal: commit hash returned; status clean for tracked files
+      fail_signal: dirty
+    - check: schema validation tests pass
+      pass_signal: pytest -k "schema or wrapper_retrieval" exits 0
+      fail_signal: any failure
+    - check: state file updated
+      pass_signal: run_state/week1.state.json adds day3_5_* task ids to
+        completed_tasks
+      fail_signal: state not updated
+  log_to: run_log
+```
+
+---
+
 ## day_4: first tool call (function calling)
 
 ```yaml

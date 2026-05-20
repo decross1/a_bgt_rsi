@@ -1,0 +1,26 @@
+{
+  "pdf": "/home/decross1/projects/a_bgt_rsi/books/osborne_rubinstein.pdf",
+  "book": "osborne_rubinstein",
+  "collection": "osborne_rubinstein",
+  "total_chunks": 2135,
+  "per_chapter_counts": {
+    "(none)": 40,
+    "1": 58,
+    "2": 126,
+    "3": 138,
+    "4": 85,
+    "5": 125,
+    "6": 166,
+    "7": 103,
+    "8": 191,
+    "9": 86,
+    "10": 136,
+    "11": 127,
+    "12": 230,
+    "13": 123,
+    "14": 151,
+    "15": 250
+  },
+  "strategy": "toc",
+  "timestamp": "2026-05-19T18:18:53.105375+00:00"
+}

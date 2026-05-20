@@ -79,23 +79,57 @@ class _MockClient:
         return _MockCollection(name)
 
 
+# DAY 3 (Track A): real client. The Chroma server runs at localhost:8001
+# (host default 8000 is the vLLM endpoint). The embedder is BGE-M3 from
+# local weights -- never the all-MiniLM default (CLAUDE.md rule 2). The
+# collection uses cosine space so `score = 1 - distance` is a cosine
+# similarity, matching the plan's >=0.85 / ~0.92 expectation.
+_CHROMA_HOST = "localhost"
+_CHROMA_PORT = 8001
+_BGE_M3_WEIGHTS = "/mnt/models/bge-m3"
+
+
+class _RealClient:
+    """Wraps a chromadb HttpClient so the needle collection always uses
+    the BGE-M3 embedding function and cosine space.
+
+    main() calls get_or_create_collection(name) with no embedding
+    function; this wrapper injects BGE-M3 and starts each run from a
+    fresh collection (the haystack ids are regenerated per run)."""
+
+    def __init__(self, client, ef):
+        self._client = client
+        self._ef = ef
+
+    def get_or_create_collection(self, name, **_kwargs):
+        try:
+            self._client.delete_collection(name)
+        except Exception:
+            pass
+        return self._client.create_collection(
+            name=name,
+            embedding_function=self._ef,
+            configuration={"hnsw": {"space": "cosine"}},
+            metadata={"embedding_function": "BGE-M3"},
+        )
+
+
 def get_chroma_client(mock):
     """Return a ChromaDB-compatible client.
 
     mock=True  -> deterministic in-memory stub (Track B / pre-Day-3).
-    mock=False -> the real client. DAY 3 implements this branch.
+    mock=False -> the real BGE-M3-backed client (Track A, Day 3).
     """
     if mock:
         return _MockClient()
-    # DAY 3: construct the real client here, e.g.
-    #     import chromadb
-    #     return chromadb.PersistentClient(path="chroma_db")
-    # and create the collection with an explicit BGE-M3 embedding function
-    # (NOT the all-MiniLM default -- see module docstring / CLAUDE.md).
-    raise NotImplementedError(
-        "Real ChromaDB client not wired yet -- run with --mock, or implement "
-        "the mock=False branch of get_chroma_client() on Day 3."
+    import chromadb
+    from chromadb.utils import embedding_functions
+
+    ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+        model_name=_BGE_M3_WEIGHTS
     )
+    client = chromadb.HttpClient(host=_CHROMA_HOST, port=_CHROMA_PORT)
+    return _RealClient(client, ef)
 
 
 # --------------------------------------------------------------------------
