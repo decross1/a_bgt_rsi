@@ -92,6 +92,12 @@ def _tool_node(tool, parent_request_id):
 
 
 def _call_node(record):
+    embedded = record.get(EMBEDDED_TOOL_KEY)
+    # A wrapper recorded its tool_calls as the wrong type (e.g. a string left by
+    # an upstream serializer bug) — surface as a parse error rather than silently
+    # rendering nothing. This is the malformed-JSON tool_calls case the day-4
+    # inspector banner is meant to flag.
+    tool_calls_malformed = embedded is not None and not isinstance(embedded, list)
     node = {
         "kind": "call",
         "request_id": record.get("request_id"),
@@ -99,12 +105,17 @@ def _call_node(record):
         "caller_tag": record.get("caller_tag"),
         "timestamp": record.get("timestamp"),
         "latency_ms": record.get("latency_ms"),
-        "parse_error": bool(record.get("parse_error")),
+        "parse_error": bool(record.get("parse_error")) or tool_calls_malformed,
+        "tool_calls_malformed": tool_calls_malformed,
+        # Day-3.5 schema addition (optional). Pass through if present and shaped
+        # like a list — the inspector renders each retrieval doc generically.
+        "retrieval_context": (record.get("retrieval_context")
+                              if isinstance(record.get("retrieval_context"), list)
+                              else None),
         "embedded": False,
         "raw": record,                           # opaque passthrough for the inspector
         "children": [],
     }
-    embedded = record.get(EMBEDDED_TOOL_KEY)
     if isinstance(embedded, list):
         for tool in embedded:
             if isinstance(tool, dict):
@@ -172,7 +183,76 @@ def build_chain(store, task_id):
     tally(root)
     return {"task_id": task_id, "found": True, "malformed": malformed,
             "root": root, "node_count": counters["nodes"],
-            "total_latency_ms": counters["latency"]}
+            "total_latency_ms": counters["latency"],
+            "malformed_tool_calls": _count_parse_errors(root)}
+
+
+def _count_parse_errors(node):
+    """Count nodes whose record had a parse_error or a malformed tool_calls field.
+
+    Drives the inspector's red banner: any node in the chain flagged as a parse
+    error contributes. The banner counts these explicitly rather than only
+    reacting to the chain-level malformed cycle flag — they are different
+    failures (cycle vs. corrupted payload).
+    """
+    total = 1 if node.get("parse_error") else 0
+    for child in node.get("children", []):
+        total += _count_parse_errors(child)
+    return total
+
+
+def build_chain_by_request_id(store, root_request_id):
+    """Reconstruct a tool-call chain rooted at an arbitrary request_id.
+
+    Day-4 tool-call chains land before day 6's orchestrator runs, so they are
+    rooted at a wrapper request (no orchestrator dispatch). build_chain keyed
+    by task_id can't reach them; this walker is the read path.
+
+    Returns the same shape as build_chain but with `root_request_id` in place
+    of `task_id` and no `dispatch` root node — the wrapper record is the tree
+    root. Returns found=False if no record carries that request_id.
+    """
+    store.refresh()
+    record = store.calls_by_id.get(root_request_id)
+    if record is None:
+        return {"root_request_id": root_request_id, "found": False,
+                "malformed": False, "root": None, "node_count": 0,
+                "total_latency_ms": 0, "malformed_tool_calls": 0}
+
+    seen = {root_request_id}
+    malformed = False
+
+    def attach_children(node, request_id):
+        nonlocal malformed
+        for child_record in store.children.get(request_id, []):
+            child_id = child_record.get("request_id")
+            if child_id in seen:
+                malformed = True
+                continue
+            seen.add(child_id)
+            child = _call_node(child_record)
+            attach_children(child, child_id)
+            node["children"].append(child)
+
+    root = _call_node(record)
+    attach_children(root, record.get("request_id"))
+
+    counters = {"nodes": 0, "latency": 0}
+
+    def tally(node):
+        counters["nodes"] += 1
+        latency = node.get("latency_ms")
+        if isinstance(latency, (int, float)):
+            counters["latency"] += latency
+        for child in node["children"]:
+            tally(child)
+
+    tally(root)
+    return {"root_request_id": root_request_id, "found": True,
+            "malformed": malformed, "root": root,
+            "node_count": counters["nodes"],
+            "total_latency_ms": counters["latency"],
+            "malformed_tool_calls": _count_parse_errors(root)}
 
 
 def recent_tasks(store, limit=50):

@@ -2,7 +2,7 @@
 // Each node expands to a generic dump of its underlying log record, so a
 // future day-2 schema addition needs no code change here.
 import { useState } from "react";
-import type { ChainNode } from "../types/schemas";
+import type { ChainNode, RetrievalDoc } from "../types/schemas";
 
 function shortId(id: string | null | undefined): string {
   if (!id) return "—";
@@ -37,10 +37,63 @@ function Scalar({ value }: { value: unknown }) {
   return <span className="text-zinc-200">{String(value)}</span>;
 }
 
+// Day-3.5: retrieval_context lands as a list of {doc_id, content_hash,
+// chunk_offset, chunk_length}. Render as a small table rather than a generic
+// JSON dump so the inspector reads cleanly at a glance.
+function RetrievalContext({ docs }: { docs: RetrievalDoc[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2 rounded border border-zinc-800 bg-zinc-950/60 p-2">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 text-left text-xs text-zinc-400 hover:text-zinc-200"
+      >
+        <span className="w-3">{open ? "▾" : "▸"}</span>
+        <span className="font-mono uppercase tracking-wide">retrieval_context</span>
+        <span className="text-zinc-600">({docs.length})</span>
+      </button>
+      {open && (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-zinc-500">
+              <tr>
+                <th className="px-2 py-1 text-left font-normal">doc_id</th>
+                <th className="px-2 py-1 text-left font-normal">content_hash</th>
+                <th className="px-2 py-1 text-right font-normal">offset</th>
+                <th className="px-2 py-1 text-right font-normal">length</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono text-zinc-300">
+              {docs.map((doc, i) => (
+                <tr key={i} className="border-t border-zinc-800/60">
+                  <td className="px-2 py-1">{doc.doc_id ?? "—"}</td>
+                  <td className="px-2 py-1 text-zinc-500">
+                    {typeof doc.content_hash === "string"
+                      ? doc.content_hash.slice(0, 12) +
+                        (doc.content_hash.length > 12 ? "…" : "")
+                      : "—"}
+                  </td>
+                  <td className="px-2 py-1 text-right">{doc.chunk_offset ?? "—"}</td>
+                  <td className="px-2 py-1 text-right">{doc.chunk_length ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NodeDetails({ node }: { node: ChainNode }) {
-  const entries = Object.entries(node.raw);
+  // Hide retrieval_context from the raw dump — we render it as its own
+  // collapsible table above. Avoids duplicating the same data in two places.
+  const entries = Object.entries(node.raw).filter(([k]) => k !== "retrieval_context");
   return (
     <div className="mt-1 mb-1 ml-6 rounded border border-zinc-800 bg-zinc-900/60 p-3 text-sm">
+      {node.retrieval_context && node.retrieval_context.length > 0 && (
+        <RetrievalContext docs={node.retrieval_context} />
+      )}
       {entries.length === 0 && <div className="text-zinc-500">no record fields</div>}
       {entries.map(([key, value]) => (
         <div key={key} className="mb-1.5">
@@ -90,6 +143,16 @@ function TreeNode({ node }: { node: ChainNode }) {
           {node.parse_error && (
             <span className="rounded bg-red-950 px-1.5 py-0.5 text-xs text-red-300">
               parse error
+            </span>
+          )}
+          {node.tool_calls_malformed && (
+            <span className="rounded bg-red-950 px-1.5 py-0.5 text-xs text-red-300">
+              malformed tool_calls
+            </span>
+          )}
+          {node.retrieval_context && node.retrieval_context.length > 0 && (
+            <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
+              ctx {node.retrieval_context.length}
             </span>
           )}
           {node.kind === "tool" && node.embedded && (

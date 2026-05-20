@@ -7,6 +7,18 @@ task_id, status, timestamps -- and carry plausible opaque payload fields
 (model, prompt_messages, completion, usage, host_metadata) so the chain
 walker and inspector can be developed before the day-2 schema lands.
 
+`write_day4_fixtures` adds the day-4 surfaces (Track D day-4 sync):
+- `day4_e2e.jsonl`: two-link tool-call chains rooted at a wrapper request
+  (no orchestrator dispatch — chains land before day 6's orchestrator).
+  One chain carries a malformed-JSON `tool_calls` string so the inspector
+  can render the red banner without silent format-fixing.
+- `day4_robust.jsonl`: per-trial invocation outcomes with latencies, so
+  the robustness panel has invocation rate + median latency to compute.
+- `events.jsonl`: forward-compatible day-3.5 stub — one
+  `human_intervention` and one `calibration_entry` event. The schema for
+  events.jsonl has not been committed yet, so the inspector reads it
+  generically; this fixture documents the shapes the UI expects.
+
 Run as a CLI to produce a log directory the backend can be pointed at:
 
   cd ui && python3 -m backend.tests.fixtures.gen /tmp/fixture_logs
@@ -209,6 +221,152 @@ def _write_jsonl(path, records):
             fh.write(json.dumps(record) + "\n")
 
 
+# --- day-4 surfaces (Track D day-4 sync) ---
+#
+# Day-4 chains begin before day 6's orchestrator runs, so they are rooted at a
+# wrapper request_id (no orchestrator.jsonl dispatch). The chain-by-request_id
+# walker is the read path; tests assert it against this manifest.
+
+# Two two-link chains and one chain with a malformed-JSON tool_calls payload
+# (deliberately a string rather than a list — the kind of corrupted record an
+# upstream serializer bug could produce). The malformed_tool_calls count is
+# what the inspector surfaces as a red banner.
+DAY4_E2E_CHAINS = [
+    {
+        "name": "day4_chain_search",
+        "root": call("wrapper", 540, [
+            call("tool", 88, embedded_tools=None),
+            call("tool", 72),
+        ]),
+    },
+    {
+        "name": "day4_chain_retrieve",
+        "root": call("wrapper", 410, [
+            call("tool", 65),
+        ]),
+    },
+    {
+        "name": "day4_chain_malformed",
+        "root": call("wrapper", 320, [
+            # parse_error on the wrapper itself surfaces the red banner;
+            # see _emit_day4 below for the malformed tool_calls payload.
+            call("tool", 95, parse_error=True),
+        ]),
+    },
+]
+
+
+def _day4_record(node, request_id, parent_request_id, ts, rng,
+                 malformed_tool_calls=False):
+    record = _call_record(node, request_id, parent_request_id, ts, rng)
+    if malformed_tool_calls:
+        # Deliberately wrong shape: an upstream serializer wrote the tool_calls
+        # array as a JSON string rather than a list. The inspector must surface
+        # this as a parse error, not silently format-fix it.
+        record["tool_calls"] = '[{"name": "broken", "arguments": "{not json'
+        record["parse_error"] = True
+    return record
+
+
+def _emit_day4_chain(chain, ts, rng, out):
+    """Emit a day-4 tool-call chain rooted at a wrapper request. Returns the root request_id."""
+    root_id = _uuid(rng)
+    is_malformed = chain["name"].endswith("_malformed")
+    out.append(_day4_record(chain["root"], root_id, None, ts, rng,
+                            malformed_tool_calls=is_malformed))
+    child_ts = ts
+    step = chain["root"].latency_ms // max(1, len(chain["root"].children))
+    for child in chain["root"].children:
+        child_ts = child_ts + timedelta(milliseconds=step)
+        cid = _uuid(rng)
+        out.append(_call_record(child, cid, root_id, child_ts, rng))
+    return root_id
+
+
+DAY4_ROBUST_TRIALS = [
+    # 10 trials: 8 invocations succeeded with various latencies, 2 missed
+    # (the agent did not emit a tool call). Median latency over successes is
+    # 145 ms. invocation_rate = 8/10 = 0.8.
+    {"trial_id": 1,  "invoked": True,  "outcome": "ok",      "latency_ms": 92},
+    {"trial_id": 2,  "invoked": True,  "outcome": "ok",      "latency_ms": 110},
+    {"trial_id": 3,  "invoked": False, "outcome": "missed",  "latency_ms": None},
+    {"trial_id": 4,  "invoked": True,  "outcome": "ok",      "latency_ms": 140},
+    {"trial_id": 5,  "invoked": True,  "outcome": "ok",      "latency_ms": 150},
+    {"trial_id": 6,  "invoked": True,  "outcome": "ok",      "latency_ms": 165},
+    {"trial_id": 7,  "invoked": False, "outcome": "missed",  "latency_ms": None},
+    {"trial_id": 8,  "invoked": True,  "outcome": "ok",      "latency_ms": 175},
+    {"trial_id": 9,  "invoked": True,  "outcome": "timeout", "latency_ms": 3000},
+    {"trial_id": 10, "invoked": True,  "outcome": "ok",      "latency_ms": 130},
+]
+
+
+def day4_robust_expected():
+    """{trials, invocations, invocation_rate, median_latency_ms} for tests.
+
+    Mirrors statistics.median (the reader's definition): for an even-length
+    list the median averages the two middle values, so for 8 latencies the
+    result is (latencies[3] + latencies[4]) / 2, not latencies[4].
+    """
+    import statistics as _stats
+    invocations = [t for t in DAY4_ROBUST_TRIALS if t["invoked"]]
+    latencies = [t["latency_ms"] for t in invocations
+                 if isinstance(t["latency_ms"], (int, float))]
+    median = _stats.median(latencies) if latencies else None
+    return {
+        "trials": len(DAY4_ROBUST_TRIALS),
+        "invocations": len(invocations),
+        "invocation_rate": round(len(invocations) / len(DAY4_ROBUST_TRIALS), 3),
+        "median_latency_ms": median,
+    }
+
+
+EVENTS_FIXTURES = [
+    # human_intervention: human pauses or unblocks the apparatus mid-run.
+    {"timestamp": "2026-05-19T11:15:42.000+00:00",
+     "event_type": "human_intervention",
+     "actor": "operator",
+     "subject": "day3_5_gate",
+     "note": "approved schema additions; resuming run"},
+    # calibration_entry: tally for a per-output calibration sweep.
+    {"timestamp": "2026-05-19T11:32:08.000+00:00",
+     "event_type": "calibration_entry",
+     "metric": "decode_tok_per_s",
+     "observed": 69.4,
+     "expected_band": [80, 130],
+     "verdict": "below_band"},
+]
+
+
+def write_day4_fixtures(out_dir, seed=20260520):
+    """Write day-4 e2e, robust, and events fixtures into out_dir.
+
+    Returns a manifest with:
+      - chains: {chain_name: root_request_id} for chain-by-request_id tests
+      - robust: day4_robust_expected()
+      - events: list of expected event records
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rng = random.Random(seed)
+
+    base_ts = datetime(2026, 5, 20, 12, 0, 0, tzinfo=timezone.utc)
+    e2e_records = []
+    chain_roots = {}
+    for i, chain in enumerate(DAY4_E2E_CHAINS):
+        ts = base_ts + timedelta(seconds=i * 2)
+        chain_roots[chain["name"]] = _emit_day4_chain(chain, ts, rng, e2e_records)
+
+    _write_jsonl(out_dir / "day4_e2e.jsonl", e2e_records)
+    _write_jsonl(out_dir / "day4_robust.jsonl", DAY4_ROBUST_TRIALS)
+    _write_jsonl(out_dir / "events.jsonl", EVENTS_FIXTURES)
+
+    return {
+        "chains": chain_roots,
+        "robust": day4_robust_expected(),
+        "events": EVENTS_FIXTURES,
+    }
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     out_dir = argv[0] if argv else "./fixture_logs"
@@ -217,6 +375,9 @@ def main(argv=None):
     for task_id, info in manifest.items():
         print(f"  {task_id}: {info['node_count']} nodes, "
               f"{info['total_latency_ms']} ms total, {info['status']}")
+    day4 = write_day4_fixtures(out_dir)
+    print(f"day-4 chains: {list(day4['chains'].keys())}")
+    print(f"day-4 robust: {day4['robust']}")
     return 0
 
 

@@ -7,8 +7,11 @@ import type {
   AppState,
   BaselineResponse,
   ChainResponse,
+  Day4ChainsResponse,
+  EventsResponse,
   Health,
   RecentTask,
+  RobustnessResponse,
   TelemetrySample,
 } from "../types/schemas";
 
@@ -31,6 +34,20 @@ async function getJSON<T>(path: string): Promise<T> {
 
 export const getChain = (taskId: string) =>
   getJSON<ChainResponse>(`/api/chain/${encodeURIComponent(taskId)}`);
+
+// Day-4 chains land before day 6's orchestrator runs, so they are rooted at a
+// wrapper request_id (no orchestrator dispatch) and read via this endpoint.
+export const getChainByRequest = (requestId: string) =>
+  getJSON<ChainResponse>(`/api/chain_by_request/${encodeURIComponent(requestId)}`);
+
+export const getDay4Chains = () =>
+  getJSON<Day4ChainsResponse>("/api/day4/chains");
+
+export const getEvents = (limit = 200) =>
+  getJSON<EventsResponse>(`/api/events?limit=${limit}`);
+
+export const getRobustness = () =>
+  getJSON<RobustnessResponse>("/api/robustness");
 
 export const getRecentTasks = (limit = 50) =>
   getJSON<{ tasks: RecentTask[] }>(`/api/recent_tasks?limit=${limit}`);

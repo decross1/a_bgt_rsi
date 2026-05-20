@@ -2,6 +2,17 @@
 // sections 4.2-4.3, 5.2. Call-log payload fields are deliberately left
 // open (`raw`) so a future day-2 schema addition does not break the UI.
 
+// Day-3.5 retrieval-context entry: a chunk of a retrieved document. The
+// backend only forwards the field if the call record carried a list of
+// objects; the inspector renders each entry as a collapsible row.
+export interface RetrievalDoc {
+  doc_id?: string;
+  content_hash?: string;
+  chunk_offset?: number;
+  chunk_length?: number;
+  [key: string]: unknown;            // forward-compatible — render generically
+}
+
 export interface ChainNode {
   // "tool" nodes are tool calls — either separate call-log lines or, when
   // `embedded` is true, synthesized from a wrapper record's tool_calls array
@@ -17,18 +28,75 @@ export interface ChainNode {
   timestamp: string | null;
   latency_ms: number | null;
   parse_error?: boolean;
+  // True when a wrapper recorded its tool_calls in the wrong shape (string,
+  // dict, etc.) instead of a list — the inspector surfaces this as a red
+  // banner rather than silently format-fixing.
+  tool_calls_malformed?: boolean;
   embedded?: boolean;
+  // Day-3.5 optional: list of {doc_id, content_hash, chunk_offset,
+  // chunk_length}. Null when the call record did not carry it.
+  retrieval_context?: RetrievalDoc[] | null;
   raw: Record<string, unknown>;
   children: ChainNode[];
 }
 
 export interface ChainResponse {
-  task_id: string;
+  task_id?: string;                  // dispatch-rooted (day-6 orchestrator)
+  root_request_id?: string;          // wrapper-rooted (day-4 chains)
   found: boolean;
   malformed: boolean;
   root: ChainNode | null;
   node_count: number;
   total_latency_ms: number;
+  malformed_tool_calls?: number;     // count of parse-error nodes in the chain
+}
+
+// --- day-4 surfaces ---
+
+export interface Day4ChainSummary {
+  request_id: string;
+  caller_tag: string | null;
+  timestamp: string | null;
+  node_count: number;
+  total_latency_ms: number;
+  malformed_tool_calls: number;
+}
+
+export interface Day4ChainsResponse {
+  available: boolean;
+  chains: Day4ChainSummary[];
+}
+
+// events.jsonl (day-3.5). The schema has not been committed, so the
+// inspector enforces only `event_type` and renders the rest generically.
+export interface EventRecord {
+  event_type: string;
+  timestamp?: string;
+  [key: string]: unknown;
+}
+
+export interface EventsResponse {
+  available: boolean;
+  events: EventRecord[];
+}
+
+// day4_robust.jsonl summary.
+export interface RobustnessTrial {
+  trial_id?: number;
+  invoked?: boolean;
+  outcome?: string;
+  latency_ms?: number | null;
+  [key: string]: unknown;
+}
+
+export interface RobustnessResponse {
+  available: boolean;
+  trials: RobustnessTrial[];
+  trial_count: number;
+  invocations: number;
+  invocation_rate: number | null;
+  median_latency_ms: number | null;
+  outcomes: Record<string, number>;
 }
 
 export interface RecentTask {
