@@ -45,9 +45,16 @@ _sync_client = OpenAI(base_url=BASE_URL, api_key=os.environ.get("VLLM_API_KEY", 
 _async_client = AsyncOpenAI(base_url=BASE_URL, api_key=os.environ.get("VLLM_API_KEY", "EMPTY"))
 
 
-def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id):
-    """Build a schema-conforming record from a chat-completion response."""
-    return {
+def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id,
+            retrieval_context=None):
+    """Build a schema-conforming record from a chat-completion response.
+
+    retrieval_context (D-025 / P2): None when no retrieval ran -- the field is
+    OMITTED from the record (legacy semantics). A list when at least one
+    retrieval contributed to the prompt; each item must carry doc_id,
+    content_hash, chunk_offset, chunk_length per the schema.
+    """
+    rec = {
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "request_id": str(uuid.uuid4()),
         "model": resp.model,
@@ -68,6 +75,9 @@ def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id):
         "caller_tag": caller_tag,
         "parent_request_id": parent_request_id,
     }
+    if retrieval_context is not None:
+        rec["retrieval_context"] = retrieval_context
+    return rec
 
 
 def _emit(record, log_path):
@@ -84,21 +94,25 @@ def _emit(record, log_path):
 
 def call_sync(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=None,
               caller_tag="unspecified", parent_request_id=None,
-              log_path=None, model=None):
+              retrieval_context=None, log_path=None, model=None):
     """Synchronous chat completion. Returns the logged record. max_tokens caps
-    generation; it is a request param, not one of the 14 logged schema fields."""
+    generation; it is a request param, not one of the 14 logged schema fields.
+
+    retrieval_context: see _record. Default None -> field absent from record.
+    """
     params = {"temperature": temperature, "top_p": top_p, "seed": seed}
     t0 = time.perf_counter()
     resp = _sync_client.chat.completions.create(
         model=model or MODEL, messages=messages, max_tokens=max_tokens, **params)
     latency_ms = (time.perf_counter() - t0) * 1000.0
     return _emit(_record(messages, params, resp, latency_ms,
-                         caller_tag, parent_request_id), log_path)
+                         caller_tag, parent_request_id,
+                         retrieval_context=retrieval_context), log_path)
 
 
 async def call_async(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=None,
                      caller_tag="unspecified", parent_request_id=None,
-                     log_path=None, model=None):
+                     retrieval_context=None, log_path=None, model=None):
     """Async chat completion (needed for OpenClaw on Day 6). Returns the record."""
     params = {"temperature": temperature, "top_p": top_p, "seed": seed}
     t0 = time.perf_counter()
@@ -106,7 +120,8 @@ async def call_async(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tok
         model=model or MODEL, messages=messages, max_tokens=max_tokens, **params)
     latency_ms = (time.perf_counter() - t0) * 1000.0
     return _emit(_record(messages, params, resp, latency_ms,
-                         caller_tag, parent_request_id), log_path)
+                         caller_tag, parent_request_id,
+                         retrieval_context=retrieval_context), log_path)
 
 
 def verify_log_integrity(path):
