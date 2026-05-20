@@ -38,7 +38,10 @@ MODEL = os.environ.get("VLLM_MODEL", "gemma-4-26b-a4b")  # served-model-name, no
 MODEL_VERSION = os.environ.get("VLLM_MODEL_VERSION", "unknown")
 HOST_METADATA = {
     "cuda_driver": os.environ.get("CUDA_DRIVER", "13.0"),
-    "vllm_image_tag": os.environ.get("VLLM_IMAGE_TAG", "vllm/vllm-openai:v0.20.0"),
+    # Default tracks CLAUDE.md inviolate rule 2 — the pinned image. Day 2's
+    # D-022 re-pin moved this from v0.20.0 to v0.21.0; that release is
+    # required for Gemma 4 MTP (PR #41745) and tool calling.
+    "vllm_image_tag": os.environ.get("VLLM_IMAGE_TAG", "vllm/vllm-openai:v0.21.0"),
 }
 
 # In-memory sink for tests (log_path=None). Cleared by callers as needed.
@@ -167,7 +170,12 @@ def _serialize_tool_calls(tool_calls):
 def _project_for_log(messages):
     """Project OpenAI-shaped messages to the call schema's {role, content}
     pair shape. Assistant turns that carry tool_calls serialize them into
-    content (as JSON); tool-result turns keep their string content."""
+    content (as JSON); tool-result turns keep their string content.
+
+    tool_calls may be SDK objects (first time round, straight from the API)
+    OR plain dicts (after we re-stage them onto openai_messages for the next
+    request). The dict branch is production today; the SDK-object branch is
+    exercised by mocks but is real — do not remove."""
     out = []
     for m in messages:
         role = m["role"]

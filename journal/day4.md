@@ -15,7 +15,7 @@ tool to model — is closed.]
 The numbers from the day's measurements:
 
 - End-to-end tool call: `[DATA: 2 linked records, chain root request_id
-  e9091452-6b94-4e33-b13e-72665c1ef9d6]` — model called
+  eafa0f98-c253-4acc-b43e-e4415d4f8a06]` — model called
   `get_payoff_matrix("prisoners_dilemma")`, tool returned (3,3),(0,5),
   (5,0),(1,1), model named every payoff in the final answer.
 - Tool-invocation rate over 5 trials at temperature 0.3:

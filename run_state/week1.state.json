@@ -62,5 +62,8 @@
     "day5_papers_ingested": null,
     "day6_orchestrator_5_of_5": null,
     "day7_coop_rate_vs_tft": null
+  },
+  "notes": {
+    "day_4_entries_count_finding": "plan.yaml day_4 end-of-day jsonl-integrity bullet stipulates 'total entries across day 4 >= 30'. Actual: 12 call records + ~7 run_log day_4 entries = ~19. Prescribed --n 5 with 2-record chains cannot hit 30. Reported in run_state/week1.run.jsonl (task_id=day4_end_of_day_artifacts, status=partial_pass, finding field) rather than coerced. Resolution: amend the threshold in plan.yaml or accept the partial_pass — human decision."
   }
 }

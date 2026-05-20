@@ -68,7 +68,7 @@ def main():
     run_record_counts = []
     tool_errors = 0
     for i in range(args.n):
-        before = sum(1 for _ in out.open()) if out.exists() else 0
+        before = len(out.read_text().splitlines()) if out.exists() else 0
         try:
             chain = call_with_tools(
                 PD_MESSAGES, TOOLS,
@@ -99,7 +99,7 @@ def main():
     print(f"tool invocations    : {invoked_count}")
     print(f"tool-invocation rate: {rate:.2f}")
     print(f"tool errors raised  : {tool_errors}")
-    print(f"records written     : {sum(1 for _ in out.open())}  (malformed: {malformed})")
+    print(f"records written     : {len(out.read_text().splitlines())}  (malformed: {malformed})")
 
     _update_state_metric(rate)
     print(f"wrote metric_log.day4_tool_call_invocation_rate={rate:.2f} -> {STATE_PATH}")

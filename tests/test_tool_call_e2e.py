@@ -57,9 +57,10 @@ EXPECTED_PAYOFFS = [(3, 3), (0, 5), (5, 0), (1, 1)]
 
 
 def _has_pair(text, a, b):
-    # Match "3,3" / "3, 3" / "(3, 3)" / "3 and 3".
+    # Match "3,3" / "3, 3" / "(3, 3)" / "3 and 3" / "3 3" (bare adjacency).
     return bool(re.search(
-        rf"\b{a}\s*,\s*{b}\b|\b{a}\s*and\s*{b}\b|\(\s*{a}\s*,\s*{b}\s*\)", text
+        rf"\b{a}\s*,\s*{b}\b|\b{a}\s*and\s*{b}\b|\(\s*{a}\s*,\s*{b}\s*\)|\b{a}\s+{b}\b",
+        text,
     ))
 
 
