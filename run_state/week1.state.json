@@ -38,7 +38,15 @@
     "day3_5_block2_events_schema",
     "day3_5_block2_wrapper_retrieval_passthrough",
     "day3_5_block3_claudemd_prose",
-    "day3_5_end_of_day_artifacts"
+    "day3_5_end_of_day_artifacts",
+    "day4_block1_reading",
+    "day4_block1_problemset",
+    "day4_block2_mock_tool",
+    "day4_block2_wrapper_tools",
+    "day4_block2_e2e_test",
+    "day4_block2_robustness",
+    "day4_block3_journal",
+    "day4_end_of_day_artifacts"
   ],
   "aborted_days": [],
   "human_gates_pending": [],
