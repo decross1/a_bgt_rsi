@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/decross1/a_bgt_rsi/schema/worker_contract.schema.json",
+  "title": "OpenClaw worker contract",
+  "description": "The orchestrator <-> worker interface for Day 6 (plan.yaml task day6_block2_worker_contract, source 0:00-0:20). A worker invocation has two halves: an input message the orchestrator dispatches to a worker, and an output message the worker returns. Every architectural promise about 'agents' hinges on this contract being clean. Validate a single message against #/$defs/worker_input or #/$defs/worker_output; a message validating against this root schema is exactly one of the two (the two sub-schemas are mutually exclusive because each forbids additional properties and their required fields are disjoint).",
+  "$defs": {
+    "worker_input": {
+      "title": "Worker input",
+      "description": "What the orchestrator dispatches to a worker. Required fields are exactly task_id, task_type, payload, parent_request_id.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "task_type", "payload", "parent_request_id"],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique id for this task, assigned by the orchestrator. Echoed back in worker_output.task_id so a result can be matched to its dispatch."
+        },
+        "task_type": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Worker capability to invoke. Day 6 defines exactly one task type: 'summarize_paper'. An unknown task_type is a clean rejection (worker_output.status == 'error'), not a crash."
+        },
+        "payload": {
+          "type": "object",
+          "description": "Task-type-specific arguments. For task_type 'summarize_paper': {\"arxiv_id\": <string>} -- the worker retrieves that paper's abstract from the papers_recent collection and asks Gemma 4 to summarize it in ~100 words."
+        },
+        "parent_request_id": {
+          "type": ["string", "null"],
+          "description": "request_id of the call that spawned this task; null for a top-level task. When a string, a uuid4. Used to reconstruct the causal chain orchestrator -> worker -> wrapper -> vLLM (see tools/inspect_run.py, Day 6).",
+          "oneOf": [
+            { "type": "string", "format": "uuid" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "worker_output": {
+      "title": "Worker output",
+      "description": "What the worker returns to the orchestrator. Required fields are exactly task_id, status, result, errors, jsonl_log_path.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["task_id", "status", "result", "errors", "jsonl_log_path"],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Echoes worker_input.task_id. On a rejection where the input had no usable task_id, the orchestrator substitutes a non-empty placeholder so the output stays well-formed."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["passed", "error", "timeout"],
+          "description": "'passed' = worker completed and result is populated. 'error' = the task was rejected or failed cleanly (malformed input, unknown task_type, worker exception caught) -- errors is non-empty. 'timeout' = the worker exceeded the orchestrator's 60 s worker timeout."
+        },
+        "result": {
+          "type": ["object", "null"],
+          "description": "Worker output on success; null when status != 'passed'. For task_type 'summarize_paper': {\"arxiv_id\": <string>, \"summary\": <string>}."
+        },
+        "errors": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Human-readable error strings. Empty when status == 'passed'; non-empty when status is 'error' or 'timeout'."
+        },
+        "jsonl_log_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to the orchestrator JSONL log (logs/orchestrator.jsonl) holding this task's causal chain: orchestrator dispatch -> worker invocation -> orchestrator receipt, linked by parent_request_id."
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/worker_input" },
+    { "$ref": "#/$defs/worker_output" }
+  ]
+}
