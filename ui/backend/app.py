@@ -18,7 +18,8 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .baseline import compute_baseline
-from .chain import LogStore, build_chain, recent_tasks
+from .chain import LogStore, build_chain, build_chain_by_request_id, recent_tasks
+from .day4 import read_events, read_robustness
 from .tailer import JsonlTailer
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -102,9 +103,70 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                 detail=f"no orchestrator dispatch for task_id {task_id!r}")
         return result
 
+    @app.get("/api/chain_by_request/{request_id}")
+    def chain_by_request(request_id: str):
+        """Walk a tool-call chain rooted at a wrapper request_id (day-4)."""
+        result = build_chain_by_request_id(store, request_id)
+        if not result["found"]:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no call record for request_id {request_id!r}")
+        return result
+
     @app.get("/api/recent_tasks")
     def recent(limit: int = 50):
         return {"tasks": recent_tasks(store, limit)}
+
+    @app.get("/api/day4/chains")
+    def day4_chains():
+        """Root wrapper request_ids from day4_e2e.jsonl, newest last.
+
+        Scoped to day4_e2e.jsonl specifically rather than the cross-file
+        LogStore index: day-2 records all carry parent_request_id=null
+        (chains start day 4 per the schema), so a cross-file enumeration
+        would surface ~50 day-2 standalone calls as "day-4 chains".
+        """
+        store.refresh()
+        path = Path(logs_dir) / "day4_e2e.jsonl"
+        if not path.exists():
+            return {"available": False, "chains": []}
+        chains = []
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if (record.get("parent_request_id") is None
+                            and isinstance(record.get("request_id"), str)):
+                        rid = record["request_id"]
+                        walk = build_chain_by_request_id(store, rid)
+                        chains.append({
+                            "request_id": rid,
+                            "caller_tag": record.get("caller_tag"),
+                            "timestamp": record.get("timestamp"),
+                            "node_count": walk["node_count"],
+                            "total_latency_ms": walk["total_latency_ms"],
+                            "malformed_tool_calls": walk["malformed_tool_calls"],
+                        })
+        except OSError:
+            return {"available": False, "chains": []}
+        chains.sort(key=lambda c: c.get("timestamp") or "", reverse=True)
+        return {"available": True, "chains": chains}
+
+    @app.get("/api/events")
+    def events(limit: int = 200):
+        """events.jsonl passthrough (day-3.5 surface). Available=False if absent."""
+        return read_events(Path(logs_dir) / "events.jsonl", limit=max(1, limit))
+
+    @app.get("/api/robustness")
+    def robustness():
+        """day4_robust.jsonl summary: invocation rate + median latency."""
+        return read_robustness(Path(logs_dir) / "day4_robust.jsonl")
 
     @app.get("/api/telemetry/recent")
     def telemetry_recent(limit: int = 300):

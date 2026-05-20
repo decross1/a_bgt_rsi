@@ -361,3 +361,55 @@ mtp-only), `test_api.py` +1 (`test_baseline_endpoint_uses_mtp_csv`;
 new `backend/tests/test_real_schema.py` (3 — see above).
 38 Python + 9 frontend tests pass; `npm run build` clean.
 `ui_plan.md` bumped r4 → r5.
+
+## Day-4 sync (2026-05-20)
+
+Track D side-track on `worktree-day4-ui-sync` for the day-4 surfaces.
+Day 3.5 and day 4 have not landed in Track A — built forward-compatible
+against synthesized fixtures (`write_day4_fixtures` in
+`backend/tests/fixtures/gen.py`). Detailed notes in
+`notes/track-d-day4-ui.md`; summary below.
+
+- **Wrapper-rooted chain walker** (`build_chain_by_request_id`) +
+  `GET /api/chain_by_request/{rid}` + new inspector route
+  `/chain/req/:requestId`. Day-4 chains begin before day 6's
+  orchestrator, so they have no dispatch root.
+- **Day-4 chain list** on the dashboard (`Day4ChainList.tsx`) reads
+  `GET /api/day4/chains` — wrapper-rooted records from
+  `logs/day4_e2e.jsonl`, with a red `malformed` badge when a chain
+  carries any parse-error nodes.
+- **Malformed-JSON `tool_calls` banner.** The inspector renders a red
+  banner counting affected nodes; `ChainTree.tsx` adds a per-node
+  `malformed tool_calls` badge. No silent format-fixing — raw record
+  shown as stored.
+- **Forward-compatible `retrieval_context`.** Surfaced as a typed list
+  only when the record carries a list of objects; wrong-shape values
+  are dropped. Each node shows a `ctx N` badge and a collapsible
+  doc_id / content_hash / offset / length table.
+- **Robustness panel** (`RobustnessPanel.tsx`) reads
+  `GET /api/robustness` — invocation rate, median latency
+  (`statistics.median`), per-outcome counts, per-trial table.
+- **Events viewer** at `/events` (`EventsViewer.tsx`) reads
+  `GET /api/events`. Type-aware rendering for `human_intervention` and
+  `calibration_entry`; generic fallback for any other event_type. The
+  reader is intentionally schema-light (only `event_type` enforced)
+  because the day-3.5 schema is not committed yet.
+- **Available-false defaults.** Every new endpoint degrades to
+  `available: false` when its source file is absent, so panels read
+  "not present yet" rather than 500 while Track A is still pre-day-4.
+
+15 new backend tests + 8 new frontend tests. 53 Python + 17 frontend
+pass; `npm run build` clean. `ui_plan.md` bumped r5 → r6.
+
+### Asks for Track A / human
+
+- The current `schema/calls.jsonl.schema.json` has
+  `additionalProperties: false`. Day 3.5 cannot add `retrieval_context`
+  to a call record without first lifting that constraint or whitelisting
+  the new field. Heads-up for whoever lands day 3.5.
+- `events.jsonl` schema is not committed yet — the viewer reads it
+  generically. When required per-type fields land, `EventsViewer`
+  should switch from key/value rendering to a per-type renderer.
+- The UI assumes day-4 chains are wrapper-rooted (parent_request_id
+  null in `day4_e2e.jsonl`). If day 4 instead emits a separate dispatch
+  record, the `/api/day4/chains` rule needs adjustment.
