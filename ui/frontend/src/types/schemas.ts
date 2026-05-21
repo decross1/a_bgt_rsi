@@ -80,12 +80,17 @@ export interface EventsResponse {
   events: EventRecord[];
 }
 
-// day4_robust.jsonl summary.
+// One robustness run, derived by read_robustness from day4_robust.jsonl's
+// chained call log: a run is a wrapper-root call (caller_tag identifies it)
+// whose `completion` did or did not carry a tool call.
 export interface RobustnessTrial {
   trial_id?: number;
+  caller_tag?: string | null;        // e.g. test_tool_call_robustness/run0
+  request_id?: string | null;
   invoked?: boolean;
-  outcome?: string;
-  latency_ms?: number | null;
+  outcome?: string;                  // ok | missed | malformed
+  tool_name?: string | null;         // name of the invoked tool, when any
+  latency_ms?: number | null;        // root-call latency, rounded to 0.1 ms
   [key: string]: unknown;
 }
 

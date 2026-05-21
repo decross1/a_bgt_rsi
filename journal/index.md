@@ -9,6 +9,6 @@ synthesis (600–1000 words). Each row links to the published post.
 | 2   | 32          | What does it mean for a research apparatus to "work"? | draft: `journal/day2.md` |
 | 3   | 33          | TBD   |     |
 | 4   | 34          | First tool call — and the gap between "works" and "works reliably." | draft: `journal/day4.md` |
-| 5   | 35          | TBD   |     |
+| 5   | 35          | Pipe arXiv into the loop — first findings about my own field | draft: `journal/day5.md` |
 | 6   | 36          | TBD   |     |
 | 7   | 37          | TBD   |     |

@@ -58,20 +58,29 @@ class _MockEmbedder:
 
 
 class _BGEM3Embedder:
-    """Real BGE-M3 dense-vector embedder, loaded lazily from local weights."""
+    """Real BGE-M3 dense-vector embedder, loaded lazily from local weights.
+
+    Wraps ChromaDB's SentenceTransformerEmbeddingFunction so this pipeline
+    and tests/test_papers_retrieval.py embed with the byte-identical
+    function (same class, same model_name) -- a store/query mismatch would
+    silently degrade retrieval. This is also the embedder the Day-3
+    retrieval layer was built and validated on
+    (scripts/chroma_init_with_bge_m3.py); FlagEmbedding is not installed in
+    the .venv-chroma environment Track A owns.
+    """
 
     name = "BGE-M3"
 
     def __init__(self, weights_path):
         # Imported lazily: Track A owns these deps; tests never reach here.
-        from FlagEmbedding import BGEM3FlagModel
+        from chromadb.utils import embedding_functions
 
-        self._model = BGEM3FlagModel(weights_path, use_fp16=True)
+        self._ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name=weights_path)
 
     def encode(self, texts):
-        out = self._model.encode(texts, batch_size=16, max_length=8192)
-        # BGEM3FlagModel returns {'dense_vecs': ndarray, ...}.
-        return [vec.tolist() for vec in out["dense_vecs"]]
+        vectors = self._ef(list(texts))
+        return [v.tolist() if hasattr(v, "tolist") else list(v) for v in vectors]
 
 
 def get_embedder(weights_path):
@@ -131,8 +140,22 @@ def dedupe(papers, existing_ids):
     return kept, n_dup, n_no_id, n_no_abstract
 
 
-def get_collection(db_path, collection_name):
-    """Open (or create) the ChromaDB collection, tagged with the BGE-M3 pin.
+def get_collection(db_path, collection_name, embedder):
+    """Open (or create) the ChromaDB collection, configured for BGE-M3.
+
+    The collection is created with `embedder`'s ChromaDB embedding function
+    as its persisted configuration. ChromaDB 1.5.9 records the embedding
+    function in the collection config and rejects a later get_collection()
+    that attaches a different one -- so a query-time caller
+    (tests/test_papers_retrieval.py) attaching the same BGE-M3 function
+    matches rather than conflicting. The real _BGEM3Embedder exposes that
+    function as `_ef`; _MockEmbedder has none, so under MOCK_LLM the
+    collection is created with no configured function (the mock path
+    stores stub vectors and is never queried through ChromaDB).
+
+    Documents are still embedded explicitly in store() and passed to add()
+    -- by the SAME function object -- so stored and query-time vectors
+    share one embedding space.
 
     ChromaDB is imported lazily so this module stays unit-testable without
     it installed. Track A owns the live store at chroma_db/.
@@ -142,9 +165,12 @@ def get_collection(db_path, collection_name):
     client = chromadb.PersistentClient(path=db_path)
     return client.get_or_create_collection(
         name=collection_name,
-        # Embeddings are supplied explicitly on add(); the metadata records
-        # the pin so validation can confirm BGE-M3 (not all-MiniLM-L6-v2).
-        metadata={"embedding_model": "BGE-M3", "hnsw:space": "cosine"},
+        embedding_function=getattr(embedder, "_ef", None),
+        # metadata records the pin so validation can confirm BGE-M3 (not
+        # all-MiniLM-L6-v2); key "embedding_function" matches the Day-3
+        # convention (scripts/chroma_init_with_bge_m3.py) and the plan.yaml
+        # day5_block2_pipeline_implementation validation check.
+        metadata={"embedding_function": "BGE-M3", "hnsw:space": "cosine"},
     )
 
 
@@ -194,7 +220,7 @@ def main(argv=None):
 
     papers = load_papers(args.input)
     embedder = get_embedder(args.bge_m3_weights)
-    collection = get_collection(args.db_path, args.collection)
+    collection = get_collection(args.db_path, args.collection, embedder)
 
     existing_ids = collection.get()["ids"]
     kept, _, _, _ = dedupe(papers, existing_ids)

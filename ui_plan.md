@@ -10,21 +10,77 @@
 > schemas in `schema/`) but do NOT share source files outside `ui/`.
 > Read the operating contract below before doing anything.
 >
-> **Revision r6 (2026-05-20).** All build steps (6.1–6.7) plus four
+> **Revision r7 (2026-05-21).** All build steps (6.1–6.7) plus five
 > improvement passes are done; full history is in §0. The latest pass
-> (r6, Track D day-4) adds: a wrapper-rooted chain walker
-> (`build_chain_by_request_id`) and `/api/chain_by_request/{rid}` for
-> day-4 tool-call chains that land before day 6's orchestrator; a
-> day-4 chain list on the dashboard linking into the inspector; a
-> robustness panel reading `logs/day4_robust.jsonl` (invocation rate,
-> per-trial outcomes, median latency); an events viewer at `/events`
-> reading `logs/events.jsonl` (day-3.5 surface, generic by event_type);
-> forward-compatible `retrieval_context` rendering on call nodes; and a
-> red banner + per-node badge for malformed-JSON `tool_calls` payloads.
+> (r7, Track D day-5) aligns the UI to the *real* Track A day-4
+> artifacts, which differ in shape from the synthesized fixtures the
+> day-4 sync (r6) was built against: `read_robustness` now consumes
+> `logs/day4_robust.jsonl` as a chained call log (deriving the
+> invocation rate from whether each run-root call emitted a tool call,
+> not a per-trial `invoked` flag — the r6 reader scored the real file a
+> misleading 0%); the chain walker gained a third tool-call synthesis
+> path that parses an OpenAI-style tool call out of the `completion`
+> field (the shape Track A actually uses); `EventsViewer` switched from
+> generic key/value rendering to a per-type renderer driven by the now
+> committed `schema/events.jsonl.schema.json`; and the UI's
+> `retrieval_context` keys were verified against the committed
+> `schema/calls.jsonl.schema.json` whitelist (no drift) with a
+> drift-guard test added.
 
 ---
 
 ## 0. Revision log
+
+**r7 (2026-05-21)** — Track D day-5 sync. The day-4 sync (r6) was built
+against synthesized fixtures; Track A's real day-4 artifacts are now on
+disk and differ in shape. This pass aligns the UI to them. All under
+`ui/` — no apparatus-side code touched.
+
+- **`day4_robust.jsonl` is a chained call log, not a per-trial summary.**
+  Track A logs every call (the same record shape as `day4_e2e.jsonl`),
+  so the r6 `read_robustness` — which keyed on a per-trial `invoked`
+  flag — scored the real file a misleading **0%**. Rewritten: a "run" is
+  a wrapper-root call (`parent_request_id` null, `caller_tag`
+  `test_tool_call_robustness/run<N>`); the run "invoked" the tool when
+  its root `completion` parses as a tool call. Child records (the
+  tool-result follow-up) are excluded from the trial count. A root whose
+  completion is plain text "missed"; one that opens like a tool-call
+  array but does not parse is "malformed" — flagged, never repaired.
+  Latencies round to 0.1 ms (the source logs sub-microsecond floats).
+- **Third tool-call shape — the `completion` field.** The day-4 sync's
+  §9 resolution covered two shapes (separate call-log lines; an embedded
+  `tool_calls` array). Track A's real shape is a third: the model's tool
+  call serialized as an OpenAI-style JSON string in the wrapper record's
+  `completion`. New `parse_completion_tool_calls` in `backend/chain.py`;
+  `_call_node` synthesizes a `kind="tool"` child from it via the existing
+  `_tool_node`, so the inspector tree is unchanged. A completion tool
+  call has no own latency (the wrapper's `latency_ms` already covers it),
+  so it contributes 0 to `total_latency_ms`. A completion that opens like
+  a tool-call array but fails to parse sets `tool_calls_malformed` — the
+  existing red banner/badge fire, no new tree field.
+- **`EventsViewer` per-type renderer.** `schema/events.jsonl.schema.json`
+  is now committed (a `oneOf` of `human_intervention` and
+  `calibration_entry`). The viewer moved from generic key/value rendering
+  to a per-type renderer driven by the schema's per-type fields, with a
+  generic fallback for any other `event_type` and an "incomplete record"
+  flag when a typed event misses a schema-required field.
+  `logs/events.jsonl` does not exist yet — the `available: false`
+  degrade path is unchanged; the backend `read_events` stays schema-light.
+- **`retrieval_context` keys verified.** `schema/calls.jsonl.schema.json`
+  whitelists `retrieval_context` (an array of `{doc_id, content_hash,
+  chunk_offset, chunk_length}`, `additionalProperties: false` kept). The
+  UI's reader passthrough, `RetrievalDoc` type and `ChainTree` table
+  already match these keys — no drift, no change. A drift-guard test
+  (`test_retrieval_context_whitelisted_keys_match_ui`) was added.
+- **Fixtures + tests.** `gen.py`'s `day4_robust.jsonl` fixture is now a
+  chained call log (5 runs: 3 ok, 1 missed, 1 malformed completion); the
+  `events.jsonl` fixture matches the committed events schema field-for-
+  field. New tests: completion-field synthesis (3), robustness chained
+  shape (2), real-artifact coverage in `test_real_schema.py` (5 — real
+  `day4_*` log validation, real `read_robustness`, real completion
+  synthesis, events-fixture + retrieval_context schema guards), and the
+  rewritten `EventsViewer` frontend tests. 65 Python + 20 frontend tests
+  pass; `npm run build` clean.
 
 **r6 (2026-05-20)** — Track D day-4 sync. Day 3.5 has not landed in
 Track A yet (schema/calls.jsonl.schema.json carries no `retrieval_context`,
@@ -620,7 +676,7 @@ A piece is done when:
 If any of these come up while you're building, write the question to
 `ui/notes/ui-build.md` and continue with a reasonable default. Don't block.
 
-- ~~Whether tool calls are logged as their own call-log lines (with their own `request_id`) or embedded inside a wrapper call's record.~~ **Resolved (r4).** Both shapes are supported; the chain walker synthesizes embedded `tool_calls` into `kind="tool"` child nodes so the inspector tree is shape-agnostic. Both shapes have test coverage. See §0 r4. The remaining unknown — the exact embedded key name — is isolated to `EMBEDDED_TOOL_KEY` in `backend/chain.py` and is a one-line change when the day-4 schema lands.
+- ~~Whether tool calls are logged as their own call-log lines (with their own `request_id`) or embedded inside a wrapper call's record.~~ **Resolved (r4, extended r7).** *Three* shapes are now supported and converge to one inspector tree: (1) separate call-log lines; (2) an embedded `tool_calls` array; (3) — the shape Track A's real day-4 logs actually use — an OpenAI-style tool call serialized as a JSON string in the wrapper record's `completion` field. The chain walker synthesizes shapes 2 and 3 into `kind="tool"` child nodes so the inspector tree is shape-agnostic; all three have test coverage. See §0 r4 and r7.
 - Whether to expose experiment-level views (cooperation rates, per-round behavior) in v1 or defer to a v2 results-browser plan. **Direction (r4):** deferred to v2; a one-page sketch of the v2 results browser and its data contracts is drafted at `ui/ui_plan_v2.md`. Not built in v1.
 - ~~Whether the inspector should let users diff two chains side-by-side (powerful, but doubles the layout work).~~ **Resolved (r4): deferred to v2.** It would roughly double the inspector layout work for marginal value — the week-1 CLI already gives a textual chain diff via `diff <(tools/inspect_run.py --task-id X) <(tools/inspect_run.py --task-id Y)`. See §0 r4.
 - ~~The "healthy baseline" card should be data-driven (read from `bench/day1.csv` and `run_state/week1.state.json`'s `metric_log`).~~ **Resolved (r4): implemented.** `GET /api/baseline` sources decode tok/s from `bench/day1.csv` + `metric_log` and falls back to the §5.3 documented constants per-row; each row is annotated measured vs documented. See §0 r4. Idle power and the threshold rows stay documented — no committed measurement source exists for them yet; revisit if one lands.

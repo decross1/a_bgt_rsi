@@ -33,25 +33,50 @@ afterEach(() => {
 });
 
 describe("RobustnessPanel", () => {
-  it("renders invocation rate and median latency when available", async () => {
+  it("renders the chained-shape run table, with caller_tag and outcomes", async () => {
+    // read_robustness returns one trial per robustness run, keyed on the
+    // run's caller_tag, with outcomes ok / missed / malformed.
     responses["/api/robustness"] = {
       available: true,
       trials: [
-        { trial_id: 1, invoked: true, outcome: "ok", latency_ms: 100 },
-        { trial_id: 2, invoked: false, outcome: "missed", latency_ms: null },
+        {
+          trial_id: 1,
+          caller_tag: "test_tool_call_robustness/run0",
+          invoked: true,
+          outcome: "ok",
+          tool_name: "get_payoff_matrix",
+          latency_ms: 100,
+        },
+        {
+          trial_id: 2,
+          caller_tag: "test_tool_call_robustness/run1",
+          invoked: false,
+          outcome: "missed",
+          latency_ms: 90,
+        },
+        {
+          trial_id: 3,
+          caller_tag: "test_tool_call_robustness/run2",
+          invoked: false,
+          outcome: "malformed",
+          latency_ms: 120,
+        },
       ],
-      trial_count: 2,
+      trial_count: 3,
       invocations: 1,
-      invocation_rate: 0.5,
+      invocation_rate: 0.333,
       median_latency_ms: 100,
-      outcomes: { ok: 1, missed: 1 },
+      outcomes: { ok: 1, missed: 1, malformed: 1 },
     };
     render(<RobustnessPanel />);
-    await waitFor(() => expect(screen.getByText("50.0%")).toBeInTheDocument());
-    // "100 ms" appears twice: once in the summary median, once in the trial row.
-    expect(screen.getAllByText("100 ms").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/ok:/)).toBeInTheDocument();
-    expect(screen.getByText(/missed:/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText("33.3%")).toBeInTheDocument());
+    // The run column shows the caller_tag, not a synthetic trial index.
+    expect(
+      screen.getByText("test_tool_call_robustness/run0"),
+    ).toBeInTheDocument();
+    // The malformed outcome is surfaced in the per-run table and the tally.
+    expect(screen.getByText("malformed")).toBeInTheDocument();
+    expect(screen.getByText(/malformed:/)).toBeInTheDocument();
   });
 
   it("shows the not-yet-available notice when day4_robust.jsonl is absent", async () => {

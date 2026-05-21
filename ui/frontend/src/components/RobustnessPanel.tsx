@@ -12,6 +12,7 @@ function outcomeClass(outcome: string | undefined): string {
     case "timeout":
       return "text-amber-400";
     case "missed":
+    case "malformed":
     case "error":
       return "text-red-400";
     default:
@@ -22,7 +23,9 @@ function outcomeClass(outcome: string | undefined): string {
 function TrialRow({ trial }: { trial: RobustnessTrial }) {
   return (
     <tr className="border-t border-zinc-800/60">
-      <td className="px-2 py-1 text-zinc-400">{trial.trial_id ?? "—"}</td>
+      <td className="px-2 py-1 font-mono text-zinc-400">
+        {trial.caller_tag ?? trial.trial_id ?? "—"}
+      </td>
       <td className="px-2 py-1">
         <span className={trial.invoked ? "text-zinc-200" : "text-zinc-600"}>
           {trial.invoked ? "yes" : "no"}
@@ -117,7 +120,7 @@ export default function RobustnessPanel() {
               <table className="w-full text-xs">
                 <thead className="text-zinc-500">
                   <tr>
-                    <th className="px-2 py-1 text-left font-normal">trial</th>
+                    <th className="px-2 py-1 text-left font-normal">run</th>
                     <th className="px-2 py-1 text-left font-normal">invoked</th>
                     <th className="px-2 py-1 text-left font-normal">outcome</th>
                     <th className="px-2 py-1 text-right font-normal">latency</th>

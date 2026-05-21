@@ -1945,11 +1945,20 @@ wall_clock_window:
       pass_signal: commit hash returned; status clean
       fail_signal: dirty
     - check: jsonl integrity
+      # Amended 2026-05-21 (human-authorized, decross1): the original
+      # "total entries across day 4 ≥ 30" was unreachable — the
+      # prescribed Day-4 scope (--n 5 trials of 2-record chains + one
+      # e2e chain) structurally yields 12 call records. Replaced the
+      # arbitrary aggregate with per-artifact record counts that pin
+      # the meaningful invariant. See DECISIONS.md D-024.
       pass_signal: |
         verify_log_integrity('logs/day4_e2e.jsonl') == 0 AND
         verify_log_integrity('logs/day4_robust.jsonl') == 0 AND
-        total entries across day 4 ≥ 30
-      fail_signal: malformed > 0 OR total < 30
+        logs/day4_e2e.jsonl has 2 linked records (matching
+        parent_request_id) AND
+        logs/day4_robust.jsonl has 2 records per trial (10 for --n 5)
+      fail_signal: malformed > 0 OR record counts do not match the
+        prescribed --n 5 two-record-chain scope
     - check: public journal URL recorded
       pass_signal: journal/index.md updated
       fail_signal: not updated

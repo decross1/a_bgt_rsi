@@ -31,24 +31,25 @@ first PD experiment + retrospective.
 
 ## 2. Where the project stands
 
-_As of 2026-05-19. The live tracker is `current_day.md`; the
+_As of 2026-05-21. The live tracker is `current_day.md`; the
 authoritative state is `run_state/week1.state.json`._
 
-- **Day 1 — complete.** All 12 tasks closed. NemoClaw onboarding was
-  skipped via the planned plain-Docker fallback. Decode throughput
-  measured at ~32 tok/s (see below).
-- **Day 2 — Block 2 complete.** Tasks #1 (JSONL schema), #2 (wrapper)
-  and #3 (50-call sweep) all pass. #3 first failed on throughput
-  (aggregate 29.75 tok/s vs the 40 floor) and aborted the day; the
-  abort was resolved 2026-05-19 (below). Block 3 (#4 reading, #5
-  journal, #6 ambient, #7 end-of-day) is still pending — #4 is
-  human-only.
-- **Throughput resolved via MTP (D-022).** Decode was weight-bandwidth-
-  bound at ~32 tok/s on the v0.20.0 image. Fix: re-pin to
+- **Days 1–4 — complete.** Hardware + vLLM serving (Day 1), Python
+  wrapper + JSONL logging (Day 2), ChromaDB + textbook ingest (Day 3),
+  Day 3.5 schema amendments, first tool call / function calling
+  (Day 4). Decode throughput was weight-bandwidth-bound at ~32 tok/s on
+  the v0.20.0 image; resolved via MTP speculative decoding — re-pin to
   `vllm/vllm-openai:v0.21.0` (first release with Gemma 4 MTP, PR
-  #41745) and enable MTP speculative decoding. Result: single-stream
-  decode 32 → 69 tok/s, the 50-call sweep aggregate 29.75 → 56.09; all
-  5 checks pass; the day_2 abort was lifted (human-attested).
+  #41745). Single-stream decode 32 → 69 tok/s (D-022).
+- **Day 5 — complete.** arXiv pipeline → ChromaDB. 138 papers
+  (cs.MA / cs.GT / econ.TH, 7-day window) ingested into the
+  `papers_recent` collection with BGE-M3 embeddings; sub-second
+  retrieval. The pipeline source was switched from the Semantic Scholar
+  API to the arXiv API (D-027 — S2 lags arXiv-ID indexing by weeks).
+  ML-Intern was probed and fell back to a direct-API path within the
+  planned 45-min cap. `cron/daily-arxiv.sh` exists but is not yet in
+  crontab (Day 6 enables it).
+- **Next: Day 6** — OpenClaw orchestrator + first worker.
 
 ---
 
