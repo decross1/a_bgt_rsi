@@ -7,17 +7,19 @@ task_id, status, timestamps -- and carry plausible opaque payload fields
 (model, prompt_messages, completion, usage, host_metadata) so the chain
 walker and inspector can be developed before the day-2 schema lands.
 
-`write_day4_fixtures` adds the day-4 surfaces (Track D day-4 sync):
+`write_day4_fixtures` adds the day-4 surfaces (Track D day-4/day-5 sync):
 - `day4_e2e.jsonl`: two-link tool-call chains rooted at a wrapper request
   (no orchestrator dispatch — chains land before day 6's orchestrator).
   One chain carries a malformed-JSON `tool_calls` string so the inspector
   can render the red banner without silent format-fixing.
-- `day4_robust.jsonl`: per-trial invocation outcomes with latencies, so
-  the robustness panel has invocation rate + median latency to compute.
-- `events.jsonl`: forward-compatible day-3.5 stub — one
-  `human_intervention` and one `calibration_entry` event. The schema for
-  events.jsonl has not been committed yet, so the inspector reads it
-  generically; this fixture documents the shapes the UI expects.
+- `day4_robust.jsonl`: a chained call log from a tool-call robustness
+  sweep — mirrors the real Track A shape (day-5 sync): each run is a
+  wrapper-root call whose `completion` is the model's tool call, optionally
+  followed by a child call. read_robustness derives the invocation rate.
+- `events.jsonl`: day-3.5 events matching the committed
+  schema/events.jsonl.schema.json — one `human_intervention` and one
+  `calibration_entry`, field-for-field, so EventsViewer's per-type
+  renderer is exercised against real shapes.
 
 Run as a CLI to produce a log directory the backend can be pointed at:
 
@@ -26,6 +28,7 @@ Run as a CLI to produce a log directory the backend can be pointed at:
 """
 import json
 import random
+import statistics
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -283,57 +286,129 @@ def _emit_day4_chain(chain, ts, rng, out):
     return root_id
 
 
-DAY4_ROBUST_TRIALS = [
-    # 10 trials: 8 invocations succeeded with various latencies, 2 missed
-    # (the agent did not emit a tool call). Median latency over successes is
-    # 145 ms. invocation_rate = 8/10 = 0.8.
-    {"trial_id": 1,  "invoked": True,  "outcome": "ok",      "latency_ms": 92},
-    {"trial_id": 2,  "invoked": True,  "outcome": "ok",      "latency_ms": 110},
-    {"trial_id": 3,  "invoked": False, "outcome": "missed",  "latency_ms": None},
-    {"trial_id": 4,  "invoked": True,  "outcome": "ok",      "latency_ms": 140},
-    {"trial_id": 5,  "invoked": True,  "outcome": "ok",      "latency_ms": 150},
-    {"trial_id": 6,  "invoked": True,  "outcome": "ok",      "latency_ms": 165},
-    {"trial_id": 7,  "invoked": False, "outcome": "missed",  "latency_ms": None},
-    {"trial_id": 8,  "invoked": True,  "outcome": "ok",      "latency_ms": 175},
-    {"trial_id": 9,  "invoked": True,  "outcome": "timeout", "latency_ms": 3000},
-    {"trial_id": 10, "invoked": True,  "outcome": "ok",      "latency_ms": 130},
+# --- day4_robust.jsonl (Track D day-5 sync) ---
+#
+# logs/day4_robust.jsonl is a CHAINED CALL LOG, not a per-trial summary: the
+# real Track A file logs every call. Each robustness run is a wrapper-root
+# call (parent_request_id null) whose `completion` is the model's tool call
+# serialized as an OpenAI-style JSON string, optionally followed by a child
+# call carrying the tool result. read_robustness derives the invocation rate
+# from whether each root's completion parses as a tool call.
+#
+# (caller_tag, outcome, root latency_ms, has follow-up child)
+DAY4_ROBUST_RUNS = [
+    ("test_tool_call_robustness/run0", "ok",        100, True),
+    ("test_tool_call_robustness/run1", "ok",        140, True),
+    ("test_tool_call_robustness/run2", "missed",     90, False),
+    ("test_tool_call_robustness/run3", "ok",        180, True),
+    ("test_tool_call_robustness/run4", "malformed", 120, False),
 ]
 
+# A completion that opens an array and names a function but never closes —
+# the kind of corrupted record an upstream serializer bug produces. The
+# reader flags it ("malformed" outcome); it is never silently repaired.
+_MALFORMED_COMPLETION = ('[{"id": "chatcmpl-tool-x", "type": "function", '
+                         '"function": {"name": "get_payoff_matrix"')
+# A run that answered from memory without calling the tool ("missed").
+_MISSED_COMPLETION = ("The prisoner's dilemma payoff matrix is "
+                      "(3,3), (0,5), (5,0), (1,1).")
 
-def day4_robust_expected():
-    """{trials, invocations, invocation_rate, median_latency_ms} for tests.
 
-    Mirrors statistics.median (the reader's definition): for an even-length
-    list the median averages the two middle values, so for 8 latencies the
-    result is (latencies[3] + latencies[4]) / 2, not latencies[4].
-    """
-    import statistics as _stats
-    invocations = [t for t in DAY4_ROBUST_TRIALS if t["invoked"]]
-    latencies = [t["latency_ms"] for t in invocations
-                 if isinstance(t["latency_ms"], (int, float))]
-    median = _stats.median(latencies) if latencies else None
+def _openai_tool_call_completion(tool_name, arguments):
+    """An OpenAI-style tool call serialized as a `completion` string (shape 3)."""
+    return json.dumps([{
+        "id": "chatcmpl-tool-" + tool_name,
+        "type": "function",
+        "function": {"name": tool_name, "arguments": json.dumps(arguments)},
+    }])
+
+
+def _robust_record(caller_tag, request_id, parent_request_id, ts, latency_ms,
+                   completion):
+    """One day4_robust.jsonl line — a call record (calls.jsonl schema shape)."""
     return {
-        "trials": len(DAY4_ROBUST_TRIALS),
-        "invocations": len(invocations),
-        "invocation_rate": round(len(invocations) / len(DAY4_ROBUST_TRIALS), 3),
-        "median_latency_ms": median,
+        "timestamp": ts.isoformat(timespec="milliseconds"),
+        "request_id": request_id,
+        "parent_request_id": parent_request_id,
+        "caller_tag": caller_tag,
+        "latency_ms": latency_ms,
+        "model": "gemma-4-26b-a4b",
+        "model_version": "unknown",
+        "temperature": 0.3,
+        "top_p": 1.0,
+        "seed": None,
+        "prompt_messages": [
+            {"role": "system", "content": "You are a game-theory assistant "
+             "with access to a payoff-matrix tool."},
+            {"role": "user", "content": "What is the prisoner's dilemma "
+             "payoff matrix? Use the tool to look it up."},
+        ],
+        "completion": completion,
+        "usage": {"input_tokens": 266, "output_tokens": 24},
+        "host_metadata": {"cuda_driver": "13.0",
+                          "vllm_image_tag": "vllm/vllm-openai:v0.21.0"},
     }
 
 
+def _emit_day4_robust(rng, out):
+    """Emit the day4_robust.jsonl chained-call records into `out`."""
+    base = datetime(2026, 5, 20, 21, 30, 0, tzinfo=timezone.utc)
+    for i, (tag, outcome, latency, has_child) in enumerate(DAY4_ROBUST_RUNS):
+        ts = base + timedelta(seconds=i)
+        root_id = _uuid(rng)
+        if outcome == "ok":
+            completion = _openai_tool_call_completion(
+                "get_payoff_matrix", {"game_name": "prisoners_dilemma"})
+        elif outcome == "malformed":
+            completion = _MALFORMED_COMPLETION
+        else:
+            completion = _MISSED_COMPLETION
+        out.append(_robust_record(tag, root_id, None, ts, latency, completion))
+        if has_child:
+            out.append(_robust_record(
+                tag, _uuid(rng), root_id,
+                ts + timedelta(milliseconds=latency), 900,
+                "Both cooperate: (3, 3). One defects: (0, 5) / (5, 0). "
+                "Both defect: (1, 1)."))
+
+
+def day4_robust_expected():
+    """Expected read_robustness summary over DAY4_ROBUST_RUNS, for tests."""
+    invoked = [run for run in DAY4_ROBUST_RUNS if run[1] == "ok"]
+    latencies = sorted(run[2] for run in invoked)
+    outcomes = {}
+    for run in DAY4_ROBUST_RUNS:
+        outcomes[run[1]] = outcomes.get(run[1], 0) + 1
+    return {
+        "trials": len(DAY4_ROBUST_RUNS),
+        "invocations": len(invoked),
+        "invocation_rate": round(len(invoked) / len(DAY4_ROBUST_RUNS), 3),
+        "median_latency_ms": statistics.median(latencies) if latencies else None,
+        "outcomes": outcomes,
+    }
+
+
+# events.jsonl (Day 3.5). schema/events.jsonl.schema.json is committed by
+# Track A: a oneOf of two discriminated types. These fixtures match it
+# field-for-field (additionalProperties:false — no extra keys) so the
+# EventsViewer per-type renderer is exercised against real shapes.
 EVENTS_FIXTURES = [
-    # human_intervention: human pauses or unblocks the apparatus mid-run.
-    {"timestamp": "2026-05-19T11:15:42.000+00:00",
-     "event_type": "human_intervention",
-     "actor": "operator",
-     "subject": "day3_5_gate",
-     "note": "approved schema additions; resuming run"},
-    # calibration_entry: tally for a per-output calibration sweep.
-    {"timestamp": "2026-05-19T11:32:08.000+00:00",
-     "event_type": "calibration_entry",
-     "metric": "decode_tok_per_s",
-     "observed": 69.4,
-     "expected_band": [80, 130],
-     "verdict": "below_band"},
+    # human_intervention: a human action inside an otherwise-agent task.
+    {"event_type": "human_intervention",
+     "timestamp": "2026-05-19T11:15:42.000+00:00",
+     "task_id": "day3_5_block2_schema_amend",
+     "subtype": "manual_decision",
+     "reason": "approved the retrieval_context schema addition; resumed the run",
+     "context_hash": "sha256:9f2c1a7d4e0b8c63"},
+    # calibration_entry: pre-experiment expected range vs observed value.
+    {"event_type": "calibration_entry",
+     "timestamp": "2026-05-19T11:32:08.000+00:00",
+     "experiment_id": "exp001_repeated_pd",
+     "metric_name": "decode_tok_per_s",
+     "pre_experiment_expected_range": [80, 130],
+     "post_experiment_observed": 69.4,
+     "within_range": False,
+     "human_attestation": "range set from the day-1 sweep before MTP tuning landed"},
 ]
 
 
@@ -356,8 +431,11 @@ def write_day4_fixtures(out_dir, seed=20260520):
         ts = base_ts + timedelta(seconds=i * 2)
         chain_roots[chain["name"]] = _emit_day4_chain(chain, ts, rng, e2e_records)
 
+    robust_records = []
+    _emit_day4_robust(rng, robust_records)
+
     _write_jsonl(out_dir / "day4_e2e.jsonl", e2e_records)
-    _write_jsonl(out_dir / "day4_robust.jsonl", DAY4_ROBUST_TRIALS)
+    _write_jsonl(out_dir / "day4_robust.jsonl", robust_records)
     _write_jsonl(out_dir / "events.jsonl", EVENTS_FIXTURES)
 
     return {

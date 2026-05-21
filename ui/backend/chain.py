@@ -9,6 +9,7 @@ A chain is reconstructed by walking parent_request_id: the orchestrator
 dispatch for a task carries the root request_id; call records whose
 parent_request_id points at it (transitively) form the tree.
 """
+import json
 from collections import defaultdict
 from pathlib import Path
 
@@ -62,26 +63,106 @@ class LogStore:
         self.orch_by_task[task_id] = record      # latest line for a task wins
 
 
-# Tool calls reach the inspector in one of two shapes (ui_plan.md section 9,
-# resolved r4): either as their own call-log lines carrying a request_id and a
-# parent_request_id (handled by the ordinary parent_request_id walk), or
-# embedded as a `tool_calls` array inside a wrapper call's record. The two are
-# unified here: an embedded tool-call object is synthesized into a child node
-# (kind="tool", embedded=True, request_id=None) so a chain renders the same
-# tree, and the same node_count / total_latency_ms, regardless of how the
-# wrapper logged its tool use. Embedded-tool latency is summed into
-# total_latency_ms exactly as a separate-line tool call's latency already is —
-# the alternative (excluding it) would make the total depend on the logging
-# shape. total_latency_ms stays a labelled rough sum, not wall-clock.
+# Tool calls reach the inspector in one of three shapes (ui_plan.md section 9):
+#
+#   1. As their own call-log lines, with a request_id and a parent_request_id
+#      — handled by the ordinary parent_request_id walk.
+#   2. Embedded as a `tool_calls` array inside a wrapper record. Each entry is
+#      synthesized into a child node; an entry's own latency_ms, when present,
+#      is summed into total_latency_ms exactly as a separate-line tool call's
+#      latency is (r4) — so the total does not depend on shapes 1 vs 2.
+#   3. As an OpenAI-style tool-call JSON string in the wrapper record's
+#      `completion` field — the shape Track A's real day-4 logs actually use
+#      (logs/day4_e2e.jsonl, logs/day4_robust.jsonl). The day-4 sync built
+#      for shapes 1-2 against fixtures; shape 3 was the real answer (r7). A
+#      completion tool call has no latency of its own — the wrapper record's
+#      latency_ms already covers the call that produced it — so its
+#      synthesized node contributes 0 to total_latency_ms.
+#
+# All three converge to one inspector tree: a synthesized tool call is a child
+# node (kind="tool", embedded=True, request_id=None), so a chain renders the
+# same tree regardless of how the wrapper logged its tool use.
+# total_latency_ms stays a labelled rough sum, not wall-clock.
 EMBEDDED_TOOL_KEY = "tool_calls"
+
+
+def tool_call_name(tool):
+    """Best-effort tool name from a tool-call object of either shape.
+
+    Embedded `tool_calls` entries (shape 2) carry `name` at the top level;
+    OpenAI-style tool calls parsed out of `completion` (shape 3) nest it
+    under `function.name`. Returns None when neither is present.
+    """
+    if not isinstance(tool, dict):
+        return None
+    name = tool.get("name")
+    if isinstance(name, str) and name:
+        return name
+    fn = tool.get("function")
+    if isinstance(fn, dict) and isinstance(fn.get("name"), str) and fn["name"]:
+        return fn["name"]
+    return None
+
+
+def _is_openai_tool_call(obj):
+    """True when obj is an OpenAI-style function tool-call object.
+
+    The shape vLLM emits into `completion`: {id, type: "function",
+    function: {name, arguments}}. Stricter than `tool_call_name` so an
+    ordinary JSON array landing in a completion is not mistaken for tools.
+    """
+    if not isinstance(obj, dict):
+        return False
+    fn = obj.get("function")
+    if isinstance(fn, dict) and isinstance(fn.get("name"), str) and fn["name"]:
+        return True
+    return obj.get("type") == "function" and isinstance(obj.get("name"), str)
+
+
+def parse_completion_tool_calls(completion):
+    """Extract OpenAI-style tool calls embedded in a `completion` string.
+
+    Shape 3 (see the module comment above): day-4 wrapper records log the
+    model's tool call in the `completion` field as a JSON string — a list of
+    {id, type, function: {name, arguments}} objects — rather than as a
+    structured `tool_calls` array.
+
+    Returns (tool_calls, malformed):
+      - ([...], False) — completion parsed to a non-empty tool-call list.
+      - ([],   False) — completion is an ordinary text answer, no tool call.
+      - ([],   True)  — completion opens like a tool-call array but does not
+                        parse. Surfaced as malformed, never silently repaired
+                        (CLAUDE.md rule 4 / ui_plan.md operating rule 8).
+    """
+    if not isinstance(completion, str):
+        return [], False
+    stripped = completion.strip()
+    if not stripped:
+        return [], False
+    # A completion that opens an array and carries both an OpenAI tool-call
+    # `"type"` and `"function"` key is almost certainly a tool-call payload;
+    # if it then fails to parse it is malformed — flagged, not fixed.
+    # Requiring both substrings keeps ordinary prose that merely opens with
+    # "[" from being mis-flagged.
+    looks_like_tool_payload = (stripped.startswith("[")
+                               and '"function"' in stripped
+                               and '"type"' in stripped)
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return [], looks_like_tool_payload
+    if not isinstance(parsed, list):
+        return [], False
+    tool_calls = [item for item in parsed if _is_openai_tool_call(item)]
+    return (tool_calls, False) if tool_calls else ([], False)
 
 
 def _tool_node(tool, parent_request_id):
     return {
         "kind": "tool",
-        "request_id": None,                      # embedded — no own request_id
+        "request_id": None,                      # synthesized — no own request_id
         "parent_request_id": parent_request_id,
-        "caller_tag": tool.get("name") or tool.get("caller_tag") or "tool",
+        "caller_tag": tool_call_name(tool) or tool.get("caller_tag") or "tool",
         "timestamp": tool.get("timestamp"),
         "latency_ms": tool.get("latency_ms"),
         "parse_error": bool(tool.get("parse_error")),
@@ -99,6 +180,14 @@ def _call_node(record):
     # so the inspector banner can react to malformed_tool_calls specifically
     # rather than to any parse_error in the chain.
     tool_calls_malformed = embedded is not None and not isinstance(embedded, list)
+    # Shape 3: the model's tool call logged as an OpenAI-style JSON string in
+    # `completion` (Track A's real day-4 logs). A completion that opens like a
+    # tool-call array but fails to parse is flagged the same way — surfaced,
+    # never silently repaired.
+    completion_tools, completion_malformed = parse_completion_tool_calls(
+        record.get("completion"))
+    if completion_malformed:
+        tool_calls_malformed = True
     node = {
         "kind": "call",
         "request_id": record.get("request_id"),
@@ -121,6 +210,8 @@ def _call_node(record):
         for tool in embedded:
             if isinstance(tool, dict):
                 node["children"].append(_tool_node(tool, record.get("request_id")))
+    for tool in completion_tools:
+        node["children"].append(_tool_node(tool, record.get("request_id")))
     return node
 
 
