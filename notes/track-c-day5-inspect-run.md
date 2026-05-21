@@ -7,7 +7,7 @@ Scratch + handoff notes for `track_c_day5_draft_inspect_run`
 
 - `tools/inspect_run.py` — CLI that reconstructs an orchestrated run's
   causal chain from JSONL logs.
-- `tests/test_inspect_run.py` — 20 `unittest` tests (run standalone or
+- `tests/test_inspect_run.py` — 21 `unittest` tests (run standalone or
   under pytest).
 
 ## What it does
@@ -87,7 +87,7 @@ join to land, the worker-invocation record's `request_id` must be the
 - No LLM endpoint is contacted; the CLI subprocess test runs with
   `MOCK_LLM=1` set.
 
-Run: `python3 tests/test_inspect_run.py` — 20 tests, all pass.
+Run: `python3 tests/test_inspect_run.py` — 21 tests, all pass.
 
 ## Constraints honored
 

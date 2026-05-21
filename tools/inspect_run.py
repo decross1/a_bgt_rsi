@@ -188,6 +188,15 @@ def build_index(records):
         pid = rec_parent(r)
         if pid is not None:
             children.setdefault(pid, []).append(r)
+            if pid not in by_id:
+                # A dangling parent reference: this record can never
+                # attach to any chain. Report it -- a wrapper-call
+                # record orphaned this way would otherwise just be
+                # absent from the printed chain with no warning.
+                warnings.append(
+                    f"chain break: {rec_level(r)} record {rec_id(r)} "
+                    f"references missing parent {pid}"
+                )
     return by_id, children, kept, warnings
 
 
@@ -208,17 +217,14 @@ def select_roots(kept, by_id, task_id, request_id, warnings):
     if not matches:
         return [], f"no record with task_id={task_id!r}"
 
+    # A dangling parent (pid not in by_id) is reported by build_index;
+    # here we only need to find where each task chain starts.
     match_ids = {rec_id(r) for r in matches if rec_id(r) is not None}
     roots = []
     for r in matches:
         pid = rec_parent(r)
         if pid is None or pid not in match_ids:
             roots.append(r)
-            if pid is not None and pid not in by_id:
-                warnings.append(
-                    f"chain break: {rec_level(r)} record {rec_id(r)} "
-                    f"references missing parent {pid}"
-                )
     if not roots:
         # Every match has a parent inside the set -> a cycle. Don't loop.
         roots = [min(matches, key=lambda r: rec_time(r) or "")]

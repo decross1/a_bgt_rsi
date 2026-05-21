@@ -286,6 +286,24 @@ class BrokenChainTest(unittest.TestCase):
         for level in ("orchestrator_dispatch", "wrapper_request"):
             self.assertIn(level, out)
 
+    def test_orphaned_wrapper_records_are_reported(self):
+        # The realistic break: wrapper-call records carry no task_id, so
+        # they are never task_id "matches". One with a dangling parent
+        # must still be flagged, not silently dropped from the chain.
+        chain = four_link_chain(task_on_wrapper=False, break_at_wreq=True)
+        orch = self.dir / "orchestrator.jsonl"
+        wrap = self.dir / "day6.jsonl"
+        write_jsonl(orch, chain[:2])
+        write_jsonl(wrap, chain[2:])
+        code, out, err = run_cli(
+            ["--task-id", TASK_ID, "--log", str(orch),
+             "--log", str(wrap), "--no-discover"])
+        self.assertEqual(code, 0, err)
+        # The wrapper level fell off the chain -- that must be visible.
+        self.assertNotIn("wrapper_response", out)
+        self.assertIn("chain break", err)
+        self.assertIn(WREQ, err)
+
     def test_cycle_detected_without_hang(self):
         log = self.dir / "orchestrator.jsonl"
         a = {"level": "a", "request_id": DISP, "parent_request_id": WORK,
