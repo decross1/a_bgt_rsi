@@ -413,3 +413,58 @@ pass; `npm run build` clean. `ui_plan.md` bumped r5 → r6.
 - The UI assumes day-4 chains are wrapper-rooted (parent_request_id
   null in `day4_e2e.jsonl`). If day 4 instead emits a separate dispatch
   record, the `/api/day4/chains` rule needs adjustment.
+
+## Day-5 sync (2026-05-21)
+
+Track D side-track on `worktree-day5-ui-sync`. The day-4 sync built
+against synthesized fixtures; Track A's real day-4 artifacts are now on
+disk and differ in shape. This pass aligns the UI to them. Full session
+notes in `notes/track-d-day5-ui-sync.md`; summary below.
+
+- **`read_robustness` rewritten for the chained-call shape.**
+  `logs/day4_robust.jsonl` is a chained call log (every call logged), not
+  per-trial summary records. The r6 reader keyed on an `invoked` flag and
+  scored the real file a misleading **0%**. Rewritten: a "run" is a
+  wrapper-root call (`parent_request_id` null), it invoked the tool when
+  its root `completion` parses as a tool call; child records are excluded
+  from the trial count. Outcomes `ok` / `missed` / `malformed`.
+- **Third tool-call shape — the `completion` field.** Track A logs the
+  model's tool call as an OpenAI-style JSON string in `completion`, not
+  in an embedded `tool_calls` array. New `parse_completion_tool_calls` /
+  `tool_call_name` in `chain.py`; `_call_node` synthesizes a
+  `kind="tool"` child via the existing `_tool_node` — tree shape
+  unchanged. A completion tool call has no own latency (the wrapper's
+  `latency_ms` covers it). A completion that opens like a tool-call array
+  but fails to parse sets `tool_calls_malformed` — surfaced, not fixed.
+- **`EventsViewer` per-type renderer.** `schema/events.jsonl.schema.json`
+  is now committed. The viewer moved from generic key/value rendering to
+  per-type cards (`human_intervention`, `calibration_entry`) driven by
+  the schema's per-type fields, with a generic fallback and an
+  "incomplete record" flag for a typed event missing a required field.
+  `logs/events.jsonl` still does not exist — `available: false` degrade
+  path unchanged; `read_events` stays schema-light.
+- **`retrieval_context` keys verified — no drift.** The committed
+  `calls.jsonl.schema.json` whitelists `retrieval_context` with item keys
+  `{doc_id, content_hash, chunk_offset, chunk_length}`; the UI's
+  `RetrievalDoc` type + `ChainTree` table already match. Added a
+  drift-guard test.
+
+### Surprises
+
+- The real `day4_e2e.jsonl` tool-call shape was **neither** of the two
+  the day-4 sync built for — it is a third shape (tool call in
+  `completion`). The §9 open question's r4 resolution ("both shapes
+  supported") was answered by a shape outside both. The `EMBEDDED_TOOL_KEY`
+  path (shape 2) is now dormant on real data but kept — it costs nothing
+  and a future wrapper revision could use it.
+- Real call records carry sub-microsecond float latencies
+  (`440.3016170…`). `read_robustness` rounds its summary latencies to
+  0.1 ms; the chain inspector still renders raw floats (a display-polish
+  item, not a shape issue).
+
+### Tests
+
+10 new backend tests (3 completion-synthesis, 2 robustness chained-shape,
+5 real-artifact coverage in `test_real_schema.py`); `EventsViewer`
+frontend tests rewritten (3 → 6). 65 Python + 20 frontend tests pass;
+`npm run build` clean. `ui_plan.md` bumped r6 → r7.
