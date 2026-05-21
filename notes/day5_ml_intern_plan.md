@@ -20,13 +20,22 @@ The plain Semantic Scholar HTTP API is known-working: pre-stage probe
 on Day 4 EOD already returned a paper for arxiv id `1706.03762`
 ("Attention Is All You Need"), and the API key in `.env` is valid.
 
-## Selection record (filled after attempt or fallback fires)
+## Selection record (filled after the router fired)
 
 | Step | Status | Notes |
 | ---- | ------ | ----- |
-| `pip install ml-intern` on ARM64 | TBD | Day-5 morning |
-| ML-Intern smoke test (one arxiv id) | TBD | |
-| If FAIL within 45 min: revert to direct API | TBD | log to `state.fallbacks_taken` |
+| Resolve the ML-Intern source | DONE | the plan's `git clone <url>` placeholder resolved via the `ml-intern` PyPI metadata to `github.com/huggingface/ml-intern` |
+| ML-Intern install probe on ARM64 | FAIL | repo does not match the plan's assumed surface — no `requirements.txt` (uses `pyproject.toml`/`uv`), no `examples/` dir, and it is a FastAPI web app (MongoDB/Slack/sandbox), not a callable literature-query library |
+| Fall back to direct API (45-min cap) | DONE | failed fast (~4 min, well under the cap); `state.fallbacks_taken.day5_ml_intern = "direct_api"` |
+
+## Resolution (2026-05-21)
+
+The router probe failed in ~4 minutes and the direct-API fallback was
+taken. The direct path was then itself re-sourced: the pre-staged
+Semantic Scholar API returned only 1 arXiv-tagged paper for the 7-day
+window (S2 lags arXiv-ID indexing by weeks), so the scraper was switched
+to the arXiv API — see **DECISIONS.md D-027**. Final result: 138 papers
+ingested into `papers_recent`.
 
 ## Direct-API fallback shape (already pre-staged)
 

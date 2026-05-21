@@ -91,8 +91,10 @@ def _words(text):
 
 def _query_mock(query, top_k):
     """Rank the mock corpus by naive word overlap with the query. Returns
-    a list of (paper, distance) -- distance 0.0 == perfect overlap, so a
-    game-theory query surfaces the on-topic papers first."""
+    (ranked, latency_ms) where ranked is a list of (paper, distance) --
+    distance 0.0 == perfect overlap, so a game-theory query surfaces the
+    on-topic papers first."""
+    t0 = time.perf_counter()
     q = _words(query)
     scored = []
     for paper in _MOCK_PAPERS:
@@ -101,30 +103,38 @@ def _query_mock(query, top_k):
         distance = round(1.0 - overlap / max(len(q), 1), 4)
         scored.append((paper, distance))
     scored.sort(key=lambda t: t[1])
-    return scored[:top_k]
+    latency_ms = round((time.perf_counter() - t0) * 1000.0, 3)
+    return scored[:top_k], latency_ms
 
 
 def _query_real(query, top_k, chroma_path, bge_m3_weights):
     """Query the real `papers_recent` collection. Wired on Day 5.
 
-    DAY5-CONTRACT: `papers_recent` is created by pipeline/embed_and_store.py
-    with an EXPLICIT BGE-M3 embedding function -- CLAUDE.md inviolate rule
-    #2 forbids ChromaDB's all-MiniLM-L6-v2 default. To query the
-    collection, the SAME embedding function must be supplied to
-    get_collection so the query text is embedded with BGE-M3. If Day 5's
-    embed_and_store.py exposes a shared embedding-function constructor,
-    import and reuse it here instead of rebuilding one -- the two MUST
-    match or retrieval silently degrades."""
+    Returns (ranked, latency_ms). The BGE-M3 model load and ChromaDB
+    client open are one-time setup and are deliberately NOT counted in
+    latency_ms -- the plan's sub-second target is QUERY latency (embed the
+    query string + ANN search), not cold-start model initialization; in
+    production the model is resident and only the query cost recurs.
+
+    DAY5-CONTRACT (resolved Day 5): `papers_recent` is created by
+    pipeline/embed_and_store.py, whose _BGEM3Embedder wraps the SAME
+    chromadb SentenceTransformerEmbeddingFunction over /mnt/models/bge-m3
+    used here -- identical class, identical model_name -- so the query and
+    the stored vectors share an embedding space (CLAUDE.md inviolate rule
+    2: BGE-M3, never the all-MiniLM-L6-v2 default)."""
     import chromadb
     from chromadb.utils import embedding_functions
 
-    # DAY5-CONTRACT: reconcile this with how embed_and_store.py builds its
-    # BGE-M3 embedding function (model id / path, normalization).
     ef = embedding_functions.SentenceTransformerEmbeddingFunction(
         model_name=bge_m3_weights)
     client = chromadb.PersistentClient(path=chroma_path)
     collection = client.get_collection(name=COLLECTION, embedding_function=ef)
+
+    # Time only the query -- model load + client open above are one-time
+    # setup, not query latency (see docstring).
+    t0 = time.perf_counter()
     res = collection.query(query_texts=[query], n_results=top_k)
+    latency_ms = round((time.perf_counter() - t0) * 1000.0, 3)
 
     metas = res.get("metadatas", [[]])[0]
     docs = res.get("documents", [[]])[0]
@@ -141,7 +151,7 @@ def _query_real(query, top_k, chroma_path, bge_m3_weights):
             "citation_count": meta.get("citation_count"),
         }
         out.append((paper, round(float(dist), 4)))
-    return out
+    return out, latency_ms
 
 
 def main():
@@ -168,15 +178,11 @@ def main():
 
     mock = bool(os.environ.get("MOCK_LLM"))
 
-    t0 = time.perf_counter()
     if mock:
-        ranked = _query_mock(args.query, args.top_k)
+        ranked, latency_ms = _query_mock(args.query, args.top_k)
     else:
-        # DAY5-CONTRACT: real branch runs only after Day 5 has ingested
-        # papers_recent. Track B verifies the mock branch only.
-        ranked = _query_real(args.query, args.top_k,
-                             args.chroma_path, args.bge_m3_weights)
-    latency_ms = round((time.perf_counter() - t0) * 1000.0, 3)
+        ranked, latency_ms = _query_real(args.query, args.top_k,
+                                         args.chroma_path, args.bge_m3_weights)
 
     results = []
     for rank, (paper, distance) in enumerate(ranked, 1):

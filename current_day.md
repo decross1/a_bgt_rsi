@@ -1,154 +1,99 @@
-# Current day — day_2: Python wrapper + JSONL logging
+# Current day — day_5: arXiv pipeline → ChromaDB
 
 _Active-day tracker. Authoritative plan: `plan.yaml`. State:
 `run_state/week1.state.json`. Run log: `run_state/week1.run.jsonl`._
 
-**Day goal:** Every Gemma 4 call goes through `wrapper.py`; every call
-writes a schema-valid JSONL line; 50+ test calls captured; determinism
-verified (T=0 and T=1/seed=42).
+**Day goal:** A daily-cron-able script pulls new cs.MA / cs.GT /
+econ.TH abstracts, embeds them with BGE-M3, and appends to a
+`papers_recent` ChromaDB collection. ≥50 papers on the first run.
+Retrieval works.
 
-**Status as of 2026-05-19:** ✅ **Day 2 Block 2 complete; abort
-resolved.** Tasks #1 (schema), #2 (wrapper), #3 (50-call sweep) all
-pass. #3 first failed check #3 (aggregate 29.75 tok/s vs the 40 floor)
-and aborted day_2; the abort was resolved by enabling MTP speculative
-decoding (re-pin to `vllm/vllm-openai:v0.21.0` — D-022). The sweep
-re-run scores aggregate **56.09 tok/s** with all 5 checks passing;
-single-stream decode 32 → 69 tok/s. day_2 abort **LIFTED**
-(human-attested, decross1, 2026-05-19).
+**Status as of 2026-05-21: ✅ Day 5 COMPLETE.** 138 papers ingested
+into `papers_recent` (cs.MA 76, cs.GT 44, econ.TH 18; 7-day window),
+real BGE-M3 embeddings, retrieval latency 298 ms. All Block 2 + Block 3
+tasks done; end-of-day artifacts committed. `current_day` advances to
+`day_6` on the next session's resume — day_6 Block 1 is human-only (HALT).
 
-**Day 2 COMPLETE (2026-05-19).** Block 3: reading (#4) + ambient (#6)
-human-attested; journal (#5) stub at `journal/day2.md` — prose is the
-human's to write + publish; end-of-day (#7) artifacts committed and
-Day 3 pre-staged (`setup/day3_chroma.sh`). `current_day` advances to
-`day_3` on the next session's resume — day_3 Block 1 is human-only (HALT).
+## Headline outcomes
 
-**Failure mode / recovery:** vLLM stops responding (thermal? OOM?) →
-cache-clear, restart container, check thermal log; if recurring, cap
-KV cache to ~30 GB.
-
-## Wall-clock windows
-
-| Block | Window |
-|-------|--------|
-| Block 1 — Foundations | 08:30–10:00 |
-| Block 2 — Build | 10:30–12:30 |
-| Block 3 — Read/Write | 13:30–14:30 |
-| Ambient | 14:30–15:30 |
-| End of day | 15:30–16:00 |
+- **ML-Intern → fallback.** The router probe failed in ~4 min — the
+  `huggingface/ml-intern` repo is a FastAPI web app, not a callable
+  literature-query library (no `examples/`, no `requirements.txt`).
+  Fell back to the direct-API path well under the 45-min cap;
+  `state.fallbacks_taken.day5_ml_intern = "direct_api"`.
+- **Pipeline source: Semantic Scholar → arXiv API (D-027).** The
+  planned S2 source returned only 1 arXiv-tagged paper for a 7-day
+  window (S2 lags arXiv-ID indexing by weeks). `pipeline/arxiv_scraper.py`
+  was rewritten to use the arXiv API directly — native `cat:` filter,
+  no lag. Human-authorized.
+- **Pipeline — 5/5 checks.** 138 papers (≥ the 50 target); BGE-M3
+  embeddings (verified genuine, 1024-dim); dedup on `arxiv_id`; 2
+  papers human-cross-checked on arxiv.org.
+- **Retrieval — 2/2 checks.** Query "LLM agents in repeated games" →
+  298 ms latency; top-3 human-attested relevant.
+- **`cron/daily-arxiv.sh`** authored — present but NOT in crontab
+  (Day 6 enables it).
 
 ## Block 1 — Foundations (human-only, NO AI)
 
-> HALT. Reading: O&R *A Course in Game Theory* Ch. 6 §6.4–6.5 + start
-> Ch. 7 (subgame perfect equilibrium, one-deviation principle).
-> Problem set: O&R 6.7, 6.10, 7.1 — pen and paper, by hand. Derive the
-> one-deviation principle by hand.
-> Claude does not assist, summarize, or solve. Mark complete only after
-> the time window elapses (human attestation).
+> HALT. Reading: Cesa-Bianchi & Lugosi, *Prediction, Learning, and
+> Games*, Ch. 1 §1.1–1.4 (Hannan consistency, regret framework).
+> Problem set: C-B & L Ex. 1.1, 1.2.
 
 | Task | Type | Status |
 |------|------|--------|
-| `day2_block1_reading` | human-only, blocking | ✅ passed — human attestation (decross1) 2026-05-18 |
-| `day2_block1_problemset` | human-only | ✅ passed — human attestation (decross1) 2026-05-18 |
+| `day5_block1_reading` | human-only, blocking | ✅ passed — human attestation (decross1) 2026-05-21 |
+| `day5_block1_problemset` | human-only | ✅ passed — human attestation (decross1) 2026-05-21 |
 
-## Block 2 — Build (agent-executable)
+## Block 2 — Build (agent-executable, with router)
 
-| # | Task | Hard checkpoint | Status |
-|---|------|-----------------|--------|
-| 1 | `day2_block2_jsonl_schema` | **yes** | ✅ passed — `schema/calls.jsonl.schema.json` + `tests/example_call.jsonl`; all 3 checks pass |
-| 2 | `day2_block2_wrapper_implementation` | no | ✅ passed — `agent_wrapper/wrapper.py` (~100 LOC); 3 import checks pass via `.venv/bin/python` |
-| 3 | `day2_block2_50call_sweep` | **yes** (abort_day) | ✅ passed — re-run on MTP / v0.21.0; 5/5 checks pass, aggregate 56.09 tok/s. (First run 2026-05-18 failed #3 → aborted; resolved via D-022) |
+| Task | Status |
+|------|--------|
+| `day5_block2_ml_intern_router` | ✅ probe FAILED → branched to fallback |
+| `day5_block2_pipeline_fallback` | ✅ direct-API path selected |
+| `day5_block2_pipeline_implementation` | ✅ 5/5 checks — 138 papers, BGE-M3, dedup |
+| `day5_block2_retrieval_test` | ✅ 2/2 checks — 298 ms, relevant |
 
-**Resolution (2026-05-19) — MTP speculative decoding (D-022).**
-Investigation (`scripts/analyze_day2_throughput.py`) established the
-29.75 tok/s was a genuine weight-bandwidth-bound ceiling on the v0.20.0
-stack, not a measurement artifact — so the fix had to be a real
-throughput lever. Empirical image introspection found v0.20.0 ships no
-Gemma 4 MTP support; v0.21.0 is the first vLLM release with PR #41745.
-Re-pinned the image to `vllm/vllm-openai:v0.21.0` and enabled MTP
-(`--speculative-config method=mtp`, official drafter). Result: decode
-32.21 → 69.44 tok/s, sweep aggregate **56.09** (≥ 40), all 5 checks
-pass, determinism intact. Launch script `setup/day2_vllm_serve_mtp.sh`;
-bench `bench/mtp.csv`.
-
-Notes:
-- Task #1 is `command: null` — schema authoring is the human's; the
-  agent only validates the output (valid JSON Schema, 14 required
-  fields, jq parses an example line).
-- Task #2 is `agent_assisted` / `command: null` — agent prepares
-  scaffolding; the human (or a sub-agent with file-write authority)
-  writes the implementation. Resist abstraction — ~100-line code
-  budget. `agent_wrapper/wrapper.py` already exists from Day-1
-  pre-staging; reconcile against the locked schema before extending.
-- Task #3 `on_failure: abort_day` — a determinism divergence halts the
-  day; Day 3 does not start until it is fixed.
+`day5_block2_ml_intern_attempt` was skipped (router branched to the
+fallback before the attempt).
 
 ## Block 3 / end of day
 
-| # | Task | Type | Status |
-|---|------|------|--------|
-| 4 | `day2_block3_reading` | human-only, blocking | ✅ passed — human attestation (decross1) 2026-05-19 |
-| 5 | `day2_block3_journal` | human-assisted | ✅ stub generated — `journal/day2.md`, data inserts pre-filled; prose + publication is the human's |
-| 6 | `day2_ambient` | human-only | ✅ passed — human attestation (decross1) 2026-05-19 |
-| 7 | `day2_end_of_day_artifacts` | agent-executable | ✅ passed — `logs/day2.jsonl` + journal + run_state committed; Day 3 pre-staged (`setup/day3_chroma.sh`) |
+| Task | Type | Status |
+|------|------|--------|
+| `day5_block3_reading` | human-only, blocking | ✅ passed — human attestation (decross1) 2026-05-21 |
+| `day5_block3_journal` | human-assisted | ✅ stub at `journal/day5.md`; prose + publication is the human's |
+| `day5_ambient` | human-only | ✅ passed — human attestation (decross1) 2026-05-21 |
+| `day5_end_of_day_artifacts` | agent-executable | ✅ passed — pipeline + cron + docs committed; Day 6 pre-staged |
 
-## Validation gates (Day 2)
+## Side-track merges
 
-- **#1 schema:** valid JSON Schema (Draft 2020-12); `required` array
-  has all 14 fields; `jq` parses `tests/example_call.jsonl`.
-- **#3 sweep:** `wc -l logs/day2.jsonl` = 50; `verify_log_integrity`
-  returns 0; aggregate decode tok/s ≥ 40; 3 identical completions at
-  T=0; 3 identical completions at T=1/seed=42.
-- **#7 end-of-day:** files committed + clean tree; `verify_log_integrity`
-  = 0; `journal/index.md` updated; Day 3 pre-staged
-  (`setup/day3_chroma.sh` queued, BGE-M3 weights at `/mnt/models/bge-m3`).
+- **Track D `day5-ui-sync`** — merged `e154814` (auditor MERGE; UI sync
+  to real Day-4 artifact shapes).
+- **Track C `day5-inspect-run`** — merged `7741795` (auditor MERGE;
+  `tools/inspect_run.py` — consumed by Day 6).
 
-## Carried in from Day 1
+## Decisions / findings
 
-1. **tok/s 32 vs plan floor 40** — accepted as the Day-1 baseline
-   (cause assessed structural: GB10 SM12x has no native FP4). Day 2's
-   #3 sweep re-checks an *aggregate* tok/s ≥ 40 floor — watch this; it
-   may surface the same shortfall.
-2. **MTP** — ENABLED 2026-05-19 (D-022); was deferred (D-019).
-3. **vLLM image** re-pinned to `vllm/vllm-openai:v0.21.0` (D-022;
-   was `:v0.20.0` / D-020); MTP speculative decoding enabled.
+- **D-026** — Day-4 jsonl-integrity check amended (`≥30 total` →
+  per-artifact record counts); resolves the open Day-4 entries-count
+  carryover.
+- **D-027** — pipeline source switched Semantic Scholar → arXiv API.
+- **Finding — `MOCK_LLM=1` in the session env.** The Track A session
+  had `MOCK_LLM=1` set (not from `.env` / `.claude/settings.json`); it
+  silently stubbed the first embed run. Caught via the warning log + a
+  1.1 s runtime; the collection was deleted and rebuilt with `MOCK_LLM`
+  stripped. The human should unset it in the shell profile so future
+  Track A sessions are not affected.
+- **Carry-over for Day 6** — `papers_recent` lives in this worktree's
+  git-ignored `chroma_db/`; a fresh Day-6 worktree won't see it. See
+  `notes/day6_openclaw_plan.md`.
 
-## Open items (human decision)
+## Carried into Day 6
 
-- ✅ Resolved 2026-05-19: the source plan `week1_days_31-37_plan.md` is
-  not committed to the repo, so `plan.yaml` is now named the canonical
-  plan across `START_HERE.md`, `CLAUDE.md`, `plan.yaml`, `README.md`,
-  `HUMAN_PLAN.md`, and `AGENT_PLAN.md`. If the source doc is later
-  added under `docs/sources/`, revisit which wins on conflict.
-- ✅ Resolved 2026-05-19: the day_2 throughput abort — enabled MTP
-  speculative decoding (re-pin to v0.21.0, D-022); the 50-call sweep
-  re-run passes all 5 checks (aggregate 56.09 tok/s). Abort lifted,
-  human-attested (decross1).
-
-## Decisions log
-
-- 2026-05-19: day_2 Block 3 + end-of-day. Reading (#4) and ambient (#6)
-  human-attested complete (decross1). Journal (#5) stub generated at
-  `journal/day2.md` — prose left to the human (human_assisted).
-  End-of-day (#7): `logs/day2.jsonl` committed (verify_log_integrity=0),
-  Day 3 pre-staged (`setup/day3_chroma.sh`; BGE-M3 weights confirmed at
-  `/mnt/models/bge-m3`). **day_2 complete.**
-- 2026-05-19: day_2 abort RESOLVED. Empirically found vLLM v0.20.0
-  lacks Gemma 4 MTP (PR #41745); re-pinned to `vllm/vllm-openai:v0.21.0`
-  and enabled MTP speculative decoding (D-022). 50-call sweep re-run:
-  aggregate 56.09 tok/s, all 5 checks pass; decode 32 → 69 tok/s.
-  day_2 abort lifted (human-attested, decross1).
-- 2026-05-19: day_2 Block 2 — #1 schema + #2 wrapper passed; #3
-  50-call sweep failed validation check #3 (tok/s 29.75 < 40), other
-  4 checks passed. `day_2` aborted (hard checkpoint). Human chose to
-  treat #3 as blocking; throughput investigation
-  (`scripts/analyze_day2_throughput.py`) confirmed ~32 tok/s is a
-  structural GB10/FP4 ceiling. Resolution deferred to next session.
-- 2026-05-18: created project venv `.venv` (gitignored) and installed
-  `requirements.txt` (openai 2.37.0, jsonschema 4.26.0, pydantic 2.13.4,
-  requests 2.34.2). The plan's bare `python3` commands lack these deps;
-  per human decision, Day-2 Python commands run as `.venv/bin/python`.
-- 2026-05-18: `current_day` advanced `day_1` → `day_2` on resume
-  (`resume-state`). All 12 Day-1 tasks complete (#10 skipped via the
-  NemoClaw → plain-Docker fallback branch). State transition logged to
-  `week1.run.jsonl`. Resume point: `day2_block1_reading` — HALTED at
-  Block 1 per Inviolate Rule 1 (No Block 1).
+- OpenClaw orchestrator install — plan at `notes/day6_openclaw_plan.md`.
+  NemoClaw was skipped on Day 1, so the router will likely pick the
+  Python `multiprocessing` fallback.
+- `cron/daily-arxiv.sh` exists; Day 6 installs it in crontab.
+- `tools/inspect_run.py` (Track C, merged) — consumed by the Day-6
+  inspect-run task.

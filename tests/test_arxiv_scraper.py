@@ -2,11 +2,15 @@
 """
 Unit tests for pipeline/arxiv_scraper.py.
 
-Runs the scraper against mocked Semantic Scholar responses (via
-unittest.mock -- no `responses` dependency, no real network) and asserts:
+The scraper sources papers from the arXiv API (DECISIONS.md D-027). These
+tests run it against mocked arXiv Atom-feed responses (via unittest.mock --
+no real network) and assert:
 
-  * exponential backoff fires on HTTP 429 (sleeps 1, 2, 4, 8 then fails);
-  * de-duplication on arxiv_id works across categories;
+  * exponential backoff fires on HTTP 503 (sleeps 1, 2, 4, 8 then fails);
+  * a non-retriable 4xx raises immediately with no backoff;
+  * de-duplication on arxiv_id works, including across version suffixes;
+  * the newest-first date window stops pagination and excludes old papers;
+  * entries lacking an arXiv id are dropped;
   * the JSONL written by main() is well-formed with all required fields.
 
 Run standalone:
@@ -19,6 +23,8 @@ import os
 import sys
 import tempfile
 import unittest
+import urllib.error
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -26,137 +32,161 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pipeline import arxiv_scraper  # noqa: E402
 
 _REQUIRED_FIELDS = (
-    "title", "abstract", "authors",
-    "arxiv_id", "semantic_scholar_id", "citation_count",
+    "title", "abstract", "authors", "arxiv_id",
+    "semantic_scholar_id", "citation_count", "category", "publication_date",
 )
 
+_TODAY = datetime.now(timezone.utc).date()
+_IN_WINDOW = (_TODAY - timedelta(days=1)).isoformat()
+_OUT_OF_WINDOW = (_TODAY - timedelta(days=60)).isoformat()
 
-class FakeResponse:
-    """Minimal stand-in for requests.Response."""
 
-    def __init__(self, status_code, body=None):
-        self.status_code = status_code
-        self._body = body or {}
+def _entry(arxiv_id, published=_IN_WINDOW, title="A Title",
+           summary="An abstract.", authors=("Ada Lovelace", "Alan Turing"),
+           primary="cs.GT", categories=("cs.GT",), with_id=True):
+    """Build one arXiv Atom <entry> as XML text."""
+    auth = "".join(f"<author><name>{a}</name></author>" for a in authors)
+    cats = "".join(f'<category term="{c}"/>' for c in categories)
+    id_el = f"<id>http://arxiv.org/abs/{arxiv_id}</id>" if with_id else ""
+    return (f"<entry>{id_el}"
+            f"<title>{title}</title><summary>{summary}</summary>"
+            f"<published>{published}T12:00:00Z</published>"
+            f"<updated>{published}T12:00:00Z</updated>"
+            f"{auth}"
+            f'<arxiv:primary_category term="{primary}"/>{cats}'
+            f"</entry>")
 
-    def json(self):
+
+def _feed(*entries):
+    """Wrap entries in an arXiv Atom <feed> document."""
+    return ('<?xml version="1.0" encoding="UTF-8"?>'
+            '<feed xmlns="http://www.w3.org/2005/Atom" '
+            'xmlns:arxiv="http://arxiv.org/schemas/atom">'
+            + "".join(entries) + '</feed>')
+
+
+class _FakeResp:
+    """Minimal context-manager stand-in for an http.client response."""
+
+    def __init__(self, body):
+        self._body = body.encode("utf-8")
+
+    def read(self):
         return self._body
 
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise arxiv_scraper.requests.HTTPError(f"HTTP {self.status_code}")
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
 
 
-def _raw_paper(arxiv_id, paper_id=None, title="A Title", abstract="An abstract."):
-    """Build one raw Semantic Scholar record carrying an arXiv external ID."""
-    return {
-        "paperId": paper_id or f"s2-{arxiv_id}",
-        "title": title,
-        "abstract": abstract,
-        "authors": [{"name": "Ada Lovelace"}, {"name": "Alan Turing"}],
-        "externalIds": {"ArXiv": arxiv_id},
-        "citationCount": 7,
-        "publicationDate": "2026-05-15",
-    }
-
-
-def _s2_body(papers, token=None):
-    """Wrap raw records in the bulk-search response envelope."""
-    return {"total": len(papers), "token": token, "data": papers}
+def _http_error(code):
+    return urllib.error.HTTPError("http://export.arxiv.org/api/query",
+                                  code, f"HTTP {code}", None, None)
 
 
 class ExponentialBackoffTest(unittest.TestCase):
 
-    def test_backoff_fires_on_429_then_succeeds(self):
-        """Two 429s, then a 200 -- backoff sleeps 1s then 2s and recovers."""
-        responses = [
-            FakeResponse(429),
-            FakeResponse(429),
-            FakeResponse(200, _s2_body([_raw_paper("2405.00001")])),
-        ]
-        with mock.patch.object(arxiv_scraper.requests, "get",
-                               side_effect=responses) as m_get, \
+    def test_backoff_retries_429_timeout_503_then_succeeds(self):
+        """429, a read timeout, then a 503 all retry; then success."""
+        side_effects = [_http_error(429), TimeoutError("read timed out"),
+                        _http_error(503),
+                        _FakeResp(_feed(_entry("2605.00001")))]
+        with mock.patch.object(arxiv_scraper.urllib.request, "urlopen",
+                               side_effect=side_effects) as m_open, \
              mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
-            papers = arxiv_scraper.fetch_papers(["cs.MA"], since_days=7)
+            papers = arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
 
-        self.assertEqual(m_get.call_count, 3)
-        # The first two sleeps are the backoff delays; any later sleep is
-        # the polite inter-request spacing, which is not under test here.
-        sleeps = [c.args[0] for c in m_sleep.call_args_list]
-        self.assertEqual(sleeps[:2], [1, 2])
-        self.assertEqual(len(papers), 1)
-        self.assertEqual(papers[0]["arxiv_id"], "2405.00001")
+        self.assertEqual(m_open.call_count, 4)
+        self.assertEqual([c.args[0] for c in m_sleep.call_args_list], [5, 15, 30])
+        self.assertEqual([p["arxiv_id"] for p in papers], ["2605.00001"])
 
     def test_backoff_exhausts_and_raises(self):
-        """Unrelenting 429s -- backoff sleeps 1, 2, 4, 8 then gives up."""
-        with mock.patch.object(arxiv_scraper.requests, "get",
-                               return_value=FakeResponse(429)), \
+        """Unrelenting 503s -- backoff sleeps 5, 15, 30, 60 then gives up."""
+        with mock.patch.object(arxiv_scraper.urllib.request, "urlopen",
+                               side_effect=_http_error(503)), \
              mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
             with self.assertRaises(arxiv_scraper.ArxivScraperError):
                 arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
 
-        self.assertEqual([c.args[0] for c in m_sleep.call_args_list], [1, 2, 4, 8])
+        self.assertEqual([c.args[0] for c in m_sleep.call_args_list],
+                         [5, 15, 30, 60])
 
-    def test_non_retriable_status_raises_immediately(self):
+    def test_non_retriable_4xx_raises_immediately(self):
         """A 400 is not retriable -- it raises with no backoff sleeps."""
-        with mock.patch.object(arxiv_scraper.requests, "get",
-                               return_value=FakeResponse(400)), \
+        with mock.patch.object(arxiv_scraper.urllib.request, "urlopen",
+                               side_effect=_http_error(400)), \
              mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
-            with self.assertRaises(arxiv_scraper.requests.HTTPError):
+            with self.assertRaises(urllib.error.HTTPError):
                 arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
 
         m_sleep.assert_not_called()
 
 
-class DedupTest(unittest.TestCase):
+class DedupAndNormalizeTest(unittest.TestCase):
 
-    def test_dedup_across_categories(self):
-        """The same arxiv_id seen in two categories appears once."""
-        shared = _raw_paper("2405.12345", title="Shared paper")
-        unique = _raw_paper("2405.99999", title="Unique paper")
-        responses = [
-            FakeResponse(200, _s2_body([shared])),          # cs.MA page
-            FakeResponse(200, _s2_body([shared, unique])),  # cs.GT page
-        ]
-        with mock.patch.object(arxiv_scraper.requests, "get",
-                               side_effect=responses), \
-             mock.patch.object(arxiv_scraper.time, "sleep"):
-            papers = arxiv_scraper.fetch_papers(["cs.MA", "cs.GT"], since_days=7)
+    def test_dedup_on_arxiv_id_ignores_version_suffix(self):
+        """Same id at v1 and v2 dedups to one; a distinct id is kept."""
+        feed = _feed(_entry("2605.12345v1", title="Paper A v1"),
+                     _entry("2605.12345v2", title="Paper A v2"),
+                     _entry("2605.67890v1", title="Paper B"))
+        with mock.patch.object(arxiv_scraper, "_get_with_backoff",
+                               return_value=feed):
+            papers = arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
 
-        ids = sorted(p["arxiv_id"] for p in papers)
-        self.assertEqual(ids, ["2405.12345", "2405.99999"])
+        self.assertEqual(sorted(p["arxiv_id"] for p in papers),
+                         ["2605.12345", "2605.67890"])
 
-    def test_records_without_arxiv_id_are_dropped(self):
-        """Records lacking an ArXiv external ID are skipped entirely."""
-        no_arxiv = {"paperId": "s2-x", "title": "No arXiv id",
-                    "abstract": "x", "authors": [], "externalIds": {},
-                    "citationCount": 0}
-        body = _s2_body([no_arxiv, _raw_paper("2405.55555")])
-        with mock.patch.object(arxiv_scraper.requests, "get",
-                               return_value=FakeResponse(200, body)), \
-             mock.patch.object(arxiv_scraper.time, "sleep"):
-            papers = arxiv_scraper.fetch_papers(["cs.MA"], since_days=7)
+    def test_entry_without_arxiv_id_is_dropped(self):
+        """An entry carrying no <id> is skipped; valid entries survive."""
+        feed = _feed(_entry("ignored", with_id=False),
+                     _entry("2605.55555"))
+        with mock.patch.object(arxiv_scraper, "_get_with_backoff",
+                               return_value=feed):
+            papers = arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
 
-        self.assertEqual([p["arxiv_id"] for p in papers], ["2405.55555"])
+        self.assertEqual([p["arxiv_id"] for p in papers], ["2605.55555"])
+
+    def test_date_window_excludes_old_papers(self):
+        """Newest-first: an out-of-window paper is excluded and stops paging."""
+        feed = _feed(_entry("2605.20001", published=_IN_WINDOW),
+                     _entry("2604.10002", published=_OUT_OF_WINDOW))
+        with mock.patch.object(arxiv_scraper, "_get_with_backoff",
+                               return_value=feed) as m_get:
+            papers = arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
+
+        self.assertEqual([p["arxiv_id"] for p in papers], ["2605.20001"])
+        self.assertEqual(m_get.call_count, 1)  # paging stopped at the window
+
+    def test_category_is_matched_target_for_cross_listed_paper(self):
+        """A paper primary in cs.LG but cross-listed cs.MA records cs.MA."""
+        feed = _feed(_entry("2605.30003", primary="cs.LG",
+                            categories=("cs.LG", "cs.MA")))
+        with mock.patch.object(arxiv_scraper, "_get_with_backoff",
+                               return_value=feed):
+            papers = arxiv_scraper.fetch_papers(["cs.MA", "cs.GT"],
+                                                since_days=7)
+
+        self.assertEqual(papers[0]["category"], "cs.MA")
 
 
 class JsonlOutputTest(unittest.TestCase):
 
     def test_main_writes_well_formed_jsonl(self):
         """main() writes one valid JSON object per line with all fields."""
-        body = _s2_body([_raw_paper("2405.00010"), _raw_paper("2405.00011")])
+        feed = _feed(_entry("2605.00010"), _entry("2605.00011"))
         with tempfile.TemporaryDirectory() as tmp:
             out_path = os.path.join(tmp, "papers.jsonl")
             argv = ["--categories", "cs.MA,cs.GT,econ.TH",
                     "--since-days", "7", "--output", out_path]
-            with mock.patch.object(arxiv_scraper.requests, "get",
-                                   return_value=FakeResponse(200, body)), \
-                 mock.patch.object(arxiv_scraper.time, "sleep"):
+            with mock.patch.object(arxiv_scraper, "_get_with_backoff",
+                                   return_value=feed):
                 rc = arxiv_scraper.main(argv)
 
             self.assertEqual(rc, 0)
             lines = Path(out_path).read_text(encoding="utf-8").splitlines()
 
-        # Three categories each return the same two papers -> deduped to 2.
         self.assertEqual(len(lines), 2)
         for line in lines:
             paper = json.loads(line)  # raises if a line is not valid JSON
@@ -164,6 +194,7 @@ class JsonlOutputTest(unittest.TestCase):
                 self.assertIn(field, paper)
             self.assertIsInstance(paper["authors"], list)
             self.assertTrue(paper["arxiv_id"])
+            self.assertTrue(paper["abstract"])
 
 
 if __name__ == "__main__":
