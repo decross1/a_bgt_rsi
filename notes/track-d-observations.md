@@ -29,3 +29,39 @@ carries its tools under a `tool_calls` key. If the day-4 tool-call
 work uses a different key, the UI side is a one-line change
 (`EMBEDDED_TOOL_KEY` in `ui/backend/chain.py`) — no rework — but it
 would be good to confirm the key name when day 4 lands.
+
+## 2026-05-23 — 4 malformed lines in `run_state/week1.run.jsonl`
+
+Surfaced by the new `/api/unlock_status` endpoint (`ui/backend/unlock.py`)
+when it first ran against the real Day-7 state. Lines **99, 105, 106,
+109** fail JSON parsing — all Day-6 entries with unescaped inner
+double-quotes inside `observable_actual` strings. Examples:
+
+- L99 (`day6_block1_reading`): `"observable_actual":"human attested complete ("these human blocks are done")"` — the inner `"these..."` needs `\"these...\"`.
+- L106 (`day6_block3_reading`): same pattern with `"LLMs as Simulated Economic Agents"`.
+- L105 (`day6_block2_inspect_run_cli`): inner `--task-id seq-1` quote nesting.
+- L109 (`day6_end_of_day_artifacts`): the longest entry; multiple unescaped pairs.
+
+These are Day-6 entries, so Day-7's experiment review is unaffected.
+But per [`agent/autonomy.md`](../agent/autonomy.md) §4.3, the Week-2
+unlock attestation requires zero malformed entries across the
+run-log / attestations / escalations files. **The publication-review
+gate's alignment-evidence check cannot legitimately clear with these
+four lines as-is.** Track A is the rectifier per
+[`agent/collision_protocol.md`](../agent/collision_protocol.md) §2.3
+and §7 — Track D does not write to `run_state/*`.
+
+**Related docs drift (Track A's call):** `autonomy.md` §4.3 references
+`verify_log_integrity` against `run_state/*` files. The function in
+`agent_wrapper/wrapper.py:315` validates against the *call-record*
+schema (`schema/calls.jsonl.schema.json`) — it's the right validator
+for `logs/day*.jsonl` and the wrong one for `run_state/week1.run.jsonl`.
+Pointed at the run-log it reports 130 malformed, because none of the
+entries are call records. Either `autonomy.md` should point at a
+dedicated `verify_run_log_integrity` (apparatus-side), or the existing
+function needs disambiguation. The UI-side
+`ui/backend/unlock.py:verify_run_log_integrity` validates against the
+run-log required-field set from CLAUDE.md inviolate rule 8 — it is the
+function `/api/unlock_status` calls, and it correctly found the four
+genuinely-broken lines above. The two-validator situation is fine if
+documented; Week-2 polish item.
