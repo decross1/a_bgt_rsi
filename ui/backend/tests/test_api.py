@@ -17,15 +17,33 @@ def _client(tmp_path):
         "processes": [], "read_errors": None,
     }) + "\n")
     state = tmp_path / "state.json"
-    state.write_text(json.dumps({"plan_id": "test", "current_day": "day_1"}))
+    state.write_text(json.dumps({
+        "plan_id": "test", "current_day": "day_1",
+        "human_gates_pending": ["day7_publication_review_gate"],
+        "metric_log": {"day1_tokens_per_sec": 32.03},
+        "fallbacks_taken": {"day5_ml_intern": "direct_api"},
+    }))
     bench = tmp_path / "day1.csv"
     bench.write_text("prompt_idx,completion_tokens,elapsed_s,decode_tok_per_s\n"
                      "0,256,8.0,32.0\n", encoding="utf-8")
     # mtp.csv is left to individual tests to create — points at tmp_path so
     # the repo's real bench/mtp.csv never leaks into a test.
     mtp = tmp_path / "mtp.csv"
-    return TestClient(create_app(logs_dir=logs, telemetry_file=telemetry,
-                                 state_file=state, bench_csv=bench, mtp_csv=mtp))
+    # run.jsonl + attestations.jsonl point at tmp_path too, so /api/unlock_status
+    # never reads the real run_state/* while Track A may be mid-write.
+    run_log = tmp_path / "week1.run.jsonl"
+    run_log.write_text(json.dumps({
+        "timestamp": "2026-05-22T00:00:00Z", "day_id": "day_6",
+        "task_id": "x", "status": "passed",
+        "observable_actual": "ok", "observable_expected": "ok",
+        "duration_ms": 0,
+    }) + "\n", encoding="utf-8")
+    attestations = tmp_path / "attestations.jsonl"
+    attestations.write_text("", encoding="utf-8")
+    return TestClient(create_app(
+        logs_dir=logs, telemetry_file=telemetry, state_file=state,
+        bench_csv=bench, mtp_csv=mtp, run_log_file=run_log,
+        attestations_file=attestations))
 
 
 def test_health(tmp_path):
@@ -83,6 +101,20 @@ def test_baseline_endpoint_uses_mtp_csv(tmp_path):
     assert "MTP-engaged" in row["value"]
     assert "mtp.csv" in row["value"]
     assert "pre-MTP day-1" in row["value"]          # day-1 bench rides alongside
+
+
+def test_unlock_status_endpoint(tmp_path):
+    body = _client(tmp_path).get("/api/unlock_status").json()
+    assert body["milestone"] == "ui_v1_week2_unlock"
+    assert body["current_day"] == "day_1"
+    assert body["run_log_integrity"]["ok"] is True
+    assert body["run_log_integrity"]["total_lines"] == 1
+    assert body["hard_gates_pending"]["pending"][0]["task_id"] \
+        == "day7_publication_review_gate"
+    assert body["hard_gates_pending"]["pending"][0]["attest_command"].endswith(
+        "--task-id day7_publication_review_gate")
+    assert body["metric_log"]["day1_tokens_per_sec"] == 32.03
+    assert body["fallbacks_taken"]["day5_ml_intern"] == "direct_api"
 
 
 def test_telemetry_recent(tmp_path):
