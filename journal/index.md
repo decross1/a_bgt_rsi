@@ -11,4 +11,4 @@ synthesis (600–1000 words). Each row links to the published post.
 | 4   | 34          | First tool call — and the gap between "works" and "works reliably." | draft: `journal/day4.md` |
 | 5   | 35          | Pipe arXiv into the loop — first findings about my own field | draft: `journal/day5.md` |
 | 6   | 36          | Day 6 — orchestrator + worker, the smallest possible loop | draft: `journal/day6.md` |
-| 7   | 37          | TBD   |     |
+| 7   | 37          | Apparatus v0 — Week 1, what worked, what didn't | draft: `journal/day7.md` |

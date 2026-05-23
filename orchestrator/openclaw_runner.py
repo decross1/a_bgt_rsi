@@ -41,7 +41,7 @@ DEFAULT_WRAPPER_LOG = REPO_ROOT / "logs" / "day6.jsonl"
 # location to the repo root via .claude/worktrees/<name>/orchestrator/.
 DEFAULT_DB_PATH = Path("/home/decross1/projects/a_bgt_rsi/chroma_db")
 DEFAULT_WORKER_TIMEOUT_S = 60  # DAY6-CONTRACT
-KNOWN_TASK_TYPES = ("summarize_paper",)
+KNOWN_TASK_TYPES = ("summarize_paper", "play_pd_match")
 
 
 def _utc_now():
@@ -53,13 +53,27 @@ def _worker_entry(task, wrapper_log_path, db_path, parent_request_id,
     """Child process entry. Lazily imports the worker so this module stays
     cheap to import in the parent (tests do that on every run)."""
     try:
-        from workers.summarize_paper import summarize
-        result = summarize(
-            arxiv_id=task["payload"]["arxiv_id"],
-            log_path=wrapper_log_path,
-            db_path=db_path,
-            parent_request_id=parent_request_id,
-        )
+        ttype = task["task_type"]
+        if ttype == "summarize_paper":
+            from workers.summarize_paper import summarize
+            result = summarize(
+                arxiv_id=task["payload"]["arxiv_id"],
+                log_path=wrapper_log_path,
+                db_path=db_path,
+                parent_request_id=parent_request_id,
+            )
+        elif ttype == "play_pd_match":
+            from workers.play_pd_match import play_match
+            result = play_match(
+                payload=task["payload"],
+                log_path=wrapper_log_path,
+                parent_request_id=parent_request_id,
+            )
+        else:  # defensive: _validate_input should have rejected this already
+            result = {
+                "status": "error",
+                "errors": [f"worker_entry: unknown task_type {ttype!r}"],
+            }
     except Exception as exc:  # surface to the parent, do not crash silently
         result = {
             "status": "error",
@@ -134,6 +148,11 @@ class OrchestratorClient:
         elif isinstance(payload, dict) and ttype == "summarize_paper" \
                 and not payload.get("arxiv_id"):
             errors.append("summarize_paper payload missing 'arxiv_id'")
+        elif isinstance(payload, dict) and ttype == "play_pd_match":
+            if not payload.get("opponent"):
+                errors.append("play_pd_match payload missing 'opponent'")
+            if not isinstance(payload.get("n_rounds"), int) or payload.get("n_rounds", 0) <= 0:
+                errors.append("play_pd_match payload missing positive int 'n_rounds'")
         return errors, task_id, ttype
 
     def _error_output(self, task_id, errors):
@@ -160,21 +179,27 @@ class OrchestratorClient:
             return self._error_output(task_id, errors)
 
         parent = task.get("parent_request_id")
-        arxiv_id = task["payload"]["arxiv_id"]
+        payload = task["payload"]
+        if ttype == "summarize_paper":
+            dispatch_arg = payload["arxiv_id"]
+        elif ttype == "play_pd_match":
+            dispatch_arg = f"{payload['opponent']}/{payload['n_rounds']}"
+        else:  # _validate_input should have rejected anything else
+            dispatch_arg = "<unknown>"
         worker_id = str(uuid.uuid4())
         receipt_id = str(uuid.uuid4())
 
         # Entry 1/3: orchestrator_dispatch
         self._log(self._entry(
             "orchestrator_dispatch", dispatch_id, parent, task_id, ttype,
-            "dispatched", f"dispatching {ttype}({arxiv_id})"))
+            "dispatched", f"dispatching {ttype}({dispatch_arg})"))
 
         # Entry 2/3: worker_invocation -- written BEFORE the worker starts
         # so the chain is visible even on crash/timeout.
         self._log(self._entry(
             "worker_invocation", worker_id, dispatch_id, task_id, ttype,
             "running",
-            f"spawning worker process for {arxiv_id} "
+            f"spawning worker process for {dispatch_arg} "
             f"(timeout {self.worker_timeout_s}s)"))
 
         t0 = time.perf_counter()
@@ -242,16 +267,26 @@ class OrchestratorClient:
             }
 
         # Success.
-        summary = child_result.get("summary") or ""
+        if ttype == "summarize_paper":
+            summary = child_result.get("summary") or ""
+            receipt_detail = f"worker returned summary ({len(summary)} chars)"
+            result_payload = {"arxiv_id": payload["arxiv_id"], "summary": summary}
+        else:  # play_pd_match (and future task_types) pass result through
+            result_payload = child_result.get("result")
+            receipt_detail = (
+                f"worker returned result for {ttype}({dispatch_arg})"
+                if isinstance(result_payload, dict) else
+                f"worker returned non-dict result for {ttype}"
+            )
         self._log(self._entry(
             "orchestrator_receipt", receipt_id, worker_id, task_id, ttype,
             "passed",
-            f"worker returned summary ({len(summary)} chars)",
+            receipt_detail,
             duration_ms=duration_ms))
         return {
             "task_id": task_id,
             "status": "passed",
-            "result": {"arxiv_id": arxiv_id, "summary": summary},
+            "result": result_payload,
             "errors": [],
             "jsonl_log_path": str(self.log_path),
         }

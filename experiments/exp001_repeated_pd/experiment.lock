@@ -1,0 +1,99 @@
+{
+  "experiment": "exp001_repeated_pd",
+  "lock_written_at": "2026-05-23T09:39:36Z",
+  "git_head": "bf5562c1adda580d4e238719e645114814782222",
+  "version_pins": {
+    "open_spiel": "1.6.15",
+    "game_reasoning_arena": "0.1",
+    "pandas": "2.2.3",
+    "matplotlib": "3.9.2",
+    "chromadb": "1.5.9",
+    "sentence_transformers": "5.5.0",
+    "openai": "2.37.0",
+    "python": "3.12.3"
+  },
+  "hashes": {
+    "vllm_image_digest": "vllm/vllm-openai@sha256:a230095847e93bd4df9888b33dab956fa9504537b828a23657d2b26fed57b5c9",
+    "gemma_config_sha256": "4e379cc809c617a49179a49140f553a2d6a5ec538ed480832b0c54f6ace43d98",
+    "bge_m3_config_sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa"
+  },
+  "served_model_name": "gemma-4-26b-a4b",
+  "served_weights_path": "/mnt/models/gemma-4-26b-a4b-nvfp4",
+  "moe_backend": "marlin",
+  "runs": [
+    {
+      "label": "baseline",
+      "results_dir": "experiments/exp001_repeated_pd/results/",
+      "jsonl_log": "logs/exp001.jsonl",
+      "temperature": 0.0,
+      "max_tokens": 4,
+      "seed": null,
+      "rules_variant": "baseline",
+      "rounds_per_opponent": 100,
+      "opponents": [
+        "tft",
+        "grim_trigger",
+        "all_c",
+        "all_d",
+        "mirror_llm"
+      ],
+      "via_orchestrator": true
+    },
+    {
+      "label": "day7_1_t0p2",
+      "results_dir": "experiments/exp001_repeated_pd/results_7_1/",
+      "jsonl_log": "logs/exp001_7_1.jsonl",
+      "temperature": 0.2,
+      "max_tokens": 4,
+      "seed": null,
+      "rules_variant": "baseline",
+      "rounds_per_opponent": 100,
+      "opponents": [
+        "tft",
+        "grim_trigger",
+        "all_c",
+        "all_d",
+        "mirror_llm"
+      ],
+      "via_orchestrator": true
+    },
+    {
+      "label": "day7_2_t0p7",
+      "results_dir": "experiments/exp001_repeated_pd/results_7_2/",
+      "jsonl_log": "logs/exp001_7_2.jsonl",
+      "temperature": 0.7,
+      "max_tokens": 4,
+      "seed": null,
+      "rules_variant": "baseline",
+      "rounds_per_opponent": 100,
+      "opponents": [
+        "tft",
+        "grim_trigger",
+        "all_c",
+        "all_d",
+        "mirror_llm"
+      ],
+      "via_orchestrator": true
+    },
+    {
+      "label": "day7_3_exploitation_hint",
+      "results_dir": "experiments/exp001_repeated_pd/results_7_3/",
+      "jsonl_log": "logs/exp001_7_3.jsonl",
+      "temperature": 0.0,
+      "max_tokens": 4,
+      "seed": null,
+      "rules_variant": "exploitation_hint",
+      "rounds_per_opponent": 100,
+      "opponents": [
+        "tft",
+        "grim_trigger",
+        "all_c",
+        "all_d",
+        "mirror_llm"
+      ],
+      "via_orchestrator": true
+    }
+  ],
+  "expected_range_note": "notes/day7_expected_range.md (range amended to [0.60, 1.00] after 4-run diagnostic)",
+  "publication_gate": "day7_publication_review (state.human_gates_pending; never auto-clears)"
+}
