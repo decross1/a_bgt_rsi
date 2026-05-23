@@ -2,8 +2,32 @@
 
 > What I confirmed before proceeding, per the handoff prompt's guardrail
 > "state explicitly rather than proceed on assumption."
+>
+> **Path-update note (2026-05-23 restructure).** This is an archived
+> snapshot of a 2026-05-19 review. The 2026-05-23 documentation
+> restructure (commit `6749c34`) renamed two of the files originally
+> referenced here:
+> - `HUMAN_PLAN.md` → [`human/daily_plan.md`](../../../human/daily_plan.md)
+> - `AGENT_PLAN.md` → [`agent/orchestration.md`](../../../agent/orchestration.md)
+>
+> The new files added in that restructure ([`GLOSSARY.md`](../../../GLOSSARY.md),
+> [`PHASE_1_ROADMAP.md`](../../../PHASE_1_ROADMAP.md),
+> [`agent/autonomy.md`](../../../agent/autonomy.md),
+> [`agent/ownership.yaml`](../../../agent/ownership.yaml),
+> [`agent/collision_protocol.md`](../../../agent/collision_protocol.md),
+> [`agent/prompts/*`](../../../agent/prompts/),
+> [`human/learning_track.md`](../../../human/learning_track.md),
+> [`human/reading_list.md`](../../../human/reading_list.md),
+> [`human/days_01_30_recap.md`](../../../human/days_01_30_recap.md),
+> [`human/retrospectives/*`](../../../human/retrospectives/))
+> did NOT exist when this review was conducted; the inventory below is
+> the as-of-2026-05-19 state. Stage 1+ findings remain valid; only the
+> filenames change.
 
 ## Files I can see in project knowledge
+
+_As of the 2026-05-19 review. New names in [brackets] reflect the
+2026-05-23 restructure._
 
 - `START_HERE.md` — orientation
 - `PROJECT_CONTEXT.md` — full project background, including the program
@@ -19,14 +43,20 @@
   read-through limited but inviolate-rules confirmed via cross-references
   in `START_HERE.md`, `plan.yaml`, and `DECISIONS.md`)
 - `README.md` — repo layout
-- `HUMAN_PLAN.md` — the researcher's daily blocker list
-- `AGENT_PLAN.md` (referenced; per-day track schedule)
+- `HUMAN_PLAN.md` — the researcher's daily blocker list [now
+  `human/daily_plan.md`]
+- `AGENT_PLAN.md` (referenced; per-day track schedule) [now
+  `agent/orchestration.md`, with per-track prompts extracted to
+  `agent/prompts/track_{a,b,c,d}.md` and ownership extracted to
+  `agent/ownership.yaml`]
 - `current_day.md` (referenced; live tracker)
 - `docs/diagrams/README.md` — diagram versioning convention
 - `docs/diagrams/architecture_v4.svg` — fully visible
 - `docs/diagrams/intelligence_loop_v4.svg` — fully visible
 - `ui_plan.md` — Pi/OpenClaw observability dashboard plan (out of scope
-  for this review but contextually useful)
+  for this review but contextually useful) [§11 added 2026-05-23 ties
+  UI milestones to agent-autonomy unlocks; does not affect Stage-1+
+  findings of this review]
 
 ## Files referenced but NOT present in project knowledge
 
