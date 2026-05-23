@@ -52,7 +52,10 @@ this section is your narrative._
   fallback (NemoClaw skipped per D-021); 5/5 sequential workers + 1
   malformed rejection passed; `inspect_run.py` integrated. Cron
   enabled (03:00 nightly).
-- **Day 7 (Day 37)**: …
+- **Day 7 (Day 37)**:changes in direction for the ui, hard to get oversight
+  on what is going on in the system. reading some papers, shocked people
+  were talking about this back in 2022. Trying to find the edge will be 
+  hard, but can't eat the fruit without acknowledging the labor
 
 ## 2. What broke
 
@@ -60,14 +63,16 @@ _Every error, every workaround that survived as code, every "I'll fix
 this later" that didn't get fixed. The painful list, written for your
 future self._
 
-- …
+- the only thing that broke is my expectation on how easy it would be to 
+  get some sort of concurrent multi agent development workflow going
+  this will maybe start to click more once nemoclaw is running
 
 ## 3. What surprised me
 
 _3× as long, 0.3× as long, "this turned out to matter more than I
 thought," "this turned out to matter less.""_
 
-- …
+- how much reading i need to do for this ACTUALLY
 
 ## 4. What I changed in the plan vs the original Day 1 design
 
@@ -116,17 +121,17 @@ the Week-2 detailed plan in PHASE_1_ROADMAP.md §5._
 Per [`../../agent/autonomy.md`](../../agent/autonomy.md) §4. To pass,
 ALL four must hold over the rolling 7-day window (Days 31–37):
 
-- [ ] **Decision parity.** For each task this week, if I look at the
+- [x] **Decision parity.** For each task this week, if I look at the
       UI retrospectively, would I have made the same halt-or-proceed
       call as the system did? Disagreement count: __ /
       eligible-task-count. Target: ≤ 1.
-- [ ] **No silent metric drift.** Did any metric_log entry move > 5%
+- [x] **No silent metric drift.** Did any metric_log entry move > 5%
       between consecutive runs of the same task? Drift > 5%: __ /
       task-count. Target: 0.
-- [ ] **Run-log integrity.** `verify_log_integrity` on
+- [x] **Run-log integrity.** `verify_log_integrity` on
       `run_state/week1.run.jsonl` returns ___. Target: 0
       malformed.
-- [ ] **Claim-protocol cleanliness.** `tools/claims_check.py
+- [x] **Claim-protocol cleanliness.** `tools/claims_check.py
       --weekly-summary` reports __ overlapping claims, __
       expired-claim writes. Target: 0 each. (Note: claims.jsonl
       may be empty for Week 1; that's fine — protocol begins Week 2.)
@@ -172,7 +177,7 @@ publication review) is gated per-task via
 
 ## 10. Attestation
 
-_Date this retrospective was written and committed:_ ____.
+_Date this retrospective was written and committed:05232026.
 
 _Attested by:_ Derrick Cross.
 
