@@ -1,1 +1,5 @@
 {"_schema_comment": "Claim/lock log for concurrent agents. Append-only by any agent before writing files. Entry kinds: write (a claim) | release (release of a prior claim) | renew (extend an expiring claim). Fields per claim: timestamp, agent_id, zone, paths, intent, expires_at. Fields per release: timestamp, agent_id, intent, claim_timestamp. See agent/collision_protocol.md §1 for the schema and §2 for the protocol."}
+{"timestamp": "2026-05-23T09:08:20Z", "agent_id": "claude-track-a-aux-launch-checklist", "zone": "docs-agent", "paths": ["agent/orchestration.md"], "intent": "write", "expires_at": "2026-05-23T11:08:20Z"}
+{"timestamp": "2026-05-23T09:08:21Z", "agent_id": "claude-track-a-aux-launch-checklist", "zone": "docs-root", "paths": ["START_HERE.md"], "intent": "write", "expires_at": "2026-05-23T11:08:21Z"}
+{"timestamp": "2026-05-23T09:13:00Z", "agent_id": "claude-track-a-aux-launch-checklist", "intent": "release", "claim_timestamp": "2026-05-23T09:08:20Z"}
+{"timestamp": "2026-05-23T09:13:01Z", "agent_id": "claude-track-a-aux-launch-checklist", "intent": "release", "claim_timestamp": "2026-05-23T09:08:21Z"}

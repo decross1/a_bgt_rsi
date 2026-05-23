@@ -2723,9 +2723,12 @@ wall_clock_window:
       pass_signal: |
         OpenSpiel cloned on the Spark; `chat_game.py` skimmed (human
         attests); the four fixed strategies (TFT, grim trigger, all-C,
-        all-D) sketched as Python stubs in
-        `experiments/exp001_repeated_pd/strategies_stubs.py`.
-      fail_signal: stubs file missing
+        all-D) implemented in
+        `experiments/exp001_repeated_pd/strategies.py` (file may have
+        been pre-staged as `strategies_stubs.py` and renamed when the
+        implementation outgrew the stub label — either filename
+        satisfies this check).
+      fail_signal: strategies file missing
   log_to: run_log
 ```
 

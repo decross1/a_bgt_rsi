@@ -141,6 +141,99 @@ Each track's launch prompt lives in [`prompts/`](prompts/):
 
 ---
 
+## Session launch checklist (read at every session start)
+
+This is the maximize-concurrency playbook for as long as the human is
+the launcher of side tracks — i.e., until the orchestrator-dispatch
+unlock in Week 2+ (see [`autonomy.md`](autonomy.md) §3 and
+[`collision_protocol.md`](collision_protocol.md) §3). Once the
+orchestrator is dispatching autonomously, this section is superseded
+by the dispatcher.
+
+### How many tracks to open
+
+The structural ceiling is **4** (A/B/C/D), set by the number of
+distinct primary zones in [`ownership.yaml`](ownership.yaml). Going
+beyond 4 requires orchestrator dispatch, which is gated on alignment
+evidence, not calendar dates.
+
+The *right number* on any given day is "everything with queued work
+that does not collide with Track A's zones." Use the decision rule
+below — do not infer "Track A only" from an empty cell in the per-day
+schedule.
+
+### Decision rule (apply at the start of every Track A session)
+
+For each of B/C/D, open a worktree if **both** are true:
+
+1. There is queued work in that track's zone — next-day prep, UI
+   milestone, etc. — visible in `plan.yaml`, the relevant
+   `prompts/track_<x>.md` per-day task table, or `ui_plan.md`.
+2. That work does not need a file Track A is actively writing today
+   (check today's Track A task list in `plan.yaml` against
+   [`ownership.yaml`](ownership.yaml)).
+
+Track-by-track triggers:
+
+| Track | Open when… |
+|---|---|
+| **A (Main)** | Always. The integrator. |
+| **D (UI)** | `ui_plan.md` has unbuilt §s that don't depend on today's Track A output. **This is almost always yes** until UI v2 ships — Day 7 included. |
+| **B (Tests/schemas)** | A test scaffold or JSON schema is queued for Day N+1 or N+2 in `plan.yaml`, and Track A isn't producing a conflicting file today. |
+| **C (Pipeline/ops)** | A self-contained pipeline/ops/experiment-stub script is queued for Day N+1 or N+2, and it doesn't depend on today's Track A output. |
+
+### Launch commands (paste at session start)
+
+```bash
+# Terminal 1 — Track A (REQUIRED). Real GPU; do not let MOCK_LLM stub it.
+env -u MOCK_LLM claude --worktree dayN-main
+# Then paste agent/prompts/track_a.md.
+
+# Terminal 2 — Track B (if triggered).
+claude --worktree dayN-tests
+# Then paste agent/prompts/track_b.md.
+
+# Terminal 3 — Track C (if triggered). Use a descriptive suffix.
+claude --worktree dayN-<topic>    # e.g. dayN-pd-strategies, dayN-inspect-run
+# Then paste agent/prompts/track_c.md.
+
+# Terminal 4 — Track D (almost always).
+claude --worktree dayN-ui
+# Then paste agent/prompts/track_d.md.
+```
+
+`MOCK_LLM=1` must be set in all non-A shells (B/C/D). Verify with
+`echo $MOCK_LLM` inside each worktree before pasting the prompt; if
+empty, `export MOCK_LLM=1`.
+
+### Per-day startup matrix (Week 1)
+
+| Day | A focus | B suffix | C suffix | D suffix | Open |
+|---|---|---|---|---|---|
+| **1** | hardware + vLLM | — | — | — | **1** |
+| **2** | wrapper + JSONL | `day2-tests` | — | — | **2** |
+| **3** | chroma + ingest | `day3-tests` | `day3-arxiv-pipeline` | — | **3** |
+| **4** | first tool call | (Day-3 B in flight) | `day4-pd-strategies` | `day4-ui` | **3** |
+| **5** | arXiv pipeline | (merged AM) | `day5-inspect-run` | `day5-ui-sync` | **3** |
+| **6** | orchestrator | — | `day6-quicklook` | (idle) | **2** |
+| **7** | PD experiment | — | (merge old C AM) | `day7-ui` | **2** |
+
+Week-2+ rows land in this matrix once Day 8's task breakdown exists
+in `plan.yaml` (not before — speculative rows rot).
+
+### Notation in the per-day schedules
+
+- **Em-dash (`—`)** in any per-day schedule means *no scheduled task
+  for that track that day* — **not** *forbidden*. UI work in
+  particular can almost always proceed concurrently: Track D's zone
+  (`ui/**`, `ui_plan.md`) is never written by Track A, and Track D
+  runs `MOCK_LLM=1` so there is no GPU contention.
+- **`(merged AM)`** means a prior-day side-track branch is consumed
+  by Track A at the start of today; that track's session can stay
+  closed today unless new work is queued.
+
+---
+
 ## Merging side branches (procedure)
 
 When a Track B / C / D session prints `TRACK <X> COMPLETE — ready to
@@ -184,7 +277,7 @@ accept verbal attestation when the auditor says MERGE.
 | **4** | day4-main | (Day-3 B unmerged) | day4-pd-strategies | day4-ui |
 | **5** | day5-main | (Day-3 B merged AM) | day5-inspect-run + (Day-3 C merged AM) | day5-ui-sync |
 | **6** | day6-main | — | day6-quicklook + (Day-5 C merged AM) | — |
-| **7** | day7-main | — | (Day-4, 6 C merged AM) | — |
+| **7** | day7-main | — | (Day-4, 6 C merged AM) | day7-ui |
 
 For per-day task assignments to each track, see:
 - Track A: `plan.yaml` `dayN_*` tasks for the current day.
@@ -298,8 +391,10 @@ for review at the start of Track A's Block 2. About 3 hours across the
 week. Enough to absorb one bad day without losing the schedule.
 
 **Don't gain:** Critical-path compression. Hard-gates and the single
-GPU serialize Track A. Block 1 is sacred and human-only. Day 7's
-experiment is sequential by nature.
+GPU serialize Track A. Block 1 is sacred and human-only. **Track A's**
+Day 7 experiment is sequential by nature — side tracks (especially
+Track D / UI) proceed normally. See §"Session launch checklist" for
+the per-day open-tracks matrix.
 
 **The discipline that makes this work:** file boundaries you actually
 enforce. The moment a side track edits something it doesn't own, the

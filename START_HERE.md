@@ -134,6 +134,13 @@ These all live in full in [`CLAUDE.md`](CLAUDE.md).
 
 ## 5. How to start a session
 
+> **Before opening any session,** read
+> [`agent/orchestration.md`](agent/orchestration.md) §"Session launch
+> checklist" for the decision rule on which side tracks (B/C/D) to
+> open alongside Track A and the per-day startup matrix. The empty
+> cells in the per-day schedule mean *no scheduled task* — not
+> *forbidden*; UI in particular can almost always proceed.
+
 ### Track A (Main)
 
 ```bash
