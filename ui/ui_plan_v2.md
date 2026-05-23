@@ -1,4 +1,4 @@
-# UI plan v2 — experiment results browser (sketch)
+# UI plan v2 — experiment results browser + live orchestrator graph (sketch)
 
 > Planning artifact, not a build spec. Drafted by Track D during the
 > r4 improvement pass to resolve `ui_plan.md` §9's second open question
@@ -6,6 +6,12 @@
 > to v2**; v1 stays a live dashboard + single-chain inspector. This
 > file sketches what v2 would cover and, more importantly, the data
 > contracts v2 needs that do not exist yet.
+>
+> The 2026-05-23 Day-7-EOD UI audit (`ui_plan.md` r10) added §5 below
+> for the **live orchestrator graph view** — a request that surfaced
+> only after the user ran a real multi-task workload against v1 and
+> wanted a single visualization of orchestrator + spawned workers
+> rather than the dashboard's tabular orchestrator queue.
 >
 > Placed under `ui/` (not the repo root) to stay inside Track D's
 > write boundary. One page; expand into a full plan when v2 starts.
@@ -87,3 +93,99 @@ per-round table, reuse of `Sparkline`/strip and the existing
 inspector link. Estimate ~2 Block 2's once the experiment-result
 schema lands — comparable to a single v1 build step. The cost is
 entirely in the contract, not the code.
+
+---
+
+## 5. Live orchestrator + workers graph (added by ui_plan.md r10)
+
+Requested by the user during the 2026-05-23 Day-7-EOD UI audit, after
+running the real PD experiment through Day-6's orchestrator. v1's
+orchestrator queue is a vertical list of `(task_id, task_type, status)`
+rows — fine for "what's running right now?" but it does not convey the
+**parent/child topology** of an in-flight run (orchestrator dispatches
+a task → spawns a worker → worker fires N wrapper calls → each call may
+fan out to tools). For a multi-task experiment with 100s of rounds, a
+node-link diagram is the right reading affordance.
+
+### 5.1 What the view shows
+
+Two view levels in one route, `/graph` (or `/experiment/:expId`):
+
+- **Macro level** — orchestrator at center, one node per task it has
+  dispatched, status-coloured (running amber, passed green, failed
+  red, rejected red). Edges are parent_request_id chains. The graph
+  updates live as new tasks fire (reusing the existing `/api/live`
+  WebSocket). Hover a node: task_id + task_type + duration + worker_pid.
+  Click a node: zoom to micro level.
+- **Micro level** — picked node becomes the new root. Its children
+  expand: wrapper calls → tool calls (when present) → model
+  responses. Equivalent to today's chain inspector at `/chain/:taskId`,
+  but rendered as a force-directed graph inside the same view rather
+  than a separate route. Back-button returns to macro level.
+
+Zoom is data zoom, not pixel zoom — the node set changes when the
+user descends, the layout re-flows. Camera zoom (mouse-wheel pan/zoom)
+is also on, for navigating large graphs at the macro level.
+
+### 5.2 Data contracts
+
+Three sources, all already present in v1:
+
+1. `orchestrator.jsonl` — every dispatch / worker_invocation /
+   orchestrator_receipt / orchestrator_reject line (Day-6+ schema).
+2. The call-log glob (`logs/day*.jsonl` + `logs/exp*.jsonl`) — wrapper
+   calls and tool calls.
+3. `/api/live` WebSocket — for live updates without a full graph
+   re-fetch.
+
+A new endpoint `GET /api/graph?experiment_id=<id>&depth=<N>` returns
+`{nodes: [...], edges: [...]}` derived from `LogStore` for an
+experiment (or just `?since=<iso>` for a rolling-window view). Node
+shape: `{id, kind, task_id, task_type, status, latency_ms,
+worker_pid, timestamp, parent_id}`. Edge shape: `{source, target,
+kind: "dispatch"|"call"|"tool"}`. Reuses the existing chain walker;
+no new tailing machinery.
+
+### 5.3 Library choice
+
+Three real options:
+
+- **`react-flow`** — React-native, supports custom nodes, has zoom +
+  pan + minimap built in. Familiar React state model. The right
+  default for our stack.
+- **`cytoscape.js`** (with `react-cytoscapejs`) — heavier, more
+  graph-theoretic, supports very large graphs (1000s of nodes) better
+  than react-flow.
+- **`vis-network`** — small footprint, but rough React integration.
+
+For v2 v1 (the first ship), `react-flow` is the right choice — our
+graphs are bounded (one experiment ≈ 5 opponents × 1 task each ×
+100 wrapper calls ≈ ~500 nodes if we render every wrapper call at
+once). The micro level shows ~10–50 nodes; the macro level shows
+~5–50. Both well within react-flow's comfort zone.
+
+Revisit `cytoscape.js` if a later experiment needs to render thousands
+of nodes simultaneously — that crossover hasn't arrived.
+
+### 5.4 What this is NOT
+
+- Not a replacement for the tabular orchestrator queue on the
+  dashboard — that view is the "what's running, briefly" affordance;
+  the graph is the "what's the shape" affordance. Both ship.
+- Not a 3D visualization, animated dial, or anything decorative
+  (operating-contract rule 10: text-and-numbers tone applies to the
+  graph too — node colour against documented thresholds; no splash).
+- Not editable. The graph is a read-only projection of the JSONL
+  state (rule 8: UI shows problems, does not remediate them).
+
+### 5.5 Sequencing
+
+Land **after** v1 is in production (UI v1 milestone clears — see
+`ui_plan.md` §11). The v2 results browser (§2-4 above) and this graph
+view can ship independently — they share zero code beyond the
+existing `LogStore`. If the experiment-result schema lands first,
+build §2-4 first; if the audience needs the visual first, build §5
+first. Recommendation in the current state: §5 first, because the
+experiment-result schema is still un-pinned (Track A's call, see
+`notes/track-d-observations.md`), while the graph view's data
+contracts already exist.
