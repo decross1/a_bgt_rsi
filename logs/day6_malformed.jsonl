@@ -1,0 +1,5 @@
+{"task_id": "<unknown>", "status": "error", "result": null, "errors": ["missing required field 'task_id'"], "jsonl_log_path": "/home/decross1/projects/a_bgt_rsi/.claude/worktrees/day6-main/logs/orchestrator.jsonl"}
+{"task_id": "bad-1", "status": "error", "result": null, "errors": ["unknown task_type 'translate_paper' (known: summarize_paper)"], "jsonl_log_path": "/home/decross1/projects/a_bgt_rsi/.claude/worktrees/day6-main/logs/orchestrator.jsonl"}
+{"task_id": "bad-2", "status": "error", "result": null, "errors": ["summarize_paper payload missing 'arxiv_id'"], "jsonl_log_path": "/home/decross1/projects/a_bgt_rsi/.claude/worktrees/day6-main/logs/orchestrator.jsonl"}
+{"task_id": "bad-3", "status": "error", "result": null, "errors": ["payload must be an object"], "jsonl_log_path": "/home/decross1/projects/a_bgt_rsi/.claude/worktrees/day6-main/logs/orchestrator.jsonl"}
+{"task_id": "<unknown>", "status": "error", "result": null, "errors": ["input is not an object (got str)"], "jsonl_log_path": "/home/decross1/projects/a_bgt_rsi/.claude/worktrees/day6-main/logs/orchestrator.jsonl"}
