@@ -35,14 +35,17 @@ from _orchestrator_contract import (  # noqa: E402
     validate_worker_output,
 )
 
-# 5 distinct papers -- arbitrary arxiv_ids; the mock worker stubs the
-# summary, the real Day 6 worker retrieves each from papers_recent.
+# 5 distinct arxiv_ids drawn from the papers_recent ChromaDB collection
+# (Day 5 ingest, 138 papers in cs.MA / cs.GT / econ.TH). Track A swapped
+# Track B's placeholder ids in on Day 6 once papers_recent existed; under
+# MOCK_LLM=1 the mock worker still stubs the summary so the test runs
+# whether or not the collection is present.
 TASKS = [
-    ("seq-1", "2401.01001"),
-    ("seq-2", "2401.01002"),
-    ("seq-3", "2401.01003"),
-    ("seq-4", "2401.01004"),
-    ("seq-5", "2401.01005"),
+    ("seq-1", "2605.21448"),  # cs.GT  -- EFX inapproximability for chores
+    ("seq-2", "2605.21269"),  # cs.MA  -- Privacy artifacts for stakeholders
+    ("seq-3", "2605.21234"),  # cs.GT  -- Team Order Problem
+    ("seq-4", "2605.21117"),  # cs.GT  -- Multiplex networks and efficiency
+    ("seq-5", "2605.21085"),  # cs.MA  -- Decoupling communication / MARL
 ]
 
 

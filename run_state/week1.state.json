@@ -1,7 +1,7 @@
 {
   "plan_id": "week1_phase1_days_31_37",
   "started_at": "2026-05-17T00:00:00Z",
-  "current_day": "day_5",
+  "current_day": "day_6",
   "completed_tasks": [
     "preflight_credentials_staged",
     "preflight_software_prestaged",
@@ -56,14 +56,24 @@
     "day5_block3_journal",
     "day5_block3_reading",
     "day5_ambient",
-    "day5_end_of_day_artifacts"
+    "day5_end_of_day_artifacts",
+    "day6_block1_reading",
+    "day6_block1_problemset",
+    "day6_block2_worker_contract",
+    "day6_block2_orchestrator_router",
+    "day6_block2_orchestrator_with_fallback",
+    "day6_block2_robustness_mini",
+    "day6_block2_inspect_run_cli",
+    "day6_block3_reading",
+    "day6_block3_journal"
   ],
   "aborted_days": [],
   "human_gates_pending": [],
   "fallbacks_taken": {
     "day1_block2_vllm_serve": "MTP deferred to Week 2+ \u2014 NVFP4 baseline; pinned vLLM image 0.19.1.dev6 predates merged PR #41745 MTP support",
     "day1_nemoclaw": "NemoClaw onboarding skipped (binary not installed) \u2014 hardened plain-Docker fallback verified working",
-    "day5_ml_intern": "direct_api"
+    "day5_ml_intern": "direct_api",
+    "day6_orchestrator_isolation": "multiprocessing"
   },
   "metric_log": {
     "day1_tokens_per_sec": 32.03,
@@ -71,7 +81,7 @@
     "day3_needle_score": 0.7221,
     "day4_tool_call_invocation_rate": 1.0,
     "day5_papers_ingested": 138,
-    "day6_orchestrator_5_of_5": null,
+    "day6_orchestrator_5_of_5": 5,
     "day7_coop_rate_vs_tft": null
   },
   "notes": {
