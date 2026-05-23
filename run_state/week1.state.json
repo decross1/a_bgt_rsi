@@ -65,7 +65,9 @@
     "day6_block2_robustness_mini",
     "day6_block2_inspect_run_cli",
     "day6_block3_reading",
-    "day6_block3_journal"
+    "day6_block3_journal",
+    "day6_ambient",
+    "day6_end_of_day_artifacts"
   ],
   "aborted_days": [],
   "human_gates_pending": [],
