@@ -1,12 +1,20 @@
 # Project Context — a_bgt_rsi
 
-> **What this document is.** The single canonical orientation document for the
-> `a_bgt_rsi` repository. A new session should read `START_HERE.md` first
-> for orientation, then this file, then `ARCHITECTURE.md`, `DECISIONS.md`,
-> and `plan.yaml`. The original source planning documents
-> (`research_program_v2.pdf`, `week1_days_31-37_plan.md`,
-> `research_apparatus_technical_plan_v1.md`) are not yet committed under
-> `docs/sources/`; `plan.yaml` is canonical for task content.
+> **What this document is.** The long-form background and rationale
+> for the `a_bgt_rsi` repository. A new session should read
+> [`START_HERE.md`](START_HERE.md) first for orientation, then this
+> file for background, then [`ARCHITECTURE.md`](ARCHITECTURE.md) for
+> technical detail, then [`DECISIONS.md`](DECISIONS.md) for rationale,
+> and `plan.yaml` for executable task content. The original source
+> planning documents (`research_program_v2.pdf`,
+> `week1_days_31-37_plan.md`, `research_apparatus_technical_plan_v1.md`)
+> are not yet committed under `docs/sources/`; `plan.yaml` is canonical
+> for task content.
+>
+> Version pins and inviolate-rule restatements have moved out of this
+> file. The canonical version-pin table is now in
+> [`ARCHITECTURE.md`](ARCHITECTURE.md) §2; the inviolate rules are in
+> [`CLAUDE.md`](CLAUDE.md); terminology is in [`GLOSSARY.md`](GLOSSARY.md).
 
 ---
 
@@ -152,20 +160,16 @@ branches. The operating contract for the executing agent is in `CLAUDE.md`.
 
 ## 5. Critical operational facts
 
+> Canonical version-pin table is in [`ARCHITECTURE.md`](ARCHITECTURE.md) §2.
+> Restated summary below for orientation; do not edit here, edit there.
+
 ### Version pins (inviolate)
-- **vLLM image:** `vllm/vllm-openai:v0.21.0` — NOT `:gemma4` (dev,
-  crashes on FP4 GEMM). Tag-naming does NOT imply one is a superset of the
-  other; capture the image digest at first boot and pin the digest, not just
-  the tag — the tag is a moving target.
-- **vLLM version:** ≥ 0.19 (April 2026). The 0.19 release shipped the SM121
-  NVFP4 fixes that had been broken since March 2026.
-- **CUDA:** 13.0 — NOT 13.2 (gibberish on low-bit quants).
-- **Embedding:** BGE-M3 — NOT all-MiniLM-L6-v2.
-- **vLLM MoE backend:** `--moe-backend marlin`; startup log MUST show
-  `Using 'MARLIN' NvFp4 MoE backend`. If it shows `CUTLASS_FP4`, the flag did
-  not take effect — STOP (silent failure: model "works" but does not reason).
-- **Weights path:** `/mnt/models/gemma-4-26b-a4b-nvfp4` (NVFP4, not BF16).
-- **OpenShell cluster image:** `ghcr.io/nvidia/openshell/cluster:0.0.13`.
+
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) §2 for the canonical table.
+Key pins: `vllm/vllm-openai:v0.21.0`, `ghcr.io/nvidia/openshell/cluster:0.0.13`,
+CUDA 13.0, BGE-M3, NVFP4 weights at `/mnt/models/gemma-4-26b-a4b-nvfp4`,
+vLLM `--moe-backend marlin` (MARLIN log line required). Capture the
+image digest at first boot and pin the digest, not just the tag.
 
 ### Repository URLs (corrected)
 The source planning docs were imprecise in places; these are correct.
@@ -204,13 +208,13 @@ Affects tooling, not the apparatus runtime.
   under the old subscription pool.
 
 ### Hard disciplines (do not erode)
-- Block 1 (foundations) is human-only. No AI assistance, ever. This is the
-  architecture, not a preference.
-- Day 7 publication is human-gated. The agent runs the experiment and HALTS
-  before any publication step.
-- Validations are never silently coerced into passes.
-- Hard checkpoints abort the day on failure rather than degrading forward.
-- Fallbacks are explicit, logged, and time-capped.
+
+Canonical list in [`CLAUDE.md`](CLAUDE.md) "Inviolate rules". Summary:
+Block 1 human-only · Day 7 publication human-gated · validations never
+coerced · hard-gate failures abort the day · fallbacks explicit,
+logged, and time-capped. The autonomy framework that governs *which*
+checks are hard-gated vs soft-gated vs autonomous is in
+[`agent/autonomy.md`](agent/autonomy.md).
 
 ### Hardware compatibility gap to be aware of
 The DGX Spark's Blackwell GPU reports as **SM12x (compute capability 12.1)**,
@@ -317,12 +321,16 @@ DECISIONS.md D-019.)_
 
 ## 8. Where to look next
 
+For the full doc map, see [`START_HERE.md`](START_HERE.md) §3.
+Selected:
+
 | If you want to know… | Read… |
 |---|---|
-| What the apparatus is, architecturally | `ARCHITECTURE.md` + `docs/diagrams/` |
-| Why a decision was made the way it was | `DECISIONS.md` |
-| What to execute on the Spark today | `plan.yaml` and the operating contract in `CLAUDE.md` |
+| The technical architecture | [`ARCHITECTURE.md`](ARCHITECTURE.md) + `docs/diagrams/` |
+| Why a decision was made | [`DECISIONS.md`](DECISIONS.md) |
+| The 30/60/90-day arc | [`PHASE_1_ROADMAP.md`](PHASE_1_ROADMAP.md) |
+| The agent autonomy framework | [`agent/autonomy.md`](agent/autonomy.md) |
+| What to execute today | `plan.yaml` + [`current_day.md`](current_day.md) |
 | The intellectual program behind the apparatus | `docs/sources/research_program_v2.pdf` |
-| The technical companion to the program | `docs/sources/research_apparatus_technical_plan_v1.md` |
-| The expanded machine-readable week-1 plan | `docs/sources/agent_plan_week1.md` |
-| The visualizations from design sessions | `docs/diagrams/architecture_v4.svg` and `docs/diagrams/intelligence_loop_v4.svg` |
+| The technical companion | `docs/sources/research_apparatus_technical_plan_v1.md` |
+| The visualizations from design sessions | `docs/diagrams/architecture_v4.svg`, `docs/diagrams/intelligence_loop_v4.svg` |

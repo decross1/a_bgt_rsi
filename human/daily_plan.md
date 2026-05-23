@@ -2,9 +2,11 @@
 
 > Everything in this file is **yours to do**. The agents will not execute,
 > assist, summarize, derive, or solve any of it. The agent execution plan
-> lives in `AGENT_PLAN.md`; the canonical machine-readable plan is
-> `plan.yaml`. The original source plan `week1_days_31-37_plan.md` is not
-> yet committed to the repo; `plan.yaml` is canonical for task content.
+> lives in [`agent/orchestration.md`](../agent/orchestration.md); the
+> autonomy framework is in [`agent/autonomy.md`](../agent/autonomy.md);
+> the canonical machine-readable plan is `plan.yaml`. The reading +
+> problem-set syllabus lives in [`learning_track.md`](learning_track.md)
+> as a parallel rail — it is NOT a daily gate.
 >
 > **The rule that does not bend:** Block 1 (foundations) is human-only,
 > every day. No AI assistance. Pen and paper. If you find yourself
@@ -12,15 +14,17 @@
 
 ## How to use this document
 
-Each day section has four blocks:
+Each day section has these blocks:
 
 1. **Pre-day (evening before)** — anything you need ready before you sit
    down tomorrow morning.
 2. **Block 1 — Foundations (08:30–10:00, human-only).** Reading and
-   problem set. Pen, paper, no agent.
+   problem set. Pen, paper, no agent. **Block 1 no longer gates Block 2**
+   in `plan.yaml` — the agent will proceed regardless. The reading
+   track lives independently at [`learning_track.md`](learning_track.md).
 3. **Block 2 manual touchpoints (10:30–12:30).** The agent runs Block 2
-   on its own track, but specific steps require you (physical actions,
-   Dashboard clicks, human attestations, pre-computed safeguards).
+   on its own. Specific steps still require you: physical actions,
+   Dashboard clicks, human attestations, pre-computed safeguards.
    Each is flagged with a wall-clock window inside Block 2.
 4. **Block 3 — Read + Journal (13:30–14:30).** Your reading and your
    public post. The agent generates a data-filled stub; you write the
@@ -29,8 +33,9 @@ Each day section has four blocks:
 6. **End-of-day (15:30–16:00).** Human attestations the agent needs to
    close the day.
 
-Items tagged **`[GATE]`** are blocking: the agent will stop and wait for
-your explicit acknowledgment before proceeding.
+Items tagged **`[GATE]`** are blocking: the agent will halt and wait for
+your explicit acknowledgment before proceeding. Gates have tier-aware
+SLAs — see [`agent/autonomy.md`](../agent/autonomy.md) §2.
 
 ---
 
@@ -67,10 +72,8 @@ Set `DGX_SPARK_LAN_IP` after the Spark is on your network.
 - [ ] Weights pre-staged on the Spark (or on a USB to copy over):
   Gemma 4 26B-A4B-NVFP4 (~12 GB) → `/mnt/models/gemma-4-26b-a4b-nvfp4`;
   BGE-M3 (~1–2 GB) → `/mnt/models/bge-m3`.
-- [ ] Bookmarks file confirms the **inviolate version pins**:
-  - `vllm/vllm-openai:v0.21.0` (NOT `:gemma4`, `:gemma4-cu130`, or
-    `:v0.20.0` — see `DECISIONS.md` D-022; v0.21.0 enables Gemma 4 MTP)
-  - `ghcr.io/nvidia/openshell/cluster:0.0.13`
+- [ ] Bookmarks file confirms the **inviolate version pins** — canonical
+  list in [`../ARCHITECTURE.md`](../ARCHITECTURE.md) §2.
 
 ### Failure-mode rehearsal (15 min each, written notes private)
 
@@ -104,8 +107,7 @@ When you've done all four walkthroughs, mark the agent's
 - [ ] **Problem set:** O&R 6.1, 6.2, 6.3 — by hand. Bridges Phase 1
   weeks 1–4 (strategic-form) into the repeated-game machinery you'll
   need on Day 7.
-- [ ] Mark `day1_block1_reading` complete in the agent session when the
-  90 minutes have elapsed and you've attempted the problems.
+- [ ] Mark `day1_block1_reading` complete in the weekly retrospective.
 
 ### Block 2 manual touchpoints (10:30–12:30)
 
@@ -175,16 +177,16 @@ each and wait for you.
 - [ ] **Problem set:** O&R 6.7, 6.10, 7.1. Derive the one-deviation
   principle by hand — it's one of those things you have to derive once
   to actually understand.
-- [ ] Mark `day2_block1_reading` complete.
+- [ ] Mark `day2_block1_reading` complete in the weekly retrospective.
 
 ### Block 2 manual touchpoints (10:30–12:30)
 
 - [ ] **`[GATE]` 10:30–11:00 — JSONL schema authoring.** Write the
   schema on paper first, then have the agent commit it as
   `schema/calls.jsonl.schema.json`. Required fields (14 total) are in
-  `plan.yaml` task `day2_block2_jsonl_schema`. **This is a hard
-  checkpoint** — get it right; the rest of the week's reproducibility
-  depends on it.
+  `plan.yaml` task `day2_block2_jsonl_schema`. **This is a hard-gate
+  (`requires_human_understanding: true`)** — get it right; the rest of
+  the week's reproducibility depends on it.
 - [ ] **11:00–12:00 — Agent-led:** wrapper implementation. You're
   not writing code; you're confirming the agent's resisting abstraction.
   Code budget: ~100 lines. If the agent proposes a base class
@@ -194,7 +196,8 @@ each and wait for you.
   T=1, seed=42. If determinism fails, **do not let the agent paper
   over it.** Pause. Investigate vLLM launch flags, wrapper seed
   passthrough, and identical request bodies across trials. This is a
-  hard checkpoint and aborts the day on failure.
+  hard-gate today; will move to `soft_gate` at Week-2 unlock (see
+  [`agent/autonomy.md`](../agent/autonomy.md) §3).
 
 ### Block 3 — Reading and journal (13:30–14:30)
 
@@ -230,15 +233,14 @@ each and wait for you.
   than Osborne — if the algebra needs slow checking, spend Block 1 on
   §1.1–1.2 alone.
 - [ ] **Problem set:** Weibull 1.1, 1.2, 1.3.
-- [ ] Mark complete.
 
 ### Block 2 manual touchpoints (10:30–12:30)
 
 - [ ] **10:30–10:50 — Agent-led:** ChromaDB install with BGE-M3 (hard
-  checkpoint). Watch for the embedding-function metadata. If it says
-  `all-MiniLM-L6-v2` instead of `BGE-M3`, **do not let the agent
-  proceed** — that default drops retrieval accuracy to 0.4–0.6 at 4K
-  chars.
+  checkpoint today; soft-gate at Week-2 unlock). Watch for the
+  embedding-function metadata. If it says `all-MiniLM-L6-v2` instead of
+  `BGE-M3`, **do not let the agent proceed** — that default drops
+  retrieval accuracy to 0.4–0.6 at 4K chars.
 - [ ] **10:50–11:30 — Agent-led + your eye on the regex:** chunking
   script. The equation-guard regex is the part that matters; the agent
   dry-runs on Ch. 1 and shows you 5 random chunks. **Verify by eye that
@@ -284,7 +286,6 @@ each and wait for you.
 - [ ] **Problem set:** **Derive replicator dynamics for hawk-dove BY
   HAND.** This is a program-listed Phase 1 problem set item — today is
   the right day for it.
-- [ ] Mark complete.
 
 ### Block 2 manual touchpoints (10:30–12:30)
 
@@ -335,7 +336,6 @@ each and wait for you.
   Games*, Ch. 1 §1.1–1.4 (Hannan consistency, regret framework).
 - [ ] **Problem set:** C-B & L Ex. 1.1, 1.2 — internalize the regret
   bound's proof structure. You'll prove MW formally tomorrow.
-- [ ] Mark complete.
 
 ### Block 2 manual touchpoints (10:30–12:30)
 
@@ -349,6 +349,8 @@ each and wait for you.
 - [ ] **`[GATE]` 12:15–12:30 — Manual cross-check.** Pick 2 random
   papers from the ingest and verify they exist on arxiv.org by ID. If
   any is hallucinated, stop and investigate before retrieval test.
+  (Moves to `soft_gate` at Week-2 unlock — agent will sample + post to
+  UI; auto-clear at 4h.)
 - [ ] **12:25–12:30 — Agent-led:** retrieval test. You attest whether
   ≥1 of the top-3 is genuinely relevant.
 
@@ -392,22 +394,24 @@ each and wait for you.
   code. Do NOT look at course notes. Derive it. This is the keystone
   problem of the no-regret content and it is on the program's Phase 1
   problem set list, scheduled for this period.
-- [ ] Mark complete.
 
 ### Block 2 manual touchpoints (10:30–12:30)
 
 - [ ] **`[GATE]` 10:30–10:50 — Worker contract schema.** You author it
   (input: `task_id, task_type, payload, parent_request_id`; output:
   `task_id, status, result, errors, jsonl_log_path`). The agent
-  validates. Hard checkpoint — every architectural promise about agents
+  validates. Hard-gate — every architectural promise about agents
   downstream hinges on this contract being right now.
+  (`requires_human_understanding: true` — stays hard-gate regardless of
+  phase boundary.)
 - [ ] **10:50–11:30 — Agent-led:** orchestrator router → primary or
   fallback. Day 6 + NemoClaw is the most-untested integration in the
   architecture; the agent will fall back to multiprocessing if needed.
   Do not let it spend more than ~30 min fighting NemoClaw.
 - [ ] **11:30–12:00 — Agent-led:** 5-worker sequential robustness +
-  malformed-input rejection. Hard checkpoint — Day 7 cannot run on a
-  flaky orchestrator.
+  malformed-input rejection. Hard-gate today — Day 7 cannot run on a
+  flaky orchestrator. Moves to `soft_gate` (≥4/5 passes; flag the 1)
+  at Week-2 unlock.
 - [ ] **12:00–12:30 — Agent-led:** `inspect_run.py` CLI. You ask it for
   the full chain on one task and verify all four levels print
   (orchestrator → worker → wrapper → vLLM call).
@@ -451,29 +455,30 @@ each and wait for you.
   otherwise Camerer 4.1, 4.2.
 - [ ] **TODAY IS EXPERIMENT DAY.** Do NOT let impatience to start it eat
   the foundations block. This is the program's principle.
-- [ ] Mark complete.
 
 ### Block 2 manual touchpoints (10:30–12:30)
 
-- [ ] **10:30–10:50 — Agent-led:** OpenSpiel + GRA up (hard checkpoint).
+- [ ] **10:30–10:50 — Agent-led:** OpenSpiel + GRA up (hard-gate).
   You attest the random-vs-random sanity check looks like ~50%.
 - [ ] **`[GATE]` 10:50–11:20 — Prompt contamination check.** The LLM
   agent's prompt must NOT contain strings like "tit-for-tat", "grim
   trigger", "all-C", "all-D". The agent greps for these and shows you
   the result. **Read the actual prompt yourself before approving.**
-  Hard checkpoint.
+  Hard-gate today; moves to `soft_gate` (auto-pass on 0 hits; halt on
+  any) at Week-2 unlock.
 - [ ] **`[GATE]` 11:20–11:30 — Pre-compute expected range.** Write down
   on paper your expected cooperation rate range for LLM vs. TFT, *before*
   the run starts. Source's published range is roughly 60–95% over 100
   rounds. The agent will compare actual vs. your range after the run.
   This is the silent-model-misconfiguration safeguard. Save the paper.
+  (`requires_human_understanding: true` — stays hard-gate.)
 - [ ] **11:30–12:10 — Agent-led:** 500-round experiment (100 × 5
   opponents). ~20–40 min runtime depending on tok/s.
 - [ ] **`[GATE]` 12:10–12:30 — Result sanity check.** Compare the
   LLM-vs-TFT actual rate to your pre-written range. If OUTSIDE the
   range, **do not declare success.** Investigate: re-check the vLLM
   startup log for MARLIN backend, look at parse-failure events, inspect
-  prompt drift. The hard checkpoint fires automatically here, but you're
+  prompt drift. The hard-gate fires automatically here, but you're
   the human safeguard.
 
 ### Block 3 — Weekly synthesis (13:30–14:30, longer than usual)
@@ -494,6 +499,8 @@ each and wait for you.
   - cooperation rates against your pre-computed expected range
   - parse-failure events
   - whether the LLM tracked opponents in per-round logs
+  (`day7_publication_review_gate` stays hard-gate regardless of phase
+  boundary — see [`agent/autonomy.md`](../agent/autonomy.md) §6.)
 
 ### Ambient listening
 
@@ -514,6 +521,9 @@ each and wait for you.
   5. Where Week 1 deviates from the research program document.
   6. What Week 2 needs to do — top 5 priorities, each with a
      one-sentence success criterion.
+- [ ] Write the first weekly attestation at
+  [`retrospectives/week1.md`](retrospectives/week1.md). This is the
+  alignment-evidence record that gates Week-2 tier shifts.
 - [ ] Agent records this is the input to Week 2 planning. **Week 2
   planning is a separate task and not run today.**
 
@@ -521,18 +531,26 @@ each and wait for you.
 
 ## Cross-cutting rules for you
 
-- **Block 1 is sacred.** If a day's Block 2 overruns, take the slack
-  budget (30 min between Block 2 and Block 3), then cut Block 3 if
-  needed. **Never** cut Block 1.
-- **You are the only one writing to `run_state/`.** When you attest
-  something to the agent, that's a state-file update. Side worktrees
-  (Tracks B and C, see `AGENT_PLAN.md`) must not write here.
+- **Block 1 is sacred for you, but it does NOT gate the agent.** The
+  agent will proceed on Block 2 work whether or not you've finished
+  today's reading. If a day's Block 2 overruns, take the slack budget
+  (30 min between Block 2 and Block 3), then cut Block 3 if needed.
+  **Never** cut Block 1 for yourself — the apparatus depends on you
+  understanding the foundations, even if it doesn't depend on the
+  agent waiting for you to finish.
+- **You are the only one writing to `run_state/week1.state.json` and
+  `run_state/week1.run.jsonl`.** When you attest something to the
+  agent, that's a state-file update. Side worktrees (Tracks B, C, D)
+  must not write here. Shared JSONL files
+  (`attestations.jsonl`, `escalations.jsonl`, `claims.jsonl`) are
+  append-only by every agent.
 - **You are the only one who can clear a `[GATE]`.** Especially the Day
   7 publication review gate. The agent will halt and wait; do not
   encourage it to "just publish now."
-- **Hard checkpoints abort the day.** If a hard checkpoint fails, the
-  agent will write `day_aborted` to the run log and stop. The next
-  day's Block 2 is gated on the prior day's success. Don't override.
+- **Hard-gates abort the day on validation failure.** The agent will
+  write `day_aborted` to the run log and stop. The next day's Block 2
+  is gated on the prior day's success. Don't override. Soft-gates
+  proceed; you review later via the UI.
 - **Version pins are inviolate.** If you find yourself thinking "the
   `:gemma4` tag should also work," stop and re-read the failure-mode
   rehearsal notes.
@@ -547,4 +565,6 @@ each and wait for you.
 - No concurrency in workers (sequential only on Day 6).
 - No fully autonomous loop — Day 7 result requires your review.
 - No fine-tuning.
-- No Week 2 planning (separate task, post-retrospective).
+- No Week 2 planning (separate task, post-retrospective). The Week 2
+  detailed plan lives in [`../PHASE_1_ROADMAP.md`](../PHASE_1_ROADMAP.md)
+  §5; you read it but do not start executing until Day 38.

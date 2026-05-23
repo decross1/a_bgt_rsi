@@ -700,6 +700,98 @@ the apparatus will likely have passed day 2 (call-log schema) — re-check
 
 ---
 
+## 11. Observability gates agent autonomy
+
+> Added in the 2026-05-23 documentation restructure. The UI's
+> deliverables are now load-bearing for the agent autonomy framework:
+> tier-shift unlocks in [`agent/autonomy.md`](agent/autonomy.md) §3
+> are gated on UI milestones.
+
+### 11.1 Why the UI gates autonomy
+
+The user's stated trajectory is: start at a tiered + phase-aware
+autonomy posture; expand toward trust-by-default as the UI proves it
+can show the human what the system is doing. The UI is therefore not
+just an observability layer — it is the **mechanism by which the
+human attests alignment evidence** (see
+[`agent/autonomy.md`](agent/autonomy.md) §4). Without the UI showing
+the right state at the right time, the alignment-evidence check
+cannot be made, and tier shifts stay locked.
+
+### 11.2 UI milestones → autonomy unlocks
+
+| UI milestone | Unlocks |
+|---|---|
+| **UI v1** — sampler + dashboard live (target Day 38; Track D) | Week-2 unlock eligible. The dashboard must render run-log integrity, recent task statuses, and pending soft-gate attestations. |
+| **UI v2** — call-chain inspector live (target Day 50) | Weeks-3-4 unlock eligible. The inspector must reconstruct causal chains from `orchestrator.jsonl` + `calls.jsonl` and surface them per-task. |
+| **UI v2.5** — alignment evidence dashboard (target Week 4) | Allows the weekly retrospective to be drafted *inside* the UI rather than from raw logs. |
+| **UI shows consistent alignment for 4+ consecutive weeks** | Phase 2 entry eligible (Day ~91). |
+
+A UI milestone is "live" when the human can run it on real Track A
+artifacts (not just fixtures) and the relevant gate-attestation flow
+works end-to-end.
+
+### 11.3 What the UI must render to support each unlock
+
+**Week-2 unlock prerequisites (rendered by UI v1):**
+- Run-log integrity: `verify_log_integrity` result for the rolling
+  week, plus any malformed-line locations.
+- Soft-gate attestation queue: pending requests in
+  `run_state/attestations.jsonl`, with rollback action available.
+- Hard-gate pending list: entries from `state.human_gates_pending`,
+  with attestation action available.
+- Today's metric_log values vs prior runs (for the metric-drift
+  alignment check).
+- Sidebar: `state.fallbacks_taken`.
+
+**Weeks-3-4 unlock prerequisites (rendered by UI v2):**
+- Causal chain inspector: pick a `task_id`, see the full chain
+  (orchestrator → worker → wrapper → vLLM call) with timestamps and
+  durations.
+- Tier-shift inventory: which tasks have shifted since the last
+  retrospective, with the tier-shift event from the run log.
+- Claim/lock log render: `run_state/claims.jsonl` showing active
+  claims, expiries, and any overlaps.
+
+**Phase 2 entry prerequisites:**
+- Hypothesis generation timeline: every hypothesis the loop produced,
+  the critic's verdict, the meta-review novelty score, the experiment
+  outcome (if executed).
+- Per-week alignment score (from the four-bullet check in
+  `agent/autonomy.md` §4), four weeks back, with delta trend.
+
+### 11.4 What Track D commits trigger
+
+Each UI milestone landing in `ui/` and `ui_plan.md` triggers Track A
+to:
+
+1. Verify the UI renders Week-N alignment evidence correctly (a
+   human-in-the-loop check; not automated).
+2. Update `agent/autonomy.md` §3 trigger column to mark the UI
+   milestone "achieved" if confirmed.
+3. Append a `ui_milestone` event to `run_state/week1.run.jsonl` with
+   the milestone ID, UI commit hash, and Track-A confirmation
+   timestamp.
+
+The weekly retrospective at the next milestone boundary may then
+trigger the actual tier-shift application (per
+[`agent/autonomy.md`](agent/autonomy.md) §4.2).
+
+### 11.5 Implication for Track D sequencing
+
+Track D's deliverables are now precondition for Track A's tier-shift
+unlocks. Falling behind on UI work delays the autonomy expansion —
+this is by design; the user is explicitly trading "raw speed of
+agentic build-out" against "demonstrated alignment in the UI." If
+Track D slips, Track A stays at the more-conservative tier
+classification.
+
+The `PHASE_1_ROADMAP.md` Week-2 schedule reflects this: Day 38 is
+"UI v1 deployment + Week-2 unlock attestation"; without UI v1, the
+unlock attestation cannot be made.
+
+---
+
 ## Appendix — file layout you should produce
 
 ```

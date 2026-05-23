@@ -1,0 +1,205 @@
+# Machine-readable ownership registry for concurrent agent coordination.
+#
+# Every file in the repo maps to exactly ONE zone. A glob conflict (two
+# zones covering the same path) is a planning bug — `tools/claims_check.py
+# --validate-ownership` will exit non-zero if found.
+#
+# Fields per zone:
+#   id            — stable identifier; referenced by plan.yaml `target_zone:`
+#   paths         — glob patterns this zone covers
+#   primary_track — default writer when no dispatch is active (A/B/C/D)
+#   dispatchable  — may an orchestrator-dispatched coding agent claim this zone?
+#                   (Track A's zones are never dispatchable — Track A is the
+#                   integrator and writes by primacy, not by claim.)
+#
+# Read by: agent sessions before any file write; tools/claims_check.py;
+# tools/dispatch_coding_agent.py (Day-39 deliverable).
+#
+# Authoritative for ownership. Where this file disagrees with prose in
+# agent/orchestration.md, this file wins.
+
+zones:
+  # ──────────────────────────────────────────────────────────────────
+  # Track A (Main) — apparatus integrator. Never dispatched.
+  # ──────────────────────────────────────────────────────────────────
+  - id: orchestrator
+    paths:
+      - "orchestrator/**"
+      - "workers/**"
+      - "agent_wrapper/**"
+    primary_track: A
+    dispatchable: false
+
+  - id: state-file
+    paths:
+      - "run_state/week1.state.json"
+      - "run_state/week1.run.jsonl"
+    primary_track: A
+    dispatchable: false
+
+  - id: bench-and-logs
+    paths:
+      - "bench/**"
+      - "logs/**"
+    primary_track: A
+    dispatchable: false
+
+  - id: chroma-store
+    paths:
+      - "chroma_db/**"
+    primary_track: A
+    dispatchable: false
+
+  # ──────────────────────────────────────────────────────────────────
+  # Track B — tests & schemas. Dispatchable.
+  # ──────────────────────────────────────────────────────────────────
+  - id: schemas
+    paths:
+      - "schema/**"
+    primary_track: B
+    dispatchable: true
+
+  - id: tests-shared
+    paths:
+      - "tests/test_*.py"
+      - "tests/_*.py"
+    primary_track: B
+    dispatchable: true
+
+  # ──────────────────────────────────────────────────────────────────
+  # Track C — pipeline & ops. Dispatchable.
+  # ──────────────────────────────────────────────────────────────────
+  - id: pipeline
+    paths:
+      - "pipeline/**"
+      - "ingest/**"
+    primary_track: C
+    dispatchable: true
+
+  - id: cron-and-scripts
+    paths:
+      - "cron/**"
+      - "scripts/**"
+    primary_track: C
+    dispatchable: true
+
+  - id: experiments
+    paths:
+      - "experiments/exp001_repeated_pd/strategies*.py"
+      - "experiments/exp001_repeated_pd/quicklook.py"
+      - "experiments/exp001_repeated_pd/analysis/**"
+      - "experiments/exp001_repeated_pd/results/**"
+      - "experiments/exp001_repeated_pd/plots/**"
+    primary_track: C
+    dispatchable: true
+
+  - id: tools
+    paths:
+      - "tools/**"
+    primary_track: C
+    dispatchable: true
+
+  - id: infra
+    paths:
+      - "infra/**"
+    primary_track: C
+    dispatchable: true
+
+  # ──────────────────────────────────────────────────────────────────
+  # Track D — UI / observability. Dispatchable.
+  # ──────────────────────────────────────────────────────────────────
+  - id: ui
+    paths:
+      - "ui/**"
+      - "ui_plan.md"
+    primary_track: D
+    dispatchable: true
+
+  # ──────────────────────────────────────────────────────────────────
+  # Shared — multi-track JSONL append-only logs.
+  # ──────────────────────────────────────────────────────────────────
+  - id: shared-jsonl
+    paths:
+      - "run_state/attestations.jsonl"
+      - "run_state/escalations.jsonl"
+      - "run_state/claims.jsonl"
+    primary_track: shared
+    dispatchable: false
+    notes: |
+      Append-only by ALL agents. Track A rectifies if a malformed
+      line appears; otherwise no one rewrites these files.
+
+  # ──────────────────────────────────────────────────────────────────
+  # Documentation — collaborative; claim-protocol mandatory.
+  # ──────────────────────────────────────────────────────────────────
+  - id: docs-root
+    paths:
+      - "*.md"
+      - "PHASE_1_ROADMAP.md"
+      - "GLOSSARY.md"
+    primary_track: A
+    dispatchable: true
+    notes: |
+      Docs are dispatchable but conflict-prone — claim protocol is
+      mandatory before any write. Track A is the default writer.
+
+  - id: docs-human
+    paths:
+      - "human/**"
+    primary_track: A
+    dispatchable: true
+    notes: |
+      Human-facing docs. Track A writes by default; dispatched agents
+      may claim individual files.
+
+  - id: docs-agent
+    paths:
+      - "agent/**"
+    primary_track: A
+    dispatchable: true
+    notes: |
+      Agent-facing docs. Track A writes by default; dispatched agents
+      may claim individual files. Changes to autonomy.md and
+      ownership.yaml require a D-NNN entry (architectural decision).
+
+  - id: notes
+    paths:
+      - "notes/**"
+    primary_track: any
+    dispatchable: true
+    notes: |
+      Working notes. Any agent may write; convention is one file
+      per agent-task (notes/<track>-<dayN>-<topic>.md or
+      notes/<agent-id>.log).
+
+# ──────────────────────────────────────────────────────────────────────
+# Conflict-resolution rules (when two claims race for the same file)
+# ──────────────────────────────────────────────────────────────────────
+conflict_resolution:
+  - rule: track_a_primacy
+    description: |
+      Track A's primary zones (orchestrator, state-file, bench-and-logs,
+      chroma-store) are NEVER dispatched. Any claim entry for a path
+      in these zones by a non-Track-A agent is a protocol violation;
+      tools/claims_check.py flags it.
+  - rule: first_claim_wins
+    description: |
+      For dispatchable zones, the first non-expired claim wins. Later
+      claimants wait or escalate.
+  - rule: doc_conflicts
+    description: |
+      For docs-root, docs-human, docs-agent: if two agents claim the
+      same file within a 10-minute window, both abort and the human
+      arbitrates. This is rare in practice because dispatched docs
+      tasks are usually scoped to disjoint sections.
+  - rule: integration_wins
+    description: |
+      Track A's version of any conflicting file wins at merge time
+      regardless of claim order. This matches CLAUDE.md inviolate rule
+      on parallel-track merges.
+
+# ──────────────────────────────────────────────────────────────────────
+# Versioning
+# ──────────────────────────────────────────────────────────────────────
+schema_version: 1
+last_updated: "2026-05-23"

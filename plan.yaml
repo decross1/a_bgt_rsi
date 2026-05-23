@@ -10,14 +10,50 @@ review. Version pins are inviolate (e.g. the vLLM image tag is
 `vllm/vllm-openai:v0.21.0` (NOT `:gemma4`/`:gemma4-cu130`/`:v0.20.0` —
 see DECISIONS.md D-022); CUDA must be 13.0, NOT 13.2). The state file is authoritative on resume.
 
-This plan is executed across up to three parallel Claude Code worktrees.
+This plan is executed across up to four parallel Claude Code worktrees
+(Tracks A/B/C/D) plus, starting Day 39 (Week 2), additional
+orchestrator-dispatched coding agents. See `agent/orchestration.md` and
+`agent/collision_protocol.md` for the parallel-execution discipline.
 Track A (Main) owns the critical path and is the only track permitted to
 write run_state/, logs/, agent_wrapper/, bench/, and chroma_db/, and the
 only track permitted to call LOCAL_LLM_BASE_URL. Tracks B (tests +
-schemas) and C (pipeline + ops) draft future-day files ahead of time per
-AGENT_PLAN.md. Tasks without an explicit `track:` field default to track
-A. Tasks tagged `track: B` or `track: C` are drafted in a side worktree
-on an earlier day and merged in by Track A on the day they're consumed.
+schemas), C (pipeline + ops), and D (UI / observability) draft files in
+their owned zones per `agent/ownership.yaml`. Tasks without an explicit
+`track:` field default to Track A.
+
+## New fields (introduced in the 2026-05-23 documentation restructure)
+
+Each task may carry these fields (defaults in parens):
+
+- `autonomy_tier:` — one of `autonomous`, `soft_gate`, `hard_gate`
+  (default: `hard_gate` for unlabeled tasks; conservative).
+  Semantics in `agent/autonomy.md` §1.
+- `autonomy_tier_after_unlock:` — the tier this task SHIFTS to when
+  Week-2 unlock applies (default: same as current `autonomy_tier`).
+  Applied by Track A's tier-shift procedure (`agent/autonomy.md` §4.2).
+- `requires_human_understanding: true` — task content depends on human
+  understanding; the task stays `hard_gate` regardless of phase
+  boundary. Example: schema authoring, expected-range pre-spec,
+  publication review.
+- `recommended_reading: [<task_id>, ...]` — INFORMATIONAL only.
+  References Block 1 readings the human is expected to do in parallel;
+  does NOT gate task execution. **The agent proceeds regardless.**
+- `target_zone: <zone-id>` — names a zone in `agent/ownership.yaml`
+  (used by `tools/claims_check.py` and `dispatch_coding_agent.py`).
+- `dispatchable: true|false` — whether an orchestrator-dispatched
+  coding agent may execute this task (default: false for Week 1).
+
+**Block 1 decoupling.** Block 1 tasks (`dayN_block1_*`) are no longer
+listed in `preconditions:` of Block 2 tasks. Block 1 is the human's
+parallel rail (`human/learning_track.md`); the agent does not wait
+for it. The exception list lives in tasks marked
+`requires_human_understanding: true` — those tasks halt for human
+authoring/attestation of their specific content, not for general
+reading progress.
+
+**Slip semantics.** A day that bleeds into N.1, N.2, … gets sub-task
+IDs of the form `dayN_<S>_block2_…` and inherits the parent's tier
+unless overridden. See `PHASE_1_ROADMAP.md` §2 for the slip mechanism.
 -->
 
 ---
@@ -80,7 +116,7 @@ parallel_execution:
         - notes/track-c-*.md
       may_call_llm: false
       mock_llm_required: true
-merge_protocol: see_AGENT_PLAN.md
+merge_protocol: see_agent_orchestration_md
 ---
 
 # Agent Plan — Week 1 (Days 31–37 of Phase 1)
@@ -377,8 +413,12 @@ wall_clock_window:
     ≤ 30 °C, UPS inline. (Source 0:00–0:20.) Physical placement is
     human; the agent verifies dashboard reachability post-placement.
   preconditions:
-    - day1_block1_reading
     - preflight_physical_setup
+  recommended_reading: [day1_block1_reading]   # informational only; does NOT gate execution
+  autonomy_tier: hard_gate
+  autonomy_tier_after_unlock: hard_gate   # physical UI work, can't automate
+  target_zone: orchestrator
+  dispatchable: false
   command: |
     # Human action: unbox and place. Agent verifies after.
     ping -c 3 "${DGX_SPARK_LAN_IP}" && \
@@ -895,8 +935,13 @@ wall_clock_window:
     usage (input/output tokens), latency_ms, host_metadata (CUDA driver,
     vLLM image tag), caller_tag, parent_request_id (null for now;
     chains start Day 4). (Source 0:00–0:30.)
-  preconditions:
-    - day2_block1_reading
+  preconditions: []
+  recommended_reading: [day2_block1_reading]   # informational only; does NOT gate execution
+  requires_human_understanding: true   # human authors the schema; agent validates
+  autonomy_tier: hard_gate
+  autonomy_tier_after_unlock: hard_gate   # load-bearing for downstream reproducibility
+  target_zone: schemas
+  dispatchable: false   # Track A only; the contract is load-bearing
   command: null  # Schema authoring is human; agent validates output.
   expected_observable:
     kind: file_exists
@@ -1183,8 +1228,12 @@ wall_clock_window:
     4K characters — unacceptable for dense math textbooks.
     (Source 0:00–0:20.)
   preconditions:
-    - day3_block1_reading
     - preflight_software_prestaged
+  recommended_reading: [day3_block1_reading]   # informational only; does NOT gate execution
+  autonomy_tier: hard_gate
+  autonomy_tier_after_unlock: soft_gate   # needle test that follows catches a bad embedding
+  target_zone: chroma-store
+  dispatchable: false
   command: |
     python3 -m venv .venv-chroma && \
     source .venv-chroma/bin/activate && \
@@ -1721,8 +1770,12 @@ wall_clock_window:
     `stag_hunt`, `matching_pennies`. Tool schema in OpenAI
     function-calling JSON format. Implementation: ~20 lines, hardcoded
     dicts. (Source 0:00–0:30.)
-  preconditions:
-    - day4_block1_reading
+  preconditions: []
+  recommended_reading: [day4_block1_reading]   # informational only; does NOT gate execution
+  autonomy_tier: soft_gate
+  autonomy_tier_after_unlock: autonomous
+  target_zone: tools
+  dispatchable: true
   command: null  # Authoring step. Agent runs unit test below after.
   expected_observable:
     kind: file_exists
@@ -2044,8 +2097,12 @@ wall_clock_window:
     Scholar API + Python — definitely works. Try ML-Intern for 45 min;
     if not running by 0:45, fall back.
   preconditions:
-    - day5_block1_reading
     - preflight_credentials_staged
+  recommended_reading: [day5_block1_reading]   # informational only; does NOT gate execution
+  autonomy_tier: hard_gate
+  autonomy_tier_after_unlock: soft_gate
+  target_zone: pipeline
+  dispatchable: true
   command: |
     # Probe: can ML-Intern even install on this ARM64 host?
     test -d clones/ml-intern || git clone <url> clones/ml-intern && \
@@ -2380,8 +2437,13 @@ wall_clock_window:
     jsonl_log_path}`. Every architectural promise about "agents" hinges
     on a clean worker contract. Get it wrong now, pay for it forever.
     Commit `schema/worker_contract.schema.json`. (Source 0:00–0:20.)
-  preconditions:
-    - day6_block1_reading
+  preconditions: []
+  recommended_reading: [day6_block1_reading]   # informational only; does NOT gate execution
+  requires_human_understanding: true   # human authors the worker contract; agent validates
+  autonomy_tier: hard_gate
+  autonomy_tier_after_unlock: hard_gate   # load-bearing for downstream architecture
+  target_zone: schemas
+  dispatchable: false
   command: null  # Schema authoring is human; agent validates.
   expected_observable:
     kind: file_exists
@@ -2739,8 +2801,12 @@ wall_clock_window:
     3: use OpenSpiel + GRA, not a custom game env. Saves 1–2 weeks.
     (Source 0:00–0:20.)
   preconditions:
-    - day7_block1_reading
     - preflight_software_prestaged
+  recommended_reading: [day7_block1_reading]   # informational only; does NOT gate execution
+  autonomy_tier: hard_gate
+  autonomy_tier_after_unlock: soft_gate
+  target_zone: experiments
+  dispatchable: false   # Track A runs Day-7 experiment on the live GPU
   command: |
     python3 -c "import pyspiel; game = pyspiel.load_game('matrix_pd'); print(game)" && \
     python3 tests/test_gra_random_vs_random.py \
@@ -3127,8 +3193,10 @@ wall_clock_window:
 > Each entry below is a STANDALONE task assigned to a side worktree
 > (Track B or C). Its output is consumed by a Track A task on a later
 > day. Track A merges the side branch before starting the consuming
-> task and validates the merged files as inputs. See `AGENT_PLAN.md`
-> for the per-day schedule, per-track prompts, and merge protocol.
+> task and validates the merged files as inputs. See
+> `agent/orchestration.md` for the per-day schedule, per-track prompts,
+> and merge protocol; `agent/ownership.yaml` for the per-track file
+> ownership; `agent/collision_protocol.md` for the claim/lock protocol.
 
 ```yaml
 side_track_tasks:
@@ -3382,7 +3450,7 @@ or interpret the retrospective.
 **11. Track boundaries are enforced.**
 Track A may write anywhere. Tracks B and C may write only the paths in
 their `file_writes` allowlist (see the `parallel_execution` frontmatter
-block and `AGENT_PLAN.md`). A side track that writes outside its
+block and `agent/orchestration.md`). A side track that writes outside its
 allowlist must STOP, revert the unauthorized changes, and refuse to
 commit. The human audits boundary violations and tightens the
 side-track system prompt.

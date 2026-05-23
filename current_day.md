@@ -3,6 +3,13 @@
 _Active-day tracker. Authoritative plan: `plan.yaml`. State:
 `run_state/week1.state.json`. Run log: `run_state/week1.run.jsonl`._
 
+> **Slip banner.** When `state.current_subday` is set (e.g., `6.1`,
+> `6.2`) the tracker's header carries a banner: `🔁 SLIP — day N
+> bled into N.<S>; cause: <hard_gate_failure | sla_expiry |
+> rework | declared>; declared at <ts>; sub-task IDs `dayN_<S>_*`.`
+> The integer-day banner appears as today. Slip mechanism:
+> [`PHASE_1_ROADMAP.md`](PHASE_1_ROADMAP.md) §2.
+
 **Day goal:** Orchestrator spawns one worker (NemoClaw sandbox if up,
 plain-Docker / multiprocessing otherwise); the worker calls Gemma 4
 via the wrapper; a structured `worker_output` returns; the full

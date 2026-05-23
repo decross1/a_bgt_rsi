@@ -1,16 +1,21 @@
-# a_bgt_rsi — Week 1 research apparatus
+# a_bgt_rsi — Phase 1 research apparatus
 
-Phase 1 / Week 1 (Days 31–37) of the research program.
+Phase 1 (Days 1–90) of a multi-year research program. The repo
+currently covers Week 1 (Days 31–37) in executable detail; the rest of
+Phase 1 is mapped in [`PHASE_1_ROADMAP.md`](PHASE_1_ROADMAP.md).
 
-**New here? Start with `START_HERE.md`** — the single orientation
-document — then `PROJECT_CONTEXT.md`, `ARCHITECTURE.md`, `DECISIONS.md`,
-and `plan.yaml`.
+**New here? Start with [`START_HERE.md`](START_HERE.md)** — the single
+orientation document. From there, the doc map at
+[`START_HERE.md`](START_HERE.md) §3 tells you which file to read for
+which question.
 
-`plan.yaml` is the canonical machine-readable plan; the operating
-contract for Claude Code is `CLAUDE.md`. The original source planning
-documents (`week1_days_31-37_plan.md` and the others referenced under
-`docs/sources/`) are **not yet committed** to the repo — until they
-are, `plan.yaml` plus `CLAUDE.md` are the operative authority.
+`plan.yaml` is the canonical machine-readable plan. The operating
+contract for Claude Code is [`CLAUDE.md`](CLAUDE.md). The agent
+autonomy framework is [`agent/autonomy.md`](agent/autonomy.md). The
+original source planning documents (`week1_days_31-37_plan.md` and the
+others referenced under `docs/sources/`) are **not yet committed** to
+the repo — until they are, `plan.yaml` plus `CLAUDE.md` are the
+operative authority.
 
 ## Target environment
 
@@ -20,27 +25,35 @@ are, `plan.yaml` plus `CLAUDE.md` are the operative authority.
 - Gemma 4 26B-A4B-NVFP4 weights at `/mnt/models/gemma-4-26b-a4b-nvfp4`
 - BGE-M3 weights at `/mnt/models/bge-m3`
 
-Full version pins in `START_HERE.md` §4 and `plan.yaml` Appendix C.
+Full canonical version-pin table in
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §2.
 
 ## Documentation layout
 
-Five documents define how Week 1 runs. They have different audiences;
-know which one to read for which question.
+The docs are split by audience. Top-level files are shared (everyone
+reads); `human/` is for the researcher; `agent/` is for Claude Code
+sessions; `plan.yaml` is the machine-readable canonical plan.
 
-| Document | Audience | Use it for |
+| Where | Audience | Use it for |
 | --- | --- | --- |
-| `START_HERE.md` | Everyone | Orientation, current state, document map, version pins |
-| `plan.yaml` | Claude Code (machine) | Canonical task definitions, validations, hard checkpoints, state schema |
-| `HUMAN_PLAN.md` | The researcher | Daily blockers, Block 1 readings, manual touchpoints inside Block 2, human gates, end-of-day attestations |
-| `AGENT_PLAN.md` | Researcher + Claude Code | Parallel-execution orchestration: which worktree runs which task on which day, per-track system prompts, merge protocol |
-| `CLAUDE.md` | Claude Code (Track A) | Operating contract: inviolate rules, parallel-track rules, what's out of scope |
+| [`START_HERE.md`](START_HERE.md) | Everyone | Orientation, current state, document map |
+| [`PHASE_1_ROADMAP.md`](PHASE_1_ROADMAP.md) | Everyone | The 30/60/90-day arc + slip mechanism |
+| [`GLOSSARY.md`](GLOSSARY.md) | Everyone | Stable terminology |
+| `plan.yaml` | Claude Code (machine) | Canonical task definitions, validations, autonomy tiers |
+| [`CLAUDE.md`](CLAUDE.md) | Claude Code (Track A) | Operating contract: inviolate rules, parallel-track rules |
+| [`human/daily_plan.md`](human/daily_plan.md) | The researcher | Daily blockers, manual touchpoints, human gates |
+| [`human/learning_track.md`](human/learning_track.md) | The researcher | Phase 1 reading + problem-set syllabus (parallel rail) |
+| [`agent/autonomy.md`](agent/autonomy.md) | Claude Code | Three-tier autonomy framework + SLAs + alignment evidence |
+| [`agent/orchestration.md`](agent/orchestration.md) | Researcher + Claude Code | Parallel-execution orchestration: which worktree, when, how to merge |
+| [`agent/ownership.yaml`](agent/ownership.yaml) | Claude Code | Machine-readable file-ownership registry |
+| [`agent/collision_protocol.md`](agent/collision_protocol.md) | Claude Code | Claim/lock protocol for concurrent agents |
 
-Day-by-day, the researcher reads `HUMAN_PLAN.md` for what's on their
-plate and `AGENT_PLAN.md` for which terminals to open. Each Claude Code
-session reads `CLAUDE.md` (Track A) or its per-track prompt (Tracks B
-and C), then resumes from `run_state/week1.state.json`. `plan.yaml` is
-canonical for task content; see `START_HERE.md` §3 for the full
-document map and authority rules.
+Day-by-day, the researcher reads [`human/daily_plan.md`](human/daily_plan.md)
+for what's on their plate and [`agent/orchestration.md`](agent/orchestration.md)
+for which terminals to open. Each Claude Code session reads
+[`CLAUDE.md`](CLAUDE.md) (Track A) or its per-track prompt
+([`agent/prompts/`](agent/prompts/)) then resumes from
+`run_state/week1.state.json`.
 
 ## Quick start (on the Spark)
 
@@ -49,37 +62,54 @@ git clone git@github.com:decross1/a_bgt_rsi.git
 cd a_bgt_rsi
 cp .env.example .env  # fill in the 5 credentials
 
-# One-time parallel-execution setup (see AGENT_PLAN.md):
+# One-time parallel-execution setup (see agent/orchestration.md):
 # .gitignore already ignores .claude/worktrees/; .worktreeinclude is
 # committed and copies .env into new worktrees. Verify with:
 claude --worktree smoke-test   # then `exit` inside the session
 
 # Begin Day 1 (Track A only; Day 1 has no side tracks):
-claude                # then ask it to begin day_1 per plan.yaml
+env -u MOCK_LLM claude    # then ask it to begin day_1 per plan.yaml
 ```
 
-Claude reads `START_HERE.md`, `CLAUDE.md`, and `plan.yaml`, then
-resumes from `run_state/week1.state.json`. Pre-flight checks run first;
-Block 1 of day 1 is human-only — Claude prints the reading + problem
-set and halts. From Day 2 onward, open multiple terminals per
-`AGENT_PLAN.md`'s per-day schedule (Track A in one, Tracks B and/or C
-in others).
+Claude reads [`CLAUDE.md`](CLAUDE.md), [`agent/autonomy.md`](agent/autonomy.md),
+[`agent/ownership.yaml`](agent/ownership.yaml), and `plan.yaml`, then
+resumes from `run_state/week1.state.json`. Pre-flight checks run
+first; Block 1 of day 1 is human-only — Claude prints the reading +
+problem set and halts. From Day 2 onward, open multiple terminals per
+[`agent/orchestration.md`](agent/orchestration.md)'s per-day schedule.
 
 ## Layout
 
 ```
 START_HERE.md              # orientation + document map — read this first
-PROJECT_CONTEXT.md         # full project background
-ARCHITECTURE.md            # apparatus architecture walkthrough
-DECISIONS.md               # architectural/operational decision log
+PHASE_1_ROADMAP.md         # 30/60/90-day plan + slip mechanism
+GLOSSARY.md                # terminology reference
+PROJECT_CONTEXT.md         # long-form background
+ARCHITECTURE.md            # technical architecture walkthrough
+DECISIONS.md               # decision log
 plan.yaml                  # canonical machine-readable task plan
 CLAUDE.md                  # operating contract for Claude Code
-HUMAN_PLAN.md              # the researcher's daily blocker list
-AGENT_PLAN.md              # parallel-execution orchestration plan
 current_day.md             # active-day progress tracker
+ui_plan.md                 # UI / observability layer plan
 .env.example               # required credentials
 
-run_state/                 # state file + run log (JSONL)
+human/                     # researcher-facing documentation
+  daily_plan.md
+  learning_track.md
+  reading_list.md
+  days_01_30_recap.md
+  retrospectives/
+
+agent/                     # agent-facing documentation
+  autonomy.md
+  orchestration.md
+  ownership.yaml
+  collision_protocol.md
+  prompts/                 # per-track launch prompts
+
+run_state/                 # state file + run log (JSONL); soft/hard-gate +
+                           # claims append-only logs
+
 agent_wrapper/             # thin wrapper around vLLM OpenAI client
 schema/                    # JSON Schemas: call log, worker contract, tools
 tests/                     # validation scripts referenced per-day
@@ -91,7 +121,7 @@ pipeline/                  # arXiv scraper + embed-and-store
 cron/                      # nightly arxiv pipeline
 orchestrator/              # OpenClaw runner (+ multiprocessing fallback)
 workers/                   # summarize_paper, etc.
-tools/                     # mock_payoffs, inspect_run CLI
+tools/                     # mock_payoffs, inspect_run, gate_sla_check, claims_check
 experiments/exp001_repeated_pd/   # day 7 experiment + results/plots/analysis
 scripts/                   # bench, chroma init, semantic scholar test, lock writer
 notes/                     # per-day debugging / decision notes
@@ -107,11 +137,16 @@ chroma_db/                 # gitignored — embeddings (manifest.json IS tracked
 
 ## Rules (concise)
 
-1. Block 1 (foundations) is **human-only**. Claude prints, halts, does not assist.
-2. Version pins in `plan.yaml` are inviolate.
-3. Day 7 publication is human-gated.
+1. Block 1 (foundations) is **human-only** but **does not gate Block 2**
+   in `plan.yaml` (decoupled per [`agent/autonomy.md`](agent/autonomy.md)
+   §7). The human reads in parallel; the agent proceeds.
+2. Version pins are inviolate — canonical table in
+   [`ARCHITECTURE.md`](ARCHITECTURE.md) §2.
+3. Day 7 publication is human-gated and never auto-clears.
 4. Validations are never silently coerced into passes.
-5. Hard checkpoints abort the day.
+5. Hard-gates abort the day on failure; soft-gates flag and continue.
 6. The state file is authoritative on resume.
 
-Full restatement in `CLAUDE.md` and `plan.yaml` Appendix C.
+Full restatement in [`CLAUDE.md`](CLAUDE.md). The autonomy framework
+(`autonomous` / `soft_gate` / `hard_gate` tiers, SLAs, alignment
+evidence) is in [`agent/autonomy.md`](agent/autonomy.md).

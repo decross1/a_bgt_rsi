@@ -9,6 +9,65 @@
 > Decisions are appended in roughly chronological order by when they were
 > locked in. The most recent decisions are at the bottom. Each decision has
 > an ID for cross-referencing from other docs.
+>
+> **The most recent decision wins** over an older one it supersedes.
+> Use `**Superseded by:** D-NNN (YYYY-MM-DD).` at the top of the
+> older entry.
+
+---
+
+## Category index
+
+A reading-finder, not authoritative. Each decision lives in its own
+section below; the index just collects them by topic so you don't
+have to grep.
+
+### Hardware
+- D-001 — DGX Spark, single unit
+
+### Models
+- D-002 — Orchestrator: Gemma 4 26B-A4B MoE in NVFP4
+- D-006 — Defer Qwen 3.6 to Week 2–3 (dual-model routing excluded)
+
+### Stack — serving and runtime
+- D-003 — vLLM image pin (superseded by D-019, D-022)
+- D-017 — Pin vLLM image **digest**, not just tag
+- D-018 — SM12x compatibility gap awareness
+- D-019 — MTP enablement (deferred → resolved by D-022)
+- D-020 — `FLASHINFER_CUTLASS for NVFP4 GEMM` expectation update
+- D-021 — NemoClaw fallback discipline (Day 1)
+- D-022 — Re-pin to `vllm/vllm-openai:v0.21.0` (MTP enabled)
+
+### Stack — knowledge base and retrieval
+- D-007 — ChromaDB
+- D-008 — BGE-M3 over ChromaDB default
+- D-023 — Needle-haystack score band update (informational)
+- D-027 — Pipeline source: Semantic Scholar → arXiv API (S2 lag)
+
+### Logging and reproducibility
+- D-011 — JSONL append-only call log
+- D-012 — JSONL field set (14 fields) for `calls.jsonl`
+- D-013 — JSONL integrity verifier
+- D-014 — `parent_request_id` chain discipline for tool calls
+- D-026 — Day-4 jsonl-integrity check amended (per-artifact counts)
+
+### Scope and fallback discipline
+- D-004 — Three-tier sandbox spectrum
+- D-005 — Apparatus v0 as Week 1 deliverable
+- D-009 — OpenSpiel + GRA for synthetic tier
+- D-010 — Bandit keep/discard (Google SCORE excluded Phase 1)
+- D-015 — Fallbacks: explicit, logged, time-capped
+- D-016 — File-boundary discipline for concurrent tracks
+- D-018 — Polymarket live trading is Phase 3 (design-only in Phase 1)
+
+### Process and gates
+- D-024 — (from adversarial review notes)
+- D-025 — (from adversarial review notes)
+
+### Pending / unresolved
+
+See "Open decisions (pending)" at the end of this file for items
+tracked but not yet locked in.
 
 ---
 

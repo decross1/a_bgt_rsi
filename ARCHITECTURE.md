@@ -345,6 +345,66 @@ validation step.
 
 ---
 
+### 5.5 Multi-agent coordination
+
+As of the Week 2 deliverable, the apparatus supports more than the four
+named tracks (A/B/C/D) launching simultaneously. The orchestrator may
+dispatch additional Claude Code sessions on demand via
+`agent_wrapper/dispatch_coding_agent.py` (Day-39 deliverable). Each
+dispatched session:
+
+- Runs in its own git worktree (extending the existing `claude
+  --worktree` pattern).
+- Receives a scoped prompt assembled from
+  [`agent/prompts/dispatched_task.md`](agent/prompts/dispatched_task.md)
+  plus a task spec describing the target zone, allowed paths, and
+  success criteria.
+- Obeys the **claim/lock protocol** documented in
+  [`agent/collision_protocol.md`](agent/collision_protocol.md): scan
+  `run_state/claims.jsonl` for non-expired claims on the target paths;
+  if clean, append a claim with 2-hour expiry; release on commit.
+- May write only to **dispatchable** zones in
+  [`agent/ownership.yaml`](agent/ownership.yaml). Track A's primary
+  zones (`orchestrator`, `state-file`, `bench-and-logs`, `chroma-store`)
+  are reserved.
+
+The concurrency cap rises with phase boundary, governed by the same
+alignment evidence as the autonomy-tier unlock (see
+[`agent/autonomy.md`](agent/autonomy.md) §4): Week-1 baseline = 4
+concurrent (human launches each); Week-2 unlock = orchestrator
+dispatches 1/day; Weeks-3-4 unlock = up to 3 concurrent dispatches;
+Phase-2 entry = autonomous dispatches with weekly human attestation.
+The Phase-2 aspirational target is ~80% of new code shipped via
+dispatched agents.
+
+The dispatch pattern does NOT introduce autonomy beyond what
+`agent/autonomy.md` already permits — a dispatched agent inherits its
+task's tier (`autonomous`, `soft_gate`, or `hard_gate`) and its
+SLA-and-attestation behavior. The dispatcher merely launches; Track A
+still merges, after validation.
+
+### 5.6 Phase 2 architecture deltas (cross-reference summary)
+
+Phase 1's intelligence loop (§6) is eight steps with three Phase-2
+additions explicitly marked. The full set of Phase-2 deltas spread
+across this document:
+
+| Phase 2 element | Location | Becomes operational |
+|---|---|---|
+| Meta-review synthesis worker | §5.1, §6 step 1 (Phase-2 addition) | Day 40 (W2-02) |
+| Critic / red-team agent | §5.1, §6 step 3 (Phase-2 addition) | Day 39 (W2-01) |
+| Experiment-outcome feedback edge to loop memory | §6 step 8 (Phase-2 addition) | Day 80 milestone (full Phase-2 loop) |
+| Active vs passive read from Layer 3 | §4.4 | Day 40+ (depends on meta-review) |
+| Per-hypothesis GPU-time budget | §5.1 (compute budgeting) | Phase 2 milestone |
+| Polymarket live trading | §3.3 (gated on CFTC compliance) | Phase 3 entry (Day ~270) |
+| Second model (Qwen 3.6) | §2.2 (manual swap, NOT routing) | Day 72 milestone |
+| Dispatched coding agents (§5.5) | §5.5 above | Day 39 plumbing; Phase-2+ scale |
+
+For the executable sequencing of these deltas, see
+[`PHASE_1_ROADMAP.md`](PHASE_1_ROADMAP.md).
+
+---
+
 ## 6. The intelligence loop
 
 The loop runs steps 1–7 autonomously on the DGX Spark and gates on step 8,
