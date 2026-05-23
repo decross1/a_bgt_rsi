@@ -221,7 +221,26 @@ each session start. **Each track must read `agent/ownership.yaml` and
 - Render `state.fallbacks_taken` in the sidebar.
 - Render today's `metric_log` values vs prior runs (the metric-drift
   evidence).
+- **Apply the `ui_plan.md` r10 fixes** (Day-7-EOD UX audit). The
+  Week-2 unlock attestation per [`agent/autonomy.md`](../agent/autonomy.md)
+  §4 cannot be made against a v1 that doesn't render orchestrator
+  events. r10's backend already shipped (`/api/workload_hint`,
+  `recent_tasks` sort fix); Day 38's Track-D scope is the **frontend
+  consumer work** for `/api/unlock_status` (the §11.3 panel — five
+  sections) and verification that the orchestrator queue and
+  workload-aware decode tile both render correctly during the
+  Day-38 multi-track parallel runs.
 - Sentinel: `TRACK D COMPLETE — ready to merge`.
+
+> **r10 amendment (2026-05-23 EOD).** Day-7's PD experiment surfaced
+> two real bugs and two UX gaps in v1's orchestrator queue and
+> decode-tok/s tile (filter mismatch on `status==="started"`; sort key
+> referenced absent `dispatch_ts`; misleading empty states on
+> Day-4-specific panels; no workload context on decode tok/s). All four
+> are fixed in `worktree-day7-ui` ahead of Day 38. Day 38's Track-D
+> ship now means "v1 with r10 applied, attestation rendered, and the
+> graph-view sketch promoted to v2's primary work item" (see
+> `ui/ui_plan_v2.md` §5).
 
 **Claim discipline** (every track, before any file write):
 ```bash

@@ -349,10 +349,23 @@ def build_chain_by_request_id(store, root_request_id):
 
 
 def recent_tasks(store, limit=50):
-    """Most-recent orchestrator dispatches, latest first. See ui_plan.md section 5.2."""
+    """Most-recent orchestrator dispatches, latest first. See ui_plan.md section 5.2.
+
+    Sort key precedence: `timestamp` (Day-6+ schema — every orchestrator
+    record carries one) -> `dispatch_ts` (pre-Day-6 fallback). The Day-7
+    UX audit caught the original sort relying on `dispatch_ts` alone,
+    which Day-6+ records do not carry — every record sorted as "" and
+    the result was dict-insertion order, pushing fresh experiment tasks
+    below stale `summarize_paper` rows. See ui_plan.md r10.
+    """
     store.refresh()
-    ordered = sorted(store.orch_by_task.values(),
-                     key=lambda r: r.get("dispatch_ts") or "", reverse=True)
+
+    def sort_key(record):
+        return (record.get("timestamp")
+                or record.get("dispatch_ts")
+                or "")
+
+    ordered = sorted(store.orch_by_task.values(), key=sort_key, reverse=True)
     summary = []
     for record in ordered[:max(0, limit)]:
         summary.append({
@@ -360,6 +373,11 @@ def recent_tasks(store, limit=50):
             "task_type": record.get("task_type"),
             "status": record.get("status"),
             "worker_pid": record.get("worker_pid"),
+            # Day-6+ records carry `timestamp` + `stage`; older ones carry
+            # `dispatch_ts` + `receipt_ts`. Surface both so the frontend
+            # can render either without an extra round-trip.
+            "timestamp": record.get("timestamp"),
+            "stage": record.get("stage"),
             "dispatch_ts": record.get("dispatch_ts"),
             "receipt_ts": record.get("receipt_ts"),
         })

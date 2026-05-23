@@ -65,3 +65,72 @@ run-log required-field set from CLAUDE.md inviolate rule 8 — it is the
 function `/api/unlock_status` calls, and it correctly found the four
 genuinely-broken lines above. The two-validator situation is fine if
 documented; Week-2 polish item.
+
+## 2026-05-23 — Day-7-EOD UX audit (orchestrator queue + decode tile)
+
+Surfaced when the user ran the Day-7 PD experiment through v1's
+dashboard. **All fixes landed in `worktree-day7-ui`** under
+`ui/**` — no apparatus-side code touched. Filing here so Track A
+knows what Day 38's Track-D scope now covers and what schema-stability
+assumption v1 was making.
+
+1. **`OrchestratorQueue.tsx` filtered on `status === "started"`** —
+   stale pre-Day-6 status name. Day-6+ writes `dispatched` /
+   `running` / `passed` / `error` across `orchestrator_dispatch` /
+   `worker_invocation` / `orchestrator_receipt` / `orchestrator_reject`
+   stages (the schema set during day 6's contract work; cf.
+   `schema/worker_contract.schema.json`). The "Running" section was
+   silently empty during real runs. Filter widened to the full
+   in-flight set.
+
+2. **`backend/chain.py:recent_tasks` sorted by `dispatch_ts`** — also
+   pre-Day-6. Day-6+ orchestrator records carry `timestamp` + `stage`
+   instead. Every record sorted as `""` → dict-insertion order, so
+   fresh experimental tasks (`exp001-tft`, `exp001_7_3-mirror_llm`,
+   ...) ended up *below* stale Day-6 summarize_paper rows in the
+   tabular view. Sort key now uses `timestamp` primary, `dispatch_ts`
+   fallback (back-compat with existing fixtures).
+
+   **Forward-looking note for Track A:** when the orchestrator schema
+   evolves further (additional stages, new statuses), the dashboard
+   needs a re-validation pass. A small protocol — "when a new stage
+   or status is added, file an issue on Track D" — keeps the dashboard
+   from silently going stale.
+
+3. **`Day4ChainList` and `RobustnessPanel` are Day-4-specific** by
+   contract (they read `logs/day4_e2e.jsonl` / `logs/day4_robust.jsonl`).
+   The empty-state copy didn't say so; the user reasonably read
+   "empty" as "broken" while the PD experiment was running through a
+   different code path. Panels now show "(logs/day4_*.jsonl —
+   day-4-specific; quiet during other workloads)" in the heading and
+   "this panel only lights up during the day-4 [thing]" in the empty
+   state. Not a generalization — that's v2-class work.
+
+4. **Decode-tok/s tile reads ~11 during the PD experiment** vs the
+   day-1 band `[80, 130]`. Not a regression — server-wide
+   `vllm:generation_tokens_total` rate scales with output_tokens × QPS.
+   Day-1 bench used 256 output tokens / call (decode-bound); PD uses
+   ~2 (prefill / TTFT-bound). New `GET /api/workload_hint` summarizes
+   the recent workload shape (calls/s, median output tokens, regime
+   classification) and the frontend renders a small workload pill
+   under the decode tile so the user sees "expected ~10 tok/s —
+   short-completion workload" rather than reading `11 / [80,130]` as
+   a failure. The Sparkline reference line (the day-1 hard floor of
+   40) now only shows in the `decode_bound` regime.
+
+   **Forward-looking note for Track A:** the workload-hint endpoint
+   leans on `usage.output_tokens` (Day-7 shape) and
+   `usage.completion_tokens` (Day-2 shape); both are recognized. If
+   future workloads write the count under a different key, both
+   `backend/workload.py:_output_tokens` and any apparatus-side
+   downstream of the same field need to move together. Filed.
+
+5. **Live orchestrator + workers graph view requested** (the
+   visualization the user wanted, ranked separately from the four
+   above because it is a v2 build, not a v1 fix). Sketch landed in
+   `ui/ui_plan_v2.md` §5: `react-flow`, route `/graph`, macro-vs-
+   micro zoom, `GET /api/graph` endpoint. Data contracts already
+   exist; no Track-A blockers. Track-D plans to ship this *ahead* of
+   the v2 results browser, because the results browser's
+   experiment-outcome schema (see §1 of this file, 2026-05-19) is
+   still un-pinned. Sequencing reasoning is in `ui_plan_v2.md` §5.5.

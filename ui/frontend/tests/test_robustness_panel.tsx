@@ -92,7 +92,7 @@ describe("RobustnessPanel", () => {
     render(<RobustnessPanel />);
     await waitFor(() =>
       expect(
-        screen.getByText(/day4_robust.jsonl is not present yet/),
+        screen.getByText(/logs\/day4_robust\.jsonl not present/),
       ).toBeInTheDocument(),
     );
   });

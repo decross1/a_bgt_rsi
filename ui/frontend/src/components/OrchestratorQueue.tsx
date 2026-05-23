@@ -6,14 +6,24 @@ import { Link } from "react-router-dom";
 import { getRecentTasks } from "../api/http";
 import type { RecentTask } from "../types/schemas";
 
+// In-flight statuses across pre-Day-6 ("started") and Day-6+ schemas
+// ("dispatched" = orchestrator_dispatch stage; "running" =
+// worker_invocation stage). "error" surfaces an orchestrator_reject —
+// the orchestrator turned the request down before a worker ran.
+// See ui_plan.md r10 for the Day-7 UX audit that surfaced these gaps.
+const IN_FLIGHT_STATUSES = new Set(["started", "dispatched", "running"]);
+
 function statusClass(status: string | null): string {
   switch (status) {
     case "passed":
       return "text-emerald-400";
     case "failed":
     case "aborted":
+    case "error":
       return "text-red-400";
     case "started":
+    case "dispatched":
+    case "running":
       return "text-amber-400";
     default:
       return "text-zinc-500";
@@ -63,8 +73,12 @@ export default function OrchestratorQueue() {
     };
   }, []);
 
-  const running = (tasks ?? []).filter((t) => t.status === "started");
-  const recent = (tasks ?? []).filter((t) => t.status !== "started");
+  const running = (tasks ?? []).filter((t) =>
+    IN_FLIGHT_STATUSES.has(t.status ?? ""),
+  );
+  const recent = (tasks ?? []).filter(
+    (t) => !IN_FLIGHT_STATUSES.has(t.status ?? ""),
+  );
 
   return (
     <div className="rounded border border-zinc-800 bg-zinc-900/40 p-4">

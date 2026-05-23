@@ -22,6 +22,7 @@ from .chain import LogStore, build_chain, build_chain_by_request_id, recent_task
 from .day4 import read_events, read_robustness
 from .tailer import JsonlTailer
 from .unlock import compute_unlock_status
+from .workload import compute_workload_hint
 
 _REPO = Path(__file__).resolve().parents[2]
 DEFAULT_LOGS_DIR = _REPO / "logs"                       # apparatus call/orchestrator logs
@@ -187,6 +188,21 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         otherwise (ui_plan.md sections 5.3, 9).
         """
         return compute_baseline(bench_csv, state_file, mtp_csv)
+
+    @app.get("/api/workload_hint")
+    def workload_hint(sample_size: int = 200, window_s: int = 120):
+        """Workload-shape hint so the decode-tok/s tile is contextualized.
+
+        Day-7 UX audit (ui_plan.md r10): the day-1 decode band [80,130]
+        was measured with 256-tok completions. PD experiment runs with
+        ~2-tok completions decode-rate ~11 by construction — not a
+        regression but the UI made it look like one. This endpoint
+        returns the *current workload shape* so the frontend can label
+        the tile accordingly.
+        """
+        capped = min(max(sample_size, 10), 2000)
+        return compute_workload_hint(logs_dir, sample_size=capped,
+                                     window_s=max(10, window_s))
 
     @app.get("/api/unlock_status")
     def unlock_status():

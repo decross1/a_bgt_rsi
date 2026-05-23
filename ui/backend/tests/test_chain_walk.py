@@ -74,6 +74,36 @@ def test_recent_tasks_latest_first(tmp_path):
     assert statuses["day6_task_03"] == "started"
 
 
+def test_recent_tasks_day6_schema_sorts_by_timestamp(tmp_path):
+    """Day-6+ orchestrator records carry `timestamp` + `stage`, no
+    `dispatch_ts`. The sort must still order them by recency rather than
+    falling back to dict-insertion order — the Day-7 UX audit caught the
+    original implementation pushing fresh exp001 dispatches below stale
+    summarize_paper rows. See ui_plan.md r10.
+    """
+    older = "summarize_paper-old"
+    newer = "exp001-tft"
+    (tmp_path / "orchestrator.jsonl").write_text("\n".join(json.dumps(r) for r in [
+        # Older summarize_paper task — full lifecycle.
+        {"task_id": older, "task_type": "summarize_paper", "status": "passed",
+         "stage": "orchestrator_receipt",
+         "timestamp": "2026-05-23T05:00:00.000Z",
+         "request_id": "rid-old-3", "parent_request_id": "rid-old-1"},
+        # Newer PD task — still in flight at worker_invocation.
+        {"task_id": newer, "task_type": "play_pd_match", "status": "running",
+         "stage": "worker_invocation",
+         "timestamp": "2026-05-23T09:11:00.000Z",
+         "request_id": "rid-new-2", "parent_request_id": "rid-new-1"},
+    ]) + "\n")
+    tasks = recent_tasks(LogStore(tmp_path), limit=10)
+    assert [t["task_id"] for t in tasks] == [newer, older]
+    assert tasks[0]["status"] == "running"
+    assert tasks[0]["stage"] == "worker_invocation"
+    # The new fields are exposed alongside the legacy ones.
+    assert tasks[0]["timestamp"] == "2026-05-23T09:11:00.000Z"
+    assert tasks[0]["dispatch_ts"] is None
+
+
 def test_cycle_marked_malformed(tmp_path):
     # A re-run reused request id "AAA" -> parent_request_id forms a cycle.
     root = "ROOT-RID"

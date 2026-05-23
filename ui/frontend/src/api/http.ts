@@ -13,6 +13,7 @@ import type {
   RecentTask,
   RobustnessResponse,
   TelemetrySample,
+  WorkloadHint,
 } from "../types/schemas";
 
 export const API_BASE = `http://${window.location.hostname}:8700`;
@@ -60,3 +61,6 @@ export const getRecentTelemetry = (limit = 300) =>
   getJSON<{ samples: TelemetrySample[] }>(`/api/telemetry/recent?limit=${limit}`);
 
 export const getBaseline = () => getJSON<BaselineResponse>("/api/baseline");
+
+export const getWorkloadHint = () =>
+  getJSON<WorkloadHint>("/api/workload_hint");

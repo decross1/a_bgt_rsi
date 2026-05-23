@@ -68,12 +68,17 @@ export default function RobustnessPanel() {
   return (
     <div className="rounded border border-zinc-800 bg-zinc-900/40 p-4">
       <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-        Robustness sweep
+        Day-4 robustness sweep{" "}
+        <span className="ml-1 normal-case text-[10px] text-zinc-600">
+          (logs/day4_robust.jsonl — day-4-specific; quiet during other workloads)
+        </span>
       </h2>
       {error && <div className="mt-2 text-sm text-red-400">{error}</div>}
       {data && !data.available && (
         <div className="mt-2 text-sm text-zinc-500">
-          logs/day4_robust.jsonl is not present yet — the apparatus has not run the day-4 sweep.
+          logs/day4_robust.jsonl not present — this panel only lights up
+          during the day-4 robustness check. PD or summarize workloads do
+          not populate it.
         </div>
       )}
       {data && data.available && (

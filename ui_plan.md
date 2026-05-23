@@ -10,21 +10,114 @@
 > schemas in `schema/`) but do NOT share source files outside `ui/`.
 > Read the operating contract below before doing anything.
 >
-> **Revision r9 (2026-05-23).** All build steps (6.1–6.7) plus six
+> **Revision r10 (2026-05-23).** All build steps (6.1–6.7) plus seven
 > improvement passes are done; full history is in §0. The latest pass
-> (r9, Track D day-7) audits `ui/backend` against the §11.3 Week-2
-> unlock prerequisites added in r8 and lands the smallest patch that
-> closes the gap: one new module `backend/unlock.py` exposed at
-> `GET /api/unlock_status` returning all five sections — run-log
-> integrity, soft-gate attestation queue, hard-gate pending list,
-> metric_log, fallbacks_taken — with read-only `attest_command` /
-> `rollback_command` affordances per entry. Frontend rendering is the
-> remaining Track-D follow-up before UI v1 is "live" against §11.3.
-> See §0 r9 for the audit table and what remains.
+> (r10, Track D day-7-EOD UX audit) lands four small fixes the user
+> hit when running the real Day-7 PD experiment through the v1
+> dashboard: two real bugs in the orchestrator queue (status filter +
+> sort key, both missed the Day-6+ schema), better empty-state copy on
+> the Day-4-specific panels (so a non-Day-4 workload doesn't read
+> "empty" as "broken"), and a workload-aware annotation on the
+> decode-tok/s tile (so a ~2-tok-per-call workload doesn't read as a
+> regression against the day-1 [80,130] band, which was measured at
+> 256 tok/call). Also: §5 of `ui_plan_v2.md` extends the v2 sketch with
+> a live orchestrator-and-workers graph view requested by the user
+> during the same session. See §0 r10 for the audit details and what
+> Track A should know about for forward-looking plans.
 
 ---
 
 ## 0. Revision log
+
+**r10 (2026-05-23)** — Day-7-EOD UX audit + four small fixes. The user
+ran the real Day-7 PD experiment through the v1 dashboard and surfaced
+observations that exposed two real bugs and two UX gaps. None of v1's
+shipped panels were re-architected; the patch is small and lives in
+`ui/backend/{chain,workload,app}.py`, `ui/backend/tests/test_*`,
+`ui/frontend/src/components/{OrchestratorQueue,Day4ChainList,RobustnessPanel,VllmPanel}.tsx`,
+`ui/frontend/src/{api/http.ts,types/schemas.ts}`, and one Day-4
+fixture-text test update. 85 Python + 20 frontend tests pass; `vite
+build` clean.
+
+The four observations and what landed:
+
+1. **Decode tok/s read ~11 during the experiment — well below the day-1
+   band [80,130].** Not a regression; the day-1 sweep used 256 output
+   tokens per call (decode-bound), the PD experiment uses ~2 (prefill /
+   TTFT-bound by construction). The decode-tok/s sampler reads
+   `vllm:generation_tokens_total` rate server-wide; with 600 calls × 2
+   tokens / 114 s ≈ ~10.5 tok/s, the tile is reporting truthfully. The
+   v1 panel just had no way to convey "different workload regime."
+   - **New: `GET /api/workload_hint`** (`backend/workload.py`). Reads
+     the last N call records across the call-log glob (Day-2-shape
+     `usage.completion_tokens` and Day-7-shape `usage.output_tokens`
+     both supported), computes calls/sec + median output tokens,
+     classifies the regime (`short_completion` / `decode_bound` /
+     `mixed` / `idle`), and returns a calls/s × tokens/call expected
+     band. The frontend renders this as a small workload pill below
+     the decode tile, plus the human-readable note. The Sparkline's
+     `reference={40}` (the day-1 hard floor) now only shows in the
+     `decode_bound` regime so the line doesn't suggest a threshold
+     where it does not apply.
+
+2. **Orchestrator queue showed no experimental events during the run.**
+   Two real bugs in v1 — both missed the Day-6 schema change from
+   `dispatch_ts`/`receipt_ts` to `timestamp`/`stage`:
+   - **`backend/chain.py:recent_tasks` sort key.** Used `dispatch_ts`
+     which Day-6+ records do not carry. Every record sorted as `""` →
+     dict-insertion order, pushing fresh `play_pd_match` rows below
+     stale `summarize_paper` rows. Fixed to `timestamp` primary,
+     `dispatch_ts` fallback (so old fixtures still work). Surfaces
+     `timestamp` + `stage` in the response alongside the legacy fields.
+     New test `test_recent_tasks_day6_schema_sorts_by_timestamp`.
+   - **`OrchestratorQueue.tsx` "Running" filter.** Filtered
+     `status === "started"` but Day-6+ writes `status: "running"` on
+     `worker_invocation` and `status: "dispatched"` on
+     `orchestrator_dispatch`. The "Running" section never lit up
+     during a real run. Filter widened to
+     `{"started", "dispatched", "running"}` and `statusClass` adds the
+     two new in-flight states + `"error"` from `orchestrator_reject`.
+
+3. **Tool-call chains and robustness sweep showed no activity.** This
+   is *by design* — they read `logs/day4_e2e.jsonl` and
+   `logs/day4_robust.jsonl`, both Day-4-specific. But the empty-state
+   copy ("logs/day4_e2e.jsonl is not present yet — the apparatus has
+   not reached day 4") was misleading once Day 4 *had* passed; the
+   user saw an empty panel and could not tell whether something was
+   broken. Both panel headings now carry an explicit
+   "(logs/day4_*.jsonl — day-4-specific; quiet during other
+   workloads)" subhead and the empty-state copy says "this panel only
+   lights up during the day-4 [thing] — PD or summarize workloads do
+   not populate it."
+
+4. **User wants a visual graph of orchestrator + spawned agents with
+   zoom-into-experiment.** This is v2 territory; sketched in
+   `ui/ui_plan_v2.md` §5 with data contracts, library choice
+   (`react-flow`), route (`/graph`), and macro-vs-micro level
+   semantics. Data sources already exist (orchestrator.jsonl + call-log
+   glob + `/api/live` WebSocket); a new `GET /api/graph` endpoint and a
+   new route are the build work. Independent of the v2 results browser
+   (`ui_plan_v2.md` §2-4) — they share zero code; either can land
+   first.
+
+**What Track A should know about for forward-looking plans:**
+- v1's coverage of the Day-6+ orchestrator schema was incomplete on
+  ship — the two filter/sort bugs above are evidence we did not
+  re-validate v1 against the real schema once Day 6 landed. A
+  follow-up regression check (when a new orchestrator stage or status
+  is added, validate the dashboard renders it) is worth a small
+  amount of process discipline. Flagged in
+  `notes/track-d-observations.md`.
+- Day 38's Track-D scope in `notes/day7_to_week2_execution_plan.md`
+  has been amended (this commit) to **ship v1 with the r10 fixes
+  applied** before attesting the Week-2 unlock — the unlock attestation
+  per `agent/autonomy.md` §4 cannot be made against a v1 that doesn't
+  render orchestrator events.
+- The v2 live-graph view is now Track D's primary v2 work, ahead of
+  the experiment-results browser. The graph view's data contracts
+  exist; the results-browser's experiment-outcome schema is still
+  blocked on Track A (no `schema/experiment.schema.json`). Sequencing
+  this way pulls Track D's next-milestone work onto unblocked ground.
 
 **r9 (2026-05-23)** — §11.3 Week-2 unlock prerequisites audit + smallest
 patch. The §11.3 list was added in r8 but not wired through `ui/backend`;

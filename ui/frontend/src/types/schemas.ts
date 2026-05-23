@@ -109,8 +109,31 @@ export interface RecentTask {
   task_type: string | null;
   status: string | null;
   worker_pid: number | null;
+  // Day-6+ orchestrator schema fields. `timestamp` is the latest line's
+  // wall-clock; `stage` is the orchestrator state machine position
+  // (orchestrator_dispatch / worker_invocation / orchestrator_receipt /
+  // orchestrator_reject). Both null on pre-Day-6 records.
+  timestamp: string | null;
+  stage: string | null;
+  // Legacy pre-Day-6 fields — still surfaced for old fixtures.
   dispatch_ts: string | null;
   receipt_ts: string | null;
+}
+
+// /api/workload_hint — workload-shape annotation for the decode-tok/s tile
+// (ui_plan.md r10). Lets the dashboard contextualize the tile so a
+// prefill-bound workload (PD experiment, ~2 tok/call) doesn't read as a
+// regression against the day-1 decode-bound band [80,130].
+export interface WorkloadHint {
+  available: boolean;
+  sample_size: number;
+  calls_per_s: number | null;
+  median_output_tokens: number | null;
+  regime: "short_completion" | "decode_bound" | "mixed" | "idle";
+  expected_decode_tok_s_lower: number | null;
+  expected_decode_tok_s_upper: number | null;
+  window_s: number;
+  note: string;
 }
 
 export interface Health {

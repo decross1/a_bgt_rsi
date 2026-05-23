@@ -40,12 +40,17 @@ export default function Day4ChainList() {
   return (
     <div className="rounded border border-zinc-800 bg-zinc-900/40 p-4">
       <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-        Day-4 tool-call chains
+        Day-4 tool-call chains{" "}
+        <span className="ml-1 normal-case text-[10px] text-zinc-600">
+          (logs/day4_e2e.jsonl — day-4-specific; quiet during other workloads)
+        </span>
       </h2>
       {error && <div className="mt-2 text-sm text-red-400">{error}</div>}
       {!available && (
         <div className="mt-2 text-sm text-zinc-500">
-          logs/day4_e2e.jsonl is not present yet — the apparatus has not reached day 4.
+          logs/day4_e2e.jsonl not present — this panel only lights up during
+          the day-4 tool-call check. A running PD experiment or summarize
+          worker will not appear here.
         </div>
       )}
       {available && chains && chains.length === 0 && (
