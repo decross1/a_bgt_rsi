@@ -1,7 +1,7 @@
 {
   "plan_id": "week1_phase1_days_31_37",
   "started_at": "2026-05-17T00:00:00Z",
-  "current_day": "day_6",
+  "current_day": "day_7",
   "completed_tasks": [
     "preflight_credentials_staged",
     "preflight_software_prestaged",
@@ -70,7 +70,7 @@
     "day6_end_of_day_artifacts"
   ],
   "aborted_days": [],
-  "human_gates_pending": [],
+  "human_gates_pending": ["day7_publication_review"],
   "fallbacks_taken": {
     "day1_block2_vllm_serve": "MTP deferred to Week 2+ \u2014 NVFP4 baseline; pinned vLLM image 0.19.1.dev6 predates merged PR #41745 MTP support",
     "day1_nemoclaw": "NemoClaw onboarding skipped (binary not installed) \u2014 hardened plain-Docker fallback verified working",
@@ -84,7 +84,11 @@
     "day4_tool_call_invocation_rate": 1.0,
     "day5_papers_ingested": 138,
     "day6_orchestrator_5_of_5": 5,
-    "day7_coop_rate_vs_tft": null
+    "day7_coop_rate_vs_tft": 1.0,
+    "day7_1_coop_rate_vs_tft": 1.0,
+    "day7_2_coop_rate_vs_tft": 1.0,
+    "day7_3_coop_rate_vs_tft": 1.0,
+    "day7_3_coop_rate_vs_all_d": 0.020
   },
   "notes": {
     "day_4_entries_count_finding": "RESOLVED 2026-05-21 (D-026, human-authorized decross1). plan.yaml day_4 jsonl-integrity bullet 'total entries across day 4 >= 30' was unreachable for the prescribed --n 5 scope (12 call records). Amended to per-artifact record counts (day4_e2e.jsonl: 2 linked records; day4_robust.jsonl: 2 per trial / 10 for --n 5). Day 4 run-log entry keeps original status=partial_pass (append-only history); the amendment makes the prescribed scope satisfy the check going forward. Carryover closed."

@@ -1,0 +1,6 @@
+opponent,n_rounds,llm_coop_rate,opp_coop_rate,llm_mean_payoff,opp_mean_payoff,first_d_round_llm,first_d_round_opp,llm_parse_failures,llm_default_d_plays
+tft,100,1.0000,1.0000,5.0000,5.0000,,,0,0
+grim_trigger,100,1.0000,1.0000,5.0000,5.0000,,,0,0
+all_c,100,1.0000,1.0000,5.0000,5.0000,,,0,0
+all_d,100,0.1200,0.0000,0.8800,2.0800,3,1,0,0
+mirror_llm,100,1.0000,1.0000,5.0000,5.0000,,,0,0
