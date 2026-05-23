@@ -21,6 +21,7 @@ from .baseline import compute_baseline
 from .chain import LogStore, build_chain, build_chain_by_request_id, recent_tasks
 from .day4 import read_events, read_robustness
 from .tailer import JsonlTailer
+from .unlock import compute_unlock_status
 
 _REPO = Path(__file__).resolve().parents[2]
 DEFAULT_LOGS_DIR = _REPO / "logs"                       # apparatus call/orchestrator logs
@@ -28,6 +29,8 @@ DEFAULT_TELEMETRY = _REPO / "ui" / "logs" / "telemetry.jsonl"
 DEFAULT_STATE = _REPO / "run_state" / "week1.state.json"
 DEFAULT_BENCH_CSV = _REPO / "bench" / "day1.csv"        # day-1 throughput sweep (pre-MTP)
 DEFAULT_MTP_CSV = _REPO / "bench" / "mtp.csv"           # MTP-enabled sweep (D-022)
+DEFAULT_RUN_LOG = _REPO / "run_state" / "week1.run.jsonl"
+DEFAULT_ATTESTATIONS = _REPO / "run_state" / "attestations.jsonl"
 
 
 def _git_sha():
@@ -73,7 +76,8 @@ def _tail_lines(path, limit):
 
 def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                state_file=DEFAULT_STATE, bench_csv=DEFAULT_BENCH_CSV,
-               mtp_csv=DEFAULT_MTP_CSV):
+               mtp_csv=DEFAULT_MTP_CSV, run_log_file=DEFAULT_RUN_LOG,
+               attestations_file=DEFAULT_ATTESTATIONS):
     app = FastAPI(title="UI backend — orchestrator dashboard", version=_git_sha())
     # Permissive CORS for local dev (Vite serves the SPA on another port).
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
@@ -184,6 +188,20 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         """
         return compute_baseline(bench_csv, state_file, mtp_csv)
 
+    @app.get("/api/unlock_status")
+    def unlock_status():
+        """§11.3 Week-2 unlock prerequisites, consolidated.
+
+        Five sections (run-log integrity, soft-gate queue, hard-gate
+        pending, metric_log, fallbacks_taken) — each independently
+        available, so the dashboard can render partial state. Read-only:
+        attest/rollback affordances surface the CLI command, not actions.
+        """
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        return compute_unlock_status(state_file, run_log_file,
+                                     attestations_file, now_iso=now_iso)
+
     @app.get("/api/state")
     def state():
         path = Path(state_file)
@@ -248,4 +266,6 @@ app = create_app(
     state_file=_env_path("UI_STATE_FILE", DEFAULT_STATE),
     bench_csv=_env_path("UI_BENCH_CSV", DEFAULT_BENCH_CSV),
     mtp_csv=_env_path("UI_MTP_CSV", DEFAULT_MTP_CSV),
+    run_log_file=_env_path("UI_RUN_LOG_FILE", DEFAULT_RUN_LOG),
+    attestations_file=_env_path("UI_ATTESTATIONS_FILE", DEFAULT_ATTESTATIONS),
 )

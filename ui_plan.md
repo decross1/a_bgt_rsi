@@ -10,26 +10,61 @@
 > schemas in `schema/`) but do NOT share source files outside `ui/`.
 > Read the operating contract below before doing anything.
 >
-> **Revision r7 (2026-05-21).** All build steps (6.1–6.7) plus five
+> **Revision r9 (2026-05-23).** All build steps (6.1–6.7) plus six
 > improvement passes are done; full history is in §0. The latest pass
-> (r7, Track D day-5) aligns the UI to the *real* Track A day-4
-> artifacts, which differ in shape from the synthesized fixtures the
-> day-4 sync (r6) was built against: `read_robustness` now consumes
-> `logs/day4_robust.jsonl` as a chained call log (deriving the
-> invocation rate from whether each run-root call emitted a tool call,
-> not a per-trial `invoked` flag — the r6 reader scored the real file a
-> misleading 0%); the chain walker gained a third tool-call synthesis
-> path that parses an OpenAI-style tool call out of the `completion`
-> field (the shape Track A actually uses); `EventsViewer` switched from
-> generic key/value rendering to a per-type renderer driven by the now
-> committed `schema/events.jsonl.schema.json`; and the UI's
-> `retrieval_context` keys were verified against the committed
-> `schema/calls.jsonl.schema.json` whitelist (no drift) with a
-> drift-guard test added.
+> (r9, Track D day-7) audits `ui/backend` against the §11.3 Week-2
+> unlock prerequisites added in r8 and lands the smallest patch that
+> closes the gap: one new module `backend/unlock.py` exposed at
+> `GET /api/unlock_status` returning all five sections — run-log
+> integrity, soft-gate attestation queue, hard-gate pending list,
+> metric_log, fallbacks_taken — with read-only `attest_command` /
+> `rollback_command` affordances per entry. Frontend rendering is the
+> remaining Track-D follow-up before UI v1 is "live" against §11.3.
+> See §0 r9 for the audit table and what remains.
 
 ---
 
 ## 0. Revision log
+
+**r9 (2026-05-23)** — §11.3 Week-2 unlock prerequisites audit + smallest
+patch. The §11.3 list was added in r8 but not wired through `ui/backend`;
+this pass closes the gap so UI v1 actually renders alignment evidence
+end-to-end. Audit result and what landed:
+
+| §11.3 prerequisite | Before r9 | After r9 |
+|---|---|---|
+| 1. Run-log integrity (`verify_log_integrity`, rolling week) | missing | **built** — `verify_run_log_integrity` in `backend/unlock.py` re-implements the validator against the plan.yaml Appendix-C required-field set (Track D cannot import `agent_wrapper.wrapper.verify_log_integrity` — out of zone) |
+| 2. Soft-gate attestation queue + rollback action | missing | **built** — `read_soft_gate_queue` reads `run_state/attestations.jsonl`, pairs `request` with `approved`/`rejected`/`no_objection` per `agent/autonomy.md` §2.1, and attaches a `rollback_command` string per pending entry |
+| 3. Hard-gate pending list + attest action | partial (raw `/api/state` passthrough) | **built** — `read_hard_gate_pending` surfaces `state.human_gates_pending` with an `attest_command` per entry |
+| 4. Today's metric_log values vs prior runs | partial (`baseline.py` read `day1_tokens_per_sec` only) | **built** — the full `state.metric_log` dict ships in the response; per-day comparison is natural since each entry is keyed by day |
+| 5. Sidebar: `state.fallbacks_taken` | partial (raw `/api/state` passthrough) | **built** — dedicated field in the response, ready for a sidebar widget |
+
+All five sections land in one new module `backend/unlock.py` exposed at
+`GET /api/unlock_status` — single endpoint, single payload, each section
+independently `available: true/false` so the dashboard renders partial
+state cleanly (mirrors `/api/events`, `/api/robustness`). The UI stays
+read-only: `attest_command` and `rollback_command` surface the human-
+runnable CLI string, the UI does not execute them (ui_plan.md §2,
+operating-contract rule 8). Test coverage: 14 new backend tests (11 in
+`test_unlock.py` + 1 in `test_api.py` end-to-end + 2 incidental from
+`_client` fixture updates); 79 Python tests pass overall.
+
+**What remains for UI v1 §11.3 completion (Track D follow-up):**
+- Frontend rendering. The `/api/unlock_status` payload exists; a
+  dashboard panel that renders the five sections is not yet wired. The
+  fields are deliberately render-ready (each section is its own key),
+  so the frontend work is a single new `UnlockPanel.tsx` consumer plus
+  routing — no further backend work needed for Week-2 unlock.
+- The `tools/attest_gate.py` and `tools/rollback_attestation.py` CLI
+  commands referenced in `attest_command` / `rollback_command` are
+  Track-C deliverables and not yet committed. Until they land the
+  commands are informational placeholders; the UI surfaces them as
+  copy-pasteable text, which is what §11.3's "action available"
+  requires.
+- The agent-side `verify_log_integrity` in `agent_wrapper/wrapper.py`
+  and the UI-side `verify_run_log_integrity` in `backend/unlock.py`
+  must keep the same required-field set. Both are pinned to plan.yaml
+  Appendix C; if the run-log schema changes, both move together.
 
 **r8 (2026-05-23)** — §11 "Observability gates agent autonomy" added.
 Ties UI milestones (v1 sampler + dashboard, v2 call-chain inspector,
