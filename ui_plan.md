@@ -31,6 +31,16 @@
 
 ## 0. Revision log
 
+**r8 (2026-05-23)** — §11 "Observability gates agent autonomy" added.
+Ties UI milestones (v1 sampler + dashboard, v2 call-chain inspector,
+v2.5 alignment dashboard) to the tier-shift unlocks in
+[`agent/autonomy.md`](agent/autonomy.md) §3. The UI's deliverables are
+now load-bearing for agent-autonomy expansion: until UI v1 renders
+alignment evidence end-to-end, Week-2 tier shifts cannot be authorized
+by the weekly retrospective. Pure additive section — does not change
+the existing data contracts, build order, or any prior revision.
+Part of the 2026-05-23 documentation restructure (commit `6749c34`).
+
 **r7 (2026-05-21)** — Track D day-5 sync. The day-4 sync (r6) was built
 against synthesized fixtures; Track A's real day-4 artifacts are now on
 disk and differ in shape. This pass aligns the UI to them. All under
