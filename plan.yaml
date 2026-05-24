@@ -3191,6 +3191,511 @@ wall_clock_window:
 
 ---
 
+## day_8: UI v1 deployment + Week-2 unlock attestation
+
+```yaml
+day_id: day_8
+program_day: 38
+date_offset: T+7
+success_criterion: |
+  Track-D UI v1 ships and is verified to render every Week-1 artifact
+  correctly; the Week-2 unlock attestation lands in
+  human/retrospectives/week2.md §0; the first real 4-track concurrent
+  day closes with a clean claims-protocol and no boundary violations.
+  Two hard-gates are STRICT-SERIAL: UI-verification must clear before
+  the Week-2 unlock attestation becomes eligible (per PHASE_1_ROADMAP
+  §5.1 — "must show every Week-1 artifact correctly before any tier
+  shift applies").
+failure_mode: |
+  UI v1 misrepresents Week-1 state (silent display drift, missing
+  artifacts, broken integrity check); a side-track merge introduces a
+  boundary violation; concurrent writes corrupt a shared JSONL.
+recovery_path: |
+  UI miss → declare slip 8.1, file the surfaced gap, re-run the UI
+  verification gate after Track D fixes. Boundary violation →
+  Track A's version wins per inviolate file-boundary rule
+  (agent/orchestration.md "Merge conflict on a shared file"); the
+  violating side track stops, reverts, and re-claims. JSONL corruption
+  → restore from last commit per agent/orchestration.md
+  "State-file collision".
+prerequisites:
+  - day_7
+unblocks: []  # Day-9 (W2-01 critic agent) is sequenced in PHASE_1_ROADMAP §5.1.
+wall_clock_window:
+  block_1: "08:30–10:00"
+  block_2: "10:30–12:30"
+  block_3: "13:30–14:30"
+  ambient: "14:30–15:30"
+  end_of_day: "15:30–16:00"
+```
+
+### block_1_foundations (90 min, human_only=true)
+
+```yaml
+- task_id: day8_block1_reading
+  type: human_only
+  human_only: true
+  description: |
+    Week-2 reading entry. Per human/learning_track.md the Week-2 list
+    opens with Weibull Ch. 2–3 (evolutionary stability + replicator
+    dynamics) and Fudenberg & Levine Ch. 2–4 (learning in games).
+    Today: open Weibull Ch. 2 OR F&L Ch. 2 — Block 1 is the human's
+    pace; the apparatus does not enforce a sub-section.
+  agent_action: print_reminder_and_wait
+  agent_message: |
+    Block 1 starts now. No-AI rule absolute. Pen and paper.
+    Reading: Weibull Ch. 2 (or F&L Ch. 2 — pick one). The Week-2
+    list is in human/learning_track.md. No keystone problem today;
+    finish Camerer 4.1/4.2 from Day 7 if outstanding.
+  blocking: true
+
+- task_id: day8_block1_problemset
+  type: human_only
+  human_only: true
+  description: |
+    Finish Camerer 4.1 / 4.2 if not completed Day 7; otherwise begin
+    Weibull Ch. 2 exercises or F&L Ch. 2 exercises.
+  agent_action: none
+  blocking: false
+```
+
+### block_2_build (2 hr, agent_executable; UI verification hard-gate strict-serial before Week-2 unlock attestation hard-gate)
+
+```yaml
+- task_id: day8_block2_draft_day8_plan
+  type: agent_executable
+  human_only: false
+  description: |
+    Meta-task: draft the day_8 section in plan.yaml using the
+    PHASE_1_ROADMAP §5.1 Day-38 row, week2_plan_seed.md,
+    notes/day8_agenda.md, and human/retrospectives/week1.md §7.
+    This IS that task — it is logged as the Day-8 entry point.
+  preconditions: []
+  autonomy_tier: autonomous
+  target_zone: state-file   # plan.yaml is Track-A primacy; closest registered zone
+  dispatchable: false
+  command: null
+  expected_observable:
+    kind: file_exists
+    value: |
+      plan.yaml contains a day_8 section with block_1 / block_2 /
+      block_3 / ambient / end_of_day subsections; side_track_tasks
+      contains day_8 entries for Track D (full) + Track B/C (stubs).
+  validation:
+    - check: day_8 section appended to plan.yaml
+      pass_signal: |
+        `grep -n "^## day_8" plan.yaml` returns one match
+      fail_signal: zero or multiple matches
+    - check: side_track_tasks contains day_8 entries
+      pass_signal: |
+        `grep -nE "track_[bcd]_day8_" plan.yaml` returns ≥ 3 matches
+      fail_signal: < 3 matches
+  hard_checkpoint: false
+  estimated_minutes: 15
+  log_to: run_log
+
+- task_id: day8_block2_verify_concurrency_infra
+  type: agent_executable
+  human_only: false
+  description: |
+    Verify the concurrency infrastructure that landed during Week 1
+    survives the first real 4-track concurrent day. Specifically:
+    agent/ownership.yaml has no glob overlaps; agent/collision_protocol.md
+    is present and current; run_state/claims.jsonl exists and is
+    parseable (may be sparse — Week-1 side tracks claimed inline);
+    tools/claims_check.py exits clean on both --validate-ownership and
+    --weekly-summary. The exit codes feed the Week-2 unlock
+    attestation's "claim-protocol-clean week" criterion
+    (agent/autonomy.md §4.2).
+  preconditions:
+    - day8_block2_draft_day8_plan
+  autonomy_tier: autonomous
+  target_zone: state-file
+  dispatchable: false
+  command: |
+    python3 tools/claims_check.py --validate-ownership && \
+    python3 tools/claims_check.py --weekly-summary
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      --validate-ownership exits 0; --weekly-summary reports 0
+      overlapping claims and 0 expired-claim writes.
+  validation:
+    - check: ownership validation clean
+      pass_signal: claims_check exits 0 on --validate-ownership
+      fail_signal: non-zero exit (glob overlap or schema error)
+    - check: claim-protocol clean for the rolling 7-day window
+      pass_signal: --weekly-summary reports 0 overlapping / 0 expired
+      fail_signal: any non-zero count
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      The concurrency infrastructure is misconfigured. Until this is
+      clean the Week-2 unlock attestation cannot truthfully reference
+      "claim-protocol-clean week" (autonomy.md §4.2).
+  hard_checkpoint: false
+  estimated_minutes: 10
+  log_to: run_log
+
+- task_id: day8_block2_merge_track_d_ui_v1
+  type: agent_executable
+  human_only: false
+  description: |
+    Merge Track D's UI v1 branch when it prints
+    "TRACK D COMPLETE — ready to merge" (or earlier on verbal
+    attestation per memory sidetrack-sentinel-attestation). Per
+    agent/orchestration.md "Merging side branches": fetch, --no-ff
+    merge, diff-only-Track-D-zones check, run ui/backend tests
+    post-merge.
+  preconditions:
+    - day8_block2_verify_concurrency_infra
+  autonomy_tier: soft_gate
+  target_zone: state-file   # Track-A integrates the merge into main
+  dispatchable: false
+  command: |
+    git fetch && \
+    git merge --no-ff worktree-day8-ui && \
+    python3 -m pytest ui/backend/tests -q
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      Clean merge (0 conflicts); all merged paths inside Track-D zones
+      (ui/**, ui_plan*.md, notes/); ui/backend tests all pass.
+  validation:
+    - check: merge clean (no conflicts)
+      pass_signal: git status clean post-merge
+      fail_signal: unresolved conflicts
+    - check: boundary respected (Track-D zones only)
+      pass_signal: |
+        `git diff --name-only HEAD~1 HEAD` returns only paths matching
+        ui/**, ui_plan*.md, or notes/ (per ownership.yaml)
+      fail_signal: any path outside Track-D zones
+    - check: ui/backend tests pass
+      pass_signal: pytest exit 0
+      fail_signal: any failure
+  on_failure:
+    action: escalate_to_human
+    human_message: |
+      Track D merge failed or violated boundaries. Per inviolate
+      file-boundary rule, Track A's version wins; discard violating
+      side edits with `git checkout --ours <path>` and tighten the
+      Track-D prompt.
+  hard_checkpoint: false
+  estimated_minutes: 15
+  log_to: run_log
+
+- task_id: day8_block2_ui_v1_verification
+  type: human_assisted
+  human_only: false
+  description: |
+    HARD-GATE — UI v1 verification. STRICT-SERIAL precondition for
+    day8_block2_week2_unlock_attestation. The UI must render every
+    Week-1 artifact correctly before the Week-2 unlock attestation is
+    eligible (PHASE_1_ROADMAP §5.1: "must show every Week-1 artifact
+    correctly before any tier shift applies"). Human walks each panel
+    and attests:
+      - Every day_1..day_7 task in state.completed_tasks shows on the
+        timeline (81 entries as of Day-8 entry).
+      - Day-7 4-run diagnostic ladder (baseline + 7.1/7.2/7.3)
+        renders with per-run cooperation rates.
+      - state.metric_log values match UI displayed values.
+      - All four fallbacks_taken entries are surfaced.
+      - Run-log integrity panel returns 0 malformed across
+        run_state/week1.run.jsonl (post-rectification, commit 083033d).
+      - Publication-gate cleared status reflects D-028 disposition
+        (no-publish-standalone).
+      - Verifier-naming drift (notes/track-d-observations.md
+        2026-05-23) is acknowledged in the UI or carried over as a
+        Week-2 polish item (NOT blocking).
+  preconditions:
+    - day8_block2_merge_track_d_ui_v1
+  autonomy_tier: hard_gate
+  requires_human_understanding: true
+  target_zone: ui
+  dispatchable: false
+  agent_action: halt_and_print_message
+  agent_message: |
+    UI v1 VERIFICATION GATE — strict-serial precondition for the
+    Week-2 unlock attestation.
+
+    Open the UI. Walk every panel. Attest that every Week-1 artifact
+    renders correctly (the checklist is in this task's description).
+    Mark complete only after personally inspecting each item.
+
+    If a panel mis-renders an artifact, file the gap, declare slip 8.1,
+    and let Track D fix before re-running this gate. Do NOT advance to
+    the attestation gate.
+  blocking: true
+  hard_checkpoint: true
+  state_update: human_gates_pending += "day8_ui_v1_verification"
+  log_to: run_log
+
+- task_id: day8_block2_week2_unlock_attestation
+  type: human_only
+  human_only: true
+  description: |
+    HARD-GATE — Week-2 unlock attestation. Second-of-two consecutive
+    weekly attestations needed to authorize Week-2 tier-shift unlocks
+    per agent/autonomy.md §4.2. The first cleared 2026-05-23 in
+    human/retrospectives/week1.md §7 (4/4 boxes checked). The second
+    lands in human/retrospectives/week2.md §0 with the same four
+    criteria evaluated over the rolling 7-day window (Days 32–38):
+      - Decision parity (target ≤ 1 disagreement / eligible-task-count)
+      - No silent metric drift (target 0 entries > 5%)
+      - Run-log integrity (target 0 malformed lines)
+      - Claim-protocol cleanliness (0/0 from
+        day8_block2_verify_concurrency_infra)
+    If all four hold, Track A applies the tier-shift inventory from
+    week1.md §8 and logs a `tier_shift` event in the run log. The
+    agent does NOT write the attestation; the agent prints the
+    questions and appends the human's response.
+  preconditions:
+    - day8_block2_ui_v1_verification
+  autonomy_tier: hard_gate
+  requires_human_understanding: true
+  target_zone: human-retrospectives
+  dispatchable: false
+  agent_action: halt_and_print_message
+  agent_message: |
+    WEEK-2 UNLOCK ATTESTATION GATE
+
+    First attestation: cleared 2026-05-23 in
+    human/retrospectives/week1.md §7 (4/4 boxes checked).
+
+    Second attestation (THIS gate) lands in
+    human/retrospectives/week2.md §0. Without it, no Week-2 tier
+    shifts apply (autonomy.md §4.2). The agent will NOT write the
+    attestation; the agent will append the response to the run log
+    once you commit week2.md.
+
+    STRICT-SERIAL: this gate is only eligible AFTER
+    day8_block2_ui_v1_verification clears. Verify
+    state.human_gates_pending shows the UI gate cleared before
+    proceeding.
+  blocking: true
+  hard_checkpoint: true
+  state_update: human_gates_pending += "day8_week2_unlock_attestation"
+  on_clear:
+    action: apply_tier_shift_inventory
+    log_event: tier_shift
+    references:
+      - human/retrospectives/week1.md §8
+  log_to: run_log
+
+- task_id: day8_block2_merge_track_b_schemas
+  type: agent_executable
+  human_only: false
+  description: |
+    Merge Track B's day_8 schema-amendment branch — drafts of schemas
+    for human_intervention, retrieval_context refresh, and a
+    calibration_entry skeleton for Day 41. Schema files land but the
+    new fields are NOT enforced until Day 42 (W2-06 schema-amendments
+    lock). Boundary: Track-B zone is schema/** + tests/test_*.py only.
+  preconditions:
+    - day8_block2_verify_concurrency_infra
+  autonomy_tier: soft_gate
+  target_zone: state-file   # Track-A integrates the merge
+  dispatchable: false
+  command: |
+    git merge --no-ff worktree-day8-schemas && \
+    python3 -m pytest tests/ -q -k schema
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      Clean merge; schema files added under schema/; backward-compatible
+      with Week-1 validators (no regression).
+  validation:
+    - check: merge clean
+      pass_signal: 0 conflicts
+      fail_signal: conflicts
+    - check: boundary respected (Track-B zones only)
+      pass_signal: |
+        diff stays within schema/** + tests/test_*.py + notes/
+      fail_signal: any path outside Track-B zones
+    - check: existing schema-aware validators still pass
+      pass_signal: pytest exit 0 on -k schema
+      fail_signal: any regression
+  hard_checkpoint: false
+  estimated_minutes: 10
+  log_to: run_log
+
+- task_id: day8_block2_merge_track_c_fixtures
+  type: agent_executable
+  human_only: false
+  description: |
+    Merge Track C's day_8 fixture branch — Day-39 critic-flaw
+    hypothesis fixtures (20 known-flawed hypotheses) + Day-41
+    calibration scaffolds. Boundary: Track-C zone is cron-and-scripts +
+    pipeline + tests/fixtures.
+  preconditions:
+    - day8_block2_verify_concurrency_infra
+  autonomy_tier: soft_gate
+  target_zone: state-file   # Track-A integrates the merge
+  dispatchable: false
+  command: |
+    git merge --no-ff worktree-day8-fixtures
+  expected_observable:
+    kind: metric_threshold
+    value: |
+      Clean merge; fixture files land under tests/fixtures/ or
+      scripts/; no Track-A file touched.
+  validation:
+    - check: merge clean
+      pass_signal: 0 conflicts
+      fail_signal: conflicts
+    - check: boundary respected (Track-C zones only)
+      pass_signal: diff stays within cron/**, pipeline/**,
+        ingest/**, scripts/**, tools/**, infra/**, tests/fixtures/**,
+        or notes/
+      fail_signal: any path outside Track-C zones
+  hard_checkpoint: false
+  estimated_minutes: 10
+  log_to: run_log
+```
+
+#### Block 2 → Block 3 buffer
+
+```yaml
+- soft_buffer:
+    name: day8_lunch_and_slack
+    duration_minutes: 60
+```
+
+### block_3_read_write (60 min, mixed)
+
+```yaml
+- task_id: day8_block3_reading
+  type: human_only
+  human_only: true
+  description: |
+    30-min skim of one Week-2-related paper from the arXiv pipeline
+    (critic-agent or meta-review or auto-evaluator topic).
+  agent_action: print_reminder_and_wait
+  blocking: true
+
+- task_id: day8_block3_journal
+  type: human_assisted
+  human_only: false
+  description: |
+    Public Day-8 journal post (200–500 words): "Week-2 entry — UI v1
+    online + first real concurrent-track day." Mentions the Week-2
+    unlock attestation (cleared or pending — be honest). The Day-7
+    publication disposition (D-028, no-publish-standalone) is the
+    public note about Day-7 results; today's post does NOT
+    independently re-announce results.
+  word_target: 200-500
+  visibility: public
+  agent_action: stub_post_with_data_inserts
+  agent_message: |
+    Generate a Day-8 post stub with these data inserts pre-filled.
+    Preserve [WRITE] / [DATA] markers so the human authors the prose.
+  data_to_insert:
+    - state.current_day (day_8 at write time)
+    - tier_shift_applied (yes / no — from the run-log tier_shift event)
+    - claims_protocol_clean (yes / no — from
+      day8_block2_verify_concurrency_infra)
+    - tracks_merged_today (one-line summary: D + B + C)
+  preconditions:
+    - day8_block2_week2_unlock_attestation
+  log_to: run_log
+```
+
+### ambient_listening
+
+```yaml
+- task_id: day8_ambient
+  type: human_only
+  human_only: true
+  description: |
+    Ambient listening — game theory / multi-agent talk; sets frame for
+    Week-2 critic + meta-review work.
+  blocking: false
+```
+
+### end_of_day
+
+```yaml
+- task_id: day8_end_of_day_artifacts
+  type: agent_executable
+  human_only: false
+  description: |
+    Verify and commit Day-8 artifacts. Advance state.current_day from
+    day_8 to day_9 ONLY after the Week-2 unlock attestation gate
+    cleared (or after an explicit slip declaration). If a gate stays
+    pending past the EOD window, log a carry-over note rather than
+    silently advancing the day.
+  preconditions:
+    - all block_2 tasks for day_8 complete
+    - day8_block3_journal
+  command: |
+    git add ui/ ui_plan*.md schema/ tests/ scripts/ \
+            human/retrospectives/week2.md plan.yaml \
+            run_state/week1.state.json run_state/week1.run.jsonl && \
+    git commit -m "day 8: UI v1 + Week-2 unlock attestation + day_8 plan"
+  validation:
+    - check: state.current_day advanced to day_9 (or slip declared)
+      pass_signal: |
+        state.json current_day == "day_9" OR current_subday is set
+        (8.1, …) with a slip_declared run-log entry
+      fail_signal: still day_8 with no slip declaration
+    - check: if Week-2 unlock cleared, tier_shift event recorded
+      pass_signal: |
+        run.jsonl has a `tier_shift` entry on the Day-8 date with the
+        shifted task IDs listed
+      fail_signal: attestation gate cleared but no tier_shift entry
+    - check: public Day-8 journal URL recorded
+      pass_signal: journal/index.md row 8 added
+      fail_signal: not updated
+    - check: human_gates_pending cleared OR carry-overs justified
+      pass_signal: |
+        state.human_gates_pending == [] OR each pending gate has a
+        notes entry justifying the carry-over
+      fail_signal: silent carry-over without justification
+  log_to: run_log
+```
+
+### day_8 carry-overs (not gating; tracked separately so they don't get lost)
+
+```yaml
+- task_id: day8_carryover_cron_install
+  type: human_only
+  human_only: true
+  description: |
+    Track-C cron install — install cron/sla-sweep.sh (every 15 min) +
+    cron/claims-weekly.sh (Sunday 04:00 UTC) into the user's crontab
+    via `crontab -e`. Playbook: notes/track-c-day7-cron.md. Surfaced
+    from notes/day8_agenda.md item 6.
+  blocking: false
+
+- task_id: day8_carryover_verifier_naming_drift
+  type: agent_executable
+  human_only: false
+  description: |
+    Resolve verifier-naming drift surfaced by Track D in
+    notes/track-d-observations.md (2026-05-23 entry, final paragraph).
+    Two functions:
+      - agent_wrapper/wrapper.py:verify_log_integrity → call-record schema
+      - ui/backend/unlock.py:verify_run_log_integrity → run-log schema
+    Either disambiguate agent/autonomy.md §4.3 to point at the right
+    verifier per file, OR unify both behind a single apparatus-side
+    function. Week-2 polish, not blocking Day 8.
+  autonomy_tier: autonomous
+  hard_checkpoint: false
+  blocking: false
+  log_to: run_log
+
+- task_id: day8_carryover_retro_q4_q6
+  type: human_only
+  human_only: true
+  description: |
+    Fill retrospective sections Q4–Q6 in human/retrospectives/week1.md
+    (currently templated; section 7 alignment-evidence is already
+    checked + attested + hash-committed — narrative is amendment-pace).
+  blocking: false
+```
+
+---
+
 ## side_track_tasks: work Tracks B and C produce ahead of time
 
 > Each entry below is a STANDALONE task assigned to a side worktree
@@ -3289,6 +3794,62 @@ side_track_tasks:
       - tests/test_quicklook.py
     preconditions: []
     completion_signal: "TRACK C COMPLETE — ready to merge"
+
+  - task_id: track_d_day8_ui_v1
+    track: D
+    day_drafted_on: day_8
+    consumed_by:
+      - day8_block2_merge_track_d_ui_v1
+      - day8_block2_ui_v1_verification
+    files_to_write:
+      - "ui/**"
+      - ui_plan.md
+      - ui_plan_v2.md
+      - "notes/track-d-*.md"
+    preconditions:
+      - day7_end_of_day_artifacts  # UI v1 requires the full Week-1 artifact set
+    completion_signal: "TRACK D COMPLETE — ready to merge"
+    notes: |
+      UI v1 is the load-bearing Track-D deliverable for Week-2
+      entry — every Week-1 artifact must render correctly before
+      the Week-2 unlock attestation (day8_block2_week2_unlock_attestation)
+      becomes eligible (strict-serial per PHASE_1_ROADMAP §5.1).
+
+  - task_id: track_b_day8_draft_week2_schemas
+    track: B
+    day_drafted_on: day_8
+    consumed_by:
+      - day8_block2_merge_track_b_schemas
+      # Day-42 W2-06 schema-amendments lock will fully enforce these
+    files_to_write:
+      - "schema/human_intervention.schema.json"
+      - "schema/retrieval_context_v2.schema.json"
+      - "schema/calibration_entry.schema.json"
+      - "tests/test_schema_human_intervention.py"
+      - "tests/test_schema_calibration_entry.py"
+    preconditions: []
+    completion_signal: "TRACK B COMPLETE — ready to merge"
+    notes: |
+      Stub — exact field set is finalized on Day 42 (W2-06). Day-8
+      draft is forward-compatible scaffolding; existing Week-1
+      validators MUST continue to pass post-merge.
+
+  - task_id: track_c_day8_draft_critic_fixtures
+    track: C
+    day_drafted_on: day_8
+    consumed_by:
+      - day8_block2_merge_track_c_fixtures
+      # Day-39 W2-01 critic agent consumes the fixture set
+    files_to_write:
+      - "tests/fixtures/critic_known_flaws_v1.jsonl"
+      - "tests/fixtures/calibration_synthetic_v1.jsonl"
+      - "scripts/generate_critic_fixtures.py"
+    preconditions: []
+    completion_signal: "TRACK C COMPLETE — ready to merge"
+    notes: |
+      Stub — 20 known-flawed hypotheses for the Day-39 critic-agent
+      target (≥80% substantively different critique). Fixture format
+      finalizes when the critic agent's contract lands on Day 39.
 ```
 
 > **Per-task `track` assignment.** Every numbered Day 1–7 task in the

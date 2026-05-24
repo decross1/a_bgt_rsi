@@ -34,6 +34,8 @@ zones:
     paths:
       - "run_state/week1.state.json"
       - "run_state/week1.run.jsonl"
+      - "run_state/.gitkeep"
+      - "run_state/vllm_image.digest"
     primary_track: A
     dispatchable: false
 
@@ -50,6 +52,32 @@ zones:
     primary_track: A
     dispatchable: false
 
+  - id: setup-scripts
+    paths:
+      - "setup/**"
+    primary_track: A
+    dispatchable: false
+    notes: |
+      One-shot install / serve scripts (day1_docker_config.sh,
+      day1_vllm_serve.sh, day2_vllm_serve_mtp.sh, day3_chroma.sh,
+      day4_vllm_serve_tools.sh). Track A primacy; never dispatched —
+      these scripts touch the live vLLM endpoint and the install
+      environment.
+
+  - id: repo-config
+    paths:
+      - ".env.example"
+      - ".gitignore"
+      - ".worktreeinclude"
+      - "plan.yaml"
+      - "requirements.txt"
+    primary_track: A
+    dispatchable: false
+    notes: |
+      Repo-root configuration. Track A primacy; never dispatched.
+      plan.yaml is read-only for non-Track-A agents per
+      agent/orchestration.md hard rule 5.
+
   # ──────────────────────────────────────────────────────────────────
   # Track B — tests & schemas. Dispatchable.
   # ──────────────────────────────────────────────────────────────────
@@ -63,8 +91,22 @@ zones:
     paths:
       - "tests/test_*.py"
       - "tests/_*.py"
+      - "tests/needle_in_haystack.py"
+      - "tests/example_call.jsonl"
+      - "tests/.gitkeep"
     primary_track: B
     dispatchable: true
+
+  - id: tests-fixtures
+    paths:
+      - "tests/fixtures/**"
+    primary_track: C
+    dispatchable: true
+    notes: |
+      Track-C fixture drops (e.g. critic-flaw hypothesis fixtures for
+      Day 39's W2-01, calibration fixtures for Day 41's W2-05).
+      Distinct from tests-shared so Track-B test scaffolds and
+      Track-C fixture drops do not collide.
 
   # ──────────────────────────────────────────────────────────────────
   # Track C — pipeline & ops. Dispatchable.
@@ -85,13 +127,23 @@ zones:
 
   - id: experiments
     paths:
-      - "experiments/exp001_repeated_pd/strategies*.py"
-      - "experiments/exp001_repeated_pd/quicklook.py"
+      - "experiments/exp001_repeated_pd/*.py"
+      - "experiments/exp001_repeated_pd/.gitkeep"
+      - "experiments/exp001_repeated_pd/experiment.lock"
       - "experiments/exp001_repeated_pd/analysis/**"
       - "experiments/exp001_repeated_pd/results/**"
+      - "experiments/exp001_repeated_pd/results_*/**"
       - "experiments/exp001_repeated_pd/plots/**"
+      - "experiments/fixtures/**"
     primary_track: C
     dispatchable: true
+    notes: |
+      Day-7 slip-rerun result dirs (results_7_1/, results_7_2/,
+      results_7_3/) are covered by the results_*/** pattern (D-029).
+      experiments/fixtures/** added 2026-05-24 to cover Track-C's
+      Day-8 fixture deliverable (critic_hypotheses/ + novelty_calibration/);
+      this extension is recorded inline in D-029's operational notes
+      rather than its own decision entry.
 
   - id: tools
     paths:
@@ -134,14 +186,26 @@ zones:
   # ──────────────────────────────────────────────────────────────────
   - id: docs-root
     paths:
-      - "*.md"
-      - "PHASE_1_ROADMAP.md"
+      - "ARCHITECTURE.md"
+      - "CLAUDE.md"
+      - "current_day.md"
+      - "DECISIONS.md"
       - "GLOSSARY.md"
+      - "PHASE_1_ROADMAP.md"
+      - "PROJECT_CONTEXT.md"
+      - "README.md"
+      - "START_HERE.md"
+      - "week2_plan_seed.md"
     primary_track: A
     dispatchable: true
     notes: |
-      Docs are dispatchable but conflict-prone — claim protocol is
-      mandatory before any write. Track A is the default writer.
+      Root-level project documentation. Enumerated explicitly to avoid
+      fnmatch glob over-match — D-029 documents why the original `*.md`
+      pattern collided with every `.md` file in the repo
+      (fnmatch.fnmatch treats `*` as matching `/`). Docs are
+      dispatchable but conflict-prone — claim protocol is mandatory
+      before any write. Track A is the default writer. ui_plan.md
+      belongs to the ui zone (Track D).
 
   - id: docs-human
     paths:
@@ -162,6 +226,29 @@ zones:
       may claim individual files. Changes to autonomy.md and
       ownership.yaml require a D-NNN entry (architectural decision).
 
+  - id: docs-tree
+    paths:
+      - "docs/**"
+    primary_track: A
+    dispatchable: true
+    notes: |
+      Everything under docs/ — architecture diagrams (SVGs from
+      D-024 / D-025 architecture v5 adoption) plus source-paper
+      reference notes. Track A by default; dispatched agents may
+      claim individual files when adding new diagrams or source
+      summaries.
+
+  - id: journal
+    paths:
+      - "journal/**"
+    primary_track: A
+    dispatchable: true
+    notes: |
+      Public daily / weekly journal posts. Track A drafts the
+      data-insert stub during Block 3; the human writes the prose.
+      Dispatched agents may draft individual posts but the human
+      authors the final text.
+
   - id: notes
     paths:
       - "notes/**"
@@ -179,9 +266,9 @@ conflict_resolution:
   - rule: track_a_primacy
     description: |
       Track A's primary zones (orchestrator, state-file, bench-and-logs,
-      chroma-store) are NEVER dispatched. Any claim entry for a path
-      in these zones by a non-Track-A agent is a protocol violation;
-      tools/claims_check.py flags it.
+      chroma-store, setup-scripts, repo-config) are NEVER dispatched.
+      Any claim entry for a path in these zones by a non-Track-A
+      agent is a protocol violation; tools/claims_check.py flags it.
   - rule: first_claim_wins
     description: |
       For dispatchable zones, the first non-expired claim wins. Later
@@ -201,5 +288,17 @@ conflict_resolution:
 # ──────────────────────────────────────────────────────────────────────
 # Versioning
 # ──────────────────────────────────────────────────────────────────────
-schema_version: 1
-last_updated: "2026-05-23"
+schema_version: 2
+last_updated: "2026-05-24"
+# Changelog (most recent first):
+#   v2 / 2026-05-24 — D-029. Tightened docs-root (enumerate root *.md
+#                     instead of `*.md` to avoid fnmatch glob over-match).
+#                     Broadened experiments (results_*/**, experiment.lock,
+#                     *.py instead of strategies+quicklook only).
+#                     Added zones: setup-scripts, repo-config,
+#                     tests-fixtures, docs-tree, journal. Extended
+#                     state-file + tests-shared to cover .gitkeep +
+#                     auxiliaries. Re-validated: --validate-ownership
+#                     exits 0; 0 multi-assigned, 0 unassigned.
+#   v1 / 2026-05-21 — Initial ownership registry landed alongside
+#                     collision_protocol.md (week-1 concurrency infra).
