@@ -5,3 +5,7 @@
 {"timestamp": "2026-05-23T09:13:01Z", "agent_id": "claude-track-a-aux-launch-checklist", "intent": "release", "claim_timestamp": "2026-05-23T09:08:21Z"}
 {"timestamp": "2026-05-23T09:18:10Z", "agent_id": "claude-track-b-day7-tools-tests", "zone": "tests-shared", "paths": ["tests/test_claims_check.py", "tests/test_gate_sla_check.py", "tests/test_mock_payoffs.py"], "intent": "write", "expires_at": "2026-05-23T11:18:10Z"}
 {"timestamp": "2026-05-23T09:25:13Z", "agent_id": "claude-track-b-day7-tools-tests", "intent": "release", "claim_timestamp": "2026-05-23T09:18:10Z"}
+{"timestamp": "2026-05-24T18:52:30Z", "agent_id": "claude-track-b-day8-schemas", "zone": "schemas", "paths": ["schema/proposed/events.jsonl.schema.json", "schema/proposed/calls.jsonl.schema.json"], "intent": "write", "expires_at": "2026-05-24T20:52:30Z"}
+{"timestamp": "2026-05-24T18:52:30Z", "agent_id": "claude-track-b-day8-schemas", "zone": "tests-shared", "paths": ["tests/test_events_schema_proposed.py", "tests/test_calls_schema_proposed.py"], "intent": "write", "expires_at": "2026-05-24T20:52:30Z"}
+{"timestamp": "2026-05-24T18:52:30Z", "agent_id": "claude-track-b-day8-schemas", "zone": "notes", "paths": ["notes/track-b-day8-schemas.md"], "intent": "write", "expires_at": "2026-05-24T20:52:30Z"}
+{"timestamp": "2026-05-24T19:03:22Z", "agent_id": "claude-track-b-day8-schemas", "intent": "release", "claim_timestamp": "2026-05-24T18:52:30Z"}
