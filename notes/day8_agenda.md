@@ -5,37 +5,29 @@ Week-1 → Week-2 boundary). Per `agent/orchestration.md` §"Session
 launch checklist", pull this open at session start and clear the
 top-of-list items before beginning the Day-8 plan.
 
-## First agenda item — stray files left at Day-7 EOD
+## First agenda item — stray files left at Day-7 EOD ✅ RESOLVED 2026-05-24
 
 Two untracked files on `main` after the Day-7 close-out that should
 be resolved on Day-8 entry, not earlier (human review preferred):
 
 1. **`notes/day7_expected_ranged.md`** (52 bytes, typo'd duplicate)
-   - Content: `LLM-vs-mirror expected coop rate range: [0.60, 0.95]`
-   - Canonical: `notes/day7_expected_range.md` (which has the full
-     diagnostic table + amended range `[0.60, 1.00]`)
-   - Decision: delete (typo) or rename to `notes/day7_expected_range_human_scratch.md`
-     to preserve the original paper-style write-down. The content
-     is fully captured in the canonical file either way.
+   — **DELETED 2026-05-24 in commit 5fe49b9.** Content preserved
+   verbatim as the "Original expected cooperation-rate range
+   (2026-05-23 pre-run)" line in canonical `notes/day7_expected_range.md`.
 
 2. **`run_state/week1.run.jsonl.pre-rectify-bak`** (~107 KB safety backup)
-   - Pre-rectification snapshot of the run log (Day-7 fix at commit
-     `083033d` escaped 4 sets of inner quotes in Day-6 entries).
-   - Decision: delete. The fix is committed + verified (0 malformed
-     across 132 lines post-rectification); UI integrity tests pass;
-     attestation already cleared on the strength of the rectified
-     file. No rollback path is needed.
-
-Both above are safe to delete from `main` directly; nothing else
-references them.
+   — **DELETED 2026-05-24 in commit 5fe49b9.** Rectified log
+   verified 0 malformed across 133 lines; no rollback path needed.
 
 ## Other Day-7 carry-overs into Day 8
 
-3. **Publication review gate `day7_publication_review`** stays in
-   `state.human_gates_pending`. The results-announcement post is
-   itself a Week-2 task; do NOT auto-publish even if the post is
-   drafted. See `journal/day7.md` (the preliminary-banner journal)
-   — that post is the weekly retrospective, not the results post.
+3. **Publication review gate `day7_publication_review`** ✅ **CLEARED
+   2026-05-24 (D-028).** Disposition: no-publish-standalone; the
+   Day-7 result aggregates into a broader future publication that
+   combines Day-7 with subsequent experiments (Week 2+). State file:
+   `human_gates_pending = []`. Journal `journal/day7.md` banner
+   updated; `notes/day7_expected_range.md` amended with the
+   publication disposition.
 
 4. **Retrospective Q4-Q6 still templated** in
    `human/retrospectives/week1.md` (sections 4, 5, 6, plus the `__`
@@ -57,9 +49,8 @@ references them.
    for the SLA-sweep (every 15 min) + claims-weekly (Sunday 04:00 UTC).
 
 7. **Day-7 carry-overs memory file** (`day7-carryovers.md` in
-   user memory) — items 1, 2, 3, 4 all closed during Day 7. Prune
-   the file or delete it entirely on Day-8 entry to keep the index
-   tight.
+   user memory) — ✅ verified 2026-05-24 already pruned (no file in
+   `~/.claude/.../memory/`).
 
 8. **Track-A aux session commit** (`5705a11`) — the session-launch
    checklist + plan.yaml strategies amendment landed mid-day. Day 8

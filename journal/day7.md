@@ -7,9 +7,12 @@
 > `[WRITE]`. Remove this notice and all markers before publishing.
 >
 > **Publication scope.** This is the *weekly retrospective*. The
-> Day-7 experiment results are **not** announced here — that post
-> happens on a follow-up day, after the human clears
-> `day7_publication_review_gate` (see "Day 7 — the experiment" below).
+> Day-7 experiment results are **not** announced here, and per **D-028**
+> (2026-05-24) will not be announced standalone at all — the Day-7
+> result aggregates into a broader future publication. The weekly
+> retrospective is allowed to mention the Day-7 numbers in passing;
+> standalone announcement of the cooperation-lock-in finding is
+> deferred to that aggregate.
 
 ---
 
@@ -81,13 +84,16 @@ degraded the apparatus.
 
 ## Day 7 — the experiment
 
-> **⚠️ PRELIMINARY — RESULTS NOT YET REVIEWED**
+> **DISPOSITION — Day-7 result will not be announced standalone**
 >
-> The day-7 numbers below are *preliminary*. The publication review
-> gate (`day7_publication_review_gate`) is open and the results
-> announcement is a separate, later post. The weekly synthesis you're
-> reading is allowed to mention measurements; it is *not* the result
-> announcement.
+> Per **D-028** (2026-05-24) the publication-review gate is cleared
+> under a no-publish-standalone disposition. The day-7 numbers below
+> stand as measured (the 4-run diagnostic ladder is in `notes/day7_expected_range.md`
+> and the data is in `experiments/exp001_repeated_pd/`); they are
+> aggregating into a broader future publication. The weekly synthesis
+> you're reading may reference them in context; it is not the result
+> announcement, and there is no separate Week-1 result-announcement
+> post coming — the next publication round is the aggregate.
 
 [WRITE: 2–3 sentences — what was actually run: 100 rounds of repeated
 matrix Prisoner's Dilemma against each of five opponents (tft,
@@ -96,9 +102,11 @@ grim_trigger, all_c, all_d, mirror_llm = a second Gemma 4 instance);
 orchestrator (its first real use, on a non-summarize-paper task).]
 
 LLM-vs-TFT cooperation rate: `[DATA: 1.000]`
-(`day7_coop_rate_vs_tft` — *preliminary; subject to
-`day7_publication_review_gate`*). The original pre-computed expected
-range was `[0.60, 0.95]`; the actual result was above the upper bound.
+(`day7_coop_rate_vs_tft` — gate cleared under D-028 no-publish-standalone
+disposition; standalone announcement is not coming, the number is
+aggregating into a broader future publication). The original
+pre-computed expected range was `[0.60, 0.95]`; the actual result
+was above the upper bound.
 
 A 4-run diagnostic ladder followed (declared as slips per
 `PHASE_1_ROADMAP.md` §2):

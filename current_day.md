@@ -3,6 +3,13 @@
 _Active-day tracker. Authoritative plan: `plan.yaml`. State:
 `run_state/week1.state.json`. Run log: `run_state/week1.run.jsonl`._
 
+> **TRANSITION (2026-05-24).** Day 7 is fully closed. `state.current_day`
+> has advanced to `day_8`; `human_gates_pending` is empty. The
+> publication-review gate cleared under **D-028** (no-publish-standalone
+> disposition — the Day-7 result aggregates into a broader future
+> publication). The next Track A session opens Day 8 against
+> `notes/day8_agenda.md` and `PHASE_1_ROADMAP.md` §5.1.
+
 > **Slip banner.** Day 7 bled into Day 7.1 → 7.2 → 7.3 (three
 > declared slips on a hard-gate validation failure that turned out
 > to be a genuine finding). All slips resolved at 7.3;
@@ -15,13 +22,16 @@ mirror-LLM}. Capture full per-round logs, summarize cooperation
 rates, compare to fixed strategies. Result requires human review
 before publication (graduated-autonomy gate).
 
-**Status as of 2026-05-23: ✅ Day 7 COMPLETE (with slip ladder
-7.1 / 7.2 / 7.3 declared and resolved).** Baseline experiment +
-3-rerun diagnostic completed; cooperation lock-in confirmed as
-model prior (not sampling/framing artifact); publication review
-gate ARMED (never auto-clears); journal stub + experiment.lock +
-week2_plan_seed.md written. Track A merged Track B (54 new tests)
-and Track C (2 cron wrappers) at EOD.
+**Status as of 2026-05-24: ✅ Day 7 FULLY CLOSED.** Baseline
+experiment + 3-rerun diagnostic completed; cooperation lock-in
+confirmed as Gemma 4 model prior (not sampling/framing artifact);
+publication-review gate **CLEARED** under D-028 no-publish-standalone
+disposition (Day-7 result aggregating into broader future publication);
+journal updated to reflect disposition; `experiment.lock` +
+`week2_plan_seed.md` written; Day-7 task IDs backfilled into
+`state.completed_tasks`; `current_day` advanced to `day_8`. Track A
+merged Track B (54 new tests) and Track C (2 cron wrappers) at EOD;
+Track D merged at EOD (16 files, +785/-24, 82/82 UI tests).
 
 ## Headline outcomes
 
@@ -95,7 +105,7 @@ and Track C (2 cron wrappers) at EOD.
 | `day7_2_block2_run_experiment` (T=0.7) | ⚠️ partial → slip 7.3 |
 | `day7_3_block2_run_experiment` (exploitation_hint, T=0.0) | ✅ slip resolved; range amended |
 | `day7_block2_quicklook` | ✅ 2/2 checks |
-| `day7_publication_review_gate` | 🛑 **ARMED** — `human_gates_pending` |
+| `day7_publication_review_gate` | ✅ **CLEARED 2026-05-24 (D-028)** — no-publish-standalone disposition |
 
 ## Block 3 / end of day
 
@@ -145,9 +155,11 @@ and Track C (2 cron wrappers) at EOD.
 
 ## Carried into Day 8 / Week 2
 
-- `day7_publication_review_gate` ARMED. Day 8 morning re-audits the
-  Day-7 data before any publication. The results-announcement post
-  is a Week-2 task gated on this attestation.
+- `day7_publication_review_gate` ✅ CLEARED 2026-05-24 (D-028). No
+  results-announcement post is coming for Day-7 standalone; the Day-7
+  result aggregates into a broader future publication. A new
+  publication-review gate will be defined when the aggregate paper is
+  drafted (Week 2+ scope).
 - `week2_plan_seed.md` written with 10 bullets — input to Day-38
   planning; the Week-2 plan execution itself is a separate task
   (per CLAUDE.md / not-in-scope-for-Week-1 rules).

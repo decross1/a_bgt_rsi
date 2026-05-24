@@ -46,3 +46,20 @@ not defect first against a non-defecting opponent.
 cooperation-lock-in finding is the publish-worthy Day-7 headline (but
 publication itself still gates on `day7_publication_review_gate`,
 which is hard-gate / never auto-clears).
+
+---
+
+## 2026-05-24 amendment — publication disposition (gate cleared)
+
+Per **D-028** (`DECISIONS.md`): the publication-review gate is cleared
+under a **no-publish-standalone** disposition. The Day-7 result is not
+announced on its own; it will be aggregated as one data point in a
+broader future publication that combines Day-7 with subsequent
+experiments (additional games, additional models, additional
+opponent classes — see Week-2 seed at `week2_plan_seed.md`).
+
+The cooperation-lock-in finding (this file's headline) is preserved
+verbatim — only the publication path changes. Data retention is
+unaffected: `logs/exp001.jsonl`, `experiments/exp001_repeated_pd/results*/`,
+`experiment.lock`, plots, and quicklook all stay put. Track D may
+consume Day-7 data freely; D-028 only constrains external publication.

@@ -1,7 +1,7 @@
 {
   "plan_id": "week1_phase1_days_31_37",
   "started_at": "2026-05-17T00:00:00Z",
-  "current_day": "day_7",
+  "current_day": "day_8",
   "completed_tasks": [
     "preflight_credentials_staged",
     "preflight_software_prestaged",
@@ -67,10 +67,26 @@
     "day6_block3_reading",
     "day6_block3_journal",
     "day6_ambient",
-    "day6_end_of_day_artifacts"
+    "day6_end_of_day_artifacts",
+    "day7_block1_reading",
+    "day7_block1_problemset",
+    "day7_block2_openspiel_up",
+    "day7_block2_strategies_and_llm_agent",
+    "day7_block2_precompute_expected_range",
+    "day7_block2_run_experiment",
+    "day7_1_block2_run_experiment",
+    "day7_2_block2_run_experiment",
+    "day7_3_block2_run_experiment",
+    "day7_block2_quicklook",
+    "day7_publication_review_gate",
+    "day7_block3_reading",
+    "day7_block3_journal_weekly_synthesis",
+    "day7_ambient",
+    "day7_end_of_day_artifacts",
+    "day7_retrospective"
   ],
   "aborted_days": [],
-  "human_gates_pending": ["day7_publication_review"],
+  "human_gates_pending": [],
   "fallbacks_taken": {
     "day1_block2_vllm_serve": "MTP deferred to Week 2+ \u2014 NVFP4 baseline; pinned vLLM image 0.19.1.dev6 predates merged PR #41745 MTP support",
     "day1_nemoclaw": "NemoClaw onboarding skipped (binary not installed) \u2014 hardened plain-Docker fallback verified working",
@@ -91,6 +107,8 @@
     "day7_3_coop_rate_vs_all_d": 0.020
   },
   "notes": {
-    "day_4_entries_count_finding": "RESOLVED 2026-05-21 (D-026, human-authorized decross1). plan.yaml day_4 jsonl-integrity bullet 'total entries across day 4 >= 30' was unreachable for the prescribed --n 5 scope (12 call records). Amended to per-artifact record counts (day4_e2e.jsonl: 2 linked records; day4_robust.jsonl: 2 per trial / 10 for --n 5). Day 4 run-log entry keeps original status=partial_pass (append-only history); the amendment makes the prescribed scope satisfy the check going forward. Carryover closed."
+    "day_4_entries_count_finding": "RESOLVED 2026-05-21 (D-026, human-authorized decross1). plan.yaml day_4 jsonl-integrity bullet 'total entries across day 4 >= 30' was unreachable for the prescribed --n 5 scope (12 call records). Amended to per-artifact record counts (day4_e2e.jsonl: 2 linked records; day4_robust.jsonl: 2 per trial / 10 for --n 5). Day 4 run-log entry keeps original status=partial_pass (append-only history); the amendment makes the prescribed scope satisfy the check going forward. Carryover closed.",
+    "day_7_publication_review_gate_resolution": "CLEARED 2026-05-24 (D-028, human-authorized decross1). Disposition: no-publish-standalone; the Day-7 result aggregates into a broader future publication that combines Day-7 with subsequent experiments (additional games, models, opponent classes per Week-2 seed). The 4-run diagnostic ladder (Days 7.1/7.2/7.3) establishes that the LLM-vs-cooperator 1.000 cooperation rate is Gemma 4's prior, not a sampling or framing artifact. Data retention unaffected (experiments/exp001_repeated_pd/ stays); only external publication is constrained.",
+    "day_7_completed_tasks_backfill": "BACKFILLED 2026-05-24. Day-7 task IDs were absent from completed_tasks during the publication-review gate hold (current_day=day_7, gate ARMED). Now that D-028 clears the gate and current_day advances to day_8, the 16 day_7 task IDs are appended to completed_tasks to reflect reality. The slip-ladder tasks (day7_block2_run_experiment / day7_1_/7_2_) are listed as completed because the slip mechanism resolved at day7_3_block2_run_experiment; their original run-log entries keep status=partial (append-only history). day7_publication_review_gate is listed because it is now discharged."
   }
 }
