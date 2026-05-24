@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/decross1/a_bgt_rsi/schema/proposed/events.jsonl.schema.json",
+  "$comment": "DRAFT — Day-8 (2026-05-24) amendment proposal targeting the Day-42 schema-amendment lock (PHASE_1_ROADMAP.md §5.1). Authored by Track B; pending Track A review and merge. The two oneOf members are extended (not replaced) so any record valid under schema/events.jsonl.schema.json at the Day-3.5 contract remains valid here.",
+  "title": "Run-log event record (proposed Day-42 lock)",
+  "description": "One line of run_state/events.jsonl. Captures typed events distinct from per-call records (which live in logs/dayN.jsonl). Discriminated on event_type. Two members live here: 'human_intervention' (P1) captures human action inside an otherwise-agent task — extended in this proposal with a 'gate_clear' subtype carrying the D-028-shaped decision-id / human-identity / disposition / decisions-ref / gate-name fields; 'calibration_entry' (P3) captures calibration data — extended in this proposal with an 'auto_evaluator' calibration_type carrying Day-41's κ + Spearman + threshold + ground-truth pointer.",
+  "type": "object",
+  "oneOf": [
+    {
+      "title": "human_intervention",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_type",
+        "timestamp",
+        "task_id",
+        "subtype",
+        "reason",
+        "context_hash"
+      ],
+      "properties": {
+        "event_type": {
+          "const": "human_intervention",
+          "description": "Discriminator. Must be the literal 'human_intervention'."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 / RFC 3339, UTC, when the intervention occurred."
+        },
+        "task_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifier of the agent_executable task in plan.yaml that was interrupted, e.g. 'day4_block2_e2e_test'. For a gate_clear subtype this is the task whose gate was being cleared (e.g. 'day7_block2_publication_review')."
+        },
+        "subtype": {
+          "type": "string",
+          "enum": [
+            "edit_prompt",
+            "edit_code",
+            "reject",
+            "redirect",
+            "manual_decision",
+            "gate_clear"
+          ],
+          "description": "Kind of intervention. 'edit_prompt' / 'edit_code' / 'reject' / 'redirect' / 'manual_decision' are unchanged from the Day-3.5 schema (P1). 'gate_clear' is NEW in this proposal: the human cleared a hard-gate by recording a decision in DECISIONS.md (e.g. D-028 cleared day7_publication_review on 2026-05-24). When subtype == 'gate_clear', the optional fields decision_id / human_identity / disposition / decisions_ref / gate_name are REQUIRED (see if/then below)."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Free-text, human-supplied reason for the intervention. For a gate_clear subtype this is the prose explanation of WHY the gate was cleared with this disposition (often the D-NNN entry's 'Rationale' section, abbreviated)."
+        },
+        "context_hash": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Hash of the task state at the moment of intervention; enables N generated / M survived / K edits accounting in the preprint. For a gate_clear subtype this hashes the gate's pending-state snapshot at clearance time so an auditor can reconstruct what was on the table when the decision landed."
+        },
+        "decision_id": {
+          "type": "string",
+          "pattern": "^D-[0-9]{3}$",
+          "description": "OPTIONAL on non-gate_clear subtypes; REQUIRED when subtype == 'gate_clear'. The DECISIONS.md entry id that records this human action, e.g. 'D-028'. Pattern: 'D-' followed by three digits."
+        },
+        "human_identity": {
+          "type": "string",
+          "minLength": 1,
+          "description": "OPTIONAL on legacy subtypes (for backwards compat with the Day-3.5 schema); REQUIRED when subtype == 'gate_clear'. Identifier of the human who took the action, e.g. 'decross1'. Naming convention follows whatever PROJECT_CONTEXT.md adopts for human identities; a unix-style username is acceptable."
+        },
+        "disposition": {
+          "type": "string",
+          "minLength": 1,
+          "description": "OPTIONAL on non-gate_clear subtypes; REQUIRED when subtype == 'gate_clear'. Short-string outcome label of the decision, e.g. 'no-publish-standalone' (D-028), 'aggregate-into-future-paper', 'approved', 'rejected'. Free-form by design — the D-NNN entry carries the prose; this field is a grep-able tag."
+        },
+        "decisions_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "OPTIONAL on non-gate_clear subtypes; REQUIRED when subtype == 'gate_clear'. Cross-reference into DECISIONS.md for the entry that records this decision. Convention: 'DECISIONS.md#D-028' (the file path + the heading anchor). Redundant with decision_id by design — decision_id is the grep key, decisions_ref is the human-clickable link target."
+        },
+        "gate_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "OPTIONAL on non-gate_clear subtypes; REQUIRED when subtype == 'gate_clear'. Name of the hard-gate being cleared, as it appears in plan.yaml / state.human_gates_pending, e.g. 'day7_publication_review'. The clearance removes this entry from human_gates_pending; auditors recover the pre-clearance state by replaying the run log up to this event's timestamp."
+        }
+      },
+      "if": {
+        "properties": { "subtype": { "const": "gate_clear" } },
+        "required": ["subtype"]
+      },
+      "then": {
+        "required": [
+          "decision_id",
+          "human_identity",
+          "disposition",
+          "decisions_ref",
+          "gate_name"
+        ]
+      }
+    },
+    {
+      "title": "calibration_entry",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_type",
+        "timestamp",
+        "experiment_id"
+      ],
+      "properties": {
+        "event_type": {
+          "const": "calibration_entry",
+          "description": "Discriminator. Must be the literal 'calibration_entry'."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 / RFC 3339, UTC, when the calibration entry was recorded."
+        },
+        "experiment_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifier of the experiment whose outcome is being calibrated, e.g. 'exp001_repeated_pd' (human_range_check style) or 'day41_auto_evaluator_calibration' (auto_evaluator style)."
+        },
+        "calibration_type": {
+          "type": "string",
+          "enum": ["human_range_check", "auto_evaluator"],
+          "description": "OPTIONAL discriminator within the calibration_entry branch. Absent or 'human_range_check' → the Day-3.5 shape applies (metric_name + pre_experiment_expected_range + post_experiment_observed + within_range + human_attestation are required). 'auto_evaluator' → the Day-41 shape applies (kappa + spearman + threshold + ground_truth_ref are required); the human_range_check fields become optional. See if/then/else below."
+        },
+        "metric_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "REQUIRED for human_range_check; optional for auto_evaluator (an auto-evaluator calibration usually doesn't aggregate over a single metric). Name of the metric the human pre-stated a range for, e.g. 'coop_rate_vs_tft'."
+        },
+        "pre_experiment_expected_range": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "number" },
+          "description": "REQUIRED for human_range_check; optional for auto_evaluator. [low, high] range elicited from the human BEFORE the experiment ran. Both elements are numbers; order is [low, high]."
+        },
+        "post_experiment_observed": {
+          "type": "number",
+          "description": "REQUIRED for human_range_check; optional for auto_evaluator. Scalar value observed for metric_name once the experiment ran."
+        },
+        "within_range": {
+          "type": "boolean",
+          "description": "REQUIRED for human_range_check; optional for auto_evaluator. Whether post_experiment_observed fell inside pre_experiment_expected_range. Recorded explicitly so consumers do not have to re-derive it from the range."
+        },
+        "human_attestation": {
+          "type": "string",
+          "minLength": 1,
+          "description": "REQUIRED for human_range_check; optional for auto_evaluator. Free-text attestation from the human who supplied the range (human_range_check) or who attested the calibration result (auto_evaluator), including any caveats about how it was chosen."
+        },
+        "kappa": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1,
+          "description": "REQUIRED for auto_evaluator; absent for human_range_check. Cohen's kappa agreement between the auto-evaluator's labels and the ground-truth labels on the calibration fixture. Per PHASE_1_ROADMAP.md §5.1 Day-41 row, success criterion is κ > 0.6."
+        },
+        "spearman": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1,
+          "description": "REQUIRED for auto_evaluator; absent for human_range_check. Spearman rank correlation between the auto-evaluator's continuous scores and the ground-truth ordering on the calibration fixture."
+        },
+        "threshold": {
+          "type": "number",
+          "description": "REQUIRED for auto_evaluator; absent for human_range_check. The auto-evaluator score threshold the human commits to as a result of this calibration. Downstream consumers (novelty evaluator on Day 46+) use this number as their decision boundary."
+        },
+        "ground_truth_ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "REQUIRED for auto_evaluator; absent for human_range_check. Pointer to the ground-truth fixture set this calibration was scored against, e.g. 'experiments/critic_calibration/fixtures.py#KNOWN_FLAWED_20' or 'experiments/critic_calibration/synthetic_outcomes_v1.csv'. Together with the code commit at timestamp this lets an auditor re-run the calibration deterministically."
+        }
+      },
+      "if": {
+        "properties": { "calibration_type": { "const": "auto_evaluator" } },
+        "required": ["calibration_type"]
+      },
+      "then": {
+        "required": ["kappa", "spearman", "threshold", "ground_truth_ref"]
+      },
+      "else": {
+        "required": [
+          "metric_name",
+          "pre_experiment_expected_range",
+          "post_experiment_observed",
+          "within_range",
+          "human_attestation"
+        ]
+      }
+    }
+  ]
+}

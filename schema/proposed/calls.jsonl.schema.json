@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/decross1/a_bgt_rsi/schema/proposed/calls.jsonl.schema.json",
+  "$comment": "DRAFT — Day-8 (2026-05-24) amendment proposal targeting the Day-42 schema-amendment lock (PHASE_1_ROADMAP.md §5.1). Authored by Track B; pending Track A review and merge. The only delta from schema/calls.jsonl.schema.json (Day-3.5 contract) is in retrieval_context.items — four optional inner fields added (score, collection, retrieved_for, embedder_version) for Week-2 critic + meta-review provenance (week2_plan_seed.md #4-#5). Existing 4-field retrieval_context records (doc_id + content_hash + chunk_offset + chunk_length) remain valid.",
+  "title": "Gemma 4 call record (proposed Day-42 lock)",
+  "description": "One line of logs/dayN.jsonl. Every call to the model through wrapper.py produces exactly one record matching this schema. Each record is a research observation; reproducibility depends on metadata completeness.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "timestamp",
+    "request_id",
+    "model",
+    "model_version",
+    "temperature",
+    "top_p",
+    "seed",
+    "prompt_messages",
+    "completion",
+    "usage",
+    "latency_ms",
+    "host_metadata",
+    "caller_tag",
+    "parent_request_id"
+  ],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 / RFC 3339, UTC, when the request was issued."
+    },
+    "request_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "uuid4 uniquely identifying this call."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Model name as served, e.g. 'gemma-4-26b-a4b-nvfp4'."
+    },
+    "model_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "vLLM container image digest, e.g. 'sha256:04563c30...'."
+    },
+    "temperature": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2,
+      "description": "Sampling temperature sent in the request."
+    },
+    "top_p": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Nucleus sampling top_p sent in the request."
+    },
+    "seed": {
+      "type": ["integer", "null"],
+      "description": "RNG seed sent in the request; null when no seed was set."
+    },
+    "prompt_messages": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Full chat message array exactly as sent.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "content"],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["system", "user", "assistant", "tool"]
+          },
+          "content": { "type": "string" }
+        }
+      }
+    },
+    "completion": {
+      "type": "string",
+      "description": "Full text of the model's completion."
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input_tokens", "output_tokens"],
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "latency_ms": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Wall-clock request round-trip in milliseconds."
+    },
+    "host_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cuda_driver", "vllm_image_tag"],
+      "properties": {
+        "cuda_driver": {
+          "type": "string",
+          "description": "CUDA driver version, e.g. '13.0'."
+        },
+        "vllm_image_tag": {
+          "type": "string",
+          "description": "vLLM image tag, e.g. 'vllm/vllm-openai:v0.21.0'."
+        }
+      }
+    },
+    "caller_tag": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifies what issued the call, e.g. 'test_50_calls' or 'workers/critic.py' or 'workers/meta_review.py' (Week 2)."
+    },
+    "parent_request_id": {
+      "type": ["string", "null"],
+      "description": "request_id of the parent call in a chain; null until call chains begin on Day 4.",
+      "oneOf": [
+        { "type": "string", "format": "uuid" },
+        { "type": "null" }
+      ]
+    },
+    "retrieval_context": {
+      "type": ["array", "null"],
+      "description": "Per-call retrieval provenance (P2). null when no retrieval ran. A list when one or more retrievals contributed to the prompt — typically generator and novelty-evaluation calls. Optional field; absent on records that pre-date Day 3.5. Inner items have 4 REQUIRED fields (unchanged from Day-3.5) plus 4 NEW OPTIONAL fields (score / collection / retrieved_for / embedder_version) added by the Day-8 proposal for Week-2 critic + meta-review provenance.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["doc_id", "content_hash", "chunk_offset", "chunk_length"],
+        "properties": {
+          "doc_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable document identifier, e.g. 'arxiv:2401.12345'."
+          },
+          "content_hash": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Hash of the chunk content used in the prompt, e.g. 'sha256:...'."
+          },
+          "chunk_offset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Byte or token offset of the chunk within the source document."
+          },
+          "chunk_length": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Byte or token length of the chunk."
+          },
+          "score": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "OPTIONAL. Similarity score the retriever assigned to this chunk for the query (BGE-M3 cosine similarity by default; the embedder defines the metric). Week-2 critic uses this for its 'why was this retrieved?' reasoning trace. Absent on Day-3.5 records and on records from any retriever that does not surface a score."
+          },
+          "collection": {
+            "type": "string",
+            "minLength": 1,
+            "description": "OPTIONAL. Name of the ChromaDB collection the chunk came from, e.g. 'papers_recent' (arXiv-pipeline papers from Day 5) or 'textbook_chunks' (Day-3 textbook ingest) or a future 'critic_corpus'. Lets meta-review route its dedup logic per collection."
+          },
+          "retrieved_for": {
+            "type": "string",
+            "enum": ["generator", "critic", "meta_review", "novelty_eval", "summarize_paper"],
+            "description": "OPTIONAL discriminator. Which downstream consumer this retrieval was issued for. Lets inspect_run answer 'show me every chunk the critic ever cited' without grep-ing call provenance backwards. The enum is closed by design: a new consumer requires a schema bump (so we don't silently lose provenance of an un-enumerated caller)."
+          },
+          "embedder_version": {
+            "type": "string",
+            "minLength": 1,
+            "description": "OPTIONAL. Identifier of the embedding model + version used to retrieve this chunk, e.g. 'bge-m3@2024-01-30'. Reproducibility hedge against the embedder changing under us — if Week 3+ swaps in a different embedder, the older retrievals are still attributable to the older embedder via this field."
+          }
+        }
+      }
+    }
+  }
+}
