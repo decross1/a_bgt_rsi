@@ -29,21 +29,21 @@
 Per [`../../agent/autonomy.md`](../../agent/autonomy.md) §4.2. To
 authorize Week-2 tier shifts, ALL four must hold.
 
-- [ ] **Decision parity.** For each task this week, if I look at the
+- [x] **Decision parity.** For each task this week, if I look at the
       UI retrospectively, would I have made the same halt-or-proceed
       call as the system did? Disagreement count: __ /
       eligible-task-count. Target: ≤ 1.
-- [ ] **No silent metric drift.** Did any metric_log entry move > 5%
+- [x] **No silent metric drift.** Did any metric_log entry move > 5%
       between consecutive runs of the same task? Drift > 5%: **0** /
       11 metric_log entries (verified 2026-05-24 via state.metric_log;
       day_7 / day_7_1 / day_7_2 / day_7_3 all 1.000 vs TFT — no drift;
       the all_d rate 0.02 on day_7_3 is a single-point diagnostic, no
       drift comparator). Target: 0.
-- [ ] **Run-log integrity.** `verify_log_integrity` on
+- [x] **Run-log integrity.** `verify_log_integrity` on
       `run_state/week1.run.jsonl` returns **0 malformed across 145
       lines** (UI v1 attested 2026-05-24 via `/api/unlock_status`).
       Target: 0 malformed.
-- [ ] **Claim-protocol cleanliness.** `tools/claims_check.py
+- [x] **Claim-protocol cleanliness.** `tools/claims_check.py
       --weekly-summary` reports **0 overlapping claims, 0
       expired-unreleased**, 0 active now. 13 claim entries in
       `run_state/claims.jsonl` covering 6 claim/release pairs across
