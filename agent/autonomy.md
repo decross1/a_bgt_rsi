@@ -111,9 +111,16 @@ retrospective, that the following hold over a rolling 7-day window:
 2. **No silent metric drift.** Retrospective audits of `metric_log`
    entries show drift ≤ **5%** between consecutive runs of the same
    task.
-3. **Run-log integrity.** `verify_log_integrity` reports **0**
+3. **Run-log integrity.** `verify_run_log_integrity`
+   ([`ui/backend/unlock.py`](../ui/backend/unlock.py)) reports **0**
    malformed entries across `run_state/week1.run.jsonl`,
    `run_state/attestations.jsonl`, and `run_state/escalations.jsonl`.
+   Note: distinct from `verify_log_integrity`
+   ([`agent_wrapper/wrapper.py`](../agent_wrapper/wrapper.py)), which
+   validates the per-call record schema in `logs/dayN.jsonl`. The two
+   verifiers share a name root but target different schemas — this
+   criterion uses the run-log variant. (Drift resolved 2026-05-24
+   on the `day8_carryover_verifier_naming_drift` task.)
 4. **Claim-protocol cleanliness.** [`tools/claims_check.py`](../tools/claims_check.py)
    reports zero overlapping claims and zero expired-claim writes
    across the window. See [`agent/collision_protocol.md`](collision_protocol.md).

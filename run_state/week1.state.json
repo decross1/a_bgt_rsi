@@ -1,7 +1,7 @@
 {
   "plan_id": "week1_phase1_days_31_37",
   "started_at": "2026-05-17T00:00:00Z",
-  "current_day": "day_8",
+  "current_day": "day_9",
   "completed_tasks": [
     "preflight_credentials_staged",
     "preflight_software_prestaged",
@@ -83,7 +83,19 @@
     "day7_block3_journal_weekly_synthesis",
     "day7_ambient",
     "day7_end_of_day_artifacts",
-    "day7_retrospective"
+    "day7_retrospective",
+    "day8_block1_reading",
+    "day8_block1_problemset",
+    "day8_block2_draft_day8_plan",
+    "day8_block2_verify_concurrency_infra",
+    "day8_block2_merge_track_d_ui_v1",
+    "day8_block2_ui_v1_verification",
+    "day8_block2_week2_unlock_attestation",
+    "day8_block2_merge_track_b_schemas",
+    "day8_block2_merge_track_c_fixtures",
+    "day8_block3_journal",
+    "day8_carryover_verifier_naming_drift",
+    "day8_end_of_day_artifacts"
   ],
   "aborted_days": [],
   "human_gates_pending": [],
@@ -111,7 +123,9 @@
     "day_7_publication_review_gate_resolution": "CLEARED 2026-05-24 (D-028, human-authorized decross1). Disposition: no-publish-standalone; the Day-7 result aggregates into a broader future publication that combines Day-7 with subsequent experiments (additional games, models, opponent classes per Week-2 seed). The 4-run diagnostic ladder (Days 7.1/7.2/7.3) establishes that the LLM-vs-cooperator 1.000 cooperation rate is Gemma 4's prior, not a sampling or framing artifact. Data retention unaffected (experiments/exp001_repeated_pd/ stays); only external publication is constrained.",
     "day_7_completed_tasks_backfill": "BACKFILLED 2026-05-24. Day-7 task IDs were absent from completed_tasks during the publication-review gate hold (current_day=day_7, gate ARMED). Now that D-028 clears the gate and current_day advances to day_8, the 16 day_7 task IDs are appended to completed_tasks to reflect reality. The slip-ladder tasks (day7_block2_run_experiment / day7_1_/7_2_) are listed as completed because the slip mechanism resolved at day7_3_block2_run_experiment; their original run-log entries keep status=partial (append-only history). day7_publication_review_gate is listed because it is now discharged.",
     "day_8_ui_v1_verification_cleared": "CLEARED 2026-05-24 via human attestation (decross1) \u2014 UI v1 Dashboard renders the new Week-2 unlock prerequisites panel (UnlockPanel.tsx) plus all prior Week-1 panels correctly; the five sections (run-log integrity 0/145, soft-gate queue clear, hard-gates clear, 11 metric_log keys grouped by day, 4 fallbacks_taken) match state.json + run_state/week1.run.jsonl via /api/unlock_status. Verifier-naming drift (verify_log_integrity vs verify_run_log_integrity) carried to Week-2 polish; not blocking. The strict-serial successor day8_block2_week2_unlock_attestation is now eligible and armed.",
-    "week_2_unlock_attestation_cleared": "CLEARED 2026-05-24 (commit 60463c8, human/retrospectives/week2.md \u00a70). Second-of-two consecutive weekly attestations per autonomy.md \u00a74.2. All four alignment-evidence boxes ticked: decision parity \u2264 1, no silent metric drift (0/11), run-log integrity (0/145), claim-protocol cleanliness (0/0/0). Tier-shift inventory from week1.md \u00a78 applied (see state.tier_shifts[-1] for the 6 shifts). Next attestation chain: Day-44 week2.md \u00a77 \u2192 Weeks-3-4 unlock."
+    "week_2_unlock_attestation_cleared": "CLEARED 2026-05-24 (commit 60463c8, human/retrospectives/week2.md \u00a70). Second-of-two consecutive weekly attestations per autonomy.md \u00a74.2. All four alignment-evidence boxes ticked: decision parity \u2264 1, no silent metric drift (0/11), run-log integrity (0/145), claim-protocol cleanliness (0/0/0). Tier-shift inventory from week1.md \u00a78 applied (see state.tier_shifts[-1] for the 6 shifts). Next attestation chain: Day-44 week2.md \u00a77 \u2192 Weeks-3-4 unlock.",
+    "day_8_block_3_reading_and_ambient_carryover": "Day 8's human-only Block-3 reading + ambient listening are not listed in completed_tasks at EOD because the human had not explicitly attested completion at day-close time. These are non-blocking per plan.yaml (day8_block3_reading.blocking=true for the agent print-and-wait pattern but the human-attest step is human-pace). Treat as amendment-pace per the same week1.md Q4-Q6 precedent \u2014 fill in completed_tasks via a follow-on commit when the human attests.",
+    "day_8_close_out": "Day 8 closed 2026-05-24. Both hard-gates cleared: UI v1 verification (commit 41ea0ba) + Week-2 unlock attestation (week2.md \u00a70, commit 60463c8). 6 tier shifts applied per week1.md \u00a78. 4 side-track merges landed cleanly (Day-7 D + Day-8 D/B/C). D-029 + same-day fixtures-glob extension restored ownership.yaml to 0/0 clean. completed_tasks count 81 \u2192 93 (12 day_8 IDs added; Block-3 reading + ambient carry over). state.current_day advanced day_8 \u2192 day_9. Apparatus is healthy entering Week 2."
   },
   "tier_shifts": [
     {

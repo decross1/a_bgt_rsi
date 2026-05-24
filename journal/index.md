@@ -1,7 +1,8 @@
-# Public journal — Week 1
+# Public journal — Weeks 1–
 
 Daily 200–500 word posts from Block 3, plus the Day 7 long-form
-synthesis (600–1000 words). Each row links to the published post.
+synthesis (600–1000 words) and any other extended posts. Each row
+links to the published post.
 
 | Day | Program day | Title | URL |
 | --- | ----------- | ----- | --- |
@@ -12,3 +13,4 @@ synthesis (600–1000 words). Each row links to the published post.
 | 5   | 35          | Pipe arXiv into the loop — first findings about my own field | draft: `journal/day5.md` |
 | 6   | 36          | Day 6 — orchestrator + worker, the smallest possible loop | draft: `journal/day6.md` |
 | 7   | 37          | Apparatus v0 — Week 1, what worked, what didn't | draft: `journal/day7.md` |
+| 8   | 38          | Week-2 entry — UI v1 online + first real concurrent-track day | draft: `journal/day8.md` |
