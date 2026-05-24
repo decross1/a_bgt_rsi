@@ -1,0 +1,17 @@
+{
+  "id": "014_temperature_artifact",
+  "hypothesis_text": "Gemma 4 produces highly deterministic strategic responses in repeated games — across our 100-round PD run the model never deviated from a mirror-the-opponent policy, suggesting the model implements a robust internalized strategy.",
+  "domain": "llm_behavior",
+  "injected_flaw_type": "temperature_artifact",
+  "flaw_description": "All runs were executed at temperature 0.0, which collapses the output distribution to greedy decoding. 'Never deviated' under temperature 0 is mechanically expected and is evidence about decoding parameters, not about the strength or robustness of an internalized strategy. The robust-strategy claim requires temperature sweeps; at T=0.7 a different picture is plausible.",
+  "expected_critique_targets": [
+    "T=0.0 is greedy decoding — non-deviation is by construction",
+    "needs temperature sweep",
+    "robustness claim not supported by single-T data",
+    "stochastic decoding may reveal alternative actions"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "subtle",
+  "context": "All Day-7 PD runs at T=0.0; the 7.2 diagnostic was T=0.7 but with no claim about strategy robustness.",
+  "schema_version": "1.0"
+}

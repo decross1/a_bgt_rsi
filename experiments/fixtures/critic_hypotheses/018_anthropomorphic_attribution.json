@@ -1,0 +1,17 @@
+{
+  "id": "018_anthropomorphic_attribution",
+  "hypothesis_text": "When confronted with a defecting opponent in repeated PD, Gemma 4 'considers' the long-term value of the relationship and 'chooses' to retaliate selectively, mirroring the human concept of conditional trust. The model has developed an implicit theory of mind for repeated interactions.",
+  "domain": "llm_behavior",
+  "injected_flaw_type": "anthropomorphic_attribution",
+  "flaw_description": "The vocabulary ('considers', 'chooses', 'theory of mind') attributes mental states the data does not establish. The same behavior is consistent with surface pattern-matching on training-data examples of repeated games, mirroring heuristics learned from RLHF, or coincidence at low temperature. Establishing 'theory of mind' requires false-belief tasks, counterfactual probes, and ablations none of which were run.",
+  "expected_critique_targets": [
+    "mentalistic vocabulary not supported by the behavioral data",
+    "alternative low-level explanations not ruled out",
+    "theory-of-mind claim requires false-belief / counterfactual evidence",
+    "behavioral mimicry is not evidence of underlying cognition"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "moderate",
+  "context": "Source data: action sequences only; no probing experiments, no representation analysis.",
+  "schema_version": "1.0"
+}

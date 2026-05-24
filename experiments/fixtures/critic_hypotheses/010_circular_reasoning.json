@@ -1,0 +1,17 @@
+{
+  "id": "010_circular_reasoning",
+  "hypothesis_text": "The critic agent successfully identifies flawed hypotheses because hypotheses it flags as flawed are, on inspection, flawed. This validates the critic-in-loop design for Phase 2.",
+  "domain": "methodology",
+  "injected_flaw_type": "circular_reasoning",
+  "flaw_description": "The validation criterion ('on inspection, flawed') is the same judgment the critic is being evaluated against. If the inspector and the critic agree, that is consistency, not validity. A proper evaluation needs an independent ground-truth label (e.g., this fixture set) and inter-rater agreement against an outside reviewer.",
+  "expected_critique_targets": [
+    "validation set has no independent ground truth",
+    "critic and inspector are the same judgment",
+    "needs an external label set",
+    "inter-rater agreement is required"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "obvious",
+  "context": "The Day-39 critic eval was reported without using the fixture set's ground_truth_label.",
+  "schema_version": "1.0"
+}

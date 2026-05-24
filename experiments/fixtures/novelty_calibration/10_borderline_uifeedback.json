@@ -1,0 +1,10 @@
+{
+  "id": "10_borderline_uifeedback",
+  "hypothesis_text": "Observability dashboards that surface live agent state to the human researcher accelerate alignment-evidence accumulation, because human interventions land earlier when the apparatus is legible.",
+  "prior_art_summary": "Human-AI interaction and explainability work argues legibility helps oversight. Specific quantitative claim about alignment-evidence accumulation rate in an autonomous-research apparatus is unstudied.",
+  "ground_truth_tier": "novel",
+  "ground_truth_novelty_score": 0.55,
+  "domain": "methodology",
+  "rationale": "Borderline novel/incremental — synthesizes a known intuition with a specific operational measure (alignment-evidence rate). Tests evaluator handling of well-motivated mid-novelty claims.",
+  "schema_version": "1.0"
+}

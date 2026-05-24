@@ -1,0 +1,17 @@
+{
+  "id": "016_ambiguous_construct",
+  "hypothesis_text": "Gemma 4 exhibits 'forgiveness' in iterated games: after the opponent defects, the model returns to cooperation within 1.4 rounds on average. This suggests a TFT-like reciprocity pattern with built-in forgiveness.",
+  "domain": "game_theory",
+  "injected_flaw_type": "ambiguous_construct",
+  "flaw_description": "'Forgiveness' is operationalized here as 'cooperates again at some later round' — but the model cooperates against all-D on ~12% of rounds with no apparent dependence on what the opponent just did. The 1.4-round number is an averaging artifact of a model that occasionally cooperates regardless of history. The construct 'forgiveness' implies a conditional response to defection; the data does not establish conditioning, only marginal cooperation rate.",
+  "expected_critique_targets": [
+    "'forgiveness' requires conditional response to defection",
+    "marginal cooperation rate is not conditional behavior",
+    "needs lag-correlation between opp_defect and own_cooperate",
+    "operationalization does not match the construct"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "subtle",
+  "context": "exp001 all_d run: cooperation rate ~0.12 with no observed correlation between opponent action and own next action.",
+  "schema_version": "1.0"
+}

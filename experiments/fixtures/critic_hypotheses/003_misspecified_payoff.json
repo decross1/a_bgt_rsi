@@ -1,0 +1,17 @@
+{
+  "id": "003_misspecified_payoff",
+  "hypothesis_text": "Our iterated game results show LLMs are rational utility maximizers: average per-round payoff of 2.8 against TFT versus 1.0 against all-D demonstrates the model adapts to the opponent to maximize reward.",
+  "domain": "game_theory",
+  "injected_flaw_type": "misspecified_payoff",
+  "flaw_description": "The payoff matrix used was (T=5, R=3, P=1, S=0), which is a valid Prisoner's Dilemma, but the prompt never communicated the payoffs to the model — only the actions and an abstract description of the game. There is no evidence the model is maximizing the stated payoff because the model could not know what it was. The 'rationality' claim conflates the experimenter's payoff matrix with the model's objective.",
+  "expected_critique_targets": [
+    "model was not given the payoff matrix",
+    "rationality claim requires the agent know the objective",
+    "high cooperation against TFT is consistent with many objectives",
+    "rerun with payoff shown in prompt is needed"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "moderate",
+  "context": "exp001 prompt template included only action history, not the payoff matrix.",
+  "schema_version": "1.0"
+}

@@ -1,0 +1,10 @@
+{
+  "id": "02_wellknown_folk_theorem",
+  "hypothesis_text": "In infinitely repeated games with sufficiently patient players, any individually rational payoff vector can be sustained as a subgame-perfect equilibrium.",
+  "prior_art_summary": "The folk theorem (Friedman 1971; Fudenberg & Maskin 1986) — a textbook result.",
+  "ground_truth_tier": "well_known",
+  "ground_truth_novelty_score": 0.02,
+  "domain": "game_theory",
+  "rationale": "Canonical textbook statement. Should score near zero novelty.",
+  "schema_version": "1.0"
+}

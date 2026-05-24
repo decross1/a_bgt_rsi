@@ -1,0 +1,17 @@
+{
+  "id": "015_ungrounded_extrapolation",
+  "hypothesis_text": "Because Gemma 4 cooperates in 100-round repeated PD with reciprocating opponents, deploying instruction-tuned LLMs as autonomous agents in real-world repeated-interaction settings (markets, multi-agent negotiation, repeated bargaining) will produce cooperative equilibria.",
+  "domain": "llm_behavior",
+  "injected_flaw_type": "ungrounded_extrapolation",
+  "flaw_description": "Extrapolates from a controlled 2-player matrix game to open-ended multi-agent real-world scenarios that differ in nearly every dimension: complete vs. incomplete information, fixed vs. heterogeneous payoffs, anonymity, communication, side-payments, exit options, and reputational systems. None of these were varied in the source experiment. The deployment claim is unsupported.",
+  "expected_critique_targets": [
+    "extrapolates from matrix PD to open-ended deployment",
+    "real-world settings differ on dimensions not varied",
+    "no incomplete-information or heterogeneous-agent test",
+    "deployment claim requires in-domain evidence"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "moderate",
+  "context": "Source experiment: matrix PD, 2 agents, full information, identical payoffs.",
+  "schema_version": "1.0"
+}

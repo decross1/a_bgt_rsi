@@ -1,0 +1,17 @@
+{
+  "id": "007_selection_bias",
+  "hypothesis_text": "Retrieval-augmented hypothesis generation produces more novel hypotheses than baseline generation. Across the four runs we report, the retrieval condition averaged a novelty score of 0.72 versus 0.41 for baseline, a 1.8x improvement.",
+  "domain": "methodology",
+  "injected_flaw_type": "selection_bias",
+  "flaw_description": "Seven runs were executed; the three excluded runs had retrieval-condition novelty scores of 0.31, 0.28, and 0.39. The 'four runs we report' were chosen post-hoc because the retrieval system was 'working as intended' in those four — but the working-as-intended classification was made by looking at the novelty scores. This is selection on the outcome.",
+  "expected_critique_targets": [
+    "runs were excluded based on the outcome",
+    "selection-on-outcome inflates the effect",
+    "report all 7 runs",
+    "pre-register the exclusion criterion"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "moderate",
+  "context": "Three runs excluded with reason 'retrieval misconfigured' but the misconfiguration was diagnosed by looking at novelty.",
+  "schema_version": "1.0"
+}

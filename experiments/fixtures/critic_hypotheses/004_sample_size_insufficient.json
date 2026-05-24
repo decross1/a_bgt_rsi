@@ -1,0 +1,17 @@
+{
+  "id": "004_sample_size_insufficient",
+  "hypothesis_text": "A single 100-round run of Gemma 4 vs. mirror-LLM produced a cooperation rate of 0.98, establishing that self-play between identical LLM instances reliably converges to cooperation.",
+  "domain": "llm_behavior",
+  "injected_flaw_type": "sample_size_insufficient",
+  "flaw_description": "n=1 run, no seeds, no replication. 'Reliably converges' is unsupported by a single trajectory. At minimum a half-dozen seeds are needed before claiming convergence; a single trajectory cannot distinguish a deterministic attractor from a lucky path.",
+  "expected_critique_targets": [
+    "single run is not evidence for reliable convergence",
+    "need multiple seeds",
+    "no variance estimate possible from n=1",
+    "lucky-path vs attractor not separable"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "obvious",
+  "context": "exp001 mirror_llm condition was run once with temperature 0.0.",
+  "schema_version": "1.0"
+}

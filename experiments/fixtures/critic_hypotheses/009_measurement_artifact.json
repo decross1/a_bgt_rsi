@@ -1,0 +1,17 @@
+{
+  "id": "009_measurement_artifact",
+  "hypothesis_text": "Our hypothesis-generation worker produces high-quality outputs at scale: across a 200-trial Day-40 run, 94% of generated hypotheses passed the auto-evaluator's quality threshold.",
+  "domain": "llm_behavior",
+  "injected_flaw_type": "measurement_artifact",
+  "flaw_description": "The auto-evaluator's quality threshold was set by sampling its score distribution on a small batch and picking the 6th percentile as the cutoff. The 94% pass rate is therefore the threshold's *definition*, not a measurement of quality — by construction any sufficiently large run will produce ~94% passes. The metric measures threshold calibration, not generation quality.",
+  "expected_critique_targets": [
+    "threshold was set on the same distribution it is measuring",
+    "94% reflects threshold calibration, not quality",
+    "needs an out-of-distribution validation set",
+    "circular use of the auto-evaluator"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "subtle",
+  "context": "Day-41 auto-evaluator threshold calibration used the Day-40 generation distribution itself.",
+  "schema_version": "1.0"
+}

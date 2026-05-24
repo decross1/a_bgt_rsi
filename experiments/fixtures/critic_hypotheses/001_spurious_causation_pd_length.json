@@ -1,0 +1,17 @@
+{
+  "id": "001_spurious_causation_pd_length",
+  "hypothesis_text": "Across our five-opponent iterated Prisoner's Dilemma sweep, runs that lasted more rounds had higher cooperation rates. We conclude that longer interaction horizons cause LLM players to cooperate more, consistent with the folk-theorem prediction that extended shadow-of-the-future supports cooperation.",
+  "domain": "game_theory",
+  "injected_flaw_type": "spurious_causation",
+  "flaw_description": "Round count was not varied independently — the long-horizon runs were the all-C and TFT runs which were always-cooperate by construction. The correlation is between opponent type and round count (all our long runs happen to be with cooperative opponents), not between round count and cooperation. A proper test would hold opponent fixed and vary horizon.",
+  "expected_critique_targets": [
+    "round count was not varied independently of opponent",
+    "confound between opponent type and horizon",
+    "no within-opponent length manipulation",
+    "folk-theorem citation does not justify the causal claim from this data"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "moderate",
+  "context": "exp001 cooperation rates by opponent: tft=1.00, grim=1.00, all_c=1.00, all_d=0.12, mirror_llm=0.98 — all 100 rounds.",
+  "schema_version": "1.0"
+}

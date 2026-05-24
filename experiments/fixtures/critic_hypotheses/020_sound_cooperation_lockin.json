@@ -1,0 +1,17 @@
+{
+  "id": "020_sound_cooperation_lockin",
+  "hypothesis_text": "Gemma 4 (NVFP4) exhibits a cooperation lock-in against non-defecting opponents in 100-round matrix Prisoner's Dilemma: across the baseline run and three diagnostic conditions (raised temperature T=0.2, T=0.7, and exploitation-hint prompt at T=0.0), the cooperation rate against the mirror/TFT opponent was 1.000 in all four conditions, while cooperation against all-D ranged 0.020-0.120. Sampling temperature and prompt-framing perturbations did not move the lock-in, but the model remains responsive to opponent behavior on the all-D side. We do not claim this generalizes beyond Gemma 4 NVFP4 / matrix PD / our prompt template; we report it as a one-model finding to aggregate with future models and games.",
+  "domain": "llm_behavior",
+  "injected_flaw_type": "none",
+  "flaw_description": "GROUND-TRUTH POSITIVE / SOUND HYPOTHESIS. This is the Day-7 cooperation-lock-in finding as documented in notes/day7_expected_range.md, written with the scope guardrails the actual result respects: temperature and prompt were both varied (4 runs total) as controls, the responsiveness check against all-D rules out a stuck-at-cooperate model, generalization is explicitly disclaimed, and the result is positioned as one data point in an aggregate. The critic agent SHOULD NOT substantively object to this hypothesis. Minor stylistic suggestions or requests for more conditions are acceptable; substantive flaw-flagging on this fixture indicates a high false-positive rate.",
+  "expected_critique_targets": [
+    "no substantive flaw should be identified",
+    "minor: could mention additional controls would strengthen the claim",
+    "minor: a non-quantization run would help isolate quantization effects",
+    "the explicit non-generalization disclaimer is appropriate"
+  ],
+  "ground_truth_label": "sound",
+  "severity": "moderate",
+  "context": "Day-7 result with 4-run diagnostic ladder (baseline, T=0.2, T=0.7, exploitation-hint). All four produced 1.000 vs TFT; 0.02-0.12 vs all_d. D-028 cleared publication gate under no-publish-standalone disposition.",
+  "schema_version": "1.0"
+}

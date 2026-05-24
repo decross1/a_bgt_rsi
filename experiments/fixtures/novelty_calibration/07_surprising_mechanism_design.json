@@ -1,0 +1,10 @@
+{
+  "id": "07_surprising_mechanism_design",
+  "hypothesis_text": "When LLM agents bid in a sealed-bid second-price auction with private valuations, providing the mechanism description in the prompt INCREASES bid-shading rather than reducing it — i.e., the LLM departs further from the dominant-strategy truthful bid when told the mechanism is incentive-compatible.",
+  "prior_art_summary": "The standard analytical result is that explaining a DSIC mechanism should make rational agents bid truthfully. No published LLM-in-auction result we are aware of reports the opposite empirical pattern.",
+  "ground_truth_tier": "surprising",
+  "ground_truth_novelty_score": 0.85,
+  "domain": "mech_design",
+  "rationale": "Predicts a counter-intuitive direction. If true, it overturns the naive expectation about LLM mechanism-compliance — high novelty by surprise.",
+  "schema_version": "1.0"
+}

@@ -1,0 +1,17 @@
+{
+  "id": "005_post_hoc_rationale",
+  "hypothesis_text": "We hypothesized that retrieval-augmented hypothesis generation would reduce redundancy because grounding in prior papers should anchor proposals away from the model's most-frequent priors. Our 20-trial run produced 12% redundancy versus a no-retrieval baseline of 35%, confirming the hypothesis.",
+  "domain": "methodology",
+  "injected_flaw_type": "post_hoc_rationale",
+  "flaw_description": "Examining the journal commits, the hypothesis was written after the 20-trial run completed and the 12% number was observed. The phrasing 'we hypothesized that' is retrospective — the original Day-40 plan called the redundancy test exploratory with no prediction. Pre-registering would have constrained the analysis.",
+  "expected_critique_targets": [
+    "hypothesis appears written after the observation",
+    "framing is retrospective",
+    "no pre-registration",
+    "exploratory analysis being reported as confirmatory"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "subtle",
+  "context": "Day-40 plan listed redundancy as an exploratory probe; journal entry on the 12% number was committed before the hypothesis was written down.",
+  "schema_version": "1.0"
+}

@@ -1,0 +1,17 @@
+{
+  "id": "011_goodhart",
+  "hypothesis_text": "Our Phase-2 hypothesis-generation pipeline improves novelty: after switching the generator's reward signal to maximize the novelty-evaluator score, the average novelty score on held-out batches rose from 0.58 to 0.81.",
+  "domain": "mech_design",
+  "injected_flaw_type": "goodhart",
+  "flaw_description": "The reward signal IS the novelty-evaluator score. Of course the score rises — the optimizer is being measured by the function it's now maximizing. The question of whether the *underlying construct* of novelty (e.g., human judgment, citation-graph distance) improved is unanswered. This is the canonical Goodhart failure mode: 'when a measure becomes a target, it ceases to be a good measure.'",
+  "expected_critique_targets": [
+    "metric is the optimization target",
+    "improvement is tautological",
+    "needs held-out evaluator or human judgment",
+    "underlying construct of novelty not validated"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "moderate",
+  "context": "Phase-2 candidate mechanism — reward = novelty-evaluator score.",
+  "schema_version": "1.0"
+}

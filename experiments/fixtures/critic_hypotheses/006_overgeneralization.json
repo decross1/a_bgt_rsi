@@ -1,0 +1,17 @@
+{
+  "id": "006_overgeneralization",
+  "hypothesis_text": "LLMs default to cooperation in social dilemmas. Our Day-7 result on Gemma 4 (NVFP4) showed 100% cooperation against three of four reciprocating opponent classes; this is the model's general behavior across game-theoretic environments.",
+  "domain": "llm_behavior",
+  "injected_flaw_type": "overgeneralization",
+  "flaw_description": "The claim extrapolates from one model (Gemma 4), one quantization (NVFP4), one game (matrix PD), and one prompt template to 'LLMs default to cooperation in social dilemmas.' The headline conflates a narrow finding with a general law. Even within PD, only a single 2-player setup was tested; coordination games, public goods, ultimatum, and N-player extensions were not.",
+  "expected_critique_targets": [
+    "one model is not 'LLMs'",
+    "matrix PD is not 'social dilemmas' generally",
+    "no other game families tested",
+    "quantization-specific result extrapolated"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "moderate",
+  "context": "Day-7 result was Gemma-4 NVFP4 only, repeated PD only, single prompt template.",
+  "schema_version": "1.0"
+}

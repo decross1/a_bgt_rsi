@@ -1,0 +1,10 @@
+{
+  "id": "06_novel_critic_dispatch",
+  "hypothesis_text": "An orchestrator-dispatched critic agent that scores hypotheses against a structured flaw taxonomy reduces post-hoc-rationale errors more than an unstructured critic prompt, even at fixed compute budget.",
+  "prior_art_summary": "Critic / debate / self-refine patterns are studied (Constitutional AI; Self-Refine 2023; debate work 2023-25). Structured-taxonomy vs. unstructured-prompt comparison at fixed compute is an unexplored angle.",
+  "ground_truth_tier": "novel",
+  "ground_truth_novelty_score": 0.60,
+  "domain": "methodology",
+  "rationale": "Sits in a busy area but identifies a comparison the literature hasn't run. Novel framing of a known mechanism.",
+  "schema_version": "1.0"
+}

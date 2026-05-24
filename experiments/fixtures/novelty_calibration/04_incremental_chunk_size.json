@@ -1,0 +1,10 @@
+{
+  "id": "04_incremental_chunk_size",
+  "hypothesis_text": "Reducing BGE-M3 retrieval chunk size from 512 to 256 tokens improves needle-in-haystack recall by 4-7% on academic-paper corpora.",
+  "prior_art_summary": "Retrieval chunking trade-offs are extensively studied (LangChain / LlamaIndex docs; numerous RAG papers 2023-2025). Smaller chunks improving recall on dense queries is the standard finding.",
+  "ground_truth_tier": "incremental",
+  "ground_truth_novelty_score": 0.25,
+  "domain": "methodology",
+  "rationale": "Confirms well-known RAG trade-off with specific numbers on a specific corpus. Low-mid novelty.",
+  "schema_version": "1.0"
+}

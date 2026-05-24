@@ -1,0 +1,10 @@
+{
+  "id": "03_incremental_llm_pd_temperature",
+  "hypothesis_text": "Increasing sampling temperature from 0.0 to 0.7 increases the variance of LLM defection decisions in repeated PD but does not change the mean cooperation rate.",
+  "prior_art_summary": "Prior LLM-in-PD work (e.g., Horton 2023 territory; Aher et al. 2023 on LLM simulations) reports temperature sweeps; a variance-up-mean-stable result is a modest extension within that line.",
+  "ground_truth_tier": "incremental",
+  "ground_truth_novelty_score": 0.30,
+  "domain": "llm_behavior",
+  "rationale": "Extends a known line with a quantifiable finding; valuable but not surprising. Mid-low novelty.",
+  "schema_version": "1.0"
+}

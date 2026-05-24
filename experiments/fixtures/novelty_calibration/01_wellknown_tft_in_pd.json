@@ -1,0 +1,10 @@
+{
+  "id": "01_wellknown_tft_in_pd",
+  "hypothesis_text": "Tit-for-tat performs well in iterated Prisoner's Dilemma tournaments because it is nice, retaliatory, forgiving, and clear.",
+  "prior_art_summary": "Axelrod (1980, 1984) — the canonical result establishing TFT's tournament performance and its four properties verbatim.",
+  "ground_truth_tier": "well_known",
+  "ground_truth_novelty_score": 0.05,
+  "domain": "game_theory",
+  "rationale": "Verbatim restatement of Axelrod's textbook claim. Any novelty evaluator scoring this above ~0.15 is mis-calibrated.",
+  "schema_version": "1.0"
+}

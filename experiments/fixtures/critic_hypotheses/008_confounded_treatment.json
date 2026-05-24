@@ -1,0 +1,17 @@
+{
+  "id": "008_confounded_treatment",
+  "hypothesis_text": "Switching from the v0.20.0 vLLM serving image to v0.21.0 increased tool-call invocation rate from 0.78 to 1.00 on the Day-4 sweep. We attribute this to the v0.21.0 changes to the tool-calling parser.",
+  "domain": "llm_behavior",
+  "injected_flaw_type": "confounded_treatment",
+  "flaw_description": "Between the two runs, the team also changed the prompt template (added explicit tool-use examples), bumped the MoE backend from CUTLASS_FP4 to MARLIN, and increased max_tokens from 256 to 1024. Any of these — or interactions among them — could explain the rate change. Attribution to the parser change is unidentified.",
+  "expected_critique_targets": [
+    "multiple variables changed simultaneously",
+    "prompt template change is a plausible alternative cause",
+    "MARLIN backend change is a plausible alternative cause",
+    "need single-variable A/B"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "moderate",
+  "context": "Day-1 and Day-4 logs show concurrent image, prompt, backend, and max_tokens changes.",
+  "schema_version": "1.0"
+}
