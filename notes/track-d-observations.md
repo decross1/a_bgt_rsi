@@ -134,3 +134,54 @@ assumption v1 was making.
    the v2 results browser, because the results browser's
    experiment-outcome schema (see §1 of this file, 2026-05-19) is
    still un-pinned. Sequencing reasoning is in `ui_plan_v2.md` §5.5.
+
+## 2026-05-24 — Day-8 audit of Day-7 artifacts (UI v1 ship)
+
+Pre-flight audit before the Week-2 unlock attestation, paired with the
+r11 `UnlockPanel.tsx` ship. UI v1's `/api/unlock_status` was driven
+against the real on-disk Week-1 artifacts via the FastAPI TestClient.
+**No integrity issues found.** Recorded here so a future session does
+not re-audit blindly.
+
+- `run_state/week1.run.jsonl`: 137 entries, 0 malformed (every line
+  parses and carries the full plan.yaml Appendix-C required field set).
+  Rolling 7-day window: 135 entries.
+- `run_state/week1.state.json`: `current_day=day_8`, `completed_tasks`
+  includes the 16 Day-7 backfilled IDs noted in
+  `state.notes.day_7_completed_tasks_backfill`, `human_gates_pending=[]`
+  (D-028 cleared the Day-7 publication-review gate), `fallbacks_taken`
+  carries 4 entries (`day1_block2_vllm_serve`, `day1_nemoclaw`,
+  `day5_ml_intern`, `day6_orchestrator_isolation`), `metric_log` has 11
+  keys including the Day-7 slip-ladder triplet
+  `day7_1/7_2/7_3_coop_rate_vs_tft` and the diagnostic
+  `day7_3_coop_rate_vs_all_d`.
+- `run_state/attestations.jsonl`: only the schema-comment line — no
+  pending soft-gates.
+- `run_state/escalations.jsonl`: only the schema-comment line — no
+  hard-gate escalations.
+- `run_state/claims.jsonl`: 5 entries beyond the schema comment — last
+  release was Track B closing `tests-shared` on 2026-05-23T09:25:13Z;
+  no stale active claims.
+- `logs/orchestrator.jsonl` (88 lines): Day-7 PD experiment events
+  surface in `/api/recent_tasks` (the r10 sort-key + filter fix works
+  on real data — `exp001_7_3-*` rows render with
+  `stage=orchestrator_receipt` and `status=passed`).
+- `logs/exp001.jsonl` (600 lines), `exp001_7_{1,2,3}.jsonl`,
+  `day7_dryrun.jsonl`: all readable; `/api/workload_hint` correctly
+  classifies the current call shape as `short_completion`
+  (5.81 call/s × 2 tokens/call), so the decode-tok/s tile carries the
+  workload-aware annotation instead of misreading as a regression.
+- `experiments/exp001_repeated_pd/`: 5 strategies' `results/*.csv`,
+  `_aggregate/`, `per_round.jsonl`, `summary.json`,
+  `analysis/quicklook.md`, 5 cumulative-payoff PNGs, `experiment.lock`
+  — all present. The UI does not render experiment-level outputs in
+  v1; the v2 results browser is `ui_plan_v2.md` §2–4 and is still
+  blocked on the experiment-outcome schema (see §1 of this file,
+  2026-05-19).
+
+**Forward-looking process note for Track A (not blocking):** the r10
+follow-up flagged ("when a new orchestrator stage or status is added,
+validate the dashboard renders it") still stands. Recommend wiring it
+into the orchestrator-schema change checklist rather than relying on a
+side-track session catching it. The Day-8 audit caught no new gaps on
+top of r10's, but the discipline scales better than spot checks.

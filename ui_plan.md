@@ -10,24 +10,101 @@
 > schemas in `schema/`) but do NOT share source files outside `ui/`.
 > Read the operating contract below before doing anything.
 >
-> **Revision r10 (2026-05-23).** All build steps (6.1–6.7) plus seven
-> improvement passes are done; full history is in §0. The latest pass
-> (r10, Track D day-7-EOD UX audit) lands four small fixes the user
-> hit when running the real Day-7 PD experiment through the v1
-> dashboard: two real bugs in the orchestrator queue (status filter +
-> sort key, both missed the Day-6+ schema), better empty-state copy on
-> the Day-4-specific panels (so a non-Day-4 workload doesn't read
-> "empty" as "broken"), and a workload-aware annotation on the
-> decode-tok/s tile (so a ~2-tok-per-call workload doesn't read as a
-> regression against the day-1 [80,130] band, which was measured at
-> 256 tok/call). Also: §5 of `ui_plan_v2.md` extends the v2 sketch with
-> a live orchestrator-and-workers graph view requested by the user
-> during the same session. See §0 r10 for the audit details and what
-> Track A should know about for forward-looking plans.
+> **Revision r11 (2026-05-24).** **UI v1 is ship-complete for the
+> Day-38 Week-2 unlock gate.** This pass wires the frontend consumer
+> for `/api/unlock_status` (the r9 backend that had no dashboard
+> renderer yet). The new `UnlockPanel.tsx` surfaces the five §11.3
+> Week-2-unlock prerequisites — run-log integrity, soft-gate queue,
+> hard-gates pending, fallbacks_taken, and a day-grouped metric_log —
+> so the human can attest the Week-2 tier shift from the UI rather
+> than from raw logs. The panel is strictly read-only: rollback /
+> attest commands surface as copy-paste CLI strings (operating-contract
+> rule 8). All Day-7 artifacts (137-line run.jsonl, 88-line
+> orchestrator.jsonl, 4-run PD diagnostic ladder, fallbacks_taken,
+> D-028 gate-clear note) render correctly against real on-disk data.
+> 85 Python + 25 frontend tests pass; `vite build` clean. See §0 r11
+> for the audit + ship details.
 
 ---
 
 ## 0. Revision log
+
+**r11 (2026-05-24)** — UI v1 ship-complete for the Day-38 Week-2
+unlock gate. Closes the §11.3 frontend gap left open by r9 (the
+`/api/unlock_status` backend had no dashboard consumer; the Week-2
+unlock attestation per `agent/autonomy.md` §4 needs the human to see
+alignment evidence end-to-end). Independently from the wire-up, this
+pass also audited the real on-disk Day-7 artifacts against UI v1 —
+findings live in `notes/track-d-observations.md`.
+
+What landed:
+
+1. **`UnlockPanel.tsx` (new) + `Dashboard.tsx` (wire-up).** A single
+   card rendering the five §11.3 sections:
+   - **Run-log integrity** — pass/fail badge + total / malformed /
+     rolling-window counts; malformed line numbers listed when present.
+   - **Soft-gate queue** — per-pending row with `task_id`, `agent_id`,
+     summary, expected vs observed, and a copy-paste rollback CLI.
+     Tone is "warn" when non-empty (soft-gate auto-proceed is not a
+     failure, just a thing to know about).
+   - **Hard gates pending** — per-pending row with `task_id` and a
+     copy-paste attest CLI. Tone is "fail" when non-empty (hard-gates
+     halt the apparatus until the human attests).
+   - **fallbacks_taken** — list of `{day_id_taskid: reason}`. Tone is
+     "warn" when non-empty; the §11.3 sidebar requirement.
+   - **metric_log (drift check)** — keys grouped by the `day_N` prefix
+     so per-day comparison reads at a glance. The slip-ladder days
+     (`day7_1_…` / `day7_2_…` / `day7_3_…`) split into separate
+     "day 7.1 / 7.2 / 7.3" buckets rather than getting lumped under
+     "day 7".
+   The panel is strictly read-only: rollback / attest commands surface
+   as `<code>` text, never as `<button>` (operating-contract rule 8;
+   covered by a no-button vitest assertion).
+2. **`api/http.ts` + `types/schemas.ts`.** Added `UnlockStatus`,
+   `SoftGatePending`, `HardGatePending`, `SoftGateQueue`,
+   `HardGatesPending`, `RunLogIntegrity` mirrors of the backend payload,
+   plus `getUnlockStatus`.
+3. **`tests/test_unlock_panel.tsx`.** 5 vitest cases covering the
+   all-clear render, malformed-line flagging + fallback rendering,
+   pending soft-gate rollback as copy-paste text (no rollback button),
+   pending hard-gate attest command + fail badge, and the
+   backend-error path.
+
+Audit findings (full list in `notes/track-d-observations.md`):
+
+- `run_state/week1.run.jsonl` 137 lines, 0 malformed under the
+  Appendix-C required-field set; rolling 7-day window 135 entries.
+- `run_state/week1.state.json` `current_day=day_8`,
+  `human_gates_pending=[]`, 4 entries in `fallbacks_taken`, 11
+  `metric_log` keys (including the Day-7 slip-ladder triplet
+  `day7_1/7_2/7_3_coop_rate_vs_tft` and the diagnostic
+  `day7_3_coop_rate_vs_all_d`).
+- `/api/recent_tasks` against the real `logs/orchestrator.jsonl`
+  surfaces Day-7 PD events as `stage=orchestrator_receipt`
+  `status=passed`; the r10 sort-key + filter fix confirmed working on
+  real data.
+- `/api/workload_hint` classifies the on-disk PD workload as
+  `short_completion` (5.81 calls/s × 2 tokens/call), so the decode tile
+  carries the workload-aware annotation instead of misreading as a
+  regression.
+
+85 Python tests pass (no change vs r10) + 25 frontend tests pass (20
+prior + 5 new); `tsc --noEmit && vite build` clean.
+
+**What Track A should know about for forward-looking plans:**
+- UI v1 is now complete for the Week-2 unlock attestation per
+  `agent/autonomy.md` §3. The five §11.3 prerequisites render end-to-end
+  against real on-disk artifacts. Track A's unlock-attestation flow
+  can proceed against this UI; no further Track-D work is gating it.
+- `tools/attest_gate.py` and `tools/rollback_attestation.py` (Track C)
+  are still referenced as informational CLI strings in the UnlockPanel.
+  When those land, the strings become real human-runnable commands;
+  no UI change needed because the strings already match the conventions
+  agreed at r9.
+- The §11.3 sidebar that r9 expected for `fallbacks_taken` is rendered
+  as one of the five panel sections rather than a separate sidebar
+  widget — it kept the layout dense and avoided a layout reflow on a
+  rarely-changing field.
 
 **r10 (2026-05-23)** — Day-7-EOD UX audit + four small fixes. The user
 ran the real Day-7 PD experiment through the v1 dashboard and surfaced
