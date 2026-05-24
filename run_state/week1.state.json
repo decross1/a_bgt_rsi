@@ -86,7 +86,9 @@
     "day7_retrospective"
   ],
   "aborted_days": [],
-  "human_gates_pending": [],
+  "human_gates_pending": [
+    "day8_week2_unlock_attestation"
+  ],
   "fallbacks_taken": {
     "day1_block2_vllm_serve": "MTP deferred to Week 2+ \u2014 NVFP4 baseline; pinned vLLM image 0.19.1.dev6 predates merged PR #41745 MTP support",
     "day1_nemoclaw": "NemoClaw onboarding skipped (binary not installed) \u2014 hardened plain-Docker fallback verified working",
@@ -104,11 +106,12 @@
     "day7_1_coop_rate_vs_tft": 1.0,
     "day7_2_coop_rate_vs_tft": 1.0,
     "day7_3_coop_rate_vs_tft": 1.0,
-    "day7_3_coop_rate_vs_all_d": 0.020
+    "day7_3_coop_rate_vs_all_d": 0.02
   },
   "notes": {
     "day_4_entries_count_finding": "RESOLVED 2026-05-21 (D-026, human-authorized decross1). plan.yaml day_4 jsonl-integrity bullet 'total entries across day 4 >= 30' was unreachable for the prescribed --n 5 scope (12 call records). Amended to per-artifact record counts (day4_e2e.jsonl: 2 linked records; day4_robust.jsonl: 2 per trial / 10 for --n 5). Day 4 run-log entry keeps original status=partial_pass (append-only history); the amendment makes the prescribed scope satisfy the check going forward. Carryover closed.",
     "day_7_publication_review_gate_resolution": "CLEARED 2026-05-24 (D-028, human-authorized decross1). Disposition: no-publish-standalone; the Day-7 result aggregates into a broader future publication that combines Day-7 with subsequent experiments (additional games, models, opponent classes per Week-2 seed). The 4-run diagnostic ladder (Days 7.1/7.2/7.3) establishes that the LLM-vs-cooperator 1.000 cooperation rate is Gemma 4's prior, not a sampling or framing artifact. Data retention unaffected (experiments/exp001_repeated_pd/ stays); only external publication is constrained.",
-    "day_7_completed_tasks_backfill": "BACKFILLED 2026-05-24. Day-7 task IDs were absent from completed_tasks during the publication-review gate hold (current_day=day_7, gate ARMED). Now that D-028 clears the gate and current_day advances to day_8, the 16 day_7 task IDs are appended to completed_tasks to reflect reality. The slip-ladder tasks (day7_block2_run_experiment / day7_1_/7_2_) are listed as completed because the slip mechanism resolved at day7_3_block2_run_experiment; their original run-log entries keep status=partial (append-only history). day7_publication_review_gate is listed because it is now discharged."
+    "day_7_completed_tasks_backfill": "BACKFILLED 2026-05-24. Day-7 task IDs were absent from completed_tasks during the publication-review gate hold (current_day=day_7, gate ARMED). Now that D-028 clears the gate and current_day advances to day_8, the 16 day_7 task IDs are appended to completed_tasks to reflect reality. The slip-ladder tasks (day7_block2_run_experiment / day7_1_/7_2_) are listed as completed because the slip mechanism resolved at day7_3_block2_run_experiment; their original run-log entries keep status=partial (append-only history). day7_publication_review_gate is listed because it is now discharged.",
+    "day_8_ui_v1_verification_cleared": "CLEARED 2026-05-24 via human attestation (decross1) \u2014 UI v1 Dashboard renders the new Week-2 unlock prerequisites panel (UnlockPanel.tsx) plus all prior Week-1 panels correctly; the five sections (run-log integrity 0/145, soft-gate queue clear, hard-gates clear, 11 metric_log keys grouped by day, 4 fallbacks_taken) match state.json + run_state/week1.run.jsonl via /api/unlock_status. Verifier-naming drift (verify_log_integrity vs verify_run_log_integrity) carried to Week-2 polish; not blocking. The strict-serial successor day8_block2_week2_unlock_attestation is now eligible and armed."
   }
 }
