@@ -86,9 +86,7 @@
     "day7_retrospective"
   ],
   "aborted_days": [],
-  "human_gates_pending": [
-    "day8_week2_unlock_attestation"
-  ],
+  "human_gates_pending": [],
   "fallbacks_taken": {
     "day1_block2_vllm_serve": "MTP deferred to Week 2+ \u2014 NVFP4 baseline; pinned vLLM image 0.19.1.dev6 predates merged PR #41745 MTP support",
     "day1_nemoclaw": "NemoClaw onboarding skipped (binary not installed) \u2014 hardened plain-Docker fallback verified working",
@@ -112,6 +110,60 @@
     "day_4_entries_count_finding": "RESOLVED 2026-05-21 (D-026, human-authorized decross1). plan.yaml day_4 jsonl-integrity bullet 'total entries across day 4 >= 30' was unreachable for the prescribed --n 5 scope (12 call records). Amended to per-artifact record counts (day4_e2e.jsonl: 2 linked records; day4_robust.jsonl: 2 per trial / 10 for --n 5). Day 4 run-log entry keeps original status=partial_pass (append-only history); the amendment makes the prescribed scope satisfy the check going forward. Carryover closed.",
     "day_7_publication_review_gate_resolution": "CLEARED 2026-05-24 (D-028, human-authorized decross1). Disposition: no-publish-standalone; the Day-7 result aggregates into a broader future publication that combines Day-7 with subsequent experiments (additional games, models, opponent classes per Week-2 seed). The 4-run diagnostic ladder (Days 7.1/7.2/7.3) establishes that the LLM-vs-cooperator 1.000 cooperation rate is Gemma 4's prior, not a sampling or framing artifact. Data retention unaffected (experiments/exp001_repeated_pd/ stays); only external publication is constrained.",
     "day_7_completed_tasks_backfill": "BACKFILLED 2026-05-24. Day-7 task IDs were absent from completed_tasks during the publication-review gate hold (current_day=day_7, gate ARMED). Now that D-028 clears the gate and current_day advances to day_8, the 16 day_7 task IDs are appended to completed_tasks to reflect reality. The slip-ladder tasks (day7_block2_run_experiment / day7_1_/7_2_) are listed as completed because the slip mechanism resolved at day7_3_block2_run_experiment; their original run-log entries keep status=partial (append-only history). day7_publication_review_gate is listed because it is now discharged.",
-    "day_8_ui_v1_verification_cleared": "CLEARED 2026-05-24 via human attestation (decross1) \u2014 UI v1 Dashboard renders the new Week-2 unlock prerequisites panel (UnlockPanel.tsx) plus all prior Week-1 panels correctly; the five sections (run-log integrity 0/145, soft-gate queue clear, hard-gates clear, 11 metric_log keys grouped by day, 4 fallbacks_taken) match state.json + run_state/week1.run.jsonl via /api/unlock_status. Verifier-naming drift (verify_log_integrity vs verify_run_log_integrity) carried to Week-2 polish; not blocking. The strict-serial successor day8_block2_week2_unlock_attestation is now eligible and armed."
-  }
+    "day_8_ui_v1_verification_cleared": "CLEARED 2026-05-24 via human attestation (decross1) \u2014 UI v1 Dashboard renders the new Week-2 unlock prerequisites panel (UnlockPanel.tsx) plus all prior Week-1 panels correctly; the five sections (run-log integrity 0/145, soft-gate queue clear, hard-gates clear, 11 metric_log keys grouped by day, 4 fallbacks_taken) match state.json + run_state/week1.run.jsonl via /api/unlock_status. Verifier-naming drift (verify_log_integrity vs verify_run_log_integrity) carried to Week-2 polish; not blocking. The strict-serial successor day8_block2_week2_unlock_attestation is now eligible and armed.",
+    "week_2_unlock_attestation_cleared": "CLEARED 2026-05-24 (commit 60463c8, human/retrospectives/week2.md \u00a70). Second-of-two consecutive weekly attestations per autonomy.md \u00a74.2. All four alignment-evidence boxes ticked: decision parity \u2264 1, no silent metric drift (0/11), run-log integrity (0/145), claim-protocol cleanliness (0/0/0). Tier-shift inventory from week1.md \u00a78 applied (see state.tier_shifts[-1] for the 6 shifts). Next attestation chain: Day-44 week2.md \u00a77 \u2192 Weeks-3-4 unlock."
+  },
+  "tier_shifts": [
+    {
+      "applied_at": "2026-05-24T02:30:00Z",
+      "trigger": "week_2_unlock_attestation",
+      "attestation_chain": [
+        "human/retrospectives/week1.md \u00a77 (2026-05-23, hash e544699)",
+        "human/retrospectives/week2.md \u00a70 (2026-05-24, hash 60463c8)"
+      ],
+      "attested_by": "decross1",
+      "shifts": [
+        {
+          "task_id": "preflight_credentials_staged",
+          "from": "hard_gate",
+          "to": "autonomous",
+          "rationale": "env-var verifier sufficient"
+        },
+        {
+          "task_id": "day2_block2_50call_sweep",
+          "from": "hard_gate",
+          "to": "soft_gate",
+          "sla_hours": 4
+        },
+        {
+          "task_id": "day3_block2_chroma_install",
+          "from": "hard_gate",
+          "to": "soft_gate",
+          "sla_hours": 4
+        },
+        {
+          "task_id": "day6_block2_robustness_mini",
+          "from": "hard_gate",
+          "to": "soft_gate",
+          "sla_hours": 4,
+          "rationale": "\u22654/5 pass threshold sufficient"
+        },
+        {
+          "task_id": "day7_block2_strategies_and_llm_agent",
+          "from": "hard_gate",
+          "to": "soft_gate",
+          "sla_hours": 4,
+          "scope": "prompt-grep validation only"
+        },
+        {
+          "task_id": "day5_block2_pipeline_arxiv_cross_check",
+          "from": "hard_gate",
+          "to": "soft_gate",
+          "sla_hours": 4
+        }
+      ],
+      "scope": "forward-looking; past completed instances of these task IDs keep their original audit history. The shift changes how similar future tasks are gated.",
+      "next_unlock": "Weeks-3-4 tier shifts require a second consecutive weekly attestation in week2.md \u00a77 (Day 44 retrospective) per agent/autonomy.md \u00a74.2"
+    }
+  ]
 }
