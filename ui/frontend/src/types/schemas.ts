@@ -217,3 +217,54 @@ export interface LiveMessage {
   source: "telemetry" | "orchestrator";
   line: Record<string, unknown>;
 }
+
+// --- Week-2 unlock prerequisites (/api/unlock_status) ---
+// Mirrors backend/unlock.py:compute_unlock_status. Five sections, each
+// independently `available` so the panel renders partial state cleanly.
+// See ui_plan.md §11.3.
+
+export interface RunLogIntegrity {
+  available: boolean;
+  ok: boolean | null;                  // null when file is absent
+  total_lines: number;
+  malformed_lines: number[];           // 1-based line numbers
+  rolling_window_days: number;
+  rolling_count: number;
+}
+
+export interface SoftGatePending {
+  task_id: string;
+  agent_id?: string | null;
+  summary?: string | null;
+  expected_observable?: string | null;
+  observed_actual?: string | null;
+  ts?: string | null;
+  sla_hours?: number | null;
+  rollback_command: string;            // informational CLI string; UI does not execute
+}
+
+export interface SoftGateQueue {
+  available: boolean;
+  pending: SoftGatePending[];
+}
+
+export interface HardGatePending {
+  task_id?: string | null;
+  attest_command: string | null;       // informational CLI string; UI does not execute
+  [key: string]: unknown;              // pass through any extra fields the state file carries
+}
+
+export interface HardGatesPending {
+  available: boolean;
+  pending: HardGatePending[];
+}
+
+export interface UnlockStatus {
+  milestone: string;
+  current_day: string | null;
+  run_log_integrity: RunLogIntegrity;
+  soft_gate_queue: SoftGateQueue;
+  hard_gates_pending: HardGatesPending;
+  metric_log: Record<string, number | string | null>;
+  fallbacks_taken: Record<string, string>;
+}

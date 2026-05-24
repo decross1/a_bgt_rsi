@@ -13,6 +13,7 @@ import type {
   RecentTask,
   RobustnessResponse,
   TelemetrySample,
+  UnlockStatus,
   WorkloadHint,
 } from "../types/schemas";
 
@@ -64,3 +65,6 @@ export const getBaseline = () => getJSON<BaselineResponse>("/api/baseline");
 
 export const getWorkloadHint = () =>
   getJSON<WorkloadHint>("/api/workload_hint");
+
+export const getUnlockStatus = () =>
+  getJSON<UnlockStatus>("/api/unlock_status");

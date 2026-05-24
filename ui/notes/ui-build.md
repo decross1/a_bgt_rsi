@@ -468,3 +468,51 @@ notes in `notes/track-d-day5-ui-sync.md`; summary below.
 5 real-artifact coverage in `test_real_schema.py`); `EventsViewer`
 frontend tests rewritten (3 → 6). 65 Python + 20 frontend tests pass;
 `npm run build` clean. `ui_plan.md` bumped r6 → r7.
+
+## r11 — UnlockPanel frontend (2026-05-24, Day-8 — Week-2 unlock gate)
+
+Closed the §11.3 frontend gap left open by r9. The backend's
+`/api/unlock_status` was shipped at r9 but had no dashboard consumer;
+the Week-2 unlock attestation (per `agent/autonomy.md` §4) needs the
+human to see alignment evidence end-to-end. The Day-38 UI-v1
+deliverable per `track_d.md` is now actually complete.
+
+### What landed
+
+- **`ui/frontend/src/components/UnlockPanel.tsx`** — a single card
+  rendering the five §11.3 sections: run-log integrity (badge + counts
+  + malformed-line list), soft-gate queue (per-pending row with
+  rollback CLI), hard-gates pending (per-pending row with attest CLI),
+  fallbacks_taken, metric_log (grouped by `day_N` prefix so per-day
+  comparison is visible at a glance). Wired into `Dashboard.tsx`
+  between the day-4 row and the baseline card. Polls
+  `/api/unlock_status` every 10 s.
+- **`api/http.ts` + `types/schemas.ts`** — added `UnlockStatus`,
+  `SoftGatePending`, `HardGatePending`, `SoftGateQueue`,
+  `HardGatesPending`, `RunLogIntegrity` mirrors of the backend payload,
+  plus `getUnlockStatus`.
+- **`tests/test_unlock_panel.tsx`** — 5 vitest cases: all-clear render,
+  malformed-line flagging + fallback rendering, soft-gate rollback as
+  copy-paste text (no `<button>` for the rollback affordance — the UI
+  stays read-only per operating-contract rule 8), hard-gate attest
+  command + fail badge, /api/unlock_status backend error surfaces
+  rather than rendering empty.
+
+### Surprises
+
+- None on the wire-up. `compute_unlock_status` against the real
+  on-disk Week-1 artifacts returned cleanly first try:
+  `run_log_integrity.ok=true`, 137 lines, 0 malformed, 0 pending
+  soft/hard gates, 11 metric_log keys, 4 fallbacks_taken. Same payload
+  the FastAPI app emits in production. The audit's findings live in
+  `notes/track-d-observations.md`.
+- The metric_log grouping regex (`/^day[_-]?(\d+(?:[._]\d+)?)/`)
+  intentionally collapses `day7_1_…` / `day7_2_…` / `day7_3_…` into
+  separate "day 7.1 / 7.2 / 7.3" buckets so the slip-ladder reads as
+  three sub-days rather than getting lumped under "day 7".
+
+### Tests
+
+85 Python tests pass (no change vs r10), 25 frontend tests pass
+(20 prior + 5 UnlockPanel cases). `tsc --noEmit && vite build` clean.
+`ui_plan.md` bumped r10 → r11.

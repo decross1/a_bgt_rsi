@@ -8,6 +8,7 @@ import HealthStrip from "../components/HealthStrip";
 import OrchestratorQueue from "../components/OrchestratorQueue";
 import ProcessGrid from "../components/ProcessGrid";
 import RobustnessPanel from "../components/RobustnessPanel";
+import UnlockPanel from "../components/UnlockPanel";
 import VllmPanel from "../components/VllmPanel";
 import { getHealth, getState } from "../api/http";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
@@ -87,6 +88,12 @@ export default function Dashboard() {
       <div className="mt-4 grid grid-cols-2 gap-4">
         <Day4ChainList />
         <RobustnessPanel />
+      </div>
+
+      {/* Week-2 unlock prerequisites — alignment-evidence the human needs
+          to attest the Week-2 tier-shift unlock (ui_plan.md §11.3). */}
+      <div className="mt-4">
+        <UnlockPanel />
       </div>
 
       <div className="mt-4">
