@@ -1,0 +1,17 @@
+{
+  "id": "012_regression_to_mean",
+  "hypothesis_text": "Targeted prompt revisions improve the worker pool: we identified the three worst-performing workers from a 50-trial sweep, rewrote their system prompts, and the same three workers improved by 18% on the next sweep. Prompt iteration on poor performers is effective.",
+  "domain": "methodology",
+  "injected_flaw_type": "regression_to_mean",
+  "flaw_description": "Workers selected because they had the lowest scores in one noisy sweep are exactly the workers most likely to score higher next sweep regardless of any intervention — pure regression to the mean. A proper test re-runs all workers with no intervention as a control; the prompt-revision effect is whatever improvement exceeds that baseline.",
+  "expected_critique_targets": [
+    "selected on the dependent variable (low scores)",
+    "regression to the mean explains expected improvement",
+    "need a no-intervention control on the same workers",
+    "alternative: randomized intervention assignment"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "subtle",
+  "context": "n=50 trials with noisy per-trial scoring; three worst selected for intervention.",
+  "schema_version": "1.0"
+}

@@ -1,0 +1,17 @@
+{
+  "id": "013_missing_baseline",
+  "hypothesis_text": "Our retrieval pipeline produces highly relevant context: the average relevance score of retrieved chunks was 0.74 (cosine similarity to query), demonstrating that BGE-M3 embeddings effectively support our research workflow.",
+  "domain": "llm_behavior",
+  "injected_flaw_type": "missing_baseline",
+  "flaw_description": "0.74 cosine similarity is meaningless without a baseline: what does random retrieval score? What does BM25 score? What does a different embedding model (e.g., e5-large) score? Absolute cosine values from a high-dimensional model say nothing about retrieval quality on their own. Need at least a random-retrieval lower bound and a BM25 reference.",
+  "expected_critique_targets": [
+    "no random-retrieval baseline",
+    "no alternative-embedder comparison",
+    "absolute cosine values are not interpretable alone",
+    "needs BM25 or similar reference"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "obvious",
+  "context": "Day-3 needle-in-haystack 0.7221 was a different metric (NDCG@10); this hypothesis is about a separate retrieval-quality claim.",
+  "schema_version": "1.0"
+}

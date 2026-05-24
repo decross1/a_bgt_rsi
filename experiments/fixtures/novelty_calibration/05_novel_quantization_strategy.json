@@ -1,0 +1,10 @@
+{
+  "id": "05_novel_quantization_strategy",
+  "hypothesis_text": "NVFP4-quantized Gemma 4 shows a quantitatively different cooperation lock-in pattern from BF16 Gemma 4 in repeated PD: NVFP4 locks at 1.00, BF16 fluctuates in a 0.85-0.95 band against the same TFT opponent and prompt.",
+  "prior_art_summary": "Quantization × behavioral-economics interaction in LLMs is largely unstudied. Most quantization work measures perplexity / MMLU; behavioral lock-in as a quantization-sensitive effect is not a published result.",
+  "ground_truth_tier": "novel",
+  "ground_truth_novelty_score": 0.65,
+  "domain": "llm_behavior",
+  "rationale": "Cross-cuts quantization research and behavioral game theory in a way the literature has not. Genuinely novel without being implausible.",
+  "schema_version": "1.0"
+}

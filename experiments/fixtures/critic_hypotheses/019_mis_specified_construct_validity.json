@@ -1,0 +1,17 @@
+{
+  "id": "019_mis_specified_construct_validity",
+  "hypothesis_text": "Our single-item auction mechanism is incentive-compatible for LLM bidders: across 50 trials with random private valuations drawn from U[0,1], bidders bid within 5% of their valuation on average, demonstrating truthful revelation.",
+  "domain": "mech_design",
+  "injected_flaw_type": "mis_specified_construct_validity",
+  "flaw_description": "Incentive compatibility is a property of the mechanism (dominant-strategy IC, Bayesian-Nash IC), proven analytically by reference to payoff structure — not a property established by observing that bidders bid near their values. A first-price auction would also produce bids near valuations under risk aversion, yet first-price is NOT incentive-compatible. The empirical observation does not establish the formal property.",
+  "expected_critique_targets": [
+    "incentive compatibility is an analytical property, not empirical",
+    "near-truthful bids are consistent with non-IC mechanisms",
+    "needs proof for the payoff structure, not observation",
+    "first-price counterexample"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "moderate",
+  "context": "Week-4 single-item auction rung sketch; conflates empirical bid behavior with mechanism property.",
+  "schema_version": "1.0"
+}

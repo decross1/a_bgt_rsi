@@ -1,0 +1,17 @@
+{
+  "id": "017_publication_threshold",
+  "hypothesis_text": "The retrieval-conditioned generator outperforms the baseline (p = 0.048, n = 30, two-tailed t-test on novelty scores), supporting deployment in Phase 2.",
+  "domain": "methodology",
+  "injected_flaw_type": "publication_threshold",
+  "flaw_description": "p = 0.048 with n=30 is right at the 0.05 gerrymander zone. The analysis log shows three different test specifications were attempted (one-tailed t-test, Mann-Whitney, two-tailed t-test); only the two-tailed t-test cleared 0.05 and only by 0.002. With no pre-registered analysis plan and three tests considered, the Bonferroni-corrected threshold would be 0.0167, which the reported p does not clear.",
+  "expected_critique_targets": [
+    "garden-of-forking-paths across three test specifications",
+    "no pre-registered analysis plan",
+    "Bonferroni correction not applied",
+    "0.048 with cherry-picked test is not robust"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "moderate",
+  "context": "Analysis log shows three statistical-test specifications considered before reporting.",
+  "schema_version": "1.0"
+}

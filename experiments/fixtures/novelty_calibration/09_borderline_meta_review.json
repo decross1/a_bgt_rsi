@@ -1,0 +1,10 @@
+{
+  "id": "09_borderline_meta_review",
+  "hypothesis_text": "Active meta-review — a step that compares each new hypothesis against the last three accepted hypotheses and rejects duplicates — substantially reduces redundancy in autonomous-research pipelines.",
+  "prior_art_summary": "Deduplication / diversity-promoting heuristics are common in IR and autonomous-agent work, but framed specifically as an N-step look-back meta-review the literature is sparse.",
+  "ground_truth_tier": "incremental",
+  "ground_truth_novelty_score": 0.40,
+  "domain": "methodology",
+  "rationale": "Borderline incremental/novel — a sensible engineering choice with weak novelty. Tests whether the evaluator can identify mid-spectrum claims rather than always going to extremes.",
+  "schema_version": "1.0"
+}

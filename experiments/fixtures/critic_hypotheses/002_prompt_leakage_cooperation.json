@@ -1,0 +1,17 @@
+{
+  "id": "002_prompt_leakage_cooperation",
+  "hypothesis_text": "Gemma 4 exhibits a strong cooperative disposition in repeated games: across 400 rounds against TFT-style opponents it cooperated 99% of the time. This supports the view that instruction-tuned models develop pro-social priors during RLHF.",
+  "domain": "llm_behavior",
+  "injected_flaw_type": "prompt_leakage",
+  "flaw_description": "The prompt used in this run included the sentence 'You are a cooperative agent playing a repeated game with a partner you would like to maintain a good relationship with.' The cooperation rate is therefore evidence about prompt-following, not about an emergent RLHF prior. Re-running with a neutral prompt is required.",
+  "expected_critique_targets": [
+    "prompt itself instructed cooperation",
+    "result is consistent with instruction-following, not an emergent disposition",
+    "needs a neutral-prompt control",
+    "RLHF claim is unidentified from this data"
+  ],
+  "ground_truth_label": "flawed",
+  "severity": "obvious",
+  "context": "Pre-prompt text included role priming. No neutral-prompt control was run.",
+  "schema_version": "1.0"
+}
