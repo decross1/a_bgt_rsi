@@ -50,11 +50,20 @@ Claim protocol (mandatory before any file write):
      timestamp.
 
 Your specific task for today is at the end of this prompt. When the
-task is complete:
-  1. git add the files you wrote, in your worktree
-  2. git commit with message "track-b dayN: <one-line summary>"
-  3. Append release entry to run_state/claims.jsonl
+task is complete, commit your work AND your claim/release entries
+ATOMICALLY in one commit:
+  1. Append your release entry to run_state/claims.jsonl in your
+     worktree (the claim line from claim-protocol step 3 is already
+     there).
+  2. git add <files you wrote> AND run_state/claims.jsonl in the same
+     `git add` invocation.
+  3. git commit with message "track-b dayN: <one-line summary>".
   4. Print "TRACK B COMPLETE — ready to merge" and exit.
+
+Why atomic: a release line that lives only in your worktree's working
+copy is invisible to Track A at merge — the audit trail is incomplete
+and Track A has to salvage post-hoc. Day-8 surfaced this with Track D
+(commit ad24625 salvaged the missed lines). Don't repeat.
 
 Today's task:
 {INSERT FROM THE PER-DAY TASK TABLE BELOW}

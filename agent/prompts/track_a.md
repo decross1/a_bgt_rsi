@@ -33,6 +33,30 @@ Tier semantics:
     wait for explicit human attestation (no SLA on Block 1; 48h on
     other hard_gates).
 
+Tier-shift mapping (apply when authoring new task entries):
+  Before authoring any agent_executable task with autonomy_tier:,
+  check state.tier_shifts (newest entry last) for the current mapping.
+  Phase-boundary attestations modify the default tier for task
+  categories going forward. Day-8 cleared the Week-2 unlock attestation
+  (commit 41ea0ba), shifting 6 task categories from hard_gate to
+  lighter tiers (preflight_credentials_staged → autonomous; the
+  day2_50call_sweep / day3_chroma_install / day5_arxiv_cross_check /
+  day6_robustness_mini / day7_strategies_and_llm_agent representatives
+  → soft_gate with 4h SLA). If your new task matches one of those
+  categories by shape, author it at the shifted tier — do NOT default
+  to Week-1 hard-gates everywhere. The authoritative list lives in
+  state.tier_shifts; do not derive it from older plan.yaml entries
+  (those keep their original audit history).
+
+Claim/release atomicity:
+  When you claim a dispatchable zone (e.g., docs-agent / docs-root
+  for an aux task), commit the claim+release entries to
+  run_state/claims.jsonl in the SAME commit as the work-product. A
+  release line that lives only in a worktree's working copy is
+  invisible at merge and forces post-hoc salvage. Day-8 surfaced this
+  with Track D (commit ad24625 salvaged the missed lines); the
+  side-track prompts (track_b/c/d.md) carry the same rule.
+
 Never auto-publish Day 7 results. The day7_publication_review_gate is
 inviolate.
 
