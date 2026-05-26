@@ -132,7 +132,9 @@ These do not bend.
 - Continuous-running orchestrator — not yet; LOOP_V0 is single-shot,
   human-triggered iterations.
 - Fine-tuning / training runs — not in LOOP_V0.
-- Second model (Qwen 3.6) — deferred until LOOP_V0 is exercised.
+- Second model — excluded; the apparatus is single-model on
+  Gemma 4 26B-A4B-NVFP4 (D-033). Same-model novelty scoring stays
+  mitigated by logged human sampling per ARCHITECTURE.md §6 step 6.
 
 ## Where things live
 

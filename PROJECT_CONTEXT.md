@@ -155,7 +155,10 @@ operating contract for the executing agent is in
 **Five validation-pass adjustments baked into Week 1.** Each is logged in
 `DECISIONS.md` with the rationale.
 1. BGE-M3 as embedding model (not ChromaDB default `all-MiniLM-L6-v2`).
-2. Defer Qwen 3.6 to Week 2–3 (avoid configuration matrix).
+2. Exclude Qwen 3.6 entirely (D-033). The apparatus is single-model
+   on Gemma 4 26B-A4B-NVFP4. D-012's "no dual-model routing" stance
+   remains; D-033 extends that to "no second model at all" for the
+   current scope.
 3. OpenSpiel + Game Reasoning Arena for the synthetic tier (not a custom
    env; saves 1–2 weeks).
 4. Pin CUDA 13.0, disable auto-update (CUDA 13.2 produces gibberish on

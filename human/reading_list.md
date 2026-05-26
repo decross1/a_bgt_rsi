@@ -104,7 +104,8 @@ Bandit selection for multi-candidate generation (W2-12). Week 3.
 ### Phase 2+ candidates
 
 - Sutton & Barto, *Reinforcement Learning* — Phase 2
-- A second model-comparison primer (Qwen 3.6 vs Gemma 4) — Week 2–3
+- ~~A second model-comparison primer (Qwen 3.6 vs Gemma 4) — Week 2-3~~
+  Dropped 2026-05-26 (D-033): single-model apparatus on Gemma 4.
 
 ---
 

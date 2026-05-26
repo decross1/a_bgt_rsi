@@ -172,6 +172,7 @@ done.
 - Polymarket live trading (design-only until CFTC compliance work).
 - Continuous-running orchestrator (LOOP_V0 is single-shot, human-triggered).
 - Fine-tuning / training runs.
-- Second model (Qwen 3.6) until LOOP_V0 is exercised.
+- Second model — excluded (D-033). The apparatus is single-model on
+  Gemma 4 26B-A4B-NVFP4.
 - The retired track/tier framework — references are in `archive/`,
   but the active model is one primary + one UI session.

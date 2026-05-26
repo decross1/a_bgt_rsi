@@ -75,10 +75,13 @@ accuracy trade-off in NVIDIA's modelopt toolkit; full uniform FP4 quants
 attention too, at a small accuracy cost. The NVIDIA checkpoint is the
 correct production choice here.
 
-Qwen 3.6 27B Dense is the documented alternative if coding quality proves
-insufficient for autoresearch modifications. This is **not a routing
-layer** — it is a manual swap. Start with one model. Swap only if a specific
-bottleneck is identified. See `DECISIONS.md` "Dual model routing excluded."
+Qwen 3.6 27B Dense was previously documented as a manual-swap alternative
+if coding quality proved insufficient for autoresearch modifications.
+**Excluded as of 2026-05-26 (D-033).** The apparatus runs single-model on
+Gemma 4. If a specific bottleneck emerges later, the swap pattern remains
+viable but starts from a fresh evaluation, not from this deferred plan.
+See `DECISIONS.md` "Dual model routing excluded" (D-012) and "Qwen 3.6
+excluded" (D-033).
 
 ### 2.3 Serving: vLLM
 
@@ -397,7 +400,7 @@ across this document:
 | Active vs passive read from Layer 3 | §4.4 | Day 40+ (depends on meta-review) |
 | Per-hypothesis GPU-time budget | §5.1 (compute budgeting) | Phase 2 milestone |
 | Polymarket live trading | §3.3 (gated on CFTC compliance) | Phase 3 entry (Day ~270) |
-| Second model (Qwen 3.6) | §2.2 (manual swap, NOT routing) | Day 72 milestone |
+| ~~Second model (Qwen 3.6)~~ | excluded 2026-05-26 (D-033) | n/a |
 | Dispatched coding agents (§5.5) | §5.5 above | Day 39 plumbing; Phase-2+ scale |
 
 For the executable sequencing of these deltas, see
@@ -505,11 +508,15 @@ plans for Phase 1 implementation:
      when the automated call is "novel" — sample rate logged per
      assessment).
 
-   - **(Phase 2)** When a second model lands (D-006: Qwen 3.6 in
-     Week 2–3), the *novelty scorer* and the *generator* should be
-     different models. Same-model scoring is structurally the
-     co-scientist's Elo circularity in miniature (the model surfaces
-     similar results from its own embedding/output space).
+   - **(Phase 2, scope reduced 2026-05-26)** Originally Phase 2 was
+     to introduce a second model so the *novelty scorer* and the
+     *generator* could be different (D-006: Qwen 3.6 in Week 2-3).
+     That plan was abandoned (D-033) — the apparatus stays
+     single-model on Gemma 4. The Elo-circularity risk (the model
+     surfaces similar results from its own embedding/output space)
+     remains real; the Phase-1 mitigation (logged human-sample rate
+     on automated novelty calls) is now the *durable* mitigation,
+     not a temporary one until a second model lands.
 
    - **(Phase 2)** Alongside semantic retrieval, run a *structured-claim
      search*: extract from the candidate finding the claim of form
