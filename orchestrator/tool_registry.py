@@ -9,26 +9,45 @@ Two parallel data structures:
   sees when it decides which tool to invoke. Each spec's `name` must
   match a key in TOOL_REGISTRY.
 
-Today's tools are the existing capabilities of the apparatus, exposed
-to Nara for the hello-world iteration. Part 2 adds the five LOOP_V0
-workers (hypothesize, retrieve_literature, novelty_classify,
-critic_loop_v0, journal_writer).
+LOOP_V0 Part-2 toolbelt (as of 2026-05-26): the five workers that
+implement the literature-only cognitive chain. The Part-1 hello-world
+tools (summarize_paper, play_pd_match, query_chroma,
+journal_writer_stub) stay as importable modules under workers/ +
+orchestrator/, but are NOT registered here — Nara's belt has the
+LOOP_V0 five and only those.
 """
 from __future__ import annotations
 
 from typing import Callable
 
-from workers.summarize_paper import summarize as _summarize
-from workers.play_pd_match import play_match as _play_match
-from orchestrator.chroma_query import query_top_k as _query_chroma
-from orchestrator.journal_stub import journal_writer_stub as _journal_stub
+from workers.hypothesize import hypothesize as _hypothesize
+from workers.retrieve_literature import retrieve_literature as _retrieve_literature
+from workers.novelty_classify import novelty_classify as _novelty_classify
+from workers.critic_loop_v0 import critic_loop_v0 as _critic_loop_v0
+from workers.journal_writer import journal_writer as _journal_writer
 
 
 TOOL_REGISTRY: dict[str, Callable] = {
-    "summarize_paper":     _summarize,
-    "play_pd_match":       _play_match,
-    "query_chroma":        _query_chroma,
-    "journal_writer_stub": _journal_stub,
+    "hypothesize":         _hypothesize,
+    "retrieve_literature": _retrieve_literature,
+    "novelty_classify":    _novelty_classify,
+    "critic_loop_v0":      _critic_loop_v0,
+    "journal_writer":      _journal_writer,
+}
+
+
+_NEIGHBOR_ITEM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "doc_id":       {"type": "string"},
+        "content_hash": {"type": ["string", "null"]},
+        "score":        {"type": "number"},
+        "chunk_text":   {"type": "string"},
+        "source_layer": {"type": "string"},
+        "title":        {"type": ["string", "null"]},
+    },
+    "required": ["doc_id", "score", "source_layer"],
+    "additionalProperties": True,
 }
 
 
@@ -36,108 +55,185 @@ TOOL_SPECS: list[dict] = [
     {
         "type": "function",
         "function": {
-            "name": "summarize_paper",
+            "name": "hypothesize",
             "description": (
-                "Summarize a paper from the local arXiv corpus by its "
-                "arXiv ID. Returns a short structured summary including "
-                "key claim, method, and evidence type."
+                "STEP 1 of the LOOP_V0 chain. Generate 1-3 candidate "
+                "research hypotheses from a topic in game theory / "
+                "behavioral game theory / learning in games, and pick "
+                "the most specific. Returns {text, candidates_considered, "
+                "all_candidates}."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "arxiv_id": {
+                    "topic": {
                         "type": "string",
-                        "description": "The arXiv ID, e.g. '2605.15049'.",
+                        "description": "Research topic as a sentence or paragraph.",
                     },
                 },
-                "required": ["arxiv_id"],
+                "required": ["topic"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "play_pd_match",
+            "name": "retrieve_literature",
             "description": (
-                "Play a single repeated Prisoner's Dilemma match between "
-                "the local Gemma 4 LLM and a named opponent strategy. "
-                "Returns the per-round history and aggregate cooperation rate."
+                "STEP 2 of the LOOP_V0 chain. Query the local knowledge "
+                "base (foundational textbook chunks + live arXiv) for the "
+                "top-K most semantically similar prior results to the "
+                "hypothesis. Returns {k, neighbors: [...]} where each "
+                "neighbor has doc_id, score, chunk_text, source_layer, "
+                "and title."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "opponent": {
+                    "hypothesis_text": {
                         "type": "string",
-                        "enum": ["tft", "grim", "all_c", "all_d", "mirror_llm"],
-                        "description": "Opponent strategy.",
-                    },
-                    "rounds": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": 200,
-                        "description": "Number of rounds.",
-                    },
-                },
-                "required": ["opponent", "rounds"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "query_chroma",
-            "description": (
-                "Query the local Chroma vector store for the top-K most "
-                "semantically similar chunks across both the foundational "
-                "(textbook) and live-arXiv collections. Returns neighbors "
-                "with doc_id, content_hash (SHA-256 of chunk text), score, "
-                "source_layer, and a title where available."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "The query text (a claim or topic).",
+                        "description": "The hypothesis text from STEP 1's `text` field — pass verbatim.",
                     },
                     "k": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50,
-                        "description": "How many neighbors to return (default 10).",
+                        "description": "Number of neighbors to return (default 10).",
                     },
                 },
-                "required": ["text"],
+                "required": ["hypothesis_text"],
             },
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "journal_writer_stub",
+            "name": "novelty_classify",
             "description": (
-                "Finalize the current iteration. Validates an "
-                "iteration_record against the schema, appends one row to "
-                "memory/loop_memory.jsonl, and writes a markdown entry "
-                "to journal/iterations/NNN.md. Always call this last."
+                "STEP 3 of the LOOP_V0 chain. Classify the hypothesis "
+                "against the retrieved neighbors into one of "
+                "{novel, rediscovery, nonsense, unclear} with rationale "
+                "and the doc_id of the most-similar neighbor."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "summary": {
+                    "hypothesis_text": {
                         "type": "string",
-                        "description": (
-                            "One- or two-paragraph human-readable summary "
-                            "of what was found in this iteration."
-                        ),
+                        "description": "Hypothesis text from STEP 1 — pass verbatim.",
                     },
-                    "tool_calls_made": {
+                    "neighbors": {
                         "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of tool names you called this iteration.",
+                        "items": _NEIGHBOR_ITEM_SCHEMA,
+                        "description": "The neighbors array from STEP 2's `neighbors` field — pass verbatim.",
                     },
                 },
-                "required": ["summary", "tool_calls_made"],
+                "required": ["hypothesis_text", "neighbors"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "critic_loop_v0",
+            "description": (
+                "STEP 4 of the LOOP_V0 chain. Attempt to falsify the "
+                "hypothesis using ONLY the retrieved neighbors. Returns "
+                "one of {survives, falsified, restated, malformed} with "
+                "a rationale and (for falsified/restated) the doc_id of "
+                "the contradicting neighbor."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "hypothesis_text": {
+                        "type": "string",
+                        "description": "Hypothesis text from STEP 1 — pass verbatim.",
+                    },
+                    "neighbors": {
+                        "type": "array",
+                        "items": _NEIGHBOR_ITEM_SCHEMA,
+                        "description": "The same neighbors array passed to novelty_classify — pass verbatim.",
+                    },
+                },
+                "required": ["hypothesis_text", "neighbors"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "journal_writer",
+            "description": (
+                "STEP 5 of the LOOP_V0 chain (always last). Write a "
+                "markdown journal entry to journal/iterations/NNN.md "
+                "with hypothesis, retrieval, novelty, critique, and "
+                "your final summary. The orchestrator appends the "
+                "structured iteration_record to memory/loop_memory.jsonl "
+                "after this returns."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "The original research topic.",
+                    },
+                    "hypothesis": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string"},
+                            "candidates_considered": {"type": "integer"},
+                            "all_candidates": {
+                                "type": "array", "items": {"type": "string"}
+                            },
+                        },
+                        "required": ["text"],
+                        "description": "The full STEP 1 result — pass verbatim.",
+                    },
+                    "retrieval": {
+                        "type": "object",
+                        "properties": {
+                            "k": {"type": "integer"},
+                            "neighbors": {
+                                "type": "array", "items": _NEIGHBOR_ITEM_SCHEMA,
+                            },
+                        },
+                        "required": ["k", "neighbors"],
+                        "description": "The full STEP 2 result — pass verbatim.",
+                    },
+                    "novelty": {
+                        "type": "object",
+                        "properties": {
+                            "class": {
+                                "type": "string",
+                                "enum": ["novel", "rediscovery", "nonsense", "unclear"],
+                            },
+                            "rationale": {"type": "string"},
+                            "top_neighbor_id": {"type": ["string", "null"]},
+                        },
+                        "required": ["class"],
+                        "description": "The full STEP 3 result — pass verbatim.",
+                    },
+                    "critique": {
+                        "type": "object",
+                        "properties": {
+                            "verdict": {
+                                "type": "string",
+                                "enum": ["survives", "falsified", "restated", "malformed"],
+                            },
+                            "rationale": {"type": "string"},
+                            "contradicting_paper_id": {"type": ["string", "null"]},
+                        },
+                        "required": ["verdict"],
+                        "description": "The full STEP 4 result — pass verbatim.",
+                    },
+                    "nara_summary": {
+                        "type": "string",
+                        "description": "Your one- or two-paragraph human-readable summary of the iteration.",
+                    },
+                },
+                "required": ["topic", "hypothesis", "retrieval", "novelty", "critique", "nara_summary"],
             },
         },
     },

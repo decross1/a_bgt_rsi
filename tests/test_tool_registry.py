@@ -20,7 +20,13 @@ sys.path.insert(0, str(REPO_ROOT))
 from orchestrator.tool_registry import TOOL_REGISTRY, TOOL_SPECS, all_specs, known_names
 
 
-EXPECTED_TOOLS = {"summarize_paper", "play_pd_match", "query_chroma", "journal_writer_stub"}
+EXPECTED_TOOLS = {
+    "hypothesize",
+    "retrieve_literature",
+    "novelty_classify",
+    "critic_loop_v0",
+    "journal_writer",
+}
 
 
 def test_registry_contains_expected_tools():

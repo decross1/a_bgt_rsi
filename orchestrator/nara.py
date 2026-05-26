@@ -48,33 +48,59 @@ ACTIVE_PATH = "run_state/active_iteration.json"  # relative to REPO_ROOT
 CALLS_LOG_PATH = REPO_ROOT / "logs" / "calls.jsonl"
 
 _DEFAULT_LOG_PATH = str(CALLS_LOG_PATH)
-_DEFAULT_MAX_DEPTH = 8
+# 5 tool turns + 1 final assistant turn + headroom = 12. Each turn is one
+# LLM round-trip; we cap so a run-away chain can't burn the GPU.
+_DEFAULT_MAX_DEPTH = 12
 
 
-NARA_PROMPT_V0_HELLO = (
+NARA_PROMPT_V0 = (
     "You are Nara, the research orchestrator for the a_bgt_rsi "
-    "apparatus. Today is a substrate-validation run (LOOP_V0 hello-"
-    "world). Given a research topic in game theory, behavioral game "
-    "theory, or learning in games:\n"
+    "apparatus. Your job is to evaluate a research topic in game theory, "
+    "behavioral game theory, or learning in games by running the LOOP_V0 "
+    "cognitive chain.\n"
     "\n"
-    "1. Read the topic and decide ONE of the four available tools is "
-    "the right next step. Choose `query_chroma` for retrieval-shaped "
-    "topics, `summarize_paper` if the user mentions a specific arXiv "
-    "ID, `play_pd_match` if the topic is specifically about repeated "
-    "Prisoner's Dilemma strategies, and otherwise prefer "
-    "`query_chroma`.\n"
-    "2. Before invoking the tool, write ONE short sentence in your "
-    "assistant message describing what you're about to do and why. "
-    "Then emit the tool_calls.\n"
-    "3. When the tool returns, write a brief 2-3 sentence summary of "
-    "the result, then call `journal_writer_stub` with a final summary "
-    "and the list of tool names you called.\n"
-    "4. End with a one-paragraph human-readable summary of the "
-    "iteration.\n"
+    "Always run these five tool calls in this exact order, one per turn:\n"
     "\n"
-    "Do NOT call more than one of {summarize_paper, play_pd_match, "
-    "query_chroma} per iteration today. Always call "
-    "journal_writer_stub LAST."
+    "  1. hypothesize(topic=<the user's topic>)\n"
+    "     → returns {text, candidates_considered, all_candidates}.\n"
+    "       The `text` field is the chosen hypothesis.\n"
+    "\n"
+    "  2. retrieve_literature(hypothesis_text=<step 1's text>, k=10)\n"
+    "     → returns {k, neighbors: [{doc_id, content_hash, score,\n"
+    "       chunk_text, source_layer, title}, ...]}.\n"
+    "\n"
+    "  3. novelty_classify(hypothesis_text=<step 1's text>,\n"
+    "                      neighbors=<step 2's neighbors>)\n"
+    "     → returns {class, rationale, top_neighbor_id}.\n"
+    "\n"
+    "  4. critic_loop_v0(hypothesis_text=<step 1's text>,\n"
+    "                    neighbors=<step 2's neighbors>)\n"
+    "     → returns {verdict, rationale, contradicting_paper_id}.\n"
+    "\n"
+    "  5. journal_writer(topic=<original topic>,\n"
+    "                    hypothesis=<step 1 result>,\n"
+    "                    retrieval=<step 2 result>,\n"
+    "                    novelty=<step 3 result>,\n"
+    "                    critique=<step 4 result>,\n"
+    "                    nara_summary=<your one-paragraph summary>)\n"
+    "     → writes the journal entry. Always call last.\n"
+    "\n"
+    "Before EACH tool call, emit ONE short narration sentence in your "
+    "assistant content describing what you're about to do and why. "
+    "Then emit the tool_call(s). When a tool returns, briefly note what "
+    "you learned in your next narration line.\n"
+    "\n"
+    "After step 5, emit a final assistant message (no tool_calls) with "
+    "a 1-2 paragraph human-readable summary of the iteration: the "
+    "hypothesis, the novelty class, the critic's verdict, and what "
+    "the human reader should take away.\n"
+    "\n"
+    "Strict rules:\n"
+    "  - Never skip a step. The chain is fixed at five.\n"
+    "  - Never call the same step twice.\n"
+    "  - Pass results verbatim — do not paraphrase the hypothesis text\n"
+    "    or trim the neighbors list between steps.\n"
+    "  - Emit valid JSON for all tool arguments."
 )
 
 
@@ -196,7 +222,7 @@ def run_iteration(
 
     # Conversation state for the LLM
     openai_messages: list[dict] = [
-        {"role": "system", "content": NARA_PROMPT_V0_HELLO},
+        {"role": "system", "content": NARA_PROMPT_V0},
         {"role": "user", "content": f"Evaluate this research topic: {topic}"},
     ]
     parent_request_id = iteration_id  # iteration-level lineage anchor
@@ -207,6 +233,10 @@ def run_iteration(
     final_summary: str | None = None
     tool_specs = TOOL_SPECS
     last_id: str | None = None
+    # Capture each LOOP_V0 step's result for the iteration_record. Keyed
+    # by tool name → the tool's `result` payload. If Nara skips a step
+    # we still serialize what we have.
+    captured: dict[str, dict] = {}
 
     for depth in range(max_depth):
         # Update active: between calls, Nara is "thinking"
@@ -323,11 +353,21 @@ def run_iteration(
                 })
 
             tool_calls_made.append(name)
-            if name == "journal_writer_stub" and isinstance(tool_result, dict):
-                # Capture the journal entry path the stub wrote
-                journal_entry_path = (
-                    tool_result.get("result", {}).get("journal_entry_path")
-                )
+            # Capture each LOOP_V0 step's payload so the iteration_record
+            # ends up complete even if Nara forgets a step at the end.
+            if isinstance(tool_result, dict) and tool_result.get("status") == "passed":
+                payload = tool_result.get("result")
+                if isinstance(payload, dict):
+                    if name == "hypothesize":
+                        captured["hypothesis"] = payload
+                    elif name == "retrieve_literature":
+                        captured["retrieval"] = payload
+                    elif name == "novelty_classify":
+                        captured["novelty"] = payload
+                    elif name == "critic_loop_v0":
+                        captured["critique"] = payload
+                    elif name == "journal_writer":
+                        journal_entry_path = payload.get("journal_entry_path")
 
             openai_messages.append({
                 "role": "tool",
@@ -343,22 +383,52 @@ def run_iteration(
 
     ended_at = _utcnow_iso()
 
-    # Build the iteration_record
+    # Build the iteration_record. If Nara skipped journal_writer, the
+    # orchestrator calls it directly with whatever it captured during
+    # the loop — degraded path, logged as a fallback event.
     if journal_entry_path is None:
-        # Nara didn't call journal_writer_stub. Write a fallback markdown
-        # ourselves so the record can still validate. This is a
-        # degradation path; log it.
-        from orchestrator.journal_stub import journal_writer_stub
-        out = journal_writer_stub(
-            summary=(final_summary or "(Nara skipped journal_writer_stub)"),
-            tool_calls_made=tool_calls_made or ["(none)"],
-            parent_request_id=last_id,
-        )
+        from workers.journal_writer import journal_writer as _full_jw
+        from orchestrator.journal_stub import journal_writer_stub as _stub_jw
+
+        if "hypothesis" in captured:
+            # We have at least step 1 captured — use the full writer with
+            # whatever substructures landed; fill missing ones with
+            # explicit placeholders so journal_writer's enum validation
+            # doesn't reject the call.
+            placeholder_novelty = {
+                "class": "unclear",
+                "rationale": "(novelty_classify did not run)",
+                "top_neighbor_id": None,
+            }
+            placeholder_critique = {
+                "verdict": "survives",
+                "rationale": "(critic_loop_v0 did not run)",
+                "contradicting_paper_id": None,
+            }
+            out = _full_jw(
+                topic=topic,
+                hypothesis=captured["hypothesis"],
+                retrieval=captured.get("retrieval") or {"k": 0, "neighbors": []},
+                novelty=captured.get("novelty") or placeholder_novelty,
+                critique=captured.get("critique") or placeholder_critique,
+                nara_summary=final_summary or "(Nara did not emit a final summary)",
+                parent_request_id=last_id,
+            )
+        else:
+            # No hypothesis even — fall all the way back to the stub.
+            out = _stub_jw(
+                summary=(final_summary or "(Nara skipped the chain entirely)"),
+                tool_calls_made=tool_calls_made or ["(none)"],
+                parent_request_id=last_id,
+            )
         journal_entry_path = out["result"]["journal_entry_path"]
         runtime.log_event({
             "event_type": "loop_v0_fallback",
             "iteration_id": iteration_id,
-            "note": "Nara did not call journal_writer_stub; orchestrator filled the stub.",
+            "note": (
+                "Nara did not call journal_writer; orchestrator filled "
+                f"using captured={sorted(captured)}."
+            ),
         })
 
     record = {
@@ -376,6 +446,11 @@ def run_iteration(
         "model_version":      MODEL_VERSION,
         "wrapper_call_ids":   wrapper_call_ids,
     }
+    # Attach the four substructures when present so the iteration_record
+    # reflects the full chain.
+    for key in ("hypothesis", "retrieval", "novelty", "critique"):
+        if key in captured:
+            record[key] = captured[key]
 
     # Validate + append to loop_memory
     try:
