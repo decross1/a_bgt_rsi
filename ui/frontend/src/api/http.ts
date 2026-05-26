@@ -7,9 +7,11 @@ import type {
   AppState,
   BaselineResponse,
   ChainResponse,
+  CriticSummary,
   Day4ChainsResponse,
   EventsResponse,
   Health,
+  MetaReviewSummary,
   RecentTask,
   RobustnessResponse,
   TelemetrySample,
@@ -68,3 +70,9 @@ export const getWorkloadHint = () =>
 
 export const getUnlockStatus = () =>
   getJSON<UnlockStatus>("/api/unlock_status");
+
+export const getCriticSummary = (limit = 50) =>
+  getJSON<CriticSummary>(`/api/critic_summary?limit=${limit}`);
+
+export const getMetaReviewSummary = () =>
+  getJSON<MetaReviewSummary>("/api/meta_review_summary");

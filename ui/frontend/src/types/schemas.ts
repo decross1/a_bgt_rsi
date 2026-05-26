@@ -268,3 +268,101 @@ export interface UnlockStatus {
   metric_log: Record<string, number | string | null>;
   fallbacks_taken: Record<string, string>;
 }
+
+// --- Critic invocations (/api/critic_summary) — Day-9 W2-01 ---
+// Mirrors backend/critic.py:compute_critic_summary. Each section is
+// independently `available` so the panel renders partial state when
+// the critic log or fixtures are absent.
+
+export type CriticDecision = "flawed" | "sound";
+export type CriticGroundTruth = "flawed" | "sound";
+export type CriticOutcome =
+  | "TP"
+  | "FP"
+  | "TN"
+  | "FN"
+  | "unrun"
+  | "unknown_truth"
+  | "unknown_fixture";
+
+export interface CriticRecentRun {
+  timestamp: string | null;
+  hypothesis_id: string | null;
+  flag_decision: CriticDecision | null;
+  ground_truth_label: CriticGroundTruth | null;
+  domain: string | null;
+  severity: string | null;
+  injected_flaw_type: string | null;
+  critique_excerpt: string;
+  target_hits: string[];
+  target_count: number;
+  model: string | null;
+  latency_ms: number | null;
+}
+
+export interface CriticRecentRuns {
+  available: boolean;
+  limit: number;
+  rows: CriticRecentRun[];
+  malformed_lines: number[];
+  total_runs: number;
+}
+
+export interface CriticFlagRate {
+  available: boolean;
+  window_days: number;
+  total: number;
+  flawed_count: number;
+  sound_count: number;
+  flag_rate: number | null;
+}
+
+export interface CriticMatchupRow {
+  fixture_id: string;
+  ground_truth_label: CriticGroundTruth | null;
+  injected_flaw_type: string | null;
+  severity: string | null;
+  domain: string | null;
+  decision: CriticDecision | null;
+  outcome: CriticOutcome;
+  target_hits: string[];
+  target_count: number;
+  latest_run_ts: string | null;
+}
+
+export interface CriticMatchupCounts {
+  TP: number;
+  FP: number;
+  TN: number;
+  FN: number;
+  unrun: number;
+  unknown_fixture: number;
+}
+
+export interface CriticFixtureMatchup {
+  available: boolean;
+  rows: CriticMatchupRow[];
+  counts: CriticMatchupCounts;
+  accuracy: number | null;
+  scored: number;
+  total_fixtures: number;
+}
+
+export interface CriticSummary {
+  milestone: string;
+  fixtures: { available: boolean; total: number };
+  recent_runs: CriticRecentRuns;
+  flag_rate: CriticFlagRate;
+  fixture_matchup: CriticFixtureMatchup;
+}
+
+// --- Day-40 meta-review stub (logs/meta_review.jsonl) ---
+// Track A creates the log on Day 40 (W2-02). UI ships the empty-state
+// stub on Day 9 so the panel exists in the dashboard scaffold before
+// the data lands. Shape will firm up alongside Track A's writer; the
+// stub renders "awaiting Day-40 meta-review outputs" until then.
+export interface MetaReviewSummary {
+  available: boolean;
+  total_runs: number;
+  note: string;
+}

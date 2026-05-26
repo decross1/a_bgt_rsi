@@ -3,8 +3,10 @@
 // WebSocket (ui/hooks/useTelemetryStream); the orchestrator queue polls.
 import { useEffect, useState } from "react";
 import BaselineCard from "../components/BaselineCard";
+import CriticPanel from "../components/CriticPanel";
 import Day4ChainList from "../components/Day4ChainList";
 import HealthStrip from "../components/HealthStrip";
+import MetaReviewPanel from "../components/MetaReviewPanel";
 import OrchestratorQueue from "../components/OrchestratorQueue";
 import ProcessGrid from "../components/ProcessGrid";
 import RobustnessPanel from "../components/RobustnessPanel";
@@ -94,6 +96,18 @@ export default function Dashboard() {
           to attest the Week-2 tier-shift unlock (ui_plan.md §11.3). */}
       <div className="mt-4">
         <UnlockPanel />
+      </div>
+
+      {/* Phase-2 alignment-evidence (ui_plan.md §11.3): the critic /
+          meta-review surfaces. CriticPanel ships full on Day 9;
+          MetaReviewPanel is an empty-state stub until Day 40 W2-02
+          produces logs/meta_review.jsonl. */}
+      <div className="mt-4">
+        <CriticPanel />
+      </div>
+
+      <div className="mt-4">
+        <MetaReviewPanel />
       </div>
 
       <div className="mt-4">

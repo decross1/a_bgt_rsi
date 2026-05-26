@@ -40,10 +40,38 @@ def _client(tmp_path):
     }) + "\n", encoding="utf-8")
     attestations = tmp_path / "attestations.jsonl"
     attestations.write_text("", encoding="utf-8")
+    # Day-9: critic-eval log + fixtures point into tmp_path so the
+    # endpoint never accidentally reads the real on-disk critic log
+    # while Track A may be mid-write. Tests that exercise critic
+    # specifically populate these files directly via _seed_critic
+    # — do not clobber if seeded before _client.
+    critic_log = tmp_path / "critic_eval.jsonl"
+    if not critic_log.exists():
+        critic_log.write_text("", encoding="utf-8")
+    critic_fixtures = tmp_path / "critic_hypotheses"
+    critic_fixtures.mkdir(exist_ok=True)
+    # Day-9 stretch: meta-review log path defaults to a tmp_path file
+    # that doesn't exist — the stub returns available=false.
+    meta_review = tmp_path / "meta_review.jsonl"
     return TestClient(create_app(
         logs_dir=logs, telemetry_file=telemetry, state_file=state,
         bench_csv=bench, mtp_csv=mtp, run_log_file=run_log,
-        attestations_file=attestations))
+        attestations_file=attestations,
+        critic_log_file=critic_log, critic_fixtures_dir=critic_fixtures,
+        meta_review_log_file=meta_review))
+
+
+def _seed_critic(tmp_path, fixtures, records):
+    """Write critic fixtures + log inside tmp_path so the next
+    `_client(tmp_path)` picks them up via the configured paths."""
+    fdir = tmp_path / "critic_hypotheses"
+    fdir.mkdir(exist_ok=True)
+    for fx in fixtures:
+        (fdir / f"{fx['id']}.json").write_text(json.dumps(fx),
+                                               encoding="utf-8")
+    log = tmp_path / "critic_eval.jsonl"
+    log.write_text("".join(json.dumps(r) + "\n" for r in records),
+                   encoding="utf-8")
 
 
 def test_health(tmp_path):
@@ -121,3 +149,54 @@ def test_telemetry_recent(tmp_path):
     body = _client(tmp_path).get("/api/telemetry/recent?limit=10").json()
     assert len(body["samples"]) == 1
     assert body["samples"][0]["timestamp"] == "2026-05-18T10:00:00.000+00:00"
+
+
+def test_critic_summary_endpoint(tmp_path):
+    _seed_critic(tmp_path,
+        fixtures=[
+            {"id": "003_misspecified_payoff", "hypothesis_text": "h",
+             "domain": "game_theory", "injected_flaw_type": "misspecified_payoff",
+             "flaw_description": "internal",
+             "expected_critique_targets": ["rationality requires the agent know the objective"],
+             "ground_truth_label": "flawed", "severity": "moderate",
+             "schema_version": "1.0"},
+        ],
+        records=[
+            {"timestamp": "2026-05-25T10:00:00Z",
+             "hypothesis_id": "003_misspecified_payoff",
+             "flag_decision": "flawed",
+             "critique": "Note that rationality requires the agent know the objective; this is missing here."},
+        ])
+    body = _client(tmp_path).get("/api/critic_summary").json()
+    assert body["milestone"] == "critic_invocations"
+    assert body["fixtures"]["total"] == 1
+    assert body["recent_runs"]["total_runs"] == 1
+    assert body["recent_runs"]["rows"][0]["target_hits"] == [
+        "rationality requires the agent know the objective"]
+    assert body["fixture_matchup"]["counts"]["TP"] == 1
+    assert body["flag_rate"]["flawed_count"] == 1
+
+
+def test_critic_summary_empty_state_endpoint(tmp_path):
+    # No critic log lines, no fixtures — endpoint returns a usable shape.
+    body = _client(tmp_path).get("/api/critic_summary").json()
+    assert body["recent_runs"]["rows"] == []
+    assert body["flag_rate"]["total"] == 0
+    assert body["fixture_matchup"]["counts"]["TP"] == 0
+
+
+def test_meta_review_summary_empty_state(tmp_path):
+    # logs/meta_review.jsonl absent → stub returns available=false.
+    body = _client(tmp_path).get("/api/meta_review_summary").json()
+    assert body["available"] is False
+    assert body["total_runs"] == 0
+    assert "awaiting Day-40" in body["note"]
+
+
+def test_meta_review_summary_with_log_present(tmp_path):
+    log = tmp_path / "meta_review.jsonl"
+    log.write_text(json.dumps({"row": 1}) + "\n" + json.dumps({"row": 2}) + "\n",
+                   encoding="utf-8")
+    body = _client(tmp_path).get("/api/meta_review_summary").json()
+    assert body["available"] is True
+    assert body["total_runs"] == 2

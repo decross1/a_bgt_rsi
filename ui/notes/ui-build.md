@@ -516,3 +516,86 @@ deliverable per `track_d.md` is now actually complete.
 85 Python tests pass (no change vs r10), 25 frontend tests pass
 (20 prior + 5 UnlockPanel cases). `tsc --noEmit && vite build` clean.
 `ui_plan.md` bumped r10 → r11.
+
+## r12 — CriticPanel + Day-40 stub (2026-05-25, Day-9 — W2-01)
+
+Day 9 lands `workers/critic.py` on the Track-A side; Track C's Day-9
+cron wraps it into `logs/critic_eval.jsonl`. The UI now has the
+polling consumer, the rolling flag-rate, and a per-fixture matchup
+view that contextualizes the rate (a high flag-rate is the *right*
+answer when ~95% of the fixture pool is flawed by construction —
+without the matchup the rate alone could mask either a correct critic
+or an over-flagger). Stretch ship: a Day-40 meta-review empty-state
+stub so MetaReviewPanel exists in the dashboard scaffold before
+Track A's W2-02 writer lands.
+
+### What landed
+
+- **`ui/backend/critic.py`** + **`GET /api/critic_summary`** — single
+  consolidated payload (mirrors `unlock.py`): `recent_runs`,
+  `flag_rate`, `fixture_matchup`, `fixtures` counts. Each section
+  `available=true/false` so partial state renders cleanly. Fixtures
+  read directly from `experiments/fixtures/critic_hypotheses/*.json` —
+  not via `experiments.fixtures.loader` which is Track C's zone (same
+  pattern `unlock.py` used for the run-log validator that lives in
+  `agent_wrapper/`).
+- **`ui/frontend/src/components/CriticPanel.tsx`** + Dashboard
+  wire-up. Polls every 10 s; renders rolling flag-rate header +
+  matchup summary chips + per-row recent-runs cards + per-fixture
+  matchup table (FN/FP sorted first so the dangerous outcomes top the
+  list). Strictly read-only — no execute / approve / rerun buttons
+  (operating-contract rule 8; covered by a no-button vitest assertion).
+- **`api/http.ts` + `types/schemas.ts`** — added `CriticSummary`,
+  `CriticRecentRun`, `CriticMatchupRow`, `CriticOutcome`,
+  `CriticDecision` mirrors plus `getCriticSummary`.
+- **`ui/frontend/tests/test_critic_panel.tsx`** — 5 vitest cases:
+  all-flag (every row flagged "flawed" / TP matchup), all-sound (TN +
+  FN — the dangerous-misses case), mixed (target-hit count + unrun +
+  FP), absent-log empty state, backend-error path.
+- **Backend tests `backend/tests/test_critic.py`** — 13 pytest cases.
+  Plus 2 cases in `test_api.py` for the endpoint (populated +
+  empty-state).
+- **Stretch — Day-40 meta-review stub.** `backend/meta_review.py` +
+  `GET /api/meta_review_summary` + `MetaReviewPanel.tsx`. Empty-state
+  message "awaiting Day-40 W2-02 meta-review outputs" until the log
+  lands; row count once it does. 2 vitest + 2 backend endpoint cases.
+
+### Surprises
+
+- The fixture-matchup "latest decision wins" rule matters more than
+  expected — once the critic agent gets re-runs across iterations, the
+  panel needs to show the *current* state, not a confusion-matrix
+  aggregated across every iteration. `compute_fixture_matchup` keeps
+  the latest timestamp per `hypothesis_id`; accuracy is computed from
+  that, not from the per-run records, so re-runs do not double-count.
+- `expected_critique_targets` substring scoring is loose by design
+  (case-insensitive substring). The fixture README documents the
+  targets as "substrings/concepts a substantive critique should hit"
+  — anything stricter would need NLP. Target-hit count is
+  informational only; TP/FN classification is driven by `flag_decision`
+  vs `ground_truth_label` alone. Track A is free to swap in a stricter
+  scorer later — the contract is one function (`_target_hits`) and the
+  panel renders whatever count it returns.
+- `ui_plan.md` r12 bumped; `notes/track-d-observations.md` not
+  touched this pass (no real `logs/critic_eval.jsonl` exists yet to
+  audit — that becomes Day-9 EOD work for Track A once `critic.py`
+  produces output).
+
+### Questions for the human / Track A
+
+- The Day-40 stretch (`MetaReviewPanel` + `meta_review.py`) shipped
+  with an empty-row contract. When Track A's `workers/meta_review.py`
+  finalizes its record shape, this should be a one-pass change to
+  `compute_meta_review_summary` (add per-row parsing) + a Day-40
+  Track-D follow-up to render the rows. Confirm this sequencing
+  works for Track A's Day-40 planning, or flag if the panel should
+  surface raw rows (generic key/value renderer) until then.
+
+### Tests
+
+106 Python tests pass (104 prior + 2 new meta-review endpoint cases;
+the 13 critic-module tests are counted under prior since they ran
+before this snapshot bucketing). 37 frontend tests pass (25 prior at
+r11 + 5 CriticPanel + 2 MetaReviewPanel + 5 from intermediate
+rebalancing). `tsc --noEmit && vite build` clean.
+`ui_plan.md` bumped r11 → r12.
