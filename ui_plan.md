@@ -1,14 +1,144 @@
-# UI plan — orchestrator dashboard + call-chain inspector
+# UI plan — orchestrator dashboard + LOOP_V0 iteration view
 
-> Companion plan to `plan.yaml` (week 1, days 31–37). The week 1 plan
-> builds the research apparatus. This plan builds the observability
-> layer on top of it. Both plans share the same repo (`a_bgt_rsi`).
->
-> **You are a concurrent Claude instance.** A different Claude is
-> executing `plan.yaml` (the week 1 apparatus build) on the DGX Spark.
-> This plan is yours. The two plans share data contracts (the JSONL
+> **Companion plan to the apparatus build.** The two share data contracts
+> (the JSONL schemas in `schema/`, plus the LOOP_V0 contract below) but do
+> NOT share source files outside `ui/`. The UI session writes only to
+> `ui/` and this file.
+
+## §LOOP_V0 — iteration view (active section, 2026-05-26)
+
+The UI's top section is now the LOOP_V0 iteration view: human prompts a
+topic → Nara runs one iteration → past iterations land in a list → the
+journal entry opens inline. Built per
+[`agent/prompts/ui_session.md`](agent/prompts/ui_session.md) and
+[`LOOP_V0.md`](LOOP_V0.md) §"What's needed from the UI session", on the
+substrate the primary session builds per
+`/home/decross1/.claude/plans/idempotent-spinning-sonnet.md`.
+
+### Layout
+
+```
+┌─ NaraPromptForm ──────────────────────────────────────────────────┐
+│ topic [        ]                          [start iteration]      │
+└──────────────────────────────────────────────────────────────────┘
+┌─ ActiveIterationPanel ────────────┐ ┌─ ResolvedIterationsList ───┐
+│ id · topic · elapsed              │ │ iter-2026-05-26-001 ▸      │
+│ [start][summ][PD][retr][jrnl][sm] │ │   rediscovery / restated   │
+│ narration line                    │ │ iter-2026-05-25-002 ▸      │
+│ tool calls                        │ │   novel / survives         │
+│   summarize_paper  6.1s passed    │ │ …                          │
+│   query_chroma     1.4s running   │ │                            │
+└───────────────────────────────────┘ └────────────────────────────┘
+┌─ JournalScroll ──────────────────────────────────────────────────┐
+│ (selected entry rendered as markdown)                            │
+└──────────────────────────────────────────────────────────────────┘
+↓ substrate panels (HealthStrip, OrchestratorQueue, VllmPanel,
+  Day4ChainList, RobustnessPanel, BaselineCard, ProcessGrid) stay
+  mounted below so the human can watch the Spark itself while Nara runs.
+```
+
+### Components
+
+| Path | Polls | Notes |
+| --- | --- | --- |
+| `ui/frontend/src/components/NaraPromptForm.tsx` | n/a | Posts trimmed topic to `/api/loop_v0/start`. Disabled until non-empty. |
+| `ui/frontend/src/components/ActiveIterationPanel.tsx` | `GET /api/loop_v0/active` at 1 Hz | Renders idle when endpoint returns 204. Tool-call durations tick in real time off `step_started_at` and per-call `started_at`. |
+| `ui/frontend/src/components/ResolvedIterationsList.tsx` | `GET /api/loop_v0/iterations` at ~0.2 Hz | Newest first; novelty + critique badges; click loads the entry into `JournalScroll`. |
+| `ui/frontend/src/components/JournalScroll.tsx` | `GET /api/loop_v0/journal/{id}` on selection | Inline markdown renderer (headings, paragraphs, lists, fenced + inline code, **bold**). No new deps. |
+| `ui/frontend/src/fixtures/loop_v0/` | n/a | `active_iteration.json` + `loop_memory.jsonl` (3 rows) + 2 journal markdown files + `index.ts` typed loader. Panels accept an `initial` prop so tests bypass polling. |
+
+### Backend
+
+`ui/backend/loop_v0.py` registers a router under `/api/loop_v0/`:
+
+| Endpoint | Behavior |
+| --- | --- |
+| `POST /start` | Body `{topic: str}`; `subprocess.Popen(["env", "-u", "MOCK_LLM", python, "-m", "orchestrator.loop_v0_cli", "--topic", topic], cwd=repo_root)`; returns `202 {pid, topic}`. Rejects empty / oversize topic with 400. |
+| `GET /active` | Reads `run_state/active_iteration.json`; returns 204 No Content if absent. |
+| `GET /iterations` | Reads `run_state/loop_memory.jsonl`, sorted newest-first by `ended_at`; returns `{iterations: []}` if absent. Malformed rows are skipped (producer contract). |
+| `GET /journal/{iteration_id}` | Looks up `journal_entry_path` from `loop_memory.jsonl` for the iteration; falls back to a glob scan of `journal/iterations/*.md` for files mentioning the id. Returns `{iteration_id, path, content}`. Rejects path-traversal ids with 400. |
+
+Wired into `create_app` with three env overrides (`UI_LOOP_V0_REPO`,
+`UI_LOOP_V0_RUN_STATE`, `UI_LOOP_V0_JOURNAL`) and an injectable `popen`
+hook so tests don't shell out to the apparatus.
+
+### Shared contract (read-only for the UI)
+
+The primary session writes these; the UI reads them and never writes back.
+Both writers and readers treat them as the source of truth for what Nara
+is doing now and what Nara has done.
+
+**`run_state/active_iteration.json`** — atomic-write while an iteration is
+in flight; deleted on completion. Shape:
+
+```json
+{
+  "iteration_id": "iter-2026-05-26-001",
+  "topic": "...",
+  "started_at": "...",
+  "current_step": "starting | summarize_paper | play_pd_match | query_chroma | journal_writer_stub | nara_summarizing",
+  "step_started_at": "...",
+  "narration": "last narration sentence Nara emitted",
+  "tool_calls_so_far": [
+    {"tool": "<name>", "started_at": "...", "ended_at": "...", "status": "passed"}
+  ]
+}
+```
+
+**`run_state/loop_memory.jsonl`** — append-only, one row per completed
+iteration. Schema is `schema/iteration_record.schema.json` (primary
+creates). Minimum fields the UI relies on: `iteration_id`, `started_at`,
+`ended_at`, `seed.topic`, `journal_entry_path`, `nara_summary`. Part-1
+hello-world fills `hypothesis` / `retrieval` / `novelty` / `critique`
+with placeholders — the UI renders the badges only when those fields are
+present, so the panel reads cleanly across both Part-1 and Part-2.
+
+**`journal/iterations/NNN.md`** — one markdown file per iteration. Format
+is the apparatus's choice; the UI's renderer handles the small subset
+already used (headings, lists, **bold**, `inline code`, fenced code).
+
+### Test discipline
+
+- Frontend: each component has a vitest file under `ui/frontend/tests/`
+  using fixture imports rather than network calls. `vi.stubGlobal("fetch", …)`
+  is used only for endpoint-error paths.
+- Backend: `ui/backend/tests/test_loop_v0.py` covers each endpoint with
+  tmp_path fixtures plus a stubbed `popen`. One smoke test uses a real
+  `subprocess.Popen` rerouted to `/bin/echo` so the test never touches
+  the real CLI or the real `run_state/`.
+
+### Open items handed back to the primary session
+
+- The `journal_entry_path` in `loop_memory.jsonl` rows is expected to be
+  resolvable from `repo_root` (either absolute or relative). The UI scans
+  `journal/iterations/*.md` as a fallback when the row is absent, but
+  only files inside `journal_dir` are read — keep entries there.
+- Any new `current_step` value beyond the six listed needs adding to
+  `LoopV0Step` in `ui/frontend/src/types/schemas.ts`; the step strip
+  silently renders extra values as "not highlighted" but doesn't add a
+  chip for them.
+
+---
+
+## Historical sections (UI v1, pre-LOOP_V0)
+
+The sections below were written before the 2026-05-26 direction change to
+LOOP_V0 (see [`DECISIONS.md`](DECISIONS.md) D-030 in the primary branch).
+Specific stale framings preserved here for code-archaeology: "Week 1",
+"Track D", "tier-shift unlock", `plan.yaml` references, and the UnlockPanel
+keyed to alignment-evidence thresholds. UnlockPanel is commented out in
+`Dashboard.tsx` as of 2026-05-26 — kept in-file so a future session can
+decide whether to repurpose it for the LOOP_V0 exit criterion or remove
+it. Treat what follows as a record of the codebase you'll find under
+`ui/`, not a binding plan.
+
+> **Original preamble (preserved):** Companion plan to `plan.yaml` (week 1,
+> days 31–37). The week 1 plan builds the research apparatus. This plan
+> builds the observability layer on top of it. Both plans share the same
+> repo (`a_bgt_rsi`). **You are a concurrent Claude instance.** A different
+> Claude is executing `plan.yaml` (the week 1 apparatus build) on the DGX
+> Spark. This plan is yours. The two plans share data contracts (the JSONL
 > schemas in `schema/`) but do NOT share source files outside `ui/`.
-> Read the operating contract below before doing anything.
 >
 > **Revision r11 (2026-05-24).** **UI v1 is ship-complete for the
 > Day-38 Week-2 unlock gate.** This pass wires the frontend consumer

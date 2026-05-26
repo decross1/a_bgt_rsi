@@ -20,11 +20,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from .baseline import compute_baseline
 from .chain import LogStore, build_chain, build_chain_by_request_id, recent_tasks
 from .day4 import read_events, read_robustness
+from .loop_v0 import register as register_loop_v0
 from .tailer import JsonlTailer
 from .unlock import compute_unlock_status
 from .workload import compute_workload_hint
 
 _REPO = Path(__file__).resolve().parents[2]
+# When the UI runs from the worktree at .claude/worktrees/ui-session, paths
+# like run_state/ and journal/ live in the primary worktree, not this one.
+# The default repo root is the real primary checkout; override via env vars
+# in tests (UI_REPO_ROOT / UI_RUN_STATE_DIR / UI_JOURNAL_DIR).
+_PRIMARY_REPO = Path("/home/decross1/projects/a_bgt_rsi")
 DEFAULT_LOGS_DIR = _REPO / "logs"                       # apparatus call/orchestrator logs
 DEFAULT_TELEMETRY = _REPO / "ui" / "logs" / "telemetry.jsonl"
 DEFAULT_STATE = _REPO / "run_state" / "week1.state.json"
@@ -32,6 +38,9 @@ DEFAULT_BENCH_CSV = _REPO / "bench" / "day1.csv"        # day-1 throughput sweep
 DEFAULT_MTP_CSV = _REPO / "bench" / "mtp.csv"           # MTP-enabled sweep (D-022)
 DEFAULT_RUN_LOG = _REPO / "run_state" / "week1.run.jsonl"
 DEFAULT_ATTESTATIONS = _REPO / "run_state" / "attestations.jsonl"
+DEFAULT_LOOP_V0_REPO = _PRIMARY_REPO
+DEFAULT_LOOP_V0_RUN_STATE = _PRIMARY_REPO / "run_state"
+DEFAULT_LOOP_V0_JOURNAL = _PRIMARY_REPO / "journal" / "iterations"
 
 
 def _git_sha():
@@ -78,7 +87,11 @@ def _tail_lines(path, limit):
 def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                state_file=DEFAULT_STATE, bench_csv=DEFAULT_BENCH_CSV,
                mtp_csv=DEFAULT_MTP_CSV, run_log_file=DEFAULT_RUN_LOG,
-               attestations_file=DEFAULT_ATTESTATIONS):
+               attestations_file=DEFAULT_ATTESTATIONS,
+               loop_v0_repo=DEFAULT_LOOP_V0_REPO,
+               loop_v0_run_state=DEFAULT_LOOP_V0_RUN_STATE,
+               loop_v0_journal=DEFAULT_LOOP_V0_JOURNAL,
+               loop_v0_popen=subprocess.Popen):
     app = FastAPI(title="UI backend — orchestrator dashboard", version=_git_sha())
     # Permissive CORS for local dev (Vite serves the SPA on another port).
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
@@ -266,6 +279,14 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
             pump_task.cancel()
             drain_task.cancel()
 
+    register_loop_v0(
+        app,
+        repo_root=Path(loop_v0_repo),
+        run_state_dir=Path(loop_v0_run_state),
+        journal_dir=Path(loop_v0_journal),
+        popen=loop_v0_popen,
+    )
+
     return app
 
 
@@ -284,4 +305,7 @@ app = create_app(
     mtp_csv=_env_path("UI_MTP_CSV", DEFAULT_MTP_CSV),
     run_log_file=_env_path("UI_RUN_LOG_FILE", DEFAULT_RUN_LOG),
     attestations_file=_env_path("UI_ATTESTATIONS_FILE", DEFAULT_ATTESTATIONS),
+    loop_v0_repo=_env_path("UI_LOOP_V0_REPO", DEFAULT_LOOP_V0_REPO),
+    loop_v0_run_state=_env_path("UI_LOOP_V0_RUN_STATE", DEFAULT_LOOP_V0_RUN_STATE),
+    loop_v0_journal=_env_path("UI_LOOP_V0_JOURNAL", DEFAULT_LOOP_V0_JOURNAL),
 )

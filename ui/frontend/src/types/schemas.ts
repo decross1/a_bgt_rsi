@@ -268,3 +268,71 @@ export interface UnlockStatus {
   metric_log: Record<string, number | string | null>;
   fallbacks_taken: Record<string, string>;
 }
+
+// --- LOOP_V0 ---
+// Shared contract: the primary session writes run_state/active_iteration.json
+// + run_state/loop_memory.jsonl + journal/iterations/NNN.md; the UI reads
+// them via /api/loop_v0/active, /api/loop_v0/iterations and
+// /api/loop_v0/journal/{id}. See LOOP_V0.md and ui_plan.md §LOOP_V0.
+
+export type LoopV0Step =
+  | "starting"
+  | "summarize_paper"
+  | "play_pd_match"
+  | "query_chroma"
+  | "journal_writer_stub"
+  | "nara_summarizing";
+
+export interface LoopV0ToolCall {
+  tool: string;
+  started_at: string;
+  ended_at?: string | null;
+  status?: string | null;
+}
+
+export interface ActiveIteration {
+  iteration_id: string;
+  topic: string;
+  started_at: string;
+  current_step: LoopV0Step | string;
+  step_started_at?: string | null;
+  narration?: string | null;
+  tool_calls_so_far?: LoopV0ToolCall[];
+}
+
+// One row of run_state/loop_memory.jsonl. Part-1 hello-world fills the
+// novelty/critique/retrieval blocks with placeholders; the fields are
+// declared optional so the UI can render across both Part-1 and Part-2.
+export interface IterationRecord {
+  iteration_id: string;
+  started_at: string;
+  ended_at: string;
+  seed?: { topic?: string; source?: string } | null;
+  hypothesis?: { text?: string; candidates_considered?: number } | null;
+  retrieval?: { k?: number; neighbors?: unknown[] } | null;
+  novelty?: {
+    class?: "novel" | "rediscovery" | "nonsense" | "unclear" | string;
+    rationale?: string;
+    top_neighbor_id?: string | null;
+  } | null;
+  critique?: {
+    verdict?: "survives" | "falsified" | "restated" | "malformed" | string;
+    rationale?: string;
+    contradicting_paper_id?: string | null;
+  } | null;
+  journal_entry_path: string;
+  nara_summary?: string | null;
+  model_version?: string | null;
+  wrapper_call_ids?: string[];
+  seed_value?: number | null;
+}
+
+export interface IterationsResponse {
+  iterations: IterationRecord[];
+}
+
+export interface JournalResponse {
+  iteration_id: string;
+  path: string;
+  content: string;
+}

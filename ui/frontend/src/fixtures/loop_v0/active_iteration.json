@@ -1,0 +1,21 @@
+{
+  "iteration_id": "iter-2026-05-26-001",
+  "topic": "Tit-for-Tat dominance in repeated PD",
+  "started_at": "2026-05-26T14:00:00Z",
+  "current_step": "query_chroma",
+  "step_started_at": "2026-05-26T14:00:08Z",
+  "narration": "Nara: querying Chroma for prior literature on Tit-for-Tat dominance.",
+  "tool_calls_so_far": [
+    {
+      "tool": "summarize_paper",
+      "started_at": "2026-05-26T14:00:01Z",
+      "ended_at": "2026-05-26T14:00:07Z",
+      "status": "passed"
+    },
+    {
+      "tool": "query_chroma",
+      "started_at": "2026-05-26T14:00:08Z",
+      "status": "running"
+    }
+  ]
+}

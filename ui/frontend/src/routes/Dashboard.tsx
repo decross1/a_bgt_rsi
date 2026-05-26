@@ -1,14 +1,26 @@
 // Live dashboard: is the Spark healthy and what is the apparatus doing?
-// See ui_plan.md section 5.3. Telemetry arrives over the /api/live
-// WebSocket (ui/hooks/useTelemetryStream); the orchestrator queue polls.
+// See ui_plan.md §LOOP_V0. Top of the page is the LOOP_V0 iteration view
+// (prompt → active iteration → resolved list → journal). Below that, the
+// substrate panels (health, orchestrator queue, vLLM, etc.) stay mounted
+// so the human can see the Spark itself while Nara runs.
 import { useEffect, useState } from "react";
+import ActiveIterationPanel from "../components/ActiveIterationPanel";
 import BaselineCard from "../components/BaselineCard";
 import Day4ChainList from "../components/Day4ChainList";
 import HealthStrip from "../components/HealthStrip";
+import JournalScroll from "../components/JournalScroll";
+import NaraPromptForm from "../components/NaraPromptForm";
 import OrchestratorQueue from "../components/OrchestratorQueue";
 import ProcessGrid from "../components/ProcessGrid";
+import ResolvedIterationsList from "../components/ResolvedIterationsList";
 import RobustnessPanel from "../components/RobustnessPanel";
-import UnlockPanel from "../components/UnlockPanel";
+// UnlockPanel was keyed to the retired Track-A/B/C/D + autonomy-tier
+// framework (see DECISIONS.md D-030, 2026-05-26). Commented out — kept in
+// the file so a future session can decide whether to repurpose it for the
+// LOOP_V0 exit criterion (LOOP_V0.md §Exit criterion) or remove it.
+// CriticPanel + MetaReviewPanel referenced in the LOOP_V0 UI prompt do
+// not exist on this branch — nothing to comment out there.
+// import UnlockPanel from "../components/UnlockPanel";
 import VllmPanel from "../components/VllmPanel";
 import { getHealth, getState } from "../api/http";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
@@ -27,6 +39,9 @@ export default function Dashboard() {
   const { samples, latest, connected } = useTelemetryStream();
   const [health, setHealth] = useState<Health | null>(null);
   const [state, setState] = useState<AppState | null>(null);
+  const [selectedIteration, setSelectedIteration] = useState<string | null>(
+    null,
+  );
   const now = useNow();
 
   useEffect(() => {
@@ -76,7 +91,26 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* LOOP_V0 iteration view — the apparatus's cognitive loop made
+          visible. Prompt → active → resolved → journal. */}
       <div className="mt-4">
+        <NaraPromptForm />
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <ActiveIterationPanel />
+        <ResolvedIterationsList
+          onSelect={setSelectedIteration}
+          selectedId={selectedIteration}
+        />
+      </div>
+
+      <div className="mt-4">
+        <JournalScroll iterationId={selectedIteration} />
+      </div>
+
+      {/* Substrate panels below — Spark health + apparatus telemetry. */}
+      <div className="mt-6">
         <HealthStrip samples={samples} />
       </div>
 
@@ -90,11 +124,10 @@ export default function Dashboard() {
         <RobustnessPanel />
       </div>
 
-      {/* Week-2 unlock prerequisites — alignment-evidence the human needs
-          to attest the Week-2 tier-shift unlock (ui_plan.md §11.3). */}
-      <div className="mt-4">
-        <UnlockPanel />
-      </div>
+      {/* UnlockPanel — Week-2 unlock prerequisites keyed to the retired
+          autonomy-tier framework (D-030). Commented out 2026-05-26; kept
+          for future repurpose into a LOOP_V0 exit-criterion progress strip. */}
+      {/* <UnlockPanel /> */}
 
       <div className="mt-4">
         <BaselineCard />

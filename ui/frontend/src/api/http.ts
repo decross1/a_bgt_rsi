@@ -4,12 +4,15 @@
 // 10.0.0.73 -> backend at 10.0.0.73:8700). The backend allows CORS.
 
 import type {
+  ActiveIteration,
   AppState,
   BaselineResponse,
   ChainResponse,
   Day4ChainsResponse,
   EventsResponse,
   Health,
+  IterationsResponse,
+  JournalResponse,
   RecentTask,
   RobustnessResponse,
   TelemetrySample,
@@ -68,3 +71,50 @@ export const getWorkloadHint = () =>
 
 export const getUnlockStatus = () =>
   getJSON<UnlockStatus>("/api/unlock_status");
+
+// --- LOOP_V0 endpoints (ui/backend/loop_v0.py) ---
+
+// GET /api/loop_v0/active returns 204 when no iteration is in flight. Caller
+// gets `null` in that case rather than an error.
+export async function getActiveIteration(): Promise<ActiveIteration | null> {
+  const resp = await fetch(`${API_BASE}/api/loop_v0/active`);
+  if (resp.status === 204) return null;
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try {
+      const body = (await resp.json()) as { detail?: string };
+      if (body.detail) detail = body.detail;
+    } catch {
+      /* no JSON body */
+    }
+    throw new Error(`${resp.status} ${detail}`);
+  }
+  return (await resp.json()) as ActiveIteration;
+}
+
+export const getIterations = () =>
+  getJSON<IterationsResponse>("/api/loop_v0/iterations");
+
+export const getJournalEntry = (iterationId: string) =>
+  getJSON<JournalResponse>(
+    `/api/loop_v0/journal/${encodeURIComponent(iterationId)}`,
+  );
+
+export async function startIteration(topic: string): Promise<{ pid: number; iteration_id?: string }> {
+  const resp = await fetch(`${API_BASE}/api/loop_v0/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ topic }),
+  });
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try {
+      const body = (await resp.json()) as { detail?: string };
+      if (body.detail) detail = body.detail;
+    } catch {
+      /* no JSON body */
+    }
+    throw new Error(`${resp.status} ${detail}`);
+  }
+  return (await resp.json()) as { pid: number; iteration_id?: string };
+}
