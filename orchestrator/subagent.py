@@ -29,6 +29,11 @@ from typing import Any, Callable, Literal
 import jsonschema
 
 from agent_wrapper.cleanup import strip_channel_markup
+from agent_wrapper.gemma_tool_parse import (
+    SynthToolCall,
+    parse_inline_tool_calls,
+    split_narration_and_markup,
+)
 from agent_wrapper.wrapper import (
     HOST_METADATA,
     MODEL,
@@ -275,6 +280,9 @@ def run_subagent(
                 messages=openai_messages,
                 tools=tool_specs if tool_specs else None,
                 temperature=0.2,
+                # Same cap as nara.py — bounded per-turn output so a
+                # tool-call-as-text emission can't run away.
+                max_tokens=1024,
             )
             latency_ms = (time.perf_counter() - t0) * 1000.0
         except Exception as exc:
@@ -299,8 +307,23 @@ def run_subagent(
         output_tokens += record["usage"]["output_tokens"]
 
         msg = resp.choices[0].message
-        text_content = (msg.content or "").strip()
+        raw_content = msg.content or ""
         tool_calls = list(msg.tool_calls or [])
+
+        # Same fallback parser as nara.py: if vLLM's gemma4 parser missed
+        # an inline `<|tool_call>call:NAME{...}` markup, synthesize tool
+        # calls from the text content and treat anything before the marker
+        # as narration (which we then attempt to validate as a final
+        # JSON answer, since for sub-agents a non-tool-call final IS the
+        # exit condition).
+        if not tool_calls:
+            synthesized = parse_inline_tool_calls(raw_content)
+            if synthesized:
+                tool_calls = [SynthToolCall(t) for t in synthesized]
+                narration_only, _ = split_narration_and_markup(raw_content)
+                raw_content = narration_only
+
+        text_content = raw_content.strip()
 
         if not tool_calls:
             # Sub-agent's final message — try to validate against schema.

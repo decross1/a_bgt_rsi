@@ -29,6 +29,11 @@ from pathlib import Path
 import jsonschema
 
 from agent_wrapper.cleanup import strip_channel_markup
+from agent_wrapper.gemma_tool_parse import (
+    SynthToolCall,
+    parse_inline_tool_calls,
+    split_narration_and_markup,
+)
 from agent_wrapper.wrapper import (
     HOST_METADATA,
     MEMORY_LOG,
@@ -204,6 +209,8 @@ _LOOP_V0_STEPS = [
 ]
 
 
+
+
 def _captured_to_step(name: str) -> str:
     """Map a tool name to the captured-key it populates."""
     return {
@@ -310,11 +317,33 @@ def run_iteration(
         last_id = record["request_id"]
 
         msg = resp.choices[0].message
+        raw_content = msg.content or ""
+        tool_calls = list(msg.tool_calls or [])
+
+        # Fallback parser: Gemma 4 stochastically emits tool calls as
+        # inline `<|tool_call>call:NAME{...}` markup in `content` instead
+        # of using the OpenAI tool_calls field (vLLM's --tool-call-parser
+        # gemma4 misses this format on ~50% of long-context turns; caught
+        # on iter-010). When that happens, synthesize tool_calls from the
+        # text content and treat the text BEFORE the marker as narration.
+        if not tool_calls:
+            synthesized = parse_inline_tool_calls(raw_content)
+            if synthesized:
+                tool_calls = [SynthToolCall(t) for t in synthesized]
+                narration_only, _ = split_narration_and_markup(raw_content)
+                raw_content = narration_only
+                runtime.log_event({
+                    "event_type": "loop_v0_synth_tool_call",
+                    "iteration_id": iteration_id,
+                    "count": len(synthesized),
+                    "names": [s["function"]["name"] for s in synthesized],
+                    "parent_request_id": last_id,
+                })
+
         # Strip Gemma's chat-template markers (`<|channel|>`, lone "thought"
         # lines, etc.) from anything that lands in the iteration_record.
         # The raw record in logs/calls.jsonl is preserved as-is for forensics.
-        text_content = strip_channel_markup((msg.content or "").strip())
-        tool_calls = list(msg.tool_calls or [])
+        text_content = strip_channel_markup(raw_content.strip())
 
         # Narration: any text Nara emitted this turn (before tool_calls or as
         # a final message) is treated as her commentary.
