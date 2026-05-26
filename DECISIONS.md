@@ -1383,6 +1383,55 @@ end of Week 1" intention is honored; the deferral reason has
 shifted from "alpha and breaks" to "installable but needs sudo
 interaction we don't have in this session."
 
+**UPDATE 2026-05-26 ~03:00 UTC — install completed (attended).** The
+user ran the install in a real terminal with the sudo password
+available. Outcome:
+
+- `nemoclaw v0.1.0` CLI installed (`/home/decross1/.npm-global/bin/nemoclaw`,
+  symlinked to a wrapper at `/home/decross1/.local/bin/nemoclaw`).
+- Sandbox `nara-sandbox` built and running
+  (`openshell-nara-sandbox-763df558-...`).
+- OpenClaw v2026.5.18 baked into the sandbox image (Dockerfile steps
+  22-23). Gateway listening at http://127.0.0.1:18789, /health
+  returns `{ok:true, status:live}`.
+- Inference: vllm-local provider, model `gemma-4-26b-a4b`, routed
+  through NemoClaw's egress proxy at `10.200.0.1:3128`. Sandbox-side
+  status reports "Inference (vllm backend): healthy".
+- Resource profile: gamer (25% CPU / 25% RAM).
+- GPU passthrough verified (3 GPU proofs passed: nvidia-smi, /proc
+  comm write, `cuInit(0)` via libcuda).
+- Dispatch path verified: `nemoclaw nara-sandbox exec --no-tty -- echo
+  "hello"` returns cleanly.
+
+**Two artifacts to note (non-blocking):**
+
+1. **Container Docker healthcheck reports "unhealthy"** even though
+   the gateway is fine. The in-container `curl 127.0.0.1:18789/health`
+   fails for an internal network-namespace reason, but the gateway is
+   reachable from the host and responding. Cosmetic.
+
+2. **`openshell sandbox connect nara-sandbox` hangs** without a TTY
+   (same root cause that blocked autonomous install). This affected
+   the wizard's step 7/8 ("Setting up OpenClaw inside sandbox") and
+   reported a non-zero exit, but OpenClaw was already baked into the
+   image at build time, so nothing material was missing. The CLI's
+   `exec --no-tty` and the gateway API are the practical dispatch
+   paths and both work.
+
+**NemoClawRuntime.dispatch_tool — implementation DEFERRED.** Nara is
+currently a Python orchestrator on the host that calls Python worker
+functions in-process. Shelling out to the sandbox via `nemoclaw
+exec` (or speaking to the gateway API) for every tool call would
+add network/serialization overhead for no benefit at LOOP_V0's
+current shape. NemoClawRuntime earns its keep when **Phase-2
+dispatched coding agents** become real (Nara dispatches a coding
+sub-agent to write a new worker → that sub-agent runs as an OpenClaw
+session in the sandbox). PyRuntime remains the default and only
+working runtime for LOOP_V0 hello-world iterations.
+
+D-031 is now **partially resolved**: install side done, runtime
+integration deferred to Phase-2 use cases.
+
 ---
 
 ## D-032 — Install full `agent_system` skill set into `.agents/` (diverges from BOUNDARY.md)
