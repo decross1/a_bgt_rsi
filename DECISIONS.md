@@ -1286,3 +1286,99 @@ mechanism is retired but the underlying instinct, "human in the loop
 until specific evidence permits less," remains). Does not supersede
 the inviolate-rules portion of `CLAUDE.md`, which is preserved
 verbatim in the rewrite.
+
+---
+
+## D-031 — NemoClaw: install feasible, deferred today (sudo-blocked autonomous session)
+
+**Date locked.** 2026-05-26 (LOOP_V0 Part 1, primary session).
+
+**Decision.** Do not run NemoClaw install in today's autonomous
+primary session. Keep `NemoClawRuntime` as a `NotImplementedError`
+stub in `orchestrator/runtime.py`. The substrate-swappable design
+(D-030) holds: when NemoClaw is installed in a future session (by
+the human, or interactively), implementing `NemoClawRuntime` is
+mechanical and Nara does not change.
+
+**Investigation summary** (≈10 min of the 90-min cap):
+
+Status of NemoClaw as of 2026-05-26 (vs. Day-1's D-008 state in
+March 2026):
+
+- Now installable via a public installer:
+  `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`
+  Bootstrap clones `github.com/NVIDIA/NemoClaw` and runs
+  `scripts/install.sh` from the checkout.
+- DGX Spark is officially supported (`spark-install.md` in repo:
+  "DGX Spark needs no platform-specific pre-setup as Docker is
+  pre-installed"). Per-repo `setup-spark.sh` exists.
+- Repo still marked "Alpha" in `CLAUDE.md` ("Interfaces may change
+  without notice"), but the install path is no longer the ad-hoc
+  state described in March 2026.
+
+Prerequisites on this host (all met):
+
+- Docker 29.2.1 (D-022 vLLM image already running).
+- Node.js 22.22.2 (≥ 20 required).
+- `NVIDIA_API_KEY` set in env.
+- 3.4 TB free on `/dev/nvme0n1p2`.
+- User in `docker` and `sudo` groups; Docker accessible without sudo.
+- GPU + CUDA 13.0 driver (`nvidia-smi` reports 580.142).
+
+The blocker: the installer needs sudo to run
+`nvidia-ctk cdi generate` for NVIDIA Container Device Interface
+spec generation (per `scripts/install.sh` line 1850). The host
+requires a sudo password (not passwordless). An autonomous Claude
+Code session cannot type the password. The installer would prompt
+and halt.
+
+Other sudo-using paths in the installer (docker install, docker
+systemd enable, docker group add) are no-ops on this host because
+Docker is already installed, active, and the user is already in
+the `docker` group.
+
+**Alternatives.**
+
+1. Push through with `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt` —
+   doesn't help; still requires interactive password.
+2. Skip the nvidia-cdi step — installer warns and continues per
+   `scripts/install.sh:1862` ("Could not obtain sudo credentials
+   for NVIDIA CDI device spec generation"), but downstream behavior
+   when CDI is unset is undocumented and may break GPU access from
+   sandboxed agents.
+3. Pre-authorize passwordless sudo for the install duration —
+   security-meaningful change to the host; out of scope for a doc
+   reorg + scaffolding session.
+4. The human runs the installer directly outside an autonomous
+   session — straightforward; works in any future working session.
+
+**Rationale.** Today's session has scope beyond NemoClaw (Runtime
+abstraction, tool registry, schemas, Nara hello-world, end-to-end
+smoke). Spending the remaining ~80 minutes of the cap on sudo
+workarounds risks zero-output day. The substrate-swappable design
+means we do not lose architectural value by deferring: when
+NemoClaw is later installed, swapping is a one-line change to the
+`runtime=` argument in `nara.run_iteration()`.
+
+**Reversibility.** Trivial. To revive NemoClaw integration in a
+future session:
+
+1. Human runs `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`
+   in a normal terminal (typing the sudo password when prompted).
+2. Implement `NemoClawRuntime.dispatch_tool` to shell out to
+   `nemoclaw run` or call the NemoClaw CLI's blueprint API.
+3. Swap `runtime=PyRuntime()` → `runtime=NemoClawRuntime()` in CLI
+   default; PyRuntime stays as fallback.
+
+**What would reverse the deferral.** (1) The human installs
+NemoClaw outside the session — the implementation is ~150 LOC
+when prereqs are met. (2) Passwordless sudo is enabled in a way
+the user is comfortable with. (3) The user explicitly requests an
+attended-but-paused install session where they type the sudo
+password mid-run.
+
+**Supersedes.** D-008 (NemoClaw alpha discipline, plain-Docker
+fallback) — partially. D-008's "re-attempt with fresh eyes at the
+end of Week 1" intention is honored; the deferral reason has
+shifted from "alpha and breaks" to "installable but needs sudo
+interaction we don't have in this session."
