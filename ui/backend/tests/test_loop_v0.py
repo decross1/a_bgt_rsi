@@ -254,9 +254,139 @@ def test_start_with_real_subprocess_invokes_env_unset(tmp_path):
 @pytest.mark.parametrize("path", [
     "/api/loop_v0/active",
     "/api/loop_v0/iterations",
+    "/api/loop_v0/processes",
 ])
 def test_endpoints_routed(tmp_path, path):
     # Smoke that the router is mounted on the app at the expected prefix.
     client, _ = _client(tmp_path)
     resp = client.get(path)
     assert resp.status_code in (200, 204)
+
+
+# ─── Process-status tracking (PID + exit-status) ──────────────────────
+
+
+class _CompletableProc:
+    """Test double for subprocess.Popen with a controllable .poll() return.
+
+    By default .poll() returns None (still running). Tests can call
+    .complete(rc) to make subsequent .poll() return that exit code,
+    simulating the subprocess having exited.
+    """
+
+    def __init__(self, pid: int):
+        self.pid = pid
+        self._rc: int | None = None
+
+    def poll(self) -> int | None:
+        return self._rc
+
+    def complete(self, rc: int) -> None:
+        self._rc = rc
+
+
+def test_processes_empty_at_startup(tmp_path):
+    client, _ = _client(tmp_path)
+    resp = client.get("/api/loop_v0/processes")
+    assert resp.status_code == 200
+    assert resp.json() == {"processes": []}
+
+
+def test_start_registers_process_as_running(tmp_path):
+    procs: list[_CompletableProc] = []
+    def popen(cmd, cwd=None, **kw):
+        p = _CompletableProc(pid=1000 + len(procs))
+        procs.append(p)
+        return p
+    client, _ = _client(tmp_path, popen=popen)
+    resp = client.post("/api/loop_v0/start", json={"topic": "alpha"})
+    assert resp.status_code == 202
+    listed = client.get("/api/loop_v0/processes").json()["processes"]
+    assert len(listed) == 1
+    assert listed[0]["topic"] == "alpha"
+    assert listed[0]["status"] == "running"
+    assert listed[0]["exit_code"] is None
+    assert listed[0]["ended_at"] is None
+    assert "proc" not in listed[0]  # internal handle stripped
+
+
+def test_process_transitions_to_exited_clean_on_rc_zero(tmp_path):
+    procs: list[_CompletableProc] = []
+    def popen(cmd, cwd=None, **kw):
+        p = _CompletableProc(pid=2000 + len(procs))
+        procs.append(p)
+        return p
+    client, _ = _client(tmp_path, popen=popen)
+    client.post("/api/loop_v0/start", json={"topic": "beta"})
+    procs[0].complete(0)  # subprocess "exits clean"
+    listed = client.get("/api/loop_v0/processes").json()["processes"]
+    assert listed[0]["status"] == "exited_clean"
+    assert listed[0]["exit_code"] == 0
+    assert listed[0]["ended_at"] is not None
+
+
+def test_process_transitions_to_exited_error(tmp_path):
+    procs: list[_CompletableProc] = []
+    def popen(cmd, cwd=None, **kw):
+        p = _CompletableProc(pid=3000 + len(procs))
+        procs.append(p)
+        return p
+    client, _ = _client(tmp_path, popen=popen)
+    client.post("/api/loop_v0/start", json={"topic": "gamma"})
+    procs[0].complete(2)  # non-zero exit
+    listed = client.get("/api/loop_v0/processes").json()["processes"]
+    assert listed[0]["status"] == "exited_error_2"
+    assert listed[0]["exit_code"] == 2
+
+
+def test_process_transitions_to_killed_on_negative_rc(tmp_path):
+    procs: list[_CompletableProc] = []
+    def popen(cmd, cwd=None, **kw):
+        p = _CompletableProc(pid=4000 + len(procs))
+        procs.append(p)
+        return p
+    client, _ = _client(tmp_path, popen=popen)
+    client.post("/api/loop_v0/start", json={"topic": "delta"})
+    procs[0].complete(-9)  # SIGKILL
+    listed = client.get("/api/loop_v0/processes").json()["processes"]
+    assert listed[0]["status"] == "killed_signal_9"
+
+
+def test_iterations_join_process_status_by_topic(tmp_path):
+    procs: list[_CompletableProc] = []
+    def popen(cmd, cwd=None, **kw):
+        p = _CompletableProc(pid=5000 + len(procs))
+        procs.append(p)
+        return p
+    client, _ = _client(tmp_path, popen=popen)
+    # Spawn + complete a process.
+    client.post("/api/loop_v0/start", json={"topic": "topic-x"})
+    procs[0].complete(0)
+    # Write a matching iteration_record in loop_memory.
+    (tmp_path / "memory" / "loop_memory.jsonl").write_text(
+        json.dumps({
+            "iteration_id": "iter-2026-05-26-001",
+            "ended_at": "2026-05-26T14:00:00Z",
+            "seed": {"topic": "topic-x", "source": "human_ui"},
+        }) + "\n",
+        encoding="utf-8")
+    rows = client.get("/api/loop_v0/iterations").json()["iterations"]
+    assert len(rows) == 1
+    assert rows[0]["process_status"] == "exited_clean"
+    assert rows[0]["process_pid"] == 5000
+    assert rows[0]["process_exit_code"] == 0
+
+
+def test_iterations_omit_process_status_when_no_match(tmp_path):
+    client, _ = _client(tmp_path)  # default stub popen
+    (tmp_path / "memory" / "loop_memory.jsonl").write_text(
+        json.dumps({
+            "iteration_id": "iter-2026-05-26-001",
+            "ended_at": "2026-05-26T14:00:00Z",
+            "seed": {"topic": "unrelated", "source": "human_cli"},
+        }) + "\n",
+        encoding="utf-8")
+    rows = client.get("/api/loop_v0/iterations").json()["iterations"]
+    assert len(rows) == 1
+    assert "process_status" not in rows[0]
+    assert "process_pid" not in rows[0]

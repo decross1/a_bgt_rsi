@@ -22,9 +22,14 @@ import json
 import os
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException, Response
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 # The shell injects MOCK_LLM=1 by default (memory: mock-llm-track-a-env);
@@ -104,6 +109,37 @@ def register(
         loop_memory_path = Path(repo_root) / "memory" / "loop_memory.jsonl"
     router = APIRouter(prefix="/api/loop_v0", tags=["loop_v0"])
 
+    # In-memory tracker for subprocess we spawn via /start. Keyed by pid.
+    # The Popen instance is kept so we can call .poll() — that returns
+    # the exit code if the process has exited, or None if still running.
+    # On backend restart this map is empty; running iterations from a
+    # prior backend cannot be reaped here (their journal entries still
+    # land via the producer's own writes).
+    _processes: dict[int, dict] = {}
+
+    def _reap_processes() -> None:
+        """Lazy reap: every endpoint call checks if any tracked pid has
+        exited and updates its status. Cheap; bounded by len(_processes)
+        which is the count of iterations submitted since backend boot."""
+        for pid, info in _processes.items():
+            if info["status"] != "running":
+                continue
+            proc = info.get("proc")
+            if proc is None or not hasattr(proc, "poll"):
+                # Test stubs without poll() — leave as running.
+                continue
+            rc = proc.poll()
+            if rc is None:
+                continue
+            info["ended_at"] = _utcnow_iso()
+            info["exit_code"] = rc
+            if rc == 0:
+                info["status"] = "exited_clean"
+            elif rc < 0:
+                info["status"] = f"killed_signal_{-rc}"
+            else:
+                info["status"] = f"exited_error_{rc}"
+
     @router.post("/start", status_code=202)
     def start(payload: dict = Body(...)):
         topic = payload.get("topic") if isinstance(payload, dict) else None
@@ -126,7 +162,32 @@ def register(
         except (OSError, ValueError) as exc:
             raise HTTPException(
                 status_code=500, detail=f"subprocess failed: {exc}") from exc
-        return {"pid": getattr(proc, "pid", None), "topic": topic}
+        pid = getattr(proc, "pid", None)
+        if isinstance(pid, int):
+            _processes[pid] = {
+                "pid": pid,
+                "topic": topic,
+                "started_at": _utcnow_iso(),
+                "ended_at": None,
+                "status": "running",
+                "exit_code": None,
+                "proc": proc,
+            }
+        return {"pid": pid, "topic": topic}
+
+    @router.get("/processes")
+    def processes():
+        """Subprocess status for iterations spawned since backend boot.
+        Each entry: `{pid, topic, started_at, ended_at, status, exit_code}`.
+        `status` ∈ {`running`, `exited_clean`, `exited_error_<rc>`,
+        `killed_signal_<sig>`}. Newest first."""
+        _reap_processes()
+        rows = []
+        for info in _processes.values():
+            # Drop the Popen handle from the API surface.
+            rows.append({k: v for k, v in info.items() if k != "proc"})
+        rows.sort(key=lambda r: r.get("started_at") or "", reverse=True)
+        return {"processes": rows}
 
     @router.get("/active")
     def active():
@@ -149,8 +210,30 @@ def register(
 
     @router.get("/iterations")
     def iterations():
+        _reap_processes()
         rows = _read_jsonl(Path(loop_memory_path))
         rows.sort(key=lambda r: r.get("ended_at") or "", reverse=True)
+        # Join in-memory process status by topic. The match is best-effort —
+        # if the same topic was submitted twice since backend boot, we attach
+        # the *latest* matching process. Iterations from before backend boot
+        # have no process info, and the field is omitted.
+        topic_to_status: dict[str, dict] = {}
+        for info in _processes.values():
+            t = info.get("topic")
+            if not t:
+                continue
+            existing = topic_to_status.get(t)
+            if existing is None or (info.get("started_at") or "") > (existing.get("started_at") or ""):
+                topic_to_status[t] = info
+        for row in rows:
+            topic = (row.get("seed") or {}).get("topic")
+            info = topic_to_status.get(topic)
+            if info is None:
+                continue
+            row["process_status"] = info["status"]
+            row["process_pid"] = info["pid"]
+            if info.get("exit_code") is not None:
+                row["process_exit_code"] = info["exit_code"]
         return {"iterations": rows}
 
     @router.get("/journal/{iteration_id}")

@@ -208,6 +208,11 @@ export interface IterationRecord {
   model_version?: string | null;
   wrapper_call_ids?: string[];
   seed_value?: number | null;
+  // Joined in by /api/loop_v0/iterations when the topic matches a tracked
+  // subprocess. Mirrors `/api/loop_v0/processes`. Absent when no match.
+  process_status?: string;
+  process_pid?: number;
+  process_exit_code?: number;
 }
 
 export interface IterationsResponse {

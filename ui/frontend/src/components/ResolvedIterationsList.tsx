@@ -21,6 +21,26 @@ const VERDICT_TONE: Record<string, string> = {
   malformed: "bg-red-950 text-red-400",
 };
 
+// Process-status badge. `status` mirrors /api/loop_v0/processes:
+// running / exited_clean / exited_error_<rc> / killed_signal_<sig>.
+function processTone(status: string | undefined): string {
+  if (!status) return "bg-zinc-800 text-zinc-400";
+  if (status === "running") return "bg-sky-950 text-sky-300";
+  if (status === "exited_clean") return "bg-emerald-950 text-emerald-400";
+  if (status.startsWith("exited_error_")) return "bg-red-950 text-red-400";
+  if (status.startsWith("killed_signal_")) return "bg-red-950 text-red-400";
+  return "bg-zinc-800 text-zinc-400";
+}
+
+function processLabel(status: string | undefined): string | null {
+  if (!status) return null;
+  if (status === "exited_clean") return "pid clean";
+  if (status === "running") return "pid running";
+  if (status.startsWith("exited_error_")) return `pid err ${status.slice("exited_error_".length)}`;
+  if (status.startsWith("killed_signal_")) return `pid killed ${status.slice("killed_signal_".length)}`;
+  return status;
+}
+
 function Badge({
   text,
   tone,
@@ -146,6 +166,10 @@ export default function ResolvedIterationsList({
                         VERDICT_TONE[row.critique?.verdict ?? ""] ??
                         "bg-zinc-800 text-zinc-400"
                       }
+                    />
+                    <Badge
+                      text={processLabel(row.process_status)}
+                      tone={processTone(row.process_status)}
                     />
                     <span className="ml-auto font-mono text-[10px] text-zinc-500">
                       {shortTimestamp(row.ended_at)}
