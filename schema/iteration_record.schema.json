@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LOOP_V0 iteration_record",
+  "description": "One row of run_state/loop_memory.jsonl. Today's hello-world has a minimal required set; Part 2 lands the full chain (hypothesis, retrieval, novelty, critique fields).",
+  "type": "object",
+  "required": [
+    "iteration_id",
+    "started_at",
+    "ended_at",
+    "seed",
+    "nara_summary",
+    "tool_calls_made",
+    "journal_entry_path",
+    "model_version",
+    "wrapper_call_ids"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "iteration_id": {
+      "type": "string",
+      "pattern": "^iter-\\d{4}-\\d{2}-\\d{2}-\\d{3}$",
+      "description": "Sequential within the day."
+    },
+    "started_at": {"type": "string", "format": "date-time"},
+    "ended_at":   {"type": "string", "format": "date-time"},
+    "seed": {
+      "type": "object",
+      "required": ["topic", "source"],
+      "properties": {
+        "topic":  {"type": "string", "minLength": 1},
+        "source": {
+          "type": "string",
+          "enum": ["human_cli", "human_ui", "arxiv_pick", "loop_memory_probe"]
+        }
+      }
+    },
+    "hypothesis": {
+      "description": "Populated by Part 2's hypothesize worker. Absent in hello-world.",
+      "type": "object",
+      "required": ["text", "candidates_considered"],
+      "properties": {
+        "text": {"type": "string"},
+        "candidates_considered": {"type": "integer", "minimum": 1, "maximum": 3},
+        "all_candidates": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "retrieval": {
+      "description": "Populated by Part 2's retrieve_literature. Absent in hello-world.",
+      "type": "object",
+      "required": ["k", "neighbors"],
+      "properties": {
+        "k": {"type": "integer"},
+        "neighbors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["doc_id", "content_hash", "score", "source_layer"],
+            "properties": {
+              "doc_id":       {"type": "string"},
+              "content_hash": {"type": "string"},
+              "score":        {"type": "number"},
+              "chunk_text":   {"type": "string"},
+              "source_layer": {"type": "string", "enum": ["foundational", "live_arxiv"]},
+              "title":        {"type": ["string", "null"]}
+            }
+          }
+        }
+      }
+    },
+    "novelty": {
+      "description": "Populated by Part 2's novelty_classify. Absent in hello-world.",
+      "type": "object",
+      "required": ["class", "rationale"],
+      "properties": {
+        "class": {
+          "type": "string",
+          "enum": ["novel", "rediscovery", "nonsense", "unclear"]
+        },
+        "rationale":       {"type": "string"},
+        "top_neighbor_id": {"type": ["string", "null"]}
+      }
+    },
+    "critique": {
+      "description": "Populated by Part 2's critic_loop_v0. Absent in hello-world.",
+      "type": "object",
+      "required": ["verdict", "rationale"],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": ["survives", "falsified", "restated", "malformed"]
+        },
+        "rationale":              {"type": "string"},
+        "contradicting_paper_id": {"type": ["string", "null"]}
+      }
+    },
+    "nara_summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Final assistant message from Nara summarizing the iteration."
+    },
+    "tool_calls_made": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1,
+      "description": "Tool names invoked in order. Must include 'journal_writer_stub' (or in Part 2: 'journal_writer')."
+    },
+    "narration_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["timestamp", "tool", "text"],
+        "properties": {
+          "timestamp": {"type": "string", "format": "date-time"},
+          "tool":      {"type": ["string", "null"]},
+          "text":      {"type": "string"}
+        }
+      },
+      "description": "Per-turn narration Nara emitted before each tool call. Optional for hello-world; populated when present."
+    },
+    "journal_entry_path": {
+      "type": "string",
+      "pattern": "^journal/iterations/[0-9]{3,}\\.md$"
+    },
+    "model_version":    {"type": "string"},
+    "wrapper_call_ids": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "request_ids of every wrapper call this iteration produced."
+    }
+  }
+}

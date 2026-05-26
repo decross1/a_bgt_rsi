@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LOOP_V0 active_iteration",
+  "description": "Live state file at run_state/active_iteration.json. Written by Nara on every step; deleted on completion. The UI polls this to render the live panel.",
+  "type": "object",
+  "required": [
+    "iteration_id",
+    "topic",
+    "started_at",
+    "current_step",
+    "tool_calls_so_far"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "iteration_id": {
+      "type": "string",
+      "pattern": "^iter-\\d{4}-\\d{2}-\\d{2}-\\d{3}$"
+    },
+    "topic":      {"type": "string"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "current_step": {
+      "type": "string",
+      "description": "The tool currently in flight, or 'nara_thinking' between calls, or 'starting' at iteration open."
+    },
+    "step_started_at": {"type": "string", "format": "date-time"},
+    "latest_narration": {
+      "type": ["string", "null"],
+      "description": "Most-recent narration sentence Nara emitted before the current step."
+    },
+    "tool_calls_so_far": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["tool", "started_at", "status"],
+        "properties": {
+          "tool":       {"type": "string"},
+          "started_at": {"type": "string", "format": "date-time"},
+          "ended_at":   {"type": ["string", "null"], "format": "date-time"},
+          "status":     {"type": "string", "enum": ["in_progress", "passed", "error"]},
+          "narration":  {"type": ["string", "null"]}
+        }
+      }
+    }
+  }
+}
