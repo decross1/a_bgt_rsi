@@ -1,20 +1,19 @@
 # Learning track — Phase 1 reading & problem sets
 
-> A parallel rail for the researcher's intellectual progression
-> through Phase 1. Sequenced by week with target completion windows
-> but **no hard deadlines**. Block 1 work happens here.
+> A parallel rail for the researcher's intellectual progression.
+> Sequenced by week with target completion windows but **no hard
+> deadlines**. Block 1 work happens here.
 >
-> **Block 1 is NOT a `plan.yaml` precondition for Block 2.** The agent
-> proceeds on apparatus build whether or not you've finished today's
-> reading. This file tracks *your* progress; the agent does not query
-> it. See [`../agent/autonomy.md`](../agent/autonomy.md) §7 for why.
+> **Block 1 does not block apparatus build.** The agent proceeds on
+> the active slice ([`../LOOP_V0.md`](../LOOP_V0.md)) whether or not
+> you've finished today's reading. This file tracks *your* progress;
+> the agent does not query it.
 >
 > Where the human's understanding is the **content** of a task (schema
 > authoring, contract authoring, expected-range pre-specification,
-> publication review, architectural decisions), the relevant
-> `plan.yaml` task carries `requires_human_understanding: true` and
-> stays hard-gate regardless of phase boundary. Those exceptions are
-> listed in §4 below.
+> publication review, architectural decisions), the task surfaces a
+> human gate; the agent halts and prints the gate notice. Those task
+> classes are listed in §4 below.
 
 ---
 
@@ -101,20 +100,16 @@ critic + meta-review architecture.
 - **Weekly:** in the retrospective at `retrospectives/weekN.md`,
   update the status column above and note: which keystone problems
   landed, which chapters slipped to next week, what surprised you.
-- **Phase boundary:** at each tier-unlock attestation, the
-  retrospective records that you have read enough to evaluate the
-  outputs of whatever tier is being unlocked. E.g., the Phase-2 entry
-  attestation requires you to attest "I have read enough to evaluate
-  the next hypothesis the loop generates" (see
-  [`../agent/autonomy.md`](../agent/autonomy.md) §6.5).
+  (The tier-unlock framing previously written here was tied to the
+  retired autonomy tiers; the cadence of writing remains useful.)
 
 ---
 
 ## 4. Where reading IS a hard-gate (the exception list)
 
-The following `plan.yaml` tasks have `requires_human_understanding:
-true` and stay hard-gate regardless of phase boundary. For each, the
-relevant reading must be done before the task runs:
+The following task classes surface a human gate; the agent halts and
+prints the gate notice. For each, the relevant reading must be done
+before the task runs:
 
 | Task | Required understanding | Relevant reading |
 |---|---|---|
@@ -134,10 +129,11 @@ but not checked.
 
 ## 5. What's NOT here
 
-- **The daily plan** lives in [`daily_plan.md`](daily_plan.md). This
-  file is a sequenced syllabus; the daily plan is your prescribed
-  cadence.
+- **Today's session focus** lives in
+  [`sessions/`](sessions/) (one note per working day, written with
+  the agent at start-of-session). This file is a sequenced syllabus,
+  not a cadence.
 - **The reading PDFs** live in `books/` (gitignored). This file is the
   table of contents.
-- **The agent's running tasks** live in `plan.yaml` and `current_day.md`.
-  This file does not track them.
+- **The active build slice** lives in [`../LOOP_V0.md`](../LOOP_V0.md).
+  This file does not track agent work.

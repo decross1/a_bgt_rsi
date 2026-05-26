@@ -5,11 +5,15 @@
 > [`START_HERE.md`](START_HERE.md) first for orientation, then this
 > file for background, then [`ARCHITECTURE.md`](ARCHITECTURE.md) for
 > technical detail, then [`DECISIONS.md`](DECISIONS.md) for rationale,
-> and `plan.yaml` for executable task content. The original source
-> planning documents (`research_program_v2.pdf`,
+> and [`LOOP_V0.md`](LOOP_V0.md) for the active build slice. The
+> original source planning documents (`research_program_v2.pdf`,
 > `week1_days_31-37_plan.md`, `research_apparatus_technical_plan_v1.md`)
-> are not yet committed under `docs/sources/`; `plan.yaml` is canonical
-> for task content.
+> are not yet committed under `docs/sources/`.
+>
+> The previous canonical task plan (`plan.yaml`), the autonomy
+> framework (`agent/autonomy.md`), and the 30/60/90-day roadmap
+> (`PHASE_1_ROADMAP.md`) were retired on 2026-05-26 and live under
+> [`archive/`](archive/); see [`DECISIONS.md`](DECISIONS.md) D-030.
 >
 > Version pins and inviolate-rule restatements have moved out of this
 > file. The canonical version-pin table is now in
@@ -139,11 +143,14 @@ that requires human review before publication.
 | 6 | OpenClaw orchestrator + first worker; full round-trip logged |
 | 7 | First synthetic-tier experiment (repeated PD vs TFT, grim trigger, all-C, all-D, mirror-LLM); HUMAN-REVIEW GATE before publication |
 
-The authoritative machine-readable version of this is `plan.yaml` (or
-equivalently `agent_plan_week1.md` in `docs/sources/` — same content). 83
-tasks: 32 human-only, 28 agent-executable, 12 agent-assisted, 11
-human-assisted. 12 hard checkpoints. Days 1, 5, 6 carry try-then-fallback
-branches. The operating contract for the executing agent is in `CLAUDE.md`.
+The authoritative historical record of Week 1's task ladder lives at
+[`archive/plan/plan.yaml`](archive/plan/plan.yaml) (retired 2026-05-26;
+see [`DECISIONS.md`](DECISIONS.md) D-030). 83 tasks: 32 human-only, 28
+agent-executable, 12 agent-assisted, 11 human-assisted. 12 hard
+checkpoints. Days 1, 5, 6 carried try-then-fallback branches. The
+operating contract for the executing agent is in
+[`CLAUDE.md`](CLAUDE.md); the active build slice is in
+[`LOOP_V0.md`](LOOP_V0.md).
 
 **Five validation-pass adjustments baked into Week 1.** Each is logged in
 `DECISIONS.md` with the rationale.
@@ -210,11 +217,12 @@ Affects tooling, not the apparatus runtime.
 ### Hard disciplines (do not erode)
 
 Canonical list in [`CLAUDE.md`](CLAUDE.md) "Inviolate rules". Summary:
-Block 1 human-only · Day 7 publication human-gated · validations never
-coerced · hard-gate failures abort the day · fallbacks explicit,
-logged, and time-capped. The autonomy framework that governs *which*
-checks are hard-gated vs soft-gated vs autonomous is in
-[`agent/autonomy.md`](agent/autonomy.md).
+Block 1 human-only · validations never coerced · human gates block
+until explicit attestation · fallbacks explicit, logged, and
+time-capped · logging mandatory · `MOCK_LLM` discipline. The
+three-tier autonomy framework that previously governed *which* checks
+were hard-gated vs soft-gated vs autonomous (`agent/autonomy.md`) was
+retired 2026-05-26; see [`DECISIONS.md`](DECISIONS.md) D-030.
 
 ### Hardware compatibility gap to be aware of
 The DGX Spark's Blackwell GPU reports as **SM12x (compute capability 12.1)**,
@@ -328,9 +336,8 @@ Selected:
 |---|---|
 | The technical architecture | [`ARCHITECTURE.md`](ARCHITECTURE.md) + `docs/diagrams/` |
 | Why a decision was made | [`DECISIONS.md`](DECISIONS.md) |
-| The 30/60/90-day arc | [`PHASE_1_ROADMAP.md`](PHASE_1_ROADMAP.md) |
-| The agent autonomy framework | [`agent/autonomy.md`](agent/autonomy.md) |
-| What to execute today | `plan.yaml` + [`current_day.md`](current_day.md) |
+| What to execute today | [`LOOP_V0.md`](LOOP_V0.md) + most recent [`human/sessions/`](human/sessions/) note |
 | The intellectual program behind the apparatus | `docs/sources/research_program_v2.pdf` |
 | The technical companion | `docs/sources/research_apparatus_technical_plan_v1.md` |
+| Retired track/tier framework (reference only) | [`archive/`](archive/) |
 | The visualizations from design sessions | `docs/diagrams/architecture_v4.svg`, `docs/diagrams/intelligence_loop_v4.svg` |

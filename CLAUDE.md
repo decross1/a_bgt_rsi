@@ -1,61 +1,79 @@
 # Operating contract for Claude Code
 
-New sessions read `START_HERE.md` first for orientation. The canonical
-plan is `plan.yaml`. The human-facing daily plan is
-[`human/daily_plan.md`](human/daily_plan.md). The parallel-execution
-orchestration is [`agent/orchestration.md`](agent/orchestration.md);
-the autonomy framework (tiers, SLAs, alignment) is
-[`agent/autonomy.md`](agent/autonomy.md); the file-ownership registry
-is [`agent/ownership.yaml`](agent/ownership.yaml); the claim/lock
-protocol is [`agent/collision_protocol.md`](agent/collision_protocol.md).
-The 30/60/90-day roadmap is [`PHASE_1_ROADMAP.md`](PHASE_1_ROADMAP.md).
-The terminology reference is [`GLOSSARY.md`](GLOSSARY.md).
+This file is auto-loaded into every Claude Code session in this repo.
+It is the operating contract: the rules that don't bend, and the
+pointer set for what's being built right now.
 
-The original source human-readable plan (`week1_days_31-37_plan.md`)
-is not yet committed to the repo; until it is, `plan.yaml` plus this
-contract are the operative authority — where a summary disagrees with
-`plan.yaml` on task content, `plan.yaml` wins.
+New sessions read [`START_HERE.md`](START_HERE.md) first for orientation,
+then this file. The active build plan is [`LOOP_V0.md`](LOOP_V0.md).
+The current session's working note is the most recent file under
+[`human/sessions/`](human/sessions/).
 
-This file is read by **Track A (Main)** sessions by default. Track B,
-C, and D sessions receive their own scoped prompts at launch (see
-[`agent/prompts/`](agent/prompts/)). If you are not certain which
-track you are, you are Track A.
+## Operating model (effective 2026-05-26)
 
-## How to start a Track A session
+**One primary session at a time, plus at most one concurrent UI session.**
 
-1. Read this file (`CLAUDE.md`) in full.
-2. Read [`agent/autonomy.md`](agent/autonomy.md) for tier semantics
-   (every task in `plan.yaml` carries an `autonomy_tier`).
-3. Read [`agent/ownership.yaml`](agent/ownership.yaml) and
-   [`agent/collision_protocol.md`](agent/collision_protocol.md) for
-   file-write rules.
-4. Read `plan.yaml` preamble + Appendix C, then today's day section.
-5. Read [`agent/orchestration.md`](agent/orchestration.md) — at minimum
-   the file-boundary rules and the per-day parallel schedule.
-6. Read `run_state/week1.state.json`. Resume at the first incomplete
-   task in `current_day`. Earlier days are not re-run.
-7. If `human_gates_pending` is non-empty, do NOT proceed past the gate
-   until a human explicitly marks it complete.
-8. Append every agent-executable task to `run_state/week1.run.jsonl`
-   per the run-log entry schema in `plan.yaml`.
+- The **primary session** builds the apparatus and runs experiments.
+  It can write anywhere except `ui/`.
+- The **UI session** (optional, parallel) runs in a separate worktree
+  and writes only to `ui/` + `ui_plan.md`. Its prompt is
+  [`agent/prompts/ui_session.md`](agent/prompts/ui_session.md).
+
+No other concurrent sessions. No dispatched coding agents. No
+multi-worktree per-day matrices. The previous track-A/B/C/D /
+autonomy-tier / claim-and-lock machinery has been retired and lives
+under [`archive/`](archive/) for historical reference only — do not
+treat those files as active rules.
+
+At the start of each working day, the human and the primary session
+agree on a session focus and write a working note at
+`human/sessions/YYYY-MM-DD.md`. That note is the session's plan; it is
+updated at end-of-session with what was actually done and what to do
+next.
+
+## How to start a primary session
+
+1. Read this file ([`CLAUDE.md`](CLAUDE.md)) in full.
+2. Read [`START_HERE.md`](START_HERE.md).
+3. Read [`LOOP_V0.md`](LOOP_V0.md) — the active build plan.
+4. Read the most recent file in [`human/sessions/`](human/sessions/)
+   — that's the current session's focus and prior-session handoff.
+5. Read `run_state/week1.state.json` if you need historical task state.
+   (The `week1` naming is a legacy artifact; the file is still the
+   authoritative history of completed work. New work logs to the same
+   run log: `run_state/week1.run.jsonl`.)
+6. If a `human_gates_pending` entry remains in the state file, halt
+   on it until the human explicitly clears it.
+
+## How to start the UI session
+
+In a separate terminal:
+
+```bash
+env -u MOCK_LLM claude --worktree ui-session
+```
+
+Then read [`agent/prompts/ui_session.md`](agent/prompts/ui_session.md).
+The UI session writes only to `ui/` and `ui_plan.md`. It does not
+touch `run_state/`, `workers/`, `orchestrator/`, `agent_wrapper/`,
+or any other path outside `ui/`.
+
+When the UI session has work ready to merge it prints `UI READY TO
+MERGE` and the primary session merges from `worktree-ui-session` with
+`git merge --no-ff`. If the UI session has gone idle without printing
+the sentinel, verbal attestation is acceptable — surface the state to
+the user and let them attest.
 
 ## Inviolate rules
 
-These rules **do not bend** regardless of phase boundary, alignment
-evidence, or task pressure.
+These do not bend.
 
-1. **No Block 1.** Every Block 1 task is `human_only: true` and tier
-   `hard_gate` with no SLA. Print the reading and problem set, set a
-   wall-clock timer, and HALT. Do not execute, assist, summarize,
-   derive, or solve. There is no "let the agent help just this once"
-   condition.
-
-   Block 1 is **decoupled** from Block 2 in `plan.yaml`. The agent
-   proceeds on Block 2 work regardless of whether the human has
-   finished today's reading. Tasks that require human understanding
-   for their *content* (not as background) carry
-   `requires_human_understanding: true` and stay hard-gate — see
-   [`agent/autonomy.md`](agent/autonomy.md) §7.
+1. **No Block 1 help.** Block 1 readings are human-only. If the
+   current session note marks a Block 1 reading, print the reading
+   and problem set and HALT. Do not execute, assist, summarize,
+   derive, or solve the problem set. Block 2 build work proceeds in
+   parallel — it is decoupled from whether the human has finished
+   today's reading.
 
 2. **Version pins are verbatim.** Canonical list in
    [`ARCHITECTURE.md`](ARCHITECTURE.md) §2. Summary:
@@ -66,120 +84,68 @@ evidence, or task pressure.
    - CUDA: 13.0 (NOT 13.2 — gibberish on low-bit quants).
    - Embedding: BGE-M3 (NOT all-MiniLM-L6-v2).
    - vLLM MoE backend: `--moe-backend marlin`; startup log MUST
-     contain `Using 'MARLIN' NvFp4 MoE backend`. If log shows
+     contain `Using 'MARLIN' NvFp4 MoE backend`. If the log shows
      `CUTLASS_FP4`, the flag did not pick up — STOP.
    - Weights path: `/mnt/models/gemma-4-26b-a4b-nvfp4` (NVFP4, not BF16).
 
-3. **Human gates are blocking.** The Day 7 publication review gate
-   (`day7_publication_review_gate`) is the most important. Do NOT
-   auto-publish results. HALT and print the gate notice. Clear the
-   gate only when a human explicitly marks it complete. Hard-gates
-   carry a 48h SLA after which the agent escalates but stays halted
-   (see [`agent/autonomy.md`](agent/autonomy.md) §2). The publication
-   gate has no auto-clear — it never expires.
+3. **Human gates are blocking.** When the human marks a step as
+   needing review (a "gate"), HALT and print the gate notice.
+   Clear the gate only when the human explicitly says so.
 
-4. **Validations are never silently coerced.** Each bullet under a
-   `validation:` block is a separate check with its own `pass_signal`
-   / `fail_signal`. Mismatches are reported, never recoded. "Below
-   band but close" is a failure unless the source explicitly bands it
-   as informational.
+4. **Validations are never silently coerced.** Each pass/fail check
+   stands on its own. "Below band but close" is a failure unless the
+   source explicitly bands it as informational. Report mismatches;
+   never recode them.
 
-5. **State file is authoritative on resume.** At startup read
-   `run_state/week1.state.json`. `human_gates_pending` is honored
-   across restarts. Track A is the only writer for the state file
-   and `run_state/week1.run.jsonl`. Other agents append to shared
-   JSONL files (`attestations.jsonl`, `escalations.jsonl`,
-   `claims.jsonl`).
+5. **State file is authoritative on resume.** `run_state/week1.state.json`
+   records completed work and any pending human gates. Honor pending
+   gates across restarts.
 
-6. **Hard checkpoints abort the day.** Tasks tagged
-   `hard_checkpoint: true` write `day_aborted` to the run log on
-   failure and halt the day. The next day's Block 2 is gated on the
-   prior day's success unless the source explicitly allows continuation.
-   A failed hard-gate that's salvageable can also declare a **slip**
-   (`current_subday = N.1`); see
-   [`PHASE_1_ROADMAP.md`](PHASE_1_ROADMAP.md) §2.
+6. **Logging is mandatory.** Every executable task appends a row to
+   `run_state/week1.run.jsonl`:
+   `{timestamp, task_id, status, observable_actual, observable_expected, duration_ms}`.
+   State transitions and fallback selections log as first-class entries.
 
-7. **Fallbacks are explicit, logged, and time-capped.** NemoClaw →
-   plain Docker (90-min cap, Day 1). ML-Intern → direct Semantic
-   Scholar API (45-min cap, Day 5). OpenClaw+NemoClaw → Python
-   multiprocessing (Day 6). Each fallback selection writes to
-   `state.fallbacks_taken`.
+7. **Fallbacks are explicit, logged, and time-capped.** When a
+   primary approach fails, switching to a fallback requires: a stated
+   time cap, a logged selection, and clear naming. No silent
+   degraded paths.
 
-8. **Logging is mandatory.** Every agent-executable task appends to
-   `run_state/week1.run.jsonl` with `{timestamp, day_id, task_id,
-   status, observable_actual, observable_expected, duration_ms}`.
-   State transitions, fallback selections, tier shifts, slip
-   declarations, and dispatch events log as their own first-class
-   entries.
+8. **Code-generation is bounded.** Resist abstraction. The wrapper's
+   code budget is ~100 lines. A bug fix doesn't need surrounding
+   cleanup. A one-shot operation doesn't need a helper. Don't design
+   for hypothetical future requirements.
 
-9. **Code-generation is bounded.** Tasks marked `agent_assisted` with
-   `command: null` indicate the agent prepares scaffolding only; the
-   human (or a sub-agent with explicit file-write authority) writes
-   the implementation. Resist abstraction — the wrapper's code budget
-   is ~100 lines.
+9. **The retrospective and research-journal prose are the human's.**
+   Print prompts, append answers verbatim. Do not write, summarize,
+   or interpret the human's reflective writing.
 
-10. **The retrospective is the human's.** On Day 7 print the
-    retrospective questions and append the human's answers to the run
-    log. Do NOT write, summarize, or interpret the retrospective.
-    The weekly retrospective is the alignment-evidence record that
-    gates phase-boundary advances — see
-    [`agent/autonomy.md`](agent/autonomy.md) §4.
+10. **`MOCK_LLM` discipline.** `MOCK_LLM=1` is set in the user's shell
+    by default; it silently stubs embedders. For any real model or
+    pipeline run, prefix commands with `env -u MOCK_LLM`. Memory:
+    `mock-llm-track-a-env` (still applicable post-track retirement).
 
-## Autonomy posture (governed by `agent/autonomy.md`)
+## Out-of-scope guardrails
 
-Every task in `plan.yaml` carries an `autonomy_tier` of `autonomous`,
-`soft_gate`, or `hard_gate`. Tier semantics, SLAs, phase-aware
-boundaries, and alignment-evidence definitions are in
-[`agent/autonomy.md`](agent/autonomy.md). The Week-1 inviolate rules
-above are tier-independent — they apply at all tiers.
+- Polymarket live trading — design-only until CFTC compliance work
+  is done (Phase 2+).
+- Continuous-running orchestrator — not yet; LOOP_V0 is single-shot,
+  human-triggered iterations.
+- Fine-tuning / training runs — not in LOOP_V0.
+- Second model (Qwen 3.6) — deferred until LOOP_V0 is exercised.
 
-Trust trajectory: start at the tiered + phase-aware posture; expand
-toward trust-by-default as the UI proves it can show the human what
-the system is doing. Autonomy unlocks are gated on alignment evidence,
-not calendar dates.
+## Where things live
 
-## Parallel-track rules (Track A)
-
-Track A is the only track that may:
-
-- Write to `run_state/week1.state.json` and `run_state/week1.run.jsonl`.
-- Write to `logs/`, `bench/`, `chroma_db/`, `agent_wrapper/`,
-  `orchestrator/`, `workers/` (its primary zones per
-  [`agent/ownership.yaml`](agent/ownership.yaml)).
-- Call `LOCAL_LLM_BASE_URL` (the vLLM endpoint).
-- Make end-of-day commits and tag releases.
-- Clear human gates (only after the human explicitly attests).
-- Decide whether to merge or discard a side-track branch.
-- Apply tier shifts when alignment evidence clears (see
-  [`agent/autonomy.md`](agent/autonomy.md) §4.2).
-
-If a Track B, C, or D session has finished and printed `TRACK <X>
-COMPLETE — ready to merge`:
-
-1. Verify file boundaries were respected (`git diff --name-only
-   main..worktree-<branch>` should show only files in that track's
-   zone per [`agent/ownership.yaml`](agent/ownership.yaml)).
-2. Merge with `git merge --no-ff worktree-<branch>` from the main
-   checkout.
-3. Run validation tests on the merged files before consuming them in
-   today's task.
-4. If validation fails, Track A's version of any conflicting file
-   wins; discard the side track's conflicting edits with `git checkout
-   --ours <path>`.
-
-If a side track has gone idle without printing the completion message,
-the sentinel is advisory — accept verbal attestation from the
-auditor's MERGE decision (memory: `sidetrack-sentinel-attestation`).
-Do not silently merge mid-flight work.
-
-## Things that are NOT in scope for Week 1
-
-- Polymarket API calls (design-only in Phase 1).
-- Autoresearch overnight runs (Week 2+).
-- Second model — Qwen 3.6 deferred to Week 2–3.
-- Concurrency in workers — sequential only on Day 6.
-- Fully autonomous loop — Day 7 result requires human review.
-- Fine-tuning.
-- Week 2 planning execution is post-Day-7; the **detailed plan**
-  for Week 2 lives in [`PHASE_1_ROADMAP.md`](PHASE_1_ROADMAP.md) §5
-  and is read-only for Week 1.
+| Need | Read |
+| --- | --- |
+| Orientation | [`START_HERE.md`](START_HERE.md) |
+| Active build plan | [`LOOP_V0.md`](LOOP_V0.md) |
+| Today's session focus | most recent file in [`human/sessions/`](human/sessions/) |
+| Technical architecture | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| Project background | [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) |
+| Why a decision was made | [`DECISIONS.md`](DECISIONS.md) |
+| System diagrams (the spec) | [`docs/diagrams/`](docs/diagrams/) |
+| Terminology | [`GLOSSARY.md`](GLOSSARY.md) |
+| Run state + run log | `run_state/week1.state.json`, `run_state/week1.run.jsonl` |
+| Historical journal entries | [`journal/`](journal/) |
+| Retired track/tier docs | [`archive/`](archive/) (reference only) |

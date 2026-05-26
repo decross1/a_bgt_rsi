@@ -1,14 +1,22 @@
 # UI plan — orchestrator dashboard + call-chain inspector
 
-> Companion plan to `plan.yaml` (week 1, days 31–37). The week 1 plan
-> builds the research apparatus. This plan builds the observability
-> layer on top of it. Both plans share the same repo (`a_bgt_rsi`).
+> **HEADER NOTE 2026-05-26 — read first.** This file was written
+> against the retired Track-A/B/C/D + autonomy-tier framework
+> (`plan.yaml`, `agent/autonomy.md`, etc., now under `archive/`; see
+> [`DECISIONS.md`](DECISIONS.md) D-030). Specific stale framings:
+> "Week 1", "Track D", "tier-shift unlock", and the UnlockPanel keyed
+> to alignment-evidence thresholds. The UI session
+> ([`agent/prompts/ui_session.md`](agent/prompts/ui_session.md)) is
+> expected to revise this plan to surface LOOP_V0 iteration state
+> (active panel / resolved-iterations list / live journal scroll)
+> per [`LOOP_V0.md`](LOOP_V0.md) §"What's needed from the UI session".
+> Until that revision lands, treat the historical sections below as
+> reference for the codebase you'll find under `ui/`, not as a
+> binding plan.
 >
-> **You are a concurrent Claude instance.** A different Claude is
-> executing `plan.yaml` (the week 1 apparatus build) on the DGX Spark.
-> This plan is yours. The two plans share data contracts (the JSONL
-> schemas in `schema/`) but do NOT share source files outside `ui/`.
-> Read the operating contract below before doing anything.
+> Companion plan to the apparatus build. The two share data contracts
+> (the JSONL schemas in `schema/`) but do NOT share source files
+> outside `ui/`. The UI session writes only to `ui/` and `ui_plan.md`.
 >
 > **Revision r11 (2026-05-24).** **UI v1 is ship-complete for the
 > Day-38 Week-2 unlock gate.** This pass wires the frontend consumer

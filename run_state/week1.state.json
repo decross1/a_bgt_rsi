@@ -1,7 +1,7 @@
 {
   "plan_id": "week1_phase1_days_31_37",
   "started_at": "2026-05-17T00:00:00Z",
-  "current_day": "day_9",
+  "current_day": "day_10",
   "completed_tasks": [
     "preflight_credentials_staged",
     "preflight_software_prestaged",
@@ -95,7 +95,16 @@
     "day8_block2_merge_track_c_fixtures",
     "day8_block3_journal",
     "day8_carryover_verifier_naming_drift",
-    "day8_end_of_day_artifacts"
+    "day8_end_of_day_artifacts",
+    "day9_doc_reorg_archive_track_framework",
+    "day9_doc_reorg_rewrite_claude_md",
+    "day9_doc_reorg_rewrite_start_here_md",
+    "day9_doc_reorg_write_loop_v0_md",
+    "day9_doc_reorg_write_main_and_ui_session_prompts",
+    "day9_doc_reorg_write_session_note_2026_05_26",
+    "day9_doc_reorg_d030_decision_logged",
+    "day9_doc_reorg_memory_updates",
+    "day9_doc_reorg_stale_pointer_pass"
   ],
   "aborted_days": [],
   "human_gates_pending": [],
@@ -179,5 +188,8 @@
       "scope": "forward-looking; past completed instances of these task IDs keep their original audit history. The shift changes how similar future tasks are gated.",
       "next_unlock": "Weeks-3-4 tier shifts require a second consecutive weekly attestation in week2.md \u00a77 (Day 44 retrospective) per agent/autonomy.md \u00a74.2"
     }
-  ]
+  ],
+  "operating_model_retired_on": "2026-05-26",
+  "operating_model_retired_decision": "D-030",
+  "active_plan": "LOOP_V0.md"
 }

@@ -34,7 +34,7 @@ The researcher was also walking through the four
 **failure-mode rehearsals** during Phase 0: NemoClaw fallback path,
 CUTLASS_FP4 gibberish trap, CUDA 13.2 rollback, and filesystem-cache
 remediation. These are all written up in
-[`daily_plan.md`](daily_plan.md) §"Pre-flight" / "Failure-mode rehearsal".
+[`../archive/roadmap/daily_plan.md`](../archive/roadmap/daily_plan.md) §"Pre-flight" / "Failure-mode rehearsal" (the daily plan was retired on 2026-05-26 and is now under `archive/`).
 
 ---
 
@@ -147,5 +147,8 @@ not start.
 - `notes/day1-bench-debug.md` — Day 1 benchmark debug notes; pre-MTP.
 - The user (the researcher) — for anything not captured above.
 
-For everything from Day 31 forward, [`../current_day.md`](../current_day.md)
-and `run_state/week1.run.jsonl` are authoritative.
+For everything from Day 31 forward, `run_state/week1.run.jsonl` is the
+authoritative history. Day-by-day work narrative through Day 9 is in
+[`../journal/`](../journal/); current focus is in
+[`sessions/`](sessions/). The per-day tracker `current_day.md` was
+retired on 2026-05-26 and is under [`../archive/roadmap/`](../archive/roadmap/).

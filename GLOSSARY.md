@@ -1,10 +1,18 @@
 # Glossary
 
-> Stable terminology used across the docs, the operating contract, and
-> the canonical plan. One entry per term; each entry points to the
-> deepest canonical reference. If a term appears elsewhere with a
-> different meaning, **this file wins** and the other usage is a bug
-> to fix.
+> Stable terminology used across the docs. One entry per term; each
+> entry points to the deepest canonical reference. If a term appears
+> elsewhere with a different meaning, **this file wins** and the other
+> usage is a bug to fix.
+>
+> **Update 2026-05-26.** The Track A/B/C/D parallel-execution framework
+> and the three-tier autonomy machinery (`autonomous` / `soft_gate` /
+> `hard_gate`) were retired (see [`DECISIONS.md`](DECISIONS.md) D-030).
+> Their entries below are preserved as historical reference because
+> they appear in the run log, prior journal entries, and decision
+> records. Links to the canonical defining documents now point under
+> [`archive/`](archive/). Do not treat these as active terminology —
+> the active operating model is documented in [`CLAUDE.md`](CLAUDE.md).
 
 ---
 
