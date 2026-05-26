@@ -19,6 +19,7 @@ writes there. The subprocess invocation must prefix ``env -u MOCK_LLM`` —
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -32,6 +33,23 @@ from fastapi import APIRouter, Body, HTTPException, Response
 REAL_RUN_PREFIX = ["env", "-u", "MOCK_LLM"]
 CLI_MODULE = "orchestrator.loop_v0_cli"
 MAX_TOPIC_LEN = 2000
+
+# The CLI imports `openai`, `chromadb`, etc. — none of which the system
+# Python has. The project's working interpreter is `.venv-chroma`
+# (memory: venv-chroma-bridges-openai). We prefer that over PATH lookup,
+# and let UI_LOOP_V0_PYTHON override for tests / unusual installs.
+def _resolve_python_bin(repo_root: Path) -> str:
+    override = os.environ.get("UI_LOOP_V0_PYTHON")
+    if override:
+        return override
+    venv_chroma = repo_root / ".venv-chroma" / "bin" / "python"
+    if venv_chroma.exists():
+        return str(venv_chroma)
+    venv = repo_root / ".venv" / "bin" / "python"
+    if venv.exists():
+        return str(venv)
+    # Last-resort fallback for tests and unusual installs.
+    return shutil.which("python3") or shutil.which("python") or "python"
 
 
 def _safe_iteration_id(iteration_id: str) -> str:
@@ -93,10 +111,10 @@ def register(
             raise HTTPException(
                 status_code=500,
                 detail=f"repo_root {repo_root!s} does not exist")
-        # Use the same Python interpreter that's running the UI backend.
-        # Falls back to "python" so tests can stub popen without needing a
-        # real interpreter on PATH.
-        python_bin = shutil.which("python3") or shutil.which("python") or "python"
+        # Use the project's .venv-chroma interpreter (which has openai,
+        # chromadb, jsonschema, etc.) — NOT the system python, which lacks
+        # the apparatus deps. See _resolve_python_bin above.
+        python_bin = _resolve_python_bin(Path(repo_root))
         cmd = [*REAL_RUN_PREFIX, python_bin, "-m", CLI_MODULE, "--topic", topic]
         try:
             proc = popen(cmd, cwd=str(repo_root))
