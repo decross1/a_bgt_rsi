@@ -52,3 +52,8 @@ bench/*.json
 
 # Side-track scratch logs (notes/track-*.md and notes/track-*.log)
 notes/track-*.log
+
+# agent_system framework symlinks (machine-local). The README.md
+# documents the install command for reproducing the setup.
+.agents/skills/
+.agents/agents/
