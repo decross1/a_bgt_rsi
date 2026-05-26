@@ -104,7 +104,11 @@
     "day9_doc_reorg_write_session_note_2026_05_26",
     "day9_doc_reorg_d030_decision_logged",
     "day9_doc_reorg_memory_updates",
-    "day9_doc_reorg_stale_pointer_pass"
+    "day9_doc_reorg_stale_pointer_pass",
+    "day9_salvage_track_b_tests_and_schemas",
+    "day9_salvage_track_c_fixtures_and_cron",
+    "day9_salvage_track_a_critic_worker_and_dispatcher",
+    "day9_salvage_track_d_ui_critic_and_meta_review_panels"
   ],
   "aborted_days": [],
   "human_gates_pending": [],
@@ -191,5 +195,11 @@
   ],
   "operating_model_retired_on": "2026-05-26",
   "operating_model_retired_decision": "D-030",
-  "active_plan": "LOOP_V0.md"
+  "active_plan": "LOOP_V0.md",
+  "day9_worktrees_salvaged_on": "2026-05-26",
+  "day9_worktrees_salvaged_commits": [
+    "cf2429a",
+    "b3cbe9c",
+    "92648dc"
+  ]
 }
