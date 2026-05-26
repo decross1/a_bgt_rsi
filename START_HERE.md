@@ -30,41 +30,58 @@ prover.
 
 ### What's built and exercised
 
-- `agent_wrapper/` — vLLM OpenAI-API wrapper with schema validation
-  (329 LOC, exercised across 8 days of work).
-- `orchestrator/` — sequential multiprocess orchestrator with causal
-  chain logging (292 LOC).
-- `workers/` — two workers: `summarize_paper`, `play_pd_match`.
-- `pipeline/` — arXiv ingest + BGE-M3 embed → Chroma (138 papers
-  ingested).
+- `agent_wrapper/` — vLLM OpenAI-API wrapper with schema validation;
+  `gemma_tool_parse.py` adds an inline-tool-call fallback parser for
+  Gemma's `<|tool_call>call:NAME{...}` text-content format (20 unit
+  tests including real iter-010 leak sample).
+- `orchestrator/` — sequential multiprocess orchestrator; `runtime.py`
+  (PyRuntime + NemoClawRuntime stub), `tool_registry.py`, `nara.py`
+  (LOOP_V0 orchestrator with chain re-prompt + 1024-token cap),
+  `subagent.py` (bounded multi-turn primitive — see Path B below).
+- `workers/` — seven workers. Original: `summarize_paper`,
+  `play_pd_match`. LOOP_V0 chain: `hypothesize`, `retrieve_literature`,
+  `novelty_classify`, `critic_loop_v0` (migrated to SubAgent), and
+  `journal_writer`.
+- `pipeline/` — arXiv ingest + BGE-M3 embed → Chroma (138 papers).
 - `ingest/` — textbook chunking + ingest.
-- `chroma_db/` — live vector store (~31 MB; foundational + live layers).
-- `tests/` — 4,786 LOC test suite.
-- `ui/` — React/FastAPI observability stack (Day-8 verification gate
-  cleared). Being extended for the loop-iteration view; see
-  [`agent/prompts/ui_session.md`](agent/prompts/ui_session.md).
-- One real experiment ran end-to-end: repeated Prisoner's Dilemma vs.
-  TfT / Grim / All-C / All-D / Mirror-LLM, 4× replication. Logged in
-  `experiments/exp001_repeated_pd/`.
+- `chroma_db/` — live vector store (foundational + live layers).
+- `tests/` — full test suite, including LOOP_V0 chain + Gemma parser.
+- `ui/` — React/FastAPI observability stack; LOOP_V0 dashboard with
+  NaraPromptForm + ActiveIterationPanel + ResolvedIterationsList +
+  JournalScroll. Subprocess shell-out uses the right venv interpreter
+  (commit `e7059e6`).
+- `memory/loop_memory.jsonl` (gitignored), `journal/iterations/NNN.md`
+  (gitignored), `run_state/active_iteration.json` (atomic-write).
+- Real experiment: repeated Prisoner's Dilemma vs. TfT / Grim / All-C
+  / All-D / Mirror-LLM, 4× replication. `experiments/exp001_repeated_pd/`.
+- LOOP_V0 end-to-end smoke: **iter-2026-05-26-008** ran the full
+  5-step chain on a real game-theory topic, novel-survives verdict,
+  ~120s. The chain works; the next session removes truncation risk
+  via reference-passing (see below).
 
 ### What's not yet built
 
-The eight-step intelligence loop in
-[`docs/diagrams/intelligence_loop_v5.svg`](docs/diagrams/intelligence_loop_v5.svg)
-has not yet run end-to-end as a chained iteration. Steps with no code
-today:
-
-- Step 2 (hypothesis generation)
-- Step 4 (robustness battery)
-- Step 5 (cross-tier replication)
-- Step 6 (novelty evaluation) — the diagrams call this out as a
-  sub-research-problem in its own right
-- Layer 3 of the knowledge base (loop memory of past assessments)
+- **Reference-passing refactor** — workers fetch heavy payloads from a
+  per-iteration cache by `iteration_id` rather than receive them in
+  tool_call args. **This is the immediate next priority.** The 1024-
+  token cap on tool_call emissions truncates downstream steps when
+  Nara re-emits `neighbors` arrays verbatim. Diagnosed end of
+  2026-05-26; see [`LOOP_V0.md`](LOOP_V0.md) §"Reference-passing".
+- Three real iterations on three real topics (gated on
+  reference-passing landing).
+- Call-stack visibility in the UI active panel (parent→child agent
+  chain: "Nara → critic_loop_v0 sub-agent on hypothesis X").
+- Step 4 (robustness battery), Step 5 (cross-tier replication), Step
+  6 sandbox tiers from the v5 loop diagram — LOOP_V0 is the
+  literature-only slice; sandbox tiers are a later slice.
 
 ### What's active right now
 
 The active build plan is [`LOOP_V0.md`](LOOP_V0.md): the
-literature-only slice of the intelligence loop. The current session
+literature-only slice of the intelligence loop. Part 1 (substrate) +
+Part 2 (5-worker chain) are complete; Path-B sub-agent migration has
+started (critic migrated). Next session: reference-passing refactor,
+then three real iterations, then call-stack UI. The current session
 focus is the most recent note in [`human/sessions/`](human/sessions/).
 
 ### Operating model

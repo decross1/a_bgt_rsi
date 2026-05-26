@@ -1,8 +1,24 @@
 # LOOP_V0 — literature-only loop slice
 
-> **Status: active build plan.** Replaces the retired `plan.yaml`
-> (archived under [`archive/plan/`](archive/plan/)). Reflects the
-> 2026-05-26 direction change (see [`DECISIONS.md`](DECISIONS.md) D-030).
+> **Status: chain wired end-to-end; reference-passing refactor pending
+> before reliable runs.** Replaces the retired `plan.yaml` (archived
+> under [`archive/plan/`](archive/plan/)). Reflects the 2026-05-26
+> direction change (see [`DECISIONS.md`](DECISIONS.md) D-030); Path-B
+> sub-agent migration in progress (D-034).
+>
+> **Build state at end of 2026-05-26:**
+> - **Part 1** (substrate, orchestrator, schemas) — **complete**.
+> - **Part 2** (5 LOOP_V0 workers + tool registry + Nara prompt) —
+>   **complete**. End-to-end smoke ran successfully on
+>   iter-2026-05-26-008 (real game-theory topic, full 5-step chain,
+>   novel-survives verdict, ~120s).
+> - **Path B** (selective sub-agent migration via SubAgent primitive)
+>   — **started**. `critic_loop_v0` migrated. SubAgent core +
+>   Gemma-tool-call fallback parser + chain re-prompt all landed.
+> - **Reference-passing refactor** — **pending**. The chain is
+>   currently blocked on heavy-payload steps because Nara copies the
+>   full neighbors array through every tool_call's args. See
+>   §"Reference-passing — the next architectural fix" below.
 
 ## Why this exists
 
@@ -126,14 +142,14 @@ appending.
 Each session writes one component end-to-end with a tiny integration
 test. The human decides session-by-session whether to keep going.
 
-| Session | Build | Verification |
-| --- | --- | --- |
-| 1 | `schema/iteration_record.schema.json` + `workers/retrieve_literature.py` | Manual query: top-10 neighbors for a known textbook claim returns sensible chunks |
-| 2 | `workers/hypothesize.py` | Type a seed topic → get 1–3 hypotheses; eyeball quality |
-| 3 | `workers/novelty_classify.py` | Feed a known rediscovery in → returns `rediscovery` with correct nearest neighbor |
-| 4 | `workers/critic.py` | Feed a hypothesis with a known contradicting paper → critic finds it |
-| 5 | `workers/journal_writer.py` + `orchestrator/loop_v0_driver.py` | End-to-end single iteration writes a valid record and a markdown entry |
-| 6 | Polish: 3 real iterations on real topics; human reads and reacts | Three records on disk; human says they're useful or what's wrong |
+| Session | Build | Status | Verification |
+| --- | --- | --- | --- |
+| Part 1 | Runtime + tool registry + Nara hello-world + Chroma helper + schemas + UI substrate | **done** (2026-05-26) | hello-world Nara ran end-to-end via UI; one tool dispatch + journal stub |
+| Part 2 | `workers/{retrieve_literature,hypothesize,novelty_classify,critic_loop_v0,journal_writer}.py` + `NARA_PROMPT_V0` full chain | **done** (2026-05-26) | iter-2026-05-26-008 ran the full 5-step chain on a real game-theory topic, novel-survives verdict, ~120s |
+| Path B | SubAgent primitive + `critic_loop_v0` migrated to sub-agent dispatch + Gemma-tool-call fallback parser + chain re-prompt | **started** (2026-05-26) | unit tests passing; critic runs via SubAgent on PyRuntime; runtime swap-point preserved |
+| Reference-passing | Workers fetch heavy payloads (neighbors, hypothesis text) by `iteration_id` from per-iteration cache rather than receive them in tool_call args | **next session** | iterations no longer truncate at 1024 tokens; full chain runs without parser truncation |
+| Three real iterations | 3 real iterations on real topics; human reads and reacts | after reference-passing | Three records on disk; human says they're useful or what's wrong |
+| Call-stack UI | Active iteration panel surfaces the parent→child call chain ("Nara → critic_loop_v0 sub-agent on hypothesis X") | UI session | Human can read the live UI and see which agent is acting on whose prompt |
 
 There is no auto-progression. Each session ends with a human-reviewed
 artifact and a working-note update at `human/sessions/YYYY-MM-DD.md`.
@@ -149,8 +165,12 @@ artifact and a working-note update at `human/sessions/YYYY-MM-DD.md`.
   decides; nothing is auto-published.
 - **No second-model scoring.** Single model (Gemma 4); a future slice
   separates generator from scorer once a second model lands.
-- **No dispatched sub-agents.** Workers are functions called by the
-  driver, not separately-launched Claude Code sessions.
+- **No separately-launched Claude Code sessions as workers.** Workers
+  are Python functions dispatched by Nara. The Path-B "sub-agent"
+  primitive (see §"Path B — selective sub-agent migration" below) is
+  a *bounded multi-turn LLM conversation* within the same process —
+  not a forked Claude Code worktree. The runtime interface is what
+  keeps a future Claude-Code-per-worker swap mechanical.
 
 ## What's needed from the UI session
 
@@ -186,3 +206,88 @@ LOOP_V0 is done when:
 
 If #4 is no, we redesign. If #1–#3 work but #4 is no, that itself is
 a finding and goes in `DECISIONS.md`.
+
+## Path B — selective sub-agent migration
+
+The LOOP_V0 chain ships as one-shot Nara tool_calls (Path A). Some
+steps benefit from bounded multi-turn reasoning with isolated context
+— **selectively, not wholesale**. Path B is the mechanism for that
+migration. See [`DECISIONS.md`](DECISIONS.md) D-034 for the rationale.
+
+**The SubAgent primitive (`orchestrator/subagent.py`):**
+
+`run_subagent(name, system_prompt, user_prompt, expected_output_schema,
+tools, tool_dispatch, budget, parent_request_id) → SubAgentResult`
+
+- Bounded multi-turn LLM conversation with isolated context window.
+- Hard caps: turns, wall-seconds, tokens. Default 6 turns / 90s.
+- Optional tool dispatch (sub-agent can call `query_chroma`, etc.).
+- Output validated against `expected_output_schema` before return.
+- Same `parent_request_id` chain so all wrapper calls stay
+  observable under one iteration.
+- Runtime-agnostic: today `PyRuntime` dispatches the LLM call; a
+  future `NemoClawRuntime` swap is mechanical.
+
+**Migration rule (per-worker, not chain-wide):**
+
+A worker stays on Path A unless multi-turn reasoning is justified by a
+concrete failure mode on real iterations. The worker's contract
+(input/output schema, return shape Nara consumes) is **identical**
+across paths, so the caller doesn't change. Currently migrated:
+
+- `workers/critic_loop_v0` (Path B). Budget 6 turns / 90s, optional
+  `query_chroma` tool. Adds observability fields:
+  `subagent_turns_used`, `subagent_wall_seconds`, `subagent_status`.
+
+Still Path A: `hypothesize`, `retrieve_literature`, `novelty_classify`,
+`journal_writer`.
+
+**Future Nara → sub-agent fan-out.** Path B is the foundation for the
+fan-in/fan-out architecture where Nara dispatches multiple sub-agents
+in parallel (e.g., three critics from different angles) and merges
+their results. Not built today; the primitive is what unblocks it.
+
+## Reference-passing — the next architectural fix
+
+**Symptom.** Even with the Gemma inline-tool-call fallback parser
+(`agent_wrapper/gemma_tool_parse.py`, 20 unit tests), some chain
+steps truncate at the `max_tokens=1024` cap because Nara copies the
+full `neighbors` array (chunk_text payloads) through every downstream
+tool_call's args.
+
+**Root cause.** Nara's current contract is "pass captured payloads
+verbatim into the next tool_call." That works for cheap fields
+(`hypothesis_text`, scalar metadata) but is fundamentally wrong for
+heavy payloads (`neighbors` with chunk_text), because:
+
+1. Long-context tool_call emissions cross the 1024-token cap.
+2. Even without truncation, Gemma's inline-markup format makes long
+   strings parser-fragile.
+3. Heavy payloads in args are duplicate state — Nara already has them
+   in conversation memory.
+
+**Fix.** Workers fetch heavy payloads by `iteration_id` from a
+per-iteration cache rather than receive them in args:
+
+- `run_state/iteration_cache/<iteration_id>/` holds captured artifacts
+  (neighbors.json, hypothesis.json, novelty.json).
+- Tool schemas downstream of `retrieve_literature` accept
+  `iteration_id` as a required field instead of `neighbors`. Workers
+  load from cache.
+- Nara's prompt is rewritten: "do not re-emit captured payloads; pass
+  iteration_id and the new fields each step computes."
+- `journal_writer` gathers everything from cache at the end.
+
+**Impact.** Tool_call emissions stay short (well under 1024 tokens),
+parser stochasticity stops mattering at scale, and the chain becomes
+deterministic at the substrate level. This is the load-bearing
+prerequisite for the three real iterations.
+
+**Next-session plan.**
+
+1. Reference-passing refactor (cache + worker signatures + Nara prompt).
+2. End-to-end smoke on iter-009 / iter-010 topic — no truncation.
+3. Three real iterations on three real topics; human reads journals.
+4. Call-stack UI: surface the parent→child agent chain in the active
+   iteration panel ("Nara → critic_loop_v0 sub-agent on hypothesis X
+   with neighbor doc_id=...").
