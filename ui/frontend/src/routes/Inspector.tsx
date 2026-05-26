@@ -1,12 +1,10 @@
-// Call-chain inspector. ui_plan.md section 5.3. Drives two routes:
-//   /chain/:taskId           — dispatch-rooted (day-6 orchestrator)
-//   /chain/req/:requestId    — wrapper-rooted (day-4 tool-call chains)
-// Both shapes share the ChainResponse contract; the only difference is the
-// kind of root node and which fetcher we hit.
+// Call-chain inspector. Walks a wrapper-rooted tool-call chain in
+// logs/calls.jsonl by request_id. Drives one route:
+//   /chain/req/:requestId
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import ChainTree from "../components/ChainTree";
-import { getChain, getChainByRequest } from "../api/http";
+import { getChainByRequest } from "../api/http";
 import type { ChainNode, ChainResponse } from "../types/schemas";
 
 function flatten(node: ChainNode | null): ChainNode[] {
@@ -15,12 +13,8 @@ function flatten(node: ChainNode | null): ChainNode[] {
 }
 
 export default function Inspector() {
-  // Either :taskId (dispatch-rooted) or :requestId (wrapper-rooted, day-4).
-  const params = useParams<{ taskId?: string; requestId?: string }>();
-  const taskId = params.taskId;
-  const requestId = params.requestId;
-  const rootedAt = taskId ?? requestId ?? "";
-  const isByRequest = requestId != null && taskId == null;
+  const { requestId } = useParams<{ requestId: string }>();
+  const rootedAt = requestId ?? "";
   const [data, setData] = useState<ChainResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
@@ -30,8 +24,7 @@ export default function Inspector() {
     let cancelled = false;
     setData(null);
     setError(null);
-    const fetcher = isByRequest ? getChainByRequest : getChain;
-    fetcher(rootedAt)
+    getChainByRequest(rootedAt)
       .then((d) => {
         if (!cancelled) setData(d);
       })
@@ -41,7 +34,7 @@ export default function Inspector() {
     return () => {
       cancelled = true;
     };
-  }, [rootedAt, isByRequest]);
+  }, [rootedAt]);
 
   // Embedded tool nodes are not their own log lines (they live inside a
   // wrapper record), so the raw-JSONL dump skips them to stay 1:1 with the log.
@@ -68,7 +61,7 @@ export default function Inspector() {
     return <div className="p-6 text-zinc-400">Loading {rootedAt}…</div>;
   }
 
-  const rootedLabel = data.task_id ?? data.root_request_id ?? rootedAt;
+  const rootedLabel = data.root_request_id ?? rootedAt;
   const malformedToolCount = data.malformed_tool_calls ?? 0;
 
   return (
@@ -79,11 +72,9 @@ export default function Inspector() {
         <span>{data.total_latency_ms} ms total (sum of call latencies)</span>
         {data.root?.task_type && <span>type: {data.root.task_type}</span>}
         {data.root?.status && <span>status: {data.root.status}</span>}
-        {isByRequest && (
-          <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">
-            day-4 chain (wrapper-rooted)
-          </span>
-        )}
+        <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">
+          wrapper-rooted (logs/calls.jsonl)
+        </span>
       </div>
       {malformedToolCount > 0 && (
         <div

@@ -48,10 +48,6 @@ def _client(tmp_path, *, popen=None) -> tuple[TestClient, dict]:
         encoding="utf-8",
     )
     mtp = tmp_path / "mtp.csv"
-    run_log = tmp_path / "run.jsonl"
-    run_log.write_text("", encoding="utf-8")
-    attest = tmp_path / "attest.jsonl"
-    attest.write_text("", encoding="utf-8")
 
     repo = tmp_path / "repo"
     repo.mkdir(exist_ok=True)
@@ -66,8 +62,6 @@ def _client(tmp_path, *, popen=None) -> tuple[TestClient, dict]:
         state_file=state,
         bench_csv=bench,
         mtp_csv=mtp,
-        run_log_file=run_log,
-        attestations_file=attest,
         loop_v0_repo=repo,
         loop_v0_run_state=run_state_dir,
         loop_v0_journal=journal_dir,

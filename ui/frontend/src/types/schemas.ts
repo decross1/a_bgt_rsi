@@ -1,10 +1,10 @@
-// TypeScript mirrors of the backend's JSON responses. See ui_plan.md
-// sections 4.2-4.3, 5.2. Call-log payload fields are deliberately left
-// open (`raw`) so a future day-2 schema addition does not break the UI.
+// TypeScript mirrors of the backend's JSON responses. Call-log payload
+// fields are deliberately left open (`raw`) so a future schema addition
+// does not break the inspector.
 
-// Day-3.5 retrieval-context entry: a chunk of a retrieved document. The
-// backend only forwards the field if the call record carried a list of
-// objects; the inspector renders each entry as a collapsible row.
+// Retrieval-context entry: a chunk of a retrieved document. The backend
+// only forwards the field if the call record carried a list of objects;
+// the inspector renders each entry as a collapsible row.
 export interface RetrievalDoc {
   doc_id?: string;
   content_hash?: string;
@@ -15,8 +15,7 @@ export interface RetrievalDoc {
 
 export interface ChainNode {
   // "tool" nodes are tool calls — either separate call-log lines or, when
-  // `embedded` is true, synthesized from a wrapper record's tool_calls array
-  // (ui_plan.md section 9, resolved r4).
+  // `embedded` is true, synthesized from a wrapper record's tool_calls array.
   kind: "dispatch" | "call" | "tool";
   request_id: string | null;
   parent_request_id: string | null;
@@ -33,16 +32,15 @@ export interface ChainNode {
   // banner rather than silently format-fixing.
   tool_calls_malformed?: boolean;
   embedded?: boolean;
-  // Day-3.5 optional: list of {doc_id, content_hash, chunk_offset,
-  // chunk_length}. Null when the call record did not carry it.
+  // Optional list of {doc_id, content_hash, chunk_offset, chunk_length}.
+  // Null when the call record did not carry it.
   retrieval_context?: RetrievalDoc[] | null;
   raw: Record<string, unknown>;
   children: ChainNode[];
 }
 
 export interface ChainResponse {
-  task_id?: string;                  // dispatch-rooted (day-6 orchestrator)
-  root_request_id?: string;          // wrapper-rooted (day-4 chains)
+  root_request_id?: string;          // wrapper-rooted chain
   found: boolean;
   malformed: boolean;
   root: ChainNode | null;
@@ -51,79 +49,9 @@ export interface ChainResponse {
   malformed_tool_calls?: number;     // count of parse-error nodes in the chain
 }
 
-// --- day-4 surfaces ---
-
-export interface Day4ChainSummary {
-  request_id: string;
-  caller_tag: string | null;
-  timestamp: string | null;
-  node_count: number;
-  total_latency_ms: number;
-  malformed_tool_calls: number;
-}
-
-export interface Day4ChainsResponse {
-  available: boolean;
-  chains: Day4ChainSummary[];
-}
-
-// events.jsonl (day-3.5). The schema has not been committed, so the
-// inspector enforces only `event_type` and renders the rest generically.
-export interface EventRecord {
-  event_type: string;
-  timestamp?: string;
-  [key: string]: unknown;
-}
-
-export interface EventsResponse {
-  available: boolean;
-  events: EventRecord[];
-}
-
-// One robustness run, derived by read_robustness from day4_robust.jsonl's
-// chained call log: a run is a wrapper-root call (caller_tag identifies it)
-// whose `completion` did or did not carry a tool call.
-export interface RobustnessTrial {
-  trial_id?: number;
-  caller_tag?: string | null;        // e.g. test_tool_call_robustness/run0
-  request_id?: string | null;
-  invoked?: boolean;
-  outcome?: string;                  // ok | missed | malformed
-  tool_name?: string | null;         // name of the invoked tool, when any
-  latency_ms?: number | null;        // root-call latency, rounded to 0.1 ms
-  [key: string]: unknown;
-}
-
-export interface RobustnessResponse {
-  available: boolean;
-  trials: RobustnessTrial[];
-  trial_count: number;
-  invocations: number;
-  invocation_rate: number | null;
-  median_latency_ms: number | null;
-  outcomes: Record<string, number>;
-}
-
-export interface RecentTask {
-  task_id: string;
-  task_type: string | null;
-  status: string | null;
-  worker_pid: number | null;
-  // Day-6+ orchestrator schema fields. `timestamp` is the latest line's
-  // wall-clock; `stage` is the orchestrator state machine position
-  // (orchestrator_dispatch / worker_invocation / orchestrator_receipt /
-  // orchestrator_reject). Both null on pre-Day-6 records.
-  timestamp: string | null;
-  stage: string | null;
-  // Legacy pre-Day-6 fields — still surfaced for old fixtures.
-  dispatch_ts: string | null;
-  receipt_ts: string | null;
-}
-
-// /api/workload_hint — workload-shape annotation for the decode-tok/s tile
-// (ui_plan.md r10). Lets the dashboard contextualize the tile so a
-// prefill-bound workload (PD experiment, ~2 tok/call) doesn't read as a
-// regression against the day-1 decode-bound band [80,130].
+// /api/workload_hint — workload-shape annotation for the decode-tok/s tile.
+// Lets the dashboard contextualize the tile so a prefill-bound workload
+// doesn't read as a regression against the decode-bound band.
 export interface WorkloadHint {
   available: boolean;
   sample_size: number;
@@ -202,10 +130,8 @@ export interface BaselineRow {
   key: string;
   label: string;
   value: string;
-  // "measured" — sourced from bench/mtp.csv, bench/day1.csv or metric_log;
-  // "documented" — the ui_plan.md section 5.3 constant, no measurement yet.
   source: "measured" | "documented";
-  documented?: string; // expected figure, present on measured rows
+  documented?: string;
 }
 
 export interface BaselineResponse {
@@ -218,155 +144,6 @@ export interface LiveMessage {
   line: Record<string, unknown>;
 }
 
-// --- Week-2 unlock prerequisites (/api/unlock_status) ---
-// Mirrors backend/unlock.py:compute_unlock_status. Five sections, each
-// independently `available` so the panel renders partial state cleanly.
-// See ui_plan.md §11.3.
-
-export interface RunLogIntegrity {
-  available: boolean;
-  ok: boolean | null;                  // null when file is absent
-  total_lines: number;
-  malformed_lines: number[];           // 1-based line numbers
-  rolling_window_days: number;
-  rolling_count: number;
-}
-
-export interface SoftGatePending {
-  task_id: string;
-  agent_id?: string | null;
-  summary?: string | null;
-  expected_observable?: string | null;
-  observed_actual?: string | null;
-  ts?: string | null;
-  sla_hours?: number | null;
-  rollback_command: string;            // informational CLI string; UI does not execute
-}
-
-export interface SoftGateQueue {
-  available: boolean;
-  pending: SoftGatePending[];
-}
-
-export interface HardGatePending {
-  task_id?: string | null;
-  attest_command: string | null;       // informational CLI string; UI does not execute
-  [key: string]: unknown;              // pass through any extra fields the state file carries
-}
-
-export interface HardGatesPending {
-  available: boolean;
-  pending: HardGatePending[];
-}
-
-export interface UnlockStatus {
-  milestone: string;
-  current_day: string | null;
-  run_log_integrity: RunLogIntegrity;
-  soft_gate_queue: SoftGateQueue;
-  hard_gates_pending: HardGatesPending;
-  metric_log: Record<string, number | string | null>;
-  fallbacks_taken: Record<string, string>;
-}
-
-// --- Critic invocations (/api/critic_summary) — Day-9 W2-01 ---
-// Mirrors backend/critic.py:compute_critic_summary. Each section is
-// independently `available` so the panel renders partial state when
-// the critic log or fixtures are absent.
-
-export type CriticDecision = "flawed" | "sound";
-export type CriticGroundTruth = "flawed" | "sound";
-export type CriticOutcome =
-  | "TP"
-  | "FP"
-  | "TN"
-  | "FN"
-  | "unrun"
-  | "unknown_truth"
-  | "unknown_fixture";
-
-export interface CriticRecentRun {
-  timestamp: string | null;
-  hypothesis_id: string | null;
-  flag_decision: CriticDecision | null;
-  ground_truth_label: CriticGroundTruth | null;
-  domain: string | null;
-  severity: string | null;
-  injected_flaw_type: string | null;
-  critique_excerpt: string;
-  target_hits: string[];
-  target_count: number;
-  model: string | null;
-  latency_ms: number | null;
-}
-
-export interface CriticRecentRuns {
-  available: boolean;
-  limit: number;
-  rows: CriticRecentRun[];
-  malformed_lines: number[];
-  total_runs: number;
-}
-
-export interface CriticFlagRate {
-  available: boolean;
-  window_days: number;
-  total: number;
-  flawed_count: number;
-  sound_count: number;
-  flag_rate: number | null;
-}
-
-export interface CriticMatchupRow {
-  fixture_id: string;
-  ground_truth_label: CriticGroundTruth | null;
-  injected_flaw_type: string | null;
-  severity: string | null;
-  domain: string | null;
-  decision: CriticDecision | null;
-  outcome: CriticOutcome;
-  target_hits: string[];
-  target_count: number;
-  latest_run_ts: string | null;
-}
-
-export interface CriticMatchupCounts {
-  TP: number;
-  FP: number;
-  TN: number;
-  FN: number;
-  unrun: number;
-  unknown_fixture: number;
-}
-
-export interface CriticFixtureMatchup {
-  available: boolean;
-  rows: CriticMatchupRow[];
-  counts: CriticMatchupCounts;
-  accuracy: number | null;
-  scored: number;
-  total_fixtures: number;
-}
-
-export interface CriticSummary {
-  milestone: string;
-  fixtures: { available: boolean; total: number };
-  recent_runs: CriticRecentRuns;
-  flag_rate: CriticFlagRate;
-  fixture_matchup: CriticFixtureMatchup;
-}
-
-// --- Day-40 meta-review stub (logs/meta_review.jsonl) ---
-// Track A creates the log on Day 40 (W2-02). UI ships the empty-state
-// stub on Day 9 so the panel exists in the dashboard scaffold before
-// the data lands. Shape will firm up alongside Track A's writer; the
-// stub renders "awaiting Day-40 meta-review outputs" until then.
-export interface MetaReviewSummary {
-  available: boolean;
-  total_runs: number;
-  note: string;
-}
-
 // --- LOOP_V0 ---
 // Shared contract: the primary session writes run_state/active_iteration.json
 // + run_state/loop_memory.jsonl + journal/iterations/NNN.md; the UI reads
@@ -375,7 +152,7 @@ export interface MetaReviewSummary {
 
 // Matches schema/active_iteration.schema.json. current_step is the tool
 // currently in flight, "starting" at iteration open, or "nara_thinking"
-// between calls (what the producer writes in nara.py:177).
+// between calls (what the producer writes in nara.py).
 export type LoopV0Step =
   | "starting"
   | "summarize_paper"
@@ -402,8 +179,6 @@ export interface ActiveIteration {
   current_step: LoopV0Step | string;
   step_started_at?: string | null;
   // The producer writes `latest_narration` (schema/active_iteration.schema.json).
-  // Field name must match exactly; the old `narration` alias is no longer
-  // accepted (B1 from the 2026-05-26 code review).
   latest_narration?: string | null;
   tool_calls_so_far?: LoopV0ToolCall[];
 }

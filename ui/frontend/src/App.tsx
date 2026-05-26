@@ -1,6 +1,5 @@
 import { BrowserRouter, Link, Route, Routes } from "react-router-dom";
 import Dashboard from "./routes/Dashboard";
-import EventsViewer from "./routes/EventsViewer";
 import Inspector from "./routes/Inspector";
 
 export default function App() {
@@ -14,20 +13,14 @@ export default function App() {
           >
             orchestrator dashboard
           </Link>
-          <Link
-            to="/events"
-            className="font-mono text-sm text-zinc-400 hover:text-zinc-100"
-          >
-            events
-          </Link>
-          <span className="text-xs text-zinc-600">/ call-chain inspector</span>
+          <span className="text-xs text-zinc-600">
+            / call-chain inspector at /chain/req/&lt;request_id&gt;
+          </span>
         </header>
         <Routes>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/chain/:taskId" element={<Inspector />} />
-          {/* Day-4 wrapper-rooted tool-call chains (no orchestrator dispatch). */}
+          {/* Wrapper-rooted tool-call chains (logs/calls.jsonl). */}
           <Route path="/chain/req/:requestId" element={<Inspector />} />
-          <Route path="/events" element={<EventsViewer />} />
         </Routes>
       </div>
     </BrowserRouter>

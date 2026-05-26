@@ -8,17 +8,10 @@ import type {
   AppState,
   BaselineResponse,
   ChainResponse,
-  CriticSummary,
-  Day4ChainsResponse,
-  EventsResponse,
   Health,
   IterationsResponse,
   JournalResponse,
-  MetaReviewSummary,
-  RecentTask,
-  RobustnessResponse,
   TelemetrySample,
-  UnlockStatus,
   WorkloadHint,
 } from "../types/schemas";
 
@@ -39,25 +32,10 @@ async function getJSON<T>(path: string): Promise<T> {
   return (await resp.json()) as T;
 }
 
-export const getChain = (taskId: string) =>
-  getJSON<ChainResponse>(`/api/chain/${encodeURIComponent(taskId)}`);
-
-// Day-4 chains land before day 6's orchestrator runs, so they are rooted at a
-// wrapper request_id (no orchestrator dispatch) and read via this endpoint.
+// Inspector route: walks a wrapper-call chain rooted at a request_id. Useful
+// for inspecting Nara's tool-call chains in logs/calls.jsonl.
 export const getChainByRequest = (requestId: string) =>
   getJSON<ChainResponse>(`/api/chain_by_request/${encodeURIComponent(requestId)}`);
-
-export const getDay4Chains = () =>
-  getJSON<Day4ChainsResponse>("/api/day4/chains");
-
-export const getEvents = (limit = 200) =>
-  getJSON<EventsResponse>(`/api/events?limit=${limit}`);
-
-export const getRobustness = () =>
-  getJSON<RobustnessResponse>("/api/robustness");
-
-export const getRecentTasks = (limit = 50) =>
-  getJSON<{ tasks: RecentTask[] }>(`/api/recent_tasks?limit=${limit}`);
 
 export const getHealth = () => getJSON<Health>("/api/health");
 
@@ -70,15 +48,6 @@ export const getBaseline = () => getJSON<BaselineResponse>("/api/baseline");
 
 export const getWorkloadHint = () =>
   getJSON<WorkloadHint>("/api/workload_hint");
-
-export const getUnlockStatus = () =>
-  getJSON<UnlockStatus>("/api/unlock_status");
-
-export const getCriticSummary = (limit = 50) =>
-  getJSON<CriticSummary>(`/api/critic_summary?limit=${limit}`);
-
-export const getMetaReviewSummary = () =>
-  getJSON<MetaReviewSummary>("/api/meta_review_summary");
 
 // --- LOOP_V0 endpoints (ui/backend/loop_v0.py) ---
 

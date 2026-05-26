@@ -1,11 +1,7 @@
-"""FastAPI app for the dashboard + chain inspector. See ui_plan.md section 5.2.
+"""FastAPI app for the dashboard + chain inspector.
 
 Read-only over the apparatus: it reads the JSONL logs and run_state, and
-never writes anything. The WebSocket /api/live endpoint is build step 6.4
-and is not implemented here.
-
-Run:  cd ui && ui/backend/run.sh        (serves on :8700)
-Point at fixture logs:  UI_LOGS_DIR=/tmp/fixture_logs ui/backend/run.sh
+never writes anything. LOOP_V0 endpoints live in `loop_v0.py`.
 """
 import asyncio
 import json
@@ -18,37 +14,21 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .baseline import compute_baseline
-from .chain import LogStore, build_chain, build_chain_by_request_id, recent_tasks
-from .critic import compute_critic_summary
-from .day4 import read_events, read_robustness
+from .chain import LogStore, build_chain_by_request_id
 from .loop_v0 import register as register_loop_v0
-from .meta_review import compute_meta_review_summary
 from .tailer import JsonlTailer
-from .unlock import compute_unlock_status
 from .workload import compute_workload_hint
 
 _REPO = Path(__file__).resolve().parents[2]
-# When the UI runs from the worktree at .claude/worktrees/ui-session, paths
-# like run_state/ and journal/ live in the primary worktree, not this one.
-# The default repo root is the real primary checkout; override via env vars
-# in tests (UI_REPO_ROOT / UI_RUN_STATE_DIR / UI_JOURNAL_DIR).
+# When the UI runs from a worktree, run_state/ and journal/ live in the
+# primary checkout, not the worktree. Env vars below override per-test.
 _PRIMARY_REPO = Path("/home/decross1/projects/a_bgt_rsi")
-DEFAULT_LOGS_DIR = _REPO / "logs"                       # apparatus call/orchestrator logs
+DEFAULT_LOGS_DIR = _REPO / "logs"                       # apparatus call log (logs/calls.jsonl)
 DEFAULT_TELEMETRY = _REPO / "ui" / "logs" / "telemetry.jsonl"
 DEFAULT_STATE = _REPO / "run_state" / "week1.state.json"
 DEFAULT_BENCH_CSV = _REPO / "bench" / "day1.csv"        # day-1 throughput sweep (pre-MTP)
 DEFAULT_MTP_CSV = _REPO / "bench" / "mtp.csv"           # MTP-enabled sweep (D-022)
-DEFAULT_RUN_LOG = _REPO / "run_state" / "week1.run.jsonl"
-DEFAULT_ATTESTATIONS = _REPO / "run_state" / "attestations.jsonl"
-# Critic eval: Day-9 W2-01 surface. Track A's `workers/critic.py` writes
-# one JSONL record per invocation; Track C's Day-9 cron wraps the runs.
-# Fixtures live in Track C's `experiments/fixtures/critic_hypotheses/`.
-DEFAULT_CRITIC_LOG = _REPO / "logs" / "critic_eval.jsonl"
-DEFAULT_CRITIC_FIXTURES = _REPO / "experiments" / "fixtures" / "critic_hypotheses"
-DEFAULT_META_REVIEW_LOG = _REPO / "logs" / "meta_review.jsonl"
-# LOOP_V0: when the UI runs from .claude/worktrees/ui-session, the
-# producer's state files live in the primary worktree. The env overrides
-# (UI_LOOP_V0_*) let tests pin alternate locations.
+# LOOP_V0: primary worktree paths; env overrides let tests pin alternates.
 DEFAULT_LOOP_V0_REPO = _PRIMARY_REPO
 DEFAULT_LOOP_V0_RUN_STATE = _PRIMARY_REPO / "run_state"
 DEFAULT_LOOP_V0_JOURNAL = _PRIMARY_REPO / "journal" / "iterations"
@@ -97,11 +77,7 @@ def _tail_lines(path, limit):
 
 def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                state_file=DEFAULT_STATE, bench_csv=DEFAULT_BENCH_CSV,
-               mtp_csv=DEFAULT_MTP_CSV, run_log_file=DEFAULT_RUN_LOG,
-               attestations_file=DEFAULT_ATTESTATIONS,
-               critic_log_file=DEFAULT_CRITIC_LOG,
-               critic_fixtures_dir=DEFAULT_CRITIC_FIXTURES,
-               meta_review_log_file=DEFAULT_META_REVIEW_LOG,
+               mtp_csv=DEFAULT_MTP_CSV,
                loop_v0_repo=DEFAULT_LOOP_V0_REPO,
                loop_v0_run_state=DEFAULT_LOOP_V0_RUN_STATE,
                loop_v0_journal=DEFAULT_LOOP_V0_JOURNAL,
@@ -126,79 +102,15 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                 "telemetry_last_seen": seen["telemetry_ts"],
                 "version": _git_sha()}
 
-    @app.get("/api/chain/{task_id}")
-    def chain(task_id: str):
-        result = build_chain(store, task_id)
-        if not result["found"]:
-            raise HTTPException(
-                status_code=404,
-                detail=f"no orchestrator dispatch for task_id {task_id!r}")
-        return result
-
     @app.get("/api/chain_by_request/{request_id}")
     def chain_by_request(request_id: str):
-        """Walk a tool-call chain rooted at a wrapper request_id (day-4)."""
+        """Walk a wrapper-rooted tool-call chain by request_id."""
         result = build_chain_by_request_id(store, request_id)
         if not result["found"]:
             raise HTTPException(
                 status_code=404,
                 detail=f"no call record for request_id {request_id!r}")
         return result
-
-    @app.get("/api/recent_tasks")
-    def recent(limit: int = 50):
-        return {"tasks": recent_tasks(store, limit)}
-
-    @app.get("/api/day4/chains")
-    def day4_chains():
-        """Root wrapper request_ids from day4_e2e.jsonl, newest last.
-
-        Scoped to day4_e2e.jsonl specifically rather than the cross-file
-        LogStore index: day-2 records all carry parent_request_id=null
-        (chains start day 4 per the schema), so a cross-file enumeration
-        would surface ~50 day-2 standalone calls as "day-4 chains".
-        """
-        store.refresh()
-        path = Path(logs_dir) / "day4_e2e.jsonl"
-        if not path.exists():
-            return {"available": False, "chains": []}
-        chains = []
-        try:
-            with open(path, encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if (record.get("parent_request_id") is None
-                            and isinstance(record.get("request_id"), str)):
-                        rid = record["request_id"]
-                        walk = build_chain_by_request_id(store, rid)
-                        chains.append({
-                            "request_id": rid,
-                            "caller_tag": record.get("caller_tag"),
-                            "timestamp": record.get("timestamp"),
-                            "node_count": walk["node_count"],
-                            "total_latency_ms": walk["total_latency_ms"],
-                            "malformed_tool_calls": walk["malformed_tool_calls"],
-                        })
-        except OSError:
-            return {"available": False, "chains": []}
-        chains.sort(key=lambda c: c.get("timestamp") or "", reverse=True)
-        return {"available": True, "chains": chains}
-
-    @app.get("/api/events")
-    def events(limit: int = 200):
-        """events.jsonl passthrough (day-3.5 surface). Available=False if absent."""
-        return read_events(Path(logs_dir) / "events.jsonl", limit=max(1, limit))
-
-    @app.get("/api/robustness")
-    def robustness():
-        """day4_robust.jsonl summary: invocation rate + median latency."""
-        return read_robustness(Path(logs_dir) / "day4_robust.jsonl")
 
     @app.get("/api/telemetry/recent")
     def telemetry_recent(limit: int = 300):
@@ -211,8 +123,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         """Healthy-baseline card rows, each annotated measured vs documented.
 
         Data-driven from bench/mtp.csv (MTP-enabled), bench/day1.csv and
-        run_state metric_log when those exist; documented constants
-        otherwise (ui_plan.md sections 5.3, 9).
+        run_state metric_log when those exist; documented constants otherwise.
         """
         return compute_baseline(bench_csv, state_file, mtp_csv)
 
@@ -220,59 +131,14 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     def workload_hint(sample_size: int = 200, window_s: int = 120):
         """Workload-shape hint so the decode-tok/s tile is contextualized.
 
-        Day-7 UX audit (ui_plan.md r10): the day-1 decode band [80,130]
-        was measured with 256-tok completions. PD experiment runs with
-        ~2-tok completions decode-rate ~11 by construction — not a
-        regression but the UI made it look like one. This endpoint
-        returns the *current workload shape* so the frontend can label
-        the tile accordingly.
+        The day-1 decode band [80,130] was measured with 256-tok completions;
+        prefill-bound workloads (~2-tok completions) decode at ~11 tok/s by
+        construction. This endpoint returns the *current workload shape* so
+        the frontend can label the tile accordingly.
         """
         capped = min(max(sample_size, 10), 2000)
         return compute_workload_hint(logs_dir, sample_size=capped,
                                      window_s=max(10, window_s))
-
-    @app.get("/api/unlock_status")
-    def unlock_status():
-        """§11.3 Week-2 unlock prerequisites, consolidated.
-
-        Five sections (run-log integrity, soft-gate queue, hard-gate
-        pending, metric_log, fallbacks_taken) — each independently
-        available, so the dashboard can render partial state. Read-only:
-        attest/rollback affordances surface the CLI command, not actions.
-        """
-        from datetime import datetime, timezone
-        now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        return compute_unlock_status(state_file, run_log_file,
-                                     attestations_file, now_iso=now_iso)
-
-    @app.get("/api/critic_summary")
-    def critic_summary(limit: int = 50, rolling_window_days: int = 7):
-        """Critic invocations surface (Day-9 W2-01).
-
-        Reads `logs/critic_eval.jsonl` + the Track-C critic-hypotheses
-        fixture set and returns the recent-runs list, rolling flag-rate,
-        and per-fixture matchup table that CriticPanel.tsx renders.
-        Each section is independently `available` (mirrors
-        `/api/unlock_status`) so the dashboard renders partial state
-        when the critic log or fixtures are not yet present.
-        """
-        from datetime import datetime, timezone
-        now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        return compute_critic_summary(
-            critic_log_file, critic_fixtures_dir,
-            limit=max(1, min(limit, 50)),
-            rolling_window_days=max(1, rolling_window_days),
-            now_iso=now_iso)
-
-    @app.get("/api/meta_review_summary")
-    def meta_review_summary():
-        """Day-40 W2-02 meta-review surface — empty-state stub on Day 9.
-
-        Track A's Day-40 writer creates `logs/meta_review.jsonl`; until
-        then this endpoint returns `available=false` so MetaReviewPanel
-        renders "awaiting Day-40 meta-review outputs" rather than a 404.
-        """
-        return compute_meta_review_summary(meta_review_log_file)
 
     @app.get("/api/state")
     def state():
@@ -286,24 +152,24 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
 
     @app.websocket("/api/live")
     async def live(websocket: WebSocket):
-        """Stream new telemetry / orchestrator lines as they are appended.
+        """Stream new telemetry / call-log lines as they are appended.
 
         Forward-only: lines present before the client connects are not
         replayed. One message per new line: {source, line}. Tail-based
-        (mtime + byte offset), polled at 0.5 s -- no inotify dependency.
+        (mtime + byte offset), polled at 0.5 s — no inotify dependency.
         """
         await websocket.accept()
         telemetry = JsonlTailer(telemetry_file)
-        orchestrator = JsonlTailer(Path(logs_dir) / "orchestrator.jsonl")
+        calls = JsonlTailer(Path(logs_dir) / "calls.jsonl")
         telemetry.seek_to_end()
-        orchestrator.seek_to_end()
+        calls.seek_to_end()
 
         async def pump():
             while True:
                 for record in telemetry.read_new():
                     await websocket.send_json({"source": "telemetry", "line": record})
-                for record in orchestrator.read_new():
-                    await websocket.send_json({"source": "orchestrator", "line": record})
+                for record in calls.read_new():
+                    await websocket.send_json({"source": "calls", "line": record})
                 await asyncio.sleep(0.5)
 
         async def drain():
@@ -346,13 +212,6 @@ app = create_app(
     state_file=_env_path("UI_STATE_FILE", DEFAULT_STATE),
     bench_csv=_env_path("UI_BENCH_CSV", DEFAULT_BENCH_CSV),
     mtp_csv=_env_path("UI_MTP_CSV", DEFAULT_MTP_CSV),
-    run_log_file=_env_path("UI_RUN_LOG_FILE", DEFAULT_RUN_LOG),
-    attestations_file=_env_path("UI_ATTESTATIONS_FILE", DEFAULT_ATTESTATIONS),
-    critic_log_file=_env_path("UI_CRITIC_LOG_FILE", DEFAULT_CRITIC_LOG),
-    critic_fixtures_dir=_env_path("UI_CRITIC_FIXTURES_DIR",
-                                  DEFAULT_CRITIC_FIXTURES),
-    meta_review_log_file=_env_path("UI_META_REVIEW_LOG_FILE",
-                                   DEFAULT_META_REVIEW_LOG),
     loop_v0_repo=_env_path("UI_LOOP_V0_REPO", DEFAULT_LOOP_V0_REPO),
     loop_v0_run_state=_env_path("UI_LOOP_V0_RUN_STATE", DEFAULT_LOOP_V0_RUN_STATE),
     loop_v0_journal=_env_path("UI_LOOP_V0_JOURNAL", DEFAULT_LOOP_V0_JOURNAL),
