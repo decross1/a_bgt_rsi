@@ -55,7 +55,7 @@ substrate the primary session builds per
 | --- | --- |
 | `POST /start` | Body `{topic: str}`; `subprocess.Popen(["env", "-u", "MOCK_LLM", python, "-m", "orchestrator.loop_v0_cli", "--topic", topic], cwd=repo_root)`; returns `202 {pid, topic}`. Rejects empty / oversize topic with 400. |
 | `GET /active` | Reads `run_state/active_iteration.json`; returns 204 No Content if absent. |
-| `GET /iterations` | Reads `run_state/loop_memory.jsonl`, sorted newest-first by `ended_at`; returns `{iterations: []}` if absent. Malformed rows are skipped (producer contract). |
+| `GET /iterations` | Reads `memory/loop_memory.jsonl`, sorted newest-first by `ended_at`; returns `{iterations: []}` if absent. Malformed rows are skipped (producer contract). |
 | `GET /journal/{iteration_id}` | Looks up `journal_entry_path` from `loop_memory.jsonl` for the iteration; falls back to a glob scan of `journal/iterations/*.md` for files mentioning the id. Returns `{iteration_id, path, content}`. Rejects path-traversal ids with 400. |
 
 Wired into `create_app` with three env overrides (`UI_LOOP_V0_REPO`,
@@ -85,7 +85,7 @@ in flight; deleted on completion. Shape:
 }
 ```
 
-**`run_state/loop_memory.jsonl`** — append-only, one row per completed
+**`memory/loop_memory.jsonl`** — append-only, one row per completed
 iteration. Schema is `schema/iteration_record.schema.json` (primary
 creates). Minimum fields the UI relies on: `iteration_id`, `started_at`,
 `ended_at`, `seed.topic`, `journal_entry_path`, `nara_summary`. Part-1

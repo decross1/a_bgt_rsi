@@ -146,7 +146,7 @@ export interface LiveMessage {
 
 // --- LOOP_V0 ---
 // Shared contract: the primary session writes run_state/active_iteration.json
-// + run_state/loop_memory.jsonl + journal/iterations/NNN.md; the UI reads
+// + memory/loop_memory.jsonl + journal/iterations/NNN.md; the UI reads
 // them via /api/loop_v0/active, /api/loop_v0/iterations and
 // /api/loop_v0/journal/{id}. See LOOP_V0.md and ui_plan.md §LOOP_V0.
 
@@ -183,7 +183,7 @@ export interface ActiveIteration {
   tool_calls_so_far?: LoopV0ToolCall[];
 }
 
-// One row of run_state/loop_memory.jsonl. Part-1 hello-world fills the
+// One row of memory/loop_memory.jsonl. Part-1 hello-world fills the
 // novelty/critique/retrieval blocks with placeholders; the fields are
 // declared optional so the UI can render across both Part-1 and Part-2.
 export interface IterationRecord {

@@ -23,7 +23,7 @@ import jsonschema
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA_PATH = REPO_ROOT / "schema" / "iteration_record.schema.json"
-LOOP_MEMORY_PATH = REPO_ROOT / "run_state" / "loop_memory.jsonl"
+LOOP_MEMORY_PATH = REPO_ROOT / "memory" / "loop_memory.jsonl"  # ARCHITECTURE.md §4.4 — Layer-3
 JOURNAL_DIR = REPO_ROOT / "journal" / "iterations"
 
 _VALIDATOR = jsonschema.Draft7Validator(json.loads(SCHEMA_PATH.read_text()))
@@ -116,6 +116,6 @@ def finalize_iteration_record(record: dict) -> dict:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     return {
         "status": "passed",
-        "loop_memory_path": "run_state/loop_memory.jsonl",
+        "loop_memory_path": "memory/loop_memory.jsonl",
         "iteration_id": record["iteration_id"],
     }

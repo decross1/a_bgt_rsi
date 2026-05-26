@@ -61,7 +61,7 @@ def main() -> int:
     print(f" iteration_id:       {record['iteration_id']}")
     print(f" tools called:       {', '.join(record['tool_calls_made']) or '(none)'}")
     print(f" journal entry:      {record['journal_entry_path']}")
-    print(f" loop_memory row:    run_state/loop_memory.jsonl (appended)")
+    print(f" loop_memory row:    memory/loop_memory.jsonl (appended)")
     print(f" wrapper calls:      {len(record['wrapper_call_ids'])}")
     print()
     print(" Nara's summary:")

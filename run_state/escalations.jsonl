@@ -1,1 +1,0 @@
-{"_schema_comment": "Hard-gate escalation log. Append-only by tools/gate_sla_check.py. Entry kinds: hard_gate_sla_expired | dispatch_blocked. Fields per entry: kind, task_id, gate_ts (original gate entry), expired_at, notification_sent, ts. Hard-gates NEVER auto-clear; an escalation is informational (notify the human) but the gate stays halted. See agent/autonomy.md §2.2."}

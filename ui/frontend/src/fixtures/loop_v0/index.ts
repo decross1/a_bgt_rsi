@@ -1,6 +1,6 @@
 // Hand-rolled fixtures the LOOP_V0 panels build against until the primary
 // session has shipped run_state/active_iteration.json,
-// run_state/loop_memory.jsonl, and journal/iterations/NNN.md. See
+// memory/loop_memory.jsonl, and journal/iterations/NNN.md. See
 // agent/prompts/ui_session.md "Shared contract" for the schemas.
 import type {
   ActiveIteration,

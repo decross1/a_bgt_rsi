@@ -57,3 +57,23 @@ notes/track-*.log
 # documents the install command for reproducing the setup.
 .agents/skills/
 .agents/agents/
+
+# Machine-generated apparatus state (LOOP_V0 + retired-framework
+# leftovers). Past versions already in history are preserved; future
+# growth stays local. See ARCHITECTURE.md §4 for the data plane.
+run_state/active_iteration.json
+run_state/loop_memory.jsonl
+run_state/week1.run.jsonl
+run_state/week1.state.json
+run_state/attestations.jsonl
+run_state/escalations.jsonl
+run_state/claims.jsonl
+
+# Layer-3 loop memory (per ARCHITECTURE.md §4.4) — sibling to chroma_db/
+# (Layers 1+2). Machine-generated; one row per Nara iteration.
+memory/*
+!memory/.gitkeep
+
+# Machine-generated journal entries from Nara iterations. The
+# human-written daily journals (journal/dayN.md) stay committed.
+journal/iterations/

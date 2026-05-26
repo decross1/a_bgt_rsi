@@ -43,7 +43,7 @@ from orchestrator.tool_registry import TOOL_SPECS
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-LOOP_MEMORY_PATH = REPO_ROOT / "run_state" / "loop_memory.jsonl"
+LOOP_MEMORY_PATH = REPO_ROOT / "memory" / "loop_memory.jsonl"  # ARCHITECTURE.md §4.4 — Layer-3
 ACTIVE_PATH = "run_state/active_iteration.json"  # relative to REPO_ROOT
 CALLS_LOG_PATH = REPO_ROOT / "logs" / "calls.jsonl"
 

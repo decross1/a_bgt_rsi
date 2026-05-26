@@ -56,7 +56,7 @@ A list of past iterations, newest first:
 - timestamp
 - link to the journal markdown entry (`journal/iterations/NNN.md`)
 
-Reads from `run_state/loop_memory.jsonl` (one row per iteration).
+Reads from `memory/loop_memory.jsonl` (one row per iteration).
 
 ### 3. Live journal scroll
 
@@ -85,7 +85,7 @@ which worker is in flight inside the active panel.
 This is for the primary session to wire up, not you. But the
 agreement is:
 
-- **History**: `run_state/loop_memory.jsonl` — append-only, one row
+- **History**: `memory/loop_memory.jsonl` — append-only, one row
   per completed iteration. The UI polls or file-watches this.
 - **Live state**: the loop driver writes a small `run_state/active_iteration.json`
   while an iteration is running and deletes it on completion. The UI

@@ -7,7 +7,7 @@ Four endpoints, all wired by ``register`` into the existing FastAPI app:
   primary worktree (not this UI worktree). Returns 202 + the spawned PID.
 - ``GET  /api/loop_v0/active`` — reads ``run_state/active_iteration.json``;
   returns 204 No Content when the file is absent.
-- ``GET  /api/loop_v0/iterations`` — reads ``run_state/loop_memory.jsonl``,
+- ``GET  /api/loop_v0/iterations`` — reads ``memory/loop_memory.jsonl``,
   newest-first by ``ended_at``. Returns ``{"iterations": []}`` if absent.
 - ``GET  /api/loop_v0/journal/{iteration_id}`` — reads the journal entry at
   ``journal/iterations/NNN.md`` matching the iteration. 404 when absent.
@@ -94,9 +94,14 @@ def register(
     repo_root: Path,
     run_state_dir: Path,
     journal_dir: Path,
+    loop_memory_path: Path | None = None,
     popen=subprocess.Popen,
 ) -> APIRouter:
-    """Attach the LOOP_V0 router to ``app`` and return it for tests."""
+    """Attach the LOOP_V0 router. `loop_memory_path` defaults to
+    `<repo_root>/memory/loop_memory.jsonl` (the Layer-3 location per
+    ARCHITECTURE.md §4.4). Tests can pin alternates."""
+    if loop_memory_path is None:
+        loop_memory_path = Path(repo_root) / "memory" / "loop_memory.jsonl"
     router = APIRouter(prefix="/api/loop_v0", tags=["loop_v0"])
 
     @router.post("/start", status_code=202)
@@ -144,8 +149,7 @@ def register(
 
     @router.get("/iterations")
     def iterations():
-        path = Path(run_state_dir) / "loop_memory.jsonl"
-        rows = _read_jsonl(path)
+        rows = _read_jsonl(Path(loop_memory_path))
         rows.sort(key=lambda r: r.get("ended_at") or "", reverse=True)
         return {"iterations": rows}
 
@@ -155,7 +159,7 @@ def register(
         # The journal entry's path is recorded in the loop_memory row. Look
         # it up there first; fall back to a glob over the journal dir if
         # loop_memory has no row yet (Part-1 hello-world race window).
-        memory = _read_jsonl(Path(run_state_dir) / "loop_memory.jsonl")
+        memory = _read_jsonl(Path(loop_memory_path))
         path: Path | None = None
         for row in memory:
             if row.get("iteration_id") == iteration_id and isinstance(

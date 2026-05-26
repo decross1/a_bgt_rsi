@@ -54,7 +54,7 @@ A single iteration:
    hypothesis well-formed? Returns a verdict: `survives / falsified /
    restated / malformed`.
 6. **Journal.** A `journal_writer` worker emits one structured JSONL
-   row to `run_state/loop_memory.jsonl` AND one markdown entry under
+   row to `memory/loop_memory.jsonl` AND one markdown entry under
    `journal/iterations/NNN.md`. The row is the minimal Layer-3 entry.
 
 Step 8 of the diagram (human evaluation) is **out of scope for LOOP_V0**.
@@ -74,7 +74,7 @@ next slice.
 | `workers/critic.py` | Step 5 worker (literature-only critic) | ~120 |
 | `workers/journal_writer.py` | Step 6 worker (JSONL row + markdown entry) | ~100 |
 | `orchestrator/loop_v0_driver.py` | Chains steps 1–6, logs run, writes record | ~150 |
-| `run_state/loop_memory.jsonl` | Append-only Layer-3 seed | 0 (starts empty) |
+| `memory/loop_memory.jsonl` | Append-only Layer-3 seed | 0 (starts empty) |
 | `journal/iterations/` | Markdown entries, one per iteration | n/a |
 
 Files to **reuse, not modify**: `agent_wrapper/wrapper.py`,
@@ -164,7 +164,7 @@ make a LOOP_V0 iteration visible while it runs and after it finishes:
   class, critique verdict, link to journal entry.
 - **Live journal scroll.** Most-recent journal entries, newest first,
   with topic and verdict visible.
-- **Source of truth.** `run_state/loop_memory.jsonl` (append-only) for
+- **Source of truth.** `memory/loop_memory.jsonl` (append-only) for
   history; an in-process event stream (file-watched is fine) for the
   live state.
 

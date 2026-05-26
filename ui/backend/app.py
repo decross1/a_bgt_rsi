@@ -29,9 +29,12 @@ DEFAULT_STATE = _REPO / "run_state" / "week1.state.json"
 DEFAULT_BENCH_CSV = _REPO / "bench" / "day1.csv"        # day-1 throughput sweep (pre-MTP)
 DEFAULT_MTP_CSV = _REPO / "bench" / "mtp.csv"           # MTP-enabled sweep (D-022)
 # LOOP_V0: primary worktree paths; env overrides let tests pin alternates.
+# `loop_memory.jsonl` is Layer-3 of the knowledge base per
+# ARCHITECTURE.md §4.4 — sibling to chroma_db/ (Layers 1+2), not run_state/.
 DEFAULT_LOOP_V0_REPO = _PRIMARY_REPO
 DEFAULT_LOOP_V0_RUN_STATE = _PRIMARY_REPO / "run_state"
 DEFAULT_LOOP_V0_JOURNAL = _PRIMARY_REPO / "journal" / "iterations"
+DEFAULT_LOOP_V0_MEMORY = _PRIMARY_REPO / "memory" / "loop_memory.jsonl"
 
 
 def _git_sha():
@@ -81,6 +84,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                loop_v0_repo=DEFAULT_LOOP_V0_REPO,
                loop_v0_run_state=DEFAULT_LOOP_V0_RUN_STATE,
                loop_v0_journal=DEFAULT_LOOP_V0_JOURNAL,
+               loop_v0_memory=DEFAULT_LOOP_V0_MEMORY,
                loop_v0_popen=subprocess.Popen):
     app = FastAPI(title="UI backend — orchestrator dashboard", version=_git_sha())
     # Permissive CORS for local dev (Vite serves the SPA on another port).
@@ -193,6 +197,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         repo_root=Path(loop_v0_repo),
         run_state_dir=Path(loop_v0_run_state),
         journal_dir=Path(loop_v0_journal),
+        loop_memory_path=Path(loop_v0_memory),
         popen=loop_v0_popen,
     )
 
@@ -215,4 +220,5 @@ app = create_app(
     loop_v0_repo=_env_path("UI_LOOP_V0_REPO", DEFAULT_LOOP_V0_REPO),
     loop_v0_run_state=_env_path("UI_LOOP_V0_RUN_STATE", DEFAULT_LOOP_V0_RUN_STATE),
     loop_v0_journal=_env_path("UI_LOOP_V0_JOURNAL", DEFAULT_LOOP_V0_JOURNAL),
+    loop_v0_memory=_env_path("UI_LOOP_V0_MEMORY", DEFAULT_LOOP_V0_MEMORY),
 )

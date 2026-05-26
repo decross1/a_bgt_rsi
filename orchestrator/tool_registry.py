@@ -118,7 +118,7 @@ TOOL_SPECS: list[dict] = [
             "description": (
                 "Finalize the current iteration. Validates an "
                 "iteration_record against the schema, appends one row to "
-                "run_state/loop_memory.jsonl, and writes a markdown entry "
+                "memory/loop_memory.jsonl, and writes a markdown entry "
                 "to journal/iterations/NNN.md. Always call this last."
             ),
             "parameters": {

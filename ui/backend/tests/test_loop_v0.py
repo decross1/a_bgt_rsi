@@ -55,6 +55,9 @@ def _client(tmp_path, *, popen=None) -> tuple[TestClient, dict]:
     run_state_dir.mkdir(exist_ok=True)
     journal_dir = tmp_path / "journal"
     journal_dir.mkdir(exist_ok=True)
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir(exist_ok=True)
+    loop_memory = memory_dir / "loop_memory.jsonl"
 
     app = create_app(
         logs_dir=tmp_path / "logs",
@@ -65,6 +68,7 @@ def _client(tmp_path, *, popen=None) -> tuple[TestClient, dict]:
         loop_v0_repo=repo,
         loop_v0_run_state=run_state_dir,
         loop_v0_journal=journal_dir,
+        loop_v0_memory=loop_memory,
         loop_v0_popen=popen,
     )
     return TestClient(app), captured
@@ -134,7 +138,7 @@ def test_iterations_returns_newest_first(tmp_path):
         {"iteration_id": "iter-003", "ended_at": "2026-05-26T14:00:00Z"},
         {"iteration_id": "iter-002", "ended_at": "2026-05-25T19:00:00Z"},
     ]
-    (tmp_path / "run_state" / "loop_memory.jsonl").write_text(
+    (tmp_path / "memory" / "loop_memory.jsonl").write_text(
         "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
     resp = client.get("/api/loop_v0/iterations")
     ids = [r["iteration_id"] for r in resp.json()["iterations"]]
@@ -143,7 +147,7 @@ def test_iterations_returns_newest_first(tmp_path):
 
 def test_iterations_skips_malformed_lines(tmp_path):
     client, _ = _client(tmp_path)
-    (tmp_path / "run_state" / "loop_memory.jsonl").write_text(
+    (tmp_path / "memory" / "loop_memory.jsonl").write_text(
         '{"iteration_id":"a","ended_at":"2026-05-26T00:00:00Z"}\n'
         "not-json-and-should-be-skipped\n"
         '{"iteration_id":"b","ended_at":"2026-05-25T00:00:00Z"}\n',
@@ -172,7 +176,7 @@ def test_journal_returns_content_when_present(tmp_path):
     body = "# Iteration iter-2026-05-26-001\n\nbody.\n"
     journal_path.write_text(body, encoding="utf-8")
     # loop_memory points the iteration at this journal file.
-    (tmp_path / "run_state" / "loop_memory.jsonl").write_text(
+    (tmp_path / "memory" / "loop_memory.jsonl").write_text(
         json.dumps({
             "iteration_id": "iter-2026-05-26-001",
             "ended_at": "2026-05-26T14:00:00Z",
