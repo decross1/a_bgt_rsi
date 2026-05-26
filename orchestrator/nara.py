@@ -187,6 +187,38 @@ def _record_turn(
     return _emit(rec, log_path)
 
 
+_LOOP_V0_STEPS = [
+    "hypothesize",
+    "retrieve_literature",
+    "novelty_classify",
+    "critic_loop_v0",
+    "journal_writer",
+]
+
+
+def _captured_to_step(name: str) -> str:
+    """Map a tool name to the captured-key it populates."""
+    return {
+        "hypothesize":         "hypothesis",
+        "retrieve_literature": "retrieval",
+        "novelty_classify":    "novelty",
+        "critic_loop_v0":      "critique",
+        "journal_writer":      "journal",
+    }.get(name, name)
+
+
+def _next_chain_step(captured: dict) -> str:
+    """Walk the LOOP_V0 step list; return the first one whose result
+    isn't yet captured. If the chain is fully captured (including
+    journal_writer), returns 'journal_writer' as a safe default — the
+    caller is expected to gate on `journal_entry_path is None` first."""
+    for step in _LOOP_V0_STEPS:
+        key = _captured_to_step(step)
+        if key not in captured:
+            return step
+    return "journal_writer"
+
+
 def _initial_active(iteration_id: str, topic: str) -> dict:
     return {
         "iteration_id": iteration_id,
@@ -281,9 +313,38 @@ def run_iteration(
             active["latest_narration"] = text_content
 
         if not tool_calls:
-            # Final turn: this is Nara's summary
-            final_summary = text_content or "(no final summary emitted)"
-            break
+            # No tool_calls. Two cases:
+            #   (a) chain is complete (journal_writer already returned) →
+            #       this is Nara's final summary, exit the loop.
+            #   (b) chain is incomplete → Nara emitted an intermediate
+            #       narration without a tool_call. Re-prompt with the
+            #       next-step nudge so the chain doesn't stall.
+            chain_complete = journal_entry_path is not None
+            if chain_complete:
+                final_summary = text_content or "(no final summary emitted)"
+                break
+            # Re-prompt: append the narration as an assistant message and
+            # then a user nudge naming the next step.
+            openai_messages.append({
+                "role": "assistant",
+                "content": text_content,
+            })
+            next_step = _next_chain_step(captured)
+            openai_messages.append({
+                "role": "user",
+                "content": (
+                    f"Continue the chain. Your next tool call must be "
+                    f"`{next_step}`. Emit narration AND the tool_call in the "
+                    f"same assistant message."
+                ),
+            })
+            runtime.log_event({
+                "event_type": "loop_v0_reprompt",
+                "iteration_id": iteration_id,
+                "next_step": next_step,
+                "parent_request_id": last_id,
+            })
+            continue
 
         # Stage the assistant turn (with tool_calls) for the next request
         openai_messages.append({
@@ -371,6 +432,7 @@ def run_iteration(
                     elif name == "critic_loop_v0":
                         captured["critique"] = payload
                     elif name == "journal_writer":
+                        captured["journal"] = payload
                         journal_entry_path = payload.get("journal_entry_path")
 
             openai_messages.append({

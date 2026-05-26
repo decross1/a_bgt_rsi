@@ -1,84 +1,139 @@
-"""LOOP_V0 step 5 worker — critic_loop_v0 (literature-grounded falsification).
+"""LOOP_V0 step 5 worker — critic_loop_v0 (sub-agent dispatch, Path-B).
 
-Given a hypothesis and the top-K retrieved neighbors, attempt to falsify
-the hypothesis using ONLY the retrieved literature. This is the
-literature-only critic — no experiment is run; the verdict draws only
-on the prior work that's already in the knowledge base.
+Falsifies the hypothesis against the retrieved literature. As of the
+Path-B migration this worker is no longer a single LLM call — it
+dispatches a bounded sub-agent that:
 
-Verdicts (matches `iteration_record.critique`):
-  - `survives`   — no retrieved paper contradicts; claim is well-formed
-  - `falsified`  — at least one retrieved paper directly contradicts
-  - `restated`   — claim is a restatement of a known result (often
-                   correlates with novelty=rediscovery but the framing
-                   here is "this hypothesis adds nothing new")
-  - `malformed`  — claim is incoherent, ill-defined, or out-of-scope
+  - has its own conversation context (separate from Nara's)
+  - has a focused critic system prompt
+  - can OPTIONALLY call `query_chroma` to pull additional evidence
+    beyond the initial retrieval if it identifies a gap
+  - runs 2-6 turns with a 90s wall budget
+  - returns the same {verdict, rationale, contradicting_paper_id}
+    payload Nara consumes
 
-Named `critic_loop_v0` to avoid colliding with the salvaged Day-9
-`workers/critic.py` (Phase-2 contract with a different 2-class verdict;
-keep both files independently importable).
+Output shape (worker contract) is unchanged from the pre-Path-B
+implementation — the tool registry doesn't notice. New fields are
+added under `result` for observability:
+  - `subagent_turns_used` — how many turns the sub-agent took
+  - `subagent_wall_seconds` — total wall-clock time inside the sub-agent
+  - `subagent_status` — passed | timeout | schema_mismatch | error
 
-Calls Gemma via `wrapper.call_sync`. Same robust JSON-extraction
-pattern as the other LLM-using workers.
+The file `workers/critic.py` (Day-9 salvage, Phase-2 contract) and
+this file (`critic_loop_v0`) stay separately importable — different
+verdict enums, different intended use.
 """
 from __future__ import annotations
 
-import json
-import os
 from typing import Any
 
 from agent_wrapper.cleanup import strip_channel_markup
-from agent_wrapper.wrapper import call_sync
-
-
-CALLS_LOG_PATH = os.environ.get(
-    "LOOP_V0_CALLS_LOG", "logs/calls.jsonl"
+from orchestrator.chroma_query import query_top_k
+from orchestrator.subagent import (
+    SubAgentBudget,
+    SubAgentResult,
+    run_subagent,
 )
+
 
 ALLOWED_VERDICTS = ("survives", "falsified", "restated", "malformed")
 
 
-CRITIC_SYSTEM_PROMPT = (
-    "You are the CRITIC worker in the a_bgt_rsi research apparatus.\n"
+CRITIC_AGENT_SYSTEM_PROMPT = (
+    "You are the CRITIC sub-agent in the a_bgt_rsi research apparatus.\n"
     "\n"
-    "Given a hypothesis and the top-K most semantically similar chunks\n"
-    "from the apparatus's knowledge base, attempt to FALSIFY the\n"
-    "hypothesis using ONLY the retrieved literature. Do not invoke\n"
-    "knowledge from outside the retrieved set. Do not run experiments.\n"
-    "Your job is to find the strongest counter-argument that's already\n"
-    "present in the prior work.\n"
+    "Your job: attempt to FALSIFY a research hypothesis using only the\n"
+    "retrieved literature you'll be given, plus optionally additional\n"
+    "chunks you fetch yourself via the `query_chroma` tool. Do NOT invoke\n"
+    "knowledge from outside the retrieved set. Do NOT run experiments.\n"
+    "Your judgment must be defensible against the cited literature.\n"
+    "\n"
+    "You have one tool available:\n"
+    "  - `query_chroma(text, k=10)` — fetches additional nearest-neighbor\n"
+    "    chunks from the local foundational + live-arXiv knowledge base.\n"
+    "    Use this sparingly — at most once or twice — when the initial\n"
+    "    neighbors don't cover an angle you need to evaluate. Each call\n"
+    "    returns the same shape you got initially. NOT every iteration\n"
+    "    needs additional retrieval.\n"
     "\n"
     "Return ONE of four verdicts:\n"
-    '  - "survives"   — no retrieved chunk directly contradicts the claim.\n'
-    '                    The hypothesis is well-formed and not yet defeated.\n'
-    '  - "falsified"  — at least one retrieved chunk directly contradicts\n'
-    '                    the claim. Cite which one in `contradicting_paper_id`.\n'
+    '  - "survives"   — no retrieved chunk (initial or fetched) directly\n'
+    "                    contradicts the claim. Well-formed hypothesis,\n"
+    "                    not yet defeated.\n"
+    '  - "falsified"  — at least one retrieved chunk directly contradicts.\n'
+    "                    Cite which one in `contradicting_paper_id`.\n"
     '  - "restated"   — the claim restates a known result in the retrieved\n'
-    '                    set; it adds no new content. (Often pairs with a\n'
-    '                    "rediscovery" novelty class, but the framing here\n'
-    '                    is about novelty-of-contribution, not novelty-of-claim.)\n'
+    "                    set; it adds no new content.\n"
     '  - "malformed"  — the claim is incoherent, ill-defined, or not a\n'
-    '                    real game-theory / learning-in-games question.\n'
+    "                    real game-theory / learning-in-games question.\n"
     "\n"
     "Be intellectually honest: `survives` is a legitimate answer when the\n"
     "literature simply doesn't address the claim. `restated` is reserved\n"
-    "for claims that the retrieved set proves redundant. Cite specific\n"
-    "doc_ids when relevant.\n"
+    "for claims that the retrieved set proves redundant.\n"
     "\n"
-    "Output STRICT JSON, nothing else — no prose, no markdown fences, no\n"
+    "When you've made your judgment, emit a FINAL assistant message that\n"
+    "is STRICT JSON, nothing else — no prose, no markdown fences, no\n"
     "channel markers. Schema:\n"
     "{\n"
     '  "verdict": "survives" | "falsified" | "restated" | "malformed",\n'
     '  "rationale": "<2-4 sentences citing specific neighbors where relevant>",\n'
-    '  "contradicting_paper_id": "<doc_id of the contradicting neighbor>" | null\n'
+    '  "contradicting_paper_id": "<doc_id of the contradicting/restated neighbor>" | null\n'
     "}\n"
     "\n"
     '`contradicting_paper_id` is non-null ONLY for "falsified" or "restated".\n'
-    "It MUST be one of the doc_id strings from the neighbors list when present."
+    "It MUST be a doc_id from the neighbors you've seen (initial + any\n"
+    "additional retrievals)."
 )
 
 
+_CRITIC_OUTPUT_SCHEMA = {
+    "type": "object",
+    "required": ["verdict", "rationale"],
+    "properties": {
+        "verdict": {
+            "type": "string",
+            "enum": list(ALLOWED_VERDICTS),
+        },
+        "rationale": {"type": "string"},
+        "contradicting_paper_id": {"type": ["string", "null"]},
+    },
+    "additionalProperties": True,
+}
+
+
+# Tool the critic sub-agent may call. Same `query_chroma` Nara uses,
+# but exposed as a sub-agent-scoped capability.
+_QUERY_CHROMA_TOOL_SPEC = {
+    "type": "function",
+    "function": {
+        "name": "query_chroma",
+        "description": (
+            "Query the local Chroma knowledge base for additional nearest "
+            "neighbors beyond the initial retrieval. Use sparingly. Returns "
+            "the same {k, neighbors} shape as the initial retrieval."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "Search text (e.g. a focused sub-claim).",
+                },
+                "k": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 20,
+                    "description": "Number of neighbors to return (default 10).",
+                },
+            },
+            "required": ["text"],
+        },
+    },
+}
+
+
 def _format_neighbors(neighbors: list[dict]) -> str:
-    """Compact neighbor list for the user prompt body."""
+    """Compact human-readable neighbor list for the user prompt."""
     if not neighbors:
         return "(none)"
     lines = []
@@ -98,81 +153,40 @@ def _format_neighbors(neighbors: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _extract_json_object(text: str) -> dict[str, Any] | None:
-    """Balanced-brace JSON extractor (same pattern as
-    workers/hypothesize.py and workers/novelty_classify.py)."""
-    if not isinstance(text, str):
-        return None
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_string = False
-    escape = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if escape:
-            escape = False
-            continue
-        if ch == "\\" and in_string:
-            escape = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    return json.loads(text[start:i + 1])
-                except json.JSONDecodeError:
-                    return None
-    return None
+def _post_validate(payload: dict, valid_doc_ids: set[str]) -> tuple[dict, list[str]]:
+    """Enforce the same consistency guards the old one-shot critic had:
+    - contradicting_paper_id must be in the seen doc_ids when present
+    - contradicting_paper_id must be None for survives/malformed verdicts
 
-
-def _validate_payload(
-    payload: Any, valid_doc_ids: set[str]
-) -> tuple[str | None, str, str | None, list[str]]:
-    """Pull verdict, rationale, contradicting_paper_id from parsed JSON."""
+    The sub-agent's schema validation guarantees verdict ∈ ALLOWED_VERDICTS
+    already; this layer only enforces cross-field invariants."""
     warnings: list[str] = []
-    if not isinstance(payload, dict):
-        return None, "", None, ["payload is not a JSON object"]
     verdict = payload.get("verdict")
-    if verdict not in ALLOWED_VERDICTS:
-        return None, "", None, [
-            f"verdict={verdict!r} not in {ALLOWED_VERDICTS}"
-        ]
-    rationale = payload.get("rationale")
-    if not isinstance(rationale, str):
-        rationale = ""
-        warnings.append("rationale missing or non-string; defaulted to empty")
-    rationale = rationale.strip()[:2000]
-    contra_raw = payload.get("contradicting_paper_id")
-    contra: str | None
-    if contra_raw is None:
-        contra = None
-    elif isinstance(contra_raw, str):
-        contra = contra_raw.strip() or None
+    rationale = strip_channel_markup(payload.get("rationale") or "")[:2000]
+    contra = payload.get("contradicting_paper_id")
+    if isinstance(contra, str):
+        contra = contra.strip() or None
         if contra and valid_doc_ids and contra not in valid_doc_ids:
             warnings.append(
-                f"contradicting_paper_id={contra!r} not in retrieved neighbors; nulling"
+                f"contradicting_paper_id={contra!r} not in seen neighbors; nulling"
             )
             contra = None
-    else:
-        contra = None
+    elif contra is not None:
         warnings.append("contradicting_paper_id not a string or null; nulling")
-    # Consistency: contradicting_paper_id must be null when verdict is
-    # survives / malformed; allowed for falsified / restated.
+        contra = None
     if verdict in ("survives", "malformed") and contra is not None:
         warnings.append(
             f"contradicting_paper_id set on verdict={verdict!r}; nulling per schema"
         )
         contra = None
-    return verdict, rationale, contra, warnings
+    return (
+        {
+            "verdict": verdict,
+            "rationale": rationale,
+            "contradicting_paper_id": contra,
+        },
+        warnings,
+    )
 
 
 def critic_loop_v0(
@@ -180,10 +194,9 @@ def critic_loop_v0(
     neighbors: list[dict],
     *,
     parent_request_id: str | None = None,
-    log_path: str | None = None,
-    model: str | None = None,
+    budget: SubAgentBudget | None = None,
 ) -> dict[str, Any]:
-    """Falsify the hypothesis against retrieved literature.
+    """Falsify the hypothesis via a bounded sub-agent.
 
     Returns:
     ```
@@ -193,6 +206,9 @@ def critic_loop_v0(
             "verdict": "survives" | "falsified" | "restated" | "malformed",
             "rationale": str,
             "contradicting_paper_id": str | None,
+            "subagent_turns_used": int,
+            "subagent_wall_seconds": float,
+            "subagent_status": "passed" | "timeout" | "schema_mismatch" | "error",
         } | None,
         "errors": [str, ...],
         "wrapper_request_id": str | None,
@@ -216,81 +232,126 @@ def critic_loop_v0(
             "wrapper_request_id": None,
             "parent_request_id": parent_request_id,
         }
-    log_path = log_path or CALLS_LOG_PATH
 
-    valid_doc_ids = {n.get("doc_id") for n in neighbors if isinstance(n.get("doc_id"), str)}
+    # Track every doc_id the sub-agent could possibly have seen (initial
+    # neighbors + any fetched via query_chroma). Used for post-validation
+    # of the cited doc_id.
+    seen_doc_ids: set[str] = {
+        n.get("doc_id") for n in neighbors if isinstance(n.get("doc_id"), str)
+    }
 
-    user_content = (
+    # Wrap query_chroma so the sub-agent's mid-flight retrievals get
+    # their doc_ids added to the seen set.
+    def _query_chroma_for_subagent(text: str, k: int = 10, *, parent_request_id=None):
+        result = query_top_k(text, k=k, parent_request_id=parent_request_id)
+        if result.get("status") == "passed":
+            for n in result["result"].get("neighbors", []):
+                d = n.get("doc_id")
+                if isinstance(d, str):
+                    seen_doc_ids.add(d)
+        return result
+
+    user_prompt = (
         f"Hypothesis:\n{hypothesis_text.strip()}\n\n"
-        f"Retrieved neighbors ({len(neighbors)}):\n"
-        f"{_format_neighbors(neighbors)}\n"
+        f"Initial retrieved neighbors ({len(neighbors)}):\n"
+        f"{_format_neighbors(neighbors)}\n\n"
+        "Decide your verdict. If the initial neighbors are sufficient,\n"
+        "emit the final JSON now. If you genuinely need to check a\n"
+        "specific angle, call `query_chroma` with a focused query first."
     )
 
-    messages = [
-        {"role": "system", "content": CRITIC_SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
+    sa_result: SubAgentResult = run_subagent(
+        name="critic_loop_v0",
+        system_prompt=CRITIC_AGENT_SYSTEM_PROMPT,
+        user_prompt=user_prompt,
+        expected_output_schema=_CRITIC_OUTPUT_SCHEMA,
+        tools=[{"spec": _QUERY_CHROMA_TOOL_SPEC, "impl": _query_chroma_for_subagent}],
+        tool_dispatch={"query_chroma": _query_chroma_for_subagent},
+        budget=budget or SubAgentBudget(max_turns=6, max_wall_seconds=90.0),
+        parent_request_id=parent_request_id,
+    )
 
-    try:
-        record = call_sync(
-            messages,
-            temperature=0.2,
-            top_p=0.95,
-            max_tokens=512,
-            caller_tag="critic_loop_v0",
-            parent_request_id=parent_request_id,
-            log_path=log_path,
-            model=model,
-        )
-    except Exception as exc:
+    # Sub-agent telemetry surfaces in the worker output so the
+    # iteration_record can carry it (and the UI can render it).
+    observability = {
+        "subagent_turns_used":   sa_result.turns_used,
+        "subagent_wall_seconds": round(sa_result.wall_seconds, 3),
+        "subagent_status":       sa_result.status,
+    }
+
+    if sa_result.status == "passed":
+        validated, warnings = _post_validate(sa_result.result or {}, seen_doc_ids)
+        validated.update(observability)
         return {
-            "status": "error",
-            "result": None,
-            "errors": [f"wrapper.call_sync failed: {type(exc).__name__}: {exc}"],
-            "wrapper_request_id": None,
+            "status": "passed",
+            "result": validated,
+            "errors": warnings,
+            "wrapper_request_id": (
+                sa_result.wrapper_call_ids[-1] if sa_result.wrapper_call_ids else None
+            ),
             "parent_request_id": parent_request_id,
         }
 
-    completion = record.get("completion") or ""
-    wrapper_rid = record.get("request_id")
-    payload = _extract_json_object(completion)
-    verdict, rationale, contra, warnings = _validate_payload(payload, valid_doc_ids)
+    if sa_result.status == "schema_mismatch":
+        # Fall back to "survives" (absence-of-evidence isn't evidence-of-absence),
+        # but surface the raw payload + status so the human knows the
+        # sub-agent failed.
+        raw = sa_result.result if isinstance(sa_result.result, dict) else None
+        fallback = {
+            "verdict": "survives",
+            "rationale": (
+                "(sub-agent emitted schema-mismatched output; defaulting to survives) "
+                + str(raw)[:500]
+            ),
+            "contradicting_paper_id": None,
+            **observability,
+        }
+        return {
+            "status": "passed",
+            "result": fallback,
+            "errors": ["sub-agent schema mismatch; verdict defaulted to 'survives'"]
+                       + sa_result.errors,
+            "wrapper_request_id": (
+                sa_result.wrapper_call_ids[-1] if sa_result.wrapper_call_ids else None
+            ),
+            "parent_request_id": parent_request_id,
+        }
 
-    if verdict is None:
-        # Fallback: default to "survives" with a flagged rationale. We
-        # default to survives (not falsified) because absence-of-evidence
-        # should not be evidence-of-absence — if the model fails, the
-        # hypothesis hasn't actually been disproven.
+    if sa_result.status == "timeout":
         return {
             "status": "passed",
             "result": {
                 "verdict": "survives",
                 "rationale": (
-                    "(model emitted unparseable / invalid output; defaulting to survives) "
-                    + strip_channel_markup(completion[:500] or "")
-                ).strip(),
+                    f"(sub-agent budget exceeded after {sa_result.turns_used} turns; "
+                    "defaulting to survives)"
+                ),
                 "contradicting_paper_id": None,
+                **observability,
             },
-            "errors": ["unparseable model output; verdict defaulted to 'survives'"] + warnings,
-            "wrapper_request_id": wrapper_rid,
+            "errors": ["sub-agent timeout; verdict defaulted to 'survives'"]
+                       + sa_result.errors,
+            "wrapper_request_id": (
+                sa_result.wrapper_call_ids[-1] if sa_result.wrapper_call_ids else None
+            ),
             "parent_request_id": parent_request_id,
         }
 
+    # sa_result.status == "error"
     return {
-        "status": "passed",
-        "result": {
-            "verdict": verdict,
-            "rationale": rationale,
-            "contradicting_paper_id": contra,
-        },
-        "errors": warnings,
-        "wrapper_request_id": wrapper_rid,
+        "status": "error",
+        "result": None,
+        "errors": sa_result.errors,
+        "wrapper_request_id": (
+            sa_result.wrapper_call_ids[-1] if sa_result.wrapper_call_ids else None
+        ),
         "parent_request_id": parent_request_id,
     }
 
 
 if __name__ == "__main__":
-    # Smoke: pull real neighbors, criticize.
+    # Smoke against real Chroma + Gemma.
+    import json
     from workers.retrieve_literature import retrieve_literature
     hyp = (
         "In finitely repeated Prisoner's Dilemma with known horizon, "
