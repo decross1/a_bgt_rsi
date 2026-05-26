@@ -101,7 +101,15 @@ NARA_PROMPT_V0 = (
     "  - Never call the same step twice.\n"
     "  - Pass results verbatim — do not paraphrase the hypothesis text\n"
     "    or trim the neighbors list between steps.\n"
-    "  - Emit valid JSON for all tool arguments."
+    "  - Emit valid JSON for all tool arguments.\n"
+    "  - **CRITICAL: emit tool calls via the OpenAI tool_calls field, NEVER\n"
+    "    as text content.** Do not write `<|tool_call>` or any inline\n"
+    "    markup mimicking a tool call. The runtime only sees tool_calls\n"
+    "    delivered through the proper structured field. If you write a\n"
+    "    tool call as text, NOTHING HAPPENS — the chain stalls and you\n"
+    "    will be re-prompted. Your assistant message has TWO slots:\n"
+    "    (a) `content` for narration text, (b) `tool_calls` for the\n"
+    "    actual structured calls. Use both, in the same message."
 )
 
 
@@ -283,6 +291,12 @@ def run_iteration(
             messages=openai_messages,
             tools=tool_specs,
             temperature=0.0,
+            # Cap per-turn output so a confused Gemma can't generate the
+            # entire neighbor list as a stringified `<|tool_call>...` text
+            # blob (a real failure mode we hit on iter-010). 1024 tokens
+            # is plenty for narration + a single proper tool_call, and a
+            # tight cap also forces faster turn cycles when re-prompting.
+            max_tokens=1024,
         )
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
