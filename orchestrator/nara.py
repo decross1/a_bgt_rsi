@@ -34,14 +34,12 @@ from agent_wrapper.gemma_tool_parse import (
     parse_inline_tool_calls,
     split_narration_and_markup,
 )
+from agent_wrapper.backends import get_backend
 from agent_wrapper.wrapper import (
-    HOST_METADATA,
+    DEFAULT_BACKEND,
     MEMORY_LOG,
-    MODEL,
-    MODEL_VERSION,
     _emit,
     _project_for_log,
-    _sync_client,
 )
 from orchestrator.journal_stub import finalize_iteration_record
 from orchestrator.runtime import PyRuntime, Runtime
@@ -156,6 +154,9 @@ def _record_turn(
     caller_tag: str,
     parent_request_id: str | None,
     log_path: str | None,
+    *,
+    model_version: str,
+    host_metadata: dict,
 ) -> dict:
     """Schema-valid call record. Mirrors wrapper._record but is local so
     we can decide what goes in 'completion' (text vs tool_calls) ourselves."""
@@ -182,7 +183,7 @@ def _record_turn(
         "timestamp": _utcnow_iso(),
         "request_id": str(uuid.uuid4()),
         "model": resp.model,
-        "model_version": MODEL_VERSION,
+        "model_version": model_version,
         "temperature": 0.0,
         "top_p": 1.0,
         "seed": None,
@@ -193,7 +194,7 @@ def _record_turn(
             "output_tokens": resp.usage.completion_tokens,
         },
         "latency_ms": latency_ms,
-        "host_metadata": dict(HOST_METADATA),
+        "host_metadata": dict(host_metadata),
         "caller_tag": caller_tag,
         "parent_request_id": parent_request_id,
     }
@@ -253,10 +254,16 @@ def run_iteration(
     source: str = "human_cli",
     log_path: str | None = _DEFAULT_LOG_PATH,
     max_depth: int = _DEFAULT_MAX_DEPTH,
+    backend: str | None = None,
 ) -> dict:
-    """Run one LOOP_V0 hello-world iteration. Returns the final
-    iteration_record dict."""
+    """Run one LOOP_V0 iteration. Returns the final iteration_record dict.
+
+    backend: which backend the orchestrator brain (Nara) runs on.
+        None -> DEFAULT_BACKEND (vllm-gemma). Workers picked via tool_calls
+        are dispatched by the runtime and may run on a different backend
+        per the per-tool tier (a future routing extension)."""
     runtime = runtime or PyRuntime()
+    be = get_backend(backend or DEFAULT_BACKEND)
     iteration_id = _next_iteration_id()
     started_at = _utcnow_iso()
     active = _initial_active(iteration_id, topic)
@@ -293,8 +300,8 @@ def run_iteration(
         runtime.write_state(ACTIVE_PATH, active)
 
         t0 = time.perf_counter()
-        resp = _sync_client.chat.completions.create(
-            model=MODEL,
+        resp = be.create_chat(
+            model=be.default_model,
             messages=openai_messages,
             tools=tool_specs,
             temperature=0.0,
@@ -312,6 +319,8 @@ def run_iteration(
             caller_tag="nara.run_iteration",
             parent_request_id=last_id or parent_request_id,
             log_path=log_path,
+            model_version=be.model_version,
+            host_metadata=be.host_metadata,
         )
         wrapper_call_ids.append(record["request_id"])
         last_id = record["request_id"]
@@ -552,7 +561,7 @@ def run_iteration(
         "tool_calls_made":    tool_calls_made,
         "narration_log":      narration_log,
         "journal_entry_path": journal_entry_path,
-        "model_version":      MODEL_VERSION,
+        "model_version":      be.model_version,
         "wrapper_call_ids":   wrapper_call_ids,
     }
     # Attach the four substructures when present so the iteration_record

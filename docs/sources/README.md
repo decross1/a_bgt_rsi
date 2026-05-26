@@ -5,14 +5,20 @@ The authoritative source documents the canonical summaries
 are derived from. **Where a summary conflicts with a source here, the
 source wins.**
 
-Expected files (referenced across the canonical docs — add each when
-available; not yet committed):
+Files in this directory:
 
-- `research_program_v2.pdf` — the intellectual research program.
+- [`research_program_v2.md`](research_program_v2.md) — **the intellectual
+  research program. This is the core essence of the project — the WHY.
+  Every primary session reads it.** Committed 2026-05-26 from the v2
+  source text; the parallel-track reading architecture and 30/60/90-day
+  daily plan from the v2 PDF were intentionally cut on the same pass to
+  reconcile with the post-D-030 single-primary-session direction.
+
+Expected files (referenced across the canonical docs — add when available;
+not yet committed):
+
 - `research_apparatus_technical_plan_v1.md` — the technical companion to
   the program.
-- `week1_days_31-37_plan.md` (a.k.a. `agent_plan_week1.md`) — the
-  human-readable Week 1 plan; `plan.yaml` is generated from it.
 
-Until these are present, `plan.yaml` plus the operating contract in
-`CLAUDE.md` are the operative authority for execution.
+The active build slice is governed by [`LOOP_V0.md`](../../LOOP_V0.md), not
+by a separate source plan; `plan.yaml` was retired on 2026-05-26 (D-030).

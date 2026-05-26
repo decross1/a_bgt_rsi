@@ -30,6 +30,11 @@ from pathlib import Path
 import jsonschema
 from openai import AsyncOpenAI, OpenAI
 
+from .backends import get_backend, register_backend
+from .backends.anthropic import AnthropicBackend
+from .backends.ollama_openai import OllamaBackend
+from .backends.vllm_openai import VLLMBackend
+
 _SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema" / "calls.jsonl.schema.json"
 _VALIDATOR = jsonschema.Draft202012Validator(json.loads(_SCHEMA_PATH.read_text()))
 
@@ -57,21 +62,34 @@ MEMORY_LOG = []
 _sync_client = OpenAI(base_url=BASE_URL, api_key=os.environ.get("VLLM_API_KEY", "EMPTY"))
 _async_client = AsyncOpenAI(base_url=BASE_URL, api_key=os.environ.get("VLLM_API_KEY", "EMPTY"))
 
+# Backend registry. The vllm-gemma backend reads _sync_client/_async_client
+# from this module lazily so existing tests that patch those clients still
+# work unchanged. Ollama (coder tier) and anthropic (planner tier) register
+# alongside; the default remains vllm-gemma.
+register_backend(VLLMBackend())
+register_backend(OllamaBackend())
+register_backend(AnthropicBackend())
+DEFAULT_BACKEND = os.environ.get("WRAPPER_DEFAULT_BACKEND", "vllm-gemma")
+
 
 def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id,
-            retrieval_context=None):
+            retrieval_context=None, model_version=None, host_metadata=None):
     """Build a schema-conforming record from a chat-completion response.
 
     retrieval_context (D-025 / P2): None when no retrieval ran -- the field is
     OMITTED from the record (legacy semantics). A list when at least one
     retrieval contributed to the prompt; each item must carry doc_id,
     content_hash, chunk_offset, chunk_length per the schema.
+
+    model_version / host_metadata: per-call provenance from the backend. If
+    None, falls back to the module-level defaults (vllm-gemma) so existing
+    callers and tests work unchanged.
     """
     rec = {
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "request_id": str(uuid.uuid4()),
         "model": resp.model,
-        "model_version": MODEL_VERSION,
+        "model_version": model_version if model_version is not None else MODEL_VERSION,
         "temperature": params["temperature"],
         "top_p": params["top_p"],
         "seed": params["seed"],
@@ -84,7 +102,7 @@ def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id,
             "output_tokens": resp.usage.completion_tokens,
         },
         "latency_ms": latency_ms,
-        "host_metadata": dict(HOST_METADATA),
+        "host_metadata": dict(host_metadata) if host_metadata is not None else dict(HOST_METADATA),
         "caller_tag": caller_tag,
         "parent_request_id": parent_request_id,
     }
@@ -107,34 +125,46 @@ def _emit(record, log_path):
 
 def call_sync(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=None,
               caller_tag="unspecified", parent_request_id=None,
-              retrieval_context=None, log_path=None, model=None):
+              retrieval_context=None, log_path=None, model=None, backend=None):
     """Synchronous chat completion. Returns the logged record. max_tokens caps
     generation; it is a request param, not one of the 14 logged schema fields.
 
     retrieval_context: see _record. Default None -> field absent from record.
+    backend: backend registry name (e.g. "vllm-gemma", "ollama-coder",
+        "anthropic"). Default None -> DEFAULT_BACKEND env, falling back to
+        "vllm-gemma" so existing callers are unaffected.
     """
+    be = get_backend(backend or DEFAULT_BACKEND)
     params = {"temperature": temperature, "top_p": top_p, "seed": seed}
     t0 = time.perf_counter()
-    resp = _sync_client.chat.completions.create(
-        model=model or MODEL, messages=messages, max_tokens=max_tokens, **params)
+    resp = be.create_chat(
+        model=model or be.default_model, messages=messages,
+        max_tokens=max_tokens, **params)
     latency_ms = (time.perf_counter() - t0) * 1000.0
     return _emit(_record(messages, params, resp, latency_ms,
                          caller_tag, parent_request_id,
-                         retrieval_context=retrieval_context), log_path)
+                         retrieval_context=retrieval_context,
+                         model_version=be.model_version,
+                         host_metadata=be.host_metadata), log_path)
 
 
 async def call_async(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=None,
                      caller_tag="unspecified", parent_request_id=None,
-                     retrieval_context=None, log_path=None, model=None):
+                     retrieval_context=None, log_path=None, model=None,
+                     backend=None):
     """Async chat completion (needed for OpenClaw on Day 6). Returns the record."""
+    be = get_backend(backend or DEFAULT_BACKEND)
     params = {"temperature": temperature, "top_p": top_p, "seed": seed}
     t0 = time.perf_counter()
-    resp = await _async_client.chat.completions.create(
-        model=model or MODEL, messages=messages, max_tokens=max_tokens, **params)
+    resp = await be.create_chat_async(
+        model=model or be.default_model, messages=messages,
+        max_tokens=max_tokens, **params)
     latency_ms = (time.perf_counter() - t0) * 1000.0
     return _emit(_record(messages, params, resp, latency_ms,
                          caller_tag, parent_request_id,
-                         retrieval_context=retrieval_context), log_path)
+                         retrieval_context=retrieval_context,
+                         model_version=be.model_version,
+                         host_metadata=be.host_metadata), log_path)
 
 
 _DEFAULT_MAX_TOOL_DEPTH = 3
@@ -199,7 +229,7 @@ def _project_for_log(messages):
 def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
                     max_tokens=None, caller_tag="call_with_tools",
                     parent_request_id=None, retrieval_context=None,
-                    log_path=None, model=None,
+                    log_path=None, model=None, backend=None,
                     max_depth=_DEFAULT_MAX_TOOL_DEPTH):
     """Multi-turn tool-call loop. Returns the list of recorded chain calls.
 
@@ -207,6 +237,7 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
     max_depth: maximum number of tool-emitting turns (>=1). The final
         non-tool-emitting turn is always permitted on top, so the chain has
         at most max_depth+1 records.
+    backend: backend registry name; None -> DEFAULT_BACKEND.
 
     Each turn:
       1. Send the current message stack with the `tools` parameter.
@@ -220,6 +251,7 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
     """
     if max_depth < 1:
         raise ValueError(f"max_depth must be >= 1, got {max_depth}")
+    be = get_backend(backend or DEFAULT_BACKEND)
     tool_index = _index_tools(tools)
     tool_specs = [t["spec"] for t in tools]
     openai_messages = [dict(m) for m in messages]
@@ -229,8 +261,8 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
 
     for depth in range(max_depth + 1):
         t0 = time.perf_counter()
-        resp = _sync_client.chat.completions.create(
-            model=model or MODEL,
+        resp = be.create_chat(
+            model=model or be.default_model,
             messages=openai_messages,
             tools=tool_specs,
             max_tokens=max_tokens,
@@ -250,7 +282,7 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "request_id": str(uuid.uuid4()),
             "model": resp.model,
-            "model_version": MODEL_VERSION,
+            "model_version": be.model_version,
             "temperature": params["temperature"],
             "top_p": params["top_p"],
             "seed": params["seed"],
@@ -261,7 +293,7 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
                 "output_tokens": resp.usage.completion_tokens,
             },
             "latency_ms": latency_ms,
-            "host_metadata": dict(HOST_METADATA),
+            "host_metadata": dict(be.host_metadata),
             "caller_tag": caller_tag,
             "parent_request_id": last_id,
         }

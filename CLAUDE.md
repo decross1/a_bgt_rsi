@@ -35,14 +35,19 @@ next.
 
 1. Read this file ([`CLAUDE.md`](CLAUDE.md)) in full.
 2. Read [`START_HERE.md`](START_HERE.md).
-3. Read [`LOOP_V0.md`](LOOP_V0.md) — the active build plan.
-4. Read the most recent file in [`human/sessions/`](human/sessions/)
+3. Read [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md)
+   — **the core essence of the project**. The intellectual frame, the
+   central question, the sandbox spectrum, the cross-cutting practices.
+   Every primary session reads this; it's what keeps build work tethered
+   to why the apparatus exists.
+4. Read [`LOOP_V0.md`](LOOP_V0.md) — the active build plan.
+5. Read the most recent file in [`human/sessions/`](human/sessions/)
    — that's the current session's focus and prior-session handoff.
-5. Read `run_state/week1.state.json` if you need historical task state.
+6. Read `run_state/week1.state.json` if you need historical task state.
    (The `week1` naming is a legacy artifact; the file is still the
    authoritative history of completed work. New work logs to the same
    run log: `run_state/week1.run.jsonl`.)
-6. If a `human_gates_pending` entry remains in the state file, halt
+7. If a `human_gates_pending` entry remains in the state file, halt
    on it until the human explicitly clears it.
 
 ## How to start the UI session
@@ -141,6 +146,7 @@ These do not bend.
 | Need | Read |
 | --- | --- |
 | Orientation | [`START_HERE.md`](START_HERE.md) |
+| **Core essence of the project (the WHY)** | [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md) |
 | Active build plan | [`LOOP_V0.md`](LOOP_V0.md) |
 | Today's session focus | most recent file in [`human/sessions/`](human/sessions/) |
 | Technical architecture | [`ARCHITECTURE.md`](ARCHITECTURE.md) |

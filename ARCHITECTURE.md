@@ -4,8 +4,9 @@
 > apparatus. Read alongside `docs/diagrams/architecture_v4.svg` (static
 > structure) and `docs/diagrams/intelligence_loop_v4.svg` (the eight-step
 > loop). For the intellectual program behind these choices, see
-> `docs/sources/research_program_v2.pdf`. For the rationale of each major
-> decision, see `DECISIONS.md`. For what to execute today, see `plan.yaml`.
+> [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md).
+> For the rationale of each major decision, see [`DECISIONS.md`](DECISIONS.md).
+> For what to execute today, see [`LOOP_V0.md`](LOOP_V0.md).
 >
 > This document supersedes
 > `docs/sources/research_apparatus_technical_plan_v1.md` only where the two
