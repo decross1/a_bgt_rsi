@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Any
 
+from agent_wrapper.cleanup import strip_channel_markup
 from agent_wrapper.wrapper import call_sync
 
 
@@ -191,9 +191,7 @@ def hypothesize(
         # Robust fallback: use the raw completion as a single candidate.
         # Marks status=passed but with an error annotation so callers can
         # decide whether to retry / surface to the human.
-        text = (completion or "").strip() or "(empty completion)"
-        # Strip Gemma's <channel|> markup at the start if present.
-        text = re.sub(r"^\s*<\|?channel\|?>.*?(?=\S)", "", text, flags=re.DOTALL).strip()
+        text = strip_channel_markup((completion or "").strip()) or "(empty completion)"
         text = text[:2000]
         return {
             "status": "passed",

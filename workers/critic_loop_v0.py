@@ -26,6 +26,7 @@ import json
 import os
 from typing import Any
 
+from agent_wrapper.cleanup import strip_channel_markup
 from agent_wrapper.wrapper import call_sync
 
 
@@ -266,7 +267,7 @@ def critic_loop_v0(
                 "verdict": "survives",
                 "rationale": (
                     "(model emitted unparseable / invalid output; defaulting to survives) "
-                    + (completion[:500] or "")
+                    + strip_channel_markup(completion[:500] or "")
                 ).strip(),
                 "contradicting_paper_id": None,
             },

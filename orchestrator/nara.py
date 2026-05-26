@@ -28,6 +28,7 @@ from pathlib import Path
 
 import jsonschema
 
+from agent_wrapper.cleanup import strip_channel_markup
 from agent_wrapper.wrapper import (
     HOST_METADATA,
     MEMORY_LOG,
@@ -263,7 +264,10 @@ def run_iteration(
         last_id = record["request_id"]
 
         msg = resp.choices[0].message
-        text_content = (msg.content or "").strip()
+        # Strip Gemma's chat-template markers (`<|channel|>`, lone "thought"
+        # lines, etc.) from anything that lands in the iteration_record.
+        # The raw record in logs/calls.jsonl is preserved as-is for forensics.
+        text_content = strip_channel_markup((msg.content or "").strip())
         tool_calls = list(msg.tool_calls or [])
 
         # Narration: any text Nara emitted this turn (before tool_calls or as

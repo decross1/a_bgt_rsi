@@ -27,6 +27,7 @@ import json
 import os
 from typing import Any
 
+from agent_wrapper.cleanup import strip_channel_markup
 from agent_wrapper.wrapper import call_sync
 
 
@@ -252,7 +253,7 @@ def novelty_classify(
                 "class": "unclear",
                 "rationale": (
                     "(model emitted unparseable / invalid output; defaulting to unclear) "
-                    + (completion[:500] or "")
+                    + strip_channel_markup(completion[:500] or "")
                 ).strip(),
                 "top_neighbor_id": None,
             },

@@ -35,13 +35,20 @@ _VALIDATOR = jsonschema.Draft202012Validator(json.loads(_SCHEMA_PATH.read_text()
 
 BASE_URL = os.environ.get("VLLM_BASE_URL", "http://localhost:8000/v1")
 MODEL = os.environ.get("VLLM_MODEL", "gemma-4-26b-a4b")  # served-model-name, not the -nvfp4 weights path
-MODEL_VERSION = os.environ.get("VLLM_MODEL_VERSION", "unknown")
+# Default tracks CLAUDE.md inviolate rule 2 — the pinned image. Day 2's
+# D-022 re-pin moved this from v0.20.0 to v0.21.0; that release is
+# required for Gemma 4 MTP (PR #41745) and tool calling.
+VLLM_IMAGE_TAG = os.environ.get("VLLM_IMAGE_TAG", "vllm/vllm-openai:v0.21.0")
+# MODEL_VERSION defaults to <image>/<model> so iteration_records have
+# meaningful provenance without requiring a separate env var. Override
+# with VLLM_MODEL_VERSION when stamping a specific build hash.
+MODEL_VERSION = os.environ.get(
+    "VLLM_MODEL_VERSION",
+    f"{VLLM_IMAGE_TAG}/{MODEL}",
+)
 HOST_METADATA = {
     "cuda_driver": os.environ.get("CUDA_DRIVER", "13.0"),
-    # Default tracks CLAUDE.md inviolate rule 2 — the pinned image. Day 2's
-    # D-022 re-pin moved this from v0.20.0 to v0.21.0; that release is
-    # required for Gemma 4 MTP (PR #41745) and tool calling.
-    "vllm_image_tag": os.environ.get("VLLM_IMAGE_TAG", "vllm/vllm-openai:v0.21.0"),
+    "vllm_image_tag": VLLM_IMAGE_TAG,
 }
 
 # In-memory sink for tests (log_path=None). Cleared by callers as needed.
