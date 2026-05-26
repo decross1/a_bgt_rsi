@@ -1,0 +1,15 @@
+{
+  "trio_id": "014_nondup_subtle_spearman_vs_kappa",
+  "last_3_hypotheses": [
+    "Agent-as-judge novelty scoring only tracks human judges meaningfully above κ = 0.6 inter-rater agreement; below that, the agent's signal is dominated by its own prior.",
+    "Cron-installed SLA sweeps fire at the expected 15-minute cadence as long as the system clock has not drifted more than 30s from UTC.",
+    "BGE-M3 embedding latency rises sub-linearly with batch size up to ~32, then flattens because the model's attention is dominated by the longest sequence in the batch."
+  ],
+  "proposed_hypothesis_text": "For ordinal-tier novelty judgments, Spearman rank correlation between agent and human is a more informative agreement metric than Cohen's κ — κ over-penalizes tier-adjacent disagreements that Spearman treats as near-ties.",
+  "expected_duplicate_label": false,
+  "duplicate_of_index": null,
+  "severity": "subtle",
+  "domain": "methodology",
+  "rationale": "Both touch the same evaluator (agent-as-judge novelty) and both involve agreement statistics. But the prior hypothesis names a κ threshold for credibility; the proposed argues κ is the wrong metric. These are not duplicates — the proposed could falsify the prior. A meta-reviewer that conflates \"talks about κ\" with \"makes the same claim\" would mis-route this.",
+  "schema_version": "1.0"
+}

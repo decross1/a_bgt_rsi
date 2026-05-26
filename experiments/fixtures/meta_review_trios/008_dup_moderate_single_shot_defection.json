@@ -1,0 +1,15 @@
+{
+  "trio_id": "008_dup_moderate_single_shot_defection",
+  "last_3_hypotheses": [
+    "BGE-M3 cosine similarity between an arXiv abstract and its corresponding paper introduction is bimodal — papers either match at > 0.85 or below 0.55, with relatively few cases in between.",
+    "Track-A's MOCK_LLM environment variable, if not unset before a real serving run, silently falls back to the stub embedder — last seen in the Day-6 incident.",
+    "Single-shot PD prompts produce ~30 percentage points more defection than iterated-PD prompts when the system prompt is held constant, suggesting the iteration framing itself is the lever."
+  ],
+  "proposed_hypothesis_text": "Removing iteration from PD substantially increases defection rate even with identical system prompts; the framing as a single shot vs. as the first round of a repeated game is itself the behavioural driver.",
+  "expected_duplicate_label": true,
+  "duplicate_of_index": 2,
+  "severity": "moderate",
+  "domain": "game_theory",
+  "rationale": "Same comparison (single-shot vs iterated, same prompt) and same conclusion (iteration framing is the lever). The proposed drops the magnitude (~30 pp) and adds the \"first-round-of-repeated\" framing, but the load-bearing claim is identical.",
+  "schema_version": "1.0"
+}

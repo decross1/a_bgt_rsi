@@ -17,6 +17,14 @@ holds one fixture set keyed by evaluator.
   fixture carries a ground-truth novelty label so κ + Spearman can
   be scored. Stretch deliverable on Day 8.
 
+- **`meta_review_trios/`** — 20 hypothesis trios consumed by the
+  Day-40 (W2-02) active-meta-review duplication test. Per-trio: the
+  meta-reviewer's last 3 emissions and a proposed next hypothesis,
+  with a ground-truth duplicate/non-duplicate label. Balance is 10
+  duplicates + 10 non-duplicates so a degenerate baseline cannot
+  exploit class skew. Schema rationale in
+  `meta_review_trios/README.md`.
+
 ## Fixture schema (critic_hypotheses)
 
 Per-file JSON. Required fields:

@@ -1,0 +1,15 @@
+{
+  "trio_id": "017_nondup_moderate_spite_threshold_distinct",
+  "last_3_hypotheses": [
+    "The LLM player exhibits fairness-seeking behavior in ultimatum-game-like prompts whenever the payoff asymmetry between proposer and responder exceeds roughly 3×; below 3×, the model accepts the asymmetric outcome.",
+    "Auto-evaluator novelty inflates by ~0.12 on the 0-1 scale when the indexed prior art is restricted to the most recent two years.",
+    "Workers that crash mid-call leave their parent_request_id orphaned in logs/orchestrator.jsonl with no terminal status entry."
+  ],
+  "proposed_hypothesis_text": "The LLM player exhibits spiteful behavior (rejection of an offer that gives the responder a positive payoff but the proposer a higher one) above roughly 5× asymmetry, distinct from fairness-seeking which fires at lower asymmetries.",
+  "expected_duplicate_label": false,
+  "duplicate_of_index": null,
+  "severity": "moderate",
+  "domain": "llm_behavior",
+  "rationale": "Same experimental setup (ultimatum-game-like prompts with payoff asymmetry) but the proposed names a different behavior (spite, not fairness) at a different threshold (5× vs 3×) and explicitly distinguishes the two. The proposed treats the prior hypothesis's claim as the contrast, not as the same finding. Distinct construct.",
+  "schema_version": "1.0"
+}

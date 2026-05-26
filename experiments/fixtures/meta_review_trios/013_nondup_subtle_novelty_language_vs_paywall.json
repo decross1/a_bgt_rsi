@@ -1,0 +1,15 @@
+{
+  "trio_id": "013_nondup_subtle_novelty_language_vs_paywall",
+  "last_3_hypotheses": [
+    "Paywalled prior art systematically inflates the auto-evaluator's novelty score because the rebutting work is invisible to the evaluator at query time.",
+    "Track-A's MOCK_LLM environment variable, if not unset before a real serving run, silently falls back to the stub embedder.",
+    "The Day-7 publication review gate's no-auto-clear policy is the only hard-gate in Week 1 that lacks an SLA-based escalation path."
+  ],
+  "proposed_hypothesis_text": "Non-English prior art systematically inflates the auto-evaluator's novelty score because the evaluator's query expansion is English-centric and misses on rebutting work in Chinese, German, or French even when it is indexed.",
+  "expected_duplicate_label": false,
+  "duplicate_of_index": null,
+  "severity": "subtle",
+  "domain": "methodology",
+  "rationale": "Same evaluator (auto-evaluator) and same directional effect (novelty inflation), but the mechanism is different: paywall vs. language barrier. These could both be true; they are not the same claim. A meta-reviewer that flags this as a duplicate is over-rejecting; the right call is to surface the parallel structure to the human but accept both as distinct hypotheses.",
+  "schema_version": "1.0"
+}

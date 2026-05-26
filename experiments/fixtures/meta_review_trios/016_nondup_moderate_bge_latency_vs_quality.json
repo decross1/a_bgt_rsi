@@ -1,0 +1,15 @@
+{
+  "trio_id": "016_nondup_moderate_bge_latency_vs_quality",
+  "last_3_hypotheses": [
+    "BGE-M3 underperforms on game-theory abstracts because the field's terminology is highly domain-specific and the M3 training distribution under-represents game-theory papers.",
+    "ChromaDB k-NN queries on collections smaller than ~500 documents are slower than a brute-force cosine over the same set because the HNSW index overhead dominates.",
+    "Run-log entries with status='partial' are not currently scored against any of the Day-7 publication review gate's pass-signals."
+  ],
+  "proposed_hypothesis_text": "BGE-M3 embedding latency in single-document batches is dominated by tokenizer overhead, not by transformer forward time — the per-token cost amortizes correctly only once batch size exceeds about 8 documents.",
+  "expected_duplicate_label": false,
+  "duplicate_of_index": null,
+  "severity": "moderate",
+  "domain": "methodology",
+  "rationale": "Same artifact (BGE-M3) but the prior hypothesis is about quality (retrieval correctness on game-theory abstracts) and the proposed is about latency (tokenizer-overhead dominance at small batch size). These are orthogonal properties of the same model. A meta-reviewer that flags anything-named-BGE-M3 as a duplicate would be over-aggressive.",
+  "schema_version": "1.0"
+}

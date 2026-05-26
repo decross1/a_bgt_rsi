@@ -1,0 +1,15 @@
+{
+  "trio_id": "019_nondup_obvious_polymarket_unrelated",
+  "last_3_hypotheses": [
+    "Tit-for-tat is unbeatable in long-horizon iterated PD against memoryless opponents.",
+    "Grim-trigger raises cooperation rate after the first defection because the LLM models the threat of permanent retaliation.",
+    "Cooperation against the mirror-LLM opponent is unstable across replicates; IQR spans 0.42 to 0.93."
+  ],
+  "proposed_hypothesis_text": "Polymarket settlement-event resolution latency (between underlying event and on-chain settlement) is the binding constraint on the Phase-2 Rung-1 trading-cycle design, not the LLM forecast latency itself.",
+  "expected_duplicate_label": false,
+  "duplicate_of_index": null,
+  "severity": "obvious",
+  "domain": "mech_design",
+  "rationale": "Last 3 are all PD-strategy claims. Proposed is about Polymarket settlement-event latency in the Phase-2 trading cycle — entirely different domain (mechanism design / market microstructure) with no overlapping content. Trivial reject.",
+  "schema_version": "1.0"
+}

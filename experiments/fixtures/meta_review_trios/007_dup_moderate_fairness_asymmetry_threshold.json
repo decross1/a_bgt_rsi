@@ -1,0 +1,15 @@
+{
+  "trio_id": "007_dup_moderate_fairness_asymmetry_threshold",
+  "last_3_hypotheses": [
+    "When the temperature is held at 0.0, multiple replays of the same PD prompt still produce different first-move actions, indicating non-determinism in the serving path even with greedy decoding.",
+    "The LLM player exhibits fairness-seeking behavior in ultimatum-game-like prompts whenever the payoff asymmetry between proposer and responder exceeds roughly 3×; below 3×, the model accepts the asymmetric outcome.",
+    "Cron-installed SLA sweeps fire at the expected 15-minute cadence as long as the system clock has not drifted more than 30s from UTC."
+  ],
+  "proposed_hypothesis_text": "Payoff asymmetries greater than 3× trigger fairness-seeking behavior in the model — the LLM rejects offers or punishes proposers above this asymmetry threshold but accepts them below it.",
+  "expected_duplicate_label": true,
+  "duplicate_of_index": 1,
+  "severity": "moderate",
+  "domain": "llm_behavior",
+  "rationale": "Both name the same threshold (~3×) and the same construct (fairness-seeking) and the same direction (rejection above, acceptance below). The proposed version is slightly tighter on the threshold value (drops \"roughly\") but otherwise identical.",
+  "schema_version": "1.0"
+}

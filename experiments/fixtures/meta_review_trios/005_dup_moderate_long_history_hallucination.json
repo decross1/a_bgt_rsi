@@ -1,0 +1,15 @@
+{
+  "trio_id": "005_dup_moderate_long_history_hallucination",
+  "last_3_hypotheses": [
+    "Hallucination rate in tool-use outputs drops as the dialog history accumulates more verified tool-call/result pairs the model can copy structural patterns from.",
+    "PD strategy switching from TFT to all-D after a single defection is more common when the system prompt names \"tit-for-tat\" explicitly, suggesting prompt leakage shapes the learned policy.",
+    "ChromaDB k-NN queries against papers_recent return more diverse top-5 results when the query embedding has L2 norm > 1.2."
+  ],
+  "proposed_hypothesis_text": "Longer dialog history reduces hallucination rate because the model has more concrete examples of valid outputs in its working context and tends to copy structure from those rather than fabricate.",
+  "expected_duplicate_label": true,
+  "duplicate_of_index": 0,
+  "severity": "moderate",
+  "domain": "llm_behavior",
+  "rationale": "Same claim with the same mechanism (model copies structural patterns from in-context examples to reduce hallucination). The original is more specific (tool-use, verified pairs); the proposed is more general (dialog history, valid outputs). A meta-reviewer should recognize the proposed as a generalization of the original — duplicate, not novel contribution.",
+  "schema_version": "1.0"
+}

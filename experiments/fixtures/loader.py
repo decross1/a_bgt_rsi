@@ -16,6 +16,7 @@ SCHEMA_VERSION = "1.0"
 FIXTURE_ROOT = Path(__file__).parent
 CRITIC_DIR = FIXTURE_ROOT / "critic_hypotheses"
 NOVELTY_DIR = FIXTURE_ROOT / "novelty_calibration"
+TRIO_DIR = FIXTURE_ROOT / "meta_review_trios"
 
 REQUIRED_FIELDS = {
     "id",
@@ -133,4 +134,62 @@ def validate_fixture(fixture: Dict[str, Any]) -> List[str]:
         errors.append("injected_flaw_type='none' iff ground_truth_label='sound'")
     if not isinstance(fixture["expected_critique_targets"], list) or not fixture["expected_critique_targets"]:
         errors.append("expected_critique_targets must be a non-empty list")
+    return errors
+
+
+# ─── Day-40 meta-review trio fixtures (W2-02 duplication test) ─────────
+
+TRIO_REQUIRED_FIELDS = {
+    "trio_id",
+    "last_3_hypotheses",
+    "proposed_hypothesis_text",
+    "expected_duplicate_label",
+    "severity",
+    "domain",
+    "rationale",
+    "schema_version",
+}
+
+TRIO_SEVERITIES = SEVERITIES  # same {subtle, moderate, obvious} taxonomy
+
+
+def load_meta_review_trios() -> List[Dict[str, Any]]:
+    """Return the Day-40 meta-review duplication-test fixtures, sorted by trio_id."""
+    return _load_dir(TRIO_DIR)
+
+
+def validate_trio_fixture(fixture: Dict[str, Any]) -> List[str]:
+    """Return a list of validation errors for one trio fixture; empty list = valid."""
+    errors: List[str] = []
+    missing = TRIO_REQUIRED_FIELDS - fixture.keys()
+    if missing:
+        errors.append(f"missing fields: {sorted(missing)}")
+        return errors
+    if fixture["schema_version"] != SCHEMA_VERSION:
+        errors.append(f"schema_version mismatch: {fixture['schema_version']!r}")
+    if fixture["domain"] not in DOMAINS:
+        errors.append(f"unknown domain: {fixture['domain']!r}")
+    if fixture["severity"] not in TRIO_SEVERITIES:
+        errors.append(f"unknown severity: {fixture['severity']!r}")
+    history = fixture["last_3_hypotheses"]
+    if not isinstance(history, list) or len(history) != 3:
+        errors.append("last_3_hypotheses must be a list of exactly 3 entries")
+    elif not all(isinstance(h, str) and h.strip() for h in history):
+        errors.append("last_3_hypotheses entries must be non-empty strings")
+    if not isinstance(fixture["proposed_hypothesis_text"], str) or not fixture["proposed_hypothesis_text"].strip():
+        errors.append("proposed_hypothesis_text must be a non-empty string")
+    label = fixture["expected_duplicate_label"]
+    if not isinstance(label, bool):
+        errors.append(f"expected_duplicate_label must be bool; got {type(label).__name__}")
+    # duplicate_of_index is optional but, if present, must point into [0,1,2] when label is True
+    # and must be None (or absent) when label is False.
+    idx = fixture.get("duplicate_of_index", None)
+    if label is True:
+        if idx not in (0, 1, 2):
+            errors.append(f"duplicate label requires duplicate_of_index in {{0,1,2}}; got {idx!r}")
+    elif label is False:
+        if idx is not None:
+            errors.append(f"non-duplicate label requires duplicate_of_index=null; got {idx!r}")
+    if not isinstance(fixture.get("rationale", ""), str) or not fixture["rationale"].strip():
+        errors.append("rationale must be a non-empty string (internal documentation)")
     return errors

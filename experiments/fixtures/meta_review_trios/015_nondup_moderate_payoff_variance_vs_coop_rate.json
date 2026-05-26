@@ -1,0 +1,15 @@
+{
+  "trio_id": "015_nondup_moderate_payoff_variance_vs_coop_rate",
+  "last_3_hypotheses": [
+    "Cooperation rate against all-D opponents in iterated PD is below 0.15 in every replicate of exp001, regardless of system prompt phrasing or temperature in [0.0, 0.7].",
+    "Cooperation rate against TFT is at ceiling (≥ 0.98) when the LLM player has access to the move history in its prompt, and drops to ~0.6 when the history is truncated.",
+    "Cooperation rate against the mirror-LLM opponent is unstable across replicates — the median is 0.78 but the IQR spans 0.42 to 0.93."
+  ],
+  "proposed_hypothesis_text": "Per-round payoff variance for the LLM player is highest against the mirror-LLM opponent and lowest against grim-trigger, suggesting opponent predictability and not raw cooperation rate is the dominant driver of payoff dispersion.",
+  "expected_duplicate_label": false,
+  "duplicate_of_index": null,
+  "severity": "moderate",
+  "domain": "game_theory",
+  "rationale": "All three recent hypotheses are about cooperation rate. The proposed shifts to payoff variance and explicitly argues opponent predictability is the driver, not cooperation rate. This is an adjacent but distinct construct. A meta-reviewer that lumps anything-about-PD-opponents together would mis-flag.",
+  "schema_version": "1.0"
+}

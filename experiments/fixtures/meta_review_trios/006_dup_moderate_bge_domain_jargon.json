@@ -1,0 +1,15 @@
+{
+  "trio_id": "006_dup_moderate_bge_domain_jargon",
+  "last_3_hypotheses": [
+    "Worker fan-out timing is dominated by the first wrapper request, not the slowest, because the orchestrator awaits the dispatch ACK serially before issuing the next worker call.",
+    "BGE-M3 underperforms on game-theory abstracts because the field's terminology is highly domain-specific and the M3 training distribution contains relatively few game-theory papers.",
+    "The Day-7 retrospective's word count is uncorrelated with the number of carryover items declared the following Monday."
+  ],
+  "proposed_hypothesis_text": "Embedding similarity is unreliable as a retrieval signal for game-theory papers because the vocabulary (folk theorem, refinement, equilibrium selection) is specialized enough that general-purpose embedders like BGE-M3 collapse semantic distinctions.",
+  "expected_duplicate_label": true,
+  "duplicate_of_index": 1,
+  "severity": "moderate",
+  "domain": "methodology",
+  "rationale": "Same artifact (BGE-M3) and same root cause (game-theory vocabulary is specialized, embedder under-represents it). The proposed version provides specific examples of the specialized vocabulary, which is presentation polish rather than a new claim.",
+  "schema_version": "1.0"
+}

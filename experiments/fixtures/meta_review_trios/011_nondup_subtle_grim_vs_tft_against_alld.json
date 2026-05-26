@@ -1,0 +1,15 @@
+{
+  "trio_id": "011_nondup_subtle_grim_vs_tft_against_alld",
+  "last_3_hypotheses": [
+    "Tit-for-tat against all-D defectors converges to mutual defection by round 2 and matches all-D's score from round 3 onward; the cooperator's only loss is the initial round.",
+    "BGE-M3's embedding distance between two paraphrased sentences correlates with the lexical overlap more than with the semantic equivalence as judged by humans.",
+    "The Day-3 arXiv scraper's exponential backoff schedule (1s → 2s → 4s → 8s → fail) is sufficient for the observed Semantic Scholar 429 rate but oversleeps when 429s cluster temporally."
+  ],
+  "proposed_hypothesis_text": "Grim-trigger against all-D defectors loses one round on the initial defection and then matches all-D from round 2 onward — but unlike TFT, grim never recovers cooperation even against a one-shot defector that later returns to C.",
+  "expected_duplicate_label": false,
+  "duplicate_of_index": null,
+  "severity": "subtle",
+  "domain": "game_theory",
+  "rationale": "Surface similar (both about cooperator-strategy behaviour against all-D) but the proposed introduces a distinct claim about grim-trigger's non-recovery against returning cooperators — a property TFT does not share. A keyword-overlap dedup would false-flag; a meta-reviewer that reads carefully should let this through.",
+  "schema_version": "1.0"
+}

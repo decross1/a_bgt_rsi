@@ -1,0 +1,15 @@
+{
+  "trio_id": "020_nondup_obvious_arxiv_citation_growth",
+  "last_3_hypotheses": [
+    "In iterated Prisoner's Dilemma the Nash equilibrium is not Pareto-optimal — both players are better off under mutual cooperation but neither will unilaterally cooperate.",
+    "Workers that crash mid-call leave their parent_request_id orphaned in logs/orchestrator.jsonl with no terminal status entry.",
+    "The Day-7 retrospective question set covers carryover items, alignment evidence, and slip declarations — three independent axes."
+  ],
+  "proposed_hypothesis_text": "arXiv citation count for game-theory papers grows roughly logarithmically in time since posting; papers in the top 5% by year-2 citations were already in the top 15% by month-3.",
+  "expected_duplicate_label": false,
+  "duplicate_of_index": null,
+  "severity": "obvious",
+  "domain": "methodology",
+  "rationale": "Last 3 are about PD equilibria, log infrastructure, and the retrospective. Proposed is an arXiv-bibliometrics claim about citation growth curves — entirely orthogonal topic. Should never be flagged as duplicate.",
+  "schema_version": "1.0"
+}

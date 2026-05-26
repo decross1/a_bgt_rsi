@@ -1,0 +1,15 @@
+{
+  "trio_id": "010_dup_obvious_nash_not_pareto",
+  "last_3_hypotheses": [
+    "Workers that crash mid-call leave their parent_request_id orphaned in logs/orchestrator.jsonl with no terminal status entry, so the call-chain reconstruction in inspect_run.py has to infer a synthetic 'crashed' close.",
+    "In the iterated Prisoner's Dilemma, the Nash equilibrium (mutual defection) is not Pareto-optimal — both players are strictly better off under mutual cooperation but neither will unilaterally cooperate.",
+    "Calibration drift in the auto-evaluator can be detected by monitoring the rolling κ between agent and human raters; a 30-day decay below 0.55 should trigger re-calibration."
+  ],
+  "proposed_hypothesis_text": "In Prisoner's Dilemma, the Nash equilibrium is not Pareto-optimal.",
+  "expected_duplicate_label": true,
+  "duplicate_of_index": 1,
+  "severity": "obvious",
+  "domain": "game_theory",
+  "rationale": "Textbook restatement of a standard textbook claim already in the recent history. No new content. A meta-reviewer should reject this immediately as duplicate (and as not novel, but the duplicate label is the one we're testing here).",
+  "schema_version": "1.0"
+}

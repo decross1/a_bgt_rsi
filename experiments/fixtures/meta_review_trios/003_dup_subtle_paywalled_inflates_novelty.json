@@ -1,0 +1,15 @@
+{
+  "trio_id": "003_dup_subtle_paywalled_inflates_novelty",
+  "last_3_hypotheses": [
+    "The orchestrator's parent_request_id chain breaks when the wrapper times out before emitting its response event.",
+    "Run-log entries with status='partial' are not currently scored against any of the Day-7 publication review gate's pass-signals.",
+    "When the prior-art evidence the auto-evaluator can read is paywalled and unreachable, the evaluator overestimates novelty because the rebutting work is invisible to it."
+  ],
+  "proposed_hypothesis_text": "Paywalled prior art systematically biases the auto-evaluator's novelty score upward because the evaluator scores based on what it can fetch and read; the unreachable rebutting work is treated as if it does not exist.",
+  "expected_duplicate_label": true,
+  "duplicate_of_index": 2,
+  "severity": "subtle",
+  "domain": "methodology",
+  "rationale": "Same evaluator artefact (novelty inflation) and same mechanism (paywall hides rebutting prior art). The proposed version explicitly invokes the \"score based on what it can fetch\" framing, which is implicit in the original's \"invisible to it.\" Semantic dedup should flag.",
+  "schema_version": "1.0"
+}

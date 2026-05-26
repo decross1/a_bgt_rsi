@@ -1,0 +1,15 @@
+{
+  "trio_id": "009_dup_obvious_tft_unbeatable_memoryless",
+  "last_3_hypotheses": [
+    "Tit-for-tat is unbeatable in long-horizon iterated PD against memoryless opponents — no opponent that ignores history can outscore TFT over a sufficiently long run.",
+    "ChromaDB collection compaction reduces query latency by ~12% on collections with > 10k documents but is a no-op below ~2k.",
+    "Hypotheses that exceed 350 characters are systematically rated as more substantive by the critic agent, independent of the actual flaw they contain."
+  ],
+  "proposed_hypothesis_text": "TFT cannot be beaten in long-horizon iterated PD when the opponent has no memory of prior moves.",
+  "expected_duplicate_label": true,
+  "duplicate_of_index": 0,
+  "severity": "obvious",
+  "domain": "game_theory",
+  "rationale": "Near-paraphrase. Same strategy (TFT), same regime (long-horizon iterated PD), same opponent class (memoryless), same claim (TFT cannot be outscored). Any meta-reviewer that misses this should be considered failing the dedup test outright.",
+  "schema_version": "1.0"
+}

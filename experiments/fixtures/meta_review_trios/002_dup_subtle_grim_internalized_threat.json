@@ -1,0 +1,15 @@
+{
+  "trio_id": "002_dup_subtle_grim_internalized_threat",
+  "last_3_hypotheses": [
+    "Cooperation rate against the grim-trigger opponent jumps after the first defection because the LLM models the threat of permanent retaliation and decides cooperation is the higher-EV path going forward.",
+    "Hypotheses that name specific opponent strategies in the proposed text dedupe poorly against hypotheses that name the same strategies in a context-only field.",
+    "Critique substance correlates with hypothesis length in the Day-39 fixture set, but only above ~120 characters."
+  ],
+  "proposed_hypothesis_text": "Interactions with a grim-trigger opponent raise cooperation rates because the LLM internalizes the punishment risk after observing a single defection-trigger event, and weighs the long-tail cost above the one-shot defection benefit.",
+  "expected_duplicate_label": true,
+  "duplicate_of_index": 0,
+  "severity": "subtle",
+  "domain": "llm_behavior",
+  "rationale": "Same causal story — the LLM updates its policy after the grim-trigger reveals its punishment rule, and EV calculation tips toward cooperation. The proposed version uses \"internalizes the punishment risk\" instead of \"models the threat,\" and \"long-tail cost\" instead of \"higher-EV path,\" but the claim is identical.",
+  "schema_version": "1.0"
+}

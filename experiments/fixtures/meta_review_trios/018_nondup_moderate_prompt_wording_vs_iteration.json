@@ -1,0 +1,15 @@
+{
+  "trio_id": "018_nondup_moderate_prompt_wording_vs_iteration",
+  "last_3_hypotheses": [
+    "Single-shot PD prompts produce ~30 percentage points more defection than iterated-PD prompts when the system prompt is held constant.",
+    "Hypotheses that cross 350 characters trigger more substantive critic responses in the Day-39 fixture set independent of the actual flaw severity.",
+    "ChromaDB compaction is safe to schedule during the daily arXiv ingest as long as the ingest is idempotent on dedup-by-arxiv-id."
+  ],
+  "proposed_hypothesis_text": "Single-shot PD defection rate varies by roughly 18 percentage points across paraphrases of the same system prompt that preserve information content, indicating that exact wording — not just the single-shot framing — drives a substantial fraction of the observed defection signal.",
+  "expected_duplicate_label": false,
+  "duplicate_of_index": null,
+  "severity": "moderate",
+  "domain": "llm_behavior",
+  "rationale": "Same experimental setting (single-shot PD prompts) but the prior compares single-shot to iterated holding prompt constant, while the proposed varies the prompt wording holding the single-shot framing constant. These two findings together would imply both the iteration framing and the wording-within-frame matter — but they are distinct claims. Not a duplicate.",
+  "schema_version": "1.0"
+}

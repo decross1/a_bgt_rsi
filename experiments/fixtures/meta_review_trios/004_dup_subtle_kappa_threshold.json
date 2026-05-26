@@ -1,0 +1,15 @@
+{
+  "trio_id": "004_dup_subtle_kappa_threshold",
+  "last_3_hypotheses": [
+    "Multi-token MTP speculation in vLLM 0.21 does not help latency on prompts shorter than 64 tokens because the draft model's amortized cost outweighs the speedup on small batches.",
+    "Critic-agent flag rates on the Day-39 fixture set are uncorrelated with the severity field, suggesting critics fire equally on subtle and obvious flaws once the fixture is engaged.",
+    "Agent-as-judge novelty scoring only tracks human judges meaningfully above κ = 0.6 inter-rater agreement; below that, the agent's signal is dominated by its own prior."
+  ],
+  "proposed_hypothesis_text": "For the agent-as-judge novelty evaluator to be credible, human-judge agreement must reach at least κ = 0.6; below that threshold the agent score reflects the model's prior more than the underlying novelty.",
+  "expected_duplicate_label": true,
+  "duplicate_of_index": 2,
+  "severity": "subtle",
+  "domain": "methodology",
+  "rationale": "Same threshold (κ = 0.6) and same conclusion (below threshold the agent signal is dominated by prior). The proposed version reorders the implication (frames it as a credibility requirement for the agent) but the load-bearing claim is the same.",
+  "schema_version": "1.0"
+}

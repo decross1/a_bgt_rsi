@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/decross1/a_bgt_rsi/schema/proposed/dispatched_task.schema.json",
+  "$comment": "DRAFT — Day-9 (2026-05-25) proposal for the dispatched-task spec consumed by agent_wrapper/dispatch_coding_agent.py (W2-01 Day-39 deliverable). The dispatcher does not exist as of Day 9; Track A is building it today. This schema pins the spec shape so the dispatcher and its callers (the orchestrator on Phase-2 entry) agree on the contract before either ships. No emission code in this PR.",
+  "title": "Dispatched-task spec (proposed)",
+  "description": "Input contract for agent_wrapper.dispatch_coding_agent.dispatch_coding_agent(task_spec, ...). A task spec describes one scoped piece of work the orchestrator hands to a freshly-spawned Claude Code session in its own git worktree. Required fields define WHO does the work (target_zone resolved via agent/ownership.yaml), WHAT they may write (allowed_paths), WHAT they're trying to accomplish (task_description), WHEN it's done (success_criteria), and HOW autonomous they are (autonomy_tier). Forbidden fields: anything that overrides version pins or attempts to dispatch a non-dispatchable zone (those are hard-gate decisions, not code changes). Validated with jsonschema.Draft202012Validator.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "target_zone",
+    "allowed_paths",
+    "task_description",
+    "success_criteria",
+    "autonomy_tier",
+    "worktree_prefix"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{2,63}$",
+      "description": "Stable identifier for this dispatch, lowercase kebab/underscore. Used as the dispatched agent's worktree suffix and as its agent_id in claims.jsonl ('claude-dispatched-<task_id>'). Convention: 'wN-NN-<short-slug>' for week-N task NN (e.g. 'w2-01-critic-impl')."
+    },
+    "target_zone": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Zone id from agent/ownership.yaml that the dispatched agent will write into. The dispatcher MUST verify the zone exists, has dispatchable:true, and that every entry in allowed_paths falls under the zone's globs. If any check fails, the dispatcher refuses to launch. Track A's primary zones (orchestrator, state-file, bench-and-logs, chroma-store, setup-scripts, repo-config) are never dispatchable."
+    },
+    "allowed_paths": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Exact file paths (NOT globs — the dispatched agent uses these verbatim in its claim entry). Every path must fall under target_zone's globs in agent/ownership.yaml. A dispatched agent that writes outside allowed_paths is in protocol violation; Track A rejects the merge."
+    },
+    "task_description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Self-contained statement of what the dispatched agent must do. Per agent/prompts/dispatched_task.md the description should inline any context the agent needs; pointer-only descriptions ('see the linked doc') are a defect because dispatched agents start cold."
+    },
+    "success_criteria": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Falsifiable bullets Track A will check at merge time. Each criterion is a single observable: a test name to pass, a file to exist with a stated property, a metric threshold. Avoid 'looks good' — that's not falsifiable."
+    },
+    "autonomy_tier": {
+      "type": "string",
+      "enum": ["autonomous", "soft_gate", "hard_gate"],
+      "description": "Per agent/autonomy.md §2. 'autonomous' = dispatcher integrates without review. 'soft_gate' = dispatcher integrates; human reviews via UI within the SLA window. 'hard_gate' = the dispatched agent stops on completion and waits for explicit human attestation. Unknown values are a clean rejection (the dispatcher refuses to launch)."
+    },
+    "worktree_prefix": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{2,63}$",
+      "description": "Prefix for the dispatched agent's git worktree name. The dispatcher creates `<worktree_prefix>-<task_id>` (e.g. 'auto-task-w2-01-critic-impl'). Must obey the same charset as task_id."
+    },
+    "timeout_minutes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 480,
+      "default": 120,
+      "description": "Wall-clock budget for the dispatched session. Default 120 (matches agent/collision_protocol.md §5 default). Maximum 480 (8h) — anything longer is a hard-gate decision (D-NNN) because the claim TTL maxes at 8h per collision_protocol.md §1.3."
+    },
+    "extra_required_reads": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "maxItems": 5,
+      "description": "Task-specific files the dispatched agent must read before starting (e.g. the worker module it's extending). Capped at 5 per agent/prompts/dispatched_task.md — a long reading list signals the task should have been split."
+    },
+    "parent_request_id": {
+      "type": ["string", "null"],
+      "description": "request_id of the call that initiated the dispatch (typically the orchestrator's request_id); null when the dispatch is human-initiated. Used by tools/inspect_run.py to reconstruct the causal chain orchestrator -> dispatched-agent -> commit.",
+      "oneOf": [
+        { "type": "string", "format": "uuid" },
+        { "type": "null" }
+      ]
+    },
+    "decision_id": {
+      "type": "string",
+      "pattern": "^D-[0-9]{3}$",
+      "description": "OPTIONAL DECISIONS.md cross-reference if this dispatch was authorised by a specific architectural decision (e.g. a hard_gate-tier dispatch unlocked by a human-attested D-NNN). Same pattern convention as schema/proposed/events.jsonl.schema.json human_intervention.decision_id."
+    }
+  }
+}

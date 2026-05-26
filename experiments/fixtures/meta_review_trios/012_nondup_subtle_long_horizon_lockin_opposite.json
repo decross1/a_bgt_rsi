@@ -1,0 +1,15 @@
+{
+  "trio_id": "012_nondup_subtle_long_horizon_lockin_opposite",
+  "last_3_hypotheses": [
+    "Longer interaction horizons in iterated PD raise cooperation rates because the shadow of the future grows and the LLM weights long-run mutual cooperation above short-run defection benefit.",
+    "Critic-agent flag substance is uncorrelated with the hypothesis's domain field — game-theory and methodology flaws are critiqued with similar depth.",
+    "Snapshotting ChromaDB during a live worker run produces a consistent snapshot as long as no insert is mid-flight at the snapshot instant."
+  ],
+  "proposed_hypothesis_text": "Longer interaction horizons in iterated PD increase the probability of mutual-defection lock-in once defection has occurred, because the LLM treats the long horizon as evidence that the relationship is already broken and continues to defect rather than risk being re-exploited.",
+  "expected_duplicate_label": false,
+  "duplicate_of_index": null,
+  "severity": "subtle",
+  "domain": "game_theory",
+  "rationale": "Both hypotheses make claims about \"long horizon\" and PD cooperation, but the claims are opposite in direction and target different conditional regimes. The first says long horizon → more cooperation (no prior defection). The proposed says long horizon → more lock-in (conditional on a prior defection). These are not duplicates; they could even be reconciled as the same model's behavior in different states. A meta-reviewer relying on keyword similarity would false-flag.",
+  "schema_version": "1.0"
+}
