@@ -13,7 +13,7 @@ export const ACTIVE_FIXTURE: ActiveIteration = {
   started_at: "2026-05-26T14:00:00Z",
   current_step: "query_chroma",
   step_started_at: "2026-05-26T14:00:08Z",
-  narration: "Nara: querying Chroma for prior literature on Tit-for-Tat dominance.",
+  latest_narration: "Nara: querying Chroma for prior literature on Tit-for-Tat dominance.",
   tool_calls_so_far: [
     {
       tool: "summarize_paper",
@@ -24,7 +24,7 @@ export const ACTIVE_FIXTURE: ActiveIteration = {
     {
       tool: "query_chroma",
       started_at: "2026-05-26T14:00:08Z",
-      status: "running",
+      status: "in_progress",
     },
   ],
 };

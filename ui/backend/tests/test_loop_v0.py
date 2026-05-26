@@ -85,12 +85,15 @@ def test_active_returns_204_when_no_iteration_in_flight(tmp_path):
 
 def test_active_returns_json_when_present(tmp_path):
     client, _ = _client(tmp_path)
+    # Field names mirror schema/active_iteration.schema.json. The producer
+    # writes `latest_narration` (not `narration`); see nara.py:182 and the
+    # 2026-05-26 code-review B1 finding.
     active = {
         "iteration_id": "iter-2026-05-26-001",
         "topic": "TfT dominance",
         "started_at": "2026-05-26T14:00:00Z",
         "current_step": "query_chroma",
-        "narration": "Nara: querying Chroma.",
+        "latest_narration": "Nara: querying Chroma.",
         "tool_calls_so_far": [],
     }
     (tmp_path / "run_state" / "active_iteration.json").write_text(
@@ -98,6 +101,29 @@ def test_active_returns_json_when_present(tmp_path):
     resp = client.get("/api/loop_v0/active")
     assert resp.status_code == 200
     assert resp.json() == active
+
+
+def test_active_returns_204_when_file_disappears_mid_read(tmp_path):
+    """Regression: producer atomically deletes active_iteration.json at
+    iteration end (nara.py finally-block). The endpoint's exists() may
+    return True but read_text() then raises FileNotFoundError. The
+    polling UI must see 204, not 500. See 2026-05-26 code-review N4."""
+    import unittest.mock as mock
+    client, _ = _client(tmp_path)
+    path = tmp_path / "run_state" / "active_iteration.json"
+    path.write_text(json.dumps({"iteration_id": "x"}), encoding="utf-8")
+
+    real_read_text = type(path).read_text
+
+    def race_read_text(self, *args, **kwargs):
+        if str(self) == str(path):
+            raise FileNotFoundError(str(self))
+        return real_read_text(self, *args, **kwargs)
+
+    with mock.patch.object(type(path), "read_text", race_read_text):
+        resp = client.get("/api/loop_v0/active")
+    assert resp.status_code == 204
+    assert resp.content == b""
 
 
 def test_iterations_empty_when_log_missing(tmp_path):

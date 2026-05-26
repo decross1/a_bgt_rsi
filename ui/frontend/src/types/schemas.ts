@@ -373,19 +373,26 @@ export interface MetaReviewSummary {
 // them via /api/loop_v0/active, /api/loop_v0/iterations and
 // /api/loop_v0/journal/{id}. See LOOP_V0.md and ui_plan.md §LOOP_V0.
 
+// Matches schema/active_iteration.schema.json. current_step is the tool
+// currently in flight, "starting" at iteration open, or "nara_thinking"
+// between calls (what the producer writes in nara.py:177).
 export type LoopV0Step =
   | "starting"
   | "summarize_paper"
   | "play_pd_match"
   | "query_chroma"
   | "journal_writer_stub"
-  | "nara_summarizing";
+  | "nara_thinking";
+
+// status mirrors schema enum ["in_progress", "passed", "error"].
+export type LoopV0ToolStatus = "in_progress" | "passed" | "error";
 
 export interface LoopV0ToolCall {
   tool: string;
   started_at: string;
   ended_at?: string | null;
-  status?: string | null;
+  status?: LoopV0ToolStatus | string | null;
+  narration?: string | null;
 }
 
 export interface ActiveIteration {
@@ -394,7 +401,10 @@ export interface ActiveIteration {
   started_at: string;
   current_step: LoopV0Step | string;
   step_started_at?: string | null;
-  narration?: string | null;
+  // The producer writes `latest_narration` (schema/active_iteration.schema.json).
+  // Field name must match exactly; the old `narration` alias is no longer
+  // accepted (B1 from the 2026-05-26 code review).
+  latest_narration?: string | null;
   tool_calls_so_far?: LoopV0ToolCall[];
 }
 

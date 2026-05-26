@@ -110,8 +110,14 @@ def register(
         path = Path(run_state_dir) / "active_iteration.json"
         if not path.exists():
             return Response(status_code=204)
+        # Race: the producer deletes this file atomically at iteration end.
+        # If the polling client hits the path between our `exists()` and
+        # `read_text()`, treat the FileNotFoundError as 204 (same as the
+        # cold path), not as 500 — the iteration just finished.
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return Response(status_code=204)
         except (OSError, json.JSONDecodeError) as exc:
             raise HTTPException(
                 status_code=500, detail=f"active_iteration unreadable: {exc}"

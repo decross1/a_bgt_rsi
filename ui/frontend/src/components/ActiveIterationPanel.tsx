@@ -9,11 +9,11 @@ import type { ActiveIteration, LoopV0ToolCall } from "../types/schemas";
 
 const STEP_STRIP: ReadonlyArray<{ id: string; label: string }> = [
   { id: "starting", label: "start" },
+  { id: "nara_thinking", label: "thinking" },
   { id: "summarize_paper", label: "summarize" },
   { id: "play_pd_match", label: "PD match" },
   { id: "query_chroma", label: "retrieve" },
   { id: "journal_writer_stub", label: "journal" },
-  { id: "nara_summarizing", label: "summary" },
 ];
 
 function useNow(intervalMs = 1000): number {
@@ -144,9 +144,9 @@ export default function ActiveIterationPanel({ initial = undefined, pollMs = 100
 
           <StepStrip current={data.current_step} />
 
-          {data.narration && (
+          {data.latest_narration && (
             <div className="mt-2 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs italic text-zinc-300">
-              {data.narration}
+              {data.latest_narration}
             </div>
           )}
 
@@ -169,12 +169,12 @@ export default function ActiveIterationPanel({ initial = undefined, pollMs = 100
                       className={
                         call.status === "passed"
                           ? "text-emerald-400"
-                          : call.status === "failed"
+                          : call.status === "error"
                             ? "text-red-400"
                             : "text-amber-400"
                       }
                     >
-                      {call.status ?? "running"}
+                      {call.status ?? "in_progress"}
                     </span>
                   </li>
                 ))}
