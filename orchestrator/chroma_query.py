@@ -39,6 +39,12 @@ COLLECTIONS = {
     "kandori_mailath_rob_1993":   "foundational",
     "ellison_1993":               "foundational",
     "hofbauer_sigmund_1998":      "foundational",
+    "blume_1995":                 "foundational",
+    "weibull_egt":                "foundational",
+    # OCR'd via tesseract — these PDFs had no embedded text layer.
+    "young_1993":                 "foundational",
+    "van_damme_1994":             "foundational",
+    "camerer_bgt":                "foundational",
 }
 
 
