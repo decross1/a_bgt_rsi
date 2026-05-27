@@ -86,7 +86,7 @@ export default function VllmPanel({ samples }: { samples: TelemetrySample[] }) {
   return (
     <div className="rounded border border-zinc-800 bg-zinc-900/40 p-4">
       <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-        vLLM internals
+        vLLM internals · gemma-4-26b-a4b
       </h2>
       {!vllm ? (
         <div className="mt-3 text-sm text-zinc-500">
