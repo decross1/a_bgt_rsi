@@ -151,10 +151,18 @@ Anchors below for the human to react to in
   That framing matters — it's the Tier-2 sandbox doing the work the
   literature loop alone can't.
 - Camerer BGT didn't surface in retrieval despite being in the
-  expanded Chroma. **Worth deciding**: is the ARCH-and-BGT collection
-  weighted differently, or is the query embedding gravitating toward
-  Osborne & Rubinstein because of the topic-seed phrasing? Worth
-  checking with a paraphrased seed.
+  expanded Chroma. **Tested and answered** (see `paraphrase_probe.py`
+  + `results/paraphrase_probe.md`): the gap IS phrasing-dependent.
+  Camerer BGT only reaches top-10 under a Camerer/behavioral-econ
+  phrasing (seed B, `camerer_bgt-chunk-71` at rank 5); under the
+  original-seed phrasing, mechanism-design phrasing, and textbook
+  phrasing it stays out of the top-15. Osborne & Rubinstein dominates
+  every phrasing — same chunk-127 the critic cited reaches its highest
+  score (0.7534) under the textbook phrasing. **Implication for Slice 2
+  ML-Intern threshold trigger:** every seed's max score was >= 0.61,
+  so a `RETRIEVAL_ESCALATION_THRESHOLD = 0.55` would NOT fire — the
+  trigger may need to be based on book-coverage diversity rather than
+  raw max-score.
 - This is the first LOOP_V0 iteration with a bridged `experiment_outcome`
   — the schema extension + the bridge contract both worked on the first
   real attempt. Slice 1 is end-to-end validated.
