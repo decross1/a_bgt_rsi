@@ -1,0 +1,2 @@
+# This directory holds run.py outputs (trials.jsonl) + analyze.py outputs (summary.md).
+# Real experimental runs are committed once they're a load-bearing record (see exp001 + exp002 patterns).
