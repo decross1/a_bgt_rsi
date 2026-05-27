@@ -337,6 +337,26 @@ def run_subagent(
             final_text = strip_channel_markup(text_content)
             payload = _extract_json_object(final_text)
             if payload is None:
+                # Reasoning-model fallback (Qwen3.x family): when vLLM is
+                # launched with --reasoning-parser, the model's thinking is
+                # routed to a separate `reasoning_content` field and only
+                # the final answer lands in `content`. Some prompts produce
+                # an empty/short content and the JSON answer sits in
+                # reasoning instead. Try the reasoning slot before giving
+                # up — this preserves backward compat (Gemma's content
+                # branch matches first) and adds Qwen-class compatibility.
+                reasoning_text = ""
+                model_extra = getattr(msg, "model_extra", None) or {}
+                for key in ("reasoning_content", "reasoning"):
+                    val = model_extra.get(key)
+                    if isinstance(val, str) and val.strip():
+                        reasoning_text = val
+                        break
+                if reasoning_text:
+                    payload = _extract_json_object(
+                        strip_channel_markup(reasoning_text)
+                    )
+            if payload is None:
                 return SubAgentResult(
                     status="schema_mismatch",
                     result=None,

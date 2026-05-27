@@ -62,7 +62,12 @@ def _tool_call(*, call_id: str, fn_name: str, args: dict):
 @pytest.fixture
 def fake_vllm(monkeypatch):
     """Scripted creator. Tests set .scripts to a list of _resp() outputs;
-    each .create() call pops the next one."""
+    each .create() call pops the next one.
+
+    Patches `agent_wrapper.wrapper._sync_client` since the SubAgent now
+    routes through the backend registry (post D-035 multi-backend
+    substrate) — the default vllm-gemma backend reads _sync_client from
+    the wrapper module lazily, so patching it there flows through cleanly."""
     calls: list[dict] = []
     scripts: list = []
 
@@ -77,7 +82,8 @@ def fake_vllm(monkeypatch):
         completions = _ChatCompletions()
 
     fake = SimpleNamespace(chat=_Chat())
-    monkeypatch.setattr(sa_mod, "_sync_client", fake)
+    from agent_wrapper import wrapper as W
+    monkeypatch.setattr(W, "_sync_client", fake)
     return SimpleNamespace(scripts=scripts, calls=calls)
 
 
@@ -133,6 +139,69 @@ def test_schema_mismatch_when_no_json_extractable(fake_vllm):
     assert out.status == "schema_mismatch"
     assert out.result is None
     assert any("no extractable JSON" in e for e in out.errors)
+
+
+def test_reasoning_content_fallback_when_content_has_no_json(fake_vllm):
+    """Qwen3.x family (reasoning models served by vLLM with
+    --reasoning-parser) route the model's thinking to a separate
+    `reasoning_content` slot on the message; sometimes the strict-JSON
+    final answer lands there instead of in `content`. SubAgent should
+    try the reasoning slot when content parsing yields no JSON. Without
+    this fallback, the iter-2026-05-27-006 critic run failed schema
+    extraction and defaulted to 'survives' even though Qwen had emitted
+    a valid verdict."""
+    # Simulate a Qwen-style response: empty content, JSON in
+    # model_extra['reasoning_content'].
+    msg = SimpleNamespace(
+        content="",
+        tool_calls=None,
+        model_extra={
+            "reasoning_content":
+                'The retrieved literature contradicts the claim.\n'
+                + json.dumps({"verdict": "no", "rationale": "contradicted by chunk-X"})
+        },
+    )
+    fake_resp = SimpleNamespace(
+        model="qwen3.6-27b-nvfp4-mtp",
+        choices=[SimpleNamespace(message=msg)],
+        usage=SimpleNamespace(prompt_tokens=100, completion_tokens=80),
+    )
+    fake_vllm.scripts.append(fake_resp)
+    out = run_subagent(
+        name="t",
+        system_prompt="sys",
+        user_prompt="user",
+        expected_output_schema=SIMPLE_SCHEMA,
+    )
+    assert out.status == "passed", f"expected passed, got {out.status}: {out.errors}"
+    assert out.result == {"verdict": "no", "rationale": "contradicted by chunk-X"}
+
+
+def test_content_branch_still_preferred_over_reasoning(fake_vllm):
+    """When BOTH content and reasoning have JSON, content wins
+    (backward-compat: existing Gemma path is unaffected)."""
+    msg = SimpleNamespace(
+        content=json.dumps({"verdict": "yes", "rationale": "from content"}),
+        tool_calls=None,
+        model_extra={
+            "reasoning_content":
+                json.dumps({"verdict": "no", "rationale": "from reasoning — should be ignored"})
+        },
+    )
+    fake_resp = SimpleNamespace(
+        model="qwen3.6-27b-nvfp4-mtp",
+        choices=[SimpleNamespace(message=msg)],
+        usage=SimpleNamespace(prompt_tokens=100, completion_tokens=80),
+    )
+    fake_vllm.scripts.append(fake_resp)
+    out = run_subagent(
+        name="t",
+        system_prompt="sys",
+        user_prompt="user",
+        expected_output_schema=SIMPLE_SCHEMA,
+    )
+    assert out.status == "passed"
+    assert out.result == {"verdict": "yes", "rationale": "from content"}
 
 
 def test_strips_channel_markup_before_extraction(fake_vllm):
@@ -263,9 +332,10 @@ def test_vllm_exception_returns_error(fake_vllm, monkeypatch):
     def boom(**kw):
         raise ConnectionError("vllm down")
 
-    monkeypatch.setattr(
-        sa_mod._sync_client.chat.completions, "create", boom
-    )
+    # Patch through the wrapper module (post D-035 backend substrate);
+    # the VLLMBackend reads _sync_client.chat.completions lazily.
+    from agent_wrapper import wrapper as W
+    monkeypatch.setattr(W._sync_client.chat.completions, "create", boom)
     out = run_subagent(
         name="t",
         system_prompt="sys",
