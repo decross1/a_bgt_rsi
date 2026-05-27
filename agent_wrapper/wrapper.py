@@ -69,6 +69,16 @@ _async_client = AsyncOpenAI(base_url=BASE_URL, api_key=os.environ.get("VLLM_API_
 register_backend(VLLMBackend())
 register_backend(OllamaBackend())
 register_backend(AnthropicBackend())
+# Second vLLM container on :8001 serving Qwen3.6-27B NVFP4-MTP (the
+# Phase-3 critic-flip target per the Co-Scientist insight, D-035).
+# Reuses the OllamaBackend class since it's an OpenAI-compat wrapper and
+# vllm exposes the same API. Toggle via CRITIC_BACKEND=vllm-qwen at the
+# call site (see workers/critic_loop_v0.py).
+register_backend(OllamaBackend(
+    name="vllm-qwen",
+    base_url="http://127.0.0.1:8001/v1",
+    model="qwen3.6-27b-nvfp4-mtp",
+))
 DEFAULT_BACKEND = os.environ.get("WRAPPER_DEFAULT_BACKEND", "vllm-gemma")
 
 

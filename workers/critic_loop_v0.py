@@ -25,9 +25,12 @@ verdict enums, different intended use.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
+from agent_wrapper.backends import get_backend
 from agent_wrapper.cleanup import strip_channel_markup
+from agent_wrapper.wrapper import DEFAULT_BACKEND
 from orchestrator import iteration_cache
 from orchestrator.chroma_query import query_top_k
 from orchestrator.subagent import (
@@ -287,6 +290,14 @@ def critic_loop_v0(
         "specific angle, call `query_chroma` with a focused query first."
     )
 
+    # Phase-3 critic-flip: when CRITIC_BACKEND is set, route the
+    # sub-agent's LLM calls to that backend instead of inheriting Nara's.
+    # The Co-Scientist insight (D-035) — having the critic on a different
+    # model than the generator — is implemented as an operational env var
+    # so flipping back is also free.
+    critic_backend = os.environ.get("CRITIC_BACKEND") or None
+    resolved_be = get_backend(critic_backend or DEFAULT_BACKEND)
+
     sa_result: SubAgentResult = run_subagent(
         name="critic_loop_v0",
         system_prompt=CRITIC_AGENT_SYSTEM_PROMPT,
@@ -296,14 +307,20 @@ def critic_loop_v0(
         tool_dispatch={"query_chroma": _query_chroma_for_subagent},
         budget=budget or SubAgentBudget(max_turns=6, max_wall_seconds=90.0),
         parent_request_id=parent_request_id,
+        backend=critic_backend,
     )
 
     # Sub-agent telemetry surfaces in the worker output so the
     # iteration_record can carry it (and the UI can render it).
+    # subagent_backend/subagent_model flow up through Nara into
+    # active_iteration.json so the divergence chip lights up when the
+    # critic is flipped off the orchestrator default.
     observability = {
         "subagent_turns_used":   sa_result.turns_used,
         "subagent_wall_seconds": round(sa_result.wall_seconds, 3),
         "subagent_status":       sa_result.status,
+        "subagent_backend":      resolved_be.name,
+        "subagent_model":        resolved_be.default_model,
     }
 
     if sa_result.status == "passed":
