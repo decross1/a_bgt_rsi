@@ -5,10 +5,17 @@ processes) and appends it to ui/logs/telemetry.jsonl. Read-only with
 respect to the apparatus: it observes nvidia-smi, the vLLM /metrics
 endpoint, psutil, and thermal zones, and never writes outside ui/.
 
+A second optional vLLM endpoint (Qwen3.6-27B NVFP4-MTP on :8001 by
+default) is sampled in parallel to the primary Gemma endpoint. The new
+field is `vllm_qwen` — same shape as `vllm`. When the URL is empty/unset
+or the endpoint is unreachable, `vllm_qwen` is written as null
+(graceful degradation; the existing `vllm` behavior is unchanged).
+
 Run:  cd ui && python3 -m sampler.sampler
 """
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -20,6 +27,10 @@ _UI_DIR = Path(__file__).resolve().parents[1]            # .../ui
 DEFAULT_OUTPUT = _UI_DIR / "logs" / "telemetry.jsonl"
 DEFAULT_SCHEMA = _UI_DIR / "schema" / "telemetry.jsonl.schema.json"
 DEFAULT_VLLM_URL = "http://localhost:8000/metrics"
+# Qwen endpoint default; overridable via --vllm-qwen-url or env
+# VLLM_QWEN_METRICS_URL. Empty string disables the second reader entirely
+# (sample lines still carry vllm_qwen: null so the key set is stable).
+DEFAULT_VLLM_QWEN_URL = "http://localhost:8001/metrics"
 
 
 def _now_iso():
@@ -30,10 +41,17 @@ class Sampler:
     """One sampler instance: holds the stateful source readers."""
 
     def __init__(self, output_path=DEFAULT_OUTPUT, vllm_url=DEFAULT_VLLM_URL,
-                 interval=1.0):
+                 interval=1.0, vllm_qwen_url=DEFAULT_VLLM_QWEN_URL):
         self.output_path = Path(output_path)
         self.interval = interval
         self.vllm = vllm_metrics.VllmMetricsReader(vllm_url)
+        # Second reader for the Qwen endpoint. An empty/None URL disables
+        # the reader entirely — sample() then writes vllm_qwen: null
+        # without attempting an HTTP call (no error noise on hosts that
+        # don't run vllm-qwen).
+        self.vllm_qwen = (
+            vllm_metrics.VllmMetricsReader(vllm_qwen_url) if vllm_qwen_url else None
+        )
         self.procs = psutil_procs.ProcessSampler()
         self._primed = False
 
@@ -42,6 +60,8 @@ class Sampler:
         psutil_procs.prime_host()
         self.procs.sample()      # primes per-PID cpu_percent
         self.vllm.read()         # primes counter rates
+        if self.vllm_qwen is not None:
+            self.vllm_qwen.read()
         self._primed = True
 
     def sample(self):
@@ -68,6 +88,17 @@ class Sampler:
         if err:
             errors["vllm-metrics"] = err
 
+        # Qwen endpoint: graceful degradation. Disabled reader => null
+        # without an error key (expected state on Gemma-only hosts).
+        # Reader present but failing => null + a distinct error key so the
+        # primary Gemma read isn't conflated with the Qwen read.
+        if self.vllm_qwen is None:
+            vllm_qwen = None
+        else:
+            vllm_qwen, err = self.vllm_qwen.read()
+            if err:
+                errors["vllm-qwen-metrics"] = err
+
         processes, err = self.procs.sample()
         if err:
             errors["psutil"] = err
@@ -77,6 +108,7 @@ class Sampler:
             "gpu": gpu,
             "host": host,
             "vllm": vllm,
+            "vllm_qwen": vllm_qwen,
             "processes": processes,
             "read_errors": errors or None,
         }
@@ -98,6 +130,7 @@ class Sampler:
                     record = {
                         "timestamp": _now_iso(),
                         "gpu": None, "host": None, "vllm": None,
+                        "vllm_qwen": None,
                         "processes": [],
                         "read_errors": {"sampler": f"unhandled: {exc!r}"},
                     }
@@ -123,15 +156,30 @@ def main(argv=None):
                         help=f"output JSONL path (default: {DEFAULT_OUTPUT})")
     parser.add_argument("--vllm-url", default=DEFAULT_VLLM_URL,
                         help="vLLM Prometheus /metrics URL")
+    # Env var wins over the built-in default; explicit --vllm-qwen-url
+    # wins over both (argparse default fills only when both env and flag
+    # are absent). Empty string disables the Qwen reader entirely.
+    parser.add_argument(
+        "--vllm-qwen-url",
+        default=os.environ.get("VLLM_QWEN_METRICS_URL", DEFAULT_VLLM_QWEN_URL),
+        help=(
+            "vLLM (Qwen) Prometheus /metrics URL. Empty string disables "
+            "the second reader; sample lines still carry vllm_qwen: null."
+        ),
+    )
     parser.add_argument("--interval", type=float, default=1.0,
                         help="sample interval in seconds (default: 1.0)")
     parser.add_argument("--max-samples", type=int, default=None,
                         help="stop after N samples (default: run forever)")
     args = parser.parse_args(argv)
 
-    sampler = Sampler(args.output, args.vllm_url, args.interval)
+    sampler = Sampler(
+        args.output, args.vllm_url, args.interval,
+        vllm_qwen_url=args.vllm_qwen_url,
+    )
+    qwen_note = args.vllm_qwen_url or "(disabled)"
     print(f"sampler: writing {args.output} every {args.interval}s "
-          f"(vLLM {args.vllm_url})", file=sys.stderr)
+          f"(vLLM {args.vllm_url}; vLLM-Qwen {qwen_note})", file=sys.stderr)
     try:
         written = sampler.run(max_samples=args.max_samples)
     except KeyboardInterrupt:

@@ -10,6 +10,7 @@ import HealthStrip from "../components/HealthStrip";
 import JournalScroll from "../components/JournalScroll";
 import NaraPromptForm from "../components/NaraPromptForm";
 import ProcessGrid from "../components/ProcessGrid";
+import QwenPanel from "../components/QwenPanel";
 import ResolvedIterationsList from "../components/ResolvedIterationsList";
 import VllmPanel from "../components/VllmPanel";
 import { getHealth, getState } from "../api/http";
@@ -86,8 +87,12 @@ export default function Dashboard() {
         <HealthStrip samples={samples} />
       </div>
 
-      <div className="mt-4">
+      {/* Two model-server panels side-by-side: Gemma (primary
+          orchestrator) first, Qwen (staged sub-agent / Phase 3 critic)
+          second. Stacked on narrow screens. */}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <VllmPanel samples={samples} />
+        <QwenPanel samples={samples} />
       </div>
 
       {/* LOOP_V0 iteration view: prompt → active → resolved → journal. */}

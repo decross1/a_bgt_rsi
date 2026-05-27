@@ -120,6 +120,11 @@ export interface TelemetrySample {
   gpu: GpuSample | null;
   host: HostSample | null;
   vllm: VllmSample | null;
+  // Second vLLM endpoint (Qwen3.6-27B NVFP4-MTP on :8001). Null when
+  // VLLM_QWEN_METRICS_URL is empty/unset or the endpoint is unreachable
+  // (graceful degradation, see ui/sampler/sources/vllm_metrics.py).
+  // Same shape as `vllm` — both are parsed by VllmMetricsReader.
+  vllm_qwen?: VllmSample | null;
   processes: ProcessSample[];
   read_errors: Record<string, string> | null;
 }
@@ -170,6 +175,21 @@ export interface LoopV0ToolCall {
   ended_at?: string | null;
   status?: LoopV0ToolStatus | string | null;
   narration?: string | null;
+  // Backend that powered this tool's LLM calls (registry name, e.g.
+  // "vllm-gemma"). Inherits from `ActiveIteration.orchestrator_backend`
+  // unless the worker reported a `backend_used` override in its
+  // tool_result. Null for tools that make no LLM calls (e.g.
+  // retrieve_literature, journal_writer).
+  backend?: string | null;
+  // Served-model-name the tool used (e.g. "gemma-4-26b-a4b"). Pairs
+  // with `backend`.
+  model?: string | null;
+  // When a tool dispatched a SubAgent (today: critic_loop_v0), the
+  // backend that powered the sub-agent. May differ from the tool's own
+  // backend once Phase 3's critic-flip lands (Co-Scientist insight; D-035).
+  subagent_backend?: string | null;
+  // Served-model-name the sub-agent used. Pairs with `subagent_backend`.
+  subagent_model?: string | null;
 }
 
 export interface ActiveIteration {
@@ -180,6 +200,14 @@ export interface ActiveIteration {
   step_started_at?: string | null;
   // The producer writes `latest_narration` (schema/active_iteration.schema.json).
   latest_narration?: string | null;
+  // Backend (registry name, e.g. "vllm-gemma", "anthropic") that drives
+  // the Nara orchestrator brain for this iteration. Null on legacy
+  // iterations written before the multi-backend substrate landed.
+  orchestrator_backend?: string | null;
+  // Served-model-name the orchestrator backend is using (e.g.
+  // "gemma-4-26b-a4b"). Pairs with `orchestrator_backend`; null on
+  // legacy iterations.
+  orchestrator_model?: string | null;
   tool_calls_so_far?: LoopV0ToolCall[];
 }
 

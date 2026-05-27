@@ -5,17 +5,23 @@
   "current_step": "query_chroma",
   "step_started_at": "2026-05-26T14:00:08Z",
   "latest_narration": "Nara: querying Chroma for prior literature on Tit-for-Tat dominance.",
+  "orchestrator_backend": "vllm-gemma",
+  "orchestrator_model": "gemma-4-26b-a4b",
   "tool_calls_so_far": [
     {
       "tool": "summarize_paper",
       "started_at": "2026-05-26T14:00:01Z",
       "ended_at": "2026-05-26T14:00:07Z",
-      "status": "passed"
+      "status": "passed",
+      "backend": "vllm-gemma",
+      "model": "gemma-4-26b-a4b"
     },
     {
       "tool": "query_chroma",
       "started_at": "2026-05-26T14:00:08Z",
-      "status": "in_progress"
+      "status": "in_progress",
+      "backend": "vllm-gemma",
+      "model": "gemma-4-26b-a4b"
     }
   ]
 }
