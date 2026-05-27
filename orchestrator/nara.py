@@ -244,7 +244,13 @@ def _next_chain_step(captured: dict) -> str:
     return "journal_writer"
 
 
-def _initial_active(iteration_id: str, topic: str) -> dict:
+def _initial_active(
+    iteration_id: str,
+    topic: str,
+    *,
+    orchestrator_backend: str | None = None,
+    orchestrator_model: str | None = None,
+) -> dict:
     return {
         "iteration_id": iteration_id,
         "topic": topic,
@@ -252,6 +258,8 @@ def _initial_active(iteration_id: str, topic: str) -> dict:
         "current_step": "starting",
         "step_started_at": _utcnow_iso(),
         "latest_narration": None,
+        "orchestrator_backend": orchestrator_backend,
+        "orchestrator_model": orchestrator_model,
         "tool_calls_so_far": [],
     }
 
@@ -275,7 +283,11 @@ def run_iteration(
     be = get_backend(backend or DEFAULT_BACKEND)
     iteration_id = _next_iteration_id()
     started_at = _utcnow_iso()
-    active = _initial_active(iteration_id, topic)
+    active = _initial_active(
+        iteration_id, topic,
+        orchestrator_backend=be.name,
+        orchestrator_model=be.default_model,
+    )
     runtime.write_state(ACTIVE_PATH, active)
     runtime.log_event({
         "event_type": "loop_v0_iteration_start",
@@ -438,13 +450,26 @@ def run_iteration(
                 # Mark active.current_step
                 active["current_step"] = name
                 active["step_started_at"] = _utcnow_iso()
-                active["tool_calls_so_far"].append({
+                # Backend/model: orchestrator-default for now. If a worker
+                # used a different backend, it can override via
+                # `backend_used`/`model_used` in its tool_result, which we
+                # read post-dispatch below. For critic_loop_v0, pre-populate
+                # subagent fields with the orchestrator default; the worker
+                # echoes the actually-used sub-agent backend back in result,
+                # which we also pick up post-dispatch.
+                entry: dict = {
                     "tool": name,
                     "started_at": active["step_started_at"],
                     "ended_at": None,
                     "status": "in_progress",
                     "narration": active.get("latest_narration"),
-                })
+                    "backend": be.name,
+                    "model": be.default_model,
+                }
+                if name == "critic_loop_v0":
+                    entry["subagent_backend"] = be.name
+                    entry["subagent_model"] = be.default_model
+                active["tool_calls_so_far"].append(entry)
                 runtime.write_state(ACTIVE_PATH, active)
 
                 runtime.log_event({
@@ -470,6 +495,22 @@ def run_iteration(
                     tool_result.get("status", "passed")
                     if isinstance(tool_result, dict) else "passed"
                 )
+                # Backend overrides reported by the worker (forward-compat
+                # hook for selective per-tool backend tiers; Phase-3
+                # critic-flip uses subagent_backend/subagent_model in
+                # particular).
+                if isinstance(tool_result, dict):
+                    result_payload = tool_result.get("result")
+                    if isinstance(result_payload, dict):
+                        for src_key, dst_key in (
+                            ("backend_used", "backend"),
+                            ("model_used", "model"),
+                            ("subagent_backend", "subagent_backend"),
+                            ("subagent_model", "subagent_model"),
+                        ):
+                            val = result_payload.get(src_key)
+                            if val:
+                                active["tool_calls_so_far"][-1][dst_key] = val
                 runtime.write_state(ACTIVE_PATH, active)
 
                 runtime.log_event({
