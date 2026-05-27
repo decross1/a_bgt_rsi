@@ -28,10 +28,17 @@ CHROMA_PATH = REPO_ROOT / "chroma_db"
 BGE_M3_WEIGHTS = os.environ.get("BGE_M3_WEIGHTS", "/mnt/models/bge-m3")
 
 # Collection → source_layer label. Add new collections here as the
-# knowledge base grows.
+# knowledge base grows. Track-B (D-036) ingest landed
+# `kandori_mailath_rob_1993`, `ellison_1993`, `hofbauer_sigmund_1998` —
+# the risk-dominance + coordination + EGT canon that retrieval was
+# missing on Topic 2. Young 1993 / van Damme 1994 / Camerer BGT are
+# pending OCR — their PDFs lacked embedded text layers.
 COLLECTIONS = {
-    "papers_recent":      "live_arxiv",
-    "osborne_rubinstein": "foundational",
+    "papers_recent":              "live_arxiv",
+    "osborne_rubinstein":         "foundational",
+    "kandori_mailath_rob_1993":   "foundational",
+    "ellison_1993":               "foundational",
+    "hofbauer_sigmund_1998":      "foundational",
 }
 
 

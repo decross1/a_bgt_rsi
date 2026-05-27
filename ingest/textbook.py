@@ -29,8 +29,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ingest.chunking import chunk_sections  # noqa: E402
 
 BGE_M3_WEIGHTS = "/mnt/models/bge-m3"
-CHROMA_HOST = "localhost"
-CHROMA_PORT = 8001
+# Persistent file-backed Chroma matches orchestrator/chroma_query.py's
+# read path. Day 3's original ingest used HttpClient against :8001 — that
+# port is now bound by vllm-qwen and no chroma server runs anymore, so
+# the file-backed pattern is the durable choice.
+CHROMA_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/chroma_db"
 DRY_RUN_SAMPLE = 5
 RNG_SEED = 1337
 
@@ -246,7 +249,7 @@ def main() -> int:
     ef = embedding_functions.SentenceTransformerEmbeddingFunction(
         model_name=BGE_M3_WEIGHTS
     )
-    client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+    client = chromadb.PersistentClient(path=CHROMA_PATH)
     coll = client.get_or_create_collection(
         name=args.collection,
         embedding_function=ef,
