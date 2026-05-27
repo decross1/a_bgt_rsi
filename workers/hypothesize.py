@@ -38,14 +38,31 @@ HYPOTHESIZE_SYSTEM_PROMPT = (
     "  - **mechanistic** — names a concrete variable, condition, or comparison\n"
     "  - **testable** — could be checked against literature or a sandbox experiment\n"
     "\n"
-    "After generating, pick the SINGLE candidate that's most specific\n"
-    "and most directly testable. That's the 'chosen' one.\n"
+    "When the topic itself is already a sharp, falsifiable claim with a\n"
+    "stated mechanism, include it VERBATIM as one of the candidates — do\n"
+    "not paraphrase or 'fix' a claim that's already specific. The user's\n"
+    "framing carries information.\n"
+    "\n"
+    "After generating, pick the SINGLE candidate that engages most\n"
+    "directly with a CONCRETE MECHANISM — a named causal pathway, a\n"
+    "named modulator, or a comparison between specific conditions.\n"
+    "Prefer mechanistic specificity over linguistic specificity. Example:\n"
+    "  • Candidate A: 'X happens faster under noisy conditions.'\n"
+    "  • Candidate B: 'X happens faster under noisy conditions because\n"
+    "    asymmetric Bayesian updating inflates the posterior probability\n"
+    "    of bad-type opponents.'\n"
+    "Both are testable; B is sharper because it names the mechanism.\n"
+    "Choose B.\n"
+    "\n"
+    "If the topic is verbatim among the candidates and already engages a\n"
+    "concrete mechanism, prefer it — the human-stated framing is the\n"
+    "research signal you're working against.\n"
     "\n"
     "Output STRICT JSON, nothing else — no prose, no markdown fences, no\n"
     "channel markers. Schema:\n"
     "{\n"
     '  "candidates": ["<hypothesis 1>", "<hypothesis 2>", ...],\n'
-    '  "chosen": "<the most specific candidate, copied verbatim from candidates>"\n'
+    '  "chosen": "<the most mechanism-engaged candidate, copied verbatim from candidates>"\n'
     "}\n"
     "\n"
     "`candidates` has 1 to 3 items. `chosen` MUST be exactly one of the\n"
@@ -155,6 +172,27 @@ def hypothesize(
         }
     topic = topic.strip()
     log_path = log_path or CALLS_LOG_PATH
+
+    # Evaluate-as-stated bypass: when HYPOTHESIZE_AS_STATED is truthy,
+    # skip the LLM call entirely and return the topic verbatim as the
+    # chosen hypothesis. Use this when testing a specific claim end-to-end
+    # without hypothesize's rewrite step (e.g., a deliberately-wrong
+    # claim where the rewrite would sanitize the wrongness — see D-036
+    # Topic 3 diagnosis). Operational toggle, no code change required.
+    if (os.environ.get("HYPOTHESIZE_AS_STATED") or "").strip().lower() in (
+        "1", "true", "yes", "on"
+    ):
+        return {
+            "status": "passed",
+            "result": {
+                "text": topic,
+                "candidates_considered": 1,
+                "all_candidates": [topic],
+            },
+            "errors": ["(HYPOTHESIZE_AS_STATED set; LLM rewrite bypassed; topic returned verbatim)"],
+            "wrapper_request_id": None,
+            "parent_request_id": parent_request_id,
+        }
 
     messages = [
         {"role": "system", "content": HYPOTHESIZE_SYSTEM_PROMPT},

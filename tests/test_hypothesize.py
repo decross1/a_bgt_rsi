@@ -42,6 +42,46 @@ def test_empty_topic_returns_error():
     assert any("required" in e for e in out["errors"])
 
 
+def test_as_stated_env_bypasses_llm_and_returns_topic_verbatim(monkeypatch):
+    """HYPOTHESIZE_AS_STATED=1 short-circuits the LLM call — used when the
+    user wants the topic tested verbatim (e.g., deliberately-wrong claims
+    where hypothesize's rewrite would sanitize the wrongness). Critical:
+    no wrapper call is made, so the test patches call_sync to raise if
+    invoked — that's the assertion."""
+    def must_not_be_called(*a, **kw):
+        raise AssertionError("call_sync MUST NOT be called when HYPOTHESIZE_AS_STATED is set")
+    monkeypatch.setattr(hyp_mod, "call_sync", must_not_be_called)
+    monkeypatch.setenv("HYPOTHESIZE_AS_STATED", "1")
+    topic = "Cooperation lock-in observed in repeated PD vs Tit-for-Tat at 100% rate."
+    out = hyp_mod.hypothesize(topic, parent_request_id="par-1")
+    assert out["status"] == "passed"
+    assert out["result"]["text"] == topic
+    assert out["result"]["candidates_considered"] == 1
+    assert out["result"]["all_candidates"] == [topic]
+    assert out["parent_request_id"] == "par-1"
+    assert any("HYPOTHESIZE_AS_STATED" in e for e in out["errors"])
+
+
+def test_as_stated_disabled_when_env_unset(monkeypatch):
+    """When the env var is unset / empty / false, hypothesize uses the
+    normal LLM path. Patched call_sync must be reached."""
+    completion = json.dumps({
+        "candidates": ["only one candidate as a sanity check"],
+        "chosen": "only one candidate as a sanity check",
+    })
+    monkeypatch.setattr(hyp_mod, "call_sync", _fake_call_sync(completion))
+    monkeypatch.delenv("HYPOTHESIZE_AS_STATED", raising=False)
+    out = hyp_mod.hypothesize("a topic")
+    assert out["status"] == "passed"
+    assert out["result"]["text"] == "only one candidate as a sanity check"
+    # And explicit false values are treated as off.
+    for falsy in ("", "0", "false", "no"):
+        monkeypatch.setenv("HYPOTHESIZE_AS_STATED", falsy)
+        monkeypatch.setattr(hyp_mod, "call_sync", _fake_call_sync(completion))
+        out = hyp_mod.hypothesize("a topic")
+        assert out["result"]["text"] == "only one candidate as a sanity check", falsy
+
+
 def test_clean_json_with_3_candidates(monkeypatch):
     completion = json.dumps({
         "candidates": [
