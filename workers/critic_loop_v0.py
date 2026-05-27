@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_wrapper.cleanup import strip_channel_markup
+from orchestrator import iteration_cache
 from orchestrator.chroma_query import query_top_k
 from orchestrator.subagent import (
     SubAgentBudget,
@@ -191,12 +192,16 @@ def _post_validate(payload: dict, valid_doc_ids: set[str]) -> tuple[dict, list[s
 
 def critic_loop_v0(
     hypothesis_text: str,
-    neighbors: list[dict],
+    iteration_id: str,
     *,
     parent_request_id: str | None = None,
     budget: SubAgentBudget | None = None,
 ) -> dict[str, Any]:
     """Falsify the hypothesis via a bounded sub-agent.
+
+    Reads `neighbors` from the per-iteration cache by `iteration_id`
+    (reference-passing refactor). Same contract as before; Nara now
+    passes `iteration_id` instead of inlining the neighbors list.
 
     Returns:
     ```
@@ -224,11 +229,33 @@ def critic_loop_v0(
             "wrapper_request_id": None,
             "parent_request_id": parent_request_id,
         }
+    if not isinstance(iteration_id, str) or not iteration_id.strip():
+        return {
+            "status": "error",
+            "result": None,
+            "errors": ["iteration_id is required and must be a non-empty string"],
+            "wrapper_request_id": None,
+            "parent_request_id": parent_request_id,
+        }
+    try:
+        retrieval = iteration_cache.read_entry(iteration_id, "retrieval")
+    except KeyError as exc:
+        return {
+            "status": "error",
+            "result": None,
+            "errors": [f"iteration cache miss for retrieval: {exc}"],
+            "wrapper_request_id": None,
+            "parent_request_id": parent_request_id,
+        }
+    neighbors = (retrieval.get("result") or {}).get("neighbors") or []
     if not isinstance(neighbors, list):
         return {
             "status": "error",
             "result": None,
-            "errors": ["neighbors must be a list"],
+            "errors": [
+                f"cached retrieval.result.neighbors is not a list "
+                f"(got {type(neighbors).__name__})"
+            ],
             "wrapper_request_id": None,
             "parent_request_id": parent_request_id,
         }
@@ -350,13 +377,17 @@ def critic_loop_v0(
 
 
 if __name__ == "__main__":
-    # Smoke against real Chroma + Gemma.
+    # Smoke against real Chroma + Gemma. Stages retrieval into the cache
+    # under a synthetic iteration_id, then calls the worker by id —
+    # mirrors how Nara wires this in production.
     import json
     from workers.retrieve_literature import retrieve_literature
     hyp = (
         "In finitely repeated Prisoner's Dilemma with known horizon, "
         "rational players defect on every round by backward induction."
     )
+    iter_id = "smoke-critic-loop-v0"
     r = retrieve_literature(hyp, k=5)
-    out = critic_loop_v0(hyp, r["result"]["neighbors"], parent_request_id="smoke")
+    iteration_cache.write_entry(iter_id, "retrieval", r)
+    out = critic_loop_v0(hyp, iter_id, parent_request_id="smoke")
     print(json.dumps(out, indent=2))

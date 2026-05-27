@@ -29,6 +29,7 @@ from typing import Any
 
 from agent_wrapper.cleanup import strip_channel_markup
 from agent_wrapper.wrapper import call_sync
+from orchestrator import iteration_cache
 
 
 CALLS_LOG_PATH = os.environ.get(
@@ -166,13 +167,18 @@ def _validate_payload(
 
 def novelty_classify(
     hypothesis_text: str,
-    neighbors: list[dict],
+    iteration_id: str,
     *,
     parent_request_id: str | None = None,
     log_path: str | None = None,
     model: str | None = None,
 ) -> dict[str, Any]:
     """Classify the hypothesis against the retrieved literature.
+
+    Reads `neighbors` from the per-iteration cache by `iteration_id`
+    rather than receiving them in args (reference-passing refactor —
+    keeps Nara's tool_call emission small enough to fit the 1024-token
+    per-turn cap regardless of Gemma's stochastic inline format).
 
     Returns:
     ```
@@ -197,11 +203,36 @@ def novelty_classify(
             "wrapper_request_id": None,
             "parent_request_id": parent_request_id,
         }
+    if not isinstance(iteration_id, str) or not iteration_id.strip():
+        return {
+            "status": "error",
+            "result": None,
+            "errors": ["iteration_id is required and must be a non-empty string"],
+            "wrapper_request_id": None,
+            "parent_request_id": parent_request_id,
+        }
+    try:
+        retrieval = iteration_cache.read_entry(iteration_id, "retrieval")
+    except KeyError as exc:
+        return {
+            "status": "error",
+            "result": None,
+            "errors": [f"iteration cache miss for retrieval: {exc}"],
+            "wrapper_request_id": None,
+            "parent_request_id": parent_request_id,
+        }
+    # `retrieval` is the tool_result dict written by Nara, which wraps the
+    # worker's payload as {"status": "passed", "result": {...}, ...}.
+    # Neighbors live under result.neighbors.
+    neighbors = (retrieval.get("result") or {}).get("neighbors") or []
     if not isinstance(neighbors, list):
         return {
             "status": "error",
             "result": None,
-            "errors": ["neighbors must be a list"],
+            "errors": [
+                f"cached retrieval.result.neighbors is not a list "
+                f"(got {type(neighbors).__name__})"
+            ],
             "wrapper_request_id": None,
             "parent_request_id": parent_request_id,
         }
@@ -276,12 +307,15 @@ def novelty_classify(
 
 
 if __name__ == "__main__":
-    # Smoke: pull real neighbors then classify.
+    # Smoke: pull real neighbors, stage them in the cache, then classify
+    # by iteration_id (mirrors how Nara wires things in production).
     from workers.retrieve_literature import retrieve_literature
     hyp = (
         "Tit-for-Tat is the dominant strategy in infinitely repeated "
         "Prisoner's Dilemma against unknown opponents."
     )
+    iter_id = "smoke-novelty-classify"
     r = retrieve_literature(hyp, k=5)
-    out = novelty_classify(hyp, r["result"]["neighbors"], parent_request_id="smoke")
+    iteration_cache.write_entry(iter_id, "retrieval", r)
+    out = novelty_classify(hyp, iter_id, parent_request_id="smoke")
     print(json.dumps(out, indent=2))

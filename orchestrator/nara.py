@@ -41,6 +41,7 @@ from agent_wrapper.wrapper import (
     _emit,
     _project_for_log,
 )
+from orchestrator import iteration_cache
 from orchestrator.journal_stub import finalize_iteration_record
 from orchestrator.runtime import PyRuntime, Runtime
 from orchestrator.tool_registry import TOOL_SPECS
@@ -63,6 +64,13 @@ NARA_PROMPT_V0 = (
     "behavioral game theory, or learning in games by running the LOOP_V0 "
     "cognitive chain.\n"
     "\n"
+    "**Iteration id.** The user message tells you the `iteration_id` for "
+    "this run. The orchestrator caches each tool's full result under this "
+    "id. Downstream workers fetch heavy payloads (neighbors arrays, etc.) "
+    "from that cache by `iteration_id` — you do NOT re-emit those payloads "
+    "in tool_call args. You only pass the small fields each step computes "
+    "(hypothesis_text, iteration_id, nara_summary).\n"
+    "\n"
     "Always run these five tool calls in this exact order, one per turn:\n"
     "\n"
     "  1. hypothesize(topic=<the user's topic>)\n"
@@ -70,24 +78,24 @@ NARA_PROMPT_V0 = (
     "       The `text` field is the chosen hypothesis.\n"
     "\n"
     "  2. retrieve_literature(hypothesis_text=<step 1's text>, k=10)\n"
-    "     → returns {k, neighbors: [{doc_id, content_hash, score,\n"
-    "       chunk_text, source_layer, title}, ...]}.\n"
+    "     → returns {k, neighbors: [...]}. The neighbors are cached for\n"
+    "       you under iteration_id — do not copy them into later args.\n"
     "\n"
     "  3. novelty_classify(hypothesis_text=<step 1's text>,\n"
-    "                      neighbors=<step 2's neighbors>)\n"
-    "     → returns {class, rationale, top_neighbor_id}.\n"
+    "                      iteration_id=<the iteration_id>)\n"
+    "     → reads neighbors from cache; returns\n"
+    "       {class, rationale, top_neighbor_id}.\n"
     "\n"
     "  4. critic_loop_v0(hypothesis_text=<step 1's text>,\n"
-    "                    neighbors=<step 2's neighbors>)\n"
-    "     → returns {verdict, rationale, contradicting_paper_id}.\n"
+    "                    iteration_id=<the iteration_id>)\n"
+    "     → reads neighbors from cache; returns\n"
+    "       {verdict, rationale, contradicting_paper_id}.\n"
     "\n"
     "  5. journal_writer(topic=<original topic>,\n"
-    "                    hypothesis=<step 1 result>,\n"
-    "                    retrieval=<step 2 result>,\n"
-    "                    novelty=<step 3 result>,\n"
-    "                    critique=<step 4 result>,\n"
+    "                    iteration_id=<the iteration_id>,\n"
     "                    nara_summary=<your one-paragraph summary>)\n"
-    "     → writes the journal entry. Always call last.\n"
+    "     → reads all four substructures from cache and writes the\n"
+    "       markdown journal entry. Always call last.\n"
     "\n"
     "Before EACH tool call, emit ONE short narration sentence in your "
     "assistant content describing what you're about to do and why. "
@@ -102,8 +110,9 @@ NARA_PROMPT_V0 = (
     "Strict rules:\n"
     "  - Never skip a step. The chain is fixed at five.\n"
     "  - Never call the same step twice.\n"
-    "  - Pass results verbatim — do not paraphrase the hypothesis text\n"
-    "    or trim the neighbors list between steps.\n"
+    "  - Do NOT re-emit captured payloads (neighbors, retrieval, novelty,\n"
+    "    critique, hypothesis blobs) in tool_call args. Pass iteration_id\n"
+    "    plus only the new fields each step computes.\n"
     "  - Emit valid JSON for all tool arguments.\n"
     "  - **CRITICAL: emit tool calls via the OpenAI tool_calls field, NEVER\n"
     "    as text content.** Do not write `<|tool_call>` or any inline\n"
@@ -275,10 +284,15 @@ def run_iteration(
         "source": source,
     })
 
-    # Conversation state for the LLM
+    # Conversation state for the LLM. Inject iteration_id into the user
+    # message so Nara has the value to pass as the `iteration_id` arg on
+    # novelty_classify / critic_loop_v0 / journal_writer.
     openai_messages: list[dict] = [
         {"role": "system", "content": NARA_PROMPT_V0},
-        {"role": "user", "content": f"Evaluate this research topic: {topic}"},
+        {"role": "user", "content": (
+            f"iteration_id: {iteration_id}\n\n"
+            f"Evaluate this research topic: {topic}"
+        )},
     ]
     parent_request_id = iteration_id  # iteration-level lineage anchor
     wrapper_call_ids: list[str] = []
@@ -472,20 +486,36 @@ def run_iteration(
             tool_calls_made.append(name)
             # Capture each LOOP_V0 step's payload so the iteration_record
             # ends up complete even if Nara forgets a step at the end.
+            # Also write the FULL tool_result to the per-iteration cache
+            # so downstream workers can fetch by iteration_id rather than
+            # receiving heavy payloads in tool_call args (reference-passing
+            # refactor — keeps Nara's emissions under the 1024 max_tokens
+            # per-turn cap regardless of Gemma's stochastic inline format).
             if isinstance(tool_result, dict) and tool_result.get("status") == "passed":
                 payload = tool_result.get("result")
+                cache_key: str | None = None
                 if isinstance(payload, dict):
                     if name == "hypothesize":
                         captured["hypothesis"] = payload
+                        cache_key = "hypothesis"
                     elif name == "retrieve_literature":
                         captured["retrieval"] = payload
+                        cache_key = "retrieval"
                     elif name == "novelty_classify":
                         captured["novelty"] = payload
+                        cache_key = "novelty"
                     elif name == "critic_loop_v0":
                         captured["critique"] = payload
+                        cache_key = "critique"
                     elif name == "journal_writer":
                         captured["journal"] = payload
                         journal_entry_path = payload.get("journal_entry_path")
+                        # journal_writer is the consumer, not a producer —
+                        # nothing downstream reads its result from cache.
+                if cache_key is not None:
+                    iteration_cache.write_entry(
+                        iteration_id, cache_key, tool_result
+                    )
 
             openai_messages.append({
                 "role": "tool",
@@ -511,24 +541,31 @@ def run_iteration(
         if "hypothesis" in captured:
             # We have at least step 1 captured — use the full writer with
             # whatever substructures landed; fill missing ones with
-            # explicit placeholders so journal_writer's enum validation
-            # doesn't reject the call.
-            placeholder_novelty = {
+            # explicit placeholder cache entries so journal_writer's
+            # enum validation (which now reads from cache) doesn't reject
+            # the call.
+            def _ensure_cached(key: str, fallback_result: dict) -> None:
+                if not iteration_cache.has_entry(iteration_id, key):
+                    iteration_cache.write_entry(iteration_id, key, {
+                        "status": "passed",
+                        "result": fallback_result,
+                        "errors": ["(orchestrator-supplied placeholder; worker did not run)"],
+                    })
+
+            _ensure_cached("retrieval", {"k": 0, "neighbors": []})
+            _ensure_cached("novelty", {
                 "class": "unclear",
                 "rationale": "(novelty_classify did not run)",
                 "top_neighbor_id": None,
-            }
-            placeholder_critique = {
+            })
+            _ensure_cached("critique", {
                 "verdict": "survives",
                 "rationale": "(critic_loop_v0 did not run)",
                 "contradicting_paper_id": None,
-            }
+            })
             out = _full_jw(
                 topic=topic,
-                hypothesis=captured["hypothesis"],
-                retrieval=captured.get("retrieval") or {"k": 0, "neighbors": []},
-                novelty=captured.get("novelty") or placeholder_novelty,
-                critique=captured.get("critique") or placeholder_critique,
+                iteration_id=iteration_id,
                 nara_summary=final_summary or "(Nara did not emit a final summary)",
                 parent_request_id=last_id,
             )
