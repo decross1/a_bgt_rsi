@@ -89,24 +89,75 @@ The `experiment_outcome` field (schema additive, landed in commit
 Plus a Tier-2-shaped topic seed for the chain to evaluate (the
 experimental finding restated as a hypothesis).
 
+## Headline findings (factual) — 2026-05-27 50-trial run
+
+**Tier-2 result (exp003): perfect Vickrey rediscovery.**
+
+| | |
+|---|---|
+| Trials | 50 (errors: 0) |
+| LLM calls | 200 (parse failures: 0) |
+| Truthful fraction at eps=5 | **200/200 = 100.0%** |
+| Pooled residual mean / sd | +0.00 / 0.00 |
+| Per-trial mean abs-residual | min=+0.00 max=+0.00 |
+| Wall-clock | 292.1 s (~4m52s) |
+
+Every one of the 200 bidder calls returned a bid equal to the private
+valuation to floating-point precision. The bidder reasoning *explicitly
+named the mechanism* on the very first call:
+
+> "This is a second-price sealed-bid auction (Vickrey auction). In such
+> auctions, the dominant strategy is to bid one's true private
+> valuation. Bidding higher risks paying more than the item is worth,
+> and bidding lower reduces the chance of winning without changing the
+> price paid if I win."
+
+— the system prompt deliberately does NOT contain the words "Vickrey",
+"second-price", "dominant strategy", or "report your value". Gemma is
+inferring the mechanism + naming the theorem + applying it from the
+mechanics description alone.
+
+**Tier-3 result (LOOP_V0 iter-2026-05-27-028, journal/iterations/054.md):**
+
+- novelty: `rediscovery` (top neighbor: `osborne_rubinstein-chunk-127`
+  — Osborne & Rubinstein §2 Nash Equilibrium, the chunk that states
+  "in a second-price auction, bidding one's valuation is a weakly
+  dominant action")
+- critic: `survives` — engaged with the auction-theory literature,
+  noted that *while the theory is established, there is no empirical
+  literature on LLM-bidder convergence in this setting*, so the claim
+  cannot be falsified or restated
+- `experiment_outcome` correctly threaded into the iteration_record
+  (`value=1.0`, `trials=50`, `summary` + `results_path`)
+- retrieval top-5: 2 live arXiv auction papers + 3 Osborne & Rubinstein
+  Nash-equilibrium chunks. The Osborne & Rubinstein chunks dominated
+  the critical citation. Camerer BGT chapters did NOT appear in the
+  top-10 — possible retrieval gap.
+
 ## Reflection anchors (human writes the prose)
 
 _(Reflective prose is the human's per CLAUDE.md inviolate rule #9.
 Anchors below for the human to react to in
 `human/retrospectives/`, not as prose for me to write.)_
 
-- If verdict = YES: does novelty correctly flag `rediscovery` and does
-  the critic cite Vickrey, Myerson, or Camerer BGT chapters? That's
-  the cross-tier replication success-condition.
-- If verdict = NO: what residual pattern? Systematic shading by some
-  fraction of valuation, or noisy near-truthful? The shape of the
-  failure is what's interesting — it tells you whether the model is
-  reasoning about the mechanism at all.
-- The chain's MAX literature signal on this topic is Camerer BGT
-  ch.7-9 (auctions) — they're in the expanded Chroma. If retrieval
-  surfaces those neighbors strongly, the critic has the prior to
-  engage with. If it doesn't, that's a retrieval-side observation
-  (and is part of what Slice 2's ML-Intern escalation is meant to fix).
+- 100.0% truthful + 0.00 residual is suspiciously clean. **Worth
+  deciding**: is this real evidence of mechanism reasoning, or is the
+  model pattern-matching "sealed-bid + second-highest wins" → "output
+  the valuation" without actually deriving the dominant strategy? The
+  bidder's reasoning text *names* the theorem — that's a signal the
+  inference is at least linguistic, but it doesn't prove derivation.
+- The critic's distinction is sharp: theory is rediscovery, but
+  *empirical LLM behavior in this setting is a genuine open question*.
+  That framing matters — it's the Tier-2 sandbox doing the work the
+  literature loop alone can't.
+- Camerer BGT didn't surface in retrieval despite being in the
+  expanded Chroma. **Worth deciding**: is the ARCH-and-BGT collection
+  weighted differently, or is the query embedding gravitating toward
+  Osborne & Rubinstein because of the topic-seed phrasing? Worth
+  checking with a paraphrased seed.
+- This is the first LOOP_V0 iteration with a bridged `experiment_outcome`
+  — the schema extension + the bridge contract both worked on the first
+  real attempt. Slice 1 is end-to-end validated.
 
 ## What this slice DELIBERATELY excludes
 
