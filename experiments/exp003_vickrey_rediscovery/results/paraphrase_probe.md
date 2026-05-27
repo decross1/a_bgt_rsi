@@ -1,6 +1,6 @@
 # exp003 — paraphrased-seed retrieval probe
 
-Direct Chroma queries (bypassing `hypothesize`) on four phrasings of the same Vickrey-rediscovery claim. Top-15 merged neighbors per seed. Question: under any phrasing, does a Camerer BGT chunk reach the top-10?
+Direct Chroma queries (bypassing `hypothesize`) on four phrasings of the same Vickrey-rediscovery claim. Top-15 merged neighbors per seed. Two questions: (1) under any phrasing, does a Camerer BGT chunk reach the top-10? (2) which Slice-2 ML-Intern escalation threshold would fire on these seeds?
 
 ## Seed A_original
 
@@ -108,3 +108,21 @@ Direct Chroma queries (bypassing `hypothesize`) on four phrasings of the same Vi
 | `osborne_rubinstein` | [1, 2, 3, 4] | 4 |
 
 **Camerer BGT reached top-10 under seeds [2] — the original-seed retrieval gap is at least partially phrasing-dependent.**
+
+## Slice-2 ML-Intern escalation threshold evaluation
+
+ML-Intern escalation (Agent β's spec) fires when `max(neighbor.score) < THRESHOLD`. The 4 seeds here are all phrasings of the SAME Vickrey-rediscovery claim — a single Tier-2 finding. For threshold tuning, the question is: under which threshold does escalation fire for some-but-not-all phrasings (an over-sensitive or under-sensitive trigger)?
+
+| seed | max neighbor score | fires at 0.55? | fires at 0.65? | fires at 0.7? | fires at 0.75? |
+|---|---|---|---|---|---|
+| `A_original` | 0.6450 | no | YES | YES | YES |
+| `B_camerer_behavioral` | 0.6174 | no | YES | YES | YES |
+| `C_myerson_mechanism_design` | 0.6833 | no | no | YES | YES |
+| `D_textbook_minimal` | 0.7534 | no | no | no | no |
+
+**Summary:**
+
+- threshold **0.55**: never fires (under-sensitive)
+- threshold **0.65**: fires on 2/4 seeds — ['A_original', 'B_camerer_behavioral']
+- threshold **0.70**: fires on 3/4 seeds — ['A_original', 'B_camerer_behavioral', 'C_myerson_mechanism_design']
+- threshold **0.75**: fires on 3/4 seeds — ['A_original', 'B_camerer_behavioral', 'C_myerson_mechanism_design']

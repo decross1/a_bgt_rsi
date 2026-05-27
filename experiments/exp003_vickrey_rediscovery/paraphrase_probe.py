@@ -44,6 +44,12 @@ OUT_PATH = EXP_DIR / "results" / "paraphrase_probe.md"
 
 K = 15
 
+# Threshold candidates for Slice-2 ML-Intern escalation trigger.
+# Escalation fires when max neighbor score is BELOW the threshold
+# (signal too weak → query Semantic Scholar via ML-Intern). 0.55 was
+# Agent β's spec; 0.70 is the current bump-candidate.
+THRESHOLDS = [0.55, 0.65, 0.70, 0.75]
+
 SEEDS = [
     {
         "label": "A_original",
@@ -130,14 +136,17 @@ def main() -> int:
 
     blocks: list[str] = []
     book_appearances: dict[str, list[int]] = {}  # book -> [seed_indices with appearance in top-10]
+    max_scores: dict[str, float] = {}  # seed_label -> max neighbor score
 
     blocks.append("# exp003 — paraphrased-seed retrieval probe")
     blocks.append("")
     blocks.append(
         "Direct Chroma queries (bypassing `hypothesize`) on four "
         "phrasings of the same Vickrey-rediscovery claim. "
-        f"Top-{K} merged neighbors per seed. Question: under any "
-        "phrasing, does a Camerer BGT chunk reach the top-10?"
+        f"Top-{K} merged neighbors per seed. Two questions: (1) under "
+        "any phrasing, does a Camerer BGT chunk reach the top-10? "
+        "(2) which Slice-2 ML-Intern escalation threshold would fire "
+        "on these seeds?"
     )
     blocks.append("")
 
@@ -158,6 +167,11 @@ def main() -> int:
             if n.get("source_layer") == "foundational":
                 book = _book_from_doc_id(n.get("doc_id", ""))
                 book_appearances.setdefault(book, []).append(i)
+
+        # Track max neighbor score for threshold evaluation.
+        max_scores[spec["label"]] = max(
+            (n.get("score", 0.0) for n in neighbors), default=0.0
+        )
 
     # Cross-seed summary: which books showed up in the top-10 for which seeds.
     blocks.append("## Cross-seed summary: foundational-book appearances in top-10")
@@ -185,9 +199,47 @@ def main() -> int:
         )
     blocks.append("")
 
+    # Slice-2 ML-Intern escalation threshold evaluation.
+    blocks.append("## Slice-2 ML-Intern escalation threshold evaluation")
+    blocks.append("")
+    blocks.append(
+        "ML-Intern escalation (Agent β's spec) fires when "
+        "`max(neighbor.score) < THRESHOLD`. The 4 seeds here are all "
+        "phrasings of the SAME Vickrey-rediscovery claim — a single "
+        "Tier-2 finding. For threshold tuning, the question is: under "
+        "which threshold does escalation fire for some-but-not-all "
+        "phrasings (an over-sensitive or under-sensitive trigger)?"
+    )
+    blocks.append("")
+    blocks.append("| seed | max neighbor score |"
+                  + "".join(f" fires at {t}? |" for t in THRESHOLDS))
+    blocks.append("|---|---|" + "---|" * len(THRESHOLDS))
+    for spec in SEEDS:
+        label = spec["label"]
+        ms = max_scores.get(label, 0.0)
+        fire_cells = "".join(
+            f" {'YES' if ms < t else 'no'} |" for t in THRESHOLDS
+        )
+        blocks.append(f"| `{label}` | {ms:.4f} |{fire_cells}")
+    blocks.append("")
+    blocks.append("**Summary:**")
+    blocks.append("")
+    for t in THRESHOLDS:
+        fires = [s["label"] for s in SEEDS if max_scores[s["label"]] < t]
+        if not fires:
+            line = f"- threshold **{t:.2f}**: never fires (under-sensitive)"
+        elif len(fires) == len(SEEDS):
+            line = f"- threshold **{t:.2f}**: fires on all 4 seeds (over-sensitive)"
+        else:
+            line = (f"- threshold **{t:.2f}**: fires on {len(fires)}/4 "
+                    f"seeds — {fires}")
+        blocks.append(line)
+    blocks.append("")
+
     OUT_PATH.write_text("\n".join(blocks))
     print(f"wrote {OUT_PATH}")
     print(f"camerer_bgt top-10 appearances: seeds {camerer_seeds or '(none)'}")
+    print(f"max scores: {[(k, round(v, 4)) for k, v in max_scores.items()]}")
     return 0
 
 

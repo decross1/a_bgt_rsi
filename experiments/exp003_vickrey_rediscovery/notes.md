@@ -158,11 +158,31 @@ Anchors below for the human to react to in
   original-seed phrasing, mechanism-design phrasing, and textbook
   phrasing it stays out of the top-15. Osborne & Rubinstein dominates
   every phrasing — same chunk-127 the critic cited reaches its highest
-  score (0.7534) under the textbook phrasing. **Implication for Slice 2
-  ML-Intern threshold trigger:** every seed's max score was >= 0.61,
-  so a `RETRIEVAL_ESCALATION_THRESHOLD = 0.55` would NOT fire — the
-  trigger may need to be based on book-coverage diversity rather than
-  raw max-score.
+  score (0.7534) under the textbook phrasing.
+
+  **Implication for Slice 2 ML-Intern threshold trigger.** Threshold
+  evaluation from `paraphrase_probe.py`:
+
+  | threshold | fires on | verdict |
+  |---|---|---|
+  | 0.55 (Agent β's original spec) | 0/4 | dead — never escalates |
+  | 0.65 | 2/4 (A, B) | fires on original + behavioral |
+  | **0.70 (bumped)** | **3/4 (A, B, C)** | misses only textbook phrasing D |
+  | 0.75 | 3/4 (A, B, C) | same as 0.70 — no seed in the 0.6833→0.7534 gap |
+
+  **0.70 is the right bump** for Slice 2's `RETRIEVAL_ESCALATION_THRESHOLD`.
+  At 0.55 the trigger is dead; at 0.70 it fires for vocabulary-mismatched
+  topic seeds (A/B/C) but stays quiet for the textbook phrasing (D)
+  where the Osborne & Rubinstein chunks are an exact lexical match.
+
+  **Tension worth carrying into Slice 2 design:** seed B already
+  surfaces Camerer BGT in its top-10 but has the LOWEST max score
+  (0.6174) — it would escalate even though it has the BEST literature
+  coverage of the four. The max-score heuristic alone doesn't capture
+  coverage diversity. A potential compound trigger:
+  `max_score < 0.70 AND distinct_books < 3` would skip B (which has
+  4 distinct books in top-10) and still fire on A/C/D when retrieval
+  is genuinely narrow.
 - This is the first LOOP_V0 iteration with a bridged `experiment_outcome`
   — the schema extension + the bridge contract both worked on the first
   real attempt. Slice 1 is end-to-end validated.
