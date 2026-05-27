@@ -6,10 +6,14 @@ The scraper sources papers from the arXiv API (DECISIONS.md D-027). These
 tests run it against mocked arXiv Atom-feed responses (via unittest.mock --
 no real network) and assert:
 
-  * exponential backoff fires on HTTP 503 (sleeps 1, 2, 4, 8 then fails);
+  * exponential backoff fires on HTTP 503 (sleeps along _BACKOFF_SCHEDULE
+    then fails);
   * a non-retriable 4xx raises immediately with no backoff;
+  * a 429 with a Retry-After header overrides the static schedule;
+  * --jitter-seconds N inserts a random startup sleep in [0, N];
   * de-duplication on arxiv_id works, including across version suffixes;
   * the newest-first date window stops pagination and excludes old papers;
+  * a page-1 failure propagates; a later-page failure returns partial results;
   * entries lacking an arXiv id are dropped;
   * the JSONL written by main() is well-formed with all required fields.
 
@@ -81,9 +85,9 @@ class _FakeResp:
         return False
 
 
-def _http_error(code):
+def _http_error(code, headers=None):
     return urllib.error.HTTPError("http://export.arxiv.org/api/query",
-                                  code, f"HTTP {code}", None, None)
+                                  code, f"HTTP {code}", headers, None)
 
 
 class ExponentialBackoffTest(unittest.TestCase):
@@ -103,7 +107,7 @@ class ExponentialBackoffTest(unittest.TestCase):
         self.assertEqual([p["arxiv_id"] for p in papers], ["2605.00001"])
 
     def test_backoff_exhausts_and_raises(self):
-        """Unrelenting 503s -- backoff sleeps 5, 15, 30, 60 then gives up."""
+        """Unrelenting 503s -- backoff walks _BACKOFF_SCHEDULE then gives up."""
         with mock.patch.object(arxiv_scraper.urllib.request, "urlopen",
                                side_effect=_http_error(503)), \
              mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
@@ -111,7 +115,7 @@ class ExponentialBackoffTest(unittest.TestCase):
                 arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
 
         self.assertEqual([c.args[0] for c in m_sleep.call_args_list],
-                         [5, 15, 30, 60])
+                         list(arxiv_scraper._BACKOFF_SCHEDULE))
 
     def test_non_retriable_4xx_raises_immediately(self):
         """A 400 is not retriable -- it raises with no backoff sleeps."""
@@ -122,6 +126,43 @@ class ExponentialBackoffTest(unittest.TestCase):
                 arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
 
         m_sleep.assert_not_called()
+
+    def test_retry_after_header_overrides_schedule(self):
+        """A 429 carrying Retry-After: N sleeps N (capped), not the schedule."""
+        # First attempt: 429 with Retry-After: 7s. Second attempt: success.
+        retry_429 = _http_error(429, headers={"Retry-After": "7"})
+        feed = _feed(_entry("2605.00077"))
+        with mock.patch.object(arxiv_scraper.urllib.request, "urlopen",
+                               side_effect=[retry_429, _FakeResp(feed)]), \
+             mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
+            papers = arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
+
+        self.assertEqual([c.args[0] for c in m_sleep.call_args_list], [7])
+        self.assertEqual([p["arxiv_id"] for p in papers], ["2605.00077"])
+
+    def test_retry_after_is_capped(self):
+        """A pathologically large Retry-After is clamped at _RETRY_AFTER_CAP_S."""
+        big_429 = _http_error(429, headers={"Retry-After": "99999"})
+        feed = _feed(_entry("2605.00078"))
+        with mock.patch.object(arxiv_scraper.urllib.request, "urlopen",
+                               side_effect=[big_429, _FakeResp(feed)]), \
+             mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
+            arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
+
+        self.assertEqual([c.args[0] for c in m_sleep.call_args_list],
+                         [arxiv_scraper._RETRY_AFTER_CAP_S])
+
+    def test_retry_after_falls_back_when_missing_or_invalid(self):
+        """Missing/garbage Retry-After leaves the static schedule in effect."""
+        bad = _http_error(429, headers={"Retry-After": "soon"})
+        feed = _feed(_entry("2605.00079"))
+        with mock.patch.object(arxiv_scraper.urllib.request, "urlopen",
+                               side_effect=[bad, _FakeResp(feed)]), \
+             mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
+            arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
+
+        self.assertEqual([c.args[0] for c in m_sleep.call_args_list],
+                         [arxiv_scraper._BACKOFF_SCHEDULE[0]])
 
 
 class DedupAndNormalizeTest(unittest.TestCase):
@@ -169,6 +210,93 @@ class DedupAndNormalizeTest(unittest.TestCase):
                                                 since_days=7)
 
         self.assertEqual(papers[0]["category"], "cs.MA")
+
+
+class PartialResultsTest(unittest.TestCase):
+    """Page 1 failures still raise; later-page failures keep what we have."""
+
+    def test_page1_failure_propagates(self):
+        """If the very first page fails, the error propagates unchanged."""
+        err = arxiv_scraper.ArxivScraperError("boom")
+        with mock.patch.object(arxiv_scraper, "_get_with_backoff",
+                               side_effect=err):
+            with self.assertRaises(arxiv_scraper.ArxivScraperError):
+                arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
+
+    def test_page2_failure_returns_partial_results(self):
+        """Page 1 succeeds with a full page; page 2 fails -- keep page 1."""
+        # Force pagination: shrink _PAGE_SIZE so a 2-entry page-1 triggers
+        # a page-2 fetch (the loop pages while len(entries) >= _PAGE_SIZE).
+        feed_p1 = _feed(_entry("2605.10001"), _entry("2605.10002"))
+        err = arxiv_scraper.ArxivScraperError("page 2 throttled")
+        with mock.patch.object(arxiv_scraper, "_PAGE_SIZE", 2), \
+             mock.patch.object(arxiv_scraper, "_get_with_backoff",
+                               side_effect=[feed_p1, err]), \
+             mock.patch.object(arxiv_scraper.time, "sleep"):
+            papers = arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
+
+        self.assertEqual(sorted(p["arxiv_id"] for p in papers),
+                         ["2605.10001", "2605.10002"])
+
+    def test_page2_malformed_xml_returns_partial_results(self):
+        """Page 1 succeeds; page 2 returns garbage XML -- keep page 1."""
+        feed_p1 = _feed(_entry("2605.10003"), _entry("2605.10004"))
+        with mock.patch.object(arxiv_scraper, "_PAGE_SIZE", 2), \
+             mock.patch.object(arxiv_scraper, "_get_with_backoff",
+                               side_effect=[feed_p1, "<not-xml>"]), \
+             mock.patch.object(arxiv_scraper.time, "sleep"):
+            papers = arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
+
+        self.assertEqual(sorted(p["arxiv_id"] for p in papers),
+                         ["2605.10003", "2605.10004"])
+
+    def test_page1_malformed_xml_raises(self):
+        """Page 1 garbage XML raises (no salvage possible)."""
+        with mock.patch.object(arxiv_scraper, "_get_with_backoff",
+                               return_value="<not-xml>"):
+            with self.assertRaises(arxiv_scraper.ArxivScraperError):
+                arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
+
+
+class JitterTest(unittest.TestCase):
+
+    def test_jitter_seconds_sleeps_random_uniform(self):
+        """--jitter-seconds N calls random.uniform(0, N) and sleeps that much."""
+        feed = _feed(_entry("2605.00099"))
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = os.path.join(tmp, "papers.jsonl")
+            argv = ["--categories", "cs.GT",
+                    "--since-days", "7",
+                    "--jitter-seconds", "300",
+                    "--output", out_path]
+            with mock.patch.object(arxiv_scraper, "_get_with_backoff",
+                                   return_value=feed), \
+                 mock.patch.object(arxiv_scraper.random, "uniform",
+                                   return_value=42.5) as m_uniform, \
+                 mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
+                rc = arxiv_scraper.main(argv)
+
+        self.assertEqual(rc, 0)
+        m_uniform.assert_called_once_with(0, 300)
+        # The jitter sleep is the only time.sleep invoked under a 1-page fetch.
+        self.assertIn(42.5, [c.args[0] for c in m_sleep.call_args_list])
+
+    def test_jitter_seconds_zero_is_no_op(self):
+        """--jitter-seconds 0 (the default) does not sleep at startup."""
+        feed = _feed(_entry("2605.00100"))
+        with tempfile.TemporaryDirectory() as tmp:
+            out_path = os.path.join(tmp, "papers.jsonl")
+            argv = ["--categories", "cs.GT",
+                    "--since-days", "7",
+                    "--output", out_path]
+            with mock.patch.object(arxiv_scraper, "_get_with_backoff",
+                                   return_value=feed), \
+                 mock.patch.object(arxiv_scraper.random, "uniform") as m_uniform, \
+                 mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
+                arxiv_scraper.main(argv)
+
+        m_uniform.assert_not_called()
+        m_sleep.assert_not_called()
 
 
 class JsonlOutputTest(unittest.TestCase):

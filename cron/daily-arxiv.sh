@@ -35,6 +35,7 @@ echo "[daily-arxiv] $(date -u +%FT%TZ) start"
 env -u MOCK_LLM "$PYTHON" pipeline/arxiv_scraper.py \
   --categories cs.MA,cs.GT,econ.TH \
   --since-days 1 \
+  --jitter-seconds 300 \
   --output "$PAPERS_JSONL"
 
 env -u MOCK_LLM "$PYTHON" pipeline/embed_and_store.py \
