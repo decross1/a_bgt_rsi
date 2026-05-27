@@ -93,6 +93,36 @@
         "contradicting_paper_id": {"type": ["string", "null"]}
       }
     },
+    "experiment_outcome": {
+      "description": "Populated when this iteration was bridged from a Tier-1/Tier-2 sandbox experiment (e.g., exp003 Vickrey-rediscovery). Carries the cross-tier evidence into the literature loop. Absent for pure-Tier-3 iterations.",
+      "type": "object",
+      "required": ["experiment_id", "metric", "value"],
+      "properties": {
+        "experiment_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identifier for the experiment that produced this outcome, e.g. 'exp003_vickrey_rediscovery'."
+        },
+        "metric":        {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the primary measured quantity, e.g. 'truthful_bid_fraction'."
+        },
+        "value": {
+          "description": "Primary measured value. Scalar for single-metric outcomes; object for multi-metric.",
+          "oneOf": [
+            {"type": "number"},
+            {"type": "object"}
+          ]
+        },
+        "trials":        {"type": "integer", "minimum": 1},
+        "summary":       {"type": "string"},
+        "results_path":  {
+          "type": "string",
+          "description": "Repo-relative path to the experiment's results file (e.g., experiments/exp003_vickrey_rediscovery/results/summary.md)."
+        }
+      }
+    },
     "nara_summary": {
       "type": "string",
       "minLength": 1,

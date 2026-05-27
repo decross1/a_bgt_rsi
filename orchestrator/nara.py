@@ -272,13 +272,21 @@ def run_iteration(
     log_path: str | None = _DEFAULT_LOG_PATH,
     max_depth: int = _DEFAULT_MAX_DEPTH,
     backend: str | None = None,
+    experiment_outcome: dict | None = None,
 ) -> dict:
     """Run one LOOP_V0 iteration. Returns the final iteration_record dict.
 
     backend: which backend the orchestrator brain (Nara) runs on.
         None -> DEFAULT_BACKEND (vllm-gemma). Workers picked via tool_calls
         are dispatched by the runtime and may run on a different backend
-        per the per-tool tier (a future routing extension)."""
+        per the per-tool tier (a future routing extension).
+
+    experiment_outcome: optional Tier-1/Tier-2 sandbox-experiment outcome to
+        attach to the resulting iteration_record. When non-None, the dict is
+        threaded into the iteration_record under the `experiment_outcome`
+        field (schema-validated by `finalize_iteration_record`). Used by
+        experiment → LOOP_V0 bridges (e.g., exp003_vickrey_rediscovery's
+        loop_bridge.py)."""
     runtime = runtime or PyRuntime()
     be = get_backend(backend or DEFAULT_BACKEND)
     iteration_id = _next_iteration_id()
@@ -647,6 +655,10 @@ def run_iteration(
     for key in ("hypothesis", "retrieval", "novelty", "critique"):
         if key in captured:
             record[key] = captured[key]
+
+    # Bridge field for Tier-1/Tier-2 sandbox experiments (Slice 1 / exp003).
+    if experiment_outcome is not None:
+        record["experiment_outcome"] = experiment_outcome
 
     # Validate + append to loop_memory
     try:
