@@ -24,6 +24,10 @@
       "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/vllm" }],
       "description": "null when the vLLM /metrics scrape failed or core gauges were absent."
     },
+    "vllm_qwen": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/vllm" }],
+      "description": "Second vLLM endpoint (Qwen3.6-27B NVFP4-MTP on :8001 by default). Same shape as `vllm`. null when the Qwen reader is disabled (empty VLLM_QWEN_METRICS_URL), the endpoint is unreachable, or core gauges are absent. Field is OPTIONAL for backward compatibility with telemetry rows written before the Qwen reader landed."
+    },
     "processes": {
       "type": "array",
       "items": { "$ref": "#/$defs/process" },

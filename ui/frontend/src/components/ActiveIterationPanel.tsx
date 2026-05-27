@@ -43,6 +43,38 @@ function toolDuration(call: LoopV0ToolCall, nowMs: number): string {
   return `${s.toFixed(1)}s`;
 }
 
+// Compact backend chip — shows "backend · model" when both present, else
+// just whichever is set. Used both for the prominent orchestrator chip in
+// the header and (divergence-only) per-tool chips.
+function BackendChip({
+  backend,
+  model,
+  testid,
+  variant = "default",
+}: {
+  backend?: string | null;
+  model?: string | null;
+  testid?: string;
+  // "default" = neutral zinc; "orchestrator" = emerald-accented for the
+  // header chip; "subagent" = sky-accented to call out the Co-Scientist
+  // critic-flip surface.
+  variant?: "default" | "orchestrator" | "subagent";
+}) {
+  if (!backend && !model) return null;
+  const label = backend && model ? `${backend} · ${model}` : (backend ?? model);
+  const classes =
+    variant === "orchestrator"
+      ? "rounded border border-emerald-800/60 bg-emerald-950/40 px-1.5 py-0.5 font-mono text-[10px] text-emerald-300"
+      : variant === "subagent"
+        ? "rounded border border-sky-800/60 bg-sky-950/40 px-1.5 py-0.5 font-mono text-[10px] text-sky-300"
+        : "rounded border border-zinc-700/60 bg-zinc-900/60 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300";
+  return (
+    <span className={classes} data-testid={testid}>
+      {label}
+    </span>
+  );
+}
+
 function StepStrip({ current }: { current: string }) {
   return (
     <ol className="mt-2 flex flex-wrap gap-1 text-[10px] uppercase tracking-wide">
@@ -135,7 +167,20 @@ export default function ActiveIterationPanel({ initial = undefined, pollMs = 100
         <>
           <div className="mt-2 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-xs">
             <span className="text-zinc-500">id</span>
-            <span className="font-mono text-zinc-200">{data.iteration_id}</span>
+            <span className="flex flex-wrap items-baseline gap-2">
+              <span className="font-mono text-zinc-200">{data.iteration_id}</span>
+              {/* Prominent orchestrator chip: which model drives Nara for
+                  this whole iteration. The chip is the diagnostic for "what
+                  brain is in the chair". Per-tool chips below ONLY render on
+                  divergence — showing it everywhere would be noise since
+                  most tools inherit. */}
+              <BackendChip
+                backend={data.orchestrator_backend}
+                model={data.orchestrator_model}
+                variant="orchestrator"
+                testid="orchestrator-chip"
+              />
+            </span>
             <span className="text-zinc-500">topic</span>
             <span className="text-zinc-200">{data.topic}</span>
             <span className="text-zinc-500">elapsed</span>
@@ -158,26 +203,60 @@ export default function ActiveIterationPanel({ initial = undefined, pollMs = 100
               <div className="mt-1 text-xs text-zinc-500">none yet</div>
             ) : (
               <ul className="mt-1 space-y-0.5 text-xs">
-                {data.tool_calls_so_far!.map((call, i) => (
-                  <li
-                    key={`${call.tool}-${i}`}
-                    className="flex items-baseline gap-2 font-mono"
-                  >
-                    <span className="text-zinc-300">{call.tool}</span>
-                    <span className="text-zinc-500">{toolDuration(call, now)}</span>
-                    <span
-                      className={
-                        call.status === "passed"
-                          ? "text-emerald-400"
-                          : call.status === "error"
-                            ? "text-red-400"
-                            : "text-amber-400"
-                      }
+                {data.tool_calls_so_far!.map((call, i) => {
+                  // Divergence-only: render a backend chip ONLY when the
+                  // tool's backend differs from the orchestrator's. If most
+                  // tools inherit (the common case), the list stays quiet
+                  // and the chip MEANS "this step is on a different brain".
+                  const divergent =
+                    call.backend != null &&
+                    data.orchestrator_backend != null &&
+                    call.backend !== data.orchestrator_backend;
+                  // critic_loop_v0's subagent_backend is the Co-Scientist
+                  // surface: when Phase 3 flips the critic to a non-Gemma
+                  // backend, this chip is THE diagnostic the human watches.
+                  // Render it prominently when present (even if it matches
+                  // the orchestrator today, so we can see the wiring).
+                  const showSubagent =
+                    call.tool === "critic_loop_v0" &&
+                    call.subagent_backend != null;
+                  return (
+                    <li
+                      key={`${call.tool}-${i}`}
+                      className="flex flex-wrap items-baseline gap-2 font-mono"
                     >
-                      {call.status ?? "in_progress"}
-                    </span>
-                  </li>
-                ))}
+                      <span className="text-zinc-300">{call.tool}</span>
+                      <span className="text-zinc-500">{toolDuration(call, now)}</span>
+                      <span
+                        className={
+                          call.status === "passed"
+                            ? "text-emerald-400"
+                            : call.status === "error"
+                              ? "text-red-400"
+                              : "text-amber-400"
+                        }
+                      >
+                        {call.status ?? "in_progress"}
+                      </span>
+                      {divergent && (
+                        <BackendChip
+                          backend={call.backend}
+                          model={call.model}
+                          variant="default"
+                          testid={`tool-backend-chip-${i}`}
+                        />
+                      )}
+                      {showSubagent && (
+                        <BackendChip
+                          backend={call.subagent_backend}
+                          model={call.subagent_model}
+                          variant="subagent"
+                          testid={`tool-subagent-chip-${i}`}
+                        />
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
