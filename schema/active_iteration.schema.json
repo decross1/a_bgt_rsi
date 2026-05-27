@@ -27,6 +27,14 @@
       "type": ["string", "null"],
       "description": "Most-recent narration sentence Nara emitted before the current step."
     },
+    "orchestrator_backend": {
+      "type": ["string", "null"],
+      "description": "Backend (registry name, e.g. 'vllm-gemma', 'anthropic') that drives the Nara orchestrator brain for this iteration. Null for iterations written before the multi-backend substrate landed."
+    },
+    "orchestrator_model": {
+      "type": ["string", "null"],
+      "description": "Served-model-name the orchestrator backend is using (e.g. 'gemma-4-26b-a4b'). Pairs with orchestrator_backend; null on legacy iterations."
+    },
     "tool_calls_so_far": {
       "type": "array",
       "items": {
@@ -37,7 +45,23 @@
           "started_at": {"type": "string", "format": "date-time"},
           "ended_at":   {"type": ["string", "null"], "format": "date-time"},
           "status":     {"type": "string", "enum": ["in_progress", "passed", "error"]},
-          "narration":  {"type": ["string", "null"]}
+          "narration":  {"type": ["string", "null"]},
+          "backend": {
+            "type": ["string", "null"],
+            "description": "Backend that powered this tool's LLM calls (registry name). Inherits from orchestrator_backend unless the worker reported a backend_used override in its tool_result. Null for tools that don't make LLM calls (e.g. retrieve_literature, journal_writer)."
+          },
+          "model": {
+            "type": ["string", "null"],
+            "description": "Served-model-name the tool used. Pairs with backend."
+          },
+          "subagent_backend": {
+            "type": ["string", "null"],
+            "description": "When a tool dispatched a SubAgent (today: critic_loop_v0), the backend that powered the sub-agent. May differ from the tool's own backend once selective sub-agent backend overrides land (Co-Scientist insight; D-035)."
+          },
+          "subagent_model": {
+            "type": ["string", "null"],
+            "description": "Served-model-name the sub-agent used. Pairs with subagent_backend."
+          }
         }
       }
     }

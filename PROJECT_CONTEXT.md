@@ -2,13 +2,14 @@
 
 > **What this document is.** The long-form background and rationale
 > for the `a_bgt_rsi` repository. A new session should read
-> [`START_HERE.md`](START_HERE.md) first for orientation, then this
-> file for background, then [`ARCHITECTURE.md`](ARCHITECTURE.md) for
-> technical detail, then [`DECISIONS.md`](DECISIONS.md) for rationale,
-> and [`LOOP_V0.md`](LOOP_V0.md) for the active build slice. The
-> original source planning documents (`research_program_v2.pdf`,
-> `week1_days_31-37_plan.md`, `research_apparatus_technical_plan_v1.md`)
-> are not yet committed under `docs/sources/`.
+> [`START_HERE.md`](START_HERE.md) first for orientation, then
+> [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md)
+> for the project's intellectual frame (the WHY), then this file for
+> background, then [`ARCHITECTURE.md`](ARCHITECTURE.md) for technical
+> detail, then [`DECISIONS.md`](DECISIONS.md) for rationale, and
+> [`LOOP_V0.md`](LOOP_V0.md) for the active build slice. The technical
+> companion document (`research_apparatus_technical_plan_v1.md`) is
+> still pending commit under `docs/sources/`.
 >
 > The previous canonical task plan (`plan.yaml`), the autonomy
 > framework (`agent/autonomy.md`), and the 30/60/90-day roadmap
@@ -340,7 +341,7 @@ Selected:
 | The technical architecture | [`ARCHITECTURE.md`](ARCHITECTURE.md) + `docs/diagrams/` |
 | Why a decision was made | [`DECISIONS.md`](DECISIONS.md) |
 | What to execute today | [`LOOP_V0.md`](LOOP_V0.md) + most recent [`human/sessions/`](human/sessions/) note |
-| The intellectual program behind the apparatus | `docs/sources/research_program_v2.pdf` |
-| The technical companion | `docs/sources/research_apparatus_technical_plan_v1.md` |
+| The intellectual program behind the apparatus | [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md) |
+| The technical companion | `docs/sources/research_apparatus_technical_plan_v1.md` (pending) |
 | Retired track/tier framework (reference only) | [`archive/`](archive/) |
 | The visualizations from design sessions | `docs/diagrams/architecture_v4.svg`, `docs/diagrams/intelligence_loop_v4.svg` |

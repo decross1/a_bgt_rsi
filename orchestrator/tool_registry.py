@@ -113,7 +113,9 @@ TOOL_SPECS: list[dict] = [
                 "STEP 3 of the LOOP_V0 chain. Classify the hypothesis "
                 "against the retrieved neighbors into one of "
                 "{novel, rediscovery, nonsense, unclear} with rationale "
-                "and the doc_id of the most-similar neighbor."
+                "and the doc_id of the most-similar neighbor. Reads the "
+                "neighbors from the per-iteration cache by iteration_id "
+                "— do NOT re-emit the neighbors array."
             ),
             "parameters": {
                 "type": "object",
@@ -122,13 +124,12 @@ TOOL_SPECS: list[dict] = [
                         "type": "string",
                         "description": "Hypothesis text from STEP 1 — pass verbatim.",
                     },
-                    "neighbors": {
-                        "type": "array",
-                        "items": _NEIGHBOR_ITEM_SCHEMA,
-                        "description": "The neighbors array from STEP 2's `neighbors` field — pass verbatim.",
+                    "iteration_id": {
+                        "type": "string",
+                        "description": "The current iteration_id — the worker reads neighbors from cache by this id.",
                     },
                 },
-                "required": ["hypothesis_text", "neighbors"],
+                "required": ["hypothesis_text", "iteration_id"],
             },
         },
     },
@@ -141,7 +142,9 @@ TOOL_SPECS: list[dict] = [
                 "hypothesis using ONLY the retrieved neighbors. Returns "
                 "one of {survives, falsified, restated, malformed} with "
                 "a rationale and (for falsified/restated) the doc_id of "
-                "the contradicting neighbor."
+                "the contradicting neighbor. Reads neighbors from the "
+                "per-iteration cache by iteration_id — do NOT re-emit "
+                "the neighbors array."
             ),
             "parameters": {
                 "type": "object",
@@ -150,13 +153,12 @@ TOOL_SPECS: list[dict] = [
                         "type": "string",
                         "description": "Hypothesis text from STEP 1 — pass verbatim.",
                     },
-                    "neighbors": {
-                        "type": "array",
-                        "items": _NEIGHBOR_ITEM_SCHEMA,
-                        "description": "The same neighbors array passed to novelty_classify — pass verbatim.",
+                    "iteration_id": {
+                        "type": "string",
+                        "description": "The current iteration_id — the sub-agent reads neighbors from cache by this id.",
                     },
                 },
-                "required": ["hypothesis_text", "neighbors"],
+                "required": ["hypothesis_text", "iteration_id"],
             },
         },
     },
@@ -168,9 +170,11 @@ TOOL_SPECS: list[dict] = [
                 "STEP 5 of the LOOP_V0 chain (always last). Write a "
                 "markdown journal entry to journal/iterations/NNN.md "
                 "with hypothesis, retrieval, novelty, critique, and "
-                "your final summary. The orchestrator appends the "
-                "structured iteration_record to memory/loop_memory.jsonl "
-                "after this returns."
+                "your final summary. Reads all four substructures from "
+                "the per-iteration cache by iteration_id — do NOT "
+                "re-emit them. The orchestrator appends the structured "
+                "iteration_record to memory/loop_memory.jsonl after "
+                "this returns."
             ),
             "parameters": {
                 "type": "object",
@@ -179,61 +183,16 @@ TOOL_SPECS: list[dict] = [
                         "type": "string",
                         "description": "The original research topic.",
                     },
-                    "hypothesis": {
-                        "type": "object",
-                        "properties": {
-                            "text": {"type": "string"},
-                            "candidates_considered": {"type": "integer"},
-                            "all_candidates": {
-                                "type": "array", "items": {"type": "string"}
-                            },
-                        },
-                        "required": ["text"],
-                        "description": "The full STEP 1 result — pass verbatim.",
-                    },
-                    "retrieval": {
-                        "type": "object",
-                        "properties": {
-                            "k": {"type": "integer"},
-                            "neighbors": {
-                                "type": "array", "items": _NEIGHBOR_ITEM_SCHEMA,
-                            },
-                        },
-                        "required": ["k", "neighbors"],
-                        "description": "The full STEP 2 result — pass verbatim.",
-                    },
-                    "novelty": {
-                        "type": "object",
-                        "properties": {
-                            "class": {
-                                "type": "string",
-                                "enum": ["novel", "rediscovery", "nonsense", "unclear"],
-                            },
-                            "rationale": {"type": "string"},
-                            "top_neighbor_id": {"type": ["string", "null"]},
-                        },
-                        "required": ["class"],
-                        "description": "The full STEP 3 result — pass verbatim.",
-                    },
-                    "critique": {
-                        "type": "object",
-                        "properties": {
-                            "verdict": {
-                                "type": "string",
-                                "enum": ["survives", "falsified", "restated", "malformed"],
-                            },
-                            "rationale": {"type": "string"},
-                            "contradicting_paper_id": {"type": ["string", "null"]},
-                        },
-                        "required": ["verdict"],
-                        "description": "The full STEP 4 result — pass verbatim.",
+                    "iteration_id": {
+                        "type": "string",
+                        "description": "The current iteration_id — the worker reads hypothesis, retrieval, novelty, and critique from cache by this id.",
                     },
                     "nara_summary": {
                         "type": "string",
                         "description": "Your one- or two-paragraph human-readable summary of the iteration.",
                     },
                 },
-                "required": ["topic", "hypothesis", "retrieval", "novelty", "critique", "nara_summary"],
+                "required": ["topic", "iteration_id", "nara_summary"],
             },
         },
     },

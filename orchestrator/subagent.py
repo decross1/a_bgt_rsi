@@ -34,13 +34,11 @@ from agent_wrapper.gemma_tool_parse import (
     parse_inline_tool_calls,
     split_narration_and_markup,
 )
+from agent_wrapper.backends import get_backend
 from agent_wrapper.wrapper import (
-    HOST_METADATA,
-    MODEL,
-    MODEL_VERSION,
+    DEFAULT_BACKEND,
     _emit,
     _project_for_log,
-    _sync_client,
 )
 
 
@@ -139,6 +137,8 @@ def _emit_record(
     caller_tag: str,
     parent_request_id: str | None,
     log_path: str | None,
+    model_version: str,
+    host_metadata: dict,
 ) -> dict:
     """Log one sub-agent turn to logs/calls.jsonl in the standard
     call-record shape. Mirrors orchestrator/nara.py's `_record_turn`
@@ -162,7 +162,7 @@ def _emit_record(
         "timestamp": _utcnow_iso(),
         "request_id": str(uuid.uuid4()),
         "model": resp.model,
-        "model_version": MODEL_VERSION,
+        "model_version": model_version,
         "temperature": 0.0,
         "top_p": 1.0,
         "seed": None,
@@ -173,7 +173,7 @@ def _emit_record(
             "output_tokens": resp.usage.completion_tokens,
         },
         "latency_ms": latency_ms,
-        "host_metadata": dict(HOST_METADATA),
+        "host_metadata": dict(host_metadata),
         "caller_tag": caller_tag,
         "parent_request_id": parent_request_id,
     }
@@ -192,6 +192,7 @@ def run_subagent(
     parent_request_id: str | None = None,
     log_path: str | None = None,
     model: str | None = None,
+    backend: str | None = None,
 ) -> SubAgentResult:
     """Run a bounded sub-agent conversation. Returns a SubAgentResult.
 
@@ -231,6 +232,7 @@ def run_subagent(
     tools = tools or []
     tool_dispatch = tool_dispatch or {}
     tool_specs = [t["spec"] if "spec" in t else t for t in tools]
+    be = get_backend(backend or DEFAULT_BACKEND)
 
     started_perf = time.perf_counter()
     wrapper_call_ids: list[str] = []
@@ -275,8 +277,8 @@ def run_subagent(
 
         try:
             t0 = time.perf_counter()
-            resp = _sync_client.chat.completions.create(
-                model=model or MODEL,
+            resp = be.create_chat(
+                model=model or be.default_model,
                 messages=openai_messages,
                 tools=tool_specs if tool_specs else None,
                 temperature=0.2,
@@ -289,7 +291,10 @@ def run_subagent(
             return SubAgentResult(
                 status="error",
                 result=None,
-                errors=[f"vllm call failed: {type(exc).__name__}: {exc}"],
+                errors=[
+                    f"backend {be.name!r} call failed: "
+                    f"{type(exc).__name__}: {exc}"
+                ],
                 wrapper_call_ids=wrapper_call_ids,
                 turns_used=turn,
                 wall_seconds=_elapsed(),
@@ -301,6 +306,8 @@ def run_subagent(
             caller_tag=f"subagent.{name}",
             parent_request_id=last_id,
             log_path=log_path,
+            model_version=be.model_version,
+            host_metadata=be.host_metadata,
         )
         wrapper_call_ids.append(record["request_id"])
         last_id = record["request_id"]

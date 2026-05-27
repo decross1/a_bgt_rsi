@@ -101,6 +101,7 @@ docs live under [`archive/`](archive/).
 | --- | --- |
 | Orientation (this file) | [`START_HERE.md`](START_HERE.md) |
 | Operating contract for sessions | [`CLAUDE.md`](CLAUDE.md) |
+| **Core essence of the project (the WHY)** | [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md) |
 | Active build plan | [`LOOP_V0.md`](LOOP_V0.md) |
 | Today's session focus / handoff | most recent in [`human/sessions/`](human/sessions/) |
 | Terminology | [`GLOSSARY.md`](GLOSSARY.md) |
@@ -119,7 +120,7 @@ docs live under [`archive/`](archive/).
 
 | If you are… | Read |
 | --- | --- |
-| Starting the primary session | [`CLAUDE.md`](CLAUDE.md) → [`LOOP_V0.md`](LOOP_V0.md) → today's session note |
+| Starting the primary session | [`CLAUDE.md`](CLAUDE.md) → [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md) → [`LOOP_V0.md`](LOOP_V0.md) → today's session note |
 | Starting the UI session | [`agent/prompts/ui_session.md`](agent/prompts/ui_session.md) |
 
 ### State and history

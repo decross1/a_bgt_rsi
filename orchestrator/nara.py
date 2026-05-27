@@ -34,15 +34,14 @@ from agent_wrapper.gemma_tool_parse import (
     parse_inline_tool_calls,
     split_narration_and_markup,
 )
+from agent_wrapper.backends import get_backend
 from agent_wrapper.wrapper import (
-    HOST_METADATA,
+    DEFAULT_BACKEND,
     MEMORY_LOG,
-    MODEL,
-    MODEL_VERSION,
     _emit,
     _project_for_log,
-    _sync_client,
 )
+from orchestrator import iteration_cache
 from orchestrator.journal_stub import finalize_iteration_record
 from orchestrator.runtime import PyRuntime, Runtime
 from orchestrator.tool_registry import TOOL_SPECS
@@ -65,6 +64,13 @@ NARA_PROMPT_V0 = (
     "behavioral game theory, or learning in games by running the LOOP_V0 "
     "cognitive chain.\n"
     "\n"
+    "**Iteration id.** The user message tells you the `iteration_id` for "
+    "this run. The orchestrator caches each tool's full result under this "
+    "id. Downstream workers fetch heavy payloads (neighbors arrays, etc.) "
+    "from that cache by `iteration_id` — you do NOT re-emit those payloads "
+    "in tool_call args. You only pass the small fields each step computes "
+    "(hypothesis_text, iteration_id, nara_summary).\n"
+    "\n"
     "Always run these five tool calls in this exact order, one per turn:\n"
     "\n"
     "  1. hypothesize(topic=<the user's topic>)\n"
@@ -72,24 +78,24 @@ NARA_PROMPT_V0 = (
     "       The `text` field is the chosen hypothesis.\n"
     "\n"
     "  2. retrieve_literature(hypothesis_text=<step 1's text>, k=10)\n"
-    "     → returns {k, neighbors: [{doc_id, content_hash, score,\n"
-    "       chunk_text, source_layer, title}, ...]}.\n"
+    "     → returns {k, neighbors: [...]}. The neighbors are cached for\n"
+    "       you under iteration_id — do not copy them into later args.\n"
     "\n"
     "  3. novelty_classify(hypothesis_text=<step 1's text>,\n"
-    "                      neighbors=<step 2's neighbors>)\n"
-    "     → returns {class, rationale, top_neighbor_id}.\n"
+    "                      iteration_id=<the iteration_id>)\n"
+    "     → reads neighbors from cache; returns\n"
+    "       {class, rationale, top_neighbor_id}.\n"
     "\n"
     "  4. critic_loop_v0(hypothesis_text=<step 1's text>,\n"
-    "                    neighbors=<step 2's neighbors>)\n"
-    "     → returns {verdict, rationale, contradicting_paper_id}.\n"
+    "                    iteration_id=<the iteration_id>)\n"
+    "     → reads neighbors from cache; returns\n"
+    "       {verdict, rationale, contradicting_paper_id}.\n"
     "\n"
     "  5. journal_writer(topic=<original topic>,\n"
-    "                    hypothesis=<step 1 result>,\n"
-    "                    retrieval=<step 2 result>,\n"
-    "                    novelty=<step 3 result>,\n"
-    "                    critique=<step 4 result>,\n"
+    "                    iteration_id=<the iteration_id>,\n"
     "                    nara_summary=<your one-paragraph summary>)\n"
-    "     → writes the journal entry. Always call last.\n"
+    "     → reads all four substructures from cache and writes the\n"
+    "       markdown journal entry. Always call last.\n"
     "\n"
     "Before EACH tool call, emit ONE short narration sentence in your "
     "assistant content describing what you're about to do and why. "
@@ -104,8 +110,9 @@ NARA_PROMPT_V0 = (
     "Strict rules:\n"
     "  - Never skip a step. The chain is fixed at five.\n"
     "  - Never call the same step twice.\n"
-    "  - Pass results verbatim — do not paraphrase the hypothesis text\n"
-    "    or trim the neighbors list between steps.\n"
+    "  - Do NOT re-emit captured payloads (neighbors, retrieval, novelty,\n"
+    "    critique, hypothesis blobs) in tool_call args. Pass iteration_id\n"
+    "    plus only the new fields each step computes.\n"
     "  - Emit valid JSON for all tool arguments.\n"
     "  - **CRITICAL: emit tool calls via the OpenAI tool_calls field, NEVER\n"
     "    as text content.** Do not write `<|tool_call>` or any inline\n"
@@ -156,6 +163,9 @@ def _record_turn(
     caller_tag: str,
     parent_request_id: str | None,
     log_path: str | None,
+    *,
+    model_version: str,
+    host_metadata: dict,
 ) -> dict:
     """Schema-valid call record. Mirrors wrapper._record but is local so
     we can decide what goes in 'completion' (text vs tool_calls) ourselves."""
@@ -182,7 +192,7 @@ def _record_turn(
         "timestamp": _utcnow_iso(),
         "request_id": str(uuid.uuid4()),
         "model": resp.model,
-        "model_version": MODEL_VERSION,
+        "model_version": model_version,
         "temperature": 0.0,
         "top_p": 1.0,
         "seed": None,
@@ -193,7 +203,7 @@ def _record_turn(
             "output_tokens": resp.usage.completion_tokens,
         },
         "latency_ms": latency_ms,
-        "host_metadata": dict(HOST_METADATA),
+        "host_metadata": dict(host_metadata),
         "caller_tag": caller_tag,
         "parent_request_id": parent_request_id,
     }
@@ -234,7 +244,13 @@ def _next_chain_step(captured: dict) -> str:
     return "journal_writer"
 
 
-def _initial_active(iteration_id: str, topic: str) -> dict:
+def _initial_active(
+    iteration_id: str,
+    topic: str,
+    *,
+    orchestrator_backend: str | None = None,
+    orchestrator_model: str | None = None,
+) -> dict:
     return {
         "iteration_id": iteration_id,
         "topic": topic,
@@ -242,6 +258,8 @@ def _initial_active(iteration_id: str, topic: str) -> dict:
         "current_step": "starting",
         "step_started_at": _utcnow_iso(),
         "latest_narration": None,
+        "orchestrator_backend": orchestrator_backend,
+        "orchestrator_model": orchestrator_model,
         "tool_calls_so_far": [],
     }
 
@@ -253,13 +271,23 @@ def run_iteration(
     source: str = "human_cli",
     log_path: str | None = _DEFAULT_LOG_PATH,
     max_depth: int = _DEFAULT_MAX_DEPTH,
+    backend: str | None = None,
 ) -> dict:
-    """Run one LOOP_V0 hello-world iteration. Returns the final
-    iteration_record dict."""
+    """Run one LOOP_V0 iteration. Returns the final iteration_record dict.
+
+    backend: which backend the orchestrator brain (Nara) runs on.
+        None -> DEFAULT_BACKEND (vllm-gemma). Workers picked via tool_calls
+        are dispatched by the runtime and may run on a different backend
+        per the per-tool tier (a future routing extension)."""
     runtime = runtime or PyRuntime()
+    be = get_backend(backend or DEFAULT_BACKEND)
     iteration_id = _next_iteration_id()
     started_at = _utcnow_iso()
-    active = _initial_active(iteration_id, topic)
+    active = _initial_active(
+        iteration_id, topic,
+        orchestrator_backend=be.name,
+        orchestrator_model=be.default_model,
+    )
     runtime.write_state(ACTIVE_PATH, active)
     runtime.log_event({
         "event_type": "loop_v0_iteration_start",
@@ -268,10 +296,15 @@ def run_iteration(
         "source": source,
     })
 
-    # Conversation state for the LLM
+    # Conversation state for the LLM. Inject iteration_id into the user
+    # message so Nara has the value to pass as the `iteration_id` arg on
+    # novelty_classify / critic_loop_v0 / journal_writer.
     openai_messages: list[dict] = [
         {"role": "system", "content": NARA_PROMPT_V0},
-        {"role": "user", "content": f"Evaluate this research topic: {topic}"},
+        {"role": "user", "content": (
+            f"iteration_id: {iteration_id}\n\n"
+            f"Evaluate this research topic: {topic}"
+        )},
     ]
     parent_request_id = iteration_id  # iteration-level lineage anchor
     wrapper_call_ids: list[str] = []
@@ -293,8 +326,8 @@ def run_iteration(
         runtime.write_state(ACTIVE_PATH, active)
 
         t0 = time.perf_counter()
-        resp = _sync_client.chat.completions.create(
-            model=MODEL,
+        resp = be.create_chat(
+            model=be.default_model,
             messages=openai_messages,
             tools=tool_specs,
             temperature=0.0,
@@ -312,6 +345,8 @@ def run_iteration(
             caller_tag="nara.run_iteration",
             parent_request_id=last_id or parent_request_id,
             log_path=log_path,
+            model_version=be.model_version,
+            host_metadata=be.host_metadata,
         )
         wrapper_call_ids.append(record["request_id"])
         last_id = record["request_id"]
@@ -415,13 +450,26 @@ def run_iteration(
                 # Mark active.current_step
                 active["current_step"] = name
                 active["step_started_at"] = _utcnow_iso()
-                active["tool_calls_so_far"].append({
+                # Backend/model: orchestrator-default for now. If a worker
+                # used a different backend, it can override via
+                # `backend_used`/`model_used` in its tool_result, which we
+                # read post-dispatch below. For critic_loop_v0, pre-populate
+                # subagent fields with the orchestrator default; the worker
+                # echoes the actually-used sub-agent backend back in result,
+                # which we also pick up post-dispatch.
+                entry: dict = {
                     "tool": name,
                     "started_at": active["step_started_at"],
                     "ended_at": None,
                     "status": "in_progress",
                     "narration": active.get("latest_narration"),
-                })
+                    "backend": be.name,
+                    "model": be.default_model,
+                }
+                if name == "critic_loop_v0":
+                    entry["subagent_backend"] = be.name
+                    entry["subagent_model"] = be.default_model
+                active["tool_calls_so_far"].append(entry)
                 runtime.write_state(ACTIVE_PATH, active)
 
                 runtime.log_event({
@@ -447,6 +495,22 @@ def run_iteration(
                     tool_result.get("status", "passed")
                     if isinstance(tool_result, dict) else "passed"
                 )
+                # Backend overrides reported by the worker (forward-compat
+                # hook for selective per-tool backend tiers; Phase-3
+                # critic-flip uses subagent_backend/subagent_model in
+                # particular).
+                if isinstance(tool_result, dict):
+                    result_payload = tool_result.get("result")
+                    if isinstance(result_payload, dict):
+                        for src_key, dst_key in (
+                            ("backend_used", "backend"),
+                            ("model_used", "model"),
+                            ("subagent_backend", "subagent_backend"),
+                            ("subagent_model", "subagent_model"),
+                        ):
+                            val = result_payload.get(src_key)
+                            if val:
+                                active["tool_calls_so_far"][-1][dst_key] = val
                 runtime.write_state(ACTIVE_PATH, active)
 
                 runtime.log_event({
@@ -463,20 +527,36 @@ def run_iteration(
             tool_calls_made.append(name)
             # Capture each LOOP_V0 step's payload so the iteration_record
             # ends up complete even if Nara forgets a step at the end.
+            # Also write the FULL tool_result to the per-iteration cache
+            # so downstream workers can fetch by iteration_id rather than
+            # receiving heavy payloads in tool_call args (reference-passing
+            # refactor — keeps Nara's emissions under the 1024 max_tokens
+            # per-turn cap regardless of Gemma's stochastic inline format).
             if isinstance(tool_result, dict) and tool_result.get("status") == "passed":
                 payload = tool_result.get("result")
+                cache_key: str | None = None
                 if isinstance(payload, dict):
                     if name == "hypothesize":
                         captured["hypothesis"] = payload
+                        cache_key = "hypothesis"
                     elif name == "retrieve_literature":
                         captured["retrieval"] = payload
+                        cache_key = "retrieval"
                     elif name == "novelty_classify":
                         captured["novelty"] = payload
+                        cache_key = "novelty"
                     elif name == "critic_loop_v0":
                         captured["critique"] = payload
+                        cache_key = "critique"
                     elif name == "journal_writer":
                         captured["journal"] = payload
                         journal_entry_path = payload.get("journal_entry_path")
+                        # journal_writer is the consumer, not a producer —
+                        # nothing downstream reads its result from cache.
+                if cache_key is not None:
+                    iteration_cache.write_entry(
+                        iteration_id, cache_key, tool_result
+                    )
 
             openai_messages.append({
                 "role": "tool",
@@ -502,24 +582,31 @@ def run_iteration(
         if "hypothesis" in captured:
             # We have at least step 1 captured — use the full writer with
             # whatever substructures landed; fill missing ones with
-            # explicit placeholders so journal_writer's enum validation
-            # doesn't reject the call.
-            placeholder_novelty = {
+            # explicit placeholder cache entries so journal_writer's
+            # enum validation (which now reads from cache) doesn't reject
+            # the call.
+            def _ensure_cached(key: str, fallback_result: dict) -> None:
+                if not iteration_cache.has_entry(iteration_id, key):
+                    iteration_cache.write_entry(iteration_id, key, {
+                        "status": "passed",
+                        "result": fallback_result,
+                        "errors": ["(orchestrator-supplied placeholder; worker did not run)"],
+                    })
+
+            _ensure_cached("retrieval", {"k": 0, "neighbors": []})
+            _ensure_cached("novelty", {
                 "class": "unclear",
                 "rationale": "(novelty_classify did not run)",
                 "top_neighbor_id": None,
-            }
-            placeholder_critique = {
+            })
+            _ensure_cached("critique", {
                 "verdict": "survives",
                 "rationale": "(critic_loop_v0 did not run)",
                 "contradicting_paper_id": None,
-            }
+            })
             out = _full_jw(
                 topic=topic,
-                hypothesis=captured["hypothesis"],
-                retrieval=captured.get("retrieval") or {"k": 0, "neighbors": []},
-                novelty=captured.get("novelty") or placeholder_novelty,
-                critique=captured.get("critique") or placeholder_critique,
+                iteration_id=iteration_id,
                 nara_summary=final_summary or "(Nara did not emit a final summary)",
                 parent_request_id=last_id,
             )
@@ -552,7 +639,7 @@ def run_iteration(
         "tool_calls_made":    tool_calls_made,
         "narration_log":      narration_log,
         "journal_entry_path": journal_entry_path,
-        "model_version":      MODEL_VERSION,
+        "model_version":      be.model_version,
         "wrapper_call_ids":   wrapper_call_ids,
     }
     # Attach the four substructures when present so the iteration_record

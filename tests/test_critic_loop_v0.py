@@ -1,8 +1,10 @@
-"""Tests for workers.critic_loop_v0 (post Path-B sub-agent migration).
+"""Tests for workers.critic_loop_v0 (post Path-B + reference-passing).
 
-The worker delegates to orchestrator.subagent.run_subagent. We stub
-that function with scripted SubAgentResults to exercise every status
-+ verdict + consistency-guard path.
+The worker delegates to orchestrator.subagent.run_subagent. We stub that
+function with scripted SubAgentResults to exercise every status + verdict
++ consistency-guard path. Post reference-passing the worker reads
+`neighbors` from the per-iteration cache by `iteration_id`, so each test
+pre-populates the cache via the `cache` fixture in tests/conftest.py.
 """
 import sys
 from pathlib import Path
@@ -30,6 +32,18 @@ def _neighbors(*doc_ids: str) -> list[dict]:
     ]
 
 
+def _stage(cache, iteration_id: str, neighbors: list[dict]) -> None:
+    """Stage a retrieval-tool-result in the cache (mirrors what Nara does
+    post-dispatch)."""
+    cache.write_entry(iteration_id, "retrieval", {
+        "status": "passed",
+        "result": {"k": len(neighbors), "neighbors": neighbors},
+        "errors": [],
+        "wrapper_request_id": "ret-test",
+        "parent_request_id": None,
+    })
+
+
 def _fake_run_subagent(*, status, result, errors=None, wrapper_call_ids=None,
                        turns_used=2, wall_seconds=1.5, output_tokens_used=200):
     """Build a stub that returns a fixed SubAgentResult regardless of args."""
@@ -49,20 +63,28 @@ def _fake_run_subagent(*, status, result, errors=None, wrapper_call_ids=None,
 # ── input validation ─────────────────────────────────────────────────
 
 
-def test_empty_hypothesis_errors():
-    out = crit_mod.critic_loop_v0("", _neighbors("a"))
+def test_empty_hypothesis_errors(cache):
+    _stage(cache, "it-1", _neighbors("a"))
+    out = crit_mod.critic_loop_v0("", "it-1")
     assert out["status"] == "error"
 
 
-def test_neighbors_must_be_list():
-    out = crit_mod.critic_loop_v0("h", "nope")
+def test_empty_iteration_id_errors(cache):
+    out = crit_mod.critic_loop_v0("h", "")
     assert out["status"] == "error"
+    assert any("iteration_id" in e for e in out["errors"])
+
+
+def test_cache_miss_errors(cache):
+    out = crit_mod.critic_loop_v0("h", "it-missing")
+    assert out["status"] == "error"
+    assert any("iteration cache miss" in e for e in out["errors"])
 
 
 # ── verdict paths (sub-agent passed) ─────────────────────────────────
 
 
-def test_survives_verdict(monkeypatch):
+def test_survives_verdict(cache, monkeypatch):
     monkeypatch.setattr(crit_mod, "run_subagent", _fake_run_subagent(
         status="passed",
         result={
@@ -71,16 +93,16 @@ def test_survives_verdict(monkeypatch):
             "contradicting_paper_id": None,
         },
     ))
-    out = crit_mod.critic_loop_v0("h", _neighbors("a", "b"))
+    _stage(cache, "it-2", _neighbors("a", "b"))
+    out = crit_mod.critic_loop_v0("h", "it-2")
     assert out["status"] == "passed"
     assert out["result"]["verdict"] == "survives"
     assert out["result"]["contradicting_paper_id"] is None
-    # Sub-agent telemetry surfaces
     assert out["result"]["subagent_turns_used"] == 2
     assert out["result"]["subagent_status"] == "passed"
 
 
-def test_falsified_verdict(monkeypatch):
+def test_falsified_verdict(cache, monkeypatch):
     monkeypatch.setattr(crit_mod, "run_subagent", _fake_run_subagent(
         status="passed",
         result={
@@ -89,13 +111,14 @@ def test_falsified_verdict(monkeypatch):
             "contradicting_paper_id": "a",
         },
     ))
-    out = crit_mod.critic_loop_v0("h", _neighbors("a", "b"))
+    _stage(cache, "it-3", _neighbors("a", "b"))
+    out = crit_mod.critic_loop_v0("h", "it-3")
     assert out["status"] == "passed"
     assert out["result"]["verdict"] == "falsified"
     assert out["result"]["contradicting_paper_id"] == "a"
 
 
-def test_restated_verdict_with_citation(monkeypatch):
+def test_restated_verdict_with_citation(cache, monkeypatch):
     monkeypatch.setattr(crit_mod, "run_subagent", _fake_run_subagent(
         status="passed",
         result={
@@ -104,13 +127,14 @@ def test_restated_verdict_with_citation(monkeypatch):
             "contradicting_paper_id": "b",
         },
     ))
-    out = crit_mod.critic_loop_v0("h", _neighbors("a", "b"))
+    _stage(cache, "it-4", _neighbors("a", "b"))
+    out = crit_mod.critic_loop_v0("h", "it-4")
     assert out["status"] == "passed"
     assert out["result"]["verdict"] == "restated"
     assert out["result"]["contradicting_paper_id"] == "b"
 
 
-def test_malformed_verdict(monkeypatch):
+def test_malformed_verdict(cache, monkeypatch):
     monkeypatch.setattr(crit_mod, "run_subagent", _fake_run_subagent(
         status="passed",
         result={
@@ -119,7 +143,8 @@ def test_malformed_verdict(monkeypatch):
             "contradicting_paper_id": None,
         },
     ))
-    out = crit_mod.critic_loop_v0("h", _neighbors())
+    _stage(cache, "it-5", _neighbors())
+    out = crit_mod.critic_loop_v0("h", "it-5")
     assert out["status"] == "passed"
     assert out["result"]["verdict"] == "malformed"
 
@@ -127,24 +152,23 @@ def test_malformed_verdict(monkeypatch):
 # ── consistency guards ───────────────────────────────────────────────
 
 
-def test_contradicting_paper_id_nulled_on_survives(monkeypatch):
-    """Even if sub-agent spuriously cites a paper on `survives`, we null it."""
+def test_contradicting_paper_id_nulled_on_survives(cache, monkeypatch):
     monkeypatch.setattr(crit_mod, "run_subagent", _fake_run_subagent(
         status="passed",
         result={
             "verdict": "survives",
             "rationale": "ok",
-            "contradicting_paper_id": "a",  # bad: shouldn't be set on survives
+            "contradicting_paper_id": "a",
         },
     ))
-    out = crit_mod.critic_loop_v0("h", _neighbors("a"))
+    _stage(cache, "it-6", _neighbors("a"))
+    out = crit_mod.critic_loop_v0("h", "it-6")
     assert out["status"] == "passed"
     assert out["result"]["contradicting_paper_id"] is None
     assert any("nulling per schema" in e for e in out["errors"])
 
 
-def test_contradicting_paper_id_must_be_in_seen_doc_ids(monkeypatch):
-    """Sub-agent cited a doc_id we've never seen — null it with a warning."""
+def test_contradicting_paper_id_must_be_in_seen_doc_ids(cache, monkeypatch):
     monkeypatch.setattr(crit_mod, "run_subagent", _fake_run_subagent(
         status="passed",
         result={
@@ -153,14 +177,14 @@ def test_contradicting_paper_id_must_be_in_seen_doc_ids(monkeypatch):
             "contradicting_paper_id": "not-in-list",
         },
     ))
-    out = crit_mod.critic_loop_v0("h", _neighbors("a", "b"))
+    _stage(cache, "it-7", _neighbors("a", "b"))
+    out = crit_mod.critic_loop_v0("h", "it-7")
     assert out["status"] == "passed"
     assert out["result"]["contradicting_paper_id"] is None
     assert any("not in seen neighbors" in e for e in out["errors"])
 
 
-def test_rationale_strips_channel_markup(monkeypatch):
-    """Sub-agent's rationale gets channel markup stripped via _post_validate."""
+def test_rationale_strips_channel_markup(cache, monkeypatch):
     monkeypatch.setattr(crit_mod, "run_subagent", _fake_run_subagent(
         status="passed",
         result={
@@ -169,7 +193,8 @@ def test_rationale_strips_channel_markup(monkeypatch):
             "contradicting_paper_id": None,
         },
     ))
-    out = crit_mod.critic_loop_v0("h", _neighbors("a"))
+    _stage(cache, "it-8", _neighbors("a"))
+    out = crit_mod.critic_loop_v0("h", "it-8")
     assert out["status"] == "passed"
     assert "<channel|>" not in out["result"]["rationale"]
     assert "thought" not in out["result"]["rationale"].split("\n")[0]
@@ -179,20 +204,21 @@ def test_rationale_strips_channel_markup(monkeypatch):
 # ── degraded paths ───────────────────────────────────────────────────
 
 
-def test_schema_mismatch_falls_back_to_survives(monkeypatch):
+def test_schema_mismatch_falls_back_to_survives(cache, monkeypatch):
     monkeypatch.setattr(crit_mod, "run_subagent", _fake_run_subagent(
         status="schema_mismatch",
         result={"some": "bad payload"},
         errors=["payload didn't validate"],
     ))
-    out = crit_mod.critic_loop_v0("h", _neighbors("a"))
+    _stage(cache, "it-9", _neighbors("a"))
+    out = crit_mod.critic_loop_v0("h", "it-9")
     assert out["status"] == "passed"
     assert out["result"]["verdict"] == "survives"
     assert any("schema mismatch" in e for e in out["errors"])
     assert out["result"]["subagent_status"] == "schema_mismatch"
 
 
-def test_timeout_falls_back_to_survives(monkeypatch):
+def test_timeout_falls_back_to_survives(cache, monkeypatch):
     monkeypatch.setattr(crit_mod, "run_subagent", _fake_run_subagent(
         status="timeout",
         result=None,
@@ -200,7 +226,8 @@ def test_timeout_falls_back_to_survives(monkeypatch):
         turns_used=6,
         wall_seconds=91.5,
     ))
-    out = crit_mod.critic_loop_v0("h", _neighbors("a"))
+    _stage(cache, "it-10", _neighbors("a"))
+    out = crit_mod.critic_loop_v0("h", "it-10")
     assert out["status"] == "passed"
     assert out["result"]["verdict"] == "survives"
     assert out["result"]["subagent_status"] == "timeout"
@@ -208,16 +235,14 @@ def test_timeout_falls_back_to_survives(monkeypatch):
     assert out["result"]["subagent_wall_seconds"] == 91.5
 
 
-def test_subagent_error_returns_worker_error(monkeypatch):
-    """Unlike timeout/schema_mismatch (which default to 'survives'),
-    a hard sub-agent error returns worker status=error so the
-    orchestrator can decide whether to retry."""
+def test_subagent_error_returns_worker_error(cache, monkeypatch):
     monkeypatch.setattr(crit_mod, "run_subagent", _fake_run_subagent(
         status="error",
         result=None,
         errors=["vllm down"],
     ))
-    out = crit_mod.critic_loop_v0("h", _neighbors("a"))
+    _stage(cache, "it-11", _neighbors("a"))
+    out = crit_mod.critic_loop_v0("h", "it-11")
     assert out["status"] == "error"
     assert out["result"] is None
     assert any("vllm down" in e for e in out["errors"])
@@ -226,7 +251,7 @@ def test_subagent_error_returns_worker_error(monkeypatch):
 # ── budget + parent_request_id wiring ────────────────────────────────
 
 
-def test_passes_budget_through(monkeypatch):
+def test_passes_budget_through(cache, monkeypatch):
     from orchestrator.subagent import SubAgentBudget
     captured = {}
     def stub(**kwargs):
@@ -238,12 +263,13 @@ def test_passes_budget_through(monkeypatch):
             turns_used=1, wall_seconds=0.1, output_tokens_used=10,
         )
     monkeypatch.setattr(crit_mod, "run_subagent", stub)
+    _stage(cache, "it-12", _neighbors("a"))
     custom = SubAgentBudget(max_turns=10, max_wall_seconds=180.0, max_tokens_total=20000)
-    crit_mod.critic_loop_v0("h", _neighbors("a"), budget=custom)
+    crit_mod.critic_loop_v0("h", "it-12", budget=custom)
     assert captured["budget"] == custom
 
 
-def test_default_budget_when_omitted(monkeypatch):
+def test_default_budget_when_omitted(cache, monkeypatch):
     from orchestrator.subagent import SubAgentBudget
     captured = {}
     def stub(**kwargs):
@@ -255,13 +281,13 @@ def test_default_budget_when_omitted(monkeypatch):
             turns_used=1, wall_seconds=0.1, output_tokens_used=10,
         )
     monkeypatch.setattr(crit_mod, "run_subagent", stub)
-    crit_mod.critic_loop_v0("h", _neighbors("a"))
-    # Default: 6 turns, 90s wall.
+    _stage(cache, "it-13", _neighbors("a"))
+    crit_mod.critic_loop_v0("h", "it-13")
     assert captured["budget"].max_turns == 6
     assert captured["budget"].max_wall_seconds == 90.0
 
 
-def test_parent_request_id_threads_through(monkeypatch):
+def test_parent_request_id_threads_through(cache, monkeypatch):
     captured = {}
     def stub(**kwargs):
         captured.update(kwargs)
@@ -272,13 +298,12 @@ def test_parent_request_id_threads_through(monkeypatch):
             turns_used=1, wall_seconds=0.1, output_tokens_used=10,
         )
     monkeypatch.setattr(crit_mod, "run_subagent", stub)
-    crit_mod.critic_loop_v0("h", _neighbors("a"), parent_request_id="iter-root-9")
+    _stage(cache, "it-14", _neighbors("a"))
+    crit_mod.critic_loop_v0("h", "it-14", parent_request_id="iter-root-9")
     assert captured["parent_request_id"] == "iter-root-9"
 
 
-def test_subagent_gets_query_chroma_tool(monkeypatch):
-    """The critic sub-agent's toolbelt MUST include query_chroma so the
-    sub-agent can fetch additional context when needed."""
+def test_subagent_gets_query_chroma_tool(cache, monkeypatch):
     captured = {}
     def stub(**kwargs):
         captured.update(kwargs)
@@ -289,13 +314,14 @@ def test_subagent_gets_query_chroma_tool(monkeypatch):
             turns_used=1, wall_seconds=0.1, output_tokens_used=10,
         )
     monkeypatch.setattr(crit_mod, "run_subagent", stub)
-    crit_mod.critic_loop_v0("h", _neighbors("a"))
+    _stage(cache, "it-15", _neighbors("a"))
+    crit_mod.critic_loop_v0("h", "it-15")
     tool_names = [t["spec"]["function"]["name"] for t in captured["tools"]]
     assert "query_chroma" in tool_names
     assert "query_chroma" in captured["tool_dispatch"]
 
 
-def test_caller_tag_in_subagent_call(monkeypatch):
+def test_caller_tag_in_subagent_call(cache, monkeypatch):
     captured = {}
     def stub(**kwargs):
         captured.update(kwargs)
@@ -306,5 +332,6 @@ def test_caller_tag_in_subagent_call(monkeypatch):
             turns_used=1, wall_seconds=0.1, output_tokens_used=10,
         )
     monkeypatch.setattr(crit_mod, "run_subagent", stub)
-    crit_mod.critic_loop_v0("h", _neighbors("a"))
+    _stage(cache, "it-16", _neighbors("a"))
+    crit_mod.critic_loop_v0("h", "it-16")
     assert captured["name"] == "critic_loop_v0"

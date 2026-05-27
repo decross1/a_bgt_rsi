@@ -29,6 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from orchestrator import iteration_cache
+
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 JOURNAL_DIR = REPO_ROOT / "journal" / "iterations"
@@ -72,24 +74,35 @@ def _format_neighbors_for_journal(neighbors: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _unwrap(tool_result: dict) -> dict:
+    """Pull the worker's `result` payload out of a Nara-cached tool_result
+    wrapper. Returns {} if the wrapper has no result (e.g. status=error
+    with result=None)."""
+    if not isinstance(tool_result, dict):
+        return {}
+    inner = tool_result.get("result")
+    return inner if isinstance(inner, dict) else {}
+
+
 def journal_writer(
     topic: str,
-    hypothesis: dict[str, Any],
-    retrieval: dict[str, Any],
-    novelty: dict[str, Any],
-    critique: dict[str, Any],
+    iteration_id: str,
     nara_summary: str,
     *,
     parent_request_id: str | None = None,
 ) -> dict[str, Any]:
     """Finalize an iteration by writing the markdown journal entry.
 
-    Args (each matches its `iteration_record.<field>` subschema):
+    Reads the four substructures (hypothesis, retrieval, novelty, critique)
+    from the per-iteration cache by `iteration_id`. Nara writes each
+    tool_result to the cache after dispatch; this worker is the final
+    consumer at the end of the chain. Keeping the args small (topic +
+    iteration_id + nara_summary) keeps Nara's tool_call emission well under
+    the 1024 max_tokens per-turn cap.
+
+    Args:
         topic: the seed topic string.
-        hypothesis: `{text, candidates_considered, all_candidates}`.
-        retrieval: `{k, neighbors}`.
-        novelty: `{class, rationale, top_neighbor_id?}`.
-        critique: `{verdict, rationale, contradicting_paper_id?}`.
+        iteration_id: same id Nara has been threading through the chain.
         nara_summary: Nara's one-or-two-paragraph closing.
 
     Returns:
@@ -109,14 +122,8 @@ def journal_writer(
 
     if not isinstance(topic, str) or not topic.strip():
         errors.append("topic is required and must be non-empty")
-    if not isinstance(hypothesis, dict):
-        errors.append("hypothesis must be an object")
-    if not isinstance(retrieval, dict):
-        errors.append("retrieval must be an object")
-    if not isinstance(novelty, dict):
-        errors.append("novelty must be an object")
-    if not isinstance(critique, dict):
-        errors.append("critique must be an object")
+    if not isinstance(iteration_id, str) or not iteration_id.strip():
+        errors.append("iteration_id is required and must be a non-empty string")
     if not isinstance(nara_summary, str):
         nara_summary = str(nara_summary) if nara_summary is not None else ""
 
@@ -125,6 +132,23 @@ def journal_writer(
             "status": "error",
             "result": None,
             "errors": errors,
+            "parent_request_id": parent_request_id,
+        }
+
+    # Load the four substructures from cache. Missing entries are
+    # fail-loud (chain didn't reach the corresponding step) — the orchestrator
+    # caller would have errored before getting here, but we surface it
+    # cleanly if not.
+    try:
+        hypothesis = _unwrap(iteration_cache.read_entry(iteration_id, "hypothesis"))
+        retrieval = _unwrap(iteration_cache.read_entry(iteration_id, "retrieval"))
+        novelty = _unwrap(iteration_cache.read_entry(iteration_id, "novelty"))
+        critique = _unwrap(iteration_cache.read_entry(iteration_id, "critique"))
+    except KeyError as exc:
+        return {
+            "status": "error",
+            "result": None,
+            "errors": [f"iteration cache miss: {exc}"],
             "parent_request_id": parent_request_id,
         }
 
@@ -240,15 +264,20 @@ def journal_writer(
 
 
 if __name__ == "__main__":
-    # Smoke with synthetic inputs.
-    out = journal_writer(
-        topic="smoke test",
-        hypothesis={
+    # Smoke: stage the four substructures in the cache (as Nara would),
+    # then call by iteration_id.
+    iter_id = "smoke-journal-writer"
+    iteration_cache.write_entry(iter_id, "hypothesis", {
+        "status": "passed",
+        "result": {
             "text": "Hypothesis text for smoke.",
             "candidates_considered": 2,
             "all_candidates": ["Hypothesis text for smoke.", "Alternative."],
         },
-        retrieval={
+    })
+    iteration_cache.write_entry(iter_id, "retrieval", {
+        "status": "passed",
+        "result": {
             "k": 2,
             "neighbors": [
                 {"doc_id": "osborne_rubinstein-chunk-831", "score": 0.59,
@@ -257,16 +286,26 @@ if __name__ == "__main__":
                  "source_layer": "live_arxiv", "title": "Some Paper"},
             ],
         },
-        novelty={
+    })
+    iteration_cache.write_entry(iter_id, "novelty", {
+        "status": "passed",
+        "result": {
             "class": "rediscovery",
             "rationale": "Well-known.",
             "top_neighbor_id": "osborne_rubinstein-chunk-831",
         },
-        critique={
+    })
+    iteration_cache.write_entry(iter_id, "critique", {
+        "status": "passed",
+        "result": {
             "verdict": "restated",
             "rationale": "It's a restatement.",
             "contradicting_paper_id": "osborne_rubinstein-chunk-831",
         },
+    })
+    out = journal_writer(
+        topic="smoke test",
+        iteration_id=iter_id,
         nara_summary="Nara: This iteration tested a known textbook claim.",
         parent_request_id="smoke",
     )

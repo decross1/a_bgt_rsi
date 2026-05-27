@@ -95,16 +95,20 @@
     },
     "host_metadata": {
       "type": "object",
-      "additionalProperties": false,
-      "required": ["cuda_driver", "vllm_image_tag"],
+      "description": "Per-backend host metadata. Heterogeneous across backends (vllm-gemma exposes cuda_driver + vllm_image_tag; ollama-coder exposes ollama_base_url; anthropic exposes prompt_cache). Existing fields remain optional for back-compat with pre-multi-backend records.",
+      "additionalProperties": true,
       "properties": {
+        "backend": {
+          "type": "string",
+          "description": "Backend discriminator, e.g. 'ollama', 'anthropic'. Absent on legacy vllm-gemma records."
+        },
         "cuda_driver": {
           "type": "string",
-          "description": "CUDA driver version, e.g. '13.0'."
+          "description": "CUDA driver version on the serving host (vllm-gemma). Optional."
         },
         "vllm_image_tag": {
           "type": "string",
-          "description": "vLLM image tag, e.g. 'vllm/vllm-openai:v0.20.0'."
+          "description": "vLLM image tag, e.g. 'vllm/vllm-openai:v0.21.0' (vllm-gemma). Optional."
         }
       }
     },
