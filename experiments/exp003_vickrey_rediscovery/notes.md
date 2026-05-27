@@ -175,14 +175,28 @@ Anchors below for the human to react to in
   topic seeds (A/B/C) but stays quiet for the textbook phrasing (D)
   where the Osborne & Rubinstein chunks are an exact lexical match.
 
-  **Tension worth carrying into Slice 2 design:** seed B already
-  surfaces Camerer BGT in its top-10 but has the LOWEST max score
-  (0.6174) — it would escalate even though it has the BEST literature
-  coverage of the four. The max-score heuristic alone doesn't capture
-  coverage diversity. A potential compound trigger:
-  `max_score < 0.70 AND distinct_books < 3` would skip B (which has
-  4 distinct books in top-10) and still fire on A/C/D when retrieval
-  is genuinely narrow.
+  **Compound trigger implemented** in `workers/retrieve_literature.py`
+  as `result.escalation`. Fires iff `max_score < 0.70 AND
+  distinct_foundational_books_in_top_10 < 3`. End-to-end run against
+  the 4 seeds matches the prediction:
+
+  | seed | max_score | distinct_books | should_escalate | reason |
+  |---|---|---|---|---|
+  | A_original | 0.6450 | 2 | **True** | weak signal AND narrow coverage |
+  | B_camerer_behavioral | 0.6174 | 4 | False | weak signal but coverage is diverse |
+  | C_myerson_mechanism_design | 0.6833 | 2 | **True** | weak signal AND narrow coverage |
+  | D_textbook_minimal | 0.7534 | 1 | False | narrow coverage but signal is strong |
+
+  Seed B (the one whose top-10 actually surfaces Camerer BGT) is the
+  case that confirms the compound shape is correct: its max score is
+  weakest of the four (0.6174) but its 4-book coverage saves it from
+  unnecessary escalation. Seed D, conversely, is the case where strong
+  signal saves it from the narrow-coverage gate. Only A + C — weak
+  signal AND narrow coverage — actually warrant the round-trip.
+
+  The trigger only computes + reports the decision today; the actual
+  ML-Intern dispatch (call site reading `result.escalation
+  .should_escalate`) is still a Slice-2 task. The seam is wired.
 - This is the first LOOP_V0 iteration with a bridged `experiment_outcome`
   — the schema extension + the bridge contract both worked on the first
   real attempt. Slice 1 is end-to-end validated.

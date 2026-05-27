@@ -113,3 +113,160 @@ def test_handles_neighbors_with_no_content_hash(monkeypatch):
     assert out["status"] == "passed"
     # Both kept (different doc_ids → different fallback keys).
     assert out["result"]["k"] == 2
+
+
+# ----- Slice-2 ML-Intern escalation trigger -----------------------------
+
+
+def _foundational(book: str, chunk: int, score: float, hash_suffix: str | None = None) -> dict:
+    h = f"sha256:{hash_suffix or f'{book}-{chunk}'}"
+    return {
+        "doc_id": f"{book}-chunk-{chunk}",
+        "content_hash": h,
+        "score": score,
+        "source_layer": "foundational",
+        "title": f"chapter from {book}",
+    }
+
+
+def _arxiv(arxiv_id: str, score: float) -> dict:
+    return {
+        "doc_id": arxiv_id,
+        "content_hash": f"sha256:{arxiv_id}",
+        "score": score,
+        "source_layer": "live_arxiv",
+        "title": "an arxiv paper",
+    }
+
+
+def test_escalation_field_always_present(monkeypatch):
+    """Every passed retrieval carries an escalation decision."""
+    fake = _fake_query([_foundational("osborne_rubinstein", 1, 0.5)])
+    monkeypatch.setattr(rl_mod, "query_top_k", fake)
+    out = rl_mod.retrieve_literature("x", k=5)
+    esc = out["result"]["escalation"]
+    # Contract fields present:
+    for key in ("should_escalate", "max_score", "distinct_books", "books",
+                "reason", "score_threshold", "min_distinct_books"):
+        assert key in esc, f"missing {key} in escalation: {esc}"
+    assert esc["score_threshold"] == rl_mod.RETRIEVAL_ESCALATION_SCORE_THRESHOLD
+    assert esc["min_distinct_books"] == rl_mod.RETRIEVAL_ESCALATION_MIN_DISTINCT_BOOKS
+
+
+def test_escalation_fires_when_weak_signal_and_narrow_coverage(monkeypatch):
+    """Compound trigger TRUE: max_score < 0.70 AND distinct_books < 3."""
+    fake = _fake_query([
+        _foundational("osborne_rubinstein", 1, 0.65),
+        _foundational("osborne_rubinstein", 2, 0.62),
+        _foundational("osborne_rubinstein", 3, 0.60),
+        _arxiv("2605.99999", 0.55),
+    ])
+    monkeypatch.setattr(rl_mod, "query_top_k", fake)
+    out = rl_mod.retrieve_literature("x", k=10)
+    esc = out["result"]["escalation"]
+    assert esc["should_escalate"] is True
+    assert esc["max_score"] == 0.65
+    assert esc["distinct_books"] == 1  # only osborne_rubinstein counts
+    assert esc["books"] == ["osborne_rubinstein"]
+
+
+def test_escalation_suppressed_by_strong_signal(monkeypatch):
+    """High max_score alone suppresses escalation regardless of coverage.
+    (Matches paraphrase_probe.py's seed D — textbook phrasing, max
+    score 0.7534, narrow foundational coverage, no escalation.)"""
+    fake = _fake_query([
+        _foundational("osborne_rubinstein", 1, 0.75),
+        _foundational("osborne_rubinstein", 2, 0.70),
+    ])
+    monkeypatch.setattr(rl_mod, "query_top_k", fake)
+    out = rl_mod.retrieve_literature("x", k=10)
+    esc = out["result"]["escalation"]
+    assert esc["should_escalate"] is False
+    assert esc["max_score"] == 0.75
+    assert esc["distinct_books"] == 1
+    assert "no escalation" in esc["reason"]
+
+
+def test_escalation_suppressed_by_diverse_coverage(monkeypatch):
+    """Diverse foundational coverage suppresses escalation even when
+    max_score is weak. (Matches paraphrase_probe.py's seed B —
+    behavioral-econ phrasing, max score 0.6174, 4 foundational books
+    in top-10, no escalation.)"""
+    fake = _fake_query([
+        _foundational("osborne_rubinstein", 1, 0.61),
+        _foundational("camerer_bgt", 71, 0.60),
+        _foundational("hofbauer_sigmund_egpd", 44, 0.60),
+        _foundational("evolutionary-game-theory_compress", 836, 0.59),
+    ])
+    monkeypatch.setattr(rl_mod, "query_top_k", fake)
+    out = rl_mod.retrieve_literature("x", k=10)
+    esc = out["result"]["escalation"]
+    assert esc["should_escalate"] is False
+    assert esc["distinct_books"] == 4
+    assert set(esc["books"]) == {
+        "osborne_rubinstein", "camerer_bgt", "hofbauer_sigmund_egpd",
+        "evolutionary-game-theory_compress",
+    }
+
+
+def test_escalation_arxiv_does_not_count_as_book(monkeypatch):
+    """The foundational-book gate ignores arXiv chunks (the trigger's
+    purpose is to detect narrow FOUNDATIONAL coverage — arXiv hits
+    don't fill that need)."""
+    fake = _fake_query([
+        _foundational("osborne_rubinstein", 1, 0.65),
+        _arxiv("2605.00001", 0.64),
+        _arxiv("2605.00002", 0.63),
+        _arxiv("2605.00003", 0.62),
+        _arxiv("2605.00004", 0.61),
+    ])
+    monkeypatch.setattr(rl_mod, "query_top_k", fake)
+    out = rl_mod.retrieve_literature("x", k=10)
+    esc = out["result"]["escalation"]
+    assert esc["distinct_books"] == 1  # only osborne_rubinstein
+    assert esc["should_escalate"] is True
+
+
+def test_escalation_no_neighbors_does_not_escalate(monkeypatch):
+    """Empty retrieval → no escalation (would just yield more nothing)."""
+    fake = _fake_query([])
+    monkeypatch.setattr(rl_mod, "query_top_k", fake)
+    out = rl_mod.retrieve_literature("x", k=10)
+    esc = out["result"]["escalation"]
+    assert esc["should_escalate"] is False
+    assert esc["max_score"] == 0.0
+    assert esc["distinct_books"] == 0
+    assert "no neighbors" in esc["reason"]
+
+
+def test_escalation_evaluates_only_top_k_for_diversity(monkeypatch):
+    """The diversity gate looks at top-RETRIEVAL_ESCALATION_TOP_K, not
+    all retained neighbors. A 12th-ranked Camerer chunk doesn't count."""
+    # 10 osborne_rubinstein chunks (filling the diversity window), then
+    # camerer_bgt at rank 11 + hofbauer at rank 12 — those don't count.
+    neighbors = [_foundational("osborne_rubinstein", i, 0.69 - i * 0.001)
+                 for i in range(10)]
+    neighbors.append(_foundational("camerer_bgt", 99, 0.55))
+    neighbors.append(_foundational("hofbauer_sigmund_egpd", 99, 0.54))
+    fake = _fake_query(neighbors)
+    monkeypatch.setattr(rl_mod, "query_top_k", fake)
+    out = rl_mod.retrieve_literature("x", k=15)
+    esc = out["result"]["escalation"]
+    assert esc["distinct_books"] == 1  # only osborne_rubinstein in top-10
+    assert esc["should_escalate"] is True
+    # And the lower-ranked books are still in result.neighbors (the trigger
+    # doesn't filter them out, it only evaluates).
+    doc_ids = {n["doc_id"] for n in out["result"]["neighbors"]}
+    assert "camerer_bgt-chunk-99" in doc_ids
+    assert "hofbauer_sigmund_egpd-chunk-99" in doc_ids
+
+
+def test_existing_callers_unaffected_by_escalation_field(monkeypatch):
+    """Backward compat: k and neighbors are still the load-bearing
+    fields; adding escalation didn't break anything."""
+    fake = _fake_query([_foundational("osborne_rubinstein", 1, 0.5)])
+    monkeypatch.setattr(rl_mod, "query_top_k", fake)
+    out = rl_mod.retrieve_literature("x", k=5)
+    assert out["result"]["k"] == 1
+    assert out["result"]["neighbors"][0]["doc_id"] == "osborne_rubinstein-chunk-1"
+    assert "latency_ms" in out["result"]
