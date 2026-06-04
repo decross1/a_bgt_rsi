@@ -32,9 +32,14 @@ echo "[daily-arxiv] $(date -u +%FT%TZ) start"
 # Track A uses the real BGE-M3 model. Strip MOCK_LLM in case it is set in
 # the environment -- it is a Track B/C testing flag and would silently
 # swap in the deterministic stub embedder.
+# --since-days 3 (not 1): a run that fails on arXiv 429 retry-exhaustion
+# leaves no backfill, and the next day's 1-day window would never recover
+# that day's papers. A 3-day window lets up to two consecutive failed days
+# self-heal on the next success; embed_and_store dedupes on arxiv_id so the
+# day-over-day overlap costs nothing.
 env -u MOCK_LLM "$PYTHON" pipeline/arxiv_scraper.py \
   --categories cs.MA,cs.GT,econ.TH \
-  --since-days 1 \
+  --since-days 3 \
   --jitter-seconds 300 \
   --output "$PAPERS_JSONL"
 
