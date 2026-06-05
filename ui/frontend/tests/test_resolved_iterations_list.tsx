@@ -658,3 +658,59 @@ describe("ResolvedIterationsList — poll does not reset the user's view", () =>
     expect(buttons[1]).toHaveAccessibleName(/iter-OLD/);
   });
 });
+
+describe("ResolvedIterationsList — Loop v1 surfacing", () => {
+  const v1Rows: IterationRecord[] = [
+    {
+      iteration_id: "iter-v1-a",
+      started_at: "2026-06-04T10:00:00Z",
+      ended_at: "2026-06-04T10:05:00Z",
+      seed: { topic: "redteam fatal case", source: "human" },
+      novelty: { class: "novel" },
+      critique: { verdict: "survives" },
+      journal_entry_path: "journal/iterations/a.md",
+      meta_review: {
+        conditioning_bullets: ["carried bullet one", "carried bullet two"],
+      },
+      redteam: { verdict: "fatal_flaw", retries_used: 2 },
+      gate_status: "invalid",
+    },
+    {
+      iteration_id: "iter-v1-b",
+      started_at: "2026-06-03T10:00:00Z",
+      ended_at: "2026-06-03T10:05:00Z",
+      seed: { topic: "clean proceed case", source: "human" },
+      novelty: { class: "rediscovery" },
+      critique: { verdict: "restated" },
+      journal_entry_path: "journal/iterations/b.md",
+      redteam: { verdict: "proceed", retries_used: 0 },
+      gate_status: "valid",
+    },
+  ];
+
+  it("renders redteam chips, gate badges and conditioning bullets when present", () => {
+    render(<ResolvedIterationsList initial={v1Rows} />);
+    const chips = screen.getAllByTestId("redteam-chip");
+    expect(chips).toHaveLength(2);
+    // fatal_flaw + retries -> highlighted red; clean proceed/0 -> quiet zinc.
+    const fatal = chips.find((c) => /fatal_flaw/.test(c.textContent ?? ""));
+    expect(fatal!.className).toMatch(/red/);
+    const clean = chips.find((c) => /proceed/.test(c.textContent ?? ""));
+    expect(clean!.className).toMatch(/zinc/);
+
+    // gate_status badge text is unique to the rows (not a filter option).
+    expect(screen.getByText("invalid")).toBeInTheDocument();
+    expect(screen.getByText("valid")).toBeInTheDocument();
+
+    // conditioning block only on the row that carries meta_review bullets.
+    const cond = screen.getByTestId("conditioning-iter-v1-a");
+    expect(within(cond).getByText("carried bullet one")).toBeInTheDocument();
+    expect(screen.queryByTestId("conditioning-iter-v1-b")).toBeNull();
+  });
+
+  it("stays quiet on pre-v1 rows (no chips, no conditioning block)", () => {
+    render(<ResolvedIterationsList initial={makeRows(3)} />);
+    expect(screen.queryByTestId("redteam-chip")).toBeNull();
+    expect(screen.queryByTestId(/^conditioning-/)).toBeNull();
+  });
+});

@@ -123,6 +123,39 @@
         }
       }
     },
+    "redteam": {
+      "description": "Loop v1 Step 2.5. Populated by the orchestrator-driven red-team retry sub-loop (workers/redteam_critic). Optional; absent for pre-v1 rows.",
+      "type": "object",
+      "required": ["verdict"],
+      "properties": {
+        "verdict": {
+          "type": "string",
+          "enum": ["fatal_flaw", "proceed"]
+        },
+        "critique":           {"type": "string"},
+        "suggested_revision": {"type": ["string", "null"]},
+        "confidence":         {"type": "number"},
+        "retries_used":       {"type": "integer", "minimum": 0}
+      }
+    },
+    "meta_review": {
+      "description": "Loop v1 Step 1.5. Conditioning synthesis from prior loop memory (workers/meta_review), injected into the iteration's initial user message. Optional; absent for pre-v1 rows and when meta_review degrades.",
+      "type": "object",
+      "required": ["conditioning_bullets"],
+      "properties": {
+        "conditioning_bullets": {"type": "array", "items": {"type": "string"}},
+        "rows_considered":      {"type": "integer"}
+      }
+    },
+    "gate_status": {
+      "description": "Loop v1 Step 8. Human-gate state for this iteration. Set to 'pending' at finalize; a human verdict written via orchestrator.gate_cli to memory/loop_feedback.jsonl carries the resolution.",
+      "type": "string",
+      "enum": ["pending", "valid", "invalid", "needs_revision"]
+    },
+    "cross_tier_comparison": {
+      "description": "Loop v1 Step 5. Cross-mechanism replication comparison (experiments/replication_driver). Optional; present only when an iteration was bridged from a replication run.",
+      "type": "object"
+    },
     "nara_summary": {
       "type": "string",
       "minLength": 1,

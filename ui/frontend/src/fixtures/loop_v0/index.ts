@@ -129,6 +129,100 @@ export const ITERATIONS_FIXTURE: IterationRecord[] = [
   },
 ];
 
+// Loop v1 rows: carry meta_review.conditioning_bullets, a redteam block,
+// and gate_status. Row 1 is a clean pass (proceed / 0 retries / valid);
+// row 2 exercises the highlight paths (fatal_flaw, retries_used > 0,
+// needs_revision gate) the panel must call out.
+export const ITERATIONS_FIXTURE_V1: IterationRecord[] = [
+  {
+    iteration_id: "iter-2026-06-04-001",
+    started_at: "2026-06-04T09:00:00Z",
+    ended_at: "2026-06-04T09:03:10Z",
+    seed: { topic: "Truthfulness of VCG in combinatorial auctions", source: "human" },
+    novelty: { class: "rediscovery", top_neighbor_id: "vickrey1961" },
+    critique: { verdict: "restated" },
+    meta_review: {
+      conditioning_bullets: [
+        "Prior iter-2026-05-26-001 found TfT dominance is a rediscovery.",
+        "exp004 showed VCG elicits 96.5% truthful bids — lean on that bridge.",
+      ],
+      rows_considered: 3,
+    },
+    redteam: { verdict: "proceed", retries_used: 0, confidence: 0.82 },
+    gate_status: "valid",
+    journal_entry_path: "journal/iterations/004.md",
+    nara_summary:
+      "Nara: VCG truthfulness is foundational; this iteration is a rediscovery.",
+  },
+  {
+    iteration_id: "iter-2026-06-04-002",
+    started_at: "2026-06-04T10:00:00Z",
+    ended_at: "2026-06-04T10:05:42Z",
+    seed: {
+      topic: "Sequential second-price beats VCG on revenue",
+      source: "human",
+    },
+    novelty: { class: "novel", top_neighbor_id: "krishna2009" },
+    critique: { verdict: "falsified" },
+    meta_review: {
+      conditioning_bullets: [
+        "exp004 mean_revenue: VCG 63.7 vs sequential 61.1 — revenue claim is shaky.",
+      ],
+      rows_considered: 4,
+    },
+    redteam: {
+      verdict: "fatal_flaw",
+      critique: "Revenue ranking reversed under the measured efficiencies.",
+      retries_used: 2,
+      confidence: 0.91,
+    },
+    gate_status: "needs_revision",
+    journal_entry_path: "journal/iterations/005.md",
+    nara_summary:
+      "Nara: the revenue-superiority claim does not hold against exp004's numbers.",
+  },
+];
+
+// Active record carrying Loop v1 blocks in flight (meta_review computed at
+// start; redteam mid-loop with a retry; gate pending). Drives the active
+// panel's v1-render test.
+export const ACTIVE_FIXTURE_V1: ActiveIteration = {
+  iteration_id: "iter-2026-06-04-003",
+  topic: "Efficiency loss in first-price combinatorial auctions",
+  started_at: "2026-06-04T11:00:00Z",
+  current_step: "critic_loop_v0",
+  step_started_at: "2026-06-04T11:00:30Z",
+  latest_narration:
+    "Nara: running the red-team critic on the efficiency-loss hypothesis.",
+  orchestrator_backend: "vllm-gemma",
+  orchestrator_model: "gemma-4-26b-a4b",
+  meta_review: {
+    conditioning_bullets: [
+      "exp004 first_price efficiency 99.9% — efficiency-loss premise may be weak.",
+    ],
+    rows_considered: 5,
+  },
+  redteam: { verdict: "fatal_flaw", retries_used: 1, confidence: 0.78 },
+  gate_status: "pending",
+  tool_calls_so_far: [
+    {
+      tool: "hypothesize",
+      started_at: "2026-06-04T11:00:01Z",
+      ended_at: "2026-06-04T11:00:12Z",
+      status: "passed",
+      backend: "vllm-gemma",
+      model: "gemma-4-26b-a4b",
+    },
+    {
+      tool: "critic_loop_v0",
+      started_at: "2026-06-04T11:00:30Z",
+      status: "in_progress",
+      backend: "vllm-gemma",
+      model: "gemma-4-26b-a4b",
+    },
+  ],
+};
+
 export const JOURNAL_FIXTURE_001 = `# Iteration iter-2026-05-26-001
 
 - **Topic**: Tit-for-Tat dominance in repeated PD

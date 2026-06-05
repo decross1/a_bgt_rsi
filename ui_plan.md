@@ -174,6 +174,30 @@ pass. Backend tests run under `ui/.venv-ui` (new, gitignored):
 
 ---
 
+## §Loop-v1 iteration surfacing (active section, 2026-06-05, reconciled with main)
+
+Surfaces the Loop-v1 `iteration_record` blocks in the iteration view. The
+primary session shipped these to `main` (commit `ef02a7e`) while this session
+was live; folded in here per `human/sessions/2026-06-05-ui-reconcile.md`.
+Read-only — `loop_v0.py` passes the new blocks through verbatim, no backend
+change.
+
+| Block | Rendered as |
+| --- | --- |
+| `meta_review.conditioning_bullets` | A "conditioned by" bulleted block under the row's topic — the prior-memory bullets that conditioned the iteration. |
+| `redteam.{verdict, retries_used}` | A chip `redteam <verdict> · <n> retr(y/ies)`, highlighted red when `verdict==fatal_flaw` OR `retries_used>0`, quiet zinc otherwise. |
+| `gate_status` | A badge: `pending` (sky) / `valid` (emerald) / `invalid` (red) / `needs_revision` (amber). |
+
+Folded into `ResolvedIterationsList.tsx` (the Batch-2 paginated/filtered list)
+and `ActiveIterationPanel.tsx`; the optional fields stay quiet on pre-v1 rows.
+
+**Dropped in the reconcile:** main also shipped an exp004 dashboard panel
+(`Exp004Panel`, `GET /api/experiments/exp004`, `compute_exp004_summary`). Per
+the guide it was DROPPED — the generic `/experiments` feature (Page B) subsumes
+it; `exp004_combinatorial_auction` surfaces via `GET /api/experiments/{exp_id}`.
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to

@@ -209,6 +209,22 @@ export interface ActiveIteration {
   // legacy iterations.
   orchestrator_model?: string | null;
   tool_calls_so_far?: LoopV0ToolCall[];
+  // Loop v1 blocks may surface on the active record too: meta_review is
+  // computed at iteration start (Step 1.5), and redteam / gate_status
+  // appear once those steps run. Same shapes as on IterationRecord; all
+  // optional so the panel renders cleanly across pre-v1 and v1 rows.
+  meta_review?: {
+    conditioning_bullets?: string[];
+    rows_considered?: number;
+  } | null;
+  redteam?: {
+    verdict?: "fatal_flaw" | "proceed" | string;
+    critique?: string;
+    suggested_revision?: string | null;
+    confidence?: number;
+    retries_used?: number;
+  } | null;
+  gate_status?: "pending" | "valid" | "invalid" | "needs_revision" | string;
 }
 
 // One row of memory/loop_memory.jsonl. Part-1 hello-world fills the
@@ -231,6 +247,26 @@ export interface IterationRecord {
     rationale?: string;
     contradicting_paper_id?: string | null;
   } | null;
+  // Loop v1 Step 1.5: conditioning synthesis from prior loop memory. The
+  // bullets are injected into this iteration's initial message. Absent on
+  // pre-v1 rows and when meta_review degraded (schema/iteration_record).
+  meta_review?: {
+    conditioning_bullets?: string[];
+    rows_considered?: number;
+  } | null;
+  // Loop v1 Step 2.5: orchestrator-driven red-team retry sub-loop. `verdict`
+  // is "fatal_flaw" or "proceed"; `retries_used` counts revision rounds.
+  // Absent on pre-v1 rows.
+  redteam?: {
+    verdict?: "fatal_flaw" | "proceed" | string;
+    critique?: string;
+    suggested_revision?: string | null;
+    confidence?: number;
+    retries_used?: number;
+  } | null;
+  // Loop v1 Step 8: human-gate state. "pending" at finalize; a human
+  // verdict resolves it. Absent on pre-v1 rows.
+  gate_status?: "pending" | "valid" | "invalid" | "needs_revision" | string;
   journal_entry_path: string;
   nara_summary?: string | null;
   model_version?: string | null;
