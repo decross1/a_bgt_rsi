@@ -31,6 +31,10 @@ field, a new endpoint payload, a new/changed experiment `summary.json` — gets 
 - `experiment_outcome`: `{ experiment_id, metric, value: number|object, trials?, summary?, results_path? }`
 - `cross_tier_comparison`: `{ claim, mechanism_a|rung_1, mechanism_b|rung_2, agreement: bool, diagnostic_note }`
 
+`iteration_record.retrieval.neighbors[].source_layer` values: `"foundational"` (curated textbook/canon),
+`"live_arxiv"` (`papers_recent`), `"live_ml_intern"` (the Slice-2 ML-Intern automated Semantic Scholar
+backfill in `ml_intern_fetched`; appears only when retrieval escalation fired this iteration — D-038).
+
 `loop_feedback` row: `{ iteration_id, verdict: "valid"|"invalid"|"needs_revision", note, gated_at, gated_by }`.
 
 ## 2. Experiment result shapes (NO JSON Schema — this doc is the only reference)
@@ -56,6 +60,10 @@ UI guidance: do not assume a uniform experiment-summary shape. Probe keys; rende
 
 ## Changelog
 
+- **2026-06-05** — Slice-2 ML-Intern: new `source_layer` value `"live_ml_intern"` in
+  `iteration_record.retrieval.neighbors[].source_layer` (schema enum widened to
+  `["foundational","live_arxiv","live_ml_intern"]`). Surfaces only when retrieval escalation
+  fired and the `ml_intern_fetched` collection contributed neighbors to the re-run. See D-038.
 - **2026-06-05** — Loop v1 added optional `iteration_record` blocks `meta_review`, `redteam`,
   `gate_status` (+ `cross_tier_comparison`); new `loop_feedback.jsonl` + `schema/loop_feedback.schema.json`.
 - **2026-06-05** — New experiment summaries: `exp004` (`per_mechanism` with `mean_efficiency`/`mean_revenue`),

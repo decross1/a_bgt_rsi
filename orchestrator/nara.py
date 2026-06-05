@@ -46,6 +46,7 @@ from orchestrator.journal_stub import finalize_iteration_record
 from orchestrator.runtime import PyRuntime, Runtime
 from orchestrator.tool_registry import TOOL_SPECS
 from workers.meta_review import meta_review as _meta_review
+from workers.ml_intern import ml_intern as _ml_intern
 from workers.redteam_critic import redteam_critic as _redteam_critic
 
 
@@ -403,6 +404,11 @@ def run_iteration(
     # attempts at 2.
     redteam_result: dict | None = None
     redteam_retries = 0
+    # Slice-2 ML-Intern (D-038) — orchestrator-driven topic-based S2
+    # backfill. Fires at most ONCE per iteration when retrieve_literature
+    # signals escalation; the guard stops a re-escalating weak topic from
+    # looping.
+    ml_intern_done = False
 
     for depth in range(max_depth):
         # Update active: between calls, Nara is "thinking"
@@ -685,6 +691,53 @@ def run_iteration(
                             iteration_id, "hypothesis", revised
                         )
                         hyp_text = revised["result"].get("text") or ""
+
+                # Slice-2 ML-Intern (D-038) — DETERMINISTIC, orchestrator-
+                # driven topic backfill. After retrieve_literature lands, if
+                # it signaled escalation (weak signal AND narrow foundational
+                # coverage), fetch topic-relevant papers from Semantic Scholar
+                # into `ml_intern_fetched`, then re-run retrieval so the now-
+                # registered collection is queried. NOT a Nara tool / not in
+                # _LOOP_V0_STEPS. At most once per iteration (the guard stops a
+                # still-weak topic from re-escalating into a loop). Any
+                # ml_intern error / 0 papers stored leaves the original weak
+                # retrieval and lets the chain proceed — never crashes.
+                if name == "retrieve_literature" and not ml_intern_done:
+                    esc = (captured.get("retrieval") or {}).get("escalation") or {}
+                    if esc.get("should_escalate"):
+                        ml_intern_done = True
+                        hyp_text = (captured.get("hypothesis") or {}).get("text") or ""
+                        runtime.log_event({
+                            "event_type": "loop_v0_ml_intern",
+                            "phase": "dispatch",
+                            "iteration_id": iteration_id,
+                            "parent_request_id": last_id,
+                        })
+                        mi = _ml_intern(hyp_text, iteration_id,
+                                        parent_request_id=last_id)
+                        mi_result = mi.get("result") or {} if isinstance(mi, dict) else {}
+                        runtime.log_event({
+                            "event_type": "loop_v0_ml_intern",
+                            "phase": "result",
+                            "iteration_id": iteration_id,
+                            "status": mi.get("status") if isinstance(mi, dict) else "unknown",
+                            "papers_stored": mi_result.get("papers_stored", 0),
+                            "parent_request_id": last_id,
+                        })
+                        if (isinstance(mi, dict) and mi.get("status") == "passed"
+                                and mi_result.get("papers_stored", 0) > 0):
+                            re_ret = runtime.dispatch_tool(
+                                "retrieve_literature",
+                                {"hypothesis_text": hyp_text, "k": 10},
+                                parent_request_id=last_id,
+                            )
+                            if (isinstance(re_ret, dict)
+                                    and re_ret.get("status") == "passed"
+                                    and isinstance(re_ret.get("result"), dict)):
+                                captured["retrieval"] = re_ret["result"]
+                                iteration_cache.write_entry(
+                                    iteration_id, "retrieval", re_ret
+                                )
 
             openai_messages.append({
                 "role": "tool",
