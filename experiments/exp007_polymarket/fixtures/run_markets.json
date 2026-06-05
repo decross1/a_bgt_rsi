@@ -1,0 +1,142 @@
+[
+  {
+    "id": "0xr01",
+    "question": "Will the incumbent win the regional election?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.62\", \"0.38\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 0,
+    "category": "Politics",
+    "endDate": "2026-01-10T00:00:00Z"
+  },
+  {
+    "id": "0xr02",
+    "question": "Will the central bank cut rates at the next meeting?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.45\", \"0.55\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 1,
+    "category": "Economics",
+    "endDate": "2026-01-12T00:00:00Z"
+  },
+  {
+    "id": "0xr03",
+    "question": "Will the spacecraft launch before the end of the quarter?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.71\", \"0.29\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 0,
+    "category": "Science",
+    "endDate": "2026-01-15T00:00:00Z"
+  },
+  {
+    "id": "0xr04",
+    "question": "Will the home team win the championship final?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.40\", \"0.60\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 1,
+    "category": "Sports",
+    "endDate": "2026-01-18T00:00:00Z"
+  },
+  {
+    "id": "0xr05",
+    "question": "Will the merger be approved by regulators?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.55\", \"0.45\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 0,
+    "category": "Business",
+    "endDate": "2026-01-20T00:00:00Z"
+  },
+  {
+    "id": "0xr06",
+    "question": "Will the film gross over its production budget opening weekend?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.66\", \"0.34\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 0,
+    "category": "Entertainment",
+    "endDate": "2026-01-22T00:00:00Z"
+  },
+  {
+    "id": "0xr07",
+    "question": "Will the bill pass the legislature this session?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.30\", \"0.70\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 1,
+    "category": "Politics",
+    "endDate": "2026-01-25T00:00:00Z"
+  },
+  {
+    "id": "0xr08",
+    "question": "Will the storm make landfall as a major hurricane?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.48\", \"0.52\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 0,
+    "category": "Weather",
+    "endDate": "2026-01-28T00:00:00Z"
+  },
+  {
+    "id": "0xr09",
+    "question": "Will the unemployment rate rise next month?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.52\", \"0.48\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 1,
+    "category": "Economics",
+    "endDate": "2026-02-01T00:00:00Z"
+  },
+  {
+    "id": "0xr10",
+    "question": "Will the product launch ship on the announced date?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.58\", \"0.42\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 0,
+    "category": "Technology",
+    "endDate": "2026-02-04T00:00:00Z"
+  },
+  {
+    "id": "0xr11",
+    "question": "Will the treaty be ratified by both parties?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.44\", \"0.56\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 1,
+    "category": "Politics",
+    "endDate": "2026-02-07T00:00:00Z"
+  },
+  {
+    "id": "0xr12",
+    "question": "Will the index close above its prior-year high?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.63\", \"0.37\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 0,
+    "category": "Economics",
+    "endDate": "2026-02-10T00:00:00Z"
+  },
+  {
+    "id": "0xopen01",
+    "question": "Will the next quarter beat earnings estimates?",
+    "outcomes": ["Yes", "No"],
+    "bestBid": 0.57,
+    "bestAsk": 0.61,
+    "closed": false,
+    "category": "Business",
+    "endDate": "2026-09-30T00:00:00Z"
+  },
+  {
+    "id": "0xopen02",
+    "question": "Will the satellite reach orbit on the first attempt?",
+    "outcomes": ["Yes", "No"],
+    "bestBid": 0.70,
+    "bestAsk": 0.74,
+    "closed": false,
+    "category": "Science",
+    "endDate": "2026-10-15T00:00:00Z"
+  }
+]

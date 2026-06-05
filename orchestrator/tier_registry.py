@@ -11,10 +11,13 @@ Tiers (in spectrum order, `list_tiers()` order):
 - `synthetic`      — exp001_repeated_pd, exp003_vickrey_rediscovery,
                      exp004_combinatorial_auction, exp005_mechanism_aware
 - `semi_synthetic` — exp006_mechanism_design
-- `applied`        — empty. Polymarket is design-only, CFTC-gated, and
-                     NOT built. It is represented as a known-but-empty
-                     tier rather than omitted, so the spectrum stays
-                     honest.
+- `applied`        — exp007_polymarket (the first applied-tier entry).
+                     Applied = design-only / CFTC-gated PAPER FORECASTING:
+                     read-only public market data + an LLM probability
+                     forecast scored OFFLINE (Brier / Brier Skill Score
+                     vs the market price). No live trading, no orders, no
+                     wallet — Polymarket stays design-only until CFTC
+                     compliance work is done (CLAUDE.md guardrail).
 
 The apparatus is honestly heterogeneous, and the registry surfaces that
 rather than papering over it:
@@ -59,7 +62,11 @@ _TIER_MAP: dict[str, list[str]] = {
     "semi_synthetic": [
         "exp006_mechanism_design",
     ],
-    "applied": [],
+    # applied = design-only / CFTC-gated paper forecasting (read-only data
+    # + LLM probability forecast scored offline). NO live trading.
+    "applied": [
+        "exp007_polymarket",
+    ],
 }
 
 
