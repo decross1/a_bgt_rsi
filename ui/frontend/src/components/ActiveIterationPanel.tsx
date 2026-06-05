@@ -5,7 +5,8 @@
 // agent/prompts/ui_session.md §"Active panel".
 import { useEffect, useState } from "react";
 import { getActiveIteration } from "../api/http";
-import type { ActiveIteration, LoopV0ToolCall } from "../types/schemas";
+import { elapsed, toolDuration, useNow } from "../time";
+import type { ActiveIteration } from "../types/schemas";
 
 const STEP_STRIP: ReadonlyArray<{ id: string; label: string }> = [
   { id: "starting", label: "start" },
@@ -15,33 +16,6 @@ const STEP_STRIP: ReadonlyArray<{ id: string; label: string }> = [
   { id: "query_chroma", label: "retrieve" },
   { id: "journal_writer_stub", label: "journal" },
 ];
-
-function useNow(intervalMs = 1000): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
-
-function elapsed(fromIso: string | null | undefined, nowMs: number): string {
-  if (!fromIso) return "—";
-  const t = Date.parse(fromIso);
-  if (Number.isNaN(t)) return "—";
-  const s = Math.max(0, (nowMs - t) / 1000);
-  if (s < 60) return `${s.toFixed(1)}s`;
-  const m = Math.floor(s / 60);
-  return `${m}m ${(s - m * 60).toFixed(0)}s`;
-}
-
-function toolDuration(call: LoopV0ToolCall, nowMs: number): string {
-  const start = Date.parse(call.started_at);
-  if (Number.isNaN(start)) return "—";
-  const end = call.ended_at ? Date.parse(call.ended_at) : nowMs;
-  const s = Math.max(0, (end - start) / 1000);
-  return `${s.toFixed(1)}s`;
-}
 
 // Compact backend chip — shows "backend · model" when both present, else
 // just whichever is set. Used both for the prominent orchestrator chip in
@@ -148,12 +122,23 @@ export default function ActiveIterationPanel({
   pollMs = 1000,
   compact = false,
 }: Props) {
+  const controlled = initial !== undefined;
   const [data, setData] = useState<ActiveIteration | null>(
-    initial === undefined ? null : initial,
+    controlled ? initial : null,
   );
   const [error, setError] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(initial !== undefined);
+  const [loaded, setLoaded] = useState(controlled);
   const now = useNow(pollMs);
+
+  // Controlled mode: the parent (Activity.tsx) lifts the active-iteration
+  // poll and feeds it down as `initial` so the page can gate its idle
+  // empty-state on it. Keep our state in sync with each new prop value
+  // (useState only reads the initializer once). Self-polling is disabled.
+  useEffect(() => {
+    if (!controlled) return;
+    setData(initial ?? null);
+    setLoaded(true);
+  }, [controlled, initial]);
 
   useEffect(() => {
     if (initial !== undefined) return;

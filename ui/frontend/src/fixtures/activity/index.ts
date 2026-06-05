@@ -68,6 +68,7 @@ export const MONITOR_FIXTURE: MonitorResponse = {
   available: true,
   telemetry_available: true,
   generated_at: "2026-06-05T00:40:00Z",
+  last_activity_at: "2026-05-23T05:16:14.0Z",
   active: [
     {
       task_id: "seq-1",
@@ -75,6 +76,8 @@ export const MONITOR_FIXTURE: MonitorResponse = {
       status: "running",
       worker_pid: 4242,
       timestamp: "2026-05-23T05:15:43.5Z",
+      stage: "worker_invocation",
+      detail: "spawning worker process for 2605.21448 (timeout 60s)",
       cpu_pct: 12.5,
       rss_mb: 660.2,
     },
@@ -86,6 +89,8 @@ export const MONITOR_FIXTURE: MonitorResponse = {
       status: "running",
       worker_pid: 4242,
       timestamp: "2026-05-23T05:15:43.5Z",
+      stage: "worker_invocation",
+      detail: "spawning worker process for 2605.21448 (timeout 60s)",
       cpu_pct: 12.5,
       rss_mb: 660.2,
     },
@@ -95,6 +100,8 @@ export const MONITOR_FIXTURE: MonitorResponse = {
       status: "passed",
       worker_pid: 4343,
       timestamp: "2026-05-23T05:16:14.0Z",
+      stage: "orchestrator_receipt",
+      detail: "worker returned summary (747 chars)",
       cpu_pct: null,
       rss_mb: null,
     },
@@ -124,4 +131,29 @@ export const MONITOR_FIXTURE_UNAVAILABLE: MonitorResponse = {
   recent: [],
   synthetic_inference: MONITOR_FIXTURE.synthetic_inference,
   generated_at: "2026-06-05T00:40:00Z",
+};
+
+// Idle: monitor is available but no workers are in flight. recent[] carries
+// the just-finished task so `last_activity_at` drives the idle empty-state's
+// "last activity … ago".
+export const MONITOR_FIXTURE_IDLE: MonitorResponse = {
+  available: true,
+  telemetry_available: true,
+  generated_at: "2026-06-05T00:40:00Z",
+  last_activity_at: "2026-05-23T05:16:14.0Z",
+  active: [],
+  recent: [
+    {
+      task_id: "seq-2",
+      task_type: "play_pd_match",
+      status: "passed",
+      worker_pid: 4343,
+      timestamp: "2026-05-23T05:16:14.0Z",
+      stage: "orchestrator_receipt",
+      detail: "worker returned summary (747 chars)",
+      cpu_pct: null,
+      rss_mb: null,
+    },
+  ],
+  synthetic_inference: MONITOR_FIXTURE.synthetic_inference,
 };

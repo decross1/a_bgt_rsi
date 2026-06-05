@@ -51,9 +51,26 @@ export default function QwenPanel({ samples }: { samples: TelemetrySample[] }) {
 
   return (
     <div className="rounded border border-sky-900/60 bg-zinc-900/40 p-4">
-      <h2 className="text-xs font-medium uppercase tracking-wide text-sky-400">
-        Qwen3.6-27B · NVFP4-MTP
-      </h2>
+      <div className="flex items-baseline gap-2">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-sky-400">
+          Qwen3.6-27B · NVFP4-MTP
+        </h2>
+        {/* Badge is deliberately binary (emerald up / red down) for parity
+            with VllmPanel, which keys off `vllm` alone. It flattens the
+            three body states into two: in the transient-drop state
+            (anyQwen && !qwen) the header reads hard-red "● down" while the
+            body shows the softer amber "dropped on the latest sample"
+            banner. This is intended — the latest sample genuinely has no
+            data — and the body carries the intermittent-vs-outage nuance. */}
+        <span
+          className={`ml-auto font-mono text-[11px] ${
+            qwen ? "text-emerald-400" : "text-red-400"
+          }`}
+          data-testid="qwen-status"
+        >
+          {qwen ? "● up" : "● down"}
+        </span>
+      </div>
       {!anyQwen ? (
         <div className="mt-3 text-sm text-zinc-500">
           Qwen endpoint unreachable — backend may be down or not enabled.
@@ -67,15 +84,18 @@ export default function QwenPanel({ samples }: { samples: TelemetrySample[] }) {
         </div>
       ) : (
         <div className="mt-2">
+          {/* Core health — always visible: decode tok/s and KV-cache
+              headroom (red over 85%). Mirrors VllmPanel; the workload-hint
+              pill is intentionally absent (see file header). */}
           <Row
-            label="Running requests"
-            value={fmt(qwen.running_requests)}
-            spark={<Sparkline values={series((s) => s.vllm_qwen?.running_requests)} />}
-          />
-          <Row
-            label="Waiting requests"
-            value={fmt(qwen.waiting_requests)}
-            spark={<Sparkline values={series((s) => s.vllm_qwen?.waiting_requests)} />}
+            label="Decode tok/s"
+            value={fmt(qwen.tokens_per_sec_decode, 1)}
+            spark={
+              <Sparkline
+                values={series((s) => s.vllm_qwen?.tokens_per_sec_decode)}
+                color="#34d399"
+              />
+            }
           />
           <Row
             label="KV-cache usage"
@@ -90,48 +110,59 @@ export default function QwenPanel({ samples }: { samples: TelemetrySample[] }) {
               />
             }
           />
-          <Row
-            label="Prefix-cache hit rate"
-            value={
-              qwen.gpu_prefix_cache_hit_rate == null
-                ? "n/a"
-                : `${fmtRatioPct(qwen.gpu_prefix_cache_hit_rate, 1)} %`
-            }
-          />
-          <Row
-            label="MTP acceptance"
-            value={
-              qwen.mtp_acceptance_rate == null
-                ? "MTP off / metric absent"
-                : `${fmtRatioPct(qwen.mtp_acceptance_rate, 1)} %`
-            }
-            // Same heuristic as VllmPanel: ≥50% reads as healthy MTP. The
-            // 20-prompt smoke (2026-05-27) on this build saw 76–83%
-            // acceptance against qwen3_5_mtp, so a healthy panel should
-            // sit well into the green.
-            valueClass={
-              qwen.mtp_acceptance_rate == null
-                ? "text-zinc-600"
-                : qwen.mtp_acceptance_rate >= 0.5
-                  ? "text-emerald-400"
-                  : "text-amber-400"
-            }
-            spark={
-              qwen.mtp_acceptance_rate != null ? (
-                <Sparkline values={series((s) => s.vllm_qwen?.mtp_acceptance_rate)} />
-              ) : undefined
-            }
-          />
-          <Row
-            label="Decode tok/s"
-            value={fmt(qwen.tokens_per_sec_decode, 1)}
-            spark={
-              <Sparkline
-                values={series((s) => s.vllm_qwen?.tokens_per_sec_decode)}
-                color="#34d399"
+
+          {/* Operator-grade internals: queue depth, prefix-cache, MTP
+              acceptance. Kept but collapsed so the glance stays clean. */}
+          <details className="mt-2 group" data-testid="qwen-details">
+            <summary className="cursor-pointer list-none text-[11px] uppercase tracking-wide text-zinc-500 hover:text-zinc-300">
+              <span className="group-open:hidden">show internals ▸</span>
+              <span className="hidden group-open:inline">hide internals ▾</span>
+            </summary>
+            <div className="mt-1">
+              <Row
+                label="Running requests"
+                value={fmt(qwen.running_requests)}
+                spark={<Sparkline values={series((s) => s.vllm_qwen?.running_requests)} />}
               />
-            }
-          />
+              <Row
+                label="Waiting requests"
+                value={fmt(qwen.waiting_requests)}
+                spark={<Sparkline values={series((s) => s.vllm_qwen?.waiting_requests)} />}
+              />
+              <Row
+                label="Prefix-cache hit rate"
+                value={
+                  qwen.gpu_prefix_cache_hit_rate == null
+                    ? "n/a"
+                    : `${fmtRatioPct(qwen.gpu_prefix_cache_hit_rate, 1)} %`
+                }
+              />
+              <Row
+                label="MTP acceptance"
+                value={
+                  qwen.mtp_acceptance_rate == null
+                    ? "MTP off / metric absent"
+                    : `${fmtRatioPct(qwen.mtp_acceptance_rate, 1)} %`
+                }
+                // Same heuristic as VllmPanel: ≥50% reads as healthy MTP. The
+                // 20-prompt smoke (2026-05-27) on this build saw 76–83%
+                // acceptance against qwen3_5_mtp, so a healthy panel should
+                // sit well into the green.
+                valueClass={
+                  qwen.mtp_acceptance_rate == null
+                    ? "text-zinc-600"
+                    : qwen.mtp_acceptance_rate >= 0.5
+                      ? "text-emerald-400"
+                      : "text-amber-400"
+                }
+                spark={
+                  qwen.mtp_acceptance_rate != null ? (
+                    <Sparkline values={series((s) => s.vllm_qwen?.mtp_acceptance_rate)} />
+                  ) : undefined
+                }
+              />
+            </div>
+          </details>
         </div>
       )}
     </div>
