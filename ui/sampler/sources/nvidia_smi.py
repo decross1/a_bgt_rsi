@@ -15,6 +15,10 @@ import subprocess
 
 _QUERY = "utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw"
 _FIELDS = ["util_pct", "mem_used_mb", "mem_total_mb", "temp_c", "power_w"]
+# GB10 uses unified memory, so nvidia-smi reports `[N/A]` for these two BY
+# DESIGN. They null silently and must NOT raise a read_error (which the
+# dashboard's HealthVerdict would otherwise read as a permanent DEGRADED).
+_GB10_UNIFIED_MEM = {"mem_used_mb", "mem_total_mb"}
 
 
 def read_gpu():
@@ -55,6 +59,10 @@ def read_gpu():
 
     if len(unavailable) == len(_FIELDS):
         return None, f"nvidia-smi: all fields unreadable ({fields})"
-    error = (f"nvidia-smi fields unavailable: {', '.join(unavailable)}"
-             if unavailable else None)
+    # Only fields that should ALWAYS be present (util / temp / power) count as a
+    # genuine read error. The GB10 unified-memory `[N/A]` is expected and must
+    # not degrade health — it just nulls in the gpu object.
+    unexpected = [k for k in unavailable if k not in _GB10_UNIFIED_MEM]
+    error = (f"nvidia-smi fields unavailable: {', '.join(unexpected)}"
+             if unexpected else None)
     return gpu, error
