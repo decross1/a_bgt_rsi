@@ -1,0 +1,14 @@
+{
+  "verdict": "NO",
+  "n_trials": 40,
+  "n_errors": 0,
+  "designer_mean_efficiency": 0.710182783334816,
+  "feasibility_rate": 0.525,
+  "matches_vcg_rate": 0.375,
+  "n_feasible": 21,
+  "n_matches_vcg": 15,
+  "parse_failures": 13,
+  "efficiency_threshold": 0.9,
+  "feasibility_threshold": 0.9,
+  "feasibility_floor": 0.5
+}
