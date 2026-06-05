@@ -52,6 +52,16 @@ MAX_GRAPH_NODES = 250
 # monitor's `active` partition and the graph node coloring.
 ACTIVE_STATUSES = {"started", "dispatched", "running"}
 
+# "Live calls": EVERY run mode (orchestrator dispatch, the LOOP_V0 loop, the
+# autoresearch driver, a raw experiment runner like exp005/run.py) funnels its
+# LLM calls through the wrapper into the call log. A call within this many
+# seconds of now means the apparatus is actively working RIGHT NOW even when no
+# orchestrator task and no loop iteration is registered — which is exactly the
+# blind spot that left /activity empty during a live exp run. We read the tail
+# of the call log(s) and surface the recent-call rate + caller_tag + model.
+LIVE_CALLS_WINDOW_S = 15
+_CALL_LOG_PATTERNS = ("calls.jsonl", "day*.jsonl", "exp*.jsonl")
+
 # Synthetic per-worker inference internals. These fields have no on-disk
 # source today; they are surfaced under a clearly-named key with
 # `synthetic: True` so the frontend can render the "needs
@@ -145,6 +155,89 @@ def _latest_processes(telemetry_path: Path) -> dict[int, dict]:
                 }
         return out
     return {}
+
+
+def _tail_records(path: Path, window_bytes: int = 256 * 1024) -> list[dict]:
+    """Parse JSON objects from the last `window_bytes` of a JSONL file.
+
+    A bounded tail read so it stays cheap as calls.jsonl grows to many MB.
+    Drops the (likely partial) first line of a windowed read and skips
+    malformed lines.
+    """
+    if not path.exists():
+        return []
+    try:
+        size = path.stat().st_size
+        window = min(size, window_bytes)
+        with open(path, "rb") as fh:
+            fh.seek(size - window)
+            data = fh.read()
+    except OSError:
+        return []
+    lines = data.decode("utf-8", errors="replace").splitlines()
+    if window < size and lines:
+        lines = lines[1:]
+    out: list[dict] = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
+
+
+def _live_calls(logs_dir: Path, window_s: int, now: datetime) -> dict:
+    """Recent wrapper-call activity across the call log(s).
+
+    Reads the tail of calls.jsonl + day*/exp* and keeps records whose
+    `timestamp` falls within the last `window_s` seconds of `now`. Returns
+    `{active, count, window_s, calls_per_s, last_call_at, caller_tags, model}`.
+    `active` is True iff at least one call landed inside the window — the
+    run-mode-agnostic "something is happening now" signal. Old logs (May
+    timestamps) fall outside the window and contribute nothing.
+    """
+    cutoff = now.timestamp() - window_s
+    files: list[Path] = []
+    for pattern in _CALL_LOG_PATTERNS:
+        files.extend(sorted(logs_dir.glob(pattern)))
+    count = 0
+    last_call_at: str | None = None
+    last_instant: datetime | None = None
+    tags: dict[str, int] = {}
+    models: dict[str, int] = {}
+    for path in files:
+        for rec in _tail_records(path):
+            ts = rec.get("timestamp")
+            if not isinstance(ts, str):
+                continue
+            dt = _parse_ts(ts)
+            if dt.timestamp() < cutoff:
+                continue
+            count += 1
+            if last_instant is None or dt > last_instant:
+                last_instant, last_call_at = dt, ts
+            tag = rec.get("caller_tag")
+            if isinstance(tag, str) and tag:
+                tags[tag] = tags.get(tag, 0) + 1
+            model = rec.get("model")
+            if isinstance(model, str) and model:
+                models[model] = models.get(model, 0) + 1
+    top_tags = sorted(tags.items(), key=lambda kv: kv[1], reverse=True)[:3]
+    top_model = max(models.items(), key=lambda kv: kv[1])[0] if models else None
+    return {
+        "active": count > 0,
+        "count": count,
+        "window_s": window_s,
+        "calls_per_s": round(count / window_s, 2) if window_s > 0 else None,
+        "last_call_at": last_call_at,
+        "caller_tags": [{"tag": t, "count": c} for t, c in top_tags],
+        "model": top_model,
+    }
 
 
 def _flatten_tree(node: dict, nodes: list, edges: list, parent_id: str | None,
@@ -262,11 +355,16 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
 
     @router.get("/monitor")
     def monitor(limit: int = 25):
+        # Run-mode-agnostic live signal — computed first so it surfaces even
+        # when the orchestrator log is absent/stale (the exp-run blind spot).
+        live_calls = _live_calls(logs_dir, LIVE_CALLS_WINDOW_S,
+                                 datetime.now(timezone.utc))
         orch_path = logs_dir / ORCHESTRATOR_FILE
         if not orch_path.exists():
             return {"available": False,
                     "reason": f"{ORCHESTRATOR_FILE} absent",
                     "active": [], "recent": [],
+                    "live_calls": live_calls,
                     "synthetic_inference": SYNTHETIC_INFERENCE,
                     "generated_at": _utcnow_iso()}
         capped = min(max(limit, 1), 200)
@@ -315,6 +413,7 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
                 "active": active,
                 "recent": enriched,
                 "last_activity_at": last_activity_at,
+                "live_calls": live_calls,
                 "synthetic_inference": SYNTHETIC_INFERENCE,
                 "generated_at": _utcnow_iso()}
 
