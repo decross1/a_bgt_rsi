@@ -1,0 +1,26 @@
+{
+  "per_mechanism": [
+    {
+      "mechanism": "first_price",
+      "truthful_fraction": 0.9316666666666666,
+      "mean_signed_residual": -1.5647223196661713,
+      "parse_failure_rate": 0.0,
+      "verdict": "YES"
+    },
+    {
+      "mechanism": "sequential_second_price",
+      "truthful_fraction": 0.9533333333333334,
+      "mean_signed_residual": -1.3116056529995046,
+      "parse_failure_rate": 0.0,
+      "verdict": "YES"
+    },
+    {
+      "mechanism": "vcg",
+      "truthful_fraction": 0.8083333333333333,
+      "mean_signed_residual": -4.901655652999504,
+      "parse_failure_rate": 0.0,
+      "verdict": "YES"
+    }
+  ],
+  "n_trials": 50
+}

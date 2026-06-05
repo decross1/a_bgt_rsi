@@ -1,0 +1,36 @@
+[
+  {
+    "id": "0xresolved_yes",
+    "question": "Will it rain in Seattle on a given winter day?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.995\", \"0.005\"]",
+    "closed": true,
+    "resolvedOutcomeIndex": 0,
+    "category": "Weather",
+    "endDate": "2026-01-15T00:00:00Z"
+  },
+  {
+    "id": "0xresolved_no",
+    "question": "Will a coin land heads ten times in a row?",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.004\", \"0.996\"]",
+    "closed": true,
+    "category": "Misc",
+    "endDate": "2026-02-01T00:00:00Z"
+  },
+  {
+    "id": "0xopen_midpoint",
+    "question": "Will the index close higher this quarter?",
+    "outcomes": ["Yes", "No"],
+    "bestBid": 0.60,
+    "bestAsk": 0.64,
+    "closed": false,
+    "category": "Economics",
+    "endDate": "2026-09-30T00:00:00Z"
+  },
+  {
+    "id": "0xsparse",
+    "question": "A market with almost no fields.",
+    "closed": false
+  }
+]

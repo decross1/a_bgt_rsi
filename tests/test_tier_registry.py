@@ -25,9 +25,22 @@ def test_exp006_in_semi_synthetic():
     assert entry in tr.experiments_in_tier("semi_synthetic")
 
 
-def test_applied_tier_is_empty():
-    assert tr.experiments_in_tier("applied") == []
-    assert tr.tiers_status()["applied"] == 0
+def test_applied_tier_has_polymarket():
+    # exp007_polymarket is the first applied-tier entry: design-only,
+    # CFTC-gated PAPER forecasting (no live trading).
+    entries = tr.experiments_in_tier("applied")
+    ids = [e["experiment_id"] for e in entries]
+    assert ids == ["exp007_polymarket"]
+    assert tr.tiers_status()["applied"] == 1
+    e7 = tr.get_experiment("exp007_polymarket")
+    assert e7["tier"] == "applied"
+    assert e7["has_run"] is True
+    assert e7["has_analyze"] is True
+    assert e7["has_loop_bridge"] is True
+    # No real paper-forecasting run yet, so results/ holds only .gitkeep ->
+    # results_summary is None (the honest state, matching exp005/exp006).
+    # A real run (analyze.py writes summary.json) flips this to the json path.
+    assert e7["results_summary"] is None
 
 
 def test_get_unknown_experiment_raises_keyerror():
@@ -61,4 +74,4 @@ def test_results_summary_resolution():
 
 
 def test_tiers_status_counts():
-    assert tr.tiers_status() == {"synthetic": 4, "semi_synthetic": 1, "applied": 0}
+    assert tr.tiers_status() == {"synthetic": 4, "semi_synthetic": 1, "applied": 1}
