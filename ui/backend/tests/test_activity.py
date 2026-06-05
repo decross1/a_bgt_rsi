@@ -3,6 +3,7 @@ each test builds its own FastAPI app with register(app, <tmp paths>)."""
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -68,6 +69,56 @@ def _client(logs_dir: Path, telemetry: Path) -> TestClient:
     app = FastAPI()
     register(app, logs_dir=logs_dir, telemetry_file=telemetry)
     return TestClient(app)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+# ─── live calls (run-mode-agnostic "active now" signal) ───────────────
+
+def test_monitor_live_calls_active_on_recent_wrapper_calls(tmp_path):
+    # The exp-run blind spot: orchestrator rows are stale (ORCH_ROWS, 2026-05)
+    # but a run is actively making wrapper calls (calls.jsonl, NOW). live_calls
+    # must light up with the caller_tag + model even though active[] is empty.
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    (logs / "calls.jsonl").write_text(
+        json.dumps({"timestamp": _now_iso(), "caller_tag": "nara.run_iteration",
+                    "model": "fake-model", "request_id": "live-1"}) + "\n",
+        encoding="utf-8")
+    lc = _client(logs, tmp_path / "telemetry.jsonl").get(
+        "/api/activity/monitor").json()["live_calls"]
+    assert lc["active"] is True
+    assert lc["count"] >= 1
+    assert lc["model"] == "fake-model"
+    assert lc["caller_tags"][0]["tag"] == "nara.run_iteration"
+    assert lc["last_call_at"] is not None
+
+
+def test_monitor_live_calls_inactive_when_calls_are_old(tmp_path):
+    # Only the stale 2026-05 day_test call -> outside the window -> not live.
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    lc = _client(logs, tmp_path / "telemetry.jsonl").get(
+        "/api/activity/monitor").json()["live_calls"]
+    assert lc["active"] is False
+    assert lc["count"] == 0
+
+
+def test_monitor_live_calls_present_on_unavailable_path(tmp_path):
+    # orchestrator.jsonl absent -> available False, but a run can still be
+    # making calls — live_calls is computed regardless so the hero can light up.
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "calls.jsonl").write_text(
+        json.dumps({"timestamp": _now_iso(), "caller_tag": "nara.run_iteration",
+                    "model": "fake-model", "request_id": "live-1"}) + "\n",
+        encoding="utf-8")
+    payload = _client(logs, tmp_path / "telemetry.jsonl").get(
+        "/api/activity/monitor").json()
+    assert payload["available"] is False
+    assert payload["live_calls"]["active"] is True
 
 
 # ─── graph ────────────────────────────────────────────────────────────

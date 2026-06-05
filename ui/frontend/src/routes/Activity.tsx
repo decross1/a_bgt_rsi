@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import ActiveIterationPanel from "../components/ActiveIterationPanel";
 import ActiveWorkersPanel from "../components/ActiveWorkersPanel";
 import ActivityGraph from "../components/ActivityGraph";
+import LiveCallsBanner from "../components/LiveCallsBanner";
 import SyntheticInferencePanel from "../components/SyntheticInferencePanel";
 import { getActivityGraph, getActivityMonitor } from "../api/activity";
 import { getActiveIteration } from "../api/http";
@@ -125,11 +126,17 @@ export default function Activity({
   // idle empty-state may speak as if it were idle. ActiveWorkersPanel owns the
   // sole "unavailable" notice on that path.
   const monitorAvailable = monitor != null && monitor.available !== false;
-  // Idle requires BOTH sides quiescent: no workers in flight AND no active
-  // orchestrator iteration. A running iteration with zero workers in flight
-  // (between dispatches / nara_thinking / query_chroma) is NOT idle.
+  // Recent wrapper-call activity — true even when this run bypasses both the
+  // orchestrator and the loop (e.g. a raw experiment driver still calling the
+  // wrapper). Counts as live for the idle gate and the status strip.
+  const liveCallsActive = monitor?.live_calls?.active ?? false;
+  // Idle requires ALL sides quiescent: no workers in flight AND no active
+  // orchestrator iteration AND no recent wrapper calls. A running iteration
+  // with zero workers, or a bare experiment driver still making calls, is
+  // live, not idle.
   const iterationIdle = iteration == null;
-  const pageIdle = monitorAvailable && activeCount === 0 && iterationIdle;
+  const pageIdle =
+    monitorAvailable && activeCount === 0 && iterationIdle && !liveCallsActive;
 
   return (
     <div className="mx-auto w-full max-w-[1800px] px-6 py-5">
@@ -145,7 +152,7 @@ export default function Activity({
         <div
           data-testid="activity-status"
           className={`mt-3 rounded border px-3 py-2 text-xs ${
-            activeCount > 0
+            activeCount > 0 || liveCallsActive
               ? "border-emerald-800/50 bg-emerald-950/20 text-emerald-300"
               : "border-zinc-800 bg-zinc-900/40 text-zinc-400"
           }`}
@@ -156,6 +163,12 @@ export default function Activity({
                 {activeCount} task{activeCount === 1 ? "" : "s"} active now.
               </span>{" "}
               Live worker + iteration state below.
+            </>
+          ) : liveCallsActive ? (
+            <>
+              <span className="font-medium text-emerald-300">Live</span> — the
+              apparatus is making wrapper calls (no orchestrator task or loop
+              iteration registered). See the live-calls banner below.
             </>
           ) : (
             <>
@@ -179,6 +192,9 @@ export default function Activity({
           Active now
         </h2>
         <ActiveIterationPanel initial={iteration} />
+        {monitor?.live_calls?.active && (
+          <LiveCallsBanner data={monitor.live_calls} />
+        )}
         {monitor ? (
           <ActiveWorkersPanel data={monitor} />
         ) : (

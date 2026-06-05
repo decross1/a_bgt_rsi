@@ -9,11 +9,13 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import ActiveWorkersPanel from "../src/components/ActiveWorkersPanel";
+import LiveCallsBanner from "../src/components/LiveCallsBanner";
 import SyntheticInferencePanel from "../src/components/SyntheticInferencePanel";
 import Activity from "../src/routes/Activity";
 import {
   MONITOR_FIXTURE,
   MONITOR_FIXTURE_IDLE,
+  MONITOR_FIXTURE_LIVE_CALLS,
   MONITOR_FIXTURE_UNAVAILABLE,
   GRAPH_FIXTURE,
 } from "../src/fixtures/activity";
@@ -74,6 +76,35 @@ describe("SyntheticInferencePanel (subordinate)", () => {
     // The synthetic numbers live inside the flagged block.
     expect(block).toHaveTextContent("312/512");
     expect(screen.getByTestId("synthetic-worker-seq-1")).toBeInTheDocument();
+  });
+});
+
+describe("LiveCallsBanner", () => {
+  it("renders recent wrapper-call activity when active", () => {
+    render(<LiveCallsBanner data={MONITOR_FIXTURE_LIVE_CALLS.live_calls!} />);
+    const banner = screen.getByTestId("live-calls-banner");
+    expect(banner).toHaveTextContent(/live/i);
+    expect(banner).toHaveTextContent("nara.run_iteration");
+    expect(banner).toHaveTextContent("fake-model");
+  });
+
+  it("renders nothing when not active", () => {
+    const { container } = render(
+      <LiveCallsBanner
+        data={{
+          active: false,
+          count: 0,
+          window_s: 15,
+          calls_per_s: 0,
+          last_call_at: null,
+          caller_tags: [],
+          model: null,
+        }}
+      />,
+    );
+    expect(
+      container.querySelector('[data-testid="live-calls-banner"]'),
+    ).toBeNull();
   });
 });
 
@@ -141,6 +172,17 @@ describe("Activity layout (workers HERO, graph demoted)", () => {
     // No status strip and no idle empty-state on the unavailable path.
     expect(screen.queryByTestId("activity-status")).toBeNull();
     expect(screen.queryByTestId("activity-idle-empty")).toBeNull();
+  });
+
+  it("lights the hero via the live-calls banner when calls flow with no workers or iteration", () => {
+    // The exp-run blind spot: no orchestrator task, no loop iteration, but the
+    // wrapper call log shows recent activity. The page must NOT read idle.
+    renderActivity(MONITOR_FIXTURE_LIVE_CALLS, null);
+    expect(screen.getByTestId("live-calls-banner")).toHaveTextContent(
+      "nara.run_iteration",
+    );
+    expect(screen.queryByTestId("activity-idle-empty")).toBeNull();
+    expect(screen.getByTestId("activity-status")).toHaveTextContent(/live/i);
   });
 
   it("renders the synthetic block subordinate (a disclosure)", () => {

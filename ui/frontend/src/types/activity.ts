@@ -76,6 +76,25 @@ export interface SyntheticInference {
   workers: SyntheticInferenceWorker[];
 }
 
+// Recent wrapper-call activity (from the call-log tail). `active` is the
+// run-mode-agnostic "something is happening right now" signal — true when any
+// LLM call landed within `window_s` seconds, even if no orchestrator task or
+// loop iteration is registered (e.g. a raw experiment driver like exp005/run.py).
+export interface LiveCallTag {
+  tag: string;
+  count: number;
+}
+
+export interface LiveCalls {
+  active: boolean;
+  count: number;
+  window_s: number;
+  calls_per_s: number | null;
+  last_call_at: string | null;
+  caller_tags: LiveCallTag[];
+  model: string | null;
+}
+
 export interface MonitorResponse {
   available: boolean;
   reason?: string;
@@ -85,6 +104,9 @@ export interface MonitorResponse {
   // Most recent timestamp across recent tasks — drives the idle empty-state's
   // "last activity … ago". Absent on the unavailable degrade path.
   last_activity_at?: string | null;
+  // Recent wrapper-call activity; lights the hero even when active[] is empty
+  // and no loop iteration is in flight. Absent on older payloads.
+  live_calls?: LiveCalls;
   synthetic_inference: SyntheticInference;
   generated_at: string;
 }

@@ -133,6 +133,29 @@ export const MONITOR_FIXTURE_UNAVAILABLE: MonitorResponse = {
   generated_at: "2026-06-05T00:40:00Z",
 };
 
+// Live calls: monitor available, NO active workers and (with initialIteration
+// null) no loop iteration — but the call log shows recent wrapper activity
+// (e.g. a raw experiment driver calling nara.run_iteration directly). The hero
+// must light up via the live-calls banner rather than read "idle".
+export const MONITOR_FIXTURE_LIVE_CALLS: MonitorResponse = {
+  available: true,
+  telemetry_available: true,
+  generated_at: "2026-06-05T22:57:10Z",
+  last_activity_at: "2026-05-23T05:16:14.0Z",
+  active: [],
+  recent: [],
+  live_calls: {
+    active: true,
+    count: 53,
+    window_s: 15,
+    calls_per_s: 3.53,
+    last_call_at: "2026-06-05T22:57:06.4Z",
+    caller_tags: [{ tag: "nara.run_iteration", count: 53 }],
+    model: "fake-model",
+  },
+  synthetic_inference: MONITOR_FIXTURE.synthetic_inference,
+};
+
 // Idle: monitor is available but no workers are in flight. recent[] carries
 // the just-finished task so `last_activity_at` drives the idle empty-state's
 // "last activity … ago".
