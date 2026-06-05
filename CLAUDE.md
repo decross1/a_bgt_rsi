@@ -51,7 +51,11 @@ concurrency-safe — speed without losing the apparatus's discipline.
    `orchestrator/nara.py`, `orchestrator/tool_registry.py`,
    `schema/iteration_record.schema.json` — is edited by a **single
    serial integrator** only. No build agent touches the spine,
-   `run_state/`, or `ui/`.
+   `run_state/`, or `ui/`. **When a UI session is live, NO workflow agent
+   writes `ui/` — not even a worktree-isolated one (it races the session
+   and forces a manual `ui/` reconcile, as happened 2026-06-05). Check
+   `git worktree list` for an active `ui-session` first; if present, hand
+   the UI session a spec instead of writing `ui/`.**
 3. **Spawn-contract per build agent** (the `spawn-contract` skill):
    exact files it may create, done-condition (its test green under
    `MOCK_LLM`), report format. Closes the "wrote to main checkout /
