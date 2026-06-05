@@ -120,6 +120,60 @@ already used (headings, lists, **bold**, `inline code`, fenced code).
 
 ---
 
+## §ACTIVITY + EXPERIMENTS — Batch 1 of the concurrent-HITL rhythm (active, 2026-06-05)
+
+Built under the batch -> fan-out -> gate operating rhythm
+(`.claude/plans/i-want-to-start-concurrent-flurry.md`): the human names N
+page concepts, one builder agent per page runs concurrently in a single
+phase-bounded Workflow, the primary UI session applies the small shared-file
+edits (`App.tsx` routes/nav, `app.py` router registration), and the human
+reviews the whole batch at once. This section is the data contract + the
+mock/real boundary for the first two pages.
+
+### Page A — Live Activity Graph + Agent Monitor (route `/activity`)
+
+Files: `ui/backend/activity.py` (+ `tests/test_activity.py`); frontend
+`routes/Activity.tsx`, `components/ActivityGraph.tsx` (@xyflow/react v12),
+`components/AgentMonitorPanel.tsx`, `api/activity.ts`, `types/activity.ts`,
+`fixtures/activity/`.
+
+| Endpoint | Behavior |
+| --- | --- |
+| `GET /api/activity/graph?limit=N` | `{available, nodes, edges, generated_at}`. Built from `logs/orchestrator.jsonl` + `day*`/`exp*` via `chain.py` `recent_tasks`+`build_chain` over the SAME `LogStore(logs_dir)` the inspector uses, so each `node.request_id` deep-links to `/chain/req/:requestId`. Edges appear only where the call log carries `parent_request_id` chains; in a worktree without the linked `calls.jsonl` the graph is dispatch-node-only — an honest data-availability artifact, not a bug. |
+| `GET /api/activity/monitor` | `{available, active, recent, synthetic_inference}`. `active`/`recent` are real (`recent_tasks`); worker `cpu_pct`/`rss_mb` cross-referenced to `ui/logs/telemetry.jsonl` `processes[]`. The per-worker INFERENCE INTERNALS (decode step / tokens / ETA) have NO on-disk source — returned under `synthetic_inference {synthetic:true, needs:"worker_activity.jsonl (primary-session)"}` and rendered behind an amber synthetic marker. Never presented as measured (rule 4/8). |
+
+Both degrade to `{available:false}` when `logs/orchestrator.jsonl` is absent.
+
+### Page B — Interactive Experiment Digestion (routes `/experiments`, `/experiments/:expId`)
+
+Files: `ui/backend/experiments.py` (+ `tests/test_experiments.py`); frontend
+`routes/Experiments.tsx` + `ExperimentDetail.tsx`, `components/MiniMarkdown.tsx`,
+`api/experiments.ts`, `types/experiments.ts`, `fixtures/experiments/`.
+
+| Endpoint | Behavior |
+| --- | --- |
+| `GET /api/experiments` | Index by scanning `experiments/*/results/`. Handles heterogeneous shapes: exp001 (`summary.json` + `per_round.jsonl` + CSVs), exp003 (`summary.md` + `trials.jsonl`), exp002 (no `results/` -> "no results yet"). |
+| `GET /api/experiments/{expId}` | Parses what exists; `per_round` aggregated to per-opponent series (capped 100k rows, `truncated` flag); `trials` head-sampled (50). `round_inspector_linkage:false` for exp001 (per_round rows carry no `task_id`), surfaced as an explicit "linkage not available" note — not fabricated. 404 missing experiment, 400 path-traversal (`_safe_exp_id` allowlist). |
+
+### Boundary handed to the primary session
+
+The one synthetic surface across both pages is Page A's per-worker inference
+internals. To make it real, the apparatus needs a per-worker activity log
+(proposed `logs/worker_activity.jsonl`: per in-flight `task_id` -> current
+decode step / tokens generated / target / ETA / tok-per-s). `activity.py`'s
+`SYNTHETIC_INFERENCE` constant then becomes a reader of that file and the
+frontend marker drops automatically once `synthetic:false`.
+
+### Tests + env
+
+`ui/backend`: +16 (test_activity 8, test_experiments 8) -> 79 backend pass.
+`ui/frontend`: +18 (graph 5, monitor 4, exp index/detail 9) -> 46 frontend
+pass. Backend tests run under `ui/.venv-ui` (new, gitignored):
+`pip install -r ui/requirements-ui.txt`. `tsc --noEmit && vite build` clean
+(`@xyflow/react ^12.11.0` added to frontend `package.json`).
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to
@@ -158,6 +212,16 @@ it. Treat what follows as a record of the codebase you'll find under
 ---
 
 ## 0. Revision log
+
+**r12 (2026-06-05)** — Batch 1 of the concurrent-HITL build rhythm:
+`/activity` (live graph + agent monitor) and `/experiments` (digestion)
+landed in one parallel fan-out (two builder agents, each owning its own
+files; primary session applied the shared `App.tsx` / `app.py` edits). See
+§ACTIVITY + EXPERIMENTS for the data contracts and the mock/real boundary.
++16 backend / +18 frontend tests; 79 + 46 pass; `tsc && vite build` clean.
+One synthetic surface (per-worker inference internals) handed to the primary
+session as a `logs/worker_activity.jsonl` instrumentation ask. New frontend
+dep `@xyflow/react ^12.11.0`; new gitignored `ui/.venv-ui` for backend tests.
 
 **r11 (2026-05-24)** — UI v1 ship-complete for the Day-38 Week-2
 unlock gate. Closes the §11.3 frontend gap left open by r9 (the

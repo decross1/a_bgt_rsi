@@ -13,8 +13,10 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from .activity import register as register_activity
 from .baseline import compute_baseline
 from .chain import LogStore, build_chain_by_request_id
+from .experiments import register as register_experiments
 from .loop_v0 import register as register_loop_v0
 from .tailer import JsonlTailer
 from .workload import compute_workload_hint
@@ -191,6 +193,9 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         finally:
             pump_task.cancel()
             drain_task.cancel()
+
+    register_activity(app, logs_dir=logs_dir, telemetry_file=telemetry_file)
+    register_experiments(app)
 
     register_loop_v0(
         app,
