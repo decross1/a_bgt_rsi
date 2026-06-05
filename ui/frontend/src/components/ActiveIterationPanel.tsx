@@ -75,6 +75,36 @@ function BackendChip({
   );
 }
 
+// Loop v1 gate-status badge tones (Step 8).
+const GATE_TONE: Record<string, string> = {
+  pending: "bg-sky-950 text-sky-300",
+  valid: "bg-emerald-950 text-emerald-400",
+  invalid: "bg-red-950 text-red-400",
+  needs_revision: "bg-amber-950 text-amber-400",
+};
+
+// Loop v1 Step 2.5 red-team chip. Highlighted red when fatal_flaw or any
+// retries were spent; quiet zinc on a clean proceed. Null when absent.
+function RedteamChip({ redteam }: { redteam: ActiveIteration["redteam"] }) {
+  if (!redteam || (redteam.verdict == null && redteam.retries_used == null)) {
+    return null;
+  }
+  const retries = redteam.retries_used ?? 0;
+  const highlight = redteam.verdict === "fatal_flaw" || retries > 0;
+  const tone = highlight ? "bg-red-950 text-red-400" : "bg-zinc-800 text-zinc-400";
+  const label = `redteam ${redteam.verdict ?? "?"}${
+    retries > 0 ? ` · ${retries} retr${retries === 1 ? "y" : "ies"}` : ""
+  }`;
+  return (
+    <span
+      data-testid="active-redteam-chip"
+      className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${tone}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 function StepStrip({ current }: { current: string }) {
   return (
     <ol className="mt-2 flex flex-wrap gap-1 text-[10px] uppercase tracking-wide">
@@ -188,6 +218,42 @@ export default function ActiveIterationPanel({ initial = undefined, pollMs = 100
           </div>
 
           <StepStrip current={data.current_step} />
+
+          {/* Loop v1 chips: red-team verdict + human-gate status. Render
+              only when the producer has populated them (v1 rows). */}
+          {(data.redteam || data.gate_status) && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <RedteamChip redteam={data.redteam} />
+              {data.gate_status && (
+                <span
+                  data-testid="active-gate-badge"
+                  className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+                    GATE_TONE[data.gate_status] ?? "bg-zinc-800 text-zinc-400"
+                  }`}
+                >
+                  {data.gate_status}
+                </span>
+              )}
+            </div>
+          )}
+
+          {(data.meta_review?.conditioning_bullets?.length ?? 0) > 0 && (
+            // Loop v1 Step 1.5: the prior-memory bullets conditioning this
+            // iteration. Shown up front so the human sees what was carried in.
+            <div
+              data-testid="active-conditioning"
+              className="mt-2 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5"
+            >
+              <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+                conditioned by
+              </div>
+              <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-[11px] text-zinc-400">
+                {data.meta_review!.conditioning_bullets!.map((bullet, i) => (
+                  <li key={i}>{bullet}</li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {data.latest_narration && (
             <div className="mt-2 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs italic text-zinc-300">

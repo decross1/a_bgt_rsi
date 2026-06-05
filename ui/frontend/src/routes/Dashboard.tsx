@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import ActiveIterationPanel from "../components/ActiveIterationPanel";
 import BaselineCard from "../components/BaselineCard";
+import Exp004Panel from "../components/Exp004Panel";
 import HealthStrip from "../components/HealthStrip";
 import JournalScroll from "../components/JournalScroll";
 import NaraPromptForm from "../components/NaraPromptForm";
@@ -110,6 +111,11 @@ export default function Dashboard() {
 
       <div className="mt-4">
         <JournalScroll iterationId={selectedIteration} />
+      </div>
+
+      {/* Sandbox-experiment summary feeding the loop (exp004). */}
+      <div className="mt-4">
+        <Exp004Panel />
       </div>
 
       {/* Spark perf baseline + process list (low-priority sanity checks). */}

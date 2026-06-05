@@ -5,6 +5,7 @@ import ActiveIterationPanel from "../src/components/ActiveIterationPanel";
 import {
   ACTIVE_FIXTURE,
   ACTIVE_FIXTURE_DIVERGENT,
+  ACTIVE_FIXTURE_V1,
 } from "../src/fixtures/loop_v0";
 import { describe, expect, it } from "vitest";
 
@@ -52,6 +53,32 @@ describe("ActiveIterationPanel", () => {
     // "this step is on a different backend than the orchestrator."
     render(<ActiveIterationPanel initial={ACTIVE_FIXTURE} />);
     expect(screen.queryByTestId(/^tool-backend-chip-/)).toBeNull();
+  });
+
+  it("does NOT render Loop v1 chips on a pre-v1 active record", () => {
+    // ACTIVE_FIXTURE has no meta_review/redteam/gate_status — the v1
+    // surfaces must stay hidden so the panel reads cleanly pre-v1.
+    render(<ActiveIterationPanel initial={ACTIVE_FIXTURE} />);
+    expect(screen.queryByTestId("active-redteam-chip")).toBeNull();
+    expect(screen.queryByTestId("active-gate-badge")).toBeNull();
+    expect(screen.queryByTestId("active-conditioning")).toBeNull();
+  });
+
+  it("renders Loop v1 conditioning, red-team, and gate surfaces in flight", () => {
+    render(<ActiveIterationPanel initial={ACTIVE_FIXTURE_V1} />);
+    // Conditioning bullets from meta_review.
+    expect(
+      screen.getByText(/efficiency-loss premise may be weak/),
+    ).toBeInTheDocument();
+    // Red-team chip: fatal_flaw + 1 retry → highlighted red.
+    const redteam = screen.getByTestId("active-redteam-chip");
+    expect(redteam).toHaveTextContent(/fatal_flaw/);
+    expect(redteam).toHaveTextContent(/1 retry/);
+    expect(redteam.className).toMatch(/red/);
+    // Gate badge: pending → sky.
+    const gate = screen.getByTestId("active-gate-badge");
+    expect(gate).toHaveTextContent("pending");
+    expect(gate.className).toMatch(/sky/);
   });
 
   it("renders a per-tool backend chip ONLY on divergence", () => {
