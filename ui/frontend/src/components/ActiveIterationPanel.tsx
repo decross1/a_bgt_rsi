@@ -132,9 +132,22 @@ interface Props {
   // Tests pass a fixture directly; production uses the polling fetch.
   initial?: ActiveIteration | null;
   pollMs?: number;
+  // When true, render a single high-level status line (idle / running:
+  // <topic> · <step> · elapsed) instead of the full step strip + tool-call
+  // detail. The dashboard uses compact mode to stay health-first; the deep
+  // view lives on /experiments and the /chain inspector.
+  compact?: boolean;
 }
 
-export default function ActiveIterationPanel({ initial = undefined, pollMs = 1000 }: Props) {
+function stepLabel(stepId: string): string {
+  return STEP_STRIP.find((s) => s.id === stepId)?.label ?? stepId;
+}
+
+export default function ActiveIterationPanel({
+  initial = undefined,
+  pollMs = 1000,
+  compact = false,
+}: Props) {
   const [data, setData] = useState<ActiveIteration | null>(
     initial === undefined ? null : initial,
   );
@@ -163,6 +176,35 @@ export default function ActiveIterationPanel({ initial = undefined, pollMs = 100
       clearInterval(id);
     };
   }, [initial, pollMs]);
+
+  if (compact) {
+    return (
+      <div
+        className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded border border-zinc-800 bg-zinc-900/40 px-4 py-2.5 text-sm"
+        data-testid="active-iteration-compact"
+      >
+        <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+          Active
+        </span>
+        {error ? (
+          <span className="text-xs text-red-400">{error}</span>
+        ) : data ? (
+          <>
+            <span className="font-mono text-[11px] text-emerald-400">● running</span>
+            <span className="text-zinc-200">{data.topic}</span>
+            <span className="text-zinc-500">·</span>
+            <span className="text-zinc-400">{stepLabel(data.current_step)}</span>
+            <span className="text-zinc-500">·</span>
+            <span className="font-mono text-zinc-300">{elapsed(data.started_at, now)}</span>
+          </>
+        ) : loaded ? (
+          <span className="text-zinc-500">idle — type a topic to start an iteration</span>
+        ) : (
+          <span className="text-zinc-600">loading…</span>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="rounded border border-zinc-800 bg-zinc-900/40 p-4" data-testid="active-iteration-panel">

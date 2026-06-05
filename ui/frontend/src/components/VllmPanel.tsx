@@ -85,24 +85,41 @@ export default function VllmPanel({ samples }: { samples: TelemetrySample[] }) {
 
   return (
     <div className="rounded border border-zinc-800 bg-zinc-900/40 p-4">
-      <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-        vLLM internals · gemma-4-26b-a4b
-      </h2>
+      <div className="flex items-baseline gap-2">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+          gemma-4-26b-a4b
+        </h2>
+        <span
+          className={`ml-auto font-mono text-[11px] ${
+            vllm ? "text-emerald-400" : "text-red-400"
+          }`}
+          data-testid="vllm-status"
+        >
+          {vllm ? "● up" : "● down"}
+        </span>
+      </div>
       {!vllm ? (
         <div className="mt-3 text-sm text-zinc-500">
           vLLM /metrics unavailable — the server may be down or still loading.
         </div>
       ) : (
         <div className="mt-2">
+          {/* Core health — always visible: decode tok/s (the throughput
+              signal, colored against the workload-aware band) and KV-cache
+              headroom (red over 85%). Everything else is operator-grade
+              detail behind the disclosure below. */}
           <Row
-            label="Running requests"
-            value={fmt(vllm.running_requests)}
-            spark={<Sparkline values={series((s) => s.vllm?.running_requests)} />}
-          />
-          <Row
-            label="Waiting requests"
-            value={fmt(vllm.waiting_requests)}
-            spark={<Sparkline values={series((s) => s.vllm?.waiting_requests)} />}
+            label="Decode tok/s"
+            value={fmt(vllm.tokens_per_sec_decode, 1)}
+            spark={
+              <Sparkline
+                values={series((s) => s.vllm?.tokens_per_sec_decode)}
+                color="#34d399"
+                reference={
+                  hint?.regime === "decode_bound" ? 40 : undefined
+                }
+              />
+            }
           />
           <Row
             label="KV-cache usage"
@@ -114,52 +131,6 @@ export default function VllmPanel({ samples }: { samples: TelemetrySample[] }) {
               <Sparkline
                 values={series((s) => s.vllm?.gpu_cache_usage_pct)}
                 color="#38bdf8"
-              />
-            }
-          />
-          <Row
-            label="Prefix-cache hit rate"
-            value={
-              vllm.gpu_prefix_cache_hit_rate == null
-                ? "n/a"
-                : `${fmtRatioPct(vllm.gpu_prefix_cache_hit_rate, 1)} %`
-            }
-          />
-          <Row
-            label="MTP acceptance"
-            value={
-              vllm.mtp_acceptance_rate == null
-                ? "MTP off / metric absent"
-                : `${fmtRatioPct(vllm.mtp_acceptance_rate, 1)} %`
-            }
-            // Chosen heuristic: ≥50% draft-token acceptance reads as healthy
-            // MTP, below it as poor (decode tok/s then suffers). ui_plan.md
-            // §5.3 says to color "against the baseline card's expected range",
-            // but the card has no acceptance-rate row — so this threshold is
-            // ours, not the plan's. Open question in ui/notes/ui-build.md.
-            valueClass={
-              vllm.mtp_acceptance_rate == null
-                ? "text-zinc-600"
-                : vllm.mtp_acceptance_rate >= 0.5
-                  ? "text-emerald-400"
-                  : "text-amber-400"
-            }
-            spark={
-              vllm.mtp_acceptance_rate != null ? (
-                <Sparkline values={series((s) => s.vllm?.mtp_acceptance_rate)} />
-              ) : undefined
-            }
-          />
-          <Row
-            label="Decode tok/s"
-            value={fmt(vllm.tokens_per_sec_decode, 1)}
-            spark={
-              <Sparkline
-                values={series((s) => s.vllm?.tokens_per_sec_decode)}
-                color="#34d399"
-                reference={
-                  hint?.regime === "decode_bound" ? 40 : undefined
-                }
               />
             }
           />
@@ -188,6 +159,60 @@ export default function VllmPanel({ samples }: { samples: TelemetrySample[] }) {
               <span className="text-zinc-600">{hint.note}</span>
             </div>
           )}
+
+          {/* Operator-grade internals: queue depth, prefix-cache, MTP
+              acceptance. Kept but collapsed so the glance stays clean. */}
+          <details className="mt-2 group" data-testid="vllm-details">
+            <summary className="cursor-pointer list-none text-[11px] uppercase tracking-wide text-zinc-500 hover:text-zinc-300">
+              <span className="group-open:hidden">show internals ▸</span>
+              <span className="hidden group-open:inline">hide internals ▾</span>
+            </summary>
+            <div className="mt-1">
+              <Row
+                label="Running requests"
+                value={fmt(vllm.running_requests)}
+                spark={<Sparkline values={series((s) => s.vllm?.running_requests)} />}
+              />
+              <Row
+                label="Waiting requests"
+                value={fmt(vllm.waiting_requests)}
+                spark={<Sparkline values={series((s) => s.vllm?.waiting_requests)} />}
+              />
+              <Row
+                label="Prefix-cache hit rate"
+                value={
+                  vllm.gpu_prefix_cache_hit_rate == null
+                    ? "n/a"
+                    : `${fmtRatioPct(vllm.gpu_prefix_cache_hit_rate, 1)} %`
+                }
+              />
+              <Row
+                label="MTP acceptance"
+                value={
+                  vllm.mtp_acceptance_rate == null
+                    ? "MTP off / metric absent"
+                    : `${fmtRatioPct(vllm.mtp_acceptance_rate, 1)} %`
+                }
+                // Chosen heuristic: ≥50% draft-token acceptance reads as healthy
+                // MTP, below it as poor (decode tok/s then suffers). ui_plan.md
+                // §5.3 says to color "against the baseline card's expected range",
+                // but the card has no acceptance-rate row — so this threshold is
+                // ours, not the plan's. Open question in ui/notes/ui-build.md.
+                valueClass={
+                  vllm.mtp_acceptance_rate == null
+                    ? "text-zinc-600"
+                    : vllm.mtp_acceptance_rate >= 0.5
+                      ? "text-emerald-400"
+                      : "text-amber-400"
+                }
+                spark={
+                  vllm.mtp_acceptance_rate != null ? (
+                    <Sparkline values={series((s) => s.vllm?.mtp_acceptance_rate)} />
+                  ) : undefined
+                }
+              />
+            </div>
+          </details>
         </div>
       )}
     </div>
