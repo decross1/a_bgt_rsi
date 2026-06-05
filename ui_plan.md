@@ -120,85 +120,81 @@ already used (headings, lists, **bold**, `inline code`, fenced code).
 
 ---
 
-## §Loop-v1 + exp004 surfacing (active section, 2026-06-05)
+## §ACTIVITY + EXPERIMENTS — Batch 1 of the concurrent-HITL rhythm (active, 2026-06-05)
 
-Extends the §LOOP_V0 iteration view to surface the Loop-v1 `iteration_record`
-blocks and adds a compact exp004 experiments panel. Read-only over the same
-shared contract; no producer files touched (the primary session writes
-`schema/iteration_record.schema.json` and the exp004 results).
+Built under the batch -> fan-out -> gate operating rhythm
+(`.claude/plans/i-want-to-start-concurrent-flurry.md`): the human names N
+page concepts, one builder agent per page runs concurrently in a single
+phase-bounded Workflow, the primary UI session applies the small shared-file
+edits (`App.tsx` routes/nav, `app.py` router registration), and the human
+reviews the whole batch at once. This section is the data contract + the
+mock/real boundary for the first two pages.
 
-### Iteration-record Loop-v1 blocks (active + resolved panels)
+### Page A — Live Activity Graph + Agent Monitor (route `/activity`)
 
-The schema (`schema/iteration_record.schema.json`) gained three optional
-blocks the UI now renders when present (and stays quiet when absent, so
-pre-v1 rows are unaffected):
-
-| Block | Rendered as |
-| --- | --- |
-| `meta_review.conditioning_bullets` | A "conditioned by" bulleted block under the row's topic (resolved) / under the chips (active). The prior-memory bullets that conditioned this iteration. |
-| `redteam.{verdict, retries_used}` | A chip: `redteam <verdict> · <n> retr(y/ies)`. **Highlighted red** when `verdict==fatal_flaw` OR `retries_used>0`; quiet zinc on a clean `proceed / 0`. |
-| `gate_status` | A badge: `pending` (sky) / `valid` (emerald) / `invalid` (red) / `needs_revision` (amber). |
-
-- Resolved: `ui/frontend/src/components/ResolvedIterationsList.tsx` — chips
-  in the badge row, conditioning block below the topic.
-- Active: `ui/frontend/src/components/ActiveIterationPanel.tsx` — chips +
-  gate badge under the step strip; conditioning block beneath them. The
-  `ActiveIteration` type gained the same three optional fields (meta_review
-  is computed at iteration start, so it can appear in flight).
-- Backend: **no change** — `loop_v0.py` reads rows verbatim
-  (`additionalProperties`), so the new blocks pass through `/iterations`
-  and `/active` untouched. Verified by the existing schema-drift discipline.
-
-### exp004 panel
-
-`ui/frontend/src/components/Exp004Panel.tsx` mirrors the VllmPanel/QwenPanel
-card style. Reads `GET /api/experiments/exp004`:
+Files: `ui/backend/activity.py` (+ `tests/test_activity.py`); frontend
+`routes/Activity.tsx`, `components/ActivityGraph.tsx` (@xyflow/react v12),
+`components/AgentMonitorPanel.tsx`, `api/activity.ts`, `types/activity.ts`,
+`fixtures/activity/`.
 
 | Endpoint | Behavior |
 | --- | --- |
-| `GET /api/experiments/exp004` | Reads `experiments/exp004_combinatorial_auction/results/summary.json` via `ui/backend/experiments.py::compute_exp004_summary`. Returns `{available, per_mechanism:[{mechanism, truthful_fraction, mean_efficiency, mean_revenue, parse_failure_rate, verdict}], n_trials}`. Degrades to `{available:false, per_mechanism:[], n_trials:null}` for every missing case (file absent / unreadable / malformed / no `per_mechanism`). |
+| `GET /api/activity/graph?limit=N` | `{available, nodes, edges, generated_at}`. Built from `logs/orchestrator.jsonl` + `day*`/`exp*` via `chain.py` `recent_tasks`+`build_chain` over the SAME `LogStore(logs_dir)` the inspector uses, so each `node.request_id` deep-links to `/chain/req/:requestId`. Edges appear only where the call log carries `parent_request_id` chains; in a worktree without the linked `calls.jsonl` the graph is dispatch-node-only — an honest data-availability artifact, not a bug. |
+| `GET /api/activity/monitor` | `{available, active, recent, synthetic_inference}`. `active`/`recent` are real (`recent_tasks`); worker `cpu_pct`/`rss_mb` cross-referenced to `ui/logs/telemetry.jsonl` `processes[]`. The per-worker INFERENCE INTERNALS (decode step / tokens / ETA) have NO on-disk source — returned under `synthetic_inference {synthetic:true, needs:"worker_activity.jsonl (primary-session)"}` and rendered behind an amber synthetic marker. Never presented as measured (rule 4/8). |
 
-Wired into `create_app` with a `UI_EXP004_SUMMARY` env override (default:
-the primary checkout's results path). Panel renders one row per mechanism
-(truthful %, efficiency %, revenue, YES/NO verdict chip) with a graceful
-empty-state ("No exp004 results yet — the experiment has not been run.")
-when `available` is false. Mounted in `Dashboard.tsx` below the journal
-scroll, above the baseline card.
+Both degrade to `{available:false}` when `logs/orchestrator.jsonl` is absent.
 
-### Files
+### Page B — Interactive Experiment Digestion (routes `/experiments`, `/experiments/:expId`)
 
-| New | Changed |
+Files: `ui/backend/experiments.py` (+ `tests/test_experiments.py`); frontend
+`routes/Experiments.tsx` + `ExperimentDetail.tsx`, `components/MiniMarkdown.tsx`,
+`api/experiments.ts`, `types/experiments.ts`, `fixtures/experiments/`.
+
+| Endpoint | Behavior |
 | --- | --- |
-| `ui/backend/experiments.py` | `ui/backend/app.py` (endpoint + env override) |
-| `ui/backend/tests/test_experiments.py` | `ui/frontend/src/types/schemas.ts` |
-| `ui/frontend/src/components/Exp004Panel.tsx` | `ui/frontend/src/api/http.ts` |
-| `ui/frontend/tests/test_exp004_panel.tsx` | `ui/frontend/src/components/{Active,Resolved}Iteration* ` |
-| | `ui/frontend/src/fixtures/loop_v0/index.ts` |
-| | `ui/frontend/src/routes/Dashboard.tsx` |
-| | `ui/frontend/tests/test_{active_iteration_panel,resolved_iterations_list}.tsx` |
+| `GET /api/experiments` | Index by scanning `experiments/*/results/`. Handles heterogeneous shapes: exp001 (`summary.json` + `per_round.jsonl` + CSVs), exp003 (`summary.md` + `trials.jsonl`), exp002 (no `results/` -> "no results yet"). |
+| `GET /api/experiments/{expId}` | Parses what exists; `per_round` aggregated to per-opponent series (capped 100k rows, `truncated` flag); `trials` head-sampled (50). `round_inspector_linkage:false` for exp001 (per_round rows carry no `task_id`), surfaced as an explicit "linkage not available" note — not fabricated. 404 missing experiment, 400 path-traversal (`_safe_exp_id` allowlist). |
 
-### Test discipline (this slice)
+### Boundary handed to the primary session
 
-- Backend reader + endpoint: `test_experiments.py` (7 tests) — real parse,
-  absent file, malformed JSON, missing `per_mechanism`, non-numeric
-  coercion, plus two endpoint tests via `create_app(exp004_summary=…)`.
-- Frontend: `test_exp004_panel.tsx` (populated + empty-state); the v1-block
-  render is added to the existing active/resolved panel tests via new
-  `ITERATIONS_FIXTURE_V1` / `ACTIVE_FIXTURE_V1` fixtures, including the
-  "stays quiet on pre-v1 rows" discipline check.
-- Verified: backend+sampler `pytest` 70 passed; frontend `vitest` 34
-  passed (10 files); `tsc --noEmit` clean. (node_modules in this worktree
-  was symlinked from the primary checkout for the run, then removed — it
-  is gitignored and not part of the diff.)
+The one synthetic surface across both pages is Page A's per-worker inference
+internals. To make it real, the apparatus needs a per-worker activity log
+(proposed `logs/worker_activity.jsonl`: per in-flight `task_id` -> current
+decode step / tokens generated / target / ETA / tok-per-s). `activity.py`'s
+`SYNTHETIC_INFERENCE` constant then becomes a reader of that file and the
+frontend marker drops automatically once `synthetic:false`.
 
-### Open items handed back to the primary session
+### Tests + env
 
-- The exp004 panel keys the YES/NO verdict chip on the literal strings
-  `"YES"`/`"NO"`; any other verdict vocabulary renders neutral zinc. If the
-  experiment writer changes the verdict enum, update `verdictTone` in
-  `Exp004Panel.tsx`.
-- `parse_failure_rate` is parsed and carried in the API payload but not
-  shown in the panel (kept compact). Surface it if the human wants it.
+`ui/backend`: +16 (test_activity 8, test_experiments 8) -> 79 backend pass.
+`ui/frontend`: +18 (graph 5, monitor 4, exp index/detail 9) -> 46 frontend
+pass. Backend tests run under `ui/.venv-ui` (new, gitignored):
+`pip install -r ui/requirements-ui.txt`. `tsc --noEmit && vite build` clean
+(`@xyflow/react ^12.11.0` added to frontend `package.json`).
+
+---
+
+## §Loop-v1 iteration surfacing (active section, 2026-06-05, reconciled with main)
+
+Surfaces the Loop-v1 `iteration_record` blocks in the iteration view. The
+primary session shipped these to `main` (commit `ef02a7e`) while this session
+was live; folded in here per `human/sessions/2026-06-05-ui-reconcile.md`.
+Read-only — `loop_v0.py` passes the new blocks through verbatim, no backend
+change.
+
+| Block | Rendered as |
+| --- | --- |
+| `meta_review.conditioning_bullets` | A "conditioned by" bulleted block under the row's topic — the prior-memory bullets that conditioned the iteration. |
+| `redteam.{verdict, retries_used}` | A chip `redteam <verdict> · <n> retr(y/ies)`, highlighted red when `verdict==fatal_flaw` OR `retries_used>0`, quiet zinc otherwise. |
+| `gate_status` | A badge: `pending` (sky) / `valid` (emerald) / `invalid` (red) / `needs_revision` (amber). |
+
+Folded into `ResolvedIterationsList.tsx` (the Batch-2 paginated/filtered list)
+and `ActiveIterationPanel.tsx`; the optional fields stay quiet on pre-v1 rows.
+
+**Dropped in the reconcile:** main also shipped an exp004 dashboard panel
+(`Exp004Panel`, `GET /api/experiments/exp004`, `compute_exp004_summary`). Per
+the guide it was DROPPED — the generic `/experiments` feature (Page B) subsumes
+it; `exp004_combinatorial_auction` surfaces via `GET /api/experiments/{exp_id}`.
 
 ---
 
@@ -240,6 +236,16 @@ it. Treat what follows as a record of the codebase you'll find under
 ---
 
 ## 0. Revision log
+
+**r12 (2026-06-05)** — Batch 1 of the concurrent-HITL build rhythm:
+`/activity` (live graph + agent monitor) and `/experiments` (digestion)
+landed in one parallel fan-out (two builder agents, each owning its own
+files; primary session applied the shared `App.tsx` / `app.py` edits). See
+§ACTIVITY + EXPERIMENTS for the data contracts and the mock/real boundary.
++16 backend / +18 frontend tests; 79 + 46 pass; `tsc && vite build` clean.
+One synthetic surface (per-worker inference internals) handed to the primary
+session as a `logs/worker_activity.jsonl` instrumentation ask. New frontend
+dep `@xyflow/react ^12.11.0`; new gitignored `ui/.venv-ui` for backend tests.
 
 **r11 (2026-05-24)** — UI v1 ship-complete for the Day-38 Week-2
 unlock gate. Closes the §11.3 frontend gap left open by r9 (the

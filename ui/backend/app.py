@@ -13,9 +13,10 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from .activity import register as register_activity
 from .baseline import compute_baseline
 from .chain import LogStore, build_chain_by_request_id
-from .experiments import compute_exp004_summary
+from .experiments import register as register_experiments
 from .loop_v0 import register as register_loop_v0
 from .tailer import JsonlTailer
 from .workload import compute_workload_hint
@@ -36,12 +37,6 @@ DEFAULT_LOOP_V0_REPO = _PRIMARY_REPO
 DEFAULT_LOOP_V0_RUN_STATE = _PRIMARY_REPO / "run_state"
 DEFAULT_LOOP_V0_JOURNAL = _PRIMARY_REPO / "journal" / "iterations"
 DEFAULT_LOOP_V0_MEMORY = _PRIMARY_REPO / "memory" / "loop_memory.jsonl"
-# exp004 combinatorial-auction summary lives in the primary checkout's
-# experiments tree; the UI reads it read-only. Env override for tests.
-DEFAULT_EXP004_SUMMARY = (
-    _PRIMARY_REPO / "experiments" / "exp004_combinatorial_auction"
-    / "results" / "summary.json"
-)
 
 
 def _git_sha():
@@ -92,7 +87,6 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                loop_v0_run_state=DEFAULT_LOOP_V0_RUN_STATE,
                loop_v0_journal=DEFAULT_LOOP_V0_JOURNAL,
                loop_v0_memory=DEFAULT_LOOP_V0_MEMORY,
-               exp004_summary=DEFAULT_EXP004_SUMMARY,
                loop_v0_popen=subprocess.Popen):
     app = FastAPI(title="UI backend — orchestrator dashboard", version=_git_sha())
     # Permissive CORS for local dev (Vite serves the SPA on another port).
@@ -152,16 +146,6 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         return compute_workload_hint(logs_dir, sample_size=capped,
                                      window_s=max(10, window_s))
 
-    @app.get("/api/experiments/exp004")
-    def experiments_exp004():
-        """exp004 combinatorial-auction per-mechanism summary.
-
-        Reads experiments/exp004_combinatorial_auction/results/summary.json.
-        Returns `{available: False, ...}` when the file is absent or
-        malformed so the panel renders a graceful empty-state.
-        """
-        return compute_exp004_summary(exp004_summary)
-
     @app.get("/api/state")
     def state():
         path = Path(state_file)
@@ -210,6 +194,9 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
             pump_task.cancel()
             drain_task.cancel()
 
+    register_activity(app, logs_dir=logs_dir, telemetry_file=telemetry_file)
+    register_experiments(app)
+
     register_loop_v0(
         app,
         repo_root=Path(loop_v0_repo),
@@ -239,5 +226,4 @@ app = create_app(
     loop_v0_run_state=_env_path("UI_LOOP_V0_RUN_STATE", DEFAULT_LOOP_V0_RUN_STATE),
     loop_v0_journal=_env_path("UI_LOOP_V0_JOURNAL", DEFAULT_LOOP_V0_JOURNAL),
     loop_v0_memory=_env_path("UI_LOOP_V0_MEMORY", DEFAULT_LOOP_V0_MEMORY),
-    exp004_summary=_env_path("UI_EXP004_SUMMARY", DEFAULT_EXP004_SUMMARY),
 )

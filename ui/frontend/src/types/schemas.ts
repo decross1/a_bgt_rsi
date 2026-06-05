@@ -227,24 +227,6 @@ export interface ActiveIteration {
   gate_status?: "pending" | "valid" | "invalid" | "needs_revision" | string;
 }
 
-// --- exp004 combinatorial auction (ui/backend/experiments.py) ---
-// GET /api/experiments/exp004 — per-mechanism truthfulness / efficiency /
-// revenue summary. `available` is false when the results file is absent.
-export interface Exp004Mechanism {
-  mechanism: string | null;
-  truthful_fraction: number | null;
-  mean_efficiency: number | null;
-  mean_revenue: number | null;
-  parse_failure_rate: number | null;
-  verdict: string | null;
-}
-
-export interface Exp004Summary {
-  available: boolean;
-  per_mechanism: Exp004Mechanism[];
-  n_trials: number | null;
-}
-
 // One row of memory/loop_memory.jsonl. Part-1 hello-world fills the
 // novelty/critique/retrieval blocks with placeholders; the fields are
 // declared optional so the UI can render across both Part-1 and Part-2.

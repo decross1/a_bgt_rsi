@@ -8,7 +8,6 @@ import type {
   AppState,
   BaselineResponse,
   ChainResponse,
-  Exp004Summary,
   Health,
   IterationsResponse,
   JournalResponse,
@@ -16,7 +15,10 @@ import type {
   WorkloadHint,
 } from "../types/schemas";
 
-export const API_BASE = `http://${window.location.hostname}:8700`;
+// Port defaults to 8700; VITE_API_PORT lets a worktree preview point at a
+// backend on another port without disturbing a primary instance on 8700.
+const API_PORT = import.meta.env.VITE_API_PORT ?? "8700";
+export const API_BASE = `http://${window.location.hostname}:${API_PORT}`;
 
 async function getJSON<T>(path: string): Promise<T> {
   const resp = await fetch(`${API_BASE}${path}`);
@@ -49,10 +51,6 @@ export const getBaseline = () => getJSON<BaselineResponse>("/api/baseline");
 
 export const getWorkloadHint = () =>
   getJSON<WorkloadHint>("/api/workload_hint");
-
-// GET /api/experiments/exp004 — combinatorial-auction per-mechanism summary.
-export const getExp004Summary = () =>
-  getJSON<Exp004Summary>("/api/experiments/exp004");
 
 // --- LOOP_V0 endpoints (ui/backend/loop_v0.py) ---
 

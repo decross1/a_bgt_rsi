@@ -4,7 +4,6 @@
 // agent/prompts/ui_session.md "Shared contract" for the schemas.
 import type {
   ActiveIteration,
-  Exp004Summary,
   IterationRecord,
 } from "../../types/schemas";
 
@@ -222,43 +221,6 @@ export const ACTIVE_FIXTURE_V1: ActiveIteration = {
       model: "gemma-4-26b-a4b",
     },
   ],
-};
-
-export const EXP004_FIXTURE: Exp004Summary = {
-  available: true,
-  n_trials: 150,
-  per_mechanism: [
-    {
-      mechanism: "first_price",
-      truthful_fraction: 0.965,
-      mean_efficiency: 0.9988418692882004,
-      mean_revenue: 82.93,
-      parse_failure_rate: 0.0,
-      verdict: "YES",
-    },
-    {
-      mechanism: "sequential_second_price",
-      truthful_fraction: 0.965,
-      mean_efficiency: 0.977107591738275,
-      mean_revenue: 61.137,
-      parse_failure_rate: 0.0,
-      verdict: "YES",
-    },
-    {
-      mechanism: "vcg",
-      truthful_fraction: 0.965,
-      mean_efficiency: 0.9988418692882004,
-      mean_revenue: 63.65886666666667,
-      parse_failure_rate: 0.0,
-      verdict: "YES",
-    },
-  ],
-};
-
-export const EXP004_FIXTURE_EMPTY: Exp004Summary = {
-  available: false,
-  per_mechanism: [],
-  n_trials: null,
 };
 
 export const JOURNAL_FIXTURE_001 = `# Iteration iter-2026-05-26-001

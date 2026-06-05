@@ -1,15 +1,20 @@
 // ActiveIterationPanel renders the current iteration's step + narration +
 // tool-call list, or "idle" when no iteration is in flight.
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import ActiveIterationPanel from "../src/components/ActiveIterationPanel";
 import {
   ACTIVE_FIXTURE,
   ACTIVE_FIXTURE_DIVERGENT,
   ACTIVE_FIXTURE_V1,
 } from "../src/fixtures/loop_v0";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as http from "../src/api/http";
 
 describe("ActiveIterationPanel", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("renders the iteration id, topic, narration and tool calls", () => {
     render(<ActiveIterationPanel initial={ACTIVE_FIXTURE} />);
     expect(screen.getByText("iter-2026-05-26-001")).toBeInTheDocument();
@@ -79,6 +84,46 @@ describe("ActiveIterationPanel", () => {
     const gate = screen.getByTestId("active-gate-badge");
     expect(gate).toHaveTextContent("pending");
     expect(gate.className).toMatch(/sky/);
+  });
+
+  it("renders a single high-level status line in compact mode (running)", () => {
+    render(<ActiveIterationPanel initial={ACTIVE_FIXTURE} compact />);
+    const line = screen.getByTestId("active-iteration-compact");
+    expect(line).toHaveTextContent("running");
+    expect(line).toHaveTextContent("Tit-for-Tat dominance in repeated PD");
+    // Compact mode omits the full step strip and tool-call detail.
+    expect(screen.queryByTestId("step-query_chroma")).toBeNull();
+    expect(screen.queryByTestId("active-iteration-panel")).toBeNull();
+  });
+
+  it("renders the compact idle line when no iteration is in flight", () => {
+    render(<ActiveIterationPanel initial={null} compact />);
+    const line = screen.getByTestId("active-iteration-compact");
+    expect(line).toHaveTextContent(/idle/);
+  });
+
+  it("renders the compact loading branch before the first poll resolves", () => {
+    // No `initial` prop => the panel polls. Hold the fetch pending so the
+    // pre-load state (loaded=false, no error) is observable: "loading…".
+    vi.spyOn(http, "getActiveIteration").mockReturnValue(
+      new Promise(() => {}),
+    );
+    render(<ActiveIterationPanel compact />);
+    const line = screen.getByTestId("active-iteration-compact");
+    expect(line).toHaveTextContent(/loading/);
+  });
+
+  it("renders the compact error branch when the poll fails", async () => {
+    // The error branch (red text) wins over data/idle/loading once the
+    // fetch rejects. Verifies the untested error path in compact mode.
+    vi.spyOn(http, "getActiveIteration").mockRejectedValue(
+      new Error("503 backend down"),
+    );
+    render(<ActiveIterationPanel compact />);
+    await waitFor(() => {
+      const line = screen.getByTestId("active-iteration-compact");
+      expect(line).toHaveTextContent(/503 backend down/);
+    });
   });
 
   it("renders a per-tool backend chip ONLY on divergence", () => {
