@@ -19,15 +19,14 @@ import ProcessGrid from "../components/ProcessGrid";
 import QwenPanel from "../components/QwenPanel";
 import ResolvedIterationsList from "../components/ResolvedIterationsList";
 import VllmPanel from "../components/VllmPanel";
-import { getHealth, getState } from "../api/http";
+import { getHealth } from "../api/http";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { useNow } from "../time";
-import type { AppState, Health } from "../types/schemas";
+import type { Health } from "../types/schemas";
 
 export default function Dashboard() {
   const { samples, latest, connected } = useTelemetryStream();
   const [health, setHealth] = useState<Health | null>(null);
-  const [state, setState] = useState<AppState | null>(null);
   const [selectedIteration, setSelectedIteration] = useState<string | null>(
     null,
   );
@@ -36,7 +35,6 @@ export default function Dashboard() {
   useEffect(() => {
     const loadHealth = () => getHealth().then(setHealth).catch(() => {});
     loadHealth();
-    getState().then(setState).catch(() => {});
     const id = setInterval(loadHealth, 10000);
     return () => clearInterval(id);
   }, []);
@@ -78,9 +76,6 @@ export default function Dashboard() {
         <span className="font-mono text-zinc-200">
           {health?.hostname ?? "spark"}
         </span>
-        {state?.current_day && (
-          <span className="text-zinc-500">apparatus: {state.current_day}</span>
-        )}
         <span className="text-zinc-500">backend {health?.version ?? "?"}</span>
       </div>
 
