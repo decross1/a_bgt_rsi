@@ -23,9 +23,15 @@ will.
 2. [`../../START_HERE.md`](../../START_HERE.md) — orientation.
 3. [`../../LOOP_V0.md`](../../LOOP_V0.md) — what the UI must surface;
    see the "What's needed from the UI session" section in particular.
-4. [`../../ui_plan.md`](../../ui_plan.md) — the UI's own build plan
-   and status.
-5. The current `ui/` codebase to see what's already there
+4. [`../../docs/DATA_SHAPES.md`](../../docs/DATA_SHAPES.md) — **the
+   canonical reference + changelog for every data shape the UI consumes**
+   (iteration_record optional blocks, loop_feedback, the heterogeneous
+   experiment `summary.json` shapes). Read this BEFORE writing any
+   component that parses producer output, and check its Changelog when
+   reconciling with `main`. The primary session logs all shape changes here.
+5. [`../../ui_plan.md`](../../ui_plan.md) — the UI's own build plan
+   and status. (Worth linking `docs/DATA_SHAPES.md` from here too.)
+6. The current `ui/` codebase to see what's already there
    (UnlockPanel, call-chain inspector, dashboard skeleton).
 
 ## What the UI must surface
