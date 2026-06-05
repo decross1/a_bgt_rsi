@@ -9,21 +9,59 @@ then this file. The active build plan is [`LOOP_V0.md`](LOOP_V0.md).
 The current session's working note is the most recent file under
 [`human/sessions/`](human/sessions/).
 
-## Operating model (effective 2026-05-26)
+## Operating model (effective 2026-06-05, amends 2026-05-26)
 
-**One primary session at a time, plus at most one concurrent UI session.**
+**One primary session at a time, plus at most one concurrent UI session.
+The primary session MAY author and run Dynamic Workflows** that fan out
+to ephemeral subagents (D-037).
 
 - The **primary session** builds the apparatus and runs experiments.
-  It can write anywhere except `ui/`.
+  It can write anywhere except `ui/`. It is the single merge/commit
+  authority and the single editor of the shared orchestrator spine.
 - The **UI session** (optional, parallel) runs in a separate worktree
   and writes only to `ui/` + `ui_plan.md`. Its prompt is
   [`agent/prompts/ui_session.md`](agent/prompts/ui_session.md).
+- **Dynamic Workflows** (the managed `Workflow` primitive shipped
+  2026-05-28 with Opus 4.8 — bounded at 16 concurrent / 1000 total
+  agents, observable via `/workflows`, resumable, context-isolated)
+  are the default vehicle for parallelizable build / audit / research
+  work. They are subject to the **Dynamic Workflow discipline** below.
 
-No other concurrent sessions. No dispatched coding agents. No
-multi-worktree per-day matrices. The previous track-A/B/C/D /
-autonomy-tier / claim-and-lock machinery has been retired and lives
-under [`archive/`](archive/) for historical reference only — do not
-treat those files as active rules.
+The retired track-A/B/C/D / autonomy-tier / claim-and-lock machinery
+(manual multi-session matrices under pre-2026-05 tooling) stays retired
+and lives under [`archive/`](archive/) for historical reference only —
+do not treat those files as active rules. The old "no dispatched coding
+agents" ban targeted *that* machinery, not the Workflow primitive
+(D-037 draws the line).
+
+## Dynamic Workflow discipline
+
+Every workflow run honors these. They are the inviolate rules made
+concurrency-safe — speed without losing the apparatus's discipline.
+
+1. **Inviolate rules inherit.** Workflow subagents are bound by every
+   rule in §"Inviolate rules" below: mandatory logging, validations
+   never silently coerced, explicit/logged fallbacks, bounded codegen
+   (resist abstraction; match existing worker norms — the ~100-line
+   figure in inviolate rule 8 is the *wrapper* budget, not a per-worker
+   cap; workers in this repo run 120–390 lines), blocking human gates,
+   verbatim version pins.
+2. **Parallel limbs, serial spine.** Build agents create **disjoint
+   NEW files only** (their worker + its test). The **shared spine** —
+   `orchestrator/nara.py`, `orchestrator/tool_registry.py`,
+   `schema/iteration_record.schema.json` — is edited by a **single
+   serial integrator** only. No build agent touches the spine,
+   `run_state/`, or `ui/`.
+3. **Spawn-contract per build agent** (the `spawn-contract` skill):
+   exact files it may create, done-condition (its test green under
+   `MOCK_LLM`), report format. Closes the "wrote to main checkout /
+   forked from stale HEAD" failure modes seen on 2026-05-27.
+4. **Single merge/commit authority** = the primary session, only after
+   a verification gate: `code-review` + full suite green + one real
+   `env -u MOCK_LLM` smoke. Workflows return a report; they do not
+   commit.
+5. **Workflow run-logging.** Phase/agent start+finish log to
+   `run_state/week1.run.jsonl` as first-class entries (inviolate rule 6).
 
 At the start of each working day, the human and the primary session
 agree on a session focus and write a working note at

@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LOOP_V0 loop_feedback row",
+  "description": "One row of memory/loop_feedback.jsonl. The Step-8 human gate verdict on an iteration. Frozen shape — gate_cli writes it, meta_review reads it.",
+  "type": "object",
+  "required": [
+    "iteration_id",
+    "verdict",
+    "note",
+    "gated_at",
+    "gated_by"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "iteration_id": {
+      "type": "string",
+      "pattern": "^iter-\\d{4}-\\d{2}-\\d{2}-\\d{3}$",
+      "description": "The iteration this verdict applies to."
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["valid", "invalid", "needs_revision"]
+    },
+    "note": {"type": "string"},
+    "gated_at": {"type": "string", "format": "date-time"},
+    "gated_by": {"type": "string", "minLength": 1}
+  }
+}

@@ -45,6 +45,8 @@ from orchestrator import iteration_cache
 from orchestrator.journal_stub import finalize_iteration_record
 from orchestrator.runtime import PyRuntime, Runtime
 from orchestrator.tool_registry import TOOL_SPECS
+from workers.meta_review import meta_review as _meta_review
+from workers.redteam_critic import redteam_critic as _redteam_critic
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -244,6 +246,34 @@ def _next_chain_step(captured: dict) -> str:
     return "journal_writer"
 
 
+def _hypothesize_retry(
+    runtime: Runtime,
+    topic: str,
+    critique: str,
+    parent_request_id: str | None,
+) -> dict:
+    """Re-call the hypothesize worker through the runtime with the
+    red-team critique appended to the topic (Loop v1 Step 2.5 retry).
+    Returns the worker contract dict (or an error-shaped dict on a
+    dispatch exception)."""
+    revised_topic = (
+        f"{topic}\n\n[Red-team critique of the prior hypothesis — "
+        f"revise to address it]: {critique}"
+    )
+    try:
+        return runtime.dispatch_tool(
+            "hypothesize",
+            {"topic": revised_topic},
+            parent_request_id=parent_request_id,
+        )
+    except Exception as exc:  # never let a retry crash the chain
+        return {
+            "status": "error",
+            "result": None,
+            "errors": [f"{type(exc).__name__}: {exc}"],
+        }
+
+
 def _initial_active(
     iteration_id: str,
     topic: str,
@@ -273,6 +303,7 @@ def run_iteration(
     max_depth: int = _DEFAULT_MAX_DEPTH,
     backend: str | None = None,
     experiment_outcome: dict | None = None,
+    cross_tier_comparison: dict | None = None,
 ) -> dict:
     """Run one LOOP_V0 iteration. Returns the final iteration_record dict.
 
@@ -286,7 +317,12 @@ def run_iteration(
         threaded into the iteration_record under the `experiment_outcome`
         field (schema-validated by `finalize_iteration_record`). Used by
         experiment → LOOP_V0 bridges (e.g., exp003_vickrey_rediscovery's
-        loop_bridge.py)."""
+        loop_bridge.py).
+
+    cross_tier_comparison: optional Loop v1 Step-5 cross-mechanism
+        replication comparison (from experiments/replication_driver). When
+        non-None, threaded into the iteration_record under the
+        `cross_tier_comparison` field. Mirrors `experiment_outcome`."""
     runtime = runtime or PyRuntime()
     be = get_backend(backend or DEFAULT_BACKEND)
     iteration_id = _next_iteration_id()
@@ -307,12 +343,48 @@ def run_iteration(
     # Conversation state for the LLM. Inject iteration_id into the user
     # message so Nara has the value to pass as the `iteration_id` arg on
     # novelty_classify / critic_loop_v0 / journal_writer.
+    user_content = (
+        f"iteration_id: {iteration_id}\n\n"
+        f"Evaluate this research topic: {topic}"
+    )
+
+    # Loop v1 Step 1.5 — meta-review PRE-STEP. Read the loop's own memory
+    # and condition the next iteration on it. Orchestrator-driven (not a
+    # Nara tool). A failure degrades gracefully: we log a fallback per
+    # inviolate rule 7 and proceed un-conditioned — never crash the chain.
+    meta_review_record: dict | None = None
+    try:
+        mr = _meta_review(parent_request_id=iteration_id)
+        if isinstance(mr, dict) and mr.get("status") == "passed":
+            meta_review_record = mr.get("result")
+            bullets = (mr.get("result") or {}).get("conditioning_bullets") or []
+            if bullets:
+                user_content += "\n\nPrior-iteration conditioning:\n" + "\n".join(
+                    f"- {b}" for b in bullets
+                )
+        else:
+            runtime.log_event({
+                "event_type": "loop_v0_fallback",
+                "iteration_id": iteration_id,
+                "note": (
+                    "meta_review did not produce conditioning bullets "
+                    f"(status={mr.get('status') if isinstance(mr, dict) else 'n/a'}); "
+                    "proceeding un-conditioned."
+                ),
+            })
+    except Exception as exc:
+        runtime.log_event({
+            "event_type": "loop_v0_fallback",
+            "iteration_id": iteration_id,
+            "note": (
+                f"meta_review raised {type(exc).__name__}: {exc}; "
+                "proceeding un-conditioned."
+            ),
+        })
+
     openai_messages: list[dict] = [
         {"role": "system", "content": NARA_PROMPT_V0},
-        {"role": "user", "content": (
-            f"iteration_id: {iteration_id}\n\n"
-            f"Evaluate this research topic: {topic}"
-        )},
+        {"role": "user", "content": user_content},
     ]
     parent_request_id = iteration_id  # iteration-level lineage anchor
     wrapper_call_ids: list[str] = []
@@ -326,6 +398,11 @@ def run_iteration(
     # by tool name → the tool's `result` payload. If Nara skips a step
     # we still serialize what we have.
     captured: dict[str, dict] = {}
+    # Loop v1 Step 2.5 — red-team retry sub-loop state. Set when the
+    # hypothesis is first captured; `redteam_retries` caps re-hypothesize
+    # attempts at 2.
+    redteam_result: dict | None = None
+    redteam_retries = 0
 
     for depth in range(max_depth):
         # Update active: between calls, Nara is "thinking"
@@ -566,6 +643,49 @@ def run_iteration(
                         iteration_id, cache_key, tool_result
                     )
 
+                # Loop v1 Step 2.5 — DETERMINISTIC red-team retry sub-loop.
+                # After hypothesize lands, red-team the hypothesis ITSELF
+                # before downstream budget is spent. This is orchestrator-
+                # driven (NOT a Nara prompt instruction — Gemma mis-sequences
+                # such instructions, as the re-prompt machinery attests).
+                # If the critic finds a fatal flaw and we have retries left,
+                # re-call hypothesize with the critique appended, overwrite
+                # the cached hypothesis, and increment. Cap at 2 retries.
+                # A critic failure never blocks: redteam_critic returns
+                # verdict "proceed" with status "passed" in that case.
+                if name == "hypothesize" and "hypothesis" in captured:
+                    hyp_text = captured["hypothesis"].get("text") or ""
+                    while True:
+                        rt = _redteam_critic(hyp_text, iteration_id,
+                                             parent_request_id=last_id)
+                        redteam_result = rt
+                        verdict = (rt.get("result") or {}).get("verdict") \
+                            if isinstance(rt, dict) else None
+                        if verdict != "fatal_flaw" or redteam_retries >= 2:
+                            break
+                        critique = (rt.get("result") or {}).get("critique") or ""
+                        runtime.log_event({
+                            "event_type": "loop_v0_redteam_retry",
+                            "iteration_id": iteration_id,
+                            "retry": redteam_retries + 1,
+                            "parent_request_id": last_id,
+                        })
+                        revised = _hypothesize_retry(
+                            runtime, topic, critique, last_id,
+                        )
+                        redteam_retries += 1
+                        if not (isinstance(revised, dict)
+                                and revised.get("status") == "passed"
+                                and isinstance(revised.get("result"), dict)):
+                            # Re-hypothesize failed; keep the prior hypothesis
+                            # and stop retrying (don't loop on a broken worker).
+                            break
+                        captured["hypothesis"] = revised["result"]
+                        iteration_cache.write_entry(
+                            iteration_id, "hypothesis", revised
+                        )
+                        hyp_text = revised["result"].get("text") or ""
+
             openai_messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
@@ -656,9 +776,28 @@ def run_iteration(
         if key in captured:
             record[key] = captured[key]
 
+    # Loop v1 Step 1.5 — store the meta-review synthesis used to condition
+    # this iteration (None when meta_review degraded; omit then).
+    if meta_review_record is not None:
+        record["meta_review"] = meta_review_record
+
+    # Loop v1 Step 2.5 — store the final red-team result + retries used.
+    if redteam_result is not None and isinstance(redteam_result.get("result"), dict):
+        rt_res = dict(redteam_result["result"])
+        rt_res["retries_used"] = redteam_retries
+        record["redteam"] = rt_res
+
+    # Loop v1 Step 8 — open the human gate. A verdict is written later via
+    # orchestrator.gate_cli to memory/loop_feedback.jsonl.
+    record["gate_status"] = "pending"
+
     # Bridge field for Tier-1/Tier-2 sandbox experiments (Slice 1 / exp003).
     if experiment_outcome is not None:
         record["experiment_outcome"] = experiment_outcome
+
+    # Loop v1 Step 5 — cross-mechanism replication comparison bridge.
+    if cross_tier_comparison is not None:
+        record["cross_tier_comparison"] = cross_tier_comparison
 
     # Validate + append to loop_memory
     try:
