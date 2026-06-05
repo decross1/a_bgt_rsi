@@ -79,6 +79,11 @@ _install_bundles_stub()
 
 from experiments.exp004_combinatorial_auction.mechanisms import vcg  # noqa: E402
 
+# vcg has bound its bundles imports above; remove the stub so the real
+# bundles.py (which also exposes draw_valuation) loads for other test modules
+# (e.g. test_exp006_design). Without this the stub leaks and breaks collection.
+sys.modules.pop("experiments.exp004_combinatorial_auction.bundles", None)
+
 
 def _utility(bid_profile, valuations, bidder):
     """True utility of `bidder` = true value of allocated bundle - payment."""
@@ -104,7 +109,11 @@ class ExactPivotArithmetic(unittest.TestCase):
         b1 = {(0,): 6.0, (1,): 0.0, (0, 1): 6.0}
         out = vcg.clear([b0, b1], rng=random.Random(0))
         self.assertEqual(out["mechanism"], "vcg")
-        self.assertEqual(out["allocation"][0], (0,))
+        # Tie-robust: bidder 0 wins item 0, but the equal-welfare set lets
+        # VCG pick either {0:(0,)} or {0:(0,1)} (b0[(0,1)]==10 too) depending
+        # on bundles' enumeration order. The load-bearing facts are the pivot
+        # payment (6) and revenue (6), which hold under either tie outcome.
+        self.assertIn(0, out["allocation"][0])
         self.assertEqual(out["payments"][0], 6.0)
         self.assertEqual(out["revenue"], 6.0)
         # Any incidental zero-value winner (e.g. item 1) pays exactly 0.

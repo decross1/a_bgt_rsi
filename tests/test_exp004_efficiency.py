@@ -72,6 +72,11 @@ from experiments.exp004_combinatorial_auction.efficiency import (  # noqa: E402
     realized_welfare,
 )
 
+# efficiency has bound its bundles imports above; remove the stub so the real
+# bundles.py (which also exposes draw_valuation) loads for other test modules
+# (e.g. test_exp006_design). Without this the stub leaks and breaks collection.
+sys.modules.pop("experiments.exp004_combinatorial_auction.bundles", None)
+
 
 class OptimalWelfare(unittest.TestCase):
     def test_known_optimum_two_bidders(self):
