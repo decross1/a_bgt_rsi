@@ -78,6 +78,22 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _parse_ts(ts: str) -> datetime:
+    """Parse an ISO timestamp for ORDERING (max) — never for display.
+
+    The orchestrator writes via datetime.isoformat(), which drops the
+    fractional second when microseconds == 0 ('…14Z') but keeps it
+    otherwise ('…14.5Z'); a raw-string max mis-orders the two at the same
+    integer second. Parse to an aware datetime so the comparison is by
+    instant. Unparseable strings sort to the bottom (datetime.min, UTC) so a
+    malformed row can never win the max.
+    """
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
 def _status_for(status: str | None) -> str:
     """Normalize an orchestrator/call status into one of the tones the
     frontend keys colors off of: 'active' | 'ok' | 'error' | 'unknown'."""
@@ -271,16 +287,34 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
                 "status": task.get("status"),
                 "worker_pid": pid,
                 "timestamp": task.get("timestamp") or task.get("dispatch_ts"),
+                # Pure passthrough from recent_tasks(): the per-stage label
+                # ("orchestrator_dispatch" / "worker_invocation" / ...) and the
+                # human-readable detail ("spawning worker process for ...").
+                # The HERO active-worker view renders `detail` as "what it is
+                # doing"; `stage` is the coarse phase. enrich() previously
+                # dropped both — surface them.
+                "stage": task.get("stage"),
+                "detail": task.get("detail"),
                 "cpu_pct": proc.get("cpu_pct") if proc else None,
                 "rss_mb": proc.get("rss_mb") if proc else None,
             }
 
         enriched = [enrich(t) for t in tasks]
         active = [e for e in enriched if e["status"] in ACTIVE_STATUSES]
+        # last_activity_at = the most recent timestamp across all recent tasks.
+        # Drives the idle empty-state's "last activity … ago". None when no
+        # task carries a timestamp. NOTE: compare as datetimes, not raw ISO
+        # strings — isoformat() omits the fractional second when microseconds
+        # == 0 ('…14Z') but includes it otherwise ('…14.5Z'), so a string max
+        # at the same integer second mis-orders ('.' < 'Z'). Return the
+        # original string of the argmax so the wire format is unchanged.
+        timestamps = [e["timestamp"] for e in enriched if e["timestamp"]]
+        last_activity_at = max(timestamps, key=_parse_ts) if timestamps else None
         return {"available": True,
                 "telemetry_available": telemetry_available,
                 "active": active,
                 "recent": enriched,
+                "last_activity_at": last_activity_at,
                 "synthetic_inference": SYNTHETIC_INFERENCE,
                 "generated_at": _utcnow_iso()}
 

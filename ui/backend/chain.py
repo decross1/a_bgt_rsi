@@ -378,6 +378,10 @@ def recent_tasks(store, limit=50):
             # can render either without an extra round-trip.
             "timestamp": record.get("timestamp"),
             "stage": record.get("stage"),
+            # Human-readable per-stage detail ("spawning worker process for
+            # 2605.21448 …"). Surfaced so the monitor's HERO worker rows can
+            # render "what it's doing"; enrich() passes it straight through.
+            "detail": record.get("detail"),
             "dispatch_ts": record.get("dispatch_ts"),
             "receipt_ts": record.get("receipt_ts"),
         })

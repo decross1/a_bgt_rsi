@@ -219,6 +219,82 @@ def test_monitor_active_and_proc_cross_reference(tmp_path):
     assert seq1["rss_mb"] == 660.2
 
 
+def test_monitor_rows_carry_detail_stage_and_last_activity(tmp_path):
+    # enrich() must pass `detail` + `stage` straight through (it used to drop
+    # them), and the monitor must report `last_activity_at` = the most recent
+    # timestamp across recent tasks. These drive the HERO worker rows' "what
+    # it's doing" + the idle empty-state's "last activity … ago".
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    client = _client(logs, tmp_path / "telemetry.jsonl")
+    payload = client.get("/api/activity/monitor").json()
+    seq1 = next(a for a in payload["active"] if a["task_id"] == "seq-1")
+    # seq-1's latest orchestrator record is the worker_invocation row.
+    assert seq1["stage"] == "worker_invocation"
+    assert seq1["detail"] == "spawning worker"
+    # last_activity_at == the newest timestamp across all recent tasks
+    # (seq-2's receipt at 05:16:14.0 is the max).
+    assert payload["last_activity_at"] == "2026-05-23T05:16:14.0Z"
+
+
+def test_monitor_idle_when_no_active_tasks(tmp_path):
+    # All tasks resolved (none in an ACTIVE_STATUS): active is empty but the
+    # monitor is still available and reports last_activity_at so the frontend
+    # can render "No agents active — last activity … ago".
+    logs = tmp_path / "logs"
+    resolved = [
+        {"timestamp": "2026-05-23T05:16:10.0Z", "request_id": "root-2",
+         "parent_request_id": None, "stage": "orchestrator_dispatch",
+         "task_id": "seq-2", "task_type": "play_pd_match", "status": "dispatched",
+         "worker_pid": 4343, "detail": "dispatching"},
+        {"timestamp": "2026-05-23T05:16:14.0Z", "request_id": "rcpt-2",
+         "parent_request_id": "root-2", "stage": "orchestrator_receipt",
+         "task_id": "seq-2", "task_type": "play_pd_match", "status": "passed",
+         "worker_pid": 4343, "detail": "worker returned summary (747 chars)"},
+    ]
+    _write_logs(logs, orch=resolved, calls=None)
+    client = _client(logs, tmp_path / "telemetry.jsonl")
+    payload = client.get("/api/activity/monitor").json()
+    assert payload["available"] is True
+    assert payload["active"] == []
+    assert payload["last_activity_at"] == "2026-05-23T05:16:14.0Z"
+
+
+def test_monitor_last_activity_orders_by_instant_not_string(tmp_path):
+    # Regression: last_activity_at must compare timestamps by instant, not by
+    # raw ISO string. datetime.isoformat() drops the fractional second when
+    # microseconds == 0 ('…14Z') but keeps it otherwise ('…14.5Z'). At the
+    # same integer second, a string max compares '.' (0x2E) vs 'Z' (0x5A) and
+    # so picks '…14.5Z' < '…14Z' WRONG — the .5s row IS the more recent one.
+    logs = tmp_path / "logs"
+    rows = [
+        {"timestamp": "2026-05-23T05:16:14Z", "request_id": "root-a",
+         "parent_request_id": None, "stage": "orchestrator_dispatch",
+         "task_id": "seq-a", "task_type": "summarize_paper",
+         "status": "dispatched", "worker_pid": 4242, "detail": "d"},
+        {"timestamp": "2026-05-23T05:16:14Z", "request_id": "rcpt-a",
+         "parent_request_id": "root-a", "stage": "orchestrator_receipt",
+         "task_id": "seq-a", "task_type": "summarize_paper",
+         "status": "passed", "worker_pid": 4242, "detail": "done"},
+        {"timestamp": "2026-05-23T05:16:13Z", "request_id": "root-b",
+         "parent_request_id": None, "stage": "orchestrator_dispatch",
+         "task_id": "seq-b", "task_type": "play_pd_match",
+         "status": "dispatched", "worker_pid": 4343, "detail": "d"},
+        # Same integer second as seq-a's receipt, but with a fractional part —
+        # this is the genuinely most-recent timestamp.
+        {"timestamp": "2026-05-23T05:16:14.5Z", "request_id": "rcpt-b",
+         "parent_request_id": "root-b", "stage": "orchestrator_receipt",
+         "task_id": "seq-b", "task_type": "play_pd_match",
+         "status": "passed", "worker_pid": 4343, "detail": "done"},
+    ]
+    _write_logs(logs, orch=rows, calls=None)
+    client = _client(logs, tmp_path / "telemetry.jsonl")
+    payload = client.get("/api/activity/monitor").json()
+    # By-instant max picks the fractional ".5Z"; a string max would have
+    # picked the bare "…14Z".
+    assert payload["last_activity_at"] == "2026-05-23T05:16:14.5Z"
+
+
 def test_monitor_synthetic_inference_marked(tmp_path):
     logs = tmp_path / "logs"
     _write_logs(logs)

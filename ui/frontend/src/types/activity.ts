@@ -45,6 +45,11 @@ export interface MonitorWorker {
   status: string | null;
   worker_pid: number | null;
   timestamp?: string | null;
+  // Per-stage label + human-readable detail straight from the orchestrator
+  // row ("worker_invocation" / "spawning worker process for 2605.21448 …").
+  // The HERO active-worker row renders `detail` as "what it is doing".
+  stage?: string | null;
+  detail?: string | null;
   // From the latest telemetry sample's processes[]; null when telemetry is
   // absent or the worker_pid has no matching process sample.
   cpu_pct: number | null;
@@ -77,6 +82,9 @@ export interface MonitorResponse {
   telemetry_available?: boolean;
   active: MonitorWorker[];
   recent: MonitorWorker[];
+  // Most recent timestamp across recent tasks — drives the idle empty-state's
+  // "last activity … ago". Absent on the unavailable degrade path.
+  last_activity_at?: string | null;
   synthetic_inference: SyntheticInference;
   generated_at: string;
 }

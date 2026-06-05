@@ -21,16 +21,8 @@ import ResolvedIterationsList from "../components/ResolvedIterationsList";
 import VllmPanel from "../components/VllmPanel";
 import { getHealth, getState } from "../api/http";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
+import { useNow } from "../time";
 import type { AppState, Health } from "../types/schemas";
-
-function useNow(intervalMs = 1000): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
 
 export default function Dashboard() {
   const { samples, latest, connected } = useTelemetryStream();
