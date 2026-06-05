@@ -37,10 +37,21 @@ if str(REPO_ROOT) not in sys.path:
 EXP_DIR = Path(__file__).resolve().parent
 PD_SUMMARY = EXP_DIR / "exp001_repeated_pd" / "results" / "summary.json"
 VICKREY_SUMMARY = EXP_DIR / "exp003_vickrey_rediscovery" / "results" / "summary.md"
+COMBINATORIAL_SUMMARY = (
+    EXP_DIR / "exp004_combinatorial_auction" / "results" / "summary.json"
+)
 
 CLAIM = (
     "an unprimed LLM rediscovers the game-theoretic equilibrium of a "
     "mechanism it was not told about."
+)
+
+# The cross-RUNG claim: same rediscovery, escalated along auction COMPLEXITY
+# (single-item second-price -> combinatorial VCG). Still the synthetic tier;
+# this is an honest cross-mechanism-FAMILY upgrade, NOT a cross-tier leap.
+CROSS_RUNG_CLAIM = (
+    "an unprimed LLM rediscovers strategyproof truthful bidding across "
+    "auction COMPLEXITY (single-item -> combinatorial)."
 )
 
 
@@ -95,6 +106,32 @@ def _vickrey_adapter(summary_path: Path) -> dict:
     }
 
 
+def _combinatorial_adapter(summary_json_path: Path) -> dict:
+    """Map exp004 summary.json -> a one-mechanism claim record.
+
+    Tiny, exp004-specific. The cross-rung signal is the VCG mechanism's
+    truthful-bid fraction (VCG is the strategyproof anchor). "supports"
+    iff that fraction meets the pre-registered 0.75 threshold.
+    """
+    data = json.loads(Path(summary_json_path).read_text())
+    vcg = None
+    for m in data.get("per_mechanism", []):
+        if m.get("mechanism") == "vcg":
+            vcg = m
+            break
+    if vcg is None:
+        raise SystemExit(
+            f"FATAL: no 'vcg' mechanism in {summary_json_path} per_mechanism"
+        )
+    fraction = float(vcg["truthful_fraction"])
+    return {
+        "experiment": "exp004_combinatorial_auction",
+        "metric": "vcg_truthful_fraction",
+        "value": fraction,
+        "supports": fraction >= 0.75,
+    }
+
+
 def build_comparison(summary_a_path, summary_b_path) -> dict:
     """Read the two synthetic-tier summaries and build the
     cross_tier_comparison dict. mechanism_a := PD, mechanism_b := Vickrey."""
@@ -122,6 +159,46 @@ def build_comparison(summary_a_path, summary_b_path) -> dict:
     }
 
 
+def build_cross_rung_comparison(
+    vickrey_summary_path=VICKREY_SUMMARY,
+    combinatorial_summary_path=COMBINATORIAL_SUMMARY,
+) -> dict:
+    """Compare rung-1 (exp003 Vickrey single-item second-price truthful) vs
+    rung-2 (exp004 combinatorial VCG truthful) on the shared CROSS_RUNG_CLAIM.
+
+    This is an honest cross-mechanism-FAMILY upgrade along auction COMPLEXITY
+    — both rungs live in the SYNTHETIC tier (there is no semi-synthetic rung
+    in the apparatus yet). When the rungs disagree the disagreement is a
+    DIAGNOSTIC SIGNAL, never silently discarded.
+    """
+    rung_1 = _vickrey_adapter(Path(vickrey_summary_path))
+    rung_2 = _combinatorial_adapter(Path(combinatorial_summary_path))
+    agreement = rung_1["supports"] == rung_2["supports"]
+    if agreement:
+        note = (
+            f"Both rungs agree (supports={rung_1['supports']}); strategyproof "
+            "truthful bidding replicates across auction complexity "
+            "(single-item second-price -> combinatorial VCG), within the "
+            "synthetic tier."
+        )
+    else:
+        note = (
+            "DIAGNOSTIC SIGNAL — rungs DISAGREE on the shared claim: "
+            f"{rung_1['experiment']} supports={rung_1['supports']} but "
+            f"{rung_2['experiment']} supports={rung_2['supports']}. Not "
+            "discarded; recorded for follow-up on whether combinatorial "
+            "complexity breaks the single-item rediscovery."
+        )
+    return {
+        "claim": CROSS_RUNG_CLAIM,
+        "tier": "synthetic (cross-mechanism-family, NOT cross-tier)",
+        "rung_1": rung_1,
+        "rung_2": rung_2,
+        "agreement": agreement,
+        "diagnostic_note": note,
+    }
+
+
 def build_topic_seed(comparison: dict) -> str:
     a, b = comparison["mechanism_a"], comparison["mechanism_b"]
     return (
@@ -133,16 +210,37 @@ def build_topic_seed(comparison: dict) -> str:
     )
 
 
+def build_cross_rung_topic_seed(comparison: dict) -> str:
+    r1, r2 = comparison["rung_1"], comparison["rung_2"]
+    return (
+        "Escalating auction COMPLEXITY within the synthetic tier (single-item "
+        "second-price -> two-item combinatorial VCG), an unprimed LLM "
+        "rediscovers strategyproof truthful bidding it was not told about "
+        f"(Vickrey supports={r1['supports']}, combinatorial-VCG supports="
+        f"{r2['supports']}, agreement={comparison['agreement']})."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--dry-run", action="store_true", default=True,
                    help="print the comparison dict, make no LLM call (default)")
     p.add_argument("--live", dest="dry_run", action="store_false",
                    help="thread the comparison into run_iteration")
+    p.add_argument("--cross-rung", action="store_true", default=False,
+                   help="compare rung-1 (exp003 Vickrey) vs rung-2 (exp004 "
+                        "combinatorial VCG) on truthful bidding across auction "
+                        "complexity, instead of the PD×Vickrey comparison")
     args = p.parse_args(argv)
 
-    comparison = build_comparison(PD_SUMMARY, VICKREY_SUMMARY)
-    topic = build_topic_seed(comparison)
+    if args.cross_rung:
+        comparison = build_cross_rung_comparison(
+            VICKREY_SUMMARY, COMBINATORIAL_SUMMARY
+        )
+        topic = build_cross_rung_topic_seed(comparison)
+    else:
+        comparison = build_comparison(PD_SUMMARY, VICKREY_SUMMARY)
+        topic = build_topic_seed(comparison)
 
     print("=== replication_driver (cross-MECHANISM, synthetic tier) ===")
     print()
