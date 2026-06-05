@@ -45,6 +45,9 @@ COLLECTIONS = {
     "young_1993":                 "foundational",
     "van_damme_1994":             "foundational",
     "camerer_bgt":                "foundational",
+    # Slice-2 ML-Intern automated S2 backfill (D-038). Separate from the
+    # human-curated collections; auto-queried once registered here.
+    "ml_intern_fetched":          "live_ml_intern",
 }
 
 

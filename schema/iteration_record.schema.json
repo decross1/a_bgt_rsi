@@ -60,7 +60,7 @@
               "content_hash": {"type": "string"},
               "score":        {"type": "number"},
               "chunk_text":   {"type": "string"},
-              "source_layer": {"type": "string", "enum": ["foundational", "live_arxiv"]},
+              "source_layer": {"type": "string", "enum": ["foundational", "live_arxiv", "live_ml_intern"]},
               "title":        {"type": ["string", "null"]}
             }
           }
