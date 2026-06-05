@@ -21,6 +21,14 @@ const VERDICT_TONE: Record<string, string> = {
   malformed: "bg-red-950 text-red-400",
 };
 
+// Loop v1 Step 8 human-gate state.
+const GATE_TONE: Record<string, string> = {
+  pending: "bg-sky-950 text-sky-300",
+  valid: "bg-emerald-950 text-emerald-400",
+  invalid: "bg-red-950 text-red-400",
+  needs_revision: "bg-amber-950 text-amber-400",
+};
+
 // Process-status badge. `status` mirrors /api/loop_v0/processes:
 // running / exited_clean / exited_error_<rc> / killed_signal_<sig>.
 function processTone(status: string | undefined): string {
@@ -61,6 +69,37 @@ function Badge({
 function shortTimestamp(iso: string | null | undefined): string {
   if (!iso) return "—";
   return iso.replace("T", " ").replace("Z", "");
+}
+
+// Loop v1 Step 2.5 red-team chip. Highlighted (red) when the critic ruled
+// fatal_flaw OR any revision retries were spent — those are the rows a
+// human most needs to eyeball. A clean "proceed / 0 retries" pass renders
+// quiet zinc. Returns null when no redteam block is present (pre-v1 rows).
+function RedteamChip({
+  redteam,
+}: {
+  redteam: IterationRecord["redteam"];
+}) {
+  if (!redteam || (redteam.verdict == null && redteam.retries_used == null)) {
+    return null;
+  }
+  const retries = redteam.retries_used ?? 0;
+  const fatal = redteam.verdict === "fatal_flaw";
+  const highlight = fatal || retries > 0;
+  const tone = highlight
+    ? "bg-red-950 text-red-400"
+    : "bg-zinc-800 text-zinc-400";
+  const label = `redteam ${redteam.verdict ?? "?"}${
+    retries > 0 ? ` · ${retries} retr${retries === 1 ? "y" : "ies"}` : ""
+  }`;
+  return (
+    <span
+      data-testid="redteam-chip"
+      className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${tone}`}
+    >
+      {label}
+    </span>
+  );
 }
 
 interface Props {
@@ -167,6 +206,11 @@ export default function ResolvedIterationsList({
                         "bg-zinc-800 text-zinc-400"
                       }
                     />
+                    <RedteamChip redteam={row.redteam} />
+                    <Badge
+                      text={row.gate_status}
+                      tone={GATE_TONE[row.gate_status ?? ""] ?? ""}
+                    />
                     <Badge
                       text={processLabel(row.process_status)}
                       tone={processTone(row.process_status)}
@@ -178,6 +222,26 @@ export default function ResolvedIterationsList({
                   {row.seed?.topic && (
                     <div className="mt-1 text-xs text-zinc-300">
                       {row.seed.topic}
+                    </div>
+                  )}
+                  {(row.meta_review?.conditioning_bullets?.length ?? 0) > 0 && (
+                    // Loop v1 Step 1.5: the prior-memory bullets that
+                    // conditioned this iteration. Shown so the human can see
+                    // what the loop carried forward into the run.
+                    <div
+                      data-testid={`conditioning-${row.iteration_id}`}
+                      className="mt-1.5 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1"
+                    >
+                      <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+                        conditioned by
+                      </div>
+                      <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-[11px] text-zinc-400">
+                        {row.meta_review!.conditioning_bullets!.map(
+                          (bullet, i) => (
+                            <li key={i}>{bullet}</li>
+                          ),
+                        )}
+                      </ul>
                     </div>
                   )}
                 </button>

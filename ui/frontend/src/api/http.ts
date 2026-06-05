@@ -8,6 +8,7 @@ import type {
   AppState,
   BaselineResponse,
   ChainResponse,
+  Exp004Summary,
   Health,
   IterationsResponse,
   JournalResponse,
@@ -48,6 +49,10 @@ export const getBaseline = () => getJSON<BaselineResponse>("/api/baseline");
 
 export const getWorkloadHint = () =>
   getJSON<WorkloadHint>("/api/workload_hint");
+
+// GET /api/experiments/exp004 — combinatorial-auction per-mechanism summary.
+export const getExp004Summary = () =>
+  getJSON<Exp004Summary>("/api/experiments/exp004");
 
 // --- LOOP_V0 endpoints (ui/backend/loop_v0.py) ---
 

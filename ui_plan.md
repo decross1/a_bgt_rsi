@@ -120,6 +120,88 @@ already used (headings, lists, **bold**, `inline code`, fenced code).
 
 ---
 
+## §Loop-v1 + exp004 surfacing (active section, 2026-06-05)
+
+Extends the §LOOP_V0 iteration view to surface the Loop-v1 `iteration_record`
+blocks and adds a compact exp004 experiments panel. Read-only over the same
+shared contract; no producer files touched (the primary session writes
+`schema/iteration_record.schema.json` and the exp004 results).
+
+### Iteration-record Loop-v1 blocks (active + resolved panels)
+
+The schema (`schema/iteration_record.schema.json`) gained three optional
+blocks the UI now renders when present (and stays quiet when absent, so
+pre-v1 rows are unaffected):
+
+| Block | Rendered as |
+| --- | --- |
+| `meta_review.conditioning_bullets` | A "conditioned by" bulleted block under the row's topic (resolved) / under the chips (active). The prior-memory bullets that conditioned this iteration. |
+| `redteam.{verdict, retries_used}` | A chip: `redteam <verdict> · <n> retr(y/ies)`. **Highlighted red** when `verdict==fatal_flaw` OR `retries_used>0`; quiet zinc on a clean `proceed / 0`. |
+| `gate_status` | A badge: `pending` (sky) / `valid` (emerald) / `invalid` (red) / `needs_revision` (amber). |
+
+- Resolved: `ui/frontend/src/components/ResolvedIterationsList.tsx` — chips
+  in the badge row, conditioning block below the topic.
+- Active: `ui/frontend/src/components/ActiveIterationPanel.tsx` — chips +
+  gate badge under the step strip; conditioning block beneath them. The
+  `ActiveIteration` type gained the same three optional fields (meta_review
+  is computed at iteration start, so it can appear in flight).
+- Backend: **no change** — `loop_v0.py` reads rows verbatim
+  (`additionalProperties`), so the new blocks pass through `/iterations`
+  and `/active` untouched. Verified by the existing schema-drift discipline.
+
+### exp004 panel
+
+`ui/frontend/src/components/Exp004Panel.tsx` mirrors the VllmPanel/QwenPanel
+card style. Reads `GET /api/experiments/exp004`:
+
+| Endpoint | Behavior |
+| --- | --- |
+| `GET /api/experiments/exp004` | Reads `experiments/exp004_combinatorial_auction/results/summary.json` via `ui/backend/experiments.py::compute_exp004_summary`. Returns `{available, per_mechanism:[{mechanism, truthful_fraction, mean_efficiency, mean_revenue, parse_failure_rate, verdict}], n_trials}`. Degrades to `{available:false, per_mechanism:[], n_trials:null}` for every missing case (file absent / unreadable / malformed / no `per_mechanism`). |
+
+Wired into `create_app` with a `UI_EXP004_SUMMARY` env override (default:
+the primary checkout's results path). Panel renders one row per mechanism
+(truthful %, efficiency %, revenue, YES/NO verdict chip) with a graceful
+empty-state ("No exp004 results yet — the experiment has not been run.")
+when `available` is false. Mounted in `Dashboard.tsx` below the journal
+scroll, above the baseline card.
+
+### Files
+
+| New | Changed |
+| --- | --- |
+| `ui/backend/experiments.py` | `ui/backend/app.py` (endpoint + env override) |
+| `ui/backend/tests/test_experiments.py` | `ui/frontend/src/types/schemas.ts` |
+| `ui/frontend/src/components/Exp004Panel.tsx` | `ui/frontend/src/api/http.ts` |
+| `ui/frontend/tests/test_exp004_panel.tsx` | `ui/frontend/src/components/{Active,Resolved}Iteration* ` |
+| | `ui/frontend/src/fixtures/loop_v0/index.ts` |
+| | `ui/frontend/src/routes/Dashboard.tsx` |
+| | `ui/frontend/tests/test_{active_iteration_panel,resolved_iterations_list}.tsx` |
+
+### Test discipline (this slice)
+
+- Backend reader + endpoint: `test_experiments.py` (7 tests) — real parse,
+  absent file, malformed JSON, missing `per_mechanism`, non-numeric
+  coercion, plus two endpoint tests via `create_app(exp004_summary=…)`.
+- Frontend: `test_exp004_panel.tsx` (populated + empty-state); the v1-block
+  render is added to the existing active/resolved panel tests via new
+  `ITERATIONS_FIXTURE_V1` / `ACTIVE_FIXTURE_V1` fixtures, including the
+  "stays quiet on pre-v1 rows" discipline check.
+- Verified: backend+sampler `pytest` 70 passed; frontend `vitest` 34
+  passed (10 files); `tsc --noEmit` clean. (node_modules in this worktree
+  was symlinked from the primary checkout for the run, then removed — it
+  is gitignored and not part of the diff.)
+
+### Open items handed back to the primary session
+
+- The exp004 panel keys the YES/NO verdict chip on the literal strings
+  `"YES"`/`"NO"`; any other verdict vocabulary renders neutral zinc. If the
+  experiment writer changes the verdict enum, update `verdictTone` in
+  `Exp004Panel.tsx`.
+- `parse_failure_rate` is parsed and carried in the API payload but not
+  shown in the panel (kept compact). Surface it if the human wants it.
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to
