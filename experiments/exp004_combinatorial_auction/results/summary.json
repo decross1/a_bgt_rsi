@@ -1,0 +1,29 @@
+{
+  "per_mechanism": [
+    {
+      "mechanism": "first_price",
+      "truthful_fraction": 0.965,
+      "mean_efficiency": 0.9988418692882004,
+      "mean_revenue": 82.92999999999999,
+      "parse_failure_rate": 0.0,
+      "verdict": "YES"
+    },
+    {
+      "mechanism": "sequential_second_price",
+      "truthful_fraction": 0.965,
+      "mean_efficiency": 0.977107591738275,
+      "mean_revenue": 61.137,
+      "parse_failure_rate": 0.0,
+      "verdict": "YES"
+    },
+    {
+      "mechanism": "vcg",
+      "truthful_fraction": 0.965,
+      "mean_efficiency": 0.9988418692882004,
+      "mean_revenue": 63.65886666666667,
+      "parse_failure_rate": 0.0,
+      "verdict": "YES"
+    }
+  ],
+  "n_trials": 150
+}
