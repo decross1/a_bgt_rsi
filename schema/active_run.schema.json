@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "active_run",
+  "description": "Generalized live-run state file at run_state/active_run.json. Written atomically by any run-mode driver (experiment, autoresearch, loop_v0, ad_hoc); cleared on completion. The UI polls this to render a single 'what is running now' panel regardless of which run kind produced it.",
+  "type": "object",
+  "required": [
+    "run_id",
+    "kind",
+    "label",
+    "started_at"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "run_id": {"type": "string"},
+    "kind": {
+      "type": "string",
+      "enum": ["experiment", "autoresearch", "loop_v0", "ad_hoc"]
+    },
+    "label": {"type": "string"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "current_step": {
+      "type": ["string", "null"],
+      "description": "The step currently in flight."
+    },
+    "step_started_at": {"type": ["string", "null"], "format": "date-time"},
+    "progress": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "done": {"type": ["integer", "null"]},
+        "total": {"type": ["integer", "null"]},
+        "unit": {"type": ["string", "null"]}
+      }
+    },
+    "narration": {
+      "type": ["string", "null"],
+      "description": "Most-recent human-readable narration sentence."
+    },
+    "model": {
+      "type": ["string", "null"],
+      "description": "Served-model-name driving this run, if applicable."
+    },
+    "n_err": {
+      "type": ["integer", "null"],
+      "description": "Count of errors observed so far in this run."
+    }
+  }
+}

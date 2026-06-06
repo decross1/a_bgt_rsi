@@ -43,6 +43,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agent_wrapper.wrapper import set_run_id  # noqa: E402
+from orchestrator import active_run  # noqa: E402
+from orchestrator.exp_orchestrator_rows import emit_task_triple  # noqa: E402
 from experiments.exp004_combinatorial_auction.bundles import (  # noqa: E402
     BUNDLES,
     draw_valuation,
@@ -184,6 +187,12 @@ def main(argv: list[str] | None = None) -> int:
 
     rng = random.Random(args.seed)
     t_start = _utcnow_iso()
+    run_id = f"exp005_mechanism_aware_{t_start}"
+    set_run_id(run_id)
+    active_run.write_active_run(
+        run_id, "experiment", "exp005 mechanism-aware bidding",
+        total=args.n, unit="trial", model=args.model,
+    )
     n_calls = args.n * args.bidders * len(MECHANISMS)
     print(f"=== exp005 run starting at {t_start} ===", flush=True)
     print(f"=== {args.n} trials × {args.bidders} bidders × {len(MECHANISMS)} "
@@ -217,8 +226,14 @@ def main(argv: list[str] | None = None) -> int:
                 f.write(json.dumps(err_row) + "\n")
                 f.flush()
                 n_err += 1
-                print(f"[{trial_idx + 1}/{args.n}] ERROR: {err_row['error']} "
-                      f"({wall_s:.1f}s)", flush=True)
+                narration = (f"[{trial_idx + 1}/{args.n}] ERROR: "
+                             f"{err_row['error']} ({wall_s:.1f}s)")
+                print(narration, flush=True)
+                active_run.update_active_run(
+                    done=trial_idx + 1, narration=narration, n_err=n_err)
+                emit_task_triple(
+                    task_id=f"exp005_t{trial_idx}", task_type="experiment_trial",
+                    status="error", duration_ms=wall_s * 1000.0, run_id=run_id)
                 continue
             wall_s = time.perf_counter() - t0
             row["wall_s"] = round(wall_s, 2)
@@ -227,11 +242,18 @@ def main(argv: list[str] | None = None) -> int:
             n_done += 1
             fp = row["mechanisms"]["first_price"]
             fp_resid = sum(fp["residuals"]) / len(fp["residuals"]) if fp["residuals"] else 0.0
-            print(f"[{trial_idx + 1}/{args.n}] fp_mean_residual={fp_resid:.2f} "
-                  f"fp_eff={fp['allocative_efficiency']:.3f} ({wall_s:.1f}s)",
-                  flush=True)
+            narration = (f"[{trial_idx + 1}/{args.n}] fp_mean_residual={fp_resid:.2f} "
+                         f"fp_eff={fp['allocative_efficiency']:.3f} ({wall_s:.1f}s)")
+            print(narration, flush=True)
+            active_run.update_active_run(
+                done=trial_idx + 1, narration=narration, n_err=n_err)
+            emit_task_triple(
+                task_id=f"exp005_t{trial_idx}", task_type="experiment_trial",
+                status="passed", duration_ms=wall_s * 1000.0, run_id=run_id)
     finally:
         f.close()
+        active_run.clear_active_run()
+        set_run_id(None)
 
     wall_s_total = time.perf_counter() - t0_total
     t_end = _utcnow_iso()
