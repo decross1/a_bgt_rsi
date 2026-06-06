@@ -71,6 +71,64 @@ this is real data — a future live stream is a separate upgrade. `tokens_target
 
 ## Changelog
 
+- **2026-06-06** — Finding-promotion + rubberbanding-session surfaces. New producers and a
+  session API the UI consumes. Written by `orchestrator/finding_promotion.py` and
+  `orchestrator/finding_session.py`; both now announce themselves via
+  `run_state/active_run.json` (`kind="ad_hoc"`, labels `promote_findings` /
+  `finding-session <finding_id>`) so they appear in the "what is running now" panel,
+  and stamp `wrapper.set_run_id` so their `logs/calls.jsonl` rows carry the run context.
+  - **`memory/surfaced_findings.jsonl`** (NEW, `schema/surfaced_finding.schema.json`): one
+    promoted finding per row. Idempotent on `finding_id` (= `"sf-" + source_iteration_id`).
+    Key fields the UI renders: `title`, `claim`, `tier` (NULLABLE string), `novelty_class`
+    (`novel|rediscovery|nonsense|unclear`), `critic_verdict`
+    (`survives|falsified|restated|malformed`), `why_it_matters`, `what_would_change_it`,
+    `status` (file value; the LIVE status is the audit override below), and `adversarial`
+    `{model, backend, n_skeptics, n_voting, n_refuted, adversarial_margin, survived,
+    qwen_failures, refutation_summaries[]}`. `evidence.experiment_outcome` and
+    `evidence.results_path` are BOTH NULLABLE — a finding can be promoted on a
+    surprising-vs-theory verdict with no attached experiment. UI must treat them as nullable.
+  - **`memory/surfaced_findings.status.jsonl`** (NEW, append-only status audit): rows
+    `{finding_id, status, changed_at, changed_by, session_id, reason}`. `status ∈
+    {valid, invalid, spawn_topic, in_review}`. EFFECTIVE status of a finding = the LAST
+    row for its `finding_id` (none yet == still `surfaced`). The UI's status pill reflects
+    this override, NOT the static `status` on the surfaced row.
+  - **`memory/finding_sessions/<finding_id>/<session_id>.jsonl`** (NEW, append-only
+    transcript, one file per interrogation session). Event rows by `type`:
+    `system_seed` (the defender seed; carries `refutation_count`, `backend`, `iteration_id`),
+    `user` / `assistant` (`{turn_index, content, request_id?, backend?, at}`), and
+    terminal `feedback` (`{outcome, note, gated_by, new_topic?, refined_claim?}`).
+  - **`memory/finding_followups.jsonl`** (NEW, append-only queue): rows
+    `{finding_id, session_id, new_topic, queued_at, queued_by, reason}`. A `spawn_topic`
+    outcome enqueues here; the session engine does NOT run the loop on it.
+  - **Session API** (Python; backs the chat view — SAME functions back the REPL):
+    `start_session(finding_id) -> {session_id, finding}` (loads finding, joins source
+    iteration, reads journal + prior refutations, writes the `system_seed` row, NO LLM
+    call); `session_turn(finding_id, session_id, user_msg) -> {reply, request_id,
+    turn_index}` (replay → append user → `call_sync` → append assistant; bounded by
+    `MAX_TURNS=24`, at which it returns an explicit cap reply and does NOT call the model);
+    `end_session(finding_id, session_id, outcome, note, ...) -> {loop_feedback_row,
+    status_audit_row, followup_row}` with `outcome ∈ {validated, rejected, spawn_topic,
+    refine, abandoned}`.
+
+  **UI SPEC — Top Findings board + session/chat view** (NOT `ui/` code; this is the spec the
+  UI session implements):
+  - **Top Findings board panel** — one card per `surfaced_findings.jsonl` row, sorted newest
+    `promoted_at` first. Card shows: `title`; `claim`; an ADVERSARIAL BADGE reading
+    `survived N-K` where `N = adversarial.n_voting`, `K = adversarial.n_refuted`, colored by
+    `adversarial.adversarial_margin` (higher margin = stronger/greener, margin near 0 =
+    amber); a MODEL BADGE (`adversarial.model` / `adversarial.backend`); a TIER CHIP
+    (`tier`, rendered "—" or hidden when null); `why_it_matters`; a STATUS PILL reflecting the
+    EFFECTIVE status from `surfaced_findings.status.jsonl` (fall back to the row's `status`);
+    and a QWEN_FAILURES WARNING icon when `adversarial.qwen_failures > 0` (the vote ran short
+    of skeptics — caveat the margin). Treat `evidence.experiment_outcome`/`results_path` as
+    nullable — render an "experiment evidence" affordance only when present.
+  - **Session / chat view** — opened from a card; drives the session API
+    (`start_session` → `session_turn` loop → `end_session`). Renders the transcript from the
+    per-session JSONL (user/assistant rows by `turn_index`), a COLLAPSIBLE "what skeptics
+    already argued" block seeded from `adversarial.refutation_summaries` (the attacks the
+    finding already survived), and verdict controls mapping to the `end_session` outcomes.
+    Honor the `MAX_TURNS` cap reply (disable further turns, prompt for a verdict).
+
 - **2026-06-06** — UI observability wiring (asks #1–#3). Four producers added/extended:
   - **`run_state/active_run.json`** (NEW, `schema/active_run.schema.json`): a single live-state
     file written atomically by any run-mode driver — `kind ∈ {experiment, autoresearch, loop_v0, ad_hoc}` —

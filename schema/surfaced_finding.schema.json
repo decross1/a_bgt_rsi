@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LOOP_V0 surfaced_finding row",
+  "description": "One row of memory/surfaced_findings.jsonl. A loop iteration that cleared the cheap multi-threshold gate AND survived a cross-model adversarial multi-vote (independent Qwen skeptics licensed to use outside knowledge). Written by orchestrator/finding_promotion.py:promote_findings; read by the human-review surface. Idempotent on finding_id.",
+  "type": "object",
+  "required": [
+    "finding_id",
+    "source_iteration_id",
+    "title",
+    "claim",
+    "evidence",
+    "novelty_class",
+    "critic_verdict",
+    "adversarial",
+    "why_it_matters",
+    "what_would_change_it",
+    "promoted_at",
+    "status"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "finding_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable id = 'sf-' + source_iteration_id. Idempotency key."
+    },
+    "source_iteration_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The loop_memory iteration this finding was promoted from."
+    },
+    "title": {"type": "string", "minLength": 1},
+    "claim": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The hypothesis/finding text being surfaced."
+    },
+    "tier": {
+      "type": ["string", "null"],
+      "description": "Sandbox tier of the supporting evidence, when known."
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["journal_entry_path", "critic_rationale", "novelty_rationale"],
+      "additionalProperties": true,
+      "properties": {
+        "journal_entry_path": {"type": "string"},
+        "results_path": {"type": ["string", "null"]},
+        "experiment_outcome": {"type": ["object", "null"]},
+        "critic_rationale": {"type": "string"},
+        "novelty_rationale": {"type": "string"},
+        "human_verdict": {"type": ["string", "null"]}
+      }
+    },
+    "novelty_class": {
+      "type": "string",
+      "enum": ["novel", "rediscovery", "nonsense", "unclear"]
+    },
+    "critic_verdict": {
+      "type": "string",
+      "enum": ["survives", "falsified", "restated", "malformed"]
+    },
+    "adversarial": {
+      "type": "object",
+      "required": [
+        "model",
+        "backend",
+        "n_skeptics",
+        "n_voting",
+        "n_refuted",
+        "adversarial_margin",
+        "survived",
+        "qwen_failures",
+        "refutation_summaries"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "model": {"type": "string"},
+        "backend": {"type": "string"},
+        "n_skeptics": {"type": "integer", "minimum": 1},
+        "n_voting": {"type": "integer", "minimum": 0},
+        "n_refuted": {"type": "integer", "minimum": 0},
+        "adversarial_margin": {"type": "integer"},
+        "survived": {"type": "boolean"},
+        "qwen_failures": {"type": "integer", "minimum": 0},
+        "refutation_summaries": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      }
+    },
+    "why_it_matters": {"type": "string"},
+    "what_would_change_it": {"type": "string"},
+    "promoted_at": {"type": "string", "format": "date-time"},
+    "status": {
+      "type": "string",
+      "enum": ["surfaced", "in_review", "validated", "rejected"]
+    }
+  }
+}
