@@ -39,6 +39,19 @@ export interface PerOpponentSummary {
   wall_clock_s?: number;
 }
 
+// exp004/005-shape per_mechanism row. exp004 carries efficiency+revenue;
+// exp005 carries a signed-residual instead. Every metric is optional — the
+// table adapts to whichever columns the rows actually carry.
+export interface PerMechanismSummary {
+  mechanism: string;
+  truthful_fraction?: number;
+  mean_efficiency?: number;
+  mean_revenue?: number;
+  mean_signed_residual?: number;
+  parse_failure_rate?: number;
+  verdict?: string;
+}
+
 export interface SummaryJson {
   n_opponents?: number;
   rounds_per_opponent?: number;
@@ -46,6 +59,15 @@ export interface SummaryJson {
   via_orchestrator?: boolean;
   total_wall_clock_s?: number;
   per_opponent?: PerOpponentSummary[];
+  // exp004/005 per-mechanism rows; exp006 flat top-level verdict.
+  per_mechanism?: PerMechanismSummary[];
+  verdict?: string;
+  n_trials?: number;
+  // The flat shape (exp006) carries arbitrary scalar metrics at top level
+  // (designer_mean_efficiency, feasibility_rate, …). An index signature keeps
+  // them reachable generically so the scalar-metrics card can render them
+  // without enumerating every producer field.
+  [key: string]: unknown;
 }
 
 export interface PerRoundEntry {
@@ -84,6 +106,12 @@ export interface Headline {
   exploit_gap_threshold?: number;
   mean_llm_coop_rate?: number | null;
   total_parse_failures?: number;
+  // Shape discriminator + per_mechanism tally fields (exp004/005). "flat"
+  // (exp006) carries only verdict/tone/kind. Absent on the legacy per_opponent
+  // and markdown headlines.
+  kind?: "per_mechanism" | "flat";
+  n_mechanisms?: number;
+  n_yes?: number;
 }
 
 export interface PerRoundAggregate {

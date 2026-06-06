@@ -28,8 +28,10 @@ import { fmt, fmtRatioPct } from "../format";
 import type {
   ExperimentDetail as ExperimentDetailT,
   Headline,
+  PerMechanismSummary,
   PerOpponentSummary,
   PerRoundEntry,
+  SummaryJson,
 } from "../types/experiments";
 
 interface Props {
@@ -74,6 +76,11 @@ function HeadlineCard({ headline }: { headline: Headline }) {
         </span>
       </div>
       <div className="mt-1 text-sm font-medium">{headline.verdict}</div>
+      {headline.kind === "per_mechanism" && headline.n_mechanisms != null && (
+        <div className="mt-2 font-mono text-xs tabular-nums opacity-80">
+          YES on {fmt(headline.n_yes)}/{fmt(headline.n_mechanisms)}
+        </div>
+      )}
       {(headline.n_opponents != null ||
         headline.mean_llm_coop_rate != null ||
         headline.total_parse_failures != null) && (
@@ -94,6 +101,156 @@ function HeadlineCard({ headline }: { headline: Headline }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// A ratio-ish key whose value sits in [0,1] is rendered as a percentage; any
+// other scalar is rendered raw. Pure presentational heuristic — it never
+// changes a value, only its display.
+function looksLikeRatio(key: string, value: unknown): boolean {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 1 &&
+    /rate|fraction|efficiency/i.test(key)
+  );
+}
+
+function formatScalar(key: string, value: unknown): string {
+  if (value == null) return "—";
+  if (typeof value === "boolean") return String(value);
+  if (typeof value === "number") {
+    if (looksLikeRatio(key, value)) return `${fmtRatioPct(value, 1)}%`;
+    return Number.isInteger(value) ? fmt(value) : fmt(value, 4);
+  }
+  return String(value);
+}
+
+// Generic top-level SCALAR metrics card. Renders every number/string/boolean
+// at the root of summary.json (EXCLUDING `verdict`, shown in the headline).
+// This covers the exp001 header fields, exp006's flat metrics, and n_trials
+// in one card — no per-experiment field list. Nested objects/arrays
+// (per_opponent, per_mechanism) are skipped; they have their own renderers.
+function ScalarMetricsCard({ summary }: { summary: SummaryJson }) {
+  const entries = Object.entries(summary).filter(
+    ([k, v]) =>
+      k !== "verdict" &&
+      (typeof v === "number" ||
+        typeof v === "string" ||
+        typeof v === "boolean"),
+  );
+  if (entries.length === 0) return null;
+  return (
+    <div className={CARD} data-testid="json-header">
+      <div className="flex flex-wrap gap-x-8 gap-y-1 text-sm text-zinc-300">
+        {entries.map(([k, v]) => (
+          <span key={k}>
+            {k.replace(/_/g, " ")}:{" "}
+            <span className="font-mono text-zinc-100">{formatScalar(k, v)}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// YES emerald / NO red / anything-else (or absent) zinc. We never guess a
+// favorable color: only the literal YES/NO token tints.
+function VerdictChip({ verdict }: { verdict?: string }) {
+  const v = (verdict ?? "").trim().toUpperCase();
+  const cls =
+    v === "YES"
+      ? "border-emerald-700/50 bg-emerald-900/20 text-emerald-300"
+      : v === "NO"
+        ? "border-red-800/50 bg-red-900/20 text-red-300"
+        : "border-zinc-700 bg-zinc-800/40 text-zinc-400";
+  return (
+    <span
+      className={`inline-block rounded border px-1.5 py-0.5 text-[10px] font-medium ${cls}`}
+    >
+      {verdict == null ? "—" : verdict}
+    </span>
+  );
+}
+
+// Per-mechanism breakdown for exp004/005. Columns are ADAPTIVE: always
+// mechanism + truthful + verdict; efficiency/revenue only if some row carries
+// them (exp004); signed-residual only if some row carries it (exp005); parse
+// fails only if present. Absent cells render a dash — never a fabricated value.
+function PerMechanismTable({ rows }: { rows: PerMechanismSummary[] }) {
+  const hasEff = rows.some((r) => typeof r.mean_efficiency === "number");
+  const hasRev = rows.some((r) => typeof r.mean_revenue === "number");
+  const hasResid = rows.some(
+    (r) => typeof r.mean_signed_residual === "number",
+  );
+  const hasParse = rows.some((r) => typeof r.parse_failure_rate === "number");
+  return (
+    <div className={CARD} data-testid="mechanism-table">
+      <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+        Per-mechanism breakdown
+      </h2>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-[11px] uppercase text-zinc-500">
+              <th className="py-1 pr-3">mechanism</th>
+              <th className="py-1 pr-3">truthful</th>
+              {hasEff && <th className="py-1 pr-3">efficiency</th>}
+              {hasRev && <th className="py-1 pr-3">revenue</th>}
+              {hasResid && <th className="py-1 pr-3">signed resid</th>}
+              {hasParse && <th className="py-1 pr-3">parse fails</th>}
+              <th className="py-1 pr-3">verdict</th>
+            </tr>
+          </thead>
+          <tbody className="font-mono tabular-nums text-zinc-300">
+            {rows.map((r) => (
+              <tr
+                key={r.mechanism}
+                className="border-t border-zinc-800/60"
+                data-testid={`mech-row-${r.mechanism}`}
+              >
+                <td className="py-1 pr-3 text-zinc-200">{r.mechanism}</td>
+                <td className="py-1 pr-3">
+                  {typeof r.truthful_fraction === "number"
+                    ? `${fmtRatioPct(r.truthful_fraction, 1)}%`
+                    : "—"}
+                </td>
+                {hasEff && (
+                  <td className="py-1 pr-3">
+                    {typeof r.mean_efficiency === "number"
+                      ? `${fmtRatioPct(r.mean_efficiency, 1)}%`
+                      : "—"}
+                  </td>
+                )}
+                {hasRev && (
+                  <td className="py-1 pr-3">{fmt(r.mean_revenue, 2)}</td>
+                )}
+                {hasResid && (
+                  <td className="py-1 pr-3">
+                    {fmt(r.mean_signed_residual, 3)}
+                  </td>
+                )}
+                {hasParse && (
+                  <td
+                    className={`py-1 pr-3 ${
+                      (r.parse_failure_rate ?? 0) > 0 ? "text-amber-400" : ""
+                    }`}
+                  >
+                    {typeof r.parse_failure_rate === "number"
+                      ? `${fmtRatioPct(r.parse_failure_rate, 1)}%`
+                      : "—"}
+                  </td>
+                )}
+                <td className="py-1 pr-3">
+                  <VerdictChip verdict={r.verdict} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -550,43 +707,14 @@ export default function ExperimentDetail({ initial, expIdOverride }: Props) {
         </div>
       )}
 
-      {/* JSON-shaped: header metrics + per-opponent table + coop chart. */}
+      {/* JSON-shaped: generic scalar metrics + per-opponent / per-mechanism. */}
       {data?.summary_json && (
         <div className="mt-4 space-y-4">
-          <div className={CARD} data-testid="json-header">
-            <div className="flex flex-wrap gap-x-8 gap-y-1 text-sm text-zinc-300">
-              <span>
-                opponents:{" "}
-                <span className="font-mono text-zinc-100">
-                  {fmt(data.summary_json.n_opponents)}
-                </span>
-              </span>
-              <span>
-                rounds/opp:{" "}
-                <span className="font-mono text-zinc-100">
-                  {fmt(data.summary_json.rounds_per_opponent)}
-                </span>
-              </span>
-              <span>
-                total rounds:{" "}
-                <span className="font-mono text-zinc-100">
-                  {fmt(data.summary_json.total_rounds)}
-                </span>
-              </span>
-              <span>
-                wall clock:{" "}
-                <span className="font-mono text-zinc-100">
-                  {fmt(data.summary_json.total_wall_clock_s, 1)}s
-                </span>
-              </span>
-              <span>
-                via orchestrator:{" "}
-                <span className="font-mono text-zinc-100">
-                  {String(data.summary_json.via_orchestrator ?? "?")}
-                </span>
-              </span>
-            </div>
-          </div>
+          <ScalarMetricsCard summary={data.summary_json} />
+          {data.summary_json.per_mechanism &&
+            data.summary_json.per_mechanism.length > 0 && (
+              <PerMechanismTable rows={data.summary_json.per_mechanism} />
+            )}
           {opponents.length > 0 && (
             <OpponentTable
               rows={opponents}

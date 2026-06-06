@@ -21,6 +21,20 @@ from backend.experiments import (
 )
 
 
+def _make_per_mechanism(root: Path, exp_id: str, rows: list[dict],
+                        n_trials: int = 50) -> None:
+    res = root / exp_id / "results"
+    res.mkdir(parents=True)
+    summary = {"per_mechanism": rows, "n_trials": n_trials}
+    (res / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+
+def _make_flat(root: Path, exp_id: str, summary: dict) -> None:
+    res = root / exp_id / "results"
+    res.mkdir(parents=True)
+    (res / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+
 def _client(experiments_dir: Path) -> TestClient:
     app = FastAPI()
     register(app, experiments_dir=experiments_dir)
@@ -472,3 +486,201 @@ def test_detail_corrupt_summary_json_sets_error_field(tmp_path):
     assert "summary_json_error" in body
     assert body["summary_json"] is None
     assert body["headline"] is None
+
+
+# ─── per_mechanism shape (exp004/005): YES/NO tally headline ───────────
+
+
+def test_per_mechanism_headline_all_yes_is_ok():
+    """All rows YES -> ok 'YES on all N mechanisms', with the tally fields."""
+    hl = _derive_headline({"per_mechanism": [
+        {"mechanism": "first_price", "verdict": "YES"},
+        {"mechanism": "vcg", "verdict": "YES"},
+        {"mechanism": "sequential_second_price", "verdict": "YES"},
+    ], "n_trials": 150})
+    assert hl is not None
+    assert hl["kind"] == "per_mechanism"
+    assert hl["tone"] == "ok"
+    assert hl["n_mechanisms"] == 3
+    assert hl["n_yes"] == 3
+    assert hl["verdict"] == "YES on all 3 mechanisms"
+
+
+def test_per_mechanism_headline_mixed_is_warn():
+    """A split of YES/NO rows tones warn and reports the K/N split."""
+    hl = _derive_headline({"per_mechanism": [
+        {"mechanism": "first_price", "verdict": "YES"},
+        {"mechanism": "vcg", "verdict": "NO"},
+    ]})
+    assert hl["kind"] == "per_mechanism"
+    assert hl["tone"] == "warn"
+    assert hl["n_mechanisms"] == 2
+    assert hl["n_yes"] == 1
+    assert "1/2" in hl["verdict"]
+
+
+def test_per_mechanism_headline_all_no_is_bad():
+    hl = _derive_headline({"per_mechanism": [
+        {"mechanism": "first_price", "verdict": "NO"},
+        {"mechanism": "vcg", "verdict": "NO"},
+    ]})
+    assert hl["tone"] == "bad"
+    assert hl["n_yes"] == 0
+    assert hl["verdict"] == "NO on all 2 mechanisms"
+
+
+def test_per_mechanism_missing_verdict_counts_as_not_yes():
+    """A row with an absent/ambiguous verdict is never tallied as YES — we do
+    not guess a favorable per-row outcome from absent data."""
+    hl = _derive_headline({"per_mechanism": [
+        {"mechanism": "first_price", "verdict": "YES"},
+        {"mechanism": "vcg"},  # no verdict field at all
+    ]})
+    assert hl["tone"] == "warn"
+    assert hl["n_yes"] == 1
+
+
+def test_per_mechanism_explicit_invalid_token_not_counted_as_yes():
+    """An explicit non-YES/NO per-row token (e.g. the pre-registered 'INVALID'
+    verdict for high parse-failure runs) is NOT tallied as YES and tones the
+    headline away from green — we never read a favorable outcome from a token
+    that is not a clean YES."""
+    hl = _derive_headline({"per_mechanism": [
+        {"mechanism": "first_price", "verdict": "YES"},
+        {"mechanism": "vcg", "verdict": "INVALID"},
+    ]})
+    assert hl["kind"] == "per_mechanism"
+    assert hl["n_yes"] == 1            # INVALID not counted as YES
+    assert hl["tone"] == "warn"        # mixed split, not green
+    assert hl["n_mechanisms"] == 2
+
+
+def test_empty_per_mechanism_list_falls_through_to_flat_verdict():
+    """REGRESSION: an empty per_mechanism array plus a real top-level verdict
+    must fall through to the flat deriver rather than short-circuit to None and
+    silently drop the present verdict."""
+    hl = _derive_headline({"per_mechanism": [], "verdict": "NO"})
+    assert hl is not None
+    assert hl["kind"] == "flat"
+    assert hl["tone"] == "bad"
+    assert hl["verdict"] == "NO"
+
+
+def test_empty_per_opponent_list_falls_through_to_flat_verdict():
+    """Same short-circuit guard for the legacy per_opponent shape: an empty
+    per_opponent array with a top-level verdict reads the flat verdict."""
+    hl = _derive_headline({"per_opponent": [], "verdict": "YES"})
+    assert hl is not None
+    assert hl["kind"] == "flat"
+    assert hl["tone"] == "ok"
+    assert hl["verdict"] == "YES"
+
+
+def test_empty_structured_list_no_flat_verdict_is_none():
+    """An empty structured list with NO top-level verdict still yields None —
+    we never fabricate a headline from nothing."""
+    assert _derive_headline({"per_mechanism": []}) is None
+
+
+def test_per_mechanism_headline_through_detail_endpoint(tmp_path):
+    """exp004-like (efficiency/revenue) per_mechanism -> structured headline."""
+    _make_per_mechanism(tmp_path, "exp004", [
+        {"mechanism": "first_price", "truthful_fraction": 0.965,
+         "mean_efficiency": 0.998, "mean_revenue": 82.9,
+         "parse_failure_rate": 0.0, "verdict": "YES"},
+        {"mechanism": "vcg", "truthful_fraction": 0.965,
+         "mean_efficiency": 0.998, "mean_revenue": 63.6,
+         "parse_failure_rate": 0.0, "verdict": "YES"},
+    ], n_trials=150)
+    body = _client(tmp_path).get("/api/experiments/exp004").json()
+    hl = body["headline"]
+    assert hl["kind"] == "per_mechanism"
+    assert hl["tone"] == "ok"
+    assert hl["n_yes"] == 2
+    # The flat scalar n_trials is still passed through on the summary.
+    assert body["summary_json"]["n_trials"] == 150
+
+
+# ─── flat top-level-verdict shape (exp006) ─────────────────────────────
+
+
+def test_flat_headline_yes_is_ok():
+    hl = _derive_headline({"verdict": "YES", "n_trials": 40,
+                           "designer_mean_efficiency": 0.71})
+    assert hl is not None
+    assert hl["kind"] == "flat"
+    assert hl["tone"] == "ok"
+    assert hl["verdict"] == "YES"
+
+
+def test_flat_headline_no_is_bad():
+    hl = _derive_headline({"verdict": "NO", "n_trials": 40,
+                           "feasibility_rate": 0.525})
+    assert hl["kind"] == "flat"
+    assert hl["tone"] == "bad"
+    assert hl["verdict"] == "NO"
+
+
+def test_flat_headline_ambiguous_is_warn():
+    hl = _derive_headline({"verdict": "INVALID", "n_trials": 40})
+    assert hl["kind"] == "flat"
+    assert hl["tone"] == "warn"
+
+
+def test_flat_headline_absent_verdict_is_none():
+    """No top-level verdict and no per_* rows -> no headline, never invented."""
+    assert _derive_headline({"n_trials": 40, "feasibility_rate": 0.5}) is None
+
+
+def test_flat_headline_through_detail_endpoint(tmp_path):
+    """exp006-like flat summary -> NO verdict tones bad through the endpoint."""
+    _make_flat(tmp_path, "exp006", {
+        "verdict": "NO", "n_trials": 40, "n_errors": 0,
+        "designer_mean_efficiency": 0.710, "feasibility_rate": 0.525,
+        "matches_vcg_rate": 0.375, "parse_failures": 13,
+    })
+    body = _client(tmp_path).get("/api/experiments/exp006").json()
+    hl = body["headline"]
+    assert hl["kind"] == "flat"
+    assert hl["tone"] == "bad"
+    assert hl["verdict"] == "NO"
+    # Flat scalar metrics ride along on summary_json for the metrics card.
+    assert body["summary_json"]["feasibility_rate"] == 0.525
+
+
+# ─── md does NOT override a STRUCTURED json headline (exp004/5/6) ───────
+
+
+def test_md_does_not_override_structured_per_mechanism_headline(tmp_path):
+    """If a per_mechanism experiment ALSO ships a summary.md, the structured
+    json headline (the producer's per-row verdict tally) wins — the markdown
+    verdict does not clobber it. Contrast test_md_verdict_overrides_json_headline
+    which pins md-over-json for the legacy per_opponent shape."""
+    res = tmp_path / "exp004" / "results"
+    res.mkdir(parents=True)
+    (res / "summary.json").write_text(json.dumps({"per_mechanism": [
+        {"mechanism": "first_price", "verdict": "YES"},
+        {"mechanism": "vcg", "verdict": "YES"},
+    ], "n_trials": 100}), encoding="utf-8")
+    # A markdown verdict that would tone the OTHER way if it won.
+    (res / "summary.md").write_text(
+        "**Verdict: NO** — markdown-authored\n", encoding="utf-8")
+    body = _client(tmp_path).get("/api/experiments/exp004").json()
+    hl = body["headline"]
+    assert hl["kind"] == "per_mechanism"
+    assert hl["tone"] == "ok"
+    assert hl["verdict"] == "YES on all 2 mechanisms"
+
+
+def test_md_does_not_override_structured_flat_headline(tmp_path):
+    res = tmp_path / "exp006" / "results"
+    res.mkdir(parents=True)
+    (res / "summary.json").write_text(
+        json.dumps({"verdict": "NO", "n_trials": 40}), encoding="utf-8")
+    (res / "summary.md").write_text(
+        "**Verdict: YES** — markdown-authored\n", encoding="utf-8")
+    body = _client(tmp_path).get("/api/experiments/exp006").json()
+    hl = body["headline"]
+    assert hl["kind"] == "flat"
+    assert hl["tone"] == "bad"
+    assert hl["verdict"] == "NO"

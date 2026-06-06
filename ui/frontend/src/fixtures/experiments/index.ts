@@ -180,6 +180,250 @@ export const DETAIL_MD_FIXTURE: ExperimentDetail = {
   },
 };
 
+// exp004 — per_mechanism shape WITH efficiency + revenue columns. All-YES
+// verdicts -> ok 'YES on all 3 mechanisms' structured headline.
+export const DETAIL_PER_MECHANISM_EFFICIENCY_FIXTURE: ExperimentDetail = {
+  id: "exp004_combinatorial_auction",
+  title: "exp004 combinatorial auction",
+  has_results_dir: true,
+  has_summary_json: true,
+  has_summary_md: true,
+  has_per_round: false,
+  has_trials: true,
+  n_results_files: 3,
+  summary_json: {
+    n_trials: 150,
+    per_mechanism: [
+      {
+        mechanism: "first_price",
+        truthful_fraction: 0.965,
+        mean_efficiency: 0.9988,
+        mean_revenue: 82.93,
+        parse_failure_rate: 0.0,
+        verdict: "YES",
+      },
+      {
+        mechanism: "sequential_second_price",
+        truthful_fraction: 0.965,
+        mean_efficiency: 0.9771,
+        mean_revenue: 61.137,
+        parse_failure_rate: 0.0,
+        verdict: "YES",
+      },
+      {
+        mechanism: "vcg",
+        truthful_fraction: 0.965,
+        mean_efficiency: 0.9988,
+        mean_revenue: 63.659,
+        parse_failure_rate: 0.0,
+        verdict: "YES",
+      },
+    ],
+  },
+  // BOTH-present shape: the real exp004 dir ships a summary.md alongside the
+  // summary.json. This synthetic md carries a verdict that tones the OTHER way
+  // (NO) so the no-clobber contract is load-bearing: the structured per_mechanism
+  // headline (YES on all 3, ok/emerald) must survive and the markdown verdict
+  // must NOT override it. The full prose still renders in its own card below.
+  summary_md:
+    "# exp004 — combinatorial-auction truthfulness summary\n\n" +
+    "**Verdict: NO** — adversarial markdown that would tone red if it won.\n\n" +
+    "## Per-mechanism verdicts\n\n" +
+    "- first_price: YES\n- sequential_second_price: YES\n- vcg: YES\n",
+  per_round: null,
+  trials: null,
+  headline: {
+    verdict: "YES on all 3 mechanisms",
+    tone: "ok",
+    kind: "per_mechanism",
+    n_mechanisms: 3,
+    n_yes: 3,
+  },
+};
+
+// exp005 — per_mechanism shape WITH a signed-residual column (no
+// efficiency/revenue). Still all-YES.
+export const DETAIL_PER_MECHANISM_RESIDUAL_FIXTURE: ExperimentDetail = {
+  id: "exp005_mechanism_aware",
+  title: "exp005 mechanism aware",
+  has_results_dir: true,
+  has_summary_json: true,
+  has_summary_md: true,
+  has_per_round: false,
+  has_trials: true,
+  n_results_files: 3,
+  summary_json: {
+    n_trials: 50,
+    per_mechanism: [
+      {
+        mechanism: "first_price",
+        truthful_fraction: 0.9317,
+        mean_signed_residual: -1.5647,
+        parse_failure_rate: 0.0,
+        verdict: "YES",
+      },
+      {
+        mechanism: "sequential_second_price",
+        truthful_fraction: 0.9533,
+        mean_signed_residual: -1.3116,
+        parse_failure_rate: 0.0,
+        verdict: "YES",
+      },
+      {
+        mechanism: "vcg",
+        truthful_fraction: 0.8083,
+        mean_signed_residual: -4.9017,
+        parse_failure_rate: 0.0,
+        verdict: "YES",
+      },
+    ],
+  },
+  summary_md: null,
+  per_round: null,
+  trials: null,
+  headline: {
+    verdict: "YES on all 3 mechanisms",
+    tone: "ok",
+    kind: "per_mechanism",
+    n_mechanisms: 3,
+    n_yes: 3,
+  },
+};
+
+// per_mechanism shape with a MIXED YES/NO split (not all-YES). One row is
+// missing a metric cell (no truthful_fraction on the NO row) so the dash-not-
+// fabricated guarantee for the mechanism table is exercised. Headline tones
+// amber (warn) and the NO row's chip reads red.
+export const DETAIL_PER_MECHANISM_MIXED_FIXTURE: ExperimentDetail = {
+  id: "exp004_combinatorial_auction",
+  title: "exp004 combinatorial auction (mixed)",
+  has_results_dir: true,
+  has_summary_json: true,
+  has_summary_md: false,
+  has_per_round: false,
+  has_trials: true,
+  n_results_files: 3,
+  summary_json: {
+    n_trials: 150,
+    per_mechanism: [
+      {
+        mechanism: "first_price",
+        truthful_fraction: 0.965,
+        mean_efficiency: 0.9988,
+        mean_revenue: 82.93,
+        parse_failure_rate: 0.0,
+        verdict: "YES",
+      },
+      {
+        // No truthful_fraction here -> the cell must render a dash, not 0/faked.
+        mechanism: "vcg",
+        mean_efficiency: 0.71,
+        mean_revenue: 40.1,
+        parse_failure_rate: 0.12,
+        verdict: "NO",
+      },
+    ],
+  },
+  summary_md: null,
+  per_round: null,
+  trials: null,
+  headline: {
+    verdict: "Mixed: YES on 1/2 mechanisms",
+    tone: "warn",
+    kind: "per_mechanism",
+    n_mechanisms: 2,
+    n_yes: 1,
+  },
+};
+
+// per_mechanism shape where EVERY row is NO -> headline tones red (bad).
+export const DETAIL_PER_MECHANISM_ALL_NO_FIXTURE: ExperimentDetail = {
+  id: "exp004_combinatorial_auction",
+  title: "exp004 combinatorial auction (all-no)",
+  has_results_dir: true,
+  has_summary_json: true,
+  has_summary_md: false,
+  has_per_round: false,
+  has_trials: true,
+  n_results_files: 3,
+  summary_json: {
+    n_trials: 150,
+    per_mechanism: [
+      {
+        mechanism: "first_price",
+        truthful_fraction: 0.42,
+        mean_efficiency: 0.61,
+        mean_revenue: 30.0,
+        parse_failure_rate: 0.0,
+        verdict: "NO",
+      },
+      {
+        mechanism: "vcg",
+        truthful_fraction: 0.38,
+        mean_efficiency: 0.55,
+        mean_revenue: 28.0,
+        parse_failure_rate: 0.0,
+        verdict: "NO",
+      },
+    ],
+  },
+  summary_md: null,
+  per_round: null,
+  trials: null,
+  headline: {
+    verdict: "NO on all 2 mechanisms",
+    tone: "bad",
+    kind: "per_mechanism",
+    n_mechanisms: 2,
+    n_yes: 0,
+  },
+};
+
+// exp006 — FLAT shape: a top-level NO verdict + scalar metrics, no
+// per_mechanism rows. The metrics card renders the scalars; the headline reads
+// red from the NO token.
+export const DETAIL_FLAT_FIXTURE: ExperimentDetail = {
+  id: "exp006_mechanism_design",
+  title: "exp006 mechanism design",
+  has_results_dir: true,
+  has_summary_json: true,
+  has_summary_md: true,
+  has_per_round: false,
+  has_trials: true,
+  n_results_files: 3,
+  summary_json: {
+    verdict: "NO",
+    n_trials: 40,
+    n_errors: 0,
+    designer_mean_efficiency: 0.7102,
+    feasibility_rate: 0.525,
+    matches_vcg_rate: 0.375,
+    n_feasible: 21,
+    n_matches_vcg: 15,
+    parse_failures: 13,
+    efficiency_threshold: 0.9,
+    feasibility_threshold: 0.9,
+    feasibility_floor: 0.5,
+  },
+  // BOTH-present shape: the real exp006 dir ships a summary.md alongside the
+  // summary.json. This synthetic md carries a verdict that tones the OTHER way
+  // (YES) so the no-clobber contract is load-bearing: the structured flat
+  // headline (NO, bad/red) must survive and the markdown verdict must NOT flip
+  // it green. The full prose still renders in its own card below.
+  summary_md:
+    "# exp006 — semi-synthetic mechanism-DESIGN summary\n\n" +
+    "**Verdict: YES** — adversarial markdown that would tone green if it won.\n\n" +
+    "## Headline metrics\n\n" +
+    "- designer mean efficiency: 0.710\n- feasibility_rate: 52.5%\n",
+  per_round: null,
+  trials: null,
+  headline: {
+    verdict: "NO",
+    tone: "bad",
+    kind: "flat",
+  },
+};
+
 // exp002 — no results/ dir at all.
 export const DETAIL_EMPTY_FIXTURE: ExperimentDetail = {
   id: "exp002_loop_v0_robustness",

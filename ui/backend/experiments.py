@@ -156,7 +156,92 @@ def _aggregate_per_round(path: Path) -> dict:
     }
 
 
+def _verdict_tone(verdict) -> str | None:
+    """Tone a single per-row / flat YES|NO verdict token. Returns ``ok`` for a
+    YES, ``bad`` for a NO, ``warn`` for anything else, and ``None`` when the
+    field is absent (so a caller can tell "no verdict" from "ambiguous"). We
+    never guess a green/red outcome — only a clean YES/NO token colors."""
+    if not isinstance(verdict, str):
+        return None
+    v = verdict.strip().lower()
+    if v == "yes":
+        return "ok"
+    if v == "no":
+        return "bad"
+    return "warn"
+
+
+def _derive_per_mechanism_headline(summary: dict) -> dict | None:
+    """Headline for the per_mechanism shape (exp004 efficiency/revenue,
+    exp005 signed-residual). Tally each row's YES/NO ``verdict`` token and
+    summarize: YES on all N (ok), NO on all N (bad), or a mixed split (warn).
+    Pure tally of the verdicts the producer already authored — we never invent
+    a per-row verdict, and rows with a missing/ambiguous verdict count as
+    not-YES. Returns ``None`` when there are no per_mechanism rows."""
+    rows = summary.get("per_mechanism")
+    if not isinstance(rows, list) or not rows:
+        return None
+    n = len(rows)
+    n_yes = sum(
+        1 for r in rows
+        if isinstance(r, dict) and _verdict_tone(r.get("verdict")) == "ok"
+    )
+    if n_yes == n:
+        verdict = f"YES on all {n} mechanisms"
+        tone = "ok"
+    elif n_yes == 0:
+        verdict = f"NO on all {n} mechanisms"
+        tone = "bad"
+    else:
+        verdict = f"Mixed: YES on {n_yes}/{n} mechanisms"
+        tone = "warn"
+    return {
+        "verdict": verdict,
+        "tone": tone,
+        "kind": "per_mechanism",
+        "n_mechanisms": n,
+        "n_yes": n_yes,
+    }
+
+
+def _derive_flat_headline(summary: dict) -> dict | None:
+    """Headline for the flat top-level-verdict shape (exp006). The producer
+    authors a single ``verdict`` token; we only tone it (YES->ok, NO->bad,
+    else warn). Returns ``None`` when there is no top-level verdict — we never
+    fabricate one. The flat scalar metrics render in the metrics card, not
+    here."""
+    tone = _verdict_tone(summary.get("verdict"))
+    if tone is None:
+        return None
+    return {
+        "verdict": str(summary.get("verdict")),
+        "tone": tone,
+        "kind": "flat",
+    }
+
+
 def _derive_headline(summary: dict) -> dict | None:
+    """Dispatch to the right OUTCOME-verdict deriver by the summary's SHAPE.
+
+    The experiments are heterogeneous: exp001 carries ``per_opponent`` rows,
+    exp004/005 carry ``per_mechanism`` rows, exp006 carries a flat top-level
+    ``verdict``. We probe in that order and return the first shape that
+    matches; ``None`` when none does (e.g. a markdown-only experiment whose
+    json is absent). Each deriver is a pure transform of producer fields —
+    nothing measured anew, no verdict invented.
+    """
+    # Only dispatch into a structured deriver when the list is NON-EMPTY. An
+    # empty per_opponent/per_mechanism array is still a list, but it carries no
+    # rows to tally — so we must fall through to the flat deriver rather than
+    # short-circuit to None and silently drop a present top-level verdict.
+    if isinstance(summary.get("per_opponent"), list) and summary["per_opponent"]:
+        return _derive_per_opponent_headline(summary)
+    if isinstance(summary.get("per_mechanism"), list) and summary["per_mechanism"]:
+        return _derive_per_mechanism_headline(summary)
+    return _derive_flat_headline(summary)
+
+
+def _derive_per_opponent_headline(summary: dict) -> dict | None:
     """Derive the OUTCOME verdict for an exp001-shaped summary.json.
 
     The key result of a repeated-PD sweep is whether the LLM was EXPLOITED:
@@ -351,7 +436,18 @@ def register(app, *, experiments_dir: Path = DEFAULT_EXPERIMENTS_DIR) -> APIRout
                 md = (results_dir / "summary.md").read_text(encoding="utf-8")
                 payload["summary_md"] = md
                 verdict = _md_verdict(md)
-                if verdict is not None:
+                # A STRUCTURED json headline (per_mechanism / flat shape, which
+                # carries a ``kind``) is the producer's authored conclusion for
+                # exp004/5/6 — the markdown does not override it. The legacy
+                # per_opponent (exp001) headline has no ``kind`` and IS
+                # overridable by an authored markdown verdict, as is the
+                # markdown-only (exp003) case where json produced no headline.
+                json_headline = payload.get("headline")
+                json_headline_is_structured = (
+                    isinstance(json_headline, dict)
+                    and json_headline.get("kind") in ("per_mechanism", "flat")
+                )
+                if verdict is not None and not json_headline_is_structured:
                     payload["headline"] = {
                         "verdict": verdict,
                         "tone": _md_verdict_tone(verdict),
