@@ -65,12 +65,14 @@ def test_heterogeneity_is_surfaced_honestly():
 
 
 def test_results_summary_resolution():
-    # exp004 ships a json summary; exp003 ships md; exp005 ships none.
+    # json summary preferred over md when both/either present. exp003 ships md;
+    # exp004 + exp005 now ship real json summaries (real runs landed 2026-06-05).
     assert tr.get_experiment("exp004_combinatorial_auction")["results_summary"] == \
         "experiments/exp004_combinatorial_auction/results/summary.json"
     assert tr.get_experiment("exp003_vickrey_rediscovery")["results_summary"] == \
         "experiments/exp003_vickrey_rediscovery/results/summary.md"
-    assert tr.get_experiment("exp005_mechanism_aware")["results_summary"] is None
+    assert tr.get_experiment("exp005_mechanism_aware")["results_summary"] == \
+        "experiments/exp005_mechanism_aware/results/summary.json"
 
 
 def test_tiers_status_counts():
