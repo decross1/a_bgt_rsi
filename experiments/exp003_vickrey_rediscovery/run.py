@@ -30,8 +30,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from agent_wrapper.wrapper import set_run_id  # noqa: E402
 from experiments.exp003_vickrey_rediscovery.auctioneer import run_auction  # noqa: E402
 from experiments.exp003_vickrey_rediscovery.bidder import compute_bid  # noqa: E402
+from orchestrator import active_run  # noqa: E402
+from orchestrator.exp_orchestrator_rows import emit_task_triple  # noqa: E402
 
 EXP_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = EXP_DIR / "results"
@@ -111,6 +114,12 @@ def main(argv: list[str] | None = None) -> int:
 
     rng = random.Random(args.seed)
     t_start = _utcnow_iso()
+    run_id = f"exp003_vickrey_rediscovery_{t_start}"
+    set_run_id(run_id)
+    active_run.write_active_run(
+        run_id, "experiment", "exp003 Vickrey rediscovery",
+        total=args.trials, unit="trial", model=args.model,
+    )
     print(f"=== exp003 run starting at {t_start} ===", flush=True)
     print(f"=== {args.trials} trials × {N_BIDDERS} bidders -> "
           f"{args.trials * N_BIDDERS} LLM calls ===", flush=True)
@@ -142,8 +151,14 @@ def main(argv: list[str] | None = None) -> int:
                 f.write(json.dumps(err_row) + "\n")
                 f.flush()
                 n_err += 1
-                print(f"[{trial_idx + 1}/{args.trials}] ERROR: {err_row['error']} "
-                      f"({wall_s:.1f}s)", flush=True)
+                narration = (f"[{trial_idx + 1}/{args.trials}] ERROR: "
+                             f"{err_row['error']} ({wall_s:.1f}s)")
+                print(narration, flush=True)
+                active_run.update_active_run(
+                    done=trial_idx + 1, narration=narration, n_err=n_err)
+                emit_task_triple(
+                    task_id=f"exp003_t{trial_idx}", task_type="experiment_trial",
+                    status="error", duration_ms=wall_s * 1000.0, run_id=run_id)
                 continue
             wall_s = time.perf_counter() - t0
             row["wall_s"] = round(wall_s, 2)
@@ -154,12 +169,19 @@ def main(argv: list[str] | None = None) -> int:
                 sum(row["bid_residuals"]) / len(row["bid_residuals"])
                 if row["bid_residuals"] else 0.0
             )
-            print(f"[{trial_idx + 1}/{args.trials}] winner={row['winner_idx']} "
-                  f"price={row['price_paid']:.2f} "
-                  f"mean_residual={mean_resid:+.2f} ({wall_s:.1f}s)",
-                  flush=True)
+            narration = (f"[{trial_idx + 1}/{args.trials}] winner={row['winner_idx']} "
+                         f"price={row['price_paid']:.2f} "
+                         f"mean_residual={mean_resid:+.2f} ({wall_s:.1f}s)")
+            print(narration, flush=True)
+            active_run.update_active_run(
+                done=trial_idx + 1, narration=narration, n_err=n_err)
+            emit_task_triple(
+                task_id=f"exp003_t{trial_idx}", task_type="experiment_trial",
+                status="passed", duration_ms=wall_s * 1000.0, run_id=run_id)
     finally:
         f.close()
+        active_run.clear_active_run()
+        set_run_id(None)
 
     wall_s_total = time.perf_counter() - t0_total
     t_end = _utcnow_iso()

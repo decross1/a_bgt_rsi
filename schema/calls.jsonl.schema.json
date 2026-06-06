@@ -125,6 +125,16 @@
         { "type": "null" }
       ]
     },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Run-mode identifier (experiment trial-loop, autoresearch sweep, or LOOP_V0 iteration) this call was issued under. OPTIONAL — set by wrapper.set_run_id; absent on calls made outside a run-mode context and on all pre-2026-06-06 records."
+    },
+    "max_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Generation cap (max_tokens) the caller requested for this call. OPTIONAL — a request param, not a logged-by-default field; absent when the caller passed no cap and on all pre-2026-06-06 records."
+    },
     "retrieval_context": {
       "type": ["array", "null"],
       "description": "Per-call retrieval provenance (P2). null when no retrieval ran. A list when one or more retrievals contributed to the prompt — typically generator and novelty-evaluation calls. Optional field; absent on records that pre-date Day 3.5.",

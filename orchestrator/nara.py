@@ -40,7 +40,10 @@ from agent_wrapper.wrapper import (
     MEMORY_LOG,
     _emit,
     _project_for_log,
+    get_run_id,
+    set_run_id,
 )
+from orchestrator import active_run
 from orchestrator import iteration_cache
 from orchestrator.journal_stub import finalize_iteration_record
 from orchestrator.runtime import PyRuntime, Runtime
@@ -210,6 +213,11 @@ def _record_turn(
         "caller_tag": caller_tag,
         "parent_request_id": parent_request_id,
     }
+    # Stamp the active run_id so loop_v0 orchestrator turns are attributable
+    # (nara builds its own record, bypassing wrapper._record's run_id stamp).
+    run_id = get_run_id()
+    if run_id is not None:
+        rec["run_id"] = run_id
     return _emit(rec, log_path)
 
 
@@ -334,6 +342,15 @@ def run_iteration(
         orchestrator_model=be.default_model,
     )
     runtime.write_state(ACTIVE_PATH, active)
+    # UI observability: mirror the iteration into the generalized active_run.json
+    # (active_iteration.json stays the loop-detail subset). set_run_id stamps
+    # every wrapper call this iteration makes. Cleared with active_iteration in
+    # the finally below.
+    set_run_id(iteration_id)
+    active_run.write_active_run(
+        iteration_id, "loop_v0", f"LOOP_V0 iteration {iteration_id}",
+        model=be.default_model,
+    )
     runtime.log_event({
         "event_type": "loop_v0_iteration_start",
         "iteration_id": iteration_id,
@@ -874,5 +891,7 @@ def run_iteration(
         raise
     finally:
         runtime.delete_state(ACTIVE_PATH)
+        active_run.clear_active_run()
+        set_run_id(None)
 
     return record

@@ -20,6 +20,7 @@ Day 4 adds: call_with_tools with bounded recursion (max_depth=3). Malformed
 tool-call JSON is surfaced (ToolCallError) -- never silently retried; the
 program needs to SEE the failure rate before deciding to add guided_json.
 """
+import contextvars
 import json
 import os
 import time
@@ -30,6 +31,7 @@ from pathlib import Path
 import jsonschema
 from openai import AsyncOpenAI, OpenAI
 
+from . import worker_activity
 from .backends import get_backend, register_backend
 from .backends.anthropic import AnthropicBackend
 from .backends.ollama_openai import OllamaBackend
@@ -59,6 +61,23 @@ HOST_METADATA = {
 # In-memory sink for tests (log_path=None). Cleared by callers as needed.
 MEMORY_LOG = []
 
+# Run-id context. A run-mode driver (experiment, autoresearch, loop_v0) sets
+# this once at the start of a run; every call_sync/call_with_tools made within
+# that run stamps it into the call record (optional field) and into the
+# per-call worker_activity row. contextvars (not a module global) so concurrent
+# async iterations don't clobber each other. Default None -> field omitted.
+_run_id: contextvars.ContextVar = contextvars.ContextVar("_run_id", default=None)
+
+
+def set_run_id(run_id):
+    """Set the active run_id for the current context (None to clear)."""
+    _run_id.set(run_id)
+
+
+def get_run_id():
+    """Return the active run_id for the current context, or None."""
+    return _run_id.get()
+
 _sync_client = OpenAI(base_url=BASE_URL, api_key=os.environ.get("VLLM_API_KEY", "EMPTY"))
 _async_client = AsyncOpenAI(base_url=BASE_URL, api_key=os.environ.get("VLLM_API_KEY", "EMPTY"))
 
@@ -83,7 +102,8 @@ DEFAULT_BACKEND = os.environ.get("WRAPPER_DEFAULT_BACKEND", "vllm-gemma")
 
 
 def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id,
-            retrieval_context=None, model_version=None, host_metadata=None):
+            retrieval_context=None, model_version=None, host_metadata=None,
+            max_tokens=None):
     """Build a schema-conforming record from a chat-completion response.
 
     retrieval_context (D-025 / P2): None when no retrieval ran -- the field is
@@ -118,6 +138,14 @@ def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id,
     }
     if retrieval_context is not None:
         rec["retrieval_context"] = retrieval_context
+    # Optional UI-observability fields (omitted when unset, so legacy
+    # records and tests still validate). run_id from the run-mode context;
+    # max_tokens echoes the generation cap the caller requested.
+    run_id = get_run_id()
+    if run_id is not None:
+        rec["run_id"] = run_id
+    if max_tokens is not None:
+        rec["max_tokens"] = max_tokens
     return rec
 
 
@@ -151,11 +179,22 @@ def call_sync(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=Non
         model=model or be.default_model, messages=messages,
         max_tokens=max_tokens, **params)
     latency_ms = (time.perf_counter() - t0) * 1000.0
-    return _emit(_record(messages, params, resp, latency_ms,
-                         caller_tag, parent_request_id,
-                         retrieval_context=retrieval_context,
-                         model_version=be.model_version,
-                         host_metadata=be.host_metadata), log_path)
+    rec = _emit(_record(messages, params, resp, latency_ms,
+                        caller_tag, parent_request_id,
+                        retrieval_context=retrieval_context,
+                        model_version=be.model_version,
+                        host_metadata=be.host_metadata,
+                        max_tokens=max_tokens), log_path)
+    # Per-call UI inference-internals row (best-effort; never raises).
+    worker_activity.emit_worker_activity(
+        run_id=get_run_id(),
+        task_id=caller_tag,
+        output_tokens=rec["usage"]["output_tokens"],
+        max_tokens=max_tokens if max_tokens is not None else rec["usage"]["output_tokens"],
+        latency_ms=latency_ms,
+        timestamp=rec["timestamp"],
+    )
+    return rec
 
 
 async def call_async(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=None,
@@ -174,7 +213,8 @@ async def call_async(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tok
                          caller_tag, parent_request_id,
                          retrieval_context=retrieval_context,
                          model_version=be.model_version,
-                         host_metadata=be.host_metadata), log_path)
+                         host_metadata=be.host_metadata,
+                         max_tokens=max_tokens), log_path)
 
 
 _DEFAULT_MAX_TOOL_DEPTH = 3
@@ -309,9 +349,24 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
         }
         if retrieval_context is not None:
             record["retrieval_context"] = retrieval_context
+        run_id = get_run_id()
+        if run_id is not None:
+            record["run_id"] = run_id
+        if max_tokens is not None:
+            record["max_tokens"] = max_tokens
         _emit(record, log_path)
         records.append(record)
         last_id = record["request_id"]
+        # Per-call UI inference-internals row (best-effort; never raises).
+        worker_activity.emit_worker_activity(
+            run_id=run_id,
+            task_id=caller_tag,
+            output_tokens=record["usage"]["output_tokens"],
+            max_tokens=(max_tokens if max_tokens is not None
+                        else record["usage"]["output_tokens"]),
+            latency_ms=latency_ms,
+            timestamp=record["timestamp"],
+        )
 
         if not tool_calls:
             return records

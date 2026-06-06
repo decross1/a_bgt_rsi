@@ -40,6 +40,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -204,48 +205,63 @@ def run_autoresearch(
               cross_tier_comparison (optional), iteration_id (when live),
               dry_run: bool}.
     """
-    # Step 1 — resolve + tier-check.
-    exp = _resolve_experiment(tier, experiment_id)
+    # UI observability: announce this autoresearch pass as the active run.
+    # set_run_id stamps every wrapper call in this pass; active_run.json is
+    # the single 'what is running now' file the UI polls. Cleared in finally
+    # so both the dry-run early-return and the live path leave no stale state.
+    from agent_wrapper.wrapper import set_run_id
+    from orchestrator import active_run
 
-    # Step 2 — optionally (re)run the experiment. Guarded.
-    if run_experiment and not reuse_results:
-        _run_experiment_subprocess(exp, runtime)
+    run_id = f"autoresearch_{experiment_id}_{uuid.uuid4().hex[:8]}"
+    set_run_id(run_id)
+    active_run.write_active_run(
+        run_id, "autoresearch", f"autoresearch {experiment_id}")
+    try:
+        # Step 1 — resolve + tier-check.
+        exp = _resolve_experiment(tier, experiment_id)
 
-    # Step 3 — build the experiment_outcome.
-    outcome = _build_experiment_outcome(exp)
-    if n is not None:
-        # `n` is an advisory trial count surfaced into the bridged outcome;
-        # it does not re-run anything (single-shot). Only set when the bridge
-        # didn't already carry a trial count.
-        outcome.setdefault("trials", n)
+        # Step 2 — optionally (re)run the experiment. Guarded.
+        if run_experiment and not reuse_results:
+            _run_experiment_subprocess(exp, runtime)
 
-    # Step 4 — optional replication comparison.
-    comparison = _build_replication(experiment_id) if replicate else None
+        # Step 3 — build the experiment_outcome.
+        outcome = _build_experiment_outcome(exp)
+        if n is not None:
+            # `n` is an advisory trial count surfaced into the bridged outcome;
+            # it does not re-run anything (single-shot). Only set when the bridge
+            # didn't already carry a trial count.
+            outcome.setdefault("trials", n)
 
-    payload: dict[str, Any] = {
-        "tier": tier,
-        "experiment_id": experiment_id,
-        "experiment_outcome": outcome,
-        "dry_run": not live,
-    }
-    if comparison is not None:
-        payload["cross_tier_comparison"] = comparison
+        # Step 4 — optional replication comparison.
+        comparison = _build_replication(experiment_id) if replicate else None
 
-    # Step 5 — dry-run returns the payload WITHOUT touching the model; live
-    # threads it through exactly ONE run_iteration.
-    if not live:
+        payload: dict[str, Any] = {
+            "tier": tier,
+            "experiment_id": experiment_id,
+            "experiment_outcome": outcome,
+            "dry_run": not live,
+        }
+        if comparison is not None:
+            payload["cross_tier_comparison"] = comparison
+
+        # Step 5 — dry-run returns the payload WITHOUT touching the model; live
+        # threads it through exactly ONE run_iteration.
+        if not live:
+            return payload
+
+        # Lazy import — run_iteration pulls in vLLM + chromadb.
+        from orchestrator.nara import run_iteration
+
+        topic = _topic_seed(outcome, comparison)
+        kwargs: dict[str, Any] = {"experiment_outcome": outcome}
+        if comparison is not None:
+            kwargs["cross_tier_comparison"] = comparison
+        record = run_iteration(topic=topic, source="human_cli", **kwargs)
+        payload["iteration_id"] = record.get("iteration_id")
         return payload
-
-    # Lazy import — run_iteration pulls in vLLM + chromadb.
-    from orchestrator.nara import run_iteration
-
-    topic = _topic_seed(outcome, comparison)
-    kwargs: dict[str, Any] = {"experiment_outcome": outcome}
-    if comparison is not None:
-        kwargs["cross_tier_comparison"] = comparison
-    record = run_iteration(topic=topic, source="human_cli", **kwargs)
-    payload["iteration_id"] = record.get("iteration_id")
-    return payload
+    finally:
+        active_run.clear_active_run()
+        set_run_id(None)
 
 
 def _topic_seed(outcome: dict, comparison: dict | None) -> str:
