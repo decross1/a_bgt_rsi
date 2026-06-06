@@ -4,6 +4,7 @@
 import type {
   ExperimentDetail,
   ExperimentsListResponse,
+  ResearchResponse,
 } from "../types/experiments";
 
 const API_PORT = import.meta.env.VITE_API_PORT ?? "8700";
@@ -31,3 +32,5 @@ export const getExperimentDetail = (expId: string) =>
   getJSON<ExperimentDetail>(
     `/api/experiments/${encodeURIComponent(expId)}`,
   );
+
+export const getResearch = () => getJSON<ResearchResponse>("/api/research");

@@ -37,6 +37,7 @@ DEFAULT_EXPERIMENTS_DIR = _REPO / "experiments"
 # Bounds so a large producer file can never blow up the endpoint.
 MAX_TRIALS_SAMPLE = 50          # head rows of trials.jsonl returned verbatim
 MAX_PER_ROUND_ROWS = 100_000    # hard cap on per_round.jsonl rows scanned
+MAX_LOOP_MEMORY_ROWS = 100_000  # hard cap on loop_memory.jsonl rows scanned
 
 # Payoff-gap threshold that classifies an opponent as having EXPLOITED the
 # LLM (opponent mean payoff exceeds the LLM's by more than this). Single
@@ -46,6 +47,158 @@ EXPLOIT_GAP_THRESHOLD = 0.5
 
 # Dirs under experiments/ that are scaffolding, not experiments.
 _SKIP_DIRS = {"fixtures", "__pycache__"}
+
+# The PRIMARY checkout's loop_memory (mirrors loop_v0.py's read pattern). The
+# UI worktree's memory/ is not the one Nara writes; the bridge lives in the
+# primary checkout. Read-only.
+_PRIMARY_REPO = Path("/home/decross1/projects/a_bgt_rsi")
+DEFAULT_LOOP_MEMORY_PATH = _PRIMARY_REPO / "memory" / "loop_memory.jsonl"
+
+# Sandbox-tier -> experiment map. KEEP IN SYNC with
+# orchestrator/tier_registry.py (do NOT import orchestrator from ui/). Tier
+# order is the sandbox spectrum: synthetic -> semi_synthetic -> applied.
+_TIER_MAP: list[dict] = [
+    {
+        "tier": "synthetic",
+        "label": "Synthetic",
+        "description": (
+            "Classical games with known equilibria — the loop rediscovers or "
+            "characterizes what is already known, so success is cleanly "
+            "measurable."
+        ),
+        "experiment_ids": [
+            "exp001_repeated_pd",
+            "exp003_vickrey_rediscovery",
+            "exp004_combinatorial_auction",
+            "exp005_mechanism_aware",
+        ],
+    },
+    {
+        "tier": "semi_synthetic",
+        "label": "Semi-synthetic",
+        "description": (
+            "LLM-as-designer scenarios with structure but no single ground "
+            "truth — scored against a benchmark (e.g. VCG)."
+        ),
+        "experiment_ids": [
+            "exp006_mechanism_design",
+        ],
+    },
+    {
+        "tier": "applied",
+        "label": "Applied",
+        "description": (
+            "Design-only paper forecasting — read-only market data scored "
+            "offline. CFTC-gated; not run (no live trading)."
+        ),
+        "experiment_ids": [
+            "exp007_polymarket",
+        ],
+    },
+]
+
+
+def _read_loop_memory_bridges(path: Path) -> dict[str, list[dict]]:
+    """Build experiment_id -> [{iteration_id, metric, value, trials}] from the
+    loop_memory.jsonl bridge. Each row may carry a top-level
+    ``experiment_outcome`` block {experiment_id, metric, value, trials?, ...};
+    we key its outcomes by experiment_id, one entry per bridging iteration.
+
+    Read-only; tolerates an absent file (-> empty), skips malformed rows, and
+    ignores rows without a usable experiment_outcome. We never fabricate a
+    bridge — only what the producer authored is surfaced.
+    """
+    bridges: dict[str, list[dict]] = {}
+    if not path.exists():
+        return bridges
+    scanned = 0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if scanned >= MAX_LOOP_MEMORY_ROWS:
+                    # Bounded read: a runaway bridge file can never blow up the
+                    # page. The cap is far above the real row count.
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                scanned += 1
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    # Producer's contract; skip malformed rows rather than 500.
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                outcome = row.get("experiment_outcome")
+                if not isinstance(outcome, dict):
+                    continue
+                exp_id = outcome.get("experiment_id")
+                if not isinstance(exp_id, str) or not exp_id:
+                    continue
+                bridges.setdefault(exp_id, []).append({
+                    "iteration_id": row.get("iteration_id"),
+                    "metric": outcome.get("metric"),
+                    "value": outcome.get("value"),
+                    "trials": outcome.get("trials"),
+                })
+    except OSError:
+        # Unreadable bridge degrades to no-bridges rather than 500ing the page.
+        return {}
+    return bridges
+
+
+def _resolve_headline(results_dir: Path) -> dict | None:
+    """Resolve the SINGLE authoritative {verdict, tone, ...} headline for a
+    results dir. This is the ONE verdict resolver shared by the detail endpoint
+    and the research page — they must never diverge.
+
+    Precedence (identical to the detail endpoint's render order):
+      1. summary.json -> _derive_headline (per_opponent / per_mechanism / flat).
+      2. An authored summary.md ``**Verdict: ...**`` line OVERRIDES the json
+         headline ONLY for the legacy per_opponent (exp001) shape and the
+         markdown-only (exp003) case — i.e. whenever the json headline is NOT a
+         STRUCTURED (per_mechanism/flat, carries a ``kind``) headline. A
+         structured json headline is the producer's authored conclusion and the
+         markdown does not clobber it.
+    Returns None when nothing readable yields a verdict — never fabricated.
+    """
+    headline: dict | None = None
+    summary_json = results_dir / "summary.json"
+    if summary_json.is_file():
+        try:
+            summary = json.loads(summary_json.read_text(encoding="utf-8"))
+            headline = _derive_headline(summary)
+        except (OSError, json.JSONDecodeError):
+            headline = None
+    summary_md = results_dir / "summary.md"
+    if summary_md.is_file():
+        try:
+            md = summary_md.read_text(encoding="utf-8")
+            verdict = _md_verdict(md)
+        except OSError:
+            verdict = None
+        if verdict is not None:
+            structured = (
+                isinstance(headline, dict)
+                and headline.get("kind") in ("per_mechanism", "flat")
+            )
+            if not structured:
+                headline = {"verdict": verdict, "tone": _md_verdict_tone(verdict)}
+    return headline
+
+
+def _experiment_verdict(results_dir: Path) -> dict | None:
+    """Derive a lightweight {text, tone} verdict for the research page by
+    REUSING the SAME resolver the detail endpoint uses (``_resolve_headline``),
+    so the two surfaces can never diverge — including the per_opponent (exp001)
+    case where an authored summary.md verdict overrides the json headline. We
+    never fabricate a verdict — no readable headline returns None.
+    """
+    headline = _resolve_headline(results_dir)
+    if headline is None:
+        return None
+    return {"text": headline.get("verdict"), "tone": headline.get("tone")}
 
 
 def _safe_exp_id(exp_id: str) -> str:
@@ -371,11 +524,21 @@ def _sample_trials(path: Path, limit: int) -> dict:
     return {"sample": rows, "total_rows": total, "truncated": total > len(rows)}
 
 
-def register(app, *, experiments_dir: Path = DEFAULT_EXPERIMENTS_DIR) -> APIRouter:
+def register(
+    app,
+    *,
+    experiments_dir: Path = DEFAULT_EXPERIMENTS_DIR,
+    loop_memory_path: Path = DEFAULT_LOOP_MEMORY_PATH,
+) -> APIRouter:
     """Attach the experiments router. ``experiments_dir`` defaults to the
-    worktree's ``experiments/`` (git-tracked + populated); tests pin tmp."""
+    worktree's ``experiments/`` (git-tracked + populated); ``loop_memory_path``
+    defaults to the PRIMARY checkout's ``memory/loop_memory.jsonl`` (mirrors
+    loop_v0.py — the bridge lives in the primary checkout, not this worktree).
+    Tests pin both to tmp."""
     experiments_dir = Path(experiments_dir)
+    loop_memory_path = Path(loop_memory_path)
     router = APIRouter(prefix="/api/experiments", tags=["experiments"])
+    research_router = APIRouter(prefix="/api/research", tags=["research"])
 
     @router.get("")
     def list_experiments():
@@ -422,7 +585,6 @@ def register(app, *, experiments_dir: Path = DEFAULT_EXPERIMENTS_DIR) -> APIRout
                     (results_dir / "summary.json").read_text(encoding="utf-8")
                 )
                 payload["summary_json"] = summary
-                payload["headline"] = _derive_headline(summary)
             except (OSError, json.JSONDecodeError) as exc:
                 payload["summary_json_error"] = f"unreadable: {exc}"
 
@@ -433,27 +595,16 @@ def register(app, *, experiments_dir: Path = DEFAULT_EXPERIMENTS_DIR) -> APIRout
 
         if probe["has_summary_md"]:
             try:
-                md = (results_dir / "summary.md").read_text(encoding="utf-8")
-                payload["summary_md"] = md
-                verdict = _md_verdict(md)
-                # A STRUCTURED json headline (per_mechanism / flat shape, which
-                # carries a ``kind``) is the producer's authored conclusion for
-                # exp004/5/6 — the markdown does not override it. The legacy
-                # per_opponent (exp001) headline has no ``kind`` and IS
-                # overridable by an authored markdown verdict, as is the
-                # markdown-only (exp003) case where json produced no headline.
-                json_headline = payload.get("headline")
-                json_headline_is_structured = (
-                    isinstance(json_headline, dict)
-                    and json_headline.get("kind") in ("per_mechanism", "flat")
-                )
-                if verdict is not None and not json_headline_is_structured:
-                    payload["headline"] = {
-                        "verdict": verdict,
-                        "tone": _md_verdict_tone(verdict),
-                    }
+                payload["summary_md"] = (
+                    results_dir / "summary.md"
+                ).read_text(encoding="utf-8")
             except OSError as exc:
                 payload["summary_md_error"] = f"unreadable: {exc}"
+
+        # The headline is resolved by the ONE shared resolver so this detail
+        # surface and /api/research can never diverge (json shape + the
+        # per_opponent/markdown-only override, structured json never clobbered).
+        payload["headline"] = _resolve_headline(results_dir)
 
         if probe["has_trials"]:
             payload["trials"] = _sample_trials(
@@ -462,5 +613,67 @@ def register(app, *, experiments_dir: Path = DEFAULT_EXPERIMENTS_DIR) -> APIRout
 
         return payload
 
+    def _research_experiment(exp_id: str, bridges: dict[str, list[dict]]) -> dict:
+        """Build one research-page experiment entry: probe flags + verdict +
+        bridge. The dir may be ABSENT (e.g. a design-only tier entry) — then
+        has_results_dir is false and verdict is null. ``bridges`` is read ONCE
+        per request by the caller and passed in (not re-parsed per experiment).
+        Nothing is fabricated."""
+        results_dir = experiments_dir / exp_id / "results"
+        probe = _probe(results_dir)
+        verdict = (
+            _experiment_verdict(results_dir)
+            if probe["has_results_dir"]
+            else None
+        )
+        return {
+            "id": exp_id,
+            "title": _title_from_id(exp_id),
+            **probe,
+            "verdict": verdict,
+            "bridge": bridges.get(exp_id, []),
+        }
+
+    @research_router.get("")
+    def research():
+        if not experiments_dir.is_dir():
+            return {
+                "available": False,
+                "reason": "experiments dir absent",
+                "tiers": [],
+                "untiered": [],
+            }
+        # Parse the loop_memory bridge ONCE per request, not once per experiment.
+        bridges = _read_loop_memory_bridges(loop_memory_path)
+        tiered_ids: set[str] = set()
+        tiers_out = []
+        for tier in _TIER_MAP:
+            experiments = []
+            for exp_id in tier["experiment_ids"]:
+                tiered_ids.add(exp_id)
+                experiments.append(_research_experiment(exp_id, bridges))
+            tiers_out.append({
+                "tier": tier["tier"],
+                "label": tier["label"],
+                "description": tier["description"],
+                "experiments": experiments,
+            })
+        # Any experiment DIR on disk not claimed by the tier map -> untiered.
+        untiered = []
+        for child in sorted(experiments_dir.iterdir()):
+            if not child.is_dir() or child.name in _SKIP_DIRS:
+                continue
+            if child.name.startswith("."):
+                continue
+            if child.name in tiered_ids:
+                continue
+            untiered.append(_research_experiment(child.name, bridges))
+        return {
+            "available": True,
+            "tiers": tiers_out,
+            "untiered": untiered,
+        }
+
     app.include_router(router)
+    app.include_router(research_router)
     return router

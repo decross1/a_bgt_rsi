@@ -3,6 +3,7 @@
 import type {
   ExperimentDetail,
   ExperimentsListResponse,
+  ResearchResponse,
 } from "../../types/experiments";
 
 // List response: one of each shape.
@@ -422,6 +423,131 @@ export const DETAIL_FLAT_FIXTURE: ExperimentDetail = {
     tone: "bad",
     kind: "flat",
   },
+};
+
+// ─── Research page (GET /api/research) — tier-grouped index ──────────
+// Covers all three tiers: a synthetic experiment WITH a bridge and a YES
+// verdict; a synthetic experiment with a NO verdict + empty bridge; a
+// semi_synthetic experiment (exp006) with a bridge; an applied design-only
+// entry (no results, null verdict, no bridge); plus an untiered dir.
+export const RESEARCH_FIXTURE: ResearchResponse = {
+  available: true,
+  tiers: [
+    {
+      tier: "synthetic",
+      label: "Synthetic",
+      description:
+        "Classical games with known equilibria — success is cleanly measurable.",
+      experiments: [
+        {
+          id: "exp003_vickrey_rediscovery",
+          title: "exp003 vickrey rediscovery",
+          has_results_dir: true,
+          has_summary_json: false,
+          has_summary_md: true,
+          has_per_round: false,
+          has_trials: true,
+          n_results_files: 3,
+          verdict: { text: "Verdict: YES", tone: "ok" },
+          bridge: [
+            {
+              iteration_id: "iter-2026-05-27-028",
+              metric: "truthful_bid_fraction",
+              value: 1.0,
+              trials: 50,
+            },
+          ],
+        },
+        {
+          // A NO verdict with NO bridge yet — exercises the red chip + the
+          // "not yet bridged into the loop" empty-bridge state.
+          id: "exp001_repeated_pd",
+          title: "exp001 repeated pd",
+          has_results_dir: true,
+          has_summary_json: true,
+          has_summary_md: false,
+          has_per_round: true,
+          has_trials: false,
+          n_results_files: 7,
+          verdict: {
+            text: "EXPLOITED by all_d: opponent mean payoff 2.50 vs LLM 0.75",
+            tone: "bad",
+          },
+          bridge: [],
+        },
+      ],
+    },
+    {
+      tier: "semi_synthetic",
+      label: "Semi-synthetic",
+      description:
+        "LLM-as-designer scenarios scored against a benchmark (e.g. VCG).",
+      experiments: [
+        {
+          id: "exp006_mechanism_design",
+          title: "exp006 mechanism design",
+          has_results_dir: true,
+          has_summary_json: true,
+          has_summary_md: true,
+          has_per_round: false,
+          has_trials: true,
+          n_results_files: 3,
+          verdict: { text: "NO", tone: "bad" },
+          bridge: [
+            {
+              iteration_id: "iter-2026-06-05-006",
+              metric: "designer_mean_efficiency",
+              value: 0.71,
+              trials: 40,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      tier: "applied",
+      label: "Applied",
+      description:
+        "Design-only paper forecasting — CFTC-gated, not run (no live trading).",
+      experiments: [
+        {
+          // Design-only: results dir present but EMPTY (.gitkeep only — the
+          // real on-disk state), so no summary, null verdict, no bridge.
+          id: "exp007_polymarket",
+          title: "exp007 polymarket",
+          has_results_dir: true,
+          has_summary_json: false,
+          has_summary_md: false,
+          has_per_round: false,
+          has_trials: false,
+          n_results_files: 0,
+          verdict: null,
+          bridge: [],
+        },
+      ],
+    },
+  ],
+  untiered: [
+    {
+      id: "exp002_loop_v0_robustness",
+      title: "exp002 loop v0 robustness",
+      has_results_dir: false,
+      has_summary_json: false,
+      has_summary_md: false,
+      has_per_round: false,
+      has_trials: false,
+      n_results_files: 0,
+      verdict: null,
+      bridge: [],
+    },
+  ],
+};
+
+export const RESEARCH_UNAVAILABLE: ResearchResponse = {
+  available: false,
+  reason: "experiments dir absent",
+  tiers: [],
+  untiered: [],
 };
 
 // exp002 — no results/ dir at all.
