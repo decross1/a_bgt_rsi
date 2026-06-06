@@ -141,3 +141,45 @@ export interface ExperimentDetail extends ExperimentFlags {
   trials: TrialsSample | null;
   headline: Headline | null;
 }
+
+// ─── Research page (GET /api/research) — tier-grouped index ───────────
+// Mirrors ui/backend/experiments.py's /api/research. Experiments are grouped
+// by sandbox tier; each carries a lightweight {text, tone} verdict (null when
+// no summary was readable — never fabricated) and the loop iterations it
+// bridged into ([] when none).
+
+// One iteration that bridged this experiment's outcome into the loop. Built
+// from a loop_memory.jsonl row's experiment_outcome block.
+export interface ResearchBridge {
+  iteration_id: string | null;
+  metric: string | null;
+  // The producer's value can be a scalar or an object; we render scalars.
+  value: number | string | null | Record<string, unknown>;
+  trials?: number | null;
+}
+
+// A lightweight verdict for the research card (reuses the detail headline
+// logic server-side). Null when no summary was readable.
+export interface ResearchVerdict {
+  text: string | null;
+  tone: "ok" | "warn" | "bad" | null;
+}
+
+export interface ResearchExperiment extends ExperimentListItem {
+  verdict: ResearchVerdict | null;
+  bridge: ResearchBridge[];
+}
+
+export interface ResearchTier {
+  tier: string;
+  label: string;
+  description: string;
+  experiments: ResearchExperiment[];
+}
+
+export interface ResearchResponse {
+  available: boolean;
+  reason?: string;
+  tiers: ResearchTier[];
+  untiered: ResearchExperiment[];
+}

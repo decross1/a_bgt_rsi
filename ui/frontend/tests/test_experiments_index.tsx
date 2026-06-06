@@ -1,16 +1,19 @@
-// Page B index tests. Render the list from fixtures (network bypassed via
-// `initial`) and assert the honest per-shape states: json summary card,
-// markdown badge, "no results yet", and the unavailable degrade.
-import { render, screen } from "@testing-library/react";
+// Research index tests. Render the tier-grouped view from fixtures (network
+// bypassed via `initial`) and assert the honest per-tier states: the three
+// tier sections render in spectrum order; a YES verdict chip is emerald and a
+// NO is red; a bridge badge names its iteration_id + metric; the applied
+// design-only entry shows its "not run" state; an empty bridge reads "not yet
+// bridged".
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Experiments from "../src/routes/Experiments";
 import {
-  EXPERIMENTS_LIST_FIXTURE,
-  EXPERIMENTS_LIST_UNAVAILABLE,
+  RESEARCH_FIXTURE,
+  RESEARCH_UNAVAILABLE,
 } from "../src/fixtures/experiments";
 import { describe, expect, it } from "vitest";
 
-function renderPage(initial: typeof EXPERIMENTS_LIST_FIXTURE) {
+function renderPage(initial: typeof RESEARCH_FIXTURE) {
   return render(
     <MemoryRouter>
       <Experiments initial={initial} />
@@ -18,40 +21,67 @@ function renderPage(initial: typeof EXPERIMENTS_LIST_FIXTURE) {
   );
 }
 
-describe("Experiments index", () => {
-  it("renders a card per experiment", () => {
-    renderPage(EXPERIMENTS_LIST_FIXTURE);
-    expect(screen.getByTestId("exp-card-exp001_repeated_pd")).toBeInTheDocument();
+describe("Research index (tier-grouped)", () => {
+  it("renders the three tier sections in spectrum order", () => {
+    const { container } = renderPage(RESEARCH_FIXTURE);
+    const sections = Array.from(
+      container.querySelectorAll('[data-testid^="tier-section-"]'),
+    ).map((el) => el.getAttribute("data-testid"));
+    // Untiered may trail; the first three are the spectrum tiers in order.
+    expect(sections.slice(0, 3)).toEqual([
+      "tier-section-synthetic",
+      "tier-section-semi_synthetic",
+      "tier-section-applied",
+    ]);
+  });
+
+  it("colors a YES verdict emerald and a NO verdict red", () => {
+    renderPage(RESEARCH_FIXTURE);
+    const yes = screen.getByTestId("verdict-exp003_vickrey_rediscovery");
+    expect(yes.className).toContain("emerald");
+    const no = screen.getByTestId("verdict-exp001_repeated_pd");
+    expect(no.className).toContain("red");
+  });
+
+  it("renders a bridge badge with its iteration_id + metric", () => {
+    renderPage(RESEARCH_FIXTURE);
+    const bridge = screen.getByTestId("bridge-exp003_vickrey_rediscovery");
+    expect(bridge).toHaveTextContent("iter-2026-05-27-028");
+    expect(bridge).toHaveTextContent("truthful_bid_fraction=1");
+  });
+
+  it("attaches the exp006 semi_synthetic bridge", () => {
+    renderPage(RESEARCH_FIXTURE);
+    const bridge = screen.getByTestId("bridge-exp006_mechanism_design");
+    expect(bridge).toHaveTextContent("iter-2026-06-05-006");
+    expect(bridge).toHaveTextContent("designer_mean_efficiency");
+  });
+
+  it("shows the applied design-only entry's not-run state + no verdict", () => {
+    renderPage(RESEARCH_FIXTURE);
+    const card = screen.getByTestId("research-card-exp007_polymarket");
+    expect(card).toHaveTextContent("design-only — not run");
     expect(
-      screen.getByTestId("exp-card-exp003_vickrey_rediscovery"),
-    ).toBeInTheDocument();
+      within(card).getByTestId("verdict-exp007_polymarket"),
+    ).toHaveTextContent("no verdict");
+  });
+
+  it("reads 'not yet bridged' for an experiment with an empty bridge", () => {
+    renderPage(RESEARCH_FIXTURE);
+    const bridge = screen.getByTestId("bridge-exp001_repeated_pd");
+    expect(bridge).toHaveTextContent("not yet bridged into the loop");
+  });
+
+  it("renders an untiered section for an unmapped on-disk dir", () => {
+    renderPage(RESEARCH_FIXTURE);
+    expect(screen.getByTestId("tier-section-untiered")).toBeInTheDocument();
     expect(
-      screen.getByTestId("exp-card-exp002_loop_v0_robustness"),
+      screen.getByTestId("research-card-exp002_loop_v0_robustness"),
     ).toBeInTheDocument();
-  });
-
-  it("shows json + per-round badges for the json-shaped experiment", () => {
-    renderPage(EXPERIMENTS_LIST_FIXTURE);
-    const card = screen.getByTestId("exp-card-exp001_repeated_pd");
-    expect(card).toHaveTextContent("json summary");
-    expect(card).toHaveTextContent("per-round");
-  });
-
-  it("shows a markdown summary badge for the md-shaped experiment", () => {
-    renderPage(EXPERIMENTS_LIST_FIXTURE);
-    const card = screen.getByTestId("exp-card-exp003_vickrey_rediscovery");
-    expect(card).toHaveTextContent("markdown summary");
-    expect(card).toHaveTextContent("trials");
-  });
-
-  it("marks the no-results experiment honestly", () => {
-    renderPage(EXPERIMENTS_LIST_FIXTURE);
-    const card = screen.getByTestId("exp-card-exp002_loop_v0_robustness");
-    expect(card).toHaveTextContent("no results yet");
   });
 
   it("degrades to an unavailable notice when the dir is absent", () => {
-    renderPage(EXPERIMENTS_LIST_UNAVAILABLE);
+    renderPage(RESEARCH_UNAVAILABLE);
     expect(screen.getByTestId("experiments-unavailable")).toBeInTheDocument();
     expect(
       screen.getByTestId("experiments-unavailable"),

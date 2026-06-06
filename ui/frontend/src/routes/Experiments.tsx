@@ -1,84 +1,178 @@
-// Page B index — browse experiments. One card per experiment dir. The
-// experiments are heterogeneous: JSON-shaped ones show opponents/rounds/
-// coop-rate; markdown-shaped ones get a "markdown summary" badge; ones
-// with no results/ dir are marked "no results yet". Nothing is fabricated.
+// Research index — experiments GROUPED BY SANDBOX TIER. One section per tier
+// (synthetic -> semi_synthetic -> applied), each header carrying a human label
+// + one-line description. Each experiment is a vettable card: id + title, a
+// verdict chip (YES/ok=emerald, NO/bad=red, warn=amber, none=zinc), and BRIDGE
+// badges naming the loop iteration(s) it bridged into. Nothing is fabricated:
+// an absent verdict reads "no verdict"; an applied design-only entry reads
+// "design-only — not run"; an empty bridge reads "not yet bridged into the
+// loop". An untiered section appears only when an on-disk dir is unmapped.
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getExperiments } from "../api/experiments";
+import { getResearch } from "../api/experiments";
 import { fmt } from "../format";
 import type {
-  ExperimentListItem,
-  ExperimentsListResponse,
+  ResearchBridge,
+  ResearchExperiment,
+  ResearchResponse,
+  ResearchTier,
+  ResearchVerdict,
 } from "../types/experiments";
 
 interface Props {
-  initial?: ExperimentsListResponse | null;
+  initial?: ResearchResponse | null;
 }
 
-function Badge({
-  text,
-  tone,
+const CARD =
+  "block rounded border border-zinc-800 bg-zinc-900/40 p-4 hover:border-zinc-700";
+
+// Verdict chip. YES/ok -> emerald, NO/bad -> red, warn -> amber, none -> zinc.
+// We never guess a green/red outcome; a null verdict reads a muted "no verdict".
+function VerdictChip({
+  verdict,
+  testid,
 }: {
-  text: string;
-  tone: "ok" | "warn" | "muted" | "sky";
+  verdict: ResearchVerdict | null;
+  testid: string;
 }) {
+  if (!verdict || verdict.tone === null) {
+    return (
+      <span
+        data-testid={testid}
+        className="rounded border border-zinc-700 bg-zinc-800/40 px-1.5 py-0.5 text-[10px] text-zinc-400"
+      >
+        no verdict
+      </span>
+    );
+  }
   const cls = {
     ok: "border-emerald-700/50 bg-emerald-900/20 text-emerald-300",
     warn: "border-amber-700/50 bg-amber-900/20 text-amber-300",
-    muted: "border-zinc-700 bg-zinc-800/40 text-zinc-400",
-    sky: "border-sky-700/50 bg-sky-900/20 text-sky-300",
-  }[tone];
+    bad: "border-red-700/50 bg-red-900/20 text-red-300",
+  }[verdict.tone];
   return (
-    <span className={`rounded border px-1.5 py-0.5 text-[10px] ${cls}`}>
-      {text}
+    <span
+      data-testid={testid}
+      className={`rounded border px-1.5 py-0.5 text-[10px] ${cls}`}
+      title={verdict.text ?? undefined}
+    >
+      {verdict.text ?? verdict.tone}
     </span>
   );
 }
 
-function ExperimentCard({ exp }: { exp: ExperimentListItem }) {
-  const empty = !exp.has_results_dir;
+// A bridge badge: "-> iter-... . metric=value". Pure pass-through of the
+// producer's experiment_outcome — we render the value only when it is a scalar.
+function bridgeLabel(b: ResearchBridge): string {
+  const it = b.iteration_id ?? "iter (unnamed)";
+  const scalar =
+    typeof b.value === "number" || typeof b.value === "string"
+      ? `${b.metric ?? "metric"}=${b.value}`
+      : (b.metric ?? "outcome");
+  return `→ ${it} · ${scalar}`;
+}
+
+function BridgeRow({ exp }: { exp: ResearchExperiment }) {
+  if (exp.bridge.length === 0) {
+    return (
+      <div
+        data-testid={`bridge-${exp.id}`}
+        className="mt-2 text-[11px] text-zinc-500"
+      >
+        not yet bridged into the loop
+      </div>
+    );
+  }
+  return (
+    <div data-testid={`bridge-${exp.id}`} className="mt-2 flex flex-wrap gap-1.5">
+      {exp.bridge.map((b, i) => (
+        <span
+          key={`${b.iteration_id ?? "it"}-${i}`}
+          className="rounded border border-sky-700/50 bg-sky-900/20 px-1.5 py-0.5 font-mono text-[10px] text-sky-300"
+        >
+          {bridgeLabel(b)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ResearchCard({
+  exp,
+  tier,
+}: {
+  exp: ResearchExperiment;
+  tier?: string;
+}) {
+  // Not-run: nothing was produced — no readable summary, no derived verdict,
+  // and no bridge. This covers both an ABSENT results dir and a PRESENT-but-
+  // empty one (e.g. applied/exp007's .gitkeep-only dir), without ever guessing
+  // a result that isn't there. The applied tier is CFTC-gated design-only, so
+  // its copy says so; other no-result dirs just haven't run yet.
+  const notRun =
+    exp.verdict === null &&
+    exp.bridge.length === 0 &&
+    !exp.has_summary_json &&
+    !exp.has_summary_md;
+  const notRunCopy =
+    tier === "applied" ? "design-only — not run" : "no results yet — not run";
   return (
     <Link
       to={`/experiments/${encodeURIComponent(exp.id)}`}
-      data-testid={`exp-card-${exp.id}`}
-      className="block rounded border border-zinc-800 bg-zinc-900/40 p-4 hover:border-zinc-700"
+      data-testid={`research-card-${exp.id}`}
+      className={CARD}
     >
       <div className="flex items-baseline gap-2">
         <span className="font-mono text-sm text-zinc-200">{exp.id}</span>
         <span className="text-xs text-zinc-500">{exp.title}</span>
+        <span className="ml-auto">
+          <VerdictChip verdict={exp.verdict} testid={`verdict-${exp.id}`} />
+        </span>
       </div>
 
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {empty && <Badge text="no results yet" tone="warn" />}
-        {exp.has_summary_json && <Badge text="json summary" tone="ok" />}
-        {exp.has_summary_md && <Badge text="markdown summary" tone="sky" />}
-        {exp.has_per_round && <Badge text="per-round" tone="muted" />}
-        {exp.has_trials && <Badge text="trials" tone="muted" />}
-        {!empty && (
-          <Badge text={`${exp.n_results_files} files`} tone="muted" />
-        )}
-      </div>
-
-      {empty && (
-        <div className="mt-2 text-xs text-zinc-500">
-          No <span className="font-mono">results/</span> directory — this
-          experiment has not produced results yet.
-        </div>
+      {notRun && (
+        <div className="mt-2 text-xs text-amber-400/90">{notRunCopy}</div>
       )}
+
+      <BridgeRow exp={exp} />
     </Link>
   );
 }
 
-export default function Experiments({ initial }: Props) {
-  const [data, setData] = useState<ExperimentsListResponse | null>(
-    initial ?? null,
+function TierSection({ tier }: { tier: ResearchTier }) {
+  return (
+    <section
+      data-testid={`tier-section-${tier.tier}`}
+      className="mt-6 first:mt-4"
+    >
+      <div className="flex items-baseline gap-2">
+        <h2 className="text-sm font-semibold text-zinc-100">{tier.label}</h2>
+        <span className="font-mono text-[10px] text-zinc-600">{tier.tier}</span>
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">{tier.description}</p>
+
+      {tier.experiments.length === 0 ? (
+        <div className="mt-3 text-xs text-zinc-600">
+          No experiments in this tier.
+        </div>
+      ) : (
+        <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {tier.experiments.map((exp) => (
+            <ResearchCard key={exp.id} exp={exp} tier={tier.tier} />
+          ))}
+        </div>
+      )}
+    </section>
   );
+}
+
+export default function Experiments({ initial }: Props) {
+  const [data, setData] = useState<ResearchResponse | null>(initial ?? null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (initial !== undefined) return;
     let active = true;
-    getExperiments()
+    getResearch()
       .then((d) => active && setData(d))
       .catch((e) => active && setError(String(e)));
     return () => {
@@ -86,12 +180,20 @@ export default function Experiments({ initial }: Props) {
     };
   }, [initial]);
 
+  const nExperiments =
+    (data?.tiers.reduce((acc, t) => acc + t.experiments.length, 0) ?? 0) +
+    (data?.untiered.length ?? 0);
+
   return (
     <div className="mx-auto max-w-7xl p-5" data-testid="experiments-page">
       <div className="flex items-baseline gap-3">
-        <h1 className="text-base font-semibold text-zinc-100">Experiments</h1>
-        <span className="text-[10px] text-zinc-600">/api/experiments</span>
+        <h1 className="text-base font-semibold text-zinc-100">Research</h1>
+        <span className="text-[10px] text-zinc-600">/api/research</span>
       </div>
+      <p className="mt-1 text-xs text-zinc-500">
+        Experiments grouped by sandbox tier, each with its outcome verdict and
+        the loop iteration(s) it bridged into.
+      </p>
 
       {error && <div className="mt-3 text-sm text-red-400">{error}</div>}
 
@@ -105,26 +207,37 @@ export default function Experiments({ initial }: Props) {
         </div>
       )}
 
-      {data && data.available && data.experiments.length === 0 && (
-        <div className="mt-4 text-sm text-zinc-500">
-          No experiments found.
-        </div>
-      )}
-
-      {data && data.available && data.experiments.length > 0 && (
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {data.experiments.map((exp) => (
-            <ExperimentCard key={exp.id} exp={exp} />
+      {data && data.available && (
+        <>
+          {data.tiers.map((tier) => (
+            <TierSection key={tier.tier} tier={tier} />
           ))}
-        </div>
+
+          {data.untiered.length > 0 && (
+            <section data-testid="tier-section-untiered" className="mt-6">
+              <div className="flex items-baseline gap-2">
+                <h2 className="text-sm font-semibold text-zinc-100">Untiered</h2>
+              </div>
+              <p className="mt-1 text-xs text-zinc-500">
+                On-disk experiment dirs not mapped to a sandbox tier.
+              </p>
+              <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {data.untiered.map((exp) => (
+                  <ResearchCard key={exp.id} exp={exp} />
+                ))}
+              </div>
+            </section>
+          )}
+        </>
       )}
 
       {!data && !error && (
         <div className="mt-4 text-sm text-zinc-500">Loading…</div>
       )}
 
-      <div className="mt-4 text-[11px] text-zinc-600">
-        {fmt(data?.experiments.length ?? 0)} experiment(s) scanned.
+      <div className="mt-6 text-[11px] text-zinc-600">
+        {fmt(nExperiments)} experiment(s) across {fmt(data?.tiers.length ?? 0)}{" "}
+        tier(s).
       </div>
     </div>
   );

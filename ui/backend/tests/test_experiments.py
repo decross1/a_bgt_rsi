@@ -35,9 +35,13 @@ def _make_flat(root: Path, exp_id: str, summary: dict) -> None:
     (res / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
 
 
-def _client(experiments_dir: Path) -> TestClient:
+def _client(experiments_dir: Path, loop_memory_path: Path | None = None) -> TestClient:
     app = FastAPI()
-    register(app, experiments_dir=experiments_dir)
+    if loop_memory_path is None:
+        # A path that does not exist -> the bridge reader degrades to empty.
+        loop_memory_path = experiments_dir.parent / "absent_loop_memory.jsonl"
+    register(app, experiments_dir=experiments_dir,
+             loop_memory_path=loop_memory_path)
     return TestClient(app)
 
 
@@ -648,6 +652,156 @@ def test_flat_headline_through_detail_endpoint(tmp_path):
     assert body["summary_json"]["feasibility_rate"] == 0.525
 
 
+# ─── research page: tier grouping + verdict + bridge ──────────────────
+
+
+def test_research_available_false_when_dir_absent(tmp_path):
+    """No experiments dir -> available:false, never a 500; tiers/untiered []."""
+    resp = _client(tmp_path / "does_not_exist").get("/api/research")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["available"] is False
+    assert body["tiers"] == []
+    assert body["untiered"] == []
+
+
+def test_research_groups_by_tier_in_spectrum_order(tmp_path):
+    """Tiers render synthetic -> semi_synthetic -> applied, each with its
+    declared experiments in order."""
+    root = tmp_path / "experiments"
+    root.mkdir()
+    _make_exp001(root)  # synthetic exp001
+    body = _client(root).get("/api/research").json()
+    assert body["available"] is True
+    assert [t["tier"] for t in body["tiers"]] == [
+        "synthetic", "semi_synthetic", "applied"]
+    syn = next(t for t in body["tiers"] if t["tier"] == "synthetic")
+    assert [e["id"] for e in syn["experiments"]] == [
+        "exp001_repeated_pd",
+        "exp003_vickrey_rediscovery",
+        "exp004_combinatorial_auction",
+        "exp005_mechanism_aware",
+    ]
+    # Each tier carries a human label + one-line description.
+    assert syn["label"]
+    assert syn["description"]
+
+
+def test_research_untiered_dir_is_bucketed_separately(tmp_path):
+    """An experiment DIR not in the tier map lands in untiered[], not a tier."""
+    root = tmp_path / "experiments"
+    root.mkdir()
+    _make_exp002(root)  # exp002_loop_v0_robustness is NOT in the tier map
+    body = _client(root).get("/api/research").json()
+    untiered_ids = [e["id"] for e in body["untiered"]]
+    assert "exp002_loop_v0_robustness" in untiered_ids
+    # And it is not smuggled into any tier.
+    for t in body["tiers"]:
+        assert "exp002_loop_v0_robustness" not in [e["id"] for e in t["experiments"]]
+
+
+def test_research_tier_lists_absent_dir_as_design_only(tmp_path):
+    """A tier experiment whose dir is ABSENT is still listed (design-only):
+    has_results_dir false, verdict null — never dropped or guessed."""
+    root = tmp_path / "experiments"
+    root.mkdir()
+    # No exp007 dir on disk at all.
+    body = _client(root).get("/api/research").json()
+    applied = next(t for t in body["tiers"] if t["tier"] == "applied")
+    e7 = next(e for e in applied["experiments"] if e["id"] == "exp007_polymarket")
+    assert e7["has_results_dir"] is False
+    assert e7["verdict"] is None
+    assert e7["bridge"] == []
+
+
+def test_research_verdict_derived_from_json(tmp_path):
+    """summary.json -> verdict {text, tone} via the detail headline logic."""
+    root = tmp_path / "experiments"
+    _make_per_mechanism(root, "exp004_combinatorial_auction", [
+        {"mechanism": "first_price", "verdict": "YES"},
+        {"mechanism": "vcg", "verdict": "YES"},
+    ], n_trials=150)
+    body = _client(root).get("/api/research").json()
+    syn = next(t for t in body["tiers"] if t["tier"] == "synthetic")
+    e4 = next(e for e in syn["experiments"]
+              if e["id"] == "exp004_combinatorial_auction")
+    assert e4["verdict"]["tone"] == "ok"
+    assert "YES on all 2" in e4["verdict"]["text"]
+
+
+def test_research_verdict_derived_from_md(tmp_path):
+    """No json, a summary.md -> verdict from the markdown verdict line."""
+    root = tmp_path / "experiments"
+    root.mkdir()
+    _make_exp003(root)  # exp003 ships summary.md '**Verdict: YES**'
+    body = _client(root).get("/api/research").json()
+    syn = next(t for t in body["tiers"] if t["tier"] == "synthetic")
+    e3 = next(e for e in syn["experiments"]
+              if e["id"] == "exp003_vickrey_rediscovery")
+    assert e3["verdict"]["tone"] == "ok"
+    assert "Verdict: YES" in e3["verdict"]["text"]
+
+
+def test_research_verdict_none_when_no_summary(tmp_path):
+    """A results dir with neither summary -> verdict null, not fabricated."""
+    root = tmp_path / "experiments"
+    res = root / "exp001_repeated_pd" / "results"
+    res.mkdir(parents=True)
+    (res / "tft.csv").write_text("round,llm\n1,C\n", encoding="utf-8")
+    body = _client(root).get("/api/research").json()
+    syn = next(t for t in body["tiers"] if t["tier"] == "synthetic")
+    e1 = next(e for e in syn["experiments"] if e["id"] == "exp001_repeated_pd")
+    assert e1["has_results_dir"] is True
+    assert e1["verdict"] is None
+
+
+def test_research_bridge_attached_from_loop_memory(tmp_path):
+    """An experiment_outcome row in loop_memory.jsonl attaches a bridge entry
+    keyed by experiment_id; experiments with none get []."""
+    root = tmp_path / "experiments"
+    root.mkdir()
+    _make_exp003(root)
+    mem = tmp_path / "loop_memory.jsonl"
+    mem.write_text(
+        json.dumps({
+            "iteration_id": "iter-2026-05-27-028",
+            "experiment_outcome": {
+                "experiment_id": "exp003_vickrey_rediscovery",
+                "metric": "truthful_bid_fraction",
+                "value": 1.0,
+                "trials": 50,
+            },
+        }) + "\n"
+        # A malformed row must be skipped, not 500.
+        + "{not json\n",
+        encoding="utf-8")
+    body = _client(root, loop_memory_path=mem).get("/api/research").json()
+    syn = next(t for t in body["tiers"] if t["tier"] == "synthetic")
+    e3 = next(e for e in syn["experiments"]
+              if e["id"] == "exp003_vickrey_rediscovery")
+    assert len(e3["bridge"]) == 1
+    assert e3["bridge"][0]["iteration_id"] == "iter-2026-05-27-028"
+    assert e3["bridge"][0]["metric"] == "truthful_bid_fraction"
+    assert e3["bridge"][0]["value"] == 1.0
+    assert e3["bridge"][0]["trials"] == 50
+    # An experiment with no outcome row gets an empty bridge.
+    e1 = next(e for e in syn["experiments"] if e["id"] == "exp001_repeated_pd")
+    assert e1["bridge"] == []
+
+
+def test_research_bridge_empty_when_loop_memory_absent(tmp_path):
+    """No loop_memory.jsonl -> every bridge is [], never an error."""
+    root = tmp_path / "experiments"
+    root.mkdir()
+    _make_exp003(root)
+    body = _client(
+        root, loop_memory_path=tmp_path / "nope.jsonl"
+    ).get("/api/research").json()
+    for t in body["tiers"]:
+        for e in t["experiments"]:
+            assert e["bridge"] == []
+
+
 # ─── md does NOT override a STRUCTURED json headline (exp004/5/6) ───────
 
 
@@ -684,3 +838,145 @@ def test_md_does_not_override_structured_flat_headline(tmp_path):
     assert hl["kind"] == "flat"
     assert hl["tone"] == "bad"
     assert hl["verdict"] == "NO"
+
+
+# ─── research page: present-but-empty results dir (real exp007 shape) ───
+
+
+def test_research_tier_present_but_empty_results_dir(tmp_path):
+    """The PRODUCTION exp007 shape: results/ EXISTS on disk but holds only a
+    .gitkeep (no summary). has_results_dir is true, yet there is nothing to
+    derive — verdict null, no summaries, bridge empty. This is the design-only
+    card the frontend keys 'notRun' on (verdict null + no summaries + no
+    bridge), and it must never fabricate a verdict from an empty dir."""
+    root = tmp_path / "experiments"
+    res = root / "exp007_polymarket" / "results"
+    res.mkdir(parents=True)
+    (res / ".gitkeep").write_text("", encoding="utf-8")
+    body = _client(root).get("/api/research").json()
+    applied = next(t for t in body["tiers"] if t["tier"] == "applied")
+    e7 = next(e for e in applied["experiments"]
+              if e["id"] == "exp007_polymarket")
+    assert e7["has_results_dir"] is True   # the dir IS present...
+    assert e7["has_summary_json"] is False  # ...but carries no summary
+    assert e7["has_summary_md"] is False
+    assert e7["verdict"] is None            # nothing to derive — not fabricated
+    assert e7["bridge"] == []
+
+
+# ─── research/detail verdict PARITY: one shared resolver, no divergence ─
+
+
+def test_research_and_detail_verdict_parity_per_opponent_md_override(tmp_path):
+    """REGRESSION (honesty): a per_opponent (exp001) experiment that ships BOTH
+    a summary.json deriving EXPLOITED *and* an authored summary.md '**Verdict:
+    NO**' must read IDENTICALLY on /api/research and on the detail endpoint.
+    The two surfaces share one resolver, so the markdown override that the
+    detail page applies is replicated on the research card — they cannot
+    diverge (previously /api/research returned the json EXPLOITED verdict while
+    the detail page returned the markdown NO)."""
+    root = tmp_path / "experiments"
+    res = root / "exp001_repeated_pd" / "results"
+    res.mkdir(parents=True)
+    # JSON alone would derive an EXPLOITED (bad) per_opponent headline...
+    (res / "summary.json").write_text(json.dumps({"per_opponent": [
+        {"opponent": "all_d", "llm_coop_rate": 0.0,
+         "llm_mean_payoff": 1.0, "opp_mean_payoff": 2.0},
+    ]}), encoding="utf-8")
+    # ...but the authored markdown verdict overrides it for this shape.
+    (res / "summary.md").write_text(
+        "**Verdict: NO** — authored conclusion\n", encoding="utf-8")
+    client = _client(root)
+
+    detail = client.get("/api/experiments/exp001_repeated_pd").json()
+    research = client.get("/api/research").json()
+    syn = next(t for t in research["tiers"] if t["tier"] == "synthetic")
+    e1 = next(e for e in syn["experiments"]
+              if e["id"] == "exp001_repeated_pd")
+
+    # Detail headline is the markdown NO (override applied)...
+    assert detail["headline"]["verdict"].startswith("Verdict: NO")
+    assert detail["headline"]["tone"] == "bad"
+    # ...and the research card carries the SAME verdict text + tone.
+    assert e1["verdict"]["text"] == detail["headline"]["verdict"]
+    assert e1["verdict"]["tone"] == detail["headline"]["tone"]
+    assert e1["verdict"]["text"].startswith("Verdict: NO")
+
+
+# ─── bridge: multiple iterations per experiment; malformed outcome rows ─
+
+
+def test_research_bridge_lists_multiple_iterations_for_one_experiment(tmp_path):
+    """exp004 (or any experiment) with TWO experiment_outcome iterations in
+    loop_memory.jsonl gets BOTH listed on its bridge, in file order."""
+    root = tmp_path / "experiments"
+    _make_per_mechanism(root, "exp004_combinatorial_auction", [
+        {"mechanism": "first_price", "verdict": "YES"},
+    ], n_trials=50)
+    mem = tmp_path / "loop_memory.jsonl"
+    mem.write_text(
+        json.dumps({
+            "iteration_id": "iter-A",
+            "experiment_outcome": {
+                "experiment_id": "exp004_combinatorial_auction",
+                "metric": "mean_efficiency", "value": 0.99, "trials": 50,
+            },
+        }) + "\n"
+        + json.dumps({
+            "iteration_id": "iter-B",
+            "experiment_outcome": {
+                "experiment_id": "exp004_combinatorial_auction",
+                "metric": "truthful_fraction", "value": 0.96, "trials": 75,
+            },
+        }) + "\n",
+        encoding="utf-8")
+    body = _client(root, loop_memory_path=mem).get("/api/research").json()
+    syn = next(t for t in body["tiers"] if t["tier"] == "synthetic")
+    e4 = next(e for e in syn["experiments"]
+              if e["id"] == "exp004_combinatorial_auction")
+    assert [b["iteration_id"] for b in e4["bridge"]] == ["iter-A", "iter-B"]
+    assert e4["bridge"][0]["metric"] == "mean_efficiency"
+    assert e4["bridge"][1]["metric"] == "truthful_fraction"
+
+
+def test_research_bridge_skips_malformed_outcome_rows_without_500(tmp_path):
+    """experiment_outcome rows that are unusable — missing experiment_id, a
+    non-dict outcome, an outcome whose experiment_id is the wrong type, or a
+    non-dict top-level row — are SKIPPED, never 500ing the page. Only the one
+    well-formed outcome attaches a bridge."""
+    root = tmp_path / "experiments"
+    root.mkdir()
+    _make_exp003(root)
+    mem = tmp_path / "loop_memory.jsonl"
+    mem.write_text(
+        # outcome without experiment_id -> skipped
+        json.dumps({"iteration_id": "i1",
+                    "experiment_outcome": {"metric": "x", "value": 1}}) + "\n"
+        # outcome that is not a dict -> skipped
+        + json.dumps({"iteration_id": "i2",
+                      "experiment_outcome": "not-a-dict"}) + "\n"
+        # experiment_id of the wrong type -> skipped
+        + json.dumps({"iteration_id": "i3",
+                      "experiment_outcome": {"experiment_id": 123,
+                                             "metric": "x"}}) + "\n"
+        # a top-level row that is a JSON array, not an object -> skipped
+        + json.dumps([1, 2, 3]) + "\n"
+        # the one well-formed outcome -> attaches
+        + json.dumps({"iteration_id": "i4",
+                      "experiment_outcome": {
+                          "experiment_id": "exp003_vickrey_rediscovery",
+                          "metric": "truthful_bid_fraction", "value": 1.0}}) + "\n",
+        encoding="utf-8")
+    resp = _client(root, loop_memory_path=mem).get("/api/research")
+    assert resp.status_code == 200  # never a 500 on malformed outcome rows
+    body = resp.json()
+    syn = next(t for t in body["tiers"] if t["tier"] == "synthetic")
+    e3 = next(e for e in syn["experiments"]
+              if e["id"] == "exp003_vickrey_rediscovery")
+    assert len(e3["bridge"]) == 1
+    assert e3["bridge"][0]["iteration_id"] == "i4"
+    # No other experiment picked up a bridge from the skipped rows.
+    for t in body["tiers"]:
+        for e in t["experiments"]:
+            if e["id"] != "exp003_vickrey_rediscovery":
+                assert e["bridge"] == []
