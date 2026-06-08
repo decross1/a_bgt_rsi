@@ -71,6 +71,40 @@ this is real data — a future live stream is a separate upgrade. `tokens_target
 
 ## Changelog
 
+- **2026-06-08** — Coordinator-brain (Slice-Alpha) `coordinator_report` shape +
+  `active_run` adoption. **OPT-IN host tooling, NOT the always-on Nara.** Produced by
+  `orchestrator/coordinator.py` (`coordinator_cycle` / `python -m orchestrator.coordinator
+  --once`), built ALONGSIDE the scripted `orchestrator/nara.py:run_iteration`, which
+  stays the unmodified DEFAULT. A single `--once` cycle (NOT continuous); **DRY-RUN by
+  default** (plans only, executes nothing) — execution requires the explicit `--execute`
+  flag. The constrained action space in `orchestrator/coordinator_actions.py` is the
+  guardrail: an off-menu / malformed / over-budget plan is REJECTED and re-planned
+  (bounded), never executed.
+  - **`coordinator_report`** (NEW, in-memory / CLI-printed return value, NO JSON Schema —
+    this doc is the only reference; not persisted to the spine): the value returned by
+    `coordinator_cycle(...)`. Fields:
+    `run_id` (`"coordinator_<hex8>"`), `status`
+    (`planned` = dry-run validated plan | `executed` = `--execute` ran handlers |
+    `no_valid_plan` = every attempt rejected by the guardrail, nothing executed),
+    `dry_run` (bool; absent on `no_valid_plan`), `plan` (the validated/normalized actions,
+    each `{name, args, cost, handler_ref}`; `[]` on `no_valid_plan`), `attempts`
+    (per plan attempt `{attempt, raw_plan, ok, errors}` — initial + up to `_MAX_REPLANS`=2
+    replans), `state` (the `assess_state` snapshot the plan was made from), `executed`
+    (per dispatched action `{action, status (passed|error|skipped), result?|reason?}`;
+    `[]` in dry-run), `bubble_up` (human-facing summary of every `bubble_up` action:
+    `[{finding_ids, note}]`), `errors` (rejection errors; populated on `no_valid_plan`).
+  - **`active_run` adoption**: the cycle announces itself via `run_state/active_run.json`
+    with **`kind="ad_hoc"`** (label `coordinator_cycle`) and stamps `wrapper.set_run_id`
+    so its `logs/calls.jsonl` rows carry the run context; the record is cleared in a
+    `finally` so an idle apparatus shows no stale coordinator run. NOTE: `kind="coordinator"`
+    is NOT (yet) a registered `active_run` kind (`schema/active_run.schema.json` /
+    `orchestrator/active_run.py:_KINDS` allow only `experiment|autoresearch|loop_v0|ad_hoc`);
+    the alpha reuses `ad_hoc` rather than amend the spine schema. Promote to a dedicated
+    `coordinator` kind if/when the coordinator graduates from opt-in alpha to a standing surface.
+  - This is **opt-in alpha host tooling**, not a loop artifact or a registered surface —
+    nothing here is wired into the spine, no continuous loop is added, and the default
+    remains dry-run.
+
 - **2026-06-08** — exp008 QAT-eval scratch artifacts (eval-only benchmark; **NOT** loop
   artifacts, **NOT** the production call log). Written by the
   `experiments/exp008_qat_eval/` harness (`eval_*.py` producers + `analyze.py`
