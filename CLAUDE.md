@@ -177,7 +177,9 @@ These do not bend.
 - Polymarket live trading — design-only until CFTC compliance work
   is done (Phase 2+).
 - Continuous-running orchestrator — not yet; LOOP_V0 is single-shot,
-  human-triggered iterations.
+  human-triggered iterations, except as bounded by [`D-040`](DECISIONS.md)
+  once β ships (D-040 is ratified but takes effect only at β; until then
+  this guardrail stands unchanged).
 - Fine-tuning / training runs — not in LOOP_V0.
 - Second model — excluded; the apparatus is single-model on
   Gemma 4 26B-A4B-NVFP4 (D-033). Same-model novelty scoring stays
