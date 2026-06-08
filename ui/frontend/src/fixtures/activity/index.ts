@@ -3,6 +3,7 @@
 // synthetic_inference block (with its `synthetic: true` marker) so the
 // component tests can assert the not-measured marker renders.
 import type {
+  ActiveRun,
   ActivityGraphResponse,
   MonitorResponse,
 } from "../../types/activity";
@@ -154,6 +155,76 @@ export const MONITOR_FIXTURE_LIVE_CALLS: MonitorResponse = {
     model: "fake-model",
   },
   synthetic_inference: MONITOR_FIXTURE.synthetic_inference,
+};
+
+// REAL inference internals: worker_activity.jsonl had recent rows, so the
+// monitor's synthetic_inference is `synthetic: false` and carries measured
+// per-worker tok/s + tokens. The SyntheticInferencePanel must render this
+// WITHOUT the amber synthetic marker (the flag is load-bearing).
+export const MONITOR_FIXTURE_REAL_INFERENCE: MonitorResponse = {
+  available: true,
+  telemetry_available: true,
+  generated_at: "2026-06-08T06:11:30Z",
+  last_activity_at: "2026-06-08T06:11:28.6Z",
+  active: [],
+  recent: [],
+  synthetic_inference: {
+    synthetic: false,
+    source: "worker_activity.jsonl",
+    workers: [
+      {
+        task_id: "t/a",
+        run_id: "exp-9",
+        tokens_generated: 220,
+        tokens_target: 512,
+        tok_per_s: 44.0,
+        eta_s: 6.6,
+      },
+    ],
+  },
+};
+
+// REAL inference internals with a null eta_s — the producer writes eta_s=null
+// when tok_per_s is 0 (no rate to divide by). The live panel must render a bare
+// dash (no trailing "s", not "n/as") for that worker while staying synthetic:false.
+export const MONITOR_FIXTURE_REAL_INFERENCE_NULL_ETA: MonitorResponse = {
+  available: true,
+  telemetry_available: true,
+  generated_at: "2026-06-08T06:12:00Z",
+  last_activity_at: "2026-06-08T06:11:58.0Z",
+  active: [],
+  recent: [],
+  synthetic_inference: {
+    synthetic: false,
+    source: "worker_activity.jsonl",
+    workers: [
+      {
+        task_id: "t/z",
+        run_id: "exp-0",
+        tokens_generated: 0,
+        tokens_target: 512,
+        tok_per_s: 0,
+        eta_s: null,
+      },
+    ],
+  },
+};
+
+// run_state/active_run.json — a run in flight (experiment kind). Drives the
+// ActiveRunCard hero + folds into the idle gate / status strip.
+export const ACTIVE_RUN_FIXTURE: ActiveRun = {
+  run_id: "exp-2026-06-08-001",
+  kind: "experiment",
+  label: "exp003 paraphrase probe",
+  started_at: "2026-06-08T06:00:00Z",
+  current_step: "retrieve_literature",
+  step_started_at: "2026-06-08T06:01:00Z",
+  progress: { done: 3, total: 10, unit: "papers" },
+  narration: "scoring candidate seeds against the Slice-2 threshold",
+  model: "gemma-4-26b-a4b",
+  n_err: 0,
+  // An unknown key a later run-driver revision may add — passed through.
+  sandbox_id: "sbx-42",
 };
 
 // Idle: monitor is available but no workers are in flight. recent[] carries

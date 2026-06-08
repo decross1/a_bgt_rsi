@@ -29,7 +29,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Response
 
 from .chain import LogStore, build_chain, recent_tasks
 
@@ -37,6 +37,20 @@ from .chain import LogStore, build_chain, recent_tasks
 _REPO = Path(__file__).resolve().parents[2]
 DEFAULT_LOGS_DIR = _REPO / "logs"
 DEFAULT_TELEMETRY = _REPO / "ui" / "logs" / "telemetry.jsonl"
+
+# The primary checkout (mirror of app.py's _PRIMARY_REPO / loop_v0's run_state
+# dir). active_run.json and worker_activity.jsonl are written by the primary
+# session's run drivers there, NOT in this UI worktree. Baked as the default so
+# app.py's register_activity(app, logs_dir=..., telemetry_file=...) call keeps
+# working with no signature change; tests pin a tmp path.
+_PRIMARY = Path("/home/decross1/projects/a_bgt_rsi")
+DEFAULT_ACTIVE_RUN = _PRIMARY / "run_state" / "active_run.json"
+# worker_activity.jsonl is written by the primary session's run drivers into
+# the PRIMARY checkout's logs dir, NOT this UI worktree's logs dir. Source it
+# from the primary checkout (mirroring DEFAULT_ACTIVE_RUN) so the live-inference
+# marker actually drops in deployment; tests pin a tmp path distinct from
+# logs_dir.
+DEFAULT_WORKER_ACTIVITY = _PRIMARY / "logs" / "worker_activity.jsonl"
 
 ORCHESTRATOR_FILE = "orchestrator.jsonl"
 
@@ -61,6 +75,14 @@ ACTIVE_STATUSES = {"started", "dispatched", "running"}
 # of the call log(s) and surface the recent-call rate + caller_tag + model.
 LIVE_CALLS_WINDOW_S = 15
 _CALL_LOG_PATTERNS = ("calls.jsonl", "day*.jsonl", "exp*.jsonl")
+
+# Real per-call inference internals (tokens generated / tok_per_s / ETA) land
+# in logs/worker_activity.jsonl, one row per wrapper call. When a row falls
+# within this window the data is genuinely live and REPLACES the synthetic
+# fixture; older rows are stale and we fall back to the labelled fixture so the
+# `synthetic` flag is never false over data that isn't being measured right now.
+WORKER_ACTIVITY_FILE = "worker_activity.jsonl"
+WORKER_ACTIVITY_WINDOW_S = 30
 
 # Synthetic per-worker inference internals. These fields have no on-disk
 # source today; they are surfaced under a clearly-named key with
@@ -240,6 +262,62 @@ def _live_calls(logs_dir: Path, window_s: int, now: datetime) -> dict:
     }
 
 
+def _real_inference(path: Path, window_s: int, now: datetime) -> dict | None:
+    """REAL per-worker inference internals from worker_activity.jsonl.
+
+    Reads the tail of the file (same bounded-tail discipline as _live_calls /
+    _tail_records), keeps rows whose `timestamp` is within the last `window_s`
+    seconds, and collapses to the LATEST row per task_id. Returns the
+    synthetic_inference-shaped block with `synthetic: False` when at least one
+    recent row exists, else None (the caller falls back to the labelled
+    SYNTHETIC_INFERENCE fixture). Returning None — not a synthetic:False block —
+    on a stale/absent file is what keeps the load-bearing flag honest.
+
+    `path` is the worker_activity.jsonl path (the PRIMARY checkout's logs dir in
+    production — decoupled from this router's logs_dir, which points at the UI
+    worktree). A row that flags ITSELF `synthetic: True` is a producer-written
+    placeholder and is dropped here, so a per-row synthetic flag can never be
+    surfaced as measured under the load-bearing `synthetic: False`.
+    """
+    cutoff = now.timestamp() - window_s
+    latest: dict[str, dict] = {}
+    latest_instant: dict[str, datetime] = {}
+    for rec in _tail_records(path):
+        if rec.get("synthetic") is True:
+            continue
+        ts = rec.get("timestamp")
+        if not isinstance(ts, str):
+            continue
+        dt = _parse_ts(ts)
+        if dt.timestamp() < cutoff:
+            continue
+        task_id = rec.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            continue
+        prev = latest_instant.get(task_id)
+        if prev is None or dt > prev:
+            latest_instant[task_id] = dt
+            latest[task_id] = rec
+    if not latest:
+        return None
+    workers = [
+        {
+            "task_id": rec.get("task_id"),
+            "run_id": rec.get("run_id"),
+            "tokens_generated": rec.get("tokens_generated"),
+            "tokens_target": rec.get("tokens_target"),
+            "tok_per_s": rec.get("tok_per_s"),
+            "eta_s": rec.get("eta_s"),
+        }
+        for rec in latest.values()
+    ]
+    return {
+        "synthetic": False,
+        "source": "worker_activity.jsonl",
+        "workers": workers,
+    }
+
+
 def _flatten_tree(node: dict, nodes: list, edges: list, parent_id: str | None,
                   task_id: str | None, seen_ids: set, state: dict,
                   depth: int = 0) -> None:
@@ -309,11 +387,24 @@ def _flatten_tree(node: dict, nodes: list, edges: list, parent_id: str | None,
 
 
 def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
-             telemetry_file: Path = DEFAULT_TELEMETRY) -> APIRouter:
+             telemetry_file: Path = DEFAULT_TELEMETRY,
+             active_run_path: Path = DEFAULT_ACTIVE_RUN,
+             worker_activity_path: Path = DEFAULT_WORKER_ACTIVITY) -> APIRouter:
     """Attach the PAGE A router. Defaults are baked in so the integrator
-    adds exactly one ``register(app)`` call; tests pin tmp paths."""
+    adds exactly one ``register(app)`` call; tests pin tmp paths.
+
+    ``active_run_path`` and ``worker_activity_path`` BOTH default to the PRIMARY
+    checkout (not this UI worktree) — the run drivers write
+    ``run_state/active_run.json`` and ``logs/worker_activity.jsonl`` there, while
+    this router's ``logs_dir`` points at the UI worktree. Keying
+    worker_activity off logs_dir would mean the live-inference marker never drops
+    in production. app.py's existing ``register_activity(app, logs_dir=...,
+    telemetry_file=...)`` call works unchanged because these are keywords with
+    baked defaults."""
     logs_dir = Path(logs_dir)
     telemetry_file = Path(telemetry_file)
+    active_run_path = Path(active_run_path)
+    worker_activity_path = Path(worker_activity_path)
     store = LogStore(logs_dir)
     router = APIRouter(prefix="/api/activity", tags=["activity"])
 
@@ -355,17 +446,24 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
 
     @router.get("/monitor")
     def monitor(limit: int = 25):
+        now = datetime.now(timezone.utc)
         # Run-mode-agnostic live signal — computed first so it surfaces even
         # when the orchestrator log is absent/stale (the exp-run blind spot).
-        live_calls = _live_calls(logs_dir, LIVE_CALLS_WINDOW_S,
-                                 datetime.now(timezone.utc))
+        live_calls = _live_calls(logs_dir, LIVE_CALLS_WINDOW_S, now)
+        # REAL inference internals when worker_activity.jsonl has recent rows;
+        # else the labelled fixture. synthetic:False ONLY over genuinely-live
+        # measured data (CLAUDE.md rule 4 — never present the fixture as
+        # measured).
+        inference = (_real_inference(worker_activity_path,
+                                     WORKER_ACTIVITY_WINDOW_S, now)
+                     or SYNTHETIC_INFERENCE)
         orch_path = logs_dir / ORCHESTRATOR_FILE
         if not orch_path.exists():
             return {"available": False,
                     "reason": f"{ORCHESTRATOR_FILE} absent",
                     "active": [], "recent": [],
                     "live_calls": live_calls,
-                    "synthetic_inference": SYNTHETIC_INFERENCE,
+                    "synthetic_inference": inference,
                     "generated_at": _utcnow_iso()}
         capped = min(max(limit, 1), 200)
         tasks = recent_tasks(store, limit=capped)
@@ -414,8 +512,36 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
                 "recent": enriched,
                 "last_activity_at": last_activity_at,
                 "live_calls": live_calls,
-                "synthetic_inference": SYNTHETIC_INFERENCE,
+                "synthetic_inference": inference,
                 "generated_at": _utcnow_iso()}
+
+    @router.get("/active_run")
+    def active_run():
+        """The single 'what is running now' state, regardless of run kind.
+
+        Mirrors loop_v0's /active: 204 when the file is absent (no run in
+        flight, the driver deletes it on completion), the parsed JSON when
+        present (ALL keys passed through, including unknown ones a later
+        nemoclaw revision may add — additionalProperties true in the schema),
+        500 only on a genuinely unreadable/corrupt file. The delete-race
+        between exists() and read is treated as 204, not 500."""
+        if not active_run_path.exists():
+            return Response(status_code=204)
+        try:
+            text = active_run_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return Response(status_code=204)
+        # A zero-length (or whitespace-only) read is the mid-write window of a
+        # non-atomic producer, not a corrupt file — treat it as "no run" (204)
+        # rather than a 500 page-error banner.
+        if not text.strip():
+            return Response(status_code=204)
+        try:
+            return json.loads(text)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise HTTPException(
+                status_code=500, detail=f"active_run unreadable: {exc}"
+            ) from exc
 
     app.include_router(router)
     return router

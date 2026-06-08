@@ -65,9 +65,22 @@ def _write_logs(logs_dir: Path, *, orch=ORCH_ROWS, calls=CALL_ROWS) -> None:
             "\n".join(json.dumps(r) for r in calls) + "\n", encoding="utf-8")
 
 
-def _client(logs_dir: Path, telemetry: Path) -> TestClient:
+def _client(logs_dir: Path, telemetry: Path,
+            active_run: Path | None = None,
+            worker_activity: Path | None = None) -> TestClient:
     app = FastAPI()
-    register(app, logs_dir=logs_dir, telemetry_file=telemetry)
+    kwargs = {}
+    if active_run is not None:
+        kwargs["active_run_path"] = active_run
+    # Default the worker_activity path to logs_dir/worker_activity.jsonl for the
+    # tests that pre-date the path split (they write the file into logs_dir),
+    # but let a test pin a path DISTINCT from logs_dir to prove the production
+    # split (worker_activity lives in the primary checkout, logs_dir in the UI
+    # worktree).
+    kwargs["worker_activity_path"] = (
+        worker_activity if worker_activity is not None
+        else logs_dir / "worker_activity.jsonl")
+    register(app, logs_dir=logs_dir, telemetry_file=telemetry, **kwargs)
     return TestClient(app)
 
 
@@ -355,6 +368,241 @@ def test_monitor_synthetic_inference_marked(tmp_path):
     assert syn["synthetic"] is True
     assert "worker_activity.jsonl" in syn["needs"]
     assert isinstance(syn["workers"], list) and syn["workers"]
+
+
+# ─── real inference internals (worker_activity.jsonl) ─────────────────
+
+def test_monitor_real_inference_when_worker_activity_recent(tmp_path):
+    # A recent worker_activity.jsonl row REPLACES the synthetic fixture. The
+    # `synthetic` flag is load-bearing: it must be False only over genuinely
+    # measured data. The latest row per task_id wins.
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    rows = [
+        {"timestamp": _now_iso(), "run_id": "exp-9", "task_id": "t/a",
+         "tokens_generated": 100, "tokens_target": 512, "tok_per_s": 41.0,
+         "eta_s": 10.0, "synthetic": False},
+        # A SECOND, later row for the same task_id — the latest must win.
+        {"timestamp": _now_iso(), "run_id": "exp-9", "task_id": "t/a",
+         "tokens_generated": 220, "tokens_target": 512, "tok_per_s": 44.0,
+         "eta_s": 6.6, "synthetic": False},
+    ]
+    (logs / "worker_activity.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    syn = _client(logs, tmp_path / "telemetry.jsonl").get(
+        "/api/activity/monitor").json()["synthetic_inference"]
+    assert syn["synthetic"] is False
+    assert syn["source"] == "worker_activity.jsonl"
+    assert len(syn["workers"]) == 1
+    w = syn["workers"][0]
+    assert w["task_id"] == "t/a"
+    assert w["run_id"] == "exp-9"
+    assert w["tokens_generated"] == 220  # latest row, not the first
+    assert w["tok_per_s"] == 44.0
+
+
+def test_monitor_falls_back_to_synthetic_when_worker_activity_stale(tmp_path):
+    # An old (2026-05) worker_activity row is outside the window -> fall back to
+    # the labelled synthetic fixture (synthetic:True). Never present a stale row
+    # as live measurement.
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    (logs / "worker_activity.jsonl").write_text(
+        json.dumps({"timestamp": "2026-05-23T05:15:44.0Z", "run_id": None,
+                    "task_id": "t/old", "tokens_generated": 5,
+                    "tokens_target": 5, "tok_per_s": 1.0, "eta_s": 0.0,
+                    "synthetic": False}) + "\n", encoding="utf-8")
+    syn = _client(logs, tmp_path / "telemetry.jsonl").get(
+        "/api/activity/monitor").json()["synthetic_inference"]
+    assert syn["synthetic"] is True
+    assert "worker_activity.jsonl" in syn["needs"]
+
+
+def test_monitor_falls_back_to_synthetic_when_worker_activity_absent(tmp_path):
+    # No worker_activity.jsonl at all -> labelled synthetic fixture.
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    syn = _client(logs, tmp_path / "telemetry.jsonl").get(
+        "/api/activity/monitor").json()["synthetic_inference"]
+    assert syn["synthetic"] is True
+
+
+def test_monitor_real_inference_sourced_from_path_distinct_from_logs_dir(tmp_path):
+    # HIGH finding regression: in production logs_dir is the UI worktree logs
+    # dir but worker_activity.jsonl is written to the PRIMARY checkout's logs
+    # dir. _real_inference must read worker_activity_path, NOT logs_dir. Here the
+    # file lives in a SEPARATE dir from logs_dir; if the router keyed off
+    # logs_dir it would miss the file and fall back to synthetic. It must not.
+    logs = tmp_path / "ui_worktree" / "logs"
+    _write_logs(logs)
+    primary_logs = tmp_path / "primary" / "logs"
+    primary_logs.mkdir(parents=True)
+    wa = primary_logs / "worker_activity.jsonl"
+    wa.write_text(
+        json.dumps({"timestamp": _now_iso(), "run_id": "exp-9", "task_id": "t/a",
+                    "tokens_generated": 200, "tokens_target": 512,
+                    "tok_per_s": 44.0, "eta_s": 6.6, "synthetic": False}) + "\n",
+        encoding="utf-8")
+    # No worker_activity.jsonl inside logs_dir — only in the distinct path.
+    assert not (logs / "worker_activity.jsonl").exists()
+    syn = _client(logs, tmp_path / "telemetry.jsonl", worker_activity=wa).get(
+        "/api/activity/monitor").json()["synthetic_inference"]
+    assert syn["synthetic"] is False
+    assert syn["source"] == "worker_activity.jsonl"
+    assert syn["workers"][0]["task_id"] == "t/a"
+
+
+def test_monitor_drops_worker_activity_row_flagged_synthetic_true(tmp_path):
+    # A row that flags ITSELF synthetic:True is a producer placeholder; it must
+    # be dropped, not surfaced under the load-bearing synthetic:False block. The
+    # only recent row here is synthetic:True -> fall back to the labelled fixture.
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    (logs / "worker_activity.jsonl").write_text(
+        json.dumps({"timestamp": _now_iso(), "run_id": None, "task_id": "t/ph",
+                    "tokens_generated": 1, "tokens_target": 2, "tok_per_s": 0,
+                    "eta_s": None, "synthetic": True}) + "\n", encoding="utf-8")
+    syn = _client(logs, tmp_path / "telemetry.jsonl").get(
+        "/api/activity/monitor").json()["synthetic_inference"]
+    assert syn["synthetic"] is True
+    assert "worker_activity.jsonl" in syn["needs"]
+
+
+def test_monitor_real_inference_accepts_future_skew_timestamp(tmp_path):
+    # A slightly-future timestamp (clock skew between the primary writer and the
+    # UI reader) is still inside the window (ts > cutoff) and counts as live.
+    # Documents the current behavior so a future change to clamp future skew is
+    # a deliberate, tested decision rather than a silent regression.
+    from datetime import timedelta
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    future = (datetime.now(timezone.utc) + timedelta(seconds=5)) \
+        .isoformat().replace("+00:00", "Z")
+    (logs / "worker_activity.jsonl").write_text(
+        json.dumps({"timestamp": future, "run_id": "exp-f", "task_id": "t/f",
+                    "tokens_generated": 10, "tokens_target": 512,
+                    "tok_per_s": 40.0, "eta_s": 12.5, "synthetic": False}) + "\n",
+        encoding="utf-8")
+    syn = _client(logs, tmp_path / "telemetry.jsonl").get(
+        "/api/activity/monitor").json()["synthetic_inference"]
+    assert syn["synthetic"] is False
+    assert syn["workers"][0]["task_id"] == "t/f"
+
+
+def test_monitor_real_inference_passes_through_null_eta(tmp_path):
+    # A real row with tok_per_s 0 -> producer writes eta_s null. The backend
+    # passes it through verbatim (synthetic:False); the frontend renders the
+    # bare dash. Proves eta_s null reaches the live panel as a real measurement.
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    (logs / "worker_activity.jsonl").write_text(
+        json.dumps({"timestamp": _now_iso(), "run_id": "exp-0", "task_id": "t/z",
+                    "tokens_generated": 0, "tokens_target": 512, "tok_per_s": 0,
+                    "eta_s": None, "synthetic": False}) + "\n", encoding="utf-8")
+    syn = _client(logs, tmp_path / "telemetry.jsonl").get(
+        "/api/activity/monitor").json()["synthetic_inference"]
+    assert syn["synthetic"] is False
+    w = syn["workers"][0]
+    assert w["task_id"] == "t/z"
+    assert w["eta_s"] is None
+    assert w["tok_per_s"] == 0
+
+
+# ─── active_run (single 'what is running now' state) ──────────────────
+
+ACTIVE_RUN_ROW = {
+    "run_id": "exp-2026-06-08-001",
+    "kind": "experiment",
+    "label": "exp003 paraphrase probe",
+    "started_at": "2026-06-08T06:00:00Z",
+    "current_step": "retrieve_literature",
+    "step_started_at": "2026-06-08T06:01:00Z",
+    "progress": {"done": 3, "total": 10, "unit": "papers"},
+    "narration": "scoring candidate seeds",
+    "model": "gemma-4-26b-a4b",
+    "n_err": 0,
+    # An unknown key a later nemoclaw revision may add — MUST pass through.
+    "sandbox_id": "sbx-42",
+}
+
+
+def test_active_run_204_when_absent(tmp_path):
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    client = _client(logs, tmp_path / "telemetry.jsonl",
+                     active_run=tmp_path / "run_state" / "active_run.json")
+    resp = client.get("/api/activity/active_run")
+    assert resp.status_code == 204
+
+
+def test_active_run_returns_json_including_unknown_keys(tmp_path):
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    ar = tmp_path / "run_state" / "active_run.json"
+    ar.parent.mkdir(parents=True, exist_ok=True)
+    ar.write_text(json.dumps(ACTIVE_RUN_ROW), encoding="utf-8")
+    client = _client(logs, tmp_path / "telemetry.jsonl", active_run=ar)
+    resp = client.get("/api/activity/active_run")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["run_id"] == "exp-2026-06-08-001"
+    assert body["kind"] == "experiment"
+    assert body["progress"] == {"done": 3, "total": 10, "unit": "papers"}
+    # The unknown key is passed through, not stripped.
+    assert body["sandbox_id"] == "sbx-42"
+
+
+def test_active_run_delete_race_yields_204(tmp_path):
+    # exists() passes but the file vanishes before read (producer deletes it
+    # atomically on completion) -> 204, not 500. Mirrors loop_v0 /active.
+    import unittest.mock as mock
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    ar = tmp_path / "run_state" / "active_run.json"
+    ar.parent.mkdir(parents=True, exist_ok=True)
+    ar.write_text(json.dumps(ACTIVE_RUN_ROW), encoding="utf-8")
+    client = _client(logs, tmp_path / "telemetry.jsonl", active_run=ar)
+
+    real_read_text = type(ar).read_text
+
+    def race_read_text(self, *args, **kwargs):
+        if str(self) == str(ar):
+            raise FileNotFoundError(str(self))
+        return real_read_text(self, *args, **kwargs)
+
+    with mock.patch.object(type(ar), "read_text", race_read_text):
+        resp = client.get("/api/activity/active_run")
+    assert resp.status_code == 204
+    assert resp.content == b""
+
+
+def test_active_run_500_on_corrupt_file(tmp_path):
+    # A genuinely corrupt (non-empty, non-JSON) file -> 500. The atomic-write
+    # producer never exposes this, but the endpoint must surface it honestly
+    # rather than fabricate an empty run.
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    ar = tmp_path / "run_state" / "active_run.json"
+    ar.parent.mkdir(parents=True, exist_ok=True)
+    ar.write_text("{not valid json", encoding="utf-8")
+    client = _client(logs, tmp_path / "telemetry.jsonl", active_run=ar)
+    resp = client.get("/api/activity/active_run")
+    assert resp.status_code == 500
+    assert "unreadable" in resp.json()["detail"]
+
+
+def test_active_run_204_on_empty_file(tmp_path):
+    # A zero-length read (the mid-write window of a non-atomic producer) is
+    # treated as "no run" (204), NOT a 500 page-error banner.
+    logs = tmp_path / "logs"
+    _write_logs(logs)
+    ar = tmp_path / "run_state" / "active_run.json"
+    ar.parent.mkdir(parents=True, exist_ok=True)
+    ar.write_text("", encoding="utf-8")
+    client = _client(logs, tmp_path / "telemetry.jsonl", active_run=ar)
+    resp = client.get("/api/activity/active_run")
+    assert resp.status_code == 204
+    assert resp.content == b""
 
 
 def test_monitor_telemetry_absent_yields_null_metrics(tmp_path):

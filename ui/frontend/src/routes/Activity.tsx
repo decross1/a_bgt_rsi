@@ -13,14 +13,20 @@
 // relayouts when the graph actually changed.
 import { useEffect, useRef, useState } from "react";
 import ActiveIterationPanel from "../components/ActiveIterationPanel";
+import ActiveRunCard from "../components/ActiveRunCard";
 import ActiveWorkersPanel from "../components/ActiveWorkersPanel";
 import ActivityGraph from "../components/ActivityGraph";
 import LiveCallsBanner from "../components/LiveCallsBanner";
 import SyntheticInferencePanel from "../components/SyntheticInferencePanel";
-import { getActivityGraph, getActivityMonitor } from "../api/activity";
+import {
+  getActiveRun,
+  getActivityGraph,
+  getActivityMonitor,
+} from "../api/activity";
 import { getActiveIteration } from "../api/http";
 import { elapsed, useNow } from "../time";
 import type {
+  ActiveRun,
   ActivityGraphResponse,
   MonitorResponse,
 } from "../types/activity";
@@ -33,6 +39,9 @@ interface ActivityProps {
   // empty-state on BOTH iteration-idle AND zero-workers (see below). When
   // provided (even as null) the page does not self-poll the iteration.
   initialIteration?: ActiveIteration | null;
+  // The active RUN (run_state/active_run.json). Injected (even as null) so the
+  // page does not self-poll it in tests; a present run means NOT idle.
+  initialActiveRun?: ActiveRun | null;
 }
 
 type Detail = "overview" | "full";
@@ -44,6 +53,7 @@ export default function Activity({
   initialGraph,
   initialMonitor,
   initialIteration,
+  initialActiveRun,
 }: ActivityProps) {
   const [graph, setGraph] = useState<ActivityGraphResponse | null>(
     initialGraph ?? null,
@@ -58,6 +68,11 @@ export default function Activity({
   const [iteration, setIteration] = useState<ActiveIteration | null>(
     initialIteration ?? null,
   );
+  // The active RUN is lifted to the page too, so a present run folds into the
+  // idle gate (a run in flight is NOT idle) and the status strip.
+  const [activeRun, setActiveRun] = useState<ActiveRun | null>(
+    initialActiveRun ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail>("overview");
   const now = useNow();
@@ -69,6 +84,8 @@ export default function Activity({
   const live = initialGraph === undefined && initialMonitor === undefined;
   // The active iteration self-polls here only when not injected by a test.
   const liveIteration = initialIteration === undefined;
+  // The active run self-polls only when not injected by a test.
+  const liveActiveRun = initialActiveRun === undefined;
 
   useEffect(() => {
     if (!live) return;
@@ -119,6 +136,21 @@ export default function Activity({
     };
   }, [liveIteration]);
 
+  useEffect(() => {
+    if (!liveActiveRun) return;
+    let cancelled = false;
+    const poll = () =>
+      getActiveRun()
+        .then((r) => !cancelled && setActiveRun(r))
+        .catch((e) => !cancelled && setError(String(e)));
+    poll();
+    const id = setInterval(poll, MONITOR_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [liveActiveRun]);
+
   const activeCount = monitor?.active.length ?? 0;
   // The monitor is "available" only when its source file is present. On the
   // {available:false} degrade path active[] is empty for want of data, not
@@ -130,13 +162,20 @@ export default function Activity({
   // orchestrator and the loop (e.g. a raw experiment driver still calling the
   // wrapper). Counts as live for the idle gate and the status strip.
   const liveCallsActive = monitor?.live_calls?.active ?? false;
+  // A run registered in run_state/active_run.json is live, regardless of run
+  // kind — fold it into the idle gate and the status strip.
+  const runActive = activeRun != null;
   // Idle requires ALL sides quiescent: no workers in flight AND no active
-  // orchestrator iteration AND no recent wrapper calls. A running iteration
-  // with zero workers, or a bare experiment driver still making calls, is
-  // live, not idle.
+  // orchestrator iteration AND no recent wrapper calls AND no registered run.
+  // A running iteration with zero workers, a bare experiment driver still
+  // making calls, or any active_run is live, not idle.
   const iterationIdle = iteration == null;
   const pageIdle =
-    monitorAvailable && activeCount === 0 && iterationIdle && !liveCallsActive;
+    monitorAvailable &&
+    activeCount === 0 &&
+    iterationIdle &&
+    !liveCallsActive &&
+    !runActive;
 
   return (
     <div className="mx-auto w-full max-w-[1800px] px-6 py-5">
@@ -152,7 +191,7 @@ export default function Activity({
         <div
           data-testid="activity-status"
           className={`mt-3 rounded border px-3 py-2 text-xs ${
-            activeCount > 0 || liveCallsActive
+            activeCount > 0 || liveCallsActive || runActive
               ? "border-emerald-800/50 bg-emerald-950/20 text-emerald-300"
               : "border-zinc-800 bg-zinc-900/40 text-zinc-400"
           }`}
@@ -163,6 +202,11 @@ export default function Activity({
                 {activeCount} task{activeCount === 1 ? "" : "s"} active now.
               </span>{" "}
               Live worker + iteration state below.
+            </>
+          ) : runActive ? (
+            <>
+              <span className="font-medium text-emerald-300">Live</span> — a{" "}
+              {activeRun!.kind} run is in flight. See the active-run card below.
             </>
           ) : liveCallsActive ? (
             <>
@@ -191,6 +235,9 @@ export default function Activity({
         <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
           Active now
         </h2>
+        {/* The active-run HERO card — renders nothing when no run is in
+            flight (activeRun null). At the TOP of the hero. */}
+        <ActiveRunCard data={activeRun} />
         <ActiveIterationPanel initial={iteration} />
         {monitor?.live_calls?.active && (
           <LiveCallsBanner data={monitor.live_calls} />

@@ -61,19 +61,54 @@ export interface MonitorWorker {
 // these are never mistaken for measured numbers (CLAUDE.md rule 4).
 export interface SyntheticInferenceWorker {
   task_id: string;
-  decode_step: number;
+  // decode_step exists only on the synthetic fixture; the real
+  // worker_activity.jsonl rows do not carry it.
+  decode_step?: number;
   tokens_generated: number;
   tokens_target: number;
-  eta_s: number;
+  // The producer writes eta_s=null when tok_per_s is 0 (no rate to divide by),
+  // so this is nullable; the live panel renders a bare dash (no trailing "s")
+  // rather than "n/as" in that case.
+  eta_s: number | null;
   tok_per_s: number;
+  // Present on real rows (worker_activity.jsonl); absent on the fixture.
+  run_id?: string | null;
 }
 
+// Inference internals block. `synthetic` is the load-bearing flag: when TRUE
+// this is the fixture (and `needs`/`note` are present, marker shown); when
+// FALSE it is REAL data from worker_activity.jsonl (source ==
+// "worker_activity.jsonl", no `needs`/`note`, no synthetic marker).
 export interface SyntheticInference {
   synthetic: boolean;
   source: string;
-  needs: string;
-  note: string;
+  needs?: string;
+  note?: string;
   workers: SyntheticInferenceWorker[];
+}
+
+// run_state/active_run.json — the single "what is running now" state, written
+// atomically by any run-mode driver and DELETED when idle (so the endpoint
+// returns 204 / the frontend gets null). additionalProperties is true in the
+// schema, so unknown keys (e.g. a future nemoclaw sandbox_id) flow through
+// untouched via the index signature.
+export interface ActiveRun {
+  run_id: string;
+  kind: "experiment" | "autoresearch" | "loop_v0" | "ad_hoc" | string;
+  label: string;
+  started_at: string;
+  current_step?: string | null;
+  step_started_at?: string | null;
+  progress?: {
+    done?: number | null;
+    total?: number | null;
+    unit?: string | null;
+  } | null;
+  narration?: string | null;
+  model?: string | null;
+  n_err?: number | null;
+  // Unknown keys a later run-driver revision may add are preserved.
+  [key: string]: unknown;
 }
 
 // Recent wrapper-call activity (from the call-log tail). `active` is the
