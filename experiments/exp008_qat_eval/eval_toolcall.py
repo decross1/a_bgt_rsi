@@ -243,7 +243,22 @@ def run_eval(
                 kwargs["backend"] = backend
             if model is not None:
                 kwargs["model"] = model
-            record = caller(messages, **kwargs)
+            # A failed call (e.g. the arm endpoint is down) is NOT a
+            # measurement: don't crash the whole run on it, and DON'T score it
+            # as a non-adherent 0 — that would let an infra failure masquerade
+            # as a quality signal (inviolate rule 4). Record the error in the
+            # audit row and skip the decision row; an arm that errors enough
+            # drops below min_sample -> honest INSUFFICIENT.
+            try:
+                record = caller(messages, **kwargs)
+            except Exception as exc:
+                fh.write(json.dumps({
+                    "timestamp": datetime.now(timezone.utc)
+                    .isoformat().replace("+00:00", "Z"),
+                    "arm": arm, "prompt_id": p["id"], "adherent": None,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }, ensure_ascii=False) + "\n")
+                continue
             adherent, n_parsed = is_parseable_toolcall(record)
             row = {
                 "timestamp": datetime.now(timezone.utc)

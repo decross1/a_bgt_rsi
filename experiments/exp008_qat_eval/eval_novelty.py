@@ -293,21 +293,30 @@ def run_eval(
             }
             rows.append(row)
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-            # analyze.py rows: novelty_agreement is the per-fixture exact-tier
-            # hit (mean -> agreement_rate, n -> fixture count); calibration_error
-            # is the per-fixture abs error (mean -> calibration_error_mae).
-            mfh.write(json.dumps({
-                "arm": arm,
-                "metric": "novelty_agreement",
-                "value": 1.0 if predicted_class == gt_class else 0.0,
-                "reference_verdict": gt_class,
-                "predicted_verdict": predicted_class,
-            }) + "\n")
-            mfh.write(json.dumps({
-                "arm": arm,
-                "metric": "calibration_error",
-                "value": calib_err,
-            }) + "\n")
+            # A worker call that ERRORED (e.g. the arm endpoint is down ->
+            # APIConnectionError) is NOT a measurement: scoring it as a 0 would
+            # let an infra failure masquerade as a quality signal and could
+            # produce a false verdict (inviolate rule 4 — never coerce). Emit
+            # the analyze.py decision rows ONLY for a genuinely served call;
+            # an arm that errors enough drops below min_sample -> INSUFFICIENT,
+            # which is the honest "could not measure this arm" outcome. The
+            # rich audit row above still records the error for triage.
+            if result.get("status") == "passed":
+                # novelty_agreement is the per-fixture exact-tier hit (mean ->
+                # agreement_rate, n -> served-fixture count); calibration_error
+                # is the per-fixture abs error (mean -> calibration_error_mae).
+                mfh.write(json.dumps({
+                    "arm": arm,
+                    "metric": "novelty_agreement",
+                    "value": 1.0 if predicted_class == gt_class else 0.0,
+                    "reference_verdict": gt_class,
+                    "predicted_verdict": predicted_class,
+                }) + "\n")
+                mfh.write(json.dumps({
+                    "arm": arm,
+                    "metric": "calibration_error",
+                    "value": calib_err,
+                }) + "\n")
     return aggregate(rows)
 
 

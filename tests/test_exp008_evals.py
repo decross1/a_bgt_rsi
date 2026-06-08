@@ -247,6 +247,50 @@ def test_novelty_emits_analyze_metric_rows(scratch_cache, tmp_path):
     assert len([ln for ln in rich if ln.strip()]) == 10
 
 
+def _error_classifier(hypothesis_text, iteration_id, **kwargs):
+    """A stub with novelty_classify's signature that ERRORS every call (e.g.
+    the arm endpoint is down -> APIConnectionError)."""
+    return {"status": "error", "result": None,
+            "errors": ["wrapper.call_sync failed: APIConnectionError"],
+            "wrapper_request_id": None}
+
+
+def test_novelty_errored_calls_emit_no_metric_rows(scratch_cache, tmp_path):
+    """A down arm (every call errors) must NOT produce 0-valued metric rows —
+    that would let infra failure masquerade as a quality 0 (rule 4). The metric
+    file is empty, so analyze sees the arm as unmeasured -> INSUFFICIENT, not a
+    false regression."""
+    fixtures = eval_novelty.load_fixtures(eval_novelty.FIXTURES_DIR)
+    runs_dir = tmp_path / "runs"
+    eval_novelty.run_eval(
+        arm="qat", classifier=_error_classifier, fixtures=fixtures,
+        model=None, runs_dir=runs_dir,
+    )
+    metric_rows = _read_metric_rows(runs_dir)
+    assert metric_rows == [], "errored calls must not become decision rows"
+    # the rich audit file still records all 10 errored fixtures for triage
+    rich = [json.loads(ln) for ln in
+            (runs_dir / "novelty_qat.jsonl").read_text().splitlines() if ln.strip()]
+    assert len(rich) == 10 and all(r["worker_status"] == "error" for r in rich)
+
+
+def test_toolcall_errored_calls_skipped_not_scored_zero(tmp_path):
+    """A down arm (caller raises) must not crash the run or score 0s; errored
+    prompts are skipped (no metric row), n reflects only served prompts."""
+    def _down_caller(messages, **kwargs):
+        raise RuntimeError("Connection error")
+
+    runs_dir = tmp_path / "runs"
+    metrics = eval_toolcall.run_eval(
+        arm="qat", caller=_down_caller, backend=None, model=None,
+        runs_dir=runs_dir,
+    )
+    assert metrics["n"] == 0
+    rows = [r for r in _read_metric_rows(runs_dir)
+            if r["metric"] == "tool_call_adherence"]
+    assert rows == []
+
+
 def test_toolcall_prompt_set_meets_min_sample():
     """The default prompt set must be >=10 so tool_call_adherence clears
     analyze.py's min_sample decision-eligibility gate."""

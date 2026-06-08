@@ -70,7 +70,14 @@ build_args() {
         --served-model-name "$ARM_C_SERVED_NAME"
         --host 0.0.0.0
         --port "${SCRATCH_PORT}"
-        --max-model-len 32768
+        # This box (DGX Spark / GB10) has ~128GB UNIFIED memory shared with the
+        # already-running production + qwen vLLM servers. vLLM defaults to
+        # grabbing ~90% of total, which OOM-crashes the scratch arm. Cap it so
+        # the ~52GB unquantized-26B weights + KV fit alongside whatever else is
+        # resident; the eval prompts are short, so a small context is ample.
+        # Free additional headroom first if needed (e.g. stop the qwen server).
+        --gpu-memory-utilization 0.5
+        --max-model-len 8192
         --trust-remote-code
       )
       ;;
