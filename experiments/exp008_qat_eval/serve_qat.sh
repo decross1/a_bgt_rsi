@@ -78,6 +78,13 @@ build_args() {
         # Free additional headroom first if needed (e.g. stop the qwen server).
         --gpu-memory-utilization 0.5
         --max-model-len 8192
+        # Gemma 4 is multimodal (image-text-to-text); its vision encoder emits
+        # max_tokens_per_mm_item (~2496) which, with chunked MM input disabled,
+        # must fit in one batch. The default max_num_batched_tokens (2048) is
+        # too small and vLLM refuses to start. Raise it above the per-item
+        # budget (the text-only eval never sends images, but the encoder budget
+        # is computed at startup regardless).
+        --max-num-batched-tokens 8192
         --trust-remote-code
       )
       ;;
