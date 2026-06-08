@@ -70,13 +70,15 @@ build_args() {
         --served-model-name "$ARM_C_SERVED_NAME"
         --host 0.0.0.0
         --port "${SCRATCH_PORT}"
-        # This box (DGX Spark / GB10) has ~128GB UNIFIED memory shared with the
-        # already-running production + qwen vLLM servers. vLLM defaults to
-        # grabbing ~90% of total, which OOM-crashes the scratch arm. Cap it so
-        # the ~52GB unquantized-26B weights + KV fit alongside whatever else is
-        # resident; the eval prompts are short, so a small context is ample.
-        # Free additional headroom first if needed (e.g. stop the qwen server).
-        --gpu-memory-utilization 0.5
+        # This box (DGX Spark / GB10) has ~121.7 GiB UNIFIED memory shared with
+        # the production vLLM server AND the OS/desktop, so vLLM typically sees
+        # only ~60 GiB free even with the scratch arm alone. The unquantized-26B
+        # weights are ~48 GiB; vLLM's startup check requires free >= util*total,
+        # so util*121.7 must stay UNDER the ~60 GiB free. 0.46 -> ~56 GiB budget
+        # (passes the check; ~8 GiB left for KV after weights). The eval prompts
+        # are short so a small context is ample. If free memory is lower on your
+        # box (other resident processes), drop this further or free memory.
+        --gpu-memory-utilization 0.46
         --max-model-len 8192
         # Gemma 4 is multimodal (image-text-to-text); its vision encoder emits
         # max_tokens_per_mm_item (~2496) which, with chunked MM input disabled,
