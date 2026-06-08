@@ -8,14 +8,19 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import ActiveRunCard from "../src/components/ActiveRunCard";
 import ActiveWorkersPanel from "../src/components/ActiveWorkersPanel";
 import LiveCallsBanner from "../src/components/LiveCallsBanner";
 import SyntheticInferencePanel from "../src/components/SyntheticInferencePanel";
+import { getActiveRun } from "../src/api/activity";
 import Activity from "../src/routes/Activity";
 import {
+  ACTIVE_RUN_FIXTURE,
   MONITOR_FIXTURE,
   MONITOR_FIXTURE_IDLE,
   MONITOR_FIXTURE_LIVE_CALLS,
+  MONITOR_FIXTURE_REAL_INFERENCE,
+  MONITOR_FIXTURE_REAL_INFERENCE_NULL_ETA,
   MONITOR_FIXTURE_UNAVAILABLE,
   GRAPH_FIXTURE,
 } from "../src/fixtures/activity";
@@ -77,6 +82,71 @@ describe("SyntheticInferencePanel (subordinate)", () => {
     expect(block).toHaveTextContent("312/512");
     expect(screen.getByTestId("synthetic-worker-seq-1")).toBeInTheDocument();
   });
+
+  it("renders REAL inference with NO synthetic marker when synthetic:false", () => {
+    // worker_activity.jsonl had recent rows -> synthetic:false. The amber
+    // marker must NOT appear over real measured data (CLAUDE.md rule 4).
+    render(<SyntheticInferencePanel data={MONITOR_FIXTURE_REAL_INFERENCE} />);
+    const block = screen.getByTestId("synthetic-inference");
+    expect(block).toHaveAttribute("data-synthetic", "false");
+    // No amber "synthetic — needs ..." marker over real data.
+    expect(screen.queryByTestId("synthetic-marker")).toBeNull();
+    // The live measured row + tok/s are rendered.
+    expect(screen.getByTestId("live-worker-t/a")).toHaveTextContent("220/512");
+    expect(block).toHaveTextContent("44.0");
+  });
+
+  it("renders a bare dash (not 'n/as') when a real row's eta_s is null", () => {
+    // Producer writes eta_s=null when tok_per_s is 0. The live panel must show a
+    // bare "—" for that cell, never "n/as" (fmt(null)+"s").
+    render(
+      <SyntheticInferencePanel data={MONITOR_FIXTURE_REAL_INFERENCE_NULL_ETA} />,
+    );
+    const row = screen.getByTestId("live-worker-t/z");
+    expect(row).toHaveTextContent("0/512");
+    expect(row.textContent).toContain("—");
+    expect(row.textContent).not.toContain("n/as");
+  });
+
+  it("KEEPS the synthetic marker when synthetic:true (fixture)", () => {
+    render(<SyntheticInferencePanel data={MONITOR_FIXTURE} />);
+    expect(screen.getByTestId("synthetic-inference")).toHaveAttribute(
+      "data-synthetic",
+      "true",
+    );
+    expect(screen.getByTestId("synthetic-marker")).toBeInTheDocument();
+  });
+});
+
+describe("ActiveRunCard (HERO)", () => {
+  it("renders nothing when data is null (no run in flight)", () => {
+    const { container } = render(<ActiveRunCard data={null} />);
+    expect(
+      container.querySelector('[data-testid="active-run-card"]'),
+    ).toBeNull();
+  });
+
+  it("renders label, kind, step and progress when a run is present", () => {
+    render(<ActiveRunCard data={ACTIVE_RUN_FIXTURE} />);
+    const card = screen.getByTestId("active-run-card");
+    expect(card).toHaveTextContent("exp003 paraphrase probe");
+    expect(card).toHaveTextContent("experiment");
+    expect(screen.getByTestId("active-run-step")).toHaveTextContent(
+      "retrieve_literature",
+    );
+    expect(screen.getByTestId("active-run-progress")).toHaveTextContent(
+      "3/10 papers",
+    );
+    // The narration + model surface too.
+    expect(screen.getByTestId("active-run-narration")).toHaveTextContent(
+      /scoring candidate seeds/i,
+    );
+    expect(screen.getByTestId("active-run-model")).toHaveTextContent(
+      "gemma-4-26b-a4b",
+    );
+    // Live elapsed cell is present and formatted (well-formed, never "—").
+    expect(screen.getByTestId("active-run-elapsed").textContent).not.toBe("—");
+  });
 });
 
 describe("LiveCallsBanner", () => {
@@ -108,6 +178,48 @@ describe("LiveCallsBanner", () => {
   });
 });
 
+describe("getActiveRun (api)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("returns null on 204 (no run in flight)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ status: 204, ok: false } as Response),
+    );
+    await expect(getActiveRun()).resolves.toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("returns the parsed object on 200", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        status: 200,
+        ok: true,
+        json: async () => ACTIVE_RUN_FIXTURE,
+      } as Response),
+    );
+    await expect(getActiveRun()).resolves.toMatchObject({
+      run_id: ACTIVE_RUN_FIXTURE.run_id,
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it("throws on a 500 error path (corrupt active_run.json)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        status: 500,
+        ok: false,
+        statusText: "Internal Server Error",
+        json: async () => ({ detail: "active_run unreadable: ..." }),
+      } as Response),
+    );
+    await expect(getActiveRun()).rejects.toThrow(/500/);
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("Activity layout (workers HERO, graph demoted)", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -118,6 +230,7 @@ describe("Activity layout (workers HERO, graph demoted)", () => {
   function renderActivity(
     monitor = MONITOR_FIXTURE,
     iteration: typeof ACTIVE_FIXTURE | null = null,
+    activeRun: typeof ACTIVE_RUN_FIXTURE | null = null,
   ) {
     return render(
       <MemoryRouter>
@@ -125,6 +238,7 @@ describe("Activity layout (workers HERO, graph demoted)", () => {
           initialGraph={GRAPH_FIXTURE}
           initialMonitor={monitor}
           initialIteration={iteration}
+          initialActiveRun={activeRun}
         />
       </MemoryRouter>,
     );
@@ -183,6 +297,36 @@ describe("Activity layout (workers HERO, graph demoted)", () => {
     );
     expect(screen.queryByTestId("activity-idle-empty")).toBeNull();
     expect(screen.getByTestId("activity-status")).toHaveTextContent(/live/i);
+  });
+
+  it("renders the active-run card at the top of the hero when a run is in flight", () => {
+    renderActivity(MONITOR_FIXTURE_IDLE, null, ACTIVE_RUN_FIXTURE);
+    const hero = screen.getByTestId("active-now");
+    const card = within(hero).getByTestId("active-run-card");
+    expect(card).toHaveTextContent("exp003 paraphrase probe");
+  });
+
+  it("suppresses the idle empty-state when an active_run is present", () => {
+    // The monitor reports zero workers (idle), but a run IS registered in
+    // run_state/active_run.json — the page must NOT claim "No agents active".
+    renderActivity(MONITOR_FIXTURE_IDLE, null, ACTIVE_RUN_FIXTURE);
+    expect(screen.queryByTestId("activity-idle-empty")).toBeNull();
+    // And the status strip reads Live.
+    expect(screen.getByTestId("activity-status")).toHaveTextContent(/live/i);
+  });
+
+  it("renders no active-run card when none is in flight", () => {
+    renderActivity(MONITOR_FIXTURE_IDLE, null, null);
+    expect(screen.queryByTestId("active-run-card")).toBeNull();
+  });
+
+  it("renders REAL inference (no synthetic marker) when monitor synthetic:false", () => {
+    renderActivity(MONITOR_FIXTURE_REAL_INFERENCE, null, null);
+    expect(screen.getByTestId("synthetic-inference")).toHaveAttribute(
+      "data-synthetic",
+      "false",
+    );
+    expect(screen.queryByTestId("synthetic-marker")).toBeNull();
   });
 
   it("renders the synthetic block subordinate (a disclosure)", () => {
