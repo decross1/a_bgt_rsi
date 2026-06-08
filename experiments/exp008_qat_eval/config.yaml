@@ -1,0 +1,133 @@
+# exp008_qat_eval — QAT-checkpoint novelty-evaluation benchmark (EVAL-ONLY)
+#
+# Objective: measure whether a Q4-QAT build of Gemma 4 26B-A4B reproduces the
+# production NVFP4 model's novelty-tier judgements on the novelty_calibration
+# fixtures. This is a benchmark only — it NEVER swaps the production pin.
+#
+# SAFETY: Arm A reads the PRODUCTION :8000 endpoint READ-ONLY (no launch, no
+# config change). Arms B/C live on a SCRATCH :8002 container only. Eval calls
+# log to experiments/exp008_qat_eval/runs/*.jsonl, never to logs/calls.jsonl.
+
+experiment_id: exp008_qat_eval
+schema_version: "1.0"
+
+# ---------------------------------------------------------------------------
+# Arms
+# ---------------------------------------------------------------------------
+# Each arm is a (model, engine, endpoint) triple. Content-hash placeholders are
+# filled in by the human at live-run time (sha256 of the resolved weight files)
+# so a result is pinned to an exact checkpoint, not just a moving repo revision.
+arms:
+  - id: A
+    role: control
+    description: >
+      Production NVFP4 model, READ-ONLY. The benchmark calls the already-running
+      production server; it does NOT launch or reconfigure it. This is the
+      baseline every other arm is compared against.
+    engine: vllm
+    endpoint: "http://localhost:8000/v1"   # PRODUCTION — read-only, do not launch
+    served_model_name: gemma-4-26b-a4b
+    checkpoint:
+      repo: nvidia/Gemma-4-26B-A4B-NVFP4
+      revision: "PLACEHOLDER_REVISION"      # human fills resolved commit at run time
+      content_hash: "PLACEHOLDER_SHA256"    # sha256 of resolved weights
+    read_only: true
+
+  - id: B
+    role: candidate
+    description: >
+      Q4_0 QAT GGUF served via llama.cpp on the SCRATCH :8002 container. NOTE the
+      engine confound: this is llama.cpp, not vLLM, so a delta vs A mixes the
+      QAT-quantization effect with the engine effect. Cannot be isolated here.
+    engine: llama.cpp
+    endpoint: "http://localhost:8002/v1"   # SCRATCH only
+    served_model_name: gemma-4-26b-a4b-qat-q4_0
+    checkpoint:
+      repo: google/gemma-4-26B-A4B-it-qat-q4_0-gguf
+      revision: "PLACEHOLDER_REVISION"
+      content_hash: "PLACEHOLDER_SHA256"
+    read_only: false
+
+  - id: C
+    role: candidate_optional
+    optional: true
+    description: >
+      QAT-unquantized checkpoint served via vLLM on the SCRATCH :8002 container.
+      Same engine as A (vLLM), so a B-vs-C-vs-A spread lets the engine confound
+      be partly disentangled from the quantization effect. Optional — only run
+      if the unquantized QAT weights are available and fit.
+    engine: vllm
+    endpoint: "http://localhost:8002/v1"   # SCRATCH only
+    served_model_name: gemma-4-26b-a4b-qat-unquantized
+    checkpoint:
+      repo: google/gemma-4-26B-A4B-it-qat-q4_0-unquantized
+      revision: "PLACEHOLDER_REVISION"
+      content_hash: "PLACEHOLDER_SHA256"
+    read_only: false
+
+# ---------------------------------------------------------------------------
+# Sampling — deterministic, one request at a time, for ALL quality runs.
+# ---------------------------------------------------------------------------
+sampling:
+  temperature: 0          # greedy decoding
+  top_p: 1.0
+  max_tokens: 1024
+  concurrency: 1          # one request at a time (no batching across fixtures)
+  seed: 0
+
+# ---------------------------------------------------------------------------
+# Fixtures — the novelty-calibration set (~10 hypotheses w/ ground-truth tiers).
+# ---------------------------------------------------------------------------
+fixtures:
+  glob: "experiments/fixtures/novelty_calibration/*.json"
+  expected_count: 10
+  # the field on each fixture that holds the ground-truth class
+  ground_truth_field: ground_truth_tier
+  tiers: [well_known, incremental, novel, surprising]
+
+# ---------------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------------
+# Primary metric is per-fixture tier agreement between a candidate arm and the
+# control arm A (NOT against ground truth — the question is "does QAT change the
+# model's behavior vs production", so production is the reference).
+metrics:
+  primary: tier_agreement_rate        # fraction of fixtures where arm tier == arm-A tier
+  secondary:
+    - novelty_score_mae               # mean abs error of novelty score vs arm A
+    - cohens_kappa_vs_control         # tier-level agreement corrected for chance
+  # latency is RECORDED but is NOT a decision input (engine confound, see README)
+  recorded_non_decision:
+    - latency_ms
+
+# ---------------------------------------------------------------------------
+# Pre-registered materiality threshold
+# ---------------------------------------------------------------------------
+# A candidate arm is flagged as MATERIALLY DIFFERENT from control only if its
+# tier-disagreement with arm A exceeds the within-control seed-perturbation
+# variance. We measure that variance by re-running arm A under N reseeded
+# greedy-equivalent perturbations (paraphrase-stable probes) and taking the
+# observed tier-flip rate as the noise floor. The candidate must exceed that
+# floor by the margin below to count as signal.
+materiality:
+  # noise floor is measured empirically at run time, not assumed:
+  noise_floor_metric: control_self_tier_flip_rate
+  noise_floor_probe_runs: 5
+  # candidate tier-disagreement must exceed (noise_floor + margin) to be material
+  margin_over_noise_floor: 0.10
+  # if no empirical floor is available, fall back to this conservative absolute:
+  fallback_absolute_disagreement_threshold: 0.20
+  small_n_caveat: >
+    Only ~10 fixtures. With N=10, one tier flip is 0.10 of the set, so the
+    resolution is coarse and any result is DIRECTIONAL, not proof. A "material"
+    flag here is a signal to investigate on a larger fixture set, never a
+    deployment decision on its own.
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging:
+  run_dir: "experiments/exp008_qat_eval/runs"
+  format: jsonl
+  # NEVER logs/calls.jsonl — eval calls are isolated to run_dir.
+  production_log_forbidden: "logs/calls.jsonl"

@@ -71,6 +71,28 @@ this is real data — a future live stream is a separate upgrade. `tokens_target
 
 ## Changelog
 
+- **2026-06-08** — exp008 QAT-eval scratch artifacts (eval-only benchmark; **NOT** loop
+  artifacts, **NOT** the production call log). Written by the
+  `experiments/exp008_qat_eval/` harness (`eval_*.py` producers + `analyze.py`
+  aggregator), served against a scratch container on port `:8002`; never touches
+  the serial spine, schema, or production `logs/calls.jsonl`.
+  - **`experiments/exp008_qat_eval/runs/*.jsonl`** (NEW, eval-scratch, NO JSON Schema):
+    append-only per-arm eval **call records**, one row per (arm, fixture) eval call.
+    File-per-(surface, arm): `runs/{toolcall,robustness,novelty}_<arm>.jsonl`, where
+    `arm ∈ {pin, B, C}` (`pin` = the NVFP4 production pin baseline; B/C = QAT GGUF /
+    QAT unquantized). Each row carries at least `arm` (the aggregation key) plus the
+    surface-specific eval payload. **Separate from production `logs/calls.jsonl`** —
+    eval calls are isolated to the experiment's `runs/` dir and are never loop data.
+  - **`experiments/exp008_qat_eval/results/summary.json`** (NEW, eval-scratch, the
+    comparison table; written by `analyze.py`): `{ verdict (H0|H1|...), reasons[],
+    per_metric, arms: { <arm>: <aggregated-metrics> }, config: { source, used_default,
+    materiality, tool_call_adherence_floor, min_sample, robustness_modal_share_min },
+    tertiary_disclaimer }`. `verdict` reads QAT relative to the `pin` arm. tok/s and
+    memory are context-only, NOT decision inputs.
+  - These are **eval-scratch, not loop artifacts** — do not treat them as a
+    sandbox-tier experiment summary; exp008 is intentionally NOT registered in
+    `orchestrator/tier_registry.py`.
+
 - **2026-06-06** — Finding-promotion + rubberbanding-session surfaces. New producers and a
   session API the UI consumes. Written by `orchestrator/finding_promotion.py` and
   `orchestrator/finding_session.py`; both now announce themselves via
