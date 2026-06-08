@@ -1,0 +1,20 @@
+{"arm": "pin", "metric": "novelty_agreement", "value": 1.0, "reference_verdict": "rediscovery", "predicted_verdict": "rediscovery"}
+{"arm": "pin", "metric": "calibration_error", "value": 0.05}
+{"arm": "pin", "metric": "novelty_agreement", "value": 1.0, "reference_verdict": "rediscovery", "predicted_verdict": "rediscovery"}
+{"arm": "pin", "metric": "calibration_error", "value": 0.08}
+{"arm": "pin", "metric": "novelty_agreement", "value": 0.0, "reference_verdict": "novel", "predicted_verdict": "rediscovery"}
+{"arm": "pin", "metric": "calibration_error", "value": 0.19999999999999998}
+{"arm": "pin", "metric": "novelty_agreement", "value": 0.0, "reference_verdict": "novel", "predicted_verdict": "rediscovery"}
+{"arm": "pin", "metric": "calibration_error", "value": 0.15}
+{"arm": "pin", "metric": "novelty_agreement", "value": 1.0, "reference_verdict": "novel", "predicted_verdict": "novel"}
+{"arm": "pin", "metric": "calibration_error", "value": 0.09999999999999998}
+{"arm": "pin", "metric": "novelty_agreement", "value": 1.0, "reference_verdict": "novel", "predicted_verdict": "novel"}
+{"arm": "pin", "metric": "calibration_error", "value": 0.15000000000000002}
+{"arm": "pin", "metric": "novelty_agreement", "value": 1.0, "reference_verdict": "novel", "predicted_verdict": "novel"}
+{"arm": "pin", "metric": "calibration_error", "value": 0.09999999999999998}
+{"arm": "pin", "metric": "novelty_agreement", "value": 1.0, "reference_verdict": "novel", "predicted_verdict": "novel"}
+{"arm": "pin", "metric": "calibration_error", "value": 0.050000000000000044}
+{"arm": "pin", "metric": "novelty_agreement", "value": 1.0, "reference_verdict": "novel", "predicted_verdict": "novel"}
+{"arm": "pin", "metric": "calibration_error", "value": 0.35}
+{"arm": "pin", "metric": "novelty_agreement", "value": 1.0, "reference_verdict": "novel", "predicted_verdict": "novel"}
+{"arm": "pin", "metric": "calibration_error", "value": 0.19999999999999996}
