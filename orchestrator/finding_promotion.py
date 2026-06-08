@@ -253,7 +253,14 @@ def _adversarial_vote(
     - adversarial_margin = n_voting - 2 * n_refuted.
     """
     user_prompt = _skeptic_user_prompt(row, claim)
-    budget = SubAgentBudget(max_turns=3, max_wall_seconds=120.0)
+    # Qwen3.6 is a reasoning model served with --reasoning-parser: its
+    # chain-of-thought consumes the per-turn token budget before the final
+    # JSON, so the default 1024 truncates the {verdict,attack,confidence}
+    # answer. Give it headroom + an extra turn for the repair-retry, and a
+    # wider wall budget for the slower 27B reasoning model.
+    budget = SubAgentBudget(
+        max_turns=4, max_wall_seconds=240.0, max_tokens_per_turn=3072
+    )
 
     n_voting = 0
     n_refuted = 0
@@ -269,6 +276,7 @@ def _adversarial_vote(
             budget=budget,
             parent_request_id=parent_request_id,
             backend=backend,
+            log_path=CALLS_LOG_PATH,
         )
         if sa.status != "passed" or not isinstance(sa.result, dict):
             qwen_failures += 1
