@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import ActiveIterationPanel from "../components/ActiveIterationPanel";
 import BaselineCard from "../components/BaselineCard";
 import BubblesPanel from "../components/BubblesPanel";
+import HealthSignalsPanel from "../components/HealthSignalsPanel";
 import HealthStrip from "../components/HealthStrip";
 import HealthVerdict, {
   excludeQwenReadErrors,
@@ -135,6 +136,7 @@ export default function Dashboard() {
           Autonomy
         </h2>
         <RedFlagsTrendStrip iterations={iterations} />
+        <HealthSignalsPanel />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <SurfacedFindingsPanel />
           <BubblesPanel />

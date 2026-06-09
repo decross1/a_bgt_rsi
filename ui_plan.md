@@ -287,6 +287,37 @@ never-silent failed-dispatch rows; `surfaced_findings.jsonl` + `coordinator_bubb
 qwen-degraded + ml-intern-papers health signals; `retrieval.relevance` topical
 signal for the low-evidence badge. Confirm final field names when the EMIT PR merges.
 
+### Reconciliation — EMIT merged 2026-06-09 (field names now authoritative)
+
+The EMIT half landed on `main` (`0d9c4af`: `coordinator_cycle_log.py`,
+`retrieval_relevance.py`, `active_run` `kind="coordinator"`). Folded `main` in and
+reconciled the RENDER contract to what EMIT actually writes (the handoff's "confirm
+field names when EMIT merges"). Corrections from the sketch:
+
+- **`retrieval.relevance`** = `{relevance: number, low_confidence: boolean, reason: string}`
+  (NOT `score`/`flag`). The low-evidence flag + red-flags off-domain rate now key on
+  `low_confidence` (the worker's authoritative signal) + empty-neighbors; the invented
+  `< 0.3` score floor was dropped (it doesn't map to the blended-score distribution).
+- **surfaced_findings** rows use `title`/`claim` + `source_iteration_id` +
+  `promoted_at` + `novelty_class`/`critic_verdict` (NOT `text`/`iteration_id`/`timestamp`,
+  no `agent`). Backend findings sort → `promoted_at`.
+- **bubbles** rows are `{timestamp, run_id, finding_ids, note}` (NOT
+  `bubble_id`/`text`/`severity`/`agent`) — rendered uniformly as the escalation channel.
+- **active_run** carries no top-level `topic`; the topic lives in `narration`/`label`.
+  `current_step` ∈ {assess,plan,validate,dispatch} matched as-is.
+- Cycle rows matched the sketch (EMIT adds a top-level `status` the type now allows).
+
+Verified end-to-end: the real `cycle_row_from_report` flows through `CoordinatorCycleCard`
+(errored outcome + error string), and the backend serves real-shaped findings/bubbles/
+active_run (cross-layer smoke).
+
+### Added this batch — degraded health signals (next-phase, EMIT was already emitting it)
+
+EMIT also writes `run_state/health_signals.jsonl` (`ml_intern_zero_papers`,
+`qwen_degraded_empty_content`, both `severity:"degraded"`). Added the missing surface:
+`GET /api/coordinator/health_signals` + `HealthSignalsPanel` (amber, "degraded ≠ down"),
+wired into the Dashboard autonomy block. Completes design principle #4.
+
 ---
 
 ## Historical sections (UI v1, pre-LOOP_V0)

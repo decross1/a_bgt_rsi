@@ -12,6 +12,7 @@ import type {
   CoordinatorActiveRun,
   CoordinatorCyclesResponse,
   Health,
+  HealthSignalsResponse,
   IterationsResponse,
   JournalResponse,
   SurfacedFindingsResponse,
@@ -113,6 +114,9 @@ export const getSurfacedFindings = () =>
   getJSON<SurfacedFindingsResponse>("/api/coordinator/findings");
 
 export const getBubbles = () => getJSON<BubblesResponse>("/api/coordinator/bubbles");
+
+export const getHealthSignals = () =>
+  getJSON<HealthSignalsResponse>("/api/coordinator/health_signals");
 
 export async function startIteration(topic: string): Promise<{ pid: number; iteration_id?: string }> {
   const resp = await fetch(`${API_BASE}/api/loop_v0/start`, {

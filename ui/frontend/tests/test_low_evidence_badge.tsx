@@ -1,8 +1,8 @@
 // LowEvidenceBadge flags the 2026-06-09 false `novel/survives` bug: a verdict
 // resting on thin / off-domain retrieval. These tests cover the component
 // render (fires on the low-evidence fixture row, renders nothing on a clean
-// row) and unit-test the pure isLowEvidence rule across its three triggers plus
-// the conservative no-signal default.
+// row) and unit-test the pure isLowEvidence rule across its triggers
+// (low_confidence + empty-neighbors) plus the conservative no-signal default.
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import LowEvidenceBadge, {
@@ -12,9 +12,9 @@ import { ITERATIONS_COORD_FIXTURE } from "../src/fixtures/coordinator";
 import type { IterationRecord } from "../src/types/schemas";
 
 // Fixture rows (see src/fixtures/coordinator/index.ts):
-//   [0] clean coordinator row  — relevance.flag "ok", score 0.81
-//   [1] the false-novel bug    — relevance.flag "low", score 0.18
-//   [2] clean human row        — relevance.flag "ok", score 0.74
+//   [0] clean coordinator row  — relevance.low_confidence false (score 0.81)
+//   [1] the false-novel bug    — relevance.low_confidence true  (score 0.04)
+//   [2] clean human row        — relevance.low_confidence false (score 0.74)
 const LOW_EVIDENCE_ROW = ITERATIONS_COORD_FIXTURE[1];
 const CLEAN_ROW = ITERATIONS_COORD_FIXTURE[0];
 
@@ -57,28 +57,23 @@ describe("isLowEvidence", () => {
     expect(isLowEvidence(ITERATIONS_COORD_FIXTURE[2])).toBe(false);
   });
 
-  it('is true when relevance.flag is "low" or "thin"', () => {
-    expect(isLowEvidence(recordWith({ relevance: { flag: "low" } }))).toBe(true);
-    expect(isLowEvidence(recordWith({ relevance: { flag: "thin" } }))).toBe(
-      true,
-    );
-  });
-
-  it("is true when relevance.score is below the ~0.3 floor", () => {
+  it("is true when retrieval.relevance.low_confidence is set", () => {
     expect(
-      isLowEvidence(recordWith({ relevance: { flag: "ok", score: 0.18 } })),
+      isLowEvidence(recordWith({ relevance: { low_confidence: true } })),
     ).toBe(true);
-    // score === 0 is a real signal, not a missing one.
-    expect(isLowEvidence(recordWith({ relevance: { score: 0 } }))).toBe(true);
   });
 
   it("is true when retrieval has an explicitly-empty neighbor list", () => {
     expect(isLowEvidence(recordWith({ k: 8, neighbors: [] }))).toBe(true);
   });
 
-  it("is false when the score is healthy and the flag is ok", () => {
+  it("trusts the worker: a low numeric score it did NOT flag is not low-evidence", () => {
+    // The retrieval-relevance worker owns the calibrated cutoff; we don't
+    // re-derive one, so a low blended score with low_confidence false is trusted.
     expect(
-      isLowEvidence(recordWith({ relevance: { flag: "ok", score: 0.81 } })),
+      isLowEvidence(
+        recordWith({ relevance: { relevance: 0.07, low_confidence: false } }),
+      ),
     ).toBe(false);
   });
 
@@ -87,7 +82,9 @@ describe("isLowEvidence", () => {
     expect(isLowEvidence(recordWith(null))).toBe(false);
     // Retrieval present but no relevance and neighbors absent (not empty).
     expect(isLowEvidence(recordWith({ k: 8 }))).toBe(false);
-    // Relevance present but score absent and flag is a benign value.
-    expect(isLowEvidence(recordWith({ relevance: { flag: "ok" } }))).toBe(false);
+    // Relevance present but low_confidence absent/false is a benign value.
+    expect(
+      isLowEvidence(recordWith({ relevance: { relevance: 0.81 } })),
+    ).toBe(false);
   });
 });

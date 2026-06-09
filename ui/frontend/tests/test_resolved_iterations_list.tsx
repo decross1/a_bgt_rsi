@@ -717,8 +717,8 @@ describe("ResolvedIterationsList — Loop v1 surfacing", () => {
 });
 
 describe("ResolvedIterationsList — coordinator provenance + low-evidence", () => {
-  // ITERATIONS_COORD_FIXTURE: [0] coordinator-source w/ ok retrieval,
-  // [1] coordinator-source w/ flag "low" (the false-novel row), [2] human.
+  // ITERATIONS_COORD_FIXTURE: [0] coordinator-source w/ confident retrieval,
+  // [1] coordinator-source w/ low_confidence true (the false-novel row), [2] human.
   it("badges coordinator-triggered rows and flags low-evidence verdicts", () => {
     render(<ResolvedIterationsList initial={ITERATIONS_COORD_FIXTURE} />);
     const list = within(screen.getByRole("list"));

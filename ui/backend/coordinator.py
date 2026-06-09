@@ -13,6 +13,9 @@ read-only and tolerant of absent (gitignored) data files:
   newest-first by ``timestamp``. Returns ``{"findings": []}`` if absent.
 - ``GET /api/coordinator/bubbles``  — reads ``memory/coordinator_bubbles.jsonl``,
   newest-first by ``timestamp``. Returns ``{"bubbles": []}`` if absent.
+- ``GET /api/coordinator/health_signals`` — reads ``run_state/health_signals.jsonl``
+  (per-cycle degraded signals: ml-intern 0-papers, qwen empty-content).
+  Newest-first by ``timestamp``. Returns ``{"health_signals": []}`` if absent.
 
 Mirrors the ``loop_v0.py`` register-fn idiom (same ``_read_jsonl`` approach,
 newest-first sort, the active-file delete-race handling). The UI never writes
@@ -89,9 +92,10 @@ def register(
     @router.get("/findings")
     def findings():
         """Promoted findings (promote_findings output). Newest-first by
-        timestamp; ``{"findings": []}`` if absent."""
+        ``promoted_at`` (the row's time field per finding_promotion.py);
+        ``{"findings": []}`` if absent."""
         rows = _read_jsonl(Path(memory_dir) / "surfaced_findings.jsonl")
-        rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
+        rows.sort(key=lambda r: r.get("promoted_at") or "", reverse=True)
         return {"findings": rows}
 
     @router.get("/bubbles")
@@ -101,6 +105,16 @@ def register(
         rows = _read_jsonl(Path(memory_dir) / "coordinator_bubbles.jsonl")
         rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
         return {"bubbles": rows}
+
+    @router.get("/health_signals")
+    def health_signals():
+        """Degraded-but-not-broken signals derived per cycle
+        (run_state/health_signals.jsonl): ml-intern "ran but stored 0 papers"
+        and qwen "generated but empty content". Newest-first by timestamp;
+        ``{"health_signals": []}`` if absent."""
+        rows = _read_jsonl(Path(run_state_dir) / "health_signals.jsonl")
+        rows.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
+        return {"health_signals": rows}
 
     app.include_router(router)
     return router

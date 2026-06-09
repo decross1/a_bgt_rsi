@@ -10,31 +10,22 @@
 // evidence is fine, so a clean row stays clean.
 import type { IterationRecord } from "../types/schemas";
 
-// SCORE_FLOOR: a retrieval-relevance score under this is "thin" regardless of
-// the flag. ~0.3 per the spec; the EMIT side bands "low"/"thin" around here, so
-// this catches a low score even on a row whose flag didn't get set.
-const SCORE_FLOOR = 0.3;
-
 // TRUE when the verdict rests on thin evidence. Conservative: with NO retrieval
 // signal at all we return false (an absent `retrieval` block is a pre-coordinator
-// row, not a low-evidence one — don't cry wolf). Three independent triggers:
-//   1. relevance.flag is "low" or "thin" (the EMIT-side verdict);
-//   2. relevance.score is present AND below SCORE_FLOOR (a thin score even
-//      without a flag); note `score === 0` is a real signal, so test presence
-//      explicitly rather than truthiness;
-//   3. retrieval.neighbors is present AND empty (0 neighbors → nothing was
-//      retrieved). An ABSENT neighbors field is no-signal, not zero.
+// row, not a low-evidence one — don't cry wolf). Two independent triggers:
+//   1. retrieval.relevance.low_confidence === true — the AUTHORITATIVE signal.
+//      workers/retrieval_relevance.py owns the calibrated thin/off-domain
+//      thresholds and sets this boolean; we trust it rather than re-derive a
+//      score cutoff (the blended `relevance` score's distribution is the
+//      worker's to interpret).
+//   2. retrieval.neighbors is present AND empty (0 neighbors → nothing was
+//      retrieved). An ABSENT neighbors field is no-signal, not zero — structural
+//      backstop for the empty-retrieval case.
 export function isLowEvidence(record: IterationRecord): boolean {
   const retrieval = record.retrieval;
   if (!retrieval) return false;
 
-  const relevance = retrieval.relevance;
-  if (relevance) {
-    if (relevance.flag === "low" || relevance.flag === "thin") return true;
-    if (typeof relevance.score === "number" && relevance.score < SCORE_FLOOR) {
-      return true;
-    }
-  }
+  if (retrieval.relevance?.low_confidence === true) return true;
 
   // Only an explicitly-present, empty neighbor list counts as a signal.
   if (Array.isArray(retrieval.neighbors) && retrieval.neighbors.length === 0) {
@@ -50,11 +41,12 @@ export function isLowEvidence(record: IterationRecord): boolean {
 function reason(record: IterationRecord): string {
   const relevance = record.retrieval?.relevance;
   const parts: string[] = [];
-  if (relevance?.flag === "low" || relevance?.flag === "thin") {
-    parts.push(`retrieval relevance flagged "${relevance.flag}"`);
-  }
-  if (typeof relevance?.score === "number" && relevance.score < SCORE_FLOOR) {
-    parts.push(`relevance score ${relevance.score.toFixed(2)} below ${SCORE_FLOOR}`);
+  if (relevance?.low_confidence === true) {
+    parts.push(
+      relevance.reason
+        ? `retrieval flagged low-confidence — ${relevance.reason}`
+        : "retrieval flagged low-confidence",
+    );
   }
   if (
     Array.isArray(record.retrieval?.neighbors) &&

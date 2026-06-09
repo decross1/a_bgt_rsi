@@ -10,8 +10,8 @@
 //                               retrieval is exactly this). Amber/red emphasis
 //                               when non-trivial, because a verdict that says
 //                               "new" on thin air is the thing a human must catch.
-//   - off-domain / thin       : fraction with retrieval.relevance.flag in
-//                               {low, thin} — the retrieval that can't be trusted.
+//   - off-domain / thin       : fraction with retrieval.relevance.low_confidence
+//                               true — the retrieval that can't be trusted.
 // Matches the dark tile idiom (MetricTile: rounded zinc tile, uppercase label,
 // large tabular value). Empty/zero state safe: 0 iterations renders "—" tiles.
 import { isLowEvidence } from "./LowEvidenceBadge";
@@ -30,8 +30,8 @@ function isNovelOrSurvives(row: IterationRecord): boolean {
 }
 
 function isOffDomain(row: IterationRecord): boolean {
-  const flag = row.retrieval?.relevance?.flag;
-  return flag === "low" || flag === "thin";
+  // The retrieval-relevance worker's authoritative thin/off-domain signal.
+  return row.retrieval?.relevance?.low_confidence === true;
 }
 
 // Format a fraction as a whole-percent string; "—" when there is no denominator.

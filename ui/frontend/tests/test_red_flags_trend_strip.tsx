@@ -8,9 +8,9 @@ import RedFlagsTrendStrip from "../src/components/RedFlagsTrendStrip";
 import { ITERATIONS_COORD_FIXTURE } from "../src/fixtures/coordinator";
 
 // Fixture (see src/fixtures/coordinator/index.ts), 3 rows:
-//   [0] rediscovery / restated, relevance "ok"  — not novel, not suspect, on-domain
-//   [1] novel / survives, relevance "low"        — THE false-novel: suspect + off-domain
-//   [2] novel / survives, relevance "ok"         — novel but well-supported
+//   [0] rediscovery / restated, low_confidence false — not novel, not suspect, on-domain
+//   [1] novel / survives, low_confidence true         — THE false-novel: suspect + off-domain
+//   [2] novel / survives, low_confidence false        — novel but well-supported
 // => novel 2/3 (67%), suspected-false-novel 1/3 (33%), off-domain 1/3 (33%).
 describe("RedFlagsTrendStrip", () => {
   it("renders the three self-check labels", () => {

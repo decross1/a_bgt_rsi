@@ -15,6 +15,7 @@ import type {
   Bubble,
   CoordinatorActiveRun,
   CoordinatorCycle,
+  HealthSignal,
   IterationRecord,
   SurfacedFinding,
 } from "../../types/schemas";
@@ -83,60 +84,91 @@ export const COORDINATOR_CYCLES_FIXTURE: CoordinatorCycle[] = [
 export const ACTIVE_RUN_FIXTURE: CoordinatorActiveRun = {
   kind: "coordinator",
   run_id: "cyc-2026-06-09-003",
+  label: "coordinator_cycle",
   current_step: "dispatch",
+  step_started_at: "2026-06-09T12:00:30Z",
   narration:
     "Chose 'Truthfulness of VCG in combinatorial auctions' (topic_source=coordinator) " +
     "because it's the lowest-coverage game-theory topic in the last 9 iterations; " +
     "dispatching a loop iteration at k=8.",
-  topic: "Truthfulness of VCG in combinatorial auctions",
-  topic_source: "coordinator",
   started_at: "2026-06-09T12:00:00Z",
 };
 
 export const SURFACED_FINDINGS_FIXTURE: SurfacedFinding[] = [
   {
-    finding_id: "find-2026-06-09-002",
-    iteration_id: "iter-2026-06-09-003",
-    agent: "nara",
-    text:
-      "Level-k convergence rate in p-beauty contests refines Nagel (1995); candidate worth a real run.",
-    timestamp: "2026-06-09T13:20:00Z",
+    finding_id: "sf-iter-2026-06-09-003",
+    source_iteration_id: "iter-2026-06-09-003",
+    title: "Level-k convergence rate in p-beauty contests refines Nagel (1995)",
+    claim:
+      "Level-k reasoning converges ~1 level/round faster than Nagel (1995) under the measured payoff structure.",
+    novelty_class: "novel",
+    critic_verdict: "survives",
+    why_it_matters:
+      "A faster convergence rate would tighten the level-k calibration the loop conditions on.",
+    status: "surfaced",
+    promoted_at: "2026-06-09T13:20:00Z",
   },
   {
-    finding_id: "find-2026-06-09-001",
-    iteration_id: "iter-2026-06-09-001",
-    agent: "coordinator",
-    text:
-      "VCG elicits truthful bids in the measured combinatorial setting (exp004 bridge: 96.5% truthful).",
-    timestamp: "2026-06-09T10:05:00Z",
+    finding_id: "sf-iter-2026-06-09-001",
+    source_iteration_id: "iter-2026-06-09-001",
+    title: "VCG elicits truthful bids in the measured combinatorial setting",
+    claim:
+      "VCG achieves 96.5% truthful bids in the exp004 combinatorial-auction bridge.",
+    novelty_class: "rediscovery",
+    critic_verdict: "restated",
+    why_it_matters:
+      "Confirms the VCG-truthfulness bridge that conditions downstream iterations.",
+    status: "surfaced",
+    promoted_at: "2026-06-09T10:05:00Z",
   },
 ];
 
 export const BUBBLES_FIXTURE: Bubble[] = [
   {
-    bubble_id: "bub-2026-06-09-001",
-    run_id: "cyc-2026-06-09-002",
-    agent: "coordinator",
-    text:
-      "A novel/survives verdict rested on off-domain retrieval (code-quality topic vs game-theory books) — eyeball before trusting.",
-    severity: "raise",
     timestamp: "2026-06-09T11:35:00Z",
-  },
-  {
-    bubble_id: "bub-2026-06-09-002",
     run_id: "cyc-2026-06-09-002",
-    agent: "coordinator",
-    text: "ml-intern returned 0 papers for this topic — external evidence is silent.",
-    severity: "warn",
-    timestamp: "2026-06-09T11:34:00Z",
+    finding_ids: ["sf-iter-2026-06-09-002"],
+    note:
+      "A novel/survives verdict rested on off-domain retrieval (code-quality topic vs game-theory books) — eyeball before trusting.",
   },
   {
-    bubble_id: "bub-2026-06-09-003",
-    run_id: "cyc-2026-06-09-001",
-    agent: "nara",
-    text: "Promoted 1 finding to surfaced_findings this cycle.",
-    severity: "info",
+    timestamp: "2026-06-09T11:34:00Z",
+    run_id: "cyc-2026-06-09-002",
+    finding_ids: [],
+    note: "ml-intern returned 0 papers for this topic — external evidence is silent.",
+  },
+  {
     timestamp: "2026-06-09T10:06:00Z",
+    run_id: "cyc-2026-06-09-001",
+    finding_ids: ["sf-iter-2026-06-09-001"],
+    note: "Promoted 1 finding to surfaced_findings this cycle.",
+  },
+];
+
+// Degraded-but-not-broken health signals (run_state/health_signals.jsonl) — the
+// two the EMIT layer derives per cycle. Both severity "degraded" → rendered
+// amber, never red: the route/worker ran, the output was just thin.
+export const HEALTH_SIGNALS_FIXTURE: HealthSignal[] = [
+  {
+    signal: "ml_intern_zero_papers",
+    severity: "degraded",
+    timestamp: "2026-06-09T11:34:00Z",
+    run_id: "cyc-2026-06-09-002",
+    iteration_id: "iter-2026-06-09-002",
+    papers_stored: 0,
+    detail:
+      "ml_intern ran but stored 0 papers; the external-search layer was blind — any verdict this iteration rests on LOCAL literature only.",
+  },
+  {
+    signal: "qwen_degraded_empty_content",
+    severity: "degraded",
+    timestamp: "2026-06-09T11:33:00Z",
+    run_id: "cyc-2026-06-09-002",
+    iteration_id: "iter-2026-06-09-002",
+    empty_calls: 2,
+    total_calls: 3,
+    detail:
+      "Qwen returned empty content on 2/3 calls this iteration (route up but unusable). The independent skeptic is DEGRADED, not down.",
   },
 ];
 
@@ -157,7 +189,11 @@ export const ITERATIONS_COORD_FIXTURE: IterationRecord[] = [
     },
     retrieval: {
       k: 8,
-      relevance: { score: 0.81, flag: "ok", topical_match: 0.79 },
+      relevance: {
+        relevance: 0.81,
+        low_confidence: false,
+        reason: "on-domain: strong neighbor overlap with the game-theory corpus",
+      },
     },
     novelty: { class: "rediscovery", top_neighbor_id: "vickrey1961" },
     critique: { verdict: "restated" },
@@ -178,7 +214,12 @@ export const ITERATIONS_COORD_FIXTURE: IterationRecord[] = [
     },
     retrieval: {
       k: 8,
-      relevance: { score: 0.18, flag: "low", topical_match: 0.12 },
+      relevance: {
+        relevance: 0.04,
+        low_confidence: true,
+        reason:
+          "off-domain: code-quality topic retrieved against game-theory books (max overlap 0.043)",
+      },
     },
     novelty: { class: "novel", top_neighbor_id: "axelrod1984" },
     critique: { verdict: "survives" },
@@ -196,7 +237,11 @@ export const ITERATIONS_COORD_FIXTURE: IterationRecord[] = [
     },
     retrieval: {
       k: 8,
-      relevance: { score: 0.74, flag: "ok", topical_match: 0.71 },
+      relevance: {
+        relevance: 0.74,
+        low_confidence: false,
+        reason: "on-domain: p-beauty-contest neighbors well-matched",
+      },
     },
     novelty: { class: "novel", top_neighbor_id: "nagel1995" },
     critique: { verdict: "survives" },

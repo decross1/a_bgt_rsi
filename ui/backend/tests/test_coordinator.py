@@ -214,25 +214,33 @@ def test_findings_returns_newest_first(tmp_path):
     client = _client(tmp_path)
     rows = [
         {
-            "finding_id": "find-001",
-            "iteration_id": "iter-2026-06-09-001",
-            "agent": "coordinator",
-            "text": "VCG elicits truthful bids in the measured combinatorial setting.",
-            "timestamp": "2026-06-09T10:05:00Z",
+            "finding_id": "sf-iter-2026-06-09-001",
+            "source_iteration_id": "iter-2026-06-09-001",
+            "title": "VCG elicits truthful bids in the measured combinatorial setting",
+            "novelty_class": "rediscovery",
+            "critic_verdict": "restated",
+            "promoted_at": "2026-06-09T10:05:00Z",
+            "status": "surfaced",
         },
         {
-            "finding_id": "find-002",
-            "iteration_id": "iter-2026-06-09-003",
-            "agent": "nara",
-            "text": "Level-k convergence rate refinement worth a real run.",
-            "timestamp": "2026-06-09T13:20:00Z",
+            "finding_id": "sf-iter-2026-06-09-003",
+            "source_iteration_id": "iter-2026-06-09-003",
+            "title": "Level-k convergence rate refinement worth a real run",
+            "novelty_class": "novel",
+            "critic_verdict": "survives",
+            "promoted_at": "2026-06-09T13:20:00Z",
+            "status": "surfaced",
         },
     ]
     _write_jsonl(tmp_path / "coord_memory" / "surfaced_findings.jsonl", rows)
     resp = client.get("/api/coordinator/findings")
     findings = resp.json()["findings"]
-    assert [f["finding_id"] for f in findings] == ["find-002", "find-001"]
-    assert findings[0]["agent"] == "nara"
+    # newest-first by promoted_at.
+    assert [f["finding_id"] for f in findings] == [
+        "sf-iter-2026-06-09-003",
+        "sf-iter-2026-06-09-001",
+    ]
+    assert findings[0]["title"].startswith("Level-k")
 
 
 # ─── bubbles ───────────────────────────────────────────────────────────
@@ -249,24 +257,65 @@ def test_bubbles_returns_newest_first(tmp_path):
     client = _client(tmp_path)
     rows = [
         {
-            "bubble_id": "bub-001",
-            "run_id": "cyc-001",
-            "agent": "coordinator",
-            "text": "A novel/survives verdict rested on off-domain retrieval — eyeball it.",
-            "severity": "raise",
             "timestamp": "2026-06-09T10:06:00Z",
+            "run_id": "cyc-001",
+            "finding_ids": ["sf-iter-2026-06-09-001"],
+            "note": "A novel/survives verdict rested on off-domain retrieval — eyeball it.",
         },
         {
-            "bubble_id": "bub-002",
-            "run_id": "cyc-002",
-            "agent": "coordinator",
-            "text": "ml-intern returned 0 papers for this topic.",
-            "severity": "warn",
             "timestamp": "2026-06-09T11:35:00Z",
+            "run_id": "cyc-002",
+            "finding_ids": [],
+            "note": "ml-intern returned 0 papers for this topic.",
         },
     ]
     _write_jsonl(tmp_path / "coord_memory" / "coordinator_bubbles.jsonl", rows)
     resp = client.get("/api/coordinator/bubbles")
     bubbles = resp.json()["bubbles"]
-    assert [b["bubble_id"] for b in bubbles] == ["bub-002", "bub-001"]
-    assert bubbles[1]["severity"] == "raise"
+    # newest-first by timestamp.
+    assert [b["run_id"] for b in bubbles] == ["cyc-002", "cyc-001"]
+    assert bubbles[1]["note"].startswith("A novel/survives")
+
+
+# ─── health signals ────────────────────────────────────────────────────
+
+
+def test_health_signals_empty_when_log_missing(tmp_path):
+    client = _client(tmp_path)
+    resp = client.get("/api/coordinator/health_signals")
+    assert resp.status_code == 200
+    assert resp.json() == {"health_signals": []}
+
+
+def test_health_signals_returns_newest_first(tmp_path):
+    client = _client(tmp_path)
+    rows = [
+        {
+            "timestamp": "2026-06-09T10:06:00Z",
+            "run_id": "cyc-001",
+            "signal": "ml_intern_zero_papers",
+            "severity": "degraded",
+            "iteration_id": "iter-001",
+            "papers_stored": 0,
+            "detail": "ml_intern ran but stored 0 papers; external search was blind.",
+        },
+        {
+            "timestamp": "2026-06-09T11:35:00Z",
+            "run_id": "cyc-002",
+            "signal": "qwen_degraded_empty_content",
+            "severity": "degraded",
+            "iteration_id": "iter-002",
+            "empty_calls": 2,
+            "total_calls": 3,
+            "detail": "Qwen returned empty content on 2/3 calls; degraded, not down.",
+        },
+    ]
+    _write_jsonl(tmp_path / "coord_run_state" / "health_signals.jsonl", rows)
+    resp = client.get("/api/coordinator/health_signals")
+    signals = resp.json()["health_signals"]
+    # newest-first by timestamp.
+    assert [s["signal"] for s in signals] == [
+        "qwen_degraded_empty_content",
+        "ml_intern_zero_papers",
+    ]
+    assert all(s["severity"] == "degraded" for s in signals)
