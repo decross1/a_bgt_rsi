@@ -8,7 +8,9 @@
 // loop". An untiered section appears only when an on-disk dir is unmapped.
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import CoordinatorCycleCard from "../components/CoordinatorCycleCard";
 import { getResearch } from "../api/experiments";
+import { getCoordinatorCycles } from "../api/http";
 import { fmt } from "../format";
 import type {
   ResearchBridge,
@@ -17,9 +19,14 @@ import type {
   ResearchTier,
   ResearchVerdict,
 } from "../types/experiments";
+import type { CoordinatorCycle } from "../types/schemas";
 
 interface Props {
   initial?: ResearchResponse | null;
+  // Coordinator cycles rendered as auditable units (plan → outcome → evidence).
+  // Injected for tests; otherwise fetched alongside the research index. Gated on
+  // the research `initial` so a static render stays network-free.
+  initialCoordinatorCycles?: CoordinatorCycle[];
 }
 
 const CARD =
@@ -165,9 +172,12 @@ function TierSection({ tier }: { tier: ResearchTier }) {
   );
 }
 
-export default function Experiments({ initial }: Props) {
+export default function Experiments({ initial, initialCoordinatorCycles }: Props) {
   const [data, setData] = useState<ResearchResponse | null>(initial ?? null);
   const [error, setError] = useState<string | null>(null);
+  const [cycles, setCycles] = useState<CoordinatorCycle[]>(
+    initialCoordinatorCycles ?? [],
+  );
 
   useEffect(() => {
     if (initial !== undefined) return;
@@ -175,6 +185,27 @@ export default function Experiments({ initial }: Props) {
     getResearch()
       .then((d) => active && setData(d))
       .catch((e) => active && setError(String(e)));
+    return () => {
+      active = false;
+    };
+  }, [initial]);
+
+  useEffect(() => {
+    // Static-render gate: when the research index is injected (test mode), do
+    // not self-fetch the coordinator cycles either — use whatever was injected.
+    if (initial !== undefined) return;
+    let active = true;
+    getCoordinatorCycles()
+      .then((r) => {
+        if (!active) return;
+        const sorted = [...r.cycles].sort((a, b) =>
+          (b.timestamp ?? "").localeCompare(a.timestamp ?? ""),
+        );
+        setCycles(sorted);
+      })
+      .catch(() => {
+        /* coordinator cycles are optional context here; never block the index */
+      });
     return () => {
       active = false;
     };
@@ -234,6 +265,42 @@ export default function Experiments({ initial }: Props) {
       {!data && !error && (
         <div className="mt-4 text-sm text-zinc-500">Loading…</div>
       )}
+
+      {/* Coordinator cycles as auditable units. Each card carries the verdict's
+          plan → outcome → evidence chain (incl. an errored dispatch as an
+          explicit row), so a coordinator-driven result can be trusted or
+          doubted alongside the hand-run experiments above. */}
+      <section className="mt-8" data-testid="coordinator-cycles-section">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-sm font-semibold text-zinc-100">
+            Coordinator cycles
+          </h2>
+          <span className="font-mono text-[10px] text-zinc-600">
+            /api/coordinator/cycles
+          </span>
+          <span className="ml-auto text-[11px] text-zinc-500">
+            {cycles.length}
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-zinc-500">
+          Autonomous cycles as auditable units: the plan, each action's outcome,
+          the linked iteration, and the findings/bubbles it produced.
+        </p>
+        {cycles.length === 0 ? (
+          <div
+            className="mt-3 text-xs text-zinc-600"
+            data-testid="coordinator-cycles-empty"
+          >
+            No coordinator cycles yet.
+          </div>
+        ) : (
+          <div className="mt-3 space-y-4">
+            {cycles.map((cycle) => (
+              <CoordinatorCycleCard key={cycle.run_id} cycle={cycle} />
+            ))}
+          </div>
+        )}
+      </section>
 
       <div className="mt-6 text-[11px] text-zinc-600">
         {fmt(nExperiments)} experiment(s) across {fmt(data?.tiers.length ?? 0)}{" "}

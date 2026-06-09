@@ -16,6 +16,8 @@ import ActiveIterationPanel from "../components/ActiveIterationPanel";
 import ActiveRunCard from "../components/ActiveRunCard";
 import ActiveWorkersPanel from "../components/ActiveWorkersPanel";
 import ActivityGraph from "../components/ActivityGraph";
+import AgentBadge from "../components/AgentBadge";
+import CoordinatorPhases from "../components/CoordinatorPhases";
 import LiveCallsBanner from "../components/LiveCallsBanner";
 import SyntheticInferencePanel from "../components/SyntheticInferencePanel";
 import {
@@ -23,14 +25,106 @@ import {
   getActivityGraph,
   getActivityMonitor,
 } from "../api/activity";
-import { getActiveIteration } from "../api/http";
+import {
+  getActiveIteration,
+  getCoordinatorActive,
+  getCoordinatorCycles,
+} from "../api/http";
 import { elapsed, useNow } from "../time";
 import type {
   ActiveRun,
   ActivityGraphResponse,
   MonitorResponse,
 } from "../types/activity";
-import type { ActiveIteration } from "../types/schemas";
+import type {
+  ActiveIteration,
+  CoordinatorActiveRun,
+  CoordinatorCycle,
+} from "../types/schemas";
+
+// A failed dispatch must never be a silent gap: each errored action from a
+// coordinator cycle becomes an explicit red row carrying its error string. We
+// derive these from getCoordinatorCycles() outcomes (the cycle row is the
+// source of truth for dispatch outcome — ui_autonomy_observability_plan.md).
+interface FailedDispatch {
+  run_id: string;
+  agent: string;
+  topic: string;
+  action: string;
+  error: string;
+  timestamp: string;
+}
+
+function deriveFailedDispatches(cycles: CoordinatorCycle[]): FailedDispatch[] {
+  const out: FailedDispatch[] = [];
+  for (const cycle of cycles) {
+    for (const outcome of cycle.outcomes) {
+      if (outcome.status === "errored") {
+        out.push({
+          run_id: cycle.run_id,
+          agent: cycle.agent,
+          topic: cycle.topic,
+          action: outcome.action,
+          error: outcome.error ?? "(no error message recorded)",
+          timestamp: cycle.timestamp,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+function shortTimestamp(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return iso.replace("T", " ").replace("Z", "");
+}
+
+// The explicit failed-dispatch surface. Renders nothing when there are no
+// errored actions (a clean loop leaves no rows here) — but when a dispatch
+// failed, it is a visible red row, not a "nothing happened" gap.
+function FailedDispatches({ cycles }: { cycles: CoordinatorCycle[] }) {
+  const failures = deriveFailedDispatches(cycles);
+  if (failures.length === 0) return null;
+  return (
+    <div
+      className="rounded border border-red-900/60 bg-red-950/20 p-4"
+      data-testid="failed-dispatches"
+    >
+      <div className="flex items-baseline gap-2">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-red-300">
+          Failed dispatches
+        </h2>
+        <span className="text-[10px] text-zinc-500">
+          coordinator actions that errored
+        </span>
+        <span className="ml-auto text-[11px] text-zinc-500">
+          {failures.length}
+        </span>
+      </div>
+      <ul className="mt-2 space-y-1.5">
+        {failures.map((f) => (
+          <li
+            key={`${f.run_id}-${f.action}`}
+            data-testid={`failed-dispatch-${f.run_id}`}
+            className="rounded border border-red-900/60 bg-red-950/30 px-2 py-1.5"
+          >
+            <div className="flex flex-wrap items-baseline gap-2 text-xs">
+              <AgentBadge agent={f.agent} />
+              <span className="font-mono text-red-300">{f.action}</span>
+              <span className="text-zinc-400">{f.topic}</span>
+              <span className="ml-auto font-mono text-[10px] text-zinc-500">
+                {shortTimestamp(f.timestamp)}
+              </span>
+            </div>
+            <div className="mt-1 font-mono text-[11px] text-red-300">
+              {f.error}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 interface ActivityProps {
   initialGraph?: ActivityGraphResponse;
@@ -42,6 +136,11 @@ interface ActivityProps {
   // The active RUN (run_state/active_run.json). Injected (even as null) so the
   // page does not self-poll it in tests; a present run means NOT idle.
   initialActiveRun?: ActiveRun | null;
+  // The coordinator's live cycle (CoordinatorPhases) + recent cycles (the
+  // failed-dispatch surface). Injected for tests; otherwise polled only when
+  // the page is live (same static-render gate the graph/monitor use).
+  initialCoordinatorActive?: CoordinatorActiveRun | null;
+  initialCoordinatorCycles?: CoordinatorCycle[];
 }
 
 type Detail = "overview" | "full";
@@ -54,6 +153,8 @@ export default function Activity({
   initialMonitor,
   initialIteration,
   initialActiveRun,
+  initialCoordinatorActive,
+  initialCoordinatorCycles,
 }: ActivityProps) {
   const [graph, setGraph] = useState<ActivityGraphResponse | null>(
     initialGraph ?? null,
@@ -72,6 +173,14 @@ export default function Activity({
   // idle gate (a run in flight is NOT idle) and the status strip.
   const [activeRun, setActiveRun] = useState<ActiveRun | null>(
     initialActiveRun ?? null,
+  );
+  // The coordinator's live cycle (phases stepper) + recent cycles (the
+  // failed-dispatch surface). Default to null/[] so an un-injected test renders
+  // the quiet idle/empty states without a network call.
+  const [coordinatorActive, setCoordinatorActive] =
+    useState<CoordinatorActiveRun | null>(initialCoordinatorActive ?? null);
+  const [coordinatorCycles, setCoordinatorCycles] = useState<CoordinatorCycle[]>(
+    initialCoordinatorCycles ?? [],
   );
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail>("overview");
@@ -150,6 +259,33 @@ export default function Activity({
       clearInterval(id);
     };
   }, [liveActiveRun]);
+
+  // Coordinator phases + recent cycles. Gated on `live` (graph+monitor not
+  // injected) so the existing static-render tests stay network-free; a test
+  // that wants coordinator data injects the props above instead. Polled at the
+  // graph cadence (these change per cycle, not per second).
+  useEffect(() => {
+    if (!live) return;
+    let cancelled = false;
+    const pollActive = () =>
+      getCoordinatorActive()
+        .then((r) => !cancelled && setCoordinatorActive(r))
+        .catch((e) => !cancelled && setError(String(e)));
+    const pollCycles = () =>
+      getCoordinatorCycles()
+        .then((r) => !cancelled && setCoordinatorCycles(r.cycles))
+        .catch((e) => !cancelled && setError(String(e)));
+    pollActive();
+    pollCycles();
+    const id = setInterval(() => {
+      pollActive();
+      pollCycles();
+    }, GRAPH_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [live]);
 
   const activeCount = monitor?.active.length ?? 0;
   // The monitor is "available" only when its source file is present. On the
@@ -265,6 +401,15 @@ export default function Activity({
             ago.
           </div>
         )}
+      </section>
+
+      {/* (2.5) Coordinator cycle — the loop's live phase stepper + an explicit
+          failed-dispatch surface. Makes the autonomous loop legible on the
+          activity page: WHAT stage it's in and why, and any dispatch that
+          errored (a red row, never a silent gap). */}
+      <section className="mt-4 space-y-4" data-testid="coordinator-activity">
+        <CoordinatorPhases activeRun={coordinatorActive} />
+        <FailedDispatches cycles={coordinatorCycles} />
       </section>
 
       {/* (3) Synthetic inference — subordinate disclosure. */}

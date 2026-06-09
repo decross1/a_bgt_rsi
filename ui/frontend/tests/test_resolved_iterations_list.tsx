@@ -15,6 +15,7 @@ import {
 } from "@testing-library/react";
 import ResolvedIterationsList from "../src/components/ResolvedIterationsList";
 import { ITERATIONS_FIXTURE } from "../src/fixtures/loop_v0";
+import { ITERATIONS_COORD_FIXTURE } from "../src/fixtures/coordinator";
 import type { IterationRecord } from "../src/types/schemas";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -712,5 +713,33 @@ describe("ResolvedIterationsList — Loop v1 surfacing", () => {
     render(<ResolvedIterationsList initial={makeRows(3)} />);
     expect(screen.queryByTestId("redteam-chip")).toBeNull();
     expect(screen.queryByTestId(/^conditioning-/)).toBeNull();
+  });
+});
+
+describe("ResolvedIterationsList — coordinator provenance + low-evidence", () => {
+  // ITERATIONS_COORD_FIXTURE: [0] coordinator-source w/ ok retrieval,
+  // [1] coordinator-source w/ flag "low" (the false-novel row), [2] human.
+  it("badges coordinator-triggered rows and flags low-evidence verdicts", () => {
+    render(<ResolvedIterationsList initial={ITERATIONS_COORD_FIXTURE} />);
+    const list = within(screen.getByRole("list"));
+
+    // Two coordinator-source rows -> two "coordinator" provenance chips; the
+    // human-source row carries none. "coordinator" is not a filter option, so
+    // these chips are the only places the text appears.
+    expect(list.getAllByText("coordinator")).toHaveLength(2);
+
+    // Exactly the off-domain/thin row gets the amber low-evidence flag.
+    const flags = screen.getAllByTestId("low-evidence-badge");
+    expect(flags).toHaveLength(1);
+    expect(flags[0].className).toContain("amber");
+  });
+
+  it("does not badge a human-seeded, well-evidenced row", () => {
+    // Only the human row, with ok retrieval: neither badge appears.
+    render(<ResolvedIterationsList initial={[ITERATIONS_COORD_FIXTURE[2]]} />);
+    expect(screen.queryByTestId("low-evidence-badge")).toBeNull();
+    expect(
+      within(screen.getByRole("list")).queryByText("coordinator"),
+    ).toBeNull();
   });
 });

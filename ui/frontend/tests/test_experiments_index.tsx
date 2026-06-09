@@ -11,12 +11,20 @@ import {
   RESEARCH_FIXTURE,
   RESEARCH_UNAVAILABLE,
 } from "../src/fixtures/experiments";
+import { COORDINATOR_CYCLES_FIXTURE } from "../src/fixtures/coordinator";
+import type { CoordinatorCycle } from "../src/types/schemas";
 import { describe, expect, it } from "vitest";
 
-function renderPage(initial: typeof RESEARCH_FIXTURE) {
+function renderPage(
+  initial: typeof RESEARCH_FIXTURE,
+  coordinatorCycles: CoordinatorCycle[] = [],
+) {
   return render(
     <MemoryRouter>
-      <Experiments initial={initial} />
+      <Experiments
+        initial={initial}
+        initialCoordinatorCycles={coordinatorCycles}
+      />
     </MemoryRouter>,
   );
 }
@@ -86,5 +94,26 @@ describe("Research index (tier-grouped)", () => {
     expect(
       screen.getByTestId("experiments-unavailable"),
     ).toHaveTextContent(/not available/);
+  });
+
+  it("renders coordinator cycles as auditable units (incl. the errored one)", () => {
+    renderPage(RESEARCH_FIXTURE, COORDINATOR_CYCLES_FIXTURE);
+    const section = within(screen.getByTestId("coordinator-cycles-section"));
+    // One card per cycle.
+    expect(section.getAllByTestId("coordinator-cycle-card")).toHaveLength(
+      COORDINATOR_CYCLES_FIXTURE.length,
+    );
+    // The failed dispatch's plan→outcome chain is visible (the errored action
+    // with its error string), so a coordinator verdict can be doubted here.
+    expect(
+      section.getByTestId("coordinator-action-error-run_loop_iteration"),
+    ).toHaveTextContent(/not a valid SeedSource/i);
+  });
+
+  it("shows an empty coordinator-cycles state when there are none", () => {
+    renderPage(RESEARCH_FIXTURE);
+    expect(
+      screen.getByTestId("coordinator-cycles-empty"),
+    ).toHaveTextContent(/No coordinator cycles yet/i);
   });
 });

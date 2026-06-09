@@ -26,6 +26,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { getIterations } from "../api/http";
 import type { IterationRecord } from "../types/schemas";
+import LowEvidenceBadge from "./LowEvidenceBadge";
+
+// A row dispatched by the autonomous coordinator (seed.source="coordinator")
+// vs one a human seeded — the provenance the audit surface exists to make
+// legible. Sky tone, distinct from the novelty/verdict chips.
+const COORDINATOR_BADGE_TONE = "bg-sky-950 text-sky-300";
 
 const PAGE_SIZE = 10;
 
@@ -442,6 +448,14 @@ export default function ResolvedIterationsList({
                       text={processLabel(row.process_status)}
                       tone={processTone(row.process_status)}
                     />
+                    {/* Provenance: this iteration was dispatched by the
+                        autonomous coordinator, not seeded by a human. */}
+                    {row.seed?.source === "coordinator" && (
+                      <Badge text="coordinator" tone={COORDINATOR_BADGE_TONE} />
+                    )}
+                    {/* The verdict rests on thin/off-domain retrieval — flag it
+                        so a false novel/survives doesn't read as trustworthy. */}
+                    <LowEvidenceBadge record={row} />
                     <span className="ml-auto font-mono text-[10px] text-zinc-500">
                       {shortTimestamp(row.ended_at)}
                     </span>

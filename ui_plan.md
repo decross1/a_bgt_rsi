@@ -198,6 +198,97 @@ it; `exp004_combinatorial_auction` surfaces via `GET /api/experiments/{exp_id}`.
 
 ---
 
+## §AUTONOMY OBSERVABILITY — the coordinator loop must stop running "dark" (active, 2026-06-09)
+
+RENDER half of the autonomy-observability batch. Spec + rationale:
+[`docs/ui_session_handoff_2026-06-09.md`](docs/ui_session_handoff_2026-06-09.md)
+and [`docs/ui_autonomy_observability_plan.md`](docs/ui_autonomy_observability_plan.md).
+The primary session lands the EMIT half (the spine instrumentation that writes
+the data files below) in a parallel workflow; this session builds the RENDER
+half in `ui/` against the documented contracts. All new data files are
+append-only JSONL, gitignored, read live by the backend exactly as
+`loop_memory.jsonl` already is — so this work builds against fixtures and ships
+independent of EMIT landing (endpoints return empty/`204` until the files exist).
+
+**Why.** On the first live `coordinator --execute --once` (2026-06-09) the
+autonomous loop picked a topic, planned, dispatched an iteration, promoted
+findings, and bubbled — and the human saw an unlabeled `ad_hoc` blip. As the
+apparatus goes autonomous the human is an *auditor*: the UI must answer "what did
+the loop decide, on what basis, can I trust it?" Six streams flow through stages
+with no view (coordinator cycle, plan, **failed dispatch**, surfaced findings,
+bubbles, per-agent attribution).
+
+**Design principles (apply these):** (1) *make absence legible* — every
+dispatched action renders an explicit state (`queued/running/succeeded/failed+error/
+skipped/degraded`); a failed dispatch is a **row, never a silent gap**. (2)
+*provenance everywhere* — badge every row with the `agent` field
+(`coordinator`/`nara`/`workflow:<id>/<role>`/`human`). (3) *show the epistemic
+basis* — a `novel/survives` verdict carries its evidence (retrieval relevance,
+external-search status, skeptic health); **flag low-evidence verdicts** (the
+headline 2026-06-09 bug: false `novel/survives` on off-domain retrieval). (4)
+*degraded ≠ broken* — qwen empty-content + ml-intern 0-papers are amber, not red;
+gemma healthy = green. (5) *one cycle = one narrative*.
+
+### Data contracts (read-only for the UI; field names final when EMIT merges)
+
+| File (gitignored, live) | Shape the UI reads |
+| --- | --- |
+| `run_state/coordinator_cycles.jsonl` (NEW) | `{timestamp, run_id, agent, topic, topic_source, plan:[{action,args}], outcomes:[{action, status: passed\|skipped\|errored, error?}], dispatched_iteration_id?, promoted_finding_ids:[], bubble_run_ids:[]}` — one row per cycle; the join key. |
+| `run_state/active_run.json` | now `kind:"coordinator"` with `current_step ∈ {assess,plan,validate,dispatch}` + `narration` (chosen topic + why). |
+| `memory/surfaced_findings.jsonl` (NEW) | promoted findings — `{finding_id, iteration_id, agent, text, ...}`. |
+| `memory/coordinator_bubbles.jsonl` (NEW) | the loop's "raise to the human" output — `{bubble_id, run_id, agent, text, severity?, ...}`. |
+| `memory/loop_memory.jsonl` (extended) | iteration rows now carry `seed.source` (badge coordinator-vs-human) and `retrieval.relevance` (low/thin flag → low-evidence badge). |
+| health signals | `agent` field on run-log rows; a qwen-degraded + ml-intern-0-papers status the sampler exposes. |
+
+### Backend (`ui/backend/`, new endpoints; mirror `loop_v0.py` register-fn idiom)
+
+New module `coordinator.py` with `register(app, *, repo_root, run_state_dir, memory_dir)`,
+wired in `app.py` next to `register_loop_v0`; absent files return `{...: []}` /
+`204` (reuse `_read_jsonl`, newest-first). Endpoints:
+`GET /api/coordinator/cycles`, `GET /api/coordinator/active` (reads `active_run.json`),
+`GET /api/coordinator/findings`, `GET /api/coordinator/bubbles`. Read-only.
+
+### Frontend (`ui/`) — 3 pages + a new view
+
+| Surface | What renders |
+| --- | --- |
+| **NEW route `/coordinator`** (`Coordinator.tsx` + `CoordinatorCycleCard.tsx`) | card per cycle: topic (+source badge) → plan with per-action status chips (executed/skipped/**errored+error**) → linked iteration → promoted findings → bubbles. Agent badge on header. |
+| **Activity** (`Activity.tsx`) | coordinator phases (assess/plan/validate/dispatch) from `active_run` narration; agent badges; **explicit failed-dispatch rows**; qwen-degraded distinct. |
+| **Dashboard** (`Dashboard.tsx`) | health row (gemma green / qwen amber / ml-intern status); Recent Iterations + a **coordinator-triggered** badge + a **low-evidence-verdict** badge; **Surfaced Findings** panel; **Bubbles** panel; a standing **red-flags trend strip** (novel-rate, suspected-false-novel rate, off-domain rate). |
+| **Experiments** (`Experiments.tsx`) | coordinator cycles as auditable units (plan→outcome→evidence) with epistemic basis visible. |
+
+Shared reusable components: `AgentBadge.tsx` (provenance), `LowEvidenceBadge.tsx`
+(+ a tiny evidence-scoring helper), `SurfacedFindingsPanel.tsx`, `BubblesPanel.tsx`,
+`RedFlagsTrendStrip.tsx`, `CoordinatorPhases.tsx`. Fixtures under
+`src/fixtures/coordinator/index.ts`. Types added to `types/schemas.ts`; API
+helpers to `api/http.ts`.
+
+### Priority order
+
+1. Make absence legible + the Coordinator view (the #1 gap).
+2. Surfaced-Findings + Bubbles panels + agent badges.
+3. Low-evidence-verdict flag + degraded-vs-broken health.
+4. Standing red-flags trend strip.
+
+### Test + acceptance
+
+Vitest per-component tests against fixtures; backend pytest with `tmp_path` files
+(mirror `test_loop_v0.py`). Acceptance: re-run `coordinator --execute --once` →
+Coordinator view shows the full arc; a **forced failed dispatch** is an explicit
+row; Surfaced Findings + Bubbles populate; every row has an agent badge; a verdict
+on thin retrieval shows a **low-evidence** flag; qwen-degraded renders amber.
+Print `UI READY TO MERGE`.
+
+### Boundary handed to the primary session (EMIT)
+
+The UI renders these; it does not write them. Land first: coordinator
+`active_run` `kind="coordinator"` + per-phase narration; `coordinator_cycles.jsonl`;
+never-silent failed-dispatch rows; `surfaced_findings.jsonl` + `coordinator_bubbles.jsonl`;
+qwen-degraded + ml-intern-papers health signals; `retrieval.relevance` topical
+signal for the low-evidence badge. Confirm final field names when the EMIT PR merges.
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to

@@ -236,7 +236,20 @@ export interface IterationRecord {
   ended_at: string;
   seed?: { topic?: string; source?: string } | null;
   hypothesis?: { text?: string; candidates_considered?: number } | null;
-  retrieval?: { k?: number; neighbors?: unknown[] } | null;
+  retrieval?: {
+    k?: number;
+    neighbors?: unknown[];
+    // Topical-relevance signal (EMIT: hypothesis-vs-neighbor similarity, the
+    // one genuinely new emit per ui_autonomy_observability_plan.md). Drives the
+    // low-evidence badge: a `novel/survives` verdict resting on thin or
+    // off-domain retrieval (flag "low"/"thin") is flagged as low-confidence.
+    // Absent on pre-coordinator rows.
+    relevance?: {
+      score?: number;
+      flag?: "low" | "thin" | "ok" | string;
+      topical_match?: number;
+    } | null;
+  } | null;
   novelty?: {
     class?: "novel" | "rediscovery" | "nonsense" | "unclear" | string;
     rationale?: string;
@@ -287,4 +300,92 @@ export interface JournalResponse {
   iteration_id: string;
   path: string;
   content: string;
+}
+
+// --- AUTONOMY OBSERVABILITY ---
+// Mirrors of the coordinator-loop data contracts (ui_autonomy_observability_plan.md
+// §"Data contracts"). The primary session writes these as append-only JSONL,
+// gitignored, read live by ui/backend/coordinator.py exactly as loop_memory.jsonl
+// is. The UI reads them via /api/coordinator/{cycles,active,findings,bubbles}.
+// Fields are kept optional/forward-compatible (like IterationRecord) so an EMIT
+// schema addition does not break the views; `status`/`severity`/etc. stay open
+// strings so an unrecognized enum value renders generically rather than crashing.
+
+// One proposed action in a coordinator cycle's plan. `args` is left open.
+export interface CoordinatorPlanStep {
+  action: string;
+  args?: Record<string, unknown>;
+}
+
+// Per-action outcome. `status` mirrors the EMIT enum
+// (passed | skipped | errored) but stays open; `error` carries the failure
+// detail for the explicit failed-dispatch row (never a silent gap).
+export interface CoordinatorOutcome {
+  action: string;
+  status: "passed" | "skipped" | "errored" | string;
+  error?: string | null;
+}
+
+// One row of run_state/coordinator_cycles.jsonl — the join key for the
+// Coordinator Cycle view. `topic_source` is the auto-chosen-topic provenance
+// (e.g. "coordinator" / "human" / "arxiv_pick"); `agent` is the actor badge.
+export interface CoordinatorCycle {
+  timestamp: string;
+  run_id: string;
+  agent: string;
+  topic: string;
+  topic_source: string;
+  plan: CoordinatorPlanStep[];
+  outcomes: CoordinatorOutcome[];
+  dispatched_iteration_id?: string | null;
+  promoted_finding_ids?: string[];
+  bubble_run_ids?: string[];
+}
+
+// One row of memory/surfaced_findings.jsonl (promote_findings output). The
+// index signature keeps it forward-compatible with EMIT-side additions.
+export interface SurfacedFinding {
+  finding_id: string;
+  iteration_id?: string | null;
+  agent?: string | null;
+  text: string;
+  timestamp?: string | null;
+  [key: string]: unknown;
+}
+
+// One row of memory/coordinator_bubbles.jsonl — the loop's "raise to the
+// human" channel. `severity` stays open; "raise" is the prominent tier.
+export interface Bubble {
+  bubble_id: string;
+  run_id?: string | null;
+  agent?: string | null;
+  text: string;
+  severity?: "info" | "warn" | "raise" | string | null;
+  timestamp?: string | null;
+}
+
+// run_state/active_run.json — the coordinator's live cycle. `kind` is
+// "coordinator" (mirrors the seed.source="coordinator" fix); `current_step`
+// walks assess → plan → validate → dispatch; `narration` carries the chosen
+// topic + why so the active panel can say what stage and why.
+export interface CoordinatorActiveRun {
+  kind: "coordinator" | string;
+  run_id?: string | null;
+  current_step?: "assess" | "plan" | "validate" | "dispatch" | string | null;
+  narration?: string | null;
+  topic?: string | null;
+  topic_source?: string | null;
+  started_at?: string | null;
+}
+
+export interface CoordinatorCyclesResponse {
+  cycles: CoordinatorCycle[];
+}
+
+export interface SurfacedFindingsResponse {
+  findings: SurfacedFinding[];
+}
+
+export interface BubblesResponse {
+  bubbles: Bubble[];
 }

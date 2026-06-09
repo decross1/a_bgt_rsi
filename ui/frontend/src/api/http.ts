@@ -7,10 +7,14 @@ import type {
   ActiveIteration,
   AppState,
   BaselineResponse,
+  BubblesResponse,
   ChainResponse,
+  CoordinatorActiveRun,
+  CoordinatorCyclesResponse,
   Health,
   IterationsResponse,
   JournalResponse,
+  SurfacedFindingsResponse,
   TelemetrySample,
   WorkloadHint,
 } from "../types/schemas";
@@ -79,6 +83,36 @@ export const getJournalEntry = (iterationId: string) =>
   getJSON<JournalResponse>(
     `/api/loop_v0/journal/${encodeURIComponent(iterationId)}`,
   );
+
+// --- AUTONOMY OBSERVABILITY endpoints (ui/backend/coordinator.py) ---
+// Surface the coordinator loop so the human-as-auditor can see what it decided
+// and on what basis. All read-only; tolerant of absent (gitignored) data files.
+
+export const getCoordinatorCycles = () =>
+  getJSON<CoordinatorCyclesResponse>("/api/coordinator/cycles");
+
+// GET /api/coordinator/active returns 204 when no cycle is live (mirrors
+// getActiveIteration). Caller gets `null` rather than an error.
+export async function getCoordinatorActive(): Promise<CoordinatorActiveRun | null> {
+  const resp = await fetch(`${API_BASE}/api/coordinator/active`);
+  if (resp.status === 204) return null;
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try {
+      const body = (await resp.json()) as { detail?: string };
+      if (body.detail) detail = body.detail;
+    } catch {
+      /* no JSON body */
+    }
+    throw new Error(`${resp.status} ${detail}`);
+  }
+  return (await resp.json()) as CoordinatorActiveRun;
+}
+
+export const getSurfacedFindings = () =>
+  getJSON<SurfacedFindingsResponse>("/api/coordinator/findings");
+
+export const getBubbles = () => getJSON<BubblesResponse>("/api/coordinator/bubbles");
 
 export async function startIteration(topic: string): Promise<{ pid: number; iteration_id?: string }> {
   const resp = await fetch(`${API_BASE}/api/loop_v0/start`, {
