@@ -40,7 +40,7 @@ from orchestrator.subagent import (
 )
 
 
-ALLOWED_VERDICTS = ("survives", "falsified", "restated", "malformed")
+ALLOWED_VERDICTS = ("survives", "falsified", "restated", "malformed", "undecidable")
 
 
 CRITIC_AGENT_SYSTEM_PROMPT = (
@@ -60,29 +60,54 @@ CRITIC_AGENT_SYSTEM_PROMPT = (
     "    returns the same shape you got initially. NOT every iteration\n"
     "    needs additional retrieval.\n"
     "\n"
-    "Return ONE of four verdicts:\n"
-    '  - "survives"   — no retrieved chunk (initial or fetched) directly\n'
-    "                    contradicts the claim. Well-formed hypothesis,\n"
-    "                    not yet defeated.\n"
-    '  - "falsified"  — at least one retrieved chunk directly contradicts.\n'
-    "                    Cite which one in `contradicting_paper_id`.\n"
-    '  - "restated"   — the claim restates a known result in the retrieved\n'
-    "                    set; it adds no new content.\n"
-    '  - "malformed"  — the claim is incoherent, ill-defined, or not a\n'
-    "                    real game-theory / learning-in-games question.\n"
+    "Follow this ORDERED decision procedure. Earlier steps take precedence\n"
+    "over later ones — do not skip ahead:\n"
+    "\n"
+    "  STEP 1 — RESTATEMENT CHECK. Does any retrieved neighbor (initial or\n"
+    "    fetched) ALREADY STATE the content of this claim — same phenomenon,\n"
+    "    same direction, no new mechanism or boundary condition? If yes,\n"
+    '    the verdict is "restated"; cite that neighbor in\n'
+    "    `contradicting_paper_id` and STOP.\n"
+    "  STEP 2 — CONTRADICTION CHECK. Does any retrieved chunk directly\n"
+    '    contradict the claim? If yes, the verdict is "falsified"; cite the\n'
+    "    contradicting neighbor and STOP.\n"
+    "  STEP 3 — only if steps 1 AND 2 both come up empty may you answer\n"
+    '    "survives". A "survives" rationale MUST name the closest retrieved\n'
+    "    neighbor by doc_id and state WHY that neighbor does NOT already\n"
+    "    state the claim. When the corpus simply does not address the\n"
+    "    claim's specific subject but the claim is well-formed, on-domain,\n"
+    '    and falsifiable, the verdict IS "survives" — your job here is\n'
+    "    restatement and contradiction; an INDEPENDENT skeptic model\n"
+    '    attacks every "survives" afterwards, so do not retreat to\n'
+    '    "undecidable" merely because the corpus is silent on the subject.\n'
+    '    Reserve "undecidable" for retrieval flagged off-topic/inadequate\n'
+    "    or claims you cannot evaluate at all.\n"
+    "\n"
+    "The five verdicts (restatement is checked BEFORE survival):\n"
+    '  - "restated"    — the claim restates a known result in the retrieved\n'
+    "                     set; it adds no new content. Cite the neighbor.\n"
+    '  - "falsified"   — at least one retrieved chunk directly contradicts.\n'
+    "                     Cite which one in `contradicting_paper_id`.\n"
+    '  - "survives"    — passed steps 1 AND 2 against on-topic retrieval;\n'
+    "                     the rationale names the closest neighbor and says\n"
+    "                     why it does not already state the claim.\n"
+    '  - "undecidable" — the retrieved literature (initial + fetched) is\n'
+    "                     too thin or off-topic to run steps 1-2 honestly;\n"
+    "                     no verdict can be defended either way.\n"
+    '  - "malformed"   — the claim is incoherent, ill-defined, or not a\n'
+    "                     real game-theory / learning-in-games question.\n"
     "\n"
     "Be intellectually honest: `survives` is a legitimate answer when the\n"
     "literature is ON-TOPIC and still fails to contradict the claim. But if\n"
     "the retrieved neighbors are topically IRRELEVANT to the claim, you CANNOT\n"
     "say `survives` — absence of contradiction in an off-topic corpus is not\n"
-    "survival; flag low confidence instead. `restated` is reserved for claims\n"
-    "that the retrieved set proves redundant.\n"
+    'survival; answer "undecidable" instead.\n'
     "\n"
     "When you've made your judgment, emit a FINAL assistant message that\n"
     "is STRICT JSON, nothing else — no prose, no markdown fences, no\n"
     "channel markers. Schema:\n"
     "{\n"
-    '  "verdict": "survives" | "falsified" | "restated" | "malformed",\n'
+    '  "verdict": "restated" | "falsified" | "survives" | "undecidable" | "malformed",\n'
     '  "rationale": "<2-4 sentences citing specific neighbors where relevant>",\n'
     '  "contradicting_paper_id": "<doc_id of the contradicting/restated neighbor>" | null\n'
     "}\n"
@@ -181,7 +206,7 @@ def _post_validate(payload: dict, valid_doc_ids: set[str]) -> tuple[dict, list[s
     elif contra is not None:
         warnings.append("contradicting_paper_id not a string or null; nulling")
         contra = None
-    if verdict in ("survives", "malformed") and contra is not None:
+    if verdict in ("survives", "malformed", "undecidable") and contra is not None:
         warnings.append(
             f"contradicting_paper_id set on verdict={verdict!r}; nulling per schema"
         )
@@ -194,6 +219,43 @@ def _post_validate(payload: dict, valid_doc_ids: set[str]) -> tuple[dict, list[s
         },
         warnings,
     )
+
+
+def _maybe_run_skeptic(
+    result: dict, hypothesis_text: str, iteration_id: str | None
+) -> None:
+    """Optional adversarial second-channel check (β skeptic-gate seam, D-041).
+
+    Called only when the FINAL verdict is "survives" and low_confidence is
+    false. The skeptic does its OWN retrieval, breaking the shared-neighbor
+    blind spot (novelty + critic reading one neighbor set is not independent
+    corroboration). Gated OFF by default: env NARA_SKEPTIC must be "1" and
+    orchestrator.novelty_skeptic must exist and export attack(); otherwise
+    this is a no-op. Mutates `result` in place.
+    """
+    if os.environ.get("NARA_SKEPTIC", "0") != "1":
+        return
+    try:
+        from orchestrator import novelty_skeptic  # lazy: module may not exist yet
+    except ImportError:
+        return
+    attack = getattr(novelty_skeptic, "attack", None)
+    if not callable(attack):
+        return
+    try:
+        out = attack(hypothesis_text, iteration_id=iteration_id) or {}
+    except Exception as exc:  # a skeptic crash is recorded, never fatal
+        result["skeptic_verdict"] = f"error: {type(exc).__name__}: {exc}"[:200]
+        return
+    attack_verdict = out.get("attack_verdict")
+    result["skeptic_verdict"] = attack_verdict
+    if attack_verdict in ("refuted", "inconclusive"):
+        result["verdict_overridden_from"] = result.get("verdict")
+        result["override_reason"] = (
+            f"skeptic attack_verdict={attack_verdict!r}: "
+            + (out.get("rationale") or "")[:300]
+        )
+        result["verdict"] = "undecidable"
 
 
 def critic_loop_v0(
@@ -214,12 +276,19 @@ def critic_loop_v0(
     {
         "status": "passed" | "error",
         "result": {
-            "verdict": "survives" | "falsified" | "restated" | "malformed",
+            "verdict": "survives" | "falsified" | "restated" | "malformed"
+                       | "undecidable",
             "rationale": str,
             "contradicting_paper_id": str | None,
             "subagent_turns_used": int,
             "subagent_wall_seconds": float,
             "subagent_status": "passed" | "timeout" | "schema_mismatch" | "error",
+            # only when a deterministic override fired (coverage bar,
+            # low-confidence hard rule, or skeptic refutation):
+            "verdict_overridden_from": str,
+            "override_reason": str,
+            # only when the skeptic seam ran (env NARA_SKEPTIC=1):
+            "skeptic_verdict": str | None,
         } | None,
         "errors": [str, ...],
         "wrapper_request_id": str | None,
@@ -296,10 +365,31 @@ def critic_loop_v0(
         "and flag low confidence.\n" if rel_low else ""
     )
 
+    # Novelty-context injection: if novelty_classify already judged this a
+    # rediscovery, tell the critic — the restatement check (STEP 1) should
+    # confront that judgment head-on. Tolerate absence (novelty may not have
+    # run, or the cache key may be missing on legacy iterations).
+    novelty_class = None
+    novelty_top_id = None
+    try:
+        nov_entry = iteration_cache.read_entry(iteration_id, "novelty")
+        nov_res = (nov_entry.get("result") or {})
+        novelty_class = nov_res.get("class")
+        novelty_top_id = nov_res.get("top_neighbor_id")
+    except Exception:
+        pass
+    novelty_note = (
+        "\nNOVELTY CONTEXT: the novelty classifier judged this hypothesis a "
+        f"REDISCOVERY of {novelty_top_id or 'a retrieved neighbor'}. If you "
+        "agree the retrieved set already states it, the correct verdict is "
+        "'restated', not 'survives'.\n"
+        if novelty_class == "rediscovery" else ""
+    )
+
     user_prompt = (
         f"Hypothesis:\n{hypothesis_text.strip()}\n\n"
         f"Initial retrieved neighbors ({len(neighbors)}):\n"
-        f"{_format_neighbors(neighbors)}\n{relevance_warning}\n"
+        f"{_format_neighbors(neighbors)}\n{relevance_warning}{novelty_note}\n"
         "Decide your verdict. If the initial neighbors are sufficient,\n"
         "emit the final JSON now. If you genuinely need to check a\n"
         "specific angle, call `query_chroma` with a focused query first."
@@ -345,6 +435,53 @@ def critic_loop_v0(
     if sa_result.status == "passed":
         validated, warnings = _post_validate(sa_result.result or {}, seen_doc_ids)
         validated.update(observability)
+
+        # Coverage-adequacy bar (rule 4): "not contradicted" is only
+        # "survives" when the retrieval was adequate to check. The cached
+        # relevance result carries a `category` (Limb A); anything but "ok"
+        # makes a raw 'survives' undecidable. A missing category field
+        # (legacy cached rows) is treated as ok.
+        if validated.get("verdict") == "survives":
+            category = rel.get("category")
+            if category is not None and category != "ok":
+                reason = rel.get("reason") or f"relevance category {category!r}"
+                validated["verdict_overridden_from"] = "survives"
+                validated["override_reason"] = (
+                    f"relevance category {category!r} != 'ok': {reason}"
+                )
+                validated["rationale"] = (
+                    f"(coverage-inadequate retrieval override: {reason}) "
+                    + (validated.get("rationale") or "")
+                )
+                validated["verdict"] = "undecidable"
+            elif rel_low:
+                # Hard rule: low_confidence retrieval can never yield survives.
+                reason = rel.get("reason") or "low-confidence retrieval"
+                validated["verdict_overridden_from"] = "survives"
+                validated["override_reason"] = (
+                    f"relevance low_confidence is true: {reason}"
+                )
+                validated["rationale"] = (
+                    f"(coverage-inadequate retrieval override: {reason}) "
+                    + (validated.get("rationale") or "")
+                )
+                validated["verdict"] = "undecidable"
+
+        # β skeptic-gate seam (D-041): independent-retrieval attack on a
+        # clean 'survives'. No-op unless NARA_SKEPTIC=1 and the module exists.
+        if validated.get("verdict") == "survives" and not rel_low:
+            _maybe_run_skeptic(validated, hypothesis_text, iteration_id)
+
+        # Novelty/critic consistency check: a final 'survives' on a
+        # hypothesis novelty called a rediscovery is flagged, never flipped
+        # (a deterministic flip would propagate novelty errors).
+        if validated.get("verdict") == "survives" and novelty_class == "rediscovery":
+            warnings = warnings + [
+                "consistency_warning: novelty_classify judged this a rediscovery"
+                f" of {novelty_top_id or 'a retrieved neighbor'} but the critic"
+                " verdict is 'survives' — one of the two is wrong"
+            ]
+
         return {
             "status": "passed",
             "result": validated,
@@ -356,14 +493,17 @@ def critic_loop_v0(
         }
 
     if sa_result.status == "schema_mismatch":
-        # Fall back to "survives" (absence-of-evidence isn't evidence-of-absence),
-        # but surface the raw payload + status so the human knows the
+        # Fail closed to "undecidable" — a sub-agent failure is NEVER
+        # evidence of survival (the pre-T1b 'survives' default let three
+        # on-domain rediscoveries through the battery unchallenged).
+        # Surface the raw payload + status so the human knows the
         # sub-agent failed.
         raw = sa_result.result if isinstance(sa_result.result, dict) else None
         fallback = {
-            "verdict": "survives",
+            "verdict": "undecidable",
             "rationale": (
-                "(sub-agent emitted schema-mismatched output; defaulting to survives) "
+                "(sub-agent emitted schema-mismatched output; defaulting to "
+                "undecidable — a sub-agent failure is not evidence of survival) "
                 + str(raw)[:500]
             ),
             "contradicting_paper_id": None,
@@ -372,7 +512,7 @@ def critic_loop_v0(
         return {
             "status": "passed",
             "result": fallback,
-            "errors": ["sub-agent schema mismatch; verdict defaulted to 'survives'"]
+            "errors": ["sub-agent schema mismatch; verdict defaulted to 'undecidable'"]
                        + sa_result.errors,
             "wrapper_request_id": (
                 sa_result.wrapper_call_ids[-1] if sa_result.wrapper_call_ids else None
@@ -384,15 +524,16 @@ def critic_loop_v0(
         return {
             "status": "passed",
             "result": {
-                "verdict": "survives",
+                "verdict": "undecidable",
                 "rationale": (
                     f"(sub-agent budget exceeded after {sa_result.turns_used} turns; "
-                    "defaulting to survives)"
+                    "defaulting to undecidable — a sub-agent failure is not "
+                    "evidence of survival)"
                 ),
                 "contradicting_paper_id": None,
                 **observability,
             },
-            "errors": ["sub-agent timeout; verdict defaulted to 'survives'"]
+            "errors": ["sub-agent timeout; verdict defaulted to 'undecidable'"]
                        + sa_result.errors,
             "wrapper_request_id": (
                 sa_result.wrapper_call_ids[-1] if sa_result.wrapper_call_ids else None

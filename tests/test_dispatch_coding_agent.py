@@ -33,6 +33,16 @@ or under pytest:
 """
 from __future__ import annotations
 
+import pytest
+
+pytest.skip(
+    "Retired machinery: the track-A/B/C/D claim-and-lock dispatch framework "
+    "was retired 2026-05-26 (D-030; commit 08fc327 removed agent/ownership.yaml, "
+    "which this test depends on). Un-skip only if the dispatcher is "
+    "deliberately revived from archive/.",
+    allow_module_level=True,
+)
+
 import fnmatch
 import importlib
 import importlib.util

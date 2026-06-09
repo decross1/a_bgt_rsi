@@ -318,3 +318,234 @@ def test_env_backend_override(cache, monkeypatch):
     out = ns_mod.novelty_skeptic("h", "it-env")
     assert captured["backend"] == "vllm-qwen"
     assert out["result"]["skeptic_backend"] == "vllm-qwen"
+
+
+# --- token starvation fix (D-041 step 1 prerequisite) ------------------------
+
+def test_worker_max_tokens_3072_for_non_default_backend(cache, monkeypatch):
+    # Independent (non-default) backends get 3072 — 512 and 2048 starved
+    # the Qwen reasoning channel (2026-06-09). Default backend stays 512.
+    captured = {}
+    def stub(messages, **kwargs):
+        captured["max_tokens"] = kwargs.get("max_tokens")
+        return _fake_call(json.dumps({
+            "skeptic_class": "novel", "skeptic_rationale": "r",
+            "skeptic_top_neighbor_id": None,
+        }))(messages, **kwargs)
+    monkeypatch.setattr(ns_mod, "call_sync", stub)
+    _stage(cache, "it-tok1", _neighbors("a"), gemma_class="novel")
+    ns_mod.novelty_skeptic("h", "it-tok1", backend="vllm-qwen")
+    assert captured["max_tokens"] == 3072
+    _stage(cache, "it-tok2", _neighbors("a"), gemma_class="novel")
+    ns_mod.novelty_skeptic("h", "it-tok2", backend=ns_mod.DEFAULT_BACKEND)
+    assert captured["max_tokens"] == 512
+
+
+# =============================================================================
+# orchestrator.novelty_skeptic.attack() — independent-skeptic ladder (D-041)
+# =============================================================================
+# attack() does its OWN retrieval (query_top_k) and its own chat call;
+# both are stubbed here. MOCK_LLM is deleted for the live-path tests
+# (the shell sets it by default, which would short-circuit to the stub).
+
+from orchestrator import novelty_skeptic as atk_mod
+
+
+def _attack_json(verdict, doc_id=None, rationale="grounded in chunk a1"):
+    return json.dumps({
+        "attack_verdict": verdict,
+        "rationale": rationale,
+        "contradicting_doc_id": doc_id,
+    })
+
+
+def _stub_retrieval(monkeypatch, neighbors, status="passed", captured=None):
+    def stub(text, k=10, **kwargs):
+        if captured is not None:
+            captured["query_text"] = text
+            captured["k"] = k
+        return {
+            "status": status,
+            "result": {"k": k, "neighbors": neighbors, "latency_ms": 0.1},
+            "errors": [],
+            "parent_request_id": kwargs.get("parent_request_id"),
+        }
+    monkeypatch.setattr(atk_mod, "query_top_k", stub)
+
+
+def _stub_attack_call(monkeypatch, completion, captured=None):
+    def stub(messages, **kwargs):
+        if captured is not None:
+            captured["messages"] = messages
+            captured.update({k: v for k, v in kwargs.items()})
+        return {"request_id": "req-attack", "completion": completion}
+    monkeypatch.setattr(atk_mod, "call_sync", stub)
+
+
+@pytest.fixture
+def no_mock(monkeypatch):
+    monkeypatch.delenv("MOCK_LLM", raising=False)
+
+
+def test_attack_mock_llm_stub(monkeypatch):
+    # Under MOCK_LLM the stub returns deterministically and touches
+    # neither retrieval nor the model.
+    monkeypatch.setenv("MOCK_LLM", "1")
+    def boom(*a, **k):  # pragma: no cover
+        raise AssertionError("network path reached under MOCK_LLM")
+    monkeypatch.setattr(atk_mod, "query_top_k", boom)
+    monkeypatch.setattr(atk_mod, "call_sync", boom)
+    out = atk_mod.attack("h", iteration_id="it-1")
+    assert out == {
+        "attack_verdict": "inconclusive",
+        "rationale": "MOCK_LLM stub",
+        "contradicting_doc_id": None,
+        "backend": "vllm-qwen",
+        "model": "mock",
+    }
+
+
+def test_attack_refuted_parsing(no_mock, monkeypatch):
+    _stub_retrieval(monkeypatch, _neighbors("a1", "b1"))
+    _stub_attack_call(monkeypatch, _attack_json("refuted", doc_id="a1"))
+    out = atk_mod.attack("h")
+    assert out["attack_verdict"] == "refuted"
+    assert out["contradicting_doc_id"] == "a1"
+    # default backend resolves from NARA_SKEPTIC_BACKEND (vllm-qwen, the
+    # 2026-06-09 ladder-validated step-1 backend)
+    assert out["backend"] == "vllm-qwen"
+    assert isinstance(out["model"], str) and out["model"]
+
+
+def test_attack_survives_parsing(no_mock, monkeypatch):
+    _stub_retrieval(monkeypatch, _neighbors("a1"))
+    _stub_attack_call(monkeypatch, _attack_json("survives_attack"))
+    out = atk_mod.attack("h")
+    assert out["attack_verdict"] == "survives_attack"
+    assert out["contradicting_doc_id"] is None
+
+
+def test_attack_inconclusive_parsing(no_mock, monkeypatch):
+    _stub_retrieval(monkeypatch, _neighbors("a1"))
+    _stub_attack_call(monkeypatch, _attack_json("inconclusive"))
+    out = atk_mod.attack("h")
+    assert out["attack_verdict"] == "inconclusive"
+    assert out["contradicting_doc_id"] is None
+
+
+def test_attack_unparseable_is_inconclusive_never_survives(no_mock, monkeypatch):
+    _stub_retrieval(monkeypatch, _neighbors("a1"))
+    _stub_attack_call(monkeypatch, "the claim clearly survives my attack, no JSON here")
+    out = atk_mod.attack("h")
+    assert out["attack_verdict"] == "inconclusive"
+    assert "survives my attack" in out["rationale"]  # raw text preserved
+
+
+def test_attack_off_enum_verdict_is_inconclusive(no_mock, monkeypatch):
+    _stub_retrieval(monkeypatch, _neighbors("a1"))
+    _stub_attack_call(monkeypatch, _attack_json("totally-destroyed"))
+    out = atk_mod.attack("h")
+    assert out["attack_verdict"] == "inconclusive"
+
+
+def test_attack_refuted_without_valid_doc_id_downgrades(no_mock, monkeypatch):
+    # "refuted" citing a doc not in the skeptic's own retrieved set is
+    # unverifiable -> inconclusive, never coerced.
+    _stub_retrieval(monkeypatch, _neighbors("a1", "b1"))
+    _stub_attack_call(monkeypatch, _attack_json("refuted", doc_id="not-retrieved"))
+    out = atk_mod.attack("h")
+    assert out["attack_verdict"] == "inconclusive"
+    assert out["contradicting_doc_id"] is None
+    assert "cited no doc_id" in out["rationale"]
+
+
+def test_attack_refuted_with_null_doc_id_downgrades(no_mock, monkeypatch):
+    _stub_retrieval(monkeypatch, _neighbors("a1"))
+    _stub_attack_call(monkeypatch, _attack_json("refuted", doc_id=None))
+    out = atk_mod.attack("h")
+    assert out["attack_verdict"] == "inconclusive"
+
+
+def test_attack_backend_selection_and_personas(no_mock, monkeypatch):
+    # Step 1 (ollama-coder) and step 2 (vllm-gemma) route the backend
+    # kwarg through and use DISTINCT system prompts — the gemma persona
+    # is visibly adversarial so it is not the critic twice.
+    _stub_retrieval(monkeypatch, _neighbors("a1"))
+    cap1 = {}
+    _stub_attack_call(monkeypatch, _attack_json("survives_attack"), captured=cap1)
+    out1 = atk_mod.attack("h", backend="ollama-coder")
+    cap2 = {}
+    _stub_attack_call(monkeypatch, _attack_json("survives_attack"), captured=cap2)
+    out2 = atk_mod.attack("h", backend="vllm-gemma")
+    assert cap1["backend"] == "ollama-coder"
+    assert cap2["backend"] == "vllm-gemma"
+    assert out1["backend"] == "ollama-coder"
+    assert out2["backend"] == "vllm-gemma"
+    sys1 = cap1["messages"][0]["content"]
+    sys2 = cap2["messages"][0]["content"]
+    assert sys1 != sys2
+    assert "HOSTILE REVIEWER" in sys2
+    assert "HOSTILE REVIEWER" not in sys1
+
+
+def test_attack_token_config(no_mock, monkeypatch):
+    # 3072 for non-default backends (the starvation fix); 512 on the
+    # wrapper default backend.
+    _stub_retrieval(monkeypatch, _neighbors("a1"))
+    cap = {}
+    _stub_attack_call(monkeypatch, _attack_json("survives_attack"), captured=cap)
+    atk_mod.attack("h", backend="ollama-coder")
+    assert cap["max_tokens"] == 3072
+    cap2 = {}
+    _stub_attack_call(monkeypatch, _attack_json("survives_attack"), captured=cap2)
+    atk_mod.attack("h", backend=atk_mod.DEFAULT_BACKEND)
+    assert cap2["max_tokens"] == 512
+
+
+def test_attack_does_own_retrieval(no_mock, monkeypatch):
+    # attack() queries with the hypothesis text and feeds ITS retrieved
+    # doc_ids into the prompt; the iteration cache is never read.
+    cap_ret, cap_call = {}, {}
+    _stub_retrieval(monkeypatch, _neighbors("own-doc-1", "own-doc-2"), captured=cap_ret)
+    _stub_attack_call(monkeypatch, _attack_json("survives_attack"), captured=cap_call)
+    atk_mod.attack("my hypothesis text", iteration_id="it-42")
+    assert cap_ret["query_text"] == "my hypothesis text"
+    user_msg = cap_call["messages"][1]["content"]
+    assert "own-doc-1" in user_msg and "own-doc-2" in user_msg
+    # provenance: the iteration id rides as parent_request_id
+    assert cap_call["parent_request_id"] == "it-42"
+
+
+def test_attack_retrieval_failure_is_inconclusive(no_mock, monkeypatch):
+    _stub_retrieval(monkeypatch, [], status="error")
+    def boom(*a, **k):  # pragma: no cover
+        raise AssertionError("call_sync reached despite failed retrieval")
+    monkeypatch.setattr(atk_mod, "call_sync", boom)
+    out = atk_mod.attack("h")
+    assert out["attack_verdict"] == "inconclusive"
+    assert "retrieval" in out["rationale"]
+
+
+def test_attack_unknown_backend_is_inconclusive(no_mock, monkeypatch):
+    def boom(*a, **k):  # pragma: no cover
+        raise AssertionError("reached past unknown backend")
+    monkeypatch.setattr(atk_mod, "query_top_k", boom)
+    monkeypatch.setattr(atk_mod, "call_sync", boom)
+    out = atk_mod.attack("h", backend="does-not-exist")
+    assert out["attack_verdict"] == "inconclusive"
+    assert "unknown skeptic backend" in out["rationale"]
+
+
+def test_attack_empty_hypothesis_is_inconclusive(no_mock, monkeypatch):
+    out = atk_mod.attack("   ")
+    assert out["attack_verdict"] == "inconclusive"
+
+
+def test_attack_wrapper_exception_is_inconclusive(no_mock, monkeypatch):
+    _stub_retrieval(monkeypatch, _neighbors("a1"))
+    def broken(*a, **k):
+        raise TimeoutError("qwen timed out")
+    monkeypatch.setattr(atk_mod, "call_sync", broken)
+    out = atk_mod.attack("h")
+    assert out["attack_verdict"] == "inconclusive"
+    assert "qwen timed out" in out["rationale"]

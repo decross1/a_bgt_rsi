@@ -115,6 +115,103 @@ def test_handles_neighbors_with_no_content_hash(monkeypatch):
     assert out["result"]["k"] == 2
 
 
+# ----- T1c corpus de-drift: collection scoping ---------------------------
+
+
+def test_default_collections_constants():
+    """DEFAULT_QUERY_COLLECTIONS = foundational + papers_recent; the drifted
+    ml_intern_fetched stays REGISTERED (D-038) but out of the default scope."""
+    from orchestrator import chroma_query as cq
+    assert cq.FOUNDATIONAL_COLLECTIONS == [
+        name for name, layer in cq.COLLECTIONS.items() if layer == "foundational"
+    ]
+    assert cq.DEFAULT_QUERY_COLLECTIONS == cq.FOUNDATIONAL_COLLECTIONS + ["papers_recent"]
+    assert "ml_intern_fetched" not in cq.DEFAULT_QUERY_COLLECTIONS
+    assert "ml_intern_fetched" in cq.COLLECTIONS  # still registered
+
+
+def test_query_top_k_default_scope_excludes_ml_intern(monkeypatch):
+    """query_top_k's default scope queries DEFAULT_QUERY_COLLECTIONS only.
+    Exercised on the real (non-mock) path with a stubbed collection."""
+    from orchestrator import chroma_query as cq
+
+    queried = []
+
+    class _FakeColl:
+        def query(self, query_texts, n_results):
+            return {"metadatas": [[]], "documents": [[]], "distances": [[]]}
+
+    monkeypatch.delenv("MOCK_LLM", raising=False)
+    monkeypatch.setattr(cq, "_get_collection",
+                        lambda name: queried.append(name) or _FakeColl())
+    out = cq.query_top_k("x", k=3)
+    assert out["status"] in ("passed", "error")
+    assert queried == cq.DEFAULT_QUERY_COLLECTIONS
+
+
+def test_query_top_k_explicit_ml_intern_still_queryable(monkeypatch):
+    """ml_intern_fetched is reachable via explicit collections= (D-038)."""
+    from orchestrator import chroma_query as cq
+
+    queried = []
+
+    class _FakeColl:
+        def query(self, query_texts, n_results):
+            return {"metadatas": [[]], "documents": [[]], "distances": [[]]}
+
+    monkeypatch.delenv("MOCK_LLM", raising=False)
+    monkeypatch.setattr(cq, "_get_collection",
+                        lambda name: queried.append(name) or _FakeColl())
+    cq.query_top_k("x", k=3, collections=["ml_intern_fetched"])
+    assert queried == ["ml_intern_fetched"]
+
+
+def test_retrieve_literature_default_passes_no_collections(monkeypatch):
+    """include_ml_intern defaults False -> collections=None (query_top_k's
+    default scope decides)."""
+    captured = {}
+
+    def stub(text, k=10, collections=None, *, parent_request_id=None):
+        captured["collections"] = collections
+        return {"status": "passed", "result": {"k": 0, "neighbors": [], "latency_ms": 0.1},
+                "errors": [], "parent_request_id": parent_request_id}
+
+    monkeypatch.setattr(rl_mod, "query_top_k", stub)
+    out = rl_mod.retrieve_literature("x")
+    assert out["status"] == "passed"
+    assert captured["collections"] is None
+
+
+def test_retrieve_literature_include_ml_intern_widens_scope(monkeypatch):
+    """include_ml_intern=True -> DEFAULT_QUERY_COLLECTIONS + ml_intern_fetched."""
+    from orchestrator.chroma_query import DEFAULT_QUERY_COLLECTIONS
+    captured = {}
+
+    def stub(text, k=10, collections=None, *, parent_request_id=None):
+        captured["collections"] = collections
+        return {"status": "passed", "result": {"k": 0, "neighbors": [], "latency_ms": 0.1},
+                "errors": [], "parent_request_id": parent_request_id}
+
+    monkeypatch.setattr(rl_mod, "query_top_k", stub)
+    out = rl_mod.retrieve_literature("x", include_ml_intern=True)
+    assert out["status"] == "passed"
+    assert captured["collections"] == DEFAULT_QUERY_COLLECTIONS + ["ml_intern_fetched"]
+
+
+def test_include_ml_intern_dedup_still_applies(monkeypatch):
+    """Dedup by content_hash holds on the widened scope too."""
+    fake = _fake_query([
+        {"doc_id": "a1", "content_hash": "sha256:H1", "score": 0.50, "source_layer": "foundational"},
+        {"doc_id": "mi1", "content_hash": "sha256:H1", "score": 0.80, "source_layer": "live_ml_intern"},
+        {"doc_id": "b1", "content_hash": "sha256:H2", "score": 0.60, "source_layer": "live_arxiv"},
+    ])
+    monkeypatch.setattr(rl_mod, "query_top_k", fake)
+    out = rl_mod.retrieve_literature("x", k=5, include_ml_intern=True)
+    neighbors = out["result"]["neighbors"]
+    assert len(neighbors) == 2
+    assert neighbors[0]["doc_id"] == "mi1"  # higher-scoring dup kept
+
+
 # ----- Slice-2 ML-Intern escalation trigger -----------------------------
 
 

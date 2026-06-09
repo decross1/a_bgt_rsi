@@ -338,8 +338,10 @@ def novelty_skeptic(
     # gemma persona) starves them and yields empty completions (observed on
     # vllm-qwen 2026-06-09: finish_reason=length, content=None). Give the
     # independent routes generous headroom — the bound is an upper limit, so the
-    # gemma persona still stops at its short verdict.
-    skeptic_max_tokens = 512 if backend_name == DEFAULT_BACKEND else 2048
+    # gemma persona still stops at its short verdict. 2048 still starved Qwen on
+    # the 2026-06-09 battery; 3072 is the value finding_promotion runs with and
+    # is the D-041 ladder's working figure.
+    skeptic_max_tokens = 512 if backend_name == DEFAULT_BACKEND else 3072
 
     try:
         record = call_sync(

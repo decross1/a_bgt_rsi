@@ -71,6 +71,15 @@ RULES_VARIANTS: Dict[str, str] = {
         "single-round payoff (10 points). You may choose to defect if "
         "that maximizes your total points in the long run."
     ),
+    # History-framing treatment arms (thesis iter-2026-05-27-001:
+    # narrative- vs list-rendered history). The rules TEXT is identical
+    # to baseline in both arms (empty suffix); the arms differ ONLY in
+    # how compute_action renders the history block — "narrative" uses
+    # _format_history_narrative, "list" (and every other variant) keeps
+    # the original structured-list rendering, so "list" is an exact
+    # control for the baseline framing.
+    "list": "",
+    "narrative": "",
 }
 
 
@@ -83,6 +92,27 @@ def _format_history(history: History, last_n: int = 20) -> str:
         lines.append(f"  round {i}: you={own}, them={opp}")
     head = f"Last {len(recent)} round(s) of {len(history)} so far:\n"
     return head + "\n".join(lines)
+
+
+def _format_history_narrative(history: History, last_n: int = 20) -> str:
+    """Render the same history window as cohesive prose instead of a
+    structured list. Deliberately neutral: same letters, same window,
+    no strategy names, no evaluative language — the ONLY manipulated
+    axis is narrative-vs-list framing (iter-2026-05-27-001)."""
+    if not history:
+        return "No rounds have been played yet."
+    recent = history[-last_n:]
+    start = max(1, len(history) - last_n + 1)
+    sentences = []
+    for i, (own, opp) in enumerate(recent, start=start):
+        if own == opp:
+            sentences.append(f"In round {i} you both played {own}.")
+        else:
+            sentences.append(
+                f"In round {i} you played {own} while they played {opp}.")
+    head = (f"Here is the story of the game so far. {len(history)} round(s) "
+            f"have been played; recounting the last {len(recent)}: ")
+    return head + " ".join(sentences)
 
 
 def _parse(text: str) -> str | None:
@@ -162,8 +192,14 @@ class LLMAgent(BaseAgent):
 
     def compute_action(self, observation: Dict[str, Any] | None = None) -> Dict[str, Any]:
         round_idx = len(self.history) + 1
+        if self.rules_variant == "narrative":
+            history_text = _format_history_narrative(
+                self.history, last_n=self.history_window)
+        else:
+            history_text = _format_history(
+                self.history, last_n=self.history_window)
         user = (
-            f"{_format_history(self.history, last_n=self.history_window)}\n\n"
+            f"{history_text}\n\n"
             f"It is now round {round_idx}. Your move?"
         )
 

@@ -54,8 +54,11 @@ RUNS_DIR = Path(__file__).resolve().parent / "runs"
 
 # Valid enum values mirrored from the workers (kept local so a worker enum
 # drift surfaces as a battery FAIL rather than a silent skip).
+# "undecidable" (T1d, 2026-06-09): the critic's fail-closed verdict for
+# claims the corpus cannot decide; every consumer gates on == "survives",
+# so undecidable is an honest tempered NOT-survives.
 NOVELTY_ENUM = ("novel", "rediscovery", "nonsense", "unclear")
-CRITIC_ENUM = ("survives", "falsified", "restated", "malformed")
+CRITIC_ENUM = ("survives", "falsified", "restated", "malformed", "undecidable")
 
 # ──────────────────────────────────────────────────────────────────────
 # Locked pass bar — DO NOT EDIT WITHOUT A D-NNN DECISION ENTRY.
@@ -77,6 +80,19 @@ class CaseObservation:
     critic_rationale: str = ""
     contradicting_paper_id: Optional[str] = None
     errors: list[str] = field(default_factory=list)
+    # Optional novelty axes (T1d): {phenomenon, substrate, predicted_direction}.
+    # Scored only when the case carries expected_axes — a soft secondary
+    # signal reported separately from the locked pass bar.
+    novelty_axes: Optional[dict] = None
+    # Per-case relevance diagnostics (T1d). None when the signal is
+    # unavailable (e.g. legacy relevance output predating the anchor gate).
+    anchor_cosine: Optional[float] = None
+    mean_top3_overlap: Optional[float] = None
+    curated_overlap: Optional[float] = None
+    neighbor_spread: Optional[float] = None
+    max_cosine: Optional[float] = None
+    category: Optional[str] = None
+    rule_fired: Optional[str] = None
 
 
 @dataclass
@@ -107,6 +123,19 @@ class CaseScore:
     gated_novel_or_survives: bool     # ... AND low_confidence True (soft)
     # combined pass for this case (see score_case docstring)
     passed: bool
+    # expected_axes soft signal (None = case carries no expected_axes; NOT
+    # part of the locked pass bar — reported separately).
+    axes_expected: Optional[dict] = None
+    axes_actual: Optional[dict] = None
+    axes_correct: Optional[bool] = None
+    # relevance diagnostics passthrough (from CaseObservation)
+    anchor_cosine: Optional[float] = None
+    mean_top3_overlap: Optional[float] = None
+    curated_overlap: Optional[float] = None
+    neighbor_spread: Optional[float] = None
+    max_cosine: Optional[float] = None
+    category: Optional[str] = None
+    rule_fired: Optional[str] = None
 
 
 @dataclass
@@ -133,6 +162,9 @@ class BatteryResult:
     # whole-battery verdict
     cases_passed: int
     all_pass: bool                    # the proposed pass bar (see README)
+    # expected_axes soft secondary signal (NOT in the locked pass bar)
+    axes_cases: int = 0               # cases carrying expected_axes
+    axes_correct_count: int = 0       # of those, all expected axes matched
     per_case: list[CaseScore] = field(default_factory=list)
     novelty_confusion: dict[str, dict[str, int]] = field(default_factory=dict)
     critic_confusion: dict[str, dict[str, int]] = field(default_factory=dict)
@@ -159,15 +191,35 @@ def score_case(case: dict[str, Any], obs: CaseObservation) -> CaseScore:
         rows are the MODAL honest answer and still feed the confusion matrix.)
       * ON-domain case: passes iff BOTH verdict axes are exact-enum correct
         AND the gate matched expectation (on-domain rows expect the gate OFF).
+
+    Optional case fields (T1d):
+      * `accepted_critic` — an explicit list of ADDITIONAL critic enums that
+        are equally honest for this case (e.g. the iteration-068 corpus-gap
+        case is restated-or-undecidable depending on whether the targeted
+        ingest has landed). This is a LABEL-side declaration authored with
+        the case, not scoring-time coercion; the confusion matrix still
+        records expected vs actual exactly.
+      * `expected_axes` — a {phenomenon, substrate, predicted_direction}
+        dict scored against obs.novelty_axes as a SOFT secondary signal
+        (axes_correct), reported separately from the locked pass bar.
     """
     exp_nov = case["expected_novelty"]
     exp_crit = case["expected_critic"]
     exp_low = bool(case["expect_low_confidence"])
     domain = case.get("domain", "on")
+    accepted_crit = case.get("accepted_critic") or []
 
     nov_correct = obs.novelty_class == exp_nov
-    crit_correct = obs.critic_verdict == exp_crit
+    crit_correct = (obs.critic_verdict == exp_crit
+                    or obs.critic_verdict in accepted_crit)
     gate_correct = obs.low_confidence == exp_low
+
+    # expected_axes soft signal — scored only when the case carries it.
+    exp_axes = case.get("expected_axes")
+    axes_correct: Optional[bool] = None
+    if isinstance(exp_axes, dict) and exp_axes:
+        act_axes = obs.novelty_axes if isinstance(obs.novelty_axes, dict) else {}
+        axes_correct = all(act_axes.get(k) == v for k, v in exp_axes.items())
 
     is_off = domain == "off"
     novel_or_survives = is_off and (
@@ -201,6 +253,16 @@ def score_case(case: dict[str, Any], obs: CaseObservation) -> CaseScore:
         ungated_novel_or_survives=ungated_ns,
         gated_novel_or_survives=gated_ns,
         passed=passed,
+        axes_expected=exp_axes if isinstance(exp_axes, dict) else None,
+        axes_actual=obs.novelty_axes if isinstance(obs.novelty_axes, dict) else None,
+        axes_correct=axes_correct,
+        anchor_cosine=obs.anchor_cosine,
+        mean_top3_overlap=obs.mean_top3_overlap,
+        curated_overlap=obs.curated_overlap,
+        neighbor_spread=obs.neighbor_spread,
+        max_cosine=obs.max_cosine,
+        category=obs.category,
+        rule_fired=obs.rule_fired,
     )
 
 
@@ -252,6 +314,9 @@ def score_battery(cases: list[dict[str, Any]], observations: list[CaseObservatio
 
     cases_passed = sum(1 for s in scored if s.passed)
 
+    axes_scored = [s for s in scored if s.axes_correct is not None]
+    axes_ok = sum(1 for s in axes_scored if s.axes_correct)
+
     meets_acc = verdict_acc >= VERDICT_ACCURACY_BAR
     gate_complete = (fired_required == len(must_fire))
     no_ungated = (off_ungated == 0)
@@ -279,6 +344,8 @@ def score_battery(cases: list[dict[str, Any]], observations: list[CaseObservatio
         no_ungated_novel_survives=no_ungated,
         cases_passed=cases_passed,
         all_pass=all_pass,
+        axes_cases=len(axes_scored),
+        axes_correct_count=axes_ok,
         per_case=scored,
         novelty_confusion=_confusion(nov_pairs, NOVELTY_ENUM),
         critic_confusion=_confusion(crit_pairs, CRITIC_ENUM),
@@ -341,13 +408,61 @@ def run_case(
     payload = (ret.get("result") if isinstance(ret, dict) else None) or {}
     neighbors = payload.get("neighbors") or []
     # Step 2: stamp relevance exactly as nara does (orchestrator-driven gate).
-    payload["relevance"] = relevance_fn(neighbors, hyp)
+    # The anchor cosine (domain-anchor gate) is computed embedder-side and
+    # passed in; when the module is absent or the embedder unavailable we
+    # fall back to anchor_cosine=None, which the relevance contract pins to
+    # EXACTLY legacy behavior.
+    anchor_val: Optional[float] = None
+    try:
+        from orchestrator.domain_anchor import anchor_cosine as _anchor_fn
+        anchor_val = _anchor_fn(hyp)
+    except Exception:
+        anchor_val = None
+    # R0 topicality (2026-06-09 revision cycle): the explicit LLM domain
+    # judgment — mirrors nara. None on failure/MOCK -> legacy behavior.
+    topic_val: Optional[str] = None
+    try:
+        from orchestrator.topicality import check as _topic_fn
+        topic_val = _topic_fn(hyp)
+    except Exception:
+        topic_val = None
+    try:
+        rel = relevance_fn(neighbors, hyp, anchor_cosine=anchor_val,
+                           topicality=topic_val)
+    except TypeError:
+        # Legacy relevance signature (pre anchor gate) — reduce honestly.
+        rel = relevance_fn(neighbors, hyp)
+    payload["relevance"] = rel
     if isinstance(ret, dict):
         ret["result"] = payload
     # Step 3: cache the full tool_result so the workers read it by id.
     iteration_cache.write_entry(iter_id, "retrieval", ret)
 
+    # Diagnostics the relevance dict may not expose directly: max cosine
+    # over the neighbor set + the gate's mean top-3 lexical overlap
+    # (recomputed with the gate's own tokenizer so the report shows the
+    # exact value the gate saw).
+    n_scores = [n.get("score") for n in neighbors
+                if isinstance(n, dict) and isinstance(n.get("score"), (int, float))]
+    max_cos = max(n_scores) if n_scores else None
+    mean_top3: Optional[float] = None
+    try:
+        from workers.retrieval_relevance import (
+            TOP_N_FOR_OVERLAP, _neighbor_overlap, _tokenize,
+        )
+        hyp_tokens = _tokenize(hyp)
+        ovs = sorted((_neighbor_overlap(hyp_tokens, n) for n in neighbors
+                      if isinstance(n, dict)), reverse=True)[:TOP_N_FOR_OVERLAP]
+        if ovs:
+            mean_top3 = sum(ovs) / len(ovs)
+    except Exception:
+        mean_top3 = None
+
     nov = novelty_fn(hyp, iter_id)
+    # Mirror nara: the novelty tool_result lands in the cache BEFORE the
+    # critic runs (the skeptic-gated critic reads it by iteration_id).
+    if isinstance(nov, dict):
+        iteration_cache.write_entry(iter_id, "novelty", nov)
     crit = critic_fn(hyp, iter_id)
     nov_res = (nov.get("result") if isinstance(nov, dict) else None) or {}
     crit_res = (crit.get("result") if isinstance(crit, dict) else None) or {}
@@ -363,6 +478,7 @@ def run_case(
     if low_conf is None:
         low_conf = bool(payload["relevance"].get("low_confidence"))
 
+    axes = nov_res.get("novelty_axes")
     return CaseObservation(
         case_id=cid,
         novelty_class=str(nov_res.get("class", "<missing>")),
@@ -372,7 +488,129 @@ def run_case(
         critic_rationale=str(crit_res.get("rationale", "")),
         contradicting_paper_id=crit_res.get("contradicting_paper_id"),
         errors=errors,
+        novelty_axes=axes if isinstance(axes, dict) else None,
+        anchor_cosine=(rel.get("anchor_cosine", anchor_val)
+                       if isinstance(rel, dict) else anchor_val),
+        mean_top3_overlap=mean_top3,
+        curated_overlap=rel.get("curated_overlap") if isinstance(rel, dict) else None,
+        neighbor_spread=rel.get("neighbor_spread") if isinstance(rel, dict) else None,
+        max_cosine=max_cos,
+        category=rel.get("category") if isinstance(rel, dict) else None,
+        rule_fired=rel.get("rule_fired") if isinstance(rel, dict) else None,
     )
+
+
+def run_relevance_only(
+    case: dict[str, Any],
+    *,
+    retrieve_fn: Callable[..., dict] | None = None,
+    relevance_fn: Callable[..., dict] | None = None,
+) -> dict[str, Any]:
+    """Retrieval + relevance gate ONLY — no LLM workers, no cache writes.
+    For embedder-only calibration sweeps (`--relevance-only`): cheap enough
+    to re-run after every threshold candidate, and it never spends LLM
+    budget. Returns one flat per-case diagnostics row."""
+    if retrieve_fn is None:
+        from workers.retrieve_literature import retrieve_literature as retrieve_fn  # noqa: E501
+    if relevance_fn is None:
+        from workers.retrieval_relevance import relevance as relevance_fn
+
+    hyp = case["hypothesis"]
+    ret = retrieve_fn(hyp)
+    payload = (ret.get("result") if isinstance(ret, dict) else None) or {}
+    neighbors = payload.get("neighbors") or []
+
+    anchor_val: Optional[float] = None
+    try:
+        from orchestrator.domain_anchor import anchor_cosine as _anchor_fn
+        anchor_val = _anchor_fn(hyp)
+    except Exception:
+        anchor_val = None
+    try:
+        rel = relevance_fn(neighbors, hyp, anchor_cosine=anchor_val)
+    except TypeError:
+        rel = relevance_fn(neighbors, hyp)
+
+    n_scores = [n.get("score") for n in neighbors
+                if isinstance(n, dict) and isinstance(n.get("score"), (int, float))]
+    max_cos = max(n_scores) if n_scores else None
+    mean_top3: Optional[float] = None
+    try:
+        from workers.retrieval_relevance import (
+            TOP_N_FOR_OVERLAP, _neighbor_overlap, _tokenize,
+        )
+        hyp_tokens = _tokenize(hyp)
+        ovs = sorted((_neighbor_overlap(hyp_tokens, n) for n in neighbors
+                      if isinstance(n, dict)), reverse=True)[:TOP_N_FOR_OVERLAP]
+        if ovs:
+            mean_top3 = sum(ovs) / len(ovs)
+    except Exception:
+        mean_top3 = None
+
+    exp_low = bool(case["expect_low_confidence"])
+    act_low = bool(rel.get("low_confidence")) if isinstance(rel, dict) else False
+    return {
+        "case_id": case["case_id"],
+        "domain": case.get("domain", "on"),
+        "expect_low_confidence": exp_low,
+        "actual_low_confidence": act_low,
+        "gate_correct": act_low == exp_low,
+        "relevance": rel.get("relevance") if isinstance(rel, dict) else None,
+        "reason": rel.get("reason") if isinstance(rel, dict) else None,
+        "anchor_cosine": (rel.get("anchor_cosine", anchor_val)
+                          if isinstance(rel, dict) else anchor_val),
+        "mean_top3_overlap": mean_top3,
+        "curated_overlap": rel.get("curated_overlap") if isinstance(rel, dict) else None,
+        "neighbor_spread": rel.get("neighbor_spread") if isinstance(rel, dict) else None,
+        "max_cosine": max_cos,
+        "category": rel.get("category") if isinstance(rel, dict) else None,
+        "rule_fired": rel.get("rule_fired") if isinstance(rel, dict) else None,
+    }
+
+
+def render_relevance_only_markdown(rows: list[dict[str, Any]], *, mock: bool) -> str:
+    must = [r for r in rows if r["expect_low_confidence"]]
+    fired = [r for r in must if r["actual_low_confidence"]]
+    false_fires = [r for r in rows
+                   if not r["expect_low_confidence"] and r["actual_low_confidence"]]
+    lines = ["# Relevance-gate-only sweep (no LLM workers)", ""]
+    if mock:
+        lines += ["> WARNING: ran under MOCK_LLM — retrieval neighbors are "
+                  "STUBBED; numbers are meaningless. Re-run with "
+                  "`env -u MOCK_LLM`.", ""]
+    lines.append(f"- cases: **{len(rows)}**")
+    lines.append(
+        f"- gate recall on must-fire cases: **{len(fired)}/{len(must)}** — "
+        f"{'PASS' if len(fired) == len(must) else 'FAIL'}"
+    )
+    lines.append(
+        f"- false fires on expect-off cases (over-gating, incl. canaries): "
+        f"**{len(false_fires)}** — {'PASS' if not false_fires else 'FAIL'}"
+    )
+    lines.append("")
+    lines.append("| case | dom | gate exp/act | anchor | ov3 | cur_ov | spread | maxcos | category:rule |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+    for r in rows:
+        gate = (f"{r['expect_low_confidence']}/{r['actual_low_confidence']}"
+                + ("" if r["gate_correct"] else " ✗"))
+        lines.append(
+            f"| {r['case_id']} | {r['domain']} | {gate} "
+            f"| {_fmt(r['anchor_cosine'])} | {_fmt(r['mean_top3_overlap'])} "
+            f"| {_fmt(r['curated_overlap'])} | {_fmt(r['neighbor_spread'])} "
+            f"| {_fmt(r['max_cosine'])} "
+            f"| {r['category'] or '-'}:{r['rule_fired'] or '-'} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _fmt(v: Any) -> str:
+    """Compact numeric formatting for markdown diagnostics columns."""
+    if v is None:
+        return "-"
+    if isinstance(v, float):
+        return f"{v:.3f}"
+    return str(v)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -398,6 +636,8 @@ def result_to_dict(res: BatteryResult) -> dict[str, Any]:
         "no_ungated_novel_survives": res.no_ungated_novel_survives,
         "cases_passed": res.cases_passed,
         "all_pass": res.all_pass,
+        "axes_cases": res.axes_cases,
+        "axes_correct_count": res.axes_correct_count,
         "novelty_confusion": res.novelty_confusion,
         "critic_confusion": res.critic_confusion,
         "per_case": [
@@ -417,6 +657,16 @@ def result_to_dict(res: BatteryResult) -> dict[str, Any]:
                 "ungated_novel_or_survives": s.ungated_novel_or_survives,
                 "gated_novel_or_survives": s.gated_novel_or_survives,
                 "passed": s.passed,
+                "axes_expected": s.axes_expected,
+                "axes_actual": s.axes_actual,
+                "axes_correct": s.axes_correct,
+                "anchor_cosine": s.anchor_cosine,
+                "mean_top3_overlap": s.mean_top3_overlap,
+                "curated_overlap": s.curated_overlap,
+                "neighbor_spread": s.neighbor_spread,
+                "max_cosine": s.max_cosine,
+                "category": s.category,
+                "rule_fired": s.rule_fired,
             }
             for s in res.per_case
         ],
@@ -464,6 +714,12 @@ def render_markdown(res: BatteryResult, *, mock: bool) -> str:
     lines.append(
         f"- cases passing combined bar: {res.cases_passed}/{res.cases_scored}"
     )
+    if res.axes_cases:
+        lines.append(
+            f"- novelty-axes soft signal (NOT in the locked bar): "
+            f"**{res.axes_correct_count}/{res.axes_cases}** cases with "
+            f"expected_axes fully matched"
+        )
     lines.append("")
     lines.append(
         f"## PROPOSED PASS BAR: {'PASS' if res.all_pass else 'FAIL'}"
@@ -476,15 +732,21 @@ def render_markdown(res: BatteryResult, *, mock: bool) -> str:
     lines.append("## Per-case")
     lines.append("")
     lines.append(
-        "| case | dom | nov exp/act | crit exp/act | gate exp/act | pass |"
+        "| case | dom | nov exp/act | crit exp/act | gate exp/act | "
+        "relevance diag (anchor/ov3/cur/spread/maxcos cat:rule) | pass |"
     )
-    lines.append("| --- | --- | --- | --- | --- | --- |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- |")
     for s in res.per_case:
         nov = f"{s.expected_novelty}/{s.actual_novelty}" + ("" if s.novelty_correct else " ✗")
         crit = f"{s.expected_critic}/{s.actual_critic}" + ("" if s.critic_correct else " ✗")
         gate = f"{s.expect_low_confidence}/{s.actual_low_confidence}" + ("" if s.gate_correct else " ✗")
+        diag = (
+            f"{_fmt(s.anchor_cosine)}/{_fmt(s.mean_top3_overlap)}/"
+            f"{_fmt(s.curated_overlap)}/{_fmt(s.neighbor_spread)}/"
+            f"{_fmt(s.max_cosine)} {s.category or '-'}:{s.rule_fired or '-'}"
+        )
         lines.append(
-            f"| {s.case_id} | {s.domain} | {nov} | {crit} | {gate} | "
+            f"| {s.case_id} | {s.domain} | {nov} | {crit} | {gate} | {diag} | "
             f"{'Y' if s.passed else 'N'} |"
         )
     lines.append("")
@@ -497,10 +759,30 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--cases", default=str(CASES_PATH), help="path to cases.jsonl")
     p.add_argument("--out-dir", default=str(RUNS_DIR), help="report output dir")
+    p.add_argument("--relevance-only", action="store_true",
+                   help="retrieval + relevance gate only — no LLM workers; "
+                        "for embedder-only calibration sweeps")
     args = p.parse_args(argv)
 
     mock = bool(os.environ.get("MOCK_LLM"))
     cases = load_cases(Path(args.cases))
+
+    if args.relevance_only:
+        rows = [run_relevance_only(c) for c in cases]
+        out_dir = Path(args.out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        md = render_relevance_only_markdown(rows, mock=mock)
+        json_path = out_dir / f"relevance_only_{stamp}.json"
+        md_path = out_dir / f"relevance_only_{stamp}.md"
+        json_path.write_text(json.dumps(
+            {"rows": rows, "ran_under_mock_llm": mock, "generated_at": stamp},
+            indent=2))
+        md_path.write_text(md)
+        print(md)
+        print(f"\nwrote {json_path}\nwrote {md_path}")
+        return 0
+
     observations = [run_case(c) for c in cases]
     res = score_battery(cases, observations)
 

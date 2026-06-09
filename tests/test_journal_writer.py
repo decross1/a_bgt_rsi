@@ -239,3 +239,12 @@ def test_empty_nara_summary_renders_placeholder(cache, isolated_journal):
     jw_mod.journal_writer(topic="t", iteration_id="it-emp", nara_summary="   ")
     body = (isolated_journal / "001.md").read_text()
     assert "_(no summary emitted)_" in body
+
+
+def test_undecidable_verdict_is_accepted(tmp_path, monkeypatch):
+    """2026-06-09: "undecidable" became the critic's common fail-closed verdict
+    (fallbacks, coverage/low-confidence overrides, skeptic demotion, the nara
+    placeholder). journal_writer's enum check must accept it — the review
+    caught it rejecting every undecidable iteration's journal entry."""
+    from workers.journal_writer import CRITIC_VERDICTS
+    assert "undecidable" in CRITIC_VERDICTS

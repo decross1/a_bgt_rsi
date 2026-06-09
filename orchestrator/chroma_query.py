@@ -46,9 +46,20 @@ COLLECTIONS = {
     "van_damme_1994":             "foundational",
     "camerer_bgt":                "foundational",
     # Slice-2 ML-Intern automated S2 backfill (D-038). Separate from the
-    # human-curated collections; auto-queried once registered here.
+    # human-curated collections. T1c (2026-06-09): registered + queryable
+    # via explicit `collections=`, but NOT in the default query scope —
+    # drifted ML arXiv papers (Belief Engine, MUSE-Autoskill, ATOM) were
+    # inflating lexical overlap on off-domain hypotheses.
     "ml_intern_fetched":          "live_ml_intern",
 }
+
+# T1c corpus de-drift (2026-06-09): the default query scope is the curated
+# foundational layer + live arXiv. Anything else (e.g. ml_intern_fetched)
+# must be requested explicitly via `collections=`.
+FOUNDATIONAL_COLLECTIONS = [
+    name for name, layer in COLLECTIONS.items() if layer == "foundational"
+]
+DEFAULT_QUERY_COLLECTIONS = FOUNDATIONAL_COLLECTIONS + ["papers_recent"]
 
 
 _EMBEDDER = None
@@ -113,8 +124,10 @@ def query_top_k(
     Args:
         text: query string (a claim, hypothesis, or topic).
         k: total neighbors to return (across collections).
-        collections: list of Chroma collection names. Defaults to all
-            of COLLECTIONS.
+        collections: list of Chroma collection names. Defaults to
+            DEFAULT_QUERY_COLLECTIONS (foundational + papers_recent);
+            other registered collections (ml_intern_fetched) must be
+            named explicitly.
 
     Returns:
         {
@@ -132,7 +145,7 @@ def query_top_k(
         }
     """
     if collections is None:
-        collections = list(COLLECTIONS.keys())
+        collections = list(DEFAULT_QUERY_COLLECTIONS)
 
     if os.environ.get("MOCK_LLM"):
         # Honored only because callers might leave the var set by

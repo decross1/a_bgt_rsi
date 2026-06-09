@@ -58,7 +58,7 @@
     },
     "critic_verdict": {
       "type": "string",
-      "enum": ["survives", "falsified", "restated", "malformed"]
+      "enum": ["survives", "falsified", "restated", "malformed", "undecidable"]
     },
     "adversarial": {
       "type": "object",

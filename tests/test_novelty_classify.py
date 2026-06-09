@@ -46,15 +46,31 @@ def _neighbors(*doc_ids: str) -> list[dict]:
     ]
 
 
-def _stage_retrieval(cache, iteration_id: str, neighbors: list[dict]) -> None:
+def _stage_retrieval(
+    cache, iteration_id: str, neighbors: list[dict], relevance: dict | None = None
+) -> None:
     """Mimic what Nara does after retrieve_literature returns: write the
     full tool_result dict to the cache under the 'retrieval' key."""
+    result = {"k": len(neighbors), "neighbors": neighbors}
+    if relevance is not None:
+        result["relevance"] = relevance
     cache.write_entry(iteration_id, "retrieval", {
         "status": "passed",
-        "result": {"k": len(neighbors), "neighbors": neighbors},
+        "result": result,
         "errors": [],
         "wrapper_request_id": "ret-test",
         "parent_request_id": None,
+    })
+
+
+def _axes_completion(phenomenon, substrate="na", direction="silent",
+                     rationale="grounded reasoning", top="a"):
+    return json.dumps({
+        "phenomenon": phenomenon,
+        "substrate": substrate,
+        "predicted_direction": direction,
+        "rationale": rationale,
+        "top_neighbor_id": top,
     })
 
 
@@ -78,6 +94,8 @@ def test_cache_miss_errors(cache):
 
 
 def test_novel_classification(cache, monkeypatch):
+    # Legacy class-only payload: still accepted (Gemma is stochastic about
+    # format), but flagged with a warning and novelty_axes = None.
     completion = json.dumps({
         "class": "novel",
         "rationale": "No retrieved chunk matches the claim about compute thresholds.",
@@ -89,7 +107,8 @@ def test_novel_classification(cache, monkeypatch):
     assert out["status"] == "passed"
     assert out["result"]["class"] == "novel"
     assert out["result"]["top_neighbor_id"] is None
-    assert out["errors"] == []
+    assert out["result"]["novelty_axes"] is None
+    assert any("legacy 'class'" in e for e in out["errors"])
 
 
 def test_rediscovery_classification(cache, monkeypatch):
@@ -212,3 +231,140 @@ def test_passes_caller_tag_and_parent(cache, monkeypatch):
     nc_mod.novelty_classify("h", "it-11", parent_request_id="par-1")
     assert captured["tag"] == "novelty_classify"
     assert captured["parent"] == "par-1"
+
+
+# ── two-axis rubric (T1b) ────────────────────────────────────────────
+
+
+def test_axes_novel_phenomenon_is_novel(cache, monkeypatch):
+    completion = _axes_completion("novel", "na", "silent", top=None)
+    monkeypatch.setattr(nc_mod, "call_sync", _fake_call(completion))
+    _stage_retrieval(cache, "ax-1", _neighbors("a", "b"))
+    out = nc_mod.novelty_classify("h", "ax-1")
+    assert out["status"] == "passed"
+    assert out["result"]["class"] == "novel"
+    assert out["result"]["novelty_axes"] == {
+        "phenomenon": "novel", "substrate": "na", "predicted_direction": "silent",
+    }
+    assert out["errors"] == []
+
+
+def test_axes_known_matches_unstudied_substrate_is_rediscovery(cache, monkeypatch):
+    # The iteration-068 case: p-beauty/level-k on Gemma — known phenomenon,
+    # unstudied substrate, predicts the published direction. Honest label is
+    # the transfer/replication bucket, i.e. legacy class 'rediscovery'.
+    completion = _axes_completion("known", "unstudied_llm", "matches", top="a")
+    monkeypatch.setattr(nc_mod, "call_sync", _fake_call(completion))
+    _stage_retrieval(cache, "ax-2", _neighbors("a", "b"))
+    out = nc_mod.novelty_classify("p-beauty level-k on gemma", "ax-2")
+    assert out["result"]["class"] == "rediscovery"
+    assert out["result"]["novelty_axes"]["substrate"] == "unstudied_llm"
+    assert out["result"]["top_neighbor_id"] == "a"
+
+
+def test_axes_known_silent_is_rediscovery(cache, monkeypatch):
+    completion = _axes_completion("known", "studied_llm", "silent", top="a")
+    monkeypatch.setattr(nc_mod, "call_sync", _fake_call(completion))
+    _stage_retrieval(cache, "ax-3", _neighbors("a"))
+    out = nc_mod.novelty_classify("h", "ax-3")
+    assert out["result"]["class"] == "rediscovery"
+
+
+def test_axes_known_deviates_is_novel(cache, monkeypatch):
+    completion = _axes_completion("known", "studied_llm", "deviates", top="a")
+    monkeypatch.setattr(nc_mod, "call_sync", _fake_call(completion))
+    _stage_retrieval(cache, "ax-4", _neighbors("a"))
+    out = nc_mod.novelty_classify("h", "ax-4")
+    assert out["result"]["class"] == "novel"
+    assert out["result"]["novelty_axes"]["predicted_direction"] == "deviates"
+
+
+def test_axes_incoherent_is_nonsense_with_null_axes(cache, monkeypatch):
+    completion = _axes_completion("incoherent", top=None)
+    monkeypatch.setattr(nc_mod, "call_sync", _fake_call(completion))
+    _stage_retrieval(cache, "ax-5", _neighbors("a"))
+    out = nc_mod.novelty_classify("h", "ax-5")
+    assert out["result"]["class"] == "nonsense"
+    assert out["result"]["novelty_axes"] is None
+
+
+def test_axes_ambiguous_is_unclear_with_null_axes(cache, monkeypatch):
+    completion = _axes_completion("ambiguous", top="a")
+    monkeypatch.setattr(nc_mod, "call_sync", _fake_call(completion))
+    _stage_retrieval(cache, "ax-6", _neighbors("a"))
+    out = nc_mod.novelty_classify("h", "ax-6")
+    assert out["result"]["class"] == "unclear"
+    assert out["result"]["novelty_axes"] is None
+
+
+def test_invalid_substrate_defaults_to_na_with_warning(cache, monkeypatch):
+    completion = _axes_completion("novel", "quantum_llm", "silent", top="a")
+    monkeypatch.setattr(nc_mod, "call_sync", _fake_call(completion))
+    _stage_retrieval(cache, "ax-7", _neighbors("a"))
+    out = nc_mod.novelty_classify("h", "ax-7")
+    assert out["result"]["class"] == "novel"
+    assert out["result"]["novelty_axes"]["substrate"] == "na"
+    assert any("substrate=" in e for e in out["errors"])
+
+
+def test_invalid_direction_on_known_fails_closed_to_unclear(cache, monkeypatch):
+    completion = _axes_completion("known", "na", "sideways", top="a")
+    monkeypatch.setattr(nc_mod, "call_sync", _fake_call(completion))
+    _stage_retrieval(cache, "ax-8", _neighbors("a"))
+    out = nc_mod.novelty_classify("h", "ax-8")
+    assert out["result"]["class"] == "unclear"
+    assert out["result"]["novelty_axes"] is None
+    assert any("predicted_direction=" in e for e in out["errors"])
+
+
+def test_axes_top_neighbor_id_still_validated(cache, monkeypatch):
+    completion = _axes_completion("known", "na", "matches", top="not-in-list")
+    monkeypatch.setattr(nc_mod, "call_sync", _fake_call(completion))
+    _stage_retrieval(cache, "ax-9", _neighbors("a", "b"))
+    out = nc_mod.novelty_classify("h", "ax-9")
+    assert out["result"]["top_neighbor_id"] is None
+    assert any("not in retrieved" in e for e in out["errors"])
+
+
+def test_low_confidence_novel_overridden_to_unclear(cache, monkeypatch):
+    completion = _axes_completion("novel", "na", "silent", top=None)
+    monkeypatch.setattr(nc_mod, "call_sync", _fake_call(completion))
+    _stage_retrieval(cache, "ax-10", _neighbors("a"), relevance={
+        "relevance": 0.1, "low_confidence": True,
+        "reason": "off-domain retrieval: almost no shared vocabulary",
+    })
+    out = nc_mod.novelty_classify("h", "ax-10")
+    assert out["result"]["class"] == "unclear"
+    assert out["result"]["verdict_overridden_from"] == "novel"
+    assert "off-domain retrieval" in out["result"]["override_reason"]
+    assert out["result"]["low_confidence"] is True
+    # The model's axes judgment is preserved; only the class is downgraded.
+    assert out["result"]["novelty_axes"]["phenomenon"] == "novel"
+    assert any("overridden to 'unclear'" in e for e in out["errors"])
+
+
+def test_low_confidence_rediscovery_not_overridden(cache, monkeypatch):
+    completion = _axes_completion("known", "na", "matches", top="a")
+    monkeypatch.setattr(nc_mod, "call_sync", _fake_call(completion))
+    _stage_retrieval(cache, "ax-11", _neighbors("a"), relevance={
+        "relevance": 0.1, "low_confidence": True, "reason": "thin retrieval",
+    })
+    out = nc_mod.novelty_classify("h", "ax-11")
+    assert out["result"]["class"] == "rediscovery"
+    assert "verdict_overridden_from" not in out["result"]
+
+
+def test_unparseable_fallback_has_null_axes(cache, monkeypatch):
+    monkeypatch.setattr(nc_mod, "call_sync", _fake_call("no json at all"))
+    _stage_retrieval(cache, "ax-12", _neighbors("a"))
+    out = nc_mod.novelty_classify("h", "ax-12")
+    assert out["result"]["class"] == "unclear"
+    assert out["result"]["novelty_axes"] is None
+
+
+def test_prompt_carries_two_axis_calibration_rules():
+    p = nc_mod.NOVELTY_SYSTEM_PROMPT
+    assert "TRANSFER/REPLICATION" in p
+    assert "falsity is the critic's job" in p.lower() or "critic's job" in p
+    assert "truism" in p
+    assert "deterministic code" in p.lower()

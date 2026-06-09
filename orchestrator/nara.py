@@ -51,6 +51,8 @@ from orchestrator.tool_registry import TOOL_SPECS
 from workers.meta_review import meta_review as _meta_review
 from workers.ml_intern import ml_intern as _ml_intern
 from workers.retrieval_relevance import relevance
+from orchestrator import domain_anchor
+from orchestrator import topicality as topicality_mod
 from workers.redteam_critic import redteam_critic as _redteam_critic
 
 
@@ -657,9 +659,20 @@ def run_iteration(
                         # retrieval. Orchestrator-driven (not a Nara tool —
                         # Gemma mis-sequences such steps); mutates payload in
                         # place so it lands in the cache + the final record.
+                        _hyp_text = (captured.get("hypothesis") or {}).get("text") or ""
+                        # T1a: hypothesis<->GT-domain-anchor cosine, computed
+                        # ONCE here (relevance() stays pure). None under
+                        # MOCK_LLM / missing anchor / embed failure -> anchor
+                        # rules inert. The LLM topicality check (R0) is the
+                        # 2026-06-09 replacement signal after both embedding
+                        # anchors were falsified as separators.
+                        _anchor = domain_anchor.anchor_cosine(_hyp_text)
+                        _topic = topicality_mod.check(_hyp_text)
                         payload["relevance"] = relevance(
                             payload.get("neighbors") or [],
-                            (captured.get("hypothesis") or {}).get("text") or "",
+                            _hyp_text,
+                            anchor_cosine=_anchor,
+                            topicality=_topic,
                         )
                     elif name == "novelty_classify":
                         captured["novelty"] = payload
@@ -757,16 +770,22 @@ def run_iteration(
                                 and mi_result.get("papers_stored", 0) > 0):
                             re_ret = runtime.dispatch_tool(
                                 "retrieve_literature",
-                                {"hypothesis_text": hyp_text, "k": 10},
+                                {"hypothesis_text": hyp_text, "k": 10,
+                                 "include_ml_intern": True},
                                 parent_request_id=last_id,
                             )
                             if (isinstance(re_ret, dict)
                                     and re_ret.get("status") == "passed"
                                     and isinstance(re_ret.get("result"), dict)):
                                 captured["retrieval"] = re_ret["result"]
+                                _hyp_text = (captured.get("hypothesis") or {}).get("text") or ""
+                                _anchor = domain_anchor.anchor_cosine(_hyp_text)
+                                _topic = topicality_mod.check(_hyp_text)
                                 re_ret["result"]["relevance"] = relevance(
                                     re_ret["result"].get("neighbors") or [],
-                                    (captured.get("hypothesis") or {}).get("text") or "",
+                                    _hyp_text,
+                                    anchor_cosine=_anchor,
+                                    topicality=_topic,
                                 )
                                 iteration_cache.write_entry(
                                     iteration_id, "retrieval", re_ret
@@ -814,7 +833,10 @@ def run_iteration(
                 "top_neighbor_id": None,
             })
             _ensure_cached("critique", {
-                "verdict": "survives",
+                # A critic that never ran is not evidence of survival —
+                # same dangerous-default class fixed in the worker
+                # fallbacks on 2026-06-09 (undecidable fails closed).
+                "verdict": "undecidable",
                 "rationale": "(critic_loop_v0 did not run)",
                 "contradicting_paper_id": None,
             })

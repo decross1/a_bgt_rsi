@@ -261,7 +261,13 @@ def test_escalation_calls_ml_intern_once_and_re_retrieves(monkeypatch, captured_
     # retrieve_literature dispatched twice: Nara's tool_call + the orchestrator re-run.
     ret_dispatches = [d for d in rt.dispatched if d[0] == "retrieve_literature"]
     assert len(ret_dispatches) == 2
-    assert ret_dispatches[1][1] == {"hypothesis_text": "H1 hypothesis", "k": 10}
+    # T1c (2026-06-09): the post-backfill re-dispatch is the ONE call site
+    # that opts back into the ml_intern_fetched collection now that the
+    # default retrieval scope excludes it (corpus de-drift, D-038 kept).
+    assert ret_dispatches[1][1] == {
+        "hypothesis_text": "H1 hypothesis", "k": 10,
+        "include_ml_intern": True,
+    }
 
     # captured retrieval reflects the re-run (the strong post-backfill result).
     assert rec["retrieval"]["neighbors"][0]["doc_id"] == "strong-after-backfill"

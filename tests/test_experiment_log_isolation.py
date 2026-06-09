@@ -25,7 +25,9 @@ REPO = Path(__file__).resolve().parents[1]
 
 HARNESSES = [
     "experiments/exp002_loop_v0_robustness/runner.py",
+    "experiments/exp001_repeated_pd/loop_bridge.py",
     "experiments/exp003_vickrey_rediscovery/loop_bridge.py",
+    "experiments/exp009_cournot/loop_bridge.py",
     "experiments/exp004_combinatorial_auction/loop_bridge.py",
     "experiments/exp006_mechanism_design/loop_bridge.py",
     "experiments/exp007_polymarket/loop_bridge.py",

@@ -26,6 +26,8 @@ def _stub_active_run(monkeypatch):
     """Never touch run_state/active_run.json from a test."""
     monkeypatch.setattr(coord.active_run, "write_active_run",
                         lambda *a, **k: {"run_id": a[0] if a else "x"})
+    monkeypatch.setattr(coord.active_run, "update_active_run",
+                        lambda *a, **k: None)
     monkeypatch.setattr(coord.active_run, "clear_active_run", lambda: None)
     monkeypatch.setattr(coord, "set_run_id", lambda _x: None)
 

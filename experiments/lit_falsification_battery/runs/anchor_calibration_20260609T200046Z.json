@@ -1,0 +1,332 @@
+{
+  "generated_at": "20260609T200046Z",
+  "ran_under_mock_llm": false,
+  "labelled_cases": [
+    {
+      "id": "novel_on_01_quant_lockin",
+      "domain": "on",
+      "anchor_cosine": 0.5582
+    },
+    {
+      "id": "novel_on_02_critic_flip_model",
+      "domain": "on",
+      "anchor_cosine": 0.5577
+    },
+    {
+      "id": "novel_on_03_levelk_quantal_bridge",
+      "domain": "on",
+      "anchor_cosine": 0.6332
+    },
+    {
+      "id": "redisc_on_01_tft_reciprocity",
+      "domain": "on",
+      "anchor_cosine": 0.6351
+    },
+    {
+      "id": "redisc_on_02_folk_theorem",
+      "domain": "on",
+      "anchor_cosine": 0.7466
+    },
+    {
+      "id": "redisc_on_03_quantal_response",
+      "domain": "on",
+      "anchor_cosine": 0.7326
+    },
+    {
+      "id": "fase_off_01_semantic_entropy",
+      "domain": "off",
+      "anchor_cosine": 0.6085
+    },
+    {
+      "id": "fase_off_02_db_index_tuning",
+      "domain": "off",
+      "anchor_cosine": 0.561
+    },
+    {
+      "id": "nonsense_01_word_salad",
+      "domain": "on",
+      "anchor_cosine": 0.6182
+    },
+    {
+      "id": "nonsense_02_not_a_question",
+      "domain": "on",
+      "anchor_cosine": 0.6397
+    },
+    {
+      "id": "falsifiable_01_finite_pd_cooperate",
+      "domain": "on",
+      "anchor_cosine": 0.7028
+    },
+    {
+      "id": "falsifiable_02_dominant_tft",
+      "domain": "on",
+      "anchor_cosine": 0.6524
+    },
+    {
+      "id": "camo_off_01_fase_gt_vocab",
+      "domain": "off",
+      "anchor_cosine": 0.6333
+    },
+    {
+      "id": "camo_off_02_btree_mechanism",
+      "domain": "off",
+      "anchor_cosine": 0.6365
+    },
+    {
+      "id": "camo_off_03_framework_coordination",
+      "domain": "off",
+      "anchor_cosine": 0.6046
+    },
+    {
+      "id": "camo_off_04_raft_punishment",
+      "domain": "off",
+      "anchor_cosine": 0.6319
+    },
+    {
+      "id": "drift_off_01_rag_chunk_overlap",
+      "domain": "off",
+      "anchor_cosine": 0.6048
+    },
+    {
+      "id": "drift_off_02_belief_distillation",
+      "domain": "off",
+      "anchor_cosine": 0.6048
+    },
+    {
+      "id": "canary_on_01_ultimatum_plain",
+      "domain": "on",
+      "anchor_cosine": 0.6203
+    },
+    {
+      "id": "canary_on_02_hawkdove_ess",
+      "domain": "on",
+      "anchor_cosine": 0.6604
+    },
+    {
+      "id": "canary_on_03_llm_gt_hybrid",
+      "domain": "on",
+      "anchor_cosine": 0.6688
+    },
+    {
+      "id": "pbeauty_068_01_levelk",
+      "domain": "on",
+      "anchor_cosine": 0.6699
+    }
+  ],
+  "historical_iterations": [
+    {
+      "id": "iter-2026-05-27-001",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6377
+    },
+    {
+      "id": "iter-2026-05-27-002",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7036
+    },
+    {
+      "id": "iter-2026-05-27-003",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6773
+    },
+    {
+      "id": "iter-2026-05-27-004",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6627
+    },
+    {
+      "id": "iter-2026-05-27-005",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7086
+    },
+    {
+      "id": "iter-2026-05-27-006",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6887
+    },
+    {
+      "id": "iter-2026-05-27-007",
+      "known_off_domain": false,
+      "anchor_cosine": 0.686
+    },
+    {
+      "id": "iter-2026-05-27-008",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6489
+    },
+    {
+      "id": "iter-2026-05-27-009",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6551
+    },
+    {
+      "id": "iter-2026-05-27-010",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7222
+    },
+    {
+      "id": "iter-2026-05-27-011",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7161
+    },
+    {
+      "id": "iter-2026-05-27-012",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6789
+    },
+    {
+      "id": "iter-2026-05-27-013",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6789
+    },
+    {
+      "id": "iter-2026-05-27-014",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6789
+    },
+    {
+      "id": "iter-2026-05-27-015",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6789
+    },
+    {
+      "id": "iter-2026-05-27-016",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6789
+    },
+    {
+      "id": "iter-2026-05-27-017",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6789
+    },
+    {
+      "id": "iter-2026-05-27-018",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7222
+    },
+    {
+      "id": "iter-2026-05-27-019",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7222
+    },
+    {
+      "id": "iter-2026-05-27-020",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7222
+    },
+    {
+      "id": "iter-2026-05-27-021",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7222
+    },
+    {
+      "id": "iter-2026-05-27-022",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7222
+    },
+    {
+      "id": "iter-2026-05-27-023",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7179
+    },
+    {
+      "id": "iter-2026-05-27-024",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7161
+    },
+    {
+      "id": "iter-2026-05-27-025",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7161
+    },
+    {
+      "id": "iter-2026-05-27-026",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7161
+    },
+    {
+      "id": "iter-2026-05-27-027",
+      "known_off_domain": false,
+      "anchor_cosine": 0.7158
+    },
+    {
+      "id": "iter-2026-05-27-028",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6154
+    },
+    {
+      "id": "iter-2026-06-05-001",
+      "known_off_domain": false,
+      "anchor_cosine": 0.5829
+    },
+    {
+      "id": "iter-2026-06-05-002",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6058
+    },
+    {
+      "id": "iter-2026-06-05-003",
+      "known_off_domain": false,
+      "anchor_cosine": 0.5883
+    },
+    {
+      "id": "iter-2026-06-05-004",
+      "known_off_domain": false,
+      "anchor_cosine": 0.604
+    },
+    {
+      "id": "iter-2026-06-05-005",
+      "known_off_domain": false,
+      "anchor_cosine": 0.541
+    },
+    {
+      "id": "iter-2026-06-05-006",
+      "known_off_domain": false,
+      "anchor_cosine": 0.5468
+    },
+    {
+      "id": "iter-2026-06-06-001",
+      "known_off_domain": false,
+      "anchor_cosine": 0.5607
+    },
+    {
+      "id": "iter-2026-06-08-001",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6414
+    },
+    {
+      "id": "iter-2026-06-09-001",
+      "known_off_domain": true,
+      "anchor_cosine": 0.5771
+    },
+    {
+      "id": "iter-2026-06-09-002",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6144
+    },
+    {
+      "id": "iter-2026-06-09-003",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6251
+    },
+    {
+      "id": "iter-2026-06-09-004",
+      "known_off_domain": false,
+      "anchor_cosine": 0.65
+    },
+    {
+      "id": "iter-2026-06-09-005",
+      "known_off_domain": false,
+      "anchor_cosine": 0.6782
+    }
+  ],
+  "candidate_threshold_rule": {
+    "min_gap_required": 0.05,
+    "max_off_domain": 0.6365,
+    "min_on_domain": 0.5577,
+    "gap": -0.0788,
+    "anchor_borderline": 0.5577,
+    "anchor_low": null,
+    "note": "NO clean threshold: gap -0.0788 < 0.05 \u2014 the anchor cosine does not separate the labelled sets; do not ship ANCHOR_LOW from this data."
+  }
+}

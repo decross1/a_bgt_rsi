@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from orchestrator.chroma_query import query_top_k
+from orchestrator.chroma_query import DEFAULT_QUERY_COLLECTIONS, query_top_k
 
 
 # Slice-2 ML-Intern escalation trigger. Thresholds chosen via
@@ -131,6 +131,7 @@ def retrieve_literature(
     hypothesis_text: str,
     k: int = 10,
     *,
+    include_ml_intern: bool = False,
     parent_request_id: str | None = None,
 ) -> dict[str, Any]:
     """Return top-K nearest-neighbor literature chunks for the hypothesis.
@@ -140,6 +141,11 @@ def retrieve_literature(
             embedded with BGE-M3 and queried against Chroma.
         k: total neighbors to return AFTER deduplication. We pull
             slightly more from Chroma to give dedup headroom.
+        include_ml_intern: when True, also query the `ml_intern_fetched`
+            collection (D-038 automated backfill). False by default —
+            T1c corpus de-drift scoped that drifted collection out of the
+            default query path; the orchestrator's ml-intern escalation
+            re-dispatch sets this True after a fresh backfill.
 
     Returns:
         Worker-shaped dict matching `iteration_record.retrieval`:
@@ -179,7 +185,13 @@ def retrieve_literature(
     # return duplicate chunks across collections (we saw this on iter-001:
     # `osborne_rubinstein-chunk-831` and `-836` returned identical content).
     overshoot = min(k * 2, 50)
-    raw = query_top_k(hypothesis_text, k=overshoot, parent_request_id=parent_request_id)
+    # None -> query_top_k's default scope (foundational + papers_recent).
+    collections = (
+        DEFAULT_QUERY_COLLECTIONS + ["ml_intern_fetched"]
+        if include_ml_intern else None
+    )
+    raw = query_top_k(hypothesis_text, k=overshoot, collections=collections,
+                      parent_request_id=parent_request_id)
 
     if raw["status"] != "passed":
         return {

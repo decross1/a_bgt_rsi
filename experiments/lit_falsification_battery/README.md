@@ -26,10 +26,14 @@ falsifies non-novel theses correctly, against a labelled known-answer set.
 
 ## What's in here
 
-- `cases.jsonl` — 13 labelled known-answer theses spanning the
+- `cases.jsonl` — 22 labelled known-answer theses spanning the
   falsification modes. Each row:
   `{case_id, topic, hypothesis, expected_novelty, expected_critic,
-  expect_low_confidence, domain ("on"|"off"), rationale}`. Coverage:
+  expect_low_confidence, domain ("on"|"off"), rationale}`; optional
+  fields: `accepted_critic` (an explicit list of equally-honest critic
+  enums, authored with the label — not scoring-time coercion) and
+  `expected_axes` ({phenomenon, substrate, predicted_direction} — a SOFT
+  secondary signal scored separately from the locked bar). Coverage:
   - **3 genuinely-novel ON-domain** GT theses (expect `novel`/`survives`,
     gate off) — grounded so retrieval is on-topic but the corpus lacks the
     specific result.
@@ -47,9 +51,36 @@ falsifies non-novel theses correctly, against a labelled known-answer set.
     "cooperate to the end" (refuted by backward induction) and "tit-for-tat
     is dominant" (refuted by the folk-theorem / Axelrod literature) —
     expect `falsified` with a `contradicting_paper_id`.
+  - **T1d expansion (2026-06-09, authored BEFORE any anchor threshold
+    existed — P-009 anti-overfit):**
+    - **4 vocabulary-camouflaged off-domain** (`camo_off_*`) — off-domain
+      claims rephrased with UNSTRIPPED GT tokens (cooperation/defection/
+      payoff/repeated/strategies; the tokenizer already strips
+      nash/equilibrium/game) — expected to expose the pure-lexical gate
+      as gameable.
+    - **2 drifted-corpus-adjacent off-domain** (`drift_off_*`) — LLM-infra
+      claims near the ML arXiv papers that polluted retrieval.
+    - **3 over-gating CANARIES** (`canary_on_*`, gate must stay OFF) —
+      plain-language ultimatum rejection, hawk-dove ESS in biological
+      phrasing, an LLM+GT hybrid in mostly-ML vocabulary.
+    - **1 p-beauty corpus-gap case** (`pbeauty_068_01_levelk`,
+      iteration-068 class) — known phenomenon on an uningested-LLM
+      substrate: expected `rediscovery` + `restated`-or-`undecidable`
+      (NOT novel/survives), with `expected_axes`.
 - `battery.py` — the harness. Mirrors the real Nara call path
-  (`retrieve_literature` -> stamp `relevance` -> per-iteration cache ->
-  `novelty_classify` + `critic_loop_v0` by `iteration_id`), then scores.
+  (`retrieve_literature` -> stamp `relevance` (anchor-aware when
+  `orchestrator.domain_anchor` is present) -> per-iteration cache ->
+  `novelty_classify` -> cache the novelty result -> `critic_loop_v0` by
+  `iteration_id`), then scores. Per-case relevance diagnostics
+  (anchor_cosine, mean_top3_overlap, curated_overlap, neighbor_spread,
+  max_cosine, category, rule_fired) land in the per-case JSON + a markdown
+  column. `--relevance-only` runs retrieval + the gate ONLY (no LLM
+  workers) for embedder-only calibration sweeps, writing
+  `runs/relevance_only_<ts>.{json,md}`.
+- `calibrate_anchor.py` — embedder-only anchor-cosine distribution report
+  over the labelled cases + the ~45 historical iteration-cache hypotheses;
+  prints the candidate ANCHOR_LOW / ANCHOR_BORDERLINE rule (a proposal,
+  applied nowhere). Requires Limb A's `orchestrator.domain_anchor`.
 - `tests/test_lit_falsification_battery.py` — self-tests for the SCORING
   logic with stubbed verdicts under `MOCK_LLM` (no model, no cache).
 
@@ -97,8 +128,9 @@ proposed pass bar fails (real-model runs only), so it can gate CI.
 Note on off-domain scoring (rule 4, applied honestly): an off-domain case
 *passes* iff the gate fired when required AND there is no UN-GATED
 novel/survives. The exact non-novel verdict is allowed to vary (`unclear` /
-`falsified` / `restated` / `malformed` are all legitimate honest tempering on
-irrelevant retrieval), so we do NOT demand exact-enum on off-domain — but the
+`falsified` / `restated` / `malformed` / `undecidable` are all legitimate
+honest tempering on irrelevant retrieval), so we do NOT demand exact-enum on
+off-domain — but the
 per-axis exact-enum result is still recorded honestly in the confusion matrix
 and the per-case `*_correct` flags. We never silently recode a non-matching
 verdict as correct. We also split the regression signal in two so the bug
@@ -112,8 +144,8 @@ The pipe is judged to falsify with sufficient accuracy (no further
 refinement needed *for these modes*) when ALL three hold:
 
 1. **combined verdict accuracy >= 80%** (`VERDICT_ACCURACY_BAR`, locked in
-   `battery.py`; mirrors the critic-eval 0.80 bar) — 21 of 26 verdict
-   decisions across 13 cases; AND
+   `battery.py`; mirrors the critic-eval 0.80 bar) — 36 of 44 verdict
+   decisions across 22 cases; AND
 2. **every off-domain case is low-confidence-flagged** (gate recall = 1.0
    over the required cases — the FASE regression guard fires); AND
 3. **zero UN-GATED novel/survives on off-domain cases** (the specific
@@ -132,7 +164,7 @@ does not collapse them into a single coerced pass.
 ## What the integrator's real run will measure
 
 Running `battery.py` under `env -u MOCK_LLM` against live Gemma + the real
-ingested Chroma corpus produces, for all 13 cases:
+ingested Chroma corpus produces, for all 22 cases:
 
 - the real `novelty_classify` / `critic_loop_v0` verdicts and the real
   `retrieval_relevance` gate decision, scored against the labels;

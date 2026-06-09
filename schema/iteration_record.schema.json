@@ -88,7 +88,18 @@
         },
         "rationale":       {"type": "string"},
         "top_neighbor_id": {"type": ["string", "null"]},
-        "low_confidence":  {"type": "boolean"}
+        "low_confidence":  {"type": "boolean"},
+        "novelty_axes": {
+          "type": ["object", "null"],
+          "required": ["phenomenon", "substrate", "predicted_direction"],
+          "properties": {
+            "phenomenon":          {"type": "string", "enum": ["known", "novel"]},
+            "substrate":           {"type": "string", "enum": ["studied_llm", "unstudied_llm", "na"]},
+            "predicted_direction": {"type": "string", "enum": ["matches", "deviates", "silent"]}
+          }
+        },
+        "verdict_overridden_from": {"type": "string"},
+        "override_reason":         {"type": "string"}
       }
     },
     "critique": {
@@ -98,11 +109,14 @@
       "properties": {
         "verdict": {
           "type": "string",
-          "enum": ["survives", "falsified", "restated", "malformed"]
+          "enum": ["survives", "falsified", "restated", "malformed", "undecidable"]
         },
         "rationale":              {"type": "string"},
         "contradicting_paper_id": {"type": ["string", "null"]},
-        "low_confidence":         {"type": "boolean"}
+        "low_confidence":         {"type": "boolean"},
+        "verdict_overridden_from": {"type": "string"},
+        "override_reason":         {"type": "string"},
+        "skeptic_verdict":         {"type": ["string", "null"]}
       }
     },
     "experiment_outcome": {

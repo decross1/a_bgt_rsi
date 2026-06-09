@@ -140,7 +140,7 @@ TOOL_SPECS: list[dict] = [
             "description": (
                 "STEP 4 of the LOOP_V0 chain. Attempt to falsify the "
                 "hypothesis using ONLY the retrieved neighbors. Returns "
-                "one of {survives, falsified, restated, malformed} with "
+                "one of {survives, falsified, restated, malformed, undecidable} with "
                 "a rationale and (for falsified/restated) the doc_id of "
                 "the contradicting neighbor. Reads neighbors from the "
                 "per-iteration cache by iteration_id — do NOT re-emit "

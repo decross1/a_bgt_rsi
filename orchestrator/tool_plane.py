@@ -40,10 +40,11 @@ Run (host side, real apparatus):
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import Body, FastAPI
+from fastapi import Body, FastAPI, Response
 
 from orchestrator.coordinator import assess_state
 from orchestrator.nara import run_iteration as _run_iteration
@@ -89,6 +90,10 @@ def _default_iteration_in_flight() -> bool:
 # HOSTNAME (raw-IP is 403 by the egress SSRF guard — see the module docstring).
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8077
+
+# MCP protocol revision this plane answers `initialize` with (streamable-HTTP,
+# JSON responses only — no SSE stream; the official SDK client accepts both).
+MCP_PROTOCOL_VERSION = "2025-03-26"
 
 
 def _tool_manifest() -> dict[str, Any]:
@@ -213,6 +218,74 @@ def create_app(
                 "low_confidence":     low_confidence,
                 "journal_entry_path": record.get("journal_entry_path"),
             },
+        }
+
+    @app.post("/mcp")
+    def mcp_endpoint(payload: dict[str, Any] = Body(...)) -> Any:
+        """MCP streamable-HTTP endpoint (JSON-RPC 2.0, plain-JSON responses).
+
+        OpenClaw 2026.5.18 registers remote MCP servers via mcp.servers
+        {url, transport: "streamable-http"} and connects with the official
+        @modelcontextprotocol/sdk client, which speaks JSON-RPC — the bare
+        REST endpoints above are not consumable by it. This handler wraps the
+        SAME two gated closures; no new capability, same server-side boundary.
+        Notifications (no id) get 202; unknown methods get -32601; tool errors
+        surface as isError content, never a 500 (never-raises discipline).
+        """
+        method = payload.get("method") if isinstance(payload, dict) else None
+        msg_id = payload.get("id") if isinstance(payload, dict) else None
+        params = payload.get("params") if isinstance(payload, dict) else None
+        params = params if isinstance(params, dict) else {}
+        if msg_id is None:  # notification (e.g. notifications/initialized)
+            return Response(status_code=202)
+
+        def _result(result: dict[str, Any]) -> dict[str, Any]:
+            return {"jsonrpc": "2.0", "id": msg_id, "result": result}
+
+        if method == "initialize":
+            return _result({
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "a_bgt_rsi-tool-plane", "version": "0"},
+            })
+        if method == "ping":
+            return _result({})
+        if method == "tools/list":
+            # MCP spells the schema key inputSchema (the REST manifest uses
+            # the Anthropic-style input_schema) — remap, content identical.
+            tools = []
+            for m in (_tool_manifest(), _run_tool_manifest()):
+                tools.append({
+                    "name": m["name"],
+                    "description": m["description"],
+                    "inputSchema": m["input_schema"],
+                })
+            return _result({"tools": tools})
+        if method == "tools/call":
+            name = params.get("name")
+            args = params.get("arguments")
+            args = args if isinstance(args, dict) else {}
+            print(f"mcp tools/call -> {name}", flush=True)  # H1 order witness (T2 PASS criterion 2)
+            try:
+                if name == TOOL_NAME:
+                    out = call_get_apparatus_state()
+                elif name == RUN_TOOL_NAME:
+                    out = call_run_loop_iteration(body=args)
+                else:
+                    return {
+                        "jsonrpc": "2.0", "id": msg_id,
+                        "error": {"code": -32602, "message": f"unknown tool: {name}"},
+                    }
+            except Exception as exc:  # never-raises discipline: isError, not 500
+                out = {"tool": name, "ok": False,
+                       "error": f"{type(exc).__name__}: {exc}"}
+            return _result({
+                "content": [{"type": "text", "text": json.dumps(out)}],
+                "isError": not out.get("ok", False),
+            })
+        return {
+            "jsonrpc": "2.0", "id": msg_id,
+            "error": {"code": -32601, "message": f"method not found: {method}"},
         }
 
     return app

@@ -34,14 +34,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from experiments.lit_falsification_battery.battery import (  # noqa: E402
+    CRITIC_ENUM,
     VERDICT_ACCURACY_BAR,
     CaseObservation,
     load_cases,
+    result_to_dict,
     score_battery,
     score_case,
 )
 
 FASE_CASE_ID = "fase_off_01_semantic_entropy"
+PBEAUTY_CASE_ID = "pbeauty_068_01_levelk"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -135,6 +138,88 @@ class ScoreCaseTest(unittest.TestCase):
         self.assertTrue(s.passed)
         self.assertFalse(s.critic_correct)  # exact-enum still reported honestly
 
+    # -- "undecidable" (T1d) ------------------------------------------------
+    def test_critic_enum_includes_undecidable(self):
+        self.assertIn("undecidable", CRITIC_ENUM)
+
+    def test_off_domain_undecidable_is_honest_tempering(self):
+        # The new fail-closed verdict: undecidable != survives, so an
+        # off-domain case with the gate fired passes the regression guard.
+        s = score_case(self._off_case(),
+                       self._obs(cid="off1", nov="unclear", crit="undecidable", low=True))
+        self.assertTrue(s.passed)
+        self.assertFalse(s.novel_or_survives)
+
+    def test_undecidable_lands_in_confusion_matrix_not_invalid(self):
+        cases = [self._off_case()]
+        obs = [self._obs(cid="off1", nov="unclear", crit="undecidable", low=True)]
+        res = score_battery(cases, obs)
+        self.assertEqual(res.critic_confusion["falsified"]["undecidable"], 1)
+        self.assertEqual(res.critic_confusion["falsified"]["<invalid>"], 0)
+
+    # -- accepted_critic (explicit label-side allowance) ---------------------
+    def test_accepted_critic_counts_as_correct(self):
+        c = self._on_case(expected_critic="restated",
+                          accepted_critic=["undecidable"],
+                          expected_novelty="rediscovery")
+        s = score_case(c, self._obs(nov="rediscovery", crit="undecidable", low=False))
+        self.assertTrue(s.critic_correct)
+        self.assertTrue(s.passed)
+
+    def test_accepted_critic_does_not_open_the_door_to_survives(self):
+        c = self._on_case(expected_critic="restated",
+                          accepted_critic=["undecidable"],
+                          expected_novelty="rediscovery")
+        s = score_case(c, self._obs(nov="rediscovery", crit="survives", low=False))
+        self.assertFalse(s.critic_correct)
+        self.assertFalse(s.passed)
+
+    # -- expected_axes soft signal -------------------------------------------
+    def test_axes_not_scored_when_case_has_no_expected_axes(self):
+        s = score_case(self._on_case(), self._obs())
+        self.assertIsNone(s.axes_correct)
+
+    def test_axes_scored_when_present_match(self):
+        c = self._on_case(expected_axes={"phenomenon": "known",
+                                         "substrate": "unstudied_llm",
+                                         "predicted_direction": "matches"})
+        o = self._obs()
+        o.novelty_axes = {"phenomenon": "known", "substrate": "unstudied_llm",
+                          "predicted_direction": "matches"}
+        s = score_case(c, o)
+        self.assertTrue(s.axes_correct)
+
+    def test_axes_mismatch_reported_but_does_not_change_pass(self):
+        # Soft secondary signal: a wrong axes decomposition is reported but
+        # never moves the locked pass bar.
+        c = self._on_case(expected_axes={"phenomenon": "known"})
+        o = self._obs()  # correct enums + gate, no axes emitted
+        s = score_case(c, o)
+        self.assertFalse(s.axes_correct)
+        self.assertTrue(s.passed)  # locked-bar pass unaffected
+
+    # -- relevance diagnostics passthrough ------------------------------------
+    def test_diagnostics_flow_from_observation_to_score_and_dict(self):
+        o = self._obs()
+        o.anchor_cosine = 0.41
+        o.mean_top3_overlap = 0.12
+        o.curated_overlap = 0.2
+        o.neighbor_spread = 0.05
+        o.max_cosine = 0.66
+        o.category = "ok"
+        o.rule_fired = None
+        s = score_case(self._on_case(), o)
+        self.assertEqual(s.anchor_cosine, 0.41)
+        self.assertEqual(s.category, "ok")
+        res = score_battery([self._on_case()], [o])
+        row = result_to_dict(res)["per_case"][0]
+        for key in ("anchor_cosine", "mean_top3_overlap", "curated_overlap",
+                    "neighbor_spread", "max_cosine", "category", "rule_fired",
+                    "axes_expected", "axes_actual", "axes_correct"):
+            self.assertIn(key, row)
+        self.assertEqual(row["anchor_cosine"], 0.41)
+        self.assertEqual(row["category"], "ok")
+
 
 # ──────────────────────────────────────────────────────────────────────
 # score_battery — roll-up arithmetic + the proposed pass bar.
@@ -209,6 +294,66 @@ class EndToEndAgainstRealCasesTest(unittest.TestCase):
         self.assertEqual(len(fase), 1, "FASE regression case missing")
         self.assertTrue(fase[0]["expect_low_confidence"])
         self.assertEqual(fase[0]["domain"], "off")
+
+    def test_t1d_expanded_case_set_invariants(self):
+        # T1d battery expansion: 12 originals + 10 new = 22, every original
+        # case_id intact, plus the new probe families.
+        self.assertGreaterEqual(len(self.cases), 22)
+        ids = {c["case_id"] for c in self.cases}
+        self.assertEqual(len(ids), len(self.cases), "duplicate case_ids")
+        for cid in ("novel_on_01_quant_lockin", "redisc_on_02_folk_theorem",
+                    "fase_off_02_db_index_tuning", "nonsense_01_word_salad",
+                    "falsifiable_01_finite_pd_cooperate"):
+            self.assertIn(cid, ids)
+        # Every case carries a rationale (defensible labels, P-009).
+        for c in self.cases:
+            self.assertTrue(str(c.get("rationale", "")).strip(),
+                            f"{c['case_id']} missing rationale")
+        # 4 vocabulary-camouflaged off-domain probes: off + gate-required.
+        camo = [c for c in self.cases if c["case_id"].startswith("camo_off_")]
+        self.assertEqual(len(camo), 4)
+        for c in camo:
+            self.assertEqual(c["domain"], "off")
+            self.assertTrue(c["expect_low_confidence"])
+        # 2 drifted-corpus-adjacent off-domain probes.
+        drift = [c for c in self.cases if c["case_id"].startswith("drift_off_")]
+        self.assertGreaterEqual(len(drift), 2)
+        for c in drift:
+            self.assertEqual(c["domain"], "off")
+            self.assertTrue(c["expect_low_confidence"])
+        # 3 over-gating canaries: on-domain, gate must stay OFF.
+        canary = [c for c in self.cases if c["case_id"].startswith("canary_on_")]
+        self.assertEqual(len(canary), 3)
+        for c in canary:
+            self.assertEqual(c["domain"], "on")
+            self.assertFalse(c["expect_low_confidence"])
+
+    def test_pbeauty_068_case_shape(self):
+        pb = [c for c in self.cases if c["case_id"] == PBEAUTY_CASE_ID]
+        self.assertEqual(len(pb), 1, "p-beauty 068-class case missing")
+        c = pb[0]
+        # NOT novel/survives: known phenomenon, corpus-gap substrate.
+        self.assertEqual(c["expected_novelty"], "rediscovery")
+        self.assertEqual(c["expected_critic"], "restated")
+        self.assertEqual(c.get("accepted_critic"), ["undecidable"])
+        self.assertNotIn("survives",
+                         [c["expected_critic"]] + list(c.get("accepted_critic") or []))
+        self.assertEqual(c.get("expected_axes"), {
+            "phenomenon": "known",
+            "substrate": "unstudied_llm",
+            "predicted_direction": "matches",
+        })
+
+    def test_axes_cases_counted_separately_from_bar(self):
+        # Oracle obs emit no novelty_axes -> the expected_axes case scores
+        # axes_correct False, reported separately; the locked bar still passes.
+        res = score_battery(self.cases, self._oracle_obs())
+        n_axes_cases = sum(1 for c in self.cases
+                           if isinstance(c.get("expected_axes"), dict))
+        self.assertEqual(res.axes_cases, n_axes_cases)
+        self.assertGreaterEqual(n_axes_cases, 1)
+        self.assertEqual(res.axes_correct_count, 0)
+        self.assertTrue(res.all_pass)  # soft signal never moves the bar
 
     def _oracle_obs(self):
         """Emit each case's expected verdicts + the expected gate state."""

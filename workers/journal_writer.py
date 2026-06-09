@@ -36,7 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 JOURNAL_DIR = REPO_ROOT / "journal" / "iterations"
 
 NOVELTY_CLASSES = ("novel", "rediscovery", "nonsense", "unclear")
-CRITIC_VERDICTS = ("survives", "falsified", "restated", "malformed")
+CRITIC_VERDICTS = ("survives", "falsified", "restated", "malformed", "undecidable")
 
 
 def _utcnow_iso() -> str:

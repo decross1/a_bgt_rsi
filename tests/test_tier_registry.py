@@ -53,11 +53,12 @@ def test_get_unknown_experiment_raises_keyerror():
 
 
 def test_heterogeneity_is_surfaced_honestly():
-    # exp001 predates analyze/loop_bridge convention.
+    # exp001 gained analyze.py + loop_bridge.py on 2026-06-09 (reverse-path
+    # limb E); the remaining honest heterogeneity is exp005.
     e1 = tr.get_experiment("exp001_repeated_pd")
     assert e1["has_run"] is True
-    assert e1["has_analyze"] is False
-    assert e1["has_loop_bridge"] is False
+    assert e1["has_analyze"] is True
+    assert e1["has_loop_bridge"] is True
     # exp005 has analyze but no loop_bridge.
     e5 = tr.get_experiment("exp005_mechanism_aware")
     assert e5["has_analyze"] is True
@@ -76,4 +77,4 @@ def test_results_summary_resolution():
 
 
 def test_tiers_status_counts():
-    assert tr.tiers_status() == {"synthetic": 4, "semi_synthetic": 1, "applied": 1}
+    assert tr.tiers_status() == {"synthetic": 5, "semi_synthetic": 1, "applied": 1}

@@ -302,3 +302,99 @@ def test_default_app_wires_real_run_iteration_without_calling_it():
     assert sig.parameters["iteration_in_flight"].default is (
         tool_plane._default_iteration_in_flight
     )
+
+
+# ── MCP streamable-HTTP endpoint (2026-06-09, T2 path-a wiring) ─────────────
+# OpenClaw 2026.5.18 consumes mcp.servers via the official MCP SDK client
+# (JSON-RPC over POST /mcp); these pin the JSON-RPC envelope around the SAME
+# gated closures the REST endpoints use.
+
+
+def _mcp_client(record=None, in_flight=False):
+    calls = {"n": 0, "topic": None, "source": None}
+
+    def _stub_run(topic, *, source=None, **kwargs):
+        calls["n"] += 1
+        calls["topic"] = topic
+        calls["source"] = source
+        return record if record is not None else _FAKE_RECORD
+
+    app = tool_plane.create_app(
+        assess=lambda: _FAKE_STATE,
+        run_iteration=_stub_run,
+        iteration_in_flight=lambda: in_flight,
+    )
+    return TestClient(app), calls
+
+
+def _rpc(client, method, params=None, msg_id=1):
+    body = {"jsonrpc": "2.0", "id": msg_id, "method": method}
+    if params is not None:
+        body["params"] = params
+    return client.post("/mcp", json=body)
+
+
+def test_mcp_initialize_returns_protocol_and_tools_capability():
+    client, _ = _mcp_client()
+    out = _rpc(client, "initialize").json()
+    assert out["jsonrpc"] == "2.0" and out["id"] == 1
+    assert out["result"]["protocolVersion"] == tool_plane.MCP_PROTOCOL_VERSION
+    assert "tools" in out["result"]["capabilities"]
+
+
+def test_mcp_notification_without_id_gets_202():
+    client, _ = _mcp_client()
+    resp = client.post(
+        "/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+    assert resp.status_code == 202
+
+
+def test_mcp_tools_list_remaps_input_schema_key():
+    client, _ = _mcp_client()
+    tools = _rpc(client, "tools/list").json()["result"]["tools"]
+    names = [t["name"] for t in tools]
+    assert names == [tool_plane.TOOL_NAME, tool_plane.RUN_TOOL_NAME]
+    for t in tools:
+        assert "inputSchema" in t and "input_schema" not in t
+    # Schema content identical to the REST manifest.
+    rest = client.get("/tools").json()["tools"]
+    assert tools[1]["inputSchema"] == rest[1]["input_schema"]
+
+
+def test_mcp_tools_call_get_apparatus_state_wraps_rest_envelope():
+    client, _ = _mcp_client()
+    out = _rpc(client, "tools/call",
+               {"name": tool_plane.TOOL_NAME, "arguments": {}}).json()
+    assert out["result"]["isError"] is False
+    inner = json.loads(out["result"]["content"][0]["text"])
+    assert inner["ok"] is True and inner["result"] == _FAKE_STATE
+
+
+def test_mcp_tools_call_run_loop_iteration_pins_nemoclaw_source():
+    client, calls = _mcp_client()
+    out = _rpc(client, "tools/call",
+               {"name": tool_plane.RUN_TOOL_NAME,
+                "arguments": {"topic": "a real GT topic"}}).json()
+    inner = json.loads(out["result"]["content"][0]["text"])
+    assert inner["ok"] is True
+    assert calls["source"] == "nemoclaw_agent"
+    assert calls["topic"] == "a real GT topic"
+
+
+def test_mcp_tools_call_run_error_surfaces_as_is_error_not_500():
+    client, calls = _mcp_client(in_flight=True)
+    out = _rpc(client, "tools/call",
+               {"name": tool_plane.RUN_TOOL_NAME,
+                "arguments": {"topic": "t"}}).json()
+    assert out["result"]["isError"] is True
+    inner = json.loads(out["result"]["content"][0]["text"])
+    assert inner["error"] == "iteration_in_flight"
+    assert calls["n"] == 0
+
+
+def test_mcp_unknown_tool_and_method_yield_jsonrpc_errors():
+    client, _ = _mcp_client()
+    out = _rpc(client, "tools/call", {"name": "nope", "arguments": {}}).json()
+    assert out["error"]["code"] == -32602
+    out2 = _rpc(client, "resources/list").json()
+    assert out2["error"]["code"] == -32601

@@ -51,6 +51,18 @@ Output (consumed by `novelty_classify` / `critic_loop_v0`, cached on
                        the verdict workers MUST temper (never assert
                        novel/survives).
   - `reason`         — short human-readable explanation of the verdict.
+
+Those three keys are FROZEN (UI join contract, commit 0fdb671). The T1a
+refinement (2026-06-09 evening) adds ADDITIVE diagnostic keys:
+  - `anchor_cosine`   — float|None; hypothesis↔GT-domain-anchor cosine as
+                        passed in by the caller (None = unavailable).
+  - `curated_overlap` — float|None; mean top-3 lexical overlap over
+                        foundational-layer neighbors only.
+  - `neighbor_spread` — float|None; max-min of the top-10 neighbor scores.
+  - `topicality`      — "on"|"off"|"unsure"|None; the caller-computed LLM
+                        domain judgment (orchestrator/topicality.py). R0.
+  - `category`        — "off_domain"|"thin"|"no_sharp_match"|"empty"|"ok".
+  - `rule_fired`      — str|None; first rule in the R0..R5 ladder that fired.
 """
 from __future__ import annotations
 
@@ -77,6 +89,38 @@ WEAK_COSINE_THRESHOLD = 0.55
 
 # How many top neighbors feed the overlap mean.
 TOP_N_FOR_OVERLAP = 3
+
+# ---- T1a anchor + spread rules (R3/R4/R5) — SHIPPED DISABLED ----------------
+#
+# The 2026-06-09 falsification battery showed the lexical gate is
+# vocabulary-gameable (off-domain probes at overlap 0.127 / 0.193 sail
+# through; the real bug was 0.043), and the iteration-068 review showed a
+# top-10 neighbor score spread of 0.027 at moderate absolute similarity
+# (0.604-0.631) is the signature of "no sharp match — query landed near a
+# cluster centroid", which must flag rather than read as confident
+# retrieval. Two new signals close those holes:
+#
+#   - anchor_cosine: hypothesis ↔ GT-domain-anchor cosine, computed by the
+#     CALLER via orchestrator/domain_anchor.py and passed in (this function
+#     stays pure — no embedding here). Rules R3 (hard off-domain) and R4
+#     (borderline anchor + weak lexical corroboration).
+#   - neighbor_spread: max-min of the top-10 neighbor scores. Rule R5
+#     (no-sharp-match) fires on a tight spread at sub-SPREAD_COSINE_CEIL
+#     absolute similarity.
+#
+# ANCHOR_LOW / ANCHOR_BORDERLINE / SPREAD_MAX ship as None: R3/R4/R5 are
+# INERT until the INTEGRATOR sets them, and ONLY after calibration against
+# a varied probe set — never a single instance (P-009). With them None and
+# anchor_cosine=None the function reduces exactly to the legacy lexical
+# gate. INVARIANT: the anchor only CONDEMNS, never rescues — R1/R2 are
+# evaluated first and a high anchor cosine cannot suppress them.
+ANCHOR_LOW = None          # R3: anchor_cosine < ANCHOR_LOW -> off_domain
+ANCHOR_BORDERLINE = None   # R4: borderline anchor + weak lexical corroboration -> thin
+SPREAD_MAX = None          # R5: top-10 score spread below this -> no_sharp_match
+SPREAD_COSINE_CEIL = 0.66  # R5 also requires max cosine below this ceiling
+
+# How many top neighbors feed the spread diagnostic.
+TOP_N_FOR_SPREAD = 10
 
 # Token cleaning. Domain-agnostic English stopwords plus a few game-theory
 # words that recur in nearly every foundational neighbor regardless of the
@@ -114,40 +158,165 @@ def _neighbor_overlap(hyp_tokens: set[str], neighbor: dict) -> float:
     return len(hyp_tokens & n_tokens) / len(hyp_tokens)
 
 
+def _out(
+    rel: float,
+    low: bool,
+    reason: str,
+    category: str,
+    rule: str | None,
+    diag: dict[str, Any],
+) -> dict[str, Any]:
+    """Assemble the output dict: the three FROZEN keys (UI join contract,
+    commit 0fdb671) plus the additive diagnostic keys."""
+    return {
+        "relevance": rel,
+        "low_confidence": low,
+        "reason": reason,
+        "anchor_cosine": diag["anchor_cosine"],
+        "curated_overlap": diag["curated_overlap"],
+        "neighbor_spread": diag["neighbor_spread"],
+        "topicality": diag.get("topicality"),
+        "category": category,
+        "rule_fired": rule,
+    }
+
+
+def _condemn(
+    anchor: float | None,
+    mean_overlap: float | None,
+    curated: float | None,
+    spread: float | None,
+    max_cosine: float,
+    n_neighbors: int,
+) -> tuple[str, str, str] | None:
+    """Evaluate the condemn-only rules R3/R4/R5 (in ladder order). Returns
+    (rule, category, reason) for the first that fires, else None. All three
+    are inert while their gating constants are None (shipped state)."""
+    # R3: hard off-domain by anchor — the hypothesis itself does not live in
+    # the curated domain, regardless of how its neighbors read lexically.
+    if anchor is not None and ANCHOR_LOW is not None and anchor < ANCHOR_LOW:
+        return ("R3", "off_domain", (
+            f"off-domain by domain anchor: hypothesis-to-GT-anchor cosine "
+            f"{anchor:.3f} < {ANCHOR_LOW} — lexical overlap cannot rescue a "
+            f"hypothesis that does not live in the curated domain."
+        ))
+    # R4: borderline anchor, corroborated by weak lexical signal — overall
+    # mean top-3 overlap under 0.10 OR curated(foundational-only) overlap
+    # under 0.05.
+    if (
+        anchor is not None and ANCHOR_BORDERLINE is not None
+        and anchor < ANCHOR_BORDERLINE
+        and (
+            (mean_overlap is not None and mean_overlap < 2 * LOW_OVERLAP_THRESHOLD)
+            or (curated is not None and curated < LOW_OVERLAP_THRESHOLD)
+        )
+    ):
+        mo = "n/a" if mean_overlap is None else f"{mean_overlap:.3f}"
+        co = "n/a" if curated is None else f"{curated:.3f}"
+        return ("R4", "thin", (
+            f"thin by domain anchor: borderline anchor cosine {anchor:.3f} < "
+            f"{ANCHOR_BORDERLINE} with weak lexical corroboration (mean top-"
+            f"{TOP_N_FOR_OVERLAP} overlap {mo}, curated-foundational overlap {co})."
+        ))
+    # R5: no sharp match — a tight top-10 score spread at moderate absolute
+    # similarity means the query landed near a cluster centroid, not on a
+    # genuinely matching chunk (iteration-068 fingerprint: spread 0.027 over
+    # scores 0.604-0.631).
+    if (
+        SPREAD_MAX is not None and SPREAD_COSINE_CEIL is not None
+        and n_neighbors >= 8 and spread is not None
+        and spread < SPREAD_MAX and max_cosine < SPREAD_COSINE_CEIL
+    ):
+        return ("R5", "no_sharp_match", (
+            f"no sharp match: top-{min(n_neighbors, TOP_N_FOR_SPREAD)} neighbor "
+            f"score spread {spread:.3f} < {SPREAD_MAX} at moderate similarity "
+            f"(max cosine {max_cosine:.3f} < {SPREAD_COSINE_CEIL}) — the query "
+            f"landed near a cluster centroid, not on a matching chunk."
+        ))
+    return None
+
+
 def relevance(
     neighbors: list[dict] | None,
     hypothesis_text: str | None = None,
+    *,
+    anchor_cosine: float | None = None,
+    topicality: str | None = None,
 ) -> dict[str, Any]:
     """Score how topically relevant a retrieval set is to the hypothesis.
 
     Pure + cheap: reads the cosine `score` already on each neighbor and the
     lexical overlap between the hypothesis and each neighbor's text. No new
-    embedding, no LLM call.
+    embedding, no LLM call — `anchor_cosine` is computed by the CALLER
+    (orchestrator/domain_anchor.py) and passed in.
 
     Args:
         neighbors: the `retrieval.neighbors` list (each a dict with at least
-            `score`, and ideally `chunk_text` / `title`). None or [] -> the
-            empty-retrieval case (low_confidence True).
+            `score`, and ideally `chunk_text` / `title` / `source_layer`).
+            None or [] -> the empty-retrieval case (low_confidence True).
         hypothesis_text: the hypothesis under test. When absent/empty the
             lexical signal can't be computed and the function falls back to
             the cosine-only signal (and says so in `reason`).
+        anchor_cosine: hypothesis-to-GT-domain-anchor cosine, or None when
+            unavailable (MOCK_LLM / anchor not built / embed failure). None
+            reduces EXACTLY to legacy behavior — anchor rules never fire.
 
-    Returns:
-        {"relevance": float in [0,1], "low_confidence": bool, "reason": str}
+    Returns (frozen keys first, additive keys after):
+        {"relevance": float in [0,1], "low_confidence": bool, "reason": str,
+         "anchor_cosine": float|None, "curated_overlap": float|None,
+         "neighbor_spread": float|None, "topicality": str|None,
+         "category": "off_domain"|"thin"|"no_sharp_match"|"empty"|"ok",
+         "rule_fired": str|None}
+
+    Rule ladder (low_confidence = any fired; rule_fired = first fired):
+        R0 topicality == "off"                     -> off_domain (LLM check)
+        R1 overlap < 0.05                          -> off_domain (legacy)
+        R2 maxcos < 0.55 and overlap < 0.10        -> thin       (legacy)
+        R3 anchor < ANCHOR_LOW                     -> off_domain
+        R4 anchor < ANCHOR_BORDERLINE + weak lex   -> thin
+        R5 tight top-10 spread at maxcos < ceiling -> no_sharp_match
+    The legacy cosine-only fallback (no text signal, weak max cosine) keeps
+    category "thin" with rule_fired None — it predates the ladder.
+
+    topicality is an explicit LLM domain judgment computed by the caller
+    (orchestrator/topicality.py): "on" | "off" | "unsure" | None. Added
+    2026-06-09 after BOTH corpus-derived anchor variants were falsified as
+    separators (calibration gap -0.079 / -0.075: a genuinely novel
+    on-domain hypothesis is far from the corpus BY DEFINITION, same as a
+    camouflaged off-domain one — distance-to-known-content conflates the
+    two). Only the literal "off" condemns; "unsure"/None never gate
+    (over-gating guard — the canary cases are part of the battery bar).
     """
+    # --- R0: explicit LLM topicality judgment (condemn-only, like the anchor)
+    if topicality == "off":
+        return _out(
+            0.0, True,
+            "off-domain hypothesis (LLM topicality check): the claim is not "
+            "primarily a game-theory / behavioral-GT / learning-in-games "
+            "question, so this corpus cannot ground novelty or survival.",
+            "off_domain", "R0",
+            {"anchor_cosine": anchor_cosine, "curated_overlap": None,
+             "neighbor_spread": None, "topicality": topicality},
+        )
     # --- empty / malformed retrieval: cannot be a basis for novel/survives ---
     if not isinstance(neighbors, list) or len(neighbors) == 0:
-        return {
-            "relevance": 0.0,
-            "low_confidence": True,
-            "reason": "empty retrieval (0 neighbors); no basis to assert novelty or survival",
-        }
+        return _out(
+            0.0, True,
+            "empty retrieval (0 neighbors); no basis to assert novelty or survival",
+            "empty", None,
+            {"anchor_cosine": anchor_cosine, "curated_overlap": None,
+             "neighbor_spread": None, "topicality": topicality},
+        )
 
     scores = [
         n.get("score") for n in neighbors
         if isinstance(n, dict) and isinstance(n.get("score"), (int, float))
     ]
     max_cosine = max(scores) if scores else 0.0
+    top_scores = sorted(scores, reverse=True)[:TOP_N_FOR_SPREAD]
+    neighbor_spread = (
+        round(top_scores[0] - top_scores[-1], 4) if top_scores else None
+    )
 
     hyp_tokens = _tokenize(hypothesis_text)
     have_text_signal = bool(hyp_tokens) and any(
@@ -155,66 +324,86 @@ def relevance(
         for n in neighbors if isinstance(n, dict)
     )
 
+    mean_top_overlap: float | None = None
+    curated_overlap: float | None = None
     if have_text_signal:
         overlaps = sorted(
             (_neighbor_overlap(hyp_tokens, n) for n in neighbors), reverse=True
         )
         top = overlaps[:TOP_N_FOR_OVERLAP]
         mean_top_overlap = sum(top) / len(top)
+        # Curated overlap: foundational-source neighbors only. The live
+        # layers can lexically echo a gamed hypothesis; the human-curated
+        # corpus is the harder-to-game reference.
+        curated = sorted(
+            (_neighbor_overlap(hyp_tokens, n) for n in neighbors
+             if isinstance(n, dict) and n.get("source_layer") == "foundational"),
+            reverse=True,
+        )
+        if curated:
+            top_c = curated[:TOP_N_FOR_OVERLAP]
+            curated_overlap = round(sum(top_c) / len(top_c), 4)
+
+    diag = {
+        "anchor_cosine": anchor_cosine,
+        "curated_overlap": curated_overlap,
+        "neighbor_spread": neighbor_spread,
+        "topicality": topicality,
+    }
+
+    if have_text_signal:
         # Blend overlap (primary) with cosine (secondary), clamped to [0,1].
         rel = round(min(1.0, 0.7 * (mean_top_overlap / LOW_OVERLAP_THRESHOLD * 0.5)
                         + 0.3 * max(0.0, max_cosine)), 4)
-        low_overlap = mean_top_overlap < LOW_OVERLAP_THRESHOLD
-        weak_cosine = max_cosine < WEAK_COSINE_THRESHOLD
-        if low_overlap:
-            return {
-                "relevance": rel,
-                "low_confidence": True,
-                "reason": (
-                    f"off-domain retrieval: hypothesis shares almost no vocabulary "
-                    f"with its neighbors (mean top-{len(top)} lexical overlap "
-                    f"{mean_top_overlap:.3f} < {LOW_OVERLAP_THRESHOLD}; "
-                    f"max cosine {max_cosine:.3f}). 'No contradiction in an "
-                    f"irrelevant corpus' is not 'survives'."
-                ),
-            }
-        if weak_cosine and mean_top_overlap < 2 * LOW_OVERLAP_THRESHOLD:
+        # R1/R2 FIRST — the anchor only condemns, never rescues: a high
+        # anchor_cosine must not suppress the legacy lexical rules.
+        if mean_top_overlap < LOW_OVERLAP_THRESHOLD:
+            return _out(rel, True, (
+                f"off-domain retrieval: hypothesis shares almost no vocabulary "
+                f"with its neighbors (mean top-{len(top)} lexical overlap "
+                f"{mean_top_overlap:.3f} < {LOW_OVERLAP_THRESHOLD}; "
+                f"max cosine {max_cosine:.3f}). 'No contradiction in an "
+                f"irrelevant corpus' is not 'survives'."
+            ), "off_domain", "R1", diag)
+        if max_cosine < WEAK_COSINE_THRESHOLD and mean_top_overlap < 2 * LOW_OVERLAP_THRESHOLD:
             # Borderline on both signals — thin but not a clean outlier.
-            return {
-                "relevance": rel,
-                "low_confidence": True,
-                "reason": (
-                    f"thin retrieval: borderline lexical overlap "
-                    f"(mean top-{len(top)} {mean_top_overlap:.3f}) and weak cosine "
-                    f"(max {max_cosine:.3f} < {WEAK_COSINE_THRESHOLD})."
-                ),
-            }
-        return {
-            "relevance": rel,
-            "low_confidence": False,
-            "reason": (
-                f"on-domain retrieval: mean top-{len(top)} lexical overlap "
-                f"{mean_top_overlap:.3f} >= {LOW_OVERLAP_THRESHOLD}, "
-                f"max cosine {max_cosine:.3f}."
-            ),
-        }
+            return _out(rel, True, (
+                f"thin retrieval: borderline lexical overlap "
+                f"(mean top-{len(top)} {mean_top_overlap:.3f}) and weak cosine "
+                f"(max {max_cosine:.3f} < {WEAK_COSINE_THRESHOLD})."
+            ), "thin", "R2", diag)
+        hit = _condemn(anchor_cosine, mean_top_overlap, curated_overlap,
+                       neighbor_spread, max_cosine, len(neighbors))
+        if hit is not None:
+            rule, category, reason = hit
+            return _out(rel, True, reason, category, rule, diag)
+        return _out(rel, False, (
+            f"on-domain retrieval: mean top-{len(top)} lexical overlap "
+            f"{mean_top_overlap:.3f} >= {LOW_OVERLAP_THRESHOLD}, "
+            f"max cosine {max_cosine:.3f}."
+        ), "ok", None, diag)
 
     # --- no lexical signal: fall back to cosine-only (rule 7: explicit) ------
     rel = round(max(0.0, min(1.0, max_cosine)), 4)
-    weak = max_cosine < WEAK_COSINE_THRESHOLD
     why = (
         "(no hypothesis/neighbor text available; cosine-only relevance) "
         if hypothesis_text else
         "(no hypothesis text supplied; cosine-only relevance) "
     )
-    if weak:
-        return {
-            "relevance": rel,
-            "low_confidence": True,
-            "reason": why + f"weak max cosine {max_cosine:.3f} < {WEAK_COSINE_THRESHOLD}.",
-        }
-    return {
-        "relevance": rel,
-        "low_confidence": False,
-        "reason": why + f"max cosine {max_cosine:.3f} >= {WEAK_COSINE_THRESHOLD}.",
-    }
+    # R3/R5 can still condemn without text (R4 needs a lexical signal).
+    hit = _condemn(anchor_cosine, None, None,
+                   neighbor_spread, max_cosine, len(neighbors))
+    if hit is not None:
+        rule, category, reason = hit
+        return _out(rel, True, why + reason, category, rule, diag)
+    if max_cosine < WEAK_COSINE_THRESHOLD:
+        return _out(
+            rel, True,
+            why + f"weak max cosine {max_cosine:.3f} < {WEAK_COSINE_THRESHOLD}.",
+            "thin", None, diag,
+        )
+    return _out(
+        rel, False,
+        why + f"max cosine {max_cosine:.3f} >= {WEAK_COSINE_THRESHOLD}.",
+        "ok", None, diag,
+    )
