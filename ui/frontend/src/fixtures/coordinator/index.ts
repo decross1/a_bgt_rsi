@@ -250,3 +250,154 @@ export const ITERATIONS_COORD_FIXTURE: IterationRecord[] = [
       "Nara: candidate refinement of level-k convergence rates; well-supported by on-topic retrieval.",
   },
 ];
+
+// 2026-06-09 evening additions (close-out: docs/ui_validation_handoff.md) — the
+// additive observability fields the EMIT side now produces. A SEPARATE export:
+// ITERATIONS_COORD_FIXTURE's exact 3-row composition is pinned by existing
+// tests (red-flag percentages, badge counts) and must not change. Three rows:
+//   (i)   the skeptic-refuted UNDECIDABLE: critique verdict "undecidable" with
+//         verdict_overridden_from/override_reason/skeptic_verdict (EMIT:
+//         workers/critic_loop_v0.py `_maybe_run_skeptic`, NARA_SKEPTIC=1).
+//   (ii)  novelty_axes populated (EMIT: workers/novelty_classify.py) on an
+//         otherwise clean novel/survives row.
+//   (iii) the FULL new relevance diagnostic block — category "off_domain",
+//         rule_fired "R1", low_confidence true — plus the novelty-side
+//         low-confidence override (novel -> unclear, axes preserved).
+export const ITERATIONS_OBSERVABILITY_FIXTURE: IterationRecord[] = [
+  {
+    iteration_id: "iter-2026-06-09-101",
+    started_at: "2026-06-09T17:00:00Z",
+    ended_at: "2026-06-09T17:02:40Z",
+    seed: {
+      topic: "History masking shifts Stag Hunt convergence in LLM agents",
+      source: "nemoclaw_agent",
+    },
+    retrieval: {
+      k: 8,
+      relevance: {
+        relevance: 0.92,
+        low_confidence: false,
+        reason:
+          "on-domain retrieval: mean top-3 lexical overlap 0.126 >= 0.05, max cosine 0.684.",
+        anchor_cosine: 0.71,
+        curated_overlap: 0.118,
+        neighbor_spread: 0.092,
+        category: "ok",
+        rule_fired: null,
+      },
+    },
+    novelty: {
+      class: "novel",
+      rationale:
+        "No retrieved neighbor links history transparency to Stag Hunt convergence in LLM agents.",
+      top_neighbor_id: "evolutionary-game-theory_compress-chunk-195",
+      low_confidence: false,
+      novelty_axes: {
+        phenomenon: "novel",
+        substrate: "unstudied_llm",
+        predicted_direction: "silent",
+      },
+    },
+    critique: {
+      verdict: "undecidable",
+      rationale:
+        "The provided corpus contains no contradiction, but an independent skeptic retrieval surfaced a directly opposing convergence result.",
+      contradicting_paper_id: null,
+      low_confidence: false,
+      verdict_overridden_from: "survives",
+      override_reason:
+        "skeptic attack_verdict='refuted': independent retrieval found Young (1993) chunk contradicting the predicted risk-dominance shift.",
+      skeptic_verdict: "refuted",
+    },
+    journal_entry_path: "journal/iterations/009.md",
+    nara_summary:
+      "Nara: survives the shared-neighbor critic, but the independent skeptic refuted it — verdict downgraded to undecidable (fails closed).",
+  },
+  {
+    iteration_id: "iter-2026-06-09-102",
+    started_at: "2026-06-09T17:10:00Z",
+    ended_at: "2026-06-09T17:12:15Z",
+    seed: {
+      topic: "Transparency drives LLM agents from payoff- to risk-dominance",
+      source: "coordinator",
+    },
+    retrieval: {
+      k: 8,
+      relevance: {
+        relevance: 0.88,
+        low_confidence: false,
+        reason:
+          "on-domain retrieval: mean top-3 lexical overlap 0.175 >= 0.05, max cosine 0.621.",
+        anchor_cosine: 0.66,
+        curated_overlap: 0.131,
+        neighbor_spread: 0.114,
+        category: "ok",
+        rule_fired: null,
+      },
+    },
+    novelty: {
+      class: "novel",
+      rationale:
+        "Neighbors cover risk dominance and history-based learning separately; the causal link for LLM agents is unaddressed.",
+      top_neighbor_id: "young_1993-chunk-14",
+      low_confidence: false,
+      novelty_axes: {
+        phenomenon: "known",
+        substrate: "unstudied_llm",
+        predicted_direction: "matches",
+      },
+    },
+    critique: { verdict: "survives", low_confidence: false },
+    journal_entry_path: "journal/iterations/010.md",
+    nara_summary:
+      "Nara: a known phenomenon on an unstudied LLM substrate — novel by axes, survives critique on on-domain retrieval.",
+  },
+  {
+    iteration_id: "iter-2026-06-09-103",
+    started_at: "2026-06-09T17:20:00Z",
+    ended_at: "2026-06-09T17:22:50Z",
+    seed: {
+      topic: "Off-domain: semantic-entropy gating for CI pipelines",
+      source: "arxiv_pick",
+    },
+    retrieval: {
+      k: 8,
+      relevance: {
+        relevance: 0.05,
+        low_confidence: true,
+        reason:
+          "off-domain retrieval: hypothesis shares almost no vocabulary with its neighbors (mean top-3 lexical overlap 0.043 < 0.05; max cosine 0.612). 'No contradiction in an irrelevant corpus' is not 'survives'.",
+        anchor_cosine: 0.34,
+        curated_overlap: 0.012,
+        neighbor_spread: 0.027,
+        category: "off_domain",
+        rule_fired: "R1",
+      },
+    },
+    novelty: {
+      class: "unclear",
+      rationale:
+        "No neighbor addresses semantic-entropy gating — but the corpus is game theory; the omission is not evidence of novelty.",
+      top_neighbor_id: null,
+      low_confidence: true,
+      novelty_axes: {
+        phenomenon: "novel",
+        substrate: "unstudied_llm",
+        predicted_direction: "silent",
+      },
+      verdict_overridden_from: "novel",
+      override_reason:
+        "low-confidence retrieval (off-domain retrieval: hypothesis shares almost no vocabulary with its neighbors); 'novel' downgraded to 'unclear' — an omission in an off-topic corpus is not novelty",
+    },
+    critique: {
+      verdict: "survives",
+      rationale:
+        "The retrieved game-theory literature contains nothing about CI pipelines, so nothing contradicts the hypothesis.",
+      contradicting_paper_id: null,
+      low_confidence: true,
+    },
+    journal_entry_path: "journal/iterations/011.md",
+    nara_summary:
+      "Nara: no close neighbor found, but retrieval was off-domain (R1) — the novelty verdict was overridden to unclear.",
+  },
+];

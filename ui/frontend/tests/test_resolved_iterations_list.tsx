@@ -15,7 +15,10 @@ import {
 } from "@testing-library/react";
 import ResolvedIterationsList from "../src/components/ResolvedIterationsList";
 import { ITERATIONS_FIXTURE } from "../src/fixtures/loop_v0";
-import { ITERATIONS_COORD_FIXTURE } from "../src/fixtures/coordinator";
+import {
+  ITERATIONS_COORD_FIXTURE,
+  ITERATIONS_OBSERVABILITY_FIXTURE,
+} from "../src/fixtures/coordinator";
 import type { IterationRecord } from "../src/types/schemas";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -735,6 +738,19 @@ describe("ResolvedIterationsList — coordinator provenance + low-evidence", () 
     const flags = screen.getAllByTestId("low-evidence-badge");
     expect(flags).toHaveLength(1);
     expect(flags[0].className).toContain("amber");
+  });
+
+  it("wires NoveltyAxesChip into the row: every ITERATIONS_OBSERVABILITY_FIXTURE row shows its axes chip", () => {
+    // Presence check only — the chip's own behavior (tone, transfer-bucket
+    // cyan, garbage handling) is fully pinned in test_novelty_axes_chip.tsx.
+    // All three observability-fixture rows carry novelty_axes.
+    render(
+      <ResolvedIterationsList initial={ITERATIONS_OBSERVABILITY_FIXTURE} />,
+    );
+    const list = within(screen.getByRole("list"));
+    expect(list.getAllByTestId("novelty-axes-chip")).toHaveLength(
+      ITERATIONS_OBSERVABILITY_FIXTURE.length,
+    );
   });
 
   it("badges a human-seeded row as 'human', not 'coordinator', and flags no low-evidence", () => {

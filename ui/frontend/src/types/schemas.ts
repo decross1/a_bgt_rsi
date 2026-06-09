@@ -250,17 +250,69 @@ export interface IterationRecord {
       relevance?: number;
       low_confidence?: boolean;
       reason?: string;
+      // Additive diagnostics (EMIT: workers/retrieval_relevance.py `_out`,
+      // close-out 2026-06-09 evening additions). The three keys above are
+      // FROZEN (UI join contract, commit 0fdb671); these five are optional
+      // and absent on rows written before the diagnostic ladder landed.
+      // `anchor_cosine` is the hypothesis↔GT-domain-anchor cosine (null
+      // under MOCK_LLM or when no anchor is usable); `rule_fired` is the
+      // first R1..R5 ladder rule that fired (null when none did — note
+      // R3/R4/R5 ship inert until their constants are calibrated).
+      anchor_cosine?: number | null;
+      curated_overlap?: number | null;
+      neighbor_spread?: number | null;
+      category?: "off_domain" | "thin" | "no_sharp_match" | "empty" | "ok" | string;
+      rule_fired?: string | null;
     } | null;
   } | null;
   novelty?: {
     class?: "novel" | "rediscovery" | "nonsense" | "unclear" | string;
     rationale?: string;
     top_neighbor_id?: string | null;
+    // Set true when the underlying retrieval was thin/off-domain (EMIT:
+    // workers/novelty_classify.py; live since 2026-06-09; absent on older rows).
+    low_confidence?: boolean;
+    // Decomposed novelty judgment (EMIT: workers/novelty_classify.py, close-out
+    // 2026-06-09 evening additions). Null on sentinel/legacy outputs — the
+    // producer emits an explicit null, so model `| null` as well as absent.
+    novelty_axes?: {
+      phenomenon?: "known" | "novel" | string;
+      substrate?: "studied_llm" | "unstudied_llm" | "na" | string;
+      predicted_direction?: "matches" | "deviates" | "silent" | string;
+    } | null;
+    // Present only when a deterministic override fired (e.g. low-confidence
+    // retrieval downgraded a derived "novel" to "unclear"). Render as plain
+    // strings; absent on legacy rows.
+    verdict_overridden_from?: string;
+    override_reason?: string;
+    // Declared on both blocks per the close-out; today only critic_loop_v0
+    // actually emits it (the novelty producer does not run the skeptic).
+    skeptic_verdict?: string | null;
   } | null;
   critique?: {
-    verdict?: "survives" | "falsified" | "restated" | "malformed" | string;
+    // "undecidable" added 2026-06-09 (EMIT: workers/critic_loop_v0.py) —
+    // fails closed; every consumer gates on `== "survives"`. Render it as a
+    // plain string chip like the other verdicts.
+    verdict?:
+      | "survives"
+      | "falsified"
+      | "restated"
+      | "malformed"
+      | "undecidable"
+      | string;
     rationale?: string;
     contradicting_paper_id?: string | null;
+    // Set true when the underlying retrieval was thin/off-domain (EMIT:
+    // workers/critic_loop_v0.py; live since 2026-06-09; absent on older rows).
+    low_confidence?: boolean;
+    // Present only when a deterministic override fired (coverage bar,
+    // low-confidence hard rule, or skeptic refutation — EMIT:
+    // workers/critic_loop_v0.py, close-out 2026-06-09 evening additions).
+    verdict_overridden_from?: string;
+    override_reason?: string;
+    // Present only when the β skeptic-gate seam ran (env NARA_SKEPTIC=1,
+    // D-041); may be null when the attack returned no verdict.
+    skeptic_verdict?: string | null;
   } | null;
   // Loop v1 Step 1.5: conditioning synthesis from prior loop memory. The
   // bullets are injected into this iteration's initial message. Absent on

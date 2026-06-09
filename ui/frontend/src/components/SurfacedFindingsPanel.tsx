@@ -34,6 +34,13 @@ const VERDICT_TONE: Record<string, string> = {
   restated: "bg-amber-950 text-amber-400",
   falsified: "bg-red-950 text-red-400",
   malformed: "bg-red-950 text-red-400",
+  // "undecidable" (close-out 2026-06-09) fails closed — "could not be judged
+  // on this retrieval", never promotes. A DELIBERATE quiet-grey entry, not the
+  // unknown-enum fallback: same quiet lane (no emerald/red/amber alarm), the
+  // /40 translucency marks it as intentional. Mirrors ResolvedIterationsList;
+  // the forward-compat pins (test_forwardcompat_findings_panel) require the
+  // bg-zinc-800 quiet family.
+  undecidable: "bg-zinc-800/40 text-zinc-400",
 };
 const QUIET_TONE = "bg-zinc-800 text-zinc-400";
 
@@ -84,12 +91,30 @@ function firstText(...candidates: unknown[]): string | null {
   return null;
 }
 
+// Skeptic-gate override provenance (close-out 2026-06-09): a promotion EMIT
+// may copy verdict_overridden_from / skeptic_verdict onto the finding row
+// (flat, via the index signature; absent on legacy rows). Surface them as a
+// title tooltip on the critic-verdict badge — tooltip only, no new chip.
+// Producer-owned: a garbled field (object/array) is dropped via asText so
+// "[object Object]" can never land in the title attribute. Returns undefined
+// (no tooltip) when neither field is usable.
+function overrideTooltip(finding: SurfacedFinding): string | undefined {
+  const from = asText(finding.verdict_overridden_from);
+  const skeptic = asText(finding.skeptic_verdict);
+  const parts: string[] = [];
+  if (from && from.trim() !== "") parts.push(`overridden from ${from}`);
+  if (skeptic && skeptic.trim() !== "") parts.push(`skeptic said ${skeptic}`);
+  return parts.length > 0 ? parts.join("; ") : undefined;
+}
+
 function Badge({
   text,
   tone,
+  title,
 }: {
   text: string | null | undefined;
   tone: string;
+  title?: string;
 }) {
   // A producer may type novelty_class/critic_verdict as a number or object;
   // asText keeps a scalar (rendered) and drops an object (would throw).
@@ -97,6 +122,7 @@ function Badge({
   if (!label) return null;
   return (
     <span
+      title={title}
       className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${tone}`}
     >
       {label}
@@ -202,6 +228,7 @@ export default function SurfacedFindingsPanel({
                 <Badge
                   text={finding.critic_verdict}
                   tone={toneFor(VERDICT_TONE, finding.critic_verdict)}
+                  title={overrideTooltip(finding)}
                 />
                 {asText(finding.source_iteration_id) && (
                   <span className="font-mono text-zinc-400">

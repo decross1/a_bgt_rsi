@@ -15,12 +15,14 @@
 //     category ("off_domain"|"thin"|"no_sharp_match"|"empty"|"ok"), rule_fired
 //     (string|null).
 //
-// The list consumes ONLY novelty.class, critique.verdict, and (via
-// LowEvidenceBadge) relevance.low_confidence + relevance.reason; the prior
-// hardening (toneFor own-key lookup, badgeText scalar coercion) absorbs the new
-// enum value and the new siblings. These tests are the announced-contract
-// regression PIN: new rows render, "undecidable" gets the quiet fallback badge,
-// the novelty_axes OBJECT never reaches a React child, LowEvidenceBadge stays
+// The list consumes novelty.class, critique.verdict, novelty.novelty_axes
+// (via NoveltyAxesChip — wired by WF-B 2026-06-09 evening; renders the three
+// axes as plain strings, never the object), and (via LowEvidenceBadge)
+// relevance.low_confidence + relevance.reason; the prior hardening (toneFor
+// own-key lookup, badgeText scalar coercion) absorbs the new enum value and
+// the new siblings. These tests are the announced-contract regression PIN:
+// new rows render, "undecidable" gets the quiet fallback badge, the
+// novelty_axes OBJECT never reaches a React child, LowEvidenceBadge stays
 // driven by low_confidence (not the new category field), and garbled variants
 // of every new field degrade silently. Idiom mirrors
 // test_harden_ResolvedIterationsList (initial= prop short-circuits the fetch
@@ -105,7 +107,7 @@ describe("ResolvedIterationsList forward-compat — announced 2026-06-09 additiv
     expect(badge.className).not.toContain("red-950");
   });
 
-  it("(b) novelty carrying the novelty_axes OBJECT alongside class: list reads class; axes never leak into a React child", () => {
+  it("(b) novelty carrying the novelty_axes OBJECT alongside class: class badge + NoveltyAxesChip strings; the OBJECT never reaches a React child", () => {
     const withAxes = {
       iteration_id: "iter-axes",
       started_at: "2026-06-09T11:10:00Z",
@@ -128,13 +130,13 @@ describe("ResolvedIterationsList forward-compat — announced 2026-06-09 additiv
     // The legacy derived class still drives the badge…
     const row = screen.getByLabelText(/load journal iter-axes/);
     expect(within(row).getByText("novel")).toBeInTheDocument();
-    // …and the axes OBJECT does not reach React's child renderer or leak its
-    // members into the row text (this surface does not render axes — that is a
-    // later, gated task).
+    // …and the axes now render THROUGH NoveltyAxesChip as plain strings (the
+    // gated render task landed 2026-06-09 evening, WF-B; original pin said
+    // "later, gated task" — coordinated relax by the serial integrator). The
+    // raw OBJECT must still never reach React's child renderer.
+    const chip = within(row).getByTestId("novelty-axes-chip");
+    expect(chip).toHaveTextContent("axes: novel/unstudied_llm/deviates");
     expect(container.innerHTML).not.toMatch(/object Object/);
-    expect(row.textContent ?? "").not.toMatch(/unstudied_llm/);
-    expect(row.textContent ?? "").not.toMatch(/deviates/);
-    expect(row.textContent ?? "").not.toMatch(/phenomenon/);
   });
 
   it("(c) retrieval.relevance with ALL five new siblings: row renders; LowEvidenceBadge stays driven by low_confidence", () => {
@@ -274,6 +276,9 @@ describe("ResolvedIterationsList forward-compat — announced 2026-06-09 additiv
     const row = screen.getByLabelText(/load journal iter-garbled/);
     // verdict badge still renders; none of the garbled siblings leak.
     expect(within(row).getByText("undecidable")).toBeInTheDocument();
+    // a string-valued novelty_axes is not an object → NoveltyAxesChip renders
+    // nothing (no chip faking "axes: ?/?/?" off garbage).
+    expect(within(row).queryByTestId("novelty-axes-chip")).toBeNull();
     expect(container.innerHTML).not.toMatch(/object Object/);
     expect(container.innerHTML).not.toMatch(/NaN/);
     // the low-evidence badge still fires off the (valid) boolean and its
