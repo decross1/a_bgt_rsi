@@ -7,6 +7,7 @@
 // and the /chain inspector, not here. BaselineCard + ProcessGrid are
 // low-priority sanity checks behind a "reference" disclosure.
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import ActiveIterationPanel from "../components/ActiveIterationPanel";
 import BaselineCard from "../components/BaselineCard";
 import BubblesPanel from "../components/BubblesPanel";
@@ -15,6 +16,7 @@ import HealthStrip from "../components/HealthStrip";
 import HealthVerdict, {
   excludeQwenReadErrors,
 } from "../components/HealthVerdict";
+import HumanTodoPanel from "../components/HumanTodoPanel";
 import JournalScroll from "../components/JournalScroll";
 import NaraPromptForm from "../components/NaraPromptForm";
 import ProcessGrid from "../components/ProcessGrid";
@@ -22,11 +24,25 @@ import QwenPanel from "../components/QwenPanel";
 import RedFlagsTrendStrip from "../components/RedFlagsTrendStrip";
 import ResolvedIterationsList from "../components/ResolvedIterationsList";
 import SurfacedFindingsPanel from "../components/SurfacedFindingsPanel";
+import SystemActivityHero from "../components/SystemActivityHero";
 import VllmPanel from "../components/VllmPanel";
-import { getHealth, getIterations } from "../api/http";
+import { getActivityMonitor } from "../api/activity";
+import {
+  getActiveIteration,
+  getCoordinatorActive,
+  getHealth,
+  getIterations,
+} from "../api/http";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { useNow } from "../time";
-import type { Health, IterationRecord, TelemetrySample } from "../types/schemas";
+import type { LiveCalls } from "../types/activity";
+import type {
+  ActiveIteration,
+  CoordinatorActiveRun,
+  Health,
+  IterationRecord,
+  TelemetrySample,
+} from "../types/schemas";
 
 export default function Dashboard() {
   const { samples, latest, connected } = useTelemetryStream();
@@ -38,6 +54,17 @@ export default function Dashboard() {
   // novel-rate / suspected-false-novel / off-domain self-checks). The resolved
   // list below still owns its own poll/pagination.
   const [iterations, setIterations] = useState<IterationRecord[]>([]);
+  // SystemActivityHero feeds — "what is the machine doing RIGHT NOW"
+  // (reconciliation plan B1). live_calls rides the same activity-monitor
+  // endpoint the /activity page polls; the two registered-run mirrors
+  // (active iteration + coordinator active_run) resolve null on 204. Their
+  // absence while calls flow IS the signal: the hero renders the amber
+  // busy-but-unregistered state instead of a false "idle".
+  const [liveCalls, setLiveCalls] = useState<LiveCalls | null>(null);
+  const [activeIteration, setActiveIteration] =
+    useState<ActiveIteration | null>(null);
+  const [coordinatorActive, setCoordinatorActive] =
+    useState<CoordinatorActiveRun | null>(null);
   const now = useNow();
 
   useEffect(() => {
@@ -62,6 +89,27 @@ export default function Dashboard() {
         .catch(() => {});
     loadIterations();
     const id = setInterval(loadIterations, 10000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    // One modest poll for the hero's three feeds. Each fetch fails quietly
+    // and independently (the getHealth idiom): a dead activity endpoint must
+    // not blank the registered-run mirrors, and vice versa. limit=1 keeps the
+    // monitor payload cheap — the hero only reads its `live_calls` block.
+    const load = () => {
+      getActivityMonitor(1)
+        .then((r) => setLiveCalls(r?.live_calls ?? null))
+        .catch(() => {});
+      getActiveIteration()
+        .then(setActiveIteration)
+        .catch(() => {});
+      getCoordinatorActive()
+        .then(setCoordinatorActive)
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 7000);
     return () => clearInterval(id);
   }, []);
 
@@ -142,6 +190,34 @@ export default function Dashboard() {
         />
       </div>
 
+      {/* ACTIVITY HERO: what the machine is doing RIGHT NOW. Health says
+          "is anything broken"; this says "is anything RUNNING" — composed
+          from live wrapper calls, GPU/vllm load, and the registered-run
+          mirrors, so GPU-at-96% can never coexist with "idle". */}
+      <div className="mt-3">
+        <SystemActivityHero
+          liveCalls={liveCalls}
+          telemetry={cleanSamples[cleanSamples.length - 1] ?? null}
+          activeIteration={activeIteration}
+          coordinatorActive={coordinatorActive}
+        />
+        <div className="mt-1 text-right">
+          <Link
+            to="/activity"
+            className="text-[11px] text-zinc-600 hover:text-zinc-300"
+          >
+            drill into activity →
+          </Link>
+        </div>
+      </div>
+
+      {/* HUMAN TODO: everything blocked on the human (gate verdicts,
+          finding reviews, unacked bubbles, …). Prominent by design — it is
+          the human's queue, above the per-system panels. */}
+      <div className="mt-2">
+        <HumanTodoPanel />
+      </div>
+
       {/* Health row: host/GPU strip + both model-server panels side-by-side.
           Gemma (primary orchestrator) first, Qwen (staged sub-agent) second.
           Stacked on narrow screens. */}
@@ -166,9 +242,17 @@ export default function Dashboard() {
           things genuinely new?" at a glance; Surfaced Findings + Bubbles are
           the loop's promoted output and its escalations. */}
       <section className="mt-6 space-y-4" data-testid="autonomy-block">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-          Autonomy
-        </h2>
+        <div className="flex items-baseline gap-3">
+          <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Autonomy
+          </h2>
+          <Link
+            to="/coordinator"
+            className="text-[11px] text-zinc-600 hover:text-zinc-300"
+          >
+            drill into coordinator →
+          </Link>
+        </div>
         <RedFlagsTrendStrip iterations={iterations} />
         <HealthSignalsPanel />
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -184,6 +268,12 @@ export default function Dashboard() {
         <summary className="cursor-pointer list-none text-xs font-medium uppercase tracking-wide text-zinc-500 hover:text-zinc-300">
           <span className="group-open:hidden">▸ recent iterations</span>
           <span className="hidden group-open:inline">▾ recent iterations</span>
+          <Link
+            to="/activity"
+            className="ml-3 text-[11px] font-normal normal-case tracking-normal text-zinc-600 hover:text-zinc-300"
+          >
+            drill into activity →
+          </Link>
         </summary>
         <div className="mt-2 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <ResolvedIterationsList

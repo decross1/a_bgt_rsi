@@ -43,6 +43,7 @@
 //      "Cannot read properties of null (reading 'vllm')" → white screen. Fix:
 //      optional-chain the access.
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   IterationRecord,
@@ -133,6 +134,27 @@ vi.mock("../src/api/http", () => ({
   getSurfacedFindings: vi.fn().mockResolvedValue({ findings: [] }),
   getBubbles: vi.fn().mockResolvedValue({ bubbles: [] }),
   getHealthSignals: vi.fn().mockResolvedValue({ health_signals: [] }),
+  // SystemActivityHero mirrors + HUMAN TODO panel (quiet defaults).
+  getCoordinatorActive: vi.fn().mockResolvedValue(null),
+  getHumanTodo: vi.fn().mockResolvedValue({ items: [], counts: {} }),
+}));
+
+// SystemActivityHero's live-calls feed (Dashboard polls the activity monitor).
+vi.mock("../src/api/activity", () => ({
+  getActivityMonitor: vi.fn().mockResolvedValue({
+    available: true,
+    active: [],
+    recent: [],
+    synthetic_inference: { synthetic: true, source: "fixture", workers: [] },
+    generated_at: new Date().toISOString(),
+  }),
+  getActivityGraph: vi.fn().mockResolvedValue({
+    available: false,
+    nodes: [],
+    edges: [],
+    generated_at: new Date().toISOString(),
+  }),
+  getActiveRun: vi.fn().mockResolvedValue(null),
 }));
 
 import Dashboard from "../src/routes/Dashboard";
@@ -145,7 +167,12 @@ import { getIterations } from "../src/api/http";
 async function renderQuietly() {
   const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-  render(<Dashboard />);
+  // Dashboard renders react-router <Link>s now; MemoryRouter hosts them.
+  render(
+    <MemoryRouter>
+      <Dashboard />
+    </MemoryRouter>,
+  );
   await waitFor(() => expect(true).toBe(true));
   await waitFor(() => expect(true).toBe(true));
   const calls = {

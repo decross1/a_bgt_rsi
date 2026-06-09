@@ -18,6 +18,7 @@ from .baseline import compute_baseline
 from .chain import LogStore, build_chain_by_request_id
 from .coordinator import register as register_coordinator
 from .experiments import register as register_experiments
+from .human_todo import register as register_human_todo
 from .loop_v0 import register as register_loop_v0
 from .tailer import JsonlTailer
 from .workload import compute_workload_hint
@@ -216,6 +217,16 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     )
 
     register_coordinator(
+        app,
+        repo_root=Path(loop_v0_repo),
+        run_state_dir=Path(coordinator_run_state),
+        memory_dir=Path(coordinator_memory),
+    )
+
+    # Human TODO composes the same primary-checkout artifacts the coordinator
+    # endpoints read (loop_memory/feedback/findings under memory/, active_run
+    # + week1.state.json under run_state/) — reuse the coordinator paths.
+    register_human_todo(
         app,
         repo_root=Path(loop_v0_repo),
         run_state_dir=Path(coordinator_run_state),

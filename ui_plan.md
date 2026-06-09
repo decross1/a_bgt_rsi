@@ -342,6 +342,37 @@ crash (one bad row blanked the Coordinator page). Report: [`ui/notes/validation_
   `active_run`, a successful `dispatched_iteration_id`) are handed to the primary session as
   [`ui/notes/emit_test_plan.md`](ui/notes/emit_test_plan.md).
 
+### Evening block 2026-06-09 — WF-A/WF-C/WF-B (three Dynamic Workflows)
+
+- **WF-A (forward-compat + live wire):** regression pins proving every surface ROBUST
+  against the primary's *announced* additive contract (`undecidable` + override fields,
+  `novelty_axes`, five new relevance keys, garbled variants); first validation against the
+  RUNNING `:8700` (`test_live_8700.py`, version == HEAD, payload parity with in-process);
+  `CoordinatorPhases` stale-active-run amber hint (the lock-leak's phantom-running dual).
+- **WF-C (observability reconciliation, operable slice):** from the human's screenshot
+  review ([`ui/notes/observability_reconciliation_plan.md`](ui/notes/observability_reconciliation_plan.md)
+  — root causes: attribution dropped, active_run mirror bypassed, stale run_id stamping,
+  test rows polluting live cycles, invisible human queue). Shipped: **SystemActivityHero**
+  (registered / busy-unregistered-AMBER / idle — the dashboard can no longer say
+  "idle/nominal" at GPU 96%), **failed-dispatch grouping** (identical (topic,action,error)
+  → one ×N row), **Human TODO** (`GET /api/human_todo` + `HumanTodoPanel` + `/todo` route:
+  pending gate verdicts with exact `gate_cli` commands — 11 live items surfaced —, finding
+  reviews, unacked bubbles, stale active-run, state gates; read-only — B4 write-back stays
+  gated on the main session blessing the A5 CLI contract), drill-in IA links. Workstream A
+  (producer fixes: mirror registration, run_id lifecycle, task_type, artifact hygiene) is
+  the main session's, per the plan doc.
+- **WF-B (confirmed contract, build half):** close-out 19:56 confirmed shapes → types/
+  fixtures synced; `undecidable` quiet-grey tone + skeptic-override tooltip (both verdict
+  surfaces); `category`/`rule_fired` low-evidence tooltip detail (isLowEvidence pinned
+  unchanged); `NoveltyAxesChip` wired into iteration rows. **Re-validation DEFERRED** —
+  the promised live rows were never produced this block (0 `low_confidence=true`,
+  artifact files absent, 0/139 dispatched); gap 5 (nemoclaw e2e) CLOSED on the two live
+  rows, pinned verbatim. Dispositions in `emit_test_plan.md`; the live-census tests
+  auto-validate the moment the data lands.
+
+Suites at close: tsc clean · frontend 62 files / **730 tests** · backend **215**. Each
+workflow independently audited.
+
 ---
 
 ## Historical sections (UI v1, pre-LOOP_V0)

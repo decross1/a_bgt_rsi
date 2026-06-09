@@ -177,3 +177,301 @@ make-absence-legible principle applied to the rows' own shapes.
   degraded-vs-broken health distinct). The bullets gated on absent EMIT data
   (populated findings/bubbles, mid-flight narration, a firing low-evidence flag)
   are listed under deferred followups above.
+
+## WF-A — forward-compat + live-:8700 + staleness (evening block)
+
+Serial-integrator close-out for the evening workflow. Scope: prove the merged
+renders survive the PRIMARY session's **announced additive-only** contract
+(critique `verdict:"undecidable"` + three override siblings, the
+`novelty.novelty_axes` OBJECT, five new `retrieval.relevance` siblings), add a
+live validation of the served :8700 process, and land the one real bug fix
+(CoordinatorPhases phantom-presence). New renders for the announced fields are
+deliberately NOT built — that is the later, gated task.
+
+### Suite results (all green, growth-only)
+
+| Suite | Result | Baseline |
+| --- | --- | --- |
+| `npx tsc --noEmit` | clean | clean |
+| `npx vitest run` | **54 files / 678 tests passed** | 49 / 639 (+5 files, +39 tests) |
+| `pytest backend/tests -q` | **202 passed, 0 skipped** | 196 (+6, `test_live_8700.py`) |
+
+`test_live_8700.py` did **NOT** skip — :8700 was up and all 6 live tests ran
+against the served process. Zero failures anywhere; no test was weakened or
+deleted. New test files are exactly the budgeted six — no sprawl, nothing to
+consolidate: `tests/test_forwardcompat_{routes,iterations_list,lowevidence_strip,findings_panel}.tsx`,
+`tests/test_stale_active_run.tsx`, `backend/tests/test_live_8700.py`.
+
+### Per-surface forward-compat verdicts
+
+| Surface | Verdict | Evidence |
+| --- | --- | --- |
+| ResolvedIterationsList | **ROBUST** | 5 probes: `undecidable` + override siblings → quiet fallback badge; `novelty_axes` object never leaks into a React child; all five relevance siblings inert; combined row; garbled variants degrade silently. Cosmetic gap only (see deferred). |
+| SurfacedFindingsPanel | **ROBUST** | 3 probes: `undecidable` renders as quiet badge; observability siblings not rendered raw; axes/relevance extras inert. |
+| LowEvidenceBadge / `isLowEvidence` | **ROBUST** | Verdict driven solely by `low_confidence` + structural triggers: `category:"off_domain"` with `low_confidence:false` does NOT fire; `"ok"` with `true` DOES; every announced category value stays silent when unflagged; garbled new fields never throw, flip the verdict, or leak into the tooltip. |
+| RedFlagsTrendStrip | **ROBUST** | NaN-free rates with announced + garbled rows mixed; `undecidable` never enters the suspect numerator (fail-closed). |
+| Routes (Dashboard / Coordinator / Activity / Experiments) | **ROBUST** | Announced-shape rows mixed with legacy rows: no crash, no console.error/warn, unknown enums fall to the existing quiet fallbacks. |
+| CoordinatorPhases | **FIXED** | Phantom-presence / staleness bug, below. |
+| Served :8700 process | **VALIDATED** | Live route/shape assertions, below. |
+
+No surface crashed on `undecidable` or `novelty_axes` — the only crash-class
+finding of the block was the CoordinatorPhases phantom-presence bug (a
+staleness/honesty bug, not a contract-shape one).
+
+### Bugs fixed (1)
+
+1. CoordinatorPhases now annotates a possibly-stale active run (>30min since
+   `step_started_at ?? started_at`) with an amber in-panel hint instead of
+   presenting it as confidently live; malformed/non-string/unparseable
+   timestamps are guarded to "freshness unknown" (no hint) so the fix cannot
+   produce a false-stale. Regression-tested in `tests/test_stale_active_run.tsx`
+   (7 cases).
+
+**Staleness-hint behavior:** fresh run → stepper, no hint; >30min-old freshest
+timestamp → amber `coordinator-stale-hint` AND the stepper still renders
+(annotate state, don't hide it); NaN-parsing / non-string / absent timestamps →
+no hint, no crash; idle (`activeRun` null) unchanged. Live today the hint has
+nothing to annotate: no `active_run.json` on disk, `/active` → 204, so the
+panel renders its quiet idle state — the hint path is pinned by the 7 unit
+cases. No exported-signature change; uses the existing `useNow`/`elapsed`
+idiom, hook called unconditionally before the idle early-return.
+
+### Live (:8700) vs in-process — comparison numbers (2026-06-09 evening)
+
+Both targets read the same on-disk files; they agree on every count.
+
+| Probe | Live :8700 | In-process / on-disk |
+| --- | --- | --- |
+| `/api/health` | `ok:true`, version `5ddff08` | = current HEAD (not a stale binary) |
+| `/api/coordinator/cycles` | **73 rows**, all carrying the 7 non-optional `CoordinatorCycle` keys | `coordinator_cycles.jsonl` = **73 lines** (grew from 19 at the earlier validation; the test's ≥19 floor is a documented lower bound and stays green) |
+| `/api/coordinator/active` | **204** | no `active_run.json` on disk — agree |
+| `/findings` / `/bubbles` / `/health_signals` | wrapper shape correct, **0 rows each** | files still absent live — matches the earlier EMIT-side observation |
+
+### Followups deferred to WF-B / the gated render task
+
+- **After the primary's close-out confirms shapes** (serial-integrator change,
+  forbidden during this probe per the additive-contract freeze):
+  `types/schemas.ts` gains the optional fields — critique
+  `verdict_overridden_from` / `override_reason` / `skeptic_verdict` (+
+  `"undecidable"` in the verdict union), `novelty.novelty_axes`, the five
+  relevance siblings — and the inline `as unknown as IterationRecord` literals
+  in the four `test_forwardcompat_*` files can be narrowed / promoted into
+  `src/fixtures/`.
+- **Gated render task** (deliberately NOT built here; the forward-compat tests
+  pin the fields as inert and will need updating when it lands): surface
+  `novelty_axes`, override provenance, and `relevance.category`/`rule_fired`
+  (badge tooltip); optionally a dedicated `undecidable` tone in
+  `VERDICT_TONE` (one line in SurfacedFindingsPanel + the matching palette in
+  ResolvedIterationsList — keep the two in sync).
+- **Cosmetic, not a crash:** ResolvedIterationsList filter dropdowns use the
+  fixed legacy enum lists — `undecidable` rows render fine but cannot be
+  filter-selected; same for new `novelty_axes` values. Fold into the gated
+  render task.
+- `test_live_8700.py`'s cycles floor (≥19) is deliberately a lower bound; live
+  is at 73. If `coordinator_cycles.jsonl` is ever rotated/reset, the floor
+  needs a matching revision — documented in the test docstring.
+
+## WF-C — reconciliation operable slice (2026-06-09, serial integrator)
+
+The operable slice of `observability_reconciliation_plan.md` (B1 + B2 + B3 +
+B5-light), four build agents fanned out + this serial-integrator wiring pass.
+
+### What shipped
+
+- **B1 — SystemActivityHero** (`components/SystemActivityHero.tsx`, pure +
+  `computeActivity` unit-tested): three-state RUNNING (emerald, registered
+  run named) / BUSY-unregistered (amber — calls flowing OR vllm running
+  requests OR GPU > 20% with no registered run; "activity without
+  provenance") / IDLE (zinc). Wired into `routes/Dashboard.tsx` directly
+  under the HealthVerdict hero, fed by a 7 s poll of
+  `getActivityMonitor(1).live_calls` + the latest clean telemetry sample +
+  `getActiveIteration()` + `getCoordinatorActive()` (204 → null → that
+  absence is the amber signal). GPU-at-96% can no longer coexist with
+  "idle/nominal".
+- **B2 — failed-dispatch grouping** on /activity: identical
+  (topic, action, error) failures collapse to one row with ×count +
+  first/last timestamps (the 12 `noop · FASE · RuntimeError: boom` rows
+  render as one line).
+- **B3 — HUMAN TODO, read-only**: backend `GET /api/human_todo`
+  (`backend/human_todo.py`, registered in `app.py`) composing the five
+  sources; `HumanTodoPanel` mounted PROMINENTLY on the Dashboard (below the
+  hero block, above the model panels) and on a new page-width **/todo**
+  route with a "todo" nav tab. Each item carries the exact copy-pastable
+  resolve command (verified against `orchestrator/gate_cli.py` argparse:
+  `--iteration-id <id> --verdict <valid|invalid|needs_revision>`).
+- **B5-light — drill-into links**: activity hero → /activity, Autonomy
+  block → /coordinator, recent-iterations → /activity (react-router
+  `<Link>`s; Dashboard tests now render under MemoryRouter).
+- Integrator fix: panel kind-label aliases `bubble_ack` / `state_gate`
+  added to match the producer's exact KINDS (additive; the original
+  spellings kept so prior fixtures stay humanized).
+
+### Live smoke (in-process TestClient(create_app()), REAL repo data)
+
+`GET /api/human_todo` → 200, counts:
+`{"gate_verdict": 11, "finding_review": 0, "bubble_ack": 0,
+"stale_active_run": 0, "state_gate": 0}` — the 11 pending-gate iterations
+from the screenshot complaint are now a first-class surface, oldest first
+(`iter-2026-06-05-002` since 2026-06-05T00:26Z), each with its verbatim
+`gate_cli` resolve command.
+
+### Suites
+
+- `npx tsc --noEmit` — clean.
+- frontend `npx vitest run` — **698 passed** (floor 678; growth only).
+- backend `pytest backend/tests -q` — **215 passed** (floor 202).
+
+### Stays gated on the main session
+
+- **B4 write-back** (valid/invalid/needs_revision buttons, bubble ack):
+  gated on the A5 CLI-contract blessing; `orchestrator/ack_cli.py` does not
+  exist yet — the bubble_ack resolve_command carries the A5 placeholder.
+- **A1–A4 producer fixes** (active_run mirror registration, `set_run_id`
+  lifecycle, `task_type` stamping, test/dev hygiene for live artifacts):
+  until they land, the amber busy-but-unregistered hero state and the
+  stale-run_id attribution will show often — rendered honestly by design.
+
+## WF-B — confirmed contract + gated re-validation (2026-06-09 late evening)
+
+The gated render task: build the renders for the close-out-CONFIRMED additive
+contract (`docs/ui_validation_handoff.md` §"2026-06-09 evening additions"),
+plus the live re-validation against the real artifacts. Three build limbs +
+this serial-integrator pass.
+
+### Suites (all green, growth-only)
+
+| Suite | Result | Prior floor |
+| --- | --- | --- |
+| `npx tsc --noEmit` | clean | clean |
+| `npx vitest run` | **62 files / 730 tests passed** | 698 (WF-C) |
+| `pytest backend/tests -q` | **215 passed** | 215 (WF-C; no backend change in WF-B) |
+
+No test weakened or deleted; the one WF-A pin that the brief *scheduled* for
+relax was updated by the integrator (coordinated relax, below).
+
+### Confirmed-vs-announced divergences
+
+1. **Undecidable tone shade.** The close-out's example shade
+   (`bg-zinc-700/40 text-zinc-300`) collides with the WF-A forward-compat pins
+   (`test_forwardcompat_iterations_list` / `_findings_panel` hard-assert the
+   `bg-zinc-800` + `text-zinc-400` quiet family). **`bg-zinc-800/40
+   text-zinc-400` was chosen instead** — satisfies the pins AND keeps the
+   close-out's deliberate `/40`-translucency "intentional quiet-grey, not the
+   unknown-enum fallback" intent. Integrator decision: KEEP the chosen shade;
+   no pin relax needed. If the exact suggested shade is ever wanted, both WF-A
+   pin files need a coordinated edit.
+2. **`types/schemas.ts` already declared the five additive relevance keys**
+   (`anchor_cosine`/`curated_overlap`/`neighbor_spread`/`category`/
+   `rule_fired`, with `category` typed as the announced enum `| string`) —
+   no type change was needed for that block; the WF-B type additions were the
+   novelty/critique side (`novelty_axes`, `low_confidence`, the override trio,
+   `"undecidable"` in the verdict union).
+3. Everything else matched the announcement exactly: `critique.verdict
+   "undecidable"`, the `verdict_overridden_from`/`override_reason`/
+   `skeptic_verdict` trio on both blocks, `novelty_axes`
+   `{phenomenon, substrate, predicted_direction}` (nullable).
+
+### The three new renders
+
+1. **Undecidable verdict chip** — quiet-grey `/40` in BOTH
+   `ResolvedIterationsList.VERDICT_TONE` and
+   `SurfacedFindingsPanel.VERDICT_TONE` (kept in sync per the WF-A followup),
+   plus **override-provenance tooltips** on the novelty AND critique badges
+   (`overrideTooltip`: "overridden from X; skeptic said Y" — garbled fields
+   dropped via the scalar coercion, never `[object Object]` in a title).
+   `override_reason` is deliberately NOT surfaced (tooltip spec carries only
+   `verdict_overridden_from` + `skeptic_verdict`); see followups.
+   Pinned in `test_undecidable_verdict.tsx`.
+2. **`NoveltyAxesChip`** (new component) — the decomposed novelty judgment as
+   one scannable token `axes: phenomenon/substrate/direction`; the
+   transfer/replication bucket (`known`/`unstudied_llm`) reads **cyan**
+   (`bg-cyan-950 text-cyan-300` — previously unused across components, now
+   reserved for that meaning), every other combination quiet zinc; non-object
+   axes / all-garbage values render nothing. Pinned in
+   `test_novelty_axes_chip.tsx`. **Wired into the `ResolvedIterationsList`
+   row by this integrator pass** (one element after the novelty badge).
+3. **Relevance diagnostics in the low-evidence tooltip** —
+   `LowEvidenceBadge.reason()` now folds `category: X` / `rule: Y` into the
+   tooltip when usable. Detail only: the five new keys NEVER decide the
+   verdict (`isLowEvidence`'s pinned contract — driven by the
+   `low_confidence` boolean + structural triggers).
+
+### Integrator actions (this pass)
+
+- Wired `NoveltyAxesChip` into the `ResolvedIterationsList` row + a
+  one-assertion presence test (3 chips on `ITERATIONS_OBSERVABILITY_FIXTURE`)
+  in `test_resolved_iterations_list.tsx`.
+- **Coordinated relax of WF-A pin (b)** in
+  `test_forwardcompat_iterations_list.tsx`: the pin's own comment marked the
+  axes render as "a later, gated task" — this run is that task. The pin now
+  asserts the axes render THROUGH the chip as plain strings
+  (`axes: novel/unstudied_llm/deviates`) and the raw OBJECT still never
+  reaches a React child; case (e) additionally pins that a garbled
+  (string-valued) `novelty_axes` produces NO chip.
+- **`undecidable` is now filter-selectable** (added to `VERDICT_CLASSES` in
+  the verdict dropdown — it is a real producible verdict; an auditor can pull
+  the undecided rows). The one screen-level `getByText("undecidable")` in
+  `test_revalidate_live_rows.tsx` was scoped to its row (it would otherwise
+  be ambiguous with the new `<option>` label).
+- Suite run + this report + `emit_test_plan.md` dispositions.
+
+### Live numbers (2026-06-09 ~21:08 UTC; :8700 version `5ddff08`, healthy)
+
+```
+memory/loop_memory.jsonl            52 rows
+  seed.source: {human_cli: 34, loop_memory_probe: 15, nemoclaw_agent: 2, coordinator: 1}
+  critique.verdict census: {survives: 35, falsified: 6}   ← ZERO undecidable live
+  retrieval.relevance present: 4    low_confidence==true: 0   ← flag still has no live trigger
+  relevance keys live: {relevance, low_confidence, reason} only ← five additive keys not yet emitted
+  novelty.novelty_axes present: 0   override fields present: 0
+run_state/coordinator_cycles.jsonl  133 rows (was 73 at WF-A; 22 errored)
+  dispatched_iteration_id present: 0 / 133
+run_state/health_signals.jsonl      ABSENT
+memory/surfaced_findings.jsonl      ABSENT
+memory/coordinator_bubbles.jsonl    ABSENT
+run_state/active_run.json           ABSENT   (/api/coordinator/active → 204)
+```
+
+Every NEW-shape render is therefore fixture/synthetic-pinned TODAY; the
+live-census loops in `test_revalidate_live_rows.tsx` (undecidable /
+novelty_axes / relevance.category / findings / bubbles) branch on the REAL
+artifacts and **auto-validate each future live row on every suite run** — no
+re-dispatch needed when the data lands. The two real `nemoclaw_agent` rows
+(`iter-2026-06-09-003`/`-004`) are pasted verbatim as permanent render pins.
+
+### Per-gap disposition (gaps 1–5, `emit_test_plan.md`)
+
+| Gap | Disposition | Evidence |
+| --- | --- | --- |
+| 1. Low-evidence flag live trigger | **DEFERRED-no-live-data-yet** | 0/4 relevance rows carry `low_confidence==true`; render + tooltip (now with category/rule detail) proven on fixtures + WF-A/WF-B pins. The genuine off-domain re-run appears to have landed ON-domain (see followups) — needs the primary to confirm/emit the real row; the live-census test then bites automatically. |
+| 2. Findings / bubbles / health panels populated | **DEFERRED-no-live-data-yet** | All three files still ABSENT. `test_revalidate_live_rows.tsx` branches on real file state (honest empty today; real rows when present). Health-signals populated path remains fixture-pinned only. |
+| 3. `active_run.json` mid-flight | **DEFERRED-no-live-data-yet** | File absent; `/active` → 204. Stepper + staleness hint pinned by unit cases (WF-A). |
+| 4. `dispatched_iteration_id` on a cycle | **DEFERRED-no-live-data-yet** | 0/133 cycles carry it (all errored or no dispatch). Footer-link render fixture-pinned. |
+| 5. `nemoclaw_agent` end-to-end | **CLOSED (UI side)** | 2 live rows render violet end-to-end; both pinned VERBATIM in `test_revalidate_live_rows.tsx` (full row contract: violet badge, novel/survives, red redteam chip, NO low-evidence flag). EMIT-side schema-enum test remains the primary's last mile. |
+
+### Followups (out of UI scope — for the primary / EMIT session)
+
+1. **Low-evidence live row**: either (a) append the genuine
+   `low_confidence=true` row to `memory/loop_memory.jsonl` (the re-run appears
+   to have landed on-domain) or (b) confirm which iteration_id was meant. Once
+   it lands, the live-census loop validates it automatically; a verbatim-pin
+   test (à la the nemoclaw rows) plus the on-domain negative control against
+   `iter-2026-06-09-002` can then be added.
+2. **Emit the three artifacts**: `run_state/health_signals.jsonl`
+   (`ml_intern_zero_papers` row), a cycle row carrying
+   `dispatched_iteration_id`, and a mid-flight `run_state/active_run.json`
+   snapshot — gaps 2–4 close themselves against the existing tests.
+3. **`iter-2026-06-09-001` absent-relevance stance**: `isLowEvidence` treats
+   an ABSENT relevance block as not-low-evidence (conservative). If the EMIT
+   side decides that row SHOULD flag, that is a contract change needing an
+   explicit decision before any UI edit.
+4. **`override_reason`** (free-text) is intentionally not surfaced; fold into
+   the tooltip or a detail view later if auditors want it.
+5. **Local `asText` copies** now exist in SourceBadge / SurfacedFindingsPanel /
+   NoveltyAxesChip / LowEvidenceBadge (parallel-limb shared-file rule barred
+   hoisting). Deliberately NOT consolidated this pass (inviolate rule 8:
+   resist abstraction; no exported-signature changes during integration) —
+   a future shared `lib/coerce.ts` is the natural home if one more consumer
+   appears.
+6. **Tone registry note**: cyan (`bg-cyan-950 text-cyan-300`) is now the
+   transfer/replication emphasis tone — keep it reserved for that meaning.

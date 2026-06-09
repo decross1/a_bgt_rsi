@@ -27,6 +27,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getIterations } from "../api/http";
 import type { IterationRecord } from "../types/schemas";
 import LowEvidenceBadge from "./LowEvidenceBadge";
+import NoveltyAxesChip from "./NoveltyAxesChip";
 import SourceBadge from "./SourceBadge";
 
 const PAGE_SIZE = 10;
@@ -43,6 +44,13 @@ const VERDICT_TONE: Record<string, string> = {
   restated: "bg-amber-950 text-amber-400",
   falsified: "bg-red-950 text-red-400",
   malformed: "bg-red-950 text-red-400",
+  // "undecidable" (close-out 2026-06-09, EMIT: workers/critic_loop_v0.py) fails
+  // closed — "could not be judged on this retrieval", never promotes. A
+  // DELIBERATE quiet-grey entry, not the unknown-enum fallback: same quiet lane
+  // (no emerald/red/amber alarm), the /40 translucency marks it as intentional.
+  // The forward-compat pins (test_forwardcompat_iterations_list) require the
+  // tone to keep the bg-zinc-800 + text-zinc-400 quiet family.
+  undecidable: "bg-zinc-800/40 text-zinc-400",
 };
 
 // Loop v1 Step 8 human-gate state.
@@ -59,6 +67,9 @@ const VERDICT_CLASSES = [
   "restated",
   "falsified",
   "malformed",
+  // Real producible verdict since the 2026-06-09 close-out (fails closed,
+  // never promotes) — filterable so an auditor can pull the undecided rows.
+  "undecidable",
 ] as const;
 
 // Tone lookup for the producer-owned enum fields (novelty.class / critique.verdict
@@ -118,17 +129,43 @@ function badgeText(text: string | null | undefined): string {
   return "";
 }
 
+// Skeptic-gate override provenance (close-out 2026-06-09):
+// verdict_overridden_from / skeptic_verdict are plain strings that may appear
+// on BOTH the novelty and critique blocks (absent on legacy rows). Surface
+// them as a title tooltip on that block's badge — tooltip only, no new chip.
+// Producer-owned: a garbled field (object/array, per the forward-compat pins)
+// is dropped via badgeText so "[object Object]" can never land in the title
+// attribute. Returns undefined (no tooltip) when neither field is usable.
+function overrideTooltip(
+  block:
+    | { verdict_overridden_from?: unknown; skeptic_verdict?: unknown }
+    | null
+    | undefined,
+): string | undefined {
+  const from = badgeText(
+    block?.verdict_overridden_from as string | null | undefined,
+  );
+  const skeptic = badgeText(block?.skeptic_verdict as string | null | undefined);
+  const parts: string[] = [];
+  if (from) parts.push(`overridden from ${from}`);
+  if (skeptic) parts.push(`skeptic said ${skeptic}`);
+  return parts.length > 0 ? parts.join("; ") : undefined;
+}
+
 function Badge({
   text,
   tone,
+  title,
 }: {
   text: string | null | undefined;
   tone: string;
+  title?: string;
 }) {
   const safe = badgeText(text);
   if (!safe) return null;
   return (
     <span
+      title={title}
       className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${tone}`}
     >
       {safe}
@@ -514,7 +551,13 @@ export default function ResolvedIterationsList({
                         row.novelty?.class,
                         "bg-zinc-800 text-zinc-400",
                       )}
+                      title={overrideTooltip(row.novelty)}
                     />
+                    {/* Decomposed novelty judgment (close-out 2026-06-09):
+                        phenomenon/substrate/predicted_direction as one chip;
+                        cyan marks the transfer/replication bucket. Renders
+                        nothing on legacy/sentinel rows (axes null/absent). */}
+                    <NoveltyAxesChip axes={row.novelty?.novelty_axes} />
                     <Badge
                       text={row.critique?.verdict}
                       tone={toneFor(
@@ -522,6 +565,7 @@ export default function ResolvedIterationsList({
                         row.critique?.verdict,
                         "bg-zinc-800 text-zinc-400",
                       )}
+                      title={overrideTooltip(row.critique)}
                     />
                     <RedteamChip redteam={row.redteam} />
                     <Badge

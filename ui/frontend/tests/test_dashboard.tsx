@@ -6,9 +6,21 @@
 // guard the adversarial-review constraint that neither LLM panel nor the
 // resolved list was dropped in the refactor.
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Dashboard from "../src/routes/Dashboard";
 import type { TelemetrySample, VllmSample } from "../src/types/schemas";
+
+// Dashboard renders react-router <Link>s (the B5 "drill into" links), so it
+// needs a Router in the tree. MemoryRouter is the test idiom
+// (test_validate_routes_console.tsx).
+function renderDashboard() {
+  return render(
+    <MemoryRouter>
+      <Dashboard />
+    </MemoryRouter>,
+  );
+}
 
 // A vllm block so gemmaUp is true (HEALTHY) and VllmPanel shows "● up".
 function vllmSample(): VllmSample {
@@ -79,8 +91,32 @@ vi.mock("../src/api/http", async () => {
     getSurfacedFindings: vi.fn().mockResolvedValue({ findings: [] }),
     getBubbles: vi.fn().mockResolvedValue({ bubbles: [] }),
     getHealthSignals: vi.fn().mockResolvedValue({ health_signals: [] }),
+    // SystemActivityHero feeds (registered-run mirrors) + the HUMAN TODO
+    // panel. Quiet defaults: no registered run, empty queue.
+    getCoordinatorActive: vi.fn().mockResolvedValue(null),
+    getHumanTodo: vi.fn().mockResolvedValue({ items: [], counts: {} }),
   };
 });
+
+// SystemActivityHero's live-calls feed (Dashboard polls the same activity
+// monitor the /activity page uses). No live_calls block -> the hero decides
+// from telemetry alone.
+vi.mock("../src/api/activity", () => ({
+  getActivityMonitor: vi.fn().mockResolvedValue({
+    available: true,
+    active: [],
+    recent: [],
+    synthetic_inference: { synthetic: true, source: "fixture", workers: [] },
+    generated_at: new Date().toISOString(),
+  }),
+  getActivityGraph: vi.fn().mockResolvedValue({
+    available: false,
+    nodes: [],
+    edges: [],
+    generated_at: new Date().toISOString(),
+  }),
+  getActiveRun: vi.fn().mockResolvedValue(null),
+}));
 
 describe("Dashboard realignment", () => {
   afterEach(() => {
@@ -88,7 +124,7 @@ describe("Dashboard realignment", () => {
   });
 
   it("mounts BOTH model-server panels (Gemma + Qwen) side-by-side", () => {
-    render(<Dashboard />);
+    renderDashboard();
     // Gemma panel header + up status (vllm block present).
     expect(screen.getByText("gemma-4-26b-a4b")).toBeInTheDocument();
     expect(screen.getByTestId("vllm-status")).toHaveTextContent("up");
@@ -97,7 +133,7 @@ describe("Dashboard realignment", () => {
   });
 
   it("feeds the verdict Qwen-filtered inputs so a Qwen read error stays HEALTHY", () => {
-    render(<Dashboard />);
+    renderDashboard();
     const verdict = screen.getByTestId("health-verdict");
     // "vllm-qwen-metrics" is the only read error and is filtered out, the
     // stream is fresh and connected, and gemmaUp is true -> HEALTHY.
@@ -105,7 +141,7 @@ describe("Dashboard realignment", () => {
   });
 
   it("keeps ResolvedIterationsList reachable and opens JournalScroll on selection", async () => {
-    render(<Dashboard />);
+    renderDashboard();
     // The list polls getIterations; let the microtask/poll resolve.
     await waitFor(() =>
       expect(screen.getByTestId("resolved-iterations-list")).toBeInTheDocument(),
@@ -120,5 +156,35 @@ describe("Dashboard realignment", () => {
     );
     fireEvent.click(row);
     expect(screen.getByTestId("journal-scroll")).toBeInTheDocument();
+  });
+
+  it("mounts the SystemActivityHero under the health hero and reads BUSY off vllm load", async () => {
+    renderDashboard();
+    // Telemetry carries running_requests: 1 with no registered run (both
+    // mirrors resolve null) -> the amber busy-unregistered state, never
+    // "idle" while the machine works.
+    const hero = screen.getByTestId("system-activity-hero");
+    await waitFor(() =>
+      expect(hero.getAttribute("data-state")).toBe("busy-unregistered"),
+    );
+    // The health hero is still above it, untouched.
+    expect(screen.getByTestId("health-verdict")).toBeInTheDocument();
+  });
+
+  it("mounts the HUMAN TODO panel prominently with the calm empty state", async () => {
+    renderDashboard();
+    expect(screen.getByTestId("human-todo-panel")).toBeInTheDocument();
+    // The mocked queue is empty -> calm state once the poll resolves.
+    await waitFor(() =>
+      expect(screen.getByTestId("human-todo-empty")).toBeInTheDocument(),
+    );
+  });
+
+  it("offers drill-into links to the deep-dive pages (B5)", () => {
+    renderDashboard();
+    const links = screen.getAllByRole("link", { name: /drill into/ });
+    const hrefs = links.map((l) => l.getAttribute("href"));
+    expect(hrefs).toContain("/activity");
+    expect(hrefs).toContain("/coordinator");
   });
 });

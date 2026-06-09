@@ -1,4 +1,5 @@
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
+import HumanTodoPanel from "./components/HumanTodoPanel";
 import Activity from "./routes/Activity";
 import Coordinator from "./routes/Coordinator";
 import Dashboard from "./routes/Dashboard";
@@ -7,14 +8,26 @@ import Experiments from "./routes/Experiments";
 import Inspector from "./routes/Inspector";
 
 // Primary destinations, surfaced as a nav on every page so the dashboard,
-// activity graph, coordinator narrative, and experiment digestion are all one
-// click apart.
+// human queue, activity graph, coordinator narrative, and experiment
+// digestion are all one click apart.
 const NAV = [
   { to: "/", label: "dashboard", end: true },
+  { to: "/todo", label: "todo", end: false },
   { to: "/activity", label: "activity", end: false },
   { to: "/coordinator", label: "coordinator", end: false },
   { to: "/experiments", label: "experiments", end: false },
 ];
+
+// Page-width view of the human's work queue (the same self-polling panel the
+// Dashboard mounts compactly). Its own route so "what is blocked on me" is
+// one click / one bookmark away.
+function HumanTodoPage() {
+  return (
+    <div className="mx-auto max-w-7xl p-5" data-testid="human-todo-page">
+      <HumanTodoPanel />
+    </div>
+  );
+}
 
 function NavTab({
   to,
@@ -61,6 +74,7 @@ export default function App() {
         </header>
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/todo" element={<HumanTodoPage />} />
           <Route path="/activity" element={<Activity />} />
           <Route path="/coordinator" element={<Coordinator />} />
           <Route path="/experiments" element={<Experiments />} />

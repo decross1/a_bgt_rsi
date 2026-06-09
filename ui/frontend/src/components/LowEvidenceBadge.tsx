@@ -46,6 +46,19 @@ export function isLowEvidence(record: IterationRecord): boolean {
   return false;
 }
 
+// `relevance.category` / `rule_fired` are producer-owned and may garble
+// (object/array/NaN from a buggy partial write — the exact variants
+// test_forwardcompat_lowevidence_strip pins). Normalize to a usable scalar the
+// same way SourceBadge.asText does: a string trims; a finite number / boolean
+// stringifies (a numeric rule still shows raw); anything else yields "" →
+// the detail is dropped, never "[object Object]"/"NaN" in the tooltip.
+function asText(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
+  if (typeof value === "boolean") return String(value);
+  return "";
+}
+
 // Build the tooltip from whatever signal actually fired, so a human hovering
 // learns *why* the verdict is suspect (thin score vs off-domain flag vs 0
 // neighbors), not just that it is.
@@ -76,6 +89,15 @@ function reason(record: IterationRecord): string {
   ) {
     parts.push("0 retrieved neighbors");
   }
+  // Diagnostic detail from the additive relevance keys (close-out 2026-06-09
+  // evening additions): WHICH ladder category/rule the worker hit, when it says
+  // so. Detail only — these five new keys never decide the verdict (that's
+  // isLowEvidence's pinned contract); an unknown category value passes through
+  // raw, same stance as SourceBadge's "unknown source renders raw".
+  const category = asText(relevance?.category);
+  if (category) parts.push(`category: ${category}`);
+  const ruleFired = asText(relevance?.rule_fired);
+  if (ruleFired) parts.push(`rule: ${ruleFired}`);
   const why = parts.length ? parts.join("; ") : "thin / off-domain retrieval";
   return `Low-evidence verdict: ${why}. The verdict rests on thin or off-domain retrieval — eyeball before trusting.`;
 }
