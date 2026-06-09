@@ -35,6 +35,54 @@ const VERDICT_TONE: Record<string, string> = {
   falsified: "bg-red-950 text-red-400",
   malformed: "bg-red-950 text-red-400",
 };
+const QUIET_TONE = "bg-zinc-800 text-zinc-400";
+
+// novelty_class / critic_verdict are producer-owned JSONL, so a novel /
+// forward-compat enum value can collide with an inherited Object.prototype
+// member name ("toString", "constructor", "valueOf", "hasOwnProperty",
+// "__proto__", ...). A bare `TONE[value]` then resolves to a FUNCTION via the
+// prototype chain instead of undefined, so `?? QUIET_TONE` does NOT fall
+// through and that function interpolates into className as
+// "function toString() { [native code] }" — the badge loses its quiet fallback
+// and lands garbage CSS. Look up own keys only; any unrecognized class/verdict
+// (incl. a prototype collision) degrades to the quiet zinc fallback.
+// (Mirrors SourceBadge.sourceTone / CoordinatorCycleCard.statusTone.)
+function toneFor(palette: Record<string, string>, value: unknown): string {
+  return typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(palette, value)
+    ? palette[value]
+    : QUIET_TONE;
+}
+
+// A producer-owned row is unvalidated: a field the panel renders as a React
+// child (title/claim/badge text/iteration id) may arrive as a number, boolean,
+// or — fatally — an object/array. Rendering an object as a child throws
+// "Objects are not valid as a React child", which crashes the WHOLE Dashboard,
+// not just this row. Coerce a scalar to a string and DROP an object/array
+// (return null) so one malformed field can never blank the page.
+function asText(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return Number.isFinite(v) ? String(v) : null;
+  if (typeof v === "boolean") return String(v);
+  // object / array / anything else: not safely renderable as text — skip it.
+  return null;
+}
+
+// First NON-EMPTY rendered text from candidates. `asText` keeps "" (a string
+// is a string), but a producer that writes `title:""` (empty string, distinct
+// from absent/null) must not blank the row: `?? ` only coalesces on null, so
+// `asText("") ?? asText(claim)` keeps the "" and the real claim is suppressed
+// — the row's only legible field vanishes. Coalesce on truthiness (the Badge
+// `if (!label)` idiom) so an empty/whitespace string falls through to the next
+// legible field instead of rendering blank.
+function firstText(...candidates: unknown[]): string | null {
+  for (const c of candidates) {
+    const s = asText(c);
+    if (s && s.trim() !== "") return s;
+  }
+  return null;
+}
 
 function Badge({
   text,
@@ -43,19 +91,26 @@ function Badge({
   text: string | null | undefined;
   tone: string;
 }) {
-  if (!text) return null;
+  // A producer may type novelty_class/critic_verdict as a number or object;
+  // asText keeps a scalar (rendered) and drops an object (would throw).
+  const label = asText(text);
+  if (!label) return null;
   return (
     <span
       className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${tone}`}
     >
-      {text}
+      {label}
     </span>
   );
 }
 
 function shortTimestamp(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  return iso.replace("T", " ").replace("Z", "");
+  // promoted_at may arrive as an epoch number or other non-string (legacy/
+  // malformed producer). `.replace` only exists on strings, so coerce first;
+  // a non-string that isn't a usable timestamp falls back to the em-dash.
+  const s = asText(iso);
+  if (!s) return "—";
+  return s.replace("T", " ").replace("Z", "");
 }
 
 interface Props {
@@ -82,7 +137,10 @@ export default function SurfacedFindingsPanel({
           // promoted_at descending so a producer appending out-of-order can't
           // scramble the panel.
           const sorted = [...r.findings].sort((a, b) =>
-            (b.promoted_at ?? "").localeCompare(a.promoted_at ?? ""),
+            // String() guards a non-string promoted_at (e.g. an epoch number):
+            // Number.prototype has no localeCompare, so the raw call would
+            // throw inside this .then and blank the whole list.
+            String(b.promoted_at ?? "").localeCompare(String(a.promoted_at ?? "")),
           );
           setFindings(sorted);
           setLoaded(true);
@@ -126,44 +184,56 @@ export default function SurfacedFindingsPanel({
 
       {findings.length > 0 && (
         <ul className="mt-2 space-y-1.5">
-          {findings.map((finding) => (
+          {findings.map((finding, i) => (
+            // A producer-owned legacy/partial row may omit finding_id; index-
+            // suffix the key (the BubblesPanel idiom) so a missing/duplicate id
+            // can't trigger React's "two children with the same key" console
+            // error, and fall the testid back to the index in that case.
             <li
-              key={finding.finding_id}
-              data-testid={`finding-${finding.finding_id}`}
+              key={`${finding.finding_id ?? "finding"}-${i}`}
+              data-testid={`finding-${finding.finding_id ?? i}`}
               className="rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5"
             >
               <div className="flex flex-wrap items-baseline gap-2 text-[11px]">
                 <Badge
                   text={finding.novelty_class}
-                  tone={
-                    NOVELTY_TONE[finding.novelty_class ?? ""] ??
-                    "bg-zinc-800 text-zinc-400"
-                  }
+                  tone={toneFor(NOVELTY_TONE, finding.novelty_class)}
                 />
                 <Badge
                   text={finding.critic_verdict}
-                  tone={
-                    VERDICT_TONE[finding.critic_verdict ?? ""] ??
-                    "bg-zinc-800 text-zinc-400"
-                  }
+                  tone={toneFor(VERDICT_TONE, finding.critic_verdict)}
                 />
-                {finding.source_iteration_id && (
+                {asText(finding.source_iteration_id) && (
                   <span className="font-mono text-zinc-400">
-                    {finding.source_iteration_id}
+                    {asText(finding.source_iteration_id)}
                   </span>
                 )}
                 <span className="ml-auto font-mono text-[10px] text-zinc-500">
                   {shortTimestamp(finding.promoted_at)}
                 </span>
               </div>
-              <div className="mt-1 text-xs text-zinc-200">
-                {finding.title ?? finding.claim ?? finding.finding_id}
-              </div>
-              {finding.claim && finding.title && (
-                <div className="mt-0.5 text-[11px] text-zinc-400">
-                  {finding.claim}
-                </div>
-              )}
+              {(() => {
+                // Primary line: first non-empty of title → claim → id, so an
+                // empty-string title (producer wrote "" not absent) falls
+                // through to the real claim instead of rendering blank. The
+                // secondary claim line shows only when claim is non-empty AND
+                // it isn't already the primary (an empty title promotes claim
+                // to primary — don't print it twice).
+                const claim = firstText(finding.claim);
+                const primary = firstText(finding.title, claim, finding.finding_id);
+                return (
+                  <>
+                    {primary && (
+                      <div className="mt-1 text-xs text-zinc-200">{primary}</div>
+                    )}
+                    {claim && claim !== primary && (
+                      <div className="mt-0.5 text-[11px] text-zinc-400">
+                        {claim}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </li>
           ))}
         </ul>

@@ -83,7 +83,12 @@ export default function CoordinatorPhases({
           Coordinator phases
         </h2>
         <span className="text-[10px] text-zinc-600">/api/coordinator/active</span>
-        {activeRun.run_id && (
+        {/* run_id is producer-owned JSONL — a malformed/legacy row could carry a
+            non-string (object/array) here. Guard on `typeof === "string"` so a
+            bad value is dropped (the chip just omits, like a null run_id) rather
+            than rendered as a React child, which would throw "Objects are not
+            valid as a React child" and crash the whole page on one bad row. */}
+        {typeof activeRun.run_id === "string" && activeRun.run_id && (
           <span className="ml-auto font-mono text-[10px] text-zinc-500">
             {activeRun.run_id}
           </span>
@@ -125,8 +130,11 @@ export default function CoordinatorPhases({
       </ol>
 
       {/* Narration — the chosen topic + why, so the panel says what stage and
-          why, not just "running". */}
-      {activeRun.narration && (
+          why, not just "running". Same producer-malformed guard as run_id: only
+          render a string narration (a non-string from a bad/legacy row would
+          crash the page as an invalid React child); a non-string is omitted,
+          like a null narration. */}
+      {typeof activeRun.narration === "string" && activeRun.narration && (
         <div
           className="mt-3 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs text-zinc-300"
           data-testid="coordinator-narration"

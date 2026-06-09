@@ -81,15 +81,35 @@ export default function RedFlagsTrendStrip({
 }: {
   iterations: IterationRecord[];
 }) {
-  const total = iterations.length;
+  // The rows are producer-owned JSONL the backend forwards as-is (a `null`
+  // line round-trips to a `null` array element — see backend/loop_v0.py
+  // _read_jsonl, which does not filter None). The declared `IterationRecord[]`
+  // type can't enforce that at runtime, and every count below dereferences
+  // `r.novelty` / `r.retrieval`, which throws on a null/non-object row and would
+  // white-screen the whole Dashboard. Skip the bad row rather than crash the
+  // strip (the backend's own "skip malformed rows" philosophy; design
+  // principle #2). The denominator is the rows we can actually score.
+  // `Array.isArray` first: the `iterations` prop is producer-owned too (the
+  // /api/loop_v0/iterations body surfaced live), so a legacy/mid-rotation
+  // backend handing back a non-array — `null`, a bare object, a scalar — would
+  // make `.filter` throw "iterations.filter is not a function" and blank the
+  // whole strip. Coerce a non-array to the clean empty state instead, matching
+  // the sibling BubblesPanel / HealthSignalsPanel guard. (Dashboard already
+  // coerces at the call site, but guard here too so the component's own
+  // contract is robust no matter which caller forgets — the same source-side
+  // stance LowEvidenceBadge takes for its `record`.)
+  const rows = (Array.isArray(iterations) ? iterations : []).filter(
+    (r): r is IterationRecord => r != null && typeof r === "object",
+  );
+  const total = rows.length;
 
-  const novelCount = iterations.filter(
+  const novelCount = rows.filter(
     (r) => r.novelty?.class === "novel",
   ).length;
-  const suspectCount = iterations.filter(
+  const suspectCount = rows.filter(
     (r) => isNovelOrSurvives(r) && isLowEvidence(r),
   ).length;
-  const offDomainCount = iterations.filter(isOffDomain).length;
+  const offDomainCount = rows.filter(isOffDomain).length;
 
   const suspectRate = total === 0 ? 0 : suspectCount / total;
   // Suspect tile escalates: any non-trivial false-novel share is amber, a

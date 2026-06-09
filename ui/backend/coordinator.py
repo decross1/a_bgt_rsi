@@ -40,11 +40,20 @@ def _read_jsonl(path: Path) -> list[dict]:
                 if not line:
                     continue
                 try:
-                    rows.append(json.loads(line))
+                    parsed = json.loads(line)
                 except json.JSONDecodeError:
                     # Producer's contract; skipping malformed rows keeps the
                     # endpoint useful while a primary-session bug is fixed.
                     continue
+                # A bare scalar/array line (`42`, `"x"`, `[1,2]`) is VALID JSON,
+                # so it survives json.loads and would land in `rows` as a non-dict.
+                # Every endpoint then does `rows.sort(key=lambda r: r.get(...))`,
+                # and `.get` on an int/str/list raises AttributeError → a 500 from
+                # one stray line. The rows are dict records by contract; drop any
+                # non-dict the same way a malformed line is dropped.
+                if not isinstance(parsed, dict):
+                    continue
+                rows.append(parsed)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"unreadable: {exc}") from exc
     return rows
