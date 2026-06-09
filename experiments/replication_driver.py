@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -40,6 +41,14 @@ VICKREY_SUMMARY = EXP_DIR / "exp003_vickrey_rediscovery" / "results" / "summary.
 COMBINATORIAL_SUMMARY = (
     EXP_DIR / "exp004_combinatorial_auction" / "results" / "summary.json"
 )
+# Eval-local wrapper-call log: --live worker calls land here, NEVER in
+# production logs/calls.jsonl. In-chain workers (hypothesize/novelty_classify/
+# meta_review) read LOOP_V0_CALLS_LOG at import time, so set it now (module
+# load), BEFORE the lazy `from orchestrator.nara import run_iteration` in main()
+# — that routes every worker call eval-local. run_iteration's own turns are
+# additionally redirected via the log_path= arg at the call site.
+CALLS_LOG_PATH = str(EXP_DIR / "runs" / "calls.jsonl")
+os.environ["LOOP_V0_CALLS_LOG"] = CALLS_LOG_PATH
 
 CLAIM = (
     "an unprimed LLM rediscovers the game-theoretic equilibrium of a "
@@ -255,10 +264,12 @@ def main(argv: list[str] | None = None) -> int:
     from orchestrator.nara import run_iteration
 
     print("=== running LOOP_V0 iteration with the comparison ===")
+    Path(CALLS_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
     record = run_iteration(
         topic=topic,
         source="human_cli",
         cross_tier_comparison=comparison,
+        log_path=CALLS_LOG_PATH,
     )
     print(f"iteration_id: {record.get('iteration_id')}")
     print(f"journal_entry_path: {record.get('journal_entry_path')}")

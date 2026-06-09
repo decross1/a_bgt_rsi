@@ -81,17 +81,40 @@ def _stage_scratch_cache() -> Path:
     return scratch
 
 
-def _register_arm_backend(endpoint: str, model: str | None) -> str:
+def _register_arm_backend(
+    endpoint: str, model: str | None, *, allow_production: bool = False,
+    arm: str | None = None,
+) -> str:
     """Register an OpenAI-compat scratch backend for the arm's endpoint and
     return its registry name. Reuses the OllamaBackend class (it is a generic
-    OpenAI-compat wrapper, same as the vLLM API). NEVER targets :8000."""
+    OpenAI-compat wrapper, same as the vLLM API).
+
+    By default the production :8000 endpoint is REFUSED — a candidate arm must
+    never accidentally be production. The ONE legitimate exception is the
+    reference ('pin') arm: the benchmark's whole question is "does QAT match
+    production", so the reference IS the production model, collected READ-ONLY.
+    `allow_production=True` (wired to the `--reference` CLI flag) permits :8000
+    for that read-only reference collection. Even then the worker's call log is
+    redirected to runs/calls_<arm>.jsonl, so production logs/calls.jsonl is
+    never written, and nothing here launches or reconfigures :8000."""
     from agent_wrapper.backends.ollama_openai import OllamaBackend
     from agent_wrapper.wrapper import register_backend
 
-    if ":8000" in endpoint:
+    # The production-read exception is scoped to the reference arm ONLY: a
+    # candidate label must never reach :8000 (it would route candidate traffic
+    # at production AND mislabel the output as a candidate). Enforce, not just
+    # document, that allow_production is paired with --arm pin.
+    if allow_production and arm != "pin":
+        raise ValueError(
+            f"refusing --reference for arm {arm!r}: the production-read "
+            "exception is for the reference arm only — use --arm pin."
+        )
+    if ":8000" in endpoint and not allow_production:
         raise ValueError(
             f"refusing arm endpoint {endpoint!r}: :8000 is the production "
-            "endpoint and is off-limits to this eval"
+            "endpoint and is off-limits to a candidate arm. To collect the "
+            "read-only production REFERENCE arm, pass --reference (and use "
+            "--arm pin)."
         )
     name = "exp008-qat-arm"
     register_backend(
@@ -230,11 +253,17 @@ def run_eval(
     served-model-name passed through to the worker."""
     runs_dir.mkdir(parents=True, exist_ok=True)
     out_path = runs_dir / f"novelty_{arm}.jsonl"
+    # analyze.py consumes {arm, metric, value} rows; the rich per-fixture rows
+    # above carry no `metric` key so analyze.py skips them. We emit the
+    # decision-metric rows analyze.py reads to a SEPARATE file (distinct name so
+    # novelty and toolcall metric files never collide) — closing the gap where a
+    # live run produced rich rows but analyze.py found zero decision metrics.
+    metrics_path = runs_dir / f"metrics_novelty_{arm}.jsonl"
     # Eval-local wrapper-call log — keeps real worker calls OUT of production
     # logs/calls.jsonl (the production_log_forbidden invariant in config.yaml).
     calls_log = str(runs_dir / f"calls_{arm}.jsonl")
     rows: list[dict] = []
-    with open(out_path, "w") as fh:
+    with open(out_path, "w") as fh, open(metrics_path, "w") as mfh:
         for fx in fixtures:
             result = _classify_fixture(
                 fx, classifier=classifier, model=model, log_path=calls_log
@@ -244,6 +273,7 @@ def run_eval(
             gt_class = TIER_TO_CLASS.get(gt_tier, "unclear")
             gt_score = float(fx["ground_truth_novelty_score"])
             pred_score = _predicted_score(predicted_class)
+            calib_err = abs(pred_score - gt_score)
             row = {
                 "timestamp": datetime.now(timezone.utc)
                 .isoformat()
@@ -256,13 +286,37 @@ def run_eval(
                 "predicted_class": predicted_class,
                 "predicted_score": pred_score,
                 "agree": predicted_class == gt_class,
-                "calibration_abs_err": abs(pred_score - gt_score),
+                "calibration_abs_err": calib_err,
                 "worker_status": result.get("status"),
                 "worker_errors": result.get("errors") or [],
                 "wrapper_request_id": result.get("wrapper_request_id"),
             }
             rows.append(row)
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            # A worker call that ERRORED (e.g. the arm endpoint is down ->
+            # APIConnectionError) is NOT a measurement: scoring it as a 0 would
+            # let an infra failure masquerade as a quality signal and could
+            # produce a false verdict (inviolate rule 4 — never coerce). Emit
+            # the analyze.py decision rows ONLY for a genuinely served call;
+            # an arm that errors enough drops below min_sample -> INSUFFICIENT,
+            # which is the honest "could not measure this arm" outcome. The
+            # rich audit row above still records the error for triage.
+            if result.get("status") == "passed":
+                # novelty_agreement is the per-fixture exact-tier hit (mean ->
+                # agreement_rate, n -> served-fixture count); calibration_error
+                # is the per-fixture abs error (mean -> calibration_error_mae).
+                mfh.write(json.dumps({
+                    "arm": arm,
+                    "metric": "novelty_agreement",
+                    "value": 1.0 if predicted_class == gt_class else 0.0,
+                    "reference_verdict": gt_class,
+                    "predicted_verdict": predicted_class,
+                }) + "\n")
+                mfh.write(json.dumps({
+                    "arm": arm,
+                    "metric": "calibration_error",
+                    "value": calib_err,
+                }) + "\n")
     return aggregate(rows)
 
 
@@ -285,6 +339,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--model", help="served-model-name for the arm")
     ap.add_argument("--limit", type=int, help="only first N fixtures (smoke)")
     ap.add_argument("--fixtures-dir", help="override fixture directory")
+    ap.add_argument(
+        "--reference", action="store_true",
+        help="permit the READ-ONLY production :8000 endpoint to collect the "
+             "reference ('pin') arm. Use with --arm pin. Without this flag "
+             ":8000 is refused (candidate-arm guardrail).",
+    )
     args = ap.parse_args(argv)
 
     fixtures_dir = Path(args.fixtures_dir) if args.fixtures_dir else FIXTURES_DIR
@@ -308,7 +368,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     _stage_scratch_cache()
-    backend = _register_arm_backend(endpoint, model)
+    backend = _register_arm_backend(
+        endpoint, model, allow_production=args.reference, arm=args.arm
+    )
     # Point the wrapper's default backend at the scratch arm so the real
     # worker's call_sync lands on the arm endpoint (never :8000). Eval-only.
     from agent_wrapper import wrapper as _wrapper

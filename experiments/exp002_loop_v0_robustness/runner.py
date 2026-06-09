@@ -30,6 +30,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+# Eval-local wrapper-call log: every real worker call this battery drives lands
+# here, NEVER in production logs/calls.jsonl. The IN-CHAIN workers
+# (hypothesize/novelty_classify/meta_review) read LOOP_V0_CALLS_LOG at import
+# time, so it MUST be set BEFORE importing orchestrator.nara below (which
+# imports them). run_iteration's own turns are additionally redirected via the
+# log_path= arg at the call site.
+CALLS_LOG_PATH = str(Path(__file__).resolve().parent / "runs" / "calls.jsonl")
+os.environ["LOOP_V0_CALLS_LOG"] = CALLS_LOG_PATH
+
 from orchestrator.nara import run_iteration  # noqa: E402
 
 EXP_DIR = Path(__file__).resolve().parent
@@ -106,6 +115,7 @@ def _utcnow_iso() -> str:
 
 def main() -> int:
     EXP_DIR.mkdir(parents=True, exist_ok=True)
+    Path(CALLS_LOG_PATH).parent.mkdir(parents=True, exist_ok=True)
     out = open(RESULTS_PATH, "w")
     total = len(TOPICS) * RUNS_PER_TOPIC
     done = 0
@@ -125,6 +135,7 @@ def main() -> int:
                 record = run_iteration(
                     topic=spec["topic"],
                     source="loop_memory_probe",
+                    log_path=CALLS_LOG_PATH,
                 )
                 wall_s = time.perf_counter() - t0
                 row = {

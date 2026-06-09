@@ -129,16 +129,72 @@ def test_schema_mismatch_when_payload_invalid(fake_vllm):
 
 
 def test_schema_mismatch_when_no_json_extractable(fake_vllm):
+    # max_turns=1 leaves no room for the repair-retry, so a single
+    # no-JSON final message resolves straight to schema_mismatch.
     fake_vllm.scripts.append(_resp(content="just some prose, no json here"))
     out = run_subagent(
         name="t",
         system_prompt="sys",
         user_prompt="user",
         expected_output_schema=SIMPLE_SCHEMA,
+        budget=SubAgentBudget(max_turns=1),
     )
     assert out.status == "schema_mismatch"
     assert out.result is None
     assert any("no extractable JSON" in e for e in out.errors)
+
+
+def test_repair_retry_recovers_on_second_turn(fake_vllm):
+    # First final message has no extractable JSON; the bounded repair-retry
+    # asks for JSON-only and the second turn delivers it -> passed.
+    fake_vllm.scripts.append(_resp(content="still thinking, no json yet"))
+    fake_vllm.scripts.append(_resp(content=json.dumps({"verdict": "no"})))
+    out = run_subagent(
+        name="t",
+        system_prompt="sys",
+        user_prompt="user",
+        expected_output_schema=SIMPLE_SCHEMA,
+        budget=SubAgentBudget(max_turns=4),
+    )
+    assert out.status == "passed"
+    assert out.result == {"verdict": "no"}
+    assert out.turns_used == 2
+    # the corrective user turn is staged before the second model call
+    assert any(
+        "ONLY the JSON object" in str(m.get("content", ""))
+        for kw in fake_vllm.calls for m in kw["messages"]
+    )
+
+
+def test_repair_retry_exhausts_to_schema_mismatch(fake_vllm):
+    # Every turn is non-JSON: the retry never coerces a verdict and the
+    # failure surfaces as schema_mismatch once max_turns is spent.
+    for _ in range(3):
+        fake_vllm.scripts.append(_resp(content="never any json"))
+    out = run_subagent(
+        name="t",
+        system_prompt="sys",
+        user_prompt="user",
+        expected_output_schema=SIMPLE_SCHEMA,
+        budget=SubAgentBudget(max_turns=3),
+    )
+    assert out.status == "schema_mismatch"
+    assert out.result is None
+    assert any("no extractable JSON" in e for e in out.errors)
+
+
+def test_max_tokens_per_turn_forwarded_to_backend(fake_vllm):
+    # The per-turn token cap must reach the backend create() call so a
+    # reasoning model can be given headroom (default 1024 stays for Gemma).
+    fake_vllm.scripts.append(_resp(content=json.dumps({"verdict": "yes"})))
+    run_subagent(
+        name="t",
+        system_prompt="sys",
+        user_prompt="user",
+        expected_output_schema=SIMPLE_SCHEMA,
+        budget=SubAgentBudget(max_tokens_per_turn=3072),
+    )
+    assert fake_vllm.calls[0]["max_tokens"] == 3072
 
 
 def test_reasoning_content_fallback_when_content_has_no_json(fake_vllm):

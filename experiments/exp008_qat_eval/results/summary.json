@@ -1,0 +1,75 @@
+{
+  "verdict": "INSUFFICIENT",
+  "reasons": [
+    "small-N or missing metric: tool_call_adherence (missing on an arm)"
+  ],
+  "per_metric": {},
+  "arms": {
+    "pin": {
+      "decision_metrics": {
+        "novelty_agreement": {
+          "mean": 0.8,
+          "n": 10
+        },
+        "calibration_error": {
+          "mean": 0.143,
+          "n": 10
+        },
+        "tool_call_adherence": {
+          "mean": 0.0,
+          "n": 12
+        }
+      },
+      "tertiary_metrics": {},
+      "confusion": {
+        "novelty_agreement": {
+          "rediscovery->rediscovery": 2,
+          "novel->rediscovery": 2,
+          "novel->novel": 6
+        },
+        "tool_call_adherence": {
+          "well_formed->malformed": 12
+        }
+      },
+      "robustness": null
+    },
+    "qat": {
+      "decision_metrics": {
+        "novelty_agreement": {
+          "mean": 0.0,
+          "n": 10
+        },
+        "calibration_error": {
+          "mean": 0.243,
+          "n": 10
+        }
+      },
+      "tertiary_metrics": {},
+      "confusion": {
+        "novelty_agreement": {
+          "rediscovery->unclear": 2,
+          "novel->unclear": 8
+        }
+      },
+      "robustness": null
+    }
+  },
+  "config": {
+    "source": "default (config.yaml present but lacks this analyzer's threshold keys)",
+    "used_default": true,
+    "materiality": {
+      "novelty_agreement": 0.05,
+      "calibration_error": 0.02,
+      "tool_call_adherence": 0.05,
+      "noise_floor_metric": "control_self_tier_flip_rate",
+      "noise_floor_probe_runs": 5,
+      "margin_over_noise_floor": 0.1,
+      "fallback_absolute_disagreement_threshold": 0.2,
+      "small_n_caveat": "Only ~10 fixtures. With N=10, one tier flip is 0.10 of the set, so the resolution is coarse and any result is DIRECTIONAL, not proof. A \"material\" flag here is a signal to investigate on a larger fixture set, never a deployment decision on its own.\n"
+    },
+    "tool_call_adherence_floor": 0.9,
+    "min_sample": 10,
+    "robustness_modal_share_min": 0.8
+  },
+  "tertiary_disclaimer": "tok/s and memory are recorded for context only; they are non-comparable across launch profiles and are NOT decision inputs."
+}

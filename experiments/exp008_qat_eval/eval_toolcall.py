@@ -45,6 +45,9 @@ TOOL_SYSTEM_PROMPT = (
     "and nothing else."
 )
 
+# >=10 prompts so tool_call_adherence clears analyze.py's min_sample=10
+# decision-eligibility gate (one scored item per prompt). Each elicits exactly
+# one tool call against a real LOOP_V0 worker vocabulary.
 PROMPT_SET = [
     {
         "id": "retrieve_literature",
@@ -75,18 +78,92 @@ PROMPT_SET = [
             "Call the critique tool."
         ),
     },
+    {
+        "id": "meta_review",
+        "user": (
+            "Run a meta-review over the last five iterations' critiques to "
+            "surface recurring failure modes. Call the meta_review tool."
+        ),
+    },
+    {
+        "id": "journal_writer",
+        "user": (
+            "Write the iteration's journal entry summarizing the hypothesis, "
+            "novelty verdict, and critique. Call the journal_writer tool."
+        ),
+    },
+    {
+        "id": "retrieve_literature_2",
+        "user": (
+            "Find prior work on whether grim-trigger strategies are renegotiation "
+            "proof in repeated games. Call the retrieve_literature tool."
+        ),
+    },
+    {
+        "id": "novelty_classify_2",
+        "user": (
+            "Decide whether the claim 'fictitious play converges in zero-sum "
+            "games' is novel given the neighbors. Call the novelty_classify tool."
+        ),
+    },
+    {
+        "id": "hypothesize_2",
+        "user": (
+            "Propose a single testable hypothesis about reputation effects in "
+            "public-goods games. Call the hypothesize tool."
+        ),
+    },
+    {
+        "id": "critique_2",
+        "user": (
+            "Assess whether the current hypothesis is falsifiable and within "
+            "scope for a sandbox experiment. Call the critique tool."
+        ),
+    },
+    {
+        "id": "hypothesize_3",
+        "user": (
+            "Generate one new hypothesis about bidding behavior in Vickrey "
+            "auctions under uncertainty. Call the hypothesize tool."
+        ),
+    },
+    {
+        "id": "critique_3",
+        "user": (
+            "Critique the experimental design implied by the current hypothesis. "
+            "Call the critique tool."
+        ),
+    },
 ]
 
 
-def _register_arm_backend(endpoint: str, model: str | None) -> str:
-    """Register an OpenAI-compat scratch backend for the arm. NEVER :8000."""
+def _register_arm_backend(
+    endpoint: str, model: str | None, *, allow_production: bool = False,
+    arm: str | None = None,
+) -> str:
+    """Register an OpenAI-compat scratch backend for the arm.
+
+    :8000 is REFUSED by default (a candidate arm must never be production). The
+    read-only reference ('pin') arm is the lone exception: pass
+    `allow_production=True` (the `--reference` CLI flag) to collect it against
+    the already-running production server. Nothing here launches/reconfigures
+    :8000 and the call log stays eval-local."""
     from agent_wrapper.backends.ollama_openai import OllamaBackend
     from agent_wrapper.wrapper import register_backend
 
-    if ":8000" in endpoint:
+    # Production-read exception is scoped to the reference arm ONLY — enforce
+    # that allow_production is paired with --arm pin (see eval_novelty).
+    if allow_production and arm != "pin":
+        raise ValueError(
+            f"refusing --reference for arm {arm!r}: the production-read "
+            "exception is for the reference arm only — use --arm pin."
+        )
+    if ":8000" in endpoint and not allow_production:
         raise ValueError(
             f"refusing arm endpoint {endpoint!r}: :8000 is the production "
-            "endpoint and is off-limits to this eval"
+            "endpoint and is off-limits to a candidate arm. To collect the "
+            "read-only production REFERENCE arm, pass --reference (and use "
+            "--arm pin)."
         )
     name = "exp008-qat-arm"
     register_backend(
@@ -145,8 +222,13 @@ def run_eval(
     """
     runs_dir.mkdir(parents=True, exist_ok=True)
     out_path = runs_dir / f"toolcall_{arm}.jsonl"
+    # analyze.py-compatible decision rows (separate file so it never collides
+    # with the novelty metrics file). One tool_call_adherence row per prompt:
+    # value 1.0/0.0, mean -> adherence_rate, n -> prompt count (>=10 clears the
+    # min_sample gate).
+    metrics_path = runs_dir / f"metrics_toolcall_{arm}.jsonl"
     rows: list[dict] = []
-    with open(out_path, "w") as fh:
+    with open(out_path, "w") as fh, open(metrics_path, "w") as mfh:
         for p in prompts:
             messages = [
                 {"role": "system", "content": TOOL_SYSTEM_PROMPT},
@@ -161,7 +243,22 @@ def run_eval(
                 kwargs["backend"] = backend
             if model is not None:
                 kwargs["model"] = model
-            record = caller(messages, **kwargs)
+            # A failed call (e.g. the arm endpoint is down) is NOT a
+            # measurement: don't crash the whole run on it, and DON'T score it
+            # as a non-adherent 0 — that would let an infra failure masquerade
+            # as a quality signal (inviolate rule 4). Record the error in the
+            # audit row and skip the decision row; an arm that errors enough
+            # drops below min_sample -> honest INSUFFICIENT.
+            try:
+                record = caller(messages, **kwargs)
+            except Exception as exc:
+                fh.write(json.dumps({
+                    "timestamp": datetime.now(timezone.utc)
+                    .isoformat().replace("+00:00", "Z"),
+                    "arm": arm, "prompt_id": p["id"], "adherent": None,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }, ensure_ascii=False) + "\n")
+                continue
             adherent, n_parsed = is_parseable_toolcall(record)
             row = {
                 "timestamp": datetime.now(timezone.utc)
@@ -175,6 +272,13 @@ def run_eval(
             }
             rows.append(row)
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            mfh.write(json.dumps({
+                "arm": arm,
+                "metric": "tool_call_adherence",
+                "value": 1.0 if adherent else 0.0,
+                "reference_verdict": "well_formed",
+                "predicted_verdict": "well_formed" if adherent else "malformed",
+            }) + "\n")
     n = len(rows)
     adherent_n = sum(1 for r in rows if r["adherent"])
     return {
@@ -201,6 +305,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", help="JSON config with endpoint/model")
     ap.add_argument("--endpoint", help="OpenAI-compat base url for the arm")
     ap.add_argument("--model", help="served-model-name for the arm")
+    ap.add_argument(
+        "--reference", action="store_true",
+        help="permit the READ-ONLY production :8000 endpoint to collect the "
+             "reference ('pin') arm. Use with --arm pin. Without it :8000 is "
+             "refused (candidate-arm guardrail).",
+    )
     args = ap.parse_args(argv)
 
     endpoint, model = _resolve_endpoint(args)
@@ -220,7 +330,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    backend = _register_arm_backend(endpoint, model)
+    backend = _register_arm_backend(
+        endpoint, model, allow_production=args.reference, arm=args.arm
+    )
     from agent_wrapper.wrapper import call_sync
 
     metrics = run_eval(

@@ -61,8 +61,8 @@ arms:
     served_model_name: gemma-4-26b-a4b-qat-unquantized
     checkpoint:
       repo: google/gemma-4-26B-A4B-it-qat-q4_0-unquantized
-      revision: "PLACEHOLDER_REVISION"
-      content_hash: "PLACEHOLDER_SHA256"
+      revision: "641f184470aa8554ae7957599a624badc2bf4e57"
+      content_hash: "e7e7b1556383e842f3d0e3b9f32ca813a3e4cc5b0472883834448f9e9f309c9d"
     read_only: false
 
 # ---------------------------------------------------------------------------

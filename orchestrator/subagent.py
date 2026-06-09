@@ -56,10 +56,16 @@ class SubAgentBudget:
     Exceeding any cap returns status="timeout" with whatever's been
     captured so far. Hard caps prevent run-away sub-agent loops from
     burning the GPU or stalling the iteration.
+
+    `max_tokens_per_turn` caps a SINGLE turn's completion. Reasoning
+    models (Qwen3.x served with --reasoning-parser) spend this budget on
+    `reasoning_content` BEFORE the final answer, so a too-small cap
+    truncates the JSON. Default 1024 preserves the Gemma path.
     """
     max_turns: int = 8
     max_wall_seconds: float = 90.0
     max_tokens_total: int = 8000
+    max_tokens_per_turn: int = 1024
 
 
 @dataclass
@@ -282,9 +288,12 @@ def run_subagent(
                 messages=openai_messages,
                 tools=tool_specs if tool_specs else None,
                 temperature=0.2,
-                # Same cap as nara.py — bounded per-turn output so a
-                # tool-call-as-text emission can't run away.
-                max_tokens=1024,
+                # Bounded per-turn output so a tool-call-as-text emission
+                # can't run away. Reasoning models (Qwen3.x) need headroom:
+                # their thinking counts against this cap before the final
+                # JSON, so the default 1024 truncates them — callers driving
+                # a reasoning backend raise budget.max_tokens_per_turn.
+                max_tokens=budget.max_tokens_per_turn,
             )
             latency_ms = (time.perf_counter() - t0) * 1000.0
         except Exception as exc:
@@ -357,11 +366,31 @@ def run_subagent(
                         strip_channel_markup(reasoning_text)
                     )
             if payload is None:
+                # Bounded repair-retry: one corrective turn asking for
+                # JSON-only, IF the budget still allows another turn. Does
+                # NOT loosen the schema and does NOT manufacture a verdict —
+                # if the retry also fails we fall through to schema_mismatch
+                # (counted as a qwen_failure upstream; inviolate rule 4).
+                if turn + 1 < budget.max_turns:
+                    openai_messages.append(
+                        {"role": "assistant", "content": text_content}
+                    )
+                    openai_messages.append({
+                        "role": "user",
+                        "content": (
+                            "Your previous message was not a valid JSON "
+                            "object matching the required schema. Reply with "
+                            "ONLY the JSON object — no thinking, no prose, no "
+                            "markdown fences."
+                        ),
+                    })
+                    continue
                 return SubAgentResult(
                     status="schema_mismatch",
                     result=None,
                     errors=[
-                        "final message had no extractable JSON object; "
+                        "final message had no extractable JSON object "
+                        "(after repair-retry); "
                         f"raw: {final_text[:300]!r}"
                     ],
                     wrapper_call_ids=wrapper_call_ids,
