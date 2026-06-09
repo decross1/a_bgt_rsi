@@ -1,5 +1,29 @@
 # NemoClaw smoke runbook — sandbox → host `get_apparatus_state`
 
+> ## ✓ PROVEN 2026-06-09 — use this, NOT the spark-7eeb/hosts-add steps below
+> The host is reachable from the sandbox as **`host.openshell.internal`** (NOT the
+> host's hostname `spark-7eeb`, NOT a raw IP) — it already resolves inside the
+> sandbox (it's how the built-in `local-inference` preset reaches the host vLLM at
+> `:8000`). So **no `hosts-add` is needed** — only a `policy-add` for the tool-plane
+> port. Verified end-to-end: a sandbox `POST get_apparatus_state` returned the live
+> apparatus snapshot.
+> ```bash
+> # 1. host: start the tool plane (binds 0.0.0.0:8077)
+> env -u MOCK_LLM .venv-chroma/bin/python -m orchestrator.tool_plane --port 8077
+> # 2. host: open the egress (LIVE policy add — no rebuild; dry-run first; reversible via policy-remove)
+> nemoclaw nara-sandbox policy-add --from-file agent/nemoclaw_nara/host_tool_plane_egress.yaml --dry-run
+> nemoclaw nara-sandbox policy-add --from-file agent/nemoclaw_nara/host_tool_plane_egress.yaml --yes
+> # 3. smoke the seam from the sandbox
+> nemoclaw nara-sandbox exec --no-tty -- curl -s http://host.openshell.internal:8077/health
+> nemoclaw nara-sandbox exec --no-tty -- curl -s -X POST http://host.openshell.internal:8077/tools/get_apparatus_state
+> ```
+> CORRECTIONS to the original runbook below (Limb D's probe was partly stale):
+> `spark-7eeb`+`hosts-add` is WRONG (that hostname isn't what the egress/SSRF guard
+> keys on → 403); `policy-add`/`policy-list`/`hosts-add` ARE v0.0.55 CLI commands;
+> `policy-add` applies LIVE (bumps the policy version) and does NOT rebuild the
+> sandbox. The `doctor` "Gateway: Docker container fail" is the known-stale probe
+> (#3975) — the gateway is fine.
+
 **Goal.** Prove, end-to-end, that the Nara OpenClaw agent **inside** the
 `nara-sandbox` can call ONE host-side tool — `get_apparatus_state`, served by
 `orchestrator/tool_plane.py` — **through the NemoClaw gateway**, and get back the

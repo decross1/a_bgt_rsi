@@ -18,11 +18,14 @@ Scope discipline (inviolate rule 8 — resist abstraction):
   - does NOT import ui/ (ui/backend/app.py is a read-side precedent only, and is
     off-limits to the primary session's tool plane — it must live outside ui/).
 
-Networking note carried from Limb D's probe (run_state/spawn.jsonl SP-…-D):
-sandbox->host:8000 returns 200 via the host HOSTNAME but 403 via the raw IP —
-NemoClaw's egress/SSRF guard keys on the hostname. So bind on 0.0.0.0 and have
-the sandbox reach this by the host's hostname (see docs/nemoclaw_smoke_runbook.md),
-never by a bare IP literal.
+Networking note (CORRECTED + PROVEN 2026-06-09): the sandbox reaches the host via
+OpenShell's host alias **`host.openshell.internal`** (NOT the host's hostname
+`spark-7eeb`, NOT a raw IP — those 403 under the egress/SSRF guard). It already
+resolves inside the sandbox (the built-in `local-inference` preset uses it for
+the host vLLM at :8000). So bind on 0.0.0.0 and add a `policy-add` egress rule for
+`host.openshell.internal:8077` (agent/nemoclaw_nara/host_tool_plane_egress.yaml);
+the sandbox then reaches this at http://host.openshell.internal:8077. Verified
+end-to-end — see docs/nemoclaw_smoke_runbook.md.
 
 Run (host side, real apparatus):
     env -u MOCK_LLM .venv-chroma/bin/python -m orchestrator.tool_plane --port 8077
