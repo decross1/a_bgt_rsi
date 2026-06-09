@@ -58,14 +58,42 @@ concurrency-safe — speed without losing the apparatus's discipline.
    the UI session a spec instead of writing `ui/`.**
 3. **Spawn-contract per build agent** (the `spawn-contract` skill):
    exact files it may create, done-condition (its test green under
-   `MOCK_LLM`), report format. Closes the "wrote to main checkout /
-   forked from stale HEAD" failure modes seen on 2026-05-27.
+   `MOCK_LLM`), report format. The build-agent `skill_subset` is the
+   runtime-safe core plus `brain-recall`:
+   `[resume-state, gate-check, validate, run-log, fallback, brain-recall]`.
+   **Boundary:** `brain-recall` (and `narrate`/`propose`) are **dev-time
+   only** and read/write the framework brain at
+   `/home/decross1/projects/agent_system/memory/brain/`; the gemma/Nara
+   **runtime never reads the brain** (firewall, D-014). Each fanned-out
+   agent is **hand-appended** to the spawn ledger `run_state/spawn.jsonl`:
+   a `{status:"spawned", contract:{...}}` line written **before launch**,
+   and a closing `{status:"completed"|"escalated", result:{...}}` line at
+   fan-in. The contract block carries `{task_statement, done_condition,
+   skill_subset, authority_cap, self_gating_rules, reporting_format,
+   escalation_path, budget, state_basis}` (`files_allowed` recommended);
+   the closing line carries `{spawn_id, status, result:{child_summary,
+   done_condition_check, verified_at, verified_by}}`. The ledger is a
+   **discipline, not a launch gate** — a missing line is a logging lapse to
+   fix, NOT a fail-to-launch. Closes the "wrote to main checkout / forked
+   from stale HEAD" failure modes seen on 2026-05-27.
 4. **Single merge/commit authority** = the primary session, only after
-   a verification gate: `code-review` + full suite green + one real
-   `env -u MOCK_LLM` smoke. Workflows return a report; they do not
-   commit.
-5. **Workflow run-logging.** Phase/agent start+finish log to
-   `run_state/week1.run.jsonl` as first-class entries (inviolate rule 6).
+   a verification gate: the **framework `code-review` skill**
+   (`/home/decross1/projects/agent_system/.agents/skills/code-review/`,
+   symlinked at `.agents/skills/code-review/`) reviewing the local commit
+   range `git diff <merge-base>..HEAD` + full suite green + one real
+   `env -u MOCK_LLM` smoke. This is the framework skill, **NOT** the Claude
+   Code `/code-review` GitHub-PR builtin — that builtin no-ops with no open
+   PR and yields a falsely-clean gate. Workflows return a report; they do
+   not commit.
+5. **Workflow run-logging + reflection.** Phase/agent start+finish log to
+   `run_state/week1.run.jsonl` as first-class entries (inviolate rule 6),
+   each carrying its `agent` (`workflow:<wf_id>/<role>`). At the workflow's
+   **synthesize** phase the integrator runs the `narrate` skill — a
+   human-readable reflection (intent, deltas, lessons, corrections honored)
+   capturing the *why* the structured run log cannot; and runs `propose`
+   **conditionally**, only when the run yields a durable lesson worth a
+   brain/rule/skill change. `narrate`/`propose` are dev-time-only (they touch
+   the framework brain; the runtime never does).
 
 At the start of each working day, the human and the primary session
 agree on a session focus and write a working note at
@@ -150,8 +178,15 @@ These do not bend.
 
 6. **Logging is mandatory.** Every executable task appends a row to
    `run_state/week1.run.jsonl`:
-   `{timestamp, task_id, status, observable_actual, observable_expected, duration_ms}`.
-   State transitions and fallback selections log as first-class entries.
+   `{timestamp, task_id, agent, status, observable_actual, observable_expected, duration_ms, skill_used?}`.
+   `agent` is **required** — the entity that ran the step (e.g. `nara`,
+   `claude-code-main`, `human:<id>`, `workflow:<wf_id>/<role>`); `skill_used`
+   is **optional**, present only when the row is a framework-skill invocation
+   (e.g. `validate`, `fallback`). The 7-field shape is a *minimum, not a
+   ceiling*. Existing rows are NOT rewritten — append-only stands; pre-bump
+   rows are canonicalized at read time (`week1.run.jsonl` → `nara`) per
+   framework FR-003. State transitions and fallback selections log as
+   first-class entries. (Bump recorded in D-043.)
 
 7. **Fallbacks are explicit, logged, and time-capped.** When a
    primary approach fails, switching to a fallback requires: a stated

@@ -20,6 +20,7 @@ D-031 documents why NemoClawRuntime is a stub today.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 from datetime import datetime, timezone
@@ -36,6 +37,28 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+# Agent attribution for the run log (D-043 / inviolate rule 6). A run-mode
+# driver sets this once (coordinator / nara / a fanned-out workflow role);
+# every log_event in that context inherits it. A ContextVar (not a global) so
+# concurrent async iterations don't clobber each other — same pattern as
+# agent_wrapper.wrapper._run_id. Default "nara" = the host orchestrator
+# identity, so the existing nara.py call sites attribute correctly with zero
+# edits.
+_current_agent: contextvars.ContextVar = contextvars.ContextVar(
+    "_current_agent", default="nara"
+)
+
+
+def set_current_agent(agent: str | None) -> None:
+    """Set the active agent for run-log attribution (None resets to 'nara')."""
+    _current_agent.set(agent if agent is not None else "nara")
+
+
+def get_current_agent() -> str:
+    """Return the active agent identity for the current context."""
+    return _current_agent.get()
+
+
 class Runtime(Protocol):
     """The substrate interface Nara consumes. Implementations differ in
     where dispatched tools execute (in-process vs. sandbox)."""
@@ -48,7 +71,7 @@ class Runtime(Protocol):
         parent_request_id: str,
     ) -> dict: ...
 
-    def log_event(self, event: dict) -> None: ...
+    def log_event(self, event: dict, *, agent: str | None = None) -> None: ...
 
     def read_state(self, path: str) -> dict | None: ...
 
@@ -88,11 +111,14 @@ class PyRuntime:
         # call time — that's the right failure mode.
         return impl(**args, parent_request_id=parent_request_id)
 
-    def log_event(self, event: dict) -> None:
+    def log_event(self, event: dict, *, agent: str | None = None) -> None:
         # Append to the existing run.jsonl. The run-log format is
         # permissive (see tools/inspect_run.py's candidate-key fallback);
-        # a new event_type passes cleanly.
-        row = {"timestamp": _utcnow_iso(), **event}
+        # a new event_type passes cleanly. `agent` (rule 6 / D-043): the
+        # explicit param wins, else the context-scoped identity, else 'nara'.
+        # Keyword-only so the existing positional-dict callers are untouched.
+        resolved = agent if agent is not None else get_current_agent()
+        row = {"timestamp": _utcnow_iso(), "agent": resolved, **event}
         RUN_STATE_DIR.mkdir(parents=True, exist_ok=True)
         with open(RUN_LOG_PATH, "a") as fh:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -134,7 +160,7 @@ class NemoClawRuntime:
             "Use PyRuntime() until NemoClaw is installed."
         )
 
-    def log_event(self, event):
+    def log_event(self, event, *, agent=None):
         raise NotImplementedError("see DECISIONS.md D-031")
 
     def read_state(self, path):

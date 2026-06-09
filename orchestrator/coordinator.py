@@ -41,12 +41,15 @@ from typing import Any, Callable
 from agent_wrapper.wrapper import call_sync, set_run_id
 from orchestrator import active_run, tier_registry
 from orchestrator.coordinator_actions import known_actions, validate_plan
+from orchestrator.morning_topic import pick_morning_topic
+from orchestrator.runtime import set_current_agent
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOOP_MEMORY = REPO_ROOT / "memory" / "loop_memory.jsonl"
 DEFAULT_SURFACED = REPO_ROOT / "memory" / "surfaced_findings.jsonl"
 DEFAULT_FEEDBACK = REPO_ROOT / "memory" / "loop_feedback.jsonl"
 DEFAULT_ACTIVE_RUN = REPO_ROOT / "run_state" / "active_run.json"
+DEFAULT_COORDINATOR_BUBBLES = REPO_ROOT / "memory" / "coordinator_bubbles.jsonl"
 
 CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 
@@ -154,6 +157,21 @@ def _extract_json(text: str) -> Any | None:
 # ── assess ────────────────────────────────────────────────────────────────
 
 
+def _topic_suggestions(
+    loop_memory_path: str | os.PathLike,
+) -> list[dict[str, str]]:
+    """One morning-loop topic candidate (newest arXiv paper, else a
+    loop-memory gap probe, else a safe fallback). Never raises; degrades to
+    [] so assess_state stays a pure read. Surfacing this is what un-blinds
+    the planner — run_loop_iteration's arg_schema requires a non-empty topic
+    and the planner had no candidate to offer before."""
+    try:
+        topic, source = pick_morning_topic(loop_memory_path=loop_memory_path)
+    except Exception:
+        return []
+    return [{"topic": topic, "source": source}]
+
+
 def assess_state(
     *,
     loop_memory_path: str | os.PathLike = DEFAULT_LOOP_MEMORY,
@@ -176,6 +194,7 @@ def assess_state(
           "gaps": [str, ...],                     # what's thin / worth doing
           "surfaced_pending": [ {finding_id, title, status} ],  # awaiting review
           "experiments": {tier: count, ...},
+          "topic_suggestions": [ {topic, source} ],  # morning-loop candidate(s)
         }
     """
     # --- in-flight: is a run live right now? ---
@@ -276,6 +295,7 @@ def assess_state(
         "gaps": gaps,
         "surfaced_pending": surfaced_pending,
         "experiments": experiments,
+        "topic_suggestions": _topic_suggestions(loop_memory_path),
     }
 
 
@@ -298,7 +318,10 @@ def _planner_system_prompt(budget: int) -> str:
         "Choose the smallest plan that advances the research: e.g. run a loop\n"
         "iteration on a worthwhile topic, promote vetted findings, bubble up a\n"
         "specific finding for the human, or noop with a reason if nothing is\n"
-        "worth doing. Prefer fewer, higher-value actions; the total cost of the\n"
+        "worth doing. When the state's 'topic_suggestions' is non-empty and a\n"
+        "loop iteration is worthwhile, use a suggested topic VERBATIM as the\n"
+        "run_loop_iteration 'topic' arg (it is a real candidate already vetted\n"
+        "for scope). Prefer fewer, higher-value actions; the total cost of the\n"
         f"actions must not exceed {budget}.\n"
         "\n"
         "Output STRICT JSON, nothing else — no prose, no markdown fences, no\n"
@@ -435,6 +458,7 @@ def coordinator_cycle(
     """
     run_id = f"coordinator_{uuid.uuid4().hex[:8]}"
     set_run_id(run_id)
+    set_current_agent("coordinator")
     active_run.write_active_run(run_id, kind="ad_hoc", label="coordinator_cycle")
     try:
         return _coordinator_cycle(
@@ -452,6 +476,7 @@ def coordinator_cycle(
     finally:
         active_run.clear_active_run()
         set_run_id(None)
+        set_current_agent(None)
 
 
 def _coordinator_cycle(
@@ -561,6 +586,8 @@ def _coordinator_cycle(
                 "reason": f"{type(exc).__name__}: {exc}",
             })
 
+    bubbles = _collect_bubble_up(validated, executed=executed)
+    _persist_bubble_up(bubbles, run_id=run_id)
     return {
         "run_id": run_id,
         "status": "executed",
@@ -569,7 +596,7 @@ def _coordinator_cycle(
         "attempts": attempts,
         "state": state,
         "executed": executed,
-        "bubble_up": _collect_bubble_up(validated, executed=executed),
+        "bubble_up": bubbles,
         "errors": [],
     }
 
@@ -588,6 +615,33 @@ def _collect_bubble_up(
             "note": args.get("note"),
         })
     return out
+
+
+def _persist_bubble_up(
+    bubbles: list[dict[str, Any]], *, run_id: str,
+    path: str | os.PathLike = DEFAULT_COORDINATOR_BUBBLES,
+) -> None:
+    """Append each bubble_up entry to memory/coordinator_bubbles.jsonl so a
+    coordinator surfacing OUTLIVES the run — today bubble_up is report-only
+    (returned + printed, then lost). Execute-only by design: a bubble is an
+    actual surfacing (handle_bubble_up ran), not a dry-run proposal, so a
+    planned-but-not-executed bubble is never recorded as a real one (rule 4).
+    One row per bubble; append-only (matches the JSONL convention); never raises."""
+    if not bubbles:
+        return
+    try:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a") as fh:
+            for bu in bubbles:
+                fh.write(json.dumps({
+                    "timestamp": _utcnow_iso(),
+                    "run_id": run_id,
+                    "finding_ids": bu.get("finding_ids", []),
+                    "note": bu.get("note"),
+                }, ensure_ascii=False) + "\n")
+    except Exception:
+        return
 
 
 # ── CLI ────────────────────────────────────────────────────────────────
