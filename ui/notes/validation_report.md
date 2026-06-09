@@ -177,3 +177,96 @@ make-absence-legible principle applied to the rows' own shapes.
   degraded-vs-broken health distinct). The bullets gated on absent EMIT data
   (populated findings/bubbles, mid-flight narration, a firing low-evidence flag)
   are listed under deferred followups above.
+
+## WF-A — forward-compat + live-:8700 + staleness (evening block)
+
+Serial-integrator close-out for the evening workflow. Scope: prove the merged
+renders survive the PRIMARY session's **announced additive-only** contract
+(critique `verdict:"undecidable"` + three override siblings, the
+`novelty.novelty_axes` OBJECT, five new `retrieval.relevance` siblings), add a
+live validation of the served :8700 process, and land the one real bug fix
+(CoordinatorPhases phantom-presence). New renders for the announced fields are
+deliberately NOT built — that is the later, gated task.
+
+### Suite results (all green, growth-only)
+
+| Suite | Result | Baseline |
+| --- | --- | --- |
+| `npx tsc --noEmit` | clean | clean |
+| `npx vitest run` | **54 files / 678 tests passed** | 49 / 639 (+5 files, +39 tests) |
+| `pytest backend/tests -q` | **202 passed, 0 skipped** | 196 (+6, `test_live_8700.py`) |
+
+`test_live_8700.py` did **NOT** skip — :8700 was up and all 6 live tests ran
+against the served process. Zero failures anywhere; no test was weakened or
+deleted. New test files are exactly the budgeted six — no sprawl, nothing to
+consolidate: `tests/test_forwardcompat_{routes,iterations_list,lowevidence_strip,findings_panel}.tsx`,
+`tests/test_stale_active_run.tsx`, `backend/tests/test_live_8700.py`.
+
+### Per-surface forward-compat verdicts
+
+| Surface | Verdict | Evidence |
+| --- | --- | --- |
+| ResolvedIterationsList | **ROBUST** | 5 probes: `undecidable` + override siblings → quiet fallback badge; `novelty_axes` object never leaks into a React child; all five relevance siblings inert; combined row; garbled variants degrade silently. Cosmetic gap only (see deferred). |
+| SurfacedFindingsPanel | **ROBUST** | 3 probes: `undecidable` renders as quiet badge; observability siblings not rendered raw; axes/relevance extras inert. |
+| LowEvidenceBadge / `isLowEvidence` | **ROBUST** | Verdict driven solely by `low_confidence` + structural triggers: `category:"off_domain"` with `low_confidence:false` does NOT fire; `"ok"` with `true` DOES; every announced category value stays silent when unflagged; garbled new fields never throw, flip the verdict, or leak into the tooltip. |
+| RedFlagsTrendStrip | **ROBUST** | NaN-free rates with announced + garbled rows mixed; `undecidable` never enters the suspect numerator (fail-closed). |
+| Routes (Dashboard / Coordinator / Activity / Experiments) | **ROBUST** | Announced-shape rows mixed with legacy rows: no crash, no console.error/warn, unknown enums fall to the existing quiet fallbacks. |
+| CoordinatorPhases | **FIXED** | Phantom-presence / staleness bug, below. |
+| Served :8700 process | **VALIDATED** | Live route/shape assertions, below. |
+
+No surface crashed on `undecidable` or `novelty_axes` — the only crash-class
+finding of the block was the CoordinatorPhases phantom-presence bug (a
+staleness/honesty bug, not a contract-shape one).
+
+### Bugs fixed (1)
+
+1. CoordinatorPhases now annotates a possibly-stale active run (>30min since
+   `step_started_at ?? started_at`) with an amber in-panel hint instead of
+   presenting it as confidently live; malformed/non-string/unparseable
+   timestamps are guarded to "freshness unknown" (no hint) so the fix cannot
+   produce a false-stale. Regression-tested in `tests/test_stale_active_run.tsx`
+   (7 cases).
+
+**Staleness-hint behavior:** fresh run → stepper, no hint; >30min-old freshest
+timestamp → amber `coordinator-stale-hint` AND the stepper still renders
+(annotate state, don't hide it); NaN-parsing / non-string / absent timestamps →
+no hint, no crash; idle (`activeRun` null) unchanged. Live today the hint has
+nothing to annotate: no `active_run.json` on disk, `/active` → 204, so the
+panel renders its quiet idle state — the hint path is pinned by the 7 unit
+cases. No exported-signature change; uses the existing `useNow`/`elapsed`
+idiom, hook called unconditionally before the idle early-return.
+
+### Live (:8700) vs in-process — comparison numbers (2026-06-09 evening)
+
+Both targets read the same on-disk files; they agree on every count.
+
+| Probe | Live :8700 | In-process / on-disk |
+| --- | --- | --- |
+| `/api/health` | `ok:true`, version `5ddff08` | = current HEAD (not a stale binary) |
+| `/api/coordinator/cycles` | **73 rows**, all carrying the 7 non-optional `CoordinatorCycle` keys | `coordinator_cycles.jsonl` = **73 lines** (grew from 19 at the earlier validation; the test's ≥19 floor is a documented lower bound and stays green) |
+| `/api/coordinator/active` | **204** | no `active_run.json` on disk — agree |
+| `/findings` / `/bubbles` / `/health_signals` | wrapper shape correct, **0 rows each** | files still absent live — matches the earlier EMIT-side observation |
+
+### Followups deferred to WF-B / the gated render task
+
+- **After the primary's close-out confirms shapes** (serial-integrator change,
+  forbidden during this probe per the additive-contract freeze):
+  `types/schemas.ts` gains the optional fields — critique
+  `verdict_overridden_from` / `override_reason` / `skeptic_verdict` (+
+  `"undecidable"` in the verdict union), `novelty.novelty_axes`, the five
+  relevance siblings — and the inline `as unknown as IterationRecord` literals
+  in the four `test_forwardcompat_*` files can be narrowed / promoted into
+  `src/fixtures/`.
+- **Gated render task** (deliberately NOT built here; the forward-compat tests
+  pin the fields as inert and will need updating when it lands): surface
+  `novelty_axes`, override provenance, and `relevance.category`/`rule_fired`
+  (badge tooltip); optionally a dedicated `undecidable` tone in
+  `VERDICT_TONE` (one line in SurfacedFindingsPanel + the matching palette in
+  ResolvedIterationsList — keep the two in sync).
+- **Cosmetic, not a crash:** ResolvedIterationsList filter dropdowns use the
+  fixed legacy enum lists — `undecidable` rows render fine but cannot be
+  filter-selected; same for new `novelty_axes` values. Fold into the gated
+  render task.
+- `test_live_8700.py`'s cycles floor (≥19) is deliberately a lower bound; live
+  is at 73. If `coordinator_cycles.jsonl` is ever rotated/reset, the floor
+  needs a matching revision — documented in the test docstring.

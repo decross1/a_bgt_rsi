@@ -20,9 +20,31 @@
 // — e.g. an ad-hoc or nara run is what's active) we render a quiet idle state
 // rather than an empty gap: idle ≠ failed ≠ running.
 import type { CoordinatorActiveRun } from "../types/schemas";
+import { elapsed, useNow } from "../time";
 
 // The coordinator's four phases, in order. The stepper's join key.
 const PHASES = ["assess", "plan", "validate", "dispatch"] as const;
+
+// An active_run whose freshest timestamp is older than this is "possibly
+// stale": a known producer bug (a lock-leak past a finally-block clear) can
+// leave active_run.json behind after the iteration completed, and the UI must
+// not present that old file as a confidently-live cycle. 30 minutes is well
+// past any observed real step duration.
+const STALE_AFTER_MS = 30 * 60_000;
+
+/** The run's freshest timestamp (step_started_at, else started_at), or null
+ * when absent / non-string. Producer-owned JSON: a malformed row can carry a
+ * non-string here (and Date.parse coerces arrays/objects), so only a
+ * non-empty string qualifies. */
+function freshestTimestamp(run: CoordinatorActiveRun): string | null {
+  if (typeof run.step_started_at === "string" && run.step_started_at) {
+    return run.step_started_at;
+  }
+  if (typeof run.started_at === "string" && run.started_at) {
+    return run.started_at;
+  }
+  return null;
+}
 
 type PhaseState = "done" | "active" | "future";
 
@@ -48,6 +70,11 @@ export default function CoordinatorPhases({
 }: {
   activeRun: CoordinatorActiveRun | null;
 }) {
+  // Live clock for the staleness check (the codebase idiom for current-time
+  // rendering — Dashboard uses the same hook). Called unconditionally, before
+  // the idle early-return, per the rules of hooks.
+  const now = useNow();
+
   // No live coordinator cycle: an ad-hoc/nara run, or nothing running at all.
   // Render a quiet idle state — absence is legible, not a blank gap.
   if (!activeRun || activeRun.kind !== "coordinator") {
@@ -73,6 +100,18 @@ export default function CoordinatorPhases({
 
   const currentStep = activeRun.current_step;
 
+  // Phantom-presence guard: a completed iteration can leave active_run.json
+  // behind (producer lock-leak), and this panel would then show a "running"
+  // stepper forever. When the freshest timestamp is older than ~30 minutes,
+  // annotate — but STILL render the stepper (don't hide state; annotate it).
+  // Date.parse → NaN must mean "freshness unknown" (NO hint), never a
+  // false-stale — same Number.isFinite ageMs guard the Dashboard hero uses.
+  const freshestIso = freshestTimestamp(activeRun);
+  const parsedAge = freshestIso != null ? now - Date.parse(freshestIso) : null;
+  const ageMs =
+    parsedAge != null && Number.isFinite(parsedAge) ? parsedAge : null;
+  const possiblyStale = ageMs != null && ageMs > STALE_AFTER_MS;
+
   return (
     <div
       className="rounded border border-zinc-800 bg-zinc-900/40 p-4"
@@ -94,6 +133,21 @@ export default function CoordinatorPhases({
           </span>
         )}
       </div>
+
+      {/* Stale-active-run hint — the dual of "make absence legible": phantom
+          presence. The stepper below still renders (annotate state, don't hide
+          it); this just withdraws the panel's claim that the cycle is
+          confidently live. freshestIso is non-null whenever possiblyStale is
+          (ageMs derives from it). */}
+      {possiblyStale && (
+        <div
+          className="mt-3 rounded border border-amber-900/60 bg-amber-950/30 px-2 py-1.5 text-xs text-amber-400"
+          data-testid="coordinator-stale-hint"
+        >
+          possibly stale — last update {elapsed(freshestIso, now)} ago; the
+          producer may have failed to clear active_run.json
+        </div>
+      )}
 
       {/* Horizontal stepper. Each phase is a chip; connectors between them. */}
       <ol
