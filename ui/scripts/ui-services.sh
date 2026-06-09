@@ -20,6 +20,10 @@
 # what still needs the primary session after a reboot.
 set -u
 
+# Robust under a minimal environment (e.g. cron @reboot): ensure node/npm
+# (/usr/bin) and the standard tools (lsof/pgrep/ps/curl/setsid) are on PATH.
+export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+
 PRIMARY=/home/decross1/projects/a_bgt_rsi
 UI="$PRIMARY/ui"
 PY="$UI/.venv/bin/python"            # main-checkout venv (has fastapi/uvicorn/psutil)
