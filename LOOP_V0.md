@@ -225,8 +225,10 @@ tools, tool_dispatch, budget, parent_request_id) → SubAgentResult`
 - Output validated against `expected_output_schema` before return.
 - Same `parent_request_id` chain so all wrapper calls stay
   observable under one iteration.
-- Runtime-agnostic: today `PyRuntime` dispatches the LLM call; a
-  future `NemoClawRuntime` swap is mechanical.
+- Runtime-agnostic: today `PyRuntime` dispatches the LLM call. (β is a
+  host-tool-plane PORT — `orchestrator/tool_plane.py` + an in-sandbox OpenClaw
+  bundle — NOT a mechanical `NemoClawRuntime` swap; that framing was falsified
+  2026-06-09, see DECISIONS D-031 amendment. `PyRuntime` stays the host default.)
 
 **Migration rule (per-worker, not chain-wide):**
 

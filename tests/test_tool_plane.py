@@ -49,22 +49,25 @@ def test_health_does_not_call_assess(monkeypatch):
     client, calls = _client(monkeypatch)
     body = client.get("/health").json()
     assert body["ok"] is True
-    assert body["tools"] == [tool_plane.TOOL_NAME]
+    # Both tools are advertised (read + the run_loop_iteration compute tool).
+    assert body["tools"] == [tool_plane.TOOL_NAME, tool_plane.RUN_TOOL_NAME]
     # A liveness ping must not load Chroma via assess_state.
     assert calls["n"] == 0
 
 
-def test_tools_manifest_lists_the_one_tool(monkeypatch):
+def test_tools_manifest_lists_the_read_tool(monkeypatch):
     client, _ = _client(monkeypatch)
     body = client.get("/tools").json()
     tools = body["tools"]
-    assert len(tools) == 1
-    tool = tools[0]
-    assert tool["name"] == "get_apparatus_state"
-    assert isinstance(tool["description"], str) and tool["description"]
+    # Two tools now: the read snapshot + the run_loop_iteration compute tool.
+    assert len(tools) == 2
+    by_name = {t["name"] for t in tools}
+    assert by_name == {"get_apparatus_state", "run_loop_iteration"}
+    read_tool = next(t for t in tools if t["name"] == "get_apparatus_state")
+    assert isinstance(read_tool["description"], str) and read_tool["description"]
     # No-arg tool: an object schema with empty properties.
-    assert tool["input_schema"]["type"] == "object"
-    assert tool["input_schema"]["properties"] == {}
+    assert read_tool["input_schema"]["type"] == "object"
+    assert read_tool["input_schema"]["properties"] == {}
 
 
 def test_call_returns_state_in_envelope(monkeypatch):
@@ -110,3 +113,192 @@ def test_manifest_matches_the_agent_bundle_tool_name():
     manifest = json.loads(bundle.read_text())
     names = {t["name"] for t in manifest["tools"]}
     assert tool_plane.TOOL_NAME in names
+
+
+# ---------------------------------------------------------------------------
+# run_loop_iteration — the first compute/write tool. Every test below injects a
+# stub run_iteration (a real model is NEVER loaded) and an explicit in-flight
+# predicate, so the server-side boundary (topic gate + one-at-a-time) is
+# exercised hermetically.
+# ---------------------------------------------------------------------------
+
+# A representative finalize_iteration_record shape (the subset the tool reads).
+_FAKE_RECORD = {
+    "iteration_id": "iter-2026-06-09-001",
+    "seed": {"topic": "t", "source": "nemoclaw_agent"},
+    "novelty": {"class": "novel", "rationale": "r", "low_confidence": False},
+    "critique": {"verdict": "survives", "rationale": "r", "low_confidence": False},
+    "journal_entry_path": "journal/iterations/042.md",
+    "nara_summary": "s",
+    "tool_calls_made": ["journal_writer"],
+}
+
+
+def _run_client(*, in_flight=False, record=None):
+    """A TestClient with stubbed run_iteration + in-flight predicate.
+
+    Records the (topic, source) the plane passed so the happy-path test can
+    assert the server pins source='nemoclaw_agent' (the boundary identity)."""
+    calls = {"n": 0, "topic": None, "source": None}
+
+    def _stub_run(topic, *, source=None, **kwargs):
+        calls["n"] += 1
+        calls["topic"] = topic
+        calls["source"] = source
+        return record if record is not None else _FAKE_RECORD
+
+    app = tool_plane.create_app(
+        assess=lambda: {},  # never used by the run endpoint
+        run_iteration=_stub_run,
+        iteration_in_flight=lambda: in_flight,
+    )
+    return TestClient(app), calls
+
+
+def test_run_tool_rejects_empty_and_whitespace_topic():
+    client, calls = _run_client()
+    for bad in ("", "   ", "\t\n"):
+        body = client.post("/tools/run_loop_iteration", json={"topic": bad}).json()
+        assert body == {"tool": "run_loop_iteration", "ok": False, "error": "topic_empty"}
+    # A rejected topic must NOT have spent any host compute.
+    assert calls["n"] == 0
+
+
+def test_run_tool_rejects_oversized_topic():
+    client, calls = _run_client()
+    resp = client.post("/tools/run_loop_iteration", json={"topic": "x" * 201})
+    assert resp.status_code == 200  # gated, NOT a 500
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"] == "topic_too_long_max_200"
+    assert calls["n"] == 0
+    # The boundary value (exactly 200) is accepted.
+    ok = client.post("/tools/run_loop_iteration", json={"topic": "y" * 200}).json()
+    assert ok["ok"] is True
+    assert calls["n"] == 1
+
+
+def test_run_tool_rejects_non_string_and_missing_topic():
+    client, calls = _run_client()
+    for bad in (123, None, ["a"], {"k": "v"}):
+        body = client.post("/tools/run_loop_iteration", json={"topic": bad}).json()
+        assert body["ok"] is False
+        assert body["error"] == "topic_must_be_string"
+    # Missing topic entirely (empty body) — also a non-string.
+    body = client.post("/tools/run_loop_iteration", json={}).json()
+    assert body["ok"] is False
+    assert body["error"] == "topic_must_be_string"
+    assert calls["n"] == 0
+
+
+def test_run_tool_refuses_when_iteration_in_flight():
+    client, calls = _run_client(in_flight=True)
+    resp = client.post("/tools/run_loop_iteration", json={"topic": "a good topic"})
+    assert resp.status_code == 200  # refusal is a 200 envelope, not a 503/500
+    body = resp.json()
+    assert body == {
+        "tool": "run_loop_iteration", "ok": False, "error": "iteration_in_flight",
+    }
+    # One-at-a-time means we never even called run_iteration.
+    assert calls["n"] == 0
+
+
+def test_run_tool_happy_path_returns_extracted_result_envelope():
+    client, calls = _run_client(in_flight=False)
+    resp = client.post("/tools/run_loop_iteration", json={"topic": "  Vickrey truthfulness  "})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tool"] == "run_loop_iteration"
+    assert body["ok"] is True
+    assert body["result"] == {
+        "iteration_id": "iter-2026-06-09-001",
+        "novelty_class": "novel",
+        "critic_verdict": "survives",
+        "low_confidence": False,
+        "journal_entry_path": "journal/iterations/042.md",
+    }
+    # Boundary identity: the plane pins source='nemoclaw_agent' and passes the
+    # stripped topic (leading/trailing whitespace removed before run).
+    assert calls["n"] == 1
+    assert calls["source"] == "nemoclaw_agent"
+    assert calls["topic"] == "Vickrey truthfulness"
+
+
+def test_run_tool_low_confidence_ors_novelty_and_critique():
+    # low_confidence surfaces a degraded signal from EITHER substructure.
+    rec = {
+        "iteration_id": "iter-2026-06-09-002",
+        "seed": {"topic": "t", "source": "nemoclaw_agent"},
+        "novelty": {"class": "unclear", "rationale": "r", "low_confidence": True},
+        "critique": {"verdict": "survives", "rationale": "r", "low_confidence": False},
+        "journal_entry_path": "journal/iterations/043.md",
+        "nara_summary": "s",
+        "tool_calls_made": ["journal_writer"],
+    }
+    client, _ = _run_client(record=rec)
+    body = client.post("/tools/run_loop_iteration", json={"topic": "t"}).json()
+    assert body["result"]["low_confidence"] is True
+    assert body["result"]["novelty_class"] == "unclear"
+
+
+def test_run_tool_tolerates_degraded_record_missing_substructures():
+    # A degraded chain still returns a VALID record without novelty/critique;
+    # the extraction must read defensively (None, not a KeyError/500).
+    rec = {
+        "iteration_id": "iter-2026-06-09-003",
+        "seed": {"topic": "t", "source": "nemoclaw_agent"},
+        "journal_entry_path": "journal/iterations/044.md",
+        "nara_summary": "s",
+        "tool_calls_made": ["journal_writer_stub"],
+    }
+    client, _ = _run_client(record=rec)
+    resp = client.post("/tools/run_loop_iteration", json={"topic": "t"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["result"] == {
+        "iteration_id": "iter-2026-06-09-003",
+        "novelty_class": None,
+        "critic_verdict": None,
+        "low_confidence": False,
+        "journal_entry_path": "journal/iterations/044.md",
+    }
+
+
+def test_tools_manifest_lists_run_loop_iteration_with_exact_schema():
+    client, _ = _run_client()
+    tools = client.get("/tools").json()["tools"]
+    by_name = {t["name"]: t for t in tools}
+    assert tool_plane.RUN_TOOL_NAME in by_name
+    run_tool = by_name["run_loop_iteration"]
+    assert isinstance(run_tool["description"], str) and run_tool["description"]
+    # EXACT input_schema the agent bundle (limb L2) mirrors — keep in lockstep.
+    assert run_tool["input_schema"] == {
+        "type": "object",
+        "properties": {"topic": {"type": "string"}},
+        "required": ["topic"],
+        "additionalProperties": False,
+    }
+
+
+def test_health_lists_both_tools():
+    client, _ = _run_client()
+    body = client.get("/health").json()
+    assert body["ok"] is True
+    assert body["tools"] == [tool_plane.TOOL_NAME, tool_plane.RUN_TOOL_NAME]
+
+
+def test_default_app_wires_real_run_iteration_without_calling_it():
+    # The module-level app binds the REAL nara.run_iteration (host production
+    # wiring). Assert the wiring identity WITHOUT invoking it (a real call
+    # loads a model). create_app's keyword default is the proof.
+    import inspect
+
+    from orchestrator.nara import run_iteration as real_run
+
+    sig = inspect.signature(tool_plane.create_app)
+    assert sig.parameters["run_iteration"].default is real_run
+    # in-flight predicate defaults to the active_run.json existence check.
+    assert sig.parameters["iteration_in_flight"].default is (
+        tool_plane._default_iteration_in_flight
+    )

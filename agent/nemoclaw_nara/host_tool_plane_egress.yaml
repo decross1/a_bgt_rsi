@@ -1,0 +1,44 @@
+# Custom NemoClaw egress preset — allow the sandboxed Nara agent to reach the
+# HOST-side tool plane (orchestrator.tool_plane: get_apparatus_state) at
+# host.openshell.internal:8077.
+#
+# WHY host.openshell.internal (NOT spark-7eeb): the sandbox reaches the host via
+# OpenShell's host alias `host.openshell.internal` (verified: sandbox ->
+# host.openshell.internal:8000 = HTTP 200, it's how the built-in local-inference
+# preset reaches the host vLLM model). The host's own hostname (spark-7eeb) is
+# NOT what the egress/SSRF guard keys on — hence the earlier 403. No hosts-add
+# is needed; this alias already resolves inside the sandbox.
+#
+# APPLY (dry-run first; this is a LIVE policy add to the sandbox — no rebuild):
+#   nemoclaw nara-sandbox policy-add --from-file agent/nemoclaw_nara/host_tool_plane_egress.yaml --dry-run
+#   nemoclaw nara-sandbox policy-add --from-file agent/nemoclaw_nara/host_tool_plane_egress.yaml --yes
+#
+# Mirrors clones/NemoClaw/nemoclaw-blueprint/policies/presets/local-inference.yaml.
+preset:
+  name: nara-host-tool-plane
+  description: "Host-side a_bgt_rsi tool plane (get_apparatus_state) on :8077"
+
+network_policies:
+  nara_host_tool_plane:
+    name: nara_host_tool_plane
+    endpoints:
+      - host: host.openshell.internal
+        port: 8077
+        protocol: rest
+        enforcement: enforce
+        allowed_ips:
+          # OpenShell's SSRF guard rejects private host-gateway IPs unless the
+          # policy allowlists the resolved address (host.openshell.internal ->
+          # the docker bridge gateway, which is in 172.16.0.0/12).
+          - 10.0.0.0/8
+          - 172.16.0.0/12
+          - 192.168.0.0/16
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/openclaw }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/python3 }

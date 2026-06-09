@@ -1,10 +1,11 @@
 {
-  "$comment": "OpenClaw/MCP tool manifest for the Nara-on-NemoClaw agent bundle (β groundwork, 2026-06-09, Limb D). STATIC MIRROR of orchestrator/tool_plane.py's GET /tools — keep the two in lockstep (tests/test_tool_plane.py::test_manifest_matches_the_agent_bundle_tool_name guards the tool name). The agent runs INSIDE nara-sandbox and reaches this HOST endpoint through the NemoClaw egress proxy; see docs/nemoclaw_smoke_runbook.md for the hostname-vs-IP + egress allow-rule nuance.",
+  "$comment": "OpenClaw/MCP tool manifest for the Nara-on-NemoClaw agent bundle (β groundwork; 2-tool slice, 2026-06-09, Limb L2). STATIC MIRROR of orchestrator/tool_plane.py's GET /tools — keep the two in lockstep (tests/test_tool_plane.py::test_manifest_matches_the_agent_bundle_tool_name guards that get_apparatus_state is present; the integrator extends that guard to run_loop_iteration when L1's plane endpoint lands). The agent runs INSIDE nara-sandbox and reaches this HOST endpoint through the proven egress alias host.openshell.internal:8077 (egress preset nara-host-tool-plane is applied LIVE, policy revision 15). See docs/nemoclaw_agent_run_runbook.md.",
+  "$mirror_note": "L1 owns the host-side plane endpoint POST /tools/run_loop_iteration + the schema/iteration_record.schema.json seed.source enum 'nemoclaw_agent'. This manifest is the agent-side mirror of L1's contract; until the integrator lands L1's plane edit, the live plane serves only get_apparatus_state and this run_loop_iteration entry is ahead of the plane (a known, intended transient — the mirror is truthful once L1 lands).",
   "schema_version": "openclaw-tools/1",
   "transport": {
     "kind": "http",
-    "$comment": "base_url is a PLACEHOLDER. Fill <HOST_HOSTNAME> with the host's resolvable hostname (NOT a raw IP — the egress SSRF guard 403s bare-IP literals; Limb D proved hostname:8000=200, IP=403) and <PORT> with the tool plane's --port (default 8077).",
-    "base_url": "http://<HOST_HOSTNAME>:<PORT>",
+    "$comment": "base_url is the PROVEN host alias. The sandbox reaches the host via OpenShell's host alias host.openshell.internal (NOT the host hostname spark-7eeb, NOT a raw IP — those 403 under the egress/SSRF guard). Verified end-to-end 2026-06-09: a sandbox POST get_apparatus_state at this base_url returned the live snapshot. Port 8077 = the tool plane's --port.",
+    "base_url": "http://host.openshell.internal:8077",
     "health_path": "/health",
     "list_path": "/tools"
   },
@@ -21,6 +22,25 @@
         "method": "POST",
         "path": "/tools/get_apparatus_state",
         "$comment": "Response envelope: {\"tool\": \"get_apparatus_state\", \"ok\": true, \"result\": <snapshot>}."
+      }
+    },
+    {
+      "name": "run_loop_iteration",
+      "description": "Run exactly ONE bounded LOOP_V0 iteration on a research topic, host-side: Nara chains hypothesize -> retrieve_literature -> novelty_classify -> critic_loop_v0 -> journal_writer and returns the verdict. The topic is validated SERVER-SIDE (an off-domain or thin-evidence topic trips the host's low-evidence gate — a correct signal, not a failure). This is the ONE write-capable tool in the bundle: it triggers a single iteration and nothing else (no spawn, no commit, no trade). One-at-a-time is enforced host-side.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string"
+          }
+        },
+        "required": ["topic"],
+        "additionalProperties": false
+      },
+      "invocation": {
+        "method": "POST",
+        "path": "/tools/run_loop_iteration",
+        "$comment": "Body: {\"topic\": \"<thesis sentence>\"}. Response envelope (L1 contract): {\"tool\": \"run_loop_iteration\", \"ok\": true|false, \"result\": {\"iteration_id\", \"novelty_class\", \"critic_verdict\", \"low_confidence\", ...}}. The iteration record is stamped seed.source=\"nemoclaw_agent\". A server-side validation failure (off-domain / thin topic) returns ok:false with a reason — report it honestly, do NOT retry or rephrase to force a pass."
       }
     }
   ]

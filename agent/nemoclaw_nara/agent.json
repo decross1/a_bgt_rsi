@@ -1,29 +1,31 @@
 {
-  "$comment": "OpenClaw agent manifest DRAFT for 'Nara on NemoClaw' (β groundwork, 2026-06-09, Limb D). NOT yet wired into a live sandbox — applied by the integrator/human after the gateway is recovered (see docs/nemoclaw_smoke_runbook.md). This is a STATIC config file. The load-bearing decision encoded here: the agent harness is the LOCAL Gemma inference provider, never the OpenClaw default claude-cli (D-013 pins the harness to Pi/local; D-014 forbids the apparatus runtime authenticating to Claude). The de-risk on 2026-06-09 found claude-cli is the enabled-by-default harness AND there are no Anthropic creds on this box — so the default is both wrong-for-us and non-functional; this manifest selects the local route explicitly.",
+  "$comment": "OpenClaw agent manifest for 'Nara on NemoClaw' (β groundwork; 2-tool slice, 2026-06-09, Limb L2). This is a STATIC config file; applying it to the live sandbox is integrator/human work (see docs/nemoclaw_agent_run_runbook.md). The bundle now grants TWO tools: get_apparatus_state (read-only) and run_loop_iteration (the ONE write-capable tool — it triggers EXACTLY ONE bounded host iteration: hypothesize->retrieve->novelty->critic->journal, and nothing else). The security boundary on that one write is THREE-fold and all server-side: (1) the host validates the topic and trips a low-evidence gate on off-domain/thin topics; (2) one-iteration-at-a-time is enforced host-side; (3) the egress preset nara-host-tool-plane scopes the agent's reach to host.openshell.internal:8077 only. Capability-ABSENCE still holds for everything dangerous: NO spawn / write-to-repo / commit / trade tool is granted, so the agent physically cannot do those (per the 2026-06-09 autonomy-boundary finding — absence, not a downstream schema check).",
   "schema_version": "openclaw-agent/1",
   "name": "nara",
   "display_name": "Nara (a_bgt_rsi coordinator)",
   "sandbox": "nara-sandbox",
   "harness": {
-    "kind": "local-inference",
-    "$comment_harness": "Do NOT use 'claude-cli'. On `nemoclaw onboard`/`rebuild`, select this via `--agent` so the runtime harness is the local model, reconciling D-013 (Pi/local harness) + D-014 (never Claude).",
+    "kind": "openclaw-local-inference",
+    "$comment_harness": "FACT-CORRECTED 2026-06-09 (Limb L2 probe of nemoclaw v0.0.55): the OpenClaw stack has NO 'claude-cli' agent runtime — the only installed agent runtimes are 'openclaw' (default) and 'hermes' (agents/*/manifest.yaml). The earlier 'avoid the claude-cli default' framing was wrong about this version. D-013 (local harness) / D-014 (never authenticate to Claude) are satisfied by: agent runtime = OpenClaw, INFERENCE provider = the sandbox's already-configured vllm-local/gemma-4-26b-a4b (status shows 'Agent: OpenClaw v2026.5.18', 'Provider: vllm-local', 'Inference (vllm backend): healthy'). The trap to avoid is `openclaw agent --local`, which 'requires model provider API keys in your shell' (the Claude/Anthropic path); the GATEWAY-routed `openclaw agent` (no --local) uses the sandbox's vllm-local route. So: runtime=openclaw, provider=local Gemma, NEVER --local, NEVER an Anthropic key.",
+    "agent_runtime": "openclaw",
     "provider": "vllm-local",
     "model": "gemma-4-26b-a4b",
-    "$comment_provider": "Mirrors the sandbox's existing inference binding recorded in D-031: provider 'vllm-local', model 'gemma-4-26b-a4b', routed through NemoClaw's egress proxy at 10.200.0.1:3128 to the host vLLM :8000. This is the SAME single model the apparatus uses (D-033 single-model); the bundle does not introduce a second model."
+    "$comment_provider": "Mirrors the sandbox's existing inference binding (D-031): provider 'vllm-local', model 'gemma-4-26b-a4b', routed through the host gateway to the host vLLM :8000. This is the SAME single model the apparatus uses (D-033 single-model); the bundle introduces no second model."
   },
   "system_prompt_file": "system_prompt.md",
   "tools_manifest_file": "tools.json",
   "tool_allow_list": [
-    "get_apparatus_state"
+    "get_apparatus_state",
+    "run_loop_iteration"
   ],
-  "$comment_allow_list": "The closed action menu becomes the OpenClaw tool allow-list (γ permission-preset mechanism arriving early at β). For this first slice exactly ONE read-only tool is granted. MUST-NOTs are enforced by capability ABSENCE: no write/trade/spawn tool is granted, so the agent physically cannot do those (per the 2026-06-09 autonomy-boundary finding — capability absence, not downstream schema checks).",
+  "$comment_allow_list": "The closed action menu IS the allow-list (the γ permission-preset mechanism, arriving early at β). TWO tools: one read-only (get_apparatus_state) + one write-capable (run_loop_iteration — triggers exactly one bounded iteration). The MUST-NOTs are enforced by capability ABSENCE: no write-to-repo/spawn/commit/trade tool is in this list or in tools.json, so the agent cannot do those at all.",
   "policy_presets": {
-    "$comment": "Egress allow-rule the agent needs so the in-sandbox HTTP call to the host tool plane is permitted. The de-risk found the proxy denies ALL host endpoints by default (only inference.local is allowed). Apply via `nemoclaw nara-sandbox policy-add --from-file <egress.yaml>` AFTER recovering the gateway; the exact YAML + the hostname-vs-IP nuance are in docs/nemoclaw_smoke_runbook.md.",
+    "$comment": "Egress allow-rule the agent needs so the in-sandbox HTTP call to the host tool plane is permitted. APPLIED LIVE — preset 'nara-host-tool-plane' is in the sandbox policy at revision 15 (verified via `nemoclaw nara-sandbox status` / `policy-list`). The full preset is agent/nemoclaw_nara/host_tool_plane_egress.yaml; re-apply only if reverted.",
     "egress_allow": [
       {
-        "host": "<HOST_HOSTNAME>",
-        "port": "<TOOL_PLANE_PORT>",
-        "note": "host tool plane (get_apparatus_state); hostname NOT raw IP"
+        "host": "host.openshell.internal",
+        "port": 8077,
+        "note": "host tool plane (get_apparatus_state + run_loop_iteration); OpenShell host alias, NOT a raw IP — proven reachable at this alias:port (policy rev 15)"
       }
     ]
   }
