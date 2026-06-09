@@ -30,7 +30,7 @@
         "topic":  {"type": "string", "minLength": 1},
         "source": {
           "type": "string",
-          "enum": ["human_cli", "human_ui", "arxiv_pick", "loop_memory_probe", "coordinator"]
+          "enum": ["human_cli", "human_ui", "arxiv_pick", "loop_memory_probe", "coordinator", "nemoclaw_agent"]
         }
       }
     },
