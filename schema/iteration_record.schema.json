@@ -64,6 +64,16 @@
               "title":        {"type": ["string", "null"]}
             }
           }
+        },
+        "relevance": {
+          "description": "Topical-relevance gate; low_confidence flags thin/off-topic retrieval (rule 4). Present going forward; absent on pre-2026-06-09 rows.",
+          "type": "object",
+          "required": ["relevance", "low_confidence", "reason"],
+          "properties": {
+            "relevance":      {"type": "number", "minimum": 0, "maximum": 1},
+            "low_confidence": {"type": "boolean"},
+            "reason":         {"type": "string"}
+          }
         }
       }
     },
@@ -77,7 +87,8 @@
           "enum": ["novel", "rediscovery", "nonsense", "unclear"]
         },
         "rationale":       {"type": "string"},
-        "top_neighbor_id": {"type": ["string", "null"]}
+        "top_neighbor_id": {"type": ["string", "null"]},
+        "low_confidence":  {"type": "boolean"}
       }
     },
     "critique": {
@@ -90,7 +101,8 @@
           "enum": ["survives", "falsified", "restated", "malformed"]
         },
         "rationale":              {"type": "string"},
-        "contradicting_paper_id": {"type": ["string", "null"]}
+        "contradicting_paper_id": {"type": ["string", "null"]},
+        "low_confidence":         {"type": "boolean"}
       }
     },
     "experiment_outcome": {

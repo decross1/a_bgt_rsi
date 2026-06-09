@@ -69,6 +69,8 @@ run_state/attestations.jsonl
 run_state/escalations.jsonl
 run_state/claims.jsonl
 run_state/iteration_cache/
+run_state/coordinator_cycles.jsonl
+run_state/health_signals.jsonl
 
 # Layer-3 loop memory (per ARCHITECTURE.md §4.4) — sibling to chroma_db/
 # (Layers 1+2). Machine-generated; one row per Nara iteration.

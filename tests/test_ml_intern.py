@@ -49,8 +49,10 @@ def test_happy_path_stores_and_maps_ids(tmp_path, monkeypatch):
     res = out["result"]
     assert res["collection"] == "ml_intern_fetched"
     assert res["escalated_from"] == "iter-007"
-    # query is distilled to the first sentence.
-    assert res["query"] == "Tit-for-tat dominates in repeated games."
+    # query is keyphrase-reduced to <=6 distinctive content terms (stopwords
+    # 'for'/'in' dropped) so S2's keyword-AND search is not over-constrained
+    # (the 2026-06-09 root cause: a 39-term hypothesis returned total=0).
+    assert res["query"] == "Tit tat dominates repeated games Extra"
     assert res["papers_fetched"] == 3          # all three mapped
     assert res["papers_stored"] == 2           # null-abstract dropped
 

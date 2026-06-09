@@ -29,7 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ACTIVE_RUN_PATH = REPO_ROOT / "run_state" / "active_run.json"
 SCHEMA_PATH = REPO_ROOT / "schema" / "active_run.schema.json"
 
-_KINDS = {"experiment", "autoresearch", "loop_v0", "ad_hoc"}
+_KINDS = {"experiment", "autoresearch", "loop_v0", "ad_hoc", "coordinator"}
 
 
 def _utcnow_iso() -> str:

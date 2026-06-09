@@ -14,7 +14,7 @@
     "run_id": {"type": "string"},
     "kind": {
       "type": "string",
-      "enum": ["experiment", "autoresearch", "loop_v0", "ad_hoc"]
+      "enum": ["experiment", "autoresearch", "loop_v0", "ad_hoc", "coordinator"]
     },
     "label": {"type": "string"},
     "started_at": {"type": "string", "format": "date-time"},
