@@ -102,11 +102,25 @@ cmd_up() {
   local dry="${2:-}"
   if [[ -z "$arm" ]]; then usage; exit 1; fi
   build_args "$arm"
+
+  # Pre-flight free-memory guard (2026-06-08 arm-C freeze). Refuses a launch that
+  # would over-commit the GB10's ~121.7 GiB UNIFIED memory and starve the OS.
+  # Needs: arm B (llama.cpp Q4_0 GGUF) ~16 GiB; arm C (vLLM unquantized, the
+  # --gpu-memory-utilization 0.46 reserved budget) ~56 GiB.
+  source "$(dirname "${BASH_SOURCE[0]}")/preflight_mem.sh"
+  local need; case "$arm" in B) need=16 ;; C) need=56 ;; *) need=56 ;; esac
+
   if [[ "$dry" == "--dry-run" ]]; then
     echo "# DRY RUN — arm ${arm} on SCRATCH :${SCRATCH_PORT} (no execution)"
     printf '%q ' "${DOCKER_ARGS[@]}"; echo
+    # Advisory only on a dry run: print the guard verdict, never abort.
+    preflight_mem_guard "$need" || echo "# (advisory) pre-flight guard would REFUSE arm ${arm} (need ${need}GiB) at current free memory"
     return 0
   fi
+
+  # Hard gate before any real launch — fail-closed on non-zero (inviolate rule 7).
+  preflight_mem_guard "$need" || { echo "FATAL: pre-flight memory guard refused arm ${arm} launch (need ${need}GiB + OS margin); free memory or use a smaller arm" >&2; exit 1; }
+
   echo "[$(date +%T)] removing any prior scratch container '${SCRATCH_NAME}'"
   docker rm -f "$SCRATCH_NAME" 2>/dev/null || true
   echo "[$(date +%T)] launching arm ${arm} on :${SCRATCH_PORT}"
