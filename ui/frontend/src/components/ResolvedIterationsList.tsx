@@ -27,11 +27,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getIterations } from "../api/http";
 import type { IterationRecord } from "../types/schemas";
 import LowEvidenceBadge from "./LowEvidenceBadge";
-
-// A row dispatched by the autonomous coordinator (seed.source="coordinator")
-// vs one a human seeded — the provenance the audit surface exists to make
-// legible. Sky tone, distinct from the novelty/verdict chips.
-const COORDINATOR_BADGE_TONE = "bg-sky-950 text-sky-300";
+import SourceBadge from "./SourceBadge";
 
 const PAGE_SIZE = 10;
 
@@ -65,10 +61,34 @@ const VERDICT_CLASSES = [
   "malformed",
 ] as const;
 
+// Tone lookup for the producer-owned enum fields (novelty.class / critique.verdict
+// / gate_status). These are append-only JSONL values, so an UNKNOWN/forward-compat
+// enum (a never-seen class, or a value colliding with an inherited Object.prototype
+// member name — "toString", "constructor", "valueOf", "hasOwnProperty", "__proto__")
+// must fall back to the quiet tone, NOT resolve a prototype function. A bare
+// `MAP[value] ?? fallback` resolves "toString" to `Function.prototype.toString` (a
+// function, not undefined), so `?? fallback` does NOT fire and that function
+// interpolates into className as "function toString() { [native code] }". Own-key
+// lookup only; any unknown value (prototype collision included) takes `fallback`.
+// Mirrors SourceBadge / AgentBadge's prototype-collision guard.
+function toneFor(
+  map: Record<string, string>,
+  key: string | null | undefined,
+  fallback: string,
+): string {
+  if (typeof key !== "string") return fallback;
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : fallback;
+}
+
 // Process-status badge. `status` mirrors /api/loop_v0/processes:
 // running / exited_clean / exited_error_<rc> / killed_signal_<sig>.
+// `status` is producer-owned (joined from /api/loop_v0/processes); a malformed
+// row can hand a number/object, and `.startsWith` then throws
+// ("status.startsWith is not a function") and takes the row down. A non-string
+// is treated as "no status" — the `typeof` guards stand in for the previous
+// falsy check.
 function processTone(status: string | undefined): string {
-  if (!status) return "bg-zinc-800 text-zinc-400";
+  if (typeof status !== "string" || !status) return "bg-zinc-800 text-zinc-400";
   if (status === "running") return "bg-sky-950 text-sky-300";
   if (status === "exited_clean") return "bg-emerald-950 text-emerald-400";
   if (status.startsWith("exited_error_")) return "bg-red-950 text-red-400";
@@ -77,12 +97,25 @@ function processTone(status: string | undefined): string {
 }
 
 function processLabel(status: string | undefined): string | null {
-  if (!status) return null;
+  if (typeof status !== "string" || !status) return null;
   if (status === "exited_clean") return "pid clean";
   if (status === "running") return "pid running";
   if (status.startsWith("exited_error_")) return `pid err ${status.slice("exited_error_".length)}`;
   if (status.startsWith("killed_signal_")) return `pid killed ${status.slice("killed_signal_".length)}`;
   return status;
+}
+
+// `text` is fed producer-owned enum fields (novelty.class / critique.verdict /
+// gate_status). The `string | null | undefined` type is a compile-time fiction
+// over unchecked JSONL: a malformed/legacy row can emit an object or array, and
+// React throws "Objects are not valid as a React child" the moment one reaches
+// {text} — crashing the whole row. Coerce to a safe scalar string: a string /
+// finite number renders as-is; anything without a usable scalar form (object,
+// array, NaN, null, undefined) yields no badge rather than a throw.
+function badgeText(text: string | null | undefined): string {
+  if (typeof text === "string") return text;
+  if (typeof text === "number") return Number.isFinite(text) ? String(text) : "";
+  return "";
 }
 
 function Badge({
@@ -92,12 +125,13 @@ function Badge({
   text: string | null | undefined;
   tone: string;
 }) {
-  if (!text) return null;
+  const safe = badgeText(text);
+  if (!safe) return null;
   return (
     <span
       className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${tone}`}
     >
-      {text}
+      {safe}
     </span>
   );
 }
@@ -133,9 +167,34 @@ function RedteamChip({
   );
 }
 
-function shortTimestamp(iso: string | null | undefined): string {
-  if (!iso) return "—";
+// ended_at is producer-owned: a legacy/buggy row can emit it as a number
+// (epoch), object, or garbage rather than an ISO string. `.replace` then
+// throws ("iso.replace is not a function") and crashes the whole row. Treat a
+// non-string as no-timestamp ("—") rather than throwing; a string passes
+// through unchanged.
+function shortTimestamp(iso: unknown): string {
+  if (typeof iso !== "string" || !iso) return "—";
   return iso.replace("T", " ").replace("Z", "");
+}
+
+// loop_memory.jsonl is producer-owned; a buggy/legacy row can emit
+// meta_review.conditioning_bullets as a bare string (not a list) or with junk
+// entries (null, numbers, objects). A non-array used to crash the whole list
+// via `.map`, and a raw-object entry crashes React's child renderer. Return
+// only the string bullets so one bad row degrades to "no bullets" instead of
+// blanking the page.
+function conditioningBullets(row: IterationRecord): string[] {
+  const bullets = row.meta_review?.conditioning_bullets;
+  if (!Array.isArray(bullets)) return [];
+  return bullets.filter((b): b is string => typeof b === "string");
+}
+
+// seed.topic is likewise producer-owned: coerce a non-string topic to a safe
+// string so neither the topic filter (`.toLowerCase()`) nor the row render
+// throws on a malformed row.
+function seedTopic(row: IterationRecord): string {
+  const topic = row.seed?.topic;
+  return typeof topic === "string" ? topic : "";
 }
 
 // A small dark-mode select styled to match the panel idiom.
@@ -201,9 +260,25 @@ export default function ResolvedIterationsList({
           if (!active) return;
           // Backend returns newest-first per the contract; if a producer
           // ever appends out-of-order, sort by ended_at descending here
-          // to keep the panel stable.
-          const sorted = [...r.iterations].sort((a, b) =>
-            (b.ended_at ?? "").localeCompare(a.ended_at ?? ""),
+          // to keep the panel stable. `ended_at` is producer-owned: a non-string
+          // (number/object on a malformed row) has no `.localeCompare`, so coerce
+          // to a comparable string first — one bad row must not throw the whole
+          // sort (which would blank the list via the error path).
+          // Guard the BODY too: the response is contractually {iterations:[...]},
+          // but a malformed 200 could hand back `null`/`undefined` (a bare-null
+          // body — getJSON returns it verbatim), a missing `iterations` key, or a
+          // non-array `iterations`. A bare `[...r.iterations]` then throws
+          // ("Cannot read properties of null" / "r.iterations is not iterable"),
+          // which rejects into .catch and paints a raw TypeError in the red banner
+          // instead of the clean empty state — the blank-gap-on-bad-data failure
+          // the autonomy work exists to fix. `Array.isArray(r?.iterations)`
+          // short-circuits every bad shape to [] (mirrors the sibling
+          // Coordinator route's `r?.cycles` guard).
+          const sortKey = (v: unknown): string =>
+            typeof v === "string" ? v : "";
+          const rows = Array.isArray(r?.iterations) ? r.iterations : [];
+          const sorted = [...rows].sort((a, b) =>
+            sortKey(b.ended_at).localeCompare(sortKey(a.ended_at)),
           );
           // Only `rows` is updated on poll. Filter/page state is deliberately
           // left alone so a background refresh does not reset the user's view.
@@ -229,7 +304,7 @@ export default function ResolvedIterationsList({
       if (novelty && (row.novelty?.class ?? "") !== novelty) return false;
       if (verdict && (row.critique?.verdict ?? "") !== verdict) return false;
       if (topicQuery) {
-        const t = (row.seed?.topic ?? "").toLowerCase();
+        const t = seedTopic(row).toLowerCase();
         if (!t.includes(topicQuery)) return false;
       }
       return true;
@@ -407,10 +482,17 @@ export default function ResolvedIterationsList({
 
       {pageRows.length > 0 && (
         <ul className="mt-2 space-y-1.5">
-          {pageRows.map((row) => {
+          {pageRows.map((row, i) => {
             const selected = row.iteration_id === selectedId;
+            // `iteration_id` is producer-owned (loop_memory.jsonl, append-only):
+            // a crash-and-retry or a re-dispatch can append the SAME id twice, so
+            // a bare `key={row.iteration_id}` then collides → React logs
+            // "Encountered two children with the same key" (a console.error) and
+            // may omit/duplicate a row. Composite the index in so duplicate ids
+            // stay distinct, mirroring the sibling panels (SurfacedFindingsPanel /
+            // BubblesPanel / HealthSignalsPanel all key `${id ?? fallback}-${i}`).
             return (
-              <li key={row.iteration_id}>
+              <li key={`${row.iteration_id || "iter"}-${i}`}>
                 <button
                   type="button"
                   onClick={() => onSelect?.(row.iteration_id)}
@@ -427,32 +509,34 @@ export default function ResolvedIterationsList({
                     </span>
                     <Badge
                       text={row.novelty?.class}
-                      tone={
-                        NOVELTY_TONE[row.novelty?.class ?? ""] ??
-                        "bg-zinc-800 text-zinc-400"
-                      }
+                      tone={toneFor(
+                        NOVELTY_TONE,
+                        row.novelty?.class,
+                        "bg-zinc-800 text-zinc-400",
+                      )}
                     />
                     <Badge
                       text={row.critique?.verdict}
-                      tone={
-                        VERDICT_TONE[row.critique?.verdict ?? ""] ??
-                        "bg-zinc-800 text-zinc-400"
-                      }
+                      tone={toneFor(
+                        VERDICT_TONE,
+                        row.critique?.verdict,
+                        "bg-zinc-800 text-zinc-400",
+                      )}
                     />
                     <RedteamChip redteam={row.redteam} />
                     <Badge
                       text={row.gate_status}
-                      tone={GATE_TONE[row.gate_status ?? ""] ?? ""}
+                      tone={toneFor(GATE_TONE, row.gate_status, "")}
                     />
                     <Badge
                       text={processLabel(row.process_status)}
                       tone={processTone(row.process_status)}
                     />
-                    {/* Provenance: this iteration was dispatched by the
-                        autonomous coordinator, not seeded by a human. */}
-                    {row.seed?.source === "coordinator" && (
-                      <Badge text="coordinator" tone={COORDINATOR_BADGE_TONE} />
-                    )}
+                    {/* Provenance: where this iteration was seeded from —
+                        the in-sandbox NemoClaw agent (violet) / the host
+                        coordinator (sky) / a human (zinc) / … — so EVERY row's
+                        origin is legible, not just the coordinator-driven ones. */}
+                    <SourceBadge source={row.seed?.source} />
                     {/* The verdict rests on thin/off-domain retrieval — flag it
                         so a false novel/survives doesn't read as trustworthy. */}
                     <LowEvidenceBadge record={row} />
@@ -460,12 +544,12 @@ export default function ResolvedIterationsList({
                       {shortTimestamp(row.ended_at)}
                     </span>
                   </div>
-                  {row.seed?.topic && (
+                  {seedTopic(row) && (
                     <div className="mt-1 text-xs text-zinc-300">
-                      {row.seed.topic}
+                      {seedTopic(row)}
                     </div>
                   )}
-                  {(row.meta_review?.conditioning_bullets?.length ?? 0) > 0 && (
+                  {conditioningBullets(row).length > 0 && (
                     // Loop v1 Step 1.5: the prior-memory bullets that
                     // conditioned this iteration. Shown so the human can see
                     // what the loop carried forward into the run.
@@ -477,11 +561,9 @@ export default function ResolvedIterationsList({
                         conditioned by
                       </div>
                       <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-[11px] text-zinc-400">
-                        {row.meta_review!.conditioning_bullets!.map(
-                          (bullet, i) => (
-                            <li key={i}>{bullet}</li>
-                          ),
-                        )}
+                        {conditioningBullets(row).map((bullet, i) => (
+                          <li key={i}>{bullet}</li>
+                        ))}
                       </ul>
                     </div>
                   )}

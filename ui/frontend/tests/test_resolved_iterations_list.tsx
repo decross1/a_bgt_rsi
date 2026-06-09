@@ -719,13 +719,16 @@ describe("ResolvedIterationsList — Loop v1 surfacing", () => {
 describe("ResolvedIterationsList — coordinator provenance + low-evidence", () => {
   // ITERATIONS_COORD_FIXTURE: [0] coordinator-source w/ confident retrieval,
   // [1] coordinator-source w/ low_confidence true (the false-novel row), [2] human.
-  it("badges coordinator-triggered rows and flags low-evidence verdicts", () => {
+  it("badges every row's source distinctly and flags low-evidence verdicts", () => {
     render(<ResolvedIterationsList initial={ITERATIONS_COORD_FIXTURE} />);
     const list = within(screen.getByRole("list"));
 
-    // Two coordinator-source rows -> two "coordinator" provenance chips; the
-    // human-source row carries none. "coordinator" is not a filter option, so
-    // these chips are the only places the text appears.
+    // Provenance is now on EVERY row via <SourceBadge>: three rows -> three
+    // source badges. The two coordinator-source rows render the "coordinator"
+    // label (distinct, sky); the human-source row renders its own "human"
+    // label — distinct from coordinator, never mislabeled as one. "coordinator"
+    // is not a filter option, so those chips are the only places it appears.
+    expect(list.getAllByTestId("source-badge")).toHaveLength(3);
     expect(list.getAllByText("coordinator")).toHaveLength(2);
 
     // Exactly the off-domain/thin row gets the amber low-evidence flag.
@@ -734,12 +737,14 @@ describe("ResolvedIterationsList — coordinator provenance + low-evidence", () 
     expect(flags[0].className).toContain("amber");
   });
 
-  it("does not badge a human-seeded, well-evidenced row", () => {
-    // Only the human row, with ok retrieval: neither badge appears.
+  it("badges a human-seeded row as 'human', not 'coordinator', and flags no low-evidence", () => {
+    // Only the human row, with ok retrieval: it carries its own distinct
+    // "human" source badge (provenance is everywhere), but NOT a coordinator
+    // badge, and no low-evidence flag.
     render(<ResolvedIterationsList initial={[ITERATIONS_COORD_FIXTURE[2]]} />);
+    const list = within(screen.getByRole("list"));
     expect(screen.queryByTestId("low-evidence-badge")).toBeNull();
-    expect(
-      within(screen.getByRole("list")).queryByText("coordinator"),
-    ).toBeNull();
+    expect(list.queryByText("coordinator")).toBeNull();
+    expect(list.getByTestId("source-badge")).toHaveTextContent(/human/i);
   });
 });

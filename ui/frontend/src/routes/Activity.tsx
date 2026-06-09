@@ -57,15 +57,35 @@ interface FailedDispatch {
 
 function deriveFailedDispatches(cycles: CoordinatorCycle[]): FailedDispatch[] {
   const out: FailedDispatch[] = [];
-  for (const cycle of cycles) {
-    for (const outcome of cycle.outcomes) {
-      if (outcome.status === "errored") {
+  // `cycles` and each row's `outcomes` are producer-owned JSONL: a legacy or
+  // partial coordinator_cycles.jsonl row may omit `outcomes` entirely, OR carry
+  // the right key with the WRONG type (a degraded backend body where `cycles` is
+  // an object, or `outcomes` written as a dict/string instead of the contract's
+  // list). `Array.isArray` guards subsume the absent case (a missing field is
+  // not an array either) and the wrong-typed case, so `for...of` can never hit a
+  // non-iterable — one malformed row is skipped, not a crash that blanks the page.
+  for (const cycle of Array.isArray(cycles) ? cycles : []) {
+    const outcomes = Array.isArray(cycle?.outcomes) ? cycle.outcomes : [];
+    for (const outcome of outcomes) {
+      if (outcome?.status === "errored") {
+        // `topic` / `action` / `error` land directly in JSX text nodes below.
+        // The contract types them as strings, but they are producer-owned JSONL:
+        // a legacy/partial/malformed row can carry an object or array here, and
+        // rendering one as a React child throws "Objects are not valid as a React
+        // child" — crashing the whole page on a single bad row. Coerce to a string
+        // at this boundary (the same `String(...)` defense shortTimestamp applies
+        // to a non-string timestamp) so a bad value renders as its raw form, not a
+        // crash. A nullish error keeps its explicit placeholder; a non-string error
+        // (e.g. a structured error object) is stringified rather than dropped.
         out.push({
           run_id: cycle.run_id,
           agent: cycle.agent,
-          topic: cycle.topic,
-          action: outcome.action,
-          error: outcome.error ?? "(no error message recorded)",
+          topic: asText(cycle.topic),
+          action: asText(outcome.action),
+          error:
+            outcome.error == null
+              ? "(no error message recorded)"
+              : asText(outcome.error),
           timestamp: cycle.timestamp,
         });
       }
@@ -74,9 +94,32 @@ function deriveFailedDispatches(cycles: CoordinatorCycle[]): FailedDispatch[] {
   return out;
 }
 
+// Coerce a producer-owned field that must become a React text child into a
+// string. A string passes through unchanged (so unicode / emoji / RTL / newlines
+// / HTML-looking text render verbatim — React escapes them, no injection). A
+// non-string (object / array / number) is stringified so it can never reach JSX
+// as a non-renderable value and throw. null/undefined → "" (the caller decides
+// any placeholder), so an absent field is an empty span, not the literal
+// "undefined".
+function asText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    // Circular / non-serializable object: fall back to a coarse string rather
+    // than letting the stringify throw bubble up and blank the page.
+    return String(value);
+  }
+}
+
 function shortTimestamp(iso: string | null | undefined): string {
   if (!iso) return "—";
-  return iso.replace("T", " ").replace("Z", "");
+  // `iso` is the producer-owned `cycle.timestamp`: the contract is an ISO string
+  // but a row could carry a number (epoch millis) or another non-string. Coerce
+  // to string before `.replace` so `(number).replace`/`(object).replace` can
+  // never throw and blank the page — a non-ISO value renders as its raw form.
+  return String(iso).replace("T", " ").replace("Z", "");
 }
 
 // The explicit failed-dispatch surface. Renders nothing when there are no
@@ -102,9 +145,12 @@ function FailedDispatches({ cycles }: { cycles: CoordinatorCycle[] }) {
         </span>
       </div>
       <ul className="mt-2 space-y-1.5">
-        {failures.map((f) => (
+        {failures.map((f, i) => (
           <li
-            key={`${f.run_id}-${f.action}`}
+            // run_id/action come from a producer-owned row and may be absent;
+            // fold in the index so two un-keyed rows can't collide (no React
+            // duplicate-key warning) while the run_id stays the readable prefix.
+            key={`${f.run_id ?? "?"}-${f.action ?? "?"}-${i}`}
             data-testid={`failed-dispatch-${f.run_id}`}
             className="rounded border border-red-900/60 bg-red-950/30 px-2 py-1.5"
           >
@@ -287,20 +333,64 @@ export default function Activity({
     };
   }, [live]);
 
-  const activeCount = monitor?.active.length ?? 0;
+  // `active`/`recent` are typed as arrays but the monitor payload is
+  // producer-owned (a degraded backend body, a hand-edited/legacy state): a row
+  // can OMIT them OR carry the right key with the WRONG type — e.g. a degrade
+  // path that wrote `active:"errored"` (a status string) instead of the list.
+  // Activity is the SOLE renderer that fans `monitor` out — to its own count +
+  // idle gate, to ActiveWorkersPanel (which does `data.active.map`), and to
+  // SyntheticInferencePanel. A non-array `active` was a two-front bug: (1) the
+  // status strip's `active?.length` read the STRING's length → a phantom
+  // "7 tasks active now" from a 7-char scalar, and (2) ActiveWorkersPanel's
+  // `data.active.map` threw "data.active.map is not a function" → the whole page
+  // blanked. Normalize both array fields to real arrays once, at this boundary
+  // (the same single-point defense `safeActiveRun` applies to a malformed
+  // `kind`), so a malformed collection reads as EMPTY everywhere downstream — no
+  // phantom count, no child crash — without reaching into another component.
+  // Pass `monitor` through untouched on the happy path (no per-tick object
+  // churn at 1 Hz) and stay null exactly when `monitor` is null (the "Loading
+  // agent monitor…" gate is unchanged).
+  const safeMonitor =
+    monitor != null &&
+    (!Array.isArray(monitor.active) || !Array.isArray(monitor.recent))
+      ? {
+          ...monitor,
+          active: Array.isArray(monitor.active) ? monitor.active : [],
+          recent: Array.isArray(monitor.recent) ? monitor.recent : [],
+        }
+      : monitor;
+  // Read the count off the NORMALIZED monitor so a non-array `active` is a real
+  // length (0 for a malformed collection), never a scalar's phantom `.length`.
+  const activeCount = safeMonitor?.active?.length ?? 0;
   // The monitor is "available" only when its source file is present. On the
   // {available:false} degrade path active[] is empty for want of data, not
   // because the apparatus is quiescent — so neither the status strip nor the
   // idle empty-state may speak as if it were idle. ActiveWorkersPanel owns the
   // sole "unavailable" notice on that path.
-  const monitorAvailable = monitor != null && monitor.available !== false;
+  const monitorAvailable = safeMonitor != null && safeMonitor.available !== false;
   // Recent wrapper-call activity — true even when this run bypasses both the
   // orchestrator and the loop (e.g. a raw experiment driver still calling the
   // wrapper). Counts as live for the idle gate and the status strip.
-  const liveCallsActive = monitor?.live_calls?.active ?? false;
+  const liveCallsActive = safeMonitor?.live_calls?.active ?? false;
   // A run registered in run_state/active_run.json is live, regardless of run
   // kind — fold it into the idle gate and the status strip.
   const runActive = activeRun != null;
+  // `activeRun.kind` is producer-owned (active_run.json). A NOVEL value (e.g.
+  // "coordinator"/"nemoclaw_agent", which the EMIT contract literally adds) is
+  // fine — it renders verbatim as text. But a legacy/malformed row can carry a
+  // non-string `kind` (object/array) even though the contract types it string,
+  // and `kind` lands as a raw React child in BOTH the status strip below and the
+  // ActiveRunCard child — an object child throws "Objects are not valid as a
+  // React child", crashing the whole page on one bad active_run. Normalize it to
+  // a string once, at this boundary (Activity is the sole renderer of
+  // ActiveRunCard), so a string passes through unchanged and a non-string is
+  // coerced — the strip and the card both stay safe without reaching into
+  // another component. `runActive`/the idle gate above keep their null-check
+  // semantics (a run is live regardless of its kind's shape).
+  const safeActiveRun =
+    activeRun != null && typeof activeRun.kind !== "string"
+      ? { ...activeRun, kind: asText(activeRun.kind) }
+      : activeRun;
   // Idle requires ALL sides quiescent: no workers in flight AND no active
   // orchestrator iteration AND no recent wrapper calls AND no registered run.
   // A running iteration with zero workers, a bare experiment driver still
@@ -342,7 +432,11 @@ export default function Activity({
           ) : runActive ? (
             <>
               <span className="font-medium text-emerald-300">Live</span> — a{" "}
-              {activeRun!.kind} run is in flight. See the active-run card below.
+              {/* safeActiveRun normalized a non-string `kind` to a string above,
+                  so an unknown-enum string still reads verbatim and a malformed
+                  non-string can't reach JSX as an invalid React child. */}
+              {safeActiveRun!.kind} run is in flight. See the active-run card
+              below.
             </>
           ) : liveCallsActive ? (
             <>
@@ -372,14 +466,19 @@ export default function Activity({
           Active now
         </h2>
         {/* The active-run HERO card — renders nothing when no run is in
-            flight (activeRun null). At the TOP of the hero. */}
-        <ActiveRunCard data={activeRun} />
+            flight (activeRun null). At the TOP of the hero. Pass safeActiveRun
+            (kind normalized to a string) so a malformed non-string `kind` from
+            active_run.json can't crash the card as an invalid React child. */}
+        <ActiveRunCard data={safeActiveRun} />
         <ActiveIterationPanel initial={iteration} />
-        {monitor?.live_calls?.active && (
-          <LiveCallsBanner data={monitor.live_calls} />
+        {safeMonitor?.live_calls?.active && (
+          <LiveCallsBanner data={safeMonitor.live_calls} />
         )}
-        {monitor ? (
-          <ActiveWorkersPanel data={monitor} />
+        {safeMonitor ? (
+          // safeMonitor's active/recent are guaranteed real arrays, so
+          // ActiveWorkersPanel's `data.active.map` can never hit a non-iterable
+          // scalar and blank the page.
+          <ActiveWorkersPanel data={safeMonitor} />
         ) : (
           <div className="rounded border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-500">
             Loading agent monitor…
@@ -389,14 +488,14 @@ export default function Activity({
             BOTH no workers in flight AND no active orchestrator iteration,
             and the monitor source is available. A running iteration with zero
             in-flight workers is live, not idle, so this stays hidden then. */}
-        {pageIdle && monitor && (
+        {pageIdle && safeMonitor && (
           <div
             data-testid="activity-idle-empty"
             className="rounded border border-zinc-800 bg-zinc-950/40 px-4 py-3 text-sm text-zinc-500"
           >
             No agents active — last activity{" "}
             <span className="font-mono text-zinc-400">
-              {elapsed(monitor.last_activity_at, now)}
+              {elapsed(safeMonitor.last_activity_at, now)}
             </span>{" "}
             ago.
           </div>
@@ -412,10 +511,11 @@ export default function Activity({
         <FailedDispatches cycles={coordinatorCycles} />
       </section>
 
-      {/* (3) Synthetic inference — subordinate disclosure. */}
-      {monitor && (
+      {/* (3) Synthetic inference — subordinate disclosure. Fed the normalized
+          monitor so it sees one consistent value with the rest of the hero. */}
+      {safeMonitor && (
         <div className="mt-4">
-          <SyntheticInferencePanel data={monitor} />
+          <SyntheticInferencePanel data={safeMonitor} />
         </div>
       )}
 

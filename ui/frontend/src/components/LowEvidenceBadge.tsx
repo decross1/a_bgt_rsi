@@ -22,6 +22,17 @@ import type { IterationRecord } from "../types/schemas";
 //      retrieved). An ABSENT neighbors field is no-signal, not zero — structural
 //      backstop for the empty-retrieval case.
 export function isLowEvidence(record: IterationRecord): boolean {
+  // `record` is one producer-owned JSONL row, forwarded by the backend as-is: a
+  // bare `null` line (or any non-object) round-trips to a null/primitive array
+  // element (backend/loop_v0.py _read_jsonl does not drop None). The declared
+  // `IterationRecord` type can't enforce object-ness at runtime, and a bare
+  // `record.retrieval` then throws "Cannot read properties of null" — which
+  // would crash whatever maps the badge over rows. RedFlagsTrendStrip already
+  // pre-filters non-objects before calling this; guard at the source too so the
+  // exported contract is robust no matter which caller forgets. A non-object
+  // row carries no retrieval signal → conservative false (same "treat a wrong
+  // type as absent" stance as AgentBadge / SourceBadge).
+  if (record == null || typeof record !== "object") return false;
   const retrieval = record.retrieval;
   if (!retrieval) return false;
 
@@ -42,9 +53,20 @@ function reason(record: IterationRecord): string {
   const relevance = record.retrieval?.relevance;
   const parts: string[] = [];
   if (relevance?.low_confidence === true) {
+    // `reason` is producer-owned and may legacy/malformed-emit as a non-string
+    // (object/array/number). A template literal would stringify an object to
+    // "[object Object]" and dump that garbage into the human-facing tooltip —
+    // the very text meant to explain *why* the verdict is suspect. Only fold in
+    // a non-empty STRING reason; otherwise fall back to the bare phrase (same
+    // "use it only if it's the expected type" guard as ResolvedIterationsList's
+    // seedTopic / conditioningBullets).
+    const why =
+      typeof relevance.reason === "string" && relevance.reason.trim()
+        ? relevance.reason
+        : null;
     parts.push(
-      relevance.reason
-        ? `retrieval flagged low-confidence — ${relevance.reason}`
+      why
+        ? `retrieval flagged low-confidence — ${why}`
         : "retrieval flagged low-confidence",
     );
   }

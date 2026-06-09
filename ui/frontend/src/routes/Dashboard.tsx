@@ -26,7 +26,7 @@ import VllmPanel from "../components/VllmPanel";
 import { getHealth, getIterations } from "../api/http";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { useNow } from "../time";
-import type { Health, IterationRecord } from "../types/schemas";
+import type { Health, IterationRecord, TelemetrySample } from "../types/schemas";
 
 export default function Dashboard() {
   const { samples, latest, connected } = useTelemetryStream();
@@ -50,12 +50,34 @@ export default function Dashboard() {
   useEffect(() => {
     const loadIterations = () =>
       getIterations()
-        .then((r) => setIterations(r.iterations))
+        // The iterations payload is producer-owned (loop_memory.jsonl surfaced
+        // live): a legacy/empty/mid-rotation backend can hand back a body with
+        // no `iterations` key, `iterations: null`, or even a null body. Coerce
+        // to [] so a malformed response never flows a non-array into
+        // RedFlagsTrendStrip's `.length`/`.filter` and blanks the page.
+        // Array.isArray guards null, undefined, and any non-array shape at once.
+        .then((r) =>
+          setIterations(Array.isArray(r?.iterations) ? r.iterations : []),
+        )
         .catch(() => {});
     loadIterations();
     const id = setInterval(loadIterations, 10000);
     return () => clearInterval(id);
   }, []);
+
+  // The telemetry buffer is forwarded raw off the WS (`msg.line as
+  // TelemetrySample`, no runtime validation in useTelemetryStream), so a
+  // malformed/legacy frame can drop a `null` (or any non-object) into the
+  // array. That bad element white-screens the page the moment any consumer
+  // dereferences it — Dashboard's own gemmaUp `.some((s) => s.vllm)` throws
+  // "Cannot read properties of null", and so would every child panel
+  // (HealthStrip/Vllm/Qwen/ProcessGrid all index `s.gpu`/`s.vllm`). Skip the
+  // bad rows once here (the backend's own "drop malformed rows" philosophy)
+  // and feed the cleaned array to the verdict math AND every panel below, so
+  // one garbage frame degrades to a missing scrape instead of a crashed page.
+  const cleanSamples = samples.filter(
+    (s): s is TelemetrySample => s != null && typeof s === "object",
+  );
 
   const lastSeen = latest?.timestamp ?? health?.telemetry_last_seen ?? null;
   // Guard against a malformed/absent timestamp: Date.parse -> NaN, which
@@ -69,16 +91,28 @@ export default function Dashboard() {
   // Qwen is excluded from the verdict (staged/unwired today): a failing-but-
   // enabled Qwen reader emits a "vllm-qwen-metrics" read error, which must
   // not drag the whole system to degraded. Drop Qwen-owned keys here.
-  const readErrors = excludeQwenReadErrors(
-    latest?.read_errors ? Object.keys(latest.read_errors) : [],
-  );
+  // read_errors is sampler-owned and forwarded raw off the WS (the hook does
+  // not validate `msg.line`), so a legacy/garbage frame can hand back a
+  // non-object truthy value — a string ("thermal failed"), a number, or an
+  // array. A bare `? Object.keys(...)` would then mine that value for index
+  // keys ("0","1",…) and paint a FALSE degraded with numeric "read errors".
+  // Only treat a plain object as a real error map; any other shape is "no
+  // legible read errors", not a fault.
+  const rawReadErrors = latest?.read_errors;
+  const readErrorKeys =
+    rawReadErrors != null &&
+    typeof rawReadErrors === "object" &&
+    !Array.isArray(rawReadErrors)
+      ? Object.keys(rawReadErrors)
+      : [];
+  const readErrors = excludeQwenReadErrors(readErrorKeys);
   // Gemma is up when the latest sample carries a `vllm` block. Debounced:
   // a single transient scrape miss (server fine, one failed /metrics poll)
   // should not flip the hero to DOWN. We require the vllm block to be
   // absent across the most recent GEMMA_DOWN_WINDOW samples before calling
   // it down. With fewer samples than the window, fall back to the latest.
   const GEMMA_DOWN_WINDOW = 2;
-  const recent = samples.slice(-GEMMA_DOWN_WINDOW);
+  const recent = cleanSamples.slice(-GEMMA_DOWN_WINDOW);
   const gemmaUp =
     recent.length === 0
       ? false
@@ -101,7 +135,7 @@ export default function Dashboard() {
       <div className="mt-3">
         <HealthVerdict
           connected={connected}
-          hasTelemetry={samples.length > 0}
+          hasTelemetry={cleanSamples.length > 0}
           ageMs={ageMs}
           readErrors={readErrors}
           gemmaUp={gemmaUp}
@@ -112,12 +146,12 @@ export default function Dashboard() {
           Gemma (primary orchestrator) first, Qwen (staged sub-agent) second.
           Stacked on narrow screens. */}
       <div className="mt-4">
-        <HealthStrip samples={samples} />
+        <HealthStrip samples={cleanSamples} />
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <VllmPanel samples={samples} />
-        <QwenPanel samples={samples} />
+        <VllmPanel samples={cleanSamples} />
+        <QwenPanel samples={cleanSamples} />
       </div>
 
       {/* LOOP_V0 high-level glance: compact active line + launcher. */}
@@ -176,7 +210,7 @@ export default function Dashboard() {
           <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
             Tracked processes
           </h2>
-          <ProcessGrid samples={samples} />
+          <ProcessGrid samples={cleanSamples} />
         </div>
       </details>
     </div>

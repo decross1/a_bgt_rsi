@@ -318,6 +318,30 @@ EMIT also writes `run_state/health_signals.jsonl` (`ml_intern_zero_papers`,
 `GET /api/coordinator/health_signals` + `HealthSignalsPanel` (amber, "degraded ≠ down"),
 wired into the Dashboard autonomy block. Completes design principle #4.
 
+### Validation — live-data + harden pass (2026-06-09, Dynamic Workflow)
+
+Validated the merged render against **live apparatus data** (the `:8700` backend was
+stale/pre-merge, so validation ran the in-process merged app via `TestClient(create_app())`
+which reads `_PRIMARY_REPO`). Every surface PASSES against real data: **19** coordinator
+cycles (3 errored → explicit red rows with their error), **52** `loop_memory` rows render
+without console errors, findings/bubbles/health panels show clean empty states (files
+absent live), `/active` → 204 idle. Plus a deep edge-case hardening sweep so a single
+malformed producer-owned JSONL row degrades to a legible fallback rather than blanking the
+page; 89 defensive fixes, frontend suite grew to 639 tests, backend 196. Two real bugs
+caught: a `Dashboard` missing-import build break and a `CoordinatorCycleCard` object-status
+crash (one bad row blanked the Coordinator page). Report: [`ui/notes/validation_report.md`](ui/notes/validation_report.md).
+
+- **Task 2 — `nemoclaw_agent` provenance (now LIVE):** new `SourceBadge` maps
+  `seed.source`/`topic_source` to a tone family — **`nemoclaw_agent` → violet** (the
+  headline β signal: the sandboxed Nara agent chose+ran the thesis), `coordinator` → sky,
+  `arxiv_pick` → indigo, human/probe → quiet zinc — used consistently on `CoordinatorCycleCard`
+  and the iteration rows. `loop_memory.jsonl` now carries 2 live `nemoclaw_agent` rows, so
+  this is validated end-to-end, not just forward-compat.
+- **EMIT-gated followups** (render paths built + proven but live-unexercised until EMIT
+  writes the data — low-evidence firing, populated findings/bubbles/health, mid-flight
+  `active_run`, a successful `dispatched_iteration_id`) are handed to the primary session as
+  [`ui/notes/emit_test_plan.md`](ui/notes/emit_test_plan.md).
+
 ---
 
 ## Historical sections (UI v1, pre-LOOP_V0)

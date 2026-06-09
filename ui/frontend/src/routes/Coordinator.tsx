@@ -21,10 +21,53 @@ interface Props {
   pollMs?: number;
 }
 
+// run_state/coordinator_cycles.jsonl is producer-owned and append-only — a
+// partial/legacy row could omit `plan`/`outcomes` (or write them as null).
+// CoordinatorCycleCard reads `cycle.outcomes.length` / `cycle.plan.map(...)`
+// unguarded, so one such row throws during render and — there is no error
+// boundary — takes the WHOLE page down (a blank surface: the dark-loop failure
+// this view exists to fix). Drop a structurally-unrenderable row rather than
+// crash the list; a card needs both arrays present.
+function isRenderableCycle(cycle: CoordinatorCycle | null | undefined): boolean {
+  return (
+    !!cycle &&
+    Array.isArray((cycle as { plan?: unknown }).plan) &&
+    Array.isArray((cycle as { outcomes?: unknown }).outcomes)
+  );
+}
+
+// `timestamp` is producer-owned and TYPED `string`, but the on-disk JSONL is
+// untyped: a legacy/serialization slip can write it as a NUMBER (a Unix epoch),
+// null, or even an object. The newest-first sort compares timestamps with
+// String.prototype.localeCompare, and calling it on a non-string RECEIVER throws
+// "(...).localeCompare is not a function" — that rejects the load promise into
+// the catch and blanks EVERY card (incl. the healthy rows) behind an error
+// banner, so ONE bad-typed timestamp takes the whole narrative down (the
+// dark-loop failure this view exists to fix). Coerce to a string so a malformed
+// timestamp sorts by its stringified form instead of crashing the comparator (a
+// numeric epoch still orders sanely; null/undefined → "").
+//
+// The comparator runs over the RAW rows BEFORE `isRenderableCycle` filters them
+// (sort precedes the render-time filter), so the `cycle` arg itself can be a
+// null/undefined element — a producer appending a blank/JSON-null line. Reading
+// `cycle.timestamp` off that throws "Cannot read properties of null (reading
+// 'timestamp')", crashing the comparator into the same catch-and-blank failure.
+// Optional-chain `cycle?.timestamp` so a null/non-object row sorts as "" instead
+// of taking the whole narrative down; it is dropped later by isRenderableCycle.
+function timestampKey(cycle: CoordinatorCycle | null | undefined): string {
+  return typeof cycle?.timestamp === "string"
+    ? cycle.timestamp
+    : String(cycle?.timestamp ?? "");
+}
+
 export default function Coordinator({ initial, pollMs = 5000 }: Props) {
   const [cycles, setCycles] = useState<CoordinatorCycle[]>(initial ?? []);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(initial !== undefined);
+
+  // Filter at the render boundary so BOTH the `initial` (test) path and the
+  // polled path get the same guard: a malformed row never reaches a card.
+  const renderable = cycles.filter(isRenderableCycle);
 
   useEffect(() => {
     if (initial !== undefined) return;
@@ -35,9 +78,19 @@ export default function Coordinator({ initial, pollMs = 5000 }: Props) {
           if (!active) return;
           // Backend returns newest-first per the contract; sort defensively by
           // timestamp descending so a producer appending out-of-order can't
-          // scramble the narrative order.
-          const sorted = [...r.cycles].sort((a, b) =>
-            (b.timestamp ?? "").localeCompare(a.timestamp ?? ""),
+          // scramble the narrative order. `timestampKey` coerces a non-string
+          // timestamp so the comparator never throws on a malformed value.
+          // Guard the body too: the response is contractually {cycles:[...]},
+          // but a malformed 200 could hand back `null`/`undefined` (a bare-null
+          // body — getJSON returns it verbatim) or a non-array `cycles`. Reading
+          // `r.cycles` off a null/undefined `r` throws "Cannot read properties
+          // of null (reading 'cycles')", which rejects into .catch and paints a
+          // raw TypeError in the red banner instead of the clean empty state
+          // (the blank-gap-on-absent-data failure this view exists to fix).
+          // `r?.cycles` short-circuits to undefined → not an array → [].
+          const rows = Array.isArray(r?.cycles) ? r.cycles : [];
+          const sorted = [...rows].sort((a, b) =>
+            timestampKey(b).localeCompare(timestampKey(a)),
           );
           setCycles(sorted);
           setLoaded(true);
@@ -62,7 +115,7 @@ export default function Coordinator({ initial, pollMs = 5000 }: Props) {
           /api/coordinator/cycles · newest first
         </span>
         <span className="ml-auto text-[11px] text-zinc-500">
-          {cycles.length}
+          {renderable.length}
         </span>
       </div>
       <p className="mt-1 text-xs text-zinc-500">
@@ -73,7 +126,7 @@ export default function Coordinator({ initial, pollMs = 5000 }: Props) {
 
       {error && <div className="mt-3 text-sm text-red-400">{error}</div>}
 
-      {loaded && cycles.length === 0 && !error && (
+      {loaded && renderable.length === 0 && !error && (
         <div
           className="mt-4 rounded border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-500"
           data-testid="coordinator-empty"
@@ -83,10 +136,23 @@ export default function Coordinator({ initial, pollMs = 5000 }: Props) {
         </div>
       )}
 
-      {cycles.length > 0 && (
+      {renderable.length > 0 && (
         <div className="mt-4 space-y-4">
-          {cycles.map((cycle) => (
-            <CoordinatorCycleCard key={cycle.run_id} cycle={cycle} />
+          {renderable.map((cycle, i) => (
+            // Key must be unique. `run_id` is producer-owned in an append-only
+            // JSONL, so it is NOT guaranteed unique across rows — a retry/re-emit
+            // or a legacy collision can write the SAME run_id twice, and at scale
+            // (1000+ rows) that grows likely. `run_id ?? cycle-${i}` only covers
+            // a MISSING id; two rows sharing the same non-null run_id still
+            // collide → React logs "Encountered two children with the same key"
+            // (a console.error). Suffix the index so the key is unique regardless
+            // (a missing/non-string id degrades to a bare index). Identity across
+            // index shifts isn't a concern here: the list is re-sorted and
+            // replaced wholesale each poll, never mutated in place.
+            <CoordinatorCycleCard
+              key={`${cycle.run_id ?? "cycle"}-${i}`}
+              cycle={cycle}
+            />
           ))}
         </div>
       )}
