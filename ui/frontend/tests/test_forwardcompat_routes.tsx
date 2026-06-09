@@ -361,6 +361,8 @@ vi.mock("../src/api/http", () => ({
   getHealthSignals: vi
     .fn()
     .mockResolvedValue({ health_signals: D.EMPTY_HEALTH }),
+  // HUMAN TODO endpoint: quiet empty-queue default.
+  getHumanTodo: vi.fn().mockResolvedValue({ items: [], counts: {} }),
   startIteration: vi.fn().mockResolvedValue({ pid: 1 }),
 }));
 

@@ -46,17 +46,41 @@ import type {
 // coordinator cycle becomes an explicit red row carrying its error string. We
 // derive these from getCoordinatorCycles() outcomes (the cycle row is the
 // source of truth for dispatch outcome — ui_autonomy_observability_plan.md).
+//
+// GROUPED by (topic, action, error): a retry loop that errors the same way 12
+// times (the 2026-06-09 noop/boom wall) is ONE legible row with an xN badge and
+// a first/last timestamp span, not 12 visually identical rows. A singleton
+// (count 1) renders exactly as before — no badge, one timestamp.
 interface FailedDispatch {
+  // run_id/agent of the group's MOST RECENT member — the readable prefix for
+  // the row's testid and badge (a singleton's are simply its own).
   run_id: string;
   agent: string;
   topic: string;
   action: string;
   error: string;
-  timestamp: string;
+  count: number;
+  firstTimestamp: string;
+  lastTimestamp: string;
+  // Sort keys: epoch millis of first/last timestamps; NaN when the producer
+  // wrote an unparseable timestamp (rendering still shows the raw value).
+  firstMs: number;
+  lastMs: number;
+}
+
+// Epoch millis of a producer-owned timestamp. A numeric epoch passes through;
+// anything else is coerced to string for Date.parse, which yields NaN for junk
+// — callers treat NaN as "unknown", never render it.
+function parseMs(ts: unknown): number {
+  if (typeof ts === "number") return ts;
+  return Date.parse(String(ts ?? ""));
 }
 
 function deriveFailedDispatches(cycles: CoordinatorCycle[]): FailedDispatch[] {
-  const out: FailedDispatch[] = [];
+  // Group key = topic\0action\0error (NUL-joined so concatenation of distinct
+  // field values can't collide). Map preserves insertion order, keeping ties
+  // stable when last-timestamps are equal or unparseable.
+  const groups = new Map<string, FailedDispatch>();
   // `cycles` and each row's `outcomes` are producer-owned JSONL: a legacy or
   // partial coordinator_cycles.jsonl row may omit `outcomes` entirely, OR carry
   // the right key with the WRONG type (a degraded backend body where `cycles` is
@@ -67,30 +91,71 @@ function deriveFailedDispatches(cycles: CoordinatorCycle[]): FailedDispatch[] {
   for (const cycle of Array.isArray(cycles) ? cycles : []) {
     const outcomes = Array.isArray(cycle?.outcomes) ? cycle.outcomes : [];
     for (const outcome of outcomes) {
-      if (outcome?.status === "errored") {
-        // `topic` / `action` / `error` land directly in JSX text nodes below.
-        // The contract types them as strings, but they are producer-owned JSONL:
-        // a legacy/partial/malformed row can carry an object or array here, and
-        // rendering one as a React child throws "Objects are not valid as a React
-        // child" — crashing the whole page on a single bad row. Coerce to a string
-        // at this boundary (the same `String(...)` defense shortTimestamp applies
-        // to a non-string timestamp) so a bad value renders as its raw form, not a
-        // crash. A nullish error keeps its explicit placeholder; a non-string error
-        // (e.g. a structured error object) is stringified rather than dropped.
-        out.push({
+      if (outcome?.status !== "errored") continue;
+      // `topic` / `action` / `error` land directly in JSX text nodes below.
+      // The contract types them as strings, but they are producer-owned JSONL:
+      // a legacy/partial/malformed row can carry an object or array here, and
+      // rendering one as a React child throws "Objects are not valid as a React
+      // child" — crashing the whole page on a single bad row. Coerce to a string
+      // at this boundary (the same `String(...)` defense shortTimestamp applies
+      // to a non-string timestamp) so a bad value renders as its raw form, not a
+      // crash. A nullish error keeps its explicit placeholder; a non-string error
+      // (e.g. a structured error object) is stringified rather than dropped.
+      const topic = asText(cycle.topic);
+      const action = asText(outcome.action);
+      const error =
+        outcome.error == null
+          ? "(no error message recorded)"
+          : asText(outcome.error);
+      const ms = parseMs(cycle.timestamp);
+      const key = `${topic}\u0000${action}\u0000${error}`;
+      const existing = groups.get(key);
+      if (!existing) {
+        groups.set(key, {
           run_id: cycle.run_id,
           agent: cycle.agent,
-          topic: asText(cycle.topic),
-          action: asText(outcome.action),
-          error:
-            outcome.error == null
-              ? "(no error message recorded)"
-              : asText(outcome.error),
-          timestamp: cycle.timestamp,
+          topic,
+          action,
+          error,
+          count: 1,
+          firstTimestamp: cycle.timestamp,
+          lastTimestamp: cycle.timestamp,
+          firstMs: ms,
+          lastMs: ms,
         });
+        continue;
+      }
+      existing.count += 1;
+      // An unparseable (NaN) candidate never displaces a tracked endpoint; a
+      // parseable one displaces a NaN endpoint or extends the range. The
+      // most-recent member also lends the group its run_id + agent badge.
+      if (
+        !Number.isNaN(ms) &&
+        (Number.isNaN(existing.firstMs) || ms < existing.firstMs)
+      ) {
+        existing.firstMs = ms;
+        existing.firstTimestamp = cycle.timestamp;
+      }
+      if (
+        !Number.isNaN(ms) &&
+        (Number.isNaN(existing.lastMs) || ms > existing.lastMs)
+      ) {
+        existing.lastMs = ms;
+        existing.lastTimestamp = cycle.timestamp;
+        existing.run_id = cycle.run_id;
+        existing.agent = cycle.agent;
       }
     }
   }
+  // Most-recent failures first. NaN last-timestamps sort as oldest; ties keep
+  // insertion order (Array.prototype.sort is stable), so an all-unparseable or
+  // all-equal batch renders in producer order with no churn.
+  const out = [...groups.values()];
+  out.sort((a, b) => {
+    const aMs = Number.isNaN(a.lastMs) ? -Infinity : a.lastMs;
+    const bMs = Number.isNaN(b.lastMs) ? -Infinity : b.lastMs;
+    return aMs === bMs ? 0 : bMs > aMs ? 1 : -1;
+  });
   return out;
 }
 
@@ -124,10 +189,14 @@ function shortTimestamp(iso: string | null | undefined): string {
 
 // The explicit failed-dispatch surface. Renders nothing when there are no
 // errored actions (a clean loop leaves no rows here) — but when a dispatch
-// failed, it is a visible red row, not a "nothing happened" gap.
+// failed, it is a visible red row, not a "nothing happened" gap. Identical
+// (topic, action, error) failures are ONE row with an xN badge + first/last
+// timestamps; the header count stays the TOTAL number of errored actions, so
+// grouping never under-reports how often the loop is failing.
 function FailedDispatches({ cycles }: { cycles: CoordinatorCycle[] }) {
   const failures = deriveFailedDispatches(cycles);
   if (failures.length === 0) return null;
+  const total = failures.reduce((n, f) => n + f.count, 0);
   return (
     <div
       className="rounded border border-red-900/60 bg-red-950/20 p-4"
@@ -140,9 +209,7 @@ function FailedDispatches({ cycles }: { cycles: CoordinatorCycle[] }) {
         <span className="text-[10px] text-zinc-500">
           coordinator actions that errored
         </span>
-        <span className="ml-auto text-[11px] text-zinc-500">
-          {failures.length}
-        </span>
+        <span className="ml-auto text-[11px] text-zinc-500">{total}</span>
       </div>
       <ul className="mt-2 space-y-1.5">
         {failures.map((f, i) => (
@@ -157,9 +224,19 @@ function FailedDispatches({ cycles }: { cycles: CoordinatorCycle[] }) {
             <div className="flex flex-wrap items-baseline gap-2 text-xs">
               <AgentBadge agent={f.agent} />
               <span className="font-mono text-red-300">{f.action}</span>
+              {f.count > 1 && (
+                // The repeat badge. NOT testid-prefixed "failed-dispatch-" —
+                // tests count rows via that prefix and a badge inside a row
+                // must not inflate the count.
+                <span className="rounded bg-red-900/60 px-1 font-mono text-[10px] text-red-200">
+                  x{f.count}
+                </span>
+              )}
               <span className="text-zinc-400">{f.topic}</span>
               <span className="ml-auto font-mono text-[10px] text-zinc-500">
-                {shortTimestamp(f.timestamp)}
+                {f.count > 1
+                  ? `first ${shortTimestamp(f.firstTimestamp)} · last ${shortTimestamp(f.lastTimestamp)}`
+                  : shortTimestamp(f.lastTimestamp)}
               </span>
             </div>
             <div className="mt-1 font-mono text-[11px] text-red-300">

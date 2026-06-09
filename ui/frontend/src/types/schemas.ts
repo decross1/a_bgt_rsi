@@ -426,3 +426,39 @@ export interface HealthSignal {
 export interface HealthSignalsResponse {
   health_signals: HealthSignal[];
 }
+
+// --- HUMAN TODO (GET /api/human_todo) ---
+// The human's work queue, composed read-only by the backend from data that
+// already exists (observability_reconciliation_plan.md §B3): pending gate
+// verdicts (loop_memory × loop_feedback join), findings awaiting review,
+// unacked bubbles, a stale active_run, and run_state/week1.state.json
+// human_gates_pending entries. Each item carries the EXACT copy-pastable CLI
+// command that resolves it (e.g. `python -m orchestrator.gate_cli
+// --iteration-id <id> --verdict <valid|invalid|needs_revision>`) — the UI
+// renders it verbatim, it never invents one. `kind`/`id` are the only fields
+// the producer must set; everything else is defensive-optional and the panel
+// degrades per-field. `kind` stays an open string so a new queue source
+// renders generically (raw, quiet) instead of crashing.
+export interface HumanTodoItem {
+  kind:
+    | "gate_verdict"
+    | "finding_review"
+    | "bubble_unacked"
+    | "stale_active_run"
+    | "state_file_gate"
+    | string;
+  id: string;
+  title?: string | null;
+  // ISO timestamp of when the item started waiting (oldest-first ordering key).
+  since?: string | null;
+  detail?: string | null;
+  resolve_command?: string | null;
+  [key: string]: unknown;
+}
+
+export interface HumanTodoResponse {
+  items: HumanTodoItem[];
+  // Per-kind item counts (e.g. {"gate_verdict": 11}); the panel's total badge
+  // is derived from `items` so a counts/items drift can't mislead.
+  counts: Record<string, number>;
+}

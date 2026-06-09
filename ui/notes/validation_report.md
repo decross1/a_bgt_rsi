@@ -270,3 +270,63 @@ Both targets read the same on-disk files; they agree on every count.
 - `test_live_8700.py`'s cycles floor (≥19) is deliberately a lower bound; live
   is at 73. If `coordinator_cycles.jsonl` is ever rotated/reset, the floor
   needs a matching revision — documented in the test docstring.
+
+## WF-C — reconciliation operable slice (2026-06-09, serial integrator)
+
+The operable slice of `observability_reconciliation_plan.md` (B1 + B2 + B3 +
+B5-light), four build agents fanned out + this serial-integrator wiring pass.
+
+### What shipped
+
+- **B1 — SystemActivityHero** (`components/SystemActivityHero.tsx`, pure +
+  `computeActivity` unit-tested): three-state RUNNING (emerald, registered
+  run named) / BUSY-unregistered (amber — calls flowing OR vllm running
+  requests OR GPU > 20% with no registered run; "activity without
+  provenance") / IDLE (zinc). Wired into `routes/Dashboard.tsx` directly
+  under the HealthVerdict hero, fed by a 7 s poll of
+  `getActivityMonitor(1).live_calls` + the latest clean telemetry sample +
+  `getActiveIteration()` + `getCoordinatorActive()` (204 → null → that
+  absence is the amber signal). GPU-at-96% can no longer coexist with
+  "idle/nominal".
+- **B2 — failed-dispatch grouping** on /activity: identical
+  (topic, action, error) failures collapse to one row with ×count +
+  first/last timestamps (the 12 `noop · FASE · RuntimeError: boom` rows
+  render as one line).
+- **B3 — HUMAN TODO, read-only**: backend `GET /api/human_todo`
+  (`backend/human_todo.py`, registered in `app.py`) composing the five
+  sources; `HumanTodoPanel` mounted PROMINENTLY on the Dashboard (below the
+  hero block, above the model panels) and on a new page-width **/todo**
+  route with a "todo" nav tab. Each item carries the exact copy-pastable
+  resolve command (verified against `orchestrator/gate_cli.py` argparse:
+  `--iteration-id <id> --verdict <valid|invalid|needs_revision>`).
+- **B5-light — drill-into links**: activity hero → /activity, Autonomy
+  block → /coordinator, recent-iterations → /activity (react-router
+  `<Link>`s; Dashboard tests now render under MemoryRouter).
+- Integrator fix: panel kind-label aliases `bubble_ack` / `state_gate`
+  added to match the producer's exact KINDS (additive; the original
+  spellings kept so prior fixtures stay humanized).
+
+### Live smoke (in-process TestClient(create_app()), REAL repo data)
+
+`GET /api/human_todo` → 200, counts:
+`{"gate_verdict": 11, "finding_review": 0, "bubble_ack": 0,
+"stale_active_run": 0, "state_gate": 0}` — the 11 pending-gate iterations
+from the screenshot complaint are now a first-class surface, oldest first
+(`iter-2026-06-05-002` since 2026-06-05T00:26Z), each with its verbatim
+`gate_cli` resolve command.
+
+### Suites
+
+- `npx tsc --noEmit` — clean.
+- frontend `npx vitest run` — **698 passed** (floor 678; growth only).
+- backend `pytest backend/tests -q` — **215 passed** (floor 202).
+
+### Stays gated on the main session
+
+- **B4 write-back** (valid/invalid/needs_revision buttons, bubble ack):
+  gated on the A5 CLI-contract blessing; `orchestrator/ack_cli.py` does not
+  exist yet — the bubble_ack resolve_command carries the A5 placeholder.
+- **A1–A4 producer fixes** (active_run mirror registration, `set_run_id`
+  lifecycle, `task_type` stamping, test/dev hygiene for live artifacts):
+  until they land, the amber busy-but-unregistered hero state and the
+  stale-run_id attribution will show often — rendered honestly by design.

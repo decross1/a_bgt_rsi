@@ -13,6 +13,7 @@ import type {
   CoordinatorCyclesResponse,
   Health,
   HealthSignalsResponse,
+  HumanTodoResponse,
   IterationsResponse,
   JournalResponse,
   SurfacedFindingsResponse,
@@ -117,6 +118,11 @@ export const getBubbles = () => getJSON<BubblesResponse>("/api/coordinator/bubbl
 
 export const getHealthSignals = () =>
   getJSON<HealthSignalsResponse>("/api/coordinator/health_signals");
+
+// --- HUMAN TODO (ui/backend, observability_reconciliation_plan.md §B3) ---
+// Read-only composition of everything awaiting a human: pending gate verdicts,
+// findings in review, unacked bubbles, stale active_run, state-file gates.
+export const getHumanTodo = () => getJSON<HumanTodoResponse>("/api/human_todo");
 
 export async function startIteration(topic: string): Promise<{ pid: number; iteration_id?: string }> {
   const resp = await fetch(`${API_BASE}/api/loop_v0/start`, {
