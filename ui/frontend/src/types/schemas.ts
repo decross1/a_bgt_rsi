@@ -236,7 +236,22 @@ export interface IterationRecord {
   ended_at: string;
   seed?: { topic?: string; source?: string } | null;
   hypothesis?: { text?: string; candidates_considered?: number } | null;
-  retrieval?: { k?: number; neighbors?: unknown[] } | null;
+  retrieval?: {
+    k?: number;
+    neighbors?: unknown[];
+    // Topical-relevance gate (EMIT: workers/retrieval_relevance.py, schema
+    // iteration_record.relevance). Drives the low-evidence badge: a
+    // `novel/survives` verdict resting on thin/off-domain retrieval is flagged.
+    // Field names ARE the EMIT contract (not score/flag): `relevance` is the
+    // blended score in [0,1] (higher = more grounded), `low_confidence` the
+    // boolean the worker sets when retrieval is thin/irrelevant, `reason` the
+    // human-readable why. Absent on pre-2026-06-09 rows.
+    relevance?: {
+      relevance?: number;
+      low_confidence?: boolean;
+      reason?: string;
+    } | null;
+  } | null;
   novelty?: {
     class?: "novel" | "rediscovery" | "nonsense" | "unclear" | string;
     rationale?: string;
@@ -287,4 +302,127 @@ export interface JournalResponse {
   iteration_id: string;
   path: string;
   content: string;
+}
+
+// --- AUTONOMY OBSERVABILITY ---
+// Mirrors of the coordinator-loop data contracts (ui_autonomy_observability_plan.md
+// §"Data contracts"). The primary session writes these as append-only JSONL,
+// gitignored, read live by ui/backend/coordinator.py exactly as loop_memory.jsonl
+// is. The UI reads them via /api/coordinator/{cycles,active,findings,bubbles}.
+// Fields are kept optional/forward-compatible (like IterationRecord) so an EMIT
+// schema addition does not break the views; `status`/`severity`/etc. stay open
+// strings so an unrecognized enum value renders generically rather than crashing.
+
+// One proposed action in a coordinator cycle's plan. `args` is left open.
+export interface CoordinatorPlanStep {
+  action: string;
+  args?: Record<string, unknown>;
+}
+
+// Per-action outcome. `status` mirrors the EMIT enum
+// (passed | skipped | errored) but stays open; `error` carries the failure
+// detail for the explicit failed-dispatch row (never a silent gap).
+export interface CoordinatorOutcome {
+  action: string;
+  status: "passed" | "skipped" | "errored" | string;
+  error?: string | null;
+}
+
+// One row of run_state/coordinator_cycles.jsonl — the join key for the
+// Coordinator Cycle view. `topic_source` is the auto-chosen-topic provenance
+// (e.g. "coordinator" / "human" / "arxiv_pick"); `agent` is the actor badge.
+export interface CoordinatorCycle {
+  timestamp: string;
+  run_id: string;
+  agent: string;
+  topic: string;
+  topic_source: string;
+  // Overall cycle status (report.status: e.g. "executed"/"no_valid_plan"); EMIT
+  // emits it top-level. Optional — the per-action `outcomes` carry the detail.
+  status?: string;
+  plan: CoordinatorPlanStep[];
+  outcomes: CoordinatorOutcome[];
+  dispatched_iteration_id?: string | null;
+  promoted_finding_ids?: string[];
+  bubble_run_ids?: string[];
+}
+
+// One row of memory/surfaced_findings.jsonl (promote_findings output —
+// orchestrator/finding_promotion.py:_promote_findings). The display field is
+// `title`; `claim`/`why_it_matters` add context; `novelty_class`/`critic_verdict`
+// are the badges; `source_iteration_id` links the iteration; `promoted_at` is
+// the time field (NOT `timestamp`). No `agent` field — promotion is the
+// coordinator's. The index signature stays forward-compatible.
+export interface SurfacedFinding {
+  finding_id: string;
+  source_iteration_id?: string | null;
+  title?: string | null;
+  claim?: string | null;
+  novelty_class?: string | null;
+  critic_verdict?: string | null;
+  why_it_matters?: string | null;
+  status?: string | null;
+  promoted_at?: string | null;
+  [key: string]: unknown;
+}
+
+// One row of memory/coordinator_bubbles.jsonl — the loop's "raise to the human"
+// channel (orchestrator/coordinator.py:_persist_bubble_up). The whole row is
+// {timestamp, run_id, finding_ids, note}: `note` is the message, `finding_ids`
+// the findings being raised. No bubble_id/agent/severity — a bubble IS the
+// escalation, always coordinator-emitted.
+export interface Bubble {
+  timestamp?: string | null;
+  run_id?: string | null;
+  finding_ids?: string[];
+  note?: string | null;
+  [key: string]: unknown;
+}
+
+// run_state/active_run.json — the coordinator's live cycle (the generalized
+// active_run helper, kind="coordinator"). The live row is {run_id, kind, label,
+// started_at, current_step, narration, step_started_at}: `current_step` walks
+// assess → plan → validate → dispatch and `narration` carries the chosen topic
+// + why. There is NO top-level topic field — the topic lives in narration/label.
+export interface CoordinatorActiveRun {
+  kind: "coordinator" | string;
+  run_id?: string | null;
+  label?: string | null;
+  current_step?: "assess" | "plan" | "validate" | "dispatch" | string | null;
+  step_started_at?: string | null;
+  narration?: string | null;
+  started_at?: string | null;
+}
+
+export interface CoordinatorCyclesResponse {
+  cycles: CoordinatorCycle[];
+}
+
+export interface SurfacedFindingsResponse {
+  findings: SurfacedFinding[];
+}
+
+export interface BubblesResponse {
+  bubbles: Bubble[];
+}
+
+// One row of run_state/health_signals.jsonl — a degraded-but-not-broken signal
+// derived per coordinator cycle (orchestrator/coordinator_cycle_log.py):
+// `ml_intern_zero_papers` (ran but stored 0 papers) or
+// `qwen_degraded_empty_content` (generated but emitted empty content). All
+// carry severity "degraded" — the UI renders them amber, not red. The index
+// signature keeps the signal-specific fields (papers_stored / empty_calls / …)
+// forward-compatible.
+export interface HealthSignal {
+  signal: string;
+  severity?: string | null;
+  timestamp?: string | null;
+  run_id?: string | null;
+  iteration_id?: string | null;
+  detail?: string | null;
+  [key: string]: unknown;
+}
+
+export interface HealthSignalsResponse {
+  health_signals: HealthSignal[];
 }

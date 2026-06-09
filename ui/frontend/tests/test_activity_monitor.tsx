@@ -25,6 +25,14 @@ import {
   GRAPH_FIXTURE,
 } from "../src/fixtures/activity";
 import { ACTIVE_FIXTURE } from "../src/fixtures/loop_v0";
+import {
+  ACTIVE_RUN_FIXTURE as COORDINATOR_ACTIVE_FIXTURE,
+  COORDINATOR_CYCLES_FIXTURE,
+} from "../src/fixtures/coordinator";
+import type {
+  CoordinatorActiveRun,
+  CoordinatorCycle,
+} from "../src/types/schemas";
 
 // @xyflow/react reaches for ResizeObserver on mount; jsdom lacks it.
 beforeAll(() => {
@@ -231,6 +239,8 @@ describe("Activity layout (workers HERO, graph demoted)", () => {
     monitor = MONITOR_FIXTURE,
     iteration: typeof ACTIVE_FIXTURE | null = null,
     activeRun: typeof ACTIVE_RUN_FIXTURE | null = null,
+    coordinatorActive: CoordinatorActiveRun | null = null,
+    coordinatorCycles: CoordinatorCycle[] = [],
   ) {
     return render(
       <MemoryRouter>
@@ -239,6 +249,8 @@ describe("Activity layout (workers HERO, graph demoted)", () => {
           initialMonitor={monitor}
           initialIteration={iteration}
           initialActiveRun={activeRun}
+          initialCoordinatorActive={coordinatorActive}
+          initialCoordinatorCycles={coordinatorCycles}
         />
       </MemoryRouter>,
     );
@@ -369,5 +381,45 @@ describe("Activity layout (workers HERO, graph demoted)", () => {
     // NOT toggle the <details> open/closed (preventDefault contract).
     fireEvent.click(fullBtn);
     expect(disclosure).not.toHaveAttribute("open");
+  });
+
+  it("renders the coordinator phases stepper when a coordinator cycle is live", () => {
+    renderActivity(MONITOR_FIXTURE, null, null, COORDINATOR_ACTIVE_FIXTURE);
+    const section = screen.getByTestId("coordinator-activity");
+    // The live cycle's current step (dispatch) is highlighted active.
+    expect(within(section).getByTestId("phase-dispatch")).toHaveAttribute(
+      "data-state",
+      "active",
+    );
+    // Narration (chosen topic + why) is shown.
+    expect(within(section).getByTestId("coordinator-narration")).toHaveTextContent(
+      /Truthfulness of VCG/i,
+    );
+  });
+
+  it("renders the coordinator idle state when no cycle is live", () => {
+    renderActivity();
+    const section = screen.getByTestId("coordinator-activity");
+    expect(within(section).getByTestId("coordinator-idle")).toBeInTheDocument();
+    // No failed-dispatch surface when there are no cycles.
+    expect(screen.queryByTestId("failed-dispatches")).toBeNull();
+  });
+
+  it("surfaces a failed dispatch as an explicit red row with its error", () => {
+    // COORDINATOR_CYCLES_FIXTURE[0] has an errored run_loop_iteration action.
+    renderActivity(
+      MONITOR_FIXTURE,
+      null,
+      null,
+      null,
+      COORDINATOR_CYCLES_FIXTURE,
+    );
+    const failed = screen.getByTestId("failed-dispatches");
+    expect(failed.className).toContain("red");
+    const row = screen.getByTestId(
+      `failed-dispatch-${COORDINATOR_CYCLES_FIXTURE[0].run_id}`,
+    );
+    expect(row).toHaveTextContent("run_loop_iteration");
+    expect(row).toHaveTextContent(/not a valid SeedSource/i);
   });
 });

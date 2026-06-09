@@ -73,6 +73,12 @@ vi.mock("../src/api/http", async () => {
     getActiveIteration: vi.fn().mockResolvedValue(null),
     getBaseline: vi.fn().mockResolvedValue({ rows: [] }),
     getWorkloadHint: vi.fn().mockResolvedValue({ regime: "idle" }),
+    // Autonomy block (SurfacedFindingsPanel + BubblesPanel + HealthSignalsPanel
+    // self-poll these). Empty responses keep the dashboard focus on the
+    // health-first assertions.
+    getSurfacedFindings: vi.fn().mockResolvedValue({ findings: [] }),
+    getBubbles: vi.fn().mockResolvedValue({ bubbles: [] }),
+    getHealthSignals: vi.fn().mockResolvedValue({ health_signals: [] }),
   };
 });
 

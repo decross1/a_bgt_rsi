@@ -9,6 +9,8 @@
 import { useEffect, useState } from "react";
 import ActiveIterationPanel from "../components/ActiveIterationPanel";
 import BaselineCard from "../components/BaselineCard";
+import BubblesPanel from "../components/BubblesPanel";
+import HealthSignalsPanel from "../components/HealthSignalsPanel";
 import HealthStrip from "../components/HealthStrip";
 import HealthVerdict, {
   excludeQwenReadErrors,
@@ -17,12 +19,14 @@ import JournalScroll from "../components/JournalScroll";
 import NaraPromptForm from "../components/NaraPromptForm";
 import ProcessGrid from "../components/ProcessGrid";
 import QwenPanel from "../components/QwenPanel";
+import RedFlagsTrendStrip from "../components/RedFlagsTrendStrip";
 import ResolvedIterationsList from "../components/ResolvedIterationsList";
+import SurfacedFindingsPanel from "../components/SurfacedFindingsPanel";
 import VllmPanel from "../components/VllmPanel";
-import { getHealth } from "../api/http";
+import { getHealth, getIterations } from "../api/http";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { useNow } from "../time";
-import type { Health } from "../types/schemas";
+import type { Health, IterationRecord } from "../types/schemas";
 
 export default function Dashboard() {
   const { samples, latest, connected } = useTelemetryStream();
@@ -30,12 +34,26 @@ export default function Dashboard() {
   const [selectedIteration, setSelectedIteration] = useState<string | null>(
     null,
   );
+  // Iterations are lifted here only to feed the standing red-flags strip (the
+  // novel-rate / suspected-false-novel / off-domain self-checks). The resolved
+  // list below still owns its own poll/pagination.
+  const [iterations, setIterations] = useState<IterationRecord[]>([]);
   const now = useNow();
 
   useEffect(() => {
     const loadHealth = () => getHealth().then(setHealth).catch(() => {});
     loadHealth();
     const id = setInterval(loadHealth, 10000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const loadIterations = () =>
+      getIterations()
+        .then((r) => setIterations(r.iterations))
+        .catch(() => {});
+    loadIterations();
+    const id = setInterval(loadIterations, 10000);
     return () => clearInterval(id);
   }, []);
 
@@ -107,6 +125,23 @@ export default function Dashboard() {
         <ActiveIterationPanel compact />
         <NaraPromptForm />
       </div>
+
+      {/* AUTONOMY block — the coordinator loop's standing self-checks +
+          its two "raise to the human" channels. Kept below the health-first
+          hero/panels: the red-flags strip answers "is the loop surfacing
+          things genuinely new?" at a glance; Surfaced Findings + Bubbles are
+          the loop's promoted output and its escalations. */}
+      <section className="mt-6 space-y-4" data-testid="autonomy-block">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+          Autonomy
+        </h2>
+        <RedFlagsTrendStrip iterations={iterations} />
+        <HealthSignalsPanel />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <SurfacedFindingsPanel />
+          <BubblesPanel />
+        </div>
+      </section>
 
       {/* Recent iterations — secondary, collapsible. Kept fully functional
           (pagination + filters + Loop-v1 chips); the journal for a selected

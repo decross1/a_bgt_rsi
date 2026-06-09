@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .activity import register as register_activity
 from .baseline import compute_baseline
 from .chain import LogStore, build_chain_by_request_id
+from .coordinator import register as register_coordinator
 from .experiments import register as register_experiments
 from .loop_v0 import register as register_loop_v0
 from .tailer import JsonlTailer
@@ -37,6 +38,12 @@ DEFAULT_LOOP_V0_REPO = _PRIMARY_REPO
 DEFAULT_LOOP_V0_RUN_STATE = _PRIMARY_REPO / "run_state"
 DEFAULT_LOOP_V0_JOURNAL = _PRIMARY_REPO / "journal" / "iterations"
 DEFAULT_LOOP_V0_MEMORY = _PRIMARY_REPO / "memory" / "loop_memory.jsonl"
+# Autonomy observability: coordinator-cycle artifacts in the primary checkout.
+# coordinator_cycles.jsonl + active_run.json live under run_state/;
+# surfaced_findings.jsonl + coordinator_bubbles.jsonl under memory/ (gitignored,
+# may be absent — endpoints return empty/204). Env overrides for tests.
+DEFAULT_COORDINATOR_RUN_STATE = _PRIMARY_REPO / "run_state"
+DEFAULT_COORDINATOR_MEMORY = _PRIMARY_REPO / "memory"
 
 
 def _git_sha():
@@ -87,7 +94,9 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                loop_v0_run_state=DEFAULT_LOOP_V0_RUN_STATE,
                loop_v0_journal=DEFAULT_LOOP_V0_JOURNAL,
                loop_v0_memory=DEFAULT_LOOP_V0_MEMORY,
-               loop_v0_popen=subprocess.Popen):
+               loop_v0_popen=subprocess.Popen,
+               coordinator_run_state=DEFAULT_COORDINATOR_RUN_STATE,
+               coordinator_memory=DEFAULT_COORDINATOR_MEMORY):
     app = FastAPI(title="UI backend — orchestrator dashboard", version=_git_sha())
     # Permissive CORS for local dev (Vite serves the SPA on another port).
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
@@ -206,6 +215,13 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         popen=loop_v0_popen,
     )
 
+    register_coordinator(
+        app,
+        repo_root=Path(loop_v0_repo),
+        run_state_dir=Path(coordinator_run_state),
+        memory_dir=Path(coordinator_memory),
+    )
+
     return app
 
 
@@ -226,4 +242,6 @@ app = create_app(
     loop_v0_run_state=_env_path("UI_LOOP_V0_RUN_STATE", DEFAULT_LOOP_V0_RUN_STATE),
     loop_v0_journal=_env_path("UI_LOOP_V0_JOURNAL", DEFAULT_LOOP_V0_JOURNAL),
     loop_v0_memory=_env_path("UI_LOOP_V0_MEMORY", DEFAULT_LOOP_V0_MEMORY),
+    coordinator_run_state=_env_path("UI_COORDINATOR_RUN_STATE", DEFAULT_COORDINATOR_RUN_STATE),
+    coordinator_memory=_env_path("UI_COORDINATOR_MEMORY", DEFAULT_COORDINATOR_MEMORY),
 )

@@ -1,15 +1,18 @@
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 import Activity from "./routes/Activity";
+import Coordinator from "./routes/Coordinator";
 import Dashboard from "./routes/Dashboard";
 import ExperimentDetail from "./routes/ExperimentDetail";
 import Experiments from "./routes/Experiments";
 import Inspector from "./routes/Inspector";
 
 // Primary destinations, surfaced as a nav on every page so the dashboard,
-// activity graph, and experiment digestion are all one click apart.
+// activity graph, coordinator narrative, and experiment digestion are all one
+// click apart.
 const NAV = [
   { to: "/", label: "dashboard", end: true },
   { to: "/activity", label: "activity", end: false },
+  { to: "/coordinator", label: "coordinator", end: false },
   { to: "/experiments", label: "experiments", end: false },
 ];
 
@@ -59,6 +62,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/activity" element={<Activity />} />
+          <Route path="/coordinator" element={<Coordinator />} />
           <Route path="/experiments" element={<Experiments />} />
           <Route path="/experiments/:expId" element={<ExperimentDetail />} />
           {/* Wrapper-rooted tool-call chains (logs/calls.jsonl). */}
