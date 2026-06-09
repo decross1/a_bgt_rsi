@@ -290,3 +290,31 @@ nemoclaw nara-sandbox policy-remove nara-sandbox nara-host-tool-plane --yes
   relocated `validate_plan` host boundary; the independent novelty skeptic as a
   hard gate. Those are the named β prerequisites (D-040 / D-041), not this slice.
 ```
+
+## 2026-06-09 evening — MCP path-a OUTCOME + ops findings
+**Result: 5/6 PASS, criterion 3 partial.** `iter-2026-06-09-008`
+(`seed.source="nemoclaw_agent"`, novel/survives, 76s) was formed and driven by the
+in-sandbox agent itself over native MCP (`nara__get_apparatus_state` then
+`nara__run_loop_iteration`; H1 witnessed both inbound calls in order). The thesis was
+grounded in the snapshot's real findings (cited iter-003/-004) and the agent reported
+honestly. Criterion 3's *returned-verdict* report was preempted: the MCP client's
+`connectionTimeoutMs: 15000` cut the synchronous response of a ~90s tool call; the SDK
+retry correctly bounced off the one-at-a-time guard and the agent honestly reported the
+in-flight state instead of confabulating a verdict.
+
+**Ops rules learned (apply to every future drive):**
+1. **Always pass a fresh `--session-id`.** The default `main` session lane wedged
+   (compaction-timeout + `EmbeddedAttemptSessionTakeoverError` + write-lock holds); the
+   wedged file is rotated aside (`088bf50f-wedged-backup-20260609.jsonl.bak`) but the
+   gateway's in-memory lane state stays flaky until the sandbox is rebuilt (rebuild is
+   human-gated). Fresh session ids work reliably, including MCP tool calls. This also
+   retro-explains the "h2 broken pipe" failures — session-lane wedge, not the inference
+   route, not the MCP registration.
+2. **`run_loop_iteration` is a long job behind a short RPC.** Either raise the MCP
+   client request timeout well past worst-case iteration time (~3 min with skeptic) or
+   reshape the tool as submit+poll (return `iteration_id` immediately; the agent polls
+   `get_apparatus_state`). The retry-vs-guard interaction is safe (guard refuses) but
+   wastes an agent turn. Decide next session.
+3. **Restart the tool plane after editing worker/orchestrator code** — iter-008 ran on
+   the plane's stale in-memory pipe (pre-R0, no skeptic env). The plane now runs the
+   final code with `NARA_SKEPTIC=1`.
