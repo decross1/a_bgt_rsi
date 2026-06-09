@@ -1304,6 +1304,18 @@ stub in `orchestrator/runtime.py`. The substrate-swappable design
 the human, or interactively), implementing `NemoClawRuntime` is
 mechanical and Nara does not change.
 
+**Amendment (2026-06-09, human-authorized decross1) — the "mechanical
+NemoClawRuntime swap" is FALSIFIED.** β is **not** a drop-in
+`NemoClawRuntime`-as-dispatch-subclass swap. The 2026-06-09 de-risk proved
+nara-sandbox is genuinely isolated (no apparatus deps), so β is a real **port**:
+an **OpenClaw agent bundle** (`agent/nemoclaw_nara/`) driving a **host-side tool
+plane** (`orchestrator/tool_plane.py`) around the unchanged host spine;
+`PyRuntime` stays the host default. **Empirically confirmed** the same day — the
+write-capable seam ran end-to-end: a sandbox-originated `run_loop_iteration` drove
+a full host iteration (`iter-2026-06-09-003`, `seed.source="nemoclaw_agent"`).
+This amends D-008's alpha framing and the D-030/D-031 "mechanical swap" language;
+`LOOP_V0.md:229` corrected to match.
+
 **Investigation summary** (≈10 min of the 90-min cap):
 
 Status of NemoClaw as of 2026-05-26 (vs. Day-1's D-008 state in
@@ -1919,9 +1931,11 @@ Procedure: ran each topic twice — once with Gemma critic (Phase 2 baseline), o
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 
-## D-039 — Gemma 4 QAT evaluated vs the NVFP4 pin (DRAFT, pending exp008 live run)
+## D-039 — Gemma 4 QAT evaluated vs the NVFP4 pin — SHELVED
 
-**Status.** DRAFT — disposition PENDING the exp008 live run. Outcome: **[pending exp008 RESULTS.md]**.
+**Status.** Ratified 2026-06-09 (human-authorized decross1). Disposition: **SHELVE the exp008 live run.**
+
+**Disposition (2026-06-09) — SHELVE.** No interpretable or deployable result is reachable here: (1) Google ships no vLLM-native W4A16 QAT for 26B-A4B, so even a win yields no production swap — the NVFP4 pin stands (inviolate rule 2); (2) arm C OOM-froze the box and the new memory guard now mechanically refuses it; (3) arm B carries an uninterpretable llama.cpp-vs-vLLM engine confound (arm C was the only disambiguator); (4) N≈10 is directional only. **Revisit** only on a dedicated-GPU box, with production paused behind the guard, or if a vLLM-native W4A16 path ships. The `experiments/exp008_qat_eval/` harness is preserved as-is; nothing in production serving is touched.
 
 **Date drafted.** 2026-06-08. Single-serial-integrator wiring of the `experiments/exp008_qat_eval/` benchmark harness (eval-only, no production swap).
 
@@ -2065,14 +2079,53 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 
 ---
 
-## D-041 — RESERVED (β gated on an independent novelty skeptic) — pending human ratification
+## D-041 — β is gated on a validated independent novelty skeptic + the memory guard
 
-**Reserved 2026-06-09.** D-041 is held for the de-risk session's draft decision
-"β is gated on an independent (off-box) novelty skeptic + the memory guard"
-(drafted in `human/sessions/2026-06-09.md`; not yet ratified). It will be authored
-here when the human ratifies it. Recorded as a reservation so the sequence stays
-dense and the gap is explicit — D-042/D-043 below were attested in the same
-2026-06-09 governance cycle and use the next numbers.
+**Status.** Ratified 2026-06-09 (human-authorized decross1). Extends D-035
+(Co-Scientist: a different-model critic is load-bearing). Supersedes the RESERVED
+placeholder.
+
+**Decision.** Before the unattended loop (β / the D-040 autonomy switch) may be
+armed, a novelty/critique verdict must be checked by a **skeptic step separate from
+the generator**, and the **free-memory pre-flight guard**
+(`experiments/exp008_qat_eval/preflight_mem.sh`) must gate every model launch.
+Single-model self-scoring (Gemma grading Gemma) is mitigated today only by human
+sampling; β removes the human, so the skeptic is a hard β prerequisite, not a nicety.
+
+**Skeptic route — priority ladder (use the highest available; each tier states its
+independence guarantee honestly, inviolate rule 4):**
+
+1. **Qwen** (on-box `:8001`, behind the memory guard) — the preferred standing
+   skeptic: a genuinely *different model* from Gemma, so it does not share the
+   generator's blind spots (true independence). **Gated on a separate quality
+   validation first:** the empty-content issue was token starvation (fixed —
+   `max_tokens` ≥ 3072), but Qwen must PASS a stand-alone skeptic back-test
+   (schema-valid, genuinely-skeptical verdicts on a labelled set) before it is
+   trusted as the standing skeptic. "It returns JSON" is not "it is a quality skeptic."
+2. **Gemma 4 with a critic-specific skill-set + persona** (a distinct critic prompt
+   on the host model) — the operational fallback when Qwen is unavailable.
+   **CAVEAT — does NOT clear the strict independence bar:** it shares weights with
+   the generator, so it shares blind spots; it is a prompt/persona-level skeptic,
+   not a model-independent one. Better than no skeptic, but β armed on tier-2 ALONE
+   is a weaker guarantee — tier-1 (validated Qwen) or tier-3 must back the full gate.
+3. **Claude** (Opus — and/or a lighter tier; "fable" per the human's note, model TBC)
+   via the **Claude Agent SDK on the max-plan subscription** — only if needed (local
+   skeptics disagree or are down). Narrow, explicit exception to D-014: the apparatus
+   *main reasoning loop* still never authenticates to Claude (D-013/D-014 intact);
+   only the bounded **critic-only** step may, via the Agent SDK + max plan (NOT
+   metered API credits). Annotate D-014 when this tier is first wired.
+
+`gemma-persona` is NOT a substitute for a different-model skeptic — it is tier-2 with
+the caveat above; the strict independence the gate wants is tier-1/tier-3.
+
+**Reversibility.** Reversible — the route is config (`workers/novelty_skeptic.py`
+backend selection); the durable rule is the gate (β needs a validated skeptic + the
+memory guard) and this priority ladder.
+
+**Open item (human, when tier-3 is reached).** Confirm the exact Claude model for
+"fable", and that the Agent-SDK / max-plan path is the intended auth (not API credits).
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
 
 ---
 
