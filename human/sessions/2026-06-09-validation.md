@@ -93,6 +93,10 @@ proven seam; the agent invoking the tools *itself* is the named carryover.
   greenlight. Fine if no thesis survives to promotion — the path is validated as sound.
 
 ## Carryover (next session)
+> **Full handoff: [`docs/next_session_plan.md`](../../docs/next_session_plan.md)** — addresses
+> all three threads below in execution detail (T1 lit-pipe refinement is foundational; T2 + T3
+> follow). Run it as a Dynamic Workflow.
+
 1. Literature-pipe refinement (gate semantics + critic restatement-detection + corpus
    de-drift) — re-run the battery as the regression check (bar: ≥80% acc, gate recall
    1.0, 0 ungated off-domain survives).
