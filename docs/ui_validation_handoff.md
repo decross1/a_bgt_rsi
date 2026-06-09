@@ -59,3 +59,37 @@ The live dashboard (restarted backend) renders the real coordinator cycles + pan
 a failed dispatch shows as an explicit red row; an off-domain thesis shows the low-evidence flag and
 an on-domain one does not; a `nemoclaw_agent`-sourced iteration shows the new provenance badge.
 Unit tests green (+ a test for the new badge). Print `UI READY TO MERGE`.
+
+## 2026-06-09 evening additions (EMIT-side schema changes — additive, no UI crash path)
+- Critic verdict enum gains `undecidable` (fails closed; every consumer gates on `== "survives"`)
+  — render it as a plain string chip like the other verdicts.
+- Novelty result gains optional `novelty_axes` ({phenomenon, substrate, predicted_direction}, may
+  be null) plus optional `verdict_overridden_from`/`override_reason`/`skeptic_verdict` strings on
+  the novelty and critique blocks — all render as strings; absent on legacy rows.
+- `retrieval.relevance` gains additive keys {anchor_cosine, curated_overlap, neighbor_spread,
+  category, rule_fired}. Existing keys {relevance, low_confidence, reason} and the legacy novelty
+  `class` are UNCHANGED (UI join contract, commit 0fdb671).
+
+## 2026-06-09 evening — EMIT live-data status per gap (for UI re-validation)
+1. **Low-evidence badge (gap 1): LIVE ROW EXISTS** — `iter-2026-06-09-007`
+   (off-domain static-analysis topic): `retrieval.relevance.low_confidence=true`,
+   `reason` mentions the LLM topicality check, new additive keys
+   `topicality:"off"` / `rule_fired:"R0"` / `category:"off_domain"`. The on-domain
+   contrast row is `iter-2026-06-09-006` (p-beauty re-run, rediscovery/restated,
+   low_confidence=false, novelty_axes present).
+2. **Findings/bubbles/health (gap 2):** a real coordinator cycle ran post-T1
+   (run_id `coordinator_6d8a2c4e`); whether findings/bubbles/health rows were
+   legitimately produced is recorded in `run_state/coordinator_cycles.jsonl` —
+   panels keep their proven empty state if no real row passed the gate
+   (fabricating rows was rejected). EMIT-side field-shape regression tests are in
+   `tests/test_emit_join_contract.py`.
+3. **active_run mid-flight (gap 3):** two distinct in-flight snapshots captured
+   during the live cycle (both lack `current_step`/`narration` — the cycle's
+   update_active_run granularity is coarser than the stepper; render what exists):
+   `{"run_id": "coordinator_6d8a2c4e", "kind": "coordinator", "label": "coordinator_cycle", "started_at": "2026-06-09T21:28:18.362557Z"}`
+   `{"run_id": "promote_findings_4c9ac22e", "kind": "ad_hoc", "label": "promote_findings", "started_at": "2026-06-09T21:28:23.423345Z"}`
+4. **dispatched_iteration_id (gap 4):** check the latest row of
+   `run_state/coordinator_cycles.jsonl` for the `coordinator_6d8a2c4e` cycle.
+5. **nemoclaw_agent (gap 5):** unchanged (2 live rows); the in-sandbox agent
+   re-drive is blocked on a broken sandbox→gemma gRPC channel (h2 broken pipe),
+   NOT on the MCP wiring — `tools/list` over `/mcp` works from inside the sandbox.
