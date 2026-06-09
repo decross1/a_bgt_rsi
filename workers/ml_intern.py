@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -71,29 +72,52 @@ class MLInternFetchError(RuntimeError):
     the caller as an exception."""
 
 
+# Generic glue + hypothesis-framing words. Dropping them lets the salient
+# content terms (a method's name + its subject) lead the short query instead
+# of the method/framing preamble that the old "first N words" approach grabbed.
+_QUERY_STOPWORDS = frozenset(
+    "a an the of for to in on at by with and or but is are be been being this "
+    "that these those it its as from into between where when which than then so "
+    "we our their your my his her not no".split()
+)
+_QUERY_FRAMING = frozenset(
+    "optimizes optimize optimizing minimizing minimize maximizing maximize "
+    "measured measure measures reduction reduce reducing increase increasing "
+    "improves improve improving approach method using based proposes propose "
+    "hypothesis hypothesize distribution divergence value values standard".split()
+)
+_QUERY_MAX_TERMS = 6
+
+
 def _distill_query(hypothesis_text: str) -> str:
-    """Deterministically reduce a hypothesis to a short search query.
+    """Deterministically reduce a hypothesis to a SHORT keyword query.
 
-    Takes the text up to its first sentence terminator, then truncates to
-    `_QUERY_MAX_CHARS`. No LLM, no network — purely lexical so the same
-    hypothesis always yields the same query (and the same dedup behavior).
+    S2's /paper/search is keyword-AND relevance and SATURATES TO total=0 past
+    ~10-12 terms (live-verified 2026-06-09: the full 39-term FASE hypothesis ->
+    HTTP 200/total=0; a 4-term topic query -> thousands incl. the relevant prior
+    art). The old "first sentence / 280 chars" distillation fed the whole 39-term
+    sentence and returned nothing. So: strip punctuation/parens/quotes, drop
+    stopwords + generic framing words, and keep the first few DISTINCTIVE content
+    words (which, with framing removed, are the topic — e.g. a method name + its
+    subject). No LLM, no network; deterministic. Capped at `_QUERY_MAX_TERMS`.
 
-    KNOWN LIMITATION (live-tested 2026-06-05): S2's /paper/search is keyword
-    relevance — a long natural-language hypothesis over-constrains it (a
-    12-term query returned 1 result vs ~20 for a 4-term topic query). A
-    positional keyword reduction was tried and rejected: topical terms often
-    trail a method/framing preamble, so "first N content words" grabs the
-    framing, not the topic (0 results). Robust query distillation is a tuning
-    follow-up; today the worker fetches what this query yields and degrades
-    gracefully when that is little.
+    NOTE (follow-up, logged): an even better route queries S2 by the SEED PAPER's
+    title/arXiv id (sidesteps a confabulated hypothesis); that needs the seed
+    handle plumbed through nara -> ml_intern and only applies to arxiv_pick seeds.
     """
-    text = " ".join(hypothesis_text.split())
-    for terminator in (". ", "? ", "! "):
-        idx = text.find(terminator)
-        if idx != -1:
-            text = text[: idx + 1]
+    seen: set[str] = set()
+    out: list[str] = []
+    for tok in re.findall(r"[A-Za-z0-9]+", hypothesis_text):
+        low = tok.lower()
+        if len(low) <= 1 or low in _QUERY_STOPWORDS or low in _QUERY_FRAMING:
+            continue
+        if low in seen:
+            continue
+        seen.add(low)
+        out.append(tok)
+        if len(out) >= _QUERY_MAX_TERMS:
             break
-    return text[:_QUERY_MAX_CHARS].strip()
+    return " ".join(out)
 
 
 def _parse_retry_after(headers: Any) -> int | None:

@@ -50,6 +50,7 @@ from orchestrator.runtime import PyRuntime, Runtime
 from orchestrator.tool_registry import TOOL_SPECS
 from workers.meta_review import meta_review as _meta_review
 from workers.ml_intern import ml_intern as _ml_intern
+from workers.retrieval_relevance import relevance
 from workers.redteam_critic import redteam_critic as _redteam_critic
 
 
@@ -650,6 +651,16 @@ def run_iteration(
                     elif name == "retrieve_literature":
                         captured["retrieval"] = payload
                         cache_key = "retrieval"
+                        # Topical-relevance gate (rule 4): score the retrieved
+                        # neighbors against the hypothesis so novelty/critic and
+                        # the UI never trust 'novel/survives' on off-topic
+                        # retrieval. Orchestrator-driven (not a Nara tool —
+                        # Gemma mis-sequences such steps); mutates payload in
+                        # place so it lands in the cache + the final record.
+                        payload["relevance"] = relevance(
+                            payload.get("neighbors") or [],
+                            (captured.get("hypothesis") or {}).get("text") or "",
+                        )
                     elif name == "novelty_classify":
                         captured["novelty"] = payload
                         cache_key = "novelty"
@@ -738,6 +749,7 @@ def run_iteration(
                             "phase": "result",
                             "iteration_id": iteration_id,
                             "status": mi.get("status") if isinstance(mi, dict) else "unknown",
+                            "papers_fetched": mi_result.get("papers_fetched", 0),
                             "papers_stored": mi_result.get("papers_stored", 0),
                             "parent_request_id": last_id,
                         })
@@ -752,6 +764,10 @@ def run_iteration(
                                     and re_ret.get("status") == "passed"
                                     and isinstance(re_ret.get("result"), dict)):
                                 captured["retrieval"] = re_ret["result"]
+                                re_ret["result"]["relevance"] = relevance(
+                                    re_ret["result"].get("neighbors") or [],
+                                    (captured.get("hypothesis") or {}).get("text") or "",
+                                )
                                 iteration_cache.write_entry(
                                     iteration_id, "retrieval", re_ret
                                 )

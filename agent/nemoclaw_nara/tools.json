@@ -1,0 +1,27 @@
+{
+  "$comment": "OpenClaw/MCP tool manifest for the Nara-on-NemoClaw agent bundle (β groundwork, 2026-06-09, Limb D). STATIC MIRROR of orchestrator/tool_plane.py's GET /tools — keep the two in lockstep (tests/test_tool_plane.py::test_manifest_matches_the_agent_bundle_tool_name guards the tool name). The agent runs INSIDE nara-sandbox and reaches this HOST endpoint through the NemoClaw egress proxy; see docs/nemoclaw_smoke_runbook.md for the hostname-vs-IP + egress allow-rule nuance.",
+  "schema_version": "openclaw-tools/1",
+  "transport": {
+    "kind": "http",
+    "$comment": "base_url is a PLACEHOLDER. Fill <HOST_HOSTNAME> with the host's resolvable hostname (NOT a raw IP — the egress SSRF guard 403s bare-IP literals; Limb D proved hostname:8000=200, IP=403) and <PORT> with the tool plane's --port (default 8077).",
+    "base_url": "http://<HOST_HOSTNAME>:<PORT>",
+    "health_path": "/health",
+    "list_path": "/tools"
+  },
+  "tools": [
+    {
+      "name": "get_apparatus_state",
+      "description": "Return a compact, read-only snapshot of the a_bgt_rsi research apparatus (in-flight run, recent loop findings, open threads, gaps, surfaced/pending findings, experiments, and one morning-loop topic suggestion). Pure read; mutates nothing.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "invocation": {
+        "method": "POST",
+        "path": "/tools/get_apparatus_state",
+        "$comment": "Response envelope: {\"tool\": \"get_apparatus_state\", \"ok\": true, \"result\": <snapshot>}."
+      }
+    }
+  ]
+}

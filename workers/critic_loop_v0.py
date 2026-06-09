@@ -72,8 +72,11 @@ CRITIC_AGENT_SYSTEM_PROMPT = (
     "                    real game-theory / learning-in-games question.\n"
     "\n"
     "Be intellectually honest: `survives` is a legitimate answer when the\n"
-    "literature simply doesn't address the claim. `restated` is reserved\n"
-    "for claims that the retrieved set proves redundant.\n"
+    "literature is ON-TOPIC and still fails to contradict the claim. But if\n"
+    "the retrieved neighbors are topically IRRELEVANT to the claim, you CANNOT\n"
+    "say `survives` — absence of contradiction in an off-topic corpus is not\n"
+    "survival; flag low confidence instead. `restated` is reserved for claims\n"
+    "that the retrieved set proves redundant.\n"
     "\n"
     "When you've made your judgment, emit a FINAL assistant message that\n"
     "is STRICT JSON, nothing else — no prose, no markdown fences, no\n"
@@ -281,10 +284,22 @@ def critic_loop_v0(
                     seen_doc_ids.add(d)
         return result
 
+    # Topical-relevance gate (rule 4): if the orchestrator flagged the retrieval
+    # as thin/off-topic, warn the sub-agent and stamp low_confidence so a bare
+    # 'survives' is never trusted on an irrelevant corpus (incl. the fallbacks).
+    rel = (retrieval.get("result") or {}).get("relevance") or {}
+    rel_low = bool(rel.get("low_confidence"))
+    relevance_warning = (
+        f"\nRETRIEVAL RELEVANCE WARNING: {rel.get('reason') or 'thin/off-topic retrieval'}. "
+        "The retrieved neighbors may be topically irrelevant to this hypothesis. "
+        "Absence of contradiction in an off-topic corpus is NOT 'survives' — say so "
+        "and flag low confidence.\n" if rel_low else ""
+    )
+
     user_prompt = (
         f"Hypothesis:\n{hypothesis_text.strip()}\n\n"
         f"Initial retrieved neighbors ({len(neighbors)}):\n"
-        f"{_format_neighbors(neighbors)}\n\n"
+        f"{_format_neighbors(neighbors)}\n{relevance_warning}\n"
         "Decide your verdict. If the initial neighbors are sufficient,\n"
         "emit the final JSON now. If you genuinely need to check a\n"
         "specific angle, call `query_chroma` with a focused query first."
@@ -321,6 +336,10 @@ def critic_loop_v0(
         "subagent_status":       sa_result.status,
         "subagent_backend":      resolved_be.name,
         "subagent_model":        resolved_be.default_model,
+        # Rule 4: stamp low_confidence on EVERY branch (passed + the three
+        # 'survives'-defaulting fallbacks) so 'survives' is never trusted bare
+        # on topically-irrelevant retrieval.
+        "low_confidence":        rel_low,
     }
 
     if sa_result.status == "passed":

@@ -1,0 +1,30 @@
+{
+  "$comment": "OpenClaw agent manifest DRAFT for 'Nara on NemoClaw' (β groundwork, 2026-06-09, Limb D). NOT yet wired into a live sandbox — applied by the integrator/human after the gateway is recovered (see docs/nemoclaw_smoke_runbook.md). This is a STATIC config file. The load-bearing decision encoded here: the agent harness is the LOCAL Gemma inference provider, never the OpenClaw default claude-cli (D-013 pins the harness to Pi/local; D-014 forbids the apparatus runtime authenticating to Claude). The de-risk on 2026-06-09 found claude-cli is the enabled-by-default harness AND there are no Anthropic creds on this box — so the default is both wrong-for-us and non-functional; this manifest selects the local route explicitly.",
+  "schema_version": "openclaw-agent/1",
+  "name": "nara",
+  "display_name": "Nara (a_bgt_rsi coordinator)",
+  "sandbox": "nara-sandbox",
+  "harness": {
+    "kind": "local-inference",
+    "$comment_harness": "Do NOT use 'claude-cli'. On `nemoclaw onboard`/`rebuild`, select this via `--agent` so the runtime harness is the local model, reconciling D-013 (Pi/local harness) + D-014 (never Claude).",
+    "provider": "vllm-local",
+    "model": "gemma-4-26b-a4b",
+    "$comment_provider": "Mirrors the sandbox's existing inference binding recorded in D-031: provider 'vllm-local', model 'gemma-4-26b-a4b', routed through NemoClaw's egress proxy at 10.200.0.1:3128 to the host vLLM :8000. This is the SAME single model the apparatus uses (D-033 single-model); the bundle does not introduce a second model."
+  },
+  "system_prompt_file": "system_prompt.md",
+  "tools_manifest_file": "tools.json",
+  "tool_allow_list": [
+    "get_apparatus_state"
+  ],
+  "$comment_allow_list": "The closed action menu becomes the OpenClaw tool allow-list (γ permission-preset mechanism arriving early at β). For this first slice exactly ONE read-only tool is granted. MUST-NOTs are enforced by capability ABSENCE: no write/trade/spawn tool is granted, so the agent physically cannot do those (per the 2026-06-09 autonomy-boundary finding — capability absence, not downstream schema checks).",
+  "policy_presets": {
+    "$comment": "Egress allow-rule the agent needs so the in-sandbox HTTP call to the host tool plane is permitted. The de-risk found the proxy denies ALL host endpoints by default (only inference.local is allowed). Apply via `nemoclaw nara-sandbox policy-add --from-file <egress.yaml>` AFTER recovering the gateway; the exact YAML + the hostname-vs-IP nuance are in docs/nemoclaw_smoke_runbook.md.",
+    "egress_allow": [
+      {
+        "host": "<HOST_HOSTNAME>",
+        "port": "<TOOL_PLANE_PORT>",
+        "note": "host tool plane (get_apparatus_state); hostname NOT raw IP"
+      }
+    ]
+  }
+}

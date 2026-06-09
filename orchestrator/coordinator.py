@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from agent_wrapper.wrapper import call_sync, set_run_id
-from orchestrator import active_run, tier_registry
+from orchestrator import active_run, coordinator_cycle_log, tier_registry
 from orchestrator.coordinator_actions import known_actions, validate_plan
 from orchestrator.morning_topic import pick_morning_topic
 from orchestrator.runtime import set_current_agent
@@ -459,7 +459,7 @@ def coordinator_cycle(
     run_id = f"coordinator_{uuid.uuid4().hex[:8]}"
     set_run_id(run_id)
     set_current_agent("coordinator")
-    active_run.write_active_run(run_id, kind="ad_hoc", label="coordinator_cycle")
+    active_run.write_active_run(run_id, kind="coordinator", label="coordinator_cycle")
     try:
         return _coordinator_cycle(
             run_id=run_id,
@@ -498,6 +498,18 @@ def _coordinator_cycle(
         feedback_path=feedback_path,
         active_run_path=active_run_path,
     )
+    _ts = (state.get("topic_suggestions") or [{}])[0]
+    active_run.update_active_run(
+        current_step="assess",
+        narration=(
+            f"assessed state; {len(state.get('recent_findings') or [])} recent "
+            f"iter(s); candidate topic {_ts.get('topic')!r} (source={_ts.get('source')})"
+        ),
+    )
+    active_run.update_active_run(
+        current_step="plan",
+        narration="planning next action over the constrained action menu",
+    )
 
     # assess -> plan -> validate, with bounded replan on rejection.
     attempts: list[dict[str, Any]] = []
@@ -528,7 +540,7 @@ def _coordinator_cycle(
 
     if validated is None:
         # All attempts rejected — the GUARDRAIL fires: execute NOTHING.
-        return {
+        report = {
             "run_id": run_id,
             "status": "no_valid_plan",
             "errors": attempts[-1]["errors"] if attempts else ["no plan produced"],
@@ -538,10 +550,12 @@ def _coordinator_cycle(
             "executed": [],
             "bubble_up": [],
         }
+        coordinator_cycle_log.write_coordinator_cycle(report)
+        return report
 
     # Dry-run: return the validated plan WITHOUT executing.
     if dry_run:
-        return {
+        report = {
             "run_id": run_id,
             "status": "planned",
             "dry_run": True,
@@ -552,7 +566,17 @@ def _coordinator_cycle(
             "bubble_up": _collect_bubble_up(validated, executed=None),
             "errors": [],
         }
+        coordinator_cycle_log.write_coordinator_cycle(report)
+        return report
 
+    active_run.update_active_run(
+        current_step="validate",
+        narration=f"plan validated: {[s.get('name') for s in validated]}",
+    )
+    active_run.update_active_run(
+        current_step="dispatch",
+        narration=f"dispatching {len(validated)} action(s)",
+    )
     # Execute: dispatch each validated action in order, within budget.
     handlers = execute_handlers or _default_execute_handlers()
     executed: list[dict[str, Any]] = []
@@ -588,7 +612,7 @@ def _coordinator_cycle(
 
     bubbles = _collect_bubble_up(validated, executed=executed)
     _persist_bubble_up(bubbles, run_id=run_id)
-    return {
+    report = {
         "run_id": run_id,
         "status": "executed",
         "dry_run": False,
@@ -599,6 +623,9 @@ def _coordinator_cycle(
         "bubble_up": bubbles,
         "errors": [],
     }
+    coordinator_cycle_log.write_coordinator_cycle(report)
+    coordinator_cycle_log.emit_health_signals(report)
+    return report
 
 
 def _collect_bubble_up(

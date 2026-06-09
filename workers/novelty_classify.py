@@ -240,10 +240,24 @@ def novelty_classify(
 
     valid_doc_ids = {n.get("doc_id") for n in neighbors if isinstance(n.get("doc_id"), str)}
 
+    # Topical-relevance gate (rule 4). If the orchestrator flagged the retrieval
+    # as thin/off-topic, warn the model so it does NOT conclude 'novel' merely
+    # because an off-topic corpus omits the hypothesis's terms, and stamp
+    # low_confidence on the result so no consumer reads a bare 'novel'.
+    rel = (retrieval.get("result") or {}).get("relevance") or {}
+    rel_low = bool(rel.get("low_confidence"))
+    relevance_warning = (
+        f"\nRETRIEVAL RELEVANCE WARNING: {rel.get('reason') or 'thin/off-topic retrieval'}. "
+        "The retrieved neighbors may be topically irrelevant to this hypothesis. "
+        "An omission in an off-topic corpus is NOT evidence of novelty — prefer 'unclear'.\n"
+        if rel_low else ""
+    )
+
     user_content = (
         f"Hypothesis:\n{hypothesis_text.strip()}\n\n"
         f"Retrieved neighbors ({len(neighbors)}):\n"
         f"{_format_neighbors(neighbors)}\n"
+        f"{relevance_warning}"
     )
 
     messages = [
@@ -287,6 +301,7 @@ def novelty_classify(
                     + strip_channel_markup(completion[:500] or "")
                 ).strip(),
                 "top_neighbor_id": None,
+                "low_confidence": rel_low,
             },
             "errors": ["unparseable model output; classification defaulted to 'unclear'"] + warnings,
             "wrapper_request_id": wrapper_rid,
@@ -299,6 +314,7 @@ def novelty_classify(
             "class": cls,
             "rationale": rationale,
             "top_neighbor_id": top_id,
+            "low_confidence": rel_low,
         },
         "errors": warnings,
         "wrapper_request_id": wrapper_rid,
