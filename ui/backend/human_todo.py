@@ -33,6 +33,15 @@ Mirrors the ``coordinator.py`` register-fn idiom (same ``_read_jsonl``
 tolerance of absent files and malformed lines). Read-only: the UI never
 writes ``run_state/`` or ``memory/``. The endpoint never 500s on absent
 or garbled data files.
+
+Dev-session deferrals (D-046, additive): ``memory/dev_session_queue.jsonl``
+is read alongside the sources above — rows fold by ``ref_id``, LAST status
+wins (``defer`` appends ``status:"open"``, ``close`` appends
+``status:"closed"``; mirrors ``orchestrator/todo_cli.py list_deferred``).
+An item whose ``ref_id`` has an open deferral gets ``deferred: true`` plus
+a ``deferral: {note, by, at}`` block — it is STILL listed and STILL counted
+(the contract: a deferral assigns the work; it does not resolve the item).
+No existing keys change.
 """
 from __future__ import annotations
 
@@ -284,6 +293,49 @@ def _state_gate_items(run_state_dir: Path) -> list[dict]:
     return items
 
 
+def _open_deferrals(memory_dir: Path) -> dict[str, dict]:
+    """Fold ``memory/dev_session_queue.jsonl`` by ``ref_id`` — LAST status
+    wins (``defer`` appends ``status:"open"``, ``close`` appends
+    ``status:"closed"``; the ledger is append-only, never edited in place).
+    Returns ref_id -> the winning OPEN row. Same fold as
+    ``orchestrator/todo_cli.py list_deferred``: the ledger's identity key is
+    ``ref_id`` alone. Absent file == no deferrals (D-046; the ledger is new
+    and gitignored)."""
+    folded: dict[str, dict] = {}
+    for row in _read_jsonl(memory_dir / "dev_session_queue.jsonl"):
+        ref = row.get("ref_id")
+        if not isinstance(ref, str) or not ref:
+            continue
+        status = row.get("status")
+        if status == "open":
+            folded[ref] = row  # last open row wins (freshest note)
+        elif status == "closed":
+            folded.pop(ref, None)
+        # Unknown statuses: skipped, like malformed lines — a future writer's
+        # contract is not ours to interpret.
+    return folded
+
+
+def _tag_deferred(items: list[dict], memory_dir: Path) -> None:
+    """ADDITIVE in place: an item whose id has an open deferral gains
+    ``deferred: true`` + ``deferral: {note, by, at}``. The item stays listed
+    and stays counted — a deferral assigns the work; it does not resolve the
+    item. Untagged items are untouched (no existing keys change)."""
+    deferrals = _open_deferrals(memory_dir)
+    if not deferrals:
+        return
+    for item in items:
+        row = deferrals.get(item["id"])
+        if row is None:
+            continue
+        item["deferred"] = True
+        item["deferral"] = {
+            "note": _as_text(row.get("note")),
+            "by": _as_text(row.get("attested_by")),
+            "at": _as_text(row.get("deferred_at")),
+        }
+
+
 def register(
     app,
     *,
@@ -310,6 +362,8 @@ def register(
         items.extend(_bubble_ack_items(memory))
         items.extend(_stale_active_run_items(run_state))
         items.extend(_state_gate_items(run_state))
+        # D-046 additive fold: tag (never remove) items with open deferrals.
+        _tag_deferred(items, memory)
         # Oldest-first: the longest-waiting item tops the queue. Items with
         # no parseable `since` sort first (unknown age is surfaced, not hidden).
         items.sort(key=lambda item: item.get("since") or "")

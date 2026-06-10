@@ -17,8 +17,10 @@
 //
 // No headless browser exists; "renders clean" = jsdom render + a console
 // spy (vi.spyOn) asserted not-called, the repo's standing stand-in.
-import { render, screen, within, cleanup } from "@testing-library/react";
+import { render, screen, within, cleanup, fireEvent } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import * as http from "../src/api/http";
 
 import SourceBadge, { sourceTone } from "../src/components/SourceBadge";
 import AgentBadge from "../src/components/AgentBadge";
@@ -130,9 +132,17 @@ describe("audit: a provenance value reads identically on a cycle card and an ite
         iteration_id: `iter-audit-${source}`,
         seed: { topic: "audit row", source },
       };
-      render(<ResolvedIterationsList initial={[row]} />);
-      const list = within(screen.getByTestId("resolved-iterations-list"));
-      const rowHue = hueOf(list.getByTestId("source-badge").className);
+      // 2026-06-10 condense: only nemoclaw_agent badges in the ROW; every
+      // source badges in the IterationDetailModal — read the hue there.
+      vi.spyOn(http, "getCoordinatorCycles").mockResolvedValue({ cycles: [] });
+      render(
+        <MemoryRouter>
+          <ResolvedIterationsList initial={[row]} />
+        </MemoryRouter>,
+      );
+      fireEvent.click(screen.getByLabelText(`load journal iter-audit-${source}`));
+      const modal = within(screen.getByTestId("iteration-detail-modal"));
+      const rowHue = hueOf(modal.getAllByTestId("source-badge")[0].className);
 
       expect(cardHue).not.toBeNull();
       expect(rowHue).toBe(cardHue);

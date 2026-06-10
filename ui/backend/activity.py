@@ -26,6 +26,7 @@ Reads are read-only; the UI never mutates apparatus state.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -45,6 +46,20 @@ DEFAULT_TELEMETRY = _REPO / "ui" / "logs" / "telemetry.jsonl"
 # working with no signature change; tests pin a tmp path.
 _PRIMARY = Path("/home/decross1/projects/a_bgt_rsi")
 DEFAULT_ACTIVE_RUN = _PRIMARY / "run_state" / "active_run.json"
+# D-047 multi-run registry: one JSON file per LIVE run under
+# run_state/active_runs/ in the PRIMARY checkout (deleted on completion;
+# absent dir == no live runs). Like DEFAULT_ACTIVE_RUN this must point at
+# the primary checkout, not the UI worktree. Env-overridable below
+# (UI_ACTIVE_RUNS_DIR) because app.py's register_activity(...) call passes
+# only logs_dir/telemetry_file — the DEFAULT_COORDINATOR_RUN_STATE idiom
+# from app.py, replicated locally so app.py needs no edit.
+DEFAULT_ACTIVE_RUNS_DIR = _PRIMARY / "run_state" / "active_runs"
+
+
+def _env_path(var: str, default: Path) -> Path:
+    """app.py's env-override idiom (UI_* var wins, else the baked default)."""
+    value = os.environ.get(var)
+    return Path(value) if value else default
 # worker_activity.jsonl is written by the primary session's run drivers into
 # the PRIMARY checkout's logs dir, NOT this UI worktree's logs dir. Source it
 # from the primary checkout (mirroring DEFAULT_ACTIVE_RUN) so the live-inference
@@ -75,6 +90,10 @@ ACTIVE_STATUSES = {"started", "dispatched", "running"}
 # of the call log(s) and surface the recent-call rate + caller_tag + model.
 LIVE_CALLS_WINDOW_S = 15
 _CALL_LOG_PATTERNS = ("calls.jsonl", "day*.jsonl", "exp*.jsonl")
+# live_calls.groups[] is capped so a pathological window (many distinct
+# caller_tag/model/backend/run_id combinations) cannot balloon the monitor
+# payload; the tail is summarized as other_count + groups_truncated.
+LIVE_CALLS_GROUPS_CAP = 12
 
 # Real per-call inference internals (tokens generated / tok_per_s / ETA) land
 # in logs/worker_activity.jsonl, one row per wrapper call. When a row falls
@@ -213,15 +232,38 @@ def _tail_records(path: Path, window_bytes: int = 256 * 1024) -> list[dict]:
     return out
 
 
+def _passthrough_str(value) -> str | None:
+    """A group-key field is the record's own value or None — NEVER derived.
+
+    Non-string / empty values normalize to None ("absent"). In particular a
+    missing `backend` (every pre-2026-06-10 calls.jsonl row) stays None; it
+    is never guessed from the model name (CLAUDE.md rule 4 — render absent,
+    don't fabricate)."""
+    return value if isinstance(value, str) and value else None
+
+
 def _live_calls(logs_dir: Path, window_s: int, now: datetime) -> dict:
     """Recent wrapper-call activity across the call log(s).
 
     Reads the tail of calls.jsonl + day*/exp* and keeps records whose
     `timestamp` falls within the last `window_s` seconds of `now`. Returns
-    `{active, count, window_s, calls_per_s, last_call_at, caller_tags, model}`.
+    `{active, count, window_s, calls_per_s, last_call_at, caller_tags, model,
+    groups, groups_truncated, other_count}`.
     `active` is True iff at least one call landed inside the window — the
     run-mode-agnostic "something is happening now" signal. Old logs (May
     timestamps) fall outside the window and contribute nothing.
+
+    `groups[]` (ADDITIVE — the pre-existing keys above are untouched, so
+    older renders/tests stay valid) aggregates the same windowed records per
+    (caller_tag, model, backend, run_id) into
+    `{tag, model, backend, run_id, count, last_call_at}`, sorted count-desc
+    (ties: most recent first, then tag), capped at LIVE_CALLS_GROUPS_CAP.
+    `groups_truncated` flags a hit cap; `other_count` is the number of CALLS
+    in the groups beyond the cap, so
+    sum(g.count) + other_count == count always holds. `backend` and `run_id`
+    are pure passthrough from the record (see _passthrough_str): `backend` is
+    stamped by the 2026-06-10 EMIT and is null on older rows; `run_id` is
+    optional — neither is ever fabricated.
     """
     cutoff = now.timestamp() - window_s
     files: list[Path] = []
@@ -232,6 +274,8 @@ def _live_calls(logs_dir: Path, window_s: int, now: datetime) -> dict:
     last_instant: datetime | None = None
     tags: dict[str, int] = {}
     models: dict[str, int] = {}
+    # (tag, model, backend, run_id) -> {count, last_instant, last_call_at}
+    groups: dict[tuple, dict] = {}
     for path in files:
         for rec in _tail_records(path):
             ts = rec.get("timestamp")
@@ -249,8 +293,36 @@ def _live_calls(logs_dir: Path, window_s: int, now: datetime) -> dict:
             model = rec.get("model")
             if isinstance(model, str) and model:
                 models[model] = models.get(model, 0) + 1
+            key = (
+                _passthrough_str(tag),
+                _passthrough_str(model),
+                _passthrough_str(rec.get("backend")),
+                _passthrough_str(rec.get("run_id")),
+            )
+            grp = groups.get(key)
+            if grp is None:
+                groups[key] = {"count": 1, "last_instant": dt,
+                               "last_call_at": ts}
+            else:
+                grp["count"] += 1
+                if dt > grp["last_instant"]:
+                    grp["last_instant"], grp["last_call_at"] = dt, ts
     top_tags = sorted(tags.items(), key=lambda kv: kv[1], reverse=True)[:3]
     top_model = max(models.items(), key=lambda kv: kv[1])[0] if models else None
+    # count-desc; ties most-recent-first then tag, so the cap is deterministic.
+    ordered = sorted(
+        groups.items(),
+        key=lambda kv: (-kv[1]["count"],
+                        -kv[1]["last_instant"].timestamp(),
+                        kv[0][0] or ""),
+    )
+    kept, overflow = (ordered[:LIVE_CALLS_GROUPS_CAP],
+                      ordered[LIVE_CALLS_GROUPS_CAP:])
+    group_rows = [
+        {"tag": k[0], "model": k[1], "backend": k[2], "run_id": k[3],
+         "count": g["count"], "last_call_at": g["last_call_at"]}
+        for k, g in kept
+    ]
     return {
         "active": count > 0,
         "count": count,
@@ -259,6 +331,9 @@ def _live_calls(logs_dir: Path, window_s: int, now: datetime) -> dict:
         "last_call_at": last_call_at,
         "caller_tags": [{"tag": t, "count": c} for t, c in top_tags],
         "model": top_model,
+        "groups": group_rows,
+        "groups_truncated": bool(overflow),
+        "other_count": sum(g["count"] for _, g in overflow),
     }
 
 
@@ -389,7 +464,8 @@ def _flatten_tree(node: dict, nodes: list, edges: list, parent_id: str | None,
 def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
              telemetry_file: Path = DEFAULT_TELEMETRY,
              active_run_path: Path = DEFAULT_ACTIVE_RUN,
-             worker_activity_path: Path = DEFAULT_WORKER_ACTIVITY) -> APIRouter:
+             worker_activity_path: Path = DEFAULT_WORKER_ACTIVITY,
+             active_runs_dir: Path | None = None) -> APIRouter:
     """Attach the PAGE A router. Defaults are baked in so the integrator
     adds exactly one ``register(app)`` call; tests pin tmp paths.
 
@@ -400,11 +476,20 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
     worker_activity off logs_dir would mean the live-inference marker never drops
     in production. app.py's existing ``register_activity(app, logs_dir=...,
     telemetry_file=...)`` call works unchanged because these are keywords with
-    baked defaults."""
+    baked defaults.
+
+    ``active_runs_dir`` (the D-047 multi-run registry) resolves None →
+    ``UI_ACTIVE_RUNS_DIR`` env override → the primary checkout's
+    ``run_state/active_runs`` — the app.py env-path idiom replicated here
+    because app.py's register call passes no path for it; tests pin a tmp
+    path via the kwarg."""
     logs_dir = Path(logs_dir)
     telemetry_file = Path(telemetry_file)
     active_run_path = Path(active_run_path)
     worker_activity_path = Path(worker_activity_path)
+    if active_runs_dir is None:
+        active_runs_dir = _env_path("UI_ACTIVE_RUNS_DIR", DEFAULT_ACTIVE_RUNS_DIR)
+    active_runs_dir = Path(active_runs_dir)
     store = LogStore(logs_dir)
     router = APIRouter(prefix="/api/activity", tags=["activity"])
 
@@ -542,6 +627,70 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
             raise HTTPException(
                 status_code=500, detail=f"active_run unreadable: {exc}"
             ) from exc
+
+    @router.get("/active_runs")
+    def active_runs():
+        """ALL live runs — the D-047 multi-run registry (NowBoard source).
+
+        Reads ``run_state/active_runs/*.json`` — one file per live run,
+        written/heartbeated by orchestrator/active_run.py and deleted on
+        completion. Every doc passes through RAW (all keys, incl.
+        ``heartbeat_at`` and kinds newer than this build — the active_run
+        kind set is {experiment, autoresearch, loop_v0, ad_hoc, coordinator}
+        today and may grow; unknown kinds are NOT filtered or normalized).
+
+        Never 500s on data states: an absent registry dir == ``{runs: []}``;
+        a malformed/unparseable/non-object file is SKIPPED and counted in
+        ``skipped``; a file deleted between listing and read is a completed
+        run, dropped silently. FALLBACK: when the dir is absent or has no
+        .json files (pre-D-047 apparatus) but the legacy single-slot
+        ``active_run.json`` mirror exists, its doc is wrapped as
+        ``{runs: [{...legacy fields, legacy_mirror: true}]}`` (an
+        empty/whitespace mirror is the mid-write window == no run; a corrupt
+        mirror counts as skipped). A registry dir WITH .json files wins over
+        the mirror even if every file was skipped — the mirror is the most
+        recent writer, not the union, so falling back there could resurrect
+        a stale run.
+        """
+        runs: list[dict] = []
+        skipped = 0
+        files = (sorted(active_runs_dir.glob("*.json"))
+                 if active_runs_dir.is_dir() else [])
+        for path in files:
+            try:
+                text = path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                continue  # delete race: the run completed mid-listing
+            except OSError:
+                skipped += 1
+                continue
+            try:
+                doc = json.loads(text)
+            except json.JSONDecodeError:
+                skipped += 1
+                continue
+            if not isinstance(doc, dict):
+                skipped += 1
+                continue
+            runs.append(doc)
+        if not files:
+            # Legacy fallback (pre-D-047 apparatus): wrap the single-slot
+            # mirror so the board still renders one honest card.
+            try:
+                text = active_run_path.read_text(encoding="utf-8")
+            except OSError:
+                text = ""
+            if text.strip():
+                try:
+                    legacy = json.loads(text)
+                except json.JSONDecodeError:
+                    legacy = None
+                if isinstance(legacy, dict):
+                    runs = [{**legacy, "legacy_mirror": True}]
+                else:
+                    skipped += 1
+        return {"runs": runs, "skipped": skipped,
+                "generated_at": _utcnow_iso()}
 
     app.include_router(router)
     return router

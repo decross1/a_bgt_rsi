@@ -21,6 +21,9 @@ server is "not under test", not a failure. With the server up it asserts:
 - ``/findings`` / ``/bubbles`` / ``/health_signals`` return their
   ``{key: [...]}`` wrapper shape (list-valued; row counts are cohort-variant,
   the wrapper is the contract).
+- ``/api/human_todo`` serves the ``{items, counts}`` wrapper with every kind
+  inside the known enum (a 404 means the served process predates the
+  human-TODO router).
 - ``/api/health`` reports ``ok`` with a version string, so a stale-binary skew
   is visible in the failure message, not just inferred.
 
@@ -68,6 +71,18 @@ _REQUIRED_CYCLE_KEYS = (
 # validated (73 observed 2026-06-09). A lower bound is cohort-invariant: the
 # count only grows; a drop below it means the server is reading the wrong file.
 _MIN_CYCLE_ROWS = 19
+
+# Kinds the human-TODO composer emits (backend/human_todo.py ``KINDS``).
+# Copied, not imported — same stance as ``_REQUIRED_CYCLE_KEYS``: the probe
+# holds the served binary to the checkout's contract, and a divergence IS the
+# stale-binary signal this module exists to catch.
+_HUMAN_TODO_KINDS = {
+    "gate_verdict",
+    "finding_review",
+    "bubble_ack",
+    "stale_active_run",
+    "state_gate",
+}
 
 
 def _get(path: str) -> httpx.Response:
@@ -130,3 +145,64 @@ def test_wrapper_endpoints_return_keyed_list(path, wrapper_key):
     # Row counts are cohort-variant (files are append-only and may be absent →
     # empty list); the list-valued wrapper is the contract the panels render.
     assert isinstance(body[wrapper_key], list)
+
+
+def test_human_todo_live_wrapper_shape_and_kinds():
+    """``/api/human_todo`` serves the ``{items, counts}`` wrapper the panel
+    renders; which kinds are exercised is cohort-variant, but every served
+    kind must stay inside the known enum and ``counts`` must tally ``items``."""
+    resp = _get("/api/human_todo")
+    assert resp.status_code == 200, (
+        f"/api/human_todo returned {resp.status_code} — a 404 means the served "
+        "process predates the human-TODO router (stale binary)"
+    )
+    body = resp.json()
+    assert isinstance(body, dict)
+    assert set(body.keys()) == {"items", "counts"}, (
+        f"expected the {{items, counts}} wrapper, got keys {sorted(body)}"
+    )
+    items, counts = body["items"], body["counts"]
+    assert isinstance(items, list)
+    assert isinstance(counts, dict)
+    # Kinds subset check: any subset of the enum may be live, but a kind
+    # OUTSIDE it (item or counts key) is binary/producer drift.
+    unknown_count_kinds = set(counts) - _HUMAN_TODO_KINDS
+    assert not unknown_count_kinds, f"unknown counts kinds: {unknown_count_kinds}"
+    for i, item in enumerate(items):
+        assert isinstance(item, dict), f"items[{i}] is not an object"
+        assert item.get("kind") in _HUMAN_TODO_KINDS, (
+            f"items[{i}] kind {item.get('kind')!r} is outside the known enum"
+        )
+    # counts tallies the items it ships with (zero-filled keys are fine).
+    assert all(isinstance(v, int) and v >= 0 for v in counts.values())
+    assert sum(counts.values()) == len(items)
+
+
+def test_active_runs_live_or_version_skew():
+    """``/api/activity/active_runs`` (D-047 registry): 200 with the
+    ``{runs, skipped}`` wrapper once the served binary includes it; a 404 is
+    version skew (the running process predates the endpoint — handoff Task 2),
+    not a failure, until the runbook preflight restarts :8700."""
+    resp = _get("/api/activity/active_runs")
+    if resp.status_code == 404:
+        pytest.skip("served binary predates /api/activity/active_runs (restart pending)")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, dict)
+    assert isinstance(body.get("runs"), list)
+    assert isinstance(body.get("skipped"), int)
+
+
+def test_attest_available_live_or_version_skew():
+    """``/api/attest/available`` (D-046 capability handshake): 200 with the
+    ``{available, actions}`` shape once served; 404 == version skew until the
+    post-merge restart."""
+    resp = _get("/api/attest/available")
+    if resp.status_code == 404:
+        pytest.skip("served binary predates /api/attest/available (restart pending)")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body.get("available"), bool)
+    actions = body.get("actions")
+    assert isinstance(actions, dict)
+    assert set(actions) == {"gate_verdict", "finding_review", "bubble_ack", "defer"}

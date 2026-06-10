@@ -13,12 +13,12 @@
 // relayouts when the graph actually changed.
 import { useEffect, useRef, useState } from "react";
 import ActiveIterationPanel from "../components/ActiveIterationPanel";
-import ActiveRunCard from "../components/ActiveRunCard";
 import ActiveWorkersPanel from "../components/ActiveWorkersPanel";
 import ActivityGraph from "../components/ActivityGraph";
 import AgentBadge from "../components/AgentBadge";
 import CoordinatorPhases from "../components/CoordinatorPhases";
 import LiveCallsBanner from "../components/LiveCallsBanner";
+import NowBoard from "../components/NowBoard";
 import SyntheticInferencePanel from "../components/SyntheticInferencePanel";
 import {
   getActiveRun,
@@ -33,6 +33,7 @@ import {
 import { elapsed, useNow } from "../time";
 import type {
   ActiveRun,
+  ActiveRunsResponse,
   ActivityGraphResponse,
   MonitorResponse,
 } from "../types/activity";
@@ -259,6 +260,10 @@ interface ActivityProps {
   // The active RUN (run_state/active_run.json). Injected (even as null) so the
   // page does not self-poll it in tests; a present run means NOT idle.
   initialActiveRun?: ActiveRun | null;
+  // The D-047 multi-run registry payload for the NowBoard. Injected (even as
+  // null) so the board does not self-poll in tests; when undefined the board
+  // polls only while the page itself is live (`live` gate below).
+  initialActiveRuns?: ActiveRunsResponse | null;
   // The coordinator's live cycle (CoordinatorPhases) + recent cycles (the
   // failed-dispatch surface). Injected for tests; otherwise polled only when
   // the page is live (same static-render gate the graph/monitor use).
@@ -276,6 +281,7 @@ export default function Activity({
   initialMonitor,
   initialIteration,
   initialActiveRun,
+  initialActiveRuns,
   initialCoordinatorActive,
   initialCoordinatorCycles,
 }: ActivityProps) {
@@ -456,14 +462,14 @@ export default function Activity({
   // "coordinator"/"nemoclaw_agent", which the EMIT contract literally adds) is
   // fine — it renders verbatim as text. But a legacy/malformed row can carry a
   // non-string `kind` (object/array) even though the contract types it string,
-  // and `kind` lands as a raw React child in BOTH the status strip below and the
-  // ActiveRunCard child — an object child throws "Objects are not valid as a
-  // React child", crashing the whole page on one bad active_run. Normalize it to
-  // a string once, at this boundary (Activity is the sole renderer of
-  // ActiveRunCard), so a string passes through unchanged and a non-string is
-  // coerced — the strip and the card both stay safe without reaching into
-  // another component. `runActive`/the idle gate above keep their null-check
-  // semantics (a run is live regardless of its kind's shape).
+  // and `kind` lands as a raw React child in the status strip below — an
+  // object child throws "Objects are not valid as a React child", crashing
+  // the whole page on one bad active_run. Normalize it to a string once, at
+  // this boundary, so a string passes through unchanged and a non-string is
+  // coerced — the strip stays safe. (The hero's run cards moved to NowBoard,
+  // which does its own per-field coercion.) `runActive`/the idle gate above
+  // keep their null-check semantics (a run is live regardless of its kind's
+  // shape).
   const safeActiveRun =
     activeRun != null && typeof activeRun.kind !== "string"
       ? { ...activeRun, kind: asText(activeRun.kind) }
@@ -512,8 +518,7 @@ export default function Activity({
               {/* safeActiveRun normalized a non-string `kind` to a string above,
                   so an unknown-enum string still reads verbatim and a malformed
                   non-string can't reach JSX as an invalid React child. */}
-              {safeActiveRun!.kind} run is in flight. See the active-run card
-              below.
+              {safeActiveRun!.kind} run is in flight. See the Now board below.
             </>
           ) : liveCallsActive ? (
             <>
@@ -542,11 +547,14 @@ export default function Activity({
         <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
           Active now
         </h2>
-        {/* The active-run HERO card — renders nothing when no run is in
-            flight (activeRun null). At the TOP of the hero. Pass safeActiveRun
-            (kind normalized to a string) so a malformed non-string `kind` from
-            active_run.json can't crash the card as an invalid React child. */}
-        <ActiveRunCard data={safeActiveRun} />
+        {/* The NOW BOARD — the D-047 multi-run registry, one card per live
+            run, at the TOP of the hero (it takes over the old single-run
+            ActiveRunCard slot; the registry endpoint wraps the legacy
+            active_run.json mirror itself, so a pre-D-047 apparatus still
+            renders one honest card). Self-polls only while the page is live;
+            tests inject initialActiveRuns. A version-skew 404 (older backend
+            binary) renders the quiet EndpointMissingNote, never red. */}
+        <NowBoard live={live} initial={initialActiveRuns} />
         <ActiveIterationPanel initial={iteration} />
         {safeMonitor?.live_calls?.active && (
           <LiveCallsBanner data={safeMonitor.live_calls} />

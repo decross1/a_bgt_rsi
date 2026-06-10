@@ -16,9 +16,11 @@ the apparatus appends another cycle:
 - ``/cycles`` must return the real ``coordinator_cycles.jsonl`` rows newest-first,
   and **every** row must carry the keys ``CoordinatorCycle`` reads (the frontend
   type). An ``errored`` outcome must carry a non-empty ``error`` string so the
-  failed-dispatch row is never silent. (As of 2026-06-09: 13 rows, all
-  ``topic_source="arxiv_pick"`` / ``agent="coordinator"``, 2 errored outcomes,
-  0 ``dispatched_iteration_id`` — those invariants are asserted live.)
+  failed-dispatch row is never silent — asserted over whatever errored rows the
+  live cohort holds. (2026-06-09 snapshot: 13 rows, 2 errored ``RuntimeError:
+  boom`` outcomes; the 2026-06-10 D-048 purge removed those, so an EMPTY errored
+  cohort is the honest live state, not a miss. All rows remain
+  ``topic_source="arxiv_pick"`` / ``agent="coordinator"``.)
 - ``/findings``, ``/bubbles``, ``/health_signals`` are shape-correct
   (``{key: [...]}``) and, while their (gitignored) files are absent, return an
   empty list — the clean empty state the panels render.
@@ -128,7 +130,9 @@ def test_every_real_cycle_has_the_keys_the_card_reads(client):
 def test_real_errored_outcomes_carry_an_error_string(client):
     """The headline 'make absence legible' contract: a failed dispatch is a row,
     and an ``errored`` outcome carries a non-empty ``error`` so the red row shows
-    *why*. The live file has 2 such outcomes (RuntimeError: boom)."""
+    *why*. Cohort-variant: the 2026-06-09 file held 2 such outcomes (RuntimeError:
+    boom); the D-048 purge removed them, so this may assert over zero rows —
+    vacuously green is the honest read of a clean cohort."""
     cycles = client.get("/api/coordinator/cycles").json()["cycles"]
     errored = [
         o
@@ -149,18 +153,25 @@ def test_real_errored_outcomes_carry_an_error_string(client):
     reason=f"real coordinator_cycles.jsonl absent ({_CYCLES_PATH}); gitignored",
 )
 def test_live_cycle_provenance_snapshot(client):
-    """Pins the 2026-06-09 live snapshot the mission documents: every real cycle
-    is coordinator-authored, arxiv-picked, and the cohort holds ≥1 errored
-    outcome (the failed-dispatch case the view exists to surface). Asserted as
-    cohort invariants (not a brittle ==13) so an appended cycle doesn't red this."""
+    """Pins the live-cohort provenance invariants: every real cycle is
+    coordinator-authored and arxiv-picked. The errored sub-cohort is VARIANT —
+    the 2026-06-09 snapshot held 2 ``RuntimeError: boom`` dispatch failures,
+    which the 2026-06-10 D-048 purge removed — so instead of pinning a count
+    that rots with the data, assert the failed-dispatch field semantics on
+    whatever errored rows exist. An empty errored cohort is the honest
+    post-purge state, never a fabricated expectation of failure."""
     cycles = client.get("/api/coordinator/cycles").json()["cycles"]
     assert cycles, "expected ≥1 real coordinator cycle"
     assert all(c["agent"] == "coordinator" for c in cycles)
     assert all(c["topic_source"] == "arxiv_pick" for c in cycles)
-    n_errored = sum(
-        1 for c in cycles for o in c["outcomes"] if o.get("status") == "errored"
-    )
-    assert n_errored >= 1, "the live cohort should contain a failed-dispatch row"
+    errored = [
+        o for c in cycles for o in c["outcomes"] if o.get("status") == "errored"
+    ]
+    # When a failed dispatch IS present it must be legible: an action plus a
+    # non-empty error string (the make-absence-legible contract).
+    for o in errored:
+        assert "action" in o
+        assert isinstance(o.get("error"), str) and o["error"]
 
 
 # ─── findings / bubbles / health_signals — clean empty state while absent ──

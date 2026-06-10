@@ -1,5 +1,6 @@
 // PAGE A (/activity) fetchers. Own module so PAGE A does not edit the
 // shared api/http.ts. Reuses the same API_BASE derivation pattern.
+import { HttpError } from "./http";
 import type {
   ActiveRun,
   ActivityGraphResponse,
@@ -19,7 +20,7 @@ async function getJSON<T>(path: string): Promise<T> {
     } catch {
       /* no JSON body */
     }
-    throw new Error(`${resp.status} ${detail}`);
+    throw new HttpError(resp.status, detail);
   }
   return (await resp.json()) as T;
 }
@@ -51,7 +52,7 @@ export async function getActiveRun(): Promise<ActiveRun | null> {
     } catch {
       /* no JSON body */
     }
-    throw new Error(`${resp.status} ${detail}`);
+    throw new HttpError(resp.status, detail);
   }
   return (await resp.json()) as ActiveRun;
 }

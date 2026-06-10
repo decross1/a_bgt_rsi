@@ -2,7 +2,12 @@
 // `novelty.novelty_axes` (2026-06-09 evening additive contract). Pins:
 //   1. full axes render as one "axes: a/b/c" token;
 //   2. the transfer/replication EMPHASIS (cyan) fires exactly on
-//      phenomenon="known" && substrate="unstudied_llm" and on nothing else;
+//      phenomenon="known" && predicted_direction in {"matches","silent"} and
+//      on nothing else — the ADJUDICATED 2026-06-10 condition
+//      (docs/novelty_two_axis_rubric.md: the decision rule keys on
+//      predicted_direction, NOT substrate; known+deviates derives class
+//      `novel` and stays quiet, while known+matches|silent is transfer even
+//      on an unstudied_llm substrate);
 //   3. partial axes render the known ones with "?" placeholders;
 //   4. garbage axes (string / number / null / array / boolean) and garbage
 //      axis VALUES degrade to null / "?" — never a throw, never
@@ -32,9 +37,10 @@ describe("NoveltyAxesChip — happy path", () => {
     expect(chip.className).not.toContain("cyan");
   });
 
-  it("emphasizes the transfer/replication bucket (known phenomenon, unstudied LLM substrate)", () => {
-    // Fixture row 1 is exactly the close-out's replication-transfer bucket:
-    // a known phenomenon on an unstudied LLM substrate.
+  it("emphasizes the transfer/replication bucket (known phenomenon, matching direction)", () => {
+    // Fixture row 1 is the rubric's replication-transfer bucket: a known
+    // phenomenon whose predicted direction MATCHES — cyan regardless of the
+    // (unstudied_llm) substrate.
     const axes = ITERATIONS_OBSERVABILITY_FIXTURE[1].novelty?.novelty_axes;
     render(<NoveltyAxesChip axes={axes} />);
     const chip = screen.getByTestId("novelty-axes-chip");
@@ -44,7 +50,7 @@ describe("NoveltyAxesChip — happy path", () => {
     expect(chip.getAttribute("title")).toMatch(/transfer|replication/i);
   });
 
-  it("does NOT emphasize known on a STUDIED substrate (only the exact bucket fires)", () => {
+  it("does NOT emphasize known when the direction DEVIATES (only the matches/silent bucket fires)", () => {
     render(
       <NoveltyAxesChip
         axes={{
@@ -59,6 +65,47 @@ describe("NoveltyAxesChip — happy path", () => {
     expect(chip.className).toContain("zinc");
     expect(chip.className).not.toContain("cyan");
   });
+
+  it("ADJUDICATED 2026-06-10: known/unstudied_llm/deviates is NOT cyan (deviation derives class `novel`, not transfer)", () => {
+    // The previous (wrong) condition keyed on substrate and painted this
+    // combination cyan as mere transfer. The rubric derives class `novel`
+    // from known+deviates — it must stay quiet zinc.
+    render(
+      <NoveltyAxesChip
+        axes={{
+          phenomenon: "known",
+          substrate: "unstudied_llm",
+          predicted_direction: "deviates",
+        }}
+      />,
+    );
+    const chip = screen.getByTestId("novelty-axes-chip");
+    expect(chip).toHaveTextContent("axes: known/unstudied_llm/deviates");
+    expect(chip.className).toContain("zinc");
+    expect(chip.className).not.toContain("cyan");
+    // No transfer text label either — this is not the transfer bucket.
+    expect(screen.queryByTestId("novelty-transfer-label")).toBeNull();
+  });
+
+  it("ADJUDICATED 2026-06-10: known/na/silent IS cyan (substrate is not class-determining)", () => {
+    // A bad/na substrate defaults with a warning in the rubric, but the
+    // transfer bucket is keyed on known+matches|silent — substrate
+    // explicitly does not gate the emphasis.
+    render(
+      <NoveltyAxesChip
+        axes={{
+          phenomenon: "known",
+          substrate: "na",
+          predicted_direction: "silent",
+        }}
+      />,
+    );
+    const chip = screen.getByTestId("novelty-axes-chip");
+    expect(chip).toHaveTextContent("axes: known/na/silent");
+    expect(chip.className).toContain("cyan");
+    // The quiet transfer text label names the same bucket.
+    expect(screen.getByTestId("novelty-transfer-label")).toBeInTheDocument();
+  });
 });
 
 describe("NoveltyAxesChip — partial axes", () => {
@@ -66,7 +113,7 @@ describe("NoveltyAxesChip — partial axes", () => {
     render(<NoveltyAxesChip axes={{ phenomenon: "known" }} />);
     const chip = screen.getByTestId("novelty-axes-chip");
     expect(chip).toHaveTextContent("axes: known/?/?");
-    // substrate is absent, so the transfer bucket cannot fire.
+    // predicted_direction is absent, so the transfer bucket cannot fire.
     expect(chip.className).toContain("zinc");
     expect(chip.className).not.toContain("cyan");
   });

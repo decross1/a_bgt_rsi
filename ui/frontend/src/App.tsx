@@ -67,6 +67,17 @@ export default function App() {
             {NAV.map((item) => (
               <NavTab key={item.to} {...item} />
             ))}
+            {/* Cross-nav to the agent-system brain dashboard (http.server
+                :5174). Built from the page hostname — not localhost — so the
+                link works over the LAN exactly like API_BASE does. */}
+            <a
+              href={`http://${window.location.hostname}:5174/dashboard.html`}
+              target="_blank"
+              rel="noreferrer"
+              className="border-b-2 border-transparent pb-1 font-mono text-sm text-zinc-400 transition-colors hover:text-zinc-100"
+            >
+              brain<span aria-hidden="true" className="ml-0.5 text-zinc-600">↗</span>
+            </a>
           </nav>
           <span className="ml-auto text-xs text-zinc-600">
             call-chain inspector at /chain/req/&lt;request_id&gt;

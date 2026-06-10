@@ -29,10 +29,59 @@ import {
   ACTIVE_RUN_FIXTURE as COORDINATOR_ACTIVE_FIXTURE,
   COORDINATOR_CYCLES_FIXTURE,
 } from "../src/fixtures/coordinator";
+import type { ActiveRunsResponse, LiveCalls } from "../src/types/activity";
 import type {
   CoordinatorActiveRun,
   CoordinatorCycle,
 } from "../src/types/schemas";
+
+// Grouped live-calls payload — CONSTRUCTED (explicitly synthetic counts/ids;
+// the tag/model/backend strings are the live names: skeptic_attack /
+// subagent.* tags, qwen3.6-27b-nvfp4-mtp + gemma-4-26b-a4b served models,
+// vllm-qwen/vllm-gemma registry names). Mirrors _live_calls()'s additive
+// groups[]: backend/run_id are PASSTHROUGH and null on pre-EMIT rows.
+const GROUPED_LIVE_CALLS: LiveCalls = {
+  active: true,
+  count: 19,
+  window_s: 60,
+  calls_per_s: 0.32,
+  last_call_at: "2026-06-10T08:00:06.4Z",
+  caller_tags: [
+    { tag: "skeptic_attack", count: 12 },
+    { tag: "hypothesize", count: 4 },
+  ],
+  model: "qwen3.6-27b-nvfp4-mtp",
+  groups: [
+    {
+      tag: "skeptic_attack",
+      model: "qwen3.6-27b-nvfp4-mtp",
+      backend: "vllm-qwen",
+      run_id: null,
+      count: 12,
+      last_call_at: "2026-06-10T08:00:06.4Z",
+    },
+    {
+      tag: "hypothesize",
+      model: "gemma-4-26b-a4b",
+      backend: "vllm-gemma",
+      run_id: "loop_v0_2026-06-10_001",
+      count: 4,
+      last_call_at: "2026-06-10T08:00:05.0Z",
+    },
+    {
+      // Pre-EMIT row: backend null (passthrough) — the row must render NO
+      // backend chip, never one guessed from the model name.
+      tag: "nara.run_iteration",
+      model: "gemma-4-26b-a4b",
+      backend: null,
+      run_id: null,
+      count: 3,
+      last_call_at: "2026-06-10T08:00:01.0Z",
+    },
+  ],
+  groups_truncated: true,
+  other_count: 7,
+};
 
 // @xyflow/react reaches for ResizeObserver on mount; jsdom lacks it.
 beforeAll(() => {
@@ -64,7 +113,61 @@ describe("ActiveWorkersPanel (HERO)", () => {
 
   it("renders an empty state when no workers are in flight", () => {
     render(<ActiveWorkersPanel data={MONITOR_FIXTURE_IDLE} />);
-    expect(screen.getByTestId("active-workers-empty")).toBeInTheDocument();
+    const empty = screen.getByTestId("active-workers-empty");
+    expect(empty).toHaveTextContent("No workers in flight.");
+  });
+
+  it("empty state names live sub-agent call groups instead of reading quiet", () => {
+    // Sub-agents (caller_tag "subagent.*") bypass orchestrator worker
+    // dispatch — zero rows in this table while they call is "no ORCHESTRATOR
+    // workers", not "nothing running". CONSTRUCTED groups; the tags are the
+    // live sub-agent tags (subagent.finding_skeptic_1/2).
+    render(
+      <ActiveWorkersPanel
+        data={{
+          ...MONITOR_FIXTURE_IDLE,
+          live_calls: {
+            active: true,
+            count: 9,
+            window_s: 60,
+            calls_per_s: 0.15,
+            last_call_at: "2026-06-10T08:00:06.4Z",
+            caller_tags: [{ tag: "subagent.finding_skeptic_1", count: 5 }],
+            model: "qwen3.6-27b-nvfp4-mtp",
+            groups: [
+              {
+                tag: "subagent.finding_skeptic_1",
+                model: "qwen3.6-27b-nvfp4-mtp",
+                backend: "vllm-qwen",
+                run_id: null,
+                count: 5,
+                last_call_at: "2026-06-10T08:00:06.4Z",
+              },
+              {
+                tag: "subagent.finding_skeptic_2",
+                model: "qwen3.6-27b-nvfp4-mtp",
+                backend: "vllm-qwen",
+                run_id: null,
+                count: 3,
+                last_call_at: "2026-06-10T08:00:05.0Z",
+              },
+              {
+                // NOT a sub-agent group — must not inflate the count.
+                tag: "skeptic_attack",
+                model: "qwen3.6-27b-nvfp4-mtp",
+                backend: "vllm-qwen",
+                run_id: null,
+                count: 1,
+                last_call_at: "2026-06-10T08:00:04.0Z",
+              },
+            ],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByTestId("active-workers-empty")).toHaveTextContent(
+      "No orchestrator workers in flight — 2 sub-agent call groups active (see live calls)",
+    );
   });
 
   it("renders an unavailable notice when the monitor is absent", () => {
@@ -166,6 +269,83 @@ describe("LiveCallsBanner", () => {
     expect(banner).toHaveTextContent("fake-model");
   });
 
+  it("FALLBACK: groups absent (older backend) keeps the aggregate line, no rows", () => {
+    // MONITOR_FIXTURE_LIVE_CALLS predates the 2026-06-10 EMIT — no groups[].
+    render(<LiveCallsBanner data={MONITOR_FIXTURE_LIVE_CALLS.live_calls!} />);
+    expect(screen.queryByTestId("live-call-groups")).toBeNull();
+    expect(screen.queryByTestId("live-call-groups-truncated")).toBeNull();
+  });
+
+  it("renders one row per group: tag · ×count · model", () => {
+    render(<LiveCallsBanner data={GROUPED_LIVE_CALLS} />);
+    const rows = screen.getByTestId("live-call-groups");
+    const row0 = screen.getByTestId("live-call-group-0");
+    expect(row0).toHaveTextContent("skeptic_attack");
+    expect(row0).toHaveTextContent("×12");
+    expect(row0).toHaveTextContent("qwen3.6-27b-nvfp4-mtp");
+    const row1 = screen.getByTestId("live-call-group-1");
+    expect(row1).toHaveTextContent("hypothesize");
+    expect(row1).toHaveTextContent("×4");
+    expect(row1).toHaveTextContent("gemma-4-26b-a4b");
+    expect(rows.querySelectorAll('[data-testid^="live-call-group-"]').length)
+      .toBeGreaterThanOrEqual(3);
+    // The grouped render replaces the aggregate top-model label (the
+    // one-model-label bug this fixes), but the live header line stays.
+    expect(screen.getByTestId("live-calls-banner")).toHaveTextContent(
+      "19 calls in last 60s",
+    );
+  });
+
+  it("backend chip takes its tone from roles.ts and is ABSENT on a null backend", () => {
+    render(<LiveCallsBanner data={GROUPED_LIVE_CALLS} />);
+    // vllm-qwen -> sky; vllm-gemma -> emerald.
+    expect(
+      screen.getByTestId("live-call-group-backend-0").className,
+    ).toContain("sky");
+    expect(screen.getByTestId("live-call-group-backend-0")).toHaveTextContent(
+      "vllm-qwen",
+    );
+    expect(
+      screen.getByTestId("live-call-group-backend-1").className,
+    ).toContain("emerald");
+    // Group 2 carried backend:null (pre-EMIT row) — no chip, never a guess
+    // from the model name.
+    expect(screen.queryByTestId("live-call-group-backend-2")).toBeNull();
+  });
+
+  it("run chip links a present run_id; null run_id reads quiet 'unregistered'", () => {
+    render(<LiveCallsBanner data={GROUPED_LIVE_CALLS} />);
+    const link = screen.getByTestId("live-call-group-run-1");
+    expect(link.tagName.toLowerCase()).toBe("a");
+    expect(link).toHaveAttribute("href", "#run-loop_v0_2026-06-10_001");
+    expect(link).toHaveTextContent("loop_v0_2026-06-10_001");
+    // Unregistered rows: quiet zinc chip, not red, not a link.
+    const unreg = screen.getByTestId("live-call-group-unregistered-0");
+    expect(unreg).toHaveTextContent(/unregistered/i);
+    expect(unreg.className).toContain("zinc");
+    expect(unreg.className).not.toContain("red");
+  });
+
+  it("shows '+N more calls' when groups_truncated", () => {
+    render(<LiveCallsBanner data={GROUPED_LIVE_CALLS} />);
+    expect(screen.getByTestId("live-call-groups-truncated")).toHaveTextContent(
+      "+7 more calls",
+    );
+  });
+
+  it("omits the truncation line when groups_truncated is false", () => {
+    render(
+      <LiveCallsBanner
+        data={{
+          ...GROUPED_LIVE_CALLS,
+          groups_truncated: false,
+          other_count: 0,
+        }}
+      />,
+    );
+    expect(screen.queryByTestId("live-call-groups-truncated")).toBeNull();
+  });
+
   it("renders nothing when not active", () => {
     const { container } = render(
       <LiveCallsBanner
@@ -241,6 +421,7 @@ describe("Activity layout (workers HERO, graph demoted)", () => {
     activeRun: typeof ACTIVE_RUN_FIXTURE | null = null,
     coordinatorActive: CoordinatorActiveRun | null = null,
     coordinatorCycles: CoordinatorCycle[] = [],
+    activeRuns: ActiveRunsResponse | null = null,
   ) {
     return render(
       <MemoryRouter>
@@ -249,6 +430,7 @@ describe("Activity layout (workers HERO, graph demoted)", () => {
           initialMonitor={monitor}
           initialIteration={iteration}
           initialActiveRun={activeRun}
+          initialActiveRuns={activeRuns}
           initialCoordinatorActive={coordinatorActive}
           initialCoordinatorCycles={coordinatorCycles}
         />
@@ -311,11 +493,36 @@ describe("Activity layout (workers HERO, graph demoted)", () => {
     expect(screen.getByTestId("activity-status")).toHaveTextContent(/live/i);
   });
 
-  it("renders the active-run card at the top of the hero when a run is in flight", () => {
-    renderActivity(MONITOR_FIXTURE_IDLE, null, ACTIVE_RUN_FIXTURE);
+  it("renders the Now board in the hero with one card per registered run", () => {
+    // NowBoard takes over the old single-run ActiveRunCard slot (2026-06-10
+    // handoff Task 1): the injected registry payload wraps the same fixture
+    // run the old card test used.
+    renderActivity(MONITOR_FIXTURE_IDLE, null, ACTIVE_RUN_FIXTURE, null, [], {
+      runs: [ACTIVE_RUN_FIXTURE],
+      skipped: 0,
+    });
     const hero = screen.getByTestId("active-now");
-    const card = within(hero).getByTestId("active-run-card");
+    const board = within(hero).getByTestId("now-board");
+    const card = within(board).getByTestId(
+      `now-run-${ACTIVE_RUN_FIXTURE.run_id}`,
+    );
     expect(card).toHaveTextContent("exp003 paraphrase probe");
+    expect(card).toHaveTextContent("experiment");
+    expect(card).toHaveTextContent("retrieve_literature");
+    expect(card).toHaveTextContent("3/10 papers");
+  });
+
+  it("Now board renders the honest empty state — never invents a run", () => {
+    renderActivity(MONITOR_FIXTURE_IDLE, null, null, null, [], {
+      runs: [],
+      skipped: 0,
+    });
+    expect(screen.getByTestId("now-board-empty")).toHaveTextContent(
+      /no registered runs/i,
+    );
+    expect(
+      document.querySelectorAll('[data-testid^="now-run-"]'),
+    ).toHaveLength(0);
   });
 
   it("suppresses the idle empty-state when an active_run is present", () => {
@@ -327,9 +534,12 @@ describe("Activity layout (workers HERO, graph demoted)", () => {
     expect(screen.getByTestId("activity-status")).toHaveTextContent(/live/i);
   });
 
-  it("renders no active-run card when none is in flight", () => {
+  it("renders no run card when none is in flight (board un-injected)", () => {
     renderActivity(MONITOR_FIXTURE_IDLE, null, null);
+    // The legacy single-run card is gone from the page, and the NowBoard
+    // (injected as null = no payload) claims nothing.
     expect(screen.queryByTestId("active-run-card")).toBeNull();
+    expect(document.querySelectorAll('[data-testid^="now-run-"]')).toHaveLength(0);
   });
 
   it("renders REAL inference (no synthetic marker) when monitor synthetic:false", () => {

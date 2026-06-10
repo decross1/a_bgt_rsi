@@ -11,8 +11,15 @@
 // equivalent for the Qwen side yet.
 import { type ReactNode } from "react";
 import { fmt, fmtRatioPct } from "../format";
+import type { LiveCalls } from "../types/activity";
 import type { TelemetrySample } from "../types/schemas";
 import Sparkline from "./Sparkline";
+import { DrivingLine } from "./VllmPanel";
+
+// The model name vllm-qwen serves (live fact, 2026-06-10). The driving
+// sub-line attributes ONLY live-call groups whose `model` EXACTLY equals
+// this string — no substring/heuristic matching.
+export const QWEN_SERVED_MODEL = "qwen3.6-27b-nvfp4-mtp";
 
 function Row({
   label,
@@ -38,7 +45,15 @@ function Row({
   );
 }
 
-export default function QwenPanel({ samples }: { samples: TelemetrySample[] }) {
+export default function QwenPanel({
+  samples,
+  liveCalls,
+}: {
+  samples: TelemetrySample[];
+  // Optional (additive): the live-call aggregate, for the "driving" sub-line.
+  // Absent -> no sub-line, panel unchanged.
+  liveCalls?: LiveCalls | null;
+}) {
   const latest = samples[samples.length - 1] ?? null;
   const qwen = latest?.vllm_qwen ?? null;
   const series = (pick: (s: TelemetrySample) => number | null | undefined) =>
@@ -71,6 +86,13 @@ export default function QwenPanel({ samples }: { samples: TelemetrySample[] }) {
           {qwen ? "● up" : "● down"}
         </span>
       </div>
+      {/* Who is generating this backend's load right now — exact-match
+          live-call groups only; absent when none. */}
+      <DrivingLine
+        liveCalls={liveCalls}
+        servedModel={QWEN_SERVED_MODEL}
+        testId="qwen-driving"
+      />
       {!anyQwen ? (
         <div className="mt-3 text-sm text-zinc-500">
           Qwen endpoint unreachable — backend may be down or not enabled.

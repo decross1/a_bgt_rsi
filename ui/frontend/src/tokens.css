@@ -1,0 +1,12 @@
+/* ====== BEGIN SHARED TOKENS v1 (synced copy; checked by scripts/check_design_tokens.py) ====== */
+:root {
+  --bg:#09090b; --surface:#18181b; --surface-2:rgba(24,24,27,.4);
+  --border:#27272a; --border-2:#3f3f46;
+  --text:#e4e4e7; --text-dim:#a1a1aa; --text-faint:#71717a; --text-ghost:#52525b;
+  --accent:#10b981; --ok:#34d399; --warn:#fbbf24; --bad:#f87171; --idle:#38bdf8;
+  --ok-bg:#022c22; --warn-bg:#451a03; --bad-bg:#450a0a;
+  --agent-nara:#34d399; --agent-coordinator:#7dd3fc; --agent-workflow:#a5b4fc;
+  --agent-claude:#c084fc; --agent-human:#a1a1aa; --agent-nemoclaw:#a78bfa; --agent-other:#fda4af;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+/* ====== END SHARED TOKENS v1 ====== */

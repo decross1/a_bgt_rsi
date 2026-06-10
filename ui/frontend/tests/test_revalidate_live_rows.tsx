@@ -45,13 +45,41 @@ import type {
   SurfacedFinding,
 } from "../src/types/schemas";
 
-// Resolve the primary repo root from this test file's location, mirroring
-// test_validate_iterations.tsx (and the backend's hardcoded _PRIMARY_REPO):
-// tests/ -> frontend -> ui -> ui-session -> worktrees -> .claude -> repo root.
-const REPO_ROOT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../../../../..",
-);
+// Resolve the primary repo root by walking UP from this test file's directory
+// until a directory containing memory/loop_memory.jsonl exists — the backend's
+// _PRIMARY_REPO target found structurally, not via a fixed "../.." depth, so
+// the SAME file resolves from the main checkout AND any worktree nesting (the
+// old hardcoded six-up only resolved from .claude/worktrees/<name>). Probes
+// with readFileSync — the only fs symbol tests/node-builtins.d.ts declares —
+// where ENOENT/ENOTDIR is a miss, any other error rethrows, and an exhausted
+// walk fails loudly with every probed path. Same idiom inlined in
+// test_validate_iterations.tsx / test_validate_lowevidence.tsx (a shared
+// livePaths.ts would be a new file — deferred to the integrator).
+function findPrimaryRepoRoot(): string {
+  const probed: string[] = [];
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const probe = resolve(dir, "memory/loop_memory.jsonl");
+    try {
+      readFileSync(probe, "utf8");
+      return dir;
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw e;
+      probed.push(probe);
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      throw new Error(
+        "memory/loop_memory.jsonl not found in any ancestor of this test " +
+          `file — probed:\n${probed.join("\n")}`,
+      );
+    }
+    dir = parent;
+  }
+}
+
+const REPO_ROOT = findPrimaryRepoRoot();
 
 function loadJsonl<T>(path: string): T[] {
   return readFileSync(path, "utf8")
@@ -279,10 +307,13 @@ describe("pinned REAL nemoclaw rows — full row render contract", () => {
     // On-domain retrieval (relevance 1.0, low_confidence:false) → NO flag.
     expect(row.queryByTestId("low-evidence-badge")).toBeNull();
 
-    // Conditioning bullets (meta_review) render as the "conditioned by" block.
+    // SCOPE MOVE (2026-06-10 Task 4 condense): the conditioning-bullets block
+    // left the row for the IterationDetailModal (section 5) — the condensed
+    // card must NOT carry it; the modal-side render of this exact block is
+    // pinned in test_iteration_detail_modal.tsx.
     expect(
-      row.getByTestId("conditioning-iter-2026-06-09-003"),
-    ).toBeInTheDocument();
+      row.queryByTestId("conditioning-iter-2026-06-09-003"),
+    ).toBeNull();
 
     expect(errSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
@@ -327,6 +358,9 @@ describe("live NEW-shape rows — undecidable / novelty_axes / relevance.categor
       "unclear",
       "nonsense",
     ]);
+    // Frozen trio + the FULL additive diagnostic set (anchor_cosine,
+    // curated_overlap, neighbor_spread, topicality, category, rule_fired) —
+    // `topicality` is the R0 LLM domain judgment, live on rows 006+.
     const KNOWN_RELEVANCE_KEYS = new Set([
       "relevance",
       "low_confidence",
@@ -334,6 +368,7 @@ describe("live NEW-shape rows — undecidable / novelty_axes / relevance.categor
       "anchor_cosine",
       "curated_overlap",
       "neighbor_spread",
+      "topicality",
       "category",
       "rule_fired",
     ]);
@@ -377,14 +412,21 @@ describe("live NEW-shape rows — undecidable / novelty_axes / relevance.categor
     }
   });
 
-  it("every live novelty_axes row (zero at validation time) renders cleanly in the list AND through NoveltyAxesChip", () => {
-    // The list mounts the axes THROUGH NoveltyAxesChip (wired by the WF-B
-    // integrator) — the chip renders the three axes as plain strings; the raw
-    // OBJECT still never reaches a React child (forward-compat pin (b)).
+  it("every live novelty_axes row renders cleanly in the list (chip moved to modal scope) AND through NoveltyAxesChip", () => {
+    // SCOPE MOVE (2026-06-10 Task 4 condense): the axes chip left the ROW for
+    // the IterationDetailModal — the list census now pins "no chip in the
+    // row, no object leak", and the chip contract is validated by mounting
+    // NoveltyAxesChip standalone on the SAME live axes (the exact component
+    // the modal mounts; full modal wiring is pinned in
+    // test_iteration_detail_modal.tsx). The raw OBJECT still never reaches a
+    // React child (forward-compat pin (b)).
     for (const r of WITH_AXES) {
       const { errSpy } = spyConsole();
       render(<ResolvedIterationsList initial={[r]} />);
       expect(document.body.textContent).not.toContain("[object Object]");
+      // Condensed row: the chip must NOT render in the card anymore.
+      expect(screen.queryByTestId("novelty-axes-chip")).toBeNull();
+      cleanup();
       render(<NoveltyAxesChip axes={r.novelty?.novelty_axes} />);
       expect(screen.getByTestId("novelty-axes-chip")).toHaveTextContent(
         /^axes: /,

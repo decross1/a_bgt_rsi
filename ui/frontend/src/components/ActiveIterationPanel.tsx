@@ -3,11 +3,24 @@
 // list of tool calls so far. The endpoint returns 204 when no iteration
 // is in flight; the panel renders "idle" in that case. See
 // agent/prompts/ui_session.md §"Active panel".
+//
+// Step strip (2026-06-10 Task 5): when active_iteration.json carries the new
+// optional `steps[]` board ({name, status pending|running|passed|failed|
+// skipped, started_at?, ended_at?} — schema/active_iteration.schema.json) the
+// strip renders it IN PRODUCER ORDER: meta_review + the 5-step chain
+// (hypothesize, retrieve_literature, novelty_classify, critic_loop_v0,
+// journal_writer — orchestrator/nara.py:_LOOP_V0_STEPS) with dynamic
+// redteam/ml_intern chips inserted by the producer when those sub-loops fire.
+// UNKNOWN names render raw — the producer may add steps; the strip never
+// filters. When `steps` is absent (every pre-2026-06-10 iteration) the legacy
+// static STEP_STRIP below renders unchanged.
 import { useEffect, useState } from "react";
 import { getActiveIteration } from "../api/http";
 import { elapsed, toolDuration, useNow } from "../time";
-import type { ActiveIteration } from "../types/schemas";
+import type { ActiveIteration, IterationStep } from "../types/schemas";
 
+// LEGACY fallback strip — the pre-steps[] static board. Unchanged on purpose:
+// it is what renders for every iteration written before 2026-06-10.
 const STEP_STRIP: ReadonlyArray<{ id: string; label: string }> = [
   { id: "starting", label: "start" },
   { id: "nara_thinking", label: "thinking" },
@@ -79,7 +92,112 @@ function RedteamChip({ redteam }: { redteam: ActiveIteration["redteam"] }) {
   );
 }
 
-function StepStrip({ current }: { current: string }) {
+// `steps` is producer-owned JSON parsed unchecked: keep only entries that are
+// objects with a usable string name. A junk entry degrades to "not on the
+// board" rather than a crash; a non-array `steps` yields [] → legacy strip.
+function usableSteps(steps: unknown): IterationStep[] {
+  if (!Array.isArray(steps)) return [];
+  return steps.filter(
+    (s): s is IterationStep =>
+      s != null &&
+      typeof s === "object" &&
+      !Array.isArray(s) &&
+      typeof (s as { name?: unknown }).name === "string" &&
+      (s as { name: string }).name.length > 0,
+  );
+}
+
+// Duration of a finished step (ended_at - started_at). "" when either
+// timestamp is absent/unparseable — the chip then shows no duration rather
+// than NaN.
+function stepDuration(step: IterationStep): string {
+  if (typeof step.started_at !== "string" || typeof step.ended_at !== "string") {
+    return "";
+  }
+  const start = Date.parse(step.started_at);
+  const end = Date.parse(step.ended_at);
+  if (Number.isNaN(start) || Number.isNaN(end)) return "";
+  return `${Math.max(0, (end - start) / 1000).toFixed(1)}s`;
+}
+
+// Tones per steps[] status. pending = zinc; running = emerald BORDER with a
+// ticking elapsed; passed = quiet emerald + duration; failed = red + duration;
+// skipped = dim zinc. An unknown status renders raw in the quiet zinc lane —
+// forward-compat, never filtered.
+const STEP_STATUS_TONE: Record<string, string> = {
+  pending: "border-zinc-800 bg-zinc-900/40 text-zinc-500",
+  running: "border-emerald-600 bg-emerald-950/60 text-emerald-300",
+  passed: "border-emerald-900/60 bg-emerald-950/30 text-emerald-500",
+  failed: "border-red-800 bg-red-950 text-red-400",
+  skipped: "border-zinc-800/60 bg-zinc-900/20 text-zinc-600",
+};
+
+function stepStatusTone(status: unknown): string {
+  // Own-key lookup (the Object.prototype hazard toneFor/SourceBadge guard):
+  // a status of "toString" must take the quiet fallback, not a function.
+  if (
+    typeof status === "string" &&
+    Object.prototype.hasOwnProperty.call(STEP_STATUS_TONE, status)
+  ) {
+    return STEP_STATUS_TONE[status];
+  }
+  return "border-zinc-800 bg-zinc-900/40 text-zinc-500";
+}
+
+// The steps[] board chip strip, in PRODUCER ORDER (array order as emitted —
+// never sorted, never filtered by name). Duplicate names are possible (the
+// producer may insert redteam more than once), so keys composite the index.
+function StepsBoard({ steps, now }: { steps: IterationStep[]; now: number }) {
+  return (
+    <>
+      <ol
+        data-testid="steps-board"
+        className="mt-2 flex flex-wrap gap-1 text-[10px] uppercase tracking-wide"
+      >
+        {steps.map((step, i) => {
+          const status = typeof step.status === "string" ? step.status : "";
+          const running = status === "running";
+          const timing = running
+            ? elapsed(step.started_at, now)
+            : status === "passed" || status === "failed"
+              ? stepDuration(step)
+              : "";
+          return (
+            <li
+              key={`${step.name}-${i}`}
+              data-testid={`board-step-${step.name}`}
+              data-status={status || "unknown"}
+              className={`rounded border px-1.5 py-0.5 ${stepStatusTone(step.status)}`}
+            >
+              {step.name}
+              {timing && (
+                <span className="ml-1 font-mono normal-case">{timing}</span>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+      <div className="mt-1 text-[10px] text-zinc-600" data-testid="steps-caption">
+        steps run sequentially within an iteration — concurrency happens across
+        runs (see the Now board)
+      </div>
+    </>
+  );
+}
+
+function StepStrip({
+  current,
+  steps,
+  now,
+}: {
+  current: string;
+  steps?: ActiveIteration["steps"];
+  now: number;
+}) {
+  // The new steps[] board wins when the producer emitted it; otherwise the
+  // legacy static strip renders exactly as before (pre-2026-06-10 fallback).
+  const board = usableSteps(steps);
+  if (board.length > 0) return <StepsBoard steps={board} now={now} />;
   return (
     <ol className="mt-2 flex flex-wrap gap-1 text-[10px] uppercase tracking-wide">
       {STEP_STRIP.map((step) => {
@@ -244,7 +362,7 @@ export default function ActiveIterationPanel({
             <span className="font-mono text-zinc-300">{elapsed(data.started_at, now)}</span>
           </div>
 
-          <StepStrip current={data.current_step} />
+          <StepStrip current={data.current_step} steps={data.steps} now={now} />
 
           {/* Loop v1 chips: red-team verdict + human-gate status. Render
               only when the producer has populated them (v1 rows). */}

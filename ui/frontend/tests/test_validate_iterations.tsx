@@ -29,17 +29,46 @@ import type { IterationRecord } from "../src/types/schemas";
 
 const PAGE_SIZE = 10;
 
-// The real, gitignored loop memory the backend reads live. Path is resolved
-// from this test file's location up to the primary repo root, mirroring the
-// backend's hardcoded _PRIMARY_REPO so the test reads exactly what the UI
-// serves. Loading is wrapped so a missing file fails loudly with a clear
-// message (this data IS the contract under validation — an empty load is a
-// real failure, not a skip).
+// Resolve the primary repo root by walking UP from this test file's directory
+// until a directory containing memory/loop_memory.jsonl exists — the backend's
+// _PRIMARY_REPO target found structurally, not via a fixed "../.." depth, so
+// the SAME file resolves from the main checkout AND any worktree nesting (the
+// old hardcoded six-up only resolved from .claude/worktrees/<name>). Probes
+// with readFileSync — the only fs symbol tests/node-builtins.d.ts declares —
+// where ENOENT/ENOTDIR is a miss, any other error rethrows, and an exhausted
+// walk fails loudly with every probed path. Same idiom inlined in
+// test_revalidate_live_rows.tsx / test_validate_lowevidence.tsx (a shared
+// livePaths.ts would be a new file — deferred to the integrator).
+function findPrimaryRepoRoot(): string {
+  const probed: string[] = [];
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const probe = resolve(dir, "memory/loop_memory.jsonl");
+    try {
+      readFileSync(probe, "utf8");
+      return dir;
+    } catch (e) {
+      const code = (e as { code?: string }).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") throw e;
+      probed.push(probe);
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      throw new Error(
+        "memory/loop_memory.jsonl not found in any ancestor of this test " +
+          `file — probed:\n${probed.join("\n")}`,
+      );
+    }
+    dir = parent;
+  }
+}
+
+// The real, gitignored loop memory the backend reads live, resolved via the
+// walk-up above so the test reads exactly what the UI serves. Loading is
+// wrapped so a missing file fails loudly with a clear message (this data IS
+// the contract under validation — an empty load is a real failure, not a skip).
 function loadRealIterations(): IterationRecord[] {
-  const here = dirname(fileURLToPath(import.meta.url));
-  // tests/ -> frontend -> ui -> ui-session -> worktrees -> .claude -> repo root
-  const repoRoot = resolve(here, "../../../../../..");
-  const path = resolve(repoRoot, "memory/loop_memory.jsonl");
+  const path = resolve(findPrimaryRepoRoot(), "memory/loop_memory.jsonl");
   const raw = readFileSync(path, "utf8");
   const rows = raw
     .split("\n")
@@ -136,16 +165,15 @@ describe("ResolvedIterationsList — validation against REAL loop_memory.jsonl",
     // Scope to the panel container (not getByRole("list") — a Loop v1 row's
     // conditioning bullets render a second <ul>, which makes that ambiguous).
     const panel = within(screen.getByTestId("resolved-iterations-list"));
-    const badges = panel.getAllByTestId("source-badge");
-    // One provenance badge per row — never an unattributed real row.
-    expect(badges.length).toBe(bySource.size);
-    // human_cli + loop_memory_probe humanize to short labels; coordinator keeps
-    // its raw label. Read the badge text directly so a topic string that merely
-    // contains one of these words can't satisfy the assertion.
-    const labels = badges.map((b) => b.textContent);
-    expect(labels).toContain("human"); // human_cli humanizes to "human"
-    expect(labels).toContain("memory-probe"); // loop_memory_probe
-    expect(labels).toContain("coordinator"); // coordinator keeps its raw label
+    // 2026-06-10 condense: only β nemoclaw provenance earns row ink; other
+    // sources render in the IterationDetailModal (modal coverage pinned in
+    // test_iteration_detail_modal.tsx).
+    const badges = panel.queryAllByTestId("source-badge");
+    const nemoRows = Array.from(bySource.values()).filter(
+      (r) => r.seed?.source === "nemoclaw_agent",
+    );
+    expect(badges.length).toBe(nemoRows.length);
+    for (const b of badges) expect(b).toHaveTextContent("nemoclaw");
   });
 
   it("renders the one real row that carries retrieval.relevance, and (low_confidence:false) shows NO low-evidence flag", () => {

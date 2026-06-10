@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .activity import register as register_activity
+from .attest import register as register_attest
 from .baseline import compute_baseline
 from .chain import LogStore, build_chain_by_request_id
 from .coordinator import register as register_coordinator
@@ -54,6 +55,14 @@ def _git_sha():
     except (subprocess.SubprocessError, OSError):
         return "unknown"
     return proc.stdout.strip() or "unknown" if proc.returncode == 0 else "unknown"
+
+
+# Snapshot at import: /api/health's `version` (and the FastAPI app version)
+# must report the code this process actually LOADED, not whatever the working
+# tree's HEAD drifts to between requests — the stale-binary skew signal is only
+# sound if "version" means "the running binary". The function stays so the
+# snapshot (or a deliberate fresh read) remains testable.
+_GIT_SHA = _git_sha()
 
 
 def _tail_lines(path, limit):
@@ -98,7 +107,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                loop_v0_popen=subprocess.Popen,
                coordinator_run_state=DEFAULT_COORDINATOR_RUN_STATE,
                coordinator_memory=DEFAULT_COORDINATOR_MEMORY):
-    app = FastAPI(title="UI backend — orchestrator dashboard", version=_git_sha())
+    app = FastAPI(title="UI backend — orchestrator dashboard", version=_GIT_SHA)
     # Permissive CORS for local dev (Vite serves the SPA on another port).
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
                        allow_methods=["*"], allow_headers=["*"])
@@ -116,7 +125,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         return {"ok": True,
                 "hostname": socket.gethostname(),
                 "telemetry_last_seen": seen["telemetry_ts"],
-                "version": _git_sha()}
+                "version": _GIT_SHA}
 
     @app.get("/api/chain_by_request/{request_id}")
     def chain_by_request(request_id: str):
@@ -232,6 +241,10 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         run_state_dir=Path(coordinator_run_state),
         memory_dir=Path(coordinator_memory),
     )
+
+    # D-046 write-back seam: argv-exec of the blessed CLIs (runner defaults
+    # to subprocess.run in production; tests inject a stub).
+    register_attest(app, repo_root=Path(loop_v0_repo))
 
     return app
 

@@ -192,6 +192,20 @@ export interface LoopV0ToolCall {
   subagent_model?: string | null;
 }
 
+// One entry of active_iteration.json's OPTIONAL `steps[]` board (2026-06-10,
+// schema/active_iteration.schema.json): the planned LOOP_V0 chain — meta_review
+// + hypothesize/retrieve_literature/novelty_classify/critic_loop_v0/
+// journal_writer — with dynamic sub-loop steps (redteam, ml_intern) inserted by
+// the producer when those sub-loops fire. `status` stays an open string so an
+// unknown future status renders generically rather than crashing; UNKNOWN step
+// NAMES likewise render raw (the producer may add steps; never filter).
+export interface IterationStep {
+  name: string;
+  status: "pending" | "running" | "passed" | "failed" | "skipped" | string;
+  started_at?: string | null;
+  ended_at?: string | null;
+}
+
 export interface ActiveIteration {
   iteration_id: string;
   topic: string;
@@ -208,6 +222,9 @@ export interface ActiveIteration {
   // "gemma-4-26b-a4b"). Pairs with `orchestrator_backend`; null on
   // legacy iterations.
   orchestrator_model?: string | null;
+  // OPTIONAL planned-chain status board (2026-06-10). Absent on
+  // pre-2026-06-10 iterations — the panel falls back to its static strip.
+  steps?: IterationStep[];
   tool_calls_so_far?: LoopV0ToolCall[];
   // Loop v1 blocks may surface on the active record too: meta_review is
   // computed at iteration start (Step 1.5), and redteam / gate_status
@@ -251,16 +268,22 @@ export interface IterationRecord {
       low_confidence?: boolean;
       reason?: string;
       // Additive diagnostics (EMIT: workers/retrieval_relevance.py `_out`,
-      // close-out 2026-06-09 evening additions). The three keys above are
-      // FROZEN (UI join contract, commit 0fdb671); these five are optional
-      // and absent on rows written before the diagnostic ladder landed.
-      // `anchor_cosine` is the hypothesis↔GT-domain-anchor cosine (null
-      // under MOCK_LLM or when no anchor is usable); `rule_fired` is the
-      // first R1..R5 ladder rule that fired (null when none did — note
-      // R3/R4/R5 ship inert until their constants are calibrated).
+      // close-out 2026-06-09 evening additions + `topicality` 2026-06-10).
+      // The three keys above are FROZEN (UI join contract, commit 0fdb671);
+      // the additive set — anchor_cosine, curated_overlap, neighbor_spread,
+      // topicality, category, rule_fired — is optional and absent on rows
+      // written before the diagnostic ladder landed. `anchor_cosine` is the
+      // hypothesis↔GT-domain-anchor cosine (null under MOCK_LLM or when no
+      // anchor is usable); `topicality` is the caller-computed LLM domain
+      // judgment ("on"|"off"|"unsure"|null, orchestrator/topicality.py) that
+      // drives the condemn-only ladder rule R0 (live on rows since
+      // iter-2026-06-09-006); `rule_fired` is the first R0..R5 ladder rule
+      // that fired (null when none did — note R3/R4/R5 ship inert until
+      // their constants are calibrated).
       anchor_cosine?: number | null;
       curated_overlap?: number | null;
       neighbor_spread?: number | null;
+      topicality?: "on" | "off" | "unsure" | string | null;
       category?: "off_domain" | "thin" | "no_sharp_match" | "empty" | "ok" | string;
       rule_fired?: string | null;
     } | null;
@@ -334,6 +357,20 @@ export interface IterationRecord {
   // Loop v1 Step 8: human-gate state. "pending" at finalize; a human
   // verdict resolves it. Absent on pre-v1 rows.
   gate_status?: "pending" | "valid" | "invalid" | "needs_revision" | string;
+  // Cross-tier bridge (schema/iteration_record.schema.json): populated when
+  // this iteration was bridged from a Tier-1/Tier-2 sandbox experiment (e.g.
+  // exp003 Vickrey-rediscovery). `value` is scalar for single-metric outcomes
+  // and an object for multi-metric — consumers must scalar-guard (the
+  // Experiments.tsx bridgeLabel idiom). `summary` carries the human verdict
+  // line ("Verdict=YES. …"). Absent for pure-Tier-3 iterations.
+  experiment_outcome?: {
+    experiment_id?: string;
+    metric?: string;
+    value?: number | Record<string, unknown>;
+    trials?: number;
+    summary?: string;
+    results_path?: string;
+  } | null;
   journal_entry_path: string;
   nara_summary?: string | null;
   model_version?: string | null;

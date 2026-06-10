@@ -59,6 +59,22 @@ interface ActiveWorkersPanelProps {
   data: MonitorResponse;
 }
 
+// Live-call groups whose caller_tag starts with "subagent." — sub-agents run
+// OUTSIDE the orchestrator's worker dispatch, so an empty workers table while
+// they call is "no ORCHESTRATOR workers", not "nothing running". Producer-
+// shaped: a malformed groups array / element / tag contributes nothing.
+function subagentGroupCount(data: MonitorResponse): number {
+  const groups = data.live_calls?.groups;
+  if (!Array.isArray(groups)) return 0;
+  let n = 0;
+  for (const g of groups) {
+    if (g == null || typeof g !== "object") continue;
+    const tag = (g as { tag?: unknown }).tag;
+    if (typeof tag === "string" && tag.startsWith("subagent.")) n += 1;
+  }
+  return n;
+}
+
 export default function ActiveWorkersPanel({ data }: ActiveWorkersPanelProps) {
   const now = useNow();
 
@@ -93,8 +109,18 @@ export default function ActiveWorkersPanel({ data }: ActiveWorkersPanelProps) {
         </div>
       )}
       {data.active.length === 0 ? (
+        // When sub-agent call groups are live (caller_tag "subagent.*"), an
+        // empty ORCHESTRATOR table must not read as a quiet machine — the
+        // sub-agents bypass worker dispatch and show in the live calls above.
         <div className="text-sm text-zinc-500" data-testid="active-workers-empty">
-          No workers in flight.
+          {(() => {
+            const n = subagentGroupCount(data);
+            return n > 0
+              ? `No orchestrator workers in flight — ${n} sub-agent call group${
+                  n === 1 ? "" : "s"
+                } active (see live calls)`
+              : "No workers in flight.";
+          })()}
         </div>
       ) : (
         <table className="w-full">

@@ -5,13 +5,17 @@
 // Renders the three axes as one scannable token, e.g.
 // "axes: known/unstudied_llm/deviates".
 //
-// The bucket worth EMPHASIS is phenomenon="known" && substrate="unstudied_llm"
-// — a KNOWN phenomenon on an UNSTUDIED LLM substrate, i.e. the close-out's
-// transfer/replication bucket ("does the known result transfer?"). That reads
-// cyan, distinct from the quiet zinc of every other combination, so a human
-// scanning the list can tell a replication-transfer thesis from a
-// new-phenomenon one at a glance. Mirrors the Badge/SourceBadge chip idiom
-// (rounded, text-[10px], uppercase, tracking-wide).
+// The bucket worth EMPHASIS is phenomenon="known" && predicted_direction in
+// {"matches","silent"} — the rubric's transfer/replication bucket
+// (docs/novelty_two_axis_rubric.md; ADJUDICATED 2026-06-10). The decision rule
+// keys the class on `predicted_direction`, NOT substrate: known+deviates
+// derives class `novel` (a deviation claim, not mere transfer), while
+// known+matches|silent is transfer/replication "even on an unstudied_llm
+// substrate" — substrate is explicitly not-class-determining. That bucket
+// reads cyan, distinct from the quiet zinc of every other combination, so a
+// human scanning can tell a replication-transfer thesis from a new-phenomenon
+// (or known-but-deviates) one at a glance. Mirrors the Badge/SourceBadge chip
+// idiom (rounded, text-[10px], uppercase, tracking-wide).
 //
 // `axes` is producer-owned JSONL parsed unchecked — the declared prop type is
 // a compile-time fiction. A legacy/buggy row can hand a string, number, array,
@@ -58,26 +62,44 @@ export default function NoveltyAxesChip({
   // No usable axis at all ({} or all-garbage values) → no chip, not "axes: ?/?/?".
   if (!phenomenon && !substrate && !direction) return null;
 
-  // The transfer/replication bucket: a known phenomenon on an unstudied LLM
-  // substrate. Exact-match on the announced enum values; any other (or
-  // forward-compat) value stays quiet.
-  const transfer = phenomenon === "known" && substrate === "unstudied_llm";
+  // The pre-registered rubric's transfer/replication bucket
+  // (docs/novelty_two_axis_rubric.md; pinned by the 2026-06-10 adjudication):
+  // known phenomenon + matches/silent predicted direction — transfer, not
+  // discovery, REGARDLESS of substrate (the rubric's decision rule keys on
+  // direction; known+deviates derives class `novel` and must stay quiet).
+  // Exact-match on the announced enum values; any other (or forward-compat)
+  // value stays quiet. The cyan emphasis and the quiet "transfer" text label
+  // both name this one bucket.
+  const transfer =
+    phenomenon === "known" &&
+    (direction === "matches" || direction === "silent");
   const tone = transfer ? TRANSFER : QUIET;
 
   // Compact "axes: a/b/c"; a missing/garbled axis shows as "?" so a partial
   // row still renders its known axes without faking the absent one.
   const label = `axes: ${phenomenon || "?"}/${substrate || "?"}/${direction || "?"}`;
   const title = transfer
-    ? `Transfer/replication bucket: a known phenomenon on an unstudied LLM substrate (${label}).`
+    ? `Transfer/replication bucket: a known phenomenon whose predicted direction matches or is silent — rediscovery/transfer regardless of substrate (${label}).`
     : `Decomposed novelty judgment — phenomenon/substrate/predicted_direction (${label}).`;
 
   return (
-    <span
-      data-testid="novelty-axes-chip"
-      title={title}
-      className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${tone}`}
-    >
-      {label}
-    </span>
+    <>
+      <span
+        data-testid="novelty-axes-chip"
+        title={title}
+        className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${tone}`}
+      >
+        {label}
+      </span>
+      {transfer && (
+        <span
+          data-testid="novelty-transfer-label"
+          title="Known phenomenon, predicted direction matches/silent — the rubric's transfer/replication bucket (rediscovery), not a discovery claim."
+          className="text-[10px] lowercase tracking-wide text-zinc-500"
+        >
+          transfer
+        </span>
+      )}
+    </>
   );
 }

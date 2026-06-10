@@ -3,8 +3,44 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { getWorkloadHint } from "../api/http";
 import { fmt, fmtRatioPct } from "../format";
+import { callerTagTone, drivingTags } from "../roles";
+import type { LiveCalls } from "../types/activity";
 import type { TelemetrySample, WorkloadHint } from "../types/schemas";
 import Sparkline from "./Sparkline";
+
+// The model name vllm-gemma serves (live fact, 2026-06-10). The driving
+// sub-line attributes ONLY live-call groups whose `model` EXACTLY equals
+// this string — no substring/heuristic matching.
+export const VLLM_SERVED_MODEL = "gemma-4-26b-a4b";
+
+// "driving: <tag> ×N" — who is generating this panel's load right now,
+// derived from the live-call groups (2026-06-10 EMIT). Absent (renders null)
+// when no group's model exactly matches the served model. Shared by
+// QwenPanel via the exported name.
+export function DrivingLine({
+  liveCalls,
+  servedModel,
+  testId,
+}: {
+  liveCalls: LiveCalls | null | undefined;
+  servedModel: string;
+  testId: string;
+}) {
+  const tags = drivingTags(liveCalls, servedModel);
+  if (tags.length === 0) return null;
+  return (
+    <div className="mt-1 text-[11px] leading-snug" data-testid={testId}>
+      <span className="text-zinc-500">driving: </span>
+      {tags.slice(0, 3).map((t, i) => (
+        <span key={t.tag} className="font-mono">
+          {i > 0 && <span className="text-zinc-600"> · </span>}
+          <span className={callerTagTone(t.tag)}>{t.tag}</span>
+          <span className="text-zinc-400"> ×{t.count}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 function Row({
   label,
@@ -60,7 +96,15 @@ function regimeShortLabel(regime: WorkloadHint["regime"]): string {
   }
 }
 
-export default function VllmPanel({ samples }: { samples: TelemetrySample[] }) {
+export default function VllmPanel({
+  samples,
+  liveCalls,
+}: {
+  samples: TelemetrySample[];
+  // Optional (additive): the live-call aggregate, for the "driving" sub-line.
+  // Absent -> no sub-line, panel unchanged.
+  liveCalls?: LiveCalls | null;
+}) {
   const latest = samples[samples.length - 1] ?? null;
   const vllm = latest?.vllm ?? null;
   const series = (pick: (s: TelemetrySample) => number | null | undefined) =>
@@ -98,6 +142,13 @@ export default function VllmPanel({ samples }: { samples: TelemetrySample[] }) {
           {vllm ? "● up" : "● down"}
         </span>
       </div>
+      {/* Who is generating this backend's load right now — exact-match
+          live-call groups only; absent when none. */}
+      <DrivingLine
+        liveCalls={liveCalls}
+        servedModel={VLLM_SERVED_MODEL}
+        testId="vllm-driving"
+      />
       {!vllm ? (
         <div className="mt-3 text-sm text-zinc-500">
           vLLM /metrics unavailable — the server may be down or still loading.

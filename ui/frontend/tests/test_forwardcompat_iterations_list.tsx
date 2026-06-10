@@ -15,18 +15,21 @@
 //     category ("off_domain"|"thin"|"no_sharp_match"|"empty"|"ok"), rule_fired
 //     (string|null).
 //
-// The list consumes novelty.class, critique.verdict, novelty.novelty_axes
-// (via NoveltyAxesChip — wired by WF-B 2026-06-09 evening; renders the three
-// axes as plain strings, never the object), and (via LowEvidenceBadge)
-// relevance.low_confidence + relevance.reason; the prior hardening (toneFor
-// own-key lookup, badgeText scalar coercion) absorbs the new enum value and
-// the new siblings. These tests are the announced-contract regression PIN:
-// new rows render, "undecidable" gets the quiet fallback badge, the
-// novelty_axes OBJECT never reaches a React child, LowEvidenceBadge stays
-// driven by low_confidence (not the new category field), and garbled variants
-// of every new field degrade silently. Idiom mirrors
-// test_harden_ResolvedIterationsList (initial= prop short-circuits the fetch
-// effect; console.error/warn spied and asserted empty).
+// The list consumes novelty.class, critique.verdict, and (via
+// LowEvidenceBadge) relevance.low_confidence + relevance.reason; since the
+// 2026-06-10 Task-4 condense, novelty.novelty_axes renders ONLY in the
+// IterationDetailModal (via NoveltyAxesChip — modal coverage in
+// test_iteration_detail_modal.tsx), so the ROW pin here flips to
+// "no axes chip in the row, and the object still never reaches a React
+// child". The prior hardening (toneFor own-key lookup, badgeText scalar
+// coercion) absorbs the new enum value and the new siblings. These tests are
+// the announced-contract regression PIN: new rows render, "undecidable" gets
+// the quiet fallback badge, the novelty_axes OBJECT never reaches a React
+// child, LowEvidenceBadge stays driven by low_confidence (not the new
+// category field), and garbled variants of every new field degrade silently.
+// Idiom mirrors test_harden_ResolvedIterationsList (initial= prop
+// short-circuits the fetch effect; console.error/warn spied and asserted
+// empty).
 import { render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ResolvedIterationsList from "../src/components/ResolvedIterationsList";
@@ -130,12 +133,11 @@ describe("ResolvedIterationsList forward-compat — announced 2026-06-09 additiv
     // The legacy derived class still drives the badge…
     const row = screen.getByLabelText(/load journal iter-axes/);
     expect(within(row).getByText("novel")).toBeInTheDocument();
-    // …and the axes now render THROUGH NoveltyAxesChip as plain strings (the
-    // gated render task landed 2026-06-09 evening, WF-B; original pin said
-    // "later, gated task" — coordinated relax by the serial integrator). The
+    // …and the axes chip MOVED TO THE DETAIL MODAL (intentional contract
+    // change, 2026-06-10 Task 4 condense — modal coverage lives in
+    // test_iteration_detail_modal.tsx): the ROW renders no axes chip, and the
     // raw OBJECT must still never reach React's child renderer.
-    const chip = within(row).getByTestId("novelty-axes-chip");
-    expect(chip).toHaveTextContent("axes: novel/unstudied_llm/deviates");
+    expect(within(row).queryByTestId("novelty-axes-chip")).toBeNull();
     expect(container.innerHTML).not.toMatch(/object Object/);
   });
 

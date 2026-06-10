@@ -3,6 +3,7 @@
 // localhost -> backend at localhost:8700) and over the LAN (browser at
 // 10.0.0.73 -> backend at 10.0.0.73:8700). The backend allows CORS.
 
+import type { ActiveRunsResponse } from "../types/activity";
 import type {
   ActiveIteration,
   AppState,
@@ -26,17 +27,45 @@ import type {
 const API_PORT = import.meta.env.VITE_API_PORT ?? "8700";
 export const API_BASE = `http://${window.location.hostname}:${API_PORT}`;
 
+// Non-2xx response error carrying the STATUS as data, not just message text.
+// The frontend regularly runs newer than the :8700 backend binary, so a 404
+// from a known list/capability endpoint is VERSION SKEW, not a failure —
+// distinguishing it requires the status code, which the old bare
+// `Error(`${status} ${detail}`)` buried in a string. Consumers:
+// `isVersionSkew404` in components/EndpointMissingNote.tsx (which duck-types
+// `.status` rather than `instanceof`, so a test that module-mocks this file
+// can never break the check).
+export class HttpError extends Error {
+  readonly status: number;
+  readonly detail: string;
+
+  constructor(status: number, detail: string) {
+    // Message keeps the old `${status} ${detail}` shape so existing
+    // string-matching consumers/tests (e.g. /500/ assertions) still hold.
+    super(`${status} ${detail}`);
+    this.name = "HttpError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+// Build the HttpError for a non-ok response: FastAPI errors carry a JSON
+// `detail`; fall back to statusText when the body has none.
+async function errorFromResponse(resp: Response): Promise<HttpError> {
+  let detail = resp.statusText;
+  try {
+    const body = (await resp.json()) as { detail?: string };
+    if (body.detail) detail = body.detail;
+  } catch {
+    /* response had no JSON body */
+  }
+  return new HttpError(resp.status, detail);
+}
+
 async function getJSON<T>(path: string): Promise<T> {
   const resp = await fetch(`${API_BASE}${path}`);
   if (!resp.ok) {
-    let detail = resp.statusText;
-    try {
-      const body = (await resp.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      /* response had no JSON body */
-    }
-    throw new Error(`${resp.status} ${detail}`);
+    throw await errorFromResponse(resp);
   }
   return (await resp.json()) as T;
 }
@@ -66,14 +95,7 @@ export async function getActiveIteration(): Promise<ActiveIteration | null> {
   const resp = await fetch(`${API_BASE}/api/loop_v0/active`);
   if (resp.status === 204) return null;
   if (!resp.ok) {
-    let detail = resp.statusText;
-    try {
-      const body = (await resp.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      /* no JSON body */
-    }
-    throw new Error(`${resp.status} ${detail}`);
+    throw await errorFromResponse(resp);
   }
   return (await resp.json()) as ActiveIteration;
 }
@@ -99,14 +121,7 @@ export async function getCoordinatorActive(): Promise<CoordinatorActiveRun | nul
   const resp = await fetch(`${API_BASE}/api/coordinator/active`);
   if (resp.status === 204) return null;
   if (!resp.ok) {
-    let detail = resp.statusText;
-    try {
-      const body = (await resp.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      /* no JSON body */
-    }
-    throw new Error(`${resp.status} ${detail}`);
+    throw await errorFromResponse(resp);
   }
   return (await resp.json()) as CoordinatorActiveRun;
 }
@@ -124,6 +139,15 @@ export const getHealthSignals = () =>
 // findings in review, unacked bubbles, stale active_run, state-file gates.
 export const getHumanTodo = () => getJSON<HumanTodoResponse>("/api/human_todo");
 
+// --- NOW BOARD (D-047 multi-run registry) ---
+// GET /api/activity/active_runs — one doc per live run (run_state/
+// active_runs/*.json), or a legacy_mirror-wrapped single doc on a pre-D-047
+// apparatus. Always 200 on the new backend ({runs: []} when idle); a 404
+// means the RUNNING BINARY predates the endpoint — version skew, which the
+// HttpError status lets NowBoard render as a quiet EndpointMissingNote.
+export const getActiveRuns = () =>
+  getJSON<ActiveRunsResponse>("/api/activity/active_runs");
+
 export async function startIteration(topic: string): Promise<{ pid: number; iteration_id?: string }> {
   const resp = await fetch(`${API_BASE}/api/loop_v0/start`, {
     method: "POST",
@@ -131,14 +155,7 @@ export async function startIteration(topic: string): Promise<{ pid: number; iter
     body: JSON.stringify({ topic }),
   });
   if (!resp.ok) {
-    let detail = resp.statusText;
-    try {
-      const body = (await resp.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      /* no JSON body */
-    }
-    throw new Error(`${resp.status} ${detail}`);
+    throw await errorFromResponse(resp);
   }
   return (await resp.json()) as { pid: number; iteration_id?: string };
 }

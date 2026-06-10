@@ -108,6 +108,28 @@ function topCallerTag(lc: LiveCalls | null | undefined): string | null {
   return null;
 }
 
+// Named-rollup phrases from the additive groups[] (2026-06-10 EMIT), e.g.
+// "skeptic_attack ×12 on qwen3.6-27b-nvfp4-mtp". The backend sorts
+// count-desc; we take the top two legible groups. Producer-shaped throughout:
+// a malformed element contributes nothing, and absent groups (older backend)
+// yields [] so the caller falls back to the anonymous aggregate phrasing.
+function topGroupPhrases(lc: LiveCalls | null | undefined, max = 2): string[] {
+  if (!lc || !Array.isArray(lc.groups)) return [];
+  const phrases: string[] = [];
+  for (const g of lc.groups) {
+    if (phrases.length >= max) break;
+    if (g == null || typeof g !== "object") continue;
+    const tag = firstText((g as { tag?: unknown }).tag);
+    const model = firstText((g as { model?: unknown }).model);
+    const count = asNum((g as { count?: unknown }).count);
+    if (!tag && !model) continue;
+    const name = tag ?? "(untagged)";
+    const counted = count != null && count > 0 ? `${name} ×${count}` : name;
+    phrases.push(model ? `${counted} on ${model}` : counted);
+  }
+  return phrases;
+}
+
 function buildEvidence(input: ActivityInput, nowMs: number): string[] {
   const lc = input.liveCalls;
   const evidence: string[] = [];
@@ -181,6 +203,26 @@ export function computeActivity(
     recent || (reqs != null && reqs > 0) || (gpu != null && gpu > GPU_BUSY_PCT);
 
   if (busy) {
+    // NAMED rollup (2026-06-10): when the live-call aggregate carries
+    // groups[], the drift headline names the top groups instead of the
+    // anonymous "BUSY (unregistered)" — e.g.
+    // "skeptic_attack ×12 on qwen3.6-27b-nvfp4-mtp · last 3s — no registered
+    // run". Gated on `recent` (a stale snapshot's groups must not be named
+    // as live work). The state machine is untouched — only the headline
+    // string changes.
+    const groupPhrases = recent ? topGroupPhrases(lc) : [];
+    if (groupPhrases.length > 0) {
+      const age =
+        lc?.last_call_at && !Number.isNaN(Date.parse(lc.last_call_at))
+          ? ` · last ${elapsed(lc.last_call_at, nowMs)}`
+          : "";
+      return {
+        state: "busy-unregistered",
+        headline: `${groupPhrases.join(" + ")}${age} — no registered run`,
+        evidence,
+      };
+    }
+    // Older backend (no groups[]): the original aggregate phrasing.
     const tag = topCallerTag(lc);
     const model = firstText(lc?.model);
     const parts: string[] = [];

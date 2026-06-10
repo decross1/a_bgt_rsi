@@ -1,8 +1,21 @@
 // LOOP_V0 resolved-iterations list. Polls /api/loop_v0/iterations at ~0.2 Hz
-// and renders past iterations newest-first: id, topic, novelty class,
-// critique verdict, timestamp, and a button that loads the corresponding
-// journal entry (via the `onSelect` callback). See agent/prompts/ui_session.md
-// §"Resolved panel".
+// and renders past iterations newest-first as CONDENSED cards (2026-06-10
+// Task 4): line 1 = mono iteration_id + AT MOST four badges — critique
+// verdict, novelty class, gate_status, and ONE alarm slot (priority
+// low-evidence > redteam fatal/retries > experiment Verdict chip; first
+// present wins) — plus the SourceBadge ONLY for the β `nemoclaw_agent`
+// provenance, and the right-aligned timestamp. Line 2 = the topic clamped to
+// one line (full text in the title attr). Everything else — NoveltyAxesChip,
+// conditioning bullets, the process badge, non-nemoclaw source badges, the
+// displaced alarm chips, the override provenance as visible text — lives in
+// the IterationDetailModal, which a card click opens (the click ALSO keeps
+// the existing `onSelect` journal behavior). Focus returns to the opening
+// card when the modal closes.
+//
+// The shared chip primitives (tone maps, Badge, RedteamChip, ExperimentChip,
+// the scalar guards) moved VERBATIM to IterationDetailModal.tsx and are
+// imported back from there, keeping the dependency one-directional
+// (list → modal).
 //
 // The endpoint returns ALL rows newest-first, which grows without bound. To
 // keep the dashboard a high-level, scannable history this component paginates
@@ -23,43 +36,27 @@
 // another page it offers "go to selected" (jumps to that page); if a filter
 // excludes it entirely it offers "clear filters". onSelect / the selectedId
 // highlight keep working on any visible row.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getIterations } from "../api/http";
 import type { IterationRecord } from "../types/schemas";
-import LowEvidenceBadge from "./LowEvidenceBadge";
-import NoveltyAxesChip from "./NoveltyAxesChip";
+import IterationDetailModal, {
+  Badge,
+  ExperimentChip,
+  GATE_TONE,
+  NOVELTY_TONE,
+  RedteamChip,
+  VERDICT_TONE,
+  badgeText,
+  overrideTooltip,
+  redteamAlarm,
+  seedTopic,
+  shortTimestamp,
+  toneFor,
+} from "./IterationDetailModal";
+import LowEvidenceBadge, { isLowEvidence } from "./LowEvidenceBadge";
 import SourceBadge from "./SourceBadge";
 
 const PAGE_SIZE = 10;
-
-const NOVELTY_TONE: Record<string, string> = {
-  novel: "bg-emerald-950 text-emerald-400",
-  rediscovery: "bg-amber-950 text-amber-400",
-  unclear: "bg-zinc-800 text-zinc-400",
-  nonsense: "bg-red-950 text-red-400",
-};
-
-const VERDICT_TONE: Record<string, string> = {
-  survives: "bg-emerald-950 text-emerald-400",
-  restated: "bg-amber-950 text-amber-400",
-  falsified: "bg-red-950 text-red-400",
-  malformed: "bg-red-950 text-red-400",
-  // "undecidable" (close-out 2026-06-09, EMIT: workers/critic_loop_v0.py) fails
-  // closed — "could not be judged on this retrieval", never promotes. A
-  // DELIBERATE quiet-grey entry, not the unknown-enum fallback: same quiet lane
-  // (no emerald/red/amber alarm), the /40 translucency marks it as intentional.
-  // The forward-compat pins (test_forwardcompat_iterations_list) require the
-  // tone to keep the bg-zinc-800 + text-zinc-400 quiet family.
-  undecidable: "bg-zinc-800/40 text-zinc-400",
-};
-
-// Loop v1 Step 8 human-gate state.
-const GATE_TONE: Record<string, string> = {
-  pending: "bg-sky-950 text-sky-300",
-  valid: "bg-emerald-950 text-emerald-400",
-  invalid: "bg-red-950 text-red-400",
-  needs_revision: "bg-amber-950 text-amber-400",
-};
 
 const NOVELTY_CLASSES = ["novel", "rediscovery", "unclear", "nonsense"] as const;
 const VERDICT_CLASSES = [
@@ -72,166 +69,61 @@ const VERDICT_CLASSES = [
   "undecidable",
 ] as const;
 
-// Tone lookup for the producer-owned enum fields (novelty.class / critique.verdict
-// / gate_status). These are append-only JSONL values, so an UNKNOWN/forward-compat
-// enum (a never-seen class, or a value colliding with an inherited Object.prototype
-// member name — "toString", "constructor", "valueOf", "hasOwnProperty", "__proto__")
-// must fall back to the quiet tone, NOT resolve a prototype function. A bare
-// `MAP[value] ?? fallback` resolves "toString" to `Function.prototype.toString` (a
-// function, not undefined), so `?? fallback` does NOT fire and that function
-// interpolates into className as "function toString() { [native code] }". Own-key
-// lookup only; any unknown value (prototype collision included) takes `fallback`.
-// Mirrors SourceBadge / AgentBadge's prototype-collision guard.
-function toneFor(
-  map: Record<string, string>,
-  key: string | null | undefined,
-  fallback: string,
-): string {
-  if (typeof key !== "string") return fallback;
-  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : fallback;
-}
-
-// Process-status badge. `status` mirrors /api/loop_v0/processes:
-// running / exited_clean / exited_error_<rc> / killed_signal_<sig>.
-// `status` is producer-owned (joined from /api/loop_v0/processes); a malformed
-// row can hand a number/object, and `.startsWith` then throws
-// ("status.startsWith is not a function") and takes the row down. A non-string
-// is treated as "no status" — the `typeof` guards stand in for the previous
-// falsy check.
-function processTone(status: string | undefined): string {
-  if (typeof status !== "string" || !status) return "bg-zinc-800 text-zinc-400";
-  if (status === "running") return "bg-sky-950 text-sky-300";
-  if (status === "exited_clean") return "bg-emerald-950 text-emerald-400";
-  if (status.startsWith("exited_error_")) return "bg-red-950 text-red-400";
-  if (status.startsWith("killed_signal_")) return "bg-red-950 text-red-400";
-  return "bg-zinc-800 text-zinc-400";
-}
-
-function processLabel(status: string | undefined): string | null {
-  if (typeof status !== "string" || !status) return null;
-  if (status === "exited_clean") return "pid clean";
-  if (status === "running") return "pid running";
-  if (status.startsWith("exited_error_")) return `pid err ${status.slice("exited_error_".length)}`;
-  if (status.startsWith("killed_signal_")) return `pid killed ${status.slice("killed_signal_".length)}`;
-  return status;
-}
-
-// `text` is fed producer-owned enum fields (novelty.class / critique.verdict /
-// gate_status). The `string | null | undefined` type is a compile-time fiction
-// over unchecked JSONL: a malformed/legacy row can emit an object or array, and
-// React throws "Objects are not valid as a React child" the moment one reaches
-// {text} — crashing the whole row. Coerce to a safe scalar string: a string /
-// finite number renders as-is; anything without a usable scalar form (object,
-// array, NaN, null, undefined) yields no badge rather than a throw.
-function badgeText(text: string | null | undefined): string {
-  if (typeof text === "string") return text;
-  if (typeof text === "number") return Number.isFinite(text) ? String(text) : "";
-  return "";
-}
-
-// Skeptic-gate override provenance (close-out 2026-06-09):
-// verdict_overridden_from / skeptic_verdict are plain strings that may appear
-// on BOTH the novelty and critique blocks (absent on legacy rows). Surface
-// them as a title tooltip on that block's badge — tooltip only, no new chip.
-// Producer-owned: a garbled field (object/array, per the forward-compat pins)
-// is dropped via badgeText so "[object Object]" can never land in the title
-// attribute. Returns undefined (no tooltip) when neither field is usable.
-function overrideTooltip(
+// T3.1 (close-out follow-up, Task-0 item 9): the tooltip alone made overrides
+// invisible to a scanning eye. When a block carries a USABLE
+// verdict_overridden_from, render a quiet inline hint ("overridden from
+// survives") next to that block's badge, with the fuller story
+// (override_reason / skeptic_verdict) in ITS title tooltip — the badge's own
+// pinned two-part tooltip (test_undecidable_verdict exact-string pins) stays
+// untouched, which is why `reason:` lives here and not there. The modal
+// additionally shows all three as VISIBLE text. Garbled (object/array)
+// fields drop via badgeText — no hint, never "[object Object]".
+function OverriddenFromHint({
+  block,
+}: {
   block:
-    | { verdict_overridden_from?: unknown; skeptic_verdict?: unknown }
+    | {
+        verdict_overridden_from?: unknown;
+        override_reason?: unknown;
+        skeptic_verdict?: unknown;
+      }
     | null
-    | undefined,
-): string | undefined {
+    | undefined;
+}) {
   const from = badgeText(
     block?.verdict_overridden_from as string | null | undefined,
   );
-  const skeptic = badgeText(block?.skeptic_verdict as string | null | undefined);
-  const parts: string[] = [];
-  if (from) parts.push(`overridden from ${from}`);
-  if (skeptic) parts.push(`skeptic said ${skeptic}`);
-  return parts.length > 0 ? parts.join("; ") : undefined;
-}
-
-function Badge({
-  text,
-  tone,
-  title,
-}: {
-  text: string | null | undefined;
-  tone: string;
-  title?: string;
-}) {
-  const safe = badgeText(text);
-  if (!safe) return null;
+  if (!from) return null;
+  const reason = badgeText(block?.override_reason as string | null | undefined);
+  const parts = [overrideTooltip(block) ?? `overridden from ${from}`];
+  if (reason) parts.push(`reason: ${reason}`);
   return (
     <span
-      title={title}
-      className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${tone}`}
+      data-testid="overridden-from-hint"
+      title={parts.join("; ")}
+      className="text-[10px] lowercase tracking-wide text-zinc-500"
     >
-      {safe}
+      overridden from {from}
     </span>
   );
 }
 
-// Loop v1 Step 2.5 red-team chip. Highlighted (red) when the critic ruled
-// fatal_flaw OR any revision retries were spent — those are the rows a
-// human most needs to eyeball. A clean "proceed / 0 retries" pass renders
-// quiet zinc. Returns null when no redteam block is present (pre-v1 rows).
-function RedteamChip({
-  redteam,
-}: {
-  redteam: IterationRecord["redteam"];
-}) {
-  if (!redteam || (redteam.verdict == null && redteam.retries_used == null)) {
-    return null;
+// The condensed card's ONE alarm slot (handoff Task 4): priority
+// low-evidence > redteam fatal/retries > experiment Verdict chip — the first
+// present wins. The displaced chips are not lost; they render in the detail
+// modal (sections 3/4/6). A clean redteam proceed/0 pass is NOT an alarm and
+// is modal-only.
+function AlarmSlot({ row }: { row: IterationRecord }) {
+  if (isLowEvidence(row)) return <LowEvidenceBadge record={row} />;
+  if (redteamAlarm(row.redteam)) return <RedteamChip redteam={row.redteam} />;
+  if (
+    row.experiment_outcome != null &&
+    typeof row.experiment_outcome === "object" &&
+    !Array.isArray(row.experiment_outcome)
+  ) {
+    return <ExperimentChip outcome={row.experiment_outcome} />;
   }
-  const retries = redteam.retries_used ?? 0;
-  const fatal = redteam.verdict === "fatal_flaw";
-  const highlight = fatal || retries > 0;
-  const tone = highlight
-    ? "bg-red-950 text-red-400"
-    : "bg-zinc-800 text-zinc-400";
-  const label = `redteam ${redteam.verdict ?? "?"}${
-    retries > 0 ? ` · ${retries} retr${retries === 1 ? "y" : "ies"}` : ""
-  }`;
-  return (
-    <span
-      data-testid="redteam-chip"
-      className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${tone}`}
-    >
-      {label}
-    </span>
-  );
-}
-
-// ended_at is producer-owned: a legacy/buggy row can emit it as a number
-// (epoch), object, or garbage rather than an ISO string. `.replace` then
-// throws ("iso.replace is not a function") and crashes the whole row. Treat a
-// non-string as no-timestamp ("—") rather than throwing; a string passes
-// through unchanged.
-function shortTimestamp(iso: unknown): string {
-  if (typeof iso !== "string" || !iso) return "—";
-  return iso.replace("T", " ").replace("Z", "");
-}
-
-// loop_memory.jsonl is producer-owned; a buggy/legacy row can emit
-// meta_review.conditioning_bullets as a bare string (not a list) or with junk
-// entries (null, numbers, objects). A non-array used to crash the whole list
-// via `.map`, and a raw-object entry crashes React's child renderer. Return
-// only the string bullets so one bad row degrades to "no bullets" instead of
-// blanking the page.
-function conditioningBullets(row: IterationRecord): string[] {
-  const bullets = row.meta_review?.conditioning_bullets;
-  if (!Array.isArray(bullets)) return [];
-  return bullets.filter((b): b is string => typeof b === "string");
-}
-
-// seed.topic is likewise producer-owned: coerce a non-string topic to a safe
-// string so neither the topic filter (`.toLowerCase()`) nor the row render
-// throws on a malformed row.
-function seedTopic(row: IterationRecord): string {
-  const topic = row.seed?.topic;
-  return typeof topic === "string" ? topic : "";
+  return null;
 }
 
 // A small dark-mode select styled to match the panel idiom.
@@ -287,6 +179,14 @@ export default function ResolvedIterationsList({
   const [verdict, setVerdict] = useState("");
   const [topic, setTopic] = useState("");
   const [page, setPage] = useState(0);
+
+  // Detail-modal state: the clicked ROW SNAPSHOT (not just the id — duplicate
+  // iteration_ids exist on the append-only log, and a poll may swap `rows`
+  // under the open modal; the snapshot keeps the modal honest about what was
+  // clicked). `openerRef` holds the opening card button so focus returns to
+  // it when the modal closes (the Task-4 dialog contract).
+  const [openRow, setOpenRow] = useState<IterationRecord | null>(null);
+  const openerRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (initial !== undefined) return;
@@ -532,7 +432,14 @@ export default function ResolvedIterationsList({
               <li key={`${row.iteration_id || "iter"}-${i}`}>
                 <button
                   type="button"
-                  onClick={() => onSelect?.(row.iteration_id)}
+                  onClick={(e) => {
+                    // The click keeps the existing journal behavior AND
+                    // opens the detail modal (Task 4) — opening the modal
+                    // selects the iteration.
+                    onSelect?.(row.iteration_id);
+                    openerRef.current = e.currentTarget;
+                    setOpenRow(row);
+                  }}
                   className={
                     selected
                       ? "block w-full rounded border border-emerald-700 bg-emerald-950/30 px-2 py-1.5 text-left hover:bg-emerald-950/50"
@@ -540,24 +447,13 @@ export default function ResolvedIterationsList({
                   }
                   aria-label={`load journal ${row.iteration_id}`}
                 >
+                  {/* LINE 1 — id + max 4 badges + β provenance + timestamp.
+                      Override provenance stays tooltip-only here; the modal
+                      shows it as visible text. */}
                   <div className="flex flex-wrap items-baseline gap-2 text-xs">
                     <span className="font-mono text-zinc-200">
                       {row.iteration_id}
                     </span>
-                    <Badge
-                      text={row.novelty?.class}
-                      tone={toneFor(
-                        NOVELTY_TONE,
-                        row.novelty?.class,
-                        "bg-zinc-800 text-zinc-400",
-                      )}
-                      title={overrideTooltip(row.novelty)}
-                    />
-                    {/* Decomposed novelty judgment (close-out 2026-06-09):
-                        phenomenon/substrate/predicted_direction as one chip;
-                        cyan marks the transfer/replication bucket. Renders
-                        nothing on legacy/sentinel rows (axes null/absent). */}
-                    <NoveltyAxesChip axes={row.novelty?.novelty_axes} />
                     <Badge
                       text={row.critique?.verdict}
                       tone={toneFor(
@@ -567,48 +463,39 @@ export default function ResolvedIterationsList({
                       )}
                       title={overrideTooltip(row.critique)}
                     />
-                    <RedteamChip redteam={row.redteam} />
+                    <OverriddenFromHint block={row.critique} />
+                    <Badge
+                      text={row.novelty?.class}
+                      tone={toneFor(
+                        NOVELTY_TONE,
+                        row.novelty?.class,
+                        "bg-zinc-800 text-zinc-400",
+                      )}
+                      title={overrideTooltip(row.novelty)}
+                    />
+                    <OverriddenFromHint block={row.novelty} />
                     <Badge
                       text={row.gate_status}
                       tone={toneFor(GATE_TONE, row.gate_status, "")}
                     />
-                    <Badge
-                      text={processLabel(row.process_status)}
-                      tone={processTone(row.process_status)}
-                    />
-                    {/* Provenance: where this iteration was seeded from —
-                        the in-sandbox NemoClaw agent (violet) / the host
-                        coordinator (sky) / a human (zinc) / … — so EVERY row's
-                        origin is legible, not just the coordinator-driven ones. */}
-                    <SourceBadge source={row.seed?.source} />
-                    {/* The verdict rests on thin/off-domain retrieval — flag it
-                        so a false novel/survives doesn't read as trustworthy. */}
-                    <LowEvidenceBadge record={row} />
+                    <AlarmSlot row={row} />
+                    {/* β provenance is the ONE origin worth row-level ink:
+                        the in-sandbox NemoClaw agent choosing its own thesis.
+                        Every other source reads in the modal. */}
+                    {row.seed?.source === "nemoclaw_agent" && (
+                      <SourceBadge source={row.seed.source} />
+                    )}
                     <span className="ml-auto font-mono text-[10px] text-zinc-500">
                       {shortTimestamp(row.ended_at)}
                     </span>
                   </div>
+                  {/* LINE 2 — topic clamped to one line; full text in title. */}
                   {seedTopic(row) && (
-                    <div className="mt-1 text-xs text-zinc-300">
-                      {seedTopic(row)}
-                    </div>
-                  )}
-                  {conditioningBullets(row).length > 0 && (
-                    // Loop v1 Step 1.5: the prior-memory bullets that
-                    // conditioned this iteration. Shown so the human can see
-                    // what the loop carried forward into the run.
                     <div
-                      data-testid={`conditioning-${row.iteration_id}`}
-                      className="mt-1.5 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1"
+                      className="mt-1 truncate text-xs text-zinc-300"
+                      title={seedTopic(row)}
                     >
-                      <div className="text-[10px] uppercase tracking-wide text-zinc-500">
-                        conditioned by
-                      </div>
-                      <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-[11px] text-zinc-400">
-                        {conditioningBullets(row).map((bullet, i) => (
-                          <li key={i}>{bullet}</li>
-                        ))}
-                      </ul>
+                      {seedTopic(row)}
                     </div>
                   )}
                 </button>
@@ -646,6 +533,19 @@ export default function ResolvedIterationsList({
             next
           </button>
         </div>
+      )}
+
+      {/* Detail modal — mounted ONLY while open (its <dialog> calls
+          showModal() on mount). Closing restores focus to the opening card. */}
+      {openRow && (
+        <IterationDetailModal
+          row={openRow}
+          onClose={() => {
+            setOpenRow(null);
+            openerRef.current?.focus();
+            openerRef.current = null;
+          }}
+        />
       )}
     </div>
   );

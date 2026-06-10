@@ -1,3 +1,7 @@
+/* Shared design tokens first (synced copy, scripts/check_design_tokens.py):
+   canonical hexes for custom styles + the brain mirror. Tailwind utility
+   classes stay literal — v4 extracts them from class strings, not from here. */
+@import "./tokens.css";
 @import "tailwindcss";
 
 :root {

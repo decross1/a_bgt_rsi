@@ -381,3 +381,150 @@ def test_live_real_data_has_pending_gate_items_with_required_keys(tmp_path):
     # Oldest-first ordering holds on live data too.
     sinces = [i["since"] for i in body["items"]]
     assert sinces == sorted(sinces)
+
+
+# ─── dev-session deferrals (D-046 additive fold) ───────────────────────
+# memory/dev_session_queue.jsonl is folded by ref_id, LAST status wins
+# (defer appends status:"open", close appends status:"closed"). An item
+# whose ref_id has an open deferral is tagged deferred: true (+ the
+# deferral note/by/at) — STILL listed, STILL counted. No existing keys
+# change on untagged items.
+
+
+def _pending_gate_rows(tmp_path) -> None:
+    _write_jsonl(tmp_path / "coord_memory" / "loop_memory.jsonl", [
+        {"iteration_id": "iter-2026-06-09-001", "gate_status": "pending",
+         "ended_at": "2026-06-09T18:00:00Z",
+         "seed": {"topic": "deferral fold subject"}},
+    ])
+
+
+def test_open_deferral_tags_item_still_listed_and_counted(tmp_path):
+    client = _client(tmp_path)
+    _pending_gate_rows(tmp_path)
+    _write_jsonl(tmp_path / "coord_memory" / "dev_session_queue.jsonl", [
+        {"ref_id": "iter-2026-06-09-001", "kind": "gate_verdict",
+         "note": "needs the primary session's judgement", "status": "open",
+         "attested_by": "human:ui", "deferred_at": "2026-06-10T09:00:00Z"},
+    ])
+    body = client.get("/api/human_todo").json()
+    # A deferral assigns the work; it does not resolve the item.
+    assert body["counts"]["gate_verdict"] == 1
+    [item] = body["items"]
+    assert item["id"] == "iter-2026-06-09-001"
+    assert item["deferred"] is True
+    assert item["deferral"] == {
+        "note": "needs the primary session's judgement",
+        "by": "human:ui",
+        "at": "2026-06-10T09:00:00Z",
+    }
+    # Existing item keys are intact alongside the additive tag.
+    assert _ITEM_KEYS <= set(item)
+
+
+def test_deferral_fold_last_status_wins_closed_untags(tmp_path):
+    client = _client(tmp_path)
+    _pending_gate_rows(tmp_path)
+    _write_jsonl(tmp_path / "coord_memory" / "dev_session_queue.jsonl", [
+        {"ref_id": "iter-2026-06-09-001", "kind": "gate_verdict",
+         "note": "park it", "status": "open", "attested_by": "human:ui",
+         "deferred_at": "2026-06-10T09:00:00Z"},
+        {"ref_id": "iter-2026-06-09-001", "status": "closed",
+         "note": "handled in dev session", "closed_by": "human",
+         "closed_at": "2026-06-10T10:00:00Z"},
+    ])
+    body = client.get("/api/human_todo").json()
+    # Item still pending (no loop_feedback row) but no longer deferred.
+    assert body["counts"]["gate_verdict"] == 1
+    [item] = body["items"]
+    assert "deferred" not in item
+    assert "deferral" not in item
+
+
+def test_deferral_fold_reopen_after_close_wins_with_freshest_note(tmp_path):
+    client = _client(tmp_path)
+    _pending_gate_rows(tmp_path)
+    _write_jsonl(tmp_path / "coord_memory" / "dev_session_queue.jsonl", [
+        {"ref_id": "iter-2026-06-09-001", "kind": "gate_verdict",
+         "note": "first deferral", "status": "open",
+         "attested_by": "human:ui", "deferred_at": "2026-06-10T09:00:00Z"},
+        {"ref_id": "iter-2026-06-09-001", "status": "closed",
+         "note": "thought it was done", "closed_by": "human",
+         "closed_at": "2026-06-10T10:00:00Z"},
+        {"ref_id": "iter-2026-06-09-001", "kind": "gate_verdict",
+         "note": "reopened — still unresolved", "status": "open",
+         "attested_by": "human:ui", "deferred_at": "2026-06-10T11:00:00Z"},
+    ])
+    body = client.get("/api/human_todo").json()
+    [item] = body["items"]
+    assert item["deferred"] is True
+    assert item["deferral"]["note"] == "reopened — still unresolved"
+    assert item["deferral"]["at"] == "2026-06-10T11:00:00Z"
+
+
+def test_deferral_tags_non_gate_kinds_too(tmp_path):
+    client = _client(tmp_path)
+    _write_jsonl(tmp_path / "coord_memory" / "coordinator_bubbles.jsonl", [
+        {"timestamp": "2026-06-09T10:06:00Z", "run_id": "cyc-007",
+         "note": "eyeball this retrieval"},
+    ])
+    _write_jsonl(tmp_path / "coord_memory" / "dev_session_queue.jsonl", [
+        {"ref_id": "cyc-007", "kind": "bubble_ack",
+         "note": "ack after the rerun", "status": "open",
+         "attested_by": "human:ui", "deferred_at": "2026-06-10T09:30:00Z"},
+    ])
+    body = client.get("/api/human_todo").json()
+    assert body["counts"]["bubble_ack"] == 1
+    [item] = body["items"]
+    assert item["kind"] == "bubble_ack"
+    assert item["deferred"] is True
+    assert item["deferral"]["by"] == "human:ui"
+
+
+def test_deferral_for_unknown_ref_id_is_ignored(tmp_path):
+    client = _client(tmp_path)
+    _pending_gate_rows(tmp_path)
+    _write_jsonl(tmp_path / "coord_memory" / "dev_session_queue.jsonl", [
+        {"ref_id": "no-such-item", "kind": "finding_review",
+         "note": "orphan deferral", "status": "open",
+         "attested_by": "human:ui", "deferred_at": "2026-06-10T09:00:00Z"},
+    ])
+    body = client.get("/api/human_todo").json()
+    assert body["counts"]["gate_verdict"] == 1
+    [item] = body["items"]
+    assert "deferred" not in item    # the orphan tags nothing
+
+
+def test_undeferred_items_gain_no_new_keys(tmp_path):
+    """No existing keys change — and items WITHOUT an open deferral keep
+    exactly the pre-fold shape (the additive keys appear only on tagged
+    items)."""
+    client = _client(tmp_path)
+    _pending_gate_rows(tmp_path)
+    # An absent dev_session_queue.jsonl is the common live case.
+    body = client.get("/api/human_todo").json()
+    [item] = body["items"]
+    assert set(item) == _ITEM_KEYS
+
+
+def test_malformed_dev_queue_rows_never_500(tmp_path):
+    client = _client(tmp_path)
+    _pending_gate_rows(tmp_path)
+    path = tmp_path / "coord_memory" / "dev_session_queue.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "not-json\n"
+        "42\n"                                   # JSON, but not a row record
+        '{"status": "open", "note": "row with no ref_id"}\n'
+        '{"ref_id": "", "status": "open"}\n'     # empty ref_id: skipped
+        '{"ref_id": "iter-2026-06-09-001", "status": "wat"}\n'  # unknown status
+        '{"ref_id": "iter-2026-06-09-001", "kind": "gate_verdict",'
+        ' "note": "survives noise", "status": "open",'
+        ' "attested_by": "human:ui", "deferred_at": "2026-06-10T09:00:00Z"}\n',
+        encoding="utf-8",
+    )
+    resp = client.get("/api/human_todo")
+    assert resp.status_code == 200
+    [item] = resp.json()["items"]
+    assert item["deferred"] is True
+    assert item["deferral"]["note"] == "survives noise"

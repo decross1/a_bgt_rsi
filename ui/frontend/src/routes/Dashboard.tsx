@@ -179,6 +179,16 @@ export default function Dashboard() {
         <span className="text-zinc-500">backend {health?.version ?? "?"}</span>
       </div>
 
+      {/* INBOX HERO: everything blocked on the human (gate verdicts,
+          finding reviews, unacked bubbles, …). First by design — it is the
+          human's one-decision surface, above even the health verdict. This
+          is the SINGLE dashboard mount of HumanTodoPanel (the /todo route
+          is a separate, page-width view; routes are exclusive, so only one
+          instance ever polls at a time). */}
+      <div className="mt-3">
+        <HumanTodoPanel />
+      </div>
+
       {/* HERO: composed health verdict. */}
       <div className="mt-3">
         <HealthVerdict
@@ -211,13 +221,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* HUMAN TODO: everything blocked on the human (gate verdicts,
-          finding reviews, unacked bubbles, …). Prominent by design — it is
-          the human's queue, above the per-system panels. */}
-      <div className="mt-2">
-        <HumanTodoPanel />
-      </div>
-
       {/* Health row: host/GPU strip + both model-server panels side-by-side.
           Gemma (primary orchestrator) first, Qwen (staged sub-agent) second.
           Stacked on narrow screens. */}
@@ -226,8 +229,8 @@ export default function Dashboard() {
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <VllmPanel samples={cleanSamples} />
-        <QwenPanel samples={cleanSamples} />
+        <VllmPanel samples={cleanSamples} liveCalls={liveCalls} />
+        <QwenPanel samples={cleanSamples} liveCalls={liveCalls} />
       </div>
 
       {/* LOOP_V0 high-level glance: compact active line + launcher. */}
@@ -268,8 +271,12 @@ export default function Dashboard() {
         <summary className="cursor-pointer list-none text-xs font-medium uppercase tracking-wide text-zinc-500 hover:text-zinc-300">
           <span className="group-open:hidden">▸ recent iterations</span>
           <span className="hidden group-open:inline">▾ recent iterations</span>
+          {/* T1.6: a Link inside a <summary> both navigates AND toggles the
+              disclosure — stop the click from reaching the summary so the
+              link only navigates. */}
           <Link
             to="/activity"
+            onClick={(e) => e.stopPropagation()}
             className="ml-3 text-[11px] font-normal normal-case tracking-normal text-zinc-600 hover:text-zinc-300"
           >
             drill into activity →

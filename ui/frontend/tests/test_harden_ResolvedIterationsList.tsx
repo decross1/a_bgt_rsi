@@ -667,10 +667,13 @@ describe("ResolvedIterationsList hardening — r5: empty-vs-absent collections +
   it("survives boundary redteam.retries_used (NaN / Infinity / negative) — no NaN, no spurious retry suffix", () => {
     // `retries_used` is producer-owned. The retry suffix must only show for a
     // real positive count; NaN/Infinity/negative must not leak into the label.
-    // The redteam chip carries a data-testid, so assert on IT (not the whole row
-    // text, which also contains the topic) — the chip is where a bad number leaks.
     // Topics deliberately avoid the substrings "NaN"/"retr"/"-3"/"Infinity" so the
     // assertions catch a leak from the NUMBER, not from the topic text.
+    //
+    // 2026-06-10 condensed-row note: a NaN retries count reads as a CLEAN
+    // pass (NaN > 0 is false, verdict "proceed"), and clean redteam chips
+    // moved to the detail modal — so the NaN row now renders NO row chip at
+    // all (the alarm slot rejects it), which is itself the no-leak outcome.
     const nan = {
       iteration_id: "iter-nan",
       started_at: "2026-06-09T11:20:00Z",
@@ -681,10 +684,8 @@ describe("ResolvedIterationsList hardening — r5: empty-vs-absent collections +
     } as unknown as IterationRecord;
 
     const { container } = expectSurvives(nan, "iter-nan");
-    const nanChip = screen.getByTestId("redteam-chip");
-    // NaN > 0 is false → no "· N retr..." suffix (reads as a clean 0-retry pass).
-    expect(nanChip.textContent ?? "").not.toMatch(/retr/);
-    expect(nanChip.textContent ?? "").not.toMatch(/NaN/);
+    // NaN > 0 is false → clean pass → quiet chip lives in the modal, not the row.
+    expect(screen.queryByTestId("redteam-chip")).toBeNull();
     expect(container.innerHTML).not.toMatch(/NaN/);
 
     // Negative count: likewise no suffix, no leaked number, no throw.

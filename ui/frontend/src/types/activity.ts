@@ -107,8 +107,27 @@ export interface ActiveRun {
   narration?: string | null;
   model?: string | null;
   n_err?: number | null;
+  // ADDITIVE (D-047 multi-run registry): refreshed on every update; the
+  // NowBoard's stale signal is `now - heartbeat_at > 120s`. Absent on
+  // pre-D-047 docs.
+  heartbeat_at?: string | null;
+  // ADDITIVE: true when GET /api/activity/active_runs fell back to wrapping
+  // the legacy single-slot active_run.json mirror (pre-D-047 apparatus).
+  // Such a run has no heartbeat semantics — staleness uses its freshest
+  // timestamp instead.
+  legacy_mirror?: boolean;
   // Unknown keys a later run-driver revision may add are preserved.
   [key: string]: unknown;
+}
+
+// GET /api/activity/active_runs — the D-047 multi-run registry (NowBoard
+// source). `runs` carries one doc per live run (or one legacy_mirror-wrapped
+// doc on a pre-D-047 apparatus); `skipped` counts malformed registry files
+// the backend dropped rather than 500ing on.
+export interface ActiveRunsResponse {
+  runs: ActiveRun[];
+  skipped?: number;
+  generated_at?: string;
 }
 
 // Recent wrapper-call activity (from the call-log tail). `active` is the
@@ -120,6 +139,21 @@ export interface LiveCallTag {
   count: number;
 }
 
+// One (caller_tag, model, backend, run_id) aggregate from _live_calls()'s
+// `groups[]` (2026-06-10 EMIT, additive). `backend`/`run_id` are PASSTHROUGH
+// from the call record — `backend` is stamped by the 2026-06-10 EMIT and null
+// on older rows; `run_id` is optional. The backend never fabricates either,
+// and neither may the renderer (a null backend renders as absent, never
+// guessed from the model name).
+export interface LiveCallGroup {
+  tag: string | null;
+  model: string | null;
+  backend: string | null;
+  run_id: string | null;
+  count: number;
+  last_call_at: string | null;
+}
+
 export interface LiveCalls {
   active: boolean;
   count: number;
@@ -128,6 +162,14 @@ export interface LiveCalls {
   last_call_at: string | null;
   caller_tags: LiveCallTag[];
   model: string | null;
+  // ADDITIVE (2026-06-10): per-(tag, model, backend, run_id) aggregates,
+  // count-desc, capped server-side. Absent on an older backend — consumers
+  // must fall back to the aggregate fields above.
+  groups?: LiveCallGroup[];
+  // True when the server-side cap dropped groups; `other_count` is the number
+  // of CALLS in the dropped groups (sum(groups[].count) + other_count == count).
+  groups_truncated?: boolean;
+  other_count?: number;
 }
 
 export interface MonitorResponse {

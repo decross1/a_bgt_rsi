@@ -1,19 +1,30 @@
-// ResolvedIterationsList renders past iterations newest-first with
-// novelty/critique badges, the topic, and a click handler that surfaces
-// the selected iteration id to the parent so JournalScroll can load it.
+// ResolvedIterationsList renders past iterations newest-first as CONDENSED
+// cards (2026-06-10 Task 4): line 1 = mono id + max-4 badges (critique
+// verdict, novelty class, gate_status, ONE alarm slot) + nemoclaw-only
+// SourceBadge + timestamp; line 2 = the topic clamped to one line. A card
+// click keeps the original onSelect journal behavior AND opens the
+// IterationDetailModal, where everything that left the row (axes chip,
+// conditioning bullets, process badge, non-nemoclaw source badges, displaced
+// alarm chips) now renders — the "modal scope" describes below pin that move.
 //
 // Beyond the original render/select/empty contract these tests cover the
 // client-side bounding added on top of the unbounded endpoint: pagination
 // (default 10 rows/page), composable filters (novelty class, critique
 // verdict, free-text topic search over seed.topic), the "showing X of Y"
 // count, and the poll-does-not-reset-the-user's-view invariant.
+//
+// Tests that OPEN the modal wrap the list in MemoryRouter (the modal's links
+// section renders react-router <Link>s) and stub getCoordinatorCycles (the
+// modal's cycle-join fetch must never hit a live backend from a test).
 import {
   fireEvent,
   render,
   screen,
   within,
 } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import ResolvedIterationsList from "../src/components/ResolvedIterationsList";
+import * as http from "../src/api/http";
 import { ITERATIONS_FIXTURE } from "../src/fixtures/loop_v0";
 import {
   ITERATIONS_COORD_FIXTURE,
@@ -23,6 +34,27 @@ import type { IterationRecord } from "../src/types/schemas";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const PAGE_SIZE = 10;
+
+// Stub the modal's coordinator-cycle join so opening a card never reaches a
+// network; tests asserting the cycle link stage their own resolved value.
+function stubCycles() {
+  return vi
+    .spyOn(http, "getCoordinatorCycles")
+    .mockResolvedValue({ cycles: [] });
+}
+
+// Render the list inside a router (required by the modal's <Link>s) and open
+// the detail modal for `id` by clicking its card. Returns the dialog element.
+function renderAndOpen(rows: IterationRecord[], id: string): HTMLElement {
+  stubCycles();
+  render(
+    <MemoryRouter>
+      <ResolvedIterationsList initial={rows} />
+    </MemoryRouter>,
+  );
+  fireEvent.click(screen.getByLabelText(`load journal ${id}`));
+  return screen.getByTestId("iteration-detail-modal");
+}
 
 // Build N synthetic rows, newest-first by ended_at, cycling through the
 // novelty/verdict classes so filters have something to bite on.
@@ -49,6 +81,13 @@ function visibleRowCount(): number {
   return screen.queryAllByRole("button", { name: /^load journal / }).length;
 }
 
+// File-wide hygiene: the modal helpers above spy on api/http — never let a
+// stub leak across tests (the poll describe additionally restores in its own
+// afterEach; restoring twice is harmless).
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("ResolvedIterationsList — original contract", () => {
   it("renders rows with id, topic, novelty and verdict badges", () => {
     render(<ResolvedIterationsList initial={ITERATIONS_FIXTURE} />);
@@ -68,17 +107,28 @@ describe("ResolvedIterationsList — original contract", () => {
     expect(list.getByText("restated")).toBeInTheDocument();
   });
 
-  it("invokes onSelect with the iteration id when a row is clicked", () => {
+  it("invokes onSelect with the iteration id when a row is clicked AND opens the detail modal", () => {
+    // The card click serves BOTH behaviors (Task 4): the existing journal
+    // selection callback and the new detail modal. Router + cycles stub
+    // because the click mounts the modal.
+    stubCycles();
     const onSelect = vi.fn();
     render(
-      <ResolvedIterationsList
-        initial={ITERATIONS_FIXTURE}
-        onSelect={onSelect}
-      />,
+      <MemoryRouter>
+        <ResolvedIterationsList
+          initial={ITERATIONS_FIXTURE}
+          onSelect={onSelect}
+        />
+      </MemoryRouter>,
     );
     const button = screen.getByLabelText(/load journal iter-2026-05-26-001/);
     fireEvent.click(button);
     expect(onSelect).toHaveBeenCalledWith("iter-2026-05-26-001");
+    const modal = screen.getByTestId("iteration-detail-modal");
+    expect(modal).toBeInTheDocument();
+    expect(within(modal).getByTestId("modal-verdict-header")).toHaveTextContent(
+      "iter-2026-05-26-001",
+    );
   });
 
   it("highlights the selected row", () => {
@@ -425,24 +475,19 @@ describe("ResolvedIterationsList — selection across filter/page", () => {
 });
 
 describe("ResolvedIterationsList — preserved badges + null-safety", () => {
-  it("renders the process_status pid badge and keeps it under filtering", () => {
+  it("process badge moved to the MODAL (intentional contract change 2026-06-10): not in the row, shown on open", () => {
+    // Pre-condense this badge rendered in the row; Task 4 moved it to the
+    // detail modal's verdict header. Pin both halves of the move.
     const rows = makeRows(8);
-    // give a 'novel' row (i=0) a running process so it survives a 'novel' filter
     rows[0] = { ...rows[0], process_status: "running" };
-    // give a 'nonsense' row (i=3) an error process, excluded by the filter
     rows[3] = { ...rows[3], process_status: "exited_error_1" };
-    render(<ResolvedIterationsList initial={rows} />);
-    // both badges visible before filtering
-    expect(screen.getByText("pid running")).toBeInTheDocument();
-    expect(screen.getByText("pid err 1")).toBeInTheDocument();
-    // filter to 'novel' → only iter-000 survives, its pid badge persists,
-    // the excluded row's badge is gone.
-    fireEvent.change(screen.getByLabelText("filter by novelty class"), {
-      target: { value: "novel" },
-    });
-    expect(visibleRowCount()).toBe(2); // i=0,4 are novel
-    expect(screen.getByText("pid running")).toBeInTheDocument();
-    expect(screen.queryByText("pid err 1")).not.toBeInTheDocument();
+    const modal = renderAndOpen(rows, "iter-000");
+    // ROW: no pid badge ink anywhere in the card list.
+    const list = within(screen.getByRole("list"));
+    expect(list.queryByText("pid running")).toBeNull();
+    expect(list.queryByText("pid err 1")).toBeNull();
+    // MODAL: the opened row's process badge renders in the verdict header.
+    expect(within(modal).getByText("pid running")).toBeInTheDocument();
   });
 
   it("tolerates rows with missing ended_at and missing novelty/critique", () => {
@@ -540,6 +585,10 @@ describe("ResolvedIterationsList — poll does not reset the user's view", () =>
       .mockResolvedValue({ iterations: shrunk });
 
     render(<ResolvedIterationsList pollMs={1000} />);
+    // two flushes: the initial-load promise chain needs a second microtask
+    // turn before the pager exists (same depth the sibling tests get
+    // incidentally from their first interaction).
+    await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(0);
 
     // walk to the last page (page 5) before the shrink.
@@ -692,24 +741,42 @@ describe("ResolvedIterationsList — Loop v1 surfacing", () => {
     },
   ];
 
-  it("renders redteam chips, gate badges and conditioning bullets when present", () => {
+  it("ROW: only the ALARMING redteam chip earns the alarm slot; gate badges stay; bullets and the clean chip moved to the modal", () => {
+    // Intentional contract change (2026-06-10 Task 4): the row keeps ONE
+    // alarm slot — iter-v1-a's fatal_flaw/2-retries chip qualifies; iter-v1-b's
+    // clean proceed/0 is quiet and now modal-only. Conditioning bullets left
+    // the row entirely (modal section 5, pinned below).
     render(<ResolvedIterationsList initial={v1Rows} />);
     const chips = screen.getAllByTestId("redteam-chip");
-    expect(chips).toHaveLength(2);
-    // fatal_flaw + retries -> highlighted red; clean proceed/0 -> quiet zinc.
-    const fatal = chips.find((c) => /fatal_flaw/.test(c.textContent ?? ""));
-    expect(fatal!.className).toMatch(/red/);
-    const clean = chips.find((c) => /proceed/.test(c.textContent ?? ""));
-    expect(clean!.className).toMatch(/zinc/);
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveTextContent(/fatal_flaw/);
+    expect(chips[0].className).toMatch(/red/);
 
     // gate_status badge text is unique to the rows (not a filter option).
     expect(screen.getByText("invalid")).toBeInTheDocument();
     expect(screen.getByText("valid")).toBeInTheDocument();
 
-    // conditioning block only on the row that carries meta_review bullets.
-    const cond = screen.getByTestId("conditioning-iter-v1-a");
-    expect(within(cond).getByText("carried bullet one")).toBeInTheDocument();
+    // conditioning blocks render in the modal now, never in a row.
+    expect(screen.queryByTestId("conditioning-iter-v1-a")).toBeNull();
     expect(screen.queryByTestId("conditioning-iter-v1-b")).toBeNull();
+  });
+
+  it("MODAL: conditioning bullets render on open (moved scope)", () => {
+    const modal = renderAndOpen(v1Rows, "iter-v1-a");
+    const cond = within(modal).getByTestId("conditioning-iter-v1-a");
+    expect(within(cond).getByText("carried bullet one")).toBeInTheDocument();
+    expect(within(cond).getByText("carried bullet two")).toBeInTheDocument();
+  });
+
+  it("MODAL: the clean proceed/0 redteam chip renders quiet zinc on open (moved scope)", () => {
+    const modal = renderAndOpen(v1Rows, "iter-v1-b");
+    // The adversarial-record section carries the chip the row no longer shows.
+    const chips = within(modal).getAllByTestId("redteam-chip");
+    expect(chips.length).toBeGreaterThanOrEqual(1);
+    for (const chip of chips) {
+      expect(chip).toHaveTextContent(/proceed/);
+      expect(chip.className).toMatch(/zinc/);
+    }
   });
 
   it("stays quiet on pre-v1 rows (no chips, no conditioning block)", () => {
@@ -719,48 +786,76 @@ describe("ResolvedIterationsList — Loop v1 surfacing", () => {
   });
 });
 
-describe("ResolvedIterationsList — coordinator provenance + low-evidence", () => {
+describe("ResolvedIterationsList — provenance + low-evidence (condensed contract)", () => {
   // ITERATIONS_COORD_FIXTURE: [0] coordinator-source w/ confident retrieval,
   // [1] coordinator-source w/ low_confidence true (the false-novel row), [2] human.
-  it("badges every row's source distinctly and flags low-evidence verdicts", () => {
+  it("ROW: non-nemoclaw source badges moved to the modal; the low-evidence flag stays row-level", () => {
+    // Intentional contract change (2026-06-10 Task 4): only the β
+    // `nemoclaw_agent` provenance earns row-level ink. coordinator/human rows
+    // carry NO row badge — their origin reads in the modal (pinned below).
     render(<ResolvedIterationsList initial={ITERATIONS_COORD_FIXTURE} />);
     const list = within(screen.getByRole("list"));
+    expect(list.queryAllByTestId("source-badge")).toHaveLength(0);
+    expect(list.queryByText("coordinator")).toBeNull();
 
-    // Provenance is now on EVERY row via <SourceBadge>: three rows -> three
-    // source badges. The two coordinator-source rows render the "coordinator"
-    // label (distinct, sky); the human-source row renders its own "human"
-    // label — distinct from coordinator, never mislabeled as one. "coordinator"
-    // is not a filter option, so those chips are the only places it appears.
-    expect(list.getAllByTestId("source-badge")).toHaveLength(3);
-    expect(list.getAllByText("coordinator")).toHaveLength(2);
-
-    // Exactly the off-domain/thin row gets the amber low-evidence flag.
+    // The alarm slot keeps the low-evidence flag at TOP priority: exactly
+    // the off-domain/thin row is amber-flagged, in the row.
     const flags = screen.getAllByTestId("low-evidence-badge");
     expect(flags).toHaveLength(1);
     expect(flags[0].className).toContain("amber");
   });
 
-  it("wires NoveltyAxesChip into the row: every ITERATIONS_OBSERVABILITY_FIXTURE row shows its axes chip", () => {
-    // Presence check only — the chip's own behavior (tone, transfer-bucket
-    // cyan, garbage handling) is fully pinned in test_novelty_axes_chip.tsx.
-    // All three observability-fixture rows carry novelty_axes.
+  it("ROW: a nemoclaw_agent row still badges its β provenance violet", () => {
+    // ITERATIONS_OBSERVABILITY_FIXTURE[0] is seed.source "nemoclaw_agent" —
+    // the one origin worth row-level ink survives the condense.
     render(
-      <ResolvedIterationsList initial={ITERATIONS_OBSERVABILITY_FIXTURE} />,
+      <ResolvedIterationsList initial={[ITERATIONS_OBSERVABILITY_FIXTURE[0]]} />,
     );
     const list = within(screen.getByRole("list"));
-    expect(list.getAllByTestId("novelty-axes-chip")).toHaveLength(
-      ITERATIONS_OBSERVABILITY_FIXTURE.length,
-    );
+    const badge = list.getByTestId("source-badge");
+    expect(badge).toHaveTextContent("nemoclaw");
+    expect(badge.className).toContain("bg-violet-950");
   });
 
-  it("badges a human-seeded row as 'human', not 'coordinator', and flags no low-evidence", () => {
-    // Only the human row, with ok retrieval: it carries its own distinct
-    // "human" source badge (provenance is everywhere), but NOT a coordinator
-    // badge, and no low-evidence flag.
-    render(<ResolvedIterationsList initial={[ITERATIONS_COORD_FIXTURE[2]]} />);
+  it("MODAL: a coordinator-source row shows its source badge on open (moved scope)", () => {
+    const modal = renderAndOpen(
+      ITERATIONS_COORD_FIXTURE,
+      ITERATIONS_COORD_FIXTURE[0].iteration_id,
+    );
+    // The verdict header + hypothesis section both badge the origin.
+    const badges = within(modal).getAllByTestId("source-badge");
+    expect(badges.length).toBeGreaterThanOrEqual(1);
+    expect(badges[0]).toHaveTextContent("coordinator");
+  });
+
+  it("ROW→MODAL: NoveltyAxesChip left the row (moved scope); it renders in the opened row's modal", () => {
+    // Presence check only — the chip's own behavior (tone, transfer-bucket
+    // cyan, garbage handling) is fully pinned in test_novelty_axes_chip.tsx.
+    // All three observability-fixture rows carry novelty_axes; NONE may chip
+    // in the row anymore.
+    const modal = renderAndOpen(
+      ITERATIONS_OBSERVABILITY_FIXTURE,
+      ITERATIONS_OBSERVABILITY_FIXTURE[0].iteration_id,
+    );
     const list = within(screen.getByRole("list"));
+    expect(list.queryAllByTestId("novelty-axes-chip")).toHaveLength(0);
+    // The modal renders the chip (verdict header + evidence section).
+    expect(
+      within(modal).getAllByTestId("novelty-axes-chip").length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  it("badges a human-seeded row in the MODAL as 'human', not 'coordinator'; no low-evidence flag anywhere", () => {
+    const modal = renderAndOpen(
+      [ITERATIONS_COORD_FIXTURE[2]],
+      ITERATIONS_COORD_FIXTURE[2].iteration_id,
+    );
     expect(screen.queryByTestId("low-evidence-badge")).toBeNull();
-    expect(list.queryByText("coordinator")).toBeNull();
-    expect(list.getByTestId("source-badge")).toHaveTextContent(/human/i);
+    const badges = within(modal).getAllByTestId("source-badge");
+    expect(badges.length).toBeGreaterThanOrEqual(1);
+    for (const b of badges) {
+      expect(b).toHaveTextContent(/human/i);
+      expect(b).not.toHaveTextContent("coordinator");
+    }
   });
 });

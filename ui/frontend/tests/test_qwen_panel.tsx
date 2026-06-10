@@ -5,6 +5,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import QwenPanel from "../src/components/QwenPanel";
+import type { LiveCalls } from "../src/types/activity";
 import type { TelemetrySample } from "../src/types/schemas";
 
 function sampleWithQwen(mtpAcceptance: number | null): TelemetrySample {
@@ -139,5 +140,102 @@ describe("QwenPanel", () => {
     // copy-paste from VllmPanel is flagged as a regression.
     render(<QwenPanel samples={[sampleWithQwen(0.82)]} />);
     expect(screen.queryByText(/workload:/i)).not.toBeInTheDocument();
+  });
+});
+
+// "driving: <tag> ×N" sub-line (handoff Task 1 / 2026-06-10): derived ONLY
+// from live-call groups whose `model` EXACTLY equals this panel's served
+// model (qwen3.6-27b-nvfp4-mtp) — no substring matching, absent when none.
+// Groups are CONSTRUCTED (synthetic counts); tags/models/backends are the
+// live names (skeptic_attack + subagent.finding_skeptic_* are today's live
+// qwen drivers).
+describe("QwenPanel driving sub-line", () => {
+  const DRIVING: LiveCalls = {
+    active: true,
+    count: 19,
+    window_s: 60,
+    calls_per_s: 0.32,
+    last_call_at: "2026-06-10T08:00:06.4Z",
+    caller_tags: [{ tag: "skeptic_attack", count: 12 }],
+    model: "qwen3.6-27b-nvfp4-mtp",
+    groups: [
+      {
+        tag: "skeptic_attack",
+        model: "qwen3.6-27b-nvfp4-mtp",
+        backend: "vllm-qwen",
+        run_id: null,
+        count: 12,
+        last_call_at: "2026-06-10T08:00:06.4Z",
+      },
+      {
+        tag: "subagent.finding_skeptic_1",
+        model: "qwen3.6-27b-nvfp4-mtp",
+        backend: "vllm-qwen",
+        run_id: null,
+        count: 5,
+        last_call_at: "2026-06-10T08:00:05.5Z",
+      },
+      {
+        // Gemma-served group — belongs to VllmPanel, not here.
+        tag: "hypothesize",
+        model: "gemma-4-26b-a4b",
+        backend: "vllm-gemma",
+        run_id: "loop_v0_2026-06-10_001",
+        count: 4,
+        last_call_at: "2026-06-10T08:00:05.0Z",
+      },
+      {
+        // NEAR-MISS (constructed): a superstring of the served model name —
+        // exact-match only, must never attribute to this panel.
+        tag: "meta_review",
+        model: "qwen3.6-27b-nvfp4-mtp-quant",
+        backend: null,
+        run_id: null,
+        count: 9,
+        last_call_at: "2026-06-10T08:00:04.0Z",
+      },
+    ],
+  };
+
+  it("renders 'driving: <tag> ×N' from exact-model groups only", () => {
+    render(<QwenPanel samples={[sampleWithQwen(0.8)]} liveCalls={DRIVING} />);
+    const line = screen.getByTestId("qwen-driving");
+    expect(line).toHaveTextContent("driving:");
+    expect(line).toHaveTextContent("skeptic_attack");
+    expect(line).toHaveTextContent("×12");
+    expect(line).toHaveTextContent("subagent.finding_skeptic_1");
+    expect(line).toHaveTextContent("×5");
+    // The gemma-served group and the near-miss model never show here.
+    expect(line.textContent).not.toContain("hypothesize");
+    expect(line.textContent).not.toContain("meta_review");
+  });
+
+  it("renders the sub-line even in the 'no data' body state (load is load)", () => {
+    // The driving derivation comes from the call log, not the sampler —
+    // a panel whose /metrics reader is down can still be the busy backend.
+    render(<QwenPanel samples={[sampleWithoutQwen()]} liveCalls={DRIVING} />);
+    expect(screen.getByTestId("qwen-driving")).toHaveTextContent(
+      "skeptic_attack",
+    );
+  });
+
+  it("is ABSENT when no group's model exactly matches", () => {
+    render(
+      <QwenPanel
+        samples={[sampleWithQwen(0.8)]}
+        liveCalls={{
+          ...DRIVING,
+          groups: DRIVING.groups!.filter(
+            (g) => g.model !== "qwen3.6-27b-nvfp4-mtp",
+          ),
+        }}
+      />,
+    );
+    expect(screen.queryByTestId("qwen-driving")).toBeNull();
+  });
+
+  it("is ABSENT when liveCalls is not provided (additive prop)", () => {
+    render(<QwenPanel samples={[sampleWithQwen(0.8)]} />);
+    expect(screen.queryByTestId("qwen-driving")).toBeNull();
   });
 });
