@@ -74,6 +74,25 @@ this is real data — a future live stream is a separate upgrade. `tokens_target
 
 ## Changelog
 
+- **2026-06-10 (Session 3)** — β-arming + Polymarket paper-strategy shapes:
+  - **`run_state/coordinator_budget.jsonl`** (NEW, append-only): one row per EXECUTED
+    coordinator cycle `{date, timestamp, run_id, spent}`; the cycle refuses to execute
+    when today's total + cycle budget would exceed `COORDINATOR_DAILY_CAP` (default 18).
+    Dry-runs are never charged. `run_state/pause_coordinator` (presence = kill switch)
+    and `run_state/d049_ratified` (presence = the human ratified D-049 scheduled cycles)
+    are SENTINEL files — content ignored.
+  - **`memory/promotion_near_misses.jsonl`** (NEW, append-only): one row per promotion
+    near-miss `{timestamp, source_iteration_id, reason, stage}` — the per-candidate WHY
+    that the cycle log dropped (first live read: 58 rows; recent candidates unanimously
+    refuted 3/3 by the Qwen adversarial panel).
+  - **Coordinator cycle rows**: plans may now name `run_experiment` (cost 5) and
+    `forecast_markets` (cost 3); `state.topic_suggestions[].source` gains
+    `finding_followup` (the `memory/finding_followups.jsonl` queue finally has a consumer).
+  - **`experiments/exp007_polymarket/results/strategy_memo.{json,md}`** (NEW, per-run):
+    schema `schema/strategy_memo.schema.json` — `{strategy_id, created_at,
+    experiment_outcome, edge_analysis (with top_edges), paper_rule, limitations,
+    disclaimer (const)}`. Design-only: the disclaimer is schema-enforced verbatim.
+
 - **2026-06-10** — Provenance EMIT (screenshot-review legibility work; pairs with the
   rewritten `docs/ui_next_session_plan.md`):
   - **`logs/calls.jsonl`**: new OPTIONAL top-level `backend` (backend registry name,

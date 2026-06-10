@@ -2371,3 +2371,120 @@ breaks the live UI contract mid-flight.
 
 **Reversibility.** Delete RUNS_DIR + the contextvar; mirror behavior reverts to the
 single-slot helper.
+
+## D-049 — β-interim bounded autonomy: the coordinator may run unattended cycles ONLY under the pause/ledger/sentinel bounds (DRAFT — awaiting human ratification)
+
+**Date drafted.** 2026-06-10 (Session 3). **Status: DRAFT.** The
+continuous-orchestrator guardrail (CLAUDE.md out-of-scope) stands unchanged until the
+human ratifies this entry; D-040's unattended contract activates at β proper.
+
+**Proposed decision.** Until β (Nara packaged in the sandbox), a bounded HOST-side
+interim is permitted: scheduled coordinator cycles via `cron/run-coordinator.sh`,
+gated by ALL of — (1) the ratification sentinel `run_state/d049_ratified` exists
+(the human creates it to ratify; deleting it un-ratifies); (2) the kill switch
+`run_state/pause_coordinator` does not exist (creating it halts every cycle,
+checked before any LLM call — never bypassed, even supervised); (3) the daily
+executed-cycle ledger `run_state/coordinator_budget.jsonl` stays within
+`COORDINATOR_DAILY_CAP` (default 18 units/day ≈ 3 full cycles; dry-runs uncharged);
+(4) the memory preflight (`preflight_mem_guard`, 30 GiB OS margin hard-pinned)
+passes; (5) cycles run with `NARA_SKEPTIC=1` (the D-044-validated Qwen skeptic in
+the critic seam). The action menu stays the validated constrained space (v2: +
+`run_experiment` — committed-results bridge by default, real re-runs only with
+explicit `run_real`; + `forecast_markets` — exp007 paper sweep, design-only, zero
+trading surface). Supervised soaks (`tools/coordinator_soak.sh --i-am-supervising`,
+human watching) may bypass ONLY the sentinel, never the pause file or ledger.
+
+**To ratify:** `touch run_state/d049_ratified` and add the crontab line in
+`cron/run-coordinator.sh`'s footer. **Reversibility:** delete the sentinel and/or
+crontab line; create the pause file for an immediate halt.
+
+**Alternatives rejected.** Unbounded host-side daemon (violates the guardrail's
+intent); waiting for full β (forfeits months of bounded daily research throughput
+the apparatus is now instrumented to run safely and the UI can observe).
+
+## D-050 — D-045 residuals 1+2: independent topicality attack (R0b) + restatement skeptic at the critic, both env-gated dark
+
+**Date.** 2026-06-10 (session 2, workflow `wf_d4e96978-59a` limbs b2/b3/b4 +
+serial integration). Extends D-044 (vllm-qwen standing skeptic) and D-045
+(residuals named, no further threshold tuning).
+
+**Decision.** Two additive, fail-open seams, each behind its own env gate and
+OFF by default until the pre-registered battery decision run judges them:
+
+1. **Residual 1 — `NARA_TOPICALITY_SKEPTIC=1`**: `orchestrator/topicality.py
+   check()` escalates a non-"off" primary verdict to
+   `orchestrator/topicality_skeptic.attack_topicality()` — an independent
+   vllm-qwen REFUTE-framed domain attack (fail-open `None`, only literal
+   "off" condemns). Skeptic-only condemnation returns the new value
+   `"off_independent"`; `workers/retrieval_relevance.py` gates it as R0 with
+   `rule_fired="R0b"` and a reason naming the independent judge. Targets the
+   domain-BOUNDARY class (fase_off_01) that passes primary R0.
+2. **Residual 2 — `NARA_RESTATE_SKEPTIC=1`**: `workers/critic_loop_v0.py`
+   gains `_maybe_run_restate_skeptic` (mirrors the D-044 hook: lazy import,
+   crash-recorded-never-fatal) in the passed-branch BEFORE the novelty
+   skeptic: `orchestrator/restate_skeptic.restate_attack()` canonicalizes the
+   hypothesis, does fresh retrieval plus the cached novelty top-neighbor
+   union, and judges restatement under the two-axis transfer rule. A
+   "restated" attack verdict demotes survives→restated carrying
+   `verdict_overridden_from` + `restate_verdict` (schema parity added beside
+   D-044's `skeptic_verdict`). Targets the 4 plain-language rediscovery cases.
+
+Battery (`experiments/lit_falsification_battery/battery.py`) carries the new
+per-case provenance fields (additive, default None) so the decision run is
+auditable per case; `cases_residual12_smoke.jsonl` is a 9-row byte-identical
+dev-smoke subset (informational only, never the decision run).
+
+**Pre-registered decision rule (locked BEFORE the real run; baseline =
+`runs/battery_20260609T212352Z.json`, run with `NARA_SKEPTIC=1` + both new
+gates on, judged on ONE full-22 run).** PASS iff ALL: (1) fase_off_01 reaches
+low-confidence-gated, not ungated novel/survives; gate recall 8/8, 0 ungated
+off-domain. (2) ≥3 of {redisc_on_01, redisc_on_03, canary_on_01, canary_on_02}
+reach critic "restated" with non-null contradicting_paper_id; neither
+redisc_on_01 nor redisc_on_03 stays "survives". (3) No regression:
+canary_on_03 stays novel+survives+ungated; redisc_on_02 stays restated; the 7
+baseline-gated off-domain cases stay gated; novel_on_01/novel_on_03 stay
+novel; the on-domain low-confidence set does not grow beyond the baseline
+three. (4) verdict_accuracy ≥ 0.70 (baseline 0.636). Explicitly
+pre-registered: the locked D-045 bar (0.80/1.0/0) is expected to STILL fail
+its accuracy leg — residuals 3–5 are out of scope; the battery exit code may
+be 1 and is judged by THIS rule, not `all_pass` (inviolate rule 4). On FAIL:
+unset the env gates (byte-identical revert), report honestly; at most one
+rule-7 revision cycle on prompt text only, then one re-run.
+
+**Reversibility.** Both seams fail-open and env-gated dark; schema/battery
+changes additive; revert = unset two env vars.
+
+## D-051 — MCP submit+poll seam at the β tool plane (ticket store composed with the D-047 registry)
+
+**Date.** 2026-06-10 (session 2, workflow `wf_d4e96978-59a` limb b1 + serial
+integration). Implements the direction recorded in the 2026-06-10 morning
+note; closes the T2 known gap (OpenClaw MCP client 15s timeout vs the
+~74–479s synchronous `run_loop_iteration`).
+
+**Decision.** Two new tools beside the unchanged pair at
+`orchestrator/tool_plane.py` — `submit_loop_iteration` (returns a
+`mcpsub-…` ticket run_id in milliseconds) and `poll_run` (honest reads
+only) — backed by NEW `orchestrator/submitted_run.py`: an atomic ticket
+store under `run_state/tool_plane_submits/`, a single daemon executor
+thread per submit (latch + the existing one-at-a-time guard; no queue, no
+scheduler, no cancellation), thread body `set_current_agent("nemoclaw_agent")`
+→ `write_active_run(ticket_id, "ad_hoc", …)` → run-log accepted-event →
+`run_iteration(topic, source="nemoclaw_agent")` → ticket finished/failed +
+terminal event → `finally` clear/reset/release. `poll_run` reports
+running/finished/failed/unknown from the ticket + registry +
+`active_iteration.json` (mtime as freshness; 900s informational stale flag;
+pid-mismatch reconciles a dead-server orphan ticket honestly). The sandbox
+can poll ONLY this seam's tickets — host iterations and experiment runs are
+not pollable (containment). Sync `run_loop_iteration` stays byte-compatible
+(T2 evidence + curl smokes unaffected); the D-040/continuous-running
+guardrail is intact: submit is still single-shot, human/agent-triggered, one
+in flight.
+
+**Verification.** 14 hermetic seam tests + plane-level endpoint tests; suite
+1158 green at integration; real-smoke decision rule per the recon design
+(submit <2s; poll converges; verdict fields equal the `loop_memory.jsonl`
+record; a sandbox MCP drive completes without the 15s timeout) — pending the
+next GPU-idle window, see the session note.
+
+**Reversibility.** New module + additive plane endpoints; the sync path is
+unchanged; removing the two tools restores the exact T2 surface.

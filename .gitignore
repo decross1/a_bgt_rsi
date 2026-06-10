@@ -88,3 +88,9 @@ run_state/active_run.json
 run_state/active_runs/
 run_state/*.pre_purge_*
 logs/*.pre_purge_*
+
+# β-interim machine state + sentinels (D-049) — never committed.
+run_state/coordinator_budget.jsonl
+run_state/d049_ratified
+run_state/pause_coordinator
+run_state/.coordinator-cron.lock

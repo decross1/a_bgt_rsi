@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "exp007 paper-strategy memo (PAPER STRATEGY ONLY)",
+  "description": "Record written by experiments/exp007_polymarket/strategy_memo.py. Retrodictive paper accounting on resolved markets; design-only guardrail — zero trading surface. The disclaimer is a const: a memo without the exact paper-only disclaimer is invalid and never written.",
+  "type": "object",
+  "required": ["strategy_id", "created_at", "experiment_outcome", "edge_analysis", "paper_rule", "limitations", "disclaimer"],
+  "additionalProperties": false,
+  "properties": {
+    "strategy_id": {"type": "string", "pattern": "^exp007_polymarket_\\d{8}T\\d{6}Z$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "experiment_outcome": {
+      "type": "object",
+      "required": ["experiment_id", "metric", "value", "trials", "summary", "results_path"],
+      "properties": {
+        "experiment_id": {"const": "exp007_polymarket"},
+        "metric": {"const": "brier_skill_score"},
+        "value": {"type": "number"},
+        "trials": {"type": "integer", "minimum": 0},
+        "summary": {"type": "string", "minLength": 1},
+        "results_path": {"type": "string", "minLength": 1}
+      }
+    },
+    "edge_analysis": {
+      "type": "object",
+      "required": ["threshold", "n_total", "n_resolved", "n_actionable", "mean_abs_edge", "hypothetical_pnl_units", "hit_rate", "assumptions", "top_edges"],
+      "properties": {
+        "threshold": {"type": "number", "exclusiveMinimum": 0},
+        "n_total": {"type": "integer", "minimum": 0},
+        "n_resolved": {"type": "integer", "minimum": 0},
+        "n_actionable": {"type": "integer", "minimum": 0},
+        "mean_abs_edge": {"type": "number"},
+        "hypothetical_pnl_units": {"type": "number"},
+        "hit_rate": {"type": ["number", "null"]},
+        "assumptions": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "top_edges": {"type": "array", "maxItems": 5}
+      }
+    },
+    "paper_rule": {"type": "string", "minLength": 1},
+    "limitations": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "disclaimer": {"const": "PAPER STRATEGY ONLY. No real trading. No live capital at risk. For research purposes only. Do not use to place real orders."}
+  }
+}

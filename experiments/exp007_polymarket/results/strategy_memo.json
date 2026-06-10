@@ -1,0 +1,67 @@
+{
+  "strategy_id": "exp007_polymarket_20260610T164330Z",
+  "created_at": "2026-06-10T16:43:30.156100Z",
+  "experiment_outcome": {
+    "experiment_id": "exp007_polymarket",
+    "metric": "brier_skill_score",
+    "value": -4528257032.844098,
+    "trials": 18,
+    "summary": "Verdict=BELOW_MARKET. Brier Skill Score vs the market-implied probability over 18 resolved markets: -4528257032.8441 (forecasting skill, not trading P&L).",
+    "results_path": "experiments/exp007_polymarket/results/summary.json"
+  },
+  "edge_analysis": {
+    "threshold": 0.05,
+    "n_total": 18,
+    "n_skipped": 0,
+    "n_resolved": 18,
+    "n_actionable": 12,
+    "mean_abs_edge": 0.3755537237945436,
+    "hypothetical_pnl_units": -1.0547250875030043e-06,
+    "hit_rate": 0.0,
+    "assumptions": [
+      "Purely retrodictive paper accounting on RESOLVED markets only; no order is or will be placed (zero trading surface).",
+      "Prices are resolution-time fixture prices (market_prob captured at fetch), not executable quotes.",
+      "No slippage, no fees, no position sizing: hypothetical flat 1-unit stake per actionable market."
+    ],
+    "top_edges": [
+      {
+        "market_id": "63",
+        "edge": 1.0,
+        "side": "yes",
+        "pnl_units": 0.0
+      },
+      {
+        "market_id": "19",
+        "edge": 0.9499989889179474,
+        "side": "yes",
+        "pnl_units": -1.0110820525225415e-06
+      },
+      {
+        "market_id": "64",
+        "edge": 0.75,
+        "side": "yes",
+        "pnl_units": 0.0
+      },
+      {
+        "market_id": "57",
+        "edge": 0.65,
+        "side": "yes",
+        "pnl_units": 0.0
+      },
+      {
+        "market_id": "47",
+        "edge": 0.55,
+        "side": "yes",
+        "pnl_units": 0.0
+      }
+    ]
+  },
+  "paper_rule": "Hypothetical 1-unit stake per actionable market (abs(prob - market_prob) > threshold, resolved markets only): BUY YES at market_prob when edge > +threshold (pnl = outcome - market_prob); BUY NO at 1 - market_prob when edge < -threshold (pnl = (1 - outcome) - (1 - market_prob)). Retrodictive paper accounting only — no order is or will be placed.",
+  "limitations": [
+    "Retrodictive: forecasts were made on already-resolved markets, so this measures calibration against the frozen fetch-time price, not live tradability.",
+    "Fixture prices, no order book: no slippage, no fees, no fill uncertainty, no position sizing; pnl units are not money.",
+    "Small, non-random market sample; hypothetical units do not compound.",
+    "Polymarket is design-only (CLAUDE.md out-of-scope) until CFTC compliance work is done; this memo must never drive a real order."
+  ],
+  "disclaimer": "PAPER STRATEGY ONLY. No real trading. No live capital at risk. For research purposes only. Do not use to place real orders."
+}

@@ -60,6 +60,16 @@ def _no_live_artifacts(tmp_path, monkeypatch):
                         tmp_path / "health_signals.jsonl")
     monkeypatch.setattr(coordinator, "DEFAULT_COORDINATOR_BUBBLES",
                         tmp_path / "coordinator_bubbles.jsonl")
+    # Session-3 β-bound paths (same leak class caught the same day it was
+    # introduced: execute-cycle tests were charging the LIVE daily ledger).
+    monkeypatch.setattr(coordinator, "BUDGET_LEDGER_PATH",
+                        tmp_path / "coordinator_budget.jsonl")
+    monkeypatch.setattr(coordinator, "PAUSE_PATH",
+                        tmp_path / "pause_coordinator")
+    monkeypatch.setattr(coordinator, "DEFAULT_NEAR_MISSES",
+                        tmp_path / "promotion_near_misses.jsonl")
+    monkeypatch.setattr(coordinator, "DEFAULT_FOLLOWUPS",
+                        tmp_path / "finding_followups.jsonl")
     monkeypatch.setattr(nara, "_DEFAULT_LOG_PATH",
                         str(tmp_path / "calls.jsonl"))
     # topicality.check() is driven directly by nara (not via the runtime),

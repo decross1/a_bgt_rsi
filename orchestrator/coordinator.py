@@ -50,6 +50,16 @@ DEFAULT_SURFACED = REPO_ROOT / "memory" / "surfaced_findings.jsonl"
 DEFAULT_FEEDBACK = REPO_ROOT / "memory" / "loop_feedback.jsonl"
 DEFAULT_ACTIVE_RUN = REPO_ROOT / "run_state" / "active_run.json"
 DEFAULT_COORDINATOR_BUBBLES = REPO_ROOT / "memory" / "coordinator_bubbles.jsonl"
+DEFAULT_FOLLOWUPS = REPO_ROOT / "memory" / "finding_followups.jsonl"
+DEFAULT_NEAR_MISSES = REPO_ROOT / "memory" / "promotion_near_misses.jsonl"
+# Pause file: when present, every cycle refuses to run (β kill switch,
+# D-049). Checked BEFORE any registration or LLM call.
+PAUSE_PATH = REPO_ROOT / "run_state" / "pause_coordinator"
+# Daily executed-cycle budget ledger (β bound, D-049): one row per
+# EXECUTED cycle {date, run_id, spent}; a new execute cycle refuses when
+# today's total would exceed the cap. Dry-runs are never charged.
+BUDGET_LEDGER_PATH = REPO_ROOT / "run_state" / "coordinator_budget.jsonl"
+DAILY_BUDGET_CAP = int(os.environ.get("COORDINATOR_DAILY_CAP", "18"))
 
 CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 
@@ -61,6 +71,42 @@ _MAX_REPLANS = 2
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _daily_spent(
+    *, path: str | os.PathLike | None = None, today: str | None = None,
+) -> int:
+    """Sum of `spent` over today's rows in the daily budget ledger.
+    Missing/malformed file -> 0. path=None resolves at call time."""
+    if path is None:
+        path = BUDGET_LEDGER_PATH
+    if today is None:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    total = 0
+    for row in _read_jsonl(path):
+        if row.get("date") == today and isinstance(row.get("spent"), int):
+            total += row["spent"]
+    return total
+
+
+def _charge_daily_ledger(
+    run_id: str, spent: int, *, path: str | os.PathLike | None = None,
+) -> None:
+    """Append one executed-cycle charge row. Append-only; never raises."""
+    if path is None:
+        path = BUDGET_LEDGER_PATH
+    try:
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a") as fh:
+            fh.write(json.dumps({
+                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "timestamp": _utcnow_iso(),
+                "run_id": run_id,
+                "spent": int(spent),
+            }, ensure_ascii=False) + "\n")
+    except Exception:
+        return
 
 
 # ── instrumentation readers (pure, never raise) ──────────────────────────
@@ -159,17 +205,32 @@ def _extract_json(text: str) -> Any | None:
 
 def _topic_suggestions(
     loop_memory_path: str | os.PathLike,
+    *,
+    followups_path: str | os.PathLike | None = None,
 ) -> list[dict[str, str]]:
-    """One morning-loop topic candidate (newest arXiv paper, else a
-    loop-memory gap probe, else a safe fallback). Never raises; degrades to
-    [] so assess_state stays a pure read. Surfacing this is what un-blinds
-    the planner — run_loop_iteration's arg_schema requires a non-empty topic
-    and the planner had no candidate to offer before."""
+    """Topic candidates for the planner. Never raises; degrades to [] so
+    assess_state stays a pure read. Surfacing this is what un-blinds the
+    planner — run_loop_iteration's arg_schema requires a non-empty topic.
+
+    Sources, in order: (1) up to 2 queued human follow-up topics from
+    memory/finding_followups.jsonl (written by finding_session's
+    spawn_topic outcome; this read closes the orphaned-queue gap — the
+    queue finally has a consumer); (2) the morning pick (newest arXiv
+    paper, else a loop-memory gap probe, else a safe fallback).
+    followups_path=None resolves at call time (patchable)."""
+    if followups_path is None:
+        followups_path = DEFAULT_FOLLOWUPS
+    out: list[dict[str, str]] = []
+    for row in _read_jsonl(followups_path)[-2:]:
+        topic = row.get("new_topic")
+        if isinstance(topic, str) and topic.strip():
+            out.append({"topic": topic, "source": "finding_followup"})
     try:
         topic, source = pick_morning_topic(loop_memory_path=loop_memory_path)
+        out.append({"topic": topic, "source": source})
     except Exception:
-        return []
-    return [{"topic": topic, "source": source}]
+        pass
+    return out
 
 
 def assess_state(
@@ -321,7 +382,13 @@ def _planner_system_prompt(budget: int) -> str:
         "worth doing. When the state's 'topic_suggestions' is non-empty and a\n"
         "loop iteration is worthwhile, use a suggested topic VERBATIM as the\n"
         "run_loop_iteration 'topic' arg (it is a real candidate already vetted\n"
-        "for scope). Prefer fewer, higher-value actions; the total cost of the\n"
+        "for scope). Topics with source 'finding_followup' are HUMAN-spawned\n"
+        "follow-ups — prefer them over fresh picks. Use run_experiment only\n"
+        "when a recent novel+surviving finding clearly maps to a built\n"
+        "experiment (tier 'synthetic'; run_real only with strong reason).\n"
+        "forecast_markets is the standing applied-tier PAPER workstream —\n"
+        "worth one slot when no fresher applied data exists; it never trades.\n"
+        "Prefer fewer, higher-value actions; the total cost of the\n"
         f"actions must not exceed {budget}.\n"
         "\n"
         "Output STRICT JSON, nothing else — no prose, no markdown fences, no\n"
@@ -406,6 +473,64 @@ def handle_noop(*, reason: str) -> dict[str, Any]:
     return {"status": "passed", "result": {"reason": reason}}
 
 
+def handle_run_experiment(
+    *, tier: str, experiment_id: str, run_real: bool = False,
+) -> dict[str, Any]:
+    """run_experiment handler — the T3 reverse path, coordinator-plannable.
+
+    Bridges ONE experiment through the autoresearch driver into ONE
+    LOOP_V0 iteration (live=True threads the experiment_outcome). Default
+    is the cheap/safe form: reuse the committed results. run_real=True
+    re-runs the experiment on the real model first (guarded; the planner
+    must justify it). Lazy import — autoresearch pulls heavy deps."""
+    from orchestrator.autoresearch import run_autoresearch
+
+    payload = run_autoresearch(
+        tier,
+        experiment_id,
+        reuse_results=not run_real,
+        run_experiment=run_real,
+        live=True,
+        source="coordinator",
+    )
+    return {"status": "passed", "result": payload}
+
+
+def handle_forecast_markets(
+    *, n: int = 20, live_data: bool = True,
+) -> dict[str, Any]:
+    """forecast_markets handler — the exp007 Polymarket PAPER workstream.
+
+    Sweep -> score -> strategy memo, all inside the design-only guardrail
+    (read-only public data; the harness has zero trading surface and the
+    memo carries the no-execution disclaimer). The memo stage degrades
+    gracefully when the strategy module is absent (explicit in the
+    result, never silent — rule 7)."""
+    from experiments.exp007_polymarket import analyze as exp007_analyze
+    from experiments.exp007_polymarket import run as exp007_run
+
+    argv = ["--n", str(int(n))]
+    if live_data:
+        argv.append("--live-data")
+    rc_run = exp007_run.main(argv)
+    if rc_run != 0:
+        return {"status": "error",
+                "result": {"stage": "run", "exit_code": rc_run}}
+    rc_an = exp007_analyze.main()
+    out: dict[str, Any] = {"run_exit": rc_run, "analyze_exit": rc_an}
+    # Memo failure degrades the result, never the cycle — but EXPLICITLY
+    # (rule 7): the exception text is carried, not summarized away.
+    try:
+        from experiments.exp007_polymarket.strategy_memo import (
+            build_and_write_memo,
+        )
+        out["memo"] = build_and_write_memo()
+    except Exception as exc:
+        out["memo"] = None
+        out["memo_note"] = f"memo stage failed: {type(exc).__name__}: {exc}"
+    return {"status": "passed" if rc_an == 0 else "error", "result": out}
+
+
 def _default_execute_handlers() -> dict[str, Callable[..., Any]]:
     """The real dispatch table, resolved lazily so importing the coordinator
     pulls in nara / finding_promotion only when an --execute cycle runs."""
@@ -416,14 +541,45 @@ def _default_execute_handlers() -> dict[str, Callable[..., Any]]:
         return _run_iteration(topic, source="coordinator")
 
     def _promote(*, max_candidates: int | None = None) -> Any:
-        return _promote_findings(max_candidates=max_candidates)
+        result = _promote_findings(max_candidates=max_candidates)
+        _persist_near_misses(result)
+        return result
 
     return {
         "run_loop_iteration": _run_loop_iteration,
         "promote_findings": _promote,
         "bubble_up": handle_bubble_up,
         "noop": handle_noop,
+        "run_experiment": handle_run_experiment,
+        "forecast_markets": handle_forecast_markets,
     }
+
+
+def _persist_near_misses(
+    result: Any, *, path: str | os.PathLike | None = None,
+) -> None:
+    """Append promotion near-misses to memory/promotion_near_misses.jsonl.
+
+    The 2026-06-09 cycle promoted 0/5 candidates and the per-candidate
+    WHY was lost (the cycle log keeps action status only). One row per
+    near-miss, append-only, never raises. path=None resolves at call time
+    (patchable)."""
+    if path is None:
+        path = DEFAULT_NEAR_MISSES
+    try:
+        misses = (result or {}).get("near_misses") if isinstance(result, dict) else None
+        if not misses:
+            return
+        ts = _utcnow_iso()
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a") as fh:
+            for nm in misses:
+                if isinstance(nm, dict):
+                    fh.write(json.dumps(
+                        {"timestamp": ts, **nm}, ensure_ascii=False) + "\n")
+    except Exception:
+        return
 
 
 # ── cycle ────────────────────────────────────────────────────────────────
@@ -457,6 +613,35 @@ def coordinator_cycle(
     around the cycle so the UI sees a live coordinator run.
     """
     run_id = f"coordinator_{uuid.uuid4().hex[:8]}"
+    # β bounds (D-049) — checked BEFORE any registration or LLM call. A
+    # refusal still writes a cycle-log row (best-effort) so the audit/UI
+    # surface never has a silent gap where a cycle was refused.
+    # (1) Kill switch: a pause file halts every cycle, supervised or not.
+    if PAUSE_PATH.exists():
+        report = {
+            "run_id": run_id, "status": "paused",
+            "errors": [f"pause file present: {PAUSE_PATH}"],
+            "plan": [], "executed": [], "bubble_up": [], "attempts": [],
+        }
+        coordinator_cycle_log.write_coordinator_cycle(report)
+        return report
+    # (2) Daily executed-cycle budget: an EXECUTE cycle refuses when today's
+    # ledger total PLUS this cycle's potential budget would exceed the cap
+    # (conservative refusal; only ACTUAL spend is charged afterwards).
+    # Dry-runs are never charged or blocked.
+    if not dry_run:
+        spent_today = _daily_spent()
+        if spent_today + budget > DAILY_BUDGET_CAP:
+            report = {
+                "run_id": run_id, "status": "daily_budget_exhausted",
+                "errors": [
+                    f"daily ledger {spent_today} + cycle budget {budget} "
+                    f"> cap {DAILY_BUDGET_CAP} (run_state/coordinator_budget.jsonl)"
+                ],
+                "plan": [], "executed": [], "bubble_up": [], "attempts": [],
+            }
+            coordinator_cycle_log.write_coordinator_cycle(report)
+            return report
     set_run_id(run_id)
     set_current_agent("coordinator")
     active_run.write_active_run(run_id, kind="coordinator", label="coordinator_cycle")
@@ -610,6 +795,7 @@ def _coordinator_cycle(
                 "reason": f"{type(exc).__name__}: {exc}",
             })
 
+    _charge_daily_ledger(run_id, spent)
     bubbles = _collect_bubble_up(validated, executed=executed)
     _persist_bubble_up(bubbles, run_id=run_id)
     report = {

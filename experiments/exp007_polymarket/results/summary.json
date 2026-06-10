@@ -1,0 +1,10 @@
+{
+  "verdict": "BELOW_MARKET",
+  "n": 18,
+  "mean_brier_model": 0.24431111111111112,
+  "mean_brier_market": 5.395257143866503e-11,
+  "bss": -4528257032.844098,
+  "calibration_note": "model trails market over 18 resolved rows (BSS=-4528257032.8441)",
+  "errors": 0,
+  "min_sample": 10
+}

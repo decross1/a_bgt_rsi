@@ -131,12 +131,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # Run-provenance registration (2026-06-10, exp009 pattern). Open the
     # output file FIRST: an open() failure must not strand a registered
-    # run (the registration sits inside the try/finally below).
-    from agent_wrapper.wrapper import set_run_id
+    # run (the registration sits inside the try/finally below). The prior
+    # run_id is RESTORED on exit (not None) so an in-process parent — the
+    # coordinator's forecast_markets handler — keeps its attribution.
+    from agent_wrapper.wrapper import get_run_id, set_run_id
     from orchestrator import active_run
 
     f = open(out_path, "w")
     run_id = f"exp007_polymarket_{t_start}"
+    _prev_run_id = get_run_id()
     set_run_id(run_id)
     active_run.write_active_run(
         run_id, "experiment", "exp007 Polymarket paper-forecasting",
@@ -204,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         f.close()
         active_run.clear_active_run()
-        set_run_id(None)
+        set_run_id(_prev_run_id)
 
     wall_s_total = time.perf_counter() - t0_total
     t_end = _utcnow_iso()

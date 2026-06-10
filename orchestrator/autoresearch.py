@@ -176,6 +176,7 @@ def run_autoresearch(
     replicate: bool = False,
     live: bool = False,
     runtime: str | None = None,
+    source: str = "human_cli",
 ) -> dict:
     """Run ONE autoresearch pass — SINGLE-SHOT, HUMAN-TRIGGERED.
 
@@ -209,10 +210,14 @@ def run_autoresearch(
     # set_run_id stamps every wrapper call in this pass; active_run.json is
     # the single 'what is running now' file the UI polls. Cleared in finally
     # so both the dry-run early-return and the live path leave no stale state.
-    from agent_wrapper.wrapper import set_run_id
+    from agent_wrapper.wrapper import get_run_id, set_run_id
     from orchestrator import active_run
 
     run_id = f"autoresearch_{experiment_id}_{uuid.uuid4().hex[:8]}"
+    # Restore the PRIOR run_id on exit (not None) so an in-process parent
+    # run — the coordinator's run_experiment action — keeps its own call
+    # attribution (same nesting fix as nara.run_iteration, 2026-06-10).
+    _prev_run_id = get_run_id()
     set_run_id(run_id)
     active_run.write_active_run(
         run_id, "autoresearch", f"autoresearch {experiment_id}")
@@ -256,12 +261,12 @@ def run_autoresearch(
         kwargs: dict[str, Any] = {"experiment_outcome": outcome}
         if comparison is not None:
             kwargs["cross_tier_comparison"] = comparison
-        record = run_iteration(topic=topic, source="human_cli", **kwargs)
+        record = run_iteration(topic=topic, source=source, **kwargs)
         payload["iteration_id"] = record.get("iteration_id")
         return payload
     finally:
         active_run.clear_active_run()
-        set_run_id(None)
+        set_run_id(_prev_run_id)
 
 
 def _topic_seed(outcome: dict, comparison: dict | None) -> str:

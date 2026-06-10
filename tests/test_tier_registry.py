@@ -37,10 +37,13 @@ def test_applied_tier_has_polymarket():
     assert e7["has_run"] is True
     assert e7["has_analyze"] is True
     assert e7["has_loop_bridge"] is True
-    # No real paper-forecasting run yet, so results/ holds only .gitkeep ->
-    # results_summary is None (the honest state, matching exp005/exp006).
-    # A real run (analyze.py writes summary.json) flips this to the json path.
-    assert e7["results_summary"] is None
+    # The first REAL paper-forecasting run landed 2026-06-10 (Session 3:
+    # 18 live resolved markets -> analyze.py wrote summary.json), flipping
+    # this from the pre-run None to the json path — the transition this
+    # pin's original comment predicted.
+    assert e7["results_summary"] == (
+        "experiments/exp007_polymarket/results/summary.json"
+    )
 
 
 def test_get_unknown_experiment_raises_keyerror():

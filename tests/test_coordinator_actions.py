@@ -15,10 +15,15 @@ from orchestrator.coordinator_actions import (
 )
 
 
-def test_known_actions_returns_four_action_menu():
+def test_known_actions_returns_v2_menu():
+    # v2 (2026-06-10 Session 3): + run_experiment (T3 reverse path) and
+    # forecast_markets (exp007 paper workstream). Still NO trade action.
     menu = known_actions()
     names = {a["name"] for a in menu}
-    assert names == {"run_loop_iteration", "promote_findings", "bubble_up", "noop"}
+    assert names == {
+        "run_loop_iteration", "promote_findings", "bubble_up", "noop",
+        "run_experiment", "forecast_markets",
+    }
     for entry in menu:
         assert set(entry) == {"name", "description", "arg_schema", "cost"}
         # handler_ref must NOT leak into the planner-facing menu
@@ -141,9 +146,17 @@ def test_noop_is_free_and_counts_toward_max_only():
     assert res["normalized"][0]["cost"] == 0
 
 
-def test_actions_registry_is_the_v1_menu():
-    assert set(ACTIONS) == {"run_loop_iteration", "promote_findings", "bubble_up", "noop"}
+def test_actions_registry_is_the_v2_menu():
+    assert set(ACTIONS) == {
+        "run_loop_iteration", "promote_findings", "bubble_up", "noop",
+        "run_experiment", "forecast_markets",
+    }
     assert ACTIONS["run_loop_iteration"]["cost"] == 3
     assert ACTIONS["promote_findings"]["cost"] == 2
     assert ACTIONS["bubble_up"]["cost"] == 1
     assert ACTIONS["noop"]["cost"] == 0
+    assert ACTIONS["run_experiment"]["cost"] == 5
+    assert ACTIONS["forecast_markets"]["cost"] == 3
+    # No action may ever name a trading surface.
+    for spec in ACTIONS.values():
+        assert "trade" not in spec["handler_ref"].lower()

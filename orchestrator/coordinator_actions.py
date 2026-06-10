@@ -39,7 +39,12 @@ def _obj_schema(properties: dict[str, Any], required: list[str]) -> dict[str, An
     }
 
 
-# The fixed v1 menu. Cheap/safe only — NO live experiment runs, NO trades.
+# The fixed menu. Safe actions only — NO trades, ever. v2 (2026-06-10,
+# Session 3) adds two guarded research actions: run_experiment (the T3
+# reverse path via the autoresearch driver — committed-results bridge by
+# default; a REAL re-run only with run_real=true) and forecast_markets
+# (the exp007 Polymarket PAPER workstream — read-only public data,
+# design-only guardrail; the harness has zero trading surface).
 # Each entry: arg_schema (jsonschema), description, cost (budget units),
 # handler_ref (string pointer the coordinator resolves to a callable).
 ACTIONS: dict[str, dict[str, Any]] = {
@@ -94,6 +99,43 @@ ACTIONS: dict[str, dict[str, Any]] = {
             ["reason"],
         ),
         "handler_ref": "orchestrator.coordinator:handle_noop",
+    },
+    "run_experiment": {
+        "description": (
+            "Bridge ONE built experiment through the autoresearch driver into "
+            "a LOOP_V0 iteration (experiment_outcome attached). Uses the "
+            "committed results by default; set run_real=true ONLY when fresh "
+            "trials are clearly warranted (it re-runs the experiment on the "
+            "real model). Use when a recent novel+surviving hypothesis maps "
+            "to a built experiment (e.g. exp001_repeated_pd, exp009_cournot)."
+        ),
+        "cost": 5,
+        "arg_schema": _obj_schema(
+            {
+                "tier": {"type": "string", "minLength": 1},
+                "experiment_id": {"type": "string", "minLength": 1},
+                "run_real": {"type": "boolean"},
+            },
+            ["tier", "experiment_id"],
+        ),
+        "handler_ref": "orchestrator.coordinator:handle_run_experiment",
+    },
+    "forecast_markets": {
+        "description": (
+            "Run the exp007 Polymarket PAPER-forecasting sweep (read-only "
+            "public data, design-only — no trading surface): forecast n "
+            "resolved markets, score Brier/BSS, and write the paper strategy "
+            "memo. A standing daily applied-tier workstream."
+        ),
+        "cost": 3,
+        "arg_schema": _obj_schema(
+            {
+                "n": {"type": "integer", "minimum": 5, "maximum": 50},
+                "live_data": {"type": "boolean"},
+            },
+            [],
+        ),
+        "handler_ref": "orchestrator.coordinator:handle_forecast_markets",
     },
 }
 
