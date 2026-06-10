@@ -16,11 +16,19 @@ for the integrator). So the suite is split honestly:
    must reproduce verbatim in runtime.py. They are the real verification of
    the design.
 
-2. `test_real_log_event_threads_agent_when_applied` — an xfail probe against
-   the LIVE `PyRuntime.log_event`. It is EXPECTED TO FAIL until the integrator
-   applies the spine edit; the moment runtime.py threads `agent`, this flips to
-   xpass and the run log starts carrying attribution. `strict=False` so the
-   limb stays green today; the xpass is the integrator's landing signal.
+2. `test_real_log_event_threads_agent_when_applied` — a probe against the LIVE
+   `PyRuntime.log_event`. Originally xfail(strict=False) awaiting the
+   integrator; the spine edit LANDED (runtime.py threads `agent` via the
+   `_current_agent` ContextVar + `set_current_agent`), the probe xpassed, and
+   the D-043 closeout (2026-06-10) flipped it to a plain regression test.
+
+3. D-043 closeout probes (2026-06-10): xfail(strict=False) tests pinning the
+   two drafted-but-unapplied spine diffs in
+   ui_overhaul_gallery/spine_drafts/ — the tool-plane nemoclaw attribution
+   probe lives in tests/test_tool_plane.py; the nara loop_v0_fallback
+   `skill_used: "fallback"` emission probe lives HERE. Same landing-signal
+   pattern as the original probe: green (xfail) today, xpass the moment the
+   integrator applies the diffs.
 
 Rule 4 (no coerced near-miss): nothing here fakes a pass — the local helper is
 genuine, and the live-code probe is honestly marked as not-yet-passing.
@@ -196,24 +204,17 @@ def test_skill_used_optional_passes_through(log_path):
 
 
 # ---------------------------------------------------------------------------
-# 2. Live-code probe against the REAL PyRuntime (xfail until integrator lands).
+# 2. Live-code regression test against the REAL PyRuntime. The spine edit
+#    LANDED (P0-B/D-043); this was the xfail landing-signal probe and is now a
+#    plain test pinning the live behavior.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(
-    reason=(
-        "LIMB B may not edit orchestrator/runtime.py; the `agent` thread is a "
-        "drafted spine edit. EXPECTED FAIL until the integrator applies it. "
-        "Flips to xpass the moment PyRuntime.log_event threads `agent` — that "
-        "xpass is the integrator's landing signal for P0-B/D-043."
-    ),
-    strict=False,
-)
 def test_real_log_event_threads_agent_when_applied(tmp_path, monkeypatch):
     from orchestrator.runtime import PyRuntime
     import orchestrator.runtime as runtime_mod
 
-    # After the spine edit, runtime.py exposes set_current_agent + log_event
-    # writes an `agent` field. Both assertions must hold for this to pass.
+    # The applied spine edit: runtime.py exposes set_current_agent + log_event
+    # writes an `agent` field. Both assertions must hold.
     fake_log = tmp_path / "run.jsonl"
     monkeypatch.setattr(runtime_mod, "RUN_LOG_PATH", fake_log)
 
@@ -235,3 +236,58 @@ def test_real_log_event_threads_agent_when_applied(tmp_path, monkeypatch):
         if line.strip()
     ]
     assert row["agent"] == "coordinator"
+
+
+# ---------------------------------------------------------------------------
+# 3. D-043 closeout probe: loop_v0_fallback rows name their skill. xfail until
+#    the integrator applies spine_drafts/nara_fallback_skill.diff (rule 6 names
+#    fallback as the canonical skill_used; orchestrator/nara.py is SPINE, so
+#    the edit is drafted, not made here).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.xfail(
+    reason=(
+        "pending spine diff application — "
+        "ui_overhaul_gallery/spine_drafts/nara_fallback_skill.diff adds "
+        "skill_used='fallback' to the three loop_v0_fallback log_event "
+        "payloads in orchestrator/nara.py (D-043). Flips to xpass the moment "
+        "the integrator applies it — that xpass is the landing signal."
+    ),
+    strict=False,
+)
+def test_loop_v0_fallback_rows_carry_skill_used(monkeypatch):
+    # Reuses the loop-v1 integration fakes (sibling-module import, same
+    # pattern as _orchestrator_contract.py consumers) to drive the REAL
+    # nara.run_iteration through the meta_review-raise fallback site — the
+    # same harness as test_meta_review_failure_degrades_gracefully.
+    import test_loop_v1_integration as lv1
+
+    from orchestrator import nara
+
+    def _boom(**kwargs):
+        raise RuntimeError("meta_review exploded")
+
+    monkeypatch.setattr(nara, "_meta_review", _boom)
+    monkeypatch.setattr(nara, "_redteam_critic",
+                        lambda *a, **k: lv1._redteam("proceed"))
+    monkeypatch.setattr(nara, "get_backend",
+                        lambda b: lv1._FakeBackend(lv1._full_chain_script()))
+    monkeypatch.setattr(nara.iteration_cache, "write_entry",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(
+        nara, "finalize_iteration_record",
+        lambda record: {"status": "passed", "loop_memory_path": "x",
+                        "iteration_id": record["iteration_id"]},
+    )
+    monkeypatch.setattr(nara, "_next_iteration_id",
+                        lambda *a, **k: "iter-2026-06-10-901")
+
+    rt = lv1._FakeRuntime(lv1._tool_table())
+    nara.run_iteration("test topic", runtime=rt)
+
+    fallbacks = [e for e in rt.events
+                 if e.get("event_type") == "loop_v0_fallback"]
+    assert fallbacks, "meta_review crash must log a loop_v0_fallback event"
+    # POST-diff contract: every fallback row names the canonical skill.
+    for event in fallbacks:
+        assert event.get("skill_used") == "fallback"

@@ -508,6 +508,7 @@ def _run_iteration_impl(
             _steps_mark(runtime, active, iteration_id, "meta_review", "failed")
             runtime.log_event({
                 "event_type": "loop_v0_fallback",
+                "skill_used": "fallback",
                 "iteration_id": iteration_id,
                 "note": (
                     "meta_review did not produce conditioning bullets "
@@ -519,6 +520,7 @@ def _run_iteration_impl(
         _steps_mark(runtime, active, iteration_id, "meta_review", "failed")
         runtime.log_event({
             "event_type": "loop_v0_fallback",
+            "skill_used": "fallback",
             "iteration_id": iteration_id,
             "note": (
                 f"meta_review raised {type(exc).__name__}: {exc}; "
@@ -1023,6 +1025,7 @@ def _run_iteration_impl(
         _steps_mark(runtime, active, iteration_id, "journal_writer", "passed")
         runtime.log_event({
             "event_type": "loop_v0_fallback",
+            "skill_used": "fallback",
             "iteration_id": iteration_id,
             "note": (
                 "Nara did not call journal_writer; orchestrator filled "

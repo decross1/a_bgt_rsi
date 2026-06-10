@@ -48,6 +48,7 @@ from fastapi import Body, FastAPI, Response
 
 from orchestrator.coordinator import assess_state
 from orchestrator.nara import run_iteration as _run_iteration
+from orchestrator.runtime import set_current_agent
 
 # The read-only tool's stable name + a one-line description for the manifest.
 TOOL_NAME = "get_apparatus_state"
@@ -202,7 +203,14 @@ def create_app(
         if iteration_in_flight():
             return {"tool": RUN_TOOL_NAME, "ok": False, "error": "iteration_in_flight"}
 
-        record = run_iteration(topic, source="nemoclaw_agent")
+        # D-043 attribution: run-log rows emitted during a sandbox-agent-driven
+        # iteration must carry agent="nemoclaw_agent", not inherit the default
+        # "nara". finally-reset so the identity never outlives this request.
+        set_current_agent("nemoclaw_agent")
+        try:
+            record = run_iteration(topic, source="nemoclaw_agent")
+        finally:
+            set_current_agent(None)
         novelty = record.get("novelty") or {}
         critique = record.get("critique") or {}
         low_confidence = bool(

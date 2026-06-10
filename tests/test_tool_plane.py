@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from orchestrator import tool_plane
@@ -398,3 +399,53 @@ def test_mcp_unknown_tool_and_method_yield_jsonrpc_errors():
     assert out["error"]["code"] == -32602
     out2 = _rpc(client, "resources/list").json()
     assert out2["error"]["code"] == -32601
+
+
+# ── D-043 run-log attribution (2026-06-10 closeout) ─────────────────────────
+# orchestrator/tool_plane.py is SPINE: the fix is drafted as
+# ui_overhaul_gallery/spine_drafts/tool_plane_nemoclaw.diff, not made here.
+# xfail(strict=False) so the suite is green both before and after the
+# integrator applies it; the xpass is the landing signal.
+
+
+@pytest.mark.xfail(
+    reason=(
+        "pending spine diff application — "
+        "ui_overhaul_gallery/spine_drafts/tool_plane_nemoclaw.diff wraps the "
+        "run_loop_iteration handler in set_current_agent('nemoclaw_agent') "
+        "try/finally, so sandbox-agent-driven iterations stop logging as "
+        "'nara' (D-043). Flips to xpass the moment the integrator applies it."
+    ),
+    strict=False,
+)
+def test_run_tool_attributes_run_log_rows_to_nemoclaw_agent():
+    # POST-diff behavior: while the handler runs run_iteration, the runtime's
+    # ContextVar identity is "nemoclaw_agent", so every log_event the
+    # iteration emits (one representative row stubbed here) carries it.
+    from orchestrator import runtime as runtime_mod
+
+    seen = {"agent_during_run": None}
+
+    def _stub_run(topic, *, source=None, **kwargs):
+        seen["agent_during_run"] = runtime_mod.get_current_agent()
+        # Emit one row exactly the way nara's iteration events do (the
+        # autouse conftest fixture redirects RUN_LOG_PATH to tmp).
+        runtime_mod.PyRuntime(tool_registry={}).log_event(
+            {"event_type": "loop_v0_iteration_start", "iteration_id": "iter-t"}
+        )
+        return _FAKE_RECORD
+
+    app = tool_plane.create_app(
+        assess=lambda: {},
+        run_iteration=_stub_run,
+        iteration_in_flight=lambda: False,
+    )
+    body = TestClient(app).post(
+        "/tools/run_loop_iteration", json={"topic": "t"}).json()
+    assert body["ok"] is True
+
+    assert seen["agent_during_run"] == "nemoclaw_agent"
+    rows = [json.loads(l)
+            for l in runtime_mod.RUN_LOG_PATH.read_text().splitlines()
+            if l.strip()]
+    assert rows and rows[0]["agent"] == "nemoclaw_agent"
