@@ -2454,6 +2454,34 @@ rule-7 revision cycle on prompt text only, then one re-run.
 **Reversibility.** Both seams fail-open and env-gated dark; schema/battery
 changes additive; revert = unset two env vars.
 
+**DECISION RUN VERDICT (2026-06-10 18:23Z, `battery_20260610T182342Z`, real,
+31 min): the pre-registered rule FAILED — gates STAY DARK.** Per criterion:
+**C1 PASS** (residual-1 target met: fase_off_01 → `off_independent`/R0b,
+low-confidence-gated; gate recall 8/8; 0 ungated off-domain). **C2 FAIL**
+(restated-with-citation 0/4 — see defect (b); redisc_on_01 DID flip
+survives→restated via the hook and canary_on_02/redisc_on_02 reached
+restated at the base critic, but no flip carried a citation;
+redisc_on_03's restate judge honestly returned `not_restated`).
+**C3 FAIL** (on-domain low-confidence set grew 3 → 7). **C4 FAIL**
+(verdict_accuracy 0.6818 < the 0.70 floor; baseline 0.6364 — improved,
+insufficient). As pre-registered, the locked 0.80 bar also failed.
+
+Two named defects, for the single remaining revision cycle:
+(a) **Topicality-attack domain definition too narrow** — the skeptic
+condemned 4 ON-domain plain-language classics (ultimatum, hawk-dove,
+quantal lock-in, folk theorem) alongside the 1 correct boundary case;
+this is D-045 residual-5's over-gating harm amplified, and it caused most
+of C3+C4 and one C2 miss. Fix lives in the attack prompt's ON-side
+instruction (plain-language canonical GT = ON). (b) **Restate-hook wiring
+bug** — the flip records `restate_verdict`/`verdict_overridden_from` but
+drops the judge's restating doc id, leaving `contradicting_paper_id` null
+on a "restated" verdict (inconsistent with the critic's own output
+contract; C2 reads that field). This is a code defect fix, distinct from
+the prompt-revision allowance. Status: the one rule-7 prompt-revision
+cycle + single re-run remain AVAILABLE and deliberately not spent
+in-session (2-3h budget reached); both seams remain dark until that
+re-run passes this same rule.
+
 ## D-051 — MCP submit+poll seam at the β tool plane (ticket store composed with the D-047 registry)
 
 **Date.** 2026-06-10 (session 2, workflow `wf_d4e96978-59a` limb b1 + serial
