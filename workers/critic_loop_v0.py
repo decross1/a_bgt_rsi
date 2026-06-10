@@ -258,6 +258,59 @@ def _maybe_run_skeptic(
         result["verdict"] = "undecidable"
 
 
+def _maybe_run_restate_skeptic(
+    result: dict,
+    hypothesis_text: str,
+    iteration_id: str | None,
+    novelty_class: str | None,
+    novelty_top_id: str | None,
+) -> None:
+    """Optional restatement-skeptic check (residual-2 seam).
+
+    Fires only when novelty already judged the hypothesis a rediscovery
+    yet the critic verdict is "survives" or "undecidable" — the
+    disagreement the 2026-06-09 battery left unresolved on 4 cases. The
+    attack canonicalizes the claim, retrieves fresh, and judges
+    restatement under the two-axis transfer rule. Gated OFF by default:
+    env NARA_RESTATE_SKEPTIC must be "1" and orchestrator.restate_skeptic
+    must exist and export restate_attack(); otherwise this is a no-op.
+    Fail-open: every failure path leaves the verdict unchanged — the
+    verdict moves (to "restated", with full provenance) ONLY on a
+    doc-grounded "restated". Mutates `result` in place.
+    """
+    if os.environ.get("NARA_RESTATE_SKEPTIC", "0") != "1":
+        return
+    if novelty_class != "rediscovery":
+        return
+    if result.get("verdict") not in ("survives", "undecidable"):
+        return
+    try:
+        from orchestrator import restate_skeptic  # lazy: module may not exist yet
+    except ImportError:
+        return
+    restate_attack = getattr(restate_skeptic, "restate_attack", None)
+    if not callable(restate_attack):
+        return
+    try:
+        out = restate_attack(
+            hypothesis_text, iteration_id=iteration_id,
+            novelty_top_neighbor_id=novelty_top_id,
+        ) or {}
+    except Exception as exc:  # a skeptic crash is recorded, never fatal
+        result["restate_verdict"] = f"error: {type(exc).__name__}: {exc}"[:200]
+        return
+    restate_verdict = out.get("restate_verdict")
+    result["restate_verdict"] = restate_verdict
+    if restate_verdict == "restated" and out.get("restating_doc_id"):
+        result["verdict_overridden_from"] = result.get("verdict")
+        result["override_reason"] = (
+            f"restatement skeptic ({out.get('backend')}): "
+            + (out.get("rationale") or "")[:300]
+        )
+        result["contradicting_paper_id"] = out.get("restating_doc_id")
+        result["verdict"] = "restated"
+
+
 def critic_loop_v0(
     hypothesis_text: str,
     iteration_id: str,
@@ -284,11 +337,16 @@ def critic_loop_v0(
             "subagent_wall_seconds": float,
             "subagent_status": "passed" | "timeout" | "schema_mismatch" | "error",
             # only when a deterministic override fired (coverage bar,
-            # low-confidence hard rule, or skeptic refutation):
+            # low-confidence hard rule, skeptic refutation, or
+            # restatement-skeptic flip):
             "verdict_overridden_from": str,
             "override_reason": str,
             # only when the skeptic seam ran (env NARA_SKEPTIC=1):
             "skeptic_verdict": str | None,
+            # only when the restatement-skeptic seam ran (env
+            # NARA_RESTATE_SKEPTIC=1, novelty=rediscovery, clean
+            # survives/undecidable):
+            "restate_verdict": str | None,
         } | None,
         "errors": [str, ...],
         "wrapper_request_id": str | None,
@@ -466,6 +524,18 @@ def critic_loop_v0(
                     + (validated.get("rationale") or "")
                 )
                 validated["verdict"] = "undecidable"
+
+        # Restatement-skeptic seam (residual 2): novelty said rediscovery,
+        # the critic said survives/undecidable — confront the disagreement
+        # with a canonicalize-then-retrieve restatement attack. Guarded to
+        # CLEAN retrieval only (a verdict on gated retrieval is never
+        # promoted); a flip to 'restated' also stops the survives-attack
+        # below from firing and dissolves the consistency warning.
+        if not rel_low and rel.get("category") in (None, "ok"):
+            _maybe_run_restate_skeptic(
+                validated, hypothesis_text, iteration_id,
+                novelty_class, novelty_top_id,
+            )
 
         # β skeptic-gate seam (D-041): independent-retrieval attack on a
         # clean 'survives'. No-op unless NARA_SKEPTIC=1 and the module exists.

@@ -50,8 +50,11 @@ def test_health_does_not_call_assess(monkeypatch):
     client, calls = _client(monkeypatch)
     body = client.get("/health").json()
     assert body["ok"] is True
-    # Both tools are advertised (read + the run_loop_iteration compute tool).
-    assert body["tools"] == [tool_plane.TOOL_NAME, tool_plane.RUN_TOOL_NAME]
+    # All four tools are advertised (read + run + the submit/poll seam).
+    assert body["tools"] == [
+        tool_plane.TOOL_NAME, tool_plane.RUN_TOOL_NAME,
+        tool_plane.SUBMIT_TOOL_NAME, tool_plane.POLL_TOOL_NAME,
+    ]
     # A liveness ping must not load Chroma via assess_state.
     assert calls["n"] == 0
 
@@ -60,10 +63,11 @@ def test_tools_manifest_lists_the_read_tool(monkeypatch):
     client, _ = _client(monkeypatch)
     body = client.get("/tools").json()
     tools = body["tools"]
-    # Two tools now: the read snapshot + the run_loop_iteration compute tool.
-    assert len(tools) == 2
+    # Four tools now: read snapshot + sync run + the submit/poll seam.
+    assert len(tools) == 4
     by_name = {t["name"] for t in tools}
-    assert by_name == {"get_apparatus_state", "run_loop_iteration"}
+    assert by_name == {"get_apparatus_state", "run_loop_iteration",
+                       "submit_loop_iteration", "poll_run"}
     read_tool = next(t for t in tools if t["name"] == "get_apparatus_state")
     assert isinstance(read_tool["description"], str) and read_tool["description"]
     # No-arg tool: an object schema with empty properties.
@@ -113,7 +117,11 @@ def test_manifest_matches_the_agent_bundle_tool_name():
     )
     manifest = json.loads(bundle.read_text())
     names = {t["name"] for t in manifest["tools"]}
+    # The bundle mirrors the FULL live manifest: all four tool names.
     assert tool_plane.TOOL_NAME in names
+    assert tool_plane.RUN_TOOL_NAME in names
+    assert tool_plane.SUBMIT_TOOL_NAME in names
+    assert tool_plane.POLL_TOOL_NAME in names
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +212,26 @@ def test_run_tool_refuses_when_iteration_in_flight():
     assert calls["n"] == 0
 
 
+def test_run_tool_refuses_during_submit_registration_gap(monkeypatch):
+    """2026-06-10 review NB-1: between submit returning and its executor
+    thread registering the mirror, the mirror predicate says idle — the
+    sync tool must STILL refuse (thread_live closes the gap), or two
+    iterations could run concurrently."""
+    import types
+
+    from orchestrator import submitted_run
+
+    client, calls = _run_client(in_flight=False)  # mirror predicate: idle
+    monkeypatch.setattr(
+        submitted_run, "_live",
+        types.SimpleNamespace(is_alive=lambda: True))  # live executor thread
+    body = client.post("/tools/run_loop_iteration",
+                       json={"topic": "a good topic"}).json()
+    assert body["ok"] is False
+    assert body["error"] == "iteration_in_flight"
+    assert calls["n"] == 0
+
+
 def test_run_tool_happy_path_returns_extracted_result_envelope():
     client, calls = _run_client(in_flight=False)
     resp = client.post("/tools/run_loop_iteration", json={"topic": "  Vickrey truthfulness  "})
@@ -286,7 +314,10 @@ def test_health_lists_both_tools():
     client, _ = _run_client()
     body = client.get("/health").json()
     assert body["ok"] is True
-    assert body["tools"] == [tool_plane.TOOL_NAME, tool_plane.RUN_TOOL_NAME]
+    assert body["tools"] == [
+        tool_plane.TOOL_NAME, tool_plane.RUN_TOOL_NAME,
+        tool_plane.SUBMIT_TOOL_NAME, tool_plane.POLL_TOOL_NAME,
+    ]
 
 
 def test_default_app_wires_real_run_iteration_without_calling_it():
@@ -354,7 +385,10 @@ def test_mcp_tools_list_remaps_input_schema_key():
     client, _ = _mcp_client()
     tools = _rpc(client, "tools/list").json()["result"]["tools"]
     names = [t["name"] for t in tools]
-    assert names == [tool_plane.TOOL_NAME, tool_plane.RUN_TOOL_NAME]
+    assert names == [
+        tool_plane.TOOL_NAME, tool_plane.RUN_TOOL_NAME,
+        tool_plane.SUBMIT_TOOL_NAME, tool_plane.POLL_TOOL_NAME,
+    ]
     for t in tools:
         assert "inputSchema" in t and "input_schema" not in t
     # Schema content identical to the REST manifest.
@@ -449,3 +483,102 @@ def test_run_tool_attributes_run_log_rows_to_nemoclaw_agent():
             for l in runtime_mod.RUN_LOG_PATH.read_text().splitlines()
             if l.strip()]
     assert rows and rows[0]["agent"] == "nemoclaw_agent"
+
+
+# ── submit/poll seam (2026-06-10) — the plane-level contract only ────────────
+# Full hermetic matrix (latch, registry lifecycle, pid restart, atomicity,
+# attribution) lives in tests/test_tool_plane_submit.py; here we pin just the
+# T2-gap behaviors: submit answers fast with a ticket, refuses while busy, and
+# the ticket round-trips to a finished verdict over REST and /mcp.
+
+
+@pytest.fixture
+def _seam_tmp(tmp_path, monkeypatch):
+    """Self-isolate every path the seam touches (no reliance on conftest)."""
+    import threading as _threading
+
+    from orchestrator import active_run, submitted_run
+
+    monkeypatch.setattr(submitted_run, "TICKETS_DIR",
+                        tmp_path / "tool_plane_submits")
+    monkeypatch.setattr(submitted_run, "ACTIVE_ITERATION_PATH",
+                        tmp_path / "active_iteration.json")
+    monkeypatch.setattr(active_run, "ACTIVE_RUN_PATH",
+                        tmp_path / "active_run.json")
+    monkeypatch.setattr(active_run, "RUNS_DIR", tmp_path / "active_runs")
+    from orchestrator import runtime as _runtime_mod
+    monkeypatch.setattr(_runtime_mod, "RUN_LOG_PATH",
+                        tmp_path / "week1.run.jsonl")
+    submitted_run._live = None
+    yield submitted_run
+    live = submitted_run._live
+    if live is not None:
+        live.join(timeout=5)
+    submitted_run._live = None
+
+
+def _wait_ticket(submitted_run, run_id, status, timeout=5.0):
+    import time as _time
+    deadline = _time.monotonic() + timeout
+    while _time.monotonic() < deadline:
+        if (submitted_run.read_ticket(run_id) or {}).get("status") == status:
+            return True
+        _time.sleep(0.02)
+    return False
+
+
+def test_submit_returns_ticket_fast_and_poll_round_trips(_seam_tmp):
+    import time as _time
+    client, calls = _run_client(in_flight=False)
+    t0 = _time.monotonic()
+    body = client.post("/tools/submit_loop_iteration",
+                       json={"topic": "Vickrey truthfulness"}).json()
+    assert _time.monotonic() - t0 < 2.0
+    assert body["tool"] == "submit_loop_iteration" and body["ok"] is True
+    run_id = body["result"]["run_id"]
+    assert run_id.startswith("mcpsub-")
+    assert body["result"]["status"] == "running"
+    assert body["result"]["poll_with"] == "poll_run"
+    assert _wait_ticket(_seam_tmp, run_id, "finished")
+    out = client.post("/tools/poll_run", json={"run_id": run_id}).json()
+    assert out["tool"] == "poll_run" and out["ok"] is True
+    assert out["result"]["status"] == "finished"
+    # The finished envelope is the SAME 5-field extraction the sync tool
+    # returns (from the same _FAKE_RECORD), now persisted via the ticket.
+    assert out["result"]["result"] == {
+        "iteration_id": "iter-2026-06-09-001",
+        "novelty_class": "novel",
+        "critic_verdict": "survives",
+        "low_confidence": False,
+        "journal_entry_path": "journal/iterations/042.md",
+    }
+    assert calls["source"] == "nemoclaw_agent"
+
+
+def test_submit_refuses_when_iteration_in_flight(_seam_tmp):
+    client, calls = _run_client(in_flight=True)
+    body = client.post("/tools/submit_loop_iteration",
+                       json={"topic": "t"}).json()
+    assert body["ok"] is False
+    assert body["error"] == "iteration_in_flight"
+    assert calls["n"] == 0  # refused, never enqueued, no compute spent
+
+
+def test_mcp_submit_then_poll_round_trip(_seam_tmp):
+    client, _ = _mcp_client()
+    out = _rpc(client, "tools/call",
+               {"name": tool_plane.SUBMIT_TOOL_NAME,
+                "arguments": {"topic": "a real GT topic"}}).json()
+    assert out["result"]["isError"] is False
+    inner = json.loads(out["result"]["content"][0]["text"])
+    assert inner["ok"] is True
+    run_id = inner["result"]["run_id"]
+    assert _wait_ticket(_seam_tmp, run_id, "finished")
+    out = _rpc(client, "tools/call",
+               {"name": tool_plane.POLL_TOOL_NAME,
+                "arguments": {"run_id": run_id}}, msg_id=2).json()
+    assert out["result"]["isError"] is False
+    inner = json.loads(out["result"]["content"][0]["text"])
+    assert inner["ok"] is True
+    assert inner["result"]["status"] == "finished"
+    assert inner["result"]["result"]["critic_verdict"] == "survives"

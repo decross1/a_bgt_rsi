@@ -9,13 +9,19 @@ DIRECTLY is a different signal: the camouflaged cases (DB tuning, React
 adoption, Raft consensus) are obviously off-domain when the question is
 "what is this claim primarily about?" rather than "is it near the corpus?".
 
-check() returns "on" | "off" | "unsure" | None:
+check() returns "on" | "off" | "off_independent" | "unsure" | None:
   - None  under MOCK_LLM, or on any wrapper/parse failure (fail-OPEN: the
     relevance gate treats None exactly like the legacy no-signal path;
     each None is logged with a distinct reason, rule 7).
   - "unsure" when the model is unparseable-but-responsive or declares
     uncertainty. "unsure" never condemns (over-gating guard).
-Only the literal "off" fires the gate's R0 rule.
+  - "off_independent" (2026-06-10, D-045 residual 1; only when
+    NARA_TOPICALITY_SKEPTIC=1): the primary judge did NOT condemn, but the
+    independent topicality attack (orchestrator/topicality_skeptic.py,
+    vllm-qwen by default) returned the literal "off". Every skeptic
+    failure path fails OPEN to the primary verdict.
+Only the literal "off" / "off_independent" fire the gate's R0 / R0b rules
+(workers/retrieval_relevance.py).
 """
 from __future__ import annotations
 
@@ -50,7 +56,41 @@ _SYSTEM = (
 
 
 def check(hypothesis_text: str) -> str | None:
-    """One cheap LLM call -> "on" | "off" | "unsure" | None (see module doc)."""
+    """Domain judgment with optional independent escalation (see module doc).
+
+    Primary judge first (`_primary_check`, one cheap default-backend call).
+    When the primary does NOT condemn and NARA_TOPICALITY_SKEPTIC=1, the
+    independent attack (topicality_skeptic.attack_topicality) gets one
+    shot; only its literal "off" escalates — to "off_independent", which
+    the relevance ladder maps to R0b. Skeptic import/call failures fail
+    OPEN to the primary verdict (logged, rule 7). Env unset: byte-identical
+    to the pre-escalation behavior.
+    """
+    if os.environ.get("MOCK_LLM"):
+        logger.info("topicality: MOCK_LLM set -> None (signal unavailable)")
+        return None
+    if not isinstance(hypothesis_text, str) or not hypothesis_text.strip():
+        logger.warning("topicality: empty hypothesis_text -> None")
+        return None
+    primary = _primary_check(hypothesis_text)
+    if primary != "off" and os.environ.get("NARA_TOPICALITY_SKEPTIC", "0") == "1":
+        try:
+            from orchestrator import topicality_skeptic
+            second = topicality_skeptic.attack_topicality(hypothesis_text)
+        except Exception as exc:
+            logger.warning(
+                "topicality: independent attack failed (%r) -> primary stands", exc)
+            second = None
+        if second == "off":
+            logger.warning(
+                "topicality: independent skeptic condemned (primary judge said "
+                "%r) -> off_independent", primary)
+            return "off_independent"
+    return primary
+
+
+def _primary_check(hypothesis_text: str) -> str | None:
+    """The primary judge: one cheap LLM call -> "on" | "off" | "unsure" | None."""
     if os.environ.get("MOCK_LLM"):
         logger.info("topicality: MOCK_LLM set -> None (signal unavailable)")
         return None

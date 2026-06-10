@@ -2487,4 +2487,15 @@ record; a sandbox MCP drive completes without the 15s timeout) — pending the
 next GPU-idle window, see the session note.
 
 **Reversibility.** New module + additive plane endpoints; the sync path is
-unchanged; removing the two tools restores the exact T2 surface.
+unchanged (its in-flight refusal predicate gains `thread_live()`, refusing
+strictly more, never less); removing the two tools restores the exact T2
+surface.
+
+**Review residuals (2026-06-10 two-reviewer gate, accepted as documented).**
+(a) pid-reuse: a restarted server that coincidentally inherits the dead
+writer's pid would report an orphan ticket "running" — astronomically
+unlikely under Linux pid_max; accepted as a residual of the pid-based
+design. (b) The busy refusal's `in_flight` field names the INNERMOST live
+run (during most of a submitted run that is the nested `iter-…` doc, not
+the mcpsub ticket) — honest, by design. (c) Single-process assumption
+(in-process latch) documented in the module + runbook.

@@ -1,5 +1,5 @@
 {
-  "$comment": "OpenClaw/MCP tool manifest for the Nara-on-NemoClaw agent bundle (β groundwork; 2-tool slice, 2026-06-09, Limb L2). STATIC MIRROR of orchestrator/tool_plane.py's GET /tools — keep the two in lockstep (tests/test_tool_plane.py::test_manifest_matches_the_agent_bundle_tool_name guards that get_apparatus_state is present; the integrator extends that guard to run_loop_iteration when L1's plane endpoint lands). The agent runs INSIDE nara-sandbox and reaches this HOST endpoint through the proven egress alias host.openshell.internal:8077 (egress preset nara-host-tool-plane is applied LIVE, policy revision 15). See docs/nemoclaw_agent_run_runbook.md.",
+  "$comment": "OpenClaw/MCP tool manifest for the Nara-on-NemoClaw agent bundle (β groundwork; 4-tool slice: submit_loop_iteration + poll_run added 2026-06-10 to close the 15s MCP client-timeout gap). STATIC MIRROR of orchestrator/tool_plane.py's GET /tools — keep the two in lockstep (tests/test_tool_plane.py::test_manifest_matches_the_agent_bundle_tool_name guards all four names). The agent runs INSIDE nara-sandbox and reaches this HOST endpoint through the proven egress alias host.openshell.internal:8077 (egress preset nara-host-tool-plane is applied LIVE, policy revision 15). See docs/nemoclaw_agent_run_runbook.md.",
   "$mirror_note": "L1 owns the host-side plane endpoint POST /tools/run_loop_iteration + the schema/iteration_record.schema.json seed.source enum 'nemoclaw_agent'. This manifest is the agent-side mirror of L1's contract; until the integrator lands L1's plane edit, the live plane serves only get_apparatus_state and this run_loop_iteration entry is ahead of the plane (a known, intended transient — the mirror is truthful once L1 lands).",
   "schema_version": "openclaw-tools/1",
   "transport": {
@@ -26,7 +26,7 @@
     },
     {
       "name": "run_loop_iteration",
-      "description": "Run exactly ONE bounded LOOP_V0 iteration on a research topic, host-side: Nara chains hypothesize -> retrieve_literature -> novelty_classify -> critic_loop_v0 -> journal_writer and returns the verdict. The topic is validated SERVER-SIDE (an off-domain or thin-evidence topic trips the host's low-evidence gate — a correct signal, not a failure). This is the ONE write-capable tool in the bundle: it triggers a single iteration and nothing else (no spawn, no commit, no trade). One-at-a-time is enforced host-side.",
+      "description": "Run exactly ONE bounded LOOP_V0 iteration on a research topic, host-side: Nara chains hypothesize -> retrieve_literature -> novelty_classify -> critic_loop_v0 -> journal_writer and returns the verdict. The topic is validated SERVER-SIDE (an off-domain or thin-evidence topic trips the host's low-evidence gate — a correct signal, not a failure). This is the ONE write-capable tool in the bundle: it triggers a single iteration and nothing else (no spawn, no commit, no trade). One-at-a-time is enforced host-side. For MCP clients prefer submit_loop_iteration + poll_run (this call blocks ~90s and may exceed client timeouts).",
       "input_schema": {
         "type": "object",
         "properties": {
@@ -41,6 +41,44 @@
         "method": "POST",
         "path": "/tools/run_loop_iteration",
         "$comment": "Body: {\"topic\": \"<thesis sentence>\"}. Response envelope (L1 contract): {\"tool\": \"run_loop_iteration\", \"ok\": true|false, \"result\": {\"iteration_id\", \"novelty_class\", \"critic_verdict\", \"low_confidence\", ...}}. The iteration record is stamped seed.source=\"nemoclaw_agent\". A server-side validation failure (off-domain / thin topic) returns ok:false with a reason — report it honestly, do NOT retry or rephrase to force a pass."
+      }
+    },
+    {
+      "name": "submit_loop_iteration",
+      "description": "Submit ONE LOOP_V0 research iteration to run host-side and return IMMEDIATELY with a run_id ticket (the iteration itself takes ~1-3 minutes of host GPU compute). Same boundary as run_loop_iteration: server-side topic validation and one iteration at a time — a busy apparatus refuses, nothing is queued. Poll the ticket with poll_run. Prefer THIS over run_loop_iteration when calling over MCP (the synchronous call blocks ~90s and exceeds the client's 15s request timeout).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string"
+          }
+        },
+        "required": ["topic"],
+        "additionalProperties": false
+      },
+      "invocation": {
+        "method": "POST",
+        "path": "/tools/submit_loop_iteration",
+        "$comment": "Body: {\"topic\": \"<thesis sentence>\"}. Response in milliseconds: {\"tool\": \"submit_loop_iteration\", \"ok\": true, \"result\": {\"run_id\": \"mcpsub-...\", \"status\": \"running\", \"poll_with\": \"poll_run\"}}. A busy apparatus returns ok:false error \"iteration_in_flight\" naming the blocking run — report it honestly, do NOT retry in a loop. Exactly one iteration per submit; nothing is queued."
+      }
+    },
+    {
+      "name": "poll_run",
+      "description": "Poll a run_id ticket returned by submit_loop_iteration. While running, returns honest reads of the run registry entry and the host's live active-iteration step board; once terminal, the finished verdict envelope (iteration_id, novelty_class, critic_verdict, low_confidence, journal path) or the failure. Pure read, except that a ticket whose server process died is reconciled to failed/server_restart_mid_run. Only tickets from submit_loop_iteration are pollable (anything else: unknown_run_id).",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          }
+        },
+        "required": ["run_id"],
+        "additionalProperties": false
+      },
+      "invocation": {
+        "method": "POST",
+        "path": "/tools/poll_run",
+        "$comment": "Body: {\"run_id\": \"mcpsub-...\"}. Running: {\"ok\": true, \"result\": {\"status\": \"running\", \"registry\": {...}, \"heartbeat_age_s\": n, \"stale\": bool, \"active_iteration\": {\"iteration_id\", \"current_step\", \"latest_narration\", \"steps\": [...], \"updated_at\"}}} — active_iteration.updated_at is the live progress signal; `stale` is informational. Finished: result.result carries the same verdict fields run_loop_iteration returns. Failed: {\"status\": \"failed\", \"error\": ...} with ok:true (the poll succeeded — report the run failure honestly). Poll every ~15-30s until terminal; do not spin."
       }
     }
   ]

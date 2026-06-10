@@ -93,6 +93,17 @@ class CaseObservation:
     max_cosine: Optional[float] = None
     category: Optional[str] = None
     rule_fired: Optional[str] = None
+    # Skeptic/topicality provenance (residual-1/2 observability, 2026-06-10):
+    # the 20260609T212352Z artifact carried NO skeptic fields even though
+    # attacks ran — these close that gap. None whenever the signal is absent
+    # (env gate off, fail-open path, or pre-seam worker output). `topicality`
+    # mirrors the relevance stamp; the other three mirror the critic result
+    # (skeptic_verdict / verdict_overridden_from per D-044, restate_verdict
+    # per the residual-2 restatement skeptic).
+    topicality: Optional[str] = None
+    skeptic_verdict: Optional[str] = None
+    restate_verdict: Optional[str] = None
+    verdict_overridden_from: Optional[str] = None
 
 
 @dataclass
@@ -136,6 +147,11 @@ class CaseScore:
     max_cosine: Optional[float] = None
     category: Optional[str] = None
     rule_fired: Optional[str] = None
+    # skeptic/topicality provenance passthrough (from CaseObservation)
+    topicality: Optional[str] = None
+    skeptic_verdict: Optional[str] = None
+    restate_verdict: Optional[str] = None
+    verdict_overridden_from: Optional[str] = None
 
 
 @dataclass
@@ -263,6 +279,10 @@ def score_case(case: dict[str, Any], obs: CaseObservation) -> CaseScore:
         max_cosine=obs.max_cosine,
         category=obs.category,
         rule_fired=obs.rule_fired,
+        topicality=obs.topicality,
+        skeptic_verdict=obs.skeptic_verdict,
+        restate_verdict=obs.restate_verdict,
+        verdict_overridden_from=obs.verdict_overridden_from,
     )
 
 
@@ -497,6 +517,12 @@ def run_case(
         max_cosine=max_cos,
         category=rel.get("category") if isinstance(rel, dict) else None,
         rule_fired=rel.get("rule_fired") if isinstance(rel, dict) else None,
+        # Skeptic/topicality provenance — additive; .get fails open to None
+        # whenever a seam is env-gated off or the worker predates it.
+        topicality=rel.get("topicality") if isinstance(rel, dict) else None,
+        skeptic_verdict=crit_res.get("skeptic_verdict"),
+        restate_verdict=crit_res.get("restate_verdict"),
+        verdict_overridden_from=crit_res.get("verdict_overridden_from"),
     )
 
 
@@ -667,6 +693,10 @@ def result_to_dict(res: BatteryResult) -> dict[str, Any]:
                 "max_cosine": s.max_cosine,
                 "category": s.category,
                 "rule_fired": s.rule_fired,
+                "topicality": s.topicality,
+                "skeptic_verdict": s.skeptic_verdict,
+                "restate_verdict": s.restate_verdict,
+                "verdict_overridden_from": s.verdict_overridden_from,
             }
             for s in res.per_case
         ],
@@ -733,9 +763,10 @@ def render_markdown(res: BatteryResult, *, mock: bool) -> str:
     lines.append("")
     lines.append(
         "| case | dom | nov exp/act | crit exp/act | gate exp/act | "
-        "relevance diag (anchor/ov3/cur/spread/maxcos cat:rule) | pass |"
+        "relevance diag (anchor/ov3/cur/spread/maxcos cat:rule) | "
+        "skeptic diag (topic/skeptic/restate/ovr_from) | pass |"
     )
-    lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
     for s in res.per_case:
         nov = f"{s.expected_novelty}/{s.actual_novelty}" + ("" if s.novelty_correct else " ✗")
         crit = f"{s.expected_critic}/{s.actual_critic}" + ("" if s.critic_correct else " ✗")
@@ -745,9 +776,13 @@ def render_markdown(res: BatteryResult, *, mock: bool) -> str:
             f"{_fmt(s.curated_overlap)}/{_fmt(s.neighbor_spread)}/"
             f"{_fmt(s.max_cosine)} {s.category or '-'}:{s.rule_fired or '-'}"
         )
+        skep = (
+            f"{s.topicality or '-'}/{s.skeptic_verdict or '-'}/"
+            f"{s.restate_verdict or '-'}/{s.verdict_overridden_from or '-'}"
+        )
         lines.append(
             f"| {s.case_id} | {s.domain} | {nov} | {crit} | {gate} | {diag} | "
-            f"{'Y' if s.passed else 'N'} |"
+            f"{skep} | {'Y' if s.passed else 'N'} |"
         )
     lines.append("")
     return "\n".join(lines)

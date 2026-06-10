@@ -116,7 +116,8 @@
         "low_confidence":         {"type": "boolean"},
         "verdict_overridden_from": {"type": "string"},
         "override_reason":         {"type": "string"},
-        "skeptic_verdict":         {"type": ["string", "null"]}
+        "skeptic_verdict":         {"type": ["string", "null"]},
+        "restate_verdict":         {"type": ["string", "null"]}
       }
     },
     "experiment_outcome": {

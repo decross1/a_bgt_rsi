@@ -18,8 +18,10 @@ import pytest
 from agent_wrapper import worker_activity
 from orchestrator import active_run, coordinator, coordinator_cycle_log
 from orchestrator import finding_session, iteration_cache, nara
+from orchestrator import restate_skeptic
 from orchestrator import runtime as runtime_mod
-from orchestrator import todo_cli, topicality
+from orchestrator import submitted_run, todo_cli, topicality
+from orchestrator import topicality_skeptic
 
 
 @pytest.fixture
@@ -90,3 +92,13 @@ def _no_live_artifacts(tmp_path, monkeypatch):
                         tmp_path / "surfaced_findings.jsonl")
     monkeypatch.setattr(finding_session, "DEFAULT_STATUS_AUDIT",
                         tmp_path / "surfaced_findings.status.jsonl")
+    # MCP submit+poll ticket store (call-time-resolved, same leak class).
+    monkeypatch.setattr(submitted_run, "TICKETS_DIR",
+                        tmp_path / "tool_plane_submits")
+    # The two D-050 skeptics log to their own module-level CALLS_LOG_PATH
+    # (same import-time-env class as topicality, redirected above) — path
+    # isolation so the D-048 invariant doesn't rest on the MOCK gate alone.
+    monkeypatch.setattr(topicality_skeptic, "CALLS_LOG_PATH",
+                        str(tmp_path / "calls.jsonl"))
+    monkeypatch.setattr(restate_skeptic, "CALLS_LOG_PATH",
+                        str(tmp_path / "calls.jsonl"))

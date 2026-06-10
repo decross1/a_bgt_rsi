@@ -36,6 +36,11 @@ end-to-end — see docs/nemoclaw_smoke_runbook.md.
 
 Run (host side, real apparatus):
     env -u MOCK_LLM .venv-chroma/bin/python -m orchestrator.tool_plane --port 8077
+
+SINGLE-PROCESS assumption: run exactly ONE uvicorn worker (the CLI above is).
+The submit+poll seam (orchestrator/submitted_run.py) enforces one-in-flight
+with an in-process latch and detects server restarts by pid — both break
+under multi-worker serving.
 """
 from __future__ import annotations
 
@@ -46,6 +51,7 @@ from typing import Any, Callable
 
 from fastapi import Body, FastAPI, Response
 
+from orchestrator import submitted_run
 from orchestrator.coordinator import assess_state
 from orchestrator.nara import run_iteration as _run_iteration
 from orchestrator.runtime import set_current_agent
@@ -66,7 +72,32 @@ RUN_TOOL_DESCRIPTION = (
     "retrieve_literature -> novelty_classify -> critic_loop_v0 -> "
     "journal_writer) for the given topic, returning the iteration's id, "
     "novelty class, critic verdict, low-confidence flag, and journal path. "
-    "Runs host GPU compute; one iteration at a time."
+    "Runs host GPU compute; one iteration at a time. For MCP clients prefer "
+    "submit_loop_iteration + poll_run (this call blocks ~90s and may exceed "
+    "client timeouts)."
+)
+
+# The asynchronous twin of run_loop_iteration (2026-06-10): submit returns a
+# run_id ticket in milliseconds — under the OpenClaw MCP client's 15s request
+# timeout — and the iteration runs in a daemon thread host-side. Same
+# server-side boundary; the seam itself lives in orchestrator/submitted_run.py.
+SUBMIT_TOOL_NAME = "submit_loop_iteration"
+SUBMIT_TOOL_DESCRIPTION = (
+    "Submit ONE LOOP_V0 research iteration to run host-side and return "
+    "IMMEDIATELY with a run_id ticket (the iteration itself takes ~1-3 "
+    "minutes of host GPU compute). Same boundary as run_loop_iteration: "
+    "server-side topic validation and one iteration at a time — a busy "
+    "apparatus refuses, nothing is queued. Poll the ticket with poll_run."
+)
+POLL_TOOL_NAME = "poll_run"
+POLL_TOOL_DESCRIPTION = (
+    "Poll a run_id ticket returned by submit_loop_iteration. While running, "
+    "returns honest reads of the run registry entry and the host's live "
+    "active-iteration step board; once terminal, the finished verdict "
+    "envelope (iteration_id, novelty_class, critic_verdict, low_confidence, "
+    "journal path) or the failure. Pure read, except that a ticket whose "
+    "server process died is reconciled to failed/server_restart_mid_run. "
+    "Only tickets from submit_loop_iteration are pollable."
 )
 
 # Server-side topic gate (the boundary is HERE, not in the untrusted sandbox).
@@ -133,6 +164,36 @@ def _run_tool_manifest() -> dict[str, Any]:
     }
 
 
+def _submit_tool_manifest() -> dict[str, Any]:
+    """Manifest for submit_loop_iteration — input_schema IDENTICAL to
+    run_loop_iteration's (same boundary, asynchronous return)."""
+    return {
+        "name": SUBMIT_TOOL_NAME,
+        "description": SUBMIT_TOOL_DESCRIPTION,
+        "input_schema": {
+            "type": "object",
+            "properties": {"topic": {"type": "string"}},
+            "required": ["topic"],
+            "additionalProperties": False,
+        },
+    }
+
+
+def _poll_tool_manifest() -> dict[str, Any]:
+    """Manifest for poll_run: one required `run_id` string (a ticket id
+    previously returned by submit_loop_iteration)."""
+    return {
+        "name": POLL_TOOL_NAME,
+        "description": POLL_TOOL_DESCRIPTION,
+        "input_schema": {
+            "type": "object",
+            "properties": {"run_id": {"type": "string"}},
+            "required": ["run_id"],
+            "additionalProperties": False,
+        },
+    }
+
+
 def create_app(
     *,
     assess: Callable[[], dict[str, Any]] = assess_state,
@@ -155,12 +216,17 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, Any]:
         """Liveness probe — does NOT call assess (no Chroma load on a ping)."""
-        return {"ok": True, "tools": [TOOL_NAME, RUN_TOOL_NAME]}
+        return {"ok": True, "tools": [
+            TOOL_NAME, RUN_TOOL_NAME, SUBMIT_TOOL_NAME, POLL_TOOL_NAME,
+        ]}
 
     @app.get("/tools")
     def list_tools() -> dict[str, Any]:
         """MCP-style discovery: the tools the sandbox agent may call."""
-        return {"tools": [_tool_manifest(), _run_tool_manifest()]}
+        return {"tools": [
+            _tool_manifest(), _run_tool_manifest(),
+            _submit_tool_manifest(), _poll_tool_manifest(),
+        ]}
 
     @app.post("/tools/" + TOOL_NAME)
     def call_get_apparatus_state() -> dict[str, Any]:
@@ -200,7 +266,10 @@ def create_app(
                 "tool": RUN_TOOL_NAME, "ok": False,
                 "error": f"topic_too_long_max_{MAX_TOPIC_LEN}",
             }
-        if iteration_in_flight():
+        # thread_live() closes the submit registration gap (2026-06-10
+        # review): a submitted run is refused here from the instant submit
+        # returns, not merely once its executor thread registers the mirror.
+        if iteration_in_flight() or submitted_run.thread_live():
             return {"tool": RUN_TOOL_NAME, "ok": False, "error": "iteration_in_flight"}
 
         # D-043 attribution: run-log rows emitted during a sandbox-agent-driven
@@ -227,6 +296,76 @@ def create_app(
                 "journal_entry_path": record.get("journal_entry_path"),
             },
         }
+
+    @app.post("/tools/" + SUBMIT_TOOL_NAME)
+    def call_submit_loop_iteration(
+        body: dict[str, Any] = Body(default={}),
+    ) -> dict[str, Any]:
+        """Asynchronous twin of run_loop_iteration (orchestrator/submitted_run).
+
+        Same server-side boundary — identical topic gate (same error
+        strings), one iteration at a time — but returns a run_id ticket in
+        milliseconds, beating the MCP client's 15s request timeout. The
+        latch is held across the check+create+start window so two
+        simultaneous submits cannot both pass before the first executor
+        thread registers its run; once registered, the SAME active_run
+        mirror predicate the sync tool uses refuses for the whole run.
+        A busy submit is REFUSED (naming the blocking run), never queued.
+        """
+        topic = body.get("topic") if isinstance(body, dict) else None
+        if not isinstance(topic, str):
+            return {"tool": SUBMIT_TOOL_NAME, "ok": False, "error": "topic_must_be_string"}
+        topic = topic.strip()
+        if not topic:
+            return {"tool": SUBMIT_TOOL_NAME, "ok": False, "error": "topic_empty"}
+        if len(topic) > MAX_TOPIC_LEN:
+            return {
+                "tool": SUBMIT_TOOL_NAME, "ok": False,
+                "error": f"topic_too_long_max_{MAX_TOPIC_LEN}",
+            }
+        # Never-raises on the REST path too (2026-06-10 review): ticket
+        # IO or thread-start failure surfaces as ok:false, not a 500.
+        try:
+            with submitted_run._latch:
+                if iteration_in_flight() or submitted_run.thread_live():
+                    return {
+                        "tool": SUBMIT_TOOL_NAME, "ok": False,
+                        "error": "iteration_in_flight",
+                        "in_flight": submitted_run.in_flight_summary(),
+                    }
+                ticket = submitted_run.new_ticket(topic)
+                submitted_run.start_iteration_thread(ticket, run_iteration)
+        except Exception as exc:
+            return {
+                "tool": SUBMIT_TOOL_NAME, "ok": False,
+                "error": f"submit_failed: {type(exc).__name__}: {exc}",
+            }
+        return {
+            "tool": SUBMIT_TOOL_NAME,
+            "ok": True,
+            "result": {
+                "run_id": ticket["run_id"],
+                "status": "running",
+                "poll_with": POLL_TOOL_NAME,
+            },
+        }
+
+    @app.post("/tools/" + POLL_TOOL_NAME)
+    def call_poll_run(
+        body: dict[str, Any] = Body(default={}),
+    ) -> dict[str, Any]:
+        """Poll a submit ticket — honest reads only (see submitted_run.poll
+        for the payload shapes: unknown/finished/failed/running and the
+        pid-based server-restart reconciliation of the seam's own ticket).
+        """
+        run_id = body.get("run_id") if isinstance(body, dict) else None
+        try:
+            return submitted_run.poll(run_id)
+        except Exception as exc:  # e.g. racing reconciliations' shared tmp
+            return {
+                "tool": POLL_TOOL_NAME, "ok": False,
+                "error": f"poll_failed: {type(exc).__name__}: {exc}",
+            }
 
     @app.post("/mcp")
     def mcp_endpoint(payload: dict[str, Any] = Body(...)) -> Any:
@@ -262,7 +401,8 @@ def create_app(
             # MCP spells the schema key inputSchema (the REST manifest uses
             # the Anthropic-style input_schema) — remap, content identical.
             tools = []
-            for m in (_tool_manifest(), _run_tool_manifest()):
+            for m in (_tool_manifest(), _run_tool_manifest(),
+                      _submit_tool_manifest(), _poll_tool_manifest()):
                 tools.append({
                     "name": m["name"],
                     "description": m["description"],
@@ -279,6 +419,10 @@ def create_app(
                     out = call_get_apparatus_state()
                 elif name == RUN_TOOL_NAME:
                     out = call_run_loop_iteration(body=args)
+                elif name == SUBMIT_TOOL_NAME:
+                    out = call_submit_loop_iteration(body=args)
+                elif name == POLL_TOOL_NAME:
+                    out = call_poll_run(body=args)
                 else:
                     return {
                         "jsonrpc": "2.0", "id": msg_id,

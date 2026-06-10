@@ -59,8 +59,10 @@ refinement (2026-06-09 evening) adds ADDITIVE diagnostic keys:
   - `curated_overlap` — float|None; mean top-3 lexical overlap over
                         foundational-layer neighbors only.
   - `neighbor_spread` — float|None; max-min of the top-10 neighbor scores.
-  - `topicality`      — "on"|"off"|"unsure"|None; the caller-computed LLM
-                        domain judgment (orchestrator/topicality.py). R0.
+  - `topicality`      — "on"|"off"|"off_independent"|"unsure"|None; the
+                        caller-computed LLM domain judgment
+                        (orchestrator/topicality.py). R0; "off_independent"
+                        (the env-gated independent attack) fires R0b.
   - `category`        — "off_domain"|"thin"|"no_sharp_match"|"empty"|"ok".
   - `rule_fired`      — str|None; first rule in the R0..R5 ladder that fired.
 """
@@ -269,7 +271,9 @@ def relevance(
          "rule_fired": str|None}
 
     Rule ladder (low_confidence = any fired; rule_fired = first fired):
-        R0 topicality == "off"                     -> off_domain (LLM check)
+        R0  topicality == "off"                    -> off_domain (LLM check)
+        R0b topicality == "off_independent"        -> off_domain (independent
+                                                      topicality attack)
         R1 overlap < 0.05                          -> off_domain (legacy)
         R2 maxcos < 0.55 and overlap < 0.10        -> thin       (legacy)
         R3 anchor < ANCHOR_LOW                     -> off_domain
@@ -284,17 +288,34 @@ def relevance(
     separators (calibration gap -0.079 / -0.075: a genuinely novel
     on-domain hypothesis is far from the corpus BY DEFINITION, same as a
     camouflaged off-domain one — distance-to-known-content conflates the
-    two). Only the literal "off" condemns; "unsure"/None never gate
-    (over-gating guard — the canary cases are part of the battery bar).
+    two). Only the literal "off" (R0, primary judge) and "off_independent"
+    (R0b, 2026-06-10 D-045 residual 1: the primary judge passed it but the
+    env-gated independent attack — orchestrator/topicality_skeptic.py —
+    condemned) fire; "on"/"unsure"/None never gate (over-gating guard —
+    the canary cases are part of the battery bar).
     """
-    # --- R0: explicit LLM topicality judgment (condemn-only, like the anchor)
-    if topicality == "off":
+    # --- R0/R0b: explicit LLM topicality judgment (condemn-only, like the
+    # anchor). "off" = the primary judge; "off_independent" = the primary
+    # judge passed it and the independent skeptic condemned (check() only
+    # emits it under NARA_TOPICALITY_SKEPTIC=1).
+    if topicality in ("off", "off_independent"):
+        if topicality == "off":
+            rule, reason = "R0", (
+                "off-domain hypothesis (LLM topicality check): the claim is "
+                "not primarily a game-theory / behavioral-GT / "
+                "learning-in-games question, so this corpus cannot ground "
+                "novelty or survival."
+            )
+        else:
+            rule, reason = "R0b", (
+                "off-domain by independent topicality attack (the "
+                "NARA_SKEPTIC_BACKEND judge): the primary judge passed it, "
+                "but the independent skeptic judged the claim's primary "
+                "subject outside game theory, so this corpus cannot ground "
+                "novelty or survival."
+            )
         return _out(
-            0.0, True,
-            "off-domain hypothesis (LLM topicality check): the claim is not "
-            "primarily a game-theory / behavioral-GT / learning-in-games "
-            "question, so this corpus cannot ground novelty or survival.",
-            "off_domain", "R0",
+            0.0, True, reason, "off_domain", rule,
             {"anchor_cosine": anchor_cosine, "curated_overlap": None,
              "neighbor_spread": None, "topicality": topicality},
         )

@@ -220,6 +220,41 @@ class ScoreCaseTest(unittest.TestCase):
         self.assertEqual(row["anchor_cosine"], 0.41)
         self.assertEqual(row["category"], "ok")
 
+    # -- skeptic/topicality provenance fields (residual-1/2 observability) ----
+    def test_new_observation_fields_default_none_and_passthrough(self):
+        fields = ("topicality", "skeptic_verdict", "restate_verdict",
+                  "verdict_overridden_from")
+        # Default: a pre-seam observation carries None on all four and they
+        # survive score_case as None (additive — never required, never
+        # affecting pass logic).
+        s = score_case(self._on_case(), self._obs())
+        for name in fields:
+            self.assertIsNone(getattr(s, name))
+        self.assertTrue(s.passed)  # provenance fields never move the bar
+        # Populated: values pass through score_case + result_to_dict verbatim.
+        o = self._obs()
+        o.topicality = "off_independent"
+        o.skeptic_verdict = "survives_attack"
+        o.restate_verdict = "restated"
+        o.verdict_overridden_from = "survives"
+        s2 = score_case(self._on_case(), o)
+        self.assertEqual(s2.topicality, "off_independent")
+        self.assertEqual(s2.skeptic_verdict, "survives_attack")
+        self.assertEqual(s2.restate_verdict, "restated")
+        self.assertEqual(s2.verdict_overridden_from, "survives")
+        row = result_to_dict(score_battery([self._on_case()], [o]))["per_case"][0]
+        for name in fields:
+            self.assertIn(name, row)
+        self.assertEqual(row["topicality"], "off_independent")
+        self.assertEqual(row["skeptic_verdict"], "survives_attack")
+        self.assertEqual(row["restate_verdict"], "restated")
+        self.assertEqual(row["verdict_overridden_from"], "survives")
+        # And the None default serializes as None (not dropped) in the dict.
+        row_none = result_to_dict(
+            score_battery([self._on_case()], [self._obs()]))["per_case"][0]
+        for name in fields:
+            self.assertIsNone(row_none[name])
+
 
 # ──────────────────────────────────────────────────────────────────────
 # score_battery — roll-up arithmetic + the proposed pass bar.

@@ -318,3 +318,62 @@ in-flight state instead of confabulating a verdict.
 3. **Restart the tool plane after editing worker/orchestrator code** — iter-008 ran on
    the plane's stale in-memory pipe (pre-R0, no skeptic env). The plane now runs the
    final code with `NARA_SKEPTIC=1`.
+
+## 2026-06-10 — submit+poll is the MCP-recommended drive path
+
+The 15s-timeout gap (ops rule 2 above) is CLOSED: the plane now serves
+**`submit_loop_iteration`** (returns a `run_id` ticket in milliseconds —
+well under the MCP client's `connectionTimeoutMs: 15000`) and
+**`poll_run`** (honest reads of the ticket + the D-047 registry entry +
+the live `active_iteration` step board; the terminal verdict envelope
+once finished). Agent-visible MCP names: `nara__submit_loop_iteration`,
+`nara__poll_run`. The synchronous `run_loop_iteration` stays unchanged
+for host-side `curl` smokes and compat, but **MCP drives should use
+submit+poll** — its description now says so.
+
+**Re-drive prompt variant (S5):**
+
+```bash
+nemoclaw nara-sandbox exec --no-tty --timeout 900 -- \
+  openclaw agent --json --session-id "drive-$(date +%s)" --message \
+  "Run one cycle: call get_apparatus_state, form ONE in-domain (cs.GT/econ.TH) research thesis grounded in the snapshot, call submit_loop_iteration(topic) ONCE to get a run_id, then call poll_run(run_id) every ~20s until status is finished or failed, and report the thesis + the returned verdict (novelty_class, critic_verdict, low_confidence) honestly. Submit exactly once; if submit refuses with iteration_in_flight, report that state honestly and stop."
+```
+
+PASS criterion 3 (returned-verdict report) is now checkable end-to-end:
+submit and each poll round-trip in <15s, so the client timeout never
+truncates the verdict. Verify the reported fields against the new
+`memory/loop_memory.jsonl` tail row for the ticket's `iteration_id`, and
+watch the H1 terminal for `mcp tools/call -> submit_loop_iteration` then
+`mcp tools/call -> poll_run` lines.
+
+**Ops notes for the seam:**
+
+- **One in flight, nothing queued.** A busy submit returns
+  `iteration_in_flight` naming the blocking run; while a submitted run is
+  live the sync `run_loop_iteration` refuses too (same mirror predicate).
+- **Server restart mid-run** = the daemon thread died with the process;
+  the next `poll_run` honestly reconciles the ticket to
+  `failed`/`server_restart_mid_run` and reports (never deletes) any
+  orphaned registry file.
+- **Stale-mirror lockout — clear BEFORE smokes.** A dead run that never
+  cleared `run_state/active_run.json` (live example at write time: the
+  orphaned `exp007_polymarket_2026-06-10T16_32_31.988359Z` mirror +
+  `run_state/active_runs/` twin from 16:32Z) makes EVERY submit/run
+  refuse with `iteration_in_flight`. That refusal is the guard working
+  as designed; the cleanup is a deliberate, logged human/dev action via
+  the legacy clear path (from a fresh process with no registration it
+  clears the mirror AND its per-run twin):
+
+  ```bash
+  /home/decross1/projects/a_bgt_rsi/.venv-chroma/bin/python -c \
+    "from orchestrator import active_run; active_run.clear_active_run()"
+  ```
+
+  Log the clear as a run-log row (rule 6) — do not let any agent
+  auto-clear it (rule 4: report, never silently coerce shared state).
+- **Single-process plane.** The seam's latch is in-process and restart
+  detection is pid-based: run exactly one uvicorn worker (the
+  `python -m orchestrator.tool_plane` CLI default).
+- **Tickets** live under `run_state/tool_plane_submits/` (seam-private;
+  only `submit_loop_iteration` tickets are pollable — host iteration ids
+  return `unknown_run_id`).
