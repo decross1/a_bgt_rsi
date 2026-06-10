@@ -61,15 +61,65 @@ UI guidance: do not assume a uniform experiment-summary shape. Probe keys; rende
 ### 2a. Per-call inference internals (`logs/worker_activity.jsonl`) — NO JSON Schema
 
 Append-only JSONL; one row per finished inference call (NOT a per-decode-step stream).
-Emitted by the wrapper after each `call_sync`/`call_with_tools`. Shape:
+Emitted by the wrapper after each `call_sync`/`call_async`/`call_with_tools`, by Nara
+orchestrator turns, and by sub-agent turns (full coverage since 2026-06-10). Shape:
 `{ timestamp, run_id, task_id (=caller_tag), tokens_generated, tokens_target,
-tok_per_s, eta_s (null when tok_per_s==0), synthetic: false }`. `synthetic:false` because
+tok_per_s, eta_s (null when tok_per_s==0), synthetic: false, backend?, model? }`.
+`backend` (registry name, e.g. `vllm-qwen`) + `model` (served-model-name) are OPTIONAL —
+absent on pre-2026-06-10 rows; always stamped since. `synthetic:false` because
 this is real data — a future live stream is a separate upgrade. `tokens_target` falls back to
 `tokens_generated` when the caller passed no `max_tokens` cap.
 
 ---
 
 ## Changelog
+
+- **2026-06-10** — Provenance EMIT (screenshot-review legibility work; pairs with the
+  rewritten `docs/ui_next_session_plan.md`):
+  - **`logs/calls.jsonl`**: new OPTIONAL top-level `backend` (backend registry name,
+    e.g. `vllm-gemma`/`vllm-qwen`/`ollama-coder`/`anthropic`) on every record from every
+    producer (`wrapper._record`, `call_with_tools`, `nara._record_turn`,
+    `subagent._emit_record`). Sub-agent records now also stamp `run_id` (they previously
+    dropped it even inside a registered iteration) and `max_tokens`. Old rows validate
+    unchanged (field optional in `schema/calls.jsonl.schema.json`).
+  - **`logs/worker_activity.jsonl`**: rows gain OPTIONAL `backend` + `model`; emission
+    coverage extended to `call_async`, Nara orchestrator turns
+    (`task_id="nara.run_iteration"`), and sub-agent turns (`task_id="subagent.<name>"`).
+  - **`run_state/active_iteration.json`**: new OPTIONAL `steps[]` board —
+    `{name, status ∈ pending|running|passed|failed|skipped, started_at?, ended_at?}` for
+    `meta_review` + the 5-step chain, with dynamic `redteam` / `ml_intern` entries
+    inserted when those sub-loops fire. Absent on legacy iterations → UI falls back to
+    its static strip. Schema updated (`schema/active_iteration.schema.json`).
+  - **`run_state/week1.run.jsonl`**: new event types `loop_v0_active_step`
+    (`{iteration_id, step, status}` per board transition), `subagent_start` /
+    `subagent_finish` (`{subagent, run_id, status?, turns_used?, backend?}`).
+  - **Run registration**: `experiments/lit_falsification_battery`, `exp001`, `exp007`,
+    `exp008` (both evals), and the `novelty_skeptic` smoke now `set_run_id` +
+    `write_active_run` (exp009 pattern) — backend load from these is no longer
+    "BUSY (unregistered)".
+  - **Multi-run registry (D-047)**: `run_state/active_runs/<safe(run_id)>.json` —
+    one schema-validated file per LIVE run (the active_run.json shape; both files
+    carry `heartbeat_at`, refreshed on every update; deleted on completion; absent
+    dir == no live runs). `run_state/active_run.json` remains the foreground mirror
+    (most recent writer) with only-owner-clears — concurrent runs no longer clobber
+    it; nested in-process registration (coordinator → iteration) pops back to the
+    parent. Caveat for `steps[]` consumers: a `journal_writer` chip marked `passed`
+    may be orchestrator-filled after Nara skipped the step — the journal EXISTS
+    either way; the degraded path is distinguishable by the paired
+    `loop_v0_fallback` run-log event, not by the chip.
+  - **Write-back ledgers (D-046)**: NEW `memory/coordinator_acks.jsonl`
+    (`{bubble_run_id, ack_by, acked_at, note}`; written ONLY by
+    `orchestrator/todo_cli.py ack`) and NEW `memory/dev_session_queue.jsonl`
+    (`{ref_id, kind, note, status:"open", attested_by, deferred_at}` /
+    closing rows `{ref_id, status:"closed", note, closed_by, closed_at}`;
+    written ONLY by `todo_cli defer|close`; readers fold by ref_id, last status
+    wins). One-shot finding dispositions append the existing
+    `surfaced_findings.status.jsonl` row shape with `session_id: null`
+    (`finding_session --set-status`). See `docs/human_writeback_contract.md`.
+  - **Purge (D-048)**: `coordinator_cycles.jsonl` 140→117, `calls.jsonl`
+    4,819→879, `worker_activity.jsonl` 1,251→1,163 — provably-synthetic test
+    rows removed with `.pre_purge_2026-06-10` backups kept beside each file.
+    Consumers must not pin the existence of the removed rows.
 
 - **2026-06-08** — Coordinator-brain (Slice-Alpha) `coordinator_report` shape +
   `active_run` adoption. **OPT-IN host tooling, NOT the always-on Nara.** Produced by

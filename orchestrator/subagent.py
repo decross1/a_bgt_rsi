@@ -34,12 +34,15 @@ from agent_wrapper.gemma_tool_parse import (
     parse_inline_tool_calls,
     split_narration_and_markup,
 )
+from agent_wrapper import worker_activity
 from agent_wrapper.backends import get_backend
 from agent_wrapper.wrapper import (
     DEFAULT_BACKEND,
     _emit,
     _project_for_log,
+    get_run_id,
 )
+from orchestrator.runtime import append_run_log
 
 
 SubAgentStatus = Literal["passed", "error", "timeout", "schema_mismatch"]
@@ -145,6 +148,8 @@ def _emit_record(
     log_path: str | None,
     model_version: str,
     host_metadata: dict,
+    backend_name: str | None = None,
+    max_tokens: int | None = None,
 ) -> dict:
     """Log one sub-agent turn to logs/calls.jsonl in the standard
     call-record shape. Mirrors orchestrator/nara.py's `_record_turn`
@@ -183,7 +188,31 @@ def _emit_record(
         "caller_tag": caller_tag,
         "parent_request_id": parent_request_id,
     }
-    return _emit(rec, log_path)
+    # Stamp the active run_id (mirrors nara._record_turn — this was the
+    # in-iteration attribution gap: sub-agent turns logged without run_id
+    # even when the contextvar was set) and the backend registry name.
+    run_id = get_run_id()
+    if run_id is not None:
+        rec["run_id"] = run_id
+    if backend_name is not None:
+        rec["backend"] = backend_name
+    if max_tokens is not None:
+        rec["max_tokens"] = max_tokens
+    _emit(rec, log_path)
+    # Per-call UI inference-internals row (best-effort; never raises) so
+    # sub-agent turns are visible in the live worker panel.
+    worker_activity.emit_worker_activity(
+        run_id=run_id,
+        task_id=caller_tag,
+        output_tokens=rec["usage"]["output_tokens"],
+        max_tokens=(max_tokens if max_tokens is not None
+                    else rec["usage"]["output_tokens"]),
+        latency_ms=latency_ms,
+        timestamp=rec["timestamp"],
+        backend=backend_name,
+        model=rec["model"],
+    )
+    return rec
 
 
 def run_subagent(
@@ -253,9 +282,32 @@ def run_subagent(
     def _elapsed() -> float:
         return time.perf_counter() - started_perf
 
+    # Run-log lifecycle pair (rule 6): one subagent_start at dispatch, one
+    # subagent_finish at whichever exit fires. Makes sub-agents visible in
+    # the activity feed instead of "no workers in flight" mid-iteration.
+    append_run_log({
+        "event_type": "subagent_start",
+        "subagent": name,
+        "run_id": get_run_id(),
+        "backend": be.name,
+        "parent_request_id": parent_request_id,
+    })
+
+    def _finish(res: SubAgentResult) -> SubAgentResult:
+        append_run_log({
+            "event_type": "subagent_finish",
+            "subagent": name,
+            "run_id": get_run_id(),
+            "status": res.status,
+            "turns_used": res.turns_used,
+            "wall_seconds": round(res.wall_seconds, 3),
+            "parent_request_id": parent_request_id,
+        })
+        return res
+
     for turn in range(budget.max_turns):
         if _elapsed() > budget.max_wall_seconds:
-            return SubAgentResult(
+            return _finish(SubAgentResult(
                 status="timeout",
                 result=None,
                 errors=[
@@ -266,9 +318,9 @@ def run_subagent(
                 turns_used=turn,
                 wall_seconds=_elapsed(),
                 output_tokens_used=output_tokens,
-            )
+            ))
         if output_tokens > budget.max_tokens_total:
-            return SubAgentResult(
+            return _finish(SubAgentResult(
                 status="timeout",
                 result=None,
                 errors=[
@@ -279,7 +331,7 @@ def run_subagent(
                 turns_used=turn,
                 wall_seconds=_elapsed(),
                 output_tokens_used=output_tokens,
-            )
+            ))
 
         try:
             t0 = time.perf_counter()
@@ -297,7 +349,7 @@ def run_subagent(
             )
             latency_ms = (time.perf_counter() - t0) * 1000.0
         except Exception as exc:
-            return SubAgentResult(
+            return _finish(SubAgentResult(
                 status="error",
                 result=None,
                 errors=[
@@ -308,7 +360,7 @@ def run_subagent(
                 turns_used=turn,
                 wall_seconds=_elapsed(),
                 output_tokens_used=output_tokens,
-            )
+            ))
 
         record = _emit_record(
             openai_messages, resp, latency_ms,
@@ -317,6 +369,8 @@ def run_subagent(
             log_path=log_path,
             model_version=be.model_version,
             host_metadata=be.host_metadata,
+            backend_name=be.name,
+            max_tokens=budget.max_tokens_per_turn,
         )
         wrapper_call_ids.append(record["request_id"])
         last_id = record["request_id"]
@@ -385,7 +439,7 @@ def run_subagent(
                         ),
                     })
                     continue
-                return SubAgentResult(
+                return _finish(SubAgentResult(
                     status="schema_mismatch",
                     result=None,
                     errors=[
@@ -397,11 +451,11 @@ def run_subagent(
                     turns_used=turn + 1,
                     wall_seconds=_elapsed(),
                     output_tokens_used=output_tokens,
-                )
+                ))
             try:
                 jsonschema.Draft7Validator(expected_output_schema).validate(payload)
             except jsonschema.ValidationError as exc:
-                return SubAgentResult(
+                return _finish(SubAgentResult(
                     status="schema_mismatch",
                     result=payload,  # caller may still find it useful
                     errors=[
@@ -412,8 +466,8 @@ def run_subagent(
                     turns_used=turn + 1,
                     wall_seconds=_elapsed(),
                     output_tokens_used=output_tokens,
-                )
-            return SubAgentResult(
+                ))
+            return _finish(SubAgentResult(
                 status="passed",
                 result=payload,
                 errors=[],
@@ -421,7 +475,7 @@ def run_subagent(
                 turns_used=turn + 1,
                 wall_seconds=_elapsed(),
                 output_tokens_used=output_tokens,
-            )
+            ))
 
         # Stage the assistant turn (with tool_calls) for the next request.
         openai_messages.append({
@@ -471,7 +525,7 @@ def run_subagent(
             })
 
     # max_turns exhausted.
-    return SubAgentResult(
+    return _finish(SubAgentResult(
         status="timeout",
         result=None,
         errors=[
@@ -482,4 +536,4 @@ def run_subagent(
         turns_used=budget.max_turns,
         wall_seconds=_elapsed(),
         output_tokens_used=output_tokens,
-    )
+    ))

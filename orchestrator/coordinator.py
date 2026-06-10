@@ -646,16 +646,19 @@ def _collect_bubble_up(
 
 def _persist_bubble_up(
     bubbles: list[dict[str, Any]], *, run_id: str,
-    path: str | os.PathLike = DEFAULT_COORDINATOR_BUBBLES,
+    path: str | os.PathLike | None = None,
 ) -> None:
     """Append each bubble_up entry to memory/coordinator_bubbles.jsonl so a
     coordinator surfacing OUTLIVES the run — today bubble_up is report-only
     (returned + printed, then lost). Execute-only by design: a bubble is an
     actual surfacing (handle_bubble_up ran), not a dry-run proposal, so a
     planned-but-not-executed bubble is never recorded as a real one (rule 4).
-    One row per bubble; append-only (matches the JSONL convention); never raises."""
+    One row per bubble; append-only (matches the JSONL convention); never raises.
+    path=None resolves to DEFAULT_COORDINATOR_BUBBLES at call time (patchable)."""
     if not bubbles:
         return
+    if path is None:
+        path = DEFAULT_COORDINATOR_BUBBLES
     try:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)

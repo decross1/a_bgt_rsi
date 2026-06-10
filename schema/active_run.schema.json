@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "active_run",
-  "description": "Generalized live-run state file at run_state/active_run.json. Written atomically by any run-mode driver (experiment, autoresearch, loop_v0, ad_hoc); cleared on completion. The UI polls this to render a single 'what is running now' panel regardless of which run kind produced it.",
+  "description": "Generalized live-run state file at run_state/active_run.json. Written atomically by any run-mode driver (experiment, autoresearch, loop_v0, ad_hoc); cleared on completion. The UI polls this to render a single 'what is running now' panel regardless of which run kind produced it. run_state/active_runs/<run_id>.json (one file per live run, deleted on completion) is the multi-run source of truth; active_run.json remains the foreground mirror (most recent writer).",
   "type": "object",
   "required": [
     "run_id",
@@ -18,6 +18,11 @@
     },
     "label": {"type": "string"},
     "started_at": {"type": "string", "format": "date-time"},
+    "heartbeat_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Refreshed on every update; consumers treat a stale heartbeat as a possibly-dead run."
+    },
     "current_step": {
       "type": ["string", "null"],
       "description": "The step currently in flight."

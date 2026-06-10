@@ -783,7 +783,30 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nwrote {json_path}\nwrote {md_path}")
         return 0
 
-    observations = [run_case(c) for c in cases]
+    # Run-provenance registration (2026-06-10): the battery used to hammer
+    # the backends with NO registered run — the dashboard's "BUSY
+    # (unregistered) — activity without provenance" state. Same pattern as
+    # exp009: set_run_id stamps every wrapper call; active_run feeds the UI.
+    from agent_wrapper.wrapper import set_run_id
+    from orchestrator import active_run
+
+    run_id = f"lit_battery_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    set_run_id(run_id)
+    active_run.write_active_run(
+        run_id, "experiment", "lit-falsification accuracy battery",
+        total=len(cases), unit="case",
+    )
+    observations = []
+    try:
+        for i, c in enumerate(cases, start=1):
+            observations.append(run_case(c))
+            active_run.update_active_run(
+                done=i,
+                narration=f"[{i}/{len(cases)}] {getattr(c, 'case_id', 'case')}",
+            )
+    finally:
+        active_run.clear_active_run()
+        set_run_id(None)
     res = score_battery(cases, observations)
 
     out_dir = Path(args.out_dir)

@@ -107,5 +107,12 @@ def test_never_raises_when_log_path_unwritable(tmp_path, monkeypatch):
 
 
 def test_default_log_path_points_at_logs_dir():
-    assert worker_activity.DEFAULT_LOG_PATH.name == "worker_activity.jsonl"
-    assert worker_activity.DEFAULT_LOG_PATH.parent.name == "logs"
+    """Pin the PRODUCTION default. The autouse _no_live_artifacts guard
+    (tests/conftest.py, D-048) patches the runtime attribute to tmp for
+    every test, so reload the module to observe the source-defined value;
+    the guard's monkeypatch teardown restores its own state afterwards."""
+    import importlib
+
+    mod = importlib.reload(worker_activity)
+    assert mod.DEFAULT_LOG_PATH.name == "worker_activity.jsonl"
+    assert mod.DEFAULT_LOG_PATH.parent.name == "logs"

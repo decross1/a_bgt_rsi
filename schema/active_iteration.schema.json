@@ -35,6 +35,20 @@
       "type": ["string", "null"],
       "description": "Served-model-name the orchestrator backend is using (e.g. 'gemma-4-26b-a4b'). Pairs with orchestrator_backend; null on legacy iterations."
     },
+    "steps": {
+      "type": "array",
+      "description": "Planned-chain status board (2026-06-10): the 5-step LOOP_V0 chain plus the meta_review pre-step, with dynamic sub-loop steps (redteam, ml_intern) inserted when they fire. Absent on pre-2026-06-10 iterations — the UI falls back to its static strip.",
+      "items": {
+        "type": "object",
+        "required": ["name", "status"],
+        "properties": {
+          "name":       {"type": "string"},
+          "status":     {"type": "string", "enum": ["pending", "running", "passed", "failed", "skipped"]},
+          "started_at": {"type": "string", "format": "date-time"},
+          "ended_at":   {"type": "string", "format": "date-time"}
+        }
+      }
+    },
     "tool_calls_so_far": {
       "type": "array",
       "items": {

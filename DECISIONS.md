@@ -2263,3 +2263,111 @@ exactly the review's predicted correction.
 **Reversibility.** All additive: R0 fail-open, anchor rules inert, overrides carry
 provenance, schema changes additive. The battery + calibration artifacts under
 `experiments/lit_falsification_battery/runs/` are the regression baseline.
+
+## D-046 — Human write-back contract blessed: UI POSTs exec blessed CLIs; defer-to-dev-session queue + startup triage step
+
+**Date locked.** 2026-06-10 (screenshot-review session; ratified by the human at
+planning time).
+
+**Decision.** The UI's deferred "B4 write-back" ships against a blessed CLI contract
+(`docs/human_writeback_contract.md`): `ui/backend` POST endpoints exec the CLIs as
+**argv arrays, no shell** — `gate_cli` for gate verdicts (enum frozen
+valid|invalid|needs_revision), NEW `finding_session --set-status` one-shot for quick
+finding dispositions (validated|rejected|in_review; validated/rejected route
+`gate_cli.append_feedback` against the finding's source iteration exactly as
+`end_session` does), NEW `todo_cli ack` for bubble acks (`memory/coordinator_acks.jsonl`,
+the join key `ui/backend/human_todo.py` already reads), and NEW `todo_cli defer` —
+a **defer-to-dev-session** disposition appending
+`{ref_id, kind, note, status:"open", attested_by, deferred_at}` to
+`memory/dev_session_queue.jsonl` (append-only; `close` appends a closing row; readers
+fold by ref_id, last status wins). Writes from the UI stamp `human:ui`. CLI validation
+is the gate: out-of-enum exits nonzero, writes nothing, stderr surfaced verbatim.
+CLAUDE.md "How to start a primary session" gains one step: run
+`todo_cli list-deferred` and triage open deferrals into the session plan.
+`stale_active_run` / `state_gate` direct resolution stays a primary-session human
+action — defer-only from the UI.
+
+**Alternatives rejected.** (a) UI writes `memory/*` files directly — breaks the
+single-writer discipline every ledger relies on; (b) a separate primary-owned API
+service — a second server to run/version for no added safety over exec-ing the same
+CLIs; (c) reusing `run_state/attestations.jsonl` — that is retired track-era machinery
+(soft-gate SLA log), and overloading it would resurrect retired semantics.
+
+**Reversibility.** Endpoints are additive; the queue file is append-only; removing the
+blessing reverts the UI to copy-paste rendering with no data migration.
+
+## D-048 — Test-pollution purge (one logged surgical cleanup) + the autouse no-live-artifacts guard
+
+**Date locked.** 2026-06-10 (ratified by the human at planning time as an explicit
+exception to append-only discipline).
+
+**The finding.** Def-time-bound default paths let the test suite write LIVE apparatus
+files for days: 23 synthetic "RuntimeError: boom" coordinator cycles (rendered as failed
+dispatches on the dashboard), **3,930 of 4,819** `logs/calls.jsonl` rows with
+`model:"fake-model"` (82% of the canonical call log), and 88 same-day worker_activity
+rows. A second vector: `orchestrator/topicality.py` makes a REAL model call when
+MOCK_LLM is unset — and MOCK_LLM is set in the human's interactive shell but NOT in
+non-interactive shells, so test runs silently hit the live Gemma server and stamped
+rows with a stale fixture run_id.
+
+**Decision.** (a) One surgical purge with `.pre_purge_2026-06-10` backups kept beside
+each file: coordinator_cycles 140→117 (−23 boom rows), calls.jsonl 4,819→879 (−3,930
+fake-model − 10 test-context topicality rows), worker_activity 1,251→1,163 (−88; lands
+exactly on the session-start baseline, confirming the dropped rows were all same-day
+test artifacts), and — found by the same-day adversarial review AFTER the new
+`subagent_start/finish` events shipped — week1.run.jsonl 1,402→1,192 (−210 fixture
+sub-agent rows: `subagent:"t"`, `run_id:null`, written live by `tests/test_subagent.py`
+through the new `runtime.append_run_log` before the guard covered it). Malformed lines
+are never dropped. (b) The leak is closed structurally: all writer defaults now resolve
+at CALL time (worker_activity, coordinator_cycle_log, coordinator bubbles, nara's
+calls-log sentinel) and `tests/conftest.py` gains an AUTOUSE `_no_live_artifacts`
+fixture redirecting every such default to tmp_path — including `runtime.RUN_LOG_PATH`
+and the D-046 ledgers — the invariant is "a full pytest run adds ZERO rows to
+run_state/, logs/, memory/".
+(c) Operating rule: pytest runs are invoked with explicit `MOCK_LLM=1` (the inverse
+discipline of `env -u MOCK_LLM` for real runs — do not rely on the shell default).
+Stray finished-run redirects deleted (`run_state/battery_run*.log`,
+`coordinator_cycle_evening.log`; battery artifacts live in
+`experiments/lit_falsification_battery/runs/`); live server stdout (`tool_plane.out`,
+`ui_backend.out`) stays in place (open fds) and is now gitignored along with the
+registry dir and purge backups.
+
+**Alternatives rejected.** Keeping the rows and rendering around them (UI ×N grouping)
+— leaves failure triage and call-log forensics poisoned forever and the "canonical call
+log" 82% synthetic. Append-only discipline is for research observations; these rows
+were never observations.
+
+**Reversibility.** Full: the `.pre_purge_2026-06-10` backups are byte-complete copies.
+
+## D-047 — Multi-run active-run registry (per-run files + foreground mirror)
+
+**Date locked.** 2026-06-10 (ratified at planning; built by Dynamic Workflow
+`wf_27141574-2c6` limb R in an isolated worktree; serially integrated).
+
+**Decision.** `orchestrator/active_run.py` becomes a multi-run registry: every live run
+writes its own `run_state/active_runs/<safe(run_id)>.json` (schema-validated, atomic
+write tmp + os.replace, deleted on completion) carrying `heartbeat_at`, refreshed on
+every update — consumers treat a stale heartbeat as a possibly-dead run. Ownership is
+keyed by a module-level ContextVar holding the run_id, so `write_active_run` /
+`update_active_run` / `clear_active_run` keep their exact signatures and the ~10 call
+sites are untouched. `run_state/active_run.json` stays as the foreground mirror (most
+recent writer; the UI keeps polling just that file) with **only-owner-clears**: an
+update never rewrites a mirror owned by a different run_id, and a context-keyed clear
+deletes the mirror only when it owns it; legacy no-context clears remove the mirror
+plus its per-run twin. Resolves loop-iteration / coordinator / battery runs clobbering
+each other's live state (the screenshot-review "BUSY (unregistered)" / single-slot
+failure mode). Registry path follows the mirror's parent when a test relocates only
+ACTIVE_RUN_PATH ("the registry lives beside the mirror" invariant).
+
+**Integration note (honest record).** The limb's worktree rewrite regressed the `kind`
+surface to 4 kinds — dropping `coordinator` from both `_KINDS` and the schema enum
+(present at HEAD since the Slice-Alpha coordinator landed). Caught by the existing
+join-contract test at integration (`test_update_active_run_each_coordinator_step_is_
+schema_valid`); restored before merge. Full suite 1068 green after integration.
+
+**Alternatives.** (1) Thread run handles through every call site — rejected: ~12-file
+churn for no safety gain. (2) Replace the mirror outright with the registry — rejected:
+breaks the live UI contract mid-flight.
+
+**Reversibility.** Delete RUNS_DIR + the contextvar; mirror behavior reverts to the
+single-slot helper.

@@ -124,32 +124,52 @@ def main():
     print(f"  output_dir = {out_dir}")
     print(f"  jsonl_log  = {args.jsonl_log}")
 
+    # Run-provenance registration (2026-06-10, exp009 pattern): run_id on
+    # every wrapper call + a registered active run for the UI.
+    from agent_wrapper.wrapper import set_run_id
+    from orchestrator import active_run
+
+    run_id = f"{args.task_id_prefix}_{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
+    set_run_id(run_id)
+    active_run.write_active_run(
+        run_id, "experiment",
+        f"exp001 repeated PD ({args.rules_variant})",
+        total=len(opponents), unit="opponent",
+    )
     t_start = time.perf_counter()
     results = []
-    for i, opp in enumerate(opponents, start=1):
-        task = _build_task(opponent=opp, n_rounds=args.rounds,
-                           temperature=args.temperature,
-                           rules_variant=args.rules_variant,
-                           task_id_prefix=args.task_id_prefix)
-        t0 = time.perf_counter()
-        if orch is not None:
-            out = orch.run_task(task)
-        else:
-            from workers.play_pd_match import play_match
-            out = play_match(
-                payload=task["payload"],
-                log_path=args.jsonl_log,
-                parent_request_id=str(uuid.uuid4()),
+    try:
+        for i, opp in enumerate(opponents, start=1):
+            task = _build_task(opponent=opp, n_rounds=args.rounds,
+                               temperature=args.temperature,
+                               rules_variant=args.rules_variant,
+                               task_id_prefix=args.task_id_prefix)
+            t0 = time.perf_counter()
+            if orch is not None:
+                out = orch.run_task(task)
+            else:
+                from workers.play_pd_match import play_match
+                out = play_match(
+                    payload=task["payload"],
+                    log_path=args.jsonl_log,
+                    parent_request_id=str(uuid.uuid4()),
+                )
+            elapsed = time.perf_counter() - t0
+            status = out.get("status")
+            result = out.get("result") or {}
+            _print_progress(opp, i, len(opponents), status, elapsed, result if status == "passed" else {})
+            active_run.update_active_run(
+                done=i,
+                narration=f"[{i}/{len(opponents)}] {opp}: {status} ({elapsed:.1f}s)",
             )
-        elapsed = time.perf_counter() - t0
-        status = out.get("status")
-        result = out.get("result") or {}
-        _print_progress(opp, i, len(opponents), status, elapsed, result if status == "passed" else {})
-        if status != "passed":
-            print(f"errors: {out.get('errors')}", file=sys.stderr)
-            return 3
-        result["wall_clock_s"] = elapsed
-        results.append(result)
+            if status != "passed":
+                print(f"errors: {out.get('errors')}", file=sys.stderr)
+                return 3
+            result["wall_clock_s"] = elapsed
+            results.append(result)
+    finally:
+        active_run.clear_active_run()
+        set_run_id(None)
 
     total_elapsed = time.perf_counter() - t_start
     summary = {

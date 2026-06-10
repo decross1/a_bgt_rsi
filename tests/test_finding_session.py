@@ -305,3 +305,93 @@ def test_end_session_bad_outcome_raises(env):
                        feedback_path=env["feedback"],
                        status_audit_path=env["status_audit"],
                        followups_path=env["followups"])
+
+
+# --------------------------------------------------------------------------- #
+# set_status — one-shot disposition (D-046 write-back contract)               #
+# --------------------------------------------------------------------------- #
+
+
+def test_set_status_validated_writes_feedback_and_audit(env):
+    res = fs.set_status(
+        env["finding_id"], "validated", "holds up on re-read", "human:ui",
+        surfaced_path=env["surfaced"], feedback_path=env["feedback"],
+        status_audit_path=env["status_audit"],
+    )
+    assert res["session_id"] is None
+    fb = json.loads(env["feedback"].read_text().splitlines()[0])
+    assert fb["iteration_id"] == env["iteration_id"]
+    assert fb["verdict"] == "valid"
+    assert fb["gated_by"] == "human:ui"
+    audit = json.loads(env["status_audit"].read_text().splitlines()[0])
+    assert audit["status"] == "valid"          # end_session convention
+    assert audit["session_id"] is None
+    assert audit["changed_by"] == "human:ui"
+
+
+def test_set_status_in_review_audits_without_feedback(env):
+    res = fs.set_status(
+        env["finding_id"], "in_review", "park for a deep session",
+        surfaced_path=env["surfaced"], feedback_path=env["feedback"],
+        status_audit_path=env["status_audit"],
+    )
+    assert res["loop_feedback_row"] is None
+    assert not env["feedback"].exists()
+    audit = json.loads(env["status_audit"].read_text().splitlines()[0])
+    assert audit["status"] == "in_review"
+
+
+def test_set_status_rejects_out_of_enum_and_writes_nothing(env):
+    with pytest.raises(ValueError, match="status"):
+        fs.set_status(env["finding_id"], "spawn_topic", "note",
+                      surfaced_path=env["surfaced"],
+                      feedback_path=env["feedback"],
+                      status_audit_path=env["status_audit"])
+    with pytest.raises(ValueError, match="note"):
+        fs.set_status(env["finding_id"], "validated", "  ",
+                      surfaced_path=env["surfaced"],
+                      feedback_path=env["feedback"],
+                      status_audit_path=env["status_audit"])
+    with pytest.raises(KeyError):
+        fs.set_status("sf-nope", "validated", "note",
+                      surfaced_path=env["surfaced"],
+                      feedback_path=env["feedback"],
+                      status_audit_path=env["status_audit"])
+    assert not env["feedback"].exists()
+    assert not env["status_audit"].exists()
+
+
+def test_set_status_reads_source_iteration_id_key(env, tmp_path):
+    """REAL promoted findings carry source_iteration_id (finding_promotion),
+    not iteration_id — the lookup must accept both."""
+    surfaced = tmp_path / "surfaced_promoted.jsonl"
+    surfaced.write_text(json.dumps({
+        "finding_id": "sf-promoted-001",
+        "source_iteration_id": env["iteration_id"],
+        "claim": _CLAIM,
+    }) + "\n")
+    res = fs.set_status(
+        "sf-promoted-001", "rejected", "refuted on inspection",
+        surfaced_path=surfaced, feedback_path=env["feedback"],
+        status_audit_path=env["status_audit"],
+    )
+    assert res["loop_feedback_row"]["iteration_id"] == env["iteration_id"]
+    assert res["loop_feedback_row"]["verdict"] == "invalid"
+
+
+def test_cli_set_status_one_shot(env, monkeypatch, capsys):
+    monkeypatch.setattr(fs, "DEFAULT_SURFACED", env["surfaced"])
+    monkeypatch.setattr(fs, "DEFAULT_STATUS_AUDIT", env["status_audit"])
+    monkeypatch.setattr(fs.gate_cli, "DEFAULT", env["feedback"])
+    rc = fs.main([
+        "--set-status", env["finding_id"], "validated",
+        "--note", "good claim", "--by", "human:ui",
+    ])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["status_audit_row"]["changed_by"] == "human:ui"
+
+    rc = fs.main([
+        "--set-status", env["finding_id"], "bogus", "--note", "x",
+    ])
+    assert rc == 1

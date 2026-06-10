@@ -129,7 +129,19 @@ def main(argv: list[str] | None = None) -> int:
           f"(mock={mock}) ===", flush=True)
     print(f"=== writing forecasts to {out_path} ===", flush=True)
 
+    # Run-provenance registration (2026-06-10, exp009 pattern). Open the
+    # output file FIRST: an open() failure must not strand a registered
+    # run (the registration sits inside the try/finally below).
+    from agent_wrapper.wrapper import set_run_id
+    from orchestrator import active_run
+
     f = open(out_path, "w")
+    run_id = f"exp007_polymarket_{t_start}"
+    set_run_id(run_id)
+    active_run.write_active_run(
+        run_id, "experiment", "exp007 Polymarket paper-forecasting",
+        total=len(resolved), unit="market", model=args.model,
+    )
     t0_total = time.perf_counter()
     n_done = 0
     n_err = 0
@@ -162,6 +174,11 @@ def main(argv: list[str] | None = None) -> int:
                 n_err += 1
                 print(f"[{i + 1}/{len(resolved)}] ERROR: {err_row['error']} "
                       f"({wall_s:.1f}s)", flush=True)
+                active_run.update_active_run(
+                    done=i + 1,
+                    narration=f"[{i + 1}/{len(resolved)}] ERROR ({wall_s:.1f}s)",
+                    n_err=n_err,
+                )
                 continue
             wall_s = time.perf_counter() - t0
             row = {
@@ -178,8 +195,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{i + 1}/{len(resolved)}] prob={out['prob']:.3f} "
                   f"market={row['market_prob']} outcome={row['outcome']} "
                   f"({wall_s:.1f}s)", flush=True)
+            active_run.update_active_run(
+                done=i + 1,
+                narration=(f"[{i + 1}/{len(resolved)}] "
+                           f"prob={out['prob']:.3f} ({wall_s:.1f}s)"),
+                n_err=n_err,
+            )
     finally:
         f.close()
+        active_run.clear_active_run()
+        set_run_id(None)
 
     wall_s_total = time.perf_counter() - t0_total
     t_end = _utcnow_iso()

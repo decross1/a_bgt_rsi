@@ -1,0 +1,31 @@
+{
+  "experiment_id": "exp009_cournot",
+  "primary_metric": "mean_abs_nash_deviation",
+  "explicit_deviation_ceiling": 0.15,
+  "verdict": "NO",
+  "verdict_reason": "mean_dev(explicit)=0.5000 is NOT < mean_dev(absent)=0.5000; mean_dev(explicit)=0.5000 exceeds the pre-registered ceiling 0.15.",
+  "comparative_holds": false,
+  "ceiling_holds": false,
+  "variance_directional_holds": false,
+  "arms": {
+    "absent": {
+      "treatment": "absent",
+      "n_trials": 50,
+      "n_valid": 50,
+      "n_invalid": 0,
+      "mean_abs_deviation": 0.5,
+      "quantity_variance": 0.0,
+      "mean_quantity": 45.0
+    },
+    "explicit": {
+      "treatment": "explicit",
+      "n_trials": 50,
+      "n_valid": 50,
+      "n_invalid": 0,
+      "mean_abs_deviation": 0.5,
+      "quantity_variance": 0.0,
+      "mean_quantity": 45.0
+    }
+  },
+  "n_errors": 0
+}

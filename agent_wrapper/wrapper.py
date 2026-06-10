@@ -103,7 +103,7 @@ DEFAULT_BACKEND = os.environ.get("WRAPPER_DEFAULT_BACKEND", "vllm-gemma")
 
 def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id,
             retrieval_context=None, model_version=None, host_metadata=None,
-            max_tokens=None):
+            max_tokens=None, backend_name=None):
     """Build a schema-conforming record from a chat-completion response.
 
     retrieval_context (D-025 / P2): None when no retrieval ran -- the field is
@@ -114,6 +114,10 @@ def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id,
     model_version / host_metadata: per-call provenance from the backend. If
     None, falls back to the module-level defaults (vllm-gemma) so existing
     callers and tests work unchanged.
+
+    backend_name: backend registry name (e.g. 'vllm-qwen') stamped into the
+    optional top-level `backend` field (UI attribution, 2026-06-10). None ->
+    field omitted, so legacy records and tests still validate.
     """
     rec = {
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -146,6 +150,8 @@ def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id,
         rec["run_id"] = run_id
     if max_tokens is not None:
         rec["max_tokens"] = max_tokens
+    if backend_name is not None:
+        rec["backend"] = backend_name
     return rec
 
 
@@ -184,7 +190,8 @@ def call_sync(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=Non
                         retrieval_context=retrieval_context,
                         model_version=be.model_version,
                         host_metadata=be.host_metadata,
-                        max_tokens=max_tokens), log_path)
+                        max_tokens=max_tokens,
+                        backend_name=be.name), log_path)
     # Per-call UI inference-internals row (best-effort; never raises).
     worker_activity.emit_worker_activity(
         run_id=get_run_id(),
@@ -193,6 +200,8 @@ def call_sync(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=Non
         max_tokens=max_tokens if max_tokens is not None else rec["usage"]["output_tokens"],
         latency_ms=latency_ms,
         timestamp=rec["timestamp"],
+        backend=be.name,
+        model=rec["model"],
     )
     return rec
 
@@ -209,12 +218,27 @@ async def call_async(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tok
         model=model or be.default_model, messages=messages,
         max_tokens=max_tokens, **params)
     latency_ms = (time.perf_counter() - t0) * 1000.0
-    return _emit(_record(messages, params, resp, latency_ms,
-                         caller_tag, parent_request_id,
-                         retrieval_context=retrieval_context,
-                         model_version=be.model_version,
-                         host_metadata=be.host_metadata,
-                         max_tokens=max_tokens), log_path)
+    rec = _emit(_record(messages, params, resp, latency_ms,
+                        caller_tag, parent_request_id,
+                        retrieval_context=retrieval_context,
+                        model_version=be.model_version,
+                        host_metadata=be.host_metadata,
+                        max_tokens=max_tokens,
+                        backend_name=be.name), log_path)
+    # Per-call UI inference-internals row (best-effort; never raises).
+    # Parity with call_sync — this path was a worker-activity blind spot
+    # until 2026-06-10.
+    worker_activity.emit_worker_activity(
+        run_id=get_run_id(),
+        task_id=caller_tag,
+        output_tokens=rec["usage"]["output_tokens"],
+        max_tokens=max_tokens if max_tokens is not None else rec["usage"]["output_tokens"],
+        latency_ms=latency_ms,
+        timestamp=rec["timestamp"],
+        backend=be.name,
+        model=rec["model"],
+    )
+    return rec
 
 
 _DEFAULT_MAX_TOOL_DEPTH = 3
@@ -354,6 +378,7 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
             record["run_id"] = run_id
         if max_tokens is not None:
             record["max_tokens"] = max_tokens
+        record["backend"] = be.name
         _emit(record, log_path)
         records.append(record)
         last_id = record["request_id"]
@@ -366,6 +391,8 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
                         else record["usage"]["output_tokens"]),
             latency_ms=latency_ms,
             timestamp=record["timestamp"],
+            backend=be.name,
+            model=record["model"],
         )
 
         if not tool_calls:

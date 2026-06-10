@@ -336,13 +336,17 @@ def _is_qwen_row(row: dict[str, Any]) -> bool:
 
 def write_coordinator_cycle(
     report: dict[str, Any], *, agent: str = "coordinator",
-    cycles_path: str | os.PathLike = DEFAULT_CYCLES_PATH,
+    cycles_path: str | os.PathLike | None = None,
 ) -> dict[str, Any] | None:
     """Append one coordinator_cycles.jsonl row built from `report`.
 
     Best-effort: a build or write failure degrades to None so the autonomous
     cycle never crashes on its own bookkeeping. Returns the written row (so the
-    caller / a test can assert on it) or None."""
+    caller / a test can assert on it) or None. cycles_path=None resolves to
+    DEFAULT_CYCLES_PATH at call time — def-time binding let tests pollute the
+    live file (D-048)."""
+    if cycles_path is None:
+        cycles_path = DEFAULT_CYCLES_PATH
     try:
         row = cycle_row_from_report(report, agent=agent)
     except Exception:
@@ -353,9 +357,9 @@ def write_coordinator_cycle(
 
 def emit_health_signals(
     report: dict[str, Any], *,
-    health_path: str | os.PathLike = DEFAULT_HEALTH_PATH,
-    run_log_path: str | os.PathLike = DEFAULT_RUN_LOG,
-    calls_log_path: str | os.PathLike = DEFAULT_CALLS_LOG,
+    health_path: str | os.PathLike | None = None,
+    run_log_path: str | os.PathLike | None = None,
+    calls_log_path: str | os.PathLike | None = None,
 ) -> list[dict[str, Any]]:
     """Derive + append degraded health signals for this cycle's dispatched
     iteration. Returns the list of signals written ([] if none / on failure).
@@ -364,7 +368,14 @@ def emit_health_signals(
     loop_v0_ml_intern result event; qwen-degraded from the calls log's
     empty-completion Qwen rows. Both are scoped to the dispatched iteration_id
     so the calls-log scan is cheap and the signals attribute to a concrete run.
-    A signal carries a timestamp so the UI can show the most-recent one."""
+    A signal carries a timestamp so the UI can show the most-recent one.
+    None paths resolve to the module defaults at call time (patchable)."""
+    if health_path is None:
+        health_path = DEFAULT_HEALTH_PATH
+    if run_log_path is None:
+        run_log_path = DEFAULT_RUN_LOG
+    if calls_log_path is None:
+        calls_log_path = DEFAULT_CALLS_LOG
     signals: list[dict[str, Any]] = []
     try:
         executed = report.get("executed") or []

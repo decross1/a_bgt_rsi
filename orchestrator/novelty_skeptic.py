@@ -299,9 +299,25 @@ if __name__ == "__main__":
     #         "<hypothesis text>" [backend]`
     import json
     import sys
+    import time as _time
+
+    from agent_wrapper.wrapper import set_run_id
+    from orchestrator import active_run
+
     hyp = sys.argv[1] if len(sys.argv) > 1 else (
         "In repeated public-goods games, contribution decay is driven by "
         "conditional cooperators imitating free riders."
     )
     be = sys.argv[2] if len(sys.argv) > 2 else "ollama-coder"
-    print(json.dumps(attack(hyp, iteration_id="smoke", backend=be), indent=2))
+    # Run-provenance registration (2026-06-10): even the smoke registers,
+    # so skeptic calls never show up as unattributed backend load.
+    _run_id = f"skeptic_smoke_{int(_time.time())}"
+    set_run_id(_run_id)
+    active_run.write_active_run(
+        _run_id, "ad_hoc", f"novelty_skeptic smoke ({be})",
+    )
+    try:
+        print(json.dumps(attack(hyp, iteration_id="smoke", backend=be), indent=2))
+    finally:
+        active_run.clear_active_run()
+        set_run_id(None)

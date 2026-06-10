@@ -113,11 +113,15 @@ next.
 4. Read [`LOOP_V0.md`](LOOP_V0.md) — the active build plan.
 5. Read the most recent file in [`human/sessions/`](human/sessions/)
    — that's the current session's focus and prior-session handoff.
-6. Read `run_state/week1.state.json` if you need historical task state.
+6. Run `.venv-chroma/bin/python -m orchestrator.todo_cli list-deferred`
+   — open entries in `memory/dev_session_queue.jsonl` are work the human
+   deferred from the UI to a dev session (D-046). Triage them into the
+   session plan; `todo_cli close --ref-id <id>` when handled.
+7. Read `run_state/week1.state.json` if you need historical task state.
    (The `week1` naming is a legacy artifact; the file is still the
    authoritative history of completed work. New work logs to the same
    run log: `run_state/week1.run.jsonl`.)
-7. If a `human_gates_pending` entry remains in the state file, halt
+8. If a `human_gates_pending` entry remains in the state file, halt
    on it until the human explicitly clears it.
 
 ## How to start the UI session

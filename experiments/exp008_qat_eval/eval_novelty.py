@@ -378,12 +378,29 @@ def main(argv: list[str] | None = None) -> int:
     _wrapper.DEFAULT_BACKEND = backend
     from workers.novelty_classify import novelty_classify
 
-    metrics = run_eval(
-        arm=args.arm,
-        classifier=novelty_classify,
-        fixtures=fixtures,
-        model=model,
+    from datetime import datetime, timezone
+
+    from orchestrator import active_run
+
+    # Run-provenance registration (2026-06-10, exp009 pattern). Coarse —
+    # run_eval owns the fixture loop, so no per-unit progress updates.
+    run_id = (f"exp008_novelty_{args.arm}_"
+              f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}")
+    _wrapper.set_run_id(run_id)
+    active_run.write_active_run(
+        run_id, "experiment", f"exp008 novelty agreement ({args.arm})",
+        total=len(fixtures), unit="fixture", model=model,
     )
+    try:
+        metrics = run_eval(
+            arm=args.arm,
+            classifier=novelty_classify,
+            fixtures=fixtures,
+            model=model,
+        )
+    finally:
+        active_run.clear_active_run()
+        _wrapper.set_run_id(None)
     print(
         json.dumps(
             {

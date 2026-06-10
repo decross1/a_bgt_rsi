@@ -140,12 +140,16 @@ class FilePersistenceTest(unittest.TestCase):
 
 class LegacyCallersUnchangedTest(unittest.TestCase):
     """A caller that does not pass retrieval_context must not observe any new
-    keys in the returned record beyond the 14 documented ones."""
+    keys in the returned record beyond the 14 documented ones plus the
+    always-stamped provenance field `backend` (2026-06-10 UI-attribution
+    contract: every new record names the backend registry entry that served
+    it; pre-2026-06-10 records validate without it)."""
 
     LEGACY_KEYS = {
         "timestamp", "request_id", "model", "model_version", "temperature",
         "top_p", "seed", "prompt_messages", "completion", "usage",
         "latency_ms", "host_metadata", "caller_tag", "parent_request_id",
+        "backend",
     }
 
     def test_legacy_record_has_only_legacy_keys(self):

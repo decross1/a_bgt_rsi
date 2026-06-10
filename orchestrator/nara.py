@@ -34,6 +34,7 @@ from agent_wrapper.gemma_tool_parse import (
     parse_inline_tool_calls,
     split_narration_and_markup,
 )
+from agent_wrapper import worker_activity
 from agent_wrapper.backends import get_backend
 from agent_wrapper.wrapper import (
     DEFAULT_BACKEND,
@@ -62,6 +63,12 @@ ACTIVE_PATH = "run_state/active_iteration.json"  # relative to REPO_ROOT
 CALLS_LOG_PATH = REPO_ROOT / "logs" / "calls.jsonl"
 
 _DEFAULT_LOG_PATH = str(CALLS_LOG_PATH)
+# Sentinel default for run_iteration's log_path: None means the in-memory
+# MEMORY_LOG (test mode), so "use the live calls log" needs a distinct
+# marker, resolved at CALL time from _DEFAULT_LOG_PATH — def-time binding
+# made the live log unpatchable and tests polluted logs/calls.jsonl with
+# fake-model rows (D-048).
+_USE_DEFAULT_LOG = object()
 # 5 tool turns + 1 final assistant turn + headroom = 12. Each turn is one
 # LLM round-trip; we cap so a run-away chain can't burn the GPU.
 _DEFAULT_MAX_DEPTH = 12
@@ -175,6 +182,8 @@ def _record_turn(
     *,
     model_version: str,
     host_metadata: dict,
+    backend_name: str | None = None,
+    max_tokens: int | None = None,
 ) -> dict:
     """Schema-valid call record. Mirrors wrapper._record but is local so
     we can decide what goes in 'completion' (text vs tool_calls) ourselves."""
@@ -221,7 +230,25 @@ def _record_turn(
     run_id = get_run_id()
     if run_id is not None:
         rec["run_id"] = run_id
-    return _emit(rec, log_path)
+    if backend_name is not None:
+        rec["backend"] = backend_name
+    if max_tokens is not None:
+        rec["max_tokens"] = max_tokens
+    _emit(rec, log_path)
+    # Per-call UI inference-internals row (best-effort; never raises) —
+    # orchestrator turns get the same live-panel visibility as worker calls.
+    worker_activity.emit_worker_activity(
+        run_id=run_id,
+        task_id=caller_tag,
+        output_tokens=rec["usage"]["output_tokens"],
+        max_tokens=(max_tokens if max_tokens is not None
+                    else rec["usage"]["output_tokens"]),
+        latency_ms=latency_ms,
+        timestamp=rec["timestamp"],
+        backend=backend_name,
+        model=rec["model"],
+    )
+    return rec
 
 
 _LOOP_V0_STEPS = [
@@ -303,7 +330,59 @@ def _initial_active(
         "orchestrator_backend": orchestrator_backend,
         "orchestrator_model": orchestrator_model,
         "tool_calls_so_far": [],
+        # Planned-chain status board (UI timeline, 2026-06-10). meta_review
+        # always runs as the pre-step; dynamic sub-loops (redteam, ml_intern)
+        # insert themselves via _steps_mark when they fire.
+        "steps": [
+            {"name": s, "status": "pending"}
+            for s in ["meta_review", *_LOOP_V0_STEPS]
+        ],
     }
+
+
+def _steps_mark(
+    runtime: Runtime,
+    active: dict,
+    iteration_id: str,
+    name: str,
+    status: str,
+    *,
+    insert_after: str | None = None,
+) -> None:
+    """Set active['steps'] entry `name` to `status` and emit one
+    loop_v0_active_step event. Unknown names are inserted after
+    `insert_after` (or appended) — that is how dynamic sub-loop steps
+    (redteam, ml_intern) join the board. Stamps started_at on first
+    'running', ended_at on terminal statuses. Never raises: the status
+    board is telemetry and must not break the chain. The caller decides
+    when to persist `active` (write_state)."""
+    try:
+        steps = active.get("steps")
+        if not isinstance(steps, list):
+            return
+        entry = next((s for s in steps if s.get("name") == name), None)
+        if entry is None:
+            entry = {"name": name, "status": "pending"}
+            idx = next(
+                (i for i, s in enumerate(steps)
+                 if s.get("name") == insert_after),
+                None,
+            )
+            steps.insert(idx + 1 if idx is not None else len(steps), entry)
+        now = _utcnow_iso()
+        if status == "running" and not entry.get("started_at"):
+            entry["started_at"] = now
+        if status in ("passed", "failed", "skipped"):
+            entry["ended_at"] = now
+        entry["status"] = status
+        runtime.log_event({
+            "event_type": "loop_v0_active_step",
+            "iteration_id": iteration_id,
+            "step": name,
+            "status": status,
+        })
+    except Exception:
+        return
 
 
 def run_iteration(
@@ -311,7 +390,7 @@ def run_iteration(
     *,
     runtime: Runtime | None = None,
     source: str = "human_cli",
-    log_path: str | None = _DEFAULT_LOG_PATH,
+    log_path=_USE_DEFAULT_LOG,
     max_depth: int = _DEFAULT_MAX_DEPTH,
     backend: str | None = None,
     experiment_outcome: dict | None = None,
@@ -335,6 +414,8 @@ def run_iteration(
         replication comparison (from experiments/replication_driver). When
         non-None, threaded into the iteration_record under the
         `cross_tier_comparison` field. Mirrors `experiment_outcome`."""
+    if log_path is _USE_DEFAULT_LOG:
+        log_path = _DEFAULT_LOG_PATH  # resolved at call time (patchable)
     runtime = runtime or PyRuntime()
     be = get_backend(backend or DEFAULT_BACKEND)
     iteration_id = _next_iteration_id()
@@ -347,8 +428,10 @@ def run_iteration(
     runtime.write_state(ACTIVE_PATH, active)
     # UI observability: mirror the iteration into the generalized active_run.json
     # (active_iteration.json stays the loop-detail subset). set_run_id stamps
-    # every wrapper call this iteration makes. Cleared with active_iteration in
-    # the finally below.
+    # every wrapper call this iteration makes. Cleared in the finally below —
+    # restoring the PRIOR run_id, not None, so an in-process parent run (the
+    # coordinator executing this iteration) keeps its own call attribution.
+    _prev_run_id = get_run_id()
     set_run_id(iteration_id)
     active_run.write_active_run(
         iteration_id, "loop_v0", f"LOOP_V0 iteration {iteration_id}",
@@ -360,7 +443,42 @@ def run_iteration(
         "topic": topic,
         "source": source,
     })
+    # Registration/cleanup wrapper (2026-06-10). The cleanup used to live in
+    # finalize's narrow `finally`, so any exception in the ~550-line chain
+    # body leaked the run_id contextvar + the live state files — in the
+    # long-lived tool-plane process that stamped STALE iteration ids onto
+    # later calls (the 2026-06-09 attribution bug). This wrapper guarantees
+    # cleanup on every exit path.
+    try:
+        return _run_iteration_impl(
+            runtime, be, iteration_id, started_at, active, topic,
+            source=source, log_path=log_path, max_depth=max_depth,
+            experiment_outcome=experiment_outcome,
+            cross_tier_comparison=cross_tier_comparison,
+        )
+    finally:
+        runtime.delete_state(ACTIVE_PATH)
+        active_run.clear_active_run()
+        set_run_id(_prev_run_id)
 
+
+def _run_iteration_impl(
+    runtime: Runtime,
+    be,
+    iteration_id: str,
+    started_at: str,
+    active: dict,
+    topic: str,
+    *,
+    source: str,
+    log_path: str | None,
+    max_depth: int,
+    experiment_outcome: dict | None,
+    cross_tier_comparison: dict | None,
+) -> dict:
+    """The iteration chain body. Registration (state files, run_id, events)
+    and cleanup are the caller's job — run_iteration wraps this in
+    try/finally. Do not call directly."""
     # Conversation state for the LLM. Inject iteration_id into the user
     # message so Nara has the value to pass as the `iteration_id` arg on
     # novelty_classify / critic_loop_v0 / journal_writer.
@@ -374,9 +492,12 @@ def run_iteration(
     # Nara tool). A failure degrades gracefully: we log a fallback per
     # inviolate rule 7 and proceed un-conditioned — never crash the chain.
     meta_review_record: dict | None = None
+    _steps_mark(runtime, active, iteration_id, "meta_review", "running")
+    runtime.write_state(ACTIVE_PATH, active)
     try:
         mr = _meta_review(parent_request_id=iteration_id)
         if isinstance(mr, dict) and mr.get("status") == "passed":
+            _steps_mark(runtime, active, iteration_id, "meta_review", "passed")
             meta_review_record = mr.get("result")
             bullets = (mr.get("result") or {}).get("conditioning_bullets") or []
             if bullets:
@@ -384,6 +505,7 @@ def run_iteration(
                     f"- {b}" for b in bullets
                 )
         else:
+            _steps_mark(runtime, active, iteration_id, "meta_review", "failed")
             runtime.log_event({
                 "event_type": "loop_v0_fallback",
                 "iteration_id": iteration_id,
@@ -394,6 +516,7 @@ def run_iteration(
                 ),
             })
     except Exception as exc:
+        _steps_mark(runtime, active, iteration_id, "meta_review", "failed")
         runtime.log_event({
             "event_type": "loop_v0_fallback",
             "iteration_id": iteration_id,
@@ -402,6 +525,7 @@ def run_iteration(
                 "proceeding un-conditioned."
             ),
         })
+    runtime.write_state(ACTIVE_PATH, active)
 
     openai_messages: list[dict] = [
         {"role": "system", "content": NARA_PROMPT_V0},
@@ -458,6 +582,8 @@ def run_iteration(
             log_path=log_path,
             model_version=be.model_version,
             host_metadata=be.host_metadata,
+            backend_name=be.name,
+            max_tokens=1024,
         )
         wrapper_call_ids.append(record["request_id"])
         last_id = record["request_id"]
@@ -581,6 +707,7 @@ def run_iteration(
                     entry["subagent_backend"] = be.name
                     entry["subagent_model"] = be.default_model
                 active["tool_calls_so_far"].append(entry)
+                _steps_mark(runtime, active, iteration_id, name, "running")
                 runtime.write_state(ACTIVE_PATH, active)
 
                 runtime.log_event({
@@ -622,6 +749,12 @@ def run_iteration(
                             val = result_payload.get(src_key)
                             if val:
                                 active["tool_calls_so_far"][-1][dst_key] = val
+                _steps_mark(
+                    runtime, active, iteration_id, name,
+                    "passed"
+                    if active["tool_calls_so_far"][-1]["status"] == "passed"
+                    else "failed",
+                )
                 runtime.write_state(ACTIVE_PATH, active)
 
                 runtime.log_event({
@@ -701,6 +834,9 @@ def run_iteration(
                 # A critic failure never blocks: redteam_critic returns
                 # verdict "proceed" with status "passed" in that case.
                 if name == "hypothesize" and "hypothesis" in captured:
+                    _steps_mark(runtime, active, iteration_id, "redteam",
+                                "running", insert_after="hypothesize")
+                    runtime.write_state(ACTIVE_PATH, active)
                     hyp_text = captured["hypothesis"].get("text") or ""
                     while True:
                         rt = _redteam_critic(hyp_text, iteration_id,
@@ -732,6 +868,20 @@ def run_iteration(
                             iteration_id, "hypothesis", revised
                         )
                         hyp_text = revised["result"].get("text") or ""
+                    # Terminal red-team chip status: failed = the final
+                    # verdict is still fatal_flaw (the chain proceeds —
+                    # red-team is advisory after retries are exhausted —
+                    # but the board shows the honest outcome).
+                    _final_rt_verdict = (
+                        (redteam_result.get("result") or {}).get("verdict")
+                        if isinstance(redteam_result, dict) else None
+                    )
+                    _steps_mark(
+                        runtime, active, iteration_id, "redteam",
+                        "failed" if _final_rt_verdict == "fatal_flaw"
+                        else "passed",
+                    )
+                    runtime.write_state(ACTIVE_PATH, active)
 
                 # Slice-2 ML-Intern (D-038) — DETERMINISTIC, orchestrator-
                 # driven topic backfill. After retrieve_literature lands, if
@@ -747,6 +897,10 @@ def run_iteration(
                     esc = (captured.get("retrieval") or {}).get("escalation") or {}
                     if esc.get("should_escalate"):
                         ml_intern_done = True
+                        _steps_mark(runtime, active, iteration_id, "ml_intern",
+                                    "running",
+                                    insert_after="retrieve_literature")
+                        runtime.write_state(ACTIVE_PATH, active)
                         hyp_text = (captured.get("hypothesis") or {}).get("text") or ""
                         runtime.log_event({
                             "event_type": "loop_v0_ml_intern",
@@ -766,8 +920,18 @@ def run_iteration(
                             "papers_stored": mi_result.get("papers_stored", 0),
                             "parent_request_id": last_id,
                         })
-                        if (isinstance(mi, dict) and mi.get("status") == "passed"
-                                and mi_result.get("papers_stored", 0) > 0):
+                        mi_ok = (
+                            isinstance(mi, dict)
+                            and mi.get("status") == "passed"
+                            and mi_result.get("papers_stored", 0) > 0
+                        )
+                        # failed = backfill stored nothing (the chain
+                        # proceeds on the original weak retrieval).
+                        _steps_mark(runtime, active, iteration_id,
+                                    "ml_intern",
+                                    "passed" if mi_ok else "failed")
+                        runtime.write_state(ACTIVE_PATH, active)
+                        if mi_ok:
                             re_ret = runtime.dispatch_tool(
                                 "retrieve_literature",
                                 {"hypothesis_text": hyp_text, "k": 10,
@@ -854,6 +1018,9 @@ def run_iteration(
                 parent_request_id=last_id,
             )
         journal_entry_path = out["result"]["journal_entry_path"]
+        # The journal DID get written (orchestrator-filled); the fallback
+        # event above records the degraded path.
+        _steps_mark(runtime, active, iteration_id, "journal_writer", "passed")
         runtime.log_event({
             "event_type": "loop_v0_fallback",
             "iteration_id": iteration_id,
@@ -862,6 +1029,13 @@ def run_iteration(
                 f"using captured={sorted(captured)}."
             ),
         })
+
+    # Terminal sweep: any step never reached is 'skipped' — the board never
+    # ends an iteration claiming work is still pending.
+    for _s in list(active.get("steps") or []):
+        if _s.get("status") == "pending":
+            _steps_mark(runtime, active, iteration_id, _s["name"], "skipped")
+    runtime.write_state(ACTIVE_PATH, active)
 
     record = {
         "iteration_id":       iteration_id,
@@ -927,9 +1101,6 @@ def run_iteration(
             "error": str(exc),
         })
         raise
-    finally:
-        runtime.delete_state(ACTIVE_PATH)
-        active_run.clear_active_run()
-        set_run_id(None)
+    # State-file/run_id cleanup happens in run_iteration's finally.
 
     return record

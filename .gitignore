@@ -80,3 +80,11 @@ memory/*
 # Machine-generated journal entries from Nara iterations. The
 # human-written daily journals (journal/dayN.md) stay committed.
 journal/iterations/
+
+# Live server stdout redirects + run registry + purge backups (D-047/D-048).
+run_state/*.out
+run_state/*.log
+run_state/active_run.json
+run_state/active_runs/
+run_state/*.pre_purge_*
+logs/*.pre_purge_*

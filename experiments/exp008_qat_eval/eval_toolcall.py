@@ -333,14 +333,30 @@ def main(argv: list[str] | None = None) -> int:
     backend = _register_arm_backend(
         endpoint, model, allow_production=args.reference, arm=args.arm
     )
-    from agent_wrapper.wrapper import call_sync
+    from datetime import datetime, timezone
 
-    metrics = run_eval(
-        arm=args.arm,
-        caller=call_sync,
-        backend=backend,
-        model=model,
+    from agent_wrapper.wrapper import call_sync, set_run_id
+    from orchestrator import active_run
+
+    # Run-provenance registration (2026-06-10, exp009 pattern). Coarse —
+    # run_eval owns the prompt loop, so no per-unit progress updates.
+    run_id = (f"exp008_toolcall_{args.arm}_"
+              f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}")
+    set_run_id(run_id)
+    active_run.write_active_run(
+        run_id, "experiment", f"exp008 tool-call adherence ({args.arm})",
+        total=len(PROMPT_SET), unit="prompt", model=model,
     )
+    try:
+        metrics = run_eval(
+            arm=args.arm,
+            caller=call_sync,
+            backend=backend,
+            model=model,
+        )
+    finally:
+        active_run.clear_active_run()
+        set_run_id(None)
     print(
         json.dumps(
             {

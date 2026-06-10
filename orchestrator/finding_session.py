@@ -254,7 +254,12 @@ def start_session(
 
     Returns {session_id, finding}."""
     finding = _load_finding(finding_id, surfaced_path)
-    iteration_id = finding.get("iteration_id")
+    # Promoted findings carry source_iteration_id (finding_promotion.py);
+    # older/test rows carry iteration_id. Accept both — reading only
+    # iteration_id silently dropped the source-iteration join (journal,
+    # refutations) on every REAL promoted finding. Caught 2026-06-10.
+    iteration_id = (finding.get("source_iteration_id")
+                    or finding.get("iteration_id"))
     record = _join_iteration(iteration_id, loop_memory_path)
     journal_text = _read_journal_text(record)
     refutations = _refutation_summaries(finding, record)
@@ -504,6 +509,78 @@ def effective_status(
     return last
 
 
+# One-shot dispositions a human may record WITHOUT an interrogation
+# session (D-046 write-back contract). validated/rejected route the
+# human-gate edge exactly as end_session does; in_review parks the
+# finding for a future session. spawn/refine stay session-only — they
+# need the conversation.
+QUICK_STATUSES = ("validated", "rejected", "in_review")
+
+
+def set_status(
+    finding_id: str,
+    status: str,
+    note: str,
+    by: str = "human",
+    *,
+    surfaced_path: str | os.PathLike | None = None,
+    feedback_path: str | os.PathLike | None = None,
+    status_audit_path: str | os.PathLike | None = None,
+) -> dict[str, Any]:
+    """One-shot finding disposition (no session transcript; D-046).
+
+    Mirrors end_session's write paths with `session_id: None`:
+      validated/rejected -> loop_feedback row (valid/invalid) against the
+                            finding's source iteration + status-audit row
+      in_review          -> status-audit row only
+    Out-of-enum status / unknown finding / empty note are REJECTED —
+    nothing is written (inviolate rule 4). Returns what was written.
+    """
+    surfaced_path = surfaced_path if surfaced_path is not None else DEFAULT_SURFACED
+    feedback_path = feedback_path if feedback_path is not None else gate_cli.DEFAULT
+    status_audit_path = (status_audit_path if status_audit_path is not None
+                         else DEFAULT_STATUS_AUDIT)
+    if status not in QUICK_STATUSES:
+        raise ValueError(f"status {status!r} is not one of {QUICK_STATUSES}")
+    if not note.strip():
+        raise ValueError("note is required — the disposition needs a why")
+    finding = _load_finding(finding_id, surfaced_path)  # KeyError if absent
+    # Promoted findings carry source_iteration_id (finding_promotion.py);
+    # older/test rows carry iteration_id. Accept both.
+    iteration_id = (finding.get("source_iteration_id")
+                    or finding.get("iteration_id"))
+    now = _utcnow_iso()
+
+    out: dict[str, Any] = {
+        "finding_id": finding_id,
+        "session_id": None,
+        "outcome": status,
+        "loop_feedback_row": None,
+        "status_audit_row": None,
+    }
+    if status in _OUTCOME_TO_VERDICT:
+        verdict = _OUTCOME_TO_VERDICT[status]
+        if iteration_id:
+            out["loop_feedback_row"] = gate_cli.append_feedback(
+                iteration_id, verdict, note, by,
+                path=Path(feedback_path), clock_iso=now,
+            )
+        audit_status = verdict
+    else:
+        audit_status = "in_review"
+    status_row = {
+        "finding_id": finding_id,
+        "status": audit_status,
+        "changed_at": now,
+        "changed_by": by,
+        "session_id": None,
+        "reason": note,
+    }
+    _append_jsonl(status_audit_path, status_row)
+    out["status_audit_row"] = status_row
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # CLI REPL                                                                     #
 # --------------------------------------------------------------------------- #
@@ -575,5 +652,30 @@ def _repl(argv: list[str] | None = None) -> int:
     return 0
 
 
+def main(argv: list[str] | None = None) -> int:
+    """CLI dispatch: `--set-status` runs the one-shot disposition (the
+    D-046 blessed argv for the UI); anything else is the REPL."""
+    import sys
+
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    if "--set-status" in argv:
+        p = argparse.ArgumentParser(
+            description="One-shot finding disposition (D-046).")
+        p.add_argument("--set-status", nargs=2,
+                       metavar=("FINDING_ID", "STATUS"), required=True)
+        p.add_argument("--note", required=True)
+        p.add_argument("--by", default="human")
+        args = p.parse_args(argv)
+        fid, status = args.set_status
+        try:
+            out = set_status(fid, status, args.note, args.by)
+        except (KeyError, ValueError) as exc:
+            print(f"rejected: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0
+    return _repl(argv)
+
+
 if __name__ == "__main__":
-    raise SystemExit(_repl())
+    raise SystemExit(main())

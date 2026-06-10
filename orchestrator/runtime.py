@@ -59,6 +59,20 @@ def get_current_agent() -> str:
     return _current_agent.get()
 
 
+def append_run_log(event: dict, *, agent: str | None = None) -> None:
+    """Module-level run-log append (same row shape as PyRuntime.log_event)
+    for code that has no Runtime handle — e.g. orchestrator/subagent.py's
+    start/finish events. Keeps the heavy tool-registry import out of the
+    caller's path. Like log_event, RAISES on an unwritable run_state/ —
+    rule-6 loudness is intentional; the run log failing silently would be
+    worse than the caller crashing."""
+    resolved = agent if agent is not None else get_current_agent()
+    row = {"timestamp": _utcnow_iso(), "agent": resolved, **event}
+    RUN_STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with open(RUN_LOG_PATH, "a") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 class Runtime(Protocol):
     """The substrate interface Nara consumes. Implementations differ in
     where dispatched tools execute (in-process vs. sandbox)."""

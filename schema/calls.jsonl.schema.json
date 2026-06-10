@@ -130,6 +130,11 @@
       "minLength": 1,
       "description": "Run-mode identifier (experiment trial-loop, autoresearch sweep, or LOOP_V0 iteration) this call was issued under. OPTIONAL — set by wrapper.set_run_id; absent on calls made outside a run-mode context and on all pre-2026-06-06 records."
     },
+    "backend": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Backend registry name that served this call (e.g. 'vllm-gemma', 'vllm-qwen', 'ollama-coder', 'anthropic'). OPTIONAL — absent on all pre-2026-06-10 records. Distinct from host_metadata.backend (a heterogeneous discriminator): this is the top-level blessed UI-attribution field."
+    },
     "max_tokens": {
       "type": "integer",
       "minimum": 0,
