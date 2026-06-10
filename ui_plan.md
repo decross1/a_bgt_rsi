@@ -375,6 +375,40 @@ workflow independently audited.
 
 ---
 
+## 2026-06-10 closure — Task-0 carry-overs landed (UI-overhaul build, agents R1a/R1b)
+
+Closure annotations for the 2026-06-09-evening carry-over findings, numbered
+T1.1–T1.6 / T3.1–T3.3 in the 2026-06-10 UI-overhaul workflow (the same items
+are Task 0 items 1–7 and 9–10 of
+[`docs/ui_session_handoff_2026-06-10.md`](docs/ui_session_handoff_2026-06-10.md)).
+All nine **landed this session** by the Phase-2 build agents **R1a** (ui-tests)
+and **R1b** (ui-components). Written at docs-closure time while Phase-3
+integration was folding the build branches into the main checkout — the
+Phase-4 suite gates are the verification of record.
+
+| Finding | Status | Resolution |
+| --- | --- | --- |
+| T1.1 — repo root hardcoded to the worktree depth in 3 live test files | landed (R1a) | Walk-up resolver (probe ancestors of the test file for `memory/loop_memory.jsonl`; fail loudly listing every probed path) inlined in all three files; the shared `livePaths.ts` extraction was deferred to the integrator. |
+| T1.2 — `KNOWN_RELEVANCE_KEYS` missed `topicality` | landed (R1a) | `topicality` added to the drift census and to the additive-key comment/type in `types/schemas.ts`; full additive set now `anchor_cosine, curated_overlap, neighbor_spread, topicality, category, rule_fired`. |
+| T1.3 — axes-census double render | landed (R1a) | `cleanup()` inserted between the list render and the standalone `NoveltyAxesChip` render inside the `WITH_AXES` loop, so the testid query is single-element again on live axes rows. |
+| T1.4 — off-domain tile pinned at literal `"0%"` | landed (R1a) | Trust tiles re-pinned as cohort invariants recomputed from the loaded live rows (rendered percent and "N of M" must match the counted cohort; a clean cohort must read 0%, a flagged one its true rate). |
+| T1.5 — missing live `/api/human_todo` probe + per-request `_git_sha()` | landed (R1a) | `test_live_8700.py` gains the `/api/human_todo` `{items, counts}` probe; `app.py` snapshots `_GIT_SHA` once at import and serves it from both the FastAPI `version` and `/api/health` — version now means the running binary. |
+| T1.6 — Dashboard drill-link inside `<summary>` | landed (R1b) | The "drill into activity →" link is decoupled from the disclosure toggle so a click navigates without also toggling the recent-iterations summary. |
+| T3.1 — override tooltip dropped `override_reason` | landed (R1b) | `overrideTooltip` gains `reason: <override_reason>` as a third part under the same `badgeText` guard — the *why* of a verdict demotion now travels with the badge. |
+| T3.2 — transfer/replication label | landed (R1b) | Quiet `transfer` text label (testid `novelty-transfer-label`) beside the axes chip on the rubric bucket `phenomenon=known` + `direction ∈ {matches, silent}` — substrate-independent per `docs/novelty_two_axis_rubric.md`; the cyan known+unstudied_llm chip emphasis is unchanged. |
+| T3.3 — active_run staleness/robustness | landed (R1b) | `ActiveRunCard` hardened: every producer-owned field coerced independently (`asText` idiom), null/non-object bodies render nothing, and `coordinator`-kind or partial/malformed rows render what exists instead of crashing the hero. |
+
+Hygiene note (same closure): the planned `.gitignore` additions
+(`run_state/*.log`, `run_state/*.out`) were already landed by commit
+`3609da3` (D-047/D-048, alongside `active_run.json`, `active_runs/`,
+`*.pre_purge_*`); zero untracked `run_state` noise files at closure time, so
+no edit was needed.
+
+The live reactive session that follows this build runs from
+[`docs/live_session_runbook.md`](docs/live_session_runbook.md).
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to
