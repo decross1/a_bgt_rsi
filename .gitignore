@@ -86,6 +86,7 @@ run_state/*.out
 run_state/*.log
 run_state/active_run.json
 run_state/active_runs/
+run_state/tool_plane_submits/
 run_state/*.pre_purge_*
 logs/*.pre_purge_*
 

@@ -2482,6 +2482,65 @@ cycle + single re-run remain AVAILABLE and deliberately not spent
 in-session (2-3h budget reached); both seams remain dark until that
 re-run passes this same rule.
 
+**REVISION CYCLE + RE-RUN EXECUTED (2026-06-13, `battery_20260613T043130Z`,
+real, 22 cases): the pre-registered rule FAILED AGAIN — gates STAY DARK.
+The one rule-7 revision allowance is now SPENT; residuals 1+2 close as NOT
+MET.** Per criterion: **C1 PASS** (residual-1 holds: fase_off_01 →
+off_independent/R0b, gated; gate recall 8/8; 0 ungated off-domain).
+**C2 FAIL** (restated-with-citation **2/4**, need ≥3, AND redisc_on_03 stayed
+`survives`). **C3 FAIL** (over-gating RELOCATED — see below; on-domain
+low-confidence set grew 3→5). **C4 FAIL** (verdict_accuracy **0.6591** <
+0.70 floor; baseline 0.6364; the 06-10 run was 0.6818 — within the real
+run-to-run stochasticity of this design). The locked D-045 0.80 bar also
+failed, as pre-registered.
+
+Two fixes were applied this cycle, and the diagnosis of defect (b) was
+CORRECTED by instrumentation:
+- **(a) Topicality ON-side prompt broadened** (`orchestrator/topicality_skeptic.py`
+  `_SYSTEM`): plain-language canonical / behavioral / evolutionary game
+  theory (Nash, QRE, level-k, folk theorem, reciprocity, bargaining, ESS)
+  is now explicitly ON regardless of AI framing or evidence type, while the
+  OFF discriminator (systems / ML-infra / single-model uncertainty metrics
+  like semantic entropy) stays sharp. **It worked for the named classics**:
+  ultimatum (canary_on_01), hawk-dove (canary_on_02), folk theorem
+  (redisc_on_02) are now `topicality=on`, no longer R0b-gated. **But the
+  independent topicality skeptic RELOCATED its over-condemnation** to two
+  *novel* on-domain cases — novel_on_01 (quantal lock-in) and novel_on_03
+  (level-k × quantal bridge) — which it still returns `off_independent` on
+  (R0b-gated → unclear/undecidable), even though the prompt names QRE/level-k
+  as ON. This confirms **D-045 residual-5 (over-gating) as STRUCTURAL**: the
+  adversarial REFUTE-framed topicality skeptic is too aggressive to be
+  net-positive on accuracy at this design — prompt text moves *which*
+  on-domain cases it condemns, not *whether* it over-condemns.
+- **(b) was MISDIAGNOSED on 2026-06-10 — it is NOT a critic wiring bug.**
+  Instrumentation proved `workers/critic_loop_v0.py` correctly carries the
+  restating citation (the flip sets `contradicting_paper_id` to the restate
+  skeptic's verified doc_id and returns it intact). The real defect was a
+  **battery REPORTING bug**: `CaseScore` / `score_case` / the `per_case` dict
+  never copied `contradicting_paper_id` through from `CaseObservation`, so the
+  C2 criterion ("restated WITH non-null contradicting_paper_id") was reading a
+  field that was structurally always-`None`. Fixed (3-line passthrough +
+  regression test `test_new_observation_fields...` extended). **Consequence:
+  the 06-10 "restated-with-citation 0/4" was partly a measurement artifact** —
+  redisc_on_01 DID carry `osborne_rubinstein-chunk-979` and was silently
+  dropped. With the harness fixed, the restate mechanism demonstrably delivers
+  **2/4 with citations** (redisc_on_01, canary_on_02); the limiter is the
+  skeptic's own `not_restated` judgments on redisc_on_03 and canary_on_01, not
+  lost wiring.
+
+**Disposition.** Env gates `NARA_TOPICALITY_SKEPTIC` / `NARA_RESTATE_SKEPTIC`
+stay OFF by default → runtime behavior is byte-identical to the no-seam
+apparatus (the reversibility property). The **battery reporting fix STAYS
+live** (it is measurement correctness, test-pinned, not part of the dark
+seam — reverting it would re-break C2 observability for any future run). The
+topicality prompt change STAYS in the now-dark seam (strictly better domain
+definition, inert while the gate is off; retained as the seam's current
+state, NOT blessed for activation). No further revision cycle is available
+under this pre-registration. Reopening residuals 1+2 (or the over-gating
+question) requires a NEW decision — the natural next question is whether an
+*independent adversarial* topicality skeptic is the right instrument at all,
+given it over-condemns on-domain novelty in both runs (D-045 residual-5).
+
 ## D-051 — MCP submit+poll seam at the β tool plane (ticket store composed with the D-047 registry)
 
 **Date.** 2026-06-10 (session 2, workflow `wf_d4e96978-59a` limb b1 + serial
@@ -2527,3 +2586,21 @@ design. (b) The busy refusal's `in_flight` field names the INNERMOST live
 run (during most of a submitted run that is the nested `iter-…` doc, not
 the mcpsub ticket) — honest, by design. (c) Single-process assumption
 (in-process latch) documented in the module + runbook.
+
+**REAL-SMOKE VERIFICATION (2026-06-13, host-side): the three host-driveable
+clauses PASS.** Tool plane :8077 restarted on current code (`/health` now
+lists all four tools incl. `submit_loop_iteration` + `poll_run`). Drove
+`submit_loop_iteration` with an in-domain topic (QRE vs Nash in repeated
+public goods): **submit returned in 9ms** (`mcpsub-20260613T023330Z-b3de`,
+clause: <2s ✓). **Poll converged** running→finished over ~2m21s
+(submitted 02:33:30Z → finished 02:35:51Z), with the honest intermediate
+reads exercised (registry kind/heartbeat, `active_iteration` steps[] board
+walking meta_review→hypothesize→…→journal_writer, a dynamic redteam→failed
+chip, `stale:false`) ✓. **Verdict fields equal the `loop_memory.jsonl`
+record** (iter-2026-06-13-001: novelty `novel`, critic `survives`,
+low_confidence false, journal 075) ✓. Run-log carries `nemoclaw_agent`
+`tool_plane_submit_accepted`/`tool_plane_submit_finished` events bracketing
+the 40-row chain. **Remaining clause — sandbox MCP drive (no 15s timeout) —
+NOT run**: it is the runbook's stretch/out-of-scope path (sandbox egress +
+gRPC/h2), deferred to a sandbox-coordinated window. The seam is proven at
+the host boundary; the end-to-end sandbox proof is the one open item.

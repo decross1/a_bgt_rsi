@@ -152,6 +152,11 @@ class CaseScore:
     skeptic_verdict: Optional[str] = None
     restate_verdict: Optional[str] = None
     verdict_overridden_from: Optional[str] = None
+    # The contradicting/restating citation the critic emitted (from
+    # CaseObservation). Carried through to per_case so the pre-registered
+    # "restated WITH non-null contradicting_paper_id" criterion is
+    # measurable — the critic sets it but it was being dropped here.
+    contradicting_paper_id: Optional[str] = None
 
 
 @dataclass
@@ -283,6 +288,7 @@ def score_case(case: dict[str, Any], obs: CaseObservation) -> CaseScore:
         skeptic_verdict=obs.skeptic_verdict,
         restate_verdict=obs.restate_verdict,
         verdict_overridden_from=obs.verdict_overridden_from,
+        contradicting_paper_id=obs.contradicting_paper_id,
     )
 
 
@@ -697,6 +703,7 @@ def result_to_dict(res: BatteryResult) -> dict[str, Any]:
                 "skeptic_verdict": s.skeptic_verdict,
                 "restate_verdict": s.restate_verdict,
                 "verdict_overridden_from": s.verdict_overridden_from,
+                "contradicting_paper_id": s.contradicting_paper_id,
             }
             for s in res.per_case
         ],
