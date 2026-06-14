@@ -1,3 +1,5 @@
+> ARCHIVED 2026-06-14 — executed/ superseded work order, kept for the record. Current UI handoffs live in the session note (human/sessions/), current state in LOOP_V0.md.
+
 # Validation session plan (2–3h, Dynamic Workflow)
 **Goal:** validate, end-to-end, two things on real infrastructure —
 1. the **UI autonomy-observability render** works against live data, and

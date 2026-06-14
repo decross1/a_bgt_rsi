@@ -1,10 +1,12 @@
+> ARCHIVED 2026-06-14 — executed/ superseded work order, kept for the record. Current UI handoffs live in the session note (human/sessions/), current state in LOOP_V0.md.
+
 # Next-session plan (handoff from the 2026-06-09 validation session)
 
 **Status:** plan/handoff. Authored at the close of the 2026-06-09 validation session
-(see [`human/sessions/2026-06-09-validation.md`](../human/sessions/2026-06-09-validation.md)
+(see [`human/sessions/2026-06-09-validation.md`](../../human/sessions/2026-06-09-validation.md)
 and commits `d655da0`/`e1e2bb2`/`9886ccc`). Run it as one or more Dynamic Workflows
 (build/probe limbs → serial integrator validates + commits), per the Dynamic Workflow
-discipline in [`CLAUDE.md`](../CLAUDE.md).
+discipline in [`CLAUDE.md`](../../CLAUDE.md).
 
 This session must address **all three** threads below. **Thread 1 is foundational** —
 the apparatus's core capability (novelty + falsification) is currently unreliable, and
@@ -17,7 +19,7 @@ each other and can run in parallel).
   full host LOOP_V0 iteration (`iter-2026-06-09-003`, `seed.source=nemoclaw_agent`). Tool
   plane: `orchestrator/tool_plane.py` on `:8077` (`get_apparatus_state` + `run_loop_iteration`).
 - **Literature pipe needs refinement** (battery: 50% verdict accuracy, off-domain gate
-  recall 0/2). Instrument: [`experiments/lit_falsification_battery/`](../experiments/lit_falsification_battery/)
+  recall 0/2). Instrument: [`experiments/lit_falsification_battery/`](../../experiments/lit_falsification_battery/)
   (13 labelled cases + `battery.py`; real run `env -u MOCK_LLM .venv-chroma/bin/python -m experiments.lit_falsification_battery.battery`).
 - **Full in-sandbox agent autonomy blocked** on native-tool wiring (the agent has no shell
   tool; needs MCP registration). SKILL.md persona already installed in the sandbox.
@@ -87,7 +89,7 @@ shell/exec), so the path-b SKILL.md `curl` can't execute. Path-a is required:
    and the alias are allow-listed.
 3. **Re-drive** `nemoclaw nara-sandbox exec --no-tty --timeout 580 -- openclaw agent --agent main
    --json --message "<assess→thesis→run→report>"`. Verify the 6 PASS criteria in
-   [`docs/nemoclaw_agent_run_runbook.md`](nemoclaw_agent_run_runbook.md) §"PASS criteria"
+   [`docs/nemoclaw_agent_run_runbook.md`](../../docs/nemoclaw_agent_run_runbook.md) §"PASS criteria"
    (esp. the H1 tool-plane terminal logging BOTH inbound POSTs, and an honestly-reported
    verdict — a coerced `survives` on thin retrieval is a FAIL).
 
@@ -101,7 +103,7 @@ before trusting T2's autonomous verdicts.
 
 ## THREAD 3 — build the reverse-path thesis → classical-game → semi-synthetic constructor
 
-**Design is done:** [`docs/thesis_to_experiment_construction.md`](thesis_to_experiment_construction.md)
+**Design is done:** [`docs/thesis_to_experiment_construction.md`](../../docs/thesis_to_experiment_construction.md)
 (the missing REVERSE arrow; the one-directional `experiment_outcome` bridge into the loop
 already exists). Build the smallest slice:
 1. **`orchestrator/thesis_to_experiment.py`** — deterministic dispatcher: a surviving thesis

@@ -5,20 +5,29 @@
 > under [`archive/plan/`](archive/plan/)). Reflects the 2026-05-26
 > direction change (see [`DECISIONS.md`](DECISIONS.md) D-030); Path-B
 > sub-agent migration in progress (D-034).
->
-> **Build state at end of 2026-05-26:**
-> - **Part 1** (substrate, orchestrator, schemas) — **complete**.
-> - **Part 2** (5 LOOP_V0 workers + tool registry + Nara prompt) —
->   **complete**. End-to-end smoke ran successfully on
->   iter-2026-05-26-008 (real game-theory topic, full 5-step chain,
->   novel-survives verdict, ~120s).
-> - **Path B** (selective sub-agent migration via SubAgent primitive)
->   — **started**. `critic_loop_v0` migrated. SubAgent core +
->   Gemma-tool-call fallback parser + chain re-prompt all landed.
-> - **Reference-passing refactor** — **pending**. The chain is
->   currently blocked on heavy-payload steps because Nara copies the
->   full neighbors array through every tool_call's args. See
->   §"Reference-passing — the next architectural fix" below.
+
+## Current state (2026-06-14)
+
+State spans four workstreams; this file's later sections carry the
+lit-pipe detail.
+
+- **Lit-pipe (the LOOP_V0 chain).** Chain wired end-to-end; the D-045
+  robustness battery, D-050 residual skeptics, and D-052 (topicality
+  skeptic retired as a gate, kept as a dark non-gating advisory) have
+  landed. **The reference-passing refactor is still pending** and is
+  the load-bearing prerequisite for reliable real iterations — detail
+  in this file's later sections (§"Reference-passing — the next
+  architectural fix").
+- **UI.** The 2026-06-10 observability overhaul shipped. The
+  dashboard/`/todo` cockpit redesign is *designed, not built* — see
+  the work order in [`human/sessions/2026-06-14.md`](human/sessions/2026-06-14.md)
+  §"UI session work order" and the orchestrator seams in
+  [`docs/todo_cockpit_seam_plan.md`](docs/todo_cockpit_seam_plan.md).
+- **Autonomy.** D-049 (coordinator v2 + β bounds) is a **draft awaiting
+  ratification**. The daily cadence is
+  [`docs/daily_workstreams.md`](docs/daily_workstreams.md).
+- **Applied.** Polymarket paper-strategy chain is closed (design-only,
+  CFTC guardrail stands); pre-resolution snapshots are the next step.
 
 ## Why this exists
 

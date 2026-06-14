@@ -1,3 +1,5 @@
+> ARCHIVED 2026-06-14 — executed/ superseded work order, kept for the record. Current UI handoffs live in the session note (human/sessions/), current state in LOOP_V0.md.
+
 # UI session handoff — 2026-06-10 (RENDER side of today's EMIT)
 
 > **To the UI session.** This document is your full work order; it is

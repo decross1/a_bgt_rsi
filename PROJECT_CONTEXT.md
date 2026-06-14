@@ -171,16 +171,11 @@ operating contract for the executing agent is in
 
 ## 5. Critical operational facts
 
-> Canonical version-pin table is in [`ARCHITECTURE.md`](ARCHITECTURE.md) §2.
-> Restated summary below for orientation; do not edit here, edit there.
-
 ### Version pins (inviolate)
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) §2 for the canonical table.
-Key pins: `vllm/vllm-openai:v0.21.0`, `ghcr.io/nvidia/openshell/cluster:0.0.13`,
-CUDA 13.0, BGE-M3, NVFP4 weights at `/mnt/models/gemma-4-26b-a4b-nvfp4`,
-vLLM `--moe-backend marlin` (MARLIN log line required). Capture the
-image digest at first boot and pin the digest, not just the tag.
+Version pins are canonical in [`ARCHITECTURE.md`](ARCHITECTURE.md) §2
+(verbatim, inviolate); intentionally not duplicated here to prevent
+drift.
 
 ### Repository URLs (corrected)
 The source planning docs were imprecise in places; these are correct.

@@ -128,7 +128,7 @@ this is real data — a future live stream is a separate upgrade. `tokens_target
     disclaimer (const)}`. Design-only: the disclaimer is schema-enforced verbatim.
 
 - **2026-06-10** — Provenance EMIT (screenshot-review legibility work; pairs with the
-  rewritten `docs/ui_next_session_plan.md`):
+  rewritten `archive/ui_handoffs/ui_next_session_plan.md`):
   - **`logs/calls.jsonl`**: new OPTIONAL top-level `backend` (backend registry name,
     e.g. `vllm-gemma`/`vllm-qwen`/`ollama-coder`/`anthropic`) on every record from every
     producer (`wrapper._record`, `call_with_tools`, `nara._record_turn`,

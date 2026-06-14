@@ -1,3 +1,5 @@
+> ARCHIVED 2026-06-14 — executed/ superseded work order, kept for the record. Current UI handoffs live in the session note (human/sessions/), current state in LOOP_V0.md.
+
 # UI validation report — autonomy-observability render against LIVE data (L3)
 
 > **Authored by workflow limb L3 (read-only) on 2026-06-09.** A scripted

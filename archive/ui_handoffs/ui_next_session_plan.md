@@ -1,3 +1,5 @@
+> ARCHIVED 2026-06-14 — executed/ superseded work order, kept for the record. Current UI handoffs live in the session note (human/sessions/), current state in LOOP_V0.md.
+
 # UI session plan — SUPERSEDED
 
 > **Current handoff: [`docs/ui_session_handoff_2026-06-10.md`](ui_session_handoff_2026-06-10.md).**
@@ -45,4 +47,4 @@ verification of record. One-line resolutions:
   `active_run` rows degrade legibly instead of crashing the hero.
 
 Nothing in this file remains open; it stays superseded. The follow-on live
-session runs from [`live_session_runbook.md`](live_session_runbook.md).
+session runs from [`../../docs/live_session_runbook.md`](../../docs/live_session_runbook.md).

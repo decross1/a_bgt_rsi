@@ -31,7 +31,11 @@ will.
    reconciling with `main`. The primary session logs all shape changes here.
 5. [`../../ui_plan.md`](../../ui_plan.md) — the UI's own build plan
    and status. (Worth linking `docs/DATA_SHAPES.md` from here too.)
-6. The current `ui/` codebase to see what's already there
+6. **The most recent `../../human/sessions/YYYY-MM-DD.md` note — and
+   specifically its "## UI session work order" subsection. THIS IS YOUR
+   WORK ORDER for the session** (the primary co-authors it). Start here
+   for what to build; if no such subsection exists, ask the primary.
+7. The current `ui/` codebase to see what's already there
    (UnlockPanel, call-chain inspector, dashboard skeleton).
 
 ## What the UI must surface

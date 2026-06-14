@@ -1,3 +1,5 @@
+> ARCHIVED 2026-06-14 — executed/ superseded work order, kept for the record. Current UI handoffs live in the session note (human/sessions/), current state in LOOP_V0.md.
+
 # UI plan — autonomy observability (the coordinator loop must stop running "dark")
 
 > **Authored by the primary session (2026-06-09) as a SPEC for the UI session.**

@@ -1,3 +1,5 @@
+> ARCHIVED 2026-06-14 — executed/ superseded work order, kept for the record. Current UI handoffs live in the session note (human/sessions/), current state in LOOP_V0.md.
+
 # UI session handoff — autonomy observability (2026-06-09)
 
 > **To the UI session.** Your task this cycle is the **RENDER half** of the

@@ -20,7 +20,11 @@ to ephemeral subagents (D-037).
   authority and the single editor of the shared orchestrator spine.
 - The **UI session** (optional, parallel) runs in a separate worktree
   and writes only to `ui/` + `ui_plan.md`. Its prompt is
-  [`agent/prompts/ui_session.md`](agent/prompts/ui_session.md).
+  [`agent/prompts/ui_session.md`](agent/prompts/ui_session.md). **The
+  dated session note IS the handoff:** the primary co-authors a
+  **"## UI session work order"** subsection in the day's
+  `human/sessions/YYYY-MM-DD.md` note, and the UI session reads its
+  work order there (it records UI status back in `ui_plan.md`).
 - **Dynamic Workflows** (the managed `Workflow` primitive shipped
   2026-05-28 with Opus 4.8 — bounded at 16 concurrent / 1000 total
   agents, observable via `/workflows`, resumable, context-isolated)
@@ -231,7 +235,9 @@ These do not bend.
 | Orientation | [`START_HERE.md`](START_HERE.md) |
 | **Core essence of the project (the WHY)** | [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md) |
 | Active build plan | [`LOOP_V0.md`](LOOP_V0.md) |
-| Today's session focus | most recent file in [`human/sessions/`](human/sessions/) |
+| Today's focus / handoff | most recent note in [`human/sessions/`](human/sessions/) |
+| UI session work order | the current session note's "## UI session work order" subsection |
+| Session index | [`human/sessions/INDEX.md`](human/sessions/INDEX.md) |
 | Technical architecture | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | Project background | [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) |
 | Why a decision was made | [`DECISIONS.md`](DECISIONS.md) |
@@ -239,4 +245,22 @@ These do not bend.
 | Terminology | [`GLOSSARY.md`](GLOSSARY.md) |
 | Run state + run log | `run_state/week1.state.json`, `run_state/week1.run.jsonl` |
 | Historical journal entries | [`journal/`](journal/) |
+| Roadmap / historical plans | [`archive/plans/`](archive/plans/) (reference only) |
+| Executed UI handoffs | [`archive/ui_handoffs/`](archive/ui_handoffs/) (reference only) |
 | Retired track/tier docs | [`archive/`](archive/) (reference only) |
+
+## Plan-mode artifacts
+
+Plan-mode files under `~/.claude/plans/` are **scratch** — per-machine,
+un-versioned, invisible to the repo and to a UI session. **Any plan that
+will be executed is committed into the repo before/at execution:**
+
+- active cross-workstream work → [`LOOP_V0.md`](LOOP_V0.md) or a `docs/`
+  detail-doc;
+- a UI work order → the session note's "## UI session work order"
+  subsection;
+- a decision → [`DECISIONS.md`](DECISIONS.md) (append-only);
+- a keep-for-record plan → [`archive/plans/`](archive/plans/).
+
+`~/.claude/plans/` is **never a source of truth and is never cited from
+an in-repo doc**.
