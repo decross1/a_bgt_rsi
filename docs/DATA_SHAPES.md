@@ -39,6 +39,22 @@ backfill in `ml_intern_fetched`; appears only when retrieval escalation fired th
 
 `loop_feedback` row: `{ iteration_id, verdict: "valid"|"invalid"|"needs_revision", note, gated_at, gated_by }`.
 
+`iteration_record.retrieval.result.relevance` (the orchestrator-stamped relevance gate;
+keys produced by `workers/retrieval_relevance.py`): FROZEN trio `relevance` (float 0–1),
+`low_confidence` (bool), `reason` (str), plus additive diagnostics `anchor_cosine`,
+`curated_overlap`, `neighbor_spread`, `topicality` (`"on"|"off"|"off_independent"|"unsure"|null`),
+`category` (`"off_domain"|"thin"|"no_sharp_match"|"empty"|"ok"`), `rule_fired` (`"R0".."R5"|null`).
+- **`topicality_advisory`** (NEW 2026-06-14, OPTIONAL): `"on"|"off"|"unsure"|null`. **ADVISORY
+  ONLY — non-gating**: does NOT affect `low_confidence` or any novelty/critic verdict. Attached
+  by the orchestrator AFTER `relevance()` (which stays pure and never carries this key), present
+  **only when `NARA_TOPICALITY_ADVISORY=1`** (dark by default) **and** the primary topicality
+  judge did NOT already condemn → **ABSENT on normal iterations**; UI falls back to showing
+  nothing. The source is the independent adversarial judge that **D-052 RETIRED as a gate**
+  (known to OVER-FLAG novel on-domain claims): surface an `"off"` as a weak "independent
+  topicality dissent (advisory)" hint — explicitly NOT a gate and NOT a low-evidence badge.
+  Schema-legal with NO schema edit (the `relevance` sub-object permits extra keys; root
+  `additionalProperties:true`).
+
 ## 2. Experiment result shapes (NO JSON Schema — this doc is the only reference)
 
 Experiments are **heterogeneous** by design; the UI's experiments feature detects artifacts
@@ -73,6 +89,24 @@ this is real data — a future live stream is a separate upgrade. `tokens_target
 ---
 
 ## Changelog
+
+- **2026-06-14 (Session 4)** — D-052 topicality advisory:
+  - **`iteration_record.retrieval.result.relevance.topicality_advisory`** (NEW, OPTIONAL):
+    `"on"|"off"|"unsure"|null`. **ADVISORY ONLY — non-gating**; does NOT affect
+    `low_confidence` or any novelty/critic verdict. The independent adversarial topicality
+    judge that **D-052 RETIRED as a gate** (outcome A), demoted to a NON-GATING human-facing
+    hint (outcome C). Attached by `orchestrator/nara.py` AFTER `relevance()` (which stays
+    PURE and never carries this key), **only when `NARA_TOPICALITY_ADVISORY=1`** (dark by
+    default) **and** the primary topicality judge did NOT already condemn → **ABSENT on
+    normal iterations**; UI falls back to showing nothing.
+  - UI guidance: surface an `"off"` as a weak "independent topicality dissent (advisory)"
+    hint — explicitly **NOT** a gate and **NOT** a low-evidence badge (the judge is known to
+    OVER-FLAG novel on-domain claims, which is why it was retired as a gate). No new
+    low-confidence styling.
+  - **Schema-legal with NO schema edit**: the `relevance` sub-object permits extra keys and
+    `schema/iteration_record.schema.json` root is `additionalProperties:true`.
+  - **`experiments/lit_falsification_battery/runs/battery_*.json`** `per_case[]` gains
+    additive `topicality_advisory` (observability passthrough; never feeds the pass bar).
 
 - **2026-06-10 (Session 3)** — β-arming + Polymarket paper-strategy shapes:
   - **`run_state/coordinator_budget.jsonl`** (NEW, append-only): one row per EXECUTED

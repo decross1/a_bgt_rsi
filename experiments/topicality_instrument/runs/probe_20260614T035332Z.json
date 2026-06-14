@@ -1,0 +1,921 @@
+{
+  "per_case": {
+    "novel_on_01_quant_lockin": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      }
+    },
+    "novel_on_02_critic_flip_model": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      }
+    },
+    "novel_on_03_levelk_quantal_bridge": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      }
+    },
+    "redisc_on_01_tft_reciprocity": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      }
+    },
+    "redisc_on_02_folk_theorem": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      }
+    },
+    "redisc_on_03_quantal_response": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      }
+    },
+    "fase_off_01_semantic_entropy": {
+      "domain": "off",
+      "primary-gemma": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          null,
+          null,
+          null
+        ],
+        "modal": null,
+        "stable": true
+      }
+    },
+    "fase_off_02_db_index_tuning": {
+      "domain": "off",
+      "primary-gemma": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      }
+    },
+    "nonsense_01_word_salad": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "off",
+          "off",
+          "on"
+        ],
+        "modal": "off",
+        "stable": false
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "unsure",
+          "unsure",
+          "unsure"
+        ],
+        "modal": "unsure",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      }
+    },
+    "nonsense_02_not_a_question": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "unsure",
+          "unsure",
+          "unsure"
+        ],
+        "modal": "unsure",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      }
+    },
+    "falsifiable_01_finite_pd_cooperate": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      }
+    },
+    "falsifiable_02_dominant_tft": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      }
+    },
+    "camo_off_01_fase_gt_vocab": {
+      "domain": "off",
+      "primary-gemma": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      }
+    },
+    "camo_off_02_btree_mechanism": {
+      "domain": "off",
+      "primary-gemma": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      }
+    },
+    "camo_off_03_framework_coordination": {
+      "domain": "off",
+      "primary-gemma": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      }
+    },
+    "camo_off_04_raft_punishment": {
+      "domain": "off",
+      "primary-gemma": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      }
+    },
+    "drift_off_01_rag_chunk_overlap": {
+      "domain": "off",
+      "primary-gemma": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      }
+    },
+    "drift_off_02_belief_distillation": {
+      "domain": "off",
+      "primary-gemma": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "off",
+          "off",
+          "off"
+        ],
+        "modal": "off",
+        "stable": true
+      }
+    },
+    "canary_on_01_ultimatum_plain": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      }
+    },
+    "canary_on_02_hawkdove_ess": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      }
+    },
+    "canary_on_03_llm_gt_hybrid": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      }
+    },
+    "pbeauty_068_01_levelk": {
+      "domain": "on",
+      "primary-gemma": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "adversarial-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "positive-id-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      },
+      "neutral-qwen": {
+        "labels": [
+          "on",
+          "on",
+          "on"
+        ],
+        "modal": "on",
+        "stable": true
+      }
+    }
+  },
+  "summary": {
+    "must_catch": [
+      "fase_off_01_semantic_entropy",
+      "fase_off_02_db_index_tuning",
+      "camo_off_01_fase_gt_vocab",
+      "camo_off_02_btree_mechanism",
+      "camo_off_03_framework_coordination",
+      "camo_off_04_raft_punishment",
+      "drift_off_01_rag_chunk_overlap",
+      "drift_off_02_belief_distillation"
+    ],
+    "must_not_condemn": [
+      "novel_on_01_quant_lockin",
+      "novel_on_02_critic_flip_model",
+      "novel_on_03_levelk_quantal_bridge",
+      "redisc_on_01_tft_reciprocity",
+      "redisc_on_02_folk_theorem",
+      "redisc_on_03_quantal_response",
+      "falsifiable_01_finite_pd_cooperate",
+      "falsifiable_02_dominant_tft",
+      "canary_on_01_ultimatum_plain",
+      "canary_on_02_hawkdove_ess",
+      "canary_on_03_llm_gt_hybrid",
+      "pbeauty_068_01_levelk"
+    ],
+    "primary_misses": [
+      "fase_off_01_semantic_entropy"
+    ],
+    "per_variant": {
+      "adversarial-qwen": {
+        "covers_primary_misses": true,
+        "over_gated": [
+          "novel_on_01_quant_lockin",
+          "novel_on_02_critic_flip_model",
+          "novel_on_03_levelk_quantal_bridge"
+        ],
+        "unstable_boundary": [],
+        "qualifies": false
+      },
+      "positive-id-qwen": {
+        "covers_primary_misses": false,
+        "over_gated": [],
+        "unstable_boundary": [],
+        "qualifies": false
+      },
+      "neutral-qwen": {
+        "covers_primary_misses": false,
+        "over_gated": [
+          "novel_on_02_critic_flip_model"
+        ],
+        "unstable_boundary": [],
+        "qualifies": false
+      }
+    },
+    "recommended_outcome": "A+C (retire the gate + advisory non-gating flag)"
+  },
+  "repeats": 3,
+  "ran_under_mock_llm": false,
+  "generated_at": "20260614T035332Z"
+}

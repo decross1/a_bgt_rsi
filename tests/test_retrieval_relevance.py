@@ -496,3 +496,25 @@ def test_r0_omitted_reduces_to_legacy_behavior():
                          topicality=None)
     assert base["low_confidence"] == via_none["low_confidence"]
     assert base["rule_fired"] == via_none["rule_fired"]
+
+
+# ── D-052: relevance() PURITY w.r.t. topicality_advisory ────────────────────
+# The NON-GATING topicality advisory is attached by nara AFTER relevance(),
+# on the relevance stamp — relevance() itself must never know about it. It is
+# not in the output contract (_ALL_KEYS) and cannot be produced by any
+# topicality input. This guards the pure boundary D-052 relies on.
+
+def test_relevance_never_emits_topicality_advisory_any_topicality():
+    """relevance() never sets a 'topicality_advisory' key under ANY topicality
+    input (on/off/off_independent/unsure/None) or on the empty/off paths."""
+    for t in ("on", "off", "off_independent", "unsure", None):
+        for neighbors, hyp in (
+            (_ON_DOMAIN_NEIGHBORS, _ON_DOMAIN_HYP),
+            (_OFF_DOMAIN_NEIGHBORS, _OFF_DOMAIN_HYP),
+            ([], _ON_DOMAIN_HYP),
+        ):
+            out = relevance(neighbors, hyp, topicality=t)
+            assert "topicality_advisory" not in out
+            # The output key set is exactly the frozen+additive contract — the
+            # advisory is NOT part of it (it lives one layer up, in nara).
+            assert set(out.keys()) == _ALL_KEYS

@@ -2604,3 +2604,130 @@ the 40-row chain. **Remaining clause — sandbox MCP drive (no 15s timeout) —
 NOT run**: it is the runbook's stretch/out-of-scope path (sandbox egress +
 gRPC/h2), deferred to a sandbox-coordinated window. The seam is proven at
 the host boundary; the end-to-end sandbox proof is the one open item.
+
+## D-052 — Independent *adversarial* topicality skeptic (R0b): is it the right instrument? — isolated boundary probe + pre-registered rule
+
+**Date.** 2026-06-13 (session 4). Reopens the over-gating question D-050's
+disposition named as needing a NEW decision ("whether an independent adversarial
+topicality skeptic is the right instrument at all, given it over-condemns
+on-domain novelty in both runs"). Supersedes the residual-1 thread of D-050;
+extends D-045 residual-5 (over-gating). **Orthogonal to β:** D-041 gates β on the
+independent *NOVELTY* skeptic (D-044, validated vllm-qwen) + the memory guard —
+NOT on this topicality skeptic, a dark-by-default add-on. Retiring or neutering
+R0b touches no β arming condition.
+
+**Evidence (two real battery runs + baseline).** R0b runs only when the primary
+Gemma judge does NOT condemn, so its entire marginal effect is the
+`off_independent` cases. Across runs it gates exactly ONE off-domain camouflage
+case (`fase_off_01_semantic_entropy`) — its only consistent win — and cannot do
+so without condemning genuinely-novel on-domain claims: 06-10 over-gated
+`novel_on_01` (lost both verdict axes) + `canary_on_01`; 06-13 (ON-side prompt
+broadened, the D-050 cycle) FIXED the plain classics but RELOCATED the harm onto
+`novel_on_01` AND `novel_on_03` (both genuinely novel, both lost both axes) and
+accuracy fell 0.6818→0.6591. Aggregate accuracy is noise-dominated (±2 axes of
+44); the per-case firing pattern is the signal and it is consistent. Diagnosis
+(D-045 residual-5, confirmed structural): the adversarial REFUTE framing
+conflates "novel on-domain" with "camouflaged off-domain" because both sit far
+from canonical GT — the falsified-embedding-anchor failure recurring at the
+LLM-judge level. Prompt text moves WHICH novel cases die, not WHETHER.
+
+**Decision space.**
+- **A. Retire R0b** — keep the seam byte-identical but permanently dark; rely on
+  the primary R0 (Gemma) + downstream critic/novelty + the human reading the
+  journal.
+- **B. Positive-identification reframe** — condemn ONLY on positive ID of an
+  off-domain subject, not on failure-to-defend-in-domain. Dark until a
+  full-battery A/B blesses it.
+- **C. Advisory (non-gating) flag** — surface the independent judge's dissent to
+  the record / journal / UI but NEVER set `low_confidence` / never temper the
+  verdict (over-gating harm → zero; the one signal preserved). Behind a new
+  `NARA_TOPICALITY_ADVISORY`.
+- **D. Abstain-by-default** variant of B.
+
+**Method — isolated boundary probe (the smallest experiment).** The topicality
+judgment is an isolated function, so instrument variants are compared by calling
+the judges directly on the labeled cases — NO retrieval / novelty / critic chain.
+Key property: a variant that condemns ZERO on-domain case *in isolation* cannot
+over-gate in the battery (the gate cannot fire when the judge says on/unsure),
+and catching the primary's misses is directly observable — so the isolation
+result is a valid hard gate on promotion.
+`experiments/topicality_instrument/boundary_probe.py` runs FOUR variants over all
+22 cases, N=3 repeats, temp 0.0: `primary-gemma` (`topicality._primary_check`),
+`adversarial-qwen` (current `attack_topicality`), `positive-id-qwen` (B prompt,
+harness-owned), `neutral-qwen` (primary prompt on vllm-qwen — isolates
+framing-vs-backend). Boundary set: MUST-CATCH = the 8 `domain:off` cases;
+MUST-NOT-CONDEMN = the 12 genuine `domain:on` cases (novel/redisc/canary ×3,
+pbeauty, falsifiable ×2); `nonsense_01/02` informational.
+
+**Phase-1 pre-registered rule (locked BEFORE the run).** A variant QUALIFIES for
+a Phase-2 full-battery A/B iff, over N=3 repeats, ALL: (1) **marginal catch** —
+it labels `off` every off-domain case `primary-gemma` does NOT (if the primary
+already catches all 8, this clause is vacuous → no marginal value → outcome A);
+(2) **zero over-gating** — it labels `off` ZERO must-not-condemn case; (3)
+**stable** — every boundary label identical across all 3 repeats. Branch: NO
+variant qualifies (expected) → **A + C** (A only if clause-1 is vacuous); a qwen
+variant qualifies → PAUSE for Phase-2 (a second pre-registered decision + ~70-min
+battery; the blessed prompt enters `_SYSTEM` only on a Phase-2 PASS).
+
+**Phase-2 sketch (only if a variant qualifies).** Paired battery: arm0
+`NARA_TOPICALITY_SKEPTIC=0` vs armV (variant on). PASS iff fase_off_01 stays
+gated (recall 8/8, 0 ungated off) AND zero `domain:on` case un-gated in arm0
+becomes low-confidence in armV AND `verdict_accuracy(armV) >=
+verdict_accuracy(arm0)` (paired baseline). FAIL → byte-identical revert → A+C.
+
+**Reversibility.** All arms env-gated and dark / fail-open; the advisory (C) is a
+new orthogonal `NARA_TOPICALITY_ADVISORY`, additive record field, no schema edit,
+no verdict effect. Revert = unset env vars.
+
+**DECISION RUN VERDICT (2026-06-14, isolated probe `probe_20260614T035332Z`,
+real, 22 cases × 4 variants × 3 repeats): NO independent variant qualifies →
+outcome A + C (retire R0b as a gate; demote the independent dissent to a
+non-gating advisory).** Per the pre-registered Phase-1 rule:
+
+- **primary-gemma catches 7/8 off-domain**; it MISSES only
+  `fase_off_01_semantic_entropy` — that one camouflage case is R0b's entire
+  possible marginal job.
+- **adversarial-qwen (current R0b): DISQUALIFIED.** Catches `fase_off_01`
+  (clause 1 ✓) but over-gates THREE genuine novel on-domain cases —
+  `novel_on_01`, `novel_on_02`, `novel_on_03`, all labelled `off` (clause 2 ✗).
+  The structural over-gating is reproduced a third time.
+- **positive-id-qwen (candidate B): DISQUALIFIED, but diagnostic.** Over-gates
+  ZERO on-domain cases (clause 2 ✓ — the reframe PROVES the adversarial *framing*
+  is the over-gating cause) but MISSES `fase_off_01` and the other GT-vocab
+  camouflage (clause 1 ✗ — a positive-ID judge cannot name an off-domain subject
+  when the claim is dressed in game-theory vocabulary).
+- **neutral-qwen (control): DISQUALIFIED** — over-gates `novel_on_02` and is
+  unstable/unmeasurable on `fase_off_01`.
+
+**The instrument question is answered: an independent adversarial topicality
+skeptic is the WRONG GATE.** The probe isolates WHY: catching the one camouflage
+case the primary misses (`fase_off_01`) is INSEPARABLE from over-condemning
+genuine novelty — the only judge that catches it (adversarial) is the one that
+over-gates; the only clean judge (positive-ID) is blind to it. Novelty and
+GT-vocab camouflage look the same to an independent judge — the falsified-anchor
+failure (D-045) at the LLM-judge level, now confirmed a THIRD time.
+
+**Outcome A — retire R0b as a gate.** `NARA_TOPICALITY_SKEPTIC` stays permanently
+dark (the seam kept byte-identical for reversibility, not ripped out). Supersedes
+the residual-1 thread of D-050.
+
+**Outcome C — advisory (non-gating).** The lesson lands exactly here: the
+independent topicality dissent belongs as a HUMAN-FACING HINT, not an
+auto-suppressing gate. Behind a new `NARA_TOPICALITY_ADVISORY` (dark by default,
+fail-open): when the primary passes, the existing adversarial `attack_topicality`
+(the only judge carrying the marginal `fase_off_01` signal) is consulted and its
+dissent rides as the additive `relevance.topicality_advisory` field — surfaced to
+the record / journal / UI but NEVER setting `low_confidence` or tempering any
+verdict (over-gating harm → zero). It is labelled the known-over-flagging
+adversarial signal so a `novel`-case false hint is discounted by the human.
+Additive field, no schema edit; logged for the UI in `docs/DATA_SHAPES.md`.
+
+**NEW RESIDUAL (out of D-052 scope, recorded for a future decision).** The
+PRIMARY R0 judge (Gemma, always-on) ITSELF over-gates
+`novel_on_02_critic_flip_model` (domain:on, stable `off`) — primary-layer
+over-gating that retiring R0b does not touch. The over-gating problem is not
+fully solved by this decision; the primary neutral judge carries some of it.
+
+**Reversibility.** `NARA_TOPICALITY_SKEPTIC` dark; the C advisory is a new
+orthogonal `NARA_TOPICALITY_ADVISORY`, additive non-gating field, fail-open;
+revert = unset env vars.

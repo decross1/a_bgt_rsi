@@ -223,7 +223,8 @@ class ScoreCaseTest(unittest.TestCase):
     # -- skeptic/topicality provenance fields (residual-1/2 observability) ----
     def test_new_observation_fields_default_none_and_passthrough(self):
         fields = ("topicality", "skeptic_verdict", "restate_verdict",
-                  "verdict_overridden_from", "contradicting_paper_id")
+                  "verdict_overridden_from", "contradicting_paper_id",
+                  "topicality_advisory")
         # Default: a pre-seam observation carries None on all four and they
         # survive score_case as None (additive — never required, never
         # affecting pass logic).
@@ -241,12 +242,17 @@ class ScoreCaseTest(unittest.TestCase):
         # MUST surface it or the pre-registered C2 criterion ("restated WITH
         # non-null contradicting_paper_id") is structurally unmeasurable.
         o.contradicting_paper_id = "osborne_rubinstein-chunk-979"
+        # D-052 NON-GATING advisory: passes through verbatim, additive only.
+        o.topicality_advisory = "off"
         s2 = score_case(self._on_case(), o)
         self.assertEqual(s2.topicality, "off_independent")
         self.assertEqual(s2.skeptic_verdict, "survives_attack")
         self.assertEqual(s2.restate_verdict, "restated")
         self.assertEqual(s2.verdict_overridden_from, "survives")
         self.assertEqual(s2.contradicting_paper_id, "osborne_rubinstein-chunk-979")
+        self.assertEqual(s2.topicality_advisory, "off")
+        # The advisory NEVER moves the locked pass bar (additive observability).
+        self.assertTrue(s2.passed)
         row = result_to_dict(score_battery([self._on_case()], [o]))["per_case"][0]
         for name in fields:
             self.assertIn(name, row)
@@ -256,6 +262,7 @@ class ScoreCaseTest(unittest.TestCase):
         self.assertEqual(row["verdict_overridden_from"], "survives")
         self.assertEqual(row["contradicting_paper_id"],
                          "osborne_rubinstein-chunk-979")
+        self.assertEqual(row["topicality_advisory"], "off")
         # And the None default serializes as None (not dropped) in the dict.
         row_none = result_to_dict(
             score_battery([self._on_case()], [self._obs()]))["per_case"][0]

@@ -809,6 +809,24 @@ def _run_iteration_impl(
                             anchor_cosine=_anchor,
                             topicality=_topic,
                         )
+                        # D-052 outcome C: the independent topicality dissent as
+                        # a NON-GATING advisory (NARA_TOPICALITY_ADVISORY, dark by
+                        # default). Consulted only when the primary did NOT
+                        # condemn; attached AFTER relevance() so it can never feed
+                        # low_confidence — the verdict is untouched, this is a
+                        # human-facing hint only. The skeptic is the known
+                        # over-flagging adversarial judge (D-052 retired it AS A
+                        # GATE) and is itself fail-open; None on any failure
+                        # (never let the advisory crash the chain).
+                        if (os.environ.get("NARA_TOPICALITY_ADVISORY") == "1"
+                                and _topic != "off"):
+                            try:
+                                from orchestrator import topicality_skeptic
+                                _advisory = topicality_skeptic.attack_topicality(
+                                    _hyp_text)
+                            except Exception:
+                                _advisory = None
+                            payload["relevance"]["topicality_advisory"] = _advisory
                     elif name == "novelty_classify":
                         captured["novelty"] = payload
                         cache_key = "novelty"

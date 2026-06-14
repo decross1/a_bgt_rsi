@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -104,6 +105,12 @@ class CaseObservation:
     skeptic_verdict: Optional[str] = None
     restate_verdict: Optional[str] = None
     verdict_overridden_from: Optional[str] = None
+    # D-052 NON-GATING topicality advisory ("on"|"off"|"unsure"|None). The
+    # independent adversarial topicality judge (RETIRED as a gate) attached
+    # AFTER relevance() on the relevance stamp when NARA_TOPICALITY_ADVISORY=1
+    # and the primary did NOT condemn. Observability ONLY — it never touches
+    # low_confidence or any verdict; None whenever the seam is dark.
+    topicality_advisory: Optional[str] = None
 
 
 @dataclass
@@ -157,6 +164,9 @@ class CaseScore:
     # "restated WITH non-null contradicting_paper_id" criterion is
     # measurable — the critic sets it but it was being dropped here.
     contradicting_paper_id: Optional[str] = None
+    # D-052 NON-GATING topicality advisory passthrough (from CaseObservation);
+    # additive observability only — never feeds any pass/fail or accuracy logic.
+    topicality_advisory: Optional[str] = None
 
 
 @dataclass
@@ -289,6 +299,7 @@ def score_case(case: dict[str, Any], obs: CaseObservation) -> CaseScore:
         restate_verdict=obs.restate_verdict,
         verdict_overridden_from=obs.verdict_overridden_from,
         contradicting_paper_id=obs.contradicting_paper_id,
+        topicality_advisory=obs.topicality_advisory,
     )
 
 
@@ -459,6 +470,19 @@ def run_case(
         # Legacy relevance signature (pre anchor gate) — reduce honestly.
         rel = relevance_fn(neighbors, hyp)
     payload["relevance"] = rel
+    # D-052 outcome C: mirror nara's NON-GATING advisory attach. nara does this
+    # in its dispatch loop AFTER relevance(); the battery replicates the chain,
+    # so it must replicate this too — else the advisory is structurally
+    # unmeasurable here (the field would be a permanent None). Dark by default
+    # (NARA_TOPICALITY_ADVISORY), only when the primary did NOT condemn,
+    # fail-open None; attached AFTER relevance() so it never feeds low_confidence.
+    if (os.environ.get("NARA_TOPICALITY_ADVISORY") == "1"
+            and topic_val != "off" and isinstance(rel, dict)):
+        try:
+            from orchestrator.topicality_skeptic import attack_topicality
+            rel["topicality_advisory"] = attack_topicality(hyp)
+        except Exception:
+            rel["topicality_advisory"] = None
     if isinstance(ret, dict):
         ret["result"] = payload
     # Step 3: cache the full tool_result so the workers read it by id.
@@ -529,6 +553,12 @@ def run_case(
         skeptic_verdict=crit_res.get("skeptic_verdict"),
         restate_verdict=crit_res.get("restate_verdict"),
         verdict_overridden_from=crit_res.get("verdict_overridden_from"),
+        # D-052 NON-GATING topicality advisory — read from the SAME relevance
+        # stamp as topicality (nara attaches it there, AFTER relevance(), only
+        # when NARA_TOPICALITY_ADVISORY=1 + primary did not condemn). Fails
+        # open to None whenever the seam is dark.
+        topicality_advisory=(rel.get("topicality_advisory")
+                             if isinstance(rel, dict) else None),
     )
 
 
@@ -704,6 +734,7 @@ def result_to_dict(res: BatteryResult) -> dict[str, Any]:
                 "restate_verdict": s.restate_verdict,
                 "verdict_overridden_from": s.verdict_overridden_from,
                 "contradicting_paper_id": s.contradicting_paper_id,
+                "topicality_advisory": s.topicality_advisory,
             }
             for s in res.per_case
         ],
@@ -771,7 +802,7 @@ def render_markdown(res: BatteryResult, *, mock: bool) -> str:
     lines.append(
         "| case | dom | nov exp/act | crit exp/act | gate exp/act | "
         "relevance diag (anchor/ov3/cur/spread/maxcos cat:rule) | "
-        "skeptic diag (topic/skeptic/restate/ovr_from) | pass |"
+        "skeptic diag (topic/skeptic/restate/ovr_from/advisory) | pass |"
     )
     lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
     for s in res.per_case:
@@ -785,7 +816,8 @@ def render_markdown(res: BatteryResult, *, mock: bool) -> str:
         )
         skep = (
             f"{s.topicality or '-'}/{s.skeptic_verdict or '-'}/"
-            f"{s.restate_verdict or '-'}/{s.verdict_overridden_from or '-'}"
+            f"{s.restate_verdict or '-'}/{s.verdict_overridden_from or '-'}/"
+            f"{s.topicality_advisory or '-'}"
         )
         lines.append(
             f"| {s.case_id} | {s.domain} | {nov} | {crit} | {gate} | {diag} | "
@@ -796,8 +828,6 @@ def render_markdown(res: BatteryResult, *, mock: bool) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    import os
-
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--cases", default=str(CASES_PATH), help="path to cases.jsonl")
     p.add_argument("--out-dir", default=str(RUNS_DIR), help="report output dir")
