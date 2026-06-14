@@ -180,9 +180,12 @@ describe("ResolvedIterationsList — validation against REAL loop_memory.jsonl",
     watchConsole();
     const withRelevance = REAL.filter(
       (r) => r.retrieval?.relevance != null,
-    );
-    // The live data has exactly one such row on 2026-06-09; tolerate ≥1 so the
-    // test survives more landing, but require the contract field to exist.
+    ).slice(0, PAGE_SIZE);
+    // The live corpus started at one such row (2026-06-09) and grows every
+    // session; cap to one page (PAGE_SIZE) so the per-row label assertion below
+    // stays stable once relevance-bearing rows exceed the page size — they now
+    // do (11 as of 2026-06-13, the oldest of which paginates to page 2). Still
+    // require ≥1 so the contract field is exercised.
     expect(withRelevance.length).toBeGreaterThanOrEqual(1);
     render(<ResolvedIterationsList initial={withRelevance} />);
     // The row renders by id (no crash on the nested relevance block).
