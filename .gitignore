@@ -38,6 +38,7 @@ models/
 # Run-time outputs — not tracked by default; per-day end-of-day tasks
 # git add specific files explicitly.
 logs/*.jsonl
+logs/*.log
 bench/*.csv
 bench/*.json
 *.tmp
