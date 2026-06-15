@@ -234,21 +234,21 @@ describe("HumanTodoPanel — severity-tiered inbox", () => {
     expect(screen.queryByTestId("human-todo-empty")).toBeNull();
   });
 
-  it("mounts EXACTLY ONE inbox on the Dashboard route, in hero position above the health verdict", async () => {
+  it("does NOT mount the inbox on the Dashboard anymore — it moved to /todo (PART 1)", async () => {
+    // 2026-06-14 work order PART 1: the HumanTodoPanel left the dashboard for
+    // the /todo cockpit. The dashboard's at-a-glance escalation signal is now
+    // the SystemActivityHero "N need you →" coupling, not a mounted panel — so
+    // the panel must NOT appear here (the inbox has exactly one home).
     const { default: Dashboard } = await import("../src/routes/Dashboard");
     render(
       <MemoryRouter>
         <Dashboard />
       </MemoryRouter>,
     );
-    const panels = screen.getAllByTestId("human-todo-panel");
-    expect(panels).toHaveLength(1);
-    // Hero position: the inbox precedes the composed health verdict.
-    const verdict = screen.getByTestId("health-verdict");
-    expect(
-      panels[0].compareDocumentPosition(verdict) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByTestId("system-activity-hero")).toBeInTheDocument(),
+    );
+    expect(screen.queryAllByTestId("human-todo-panel")).toHaveLength(0);
   });
 });
 

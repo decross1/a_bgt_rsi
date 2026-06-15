@@ -28,6 +28,7 @@ import type { IterationRecord } from "../types/schemas";
 import GateVerdictForm from "./GateVerdictForm";
 import JournalScroll from "./JournalScroll";
 import LowEvidenceBadge, { isLowEvidence } from "./LowEvidenceBadge";
+import TopicalityAdvisoryBadge from "./TopicalityAdvisoryBadge";
 import NoveltyAxesChip from "./NoveltyAxesChip";
 import SourceBadge from "./SourceBadge";
 
@@ -575,6 +576,7 @@ export default function IterationDetailModal({ row, onClose }: Props) {
               signal; the full origin story reads here. */}
           <SourceBadge source={row.seed?.source} />
           <LowEvidenceBadge record={row} />
+          <TopicalityAdvisoryBadge record={row} />
           <ExperimentChip outcome={row.experiment_outcome} />
           <span className="ml-auto flex items-center gap-2">
             <span className="font-mono text-[10px] text-zinc-500">
@@ -636,6 +638,7 @@ export default function IterationDetailModal({ row, onClose }: Props) {
             <DetailRow k="category" v={relevance.category} />
             <DetailRow k="rule_fired" v={relevance.rule_fired} />
             <DetailRow k="topicality" v={relevance.topicality} />
+            <DetailRow k="topicality_advisory" v={relevance.topicality_advisory} />
             <DetailRow k="anchor_cosine" v={relevance.anchor_cosine} />
             <DetailRow k="curated_overlap" v={relevance.curated_overlap} />
             <DetailRow k="neighbor_spread" v={relevance.neighbor_spread} />

@@ -2,6 +2,7 @@
 // in ui_plan.md section 5.3.
 import { fmt } from "../format";
 import type { TelemetrySample } from "../types/schemas";
+import HostMemoryTile from "./HostMemoryTile";
 import MetricTile, { type Tone } from "./MetricTile";
 
 function gpuTempTone(t: number | null | undefined): Tone {
@@ -31,22 +32,34 @@ function gpuUtilTone(u: number | null | undefined): Tone {
 }
 
 export default function HealthStrip({ samples }: { samples: TelemetrySample[] }) {
-  const latest = samples[samples.length - 1] ?? null;
+  // Producer-owned telemetry is forwarded raw (house robustness doctrine): the
+  // declared TelemetrySample[] cannot enforce shape at runtime. A null/absent
+  // body, a non-array, or a null/non-object trailing sample must all degrade to
+  // an honest "n/a"/idle tile, never blank the strip with a .map/index throw.
+  const list = Array.isArray(samples) ? samples : [];
+  const rawLatest = list[list.length - 1];
+  const latest =
+    rawLatest != null && typeof rawLatest === "object" ? rawLatest : null;
   const gpu = latest?.gpu ?? null;
   const host = latest?.host ?? null;
 
   const series = (pick: (s: TelemetrySample) => number | null | undefined) =>
-    samples.map(pick);
+    list.map((s) => (s != null && typeof s === "object" ? pick(s) : null));
 
   const memUsed = gpu?.mem_used_mb;
   const memTotal = gpu?.mem_total_mb;
+  // Both must be FINITE numbers before we divide — a string/NaN/Infinity from a
+  // malformed sample would otherwise toFixed() into a literal "NaN" in the tile.
   const memValue =
-    memUsed != null && memTotal != null
+    typeof memUsed === "number" &&
+    Number.isFinite(memUsed) &&
+    typeof memTotal === "number" &&
+    Number.isFinite(memTotal)
       ? `${(memUsed / 1024).toFixed(1)}/${(memTotal / 1024).toFixed(1)}`
       : "n/a";
 
   return (
-    <div className="grid grid-cols-5 gap-3">
+    <div className="grid grid-cols-6 gap-3">
       <MetricTile
         label="GPU util"
         value={fmt(gpu?.util_pct)}
@@ -60,7 +73,7 @@ export default function HealthStrip({ samples }: { samples: TelemetrySample[] })
         unit="GiB"
         tone="idle"
         values={series((s) => s.gpu?.mem_used_mb)}
-        note={memUsed == null ? "GB10 unified memory — n/a" : undefined}
+        note={memValue === "n/a" ? "GB10 unified memory — n/a" : undefined}
       />
       <MetricTile
         label="GPU temp"
@@ -83,6 +96,10 @@ export default function HealthStrip({ samples }: { samples: TelemetrySample[] })
         tone={cpuTempTone(host?.cpu_temp_c)}
         values={series((s) => s.host?.cpu_temp_c)}
       />
+      {/* PART 1 (2026-06-14): host RAM-used, alongside the GPU/CPU tiles.
+          Fed the strip's own samples so it shares this poll (no second
+          fetch); renders an honest "—" when host telemetry lacks mem. */}
+      <HostMemoryTile initial={list} />
     </div>
   );
 }

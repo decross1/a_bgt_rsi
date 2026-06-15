@@ -13,7 +13,8 @@ journal entry opens inline. Built per
 [`agent/prompts/ui_session.md`](agent/prompts/ui_session.md) and
 [`LOOP_V0.md`](LOOP_V0.md) §"What's needed from the UI session", on the
 substrate the primary session builds per
-`/home/decross1/.claude/plans/idempotent-spinning-sonnet.md`.
+[`archive/plans/idempotent-spinning-sonnet.md`](archive/plans/idempotent-spinning-sonnet.md)
+(imported into the repo 2026-06-14; formerly a stranded `~/.claude/plans/` file).
 
 ### Layout
 
@@ -123,7 +124,8 @@ already used (headings, lists, **bold**, `inline code`, fenced code).
 ## §ACTIVITY + EXPERIMENTS — Batch 1 of the concurrent-HITL rhythm (active, 2026-06-05)
 
 Built under the batch -> fan-out -> gate operating rhythm
-(`.claude/plans/i-want-to-start-concurrent-flurry.md`): the human names N
+([`archive/plans/i-want-to-start-concurrent-flurry.md`](archive/plans/i-want-to-start-concurrent-flurry.md),
+imported into the repo 2026-06-14): the human names N
 page concepts, one builder agent per page runs concurrently in a single
 phase-bounded Workflow, the primary UI session applies the small shared-file
 edits (`App.tsx` routes/nav, `app.py` router registration), and the human
@@ -201,8 +203,8 @@ it; `exp004_combinatorial_auction` surfaces via `GET /api/experiments/{exp_id}`.
 ## §AUTONOMY OBSERVABILITY — the coordinator loop must stop running "dark" (active, 2026-06-09)
 
 RENDER half of the autonomy-observability batch. Spec + rationale:
-[`docs/ui_session_handoff_2026-06-09.md`](docs/ui_session_handoff_2026-06-09.md)
-and [`docs/ui_autonomy_observability_plan.md`](docs/ui_autonomy_observability_plan.md).
+[`archive/ui_handoffs/ui_session_handoff_2026-06-09.md`](archive/ui_handoffs/ui_session_handoff_2026-06-09.md)
+and [`archive/ui_handoffs/ui_autonomy_observability_plan.md`](archive/ui_handoffs/ui_autonomy_observability_plan.md).
 The primary session lands the EMIT half (the spine instrumentation that writes
 the data files below) in a parallel workflow; this session builds the RENDER
 half in `ui/` against the documented contracts. All new data files are
@@ -380,7 +382,7 @@ workflow independently audited.
 Closure annotations for the 2026-06-09-evening carry-over findings, numbered
 T1.1–T1.6 / T3.1–T3.3 in the 2026-06-10 UI-overhaul workflow (the same items
 are Task 0 items 1–7 and 9–10 of
-[`docs/ui_session_handoff_2026-06-10.md`](docs/ui_session_handoff_2026-06-10.md)).
+[`archive/ui_handoffs/ui_session_handoff_2026-06-10.md`](archive/ui_handoffs/ui_session_handoff_2026-06-10.md)).
 All nine **landed this session** by the Phase-2 build agents **R1a** (ui-tests)
 and **R1b** (ui-components). Written at docs-closure time while Phase-3
 integration was folding the build branches into the main checkout — the
@@ -406,6 +408,103 @@ no edit was needed.
 
 The live reactive session that follows this build runs from
 [`docs/live_session_runbook.md`](docs/live_session_runbook.md).
+
+---
+
+## §2026-06-14 — topicality advisory + dashboard reframe + /todo cockpit (active)
+
+Work order: `human/sessions/2026-06-14.md` "## UI session work order" (the dated
+session note is now the canonical UI handoff home, per the amended CLAUDE.md
+operating model). Built by the UI session via three Dynamic Workflows (leaf
+build → contract+shell assemble → max-fan-out harden/validate), with the session
+serially integrating the shared spine (route/router registration, dashboard
+reframe, badge wiring) and verifying. Scope held: `ui/` + `ui_plan.md` only.
+
+### Topicality advisory badge (D-052)
+
+`relevance.topicality_advisory` (DATA_SHAPES §1 / Changelog 2026-06-14) surfaced
+as a **non-gating** hint. New `TopicalityAdvisoryBadge.tsx`: a quiet **zinc**
+"topicality dissent" chip that fires ONLY for an explicit `"off"` (the retired-
+as-gate adversarial judge's dissent), renders nothing for absent/`on`/`unsure`/
+null/garbled values, and must NOT reuse the amber low-evidence styling (it is
+neither a gate nor a low-evidence flag). Wired into `ResolvedIterationsList` (a
+quiet row chip beside — never inside — the alarm slot), and `IterationDetailModal`
+(header chip + a `topicality_advisory` Evidence `DetailRow`). `topicality_advisory`
+added to the `relevance` type in `types/schemas.ts`.
+
+### PART 1 — dashboard reframe (center = system-overview snapshot)
+
+Center order: HealthVerdict → SystemActivityHero → HealthStrip **+ a new
+`HostMemoryTile`** (6th strip tile, host RAM-used GiB, honest "—" when host
+telemetry lacks `mem_used_mb`) → Vllm + Qwen (both kept). **`HumanTodoPanel`
+REMOVED from the dashboard** — it moved entirely to `/todo`. The removal is safe
+ONLY because of the **coupling**: `SystemActivityHero` gained a router-free
+`needsYou` slot, and the Dashboard feeds it `<Link to="/todo">{N} need you →</Link>`,
+visible in **every** state. **N = taxonomy A+B ONLY** = `counts.gate_verdict +
+counts.state_gate` from `/api/human_todo` (C — `bubble_ack`/`stale_active_run` —
+and `finding_review` are excluded; they are not blocking decisions). No
+slide-out drawer (rejected; over-build).
+
+### PART 2 — `/todo` uncertainty-resolution cockpit (STUBBED)
+
+New `routes/Todo.tsx` assembles the cockpit: `ConcurrencyWarning` (self-fetches
+`/api/todo/concurrency`; warns when an iteration is mid-flight) → the
+`HumanTodoPanel` inbox (its new home) → the resolution area enforcing the
+**pre-verdict ordering** (ARCH §6.5.4: `CalibrationCapture` FIRST; the six
+resolution forms unlock only after `onCaptured`) → the six outcomes (sign-off /
+reject / refine-defer reuse the blessed `GateVerdictForm`/`FindingReviewForm`/
+`DeferForm`; **NEW stub forms** `DirectiveSignOffField`, `AuthorizeFixForm`
+(outcome 4, "you approve the WORK, not a merge"), `SpawnTopicForm`, `AbstainForm`)
+→ `TwoVoiceChatPane` (Gemma defends / Qwen attacks, gated, stub) + `TutorPanel`
+(**fenced from the verdict** — handed no verdict props). New backend
+`ui/backend/todo_cockpit.py` (`register` wired in `app.py`) serves the NEW seams
+as **honest stubs**: each POST validates, then returns `{status:"stub", seam,
+would_run:[argv…]}` — the seam-faithful argv the future blessed CLI will run —
+and **writes nothing** (D-046 / rule 4). The lone real read is
+`GET /api/todo/concurrency` (read-only `run_state/active_run.json`).
+`/api/todo/available` reports the NEW seams as `false` until
+`docs/todo_cockpit_seam_plan.md`'s writers (primary-session) land; the cockpit
+snaps onto them with zero argv churn. The `/todo` route now renders `<Todo/>`
+(was the bare `HumanTodoPage`).
+
+### Verification
+
+Settled baseline before the harden sweep: frontend 903 vitest pass (75 files),
+backend 358 pytest pass, `tsc --noEmit` clean. Two existing tests were updated
+to the new contract (not coerced): the dashboard no longer mounts the inbox
+(asserts absence + the coupling link), and `/todo` renders the cockpit.
+
+**Harden/validate sweep closure.** A max-fan-out Dynamic Workflow (16 surfaces
+pipelined harden→adversarial-verify + a deepen phase) then took the new/changed
+surfaces to **frontend 1255 pass (91 files), backend 517 pass, `tsc` clean**
+(+352 fe / +159 be tests, all green). Adversarial verification **found and fixed
+6 real robustness bugs** a happy-path pass would miss — the most serious:
+`SystemActivityHero`'s `needsYou` slot would **blank the whole dashboard** if
+handed a React element wrapping a producer-derived bad-object child (fixed with a
+scoped `SlotBoundary` error boundary); plus `/api/todo/concurrency` on a
+deeply-malformed `active_run.json`, `api/todo.ts` body coercion, and
+edge-input handling in `AbstainForm` / `DirectiveSignOffField` / `CalibrationCapture`.
+Live-data validation (in-process `TestClient` over the real `_PRIMARY_REPO`)
+confirmed end-to-end: every `/api/todo` POST stub writes NOTHING (before/after
+`memory/`+`run_state/` snapshot = zero delta — D-046 / rule 4 verified), and the
+dashboard coupling reads real `counts.{gate_verdict,state_gate}` (16 live
+`gate_verdict` pending). An a11y pass labelled the read-only would-run blocks.
+The completeness critic verdicts **every** PART-1/PART-2/badge work-order item
+**BUILT**; its punch list resolved with no code change: the "exclude taxonomy C
+from N" invariant is already pinned in `test_dashboard.tsx`; the `IDLE · N need
+you →` literal is rendered as a separate always-visible slot (a deliberate
+improvement — the count shows in every hero state, not only idle); and the
+calibration-ordering / two-voice-chat / outcome-4-enqueue stubs are the expected
+primary-seam boundary below.
+
+### Boundary handed to the primary session
+
+The cockpit's NEW resolution outcomes are inert stubs until the four
+`docs/todo_cockpit_seam_plan.md` seams ship (two-voice `finding_session.py`, the
+generalized escalation schema + coordinator emit, the resolution-outcome CLIs,
+the outcome-4 spawn-contract enqueue). When they land, flip the per-action flags
+in `todo_cockpit.py`'s `/available` and swap each stub body for an
+`attest._exec_blessed` call — the argv shapes already match the seam plan.
 
 ---
 

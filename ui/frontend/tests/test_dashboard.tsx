@@ -9,6 +9,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Dashboard from "../src/routes/Dashboard";
+import { getHumanTodo } from "../src/api/http";
 import type { TelemetrySample, VllmSample } from "../src/types/schemas";
 
 // Dashboard renders react-router <Link>s (the B5 "drill into" links), so it
@@ -171,13 +172,33 @@ describe("Dashboard realignment", () => {
     expect(screen.getByTestId("health-verdict")).toBeInTheDocument();
   });
 
-  it("mounts the HUMAN TODO panel prominently with the calm empty state", async () => {
+  it("does NOT mount HumanTodoPanel — it moved to /todo (2026-06-14 PART 1)", async () => {
     renderDashboard();
-    expect(screen.getByTestId("human-todo-panel")).toBeInTheDocument();
-    // The mocked queue is empty -> calm state once the poll resolves.
-    await waitFor(() =>
-      expect(screen.getByTestId("human-todo-empty")).toBeInTheDocument(),
-    );
+    // The panel is gone from the dashboard; the at-a-glance signal is now the
+    // hero's "N need you →" coupling, which links to the /todo cockpit.
+    expect(screen.queryByTestId("human-todo-panel")).toBeNull();
+    const link = await screen.findByTestId("dashboard-needs-you");
+    expect(link.getAttribute("href")).toBe("/todo");
+    // Empty A+B counts -> the calm "none need you" form, still a live link.
+    expect(link).toHaveTextContent(/none need you/i);
+  });
+
+  it("the 'N need you' count is taxonomy A+B ONLY (gate_verdict + state_gate)", async () => {
+    // bubble_ack / stale_active_run (C) and finding_review are NOT decisions
+    // and must be excluded: N = 2 + 1 = 3, never 3 + 9 + 4.
+    vi.mocked(getHumanTodo).mockResolvedValueOnce({
+      items: [],
+      counts: {
+        gate_verdict: 2,
+        state_gate: 1,
+        bubble_ack: 9,
+        stale_active_run: 5,
+        finding_review: 4,
+      },
+    });
+    renderDashboard();
+    const link = await screen.findByTestId("dashboard-needs-you");
+    await waitFor(() => expect(link).toHaveTextContent("3 need you →"));
   });
 
   it("offers drill-into links to the deep-dive pages (B5)", () => {

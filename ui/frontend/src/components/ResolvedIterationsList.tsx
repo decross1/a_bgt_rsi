@@ -54,6 +54,7 @@ import IterationDetailModal, {
   toneFor,
 } from "./IterationDetailModal";
 import LowEvidenceBadge, { isLowEvidence } from "./LowEvidenceBadge";
+import TopicalityAdvisoryBadge from "./TopicalityAdvisoryBadge";
 import SourceBadge from "./SourceBadge";
 
 const PAGE_SIZE = 10;
@@ -479,6 +480,11 @@ export default function ResolvedIterationsList({
                       tone={toneFor(GATE_TONE, row.gate_status, "")}
                     />
                     <AlarmSlot row={row} />
+                    {/* D-052 advisory: a quiet, non-gating topicality-dissent
+                        hint (self-nulls unless an explicit "off" rode in). NOT
+                        an alarm — it sits beside the alarm slot, never inside
+                        it. */}
+                    <TopicalityAdvisoryBadge record={row} />
                     {/* β provenance is the ONE origin worth row-level ink:
                         the in-sandbox NemoClaw agent choosing its own thesis.
                         Every other source reads in the modal. */}

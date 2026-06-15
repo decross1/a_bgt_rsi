@@ -22,6 +22,7 @@ from .experiments import register as register_experiments
 from .human_todo import register as register_human_todo
 from .loop_v0 import register as register_loop_v0
 from .tailer import JsonlTailer
+from .todo_cockpit import register as register_todo_cockpit
 from .workload import compute_workload_hint
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -245,6 +246,11 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     # D-046 write-back seam: argv-exec of the blessed CLIs (runner defaults
     # to subprocess.run in production; tests inject a stub).
     register_attest(app, repo_root=Path(loop_v0_repo))
+
+    # /todo cockpit NEW-seam stubs (authorize_fix / directive_signoff /
+    # spawn_topic / abstain / calibration) + the read-only concurrency guard.
+    # Read-only/stub until docs/todo_cockpit_seam_plan.md's writers land.
+    register_todo_cockpit(app, repo_root=Path(loop_v0_repo))
 
     return app
 
