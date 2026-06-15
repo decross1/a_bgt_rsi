@@ -16,7 +16,6 @@ import HealthStrip from "../components/HealthStrip";
 import HealthVerdict, {
   excludeQwenReadErrors,
 } from "../components/HealthVerdict";
-import HumanTodoPanel from "../components/HumanTodoPanel";
 import JournalScroll from "../components/JournalScroll";
 import NaraPromptForm from "../components/NaraPromptForm";
 import ProcessGrid from "../components/ProcessGrid";
@@ -31,6 +30,7 @@ import {
   getActiveIteration,
   getCoordinatorActive,
   getHealth,
+  getHumanTodo,
   getIterations,
 } from "../api/http";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
@@ -65,6 +65,14 @@ export default function Dashboard() {
     useState<ActiveIteration | null>(null);
   const [coordinatorActive, setCoordinatorActive] =
     useState<CoordinatorActiveRun | null>(null);
+  // PART 1 coupling (2026-06-14 work order): the dashboard's at-a-glance
+  // escalation signal that replaces the removed HumanTodoPanel mount. N is the
+  // REAL-decision count = taxonomy A (gate_verdict) + B (state_gate) ONLY —
+  // bubble_ack/stale_active_run (taxonomy C, read-receipt/ops-autopsy) and
+  // finding_review are deliberately EXCLUDED (they are not blocking decisions).
+  // Keyed on the backend's emitted kind strings via the counts map, so the
+  // stale `state_file_gate`/`bubble_unacked` names in the TS union don't matter.
+  const [needsYouCount, setNeedsYouCount] = useState<number | null>(null);
   const now = useNow();
 
   useEffect(() => {
@@ -110,6 +118,43 @@ export default function Dashboard() {
     };
     load();
     const id = setInterval(load, 7000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    // The "N need you →" coupling source. counts is producer-owned
+    // (Record<string, number>); a malformed/legacy body could omit it or hand
+    // back a non-number — coerce each kind independently to 0 so one bad field
+    // can't NaN the badge. A failed fetch leaves the last good count (the
+    // getHealth idiom): the escalation signal must not blink to "none" on a
+    // transient miss.
+    //
+    // A "pending human decision" count is a small non-negative integer. The
+    // producer could still hand back a negative (sign-flip/underflow bug), a
+    // fractional value, or an absurdly-huge number; clamp each kind into
+    // [0, CAP] as an integer so the badge degrades to a sane "N" instead of
+    // "-5 need you →", "2.7", or a "1e+308" scientific-notation string (the
+    // JSX coerces the count with a template literal, which prints huge numbers
+    // in exponent form). CAP is far above any real escalation backlog, so
+    // valid counts pass through unchanged; an absurd value simply pegs at CAP.
+    const CAP = 9999;
+    const num = (v: unknown): number =>
+      typeof v === "number" && Number.isFinite(v)
+        ? Math.min(CAP, Math.max(0, Math.floor(v)))
+        : 0;
+    const load = () =>
+      getHumanTodo()
+        .then((r) => {
+          // counts may itself be absent/null or a non-object (string/number/
+          // array) on a malformed body. Property access on a non-object
+          // primitive yields undefined (not a throw), and num() coerces that
+          // to 0, so guarding null/undefined to {} is sufficient.
+          const counts = (r?.counts ?? {}) as Record<string, unknown>;
+          setNeedsYouCount(num(counts.gate_verdict) + num(counts.state_gate));
+        })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, 10000);
     return () => clearInterval(id);
   }, []);
 
@@ -179,15 +224,12 @@ export default function Dashboard() {
         <span className="text-zinc-500">backend {health?.version ?? "?"}</span>
       </div>
 
-      {/* INBOX HERO: everything blocked on the human (gate verdicts,
-          finding reviews, unacked bubbles, …). First by design — it is the
-          human's one-decision surface, above even the health verdict. This
-          is the SINGLE dashboard mount of HumanTodoPanel (the /todo route
-          is a separate, page-width view; routes are exclusive, so only one
-          instance ever polls at a time). */}
-      <div className="mt-3">
-        <HumanTodoPanel />
-      </div>
+      {/* HumanTodoPanel was REMOVED from the dashboard here (2026-06-14 work
+          order PART 1). It now lives ONLY on the /todo cockpit route. This is
+          safe BECAUSE of the SystemActivityHero "N need you →" coupling below:
+          the pending A+B escalation count is the dashboard's at-a-glance signal,
+          so nothing blocked on the human sits silently off-screen. Do NOT
+          re-add the panel without that coupling in place. */}
 
       {/* HERO: composed health verdict. */}
       <div className="mt-3">
@@ -210,6 +252,23 @@ export default function Dashboard() {
           telemetry={cleanSamples[cleanSamples.length - 1] ?? null}
           activeIteration={activeIteration}
           coordinatorActive={coordinatorActive}
+          needsYou={
+            needsYouCount != null ? (
+              <Link
+                to="/todo"
+                data-testid="dashboard-needs-you"
+                className={`rounded px-2 py-0.5 text-xs font-medium ${
+                  needsYouCount > 0
+                    ? "bg-amber-950 text-amber-300 hover:bg-amber-900"
+                    : "text-zinc-500 hover:text-zinc-300"
+                }`}
+              >
+                {needsYouCount > 0
+                  ? `${needsYouCount} need you →`
+                  : "none need you →"}
+              </Link>
+            ) : undefined
+          }
         />
         <div className="mt-1 text-right">
           <Link

@@ -284,6 +284,17 @@ export interface IterationRecord {
       curated_overlap?: number | null;
       neighbor_spread?: number | null;
       topicality?: "on" | "off" | "unsure" | string | null;
+      // ADVISORY-ONLY topicality dissent (EMIT: orchestrator/nara.py attaches it
+      // AFTER relevance(); DATA_SHAPES Changelog 2026-06-14 / D-052). The
+      // independent adversarial topicality judge that D-052 RETIRED as a gate
+      // (it over-flags novel on-domain claims). Present ONLY when
+      // NARA_TOPICALITY_ADVISORY=1 (dark by default) AND the primary judge did
+      // NOT already condemn → ABSENT on normal rows. It is NON-GATING: it never
+      // feeds `low_confidence`, novelty, or critic verdicts, and must NOT reuse
+      // the amber low-evidence styling. The UI surfaces an `"off"` as a weak
+      // "independent topicality dissent (advisory)" hint; other values render
+      // nothing (the raw field still shows in the detail modal).
+      topicality_advisory?: "on" | "off" | "unsure" | string | null;
       category?: "off_domain" | "thin" | "no_sharp_match" | "empty" | "ok" | string;
       rule_fired?: string | null;
     } | null;

@@ -1,11 +1,11 @@
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
-import HumanTodoPanel from "./components/HumanTodoPanel";
 import Activity from "./routes/Activity";
 import Coordinator from "./routes/Coordinator";
 import Dashboard from "./routes/Dashboard";
 import ExperimentDetail from "./routes/ExperimentDetail";
 import Experiments from "./routes/Experiments";
 import Inspector from "./routes/Inspector";
+import Todo from "./routes/Todo";
 
 // Primary destinations, surfaced as a nav on every page so the dashboard,
 // human queue, activity graph, coordinator narrative, and experiment
@@ -18,16 +18,10 @@ const NAV = [
   { to: "/experiments", label: "experiments", end: false },
 ];
 
-// Page-width view of the human's work queue (the same self-polling panel the
-// Dashboard mounts compactly). Its own route so "what is blocked on me" is
-// one click / one bookmark away.
-function HumanTodoPage() {
-  return (
-    <div className="mx-auto max-w-7xl p-5" data-testid="human-todo-page">
-      <HumanTodoPanel />
-    </div>
-  );
-}
+// The /todo route is now the uncertainty-resolution COCKPIT (routes/Todo.tsx):
+// the HumanTodoPanel inbox + the two-voice interrogation + pre-verdict
+// calibration + the six resolution forms. PART 1 removed the panel from the
+// dashboard, so /todo is its single home (2026-06-14 work order).
 
 function NavTab({
   to,
@@ -85,7 +79,7 @@ export default function App() {
         </header>
         <Routes>
           <Route path="/" element={<Dashboard />} />
-          <Route path="/todo" element={<HumanTodoPage />} />
+          <Route path="/todo" element={<Todo />} />
           <Route path="/activity" element={<Activity />} />
           <Route path="/coordinator" element={<Coordinator />} />
           <Route path="/experiments" element={<Experiments />} />
