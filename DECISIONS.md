@@ -2731,3 +2731,71 @@ fully solved by this decision; the primary neutral judge carries some of it.
 **Reversibility.** `NARA_TOPICALITY_SKEPTIC` dark; the C advisory is a new
 orthogonal `NARA_TOPICALITY_ADVISORY`, additive non-gating field, fail-open;
 revert = unset env vars.
+
+## D-053 — Over-gating vs promotion-starvation: demote BOTH the primary R0 topicality gate AND the adversarial promotion vote to non-gating advisories (option C, env-gated dark) — the human/cockpit is the calibration the automatic vote could not be
+
+**Date.** 2026-06-15 (session 5). Disposes the NEW RESIDUAL D-052 logged (the
+PRIMARY R0 Gemma judge over-gates `novel_on_02`) AND the S3 "skeptic refutes 3/3
+— calibration question" by applying the **D-052 pattern (option C)** one layer up
+*and* one layer down: an inseparable adversarial call should not be a binary gate;
+it should ride as a human-facing advisory and let the human (via the `/todo`
+cockpit) be the calibration. Extends D-052 / D-045 residual-5 (over-gating).
+**Orthogonal to β:** D-041 gates β on the independent *NOVELTY* skeptic (D-044) +
+the memory guard — NOT on R0 topicality nor on the finding-promotion vote; both
+demotions here are env-gated dark add-ons that touch no β arming condition.
+
+**Evidence (read-only investigation, primary re-verified — see
+[`docs/overgating_promotion_analysis.md`](docs/overgating_promotion_analysis.md)).**
+The `overgating-understand` Dynamic Workflow (3 parallel maps → design →
+adversarial critique) found two conflated problems, with the load-bearing
+production numbers **independently re-counted by the primary** (not the workflow's
+word):
+
+- **Problem A (R0 over-gating).** The primary R0 judge over-gates the on-domain
+  novel case `novel_on_02` and misses off-domain `fase_off_01` — mirror cells a
+  hypothesis-text-only judge cannot separate (confirmed a 4th time). BUT: across
+  `memory/loop_memory.jsonl` (**59** iterations) the R0 `novel→unclear` downgrade
+  fired **0** times. **R0 over-gating is NOT why the cockpit is empty.**
+- **Problem B (the actual cargo starvation).** `memory/surfaced_findings.jsonl`
+  is **ABSENT** (0 cargo). From `memory/promotion_near_misses.jsonl` (**174**):
+  **65** capped by `max_candidates` (44 at =3, 21 at =4); **10** "refuted by
+  adversarial vote" (9 at 3/3, 1 at 2/2); **0** R0/low-confidence rejections. The
+  **adversarial promotion vote** (`orchestrator/finding_promotion.py:234-307`,
+  survive-iff-minority-refute at `:297`) refuting **3/3** is the real binding
+  constraint — structurally the **same independent-skeptic-refute pattern D-052
+  just retired at the relevance gate**, now at the promotion stage. Even a perfect
+  R0 produces zero cargo.
+
+**Decision (option C, both layers).** Demote BOTH over-gating layers to
+non-gating advisories, env-gated DARK by default, fully reversible (the D-052
+pattern):
+
+- **Layer 1 — primary R0 topicality.** Behind `NARA_R0_ADVISORY` (dark by
+  default, fail-open): the R0 `"off"`→`relevance.low_confidence` path is demoted
+  to an additive advisory record field, never setting `low_confidence` / never
+  downgrading novelty. Dissolves Problem A by refusing to let an inseparable call
+  gate anything; residual over-gating handled by logged human sampling.
+- **Layer 2 — adversarial promotion vote.** Behind `NARA_PROMOTION_VOTE_ADVISORY`
+  (dark by default, fail-open): the survive-iff-minority-refute vote is demoted to
+  an advisory annotation that does NOT block promotion. `NARA_PROMOTION_MAX_CANDIDATES`
+  raises/removes the `max_candidates` cap for the cost-bounded local run. Together
+  these are the binding cargo lever the analysis identified.
+
+**Cargo experiment (pre-registered).** Re-run promotion with the vote demoted to
+advisory and the candidate cap lifted; **PASS = ≥1 finding reaches
+`memory/surfaced_findings.jsonl`**. A zero result answers the S3 calibration
+question honestly (genuine novelty absence vs over-gating) rather than leaving it
+masked by a 3/3 auto-refute.
+
+**Why the human/cockpit, not a better vote.** The adversarial vote refuting 3/3
+on every candidate is the same inseparability D-052 isolated at the relevance
+gate: an independent skeptic cannot separate genuine novelty from camouflage, so
+as a *gate* it strangles cargo. Demoted to advisory, that same dissent becomes
+cockpit cargo — the human reading `/todo` IS the calibration the automatic vote
+could not be. This gives the `/todo` cockpit its first real human-in-the-loop
+material.
+
+**Reversibility.** Env flags only, fully reversible: `NARA_R0_ADVISORY`,
+`NARA_PROMOTION_VOTE_ADVISORY`, `NARA_PROMOTION_MAX_CANDIDATES` — all dark by
+default, fail-open, additive record fields, no schema edit. Revert = unset env
+vars.

@@ -12,11 +12,16 @@ State spans four workstreams; this file's later sections carry the
 lit-pipe detail.
 
 - **Lit-pipe (the LOOP_V0 chain).** Chain wired end-to-end; the D-045
-  robustness battery, D-050 residual skeptics, and D-052 (topicality
-  skeptic retired as a gate, kept as a dark non-gating advisory) have
-  landed. **The reference-passing refactor is still pending** and is
-  the load-bearing prerequisite for reliable real iterations — detail
-  in this file's later sections (§"Reference-passing — the next
+  robustness battery, D-050 residual skeptics, D-052 (topicality
+  skeptic retired as a gate, kept as a dark non-gating advisory), and
+  D-053 (both over-gating layers — the primary R0 topicality gate AND
+  the adversarial promotion vote — demoted to non-gating advisories,
+  env-gated dark; pre-registered cargo experiment to fill the empty
+  `/todo` cockpit — see
+  [`docs/overgating_promotion_analysis.md`](docs/overgating_promotion_analysis.md))
+  have landed. **The reference-passing refactor is still pending** and
+  is the load-bearing prerequisite for reliable real iterations —
+  detail in this file's later sections (§"Reference-passing — the next
   architectural fix").
 - **UI.** The 2026-06-10 observability overhaul shipped. The
   dashboard/`/todo` cockpit redesign is *designed, not built* — see

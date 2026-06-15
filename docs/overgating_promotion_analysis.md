@@ -1,13 +1,16 @@
 # Over-gating vs promotion-starvation — the binding constraint on `/todo` cockpit cargo
 
-> **Analysis (2026-06-15), feeding a PENDING human decision.** Read-only
-> investigation via the `overgating-understand` Dynamic Workflow (3 parallel maps
-> → design → adversarial critique), with the load-bearing production numbers
-> **independently re-verified by the primary**. NO structural change is made here;
-> this records the verified evidence + the reframe options for the human's call.
-> The structural decisions below are the human's (per the D-052 pattern: probes/
-> analysis run autonomously; the apparatus-mechanism decision is ratified by the
-> human).
+> **Analysis (2026-06-15) — DECIDED 2026-06-15 (option C, [D-053](../DECISIONS.md#d-053--over-gating-vs-promotion-starvation-demote-both-the-primary-r0-topicality-gate-and-the-adversarial-promotion-vote-to-non-gating-advisories-option-c-env-gated-dark--the-humancockpit-is-the-calibration-the-automatic-vote-could-not-be)).**
+> Read-only investigation via the `overgating-understand` Dynamic Workflow
+> (3 parallel maps → design → adversarial critique), with the load-bearing
+> production numbers **independently re-verified by the primary**. NO structural
+> change was made in this doc; it records the verified evidence + the reframe
+> options. The human (per the D-052 pattern: probes/analysis run autonomously; the
+> apparatus-mechanism decision is ratified by the human) **chose option C** —
+> demote BOTH the primary R0 topicality gate (`NARA_R0_ADVISORY`) AND the
+> adversarial promotion vote (`NARA_PROMOTION_VOTE_ADVISORY` +
+> `NARA_PROMOTION_MAX_CANDIDATES`) to non-gating advisories, env-gated DARK +
+> reversible — see D-053. The evidence below is retained as the decision's basis.
 
 ## TL;DR
 
@@ -57,7 +60,7 @@ independent-skeptic-refute pattern D-052 just retired at the relevance gate**, n
 the binding constraint at the promotion stage. The S3 note's "skeptic refutes 3/3
 — calibration question" is this.
 
-## Reframe options (the human's decision)
+## Reframe options (DECIDED 2026-06-15 — human chose option C: D-052-pattern advisory on BOTH problem A's R0 gate and problem B's promotion vote; see D-053)
 
 1. **Demote primary R0 to a non-gating advisory** — D-052 outcome C applied to the
    primary judge: emit `topicality_advisory` (logged + surfaced), never set
@@ -82,6 +85,28 @@ the binding constraint at the promotion stage. The S3 note's "skeptic refutes 3/
 - **Problem B (higher priority — it is what empties the cockpit):** option 3 — the
   promotion-stage adversarial vote + `max_candidates` are the binding constraint;
   that vote deserves the same D-052 scrutiny the relevance skeptic got.
+
+## Cargo experiment result (2026-06-15, D-053)
+
+Ran with both advisory gates ON (`NARA_PROMOTION_VOTE_ADVISORY=1`,
+`NARA_R0_ADVISORY=1`, `NARA_PROMOTION_MAX_CANDIDATES=12`, `env -u MOCK_LLM`).
+**Pre-registered pass (≥1 finding reaches `surfaced_findings.jsonl`): MET — 5
+findings surfaced**, so the cockpit now has cargo. But the calibration story is the
+*discordant-gate* branch, NOT "genuine novelty absence": **all 5** carry
+`promotion_vote_advisory = {n_refuted:3, n_voting:3, survived:False, margin:-3}`
+— the cross-model adversarial vote (3 independent Qwen skeptics, 0 failures)
+refuted **5/5** while the cheap threshold gate (novel + survives + trials) passed
+**5/5**. The two signals fully disagree. Under the old gating regime all 5 would
+have been killed (0 cargo); the advisory unmasks the disagreement instead of
+hiding it — its purpose.
+
+**Open calibration question (now the human's, via the cockpit):** which signal to
+trust — a threshold that lets 5 through, or an adversarial vote that refutes all
+5? A 5/5-unanimous-refute pattern is consistent with the suspected
+refute-everything / register bias in the adversarial vote and warrants a human
+look (cockpit interrogation) before acting on the advisory. Cargo is local in the
+gitignored `memory/surfaced_findings.jsonl` (5 rows); the default pipeline stays
+dark.
 
 ## Caveat for any future R0 prompt probe
 

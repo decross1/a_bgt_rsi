@@ -65,9 +65,20 @@ refinement (2026-06-09 evening) adds ADDITIVE diagnostic keys:
                         (the env-gated independent attack) fires R0b.
   - `category`        — "off_domain"|"thin"|"no_sharp_match"|"empty"|"ok".
   - `rule_fired`      — str|None; first rule in the R0..R5 ladder that fired.
+
+D-053 (2026-06-15) adds a further-additive, env-gated, NON-GATING field:
+  - `r0_advisory`     — "off"; present ONLY when NARA_R0_ADVISORY=1 AND the
+                        primary R0 judge said "off". It DEMOTES the primary
+                        R0 gate to a human-facing advisory: low_confidence is
+                        then driven by the lexical/cosine ladder, never by R0,
+                        so an on-domain-novel claim R0 mislabels "off" is no
+                        longer downgraded. With the flag unset the key is
+                        absent and R0 gates exactly as before (byte-identical).
+                        Mirrors the D-052 relevance.topicality_advisory shape.
 """
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -294,6 +305,29 @@ def relevance(
     condemned) fire; "on"/"unsure"/None never gate (over-gating guard —
     the canary cases are part of the battery bar).
     """
+    # --- R0 ADVISORY DEMOTION (env-gated, DARK by default) -------------------
+    # The primary R0 judge ("off") and a camouflaged off-domain claim are
+    # INSEPARABLE from hypothesis text alone (confirmed 4× — D-045/D-050/
+    # D-052 + docs/overgating_promotion_analysis.md): R0 over-gates the
+    # on-domain novel case `novel_on_02` exactly as it catches the off-domain
+    # `fase_off_01`. NARA_R0_ADVISORY=1 demotes the PRIMARY judge from a gate
+    # to a NON-GATING advisory, mirroring the D-052 topicality_advisory shape:
+    # the verdict ("off") rides as the ADDITIVE `r0_advisory` field and NEVER
+    # sets low_confidence — we re-score with R0 demoted (topicality=None) so
+    # the lexical/cosine ladder owns the gate, then tack the advisory on.
+    # With the flag UNSET this branch is skipped entirely and the R0 path
+    # below is byte-identical to before (no r0_advisory key, "off" gates).
+    # SCOPE: only the primary "off" is demoted. "off_independent" (R0b, the
+    # independent skeptic, env-gated under NARA_TOPICALITY_SKEPTIC) is a
+    # distinct judge and keeps its existing gating behavior here.
+    if topicality == "off" and os.environ.get("NARA_R0_ADVISORY", "0") == "1":
+        out = relevance(
+            neighbors, hypothesis_text,
+            anchor_cosine=anchor_cosine, topicality=None,
+        )
+        out["r0_advisory"] = "off"
+        return out
+
     # --- R0/R0b: explicit LLM topicality judgment (condemn-only, like the
     # anchor). "off" = the primary judge; "off_independent" = the primary
     # judge passed it and the independent skeptic condemned (check() only

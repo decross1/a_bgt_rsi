@@ -61,6 +61,31 @@ _VALIDATOR = jsonschema.Draft7Validator(_SCHEMA)
 
 CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 
+
+def _promotion_vote_advisory() -> bool:
+    """D-053 (mirrors D-052): when NARA_PROMOTION_VOTE_ADVISORY=1 the
+    adversarial promotion vote is DEMOTED from a gate to a NON-GATING advisory
+    — a candidate that cleared _passes_threshold promotes regardless of the
+    vote, and the real vote outcome rides as an additive
+    `promotion_vote_advisory` field. DARK by default: unset/!="1" leaves the
+    vote gating exactly as before (byte-identical)."""
+    return os.environ.get("NARA_PROMOTION_VOTE_ADVISORY") == "1"
+
+
+def _max_candidates_override(max_candidates: int | None) -> int | None:
+    """D-053: NARA_PROMOTION_MAX_CANDIDATES, when set to a valid int, lifts/
+    overrides the caller's max_candidates cap (for the cost-bounded cargo
+    experiment). Unset or unparseable -> the caller's value unchanged (DARK
+    default). Never silently coerces a bad value — a non-int env is ignored,
+    not clamped."""
+    raw = os.environ.get("NARA_PROMOTION_MAX_CANDIDATES")
+    if raw is None or raw.strip() == "":
+        return max_candidates
+    try:
+        return int(raw)
+    except ValueError:
+        return max_candidates
+
 # A finding's experiment evidence must clear this trial floor to be
 # trustworthy enough to surface (matches the loop's "trials>=30" bar).
 MIN_TRIALS = 30
@@ -548,6 +573,9 @@ def _promote_findings(
         survivors.append(row)
 
     # Cap AFTER the gate — load-bearing: this bounds the expensive Qwen vote.
+    # D-053: NARA_PROMOTION_MAX_CANDIDATES (when set) lifts/overrides the cap
+    # for the cargo experiment; unset = the caller's value (DARK default).
+    max_candidates = _max_candidates_override(max_candidates)
     if max_candidates is not None and max_candidates >= 0:
         capped = survivors[max_candidates:]
         survivors = survivors[:max_candidates]
@@ -559,6 +587,11 @@ def _promote_findings(
             })
 
     resolved_be = get_backend(backend or DEFAULT_BACKEND)
+
+    # D-053: when armed, the vote is a NON-GATING advisory — it still RUNS (so
+    # its opinion is captured) but never blocks a threshold-passer. DARK by
+    # default (vote gates, exactly as before).
+    vote_advisory = _promotion_vote_advisory()
 
     # ── pass B: adversarial multi-vote over survivors ──
     for row in survivors:
@@ -573,6 +606,10 @@ def _promote_findings(
         )
         total_qwen_failures += tally["qwen_failures"]
 
+        # The vote's real outcome (never silently coerced — rule 4). When the
+        # advisory flag is OFF these two checks GATE (continue); when ON they
+        # only RECORD a near_miss and fall through to promotion with the
+        # advisory attached.
         if tally["n_voting"] < tally["quorum"]:
             near_misses.append({
                 "source_iteration_id": iid,
@@ -583,8 +620,9 @@ def _promote_findings(
                 ),
                 "stage": "adversarial",
             })
-            continue
-        if not tally["survived"]:
+            if not vote_advisory:
+                continue
+        elif not tally["survived"]:
             near_misses.append({
                 "source_iteration_id": iid,
                 "reason": (
@@ -594,9 +632,13 @@ def _promote_findings(
                 ),
                 "stage": "adversarial",
             })
-            continue
+            if not vote_advisory:
+                continue
 
-        # Survived. Synthesize + assemble + validate + append.
+        # Promote. (Gate-OFF path: only true survivors reach here.
+        # Advisory-ON path: every threshold-passer reaches here regardless of
+        # the vote, which rides as promotion_vote_advisory below.)
+        # Synthesize + assemble + validate + append.
         why, change = _synthesize(claim, row, parent_request_id=parent_request_id)
         exp = _sub(row, "experiment_outcome")
         finding = {
@@ -631,6 +673,17 @@ def _promote_findings(
             "promoted_at": _utcnow_iso(),
             "status": "surfaced",
         }
+        # D-053: when the vote is a non-gating advisory, ride its real outcome
+        # as an ADDITIVE field — recorded, never blocking. Added ONLY when
+        # armed so the OFF-path finding is byte-identical to before. Schema
+        # accepts it (surfaced_finding additionalProperties: true).
+        if vote_advisory:
+            finding["promotion_vote_advisory"] = {
+                "n_refuted": tally["n_refuted"],
+                "n_voting": tally["n_voting"],
+                "survived": tally["survived"],
+                "margin": tally["adversarial_margin"],
+            }
 
         errs = list(_VALIDATOR.iter_errors(finding))
         if errs:
