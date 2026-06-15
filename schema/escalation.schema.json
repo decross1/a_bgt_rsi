@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LOOP_V0 coordinator escalation row",
+  "description": "One row of memory/coordinator_bubbles.jsonl. An escalation the coordinator raised to the human. Written by orchestrator/coordinator.py:_persist_bubble_up (execute-only: a planned-but-not-executed bubble is never recorded); read by the human-review surface (ui/backend/human_todo.py:_bubble_ack_items, which consumes run_id/timestamp/note). Two forms are valid and additive: (1) the LEGACY finding-id bubble {finding_ids, note} (the original ack-only surfacing, taxonomy C); (2) the GENERIC escalation {question, context, kind, allowed_actions} that lets Nara escalate ANY uncertain step, not just finding ids. run_id and timestamp are always present (the persist stamps them). Back-compat: additionalProperties is true so existing/new readers never break on extra fields.",
+  "type": "object",
+  "required": [
+    "run_id",
+    "timestamp"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The coordinator cycle run_id that raised this escalation. The UI ack key (coordinator_acks.jsonl matches on bubble_run_id)."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the escalation was persisted (UTC ISO-8601, Z-suffixed)."
+    },
+    "finding_ids": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "LEGACY form: the surfaced finding ids being raised for review. The 16 pending bubbles are all finding-id bubbles. Present (non-empty) on a legacy bubble; an empty list on a generic escalation that carries no finding ids."
+    },
+    "note": {
+      "type": ["string", "null"],
+      "description": "LEGACY form: an optional free-text note. Surfaced verbatim by the UI as the bubble_ack item title."
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "description": "GENERIC form: the specific question/uncertainty the human is asked to resolve. The primary human-facing payload of a generic escalation."
+    },
+    "context": {
+      "type": ["string", "null"],
+      "description": "GENERIC form: optional supporting context for the question (what was tried, why it is uncertain)."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["A", "B", "C"],
+      "description": "Escalation taxonomy. A = judgment (a decision the human must make). B = blocking-halt (work cannot proceed until resolved). C = read-receipt (ack-only, no decision; legacy finding-id bubbles are C). COUNT CONTRACT: the dashboard idle-hero count = escalations of kind A or B ONLY, never C (a read-receipt is not unresolved work). The UI renders that count against these rows; orchestrator.coordinator:count_actionable_escalations computes it."
+    },
+    "allowed_actions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "sign_off",
+          "reject",
+          "refine_defer",
+          "refine_authorize_fix",
+          "spawn_topic",
+          "abstain"
+        ]
+      },
+      "description": "GENERIC form: which of the 6 resolution outcomes (seam 3) are valid for THIS escalation. Constrains the resolution forms the cockpit offers. Enum: sign_off (1), reject (2), refine_defer (3), refine_authorize_fix (4), spawn_topic (5), abstain (6)."
+    }
+  }
+}

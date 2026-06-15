@@ -74,21 +74,41 @@ ACTIONS: dict[str, dict[str, Any]] = {
     },
     "bubble_up": {
         "description": (
-            "Surface specific finding ids to the human for review, with an "
-            "optional note."
+            "Escalate to the human. Two forms (seam 2): the LEGACY finding-id "
+            "bubble (surface specific finding ids with an optional note), OR a "
+            "GENERIC escalation {question, context, kind, allowed_actions} that "
+            "raises ANY uncertain step, not just findings. The kind/allowed_"
+            "actions ENUMs are enforced fail-closed by handle_bubble_up (the "
+            "single source of truth); this schema only gates the shape."
         ),
         "cost": 1,
-        "arg_schema": _obj_schema(
-            {
+        # anyOf finding_ids|question: either form is valid, neither-present is
+        # rejected. additionalProperties stays closed (no unknown keys). The
+        # kind/allowed_actions enums are NOT duplicated here — the handler is
+        # authoritative (avoids drift); this is the shape gate only.
+        "arg_schema": {
+            "type": "object",
+            "properties": {
                 "finding_ids": {
                     "type": "array",
                     "items": {"type": "string", "minLength": 1},
                     "minItems": 1,
                 },
                 "note": {"type": "string"},
+                "question": {"type": "string", "minLength": 1},
+                "context": {"type": "string"},
+                "kind": {"type": "string", "minLength": 1},
+                "allowed_actions": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                },
             },
-            ["finding_ids"],
-        ),
+            "anyOf": [
+                {"required": ["finding_ids"]},
+                {"required": ["question"]},
+            ],
+            "additionalProperties": False,
+        },
         "handler_ref": "orchestrator.coordinator:handle_bubble_up",
     },
     "noop": {

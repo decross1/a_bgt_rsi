@@ -2,9 +2,14 @@
 
 # `/todo` cockpit — PRIMARY-session orchestrator-seam work order
 
-**Status: FUTURE BUILD — nothing here is built yet.** This is the work order for
-the *primary-session* (non-`ui/`) seams that the `/todo` uncertainty-resolution
-cockpit needs. The `/todo` cockpit itself (chat pane, the six resolution forms,
+**Status: BUILT (2026-06-15) — all four seams' primary-session limbs are built
+and verified** (tests green under `MOCK_LLM=1`; `tests/` suite 1225 passed / 0
+failed; the three new seam test files = 45 passed). Per-seam status markers are
+inline below; the spec is retained as the build record. The seam-2 planner-gate
+discrepancy the build pinned (the `bubble_up` arg-schema rejected generic
+escalations) was CLOSED by the integrator the same day — see seam 2's note. This
+was the work order for the *primary-session*
+(non-`ui/`) seams that the `/todo` uncertainty-resolution cockpit needs. The `/todo` cockpit itself (chat pane, the six resolution forms,
 the `ui/backend` endpoints that exec these CLIs) is the **UI session's** job and
 is specified in the day's session note "## UI session work order"; it builds
 *against* the seam contracts the primary ships first.
@@ -70,6 +75,16 @@ defender / attacker / both, the transcript records stance + addressee, caps hold
 the concurrency guard fires under a mid-flight active run; test green under
 `MOCK_LLM`.
 
+**BUILT (2026-06-15):** additive in `orchestrator/finding_session.py`
+(`start_two_voice_session`, `two_voice_turn`, `_stance_turn`,
+`_replay_stance_messages`, `_is_run_live`; `STANCE_BACKEND` =
+defender→`vllm-gemma`, attacker→`vllm-qwen`). The single-defender path
+(`start_session`/`session_turn`) is unchanged. Stance + addressee are recorded on
+the rows; `MAX_TURNS` cap holds with the explicit cap reply (both-stances-in-one
+counts as one turn); the concurrency guard is warn-and-proceed (never a fabricated
+concession on a call failure — mirrors `novelty_skeptic.attack()`). Tests:
+`tests/test_finding_session_twovoice.py` (green under `MOCK_LLM=1`).
+
 ## Seam 2 — generalized escalation schema + coordinator `bubble_up` emit + `human_todo` surfacing
 
 Today the coordinator bubble is finding-id-centric and ack-only:
@@ -103,6 +118,32 @@ step, not just finding ids:
 **Done-when:** the planner can emit a generic escalation; it persists with the
 4-field shape; legacy finding-id bubbles still surface; the A+B-only count
 contract is documented; test green under `MOCK_LLM`.
+
+**BUILT (2026-06-15):** `orchestrator/coordinator.py` — `handle_bubble_up`
+accepts the generic `{question, context, kind, allowed_actions}` alongside the
+legacy `{finding_ids, note}` (back-compat: a legacy call leaves the generic keys
+`None`/absent and still surfaces); `_collect_bubble_up`/`_persist_bubble_up` carry
++ persist the generic fields additively (no empty generic keys written on a legacy
+bubble); `kind`/`allowed_actions` validate fail-closed (off-enum raises — rule 4).
+New `schema/escalation.schema.json` (Draft7) accepts BOTH on-disk forms and
+rejects off-enum `kind`/`allowed_actions`. The **A+B-only count contract** is
+`count_actionable_escalations()` (kind C / legacy read-receipts excluded). Tests:
+`tests/test_coordinator_escalation.py` (green under `MOCK_LLM=1`).
+
+**Planner-gate discrepancy — RESOLVED by the integrator (2026-06-15):** the build
+correctly surfaced that `orchestrator/coordinator_actions.py` (the action-validator
+spec, originally outside this seam's limb contract) defined `bubble_up` with a
+CLOSED arg_schema (`additionalProperties: False`, `required: ["finding_ids"]`), so
+`validate_plan` rejected a generic `{question, kind, …}` bubble_up. The integrator
+opened it the same day: `bubble_up`'s arg_schema now accepts the legacy finding-id
+form OR a generic `{question, context, kind, allowed_actions}` escalation
+(`anyOf finding_ids|question`; `additionalProperties` stays closed). The
+`kind`/`allowed_actions` ENUMs are deliberately NOT duplicated into the validator —
+they stay enforced fail-closed in `handle_bubble_up` (single source of truth), so
+the planner gate checks shape only. Done-condition #1 ("the planner can emit a
+generic escalation") is now met end-to-end, pinned by
+`test_coordinator_escalation.py::test_validator_accepts_generic_bubble_args`
+(validates the generic form + the legacy form + rejects an empty bubble).
 
 ## Seam 3 — the six resolution-outcome CLIs (writers of record, D-046)
 
@@ -143,6 +184,29 @@ contract; the two NEW CLIs validate-and-reject out-of-enum input; directive
 sign-off is a clean superset of the bare path; `docs/human_writeback_contract.md`
 gains rows for the two new commands; tests green under `MOCK_LLM`.
 
+**BUILT (2026-06-15):** the four reused writers (`gate_cli`, `todo_cli defer`,
+`finding_session --set-status`, the followups queue) are unchanged. The two NEW:
+- **`authorize-fix`** (outcome 4) — new module `orchestrator/authorize_fix.py`.
+  Argv as specified: `PY -m orchestrator.authorize_fix authorize-fix --ref-id <id>
+  --task <statement> --note <why> --by human:ui`. The `authorize-fix` **subcommand
+  token** is load-bearing (matches the sibling `todo_cli` writer-of-record shape;
+  the bare flat form is rejected — pinned by a test). `--task`/`--note` required
+  non-empty; the ref-id must resolve (finding / open deferral / coordinator bubble)
+  or it **fails closed** (`rejected: …`, exit 1, nothing written — rule 4). Prints
+  the enqueued row (full `contract` block nested) on stdout. Writer of record =
+  `memory/authorize_fix_queue.jsonl` (NOT `run_state/spawn.jsonl`).
+- **directive sign-off** — `--directive <next-step>` optional flag added to the
+  existing `finding_session --set-status` path (and the in-session `end_session`
+  validated path). Omit it → identical to today's bare sign-off (clean superset, UI
+  degrades cleanly). Present → recorded on the status-audit row
+  (`status_audit_row.directive`) only; the frozen `loop_feedback` schema is NOT
+  extended.
+
+`docs/human_writeback_contract.md` gained both argv rows + the full 6-outcome
+mapping table (this session). Tests: `tests/test_authorize_fix.py` and the
+directive cases in `tests/test_finding_session_twovoice.py` (green under
+`MOCK_LLM=1`).
+
 ## Seam 4 — outcome-4 spawn-contract-on-approve (the gated autonomy boundary)
 
 This is the one seam with a real autonomy boundary. The design locks the SHIP
@@ -181,6 +245,19 @@ scope and stages the rest with **no schema change**.
 schema is sufficient for an autonomous (ii) consumer with no change; the
 merge-gate invariant and the D-014 firewall are intact and explicitly documented;
 test green under `MOCK_LLM`.
+
+**BUILT (2026-06-15):** realized by `orchestrator/authorize_fix.py` (seam 3's NEW
+CLI). The enqueue row carries the FULL spawn-contract block — `{task_statement,
+done_condition, skill_subset, authority_cap, self_gating_rules, reporting_format,
+escalation_path, budget, state_basis}` — so a future stage-(ii) dispatcher reads
+the SAME rows with NO schema migration (a test asserts every field is present and
+non-empty). Option (i) is the only consuming path: the enqueue is written to
+`memory/authorize_fix_queue.jsonl`, NOT the live `run_state/spawn.jsonl` ledger
+(that is written at actual dispatch). The merge-gate invariant + the D-014 runtime
+firewall are encoded IN the row (`authority_cap` says "do NOT merge"; `state_basis`
+= `HEAD@dispatch`; `self_gating_rules` says dispatch is dev-time only) and are
+verified by `tests/test_authorize_fix.py`. Nothing dispatches at approve time; no
+firewall crossing — stage-(ii) auto-dispatch stays the documented, un-built target.
 
 ## DECISIONS implication (future, append-only)
 

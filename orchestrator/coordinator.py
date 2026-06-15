@@ -68,6 +68,19 @@ _RECENT_N = 8
 # Bounded replan retries (after the first plan attempt). <= 2 per the contract.
 _MAX_REPLANS = 2
 
+# Escalation taxonomy (kind) — A=judgment, B=blocking-halt, C=read-receipt.
+# Legacy finding-id bubbles are read-receipts (C). The COUNT CONTRACT the
+# dashboard idle-hero renders against: actionable escalations = kind A or B
+# ONLY, never C (a read-receipt is not unresolved work) — see
+# count_actionable_escalations. Schema: schema/escalation.schema.json.
+ESCALATION_KINDS = ("A", "B", "C")
+ACTIONABLE_ESCALATION_KINDS = ("A", "B")
+# The 6 resolution outcomes a generic escalation may permit (seam 3).
+ALLOWED_ESCALATION_ACTIONS = (
+    "sign_off", "reject", "refine_defer",
+    "refine_authorize_fix", "spawn_topic", "abstain",
+)
+
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -457,14 +470,63 @@ def plan(
 # ── built-in handlers for the report-only actions ───────────────────────
 
 
-def handle_bubble_up(*, finding_ids: list[str], note: str | None = None) -> dict[str, Any]:
-    """bubble_up handler — surface finding ids into the coordinator report.
+def handle_bubble_up(
+    *,
+    finding_ids: list[str] | None = None,
+    note: str | None = None,
+    question: str | None = None,
+    context: str | None = None,
+    kind: str | None = None,
+    allowed_actions: list[str] | None = None,
+) -> dict[str, Any]:
+    """bubble_up handler — surface an escalation into the coordinator report.
+
+    Two additive forms (schema/escalation.schema.json):
+      - LEGACY finding-id bubble: ``finding_ids`` (+ optional ``note``) — the
+        original ack-only surfacing (taxonomy kind C).
+      - GENERIC escalation: ``question`` (+ optional ``context``, ``kind``,
+        ``allowed_actions``) — lets Nara escalate ANY uncertain step, not just
+        finding ids.
+    At least one of ``finding_ids`` / ``question`` must be supplied; an empty
+    escalation is rejected (rule 4 — we never fabricate a surfacing).
+
+    Fail-closed validation, mirroring novelty_skeptic.attack()'s discipline of
+    never coercing an off-enum value into a pass: an unknown ``kind`` or an
+    out-of-enum ``allowed_actions`` entry raises ``ValueError`` — the dispatch
+    loop records that as ``status: error``, never a silent coercion to a valid
+    value (inviolate rule 4).
 
     Writes nothing to disk and touches no shared state; the surfacing IS the
-    report entry. Referenced by coordinator_actions handler_ref."""
+    report entry (persistence is _persist_bubble_up's job, execute-only).
+    Referenced by coordinator_actions handler_ref."""
+    fids = list(finding_ids) if finding_ids else []
+    if not fids and not (isinstance(question, str) and question.strip()):
+        raise ValueError(
+            "bubble_up requires finding_ids or a non-empty question"
+        )
+    if kind is not None and kind not in ESCALATION_KINDS:
+        raise ValueError(
+            f"bubble_up kind {kind!r} not in {ESCALATION_KINDS}"
+        )
+    if allowed_actions is not None:
+        bad = [a for a in allowed_actions if a not in ALLOWED_ESCALATION_ACTIONS]
+        if bad:
+            raise ValueError(
+                f"bubble_up allowed_actions {bad!r} not in "
+                f"{ALLOWED_ESCALATION_ACTIONS}"
+            )
     return {
         "status": "passed",
-        "result": {"finding_ids": list(finding_ids), "note": note},
+        "result": {
+            "finding_ids": fids,
+            "note": note,
+            "question": question,
+            "context": context,
+            "kind": kind,
+            "allowed_actions": (
+                list(allowed_actions) if allowed_actions is not None else None
+            ),
+        },
     }
 
 
@@ -817,7 +879,11 @@ def _coordinator_cycle(
 def _collect_bubble_up(
     validated: list[dict[str, Any]], *, executed: list[dict[str, Any]] | None
 ) -> list[dict[str, Any]]:
-    """Summarize every bubble_up action in the plan for the human-facing report."""
+    """Summarize every bubble_up action in the plan for the human-facing report.
+
+    Carries both the legacy finding-id fields and the generic-escalation fields
+    (question/context/kind/allowed_actions) so the report and the persist see
+    the full additive shape (schema/escalation.schema.json)."""
     out: list[dict[str, Any]] = []
     for step in validated:
         if step.get("name") != "bubble_up":
@@ -826,6 +892,10 @@ def _collect_bubble_up(
         out.append({
             "finding_ids": args.get("finding_ids", []),
             "note": args.get("note"),
+            "question": args.get("question"),
+            "context": args.get("context"),
+            "kind": args.get("kind"),
+            "allowed_actions": args.get("allowed_actions"),
         })
     return out
 
@@ -850,14 +920,44 @@ def _persist_bubble_up(
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "a") as fh:
             for bu in bubbles:
-                fh.write(json.dumps({
+                # Legacy fields stay byte-shape identical (run_id/timestamp/
+                # finding_ids/note) so the existing UI reader
+                # (human_todo._bubble_ack_items) never breaks. The generic
+                # escalation fields are ADDITIVE — written only when present
+                # so a legacy finding-id bubble carries no empty generic keys.
+                row: dict[str, Any] = {
                     "timestamp": _utcnow_iso(),
                     "run_id": run_id,
                     "finding_ids": bu.get("finding_ids", []),
                     "note": bu.get("note"),
-                }, ensure_ascii=False) + "\n")
+                }
+                for key in ("question", "context", "kind", "allowed_actions"):
+                    val = bu.get(key)
+                    if val is not None:
+                        row[key] = val
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     except Exception:
         return
+
+
+def count_actionable_escalations(
+    *, path: str | os.PathLike | None = None,
+) -> int:
+    """COUNT CONTRACT for the dashboard idle-hero count: the number of
+    persisted escalations of kind A (judgment) or B (blocking-halt) ONLY —
+    NEVER C (read-receipt). A read-receipt is not unresolved work, so legacy
+    finding-id bubbles (which carry no `kind`, i.e. taxonomy C) are excluded.
+
+    This is the contract the UI renders against; the UI does the rendering,
+    this function produces the count. Rows are read from
+    memory/coordinator_bubbles.jsonl (path=None resolves at call time).
+    Never raises; a missing/unreadable file -> 0."""
+    if path is None:
+        path = DEFAULT_COORDINATOR_BUBBLES
+    return sum(
+        1 for row in _read_jsonl(path)
+        if row.get("kind") in ACTIONABLE_ESCALATION_KINDS
+    )
 
 
 # ── CLI ────────────────────────────────────────────────────────────────
