@@ -18,3 +18,4 @@ end-of-session with what was done and what's next). Oldest first.
 | 2026-06-10 | System legibility EMIT + write-back contract + UI handoff | primary | [2026-06-10.md](2026-06-10.md) |
 | 2026-06-13 | Clear the two honest-pending real runs from 06-10 | primary | [2026-06-13.md](2026-06-13.md) |
 | 2026-06-14 | Documentation consolidation — mass cleanup, single-home, recurrence-proof | primary | [2026-06-14.md](2026-06-14.md) |
+| 2026-06-15 | Cockpit seams + D-053 reframe (gates → advisory) + UI cockpit merge | primary | [2026-06-15.md](2026-06-15.md) |
