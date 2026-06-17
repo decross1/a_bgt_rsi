@@ -1,10 +1,12 @@
 """LOOP_V0 endpoints. Surfaces what Nara is doing to the dashboard.
 
-Four endpoints, all wired by ``register`` into the existing FastAPI app:
+Five endpoints, all wired by ``register`` into the existing FastAPI app:
 
 - ``POST /api/loop_v0/start``  — body ``{"topic": str}``; subprocess-spawns
   ``orchestrator.loop_v0_cli`` under ``env -u MOCK_LLM`` with cwd set to the
   primary worktree (not this UI worktree). Returns 202 + the spawned PID.
+- ``GET  /api/loop_v0/processes`` — subprocess status for iterations spawned
+  since backend boot. Newest first.
 - ``GET  /api/loop_v0/active`` — reads ``run_state/active_iteration.json``;
   returns 204 No Content when the file is absent.
 - ``GET  /api/loop_v0/iterations`` — reads ``memory/loop_memory.jsonl``,

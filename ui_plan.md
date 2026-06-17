@@ -508,6 +508,54 @@ in `todo_cockpit.py`'s `/available` and swap each stub body for an
 
 ---
 
+## §2026-06-17 — full UI hygiene pass (Dynamic Workflow, behavior-preserving)
+
+Worktree first fast-forwarded to `main` (`5668387`) — clean FF, `ui/` byte-identical
+(the 5 intervening commits are the primary-side cockpit seams + D-053 advisories,
+none under `ui/`).
+
+A behavior-preserving hygiene sweep over `ui/`, run as one Dynamic Workflow fanning
+out to **7 disjoint path-slices** in parallel (components / routes / api+types /
+fixtures+utils / fe-tests / be-write / be-read). Every agent was bound to: edit only
+its slice, no public-API or behavior change, never touch spine files (flag them
+instead), never weaken a test, no new dependency. This session (serial integrator)
+applied the one spine-flagged fix and ran the authoritative gate.
+
+**Changed (8 files, all comment/docstring/dead-code tidy):**
+- `components/HealthStrip.tsx` — header comment "5 GPU/host tiles" → "6" (renders 6).
+- `format.ts` — `fmtRatioPct` docstring corrected: returns the scaled VALUE (n*100),
+  not a "%" string; callers append "%".
+- `types/todo.ts` — removed the provably-unused `HumanTodoResponse` re-export.
+- `backend/activity.py` · `coordinator.py` · `loop_v0.py` — corrected wrong endpoint
+  counts in module docstrings ("Two"/"Four" → actual); added the missing `/processes`
+  bullet to `loop_v0`.
+- `backend/human_todo.py` + `backend/app.py` (spine, integrator) — removed the dead
+  `repo_root` param from `human_todo.register` and its sole call site. An unused
+  copy-paste vestige from `attest.register`; removal aligns the signature with its
+  documented sibling `coordinator.register` (which takes no `repo_root`).
+
+**Gate:** `tsc --noEmit` clean · `vitest` 1255 pass (91 files) · `pytest` 517 pass.
+Scope: only `ui/` + this file.
+
+**Deliberately NOT done — recorded so a future session doesn't re-litigate:**
+- **eslint/prettier/ruff adoption — deferred, not declined.** None are installed (no
+  devDeps, no `pyproject`); adopting them needs an `npm install` + a real warning
+  burndown that does not fit a safe time-boxed pass. Own it as a dedicated follow-up.
+- **`api/attest.ts` ↔ `api/todo.ts` "dedup" — DECLINED as unsafe (not skipped for
+  time).** Their look-alike POST idiom diverges in load-bearing ways: `postAttest`
+  treats an empty-string error `detail` as PRESENT and does a throwing `resp.json()`;
+  `postTodo` treats "" as ABSENT (matching `http.ts`'s truthiness contract) and
+  degrades a non-object 200 via `parseJsonSafe`. `AttestError`/`TodoError` are distinct
+  public exports. A shared helper would change one file's documented behavior or add
+  the exact indirection the bounded-codegen rule forbids. They are intentional twins —
+  leave them.
+- A few unused **contract/schema-doc fixtures** (`EXPERIMENTS_LIST_FIXTURE`,
+  `ITERATIONS_FIXTURE_V1`, …) and unreferenced `fixtures/loop_v0/*` sample-data files
+  were left in place — they document record shapes for future tests; flag for producer
+  confirmation before any removal.
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to

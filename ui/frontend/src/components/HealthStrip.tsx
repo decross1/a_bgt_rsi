@@ -1,4 +1,4 @@
-// Top strip: 5 GPU/host tiles, colour-coded against the day-1 baselines
+// Top strip: 6 GPU/host tiles, colour-coded against the day-1 baselines
 // in ui_plan.md section 5.3.
 import { fmt } from "../format";
 import type { TelemetrySample } from "../types/schemas";
