@@ -562,3 +562,57 @@ export interface HumanTodoResponse {
   // is derived from `items` so a counts/items drift can't mislead.
   counts: Record<string, number>;
 }
+
+// --- FINDING DETAIL (GET /api/finding/{finding_id}) ---
+// Read-only finding overview for the /todo tutor (U1, 2026-06-17 work order).
+// The backend JOINS one memory/surfaced_findings.jsonl row (the finding) with
+// its source iteration in memory/loop_memory.jsonl — read-only, NO writer (the
+// tutor is fenced from the verdict, D-054). Unknown finding_id => `found:false`
+// at HTTP 200 (the tutor degrades to "detail unavailable", never 404-blanks).
+// Every field is defensive-optional: the producer JSONL is unvalidated, and the
+// status-overlay (surfaced_findings.status.jsonl) may be absent.
+
+// The finding's `evidence` object (surfaced_findings.jsonl `evidence` is a DICT,
+// not a list): the read-only refs that ground the claim. Index signature keeps
+// producer-added refs forward-compatible.
+export interface FindingEvidence {
+  journal_entry_path?: string | null;
+  results_path?: string | null;
+  experiment_outcome?: unknown;
+  critic_rationale?: string | null;
+  [key: string]: unknown;
+}
+
+// A read-only subset of the source loop_memory.jsonl row — enough to anchor
+// "which iteration produced this finding, on what topic, and is it gated". NOT
+// the whole iteration record.
+export interface FindingSourceIteration {
+  iteration_id: string;
+  topic?: string | null; // seed.topic
+  nara_summary?: string | null;
+  gate_status?: string | null;
+  journal_entry_path?: string | null;
+  started_at?: string | null;
+  ended_at?: string | null;
+}
+
+export interface FindingDetail {
+  found: boolean;
+  finding_id: string;
+  title?: string | null;
+  claim?: string | null;
+  why_it_matters?: string | null;
+  // The finding's falsifier — "what would change the verdict". This is the
+  // "blocker / why-deferred" surface (no extra file is read).
+  what_would_change_it?: string | null;
+  novelty_class?: string | null;
+  critic_verdict?: string | null;
+  // EFFECTIVE status (the surfaced_findings.status.jsonl overlay applied; the
+  // base row's status when the overlay is absent).
+  status?: string | null;
+  promoted_at?: string | null;
+  source_iteration_id?: string | null;
+  evidence?: FindingEvidence | null;
+  source_iteration?: FindingSourceIteration | null;
+  [key: string]: unknown;
+}

@@ -12,6 +12,7 @@ import type {
   ChainResponse,
   CoordinatorActiveRun,
   CoordinatorCyclesResponse,
+  FindingDetail,
   Health,
   HealthSignalsResponse,
   HumanTodoResponse,
@@ -138,6 +139,15 @@ export const getHealthSignals = () =>
 // Read-only composition of everything awaiting a human: pending gate verdicts,
 // findings in review, unacked bubbles, stale active_run, state-file gates.
 export const getHumanTodo = () => getJSON<HumanTodoResponse>("/api/human_todo");
+
+// --- FINDING DETAIL (ui/backend finding_detail.py, U1 2026-06-17 work order) ---
+// Read-only finding overview for the /todo tutor: joins surfaced_findings.jsonl
+// with its source loop_memory.jsonl iteration. Unknown id => {found:false} at
+// 200, so the tutor degrades in place (the GET writes NOTHING — tutor fence).
+export const getFindingDetail = (findingId: string) =>
+  getJSON<FindingDetail>(
+    `/api/finding/${encodeURIComponent(findingId)}`,
+  );
 
 // --- NOW BOARD (D-047 multi-run registry) ---
 // GET /api/activity/active_runs — one doc per live run (run_state/

@@ -70,6 +70,22 @@ function safeActions(caps: unknown): CockpitActions {
   };
 }
 
+// Classify the selected item's kind into the form FAMILY it may render
+// (U5 — the kind-gate). `selected.id` is an iteration_id for a gate_verdict
+// item and a finding_id for a finding_review item; routing the wrong id into a
+// form is the bug this gate closes (a finding_id into GateVerdictForm, or an
+// iteration_id into the finding-keyed forms + the aux panes). The match is on
+// the EXACT producer enum value; `kind` is producer-owned and may be a non-
+// string (the harden suite injects object kinds) — anything that is not one of
+// the two verdict-bearing kinds is "other": it renders NEITHER keyed family,
+// only the kind-agnostic DeferForm + CalibrationCapture.
+type KindClass = "iteration" | "finding" | "other";
+function classifyKind(kind: unknown): KindClass {
+  if (kind === "gate_verdict") return "iteration";
+  if (kind === "finding_review") return "finding";
+  return "other";
+}
+
 // Coerce any value to a clean HumanTodoItem[]: drop non-array containers and
 // any element that is not an object carrying a non-empty string `id` (the id
 // is the selection key + the forms' target — an item without one cannot be
@@ -154,6 +170,14 @@ export default function Todo({ availability, items }: Props) {
   // `actions` must keep every NEW seam stubbed, not crash on `actions.<flag>`.
   const actions = safeActions(caps);
 
+  // U5 kind-gate: which form family `selected.id` is keyed for. ITERATION-keyed
+  // forms get an iteration_id; FINDING-keyed forms + the aux panes get a
+  // finding_id; an "other" kind (bubble_ack, state_file_gate, stale_active_run,
+  // unknown) gets neither family — only the kind-agnostic DeferForm +
+  // CalibrationCapture. This is what stops a finding_id from ever reaching
+  // GateVerdictForm (or an iteration_id reaching the finding-keyed forms).
+  const kindClass = selected !== null ? classifyKind(selected.kind) : "other";
+
   return (
     <div className="mx-auto max-w-7xl p-5" data-testid="todo-cockpit">
       <header className="mb-3">
@@ -232,55 +256,81 @@ export default function Todo({ availability, items }: Props) {
               </div>
             ) : (
               <div data-testid="resolution-forms" className="space-y-2">
-                {/* outcome 1 (bare) + outcome 2 (reject) — the blessed
-                    gate-verdict form: valid = sign off, invalid = reject. */}
-                <GateVerdictForm iterationId={selected.id} />
+                {/* U5 KIND-GATE: an ITERATION item (gate_verdict) carries an
+                    iteration_id → only the iteration-keyed forms; a FINDING item
+                    (finding_review) carries a finding_id → only the finding-keyed
+                    forms. selected.id is never crossed into the wrong family. */}
+                {kindClass === "iteration" && (
+                  <>
+                    {/* outcome 1 (bare) + outcome 2 (reject) — the blessed
+                        gate-verdict form: valid = sign off, invalid = reject.
+                        WANTS an iteration_id. */}
+                    <GateVerdictForm iterationId={selected.id} />
 
-                {/* outcome 1 variant — sign off WITH a directive (stub). The
-                    note is the sign-off's audit note; left to the form here. */}
-                <DirectiveSignOffField
-                  iterationId={selected.id}
-                  note="signed off via /todo cockpit"
-                  available={actions.directive_signoff}
-                />
+                    {/* outcome 1 variant — sign off WITH a directive (stub). The
+                        note is the sign-off's audit note; left to the form here.
+                        WANTS an iteration_id. */}
+                    <DirectiveSignOffField
+                      iterationId={selected.id}
+                      note="signed off via /todo cockpit"
+                      available={actions.directive_signoff}
+                    />
+                  </>
+                )}
 
-                {/* outcome 2 (finding reject path) — the blessed finding-review
-                    form (reject = invalid for a finding-kind item). */}
-                <FindingReviewForm findingId={selected.id} />
+                {kindClass === "finding" && (
+                  <>
+                    {/* outcome 2 (finding reject path) — the blessed
+                        finding-review form. WANTS a finding_id. */}
+                    <FindingReviewForm findingId={selected.id} />
 
-                {/* outcome 3 — refine, defer to a dev session (blessed). */}
+                    {/* outcome 4 — refine, authorize an autonomous fix (stub,
+                        gated). WANTS a finding_id. */}
+                    <AuthorizeFixForm
+                      findingId={selected.id}
+                      available={actions.authorize_fix}
+                    />
+
+                    {/* outcome 5 — spawn a follow-up topic (stub). WANTS a
+                        finding_id. */}
+                    <SpawnTopicForm
+                      findingId={selected.id}
+                      available={actions.spawn_topic}
+                    />
+
+                    {/* outcome 6 — abstain, the honest no-verdict exit (stub).
+                        WANTS a finding_id. */}
+                    <AbstainForm findingId={selected.id} available={actions.abstain} />
+                  </>
+                )}
+
+                {/* outcome 3 — refine, defer to a dev session (blessed). Already
+                    kind-aware (DeferForm renders nothing for an unknown kind), so
+                    it renders for ALL kinds — the one in-UI action even for the
+                    "other" kinds whose direct resolution stays primary-session. */}
                 <DeferForm kind={selected.kind} refId={selected.id} />
-
-                {/* outcome 4 — refine, authorize an autonomous fix (stub, gated). */}
-                <AuthorizeFixForm
-                  findingId={selected.id}
-                  available={actions.authorize_fix}
-                />
-
-                {/* outcome 5 — spawn a follow-up topic (stub). */}
-                <SpawnTopicForm
-                  findingId={selected.id}
-                  available={actions.spawn_topic}
-                />
-
-                {/* outcome 6 — abstain, the honest no-verdict exit (stub). */}
-                <AbstainForm findingId={selected.id} available={actions.abstain} />
               </div>
             )}
           </div>
         )}
       </section>
 
-      {/* 4) two-voice interrogation (gated) + tutor (FENCED from the verdict). */}
-      <section className="mt-4 grid gap-3 md:grid-cols-2" data-testid="todo-aux">
-        <TwoVoiceChatPane
-          findingId={selected?.id ?? ""}
-          available={actions.two_voice_chat}
-        />
-        {/* The tutor is handed NO verdict props — it cannot influence or
-            auto-fill a verdict (D-044 independence; rule 4). */}
-        <TutorPanel findingId={selected?.id ?? ""} title={selected?.title ?? undefined} />
-      </section>
+      {/* 4) two-voice interrogation (gated) + tutor (FENCED from the verdict).
+          U5 KIND-GATE: aux panes are FINDING-keyed (they interrogate / explain a
+          finding), so they render ONLY for a finding_review item. selected.id is
+          therefore always a real finding_id here — never the empty-string id a
+          non-finding selection used to feed them, and never an iteration_id. */}
+      {selected !== null && kindClass === "finding" && (
+        <section className="mt-4 grid gap-3 md:grid-cols-2" data-testid="todo-aux">
+          <TwoVoiceChatPane
+            findingId={selected.id}
+            available={actions.two_voice_chat}
+          />
+          {/* The tutor is handed NO verdict props — it cannot influence or
+              auto-fill a verdict (D-044 independence; rule 4). */}
+          <TutorPanel findingId={selected.id} title={selected.title ?? undefined} />
+        </section>
+      )}
     </div>
   );
 }

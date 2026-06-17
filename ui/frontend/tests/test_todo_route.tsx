@@ -19,6 +19,25 @@ import { MemoryRouter } from "react-router-dom";
 
 import Todo from "../src/routes/Todo";
 import { AVAILABILITY_STUB, AVAILABILITY_LIVE, TODO_ITEMS } from "../src/fixtures/todo";
+import type { HumanTodoItem } from "../src/types/schemas";
+
+// U5 kind-gate: the FINDING-keyed resolution surfaces (finding-review,
+// authorize-fix, spawn-topic, abstain) and the aux panes (two-voice, tutor)
+// now render ONLY for a finding_review item — selected.id there is a
+// finding_id, never an iteration_id. TODO_ITEMS[0] is a gate_verdict
+// (ITERATION) item, so the tests below that assert those FINDING surfaces are
+// driven with an explicit finding_review item. This adjusts the fixture KIND
+// to match the gate; the assertions' intent (those surfaces render and stub-
+// gate correctly) is unchanged. The full kind-gate matrix is owned by
+// tests/test_todo_kind_gating.tsx.
+const FINDING_ITEMS: HumanTodoItem[] = [
+  {
+    kind: "finding_review",
+    id: "sf-2026-06-14-001",
+    title: "Finding: shading is dominated under VCG (survives 2/3)",
+    since: "2026-06-14T16:00:00Z",
+  },
+];
 
 // --- network stub (by URL) ----------------------------------------------
 // The shell is driven through its injected `availability` + `items` props, so
@@ -97,8 +116,11 @@ describe("Todo cockpit shell", () => {
     expect(screen.queryByTestId("resolution-locked")).toBeNull();
   });
 
-  it("after calibration: all SIX resolution surfaces are present", async () => {
-    renderTodo({ availability: AVAILABILITY_STUB });
+  it("after calibration: the FINDING resolution surfaces are present", async () => {
+    // FINDING-kind item: the finding-keyed forms render (authorize-fix,
+    // spawn-topic, abstain). directive-signoff is ITERATION-keyed, asserted in
+    // the kind-gating suite; here we pin the finding family.
+    renderTodo({ availability: AVAILABILITY_STUB, items: FINDING_ITEMS });
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "p" },
     });
@@ -106,16 +128,18 @@ describe("Todo cockpit shell", () => {
     await waitFor(() =>
       expect(screen.getByTestId("resolution-forms")).toBeInTheDocument(),
     );
-    // sign off / reject (blessed gate-verdict), directive sign-off, finding
-    // review (reject path), defer, authorize-fix, spawn-topic, abstain.
-    expect(screen.getByTestId("directive-signoff-field")).toBeInTheDocument();
+    // the finding-keyed stub forms (authorize-fix, spawn-topic, abstain) render
+    // off the cockpit `available` prop (no attest probe), so they are present
+    // even while the attest handshake 404s in this stub.
     expect(screen.getByTestId("authorize-fix-form")).toBeInTheDocument();
     expect(screen.getByTestId("spawn-topic-form")).toBeInTheDocument();
     expect(screen.getByTestId("abstain-form")).toBeInTheDocument();
   });
 
   it("STUB forms label themselves honestly and show a read-only would-run argv (no execute)", async () => {
-    renderTodo({ availability: AVAILABILITY_STUB });
+    // FINDING-kind item: the stub forms under test (authorize-fix/spawn-topic/
+    // abstain) are finding-keyed.
+    renderTodo({ availability: AVAILABILITY_STUB, items: FINDING_ITEMS });
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "p" },
     });
@@ -139,7 +163,9 @@ describe("Todo cockpit shell", () => {
   });
 
   it("the tutor exposes NO verdict affordance (FENCED from the verdict path)", () => {
-    renderTodo({ availability: AVAILABILITY_STUB });
+    // The tutor is a FINDING-keyed aux pane (it explains a finding); it renders
+    // only for a finding_review item.
+    renderTodo({ availability: AVAILABILITY_STUB, items: FINDING_ITEMS });
     const tutor = screen.getByTestId("tutor-panel");
     expect(tutor).toBeInTheDocument();
     expect(screen.getByTestId("tutor-fence-note")).toHaveTextContent(
@@ -150,13 +176,16 @@ describe("Todo cockpit shell", () => {
   });
 
   it("two-voice pane is gated off availability (disabled send while the seam is dark)", () => {
-    renderTodo({ availability: AVAILABILITY_STUB });
+    // Two-voice is a FINDING-keyed aux pane (it interrogates a finding); it
+    // renders only for a finding_review item.
+    renderTodo({ availability: AVAILABILITY_STUB, items: FINDING_ITEMS });
     expect(screen.getByTestId("two-voice-chat-pane")).toBeInTheDocument();
     expect(screen.getByTestId("two-voice-send")).toBeDisabled();
   });
 
   it("when the cockpit seams are LIVE, the stub submit enables (capability flows through)", async () => {
-    renderTodo({ availability: AVAILABILITY_LIVE });
+    // AbstainForm is FINDING-keyed; drive with a finding_review item.
+    renderTodo({ availability: AVAILABILITY_LIVE, items: FINDING_ITEMS });
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "p" },
     });

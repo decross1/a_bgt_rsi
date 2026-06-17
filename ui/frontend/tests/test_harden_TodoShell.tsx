@@ -20,6 +20,15 @@ import { resetAttestCapabilityCache } from "../src/api/attest";
 import type { CockpitAvailability } from "../src/types/todo";
 import type { HumanTodoItem } from "../src/types/schemas";
 
+// U5 kind-gate: two-voice + abstain (asserted by the safeActions block below)
+// are FINDING-keyed surfaces, rendered only for a finding_review item. The
+// safeActions guards being pinned (malformed availability ⇒ seam stays stubbed,
+// no crash) are kind-agnostic, so these tests are driven with a finding_review
+// item — adjusting the fixture KIND to match the gate, NOT the guard's intent.
+const FINDING_ITEMS: HumanTodoItem[] = [
+  { kind: "finding_review", id: "sf-harden-001", title: "finding under harden" },
+];
+
 // --- network stub (mirrors test_todo_route.tsx) -------------------------
 // The leaf children self-fetch through the real api helpers; answer them so the
 // shell renders deterministically. The shell's OWN fetches are bypassed by the
@@ -82,7 +91,7 @@ describe("TodoShell hardening — malformed availability prop (safeActions)", ()
   // A null availability prop: `caps` holds null; `caps.actions.calibration`
   // would throw. Guard => every NEW seam stubbed, cockpit mounts.
   it("availability=null degrades to all-seams-stubbed (no crash)", async () => {
-    renderTodo({ availability: null as unknown as CockpitAvailability, items: TODO_ITEMS });
+    renderTodo({ availability: null as unknown as CockpitAvailability, items: FINDING_ITEMS });
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
     await unlockResolution();
     // two-voice send is gated off actions.two_voice_chat → disabled when stub.
@@ -92,7 +101,7 @@ describe("TodoShell hardening — malformed availability prop (safeActions)", ()
   it("availability with a MISSING actions key degrades (no crash)", async () => {
     renderTodo({
       availability: { available: true } as unknown as CockpitAvailability,
-      items: TODO_ITEMS,
+      items: FINDING_ITEMS,
     });
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
     await unlockResolution();
@@ -102,7 +111,7 @@ describe("TodoShell hardening — malformed availability prop (safeActions)", ()
   it("availability.actions of WRONG type (number) degrades (no crash)", async () => {
     renderTodo({
       availability: { available: true, actions: 42 } as unknown as CockpitAvailability,
-      items: TODO_ITEMS,
+      items: FINDING_ITEMS,
     });
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
     await unlockResolution();
@@ -112,7 +121,7 @@ describe("TodoShell hardening — malformed availability prop (safeActions)", ()
   it("availability.actions as an ARRAY degrades (no crash)", async () => {
     renderTodo({
       availability: { available: true, actions: [] } as unknown as CockpitAvailability,
-      items: TODO_ITEMS,
+      items: FINDING_ITEMS,
     });
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
     await unlockResolution();
@@ -135,7 +144,7 @@ describe("TodoShell hardening — malformed availability prop (safeActions)", ()
           two_voice_chat: "on",
         },
       } as unknown as CockpitAvailability,
-      items: TODO_ITEMS,
+      items: FINDING_ITEMS,
     });
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
     await unlockResolution();
@@ -144,7 +153,7 @@ describe("TodoShell hardening — malformed availability prop (safeActions)", ()
   });
 
   it("VALID live availability still lights the seam up (behavior preserved)", async () => {
-    renderTodo({ availability: AVAILABILITY_LIVE, items: TODO_ITEMS });
+    renderTodo({ availability: AVAILABILITY_LIVE, items: FINDING_ITEMS });
     await unlockResolution();
     const abstain = screen.getByTestId("abstain-form");
     fireEvent.change(within(abstain).getByLabelText(/abstain note/i), {
@@ -328,13 +337,16 @@ describe("TodoShell hardening — valid id but malformed sibling fields (deep de
   // non-string kind or an OBJECT title — rendering an object as a React child
   // throws "Objects are not valid as a React child" and blanks the WHOLE
   // cockpit. The children must coerce; the shell must not crash on the deref.
-  it("a valid item with an OBJECT title + OBJECT kind still mounts (no React-child throw)", async () => {
+  it("a valid item with an OBJECT title still mounts the tutor (no React-child throw)", async () => {
+    // U5 kind-gate: the tutor is a FINDING-keyed aux pane, so this probe of the
+    // OBJECT-title → TutorPanel React-child coercion uses a finding_review kind
+    // (otherwise the tutor would correctly be hidden). The OBJECT-KIND →
+    // DeferForm probe is covered separately below ("OBJECT kind with LIVE
+    // defer capability renders no defer form").
     const nasty = [
       {
-        id: "iter-nasty",
-        // kind as a nested object: DeferForm.deferKindOf must not be fed a key
-        // that resolves through the prototype chain, and React must not see it.
-        kind: { malformed: true },
+        id: "sf-nasty",
+        kind: "finding_review",
         // title as an object: TutorPanel renders title as a child → would throw
         // "Objects are not valid as a React child" if not coerced to text.
         title: { not: "a string" },
@@ -346,8 +358,7 @@ describe("TodoShell hardening — valid id but malformed sibling fields (deep de
       items: nasty as unknown as HumanTodoItem[],
     });
     // The valid id is selectable — the item was NOT dropped (id is a string).
-    expect(screen.getByRole("button", { name: "iter-nasty" })).toBeInTheDocument();
-    // Drive the gate open: this renders DeferForm(kind=object) + the forms.
+    expect(screen.getByRole("button", { name: "sf-nasty" })).toBeInTheDocument();
     await unlockResolution();
     expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
     // The tutor (handed the object title) degraded legibly — NOT "[object Object]".
@@ -355,16 +366,17 @@ describe("TodoShell hardening — valid id but malformed sibling fields (deep de
     expect(screen.queryByText(/\[object Object\]/)).toBeNull();
   });
 
-  // A title that is an ARRAY (another legacy/partial shape) flowing to TutorPanel.
+  // A title that is an ARRAY (another legacy/partial shape) flowing to TutorPanel
+  // — finding_review kind so the FINDING-keyed tutor renders (U5 kind-gate).
   it("a valid item with an ARRAY title still mounts and shows no raw array text", async () => {
     const nasty = [
-      { id: "iter-arr", kind: "gate_verdict", title: ["a", "b"] },
+      { id: "sf-arr", kind: "finding_review", title: ["a", "b"] },
     ];
     renderTodo({
       availability: AVAILABILITY_LIVE,
       items: nasty as unknown as HumanTodoItem[],
     });
-    expect(screen.getByRole("button", { name: "iter-arr" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "sf-arr" })).toBeInTheDocument();
     await unlockResolution();
     expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
   });
