@@ -971,6 +971,21 @@ def _run_iteration_impl(
                                     anchor_cosine=_anchor,
                                     topicality=_topic,
                                 )
+                                # D-052 outcome C, re-retrieval site (P6): re-attach
+                                # the NON-GATING topicality advisory on the
+                                # ml_intern-augmented relevance stamp — the gap named
+                                # in a30f58f. Mirrors the primary site (L821-829),
+                                # dark by default, fail-open, attached AFTER
+                                # relevance() so it can never feed low_confidence.
+                                if (os.environ.get("NARA_TOPICALITY_ADVISORY") == "1"
+                                        and _topic != "off"):
+                                    try:
+                                        from orchestrator import topicality_skeptic
+                                        _advisory = topicality_skeptic.attack_topicality(
+                                            _hyp_text)
+                                    except Exception:
+                                        _advisory = None
+                                    re_ret["result"]["relevance"]["topicality_advisory"] = _advisory
                                 iteration_cache.write_entry(
                                     iteration_id, "retrieval", re_ret
                                 )
