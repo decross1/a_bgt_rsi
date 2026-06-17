@@ -19,13 +19,11 @@ Mirrors orchestrator/gate_cli.py + orchestrator/authorize_fix.py: REPO_ROOT,
 a parametrized DEFAULT path, _utcnow_iso, jsonschema validate-then-append,
 'rejected:' to stderr + return 1, the appended row printed as JSON on stdout.
 
-NOTE for the integrator: schema/events.jsonl.schema.json already owns
-event_type 'calibration_entry' with the INCOMPATIBLE post-experiment shape
-(additionalProperties:false on experiment_id/metric_name/range). This writer
-validates against the NEW schema/calibration_pre_verdict.schema.json. The
-spine schema must be reconciled (add a phase-discriminated branch, or split
-event_type) before any events.jsonl validator is wired — see the build
-report's spine_edits_flagged.
+This writer validates against schema/calibration_pre_verdict.schema.json. The
+spine schema/events.jsonl.schema.json — which already owned event_type
+'calibration_entry' for the INCOMPATIBLE post-experiment shape — was reconciled
+in D-055 with an additive 'pre_verdict' oneOf branch, so a pre-verdict row now
+validates against BOTH this focused schema and the events.jsonl spine schema.
 """
 from __future__ import annotations
 
