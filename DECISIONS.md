@@ -2799,3 +2799,51 @@ material.
 `NARA_PROMOTION_VOTE_ADVISORY`, `NARA_PROMOTION_MAX_CANDIDATES` — all dark by
 default, fail-open, additive record fields, no schema edit. Revert = unset env
 vars.
+
+## D-054 — Tutor card: affirm the verdict-fence, route the accept/deny steer to the two-voice pane, and correct the D-044 mis-citation
+
+**Date.** 2026-06-17 (session 6). Disposes the human's `/todo` tutor-card
+design questions (grounded by the 2026-06-17 cockpit design probe). The tutor
+card today is a stub that echoes the finding title verbatim; the human asked it
+to give an overview, pros/cons, and "a recommendation of what accepting/denying
+would do," plus a dynamic probing chat.
+
+**Finding (cockpit design probe — read-only, file:line evidence).** The tutor's
+fence note cites "D-044 independence," but D-044 is the vllm-qwen
+standing-skeptic decision (the interrogator must not be the authoring model).
+The REAL source of the tutor verdict-fence is the 2026-06-14 session note PART 2
+("Tutor FENCED from the verdict") + inviolate rule 4 (the verdict is the
+human's) + D-053 (the human is the calibration). The fence protects the
+pre-verdict calibration capture (ARCH §6.5.4): the human predicts + rates
+confidence BLIND, then the verdict unlocks; a tutor recommendation would corrupt
+that signal. Mapping the human's three asks against the fence: an
+outcome/blocker overview is fence-safe; pros/cons is safe only as a neutral
+*unweighted* enumeration; an explicit accept/deny recommendation is a verdict in
+all but name — fence-crossing, and cannot be worded around.
+
+**Decision.**
+1. **Affirm the verdict-fence.** The tutor stays fenced. It MAY render: a
+   neutral overview/mechanics of the finding + blocker; the *mechanical* "what
+   each outcome writes" (factual, not a steer); a neutral *unweighted* pros/cons
+   enumeration; and a Qwen-backed **no-verdict** probing chat. It MUST NOT render
+   an accept/deny recommendation, weight the pros/cons, or write any disposition.
+2. **Route the steer to the two-voice pane.** Accept/deny adversarial decision
+   support lives in the two-voice pane (defender Gemma / attacker Qwen), which is
+   built to feed the verdict by design — NOT in the verdict-fenced tutor.
+3. **Tutor backend = vllm-qwen, not the authoring Gemma** — preserves
+   teach ≠ author (the same independence rationale as the two-voice
+   defender/attacker split, and consistent with D-044's interrogator rule).
+4. **Correct the mis-citation** in `TutorPanel.tsx`: cite the real fence source
+   (2026-06-14 note PART 2 + rule 4 + D-053); reserve the D-044 reference for the
+   interrogator-independence context where it actually applies.
+
+**Scope of the build.** Tutor = richer static overview + live probing chat.
+PRIMARY builds the orchestrator tutor engine + a per-turn chat CLI seam (P1–P3,
+see [`human/sessions/2026-06-17.md`](human/sessions/2026-06-17.md)); the UI
+session wires the frontend + `ui/backend` seam (U1–U5 in that note).
+
+**Fence enforcement (by construction, not convention).** The tutor session is
+built with NO `end_session` verdict path — structurally it cannot write a
+disposition (no `loop_feedback` / `surfaced_findings.status` write), so the
+fence holds even if the UI wiring is wrong. Reversible: the tutor seam is an
+additive new path; removing it restores the current stub.
