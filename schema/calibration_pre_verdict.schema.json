@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/decross1/a_bgt_rsi/schema/calibration_pre_verdict.schema.json",
+  "title": "Pre-verdict calibration_entry record",
+  "description": "One line of run_state/events.jsonl: the /todo cockpit's PRE-VERDICT calibration capture (ARCH §6.5.4). The human types a free-text prediction + a confidence scalar in [0,1] BEFORE the verdict form unlocks, against a surfaced finding (ref_id). Discriminated on event_type='calibration_entry' AND phase='pre_verdict'. This is a DISTINCT shape from the post-experiment calibration_entry member in schema/events.jsonl.schema.json (which is keyed on experiment_id/metric_name/range). The two collide on event_type 'calibration_entry'; the 'phase' const disambiguates them so both coexist in one events.jsonl. RECONCILED (D-055): schema/events.jsonl.schema.json carries an additive 'pre_verdict' oneOf branch matching this shape, so a pre-verdict row validates against both this focused schema (which the writer self-validates against) and the events.jsonl spine schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_type",
+    "timestamp",
+    "ref_id",
+    "prediction",
+    "confidence",
+    "by",
+    "phase"
+  ],
+  "properties": {
+    "event_type": {
+      "const": "calibration_entry",
+      "description": "Discriminator. Must be the literal 'calibration_entry' (matches ARCH §6.5.4 + the events.jsonl.schema.json discriminator literal so a reader still discriminates on event_type)."
+    },
+    "phase": {
+      "const": "pre_verdict",
+      "description": "Secondary discriminator. The literal 'pre_verdict' tells a single events.jsonl consumer this is the cockpit's pre-verdict finding capture, NOT the post-experiment metric calibration_entry, without re-deriving from field presence."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 / RFC 3339, UTC, when the calibration was recorded (BEFORE the verdict unlocked)."
+    },
+    "ref_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The surfaced finding / loop_memory id this prediction is about (the cockpit's --ref-id). Named ref_id (not experiment_id) because this is a finding-level pre-verdict capture."
+    },
+    "prediction": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Free-text human prediction typed BEFORE the verdict unlocks (the cockpit's --prediction)."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Confidence scalar in the closed interval [0,1] (the cockpit's --confidence). A JSON number, never a string. Out-of-range is REJECTED, never clamped (inviolate rule 4)."
+    },
+    "by": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Who recorded it (the cockpit stamps 'human:ui'; defaults to 'human')."
+    }
+  }
+}

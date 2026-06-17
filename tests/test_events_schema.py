@@ -143,6 +143,50 @@ class CalibrationEntryMalformedTest(unittest.TestCase):
         rec["post_experiment_observed"] = "0.55"
         self.assertNotEqual(list(_validator().iter_errors(rec)), [])
 
+
+def _ce_pre():
+    """Happy-path PRE-VERDICT calibration_entry payload (D-055)."""
+    return {
+        "event_type": "calibration_entry",
+        "phase": "pre_verdict",
+        "timestamp": "2026-06-17T16:08:00.000000Z",
+        "ref_id": "sf-iter-2026-05-26-008",
+        "prediction": "Cooperation will rise with context-window size.",
+        "confidence": 0.7,
+        "by": "human:ui",
+    }
+
+
+class PreVerdictCalibrationTest(unittest.TestCase):
+    """D-055: the cockpit's pre-verdict calibration_entry coexists with the
+    post-experiment one under the same event_type, disambiguated by `phase`."""
+
+    def test_pre_verdict_payload_validates(self):
+        self.assertEqual(list(_validator().iter_errors(_ce_pre())), [])
+
+    def test_pre_verdict_and_post_experiment_both_validate_disjointly(self):
+        # Each canonical payload matches exactly ONE oneOf branch (no overlap).
+        v = _validator()
+        self.assertEqual(list(v.iter_errors(_ce_pre())), [])
+        self.assertEqual(list(v.iter_errors(_ce())), [])
+
+    def test_pre_verdict_missing_phase_fails(self):
+        # Without phase it can't match the pre_verdict branch, and it lacks the
+        # post-experiment branch's required fields -> oneOf falls through.
+        rec = _ce_pre()
+        del rec["phase"]
+        self.assertNotEqual(list(_validator().iter_errors(rec)), [])
+
+    def test_pre_verdict_confidence_out_of_range_fails(self):
+        rec = _ce_pre()
+        rec["confidence"] = 1.5
+        self.assertNotEqual(list(_validator().iter_errors(rec)), [])
+
+    def test_pre_verdict_unknown_field_fails(self):
+        rec = _ce_pre()
+        rec["verdict"] = "valid"  # additionalProperties:false
+        self.assertNotEqual(list(_validator().iter_errors(rec)), [])
+
     def test_unknown_top_level_field_fails(self):
         rec = _ce()
         rec["notes"] = "extra"
@@ -195,10 +239,21 @@ class DiscriminatorBoundaryTest(unittest.TestCase):
 class SchemaInvariantsTest(unittest.TestCase):
     """Structural guarantees the schema must keep -- documenting the contract."""
 
-    def test_root_is_oneOf_with_two_members(self):
+    def test_root_is_oneOf_with_three_members(self):
+        # D-055: human_intervention + post-experiment calibration_entry +
+        # pre-verdict calibration_entry (the latter two share the
+        # 'calibration_entry' const, disambiguated by the 'phase' discriminator).
         schema = _load_schema()
         self.assertIn("oneOf", schema)
-        self.assertEqual(len(schema["oneOf"]), 2)
+        self.assertEqual(len(schema["oneOf"]), 3)
+
+    def test_two_calibration_branches_share_const_disambiguated_by_phase(self):
+        schema = _load_schema()
+        cal = [b for b in schema["oneOf"]
+               if b["properties"]["event_type"].get("const") == "calibration_entry"]
+        self.assertEqual(len(cal), 2)
+        phases = {b["properties"].get("phase", {}).get("const") for b in cal}
+        self.assertEqual(phases, {None, "pre_verdict"})
 
     def test_both_branches_have_additional_properties_false(self):
         schema = _load_schema()

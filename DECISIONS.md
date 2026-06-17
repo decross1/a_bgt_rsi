@@ -2847,3 +2847,41 @@ built with NO `end_session` verdict path — structurally it cannot write a
 disposition (no `loop_feedback` / `surfaced_findings.status` write), so the
 fence holds even if the UI wiring is wrong. Reversible: the tutor seam is an
 additive new path; removing it restores the current stub.
+
+## D-055 — `calibration_entry` overloaded: the cockpit pre-verdict capture coexists with the post-experiment calibration under one event_type, disambiguated by `phase` (integrator call — ratify or redirect)
+
+**Date.** 2026-06-17 (session 6, P4 autonomous build). **Surfaced by the P4
+calibration-writer workflow, NOT silently resolved.** The cockpit's pre-verdict
+calibration capture (free-text prediction + confidence ∈ [0,1], ARCH §6.5.4)
+needed a durable writer, but `schema/events.jsonl.schema.json` already owns
+`event_type: 'calibration_entry'` for a DIFFERENT artifact — the post-experiment
+metric-range calibration (`experiment_id` / `metric_name` /
+`pre_experiment_expected_range` / `post_experiment_observed` / `within_range` /
+`human_attestation`). Same event_type literal, two distinct research artifacts at
+different lifecycle stages.
+
+**Integrator decision (option a — coexist).** Keep the single event_type
+`calibration_entry`; disambiguate with a new `phase` const: the post-experiment
+member carries no `phase`, the cockpit's pre-verdict member carries
+`phase: 'pre_verdict'`. Both coexist as `oneOf` members in one
+`run_state/events.jsonl` (`oneOf` integrity holds — disjoint required-sets +
+`additionalProperties:false` mean no row matches two branches). **Rationale:** the
+UI already references `calibration_entry` (`ui/frontend/src/types/todo.ts`) and
+ARCH §6.5.4 mints the name; option (a) is the lower-churn, additive reconciliation
+(a third `oneOf` branch — the existing two members are untouched). **Rejected
+option (b):** split the pre-verdict capture into its own event_type — cleaner
+one-shape-per-event_type, but it diverges from the UI's existing expectation and
+ARCH's naming.
+
+**What landed (P4, commit pending).** `orchestrator/calibration_cli.py` (blessed
+writer-of-record mirroring `gate_cli.py`; argv `calibration --ref-id --prediction
+--confidence --by` matching the cockpit stub verbatim; confidence ∈ [0,1]
+REJECTED-not-clamped per rule 4; append-only to `run_state/events.jsonl` per rule
+6); `schema/calibration_pre_verdict.schema.json` (the focused single-shape schema
+the writer self-validates against); the additive `pre_verdict` branch in the spine
+`schema/events.jsonl.schema.json` (this integrator edit) + its test.
+
+**Status: integrator default — ratify or redirect.** This is a modeling call the
+human may override. To redirect to option (b): rename the const in the writer row
++ the two schemas + this entry — small and reversible. No consumer reads
+`calibration_entry` out of `events.jsonl` yet, so nothing breaks either way today.
