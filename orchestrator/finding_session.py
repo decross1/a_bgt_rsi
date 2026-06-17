@@ -28,6 +28,18 @@ Three feedback paths on end_session, all LOGGED, none a silent mutation:
   (c) refine                -> status in_review, refined claim carried in reason
 We NEVER edit surfaced_findings.jsonl in place. Effective status = last audit
 row for the finding_id.
+
+Tutor mode (no-verdict, D-054): a SEPARATE single-voice path
+(`start_tutor_session`/`tutor_turn`) for probe-to-understand teaching. It
+reuses the single-voice machinery but is VERDICT-FENCED BY CONSTRUCTION: it
+writes ONLY system_seed/user/assistant rows (never loop_feedback,
+status-audit, or followups), never calls end_session/set_status, and never
+touches a calibration confidence. The tutor seed carries mode='tutor'; a guard
+in end_session rejects any tutor transcript so a teaching session can never
+produce a disposition. The tutor is always backed by vllm-qwen (teach !=
+author — a different model than the Gemma generator). The per-turn `chat` CLI
+exposes ONLY start/turn (no verdict verb) and serves both the tutor and the
+existing two-voice pane as a thin stateless envelope over stdout.
 """
 from __future__ import annotations
 
@@ -53,6 +65,16 @@ CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 
 DEFAULT_BACKEND = "vllm-qwen"
 MAX_TURNS = 24
+
+# No-verdict tutor mode (D-054). TUTOR_MODE is the transcript-tag value
+# written on the tutor system_seed row's `mode` field — it marks the
+# transcript verdict-fenced by construction (the end_session guard trips on
+# it). TUTOR_BACKEND pins the tutor to vllm-qwen (teach != author, D-054 §3):
+# the teaching voice is a DIFFERENT model than the Gemma generator, named so
+# the pin is explicit at the call site rather than relying on a wrapper default
+# (the wrapper default is vllm-gemma — using it would teach on the author).
+TUTOR_MODE = "tutor"
+TUTOR_BACKEND = DEFAULT_BACKEND
 
 # Two-voice interrogation (additive to the single-defender path above).
 # Gemma authored the findings, so Gemma DEFENDS (vllm-gemma); the standing
@@ -325,6 +347,80 @@ def _build_skeptic_seed(finding: dict[str, Any], record: dict[str, Any],
     )
 
 
+def _build_tutor_seed(finding: dict[str, Any], record: dict[str, Any],
+                      journal_text: str, refutations: list[str]) -> str:
+    """Compose the no-verdict TUTOR system seed (D-054).
+
+    Same claim/evidence/journal/refutation context blocks as `_build_seed`
+    (the duplication is the repo idiom — `_build_seed` and `_build_skeptic_seed`
+    already duplicate it; resisting abstraction per rule 8). Only the framing
+    prose differs: probe-to-understand teaching, neutral, with NO
+    recommendation, NO disposition, and NO verdict. A teaching session can
+    never produce a disposition, so the seed never asks for one."""
+    claim = (
+        finding.get("claim")
+        or finding.get("text")
+        or (record.get("hypothesis") or {}).get("text")
+        or "(no claim text on the surfaced finding)"
+    )
+    exp = record.get("experiment_outcome")
+    evidence_lines: list[str] = []
+    if isinstance(exp, dict):
+        metric = exp.get("metric")
+        value = exp.get("value")
+        trials = exp.get("trials")
+        summary = exp.get("summary")
+        bits = []
+        if metric is not None:
+            bits.append(f"metric={metric}")
+        if value is not None:
+            bits.append(f"value={value}")
+        if trials is not None:
+            bits.append(f"trials={trials}")
+        if bits:
+            evidence_lines.append("Experiment outcome: " + ", ".join(str(b) for b in bits))
+        if isinstance(summary, str) and summary.strip():
+            evidence_lines.append("Experiment summary: " + summary.strip())
+    nov = record.get("novelty")
+    if isinstance(nov, dict) and nov.get("class"):
+        evidence_lines.append(f"Novelty classification: {nov.get('class')}")
+
+    refutation_block = (
+        "\n".join(f"  {i + 1}. {r}" for i, r in enumerate(refutations))
+        if refutations else "  (none recorded)"
+    )
+    evidence_block = "\n".join(f"  - {e}" for e in evidence_lines) or "  (no structured evidence captured)"
+    journal_block = journal_text.strip()[:4000] if journal_text.strip() else "(no journal entry text)"
+
+    return (
+        "You are a TUTOR helping a human UNDERSTAND a promoted research "
+        "finding in the a_bgt_rsi apparatus. This is a teaching session, not a "
+        "judgement: your job is to probe and explain so the human grasps what "
+        "the finding claims, what the evidence does and does not establish, and "
+        "where the open questions are.\n"
+        "\n"
+        "Teach honestly and neutrally. Explain the claim and the evidence in "
+        "plain terms, surface the assumptions and the limits, and answer the "
+        "human's questions to deepen their understanding. Cite the specific "
+        "metric, value, and trial-count from the record when relevant. Do NOT "
+        "invent evidence that is not in the record below.\n"
+        "\n"
+        "Do NOT render a verdict, recommendation, or disposition. Do NOT tell "
+        "the human to accept, reject, validate, or reject this finding, and do "
+        "NOT estimate a confidence for them. The human reaches their own "
+        "conclusion; you only help them understand. If they ask you to decide, "
+        "explain the considerations on each side instead of choosing.\n"
+        "\n"
+        f"THE FINDING:\n  {claim}\n"
+        "\n"
+        f"EVIDENCE ON RECORD:\n{evidence_block}\n"
+        "\n"
+        f"ADVERSARIAL ATTACKS IT SURVIVED:\n{refutation_block}\n"
+        "\n"
+        f"JOURNAL ENTRY:\n{journal_block}\n"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Public API                                                                  #
 # --------------------------------------------------------------------------- #
@@ -506,6 +602,123 @@ def session_turn(
         "request_id": request_id, "backend": use_backend, "at": now,
     })
     return {"reply": reply, "request_id": request_id, "turn_index": turn_index}
+
+
+# --------------------------------------------------------------------------- #
+# No-verdict tutor (single-voice teaching) — D-054                            #
+# --------------------------------------------------------------------------- #
+
+
+def start_tutor_session(
+    finding_id: str,
+    *,
+    surfaced_path: str | os.PathLike = DEFAULT_SURFACED,
+    loop_memory_path: str | os.PathLike = DEFAULT_LOOP_MEMORY,
+    sessions_root: str | os.PathLike = DEFAULT_SESSIONS_ROOT,
+) -> dict[str, Any]:
+    """Open a no-verdict TUTOR session (D-054). Mirrors `start_session` — same
+    finding/iteration/journal/refutation load — but writes ONE `system_seed`
+    row tagged `mode='tutor'`, backend=vllm-qwen (teach != author). NO LLM call.
+
+    Verdict-fenced by construction: the only writer is `_append_jsonl` of
+    transcript rows; nothing here touches loop_feedback, status-audit, or
+    followups, and the `mode='tutor'` tag makes end_session reject the
+    transcript. Returns {session_id, finding}."""
+    finding = _load_finding(finding_id, surfaced_path)
+    iteration_id = (finding.get("source_iteration_id")
+                    or finding.get("iteration_id"))
+    record = _join_iteration(iteration_id, loop_memory_path)
+    journal_text = _read_journal_text(record)
+    refutations = _refutation_summaries(finding, record)
+    seed = _build_tutor_seed(finding, record, journal_text, refutations)
+
+    session_id = "fs-" + uuid.uuid4().hex[:12]
+    seed_row = {
+        "type": "system_seed",
+        "finding_id": finding_id,
+        "session_id": session_id,
+        "iteration_id": iteration_id,
+        "mode": TUTOR_MODE,
+        "backend": TUTOR_BACKEND,
+        "content": seed,
+        "refutation_count": len(refutations),
+        "at": _utcnow_iso(),
+    }
+    _append_jsonl(_session_path(finding_id, session_id, sessions_root), seed_row)
+    return {"session_id": session_id, "finding": finding}
+
+
+def tutor_turn(
+    finding_id: str,
+    session_id: str,
+    user_msg: str,
+    *,
+    sessions_root: str | os.PathLike = DEFAULT_SESSIONS_ROOT,
+) -> dict[str, Any]:
+    """One TUTOR turn (D-054): replay -> append user -> call_sync -> append
+    assistant. Mirrors `session_turn` verbatim except the backend is always
+    pinned to vllm-qwen (TUTOR_BACKEND — teach != author) and max_tokens=4096
+    (the qwen reasoning model's think-block can consume a 1024 budget, leaving
+    empty visible content — see _stance_turn). Stateless across calls.
+
+    Bounded by MAX_TURNS (rule 7): at the cap, returns an explicit cap reply
+    and does NOT call the model. The cap reply carries NO verdict language — a
+    teaching session never closes with a disposition. Returns {reply,
+    request_id, turn_index, capped}."""
+    path = _session_path(finding_id, session_id, sessions_root)
+    rows = _read_jsonl(path)
+    if not rows or rows[0].get("type") != "system_seed":
+        raise KeyError(
+            f"no session transcript at {path} "
+            f"(finding_id={finding_id!r}, session_id={session_id!r})"
+        )
+
+    prior_turns = _count_turns(rows)
+    if prior_turns >= MAX_TURNS:
+        cap_msg = (
+            f"[teaching-session cap reached: {MAX_TURNS} turns] This tutor "
+            "session has hit its bounded turn limit. Open a fresh teaching "
+            "session to keep exploring."
+        )
+        return {"reply": cap_msg, "request_id": None,
+                "turn_index": prior_turns, "capped": True}
+
+    messages, _seed_backend = _replay_messages(rows)
+    messages.append({"role": "user", "content": user_msg})
+    turn_index = prior_turns + 1
+
+    run_id = f"finding_session_{session_id}"
+    set_run_id(run_id)
+    active_run.write_active_run(
+        run_id, kind="ad_hoc", label=f"finding-tutor {finding_id}")
+    try:
+        record = call_sync(
+            messages,
+            temperature=0.3,
+            top_p=0.9,
+            max_tokens=4096,
+            caller_tag="finding_session_tutor",
+            log_path=CALLS_LOG_PATH,
+            backend=TUTOR_BACKEND,
+        )
+    finally:
+        active_run.clear_active_run()
+        set_run_id(None)
+    reply = record.get("completion") or ""
+    request_id = record.get("request_id")
+    now = _utcnow_iso()
+
+    _append_jsonl(path, {
+        "type": "user", "finding_id": finding_id, "session_id": session_id,
+        "turn_index": turn_index, "content": user_msg, "at": now,
+    })
+    _append_jsonl(path, {
+        "type": "assistant", "finding_id": finding_id, "session_id": session_id,
+        "turn_index": turn_index, "content": reply,
+        "request_id": request_id, "backend": TUTOR_BACKEND, "at": now,
+    })
+    return {"reply": reply, "request_id": request_id,
+            "turn_index": turn_index, "capped": False}
 
 
 # --------------------------------------------------------------------------- #
@@ -717,6 +930,12 @@ def end_session(
             f"no session transcript at {path} "
             f"(finding_id={finding_id!r}, session_id={session_id!r})"
         )
+    # Verdict fence (D-054): a tutor transcript can NEVER be closed with a
+    # disposition. Single-voice and two-voice seeds carry no 'mode' key, so
+    # .get -> None and the guard only ever trips on a tutor session — it
+    # rejects BEFORE any loop_feedback/status-audit write.
+    if rows[0].get("mode") == TUTOR_MODE:
+        raise ValueError("tutor sessions are verdict-fenced (D-054)")
     iteration_id = rows[0].get("iteration_id")
     now = _utcnow_iso()
 
@@ -907,6 +1126,91 @@ def set_status(
 
 
 # --------------------------------------------------------------------------- #
+# Per-turn chat CLI (one-shot, stateless replay) — serves tutor + two-voice   #
+# --------------------------------------------------------------------------- #
+
+
+def _emit_envelope(payload: dict[str, Any]) -> None:
+    """Write the single-line JSON envelope to stdout. The ONLY stdout writer on
+    the chat branch — ui/backend parses stdout as one JSON line on success."""
+    print(json.dumps(payload, ensure_ascii=False))
+
+
+def _chat_cli(argv: list[str]) -> int:
+    """Per-turn `chat` subcommand (D-054, P2): a thin stateless envelope over
+    start_tutor_session/tutor_turn (mode=tutor) and start_two_voice_session/
+    two_voice_turn (mode=two_voice). Exposes ONLY start and turn — no verdict
+    verb is reachable here (the fence). Success -> one JSON line on stdout,
+    exit 0; error -> a JSON error envelope on stderr, empty stdout, exit 1."""
+    import sys
+
+    p = argparse.ArgumentParser(prog="finding_session chat",
+                                description="Per-turn finding chat (D-054).")
+    p.add_argument("action", choices=("start", "turn"))
+    p.add_argument("--mode", choices=(TUTOR_MODE, "two_voice"), required=True)
+    p.add_argument("--finding-id", required=True)
+    p.add_argument("--session-id")
+    p.add_argument("--message")
+    p.add_argument("--addressee", default=None)
+    args = p.parse_args(argv)
+
+    mode = args.mode
+    try:
+        if mode == TUTOR_MODE and args.addressee is not None:
+            # Tutor is single-voice — an addressee is meaningless here (rule 4:
+            # out-of-shape arg rejected, nothing written).
+            raise ValueError("--addressee is not valid in tutor mode (single-voice)")
+
+        if args.action == "start":
+            if mode == TUTOR_MODE:
+                opened = start_tutor_session(args.finding_id)
+                stances = None
+            else:
+                opened = start_two_voice_session(args.finding_id)
+                stances = opened["stances"]
+            _emit_envelope({
+                "ok": True, "mode": mode, "action": "start",
+                "finding_id": args.finding_id,
+                "session_id": opened["session_id"], "stances": stances,
+            })
+            return 0
+
+        # action == "turn"
+        if not args.session_id:
+            raise ValueError("--session-id is required for a turn")
+        if args.message is None:
+            raise ValueError("--message is required for a turn")
+        if mode == TUTOR_MODE:
+            res = tutor_turn(args.finding_id, args.session_id, args.message)
+            _emit_envelope({
+                "ok": True, "mode": mode, "action": "turn",
+                "finding_id": args.finding_id, "session_id": args.session_id,
+                "turn_index": res["turn_index"], "capped": res["capped"],
+                "warning": None,
+                "replies": [{"stance": None, "reply": res["reply"],
+                             "request_id": res["request_id"]}],
+            })
+            return 0
+        addressee = args.addressee or "both"
+        res = two_voice_turn(args.finding_id, args.session_id, args.message,
+                             addressee=addressee)
+        _emit_envelope({
+            "ok": True, "mode": mode, "action": "turn",
+            "finding_id": args.finding_id, "session_id": args.session_id,
+            "turn_index": res["turn_index"], "capped": res["capped"],
+            "addressee": res["addressee"], "warning": res["warning"],
+            "replies": res["replies"],
+        })
+        return 0
+    except (KeyError, ValueError) as exc:
+        # stdout stays EMPTY on error so ui/backend reads stdout-on-success /
+        # stderr-on-failure. Nothing was written for these rejections (rule 4).
+        print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"},
+                         ensure_ascii=False), file=sys.stderr)
+        return 1
+
+
+# --------------------------------------------------------------------------- #
 # CLI REPL                                                                     #
 # --------------------------------------------------------------------------- #
 
@@ -978,11 +1282,15 @@ def _repl(argv: list[str] | None = None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI dispatch: `--set-status` runs the one-shot disposition (the
-    D-046 blessed argv for the UI); anything else is the REPL."""
+    """CLI dispatch: `chat <action>` runs the per-turn stateless seam (D-054,
+    P2 — tutor + two-voice); `--set-status` runs the one-shot disposition (the
+    D-046 blessed argv for the UI); anything else is the REPL. `chat` is tested
+    FIRST so it never collides with the other two branches."""
     import sys
 
     argv = list(sys.argv[1:]) if argv is None else list(argv)
+    if argv and argv[0] == "chat":
+        return _chat_cli(argv[1:])
     if "--set-status" in argv:
         p = argparse.ArgumentParser(
             description="One-shot finding disposition (D-046).")
