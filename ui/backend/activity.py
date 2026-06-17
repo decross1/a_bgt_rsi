@@ -1,6 +1,6 @@
 """PAGE A — Live Activity Graph + Agent Monitor.
 
-Two read-only endpoints over the apparatus logs (and the UI telemetry
+Read-only endpoints over the apparatus logs (and the UI telemetry
 sample stream), mounted at ``/api/activity``:
 
 - ``GET /api/activity/graph?limit=N`` — flattens the per-task causal

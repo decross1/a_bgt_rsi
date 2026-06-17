@@ -14,12 +14,11 @@
 // finding_review, bubble_ack, defer) are NOT here: the cockpit reuses
 // api/attest.ts directly for those.
 //
-// HumanTodoItem / HumanTodoResponse are IMPORTED from types/schemas.ts — not
-// redefined here. Re-exported for the cockpit's convenience so a panel imports
-// one module.
-import type { HumanTodoItem, HumanTodoResponse } from "./schemas";
+// HumanTodoItem is IMPORTED from types/schemas.ts — not redefined here.
+// Re-exported for the cockpit's convenience so a panel imports one module.
+import type { HumanTodoItem } from "./schemas";
 
-export type { HumanTodoItem, HumanTodoResponse };
+export type { HumanTodoItem };
 
 // --- the six resolution outcomes (the cockpit's outcome taxonomy) ---
 // 'sign_off'     → verdict ledger + journal (MAY carry a directive)  [mostly exists → attest.ts]

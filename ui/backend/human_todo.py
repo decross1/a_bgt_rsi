@@ -339,7 +339,6 @@ def _tag_deferred(items: list[dict], memory_dir: Path) -> None:
 def register(
     app,
     *,
-    repo_root: Path,
     run_state_dir: Path,
     memory_dir: Path,
 ) -> APIRouter:

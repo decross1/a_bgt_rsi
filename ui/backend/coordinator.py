@@ -2,7 +2,7 @@
 human-as-auditor can answer "what did the loop decide, on what basis, can I
 trust it?" — the loop currently runs "dark" (ui_autonomy_observability_plan.md).
 
-Four endpoints, all wired by ``register`` into the existing FastAPI app, all
+Five endpoints, all wired by ``register`` into the existing FastAPI app, all
 read-only and tolerant of absent (gitignored) data files:
 
 - ``GET /api/coordinator/cycles``   — reads ``run_state/coordinator_cycles.jsonl``,

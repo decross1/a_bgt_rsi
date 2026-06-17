@@ -238,7 +238,6 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     # + week1.state.json under run_state/) — reuse the coordinator paths.
     register_human_todo(
         app,
-        repo_root=Path(loop_v0_repo),
         run_state_dir=Path(coordinator_run_state),
         memory_dir=Path(coordinator_memory),
     )
