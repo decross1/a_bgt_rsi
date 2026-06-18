@@ -248,6 +248,7 @@ These do not bend.
 | Roadmap / historical plans | [`archive/plans/`](archive/plans/) (reference only) |
 | Executed UI handoffs | [`archive/ui_handoffs/`](archive/ui_handoffs/) (reference only) |
 | Retired track/tier docs | [`archive/`](archive/) (reference only) |
+| Runtime → framework skill-signals (firewall: D-014, NOT framework `BOUNDARY.md`; a non-framework-enum run-log status is the rule-6 norm, NOT friction) | [`docs/skill_signals_contract.md`](docs/skill_signals_contract.md) |
 
 ## Plan-mode artifacts
 

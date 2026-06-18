@@ -2906,3 +2906,45 @@ human may override. To redirect to option (b): rename the const in the writer ro
 **Ratified 2026-06-18** by the human (derrick), explicit sign-off. The overload
 stands: `calibration_entry` + `phase` discriminator, NOT split into a distinct
 event_type.
+
+## D-056 — Runtime skill-signals stream: adversarially reviewed, ADOPT-WITH-RECONCILIATIONS; implementation gated
+
+**Date.** 2026-06-18. A framework-side handoff asked the a_bgt_rsi runtime to emit a
+per-event `run_state/skill_signals.jsonl` skill-friction stream (the `source="runtime"`
+half of the framework's drift-detection `detected` lane; the framework owns ingest,
+read-only). The handoff was adversarially reviewed (Dynamic Workflow, 4 reviewers +
+synthesis). **Verdict: ADOPT-WITH-RECONCILIATIONS.** The firewall *behavior* (apparatus
+writes its own file, framework reads one-way, no brain access) is clean and consistent
+with D-014; the apparatus-side contract is
+[`docs/skill_signals_contract.md`](docs/skill_signals_contract.md).
+
+**Two hard inviolations pushed back on:**
+1. **Trigger (a) imported the framework's run-log enum** (`started|passed|…`) and
+   treated a status outside it as "friction." a_bgt_rsi's run-log status is
+   open-vocabulary (rule 6 "minimum, not a ceiling"; 25+ live values incl. the
+   handoff's own example `recovered`); adopting it would coerce status into a closed
+   set (rule 4) and turn normal logging into a friction firehose. **Reframed:** a
+   non-framework-enum status is the EXPECTED norm and is NOT friction; emit (a) only on
+   genuine run-log-skill misfit, or drop (a) and keep the clean (b) GAP / (c) MISUSE.
+2. **The firewall citation pointed at the framework's `BOUNDARY.md`**, which a_bgt_rsi
+   lacks and **consciously diverges from (D-032)**. Re-sourced to D-014 + CLAUDE.md
+   Dynamic-Workflow-discipline rule 3; all framework-artifact names stripped from the
+   apparatus's obligation text.
+
+**Two reconciled collisions:**
+3. The "swallow write errors silently" instruction vs rule 7 — guarded: swallow only the
+   side-channel, never mask the mandatory run-log write (rule 6), run-log-first, leave a
+   logged breadcrumb on emit failure.
+4. The new `run_state/` writer was missing from the **D-048** `_no_live_artifacts`
+   conftest guard — `emit_skill_signal` must resolve `SKILL_SIGNALS_PATH` from a
+   module-global and the autouse fixture must redirect it to `tmp_path`, or it reopens
+   the ~210-row leak D-048 closed.
+
+**Decision.** Adopt the stream **on the apparatus's terms** per
+`docs/skill_signals_contract.md` (cites D-014, not `BOUNDARY.md`; reframed trigger;
+swallow guard; in-repo skill-name constant; D-048 wiring). The handoff's acceptance
+criterion "framework ingest parses the file" is framework-side and is dropped from
+apparatus acceptance. **Implementation is GATED** behind the human's go: a single small
+`emit_skill_signal` one-append helper (rule 8) + the conftest extension; (b)/(c) may ship
+first. Follows the D-046 precedent — the apparatus is the single merge/commit authority
+and owns whether it takes on a cross-boundary obligation.
