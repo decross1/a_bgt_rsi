@@ -37,5 +37,9 @@ ui/
 pip install -r ui/requirements-ui.txt
 ui/sampler/run.sh                 # start the telemetry sampler
 ui/backend/run.sh                 # start the backend API on :8700
-pytest ui/sampler/tests ui/backend/tests
+
+# Backend tests run under the PINNED harness venv `ui/.venv-ui` — it is the one
+# with pytest + fastapi installed (the repo's other venvs lack one or the
+# other). Prefix with MOCK_LLM=1 so the suite never makes a real model call.
+MOCK_LLM=1 ui/.venv-ui/bin/python -m pytest ui/sampler/tests ui/backend/tests
 ```

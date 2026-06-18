@@ -152,7 +152,7 @@ describe("todo api helpers build the right URLs + bodies", () => {
     // {ref_id, note}; calibration is FLAT {ref_id, prediction, confidence}.
     await postAuthorizeFix({ ref_id: "sf-001", task: "re-run novelty on 02", note: "fix the citation wiring" });
     await postDirectiveSignoff({
-      iteration_id: "iter-1",
+      finding_id: "sf-001",
       note: "looks right",
       directive: "proceed to experiment",
     });
@@ -174,7 +174,7 @@ describe("todo api helpers build the right URLs + bodies", () => {
       note: "fix the citation wiring",
     });
     expect(calls[1].body).toEqual({
-      iteration_id: "iter-1",
+      finding_id: "sf-001",
       note: "looks right",
       directive: "proceed to experiment",
     });

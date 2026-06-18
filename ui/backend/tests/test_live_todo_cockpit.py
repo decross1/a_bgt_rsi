@@ -3,16 +3,25 @@
 Sibling of ``test_validate_live_real_data.py`` (which validates the coordinator
 endpoints against the real on-disk apparatus). This module validates the
 **cockpit** surface and the **dashboard N coupling** against the REAL primary
-checkout: it builds the merged app in-process via ``TestClient(create_app())``
-with NO overrides, so the app reads the hardcoded ``_PRIMARY_REPO`` defaults
-exactly as the served UI does — the files the dashboard actually renders.
+checkout: the GET reads build the merged app in-process via
+``TestClient(create_app())`` with NO overrides, so the app reads the hardcoded
+``_PRIMARY_REPO`` defaults exactly as the served UI does — the files the
+dashboard actually renders.
+
+The POST seams now exec their BLESSED CLI (D-046 — the CLI is the writer of
+record). A live test must NEVER exec a real CLI or a real model, so the POST
+checks build a cockpit-only app with an INJECTED STUB runner (over the real
+``_PRIMARY_REPO`` so the seams are "available"); the stub records the argv and
+returns canned JSON without spawning anything. The GET reads stay on the real
+merged app.
 
 It asserts the live truth without re-hardcoding a row count that would rot:
 
-- ``GET /api/todo/available`` — the capability handshake. Reports the NEW
-  cockpit seams as currently false/stub (no writer is blessed yet), surfaces
-  ``interpreter_present`` against the real ``.venv-chroma/bin/python``, and
-  carries the ``two_voice_chat`` chat-pane gate flag the cockpit reads.
+- ``GET /api/todo/available`` — the capability handshake. With the real
+  corrected modules on disk the three one-shot seams + ``two_voice_chat`` are
+  True; ``spawn_topic`` / ``abstain`` stay False (session-exits). Surfaces
+  ``interpreter_present`` against the real ``.venv-chroma/bin/python`` and the
+  documented ``allowed_action_endpoints`` map.
 - ``GET /api/todo/concurrency`` — the ONE real (non-stub) read, against the
   REAL ``run_state/active_run.json`` (absent OR present): never 500s, always
   carries an ``active`` boolean.
@@ -20,36 +29,32 @@ It asserts the live truth without re-hardcoding a row count that would rot:
   "N need you →" coupling consumes. Confirms ``gate_verdict`` AND ``state_gate``
   keys exist in ``counts`` (Dashboard.tsx sums exactly those two), every item
   carries the contract keys, and every kind is inside the known enum.
-- Every ``/api/todo`` POST stub WRITES NOTHING (inviolate rule 4 — a stub never
-  fakes a write) and returns a read-only ``would_run``: no ledger/file appears
-  under ``memory/`` or ``run_state/`` across the full POST surface, and the
-  cockpit never execs.
+- Every ``/api/todo`` POST, fired with the injected STUB runner, WRITES NOTHING
+  (inviolate rule 4 — no real exec, no faked write): no ledger/file appears
+  under ``memory/`` or ``run_state/`` across the full POST surface.
 
-Read-only: GETs and stub POSTs only. The stub-POST no-write assertion snapshots
-the real ``memory/``+``run_state/`` listing before and after and asserts no
-delta — if a future seam wiring accidentally writes, this fails loudly.
+Read-only against disk: the GETs read the real checkout; the POSTs use a stub
+runner so no real CLI runs (the no-write snapshot proves it).
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.app import create_app
+from backend.todo_cockpit import register as register_cockpit
 
 # The primary checkout the cockpit / human_todo / active_run.json all pin
 # (mirrors backend.app._PRIMARY_REPO / todo_cockpit._PRIMARY_REPO).
 _PRIMARY_REPO = Path("/home/decross1/projects/a_bgt_rsi")
 
-# The NEW cockpit seams (todo_cockpit._SEAM_MODULES) — all currently false/stub.
-_SEAM_ACTIONS = (
-    "authorize_fix",
-    "directive_signoff",
-    "spawn_topic",
-    "abstain",
-    "calibration",
-)
+# The three one-shot cockpit seams that exec a blessed CLI (vs the two
+# session-exits spawn_topic / abstain).
+_ONE_SHOT_ACTIONS = ("authorize_fix", "directive_signoff", "calibration")
+_SESSION_EXIT_ACTIONS = ("spawn_topic", "abstain")
 
 # The human_todo producer's frozen kind enum (human_todo.KINDS).
 _HUMAN_TODO_KINDS = frozenset((
@@ -66,11 +71,36 @@ _TODO_ITEM_KEYS = frozenset((
 ))
 
 
+class _StubRunner:
+    """Stand-in for ``subprocess.run`` — records argv, returns a canned zero-exit
+    result with VALID JSON stdout. NEVER spawns a process (no real CLI/model)."""
+
+    def __init__(self):
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(list(argv))
+
+        class _Proc:
+            returncode = 0
+            stdout = '{"ok": true}'
+            stderr = ""
+        return _Proc()
+
+
 @pytest.fixture(scope="module")
 def client() -> TestClient:
     """The merged app, no overrides — reads the REAL primary checkout exactly as
-    the served UI does."""
+    the served UI does (GET reads only)."""
     return TestClient(create_app())
+
+
+def _cockpit_client(runner) -> TestClient:
+    """A cockpit-only app over the REAL _PRIMARY_REPO but with an INJECTED stub
+    runner, so a POST exercises the exec path WITHOUT spawning a real CLI."""
+    app = FastAPI()
+    register_cockpit(app, repo_root=_PRIMARY_REPO, runner=runner)
+    return TestClient(app)
 
 
 # --------------------------------------------------------------------------- #
@@ -81,26 +111,44 @@ def test_available_handshake_shape_live(client: TestClient):
     r = client.get("/api/todo/available")
     assert r.status_code == 200
     body = r.json()
-    # The whole router is stub/advisory-only until the seam plan ships.
-    assert body["available"] is False
-    assert body["stub"] is True
     # Surfaced against the REAL interpreter on disk.
     expect_python = (_PRIMARY_REPO / ".venv-chroma" / "bin" / "python").exists()
     assert body["interpreter_present"] is expect_python
     actions = body["actions"]
     assert isinstance(actions, dict)
-    # Every NEW seam is currently false (no blessed writer yet).
-    for name in _SEAM_ACTIONS:
-        assert actions[name] is False, f"{name} should be false/stub"
+    # The three one-shot seams light up iff their corrected module is on disk.
+    for name in _ONE_SHOT_ACTIONS:
+        rel = {
+            "authorize_fix": "orchestrator/authorize_fix.py",
+            "directive_signoff": "orchestrator/finding_session.py",
+            "calibration": "orchestrator/calibration_cli.py",
+        }[name]
+        expect = expect_python and (_PRIMARY_REPO / rel).exists()
+        assert actions[name] is expect, f"{name} availability vs disk"
+    # spawn_topic / abstain stay False — they are session-exits, not one-shots.
+    for name in _SESSION_EXIT_ACTIONS:
+        assert actions[name] is False, f"{name} is a session-exit (stays false)"
 
 
 def test_available_reports_two_voice_chat_gate_live(client: TestClient):
-    # The cockpit gates the two-voice chat pane on this flag, so the handshake
-    # MUST report it (and it stays False until finding_session's two-stance
-    # extension lands).
-    actions = client.get("/api/todo/available").json()["actions"]
+    # The cockpit gates the two-voice chat pane on this flag. The chat seam
+    # (finding_session) landed, so it is True iff finding_session.py is on disk.
+    body = client.get("/api/todo/available").json()
+    actions = body["actions"]
     assert "two_voice_chat" in actions
-    assert actions["two_voice_chat"] is False
+    expect = ((_PRIMARY_REPO / ".venv-chroma" / "bin" / "python").exists()
+              and (_PRIMARY_REPO / "orchestrator" / "finding_session.py").exists())
+    assert actions["two_voice_chat"] is expect
+
+
+def test_available_exposes_allowed_action_endpoints_map_live(client: TestClient):
+    body = client.get("/api/todo/available").json()
+    endpoints = body["allowed_action_endpoints"]
+    # The documented escalation allowed_actions -> cockpit endpoint map.
+    assert endpoints["refine_authorize_fix"] == ["/api/todo/authorize_fix"]
+    assert endpoints["sign_off"] == [
+        "/api/todo/directive_signoff", "/api/attest/finding_review"]
+    assert endpoints["spawn_topic"] == ["session-exit"]
 
 
 # --------------------------------------------------------------------------- #
@@ -163,22 +211,23 @@ def test_human_todo_items_shape_and_kinds_live(client: TestClient):
 
 
 # --------------------------------------------------------------------------- #
-# Every POST stub writes NOTHING (inviolate rule 4) — vs the REAL data dirs
+# Every POST writes NOTHING (inviolate rule 4) — stub runner, vs the REAL dirs
 # --------------------------------------------------------------------------- #
 
-# The full stub-POST surface with a VALID payload for each (so we exercise the
-# write path, not the 422 path — a 422 trivially writes nothing).
-_STUB_POSTS = (
+# The full POST surface with a VALID payload for each (so we exercise the write
+# path, not the 422 path — a 422 trivially writes nothing). directive_signoff /
+# spawn_topic / abstain key on finding_id now (the U4 corrections).
+_POSTS = (
     ("/api/todo/authorize_fix",
      {"ref_id": "F-live-1", "task": "do the thing", "note": "because"}),
     ("/api/todo/directive_signoff",
-     {"iteration_id": "iter-live-1", "note": "ok", "directive": "proceed"}),
+     {"finding_id": "F-live-1", "note": "ok", "directive": "proceed"}),
     ("/api/todo/spawn_topic",
-     {"ref_id": "F-live-1", "kind": "finding", "topic": "a follow-up"}),
+     {"finding_id": "F-live-1", "topic": "a follow-up"}),
     ("/api/todo/abstain",
-     {"ref_id": "F-live-1", "note": "no verdict yet"}),
+     {"finding_id": "F-live-1", "note": "no verdict yet"}),
     ("/api/todo/calibration",
-     {"ref_id": "iter-live-1", "prediction": "valid", "confidence": 0.5}),
+     {"ref_id": "F-live-1", "prediction": "valid", "confidence": 0.5}),
 )
 
 
@@ -193,31 +242,39 @@ def _data_listing() -> set[str]:
     return out
 
 
-@pytest.mark.parametrize("path,payload", _STUB_POSTS)
-def test_stub_post_is_read_only_would_run_live(client: TestClient, path, payload):
-    r = client.post(path, json=payload)
+@pytest.mark.parametrize("path,payload", _POSTS)
+def test_post_is_honest_and_does_not_exec_real_cli_live(path, payload):
+    stub = _StubRunner()
+    r = _cockpit_client(stub).post(path, json=payload)
     assert r.status_code == 200, r.text
     body = r.json()
-    # Honest stub: status=stub + a read-only would_run argv, NO faked verdict.
-    assert body["status"] == "stub"
-    assert isinstance(body["would_run"], list) and body["would_run"]
-    # would_run is illustrative argv, never an exec — the bare relative
-    # interpreter token, never absolutized to a real exec target.
-    assert body["would_run"][0] == ".venv-chroma/bin/python"
-    assert body["would_run"][1] == "-m"
-    assert "seam" in body
+    if path.endswith(("spawn_topic", "abstain")):
+        # Session-exit: honest indicator, NO exec, NO faked write.
+        assert body["status"] == "session_exit"
+        assert body["finding_id"] == "F-live-1"
+        assert stub.calls == []
+    else:
+        # One-shot seam: exec'd the blessed CLI through the STUB (never a real
+        # process). The stub's canned JSON is returned verbatim.
+        assert body == {"ok": True}
+        assert len(stub.calls) == 1
+        argv = stub.calls[0]
+        assert argv[1] == "-m" and argv[2].startswith("orchestrator.")
+        assert "human:ui" in argv
 
 
-def test_full_stub_post_surface_writes_no_ledger_live(client: TestClient):
-    """The whole stub-POST surface, fired in sequence, leaves the REAL
-    memory/+run_state/ listing byte-for-byte unchanged — no ledger file is
-    created under any tmp/real path (D-046: the cockpit shells blessed CLIs;
-    stubs are read-only would_run)."""
+def test_full_post_surface_writes_no_ledger_live():
+    """The whole POST surface, fired in sequence with a STUB runner, leaves the
+    REAL memory/+run_state/ listing byte-for-byte unchanged — no ledger file is
+    created (D-046: the cockpit execs blessed CLIs; the stub runs no real CLI,
+    so nothing is written)."""
+    stub = _StubRunner()
+    cockpit = _cockpit_client(stub)
     before = _data_listing()
-    for path, payload in _STUB_POSTS:
-        assert client.post(path, json=payload).status_code == 200
+    for path, payload in _POSTS:
+        assert cockpit.post(path, json=payload).status_code == 200
     after = _data_listing()
     created = after - before
-    assert not created, f"stub POSTs created files (must write NOTHING): {created}"
+    assert not created, f"POSTs created files (must write NOTHING): {created}"
     removed = before - after
-    assert not removed, f"stub POSTs removed files: {removed}"
+    assert not removed, f"POSTs removed files: {removed}"

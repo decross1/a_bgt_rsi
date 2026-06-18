@@ -1,17 +1,17 @@
-// DirectiveSignOffField — the optional --directive add-on to a sign-off
-// (outcome 1 variant). A sign-off MAY carry a directive ("proceed to <next
-// step>") instead of a bare "this is fine". This is the SUPERSET of the existing
-// gate_verdict valid path: EMPTY directive == a bare sign-off == today's
-// behaviour (the integrator routes that through GateVerdictForm / attest.ts). A
-// non-empty directive routes through the NEW sign-off CLI, which records the
-// directive on the verdict/audit row.
+// DirectiveSignOffField — the optional --directive add-on to a FINDING sign-off
+// (outcome 1 variant). Signing off a finding MAY carry a directive ("proceed to
+// <next step>") instead of a bare "this is fine". EMPTY directive == a bare
+// sign-off == today's behaviour (the integrator routes that through
+// FindingReviewForm / attest.ts validated). A non-empty directive routes through
+// the sign-off CLI, which records the directive on the finding's status_audit_row.
 //
-// POSTs /api/todo/directive_signoff, which — once the seam lands — shells the
-// NEW directive sign-off argv. Until then the endpoint is an honest STUB:
-// {status:"stub", would_run:[...argv]}, writing NOTHING (rule 4). No execute
-// button — the would-run argv is read-only (D-046 / rule 8).
+// Keyed on FINDING_ID, not iteration_id (docs/cockpit_seam_wiring.md row 1d):
+// the writer is `finding_session --set-status <FINDING_ID> validated --directive`.
+// POSTs /api/todo/directive_signoff, which execs that blessed CLI (the UI never
+// writes a ledger directly — D-046). No execute affordance beyond the submit; the
+// would-run argv is shown read-only (D-046 / rule 8).
 //
-// It is a small CONTROLLED field: the integrator owns the iterationId and the
+// It is a small CONTROLLED field: the integrator owns the findingId and the
 // note (the sign-off's audit note) and lifts the directive value via
 // onDirectiveChange if it wants to drive its own submit; the field also offers
 // its own submit for the directive variant. Empty directive disables that
@@ -20,7 +20,7 @@ import { useState } from "react";
 import { postDirectiveSignoff, TodoError, type TodoResult } from "../../api/todo";
 
 interface Props {
-  iterationId: string;
+  findingId: string;
   /** the sign-off audit note (required by the sign-off CLI for the directive
    *  variant — the integrator passes the same note its verdict form collects). */
   note: string;
@@ -32,7 +32,7 @@ interface Props {
   onSubmitted?: () => void;
 }
 
-// `iterationId` and `note` are typed `string`, but they are CONTROLLED by the
+// `findingId` and `note` are typed `string`, but they are CONTROLLED by the
 // integrator, which lifts them off producer-owned bodies (active_run.json / the
 // /api/* envelopes). A legacy/partial row can hand us a non-string (null, a
 // number, an object) where a string is expected; a bare `.trim()` then throws
@@ -42,21 +42,21 @@ interface Props {
 // path as a genuinely empty one.
 const asStr = (v: unknown): string => (typeof v === "string" ? v : "");
 
-const argvPreview = (iterationId: unknown, directive: unknown, note: unknown): string => {
-  const iter = asStr(iterationId).trim();
+const argvPreview = (findingId: unknown, directive: unknown, note: unknown): string => {
+  const fid = asStr(findingId).trim();
   const dir = asStr(directive).trim();
   const n = asStr(note).trim();
   return (
-    ".venv-chroma/bin/python -m orchestrator.gate_cli --iteration-id" +
-    ` ${iter || "<iter-ID>"} --verdict valid` +
-    ` --directive ${dir ? JSON.stringify(dir) : "<proceed to ...>"}` +
+    ".venv-chroma/bin/python -m orchestrator.finding_session --set-status" +
+    ` ${fid || "<FINDING_ID>"} validated` +
     ` --note ${n ? JSON.stringify(n) : "<why>"}` +
-    " --gated-by human:ui"
+    ` --directive ${dir ? JSON.stringify(dir) : "<proceed to ...>"}` +
+    " --by human:ui"
   );
 };
 
 export default function DirectiveSignOffField({
-  iterationId,
+  findingId,
   note,
   available,
   onDirectiveChange,
@@ -88,7 +88,7 @@ export default function DirectiveSignOffField({
     setError(null);
     try {
       const res = await postDirectiveSignoff({
-        iteration_id: asStr(iterationId),
+        finding_id: asStr(findingId),
         directive: directive.trim(),
         note: noteStr.trim(),
       });
@@ -105,7 +105,7 @@ export default function DirectiveSignOffField({
     <div data-testid="directive-signoff-field" className="rounded border border-emerald-900/60 bg-zinc-950/40 px-2 py-1.5">
       <div className="text-[10px] uppercase tracking-wide text-emerald-400">
         sign-off directive (optional) · POST /api/todo/directive_signoff →
-        orchestrator.gate_cli --directive
+        orchestrator.finding_session --set-status … validated --directive
       </div>
       {available !== true && (
         <div data-testid="directive-signoff-stub" className="mt-0.5 text-[10px] text-zinc-500">
@@ -140,7 +140,7 @@ export default function DirectiveSignOffField({
             aria-label="would run (read-only — no execute)"
             className="mt-0.5 overflow-x-auto whitespace-pre-wrap rounded border border-zinc-800 bg-zinc-950 p-2 font-mono text-[11px] text-zinc-400"
           >
-            {argvPreview(iterationId, directive, note)}
+            {argvPreview(findingId, directive, note)}
           </pre>
         </>
       )}

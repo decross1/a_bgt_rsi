@@ -10,10 +10,10 @@
 // initial/version-skew value could arrive < 0 or > 1. Unclamped, `.toFixed(2)`
 // renders the human-facing label as "NaN"/"Infinity" and an out-of-[0,1]
 // confidence is handed to the calibration ledger via onCaptured (the very number
-// ARCH §6.5.4 wants honest). findingId is producer-owned (a loop_memory finding
+// ARCH §6.5.4 wants honest). refId is producer-owned (a loop_memory finding
 // id) — a null/non-string value must degrade to an empty ref, never crash the
 // trim/POST. The fix clamps confidence into [0,1] (non-finite → 0.5 midpoint) and
-// coerces a non-string findingId to "". VALID-input behavior is unchanged
+// coerces a non-string refId to "". VALID-input behavior is unchanged
 // (the existing test_cockpit_interrogation.tsx CalibrationCapture spec still
 // passes — see DONE).
 //
@@ -86,7 +86,7 @@ describe("CalibrationCapture hardening — confidence bounds + non-number/NaN", 
     const { calls } = stubCalibrationOk();
     const c = watchConsole();
     const onCaptured = vi.fn();
-    render(<CalibrationCapture findingId="sf-iter-x" onCaptured={onCaptured} />);
+    render(<CalibrationCapture refId="sf-iter-x" onCaptured={onCaptured} />);
 
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "survives" },
@@ -111,7 +111,7 @@ describe("CalibrationCapture hardening — confidence bounds + non-number/NaN", 
   it("a negative confidence clamps to 0 (label + captured draft + body all 0)", async () => {
     const { calls } = stubCalibrationOk();
     const onCaptured = vi.fn();
-    render(<CalibrationCapture findingId="sf-iter-x" onCaptured={onCaptured} />);
+    render(<CalibrationCapture refId="sf-iter-x" onCaptured={onCaptured} />);
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "fails" },
     });
@@ -132,7 +132,7 @@ describe("CalibrationCapture hardening — confidence bounds + non-number/NaN", 
     const c = watchConsole();
     const onCaptured = vi.fn();
     const { container } = render(
-      <CalibrationCapture findingId="sf-iter-x" onCaptured={onCaptured} />,
+      <CalibrationCapture refId="sf-iter-x" onCaptured={onCaptured} />,
     );
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "unknown" },
@@ -158,7 +158,7 @@ describe("CalibrationCapture hardening — confidence bounds + non-number/NaN", 
     const { calls } = stubCalibrationOk();
     const onCaptured = vi.fn();
     const { container } = render(
-      <CalibrationCapture findingId="sf-iter-x" onCaptured={onCaptured} />,
+      <CalibrationCapture refId="sf-iter-x" onCaptured={onCaptured} />,
     );
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "p" },
@@ -181,7 +181,7 @@ describe("CalibrationCapture hardening — confidence bounds + non-number/NaN", 
   it("a valid in-range confidence is captured UNCHANGED (the clamp did not over-correct)", async () => {
     const { calls } = stubCalibrationOk();
     const onCaptured = vi.fn();
-    render(<CalibrationCapture findingId="sf-iter-x" onCaptured={onCaptured} />);
+    render(<CalibrationCapture refId="sf-iter-x" onCaptured={onCaptured} />);
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "survives 2/3" },
     });
@@ -206,7 +206,7 @@ describe("CalibrationCapture hardening — capture-BEFORE-verdict ordering under
     stubCalibrationNetworkError();
     const c = watchConsole();
     const onCaptured = vi.fn();
-    render(<CalibrationCapture findingId="sf-iter-x" onCaptured={onCaptured} />);
+    render(<CalibrationCapture refId="sf-iter-x" onCaptured={onCaptured} />);
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "survives" },
     });
@@ -228,7 +228,7 @@ describe("CalibrationCapture hardening — capture-BEFORE-verdict ordering under
   it("a version-skew 404 surfaces an error and does NOT open the verdict (onCaptured unfired)", async () => {
     stubCalibration404();
     const onCaptured = vi.fn();
-    render(<CalibrationCapture findingId="sf-iter-x" onCaptured={onCaptured} />);
+    render(<CalibrationCapture refId="sf-iter-x" onCaptured={onCaptured} />);
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "survives" },
     });
@@ -245,7 +245,7 @@ describe("CalibrationCapture hardening — capture-BEFORE-verdict ordering under
   it("onCaptured never fires BEFORE a click (no auto-open) — empty prediction keeps the button disabled", () => {
     stubCalibrationOk();
     const onCaptured = vi.fn();
-    render(<CalibrationCapture findingId="sf-iter-x" onCaptured={onCaptured} />);
+    render(<CalibrationCapture refId="sf-iter-x" onCaptured={onCaptured} />);
     // Before any interaction the verdict is NOT opened.
     expect(onCaptured).not.toHaveBeenCalled();
     // A whitespace-only prediction must not satisfy the required gate.
@@ -259,8 +259,8 @@ describe("CalibrationCapture hardening — capture-BEFORE-verdict ordering under
   });
 });
 
-describe("CalibrationCapture hardening — malformed findingId prop", () => {
-  // findingId is producer-owned; the Props type says string, but a partial/legacy
+describe("CalibrationCapture hardening — malformed refId prop", () => {
+  // refId is producer-owned; the Props type says string, but a partial/legacy
   // record can hand a null/number/object at runtime. It must degrade to an empty
   // ref, never crash the render or the POST.
   const BAD_IDS: Array<[string, unknown]> = [
@@ -272,12 +272,12 @@ describe("CalibrationCapture hardening — malformed findingId prop", () => {
     ["NaN", NaN],
   ];
 
-  it("renders without throwing for every malformed findingId", () => {
+  it("renders without throwing for every malformed refId", () => {
     for (const [name, id] of BAD_IDS) {
       const c = watchConsole();
       const { unmount } = render(
         <CalibrationCapture
-          findingId={id as unknown as string}
+          refId={id as unknown as string}
           onCaptured={vi.fn()}
         />,
       );
@@ -289,12 +289,12 @@ describe("CalibrationCapture hardening — malformed findingId prop", () => {
     }
   });
 
-  it("a null findingId POSTs an empty ref_id (degrade, not crash) and still honors the ordering contract", async () => {
+  it("a null refId POSTs an empty ref_id (degrade, not crash) and still honors the ordering contract", async () => {
     const { calls } = stubCalibrationOk();
     const onCaptured = vi.fn();
     render(
       <CalibrationCapture
-        findingId={null as unknown as string}
+        refId={null as unknown as string}
         onCaptured={onCaptured}
       />,
     );
@@ -347,7 +347,7 @@ describe("CalibrationCapture hardening — onCaptured throwing AFTER a successfu
     const onCaptured = vi.fn(() => {
       throw new Error("shell verdict-reveal blew up");
     });
-    render(<CalibrationCapture findingId="sf-iter-x" onCaptured={onCaptured} />);
+    render(<CalibrationCapture refId="sf-iter-x" onCaptured={onCaptured} />);
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "captured then callback throws" },
     });
@@ -379,7 +379,7 @@ describe("CalibrationCapture hardening — onCaptured throwing AFTER a successfu
     });
     const c = watchConsole();
     const onCaptured = vi.fn();
-    render(<CalibrationCapture findingId="sf-iter-x" onCaptured={onCaptured} />);
+    render(<CalibrationCapture refId="sf-iter-x" onCaptured={onCaptured} />);
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "post fails" },
     });
@@ -396,13 +396,13 @@ describe("CalibrationCapture hardening — onCaptured throwing AFTER a successfu
   });
 });
 
-describe("CalibrationCapture hardening — malformed findingId prop (POST path)", () => {
-  it("a null findingId POSTs an empty ref_id (degrade, not crash) and still honors the ordering contract", async () => {
+describe("CalibrationCapture hardening — malformed refId prop (POST path)", () => {
+  it("a null refId POSTs an empty ref_id (degrade, not crash) and still honors the ordering contract", async () => {
     const { calls } = stubCalibrationOk();
     const onCaptured = vi.fn();
     render(
       <CalibrationCapture
-        findingId={null as unknown as string}
+        refId={null as unknown as string}
         onCaptured={onCaptured}
       />,
     );

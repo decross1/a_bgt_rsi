@@ -1,11 +1,11 @@
 // Hardening for DirectiveSignOffField against the HOUSE ROBUSTNESS DOCTRINE.
 //
-// DirectiveSignOffField is a CONTROLLED field: the integrator owns `iterationId`
+// DirectiveSignOffField is a CONTROLLED field: the integrator owns `findingId`
 // and `note` and lifts them off producer-owned JSON (active_run.json / the
 // /api/* envelopes). The `string` types on those props are a compile-time
 // fiction over an unchecked stream — a legacy/partial body can hand the field a
 // non-string (null, a number, an object) where a string is expected. A bare
-// `note.trim()` / `iterationId` template-interpolation then throws "x.trim is
+// `note.trim()` / `findingId` template-interpolation then throws "x.trim is
 // not a function" and blanks the whole cockpit on one bad field. The fix coerces
 // each controlled prop to a safe string (SystemActivityHero.asText idiom): a
 // non-string degrades to "" — the SAME bare-placeholder path as a genuinely
@@ -74,7 +74,7 @@ describe("DirectiveSignOffField hardening — non-string controlled props", () =
       const c = watchConsole();
       const { container, unmount } = render(
         <DirectiveSignOffField
-          iterationId="iter-2026-06-14-001"
+          findingId="iter-2026-06-14-001"
           note={note as unknown as string}
           available={true}
         />,
@@ -89,12 +89,12 @@ describe("DirectiveSignOffField hardening — non-string controlled props", () =
     }
   });
 
-  it("a non-string `iterationId` degrades to the <iter-ID> placeholder in the argv preview, never throws", () => {
-    for (const [name, iterationId] of BAD_STRINGS) {
+  it("a non-string `findingId` degrades to the <FINDING_ID> placeholder in the argv preview, never throws", () => {
+    for (const [name, findingId] of BAD_STRINGS) {
       const c = watchConsole();
       const { unmount } = render(
         <DirectiveSignOffField
-          iterationId={iterationId as unknown as string}
+          findingId={findingId as unknown as string}
           note="audit note"
           available={true}
         />,
@@ -105,7 +105,7 @@ describe("DirectiveSignOffField hardening — non-string controlled props", () =
       });
       const argv = screen.getByTestId("directive-signoff-argv").textContent ?? "";
       // The malformed id degrades to the placeholder rather than leaking junk.
-      expect(argv, name).toContain("<iter-ID>");
+      expect(argv, name).toContain("<FINDING_ID>");
       expect(argv, name).not.toContain("[object Object]");
       expect(argv, name).not.toContain("NaN");
       expect(c.error, name).not.toHaveBeenCalled();
@@ -117,7 +117,7 @@ describe("DirectiveSignOffField hardening — non-string controlled props", () =
     const c = watchConsole();
     render(
       <DirectiveSignOffField
-        iterationId="iter-1"
+        findingId="iter-1"
         note={{ legacy: "row" } as unknown as string}
         available={true}
       />,
@@ -139,7 +139,7 @@ describe("DirectiveSignOffField hardening — non-string controlled props", () =
     watchConsole();
     render(
       <DirectiveSignOffField
-        iterationId="iter-2026-06-14-007"
+        findingId="iter-2026-06-14-007"
         note="looks sound; advancing"
         available={true}
       />,
@@ -165,7 +165,7 @@ describe("DirectiveSignOffField hardening — `available` coerced strictly", () 
       const c = watchConsole();
       const { unmount } = render(
         <DirectiveSignOffField
-          iterationId="iter-1"
+          findingId="iter-1"
           note="note"
           available={available as unknown as boolean}
         />,
@@ -186,7 +186,7 @@ describe("DirectiveSignOffField hardening — `available` coerced strictly", () 
   it("available === true (only) enables the live submit", () => {
     watchConsole();
     render(
-      <DirectiveSignOffField iterationId="iter-1" note="note" available={true} />,
+      <DirectiveSignOffField findingId="iter-1" note="note" available={true} />,
     );
     expect(screen.queryByTestId("directive-signoff-stub")).toBeNull();
     fireEvent.change(screen.getByLabelText("sign-off directive (optional)"), {
@@ -213,7 +213,7 @@ describe("DirectiveSignOffField hardening — malformed POST response body", () 
       const c = watchConsole();
       stubSignoff(body);
       const { unmount } = render(
-        <DirectiveSignOffField iterationId="iter-1" note="note" available={true} />,
+        <DirectiveSignOffField findingId="iter-1" note="note" available={true} />,
       );
       await submitDirective();
       // The result region either stays silent (null/non-object) or degrades to a
@@ -235,7 +235,7 @@ describe("DirectiveSignOffField hardening — malformed POST response body", () 
       would_run: ["python", { obj: 1 }, null, 7, NaN, ["nested"], "--flag"],
     });
     render(
-      <DirectiveSignOffField iterationId="iter-1" note="note" available={true} />,
+      <DirectiveSignOffField findingId="iter-1" note="note" available={true} />,
     );
     await submitDirective();
     const pre = await screen.findByTestId("directive-signoff-wouldrun");
@@ -264,7 +264,7 @@ describe("DirectiveSignOffField hardening — malformed POST response body", () 
       would_run: ["orchestrator.gate_cli", "--verdict", "valid"],
     });
     render(
-      <DirectiveSignOffField iterationId="iter-1" note="note" available={true} />,
+      <DirectiveSignOffField findingId="iter-1" note="note" available={true} />,
     );
     await submitDirective();
     const result = await screen.findByTestId("directive-signoff-result");
@@ -285,7 +285,7 @@ describe("DirectiveSignOffField hardening — malformed POST response body", () 
     watchConsole();
     stubSignoff({ recorded: true, verdict: "valid" });
     render(
-      <DirectiveSignOffField iterationId="iter-1" note="note" available={true} />,
+      <DirectiveSignOffField findingId="iter-1" note="note" available={true} />,
     );
     await submitDirective();
     const result = await screen.findByTestId("directive-signoff-result");
@@ -297,7 +297,7 @@ describe("DirectiveSignOffField hardening — malformed POST response body", () 
     watchConsole();
     stubSignoff({ stub: true, would_run: ["orchestrator.gate_cli", "--verdict", "valid"] });
     render(
-      <DirectiveSignOffField iterationId="iter-1" note="note" available={true} />,
+      <DirectiveSignOffField findingId="iter-1" note="note" available={true} />,
     );
     await submitDirective();
     const result = await screen.findByTestId("directive-signoff-result");
@@ -311,7 +311,7 @@ describe("DirectiveSignOffField hardening — malformed POST response body", () 
     const c = watchConsole();
     stubSignoff({ detail: "Not Found" }, 404);
     render(
-      <DirectiveSignOffField iterationId="iter-1" note="note" available={true} />,
+      <DirectiveSignOffField findingId="iter-1" note="note" available={true} />,
     );
     await submitDirective();
     // postTodo throws TodoError on !ok; the field surfaces it in the error slot.
@@ -327,7 +327,7 @@ describe("DirectiveSignOffField hardening — malformed POST response body", () 
     watchConsole();
     stubSignoff({ rc: 3, stderr: "gate_cli: iteration not found\n" }, 502);
     render(
-      <DirectiveSignOffField iterationId="iter-1" note="note" available={true} />,
+      <DirectiveSignOffField findingId="iter-1" note="note" available={true} />,
     );
     await submitDirective();
     const stderr = await screen.findByTestId("directive-signoff-stderr");

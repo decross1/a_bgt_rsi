@@ -118,8 +118,9 @@ describe("Todo cockpit shell", () => {
 
   it("after calibration: the FINDING resolution surfaces are present", async () => {
     // FINDING-kind item: the finding-keyed forms render (authorize-fix,
-    // spawn-topic, abstain). directive-signoff is ITERATION-keyed, asserted in
-    // the kind-gating suite; here we pin the finding family.
+    // spawn-topic, abstain, and directive-signoff — it signs off a FINDING via
+    // finding_session --set-status; wiring doc 1d). The full matrix is asserted
+    // in the kind-gating suite; here we pin the finding family.
     renderTodo({ availability: AVAILABILITY_STUB, items: FINDING_ITEMS });
     fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
       target: { value: "p" },
@@ -175,11 +176,19 @@ describe("Todo cockpit shell", () => {
     expect(within(tutor).queryByRole("button")).toBeNull();
   });
 
-  it("two-voice pane is gated off availability (disabled send while the seam is dark)", () => {
+  it("two-voice pane is gated off availability (disabled send while the seam is dark)", async () => {
     // Two-voice is a FINDING-keyed aux pane (it interrogates a finding); it
-    // renders only for a finding_review item.
+    // renders only for a finding_review item AND only AFTER calibration — the
+    // interactive interrogation is gated behind the pre-verdict calibration (the
+    // static overview is the pre-calibration affordance; D-054).
     renderTodo({ availability: AVAILABILITY_STUB, items: FINDING_ITEMS });
-    expect(screen.getByTestId("two-voice-chat-pane")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
+      target: { value: "p" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /capture calibration/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId("two-voice-chat-pane")).toBeInTheDocument(),
+    );
     expect(screen.getByTestId("two-voice-send")).toBeDisabled();
   });
 

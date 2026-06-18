@@ -151,9 +151,14 @@ def _exec_blessed(runner, repo_root: Path, module: str, args: list[str]):
         return JSONResponse(status_code=502, content={"rc": rc, "stderr": stderr})
     try:
         return json.loads(stdout)
-    except (json.JSONDecodeError, TypeError):
+    except (ValueError, TypeError):
         # A zero-exit CLI that printed non-JSON broke the D-046 contract;
-        # surface everything rather than fake a success shape.
+        # surface everything rather than fake a success shape. We catch the
+        # broad ValueError (not just json.JSONDecodeError, its subclass): a
+        # numeric literal over CPython's int<->str digit limit (>4300 digits)
+        # makes json.loads itself raise a BARE ValueError, which would otherwise
+        # escape and 500 the endpoint (the read-layer half of the encoder-
+        # overflow class — surface it as the same honest 502 contract break).
         return JSONResponse(status_code=502, content={
             "rc": rc, "stderr": stderr, "stdout": stdout,
             "error": "CLI exited 0 but stdout was not parseable JSON"})
