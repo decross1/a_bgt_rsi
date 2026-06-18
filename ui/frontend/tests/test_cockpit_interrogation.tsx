@@ -102,7 +102,7 @@ describe("CalibrationCapture", () => {
     const { calls } = stubCalibrationOk();
     const onCaptured = vi.fn();
     render(
-      <CalibrationCapture findingId="sf-iter-x" onCaptured={onCaptured} />,
+      <CalibrationCapture refId="sf-iter-x" onCaptured={onCaptured} />,
     );
 
     // The stub banner is visible (seam not yet live).

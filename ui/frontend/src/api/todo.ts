@@ -16,6 +16,9 @@
 // gate_verdict via attest.ts; only the directive variant lives here.
 import { API_BASE } from "./http";
 import type {
+  ChatMode,
+  ChatStartResult,
+  ChatTurnResult,
   CockpitAvailability,
   ConcurrencyStatus,
 } from "../types/todo";
@@ -195,11 +198,14 @@ export const postAuthorizeFix = (body: {
   note: string;
 }) => postTodo("/api/todo/authorize_fix", body);
 
-// Outcome 1 variant — directive sign-off: a sign-off carrying "proceed to
-// <next step>" (vs a bare gate_verdict, which goes through attest.ts). The
-// directive is recorded on the verdict/audit row by the NEW sign-off CLI.
+// Outcome 1 variant — directive sign-off: sign off a FINDING (status →
+// validated) carrying "proceed to <next step>". Keyed on FINDING_ID, not
+// iteration_id (docs/cockpit_seam_wiring.md row 1d): the writer is
+// `finding_session --set-status <FINDING_ID> validated --directive <next-step>`;
+// the directive lands on the status_audit_row only (loop_feedback stays frozen).
+// A bare sign-off (no directive) goes through attest.ts /finding_review.
 export const postDirectiveSignoff = (body: {
-  iteration_id: string;
+  finding_id: string;
   note: string;
   directive: string;
 }) => postTodo("/api/todo/directive_signoff", body);
@@ -228,3 +234,24 @@ export const postCalibration = (body: {
   prediction: string;
   confidence: number;
 }) => postTodo("/api/todo/calibration", body);
+
+// --- LIVE chat seam (U2 tutor / U3 two-voice, 2026-06-18 work order) ---
+// Exec path over `finding_session chat start|turn` (the ui/backend chat seam).
+// The chat is VERDICT-FENCED (start/turn only); the panes are session-local and
+// carry NO verdict props. `postChatStart` opens a session (returns session_id +
+// stances); `postChatTurn` sends one human-directed turn and returns the reply
+// envelope. Errors surface as TodoError (the CLI's stderr verbatim) like the
+// other cockpit POSTs.
+export const postChatStart = (body: {
+  mode: ChatMode;
+  finding_id: string;
+}): Promise<ChatStartResult> => postTodo("/api/todo/chat/start", body);
+
+export const postChatTurn = (body: {
+  mode: ChatMode;
+  finding_id: string;
+  session_id: string;
+  message: string;
+  // two_voice only; tutor mode rejects an addressee (single-voice).
+  addressee?: "defender" | "attacker" | "both";
+}): Promise<ChatTurnResult> => postTodo("/api/todo/chat/turn", body);

@@ -34,6 +34,7 @@ import AuthorizeFixForm from "../components/todo/AuthorizeFixForm";
 import SpawnTopicForm from "../components/todo/SpawnTopicForm";
 import AbstainForm from "../components/todo/AbstainForm";
 import TwoVoiceChatPane from "../components/todo/TwoVoiceChatPane";
+import TutorChatPane from "../components/todo/TutorChatPane";
 import TutorPanel from "../components/todo/TutorPanel";
 
 import { getCockpitAvailability, COCKPIT_UNAVAILABLE } from "../api/todo";
@@ -241,7 +242,7 @@ export default function Todo({ availability, items }: Props) {
             {/* THE ORDERING CONTRACT: calibration FIRST. */}
             <CalibrationCapture
               key={`calib-${selected.id}`}
-              findingId={selected.id}
+              refId={selected.id}
               available={actions.calibration}
               onCaptured={() => setCalibratedId(selected.id)}
             />
@@ -261,21 +262,10 @@ export default function Todo({ availability, items }: Props) {
                     (finding_review) carries a finding_id → only the finding-keyed
                     forms. selected.id is never crossed into the wrong family. */}
                 {kindClass === "iteration" && (
-                  <>
-                    {/* outcome 1 (bare) + outcome 2 (reject) — the blessed
-                        gate-verdict form: valid = sign off, invalid = reject.
-                        WANTS an iteration_id. */}
-                    <GateVerdictForm iterationId={selected.id} />
-
-                    {/* outcome 1 variant — sign off WITH a directive (stub). The
-                        note is the sign-off's audit note; left to the form here.
-                        WANTS an iteration_id. */}
-                    <DirectiveSignOffField
-                      iterationId={selected.id}
-                      note="signed off via /todo cockpit"
-                      available={actions.directive_signoff}
-                    />
-                  </>
+                  /* outcome 1 (bare) + outcome 2 (reject) — the blessed
+                     gate-verdict form: valid = sign off, invalid = reject. The
+                     ONLY iteration-keyed disposition (gate_cli --iteration-id). */
+                  <GateVerdictForm iterationId={selected.id} />
                 )}
 
                 {kindClass === "finding" && (
@@ -283,6 +273,17 @@ export default function Todo({ availability, items }: Props) {
                     {/* outcome 2 (finding reject path) — the blessed
                         finding-review form. WANTS a finding_id. */}
                     <FindingReviewForm findingId={selected.id} />
+
+                    {/* outcome 1 variant — sign off the FINDING with a directive
+                        (finding_session --set-status <FINDING_ID> validated
+                        --directive; docs/cockpit_seam_wiring.md row 1d). A bare
+                        sign-off (no directive) goes through FindingReviewForm.
+                        WANTS a finding_id — NOT an iteration_id. */}
+                    <DirectiveSignOffField
+                      findingId={selected.id}
+                      note="signed off via /todo cockpit"
+                      available={actions.directive_signoff}
+                    />
 
                     {/* outcome 4 — refine, authorize an autonomous fix (stub,
                         gated). WANTS a finding_id. */}
@@ -315,20 +316,43 @@ export default function Todo({ availability, items }: Props) {
         )}
       </section>
 
-      {/* 4) two-voice interrogation (gated) + tutor (FENCED from the verdict).
-          U5 KIND-GATE: aux panes are FINDING-keyed (they interrogate / explain a
-          finding), so they render ONLY for a finding_review item. selected.id is
-          therefore always a real finding_id here — never the empty-string id a
-          non-finding selection used to feed them, and never an iteration_id. */}
+      {/* 4) AUX — FINDING items only (U5 kind-gate: selected.id is a real
+          finding_id here, never an iteration_id or the empty-string fallback).
+          The tutor OVERVIEW is the BASIS for the calibration prediction, so it
+          is visible PRE-calibration. The INTERACTIVE panes — the live tutor
+          chat (U2) and the two-voice interrogation (U3) — are decision-support
+          whose back-and-forth could bias the pre-verdict calibration signal
+          §6.5.4 measures, so they unlock only AFTER calibration is captured
+          (D-054; this resolves the 2026-06-17 aux-vs-calibration flag). Both
+          chat panes gate on actions.two_voice_chat — the single signal that the
+          finding_session chat seam is live (it serves both tutor + two_voice). */}
       {selected !== null && kindClass === "finding" && (
-        <section className="mt-4 grid gap-3 md:grid-cols-2" data-testid="todo-aux">
-          <TwoVoiceChatPane
-            findingId={selected.id}
-            available={actions.two_voice_chat}
-          />
-          {/* The tutor is handed NO verdict props — it cannot influence or
-              auto-fill a verdict (D-044 independence; rule 4). */}
+        <section className="mt-4 space-y-3" data-testid="todo-aux">
+          {/* static overview — the finding's own content; handed NO verdict
+              props, so it cannot influence or auto-fill the verdict (the verdict
+              fence: 2026-06-14 PART 2 · inviolate rule 4 · D-053/D-054). D-044
+              governs the two-voice interrogator's independence — cited there. */}
           <TutorPanel findingId={selected.id} title={selected.title ?? undefined} />
+
+          {calibrated && (
+            <div
+              className="grid gap-3 md:grid-cols-2"
+              data-testid="todo-aux-interactive"
+            >
+              {/* live probing chat (U2) — fenced; it probes/explains, never
+                  recommends, and carries no verdict prop. */}
+              <TutorChatPane
+                findingId={selected.id}
+                available={actions.two_voice_chat}
+              />
+              {/* live two-voice interrogation (U3) — Gemma defends / Qwen
+                  attacks (D-044 interrogator independence). */}
+              <TwoVoiceChatPane
+                findingId={selected.id}
+                available={actions.two_voice_chat}
+              />
+            </div>
+          )}
         </section>
       )}
     </div>

@@ -100,6 +100,53 @@ export interface ChatTurn {
   text: string;
 }
 
+// --- LIVE chat seam (U2/U3, 2026-06-18 work order) ---
+// The single-line JSON envelope `orchestrator/finding_session.py` `chat
+// start|turn` emits (via the ui/backend chat exec path). The chat is
+// VERDICT-FENCED: only `start` and `turn` exist (no disposition verb).
+// `tutor` mode is single-voice (`stances:null`, replies carry `stance:null`,
+// no `addressee`); `two_voice` carries the two-stance object + an `addressee`.
+// Every field is producer-owned (CLI stdout) — defensive-optional.
+export type ChatMode = "tutor" | "two_voice";
+
+// One model reply within a turn. `stance` is null in tutor mode; "defender"
+// (Gemma) / "attacker" (Qwen) in two_voice. Index signature stays
+// forward-compatible with extra envelope keys.
+export interface ChatReply {
+  stance?: string | null;
+  reply?: string | null;
+  request_id?: string | null;
+  [key: string]: unknown;
+}
+
+// `chat start` envelope. `session_id` threads into every subsequent turn;
+// `stances` is null (tutor) or the two-stance object (two_voice).
+export interface ChatStartResult {
+  ok?: boolean;
+  mode?: string;
+  action?: "start" | string;
+  finding_id?: string;
+  session_id?: string;
+  stances?: unknown;
+  [key: string]: unknown;
+}
+
+// `chat turn` envelope. `addressee`/`warning` appear only in two_voice;
+// `capped` flags the turn/token cap; `replies` is the model output(s).
+export interface ChatTurnResult {
+  ok?: boolean;
+  mode?: string;
+  action?: "turn" | string;
+  finding_id?: string;
+  session_id?: string;
+  turn_index?: number | null;
+  capped?: boolean | null;
+  addressee?: string | null;
+  warning?: string | null;
+  replies?: ChatReply[];
+  [key: string]: unknown;
+}
+
 // --- concurrency guard (mirrors GET /api/todo/concurrency) ---
 // The loop and the cockpit reuse the SAME models (Gemma gen+defend; Qwen
 // skeptic+attack). When an iteration is mid-flight the cockpit shows an

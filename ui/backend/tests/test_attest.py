@@ -472,6 +472,20 @@ def test_zero_exit_with_nonjson_stdout_is_502(repo):
     assert body["stdout"] == "wrote it!\n"   # surfaced, not faked as success
 
 
+def test_zero_exit_with_huge_bigint_stdout_is_502_not_500(repo):
+    # A >4300-digit integer literal makes json.loads itself raise a BARE
+    # ValueError (CPython's int<->str digit limit), NOT a JSONDecodeError.
+    # _exec_blessed catches the broad ValueError so this surfaces as the honest
+    # 502 contract break for EVERY blessed-exec caller, never an uncaught 500
+    # (the read-layer half of the encoder-overflow class; cf. chat_seam).
+    huge = "9" * 4400
+    runner = StubRunner(returncode=0, stdout='{"n": ' + huge + '}\n', stderr="")
+    resp = _client(repo, runner).post("/api/attest/gate_verdict",
+                                      json=_VALID_PAYLOADS["gate_verdict"])
+    assert resp.status_code == 502
+    assert resp.json()["rc"] == 0
+
+
 # ─── unblessed kinds have NO direct-resolution endpoints ────────────────
 
 

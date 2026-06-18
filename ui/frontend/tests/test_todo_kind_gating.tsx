@@ -135,9 +135,11 @@ describe("Todo cockpit — U5 kind-gate", () => {
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("directive-signoff-field")).toBeInTheDocument();
 
     // FINDING-keyed forms + aux panes ABSENT — no iteration_id reaches them.
+    // directive-signoff is now FINDING-keyed (it signs off a finding via
+    // finding_session --set-status validated --directive; wiring doc 1d).
+    expect(screen.queryByTestId("directive-signoff-field")).toBeNull();
     expect(screen.queryByTestId("finding-review-form")).toBeNull();
     expect(screen.queryByTestId("authorize-fix-form")).toBeNull();
     expect(screen.queryByTestId("spawn-topic-form")).toBeNull();
@@ -163,6 +165,8 @@ describe("Todo cockpit — U5 kind-gate", () => {
     await waitFor(() =>
       expect(screen.getByTestId("finding-review-form")).toBeInTheDocument(),
     );
+    // directive sign-off is a FINDING op (set-status validated --directive).
+    expect(screen.getByTestId("directive-signoff-field")).toBeInTheDocument();
     expect(screen.getByTestId("authorize-fix-form")).toBeInTheDocument();
     expect(screen.getByTestId("spawn-topic-form")).toBeInTheDocument();
     expect(screen.getByTestId("abstain-form")).toBeInTheDocument();
@@ -176,7 +180,6 @@ describe("Todo cockpit — U5 kind-gate", () => {
 
     // ITERATION-keyed forms ABSENT — no finding_id reaches GateVerdictForm.
     expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
-    expect(screen.queryByTestId("directive-signoff-field")).toBeNull();
 
     // Kind-agnostic surfaces still present.
     await waitFor(() =>
@@ -255,9 +258,10 @@ describe("Todo cockpit — U5 kind-gate", () => {
 // The keyed form testids, grouped by the family their id is keyed for. The
 // invariant: for an "other"-classed kind NEITHER group renders; the two groups
 // are mutually exclusive for the enum kinds.
-const ITERATION_KEYED = ["gate-verdict-form", "directive-signoff-field"] as const;
+const ITERATION_KEYED = ["gate-verdict-form"] as const;
 const FINDING_KEYED = [
   "finding-review-form",
+  "directive-signoff-field",
   "authorize-fix-form",
   "spawn-topic-form",
   "abstain-form",
@@ -420,8 +424,8 @@ describe("Todo cockpit — U5 kind-gate: selection SWITCHING unmounts the wrong 
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("directive-signoff-field")).toBeInTheDocument();
-    // ...and EVERY finding-keyed surface + the aux is GONE (no stale lingering).
+    // ...and EVERY finding-keyed surface (incl. directive-signoff now) + the aux
+    // is GONE (no stale lingering).
     for (const id of FINDING_KEYED) expect(screen.queryByTestId(id)).toBeNull();
     expect(screen.queryByTestId("todo-aux")).toBeNull();
   });
@@ -560,7 +564,8 @@ describe("Todo cockpit — U5 kind-gate: calibration ORDERING holds for BOTH kin
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("directive-signoff-field")).toBeInTheDocument();
+    // directive-signoff is finding-keyed now — absent for a gate_verdict item.
+    expect(screen.queryByTestId("directive-signoff-field")).toBeNull();
     expect(screen.queryByTestId("resolution-locked")).toBeNull();
   });
 
@@ -580,22 +585,30 @@ describe("Todo cockpit — U5 kind-gate: calibration ORDERING holds for BOTH kin
   // residual_risks for the human/primary to rule on — it is NOT silently "fixed"
   // here (would invent a contract the spec does not state, inviolate rule 8) nor
   // silently accepted.
-  it("DOCUMENTED: a finding item's AUX panes render pre-calibration (verdict forms do NOT)", () => {
+  it("RESOLVED: pre-calibration the tutor OVERVIEW renders; the INTERACTIVE aux gates on calibration (D-054)", async () => {
+    // Resolution of the 2026-06-17 aux-vs-calibration flag: the static tutor
+    // OVERVIEW is the BASIS for the calibration prediction, so it is visible
+    // PRE-calibration; the INTERACTIVE panes (live tutor chat + two-voice
+    // interrogation) are decision-support that could bias the pre-verdict
+    // calibration signal §6.5.4 measures, so they unlock only AFTER calibration.
     renderTodo(FINDING_REVIEW_ITEM);
-    // Pre-calibration: forms locked...
+    // Pre-calibration: verdict forms locked...
     expect(screen.getByTestId("resolution-locked")).toBeInTheDocument();
     expect(screen.queryByTestId("resolution-forms")).toBeNull();
     for (const id of FINDING_VERDICT_FORMS) expect(screen.queryByTestId(id)).toBeNull();
-    // ...but the aux IS present (current behavior — pinned, flagged in report).
+    // ...the tutor OVERVIEW (the prediction basis) IS shown...
     expect(screen.getByTestId("todo-aux")).toBeInTheDocument();
+    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
+    // ...but the INTERACTIVE interrogation panes are NOT yet rendered.
+    expect(screen.queryByTestId("todo-aux-interactive")).toBeNull();
+    expect(screen.queryByTestId("two-voice-chat-pane")).toBeNull();
+    expect(screen.queryByTestId("tutor-chat-pane")).toBeNull();
+
+    // After calibration, the interactive interrogation unlocks.
+    await captureCalibration();
+    expect(screen.getByTestId("todo-aux-interactive")).toBeInTheDocument();
     expect(screen.getByTestId("two-voice-chat-pane")).toBeInTheDocument();
-    // And even pre-calibration the aux still gets the REAL finding_id (the U5
-    // invariant holds regardless of the ordering question): never "" / iteration.
-    expect(
-      within(screen.getByTestId("two-voice-chat-pane")).getByText(
-        /directed at both · sf-2026-06-14-001/,
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("tutor-chat-pane")).toBeInTheDocument();
   });
 
   // The MIRROR for an iteration item: NO aux pane renders pre- OR post-calibration
@@ -611,4 +624,223 @@ describe("Todo cockpit — U5 kind-gate: calibration ORDERING holds for BOTH kin
     expect(screen.queryByTestId("todo-aux")).toBeNull(); // post-calibration
     expect(screen.queryByTestId("two-voice-chat-pane")).toBeNull();
   });
+});
+
+// ===========================================================================
+// ADVERSARIAL-VERIFY additions, ROUND 2 (independent auditor, 2026-06-18).
+// The D-054 aux calibration-gate (Todo.tsx block 4): for a finding_review item
+// the static tutor OVERVIEW (testid tutor-panel) renders PRE-calibration, but the
+// INTERACTIVE panes (todo-aux-interactive wrapper + tutor-chat-pane + two-voice-
+// chat-pane) mount ONLY after calibration is captured. The existing "RESOLVED"
+// test pins the single-selection phase transition; these blocks attack the gate
+// where it is most likely to leak: SELECTION SWITCHING between two FINDINGS (the
+// per-item ordering must RE-LOCK the interactive panes on a not-yet-calibrated
+// sibling), the gate's INDEPENDENCE from the kind-gate, and the interactive panes'
+// total absence (not just two-voice but the tutor-chat-pane + the wrapper) under
+// HOSTILE kinds. The interactive trio is distinct from the static tutor-panel and
+// must be enumerated as such — the FINDING_KEYED list above carries tutor-panel,
+// NOT tutor-chat-pane, so a leak of the live chat pane would slip past it.
+// ===========================================================================
+
+// A SECOND finding_review item, distinct id, so we can switch between two findings
+// and prove the calibration-gate is tracked PER ITEM (calibrating A must not leave
+// B's interactive panes unlocked). Its id is a real, non-empty finding_id.
+const FINDING_REVIEW_ITEM_B: HumanTodoItem = {
+  kind: "finding_review",
+  id: "sf-2026-06-15-009",
+  title: "Finding: equilibrium shading persists under second-price tie-break",
+};
+
+// The INTERACTIVE aux trio — the panes D-054 gates behind calibration. Distinct
+// from the static tutor-panel OVERVIEW (which renders pre-cal). A leak of ANY of
+// these pre-calibration is the contamination D-054 forbids.
+const AUX_INTERACTIVE = [
+  "todo-aux-interactive",
+  "tutor-chat-pane",
+  "two-voice-chat-pane",
+] as const;
+
+function expectInteractiveLocked() {
+  for (const id of AUX_INTERACTIVE) expect(screen.queryByTestId(id)).toBeNull();
+}
+function expectInteractiveUnlocked() {
+  for (const id of AUX_INTERACTIVE) expect(screen.getByTestId(id)).toBeInTheDocument();
+}
+
+describe("Todo cockpit — D-054 aux calibration-gate: static overview vs interactive panes", () => {
+  // The crisp single-selection contract, asserted on the FULL interactive trio
+  // (the RESOLVED test omits the todo-aux-interactive wrapper from its pre-cal
+  // absence check and never asserts tutor-chat-pane's presence post-cal alongside
+  // the wrapper). PRE-cal: tutor-panel overview present, interactive trio absent.
+  // POST-cal: the SAME tutor-panel overview still present AND the interactive trio
+  // mounts. The static overview never disappears — it is the calibration BASIS.
+  it("finding pre-cal: tutor OVERVIEW shows, interactive trio absent; post-cal: trio mounts, overview persists", async () => {
+    renderTodo(FINDING_REVIEW_ITEM);
+
+    // PRE-calibration: the aux SECTION + the static overview are up...
+    expect(screen.getByTestId("todo-aux")).toBeInTheDocument();
+    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
+    // ...but NONE of the interactive panes (nor their grid wrapper) exist yet.
+    expectInteractiveLocked();
+    // The verdict forms are also still locked (the ordering gate is shut).
+    expect(screen.getByTestId("resolution-locked")).toBeInTheDocument();
+
+    await captureCalibration();
+
+    // POST-calibration: the interactive trio mounts in full...
+    expectInteractiveUnlocked();
+    // ...and the static overview is STILL present (it was the prediction basis,
+    // not a thing that toggles off when the interactive panes arrive).
+    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("todo-aux")).toBeInTheDocument();
+  });
+
+  // INDEPENDENCE of the calibration-gate from the kind-gate: an ITERATION item
+  // has NO aux at all (kind-gate excludes it) — so the calibration-gate has nothing
+  // to gate. Neither the static overview NOR the interactive trio appears at ANY
+  // phase. This proves the two gates compose: kind-gate decides IF aux exists,
+  // calibration-gate decides WHEN the interactive subset of it unlocks.
+  it("an iteration item: NO aux overview and NO interactive trio at either phase (gates compose)", async () => {
+    renderTodo(GATE_VERDICT_ITEM);
+    // Pre-cal: no aux section, no overview, no interactive trio.
+    expect(screen.queryByTestId("todo-aux")).toBeNull();
+    expect(screen.queryByTestId("tutor-panel")).toBeNull();
+    expectInteractiveLocked();
+
+    await captureCalibration();
+    await waitFor(() =>
+      expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
+    );
+    // Post-cal: STILL no aux of any kind — the interactive panes never mount for
+    // an iteration item even once calibration is captured.
+    expect(screen.queryByTestId("todo-aux")).toBeNull();
+    expect(screen.queryByTestId("tutor-panel")).toBeNull();
+    expectInteractiveLocked();
+  });
+});
+
+describe("Todo cockpit — D-054 aux calibration-gate: PER-ITEM re-lock across finding↔finding switch", () => {
+  function renderTwoFindings() {
+    return render(
+      <MemoryRouter initialEntries={["/todo"]}>
+        <Todo
+          availability={AVAILABILITY_LIVE}
+          items={[FINDING_REVIEW_ITEM, FINDING_REVIEW_ITEM_B]}
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  // The sharpest D-054 attack: TWO findings. Calibrate finding A → A's interactive
+  // panes unlock. Switch to finding B (not yet calibrated) → the interactive panes
+  // must RE-LOCK (the per-item ordering gate tracks calibratedId === selected.id,
+  // so a calibrated sibling does NOT carry its unlock across). Crucially the static
+  // tutor OVERVIEW for B still shows (it is the basis for B's own calibration) and
+  // carries B's REAL finding_id — never A's, never "". Then calibrate B → B unlocks.
+  it("calibrate finding A, switch to finding B: interactive panes RE-LOCK until B is calibrated", async () => {
+    renderTwoFindings();
+
+    // Finding A is default-selected. Pre-cal: interactive locked, overview shows.
+    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
+    expectInteractiveLocked();
+
+    // Calibrate A → A's interactive trio unlocks, fed A's real finding_id.
+    await captureCalibration();
+    expectInteractiveUnlocked();
+    {
+      const twoVoiceA = screen.getByTestId("two-voice-chat-pane");
+      expect(
+        within(twoVoiceA).getByText(/directed at both · sf-2026-06-14-001/),
+      ).toBeInTheDocument();
+    }
+
+    // Switch to finding B (its id is the chooser button label).
+    fireEvent.click(screen.getByRole("button", { name: "sf-2026-06-15-009" }));
+
+    // B is NOT yet calibrated → the per-item gate RE-LOCKS the interactive panes,
+    // even though A was calibrated. The verdict forms re-lock too.
+    await waitFor(() =>
+      expect(screen.getByTestId("resolution-locked")).toBeInTheDocument(),
+    );
+    expectInteractiveLocked();
+    // But B's static OVERVIEW is shown (the basis for B's calibration) and carries
+    // B's OWN finding_id — A's unlock did not leak A's id into B's aux.
+    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
+
+    // Calibrate B → NOW B's interactive trio unlocks, fed B's real finding_id
+    // (sf-2026-06-15-009), never A's (sf-2026-06-14-001), never "".
+    await captureCalibration();
+    expectInteractiveUnlocked();
+    const twoVoiceB = screen.getByTestId("two-voice-chat-pane");
+    expect(
+      within(twoVoiceB).getByText(/directed at both · sf-2026-06-15-009/),
+    ).toBeInTheDocument();
+    // A's id must not appear in B's interactive pane (no stale-id leak on switch).
+    expect(within(twoVoiceB).queryByText(/sf-2026-06-14-001/)).toBeNull();
+  });
+
+  // The reverse direction + a calibrated→calibrated round trip: switching BACK to
+  // finding A (already calibrated earlier this render) must NOT auto-unlock — the
+  // gate keys on the LAST captured id, and a switch away then back lands on the
+  // most-recent calibratedId. We assert the deterministic current behavior: A
+  // re-locks on return because calibratedId now points at B (only one slot). This
+  // pins the single-slot calibratedId semantics so a future multi-slot change is
+  // a DELIBERATE, visible edit.
+  it("round trip A→B→A: returning to A re-locks (single-slot calibratedId semantics)", async () => {
+    renderTwoFindings();
+
+    // Calibrate A.
+    await captureCalibration();
+    expectInteractiveUnlocked();
+
+    // Switch to B, calibrate B → calibratedId now points at B.
+    fireEvent.click(screen.getByRole("button", { name: "sf-2026-06-15-009" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("resolution-locked")).toBeInTheDocument(),
+    );
+    await captureCalibration();
+    expectInteractiveUnlocked();
+
+    // Switch BACK to A → calibratedId (=== B's id) !== A's id, so A re-locks.
+    fireEvent.click(screen.getByRole("button", { name: "sf-2026-06-14-001" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("resolution-locked")).toBeInTheDocument(),
+    );
+    expectInteractiveLocked();
+    // A's static overview is back (basis for re-calibrating A).
+    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
+  });
+});
+
+describe("Todo cockpit — D-054 aux calibration-gate: hostile kinds NEVER mount the interactive trio", () => {
+  // The kind-gate excludes the aux for any non-finding kind, so the calibration-
+  // gate's interactive trio must be absent for a HOSTILE kind at BOTH phases —
+  // even after calibration is captured. (The hostile-kind block above asserts the
+  // keyed FORMS absent and lists tutor-panel + two-voice-chat-pane, but does NOT
+  // enumerate tutor-chat-pane or the todo-aux-interactive wrapper — a live tutor
+  // chat pane leaking for a hostile kind would slip past it. We close that here.)
+  const HOSTILE_AUX_KINDS: ReadonlyArray<readonly [string, unknown]> = [
+    ["null", null],
+    ["an object spoofing finding_review", { kind: "finding_review" }],
+    ["whitespace-padded finding_review", "  finding_review  "],
+    ["wrong-case Finding_Review", "Finding_Review"],
+    ["empty string", ""],
+  ];
+
+  for (const [label, kind] of HOSTILE_AUX_KINDS) {
+    it(`kind = ${label} → no interactive aux trio pre- OR post-calibration`, async () => {
+      renderTodo(itemWithKind(kind));
+      // Pre-cal: no aux section, no interactive trio.
+      expect(screen.queryByTestId("todo-aux")).toBeNull();
+      expectInteractiveLocked();
+
+      // Even AFTER calibration is captured, the interactive trio must stay absent
+      // (the kind-gate excludes the aux entirely; calibration cannot conjure it).
+      await captureCalibration();
+      expect(screen.queryByTestId("todo-aux")).toBeNull();
+      expectInteractiveLocked();
+      // The kind-agnostic calibration capture is still present (never stranded).
+      expect(screen.getByTestId("calibration-capture")).toBeInTheDocument();
+    });
+  }
 });

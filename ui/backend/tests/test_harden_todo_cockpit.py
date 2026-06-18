@@ -8,6 +8,11 @@ POST payload that is missing/empty/wrong-type/oversize/unicode/leading-dash must
 degrade for each realistic malformed/edge input; the existing
 ``test_todo_cockpit.py`` covers the happy + basic-422 paths and stays green.
 
+The one-shot seams (authorize_fix / directive_signoff / calibration) exec a
+blessed CLI; an injected STUB runner stands in for ``subprocess.run`` so a happy
+path never spawns a real process. The session-exits (spawn_topic / abstain) exec
+nothing. NO test here execs a real CLI or a real model.
+
 The load-bearing fix this file pins: a malformed ``active_run.json`` whose
 surfaced field holds a non-finite float (Python's ``json.loads`` ACCEPTS the
 ``NaN``/``Infinity``/``-Infinity`` literals) previously reached the JSONResponse
@@ -16,23 +21,44 @@ encoder and 500'd ``GET /api/todo/concurrency``. It now fails safe to
 """
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend import todo_cockpit
 from backend.todo_cockpit import register
 
+
+class _StubRunner:
+    """Stand-in for ``subprocess.run`` — records argv, returns a canned zero-exit
+    result with VALID JSON stdout. NEVER spawns a process (no real CLI/model)."""
+
+    def __init__(self):
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(list(argv))
+
+        class _Proc:
+            returncode = 0
+            stdout = '{"ok": true}'
+            stderr = ""
+        return _Proc()
+
+
 # All POST seams + a known-good payload, so a fuzz can keep the *other* fields
-# valid while corrupting one. Mirrors test_todo_cockpit._VALID_PAYLOADS.
+# valid while corrupting one. directive_signoff / spawn_topic / abstain key on
+# finding_id now (the U4 corrections).
 _VALID = {
     "authorize_fix": {"ref_id": "sf-001", "task": "re-run novelty",
                       "note": "looks promising"},
-    "directive_signoff": {"iteration_id": "iter-1", "note": "checked",
+    "directive_signoff": {"finding_id": "sf-1", "note": "checked",
                           "directive": "proceed"},
-    "spawn_topic": {"ref_id": "sf-002", "kind": "finding", "topic": "holds?"},
-    "abstain": {"ref_id": "sf-003", "note": "re-look later"},
+    "spawn_topic": {"finding_id": "sf-002", "topic": "holds?"},
+    "abstain": {"finding_id": "sf-003", "note": "re-look later"},
     "calibration": {"ref_id": "sf-001", "prediction": "valid",
                     "confidence": 0.7},
 }
@@ -41,11 +67,12 @@ _ENDPOINTS = sorted(_VALID)
 
 @pytest.fixture()
 def repo(tmp_path) -> Path:
-    """tmp 'primary repo root' — interpreter + seam modules exist for the
-    /available existence checks; nothing is ever executed."""
+    """tmp 'primary repo root' — interpreter + the CORRECTED seam modules exist
+    for the /available existence checks; nothing is ever executed for real (the
+    one-shot seams exec through the injected stub runner)."""
     for rel in (".venv-chroma/bin/python",
-                "orchestrator/todo_cli.py",
-                "orchestrator/gate_cli.py",
+                "orchestrator/authorize_fix.py",
+                "orchestrator/calibration_cli.py",
                 "orchestrator/finding_session.py"):
         p = tmp_path / rel
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -53,9 +80,9 @@ def repo(tmp_path) -> Path:
     return tmp_path
 
 
-def _client(repo_root: Path) -> TestClient:
+def _client(repo_root: Path, runner=None) -> TestClient:
     app = FastAPI()
-    register(app, repo_root=repo_root)
+    register(app, repo_root=repo_root, runner=runner or _StubRunner())
     # raise_server_exceptions=False so a 500 is OBSERVED (not re-raised) — that
     # is exactly the failure mode the doctrine forbids and we assert against.
     return TestClient(app, raise_server_exceptions=False)
@@ -108,8 +135,6 @@ _WRONG_TYPES = [123, 1.5, {"x": 1}, [1, 2], None, True]
 @pytest.mark.parametrize("bad", _WRONG_TYPES)
 def test_post_wrong_field_type_is_422(repo, endpoint, bad):
     for field in _VALID[endpoint]:
-        if field == "kind":
-            continue  # enum field: any non-member already 422s (own test below)
         if field == "confidence":
             continue  # numeric field has its own range/type tests below
         payload = dict(_VALID[endpoint])
@@ -121,12 +146,13 @@ def test_post_wrong_field_type_is_422(repo, endpoint, bad):
 # ─── id guards: oversize / unicode / leading-dash / whitespace => 422 ───
 
 
-# Every endpoint that takes an id field, and the field's name.
+# Every endpoint that takes an id field, and the field's name (corrected: the
+# directive_signoff / spawn_topic / abstain id field is finding_id now).
 _ID_FIELDS = {
     "authorize_fix": "ref_id",
-    "directive_signoff": "iteration_id",
-    "spawn_topic": "ref_id",
-    "abstain": "ref_id",
+    "directive_signoff": "finding_id",
+    "spawn_topic": "finding_id",
+    "abstain": "finding_id",
     "calibration": "ref_id",
 }
 
@@ -159,20 +185,23 @@ def test_id_field_max_len_boundary_accepted(repo):
 
 
 def test_free_text_accepts_unicode(repo):
-    # Free text (--task/--note/--directive/--topic/--prediction) is NOT charset
-    # restricted (never a positional argv flag) — unicode must pass unchanged.
+    # Free text (--task/--note/--directive/--prediction) is NOT charset
+    # restricted (never a positional argv flag) — unicode must pass unchanged
+    # into the blessed exec argv (asserted via the injected stub runner).
+    stub = _StubRunner()
     payload = dict(_VALID["authorize_fix"])
     payload["task"] = "café ☕ re-run \U0001f9ea"
-    body = _client(repo).post("/api/todo/authorize_fix", json=payload).json()
-    assert payload["task"] in body["would_run"]
+    r = _client(repo, runner=stub).post("/api/todo/authorize_fix", json=payload)
+    assert r.status_code == 200
+    assert payload["task"] in stub.calls[-1]          # forwarded to the CLI argv
 
 
-@pytest.mark.parametrize("blank", ["", "   ", "\t\n", " "])
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n", " "])
 def test_free_text_blank_is_422(repo, blank):
     payload = dict(_VALID["authorize_fix"])
     payload["note"] = blank
     r = _client(repo).post("/api/todo/authorize_fix", json=payload)
-    # NB:   (NBSP) is not stripped by str.strip in older runtimes; assert
+    # NB:   (NBSP) is not stripped by str.strip in older runtimes; assert
     # only the clearly-blank cases hard-fail. The first three MUST 422.
     if blank.strip() == "":
         assert r.status_code == 422
@@ -198,16 +227,6 @@ def test_calibration_bad_confidence_is_422(repo, bad):
     assert r.status_code == 422
 
 
-# ─── spawn_topic enum: out-of-enum / missing => 422 ─────────────────────
-
-
-@pytest.mark.parametrize("bad_kind", ["bogus", "", "FINDING", " finding"])
-def test_spawn_topic_out_of_enum_kind_is_422(repo, bad_kind):
-    r = _client(repo).post("/api/todo/spawn_topic", json={
-        "ref_id": "sf-1", "kind": bad_kind, "topic": "t"})
-    assert r.status_code == 422
-
-
 # ─── GET /api/todo/available — stable shape under any state ─────────────
 
 
@@ -216,12 +235,13 @@ def test_available_stable_shape_when_interpreter_absent(tmp_path):
     # stable shape (all actions False, interpreter_present False), never 500.
     body = _client(tmp_path).get("/api/todo/available").json()
     assert body["available"] is False
-    assert body["stub"] is True
     assert body["interpreter_present"] is False
     assert set(body["actions"]) == {
         "authorize_fix", "directive_signoff", "spawn_topic",
         "abstain", "calibration", "two_voice_chat"}
     assert all(v is False for v in body["actions"].values())
+    # The allowed_actions -> endpoint map is present regardless of disk state.
+    assert "allowed_action_endpoints" in body
 
 
 # ─── GET /api/todo/concurrency — malformed active_run.json => active:false ──
@@ -336,3 +356,162 @@ def test_concurrency_huge_dict_does_not_crash(repo):
     assert body["kind"] == "loop_v0"
     assert body["label"] == "iter-1"
     assert "extra" not in body and "blob" not in body
+
+
+# ─── production import form: stays RELATIVE so uvicorn never regresses ──────
+
+
+def test_import_of_exec_blessed_is_relative_not_absolute_backend():
+    # REGRESSION (integrator U4 fix): the helper import MUST be the package-relative
+    # `from .attest import _exec_blessed`. The absolute `from backend.attest import`
+    # form breaks the served app (uvicorn loads the module as `backend.todo_cockpit`
+    # — a SUBMODULE of the `backend` package — where an absolute sibling import is
+    # the fragile, refactor-unsafe form the integrator just removed). Pin the source
+    # text so the relative form can never silently regress back: the test harness
+    # itself imports `backend.*` from sys.path, so a bad import would NOT red any of
+    # the other tests — only this static-source pin catches it.
+    src = Path(todo_cockpit.__file__).read_text(encoding="utf-8")
+    assert "from .attest import _exec_blessed" in src, (
+        "todo_cockpit must import _exec_blessed via the package-relative "
+        "`from .attest import _exec_blessed` (the integrator's uvicorn fix)")
+    assert "from backend.attest import" not in src, (
+        "the absolute `from backend.attest import` form regressed — it breaks "
+        "the served uvicorn app; use the relative `from .attest import` form")
+
+
+# ─── /available: per-module flip isolation + interpreter gates everything ───
+
+
+@pytest.mark.parametrize("present,expect_true", [
+    ("orchestrator/authorize_fix.py", "authorize_fix"),
+    ("orchestrator/calibration_cli.py", "calibration"),
+    ("orchestrator/finding_session.py", "directive_signoff"),
+])
+def test_available_each_oneshot_seam_flips_independently(tmp_path, present, expect_true):
+    # REGRESSION: each one-shot seam must light up ONLY when ITS OWN corrected
+    # module is on disk — a single missing module must not drag the others down,
+    # nor a single present one falsely light the rest. (The existing tests only
+    # cover all-present / all-absent; this pins the per-module isolation so a
+    # future _SEAM_MODULES edit that cross-wires the existence checks reds here.)
+    (tmp_path / ".venv-chroma" / "bin").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".venv-chroma" / "bin" / "python").write_text("", encoding="utf-8")
+    p = tmp_path / present
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("", encoding="utf-8")
+    actions = _client(tmp_path).get("/api/todo/available").json()["actions"]
+    # The one seam whose module exists is True; the OTHER two one-shots are False.
+    for name in ("authorize_fix", "calibration", "directive_signoff"):
+        assert actions[name] is (name == expect_true), (
+            f"{name} should be {name == expect_true} with only {present} present")
+    # finding_session.py drives directive_signoff AND two_voice_chat together.
+    assert actions["two_voice_chat"] is (present.endswith("finding_session.py"))
+    # session-exits never flip True on a module's presence.
+    assert actions["spawn_topic"] is False
+    assert actions["abstain"] is False
+    # Partial presence => the overall `available` is never True.
+    assert _client(tmp_path).get("/api/todo/available").json()["available"] is False
+
+
+def test_available_interpreter_absent_gates_every_action_false(tmp_path):
+    # REGRESSION: with EVERY corrected module on disk but the interpreter ABSENT,
+    # all actions stay False and `available` is False (python_ok gates the whole
+    # handshake — a missing .venv-chroma must never let a seam claim availability).
+    for rel in ("orchestrator/authorize_fix.py",
+                "orchestrator/calibration_cli.py",
+                "orchestrator/finding_session.py"):
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("", encoding="utf-8")
+    body = _client(tmp_path).get("/api/todo/available").json()
+    assert body["interpreter_present"] is False
+    assert body["available"] is False
+    assert all(v is False for v in body["actions"].values())
+
+
+# ─── one-shot exec failure modes propagate through the cockpit (502) ────────
+
+
+def test_oneshot_seam_spawn_oserror_is_502(repo):
+    # REGRESSION: a spawn-level failure (e.g. a missing interpreter raising
+    # OSError) must surface as a 502 through the cockpit — NOT a 500, NOT a faked
+    # success shape. (_exec_blessed catches OSError/SubprocessError; pin that the
+    # cockpit endpoints inherit that surface.)
+    def raising(argv, **kw):
+        raise OSError("no such interpreter")
+    r = _client(repo, runner=raising).post(
+        "/api/todo/authorize_fix", json=_VALID["authorize_fix"])
+    assert r.status_code == 502
+    body = r.json()
+    assert body["rc"] is None
+    assert "exec failed before the CLI completed" in body["stderr"]
+
+
+def test_oneshot_seam_spawn_timeout_is_502(repo):
+    # REGRESSION: a wedged CLI hitting the exec timeout (TimeoutExpired, a
+    # subprocess.SubprocessError) must 502 through the cockpit, never 500.
+    def timing_out(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, 120)
+    r = _client(repo, runner=timing_out).post(
+        "/api/todo/calibration", json=_VALID["calibration"])
+    assert r.status_code == 502
+
+
+def test_oneshot_seam_rc0_nonjson_stdout_is_502(repo):
+    # REGRESSION: a CLI that exits 0 but prints NON-JSON broke the D-046 contract
+    # (the stdout is the writer's receipt). The cockpit must surface 502 with the
+    # explanatory error, never fabricate a success shape from un-parseable output.
+    class _BadProc:
+        def __call__(self, argv, **kw):
+            class P:
+                returncode = 0
+                stdout = "not json at all"
+                stderr = ""
+            return P()
+    r = _client(repo, runner=_BadProc()).post(
+        "/api/todo/directive_signoff", json=_VALID["directive_signoff"])
+    assert r.status_code == 502
+    assert "not parseable JSON" in r.json()["error"]
+
+
+# ─── directive_signoff keys on finding_id, ignores a stray iteration_id ─────
+
+
+def test_directive_signoff_ignores_stray_iteration_id(repo):
+    # REGRESSION: the U4 fix re-keyed directive_signoff onto finding_id (the old
+    # stub keyed on iteration_id with verdict-style argv). A caller that sends a
+    # bogus iteration_id ALONGSIDE a valid finding_id must key on the finding_id
+    # and NEVER leak iteration_id into the blessed argv (no flag/identity confusion).
+    stub = _StubRunner()
+    r = _client(repo, runner=stub).post("/api/todo/directive_signoff", json={
+        "iteration_id": "iter-2026-06-09-001", "finding_id": "sf-9",
+        "note": "n", "directive": "d"})
+    assert r.status_code == 200
+    tokens = stub.calls[-1][3:]
+    assert tokens == [
+        "--set-status", "sf-9", "validated",
+        "--note", "n", "--directive", "d", "--by", "human:ui"]
+    assert "iter-2026-06-09-001" not in tokens   # the stray id never reaches argv
+    assert "--iteration-id" not in tokens         # no verdict-style flag
+
+
+# ─── session-exits write NOTHING to a tmp repo tree (snapshot proof) ────────
+
+
+def test_session_exits_create_no_file_under_tmp_repo(repo):
+    # REGRESSION (target 3, tmp-snapshot form): spawn_topic / abstain must exec
+    # nothing AND create no file anywhere under the (tmp) repo root — they are
+    # pure session-exit indicators. Snapshot the whole tmp tree before/after so a
+    # future edit that sneaks in a faked write reds here, independently of the
+    # live-ledger snapshot in test_todo_cockpit.py.
+    def listing() -> set[str]:
+        return {str(p) for p in repo.rglob("*") if p.is_file()}
+    stub = _StubRunner()
+    cl = _client(repo, runner=stub)
+    before = listing()
+    assert cl.post("/api/todo/spawn_topic",
+                   json=_VALID["spawn_topic"]).status_code == 200
+    assert cl.post("/api/todo/abstain",
+                   json=_VALID["abstain"]).status_code == 200
+    after = listing()
+    assert after == before, f"session-exit created/removed files: {after ^ before}"
+    assert stub.calls == [], "session-exits must exec nothing"

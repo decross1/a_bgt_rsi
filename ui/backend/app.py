@@ -17,6 +17,7 @@ from .activity import register as register_activity
 from .attest import register as register_attest
 from .baseline import compute_baseline
 from .chain import LogStore, build_chain_by_request_id
+from .chat_seam import register as register_chat_seam
 from .coordinator import register as register_coordinator
 from .experiments import register as register_experiments
 from .finding_detail import register as register_finding_detail
@@ -252,6 +253,11 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     # D-046 write-back seam: argv-exec of the blessed CLIs (runner defaults
     # to subprocess.run in production; tests inject a stub).
     register_attest(app, repo_root=Path(loop_v0_repo))
+
+    # U2/U3 (2026-06-18 work order): the chat exec seam — argv-exec of the
+    # blessed `finding_session chat` CLI (tutor + two-voice interrogation).
+    # Verdict-fenced (start/turn only); the CLI owns its transcript (D-046).
+    register_chat_seam(app, repo_root=Path(loop_v0_repo))
 
     # /todo cockpit NEW-seam stubs (authorize_fix / directive_signoff /
     # spawn_topic / abstain / calibration) + the read-only concurrency guard.

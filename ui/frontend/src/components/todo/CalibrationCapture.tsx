@@ -20,8 +20,13 @@ import { postCalibration } from "../../api/todo";
 import type { CalibrationDraft } from "../../types/todo";
 
 interface Props {
-  findingId: string;
-  /** false until the calibration primary seam lands (cockpit availability). */
+  /** the selected item's ref_id — a finding_id, or an iteration_id for a
+   *  gate_verdict item (the calibration ordering gate precedes ANY verdict, so
+   *  this is the generic item id, not finding-specific). */
+  refId: string;
+  /** actions.calibration from GET /api/todo/available — false disables the
+   *  DURABLE write (calibration_cli absent in this env); local capture still
+   *  works. The calibration_entry writer itself landed (P4 / D-055). */
   available?: boolean;
   /** Fired AFTER a successful capture — the shell then reveals the verdict
    *  form. Carries the captured draft so the shell can echo it. This is the
@@ -43,7 +48,7 @@ function cleanConfidence(n: number): number {
 }
 
 export default function CalibrationCapture({
-  findingId,
+  refId,
   available = false,
   onCaptured,
 }: Props) {
@@ -54,11 +59,13 @@ export default function CalibrationCapture({
   );
   const [errorDetail, setErrorDetail] = useState<string | null>(null);
 
-  // findingId is producer-owned (it flows from a loop_memory finding id); a
-  // null/non-string/empty value must degrade to a legible empty ref, never crash
-  // the trim/POST. The capture still works locally (ARCH §6.5.4) — the durable
-  // write is the STUB anyway.
-  const safeFindingId = typeof findingId === "string" ? findingId : "";
+  // refId is producer-owned (the selected item's id — a finding_id, or an
+  // iteration_id for a gate_verdict item); a null/non-string/empty value must
+  // degrade to a legible empty ref, never crash the trim/POST. (NOTE: the live
+  // calibration_cli expects a surfaced-finding ref_id; whether it accepts an
+  // iteration_id for a gate_verdict item is a primary-side question — flagged in
+  // ui_plan.md. A reject surfaces as a legible error here, never a bad write.)
+  const safeRefId = typeof refId === "string" ? refId : "";
   // Render the clamped value so a malformed confidence in state can never leak a
   // "NaN"/"Infinity" label or push the slider out of its [0,1] track.
   const safeConfidence = cleanConfidence(confidence);
@@ -75,7 +82,7 @@ export default function CalibrationCapture({
       // Stub today: returns the would-run argv read-only, writes nothing.
       // FLAT body — the backend takes prediction + confidence as top-level fields.
       await postCalibration({
-        ref_id: safeFindingId,
+        ref_id: safeRefId,
         prediction: draft.prediction,
         confidence: draft.confidence,
       });
@@ -119,8 +126,9 @@ export default function CalibrationCapture({
           data-testid="calibration-stub-banner"
           className="mt-0.5 text-[10px] text-zinc-500"
         >
-          stub — lights up when the calibration_entry primary seam lands; your
-          input is captured locally but not yet persisted.
+          calibration_cli not reachable in this environment — your input is
+          captured locally but not durably written (the calibration_entry writer
+          itself landed in P4 / D-055).
         </div>
       )}
 

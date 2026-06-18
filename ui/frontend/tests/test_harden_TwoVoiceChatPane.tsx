@@ -18,10 +18,21 @@
 // behavior is unchanged. It does NOT exercise any model call — the stub stays a
 // stub (the send button stays disabled; nothing is sent).
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import TwoVoiceChatPane from "../src/components/todo/TwoVoiceChatPane";
-import type { ChatTurn } from "../src/types/todo";
+import * as todoApi from "../src/api/todo";
+import type {
+  ChatTurn,
+  ChatStartResult,
+  ChatTurnResult,
+} from "../src/types/todo";
 
 // A well-formed control transcript so each malformed case proves the GOOD turns
 // still render alongside the bad one (skip/degrade the bad turn, never blank-all).
@@ -314,7 +325,314 @@ describe("TwoVoiceChatPane hardening — non-string findingId in the available b
     const { errorSpy } = renderQuietly(
       <TwoVoiceChatPane findingId={weird} turns={GOOD_TURNS} available />,
     );
-    expectPanePresent();
+    // available=true takes the LIVE branch; on mount send is disabled (no draft).
+    expect(screen.getByTestId("two-voice-chat-pane")).toBeInTheDocument();
+    expect(screen.getByTestId("two-voice-send")).toBeDisabled();
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+// =====================================================================
+// LIVE PATH (available===true) — the U3 chat seam. The api client is mocked
+// with vi.spyOn(todoApi, ...); the network is NEVER hit and no CLI / model is
+// ever exec'd. The stub path above (available!==true) stays byte-identical, so
+// its tests are unchanged.
+// =====================================================================
+
+const START_OK: ChatStartResult = {
+  ok: true,
+  mode: "two_voice",
+  action: "start",
+  finding_id: "sf-iter-x",
+  session_id: "sess-2v-1",
+  stances: { defender: "vllm-gemma", attacker: "vllm-qwen" },
+};
+
+function twoVoiceTurn(
+  addressee: string,
+  replies: ChatTurnResult["replies"],
+): ChatTurnResult {
+  return {
+    ok: true,
+    mode: "two_voice",
+    action: "turn",
+    finding_id: "sf-iter-x",
+    session_id: "sess-2v-1",
+    turn_index: 0,
+    capped: false,
+    addressee,
+    warning: null,
+    replies,
+  };
+}
+
+describe("TwoVoiceChatPane LIVE — send threads the addressee + renders stance-tagged replies", () => {
+  it("opens a session then posts a turn with the SELECTED addressee, rendering both stances", async () => {
+    const startSpy = vi
+      .spyOn(todoApi, "postChatStart")
+      .mockResolvedValue(START_OK);
+    const turnSpy = vi.spyOn(todoApi, "postChatTurn").mockResolvedValue(
+      twoVoiceTurn("attacker", [
+        { stance: "attacker", reply: "Your sample is biased.", request_id: "rq-a" },
+      ]),
+    );
+
+    renderQuietly(<TwoVoiceChatPane findingId="sf-iter-x" available />);
+
+    // Select the attacker as the addressee, then send.
+    fireEvent.click(screen.getByRole("button", { name: "attacker" }));
+    fireEvent.change(screen.getByLabelText(/two-voice turn input/i), {
+      target: { value: "defend the sample" },
+    });
+    const send = screen.getByTestId("two-voice-send");
+    expect(send).toBeEnabled();
+    fireEvent.click(send);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-turn-attacker")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("chat-turn-attacker")).toHaveTextContent(
+      "Your sample is biased.",
+    );
+    // D-044: the attacker voice is labelled Qwen ATTACKS.
+    expect(screen.getByTestId("chat-turn-attacker")).toHaveTextContent(/Qwen/);
+
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    expect(startSpy).toHaveBeenCalledWith({
+      mode: "two_voice",
+      finding_id: "sf-iter-x",
+    });
+    // The selected addressee threaded into the turn.
+    expect(turnSpy).toHaveBeenCalledTimes(1);
+    expect(turnSpy.mock.calls[0][0]).toMatchObject({
+      mode: "two_voice",
+      finding_id: "sf-iter-x",
+      session_id: "sess-2v-1",
+      message: "defend the sample",
+      addressee: "attacker",
+    });
+  });
+
+  it("an addressee=both turn renders BOTH a defender and an attacker reply", async () => {
+    vi.spyOn(todoApi, "postChatStart").mockResolvedValue(START_OK);
+    vi.spyOn(todoApi, "postChatTurn").mockResolvedValue(
+      twoVoiceTurn("both", [
+        { stance: "defender", reply: "I stand by the finding.", request_id: "d1" },
+        { stance: "attacker", reply: "The anchor is off-domain.", request_id: "a1" },
+      ]),
+    );
+    renderQuietly(<TwoVoiceChatPane findingId="sf-iter-x" available />);
+    // Default addressee is "both".
+    expect(screen.getByRole("button", { name: "both" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.change(screen.getByLabelText(/two-voice turn input/i), {
+      target: { value: "go" },
+    });
+    fireEvent.click(screen.getByTestId("two-voice-send"));
+    await waitFor(() =>
+      expect(screen.getByTestId("chat-turn-defender")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("chat-turn-defender")).toHaveTextContent(
+      "I stand by the finding.",
+    );
+    expect(screen.getByTestId("chat-turn-attacker")).toHaveTextContent(
+      "The anchor is off-domain.",
+    );
+  });
+});
+
+describe("TwoVoiceChatPane LIVE — each addressee threads into postChatTurn", () => {
+  it.each(["defender", "attacker", "both"] as const)(
+    "directing at %s threads that addressee into the turn",
+    async (who) => {
+      vi.spyOn(todoApi, "postChatStart").mockResolvedValue(START_OK);
+      const turnSpy = vi
+        .spyOn(todoApi, "postChatTurn")
+        .mockResolvedValue(
+          twoVoiceTurn(who, [
+            { stance: "defender", reply: "ok", request_id: "x" },
+          ]),
+        );
+      renderQuietly(<TwoVoiceChatPane findingId="sf-iter-x" available />);
+      fireEvent.click(screen.getByRole("button", { name: who }));
+      fireEvent.change(screen.getByLabelText(/two-voice turn input/i), {
+        target: { value: `aimed at ${who}` },
+      });
+      fireEvent.click(screen.getByTestId("two-voice-send"));
+      await waitFor(() => expect(turnSpy).toHaveBeenCalledTimes(1));
+      expect(turnSpy.mock.calls[0][0]).toMatchObject({
+        mode: "two_voice",
+        addressee: who,
+        message: `aimed at ${who}`,
+      });
+    },
+  );
+});
+
+describe("TwoVoiceChatPane LIVE — the verdict fence at the wire (only chat verbs fire)", () => {
+  it("a live send issues ONLY postChatStart/postChatTurn — no verdict/disposition POST", async () => {
+    const startSpy = vi.spyOn(todoApi, "postChatStart").mockResolvedValue(START_OK);
+    const turnSpy = vi.spyOn(todoApi, "postChatTurn").mockResolvedValue(
+      twoVoiceTurn("both", [
+        { stance: "defender", reply: "stand", request_id: "d" },
+      ]),
+    );
+    const writerSpies = (
+      [
+        "postDirectiveSignoff",
+        "postAuthorizeFix",
+        "postSpawnTopic",
+        "postAbstain",
+        "postCalibration",
+      ] as const
+    ).map((name) => vi.spyOn(todoApi, name).mockResolvedValue({}));
+
+    renderQuietly(<TwoVoiceChatPane findingId="sf-iter-x" available />);
+    fireEvent.change(screen.getByLabelText(/two-voice turn input/i), {
+      target: { value: "go" },
+    });
+    fireEvent.click(screen.getByTestId("two-voice-send"));
+    await waitFor(() => expect(turnSpy).toHaveBeenCalledTimes(1));
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    for (const s of writerSpies) expect(s).not.toHaveBeenCalled();
+  });
+
+  it("renders no verdict-shaped control in either branch (available true/false)", () => {
+    for (const available of [true, false] as const) {
+      const { unmount } = render(
+        <TwoVoiceChatPane findingId="sf-iter-x" available={available} />,
+      );
+      for (const re of [
+        /verdict/i,
+        /disposition/i,
+        /confidence/i,
+        /sign[\s_-]?off/i,
+        /abstain/i,
+        /resolve/i,
+        /approve/i,
+      ]) {
+        expect(
+          screen.queryByRole("button", { name: re }),
+          `verdict control leaked (available=${available}): ${re}`,
+        ).toBeNull();
+      }
+      expect(screen.queryByRole("slider")).toBeNull();
+      // The pane text never carries D-044's sibling disposition vocabulary as a
+      // control; the only allowed POSTs are the chat verbs.
+      unmount();
+    }
+  });
+});
+
+describe("TwoVoiceChatPane LIVE — stale session never leaks across findings", () => {
+  it("a turn resolving AFTER findingId changes does not append to the new finding", async () => {
+    vi.spyOn(todoApi, "postChatStart").mockResolvedValue(START_OK);
+    let resolveStale!: (v: ChatTurnResult) => void;
+    const stale = new Promise<ChatTurnResult>((r) => {
+      resolveStale = r;
+    });
+    const turnSpy = vi
+      .spyOn(todoApi, "postChatTurn")
+      .mockReturnValueOnce(stale);
+
+    const { rerender } = render(
+      <TwoVoiceChatPane findingId="sf-iter-A" available />,
+    );
+    fireEvent.change(screen.getByLabelText(/two-voice turn input/i), {
+      target: { value: "for A" },
+    });
+    fireEvent.click(screen.getByTestId("two-voice-send"));
+    await waitFor(() => expect(turnSpy).toHaveBeenCalledTimes(1));
+
+    // Switch findings while the turn is still in flight.
+    rerender(<TwoVoiceChatPane findingId="sf-iter-B" available />);
+    // Now the stale A turn resolves — its reply must NOT enter B's transcript.
+    resolveStale(
+      twoVoiceTurn("both", [
+        { stance: "defender", reply: "STALE-A reply", request_id: "s" },
+      ]),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(screen.queryByText(/STALE-A reply/)).toBeNull();
+    expect(screen.getByTestId("two-voice-empty")).toBeInTheDocument();
+  });
+});
+
+describe("TwoVoiceChatPane LIVE — degrade + hostile envelopes never crash", () => {
+  it("a start error degrades to a legible error (no throw, no blank, no turn posted)", async () => {
+    vi.spyOn(todoApi, "postChatStart").mockRejectedValue(
+      new todoApi.TodoError(502, "boom", 1, "ValueError: session-id is required"),
+    );
+    const turnSpy = vi.spyOn(todoApi, "postChatTurn");
+    const { errorSpy } = renderQuietly(
+      <TwoVoiceChatPane findingId="sf-iter-x" available />,
+    );
+    fireEvent.change(screen.getByLabelText(/two-voice turn input/i), {
+      target: { value: "anything" },
+    });
+    fireEvent.click(screen.getByTestId("two-voice-send"));
+    await waitFor(() =>
+      expect(screen.getByTestId("two-voice-error")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("two-voice-error")).toHaveTextContent(
+      /session-id is required/i,
+    );
+    expect(screen.getByTestId("two-voice-chat-pane")).toBeInTheDocument();
+    expect(turnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("a hostile turn envelope (non-array replies / non-string reply / unknown stance) never crashes", async () => {
+    vi.spyOn(todoApi, "postChatStart").mockResolvedValue(START_OK);
+    vi.spyOn(todoApi, "postChatTurn")
+      // 1) replies as a bare object (non-array) → nothing appended, no crash.
+      .mockResolvedValueOnce({
+        ok: true,
+        action: "turn",
+        session_id: "sess-2v-1",
+        replies: { nope: true } as unknown as ChatTurnResult["replies"],
+      })
+      // 2) a non-string reply + an unknown stance → degrade, no [object Object].
+      .mockResolvedValueOnce(
+        twoVoiceTurn("both", [
+          {
+            stance: "moderator",
+            reply: { body: "obj" } as unknown as string,
+            request_id: null,
+          },
+          {
+            stance: { weird: true } as unknown as string,
+            reply: ["array", "reply"] as unknown as string,
+            request_id: null,
+          },
+        ]),
+      );
+
+    const { container, errorSpy } = renderQuietly(
+      <TwoVoiceChatPane findingId="sf-iter-x" available />,
+    );
+    const input = screen.getByLabelText(/two-voice turn input/i);
+
+    // Non-array replies → no rows, no crash, the empty state holds.
+    fireEvent.change(input, { target: { value: "q1" } });
+    fireEvent.click(screen.getByTestId("two-voice-send"));
+    await waitFor(() => expect(input).toHaveValue(""));
+    expect(screen.getByTestId("two-voice-empty")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-turn-defender")).toBeNull();
+
+    // Hostile members → bucket to the "unknown" testid, degrade text, no leak.
+    fireEvent.change(input, { target: { value: "q2" } });
+    fireEvent.click(screen.getByTestId("two-voice-send"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("chat-turn-unknown").length).toBe(2),
+    );
+    expect(container.innerHTML).not.toMatch(/object Object/);
+    expect(container.innerHTML).not.toMatch(/native code/);
+    const offending = container.innerHTML.match(/class="[^"]*function[^"]*"/g);
+    expect(offending).toBeNull();
     expect(errorSpy).not.toHaveBeenCalled();
   });
 });

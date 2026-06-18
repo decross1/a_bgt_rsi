@@ -688,6 +688,139 @@ to the new overview behavior (not faked back into existence — inviolate rule 4
 
 ---
 
+## §2026-06-18 — cockpit LIVE seams: tutor chat (U2) + two-voice (U3) + cockpit exec corrections (U4)
+
+Work order: `human/sessions/2026-06-18.md` "## UI session work order" (U2/U3/U4), the
+round that lights up the cockpit's live interrogation seams now that the primary
+landed **P2** (the `finding_session chat` per-turn CLI), **P4** (the
+`calibration_entry` writer, D-055) and **P5** (the authoritative
+**`docs/cockpit_seam_wiring.md`**). Worktree fast-forwarded to `04bd27c` (U1/U5 merged
+at `b8ca85f`). Built by this UI session via **two Dynamic Workflows** (a 3-agent
+parallel BUILD + a 4-agent INDEPENDENT ADVERSARIAL HARDEN) + serial integration.
+Scope: `ui/` + this file only. Wired to the wiring doc, NOT the old stub guesses.
+
+### What shipped
+
+- **U2 — live tutor chat.** New `components/todo/TutorChatPane.tsx` (single-voice
+  probing chat) + the shared `components/todo/useChatSession.ts` hook, over a new
+  read-through-the-CLI backend seam `ui/backend/chat_seam.py` (`POST
+  /api/todo/chat/start` + `/turn`, execing `finding_session chat start|turn --mode
+  tutor` via the blessed `attest._exec_blessed` runner — argv-array, no shell). The
+  tutor chat is **verdict-fenced by construction** (no verdict/confidence/onResolved
+  prop; only start/turn verbs reachable; cites 2026-06-14 PART 2 / rule 4 / D-053-D-054,
+  NOT D-044).
+- **U3 — live two-voice interrogation.** `TwoVoiceChatPane.tsx` made LIVE (mode
+  `two_voice`, defender = Gemma / attacker = Qwen, D-044 interrogator independence)
+  via the SAME chat seam + hook; the `available=false` stub path is preserved
+  byte-for-byte. `actions.two_voice_chat` flips True when the seam exists.
+- **U4 — cockpit exec corrections** (`ui/backend/todo_cockpit.py`, per the wiring doc):
+  `_SEAM_MODULES` retargeted (`authorize_fix → orchestrator.authorize_fix`;
+  `calibration → orchestrator.calibration_cli`; `directive_signoff →
+  orchestrator.finding_session`); the three one-shot stubs swapped for **real blessed
+  execs** via `_exec_blessed` (injectable runner; tests stub it); **`directive_signoff`
+  re-keyed on `finding_id`** (it signs off a FINDING — the U5 mis-gating is corrected:
+  the form moves from the iteration branch to the **finding** branch, and the client
+  sends `finding_id`); `spawn_topic`/`abstain` reshaped to honest **session-exits**
+  (no fictional one-shot argv, `available` stays false, write + exec nothing); the
+  `allowed_action_endpoints` map (escalation `allowed_actions` → cockpit endpoints)
+  added to `/available`.
+- **Aux ordering (D-054 resolution — the delegated 2026-06-17 flag).** In `Todo.tsx`
+  the static tutor **OVERVIEW** (`TutorPanel`) is the BASIS for the calibration
+  prediction, so it renders **pre-calibration**; the **INTERACTIVE** panes (live tutor
+  chat + two-voice) are decision-support that could bias the pre-verdict calibration
+  signal §6.5.4 measures, so they gate behind `calibrated` (**post-calibration**).
+  Coherent flow: read overview → predict (calibration) → interrogate → verdict. Both
+  interactive panes gate on `actions.two_voice_chat` (the single "chat seam is live"
+  signal — it serves both tutor + two_voice modes).
+- **Nits folded in:** the residual D-044 mis-citation in the `Todo.tsx` CODE comment →
+  D-053/D-054/rule 4; `CalibrationCapture` prop `findingId → refId` (it is the generic
+  item id — a finding_id, or an iteration_id for a gate_verdict item) + stale stub
+  banner refreshed (the writer landed in P4); the **`ui/.venv-ui` test-harness venv
+  pinned** in `ui/README.md`; `finding_detail.py`'s `_safe`-wrap of `source_iteration_id`
+  confirmed already in place (H1, §2026-06-17 round 2).
+
+### Bugs caught — 1 by the smoke, 3 by the adversarial harden
+
+1. **Production import bug** (caught by the real `env -u MOCK_LLM` smoke, NOT the
+   suite): `todo_cockpit.py` imported `from backend.attest import _exec_blessed` —
+   works under pytest (conftest puts `ui/` on `sys.path`) but **breaks uvicorn** (the
+   package is `ui.backend`). Fixed to the package-relative `from .attest import`. The
+   harden added a static-source pin so it can't regress.
+2. **Chat-seam encoder overflow** (H1): a zero-exit CLI envelope that is deeply
+   nested / carries a non-finite float / carries a >4300-digit bigint would 500 the
+   `JSONResponse` encoder (the same class `finding_detail`/`todo_cockpit` guard).
+   Fixed with a `_exec_chat` wrapper + iterative `_encode_safe` in `chat_seam.py`
+   (degrade to a 502 contract break, never 500); 9 regression pins, each reverted-verified.
+3. **`useChatSession` stale-session leak** (H2): an in-flight `send` for finding A
+   resolving after switching to finding B wrote A's reply / session_id / error into B
+   (a cross-finding session bleed — the exact thing the hook claimed to prevent).
+   Fixed with a `genRef` generation guard that retires in-flight sends on a findingId
+   change; new `test_useChatSession.tsx` pins all three leak vectors.
+4. **`attest._exec_blessed` bigint `ValueError`** (root cause, flagged by H1, fixed by
+   the integrator): the shared helper caught only `(json.JSONDecodeError, TypeError)`,
+   so a >4300-digit-int envelope raised a bare `ValueError` that escaped → a 500 for
+   **every** blessed-exec caller (attest's own endpoints + todo_cockpit). Broadened to
+   `(ValueError, TypeError)` (a strict superset — `JSONDecodeError ⊂ ValueError`, so no
+   existing behavior changes); regression-pinned in `test_attest.py`.
+
+### Gate (authoritative)
+
+`tsc --noEmit` clean · **vitest 1352 pass** (94 files; 1319 → 1352) · **pytest 630
+pass** (603 → 630) · real `env -u MOCK_LLM` smoke green (app builds; chat + cockpit +
+finding routes serve; `/available` reports the corrected flags + the
+`allowed_action_endpoints` map; chat fence, directive `finding_id` validation, and the
+session-exits all behave). Build agents: chat seam 41 → harden 57; chat panes 38 →
+harden 62; cockpit 210 → harden 220; kind-gate 29 → harden 38. No test was weakened,
+skipped, or coerced.
+
+### Component docs backfill (cockpit current state)
+
+- **`TutorPanel` (overview) — LIVE, fenced, pre-calibration.** Static read-only finding
+  overview (claim / source iteration / evidence / mechanical outcome-effects /
+  unweighted pros-cons), backed by `GET /api/finding/{id}`. No verdict path. (§2026-06-17
+  round 2.)
+- **`TutorChatPane` (U2) — LIVE, fenced, post-calibration.** Single-voice Qwen probing
+  chat via `useChatSession("tutor", findingId)` → the chat seam. It probes/explains,
+  never recommends; no verdict prop; session-local; `available=false` → disabled stub.
+- **`TwoVoiceChatPane` (U3) — LIVE, post-calibration.** Human-directed Gemma-defends /
+  Qwen-attacks interrogation via `useChatSession("two_voice", findingId)`; addressee
+  selector (defender/attacker/both) threads into the turn; stance-tagged replies. The
+  `available=false` stub path is intact for environments without the seam.
+- **`CalibrationCapture` — LIVE writer (P4/D-055).** Pre-verdict prediction + confidence
+  (`[0,1]` slider). The cockpit **ordering gate**: the resolution forms AND the
+  interactive aux panes stay locked until `onCaptured`. POSTs `/api/todo/calibration` →
+  the blessed `calibration_cli` (`--ref-id`). `available=false` → captured locally but
+  not durably written.
+
+### Flagged for a primary/human ruling (NOT silently changed)
+
+- **spawn_topic / abstain FRONTEND reshape — DEFERRED (tied to wiring-doc open Q1).**
+  The backend is correct (session-exits, `available=false`). The frontend
+  `SpawnTopicForm`/`AbstainForm` + `postSpawnTopic`/`postAbstain` still reflect the OLD
+  one-shot model (a fictional `finding_session spawn-topic` verb, a `kind` field,
+  `ref_id` body) — but they are DISABLED (`available=false`), so **no production POST
+  fires** and there is no live inconsistency. The proper reshape (retire the one-shot
+  forms → session-exit affordances; align to `finding_id`) is **gated on the wiring
+  doc's open question 1** (an in-UI chat-CLI `end` verb vs the terminal REPL) — a
+  design decision for the human/primary; building it now would be speculative (rule 8).
+- **Single-slot `calibratedId`** (H4): switching away from a calibrated finding and
+  back RE-LOCKS it (calibration is tracked per the current selection, not remembered
+  per-item). Internally consistent + pinned as deliberate; if the intent is "a finding
+  stays calibrated once captured this session," that is a `Todo.tsx` change
+  (`calibratedId` → `Set<string>`) for the human to decide.
+- **Calibration for iteration items**: `calibration_cli` expects a surfaced-finding
+  `ref_id`; whether it accepts an `iteration_id` (for a gate_verdict item's calibration)
+  is a primary-side question. A reject surfaces as a legible error in
+  `CalibrationCapture`, never a bad write.
+- **`attest._exec_blessed` encoder-layer gap** (low likelihood): the read-layer bigint
+  `ValueError` is now fixed for all callers; a deeply-nested / non-finite-float
+  *returned* envelope would still 500 the encoder for attest's own endpoints +
+  todo_cockpit (chat_seam self-guards this). attest's blessed CLIs emit bounded
+  well-formed ledger rows, so the risk is ~nil — left unguarded rather than thread the
+  `_encode_safe` walker through every blessed-exec response (rule 8).
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to

@@ -251,7 +251,7 @@ describe("AbstainForm (outcome 6)", () => {
 describe("DirectiveSignOffField (sign-off directive add-on)", () => {
   it("empty directive = bare sign-off: shows the bare note, disables the directive submit", () => {
     stubFetch(() => undefined);
-    render(<DirectiveSignOffField iterationId="iter-002" note="checked" available={true} />);
+    render(<DirectiveSignOffField findingId="iter-002" note="checked" available={true} />);
     expect(screen.getByTestId("directive-signoff-bare")).toHaveTextContent(/bare sign-off/i);
     expect(screen.getByRole("button", { name: /sign off with directive/i })).toBeDisabled();
     // no argv preview until a directive is typed (the bare path is attest's job)
@@ -263,7 +263,7 @@ describe("DirectiveSignOffField (sign-off directive add-on)", () => {
     const onDirectiveChange = vi.fn();
     render(
       <DirectiveSignOffField
-        iterationId="iter-002"
+        findingId="iter-002"
         note="checked"
         available={true}
         onDirectiveChange={onDirectiveChange}
@@ -275,7 +275,11 @@ describe("DirectiveSignOffField (sign-off directive add-on)", () => {
     expect(onDirectiveChange).toHaveBeenCalledWith("proceed to step 9");
     const argv = screen.getByTestId("directive-signoff-argv");
     expect(argv.tagName.toLowerCase()).toBe("pre");
-    expect(argv).toHaveTextContent(/gate_cli/);
+    // Keyed on the finding via finding_session --set-status (wiring doc 1d),
+    // NOT gate_cli/--iteration-id.
+    expect(argv).toHaveTextContent(/finding_session/);
+    expect(argv).toHaveTextContent(/--set-status/);
+    expect(argv).toHaveTextContent(/validated/);
     expect(argv).toHaveTextContent(/--directive/);
     expect(argv).toHaveTextContent(/proceed to step 9/);
     expect(screen.getByRole("button", { name: /sign off with directive/i })).not.toBeDisabled();
@@ -283,7 +287,7 @@ describe("DirectiveSignOffField (sign-off directive add-on)", () => {
 
   it("unavailable: stub note + directive submit disabled even with a directive", () => {
     stubFetch(() => undefined);
-    render(<DirectiveSignOffField iterationId="iter-002" note="checked" available={false} />);
+    render(<DirectiveSignOffField findingId="iter-002" note="checked" available={false} />);
     expect(screen.getByTestId("directive-signoff-stub")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/sign-off directive/i), {
       target: { value: "proceed" },
@@ -291,13 +295,13 @@ describe("DirectiveSignOffField (sign-off directive add-on)", () => {
     expect(screen.getByRole("button", { name: /sign off with directive/i })).toBeDisabled();
   });
 
-  it("posts to /api/todo/directive_signoff with iteration_id + directive + note", async () => {
+  it("posts to /api/todo/directive_signoff with finding_id + directive + note", async () => {
     const calls = stubFetch((u) =>
       u.endsWith("/api/todo/directive_signoff")
         ? jsonResponse(200, stubEnvelope("argv"))
         : undefined,
     );
-    render(<DirectiveSignOffField iterationId="iter-002" note="checked" available={true} />);
+    render(<DirectiveSignOffField findingId="iter-002" note="checked" available={true} />);
     fireEvent.change(screen.getByLabelText(/sign-off directive/i), {
       target: { value: "proceed to step 9" },
     });
@@ -306,7 +310,7 @@ describe("DirectiveSignOffField (sign-off directive add-on)", () => {
     const post = calls.find((c) => c.url.endsWith("/api/todo/directive_signoff"));
     expect(post?.method).toBe("POST");
     expect(post?.body).toMatchObject({
-      iteration_id: "iter-002",
+      finding_id: "iter-002",
       directive: "proceed to step 9",
       note: "checked",
     });

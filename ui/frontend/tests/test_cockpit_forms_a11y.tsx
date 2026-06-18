@@ -144,7 +144,7 @@ describe("a11y — AbstainForm", () => {
 describe("a11y — DirectiveSignOffField", () => {
   it("the directive input has an accessible name; submit is a real button", () => {
     const errSpy = spyConsole();
-    render(<DirectiveSignOffField iterationId="iter-1" note="why" available={true} />);
+    render(<DirectiveSignOffField findingId="iter-1" note="why" available={true} />);
     expect(screen.getByLabelText(/sign-off directive/i).tagName.toLowerCase()).toBe(
       "input",
     );
@@ -159,7 +159,7 @@ describe("a11y — DirectiveSignOffField", () => {
     const errSpy = spyConsole();
     render(
       <DirectiveSignOffField
-        iterationId="iter-1"
+        findingId="iter-1"
         note="why"
         available={true}
       />,
@@ -174,7 +174,7 @@ describe("a11y — DirectiveSignOffField", () => {
   });
 
   it("stub state disables the directive submit (conveyed, not color-only)", () => {
-    render(<DirectiveSignOffField iterationId="iter-1" note="why" available={false} />);
+    render(<DirectiveSignOffField findingId="iter-1" note="why" available={false} />);
     expect(
       screen.getByRole("button", { name: /sign off with directive/i }),
     ).toBeDisabled();
@@ -189,7 +189,7 @@ describe("a11y — CalibrationCapture", () => {
   it("the prediction input and confidence slider each have accessible names", () => {
     const errSpy = spyConsole();
     render(
-      <CalibrationCapture findingId="f1" available={true} onCaptured={() => {}} />,
+      <CalibrationCapture refId="f1" available={true} onCaptured={() => {}} />,
     );
     expect(
       screen.getByLabelText(/calibration prediction/i).tagName.toLowerCase(),
@@ -202,7 +202,7 @@ describe("a11y — CalibrationCapture", () => {
 
   it("the capture control is a real <button type=button>", () => {
     render(
-      <CalibrationCapture findingId="f1" available={true} onCaptured={() => {}} />,
+      <CalibrationCapture refId="f1" available={true} onCaptured={() => {}} />,
     );
     const btn = screen.getByRole("button", { name: /capture calibration/i });
     expect(btn.tagName.toLowerCase()).toBe("button");
@@ -211,10 +211,13 @@ describe("a11y — CalibrationCapture", () => {
 
   it("the stub-availability state is conveyed by TEXT, not color alone", () => {
     render(
-      <CalibrationCapture findingId="f1" available={false} onCaptured={() => {}} />,
+      <CalibrationCapture refId="f1" available={false} onCaptured={() => {}} />,
     );
-    // The stub banner carries readable text (not just a tone class).
-    expect(screen.getByTestId("calibration-stub-banner")).toHaveTextContent(/stub/i);
+    // The unavailable state carries readable text (not just a tone class):
+    // the input is captured locally but not durably written.
+    expect(screen.getByTestId("calibration-stub-banner")).toHaveTextContent(
+      /not durably written|captured locally/i,
+    );
     // Empty prediction → capture disabled, perceivable via the disabled attr.
     expect(
       screen.getByRole("button", { name: /capture calibration/i }),
