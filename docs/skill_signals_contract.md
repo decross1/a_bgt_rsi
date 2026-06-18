@@ -83,8 +83,12 @@ Emit one non-blocking append at the friction moment, then keep going. Emitting i
   **only** when the run-log skill's prescribed procedure genuinely *could not
   express* the step — i.e. you had to invent an ad-hoc status with no honest
   meaning because no value fit — framed as feedback **to the framework about its
-  skill**, never as an apparatus self-constraint. **When in doubt, prefer (b)/(c);
-  (a) may be dropped entirely.**
+  skill**, never as an apparatus self-constraint. **Resolution (D-056 + framework
+  round-trip): trigger (a) is committed to this form (i)** — keep the friction class,
+  fire ONLY on a genuine run-log-skill misfit, never on a non-framework-enum status.
+  Form (ii) (per-status enum telemetry) is **explicitly REJECTED** (firehose + the
+  rule-4 coercion this reframe refutes). **Phasing:** ship (b) GAP / (c) MISUSE first;
+  add (a) under form (i) later — same schema, no schema re-review.
 
 ## The rule-7 swallow guard (no silent degraded path)
 
@@ -105,9 +109,13 @@ explicit, logged… no silent degraded paths"):
 Validate `skill` against an **in-repo constant** sourced from CLAUDE.md rule 3's
 `skill_subset` plus the framework-skill examples already named there:
 `{run-log, validate, fallback, resume-state, gate-check, brain-recall}`. **Never
-read a framework skill registry** to learn valid names. (Looser alternative if
-the set drifts: accept any non-empty `skill` string and let the framework
-reconcile names at *its* ingest.)
+read a framework skill registry** to learn valid names. **Validation is
+NON-DROPPING:** a `skill` not in the constant STILL emits the row (carrying
+`skill_known: false` as an advisory) — never suppressed. This neutralizes the
+staleness hazard: a framework skill rename can never cause apparatus-side data loss.
+*Fallback only if the set drifts:* accept any non-empty `skill` string — framed
+strictly as "we accept any non-empty string for OUR robustness," NOT "the framework
+reconciles our names for us" (that would be an unverifiable framework dependency).
 
 ## D-048 no-live-artifacts wiring (hard precondition for implementation)
 
@@ -139,6 +147,11 @@ to `run_state/skill_signals.jsonl`.**
 9. `skill_signals.jsonl` is covered by the D-048 `_no_live_artifacts` fixture.
 10. The run-log row is written first and unconditionally; `skill_signals` is
     supplementary.
+11. **Self-standing:** the build's validity depends on NOTHING in the framework's
+    ingest/projection. Even if every framework assurance (ingest keys only on
+    `signal_class`+`skill`; `task_id` optional; names match their registry) is false,
+    the worst case is a row no one reads downstream — never a bad write or a rule
+    violation. Framework assurances must never harden into apparatus dependencies.
 
 > **Not apparatus acceptance:** the handoff's criterion "the framework ingest
 > (`ingest_apparatus.py`) parses the live file" is **framework-side** and is
@@ -152,11 +165,14 @@ narrative + a `source="runtime"` row in `memory/brain/drift_signals.jsonl` (the
 **DRAFT** proposals for human triage (never auto-enacted). `misuse` is recorded
 as `diverged`. None of these paths are read, imported, or called by the apparatus.
 
-## Implementation (GATED)
+## Implementation — (b)/(c) SHIPPED 2026-06-18 (human go)
 
-A single small one-append helper `emit_skill_signal(...)` (rule 8 — bounded; no
-framework) writing the schema above, plus the `tests/conftest.py` extension. It is
-**gated behind the human's go** and the reconciliations above (trigger-(a) reframe,
-D-014 re-source, swallow guard, in-repo skill-name constant, D-048 wiring). The
-context-injection prompt for that session must reference **only** D-014, CLAUDE.md
-rule 3, and `run_state/skill_signals.jsonl`.
+`orchestrator/skill_signals.py` ships the single one-append helper
+`emit_skill_signal(...)` (rule 8 — bounded; no framework) writing the schema above:
+non-blocking swallow guard, NON-DROPPING skill-name validation, rule-4 enum rejection,
+append-only, no `_source`. `tests/conftest.py` redirects `SKILL_SIGNALS_PATH` to
+`tmp_path` (D-048) and `.gitignore` covers `run_state/skill_signals.jsonl`. The helper
+accepts the full `signal_class` enum, so **(a) FRICTION under form (i) needs no schema
+change** — only the call sites that decide *when* to emit (a) are deferred. Call sites
+for (b) GAP / (c) MISUSE are added opportunistically as agents hit real friction; the
+helper is now available to call. Tests: `tests/test_skill_signals.py`.

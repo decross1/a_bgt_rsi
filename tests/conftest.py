@@ -19,6 +19,7 @@ from agent_wrapper import worker_activity
 from orchestrator import active_run, coordinator, coordinator_cycle_log
 from orchestrator import finding_session, iteration_cache, nara
 from orchestrator import restate_skeptic
+from orchestrator import skill_signals
 from orchestrator import runtime as runtime_mod
 from orchestrator import submitted_run, todo_cli, topicality
 from orchestrator import topicality_skeptic
@@ -102,3 +103,7 @@ def _no_live_artifacts(tmp_path, monkeypatch):
                         str(tmp_path / "calls.jsonl"))
     monkeypatch.setattr(restate_skeptic, "CALLS_LOG_PATH",
                         str(tmp_path / "calls.jsonl"))
+    # D-056: the skill-signals emit target (resolved at call time) — keep the
+    # D-048 zero-live-rows invariant for skill_signals.jsonl too.
+    monkeypatch.setattr(skill_signals, "SKILL_SIGNALS_PATH",
+                        tmp_path / "skill_signals.jsonl")
