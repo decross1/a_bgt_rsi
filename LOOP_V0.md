@@ -6,7 +6,7 @@
 > direction change (see [`DECISIONS.md`](DECISIONS.md) D-030); Path-B
 > sub-agent migration in progress (D-034).
 
-## Current state (2026-06-17)
+## Current state (2026-06-18)
 
 State spans four workstreams; this file's later sections carry the
 lit-pipe detail.
@@ -24,14 +24,15 @@ lit-pipe detail.
   detail in this file's later sections (§"Reference-passing — the next
   architectural fix").
 - **UI.** The 2026-06-10 observability overhaul shipped; the 2026-06-14
-  dashboard reframe + `/todo` cockpit (stubbed) merged. **2026-06-17: the
-  cockpit's tutor card + two-voice pane are being wired** (D-054). The tutor is
-  verdict-fenced — overview + neutral mechanics + a live Qwen probing chat; the
-  accept/deny steer lives in the two-voice pane. Primary builds the orchestrator
-  tutor engine + a per-turn chat CLI seam; the UI session wires the frontend —
-  work order in [`human/sessions/2026-06-17.md`](human/sessions/2026-06-17.md)
-  §"UI session work order". Earlier orchestrator seams:
-  [`docs/todo_cockpit_seam_plan.md`](docs/todo_cockpit_seam_plan.md).
+  dashboard reframe + `/todo` cockpit (stubbed) merged. **2026-06-17/18 (pushed,
+  `b8ca85f`): the verdict-fenced tutor is live** — orchestrator tutor engine +
+  per-turn `chat` CLI seam + `calibration_cli` writer (D-054/D-055), and the UI
+  session's **U1** (tutor finding-overview + read-only `finding_detail` GET) +
+  **U5** (kind-gated forms) landed. The authoritative wiring spec is
+  [`docs/cockpit_seam_wiring.md`](docs/cockpit_seam_wiring.md). **Remaining: U2/U3/U4**
+  (tutor chat pane, two-voice pane, cockpit seam execs) — work order in
+  [`human/sessions/2026-06-18.md`](human/sessions/2026-06-18.md) §"UI session work
+  order".
 - **Autonomy.** D-049 (coordinator v2 + β bounds) is a **draft awaiting
   ratification**. The daily cadence is
   [`docs/daily_workstreams.md`](docs/daily_workstreams.md).
