@@ -2372,11 +2372,12 @@ breaks the live UI contract mid-flight.
 **Reversibility.** Delete RUNS_DIR + the contextvar; mirror behavior reverts to the
 single-slot helper.
 
-## D-049 — β-interim bounded autonomy: the coordinator may run unattended cycles ONLY under the pause/ledger/sentinel bounds (DRAFT — awaiting human ratification)
+## D-049 — β-interim bounded autonomy: the coordinator may run unattended cycles ONLY under the pause/ledger/sentinel bounds (RATIFIED + ARMED 2026-06-18)
 
-**Date drafted.** 2026-06-10 (Session 3). **Status: DRAFT.** The
-continuous-orchestrator guardrail (CLAUDE.md out-of-scope) stands unchanged until the
-human ratifies this entry; D-040's unattended contract activates at β proper.
+**Date drafted.** 2026-06-10 (Session 3). **Status: RATIFIED + ARMED 2026-06-18**
+(see the ratification note at the end of this entry). The
+continuous-orchestrator guardrail (CLAUDE.md out-of-scope) stood unchanged until the
+human ratified this entry; D-040's unattended contract activates at β proper.
 
 **Proposed decision.** Until β (Nara packaged in the sandbox), a bounded HOST-side
 interim is permitted: scheduled coordinator cycles via `cron/run-coordinator.sh`,
@@ -2401,6 +2402,19 @@ crontab line; create the pause file for an immediate halt.
 **Alternatives rejected.** Unbounded host-side daemon (violates the guardrail's
 intent); waiting for full β (forfeits months of bounded daily research throughput
 the apparatus is now instrumented to run safely and the UI can observe).
+
+**Ratified + ARMED 2026-06-18** by the human (derrick), explicit sign-off. The serial
+integrator created the sentinel `run_state/d049_ratified` and installed the crontab
+line `0 9,15 * * * /home/decross1/projects/a_bgt_rsi/cron/run-coordinator.sh` (morning
++ afternoon cycles), per the `cron/run-coordinator.sh` footer. The bounded host-side
+interim is now LIVE: each firing runs only while ALL gates hold — sentinel present, no
+`run_state/pause_coordinator` kill-switch (checked before any LLM call, never
+bypassed), within `COORDINATOR_DAILY_CAP`, mem preflight passes, `NARA_SKEPTIC=1`.
+First real cycle fires at the next 09:00/15:00. **Halt:** `touch
+run_state/pause_coordinator` (immediate). **Un-arm:** `rm run_state/d049_ratified`
+and/or remove the crontab line. The continuous-orchestrator out-of-scope guardrail
+(CLAUDE.md) is hereby relaxed to exactly this bounded interim; the full-β D-040
+contract still activates only at β.
 
 ## D-050 — D-045 residuals 1+2: independent topicality attack (R0b) + restatement skeptic at the critic, both env-gated dark
 
@@ -2848,6 +2862,9 @@ disposition (no `loop_feedback` / `surfaced_findings.status` write), so the
 fence holds even if the UI wiring is wrong. Reversible: the tutor seam is an
 additive new path; removing it restores the current stub.
 
+**Ratified 2026-06-18** by the human (derrick), explicit sign-off. The verdict-fence
+stands; the accept/deny steer stays in the two-voice pane.
+
 ## D-055 — `calibration_entry` overloaded: the cockpit pre-verdict capture coexists with the post-experiment calibration under one event_type, disambiguated by `phase` (integrator call — ratify or redirect)
 
 **Date.** 2026-06-17 (session 6, P4 autonomous build). **Surfaced by the P4
@@ -2885,3 +2902,7 @@ the writer self-validates against); the additive `pre_verdict` branch in the spi
 human may override. To redirect to option (b): rename the const in the writer row
 + the two schemas + this entry — small and reversible. No consumer reads
 `calibration_entry` out of `events.jsonl` yet, so nothing breaks either way today.
+
+**Ratified 2026-06-18** by the human (derrick), explicit sign-off. The overload
+stands: `calibration_entry` + `phase` discriminator, NOT split into a distinct
+event_type.
