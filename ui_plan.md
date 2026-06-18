@@ -556,6 +556,138 @@ Scope: only `ui/` + this file.
 
 ---
 
+## §2026-06-17 (round 2) — tutor finding-overview (U1) + kind-gated cockpit forms (U5)
+
+Work order: `human/sessions/2026-06-17.md` "## UI session work order" (U1–U5), the
+tutor build round (D-054: verdict-fence KEPT; tutor = static overview + a live Qwen
+probing chat; **no recommendation**). Built by this UI session via **two Dynamic
+Workflows** (a 3-agent parallel BUILD on disjoint files, then a 3-agent INDEPENDENT
+ADVERSARIAL HARDEN) + serial integration. Scope: `ui/` + this file only.
+
+**Dependency honored:** the primary's **P2 per-turn chat CLI has NOT landed** (main
+HEAD is the plan commit). The work order gates **U2 / U3 / U4 on P2**, so this round
+shipped only the **P2-independent** items. U2 (tutor chat pane), U3 (light up the
+two-voice pane), U4 (`todo_cockpit.py` tutor + two-voice seam endpoints) **remain
+deferred until P2 lands on `main`** (the primary will note it in the session file).
+
+### What shipped (U1, U5, + the carried nit)
+
+- **U1 — read-only finding-detail GET** (`ui/backend/finding_detail.py`, NEW;
+  registered in `app.py`). `GET /api/finding/{finding_id}` JOINS one
+  `memory/surfaced_findings.jsonl` row (claim, evidence-DICT, `what_would_change_it`,
+  effective status via the `surfaced_findings.status.jsonl` last-row-wins overlay)
+  with its source iteration projected from `memory/loop_memory.jsonl`
+  (topic←`seed.topic`, `nara_summary`, `gate_status`, `journal_entry_path`,
+  started/ended). Unknown id → `{found:false}` at **HTTP 200** (the tutor degrades in
+  place, never 404-blanks). **Writes NOTHING** (the tutor fence at the data layer).
+  Contract is `FindingDetail` in `types/schemas.ts`; client `getFindingDetail` in
+  `http.ts`.
+- **U1 — `TutorPanel` rewrite** (`components/todo/TutorPanel.tsx`): replaced the
+  verbatim title-echo + stub banner with a real finding **OVERVIEW** — claim, source
+  iteration, `what_would_change_it` / why-it-matters, read-only evidence refs, quiet
+  novelty/critic/status badges, a **neutral MECHANICAL outcome-effects** line ("accept
+  → writes a valid `loop_feedback` row vs iteration X + clears the queue · deny →
+  invalid · in_review → stays queued"), and a **neutral UNWEIGHTED** for/against
+  enumeration that ends "not a recommendation". Self-fetches `getFindingDetail`
+  (the `detail` prop is the test-injection override); degrades to "unavailable" on
+  any failure; **idle** when nothing is selected.
+  - **THE FENCE (D-054), by construction:** the component accepts NO
+    verdict/confidence/onResolved/calibration prop — it is structurally unable to
+    influence or auto-fill the verdict; it renders **no recommendation/steer**.
+  - **Fixed the D-044 mis-citation:** the fence note now cites the REAL source —
+    *2026-06-14 note PART 2 · inviolate rule 4 · D-053* — and no longer cites D-044
+    (D-044 is the vllm-qwen novelty-skeptic independence decision, a different fence).
+- **U5 — kind-gated resolution forms** (`routes/Todo.tsx`): a `classifyKind` total
+  function gates the cockpit so **no `iteration_id` ever reaches a finding-keyed form
+  and no `finding_id` ever reaches an iteration-keyed form**.
+  `gate_verdict` → iteration forms (`GateVerdictForm`, `DirectiveSignOffField`);
+  `finding_review` → finding forms (`FindingReviewForm`, `AuthorizeFixForm`,
+  `SpawnTopicForm`, `AbstainForm`) + the aux `TwoVoiceChatPane` + `TutorPanel`;
+  any other kind → only `DeferForm` + `CalibrationCapture`. The aux now mounts only
+  for a real finding and receives the item's real non-empty `finding_id` (the old
+  `selected?.id ?? ""` empty-string fallback is gone). Calibration-first ordering +
+  all `safeActions`/`safeItems` guards preserved.
+- **Carried hygiene nit:** `attest.py:168` stale `repo_root` cross-reference fixed
+  (now cites `todo_cockpit.register`, the true `repo_root: Path | None`-defaulting
+  sibling — `human_todo.register` lost its `repo_root` last round).
+
+### Adversarial harden — 3 real backend bugs caught + fixed
+
+The independent-skeptic harden workflow broke the new GET three ways (each reproduced
+as a live 500 before the fix, each regression-pinned and reversion-verified):
+
+1. **Response-encoder overflow** — a surfaced value that is deeply nested (1000s of
+   levels), a non-finite float (NaN/Inf), or a 600–4300-digit bigint is valid JSON but
+   500s FastAPI's recursive `JSONResponse` encoder *after* the read try/except. Fixed
+   with an iterative `_encoder_safe` (depth ≤ 32, int < 10**600, finite floats) applied
+   as each value ENTERS the response — a pathological field degrades to null, the rest
+   is intact, safe values pass through byte-for-byte. (Same class `todo_cockpit._within_depth` guards.)
+2. **Read-layer `ValueError` escape** — a >4300-digit int makes `json.loads` itself
+   raise a bare `ValueError` (not a `JSONDecodeError`), which escaped the per-line
+   catch → 500. Widened the catch to `except ValueError`.
+3. **Delete-race 500** — a file unlinked between `exists()` and `open()` raised
+   `FileNotFoundError`→500; the sibling `coordinator.active` degrades the same race.
+   Added `except FileNotFoundError: return []` *before* the genuine-fault `except OSError`
+   → a vanished file reads as absent; a real unreadable file still 500s (pinned).
+
+`TutorPanel` and the `Todo.tsx` kind-gate were found **robust as-built** (no code fix);
+the harden added +24 fence/write-safety pins and +24 hostile-kind pins respectively.
+
+**Gate (authoritative):** `tsc --noEmit` clean · **vitest 1306 pass** (92 files; 1255 →
+1306) · **pytest 556 pass** (517 → 556) · real `env -u MOCK_LLM` smoke green (route
+serves real findings; unknown id → `found:false`; writes nothing). No test was
+weakened, skipped, or coerced; the one stale sibling assertion
+(`test_cockpit_interrogation.tsx` expected the retired `tutor-stub-banner`) was updated
+to the new overview behavior (not faked back into existence — inviolate rule 4).
+
+### Component docs backfill (cockpit current state)
+
+- **`TutorPanel` (`components/todo/TutorPanel.tsx`) — LIVE overview, fenced.** As
+  above: a read-only finding overview backed by `GET /api/finding/{id}`; no verdict
+  path exists on it; the visible fence note cites 2026-06-14 PART 2 / rule 4 / D-053.
+  Renders idle / unavailable / loaded states; every producer field is `typeof`-coerced
+  so a hostile value drops rather than blanks the cockpit. The future **live Qwen
+  probing chat** (U2) is a *separate* pane that waits on the P2 CLI.
+- **`TwoVoiceChatPane` (`components/todo/TwoVoiceChatPane.tsx`) — STILL A STUB.**
+  Renders the two-stance layout (defender **Gemma** / attacker **Qwen**, D-044
+  interrogator-independence), the turn/token cap intent, fixture turns, and a stub
+  banner; `actions.two_voice_chat` is `false`. It lights up at **U3** once the P2
+  per-turn CLI lands and `todo_cockpit.py` exposes the exec seam (U4). It is the
+  home for accept/deny **adversarial** support — distinct from the (fenced) tutor.
+- **`CalibrationCapture` (`components/todo/CalibrationCapture.tsx`) — STUBBED writer.**
+  The pre-verdict prediction + confidence slider (`[0,1]`, step 0.05) per ARCH §6.5.4.
+  It is the cockpit **ordering gate**: the verdict/resolution forms stay locked until
+  `onCaptured` fires. The POST (`/api/todo/calibration`) is an honest `would_run` stub
+  — the `calibration_entry` run-log writer is a primary seam (P4), so confidence is
+  captured in component state but **not yet durably written** (server still 422s
+  out-of-`[0,1]`, never coerced).
+
+### Flagged for a primary/human ruling (NOT changed this round)
+
+- **Aux panes render before pre-verdict calibration.** The harden pass surfaced that
+  the aux section (`TwoVoiceChatPane` + `TutorPanel`) renders for a finding item
+  *before* `CalibrationCapture` fires — the verdict FORMS are correctly locked behind
+  calibration, the aux is not. This **does not break U5** (the aux gets the real
+  `finding_id`, never an `iteration_id` or the empty-string fallback) and is
+  **pre-existing** (2026-06-14, not introduced here). It was deliberately NOT
+  "fixed": the written contract scopes the lock to *"the verdict form opens"* (ARCH
+  §6.5.4; 2026-06-14 PART 2), D-054's chosen calibration-bias mitigation is
+  *"no recommendation"* (now implemented), and seeing a finding's neutral overview is
+  arguably the legitimate **basis** for an informed calibration prediction — so
+  gating it would invent a contract the spec does not state (inviolate rule 8). **Open
+  research-design question for the human/primary:** should the calibration prediction
+  be made on minimal info (item title only, aux hidden until captured) to measure an
+  *uncontaminated* prior, or with the tutor overview available? If the former, the
+  one-line fix is `&& calibrated` on the Todo.tsx block-4 aux condition.
+- **`todo_cockpit.py` `_SEAM_MODULES` reconciliation** (the `authorize_fix` →
+  `orchestrator.authorize_fix` retarget + the spawn_topic/abstain session-vs-one-shot
+  question) stays **carried-forward** per the work order — separate from the tutor
+  round, lands when the primary ships the corrected seam wiring (P5).
+- **eslint/prettier/ruff adoption** still deferred (from §2026-06-17 hygiene) — needs
+  an install + warning burndown, out of a focused feature round.
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to

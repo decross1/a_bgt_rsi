@@ -146,19 +146,45 @@ describe("CalibrationCapture", () => {
 // --- TutorPanel ---
 
 describe("TutorPanel", () => {
-  it("exposes NO verdict affordance and shows a visible fence", () => {
-    render(<TutorPanel findingId="sf-iter-x" title="novel_on_02 over-gated" />);
-    // The fence is visible to the human.
+  it("renders the overview but exposes NO verdict affordance behind a visible fence", () => {
+    // U1 (2026-06-17): the tutor is now a real finding OVERVIEW, not a stub.
+    // Inject `detail` (the override) so we deterministically exercise the loaded
+    // state — the fence must hold WITH real content present (D-054), and the word
+    // "verdict" must appear ONLY in the fence note (critic_verdict is labelled
+    // "critic"; the mechanical outcome line avoids the word).
+    render(
+      <TutorPanel
+        findingId="sf-iter-x"
+        detail={{
+          found: true,
+          finding_id: "sf-iter-x",
+          title: "novel_on_02 over-gated",
+          claim: "the primary R0 gate over-gates novel_on_02",
+          what_would_change_it: "a re-run that clears the gate",
+          source_iteration_id: "iter-2026-05-27-006",
+          critic_verdict: "survives",
+        }}
+      />,
+    );
+    // The real overview renders (no longer a stub).
+    expect(screen.getByTestId("tutor-overview")).toBeInTheDocument();
+    // The fence is visible to the human, even alongside real content.
     expect(screen.getByTestId("tutor-fence-note")).toHaveTextContent(
       /does not affect your verdict/i,
     );
-    expect(screen.getByTestId("tutor-stub-banner")).toBeInTheDocument();
+    // It teaches; it NEVER recommends (the considerations are explicitly
+    // unweighted and disclaimed).
+    expect(screen.getByTestId("tutor-considerations")).toBeInTheDocument();
+    expect(screen.getByText(/not a recommendation/i)).toBeInTheDocument();
     // No verdict-shaped control: no valid/invalid/needs_revision buttons, no
     // verdict-labelled inputs leak in through this teaching surface.
     expect(screen.queryByRole("button", { name: /valid/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /invalid/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /needs_revision/i })).toBeNull();
-    expect(screen.queryByText(/verdict/i)).toHaveTextContent(/does not affect your verdict/i);
+    // The word "verdict" appears ONLY in the fence note (single-match holds).
+    expect(screen.queryByText(/verdict/i)).toHaveTextContent(
+      /does not affect your verdict/i,
+    );
   });
 });
 

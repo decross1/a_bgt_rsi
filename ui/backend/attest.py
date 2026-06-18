@@ -166,9 +166,10 @@ def register(
     runner=None,
 ) -> APIRouter:
     """Attach the attestation router (sibling-module pattern, cf.
-    ``human_todo.register``). ``repo_root`` defaults to the primary checkout;
-    ``runner`` defaults to ``subprocess.run`` and is injectable so tests stub
-    the exec — tests NEVER exec against the live ledgers."""
+    ``todo_cockpit.register`` — the same ``repo_root: Path | None`` defaulting to
+    the primary checkout). ``runner`` defaults to ``subprocess.run`` and is
+    injectable so tests stub the exec — tests NEVER exec against the live
+    ledgers."""
     root = Path(repo_root) if repo_root is not None else _PRIMARY_REPO
     run = runner if runner is not None else subprocess.run
     router = APIRouter(prefix="/api/attest", tags=["attest"])
