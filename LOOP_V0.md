@@ -19,10 +19,12 @@ lit-pipe detail.
   env-gated dark; pre-registered cargo experiment to fill the empty
   `/todo` cockpit — see
   [`docs/overgating_promotion_analysis.md`](docs/overgating_promotion_analysis.md))
-  have landed. **The reference-passing refactor is still pending** and
-  is the load-bearing prerequisite for reliable real iterations —
-  detail in this file's later sections (§"Reference-passing — the next
-  architectural fix").
+  have landed. **The reference-passing refactor SHIPPED (`39ba954`) and is
+  verified live** — 3 real iterations on 2026-06-19
+  (`iter-2026-06-19-001/002/003`) ran complete 5-step chains with no
+  truncation. The 3-iteration exit criterion is materially met (pending the
+  owner reading journals 076/077/078). Loops 1 (falsification) + 2
+  (rediscovery) demonstrated; 019-003 is a novel surviving Loop-3 seed.
 - **UI.** The 2026-06-10 observability overhaul shipped; the 2026-06-14
   dashboard reframe + `/todo` cockpit (stubbed) merged. **2026-06-17/18 (pushed,
   `b8ca85f`): the verdict-fenced tutor is live** — orchestrator tutor engine +
@@ -269,6 +271,12 @@ in parallel (e.g., three critics from different angles) and merges
 their results. Not built today; the primitive is what unblocks it.
 
 ## Reference-passing — the next architectural fix
+
+> **Status: SHIPPED + verified 2026-06-19.** The refactor landed (`39ba954`);
+> `workers/journal_writer.py` gathers all four substructures from the
+> per-iteration cache (`run_state/iteration_cache/<id>/`); verified live by 3
+> complete real iterations (`iter-2026-06-19-001/002/003`, no truncation). The
+> text below is the original plan, kept for the record.
 
 **Symptom.** Even with the Gemma inline-tool-call fallback parser
 (`agent_wrapper/gemma_tool_parse.py`, 20 unit tests), some chain

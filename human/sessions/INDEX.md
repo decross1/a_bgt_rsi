@@ -21,3 +21,4 @@ end-of-session with what was done and what's next). Oldest first.
 | 2026-06-15 | Cockpit seams + D-053 reframe (gates → advisory) + UI cockpit merge | primary | [2026-06-15.md](2026-06-15.md) |
 | 2026-06-17 | UI hygiene merge + cockpit design probe + tutor build (verdict-fenced overview + Qwen probing chat, D-054) | primary | [2026-06-17.md](2026-06-17.md) |
 | 2026-06-18 | Push the 06-17 bundle + UI U1+U5 merge (b8ca85f); U2–U4 work order | primary | [2026-06-18.md](2026-06-18.md) |
+| 2026-06-19 | Roadmap S1 — ref-passing verified + Loops 1 & 2 demonstrated (3 real iterations); 3-loop roadmap + UI reframe work order | primary | [2026-06-19.md](2026-06-19.md) |
