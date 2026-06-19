@@ -41,18 +41,21 @@ the 3-iteration LOOP_V0 exit materially met; the UI reframe work order authored.
 (b)/(c) shipped earlier, `59d1b07`.)
 
 ### S2 — Loop 3 part 1 (experiment chain) + the cockpit reframe + skill-signals (a)
-> **S1 probe result:** the experiment→loop **bridge plumbing works** (a 2026-06-19 `autoresearch
-> --replicate --live` on exp004 threaded `experiment_outcome` `vcg_truthful_fraction=0.965` + a
-> cross-tier replication into `iter-019-004/005`), **but the experiment-grounded chain doesn't vet
-> the finding** — it loops on `hypothesize` to `max_depth` (Gemma never emits a captured hypothesize
-> result from the "Experiment X reports metric=value" seed; `dispatch_tool` works in isolation).
-> **Headline S2 fix:** when `experiment_outcome` is present, **pre-seed the hypothesis from the
-> experiment's claim directly into the iteration cache** (bypass Gemma's re-derivation) so the chain
-> advances to retrieve → novelty → critic. Touches `autoresearch._topic_seed` + `nara.run_iteration`.
+> **Headline S2 fix — DONE (commit `1eba8f6`, 2026-06-19).** The experiment→loop chain was stalling
+> (looped on `hypothesize`/`novelty` to `max_depth`; bridged findings never vetted). Two dynamic
+> workflows misdiagnosed it as Gemma's tool emission and built a pre-seed + a deterministic
+> chain-driver — **both REVERTED**. The real root cause: the experiment `loop_bridge.py` /
+> `replication_driver.py` modules set `LOOP_V0_CALLS_LOG=<exp>/runs/calls.jsonl` at **import** time
+> but only `mkdir` it in `main()`; `autoresearch` imports them → the env var leaks → the dir is
+> absent → the wrapper's call-log `open` threw `FileNotFoundError` on every `call_sync`. **Fix:** a
+> 1-line `agent_wrapper.wrapper._emit` `mkdir` (+ regression test). Verified: `iter-2026-06-19-011`
+> runs the clean 5-step chain once-through and **vets** the bridged exp004 finding (novelty=rediscovery,
+> critic=undecidable, experiment_outcome + cross_tier present); literature path unaffected. The 2nd
+> workflow's adversarial verifier traced the truth (zero `calls.jsonl` entries → `call_sync` fails at
+> connection); lesson logged: never run two real iterations concurrently (iteration_id collision).
 
 **Primary:**
-- **[headline] Fix the experiment-grounded chain** (pre-seed the hypothesis from `experiment_outcome`)
-  so the finding is vetted, THEN:
+- **[headline] Fix the experiment-grounded chain — DONE** (`1eba8f6`; the call-log-dir fix above), THEN:
 - Loop 3 step 1–2: take a novel finding that maps to a built experiment (or run a built one
   standalone) → run a **classical experiment** (exp001 repeated-PD) via `orchestrator/autoresearch.py`
   (committed-results bridge first; `run_real` only with reason) → **bridge** the `experiment_outcome`
