@@ -80,6 +80,9 @@ run_state/events.jsonl
 experiments/runs/
 experiments/*/runs/
 
+# Applied-tier interactive refine sessions (exp007 paper forecasting) — runtime state.
+run_state/applied_sessions/
+
 # Layer-3 loop memory (per ARCHITECTURE.md §4.4) — sibling to chroma_db/
 # (Layers 1+2). Machine-generated; one row per Nara iteration.
 memory/*

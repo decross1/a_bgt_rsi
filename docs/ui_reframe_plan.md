@@ -70,15 +70,17 @@ awaiting your applied sign-off"). Reads `/api/loop_v0/active`, `/api/coordinator
 ## 3. Activity — deep-dive on running processes · **S3**
 
 **Current:** live-vs-history strip, Active-now hero (NowBoard, ActiveIterationPanel, ActiveWorkersPanel),
-CoordinatorPhases + FailedDispatches, a collapsed react-flow graph. **Per-worker internals are SYNTHETIC
-and flagged** (no `logs/worker_activity.jsonl`).
+CoordinatorPhases + FailedDispatches, a collapsed react-flow graph.
 
-**Target:** real deep-dive on actively-running processes (per-worker decode/tokens/ETA).
+**Target:** real deep-dive on actively-running processes (per-worker tokens / tok-per-s / ETA).
 
-**Changes:** mostly **a primary dependency** — the primary emits `logs/worker_activity.jsonl` (decode
-step, tokens-generated, ETA per in-flight worker); then the UI replaces the synthetic per-worker panel
-with real data (`ActiveWorkersPanel`, `activity.py`). Until then, keep the synthetic flag honest. (S3,
-gated on the primary producer — tracked in the roadmap.)
+**Changes — PRODUCER ALREADY LANDED (the stale "needs a producer" note is wrong).**
+`agent_wrapper/worker_activity.py` emits `logs/worker_activity.jsonl` (one honest row per `call_sync`:
+`tokens_generated / tokens_target / tok_per_s / eta_s / task_id / run_id / backend / model`; no fabricated
+ETA — per-decode-step needs streaming, future work), and `ui/backend/activity.py::_real_inference` already
+reads it (returns `synthetic:false` for rows within a 30s window; the synthetic fixture is the honest IDLE
+fallback, not a gap). **So §3 is mostly DONE** — remaining UI work is just to confirm `ActiveWorkersPanel`
+renders the real block during a live run and the synthetic marker drops. **No primary dependency outstanding.**
 
 ---
 
@@ -110,10 +112,15 @@ title + verdict chip + bridge badges; a separate `ExperimentDetail.tsx` (outcome
 - **Lifecycle + findings in detail** (`ExperimentDetail.tsx`): add the *lifecycle* (when run, which loop
   iteration seeded it, the bridge, cross-tier replications) + the **findings it surfaced** (join the
   coordinator-cycle `promoted_findings` / `surfaced_findings` for this experiment, currently orphaned).
-- **Interactive applied refinement** (new, the main build — pairs with Loop 3): for an applied-**paper**
-  experiment (exp007), an interactive surface to tweak market selection / forecast parameters and re-run
-  the **paper** forecast (zero trading; CFTC-safe), via a blessed CLI seam the primary provides (mirrors
-  the chat-seam pattern). The owner drives the applied experiment here after signing off in the cockpit.
+- **Interactive applied refinement — CLI LANDED (2026-06-19); the UI seam is yours.** The primary built
+  the blessed refine CLI `python -m experiments.exp007_polymarket.refine_cli` (start/turn verbs, mirrors
+  `finding_session chat`; **zero trading** — it re-runs the exp007 PAPER forecast against the offline
+  fixture and scores Brier): `start --session-id <id>` → `{ok, params, tunable:{seed,temperature,n}, note}`;
+  `turn --session-id <id> [--param seed:42|temperature:0.4|n:8] [--message <intent>]` → `{ok, params,
+  n_forecast, brier, sample[], elapsed_s}`. **Build:** a `ui/backend` seam mirroring `chat_seam.py`
+  (`_exec_blessed` runner over `experiments.exp007_polymarket.refine_cli`, argv-array, no shell;
+  `POST /api/exp007/refine/start|turn`) + the Experiments interactive surface (param controls → turn →
+  render the new Brier + sample). The owner drives it after signing off a finding to applied in the cockpit.
 
 ---
 

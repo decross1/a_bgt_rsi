@@ -13,8 +13,24 @@ framework. Even if the framework never ingests the file, the worst case is a row
 no one reads downstream — it can never make us write a bad file or violate a rule.
 
 Phasing (D-056): the call sites that emit (b) GAP and (c) MISUSE ship first;
-(a) FRICTION (form (i) — genuine run-log-skill misfit only) is added later. This
-helper accepts the full signal_class enum so (a) needs no schema change.
+(a) FRICTION (form (i) — genuine run-log-skill misfit only) is wired as a
+DOCUMENTED DEV-TIME MANUAL-EMIT AFFORDANCE, NOT an apparatus auto-call-site.
+Friction is a *dev-time agent's* feedback to the framework about its skill, so the
+emit lives in the conscious agent that hit the misfit (a Claude Code session /
+workflow build agent / the integrator), never in apparatus runtime code — which
+never uses framework skills at all (D-014 firewall). This helper accepts the full
+signal_class enum so (a) needs no schema change. Example — a dev-time agent whose
+`validate` skill cannot express a check because the agent's own output won't fit
+the declared schema (a real run-log/validate-skill misfit, not the rule-6 norm of
+a non-framework-enum status):
+
+    emit_skill_signal(
+        agent="workflow:<wf_id>/integrator", skill="validate",
+        signal_class="friction", severity="med",
+        evidence="subagent output failed schema validation; the validate skill's "
+                 "procedure could not express the actual output shape",
+        task_id="<task>", expected="<schema>", actual="<payload>",
+        suggested_fix="reconcile the schema or loosen the agent's output contract")
 """
 from __future__ import annotations
 
