@@ -41,7 +41,18 @@ the 3-iteration LOOP_V0 exit materially met; the UI reframe work order authored.
 (b)/(c) shipped earlier, `59d1b07`.)
 
 ### S2 — Loop 3 part 1 (experiment chain) + the cockpit reframe + skill-signals (a)
+> **S1 probe result:** the experiment→loop **bridge plumbing works** (a 2026-06-19 `autoresearch
+> --replicate --live` on exp004 threaded `experiment_outcome` `vcg_truthful_fraction=0.965` + a
+> cross-tier replication into `iter-019-004/005`), **but the experiment-grounded chain doesn't vet
+> the finding** — it loops on `hypothesize` to `max_depth` (Gemma never emits a captured hypothesize
+> result from the "Experiment X reports metric=value" seed; `dispatch_tool` works in isolation).
+> **Headline S2 fix:** when `experiment_outcome` is present, **pre-seed the hypothesis from the
+> experiment's claim directly into the iteration cache** (bypass Gemma's re-derivation) so the chain
+> advances to retrieve → novelty → critic. Touches `autoresearch._topic_seed` + `nara.run_iteration`.
+
 **Primary:**
+- **[headline] Fix the experiment-grounded chain** (pre-seed the hypothesis from `experiment_outcome`)
+  so the finding is vetted, THEN:
 - Loop 3 step 1–2: take a novel finding that maps to a built experiment (or run a built one
   standalone) → run a **classical experiment** (exp001 repeated-PD) via `orchestrator/autoresearch.py`
   (committed-results bridge first; `run_real` only with reason) → **bridge** the `experiment_outcome`
