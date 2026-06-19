@@ -42,6 +42,9 @@ vi.mock("../src/api/http", () => ({
   getHealthSignals: vi.fn().mockResolvedValue({ health_signals: [] }),
   getCoordinatorActive: vi.fn().mockResolvedValue(null),
   getHumanTodo: vi.fn().mockResolvedValue({ items: [], counts: {} }),
+  // The Dashboard (mounted by the PART 1 single-mount test) now polls the
+  // processes route — mock it so the import resolves (empty = no rows).
+  getProcesses: vi.fn().mockResolvedValue({ processes: [] }),
 }));
 
 // Dashboard-only feeds (single-mount test): quiet telemetry + no live calls.
@@ -472,5 +475,415 @@ describe("HumanTodoPanel — in-UI attestation (B4)", () => {
     // Exactly one getHumanTodo call: the form's re-poll (the fixture-mode
     // panel itself never polls).
     expect(vi.mocked(getHumanTodo)).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --- FE1: select-only mode (closes the calibration-bypass at the source) ---
+//
+// In select mode the inbox is a SELECTOR for the calibration-capture flow:
+// each row's title is a clickable selector (onSelect(id), aria-pressed off
+// selectedId) and the GATED writers — GateVerdictForm + FindingReviewForm —
+// are SUPPRESSED so no verdict is written without calibration. BubbleAck +
+// Defer + the CLI fallback stay inline (not the bypass). Default-off (no
+// selectMode) leaves every inline writer exactly as before.
+
+const FINDING_ITEM: HumanTodoItem = {
+  kind: "finding_review",
+  id: "f-0042",
+  title: "Finding f-0042 surfaced",
+  since: daysAgo(2),
+  resolve_command: "python -m orchestrator.finding_session",
+};
+const BUBBLE_ITEM: HumanTodoItem = {
+  kind: "bubble_ack",
+  id: "coord-1",
+  title: "Bubble from coord-1",
+  since: daysAgo(3),
+  resolve_command: "ack_cli --bubble-run-id coord-1",
+};
+
+describe("HumanTodoPanel — select-only mode (FE1)", () => {
+  beforeEach(() => {
+    resetAttestCapabilityCache();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    resetAttestCapabilityCache();
+  });
+
+  it("suppresses the GateVerdictForm and FindingReviewForm (the gated writers) in select mode", async () => {
+    // The kept DeferForms self-resolve the capability handshake — stub it so
+    // the only thing absent is the suppressed gated writers, not a fetch error.
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, CAP_ALL);
+      throw new Error(`unstubbed fetch: ${u}`);
+    });
+    render(
+      <HumanTodoPanel
+        initial={[GATE_ITEM, FINDING_ITEM]}
+        attest={CAP_ALL}
+        selectMode
+        onSelect={() => {}}
+        selectedId={null}
+      />,
+    );
+
+    // The defer surfaces mount once the handshake resolves; the gated writers
+    // never do — gated OFF by family.
+    await waitFor(() => expect(screen.getAllByTestId("defer-form").length).toBe(2));
+    expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
+    expect(screen.queryByTestId("finding-review-form")).toBeNull();
+    // Their verdict buttons are gone too.
+    expect(screen.queryByRole("button", { name: "valid" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "needs_revision" })).toBeNull();
+  });
+
+  it("keeps BubbleAck, Defer, and the CLI fallback inline in select mode", async () => {
+    // Each mounted form self-resolves the page-load-cached
+    // GET /api/attest/available — stub it (no live write) so the kept surfaces
+    // mount; the gated writers stay suppressed regardless.
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, CAP_ALL);
+      throw new Error(`unstubbed fetch: ${u}`);
+    });
+    render(
+      <HumanTodoPanel
+        initial={[GATE_ITEM, BUBBLE_ITEM]}
+        attest={CAP_ALL}
+        selectMode
+        onSelect={() => {}}
+        selectedId={null}
+      />,
+    );
+
+    // bubble_ack is an ack channel, not a gate decision — it stays.
+    expect(await screen.findByTestId("bubble-ack-form")).toBeInTheDocument();
+    // Defer stays on every blessed kind (the gate item keeps its defer surface).
+    expect(screen.getAllByTestId("defer-form").length).toBeGreaterThanOrEqual(1);
+    // The verbatim CLI fallback is still rendered per item.
+    expect(screen.getAllByTestId("todo-cli-fallback").length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByRole("button", { name: "Copy resolve command" }).length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  it("clicking a row's title selector fires onSelect(id) and drives aria-pressed off selectedId", () => {
+    // The selector button renders synchronously (not gated on capability); the
+    // kept DeferForm self-fetches the handshake, so stub it quietly.
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, CAP_ALL);
+      throw new Error(`unstubbed fetch: ${u}`);
+    });
+    const onSelect = vi.fn();
+    const { rerender } = render(
+      <HumanTodoPanel
+        initial={[GATE_ITEM]}
+        attest={CAP_ALL}
+        selectMode
+        onSelect={onSelect}
+        selectedId={null}
+      />,
+    );
+
+    // The hero row's title is a selector button — clicking it selects the id.
+    const hero = screen.getByTestId("human-todo-hero");
+    const selector = within(hero).getByRole("button", {
+      name: /iter-2026-06-09-001 awaiting verdict/,
+    });
+    expect(selector).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(selector);
+    expect(onSelect).toHaveBeenCalledWith("iter-2026-06-09-001");
+
+    // selectedId drives the aria-pressed affordance.
+    rerender(
+      <HumanTodoPanel
+        initial={[GATE_ITEM]}
+        attest={CAP_ALL}
+        selectMode
+        onSelect={onSelect}
+        selectedId="iter-2026-06-09-001"
+      />,
+    );
+    expect(
+      within(screen.getByTestId("human-todo-hero")).getByRole("button", {
+        name: /iter-2026-06-09-001 awaiting verdict/,
+      }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("default-off: without selectMode the inline writers render unchanged and the title is not a selector", async () => {
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, CAP_ALL);
+      throw new Error(`unstubbed fetch: ${u}`);
+    });
+    const onSelect = vi.fn();
+    render(
+      <HumanTodoPanel
+        initial={[GATE_ITEM]}
+        attest={CAP_ALL}
+        onSelect={onSelect}
+        selectedId={null}
+      />,
+    );
+
+    // The gated writer renders as before.
+    expect(await screen.findByTestId("gate-verdict-form")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "valid" })).toBeInTheDocument();
+    // The title is plain text, not a selector — clicking it cannot fire onSelect.
+    const hero = screen.getByTestId("human-todo-hero");
+    expect(
+      within(hero).queryByRole("button", {
+        name: /iter-2026-06-09-001 awaiting verdict/,
+      }),
+    ).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("preserves the todo-<kind>-<kindIndex> testid scheme in select mode", () => {
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, CAP_ALL);
+      throw new Error(`unstubbed fetch: ${u}`);
+    });
+    render(
+      <HumanTodoPanel
+        initial={[
+          { ...GATE_ITEM, id: "iter-a", title: "iter-a awaiting verdict", since: daysAgo(1) },
+          { ...GATE_ITEM, id: "iter-b", title: "iter-b awaiting verdict", since: daysAgo(3) },
+        ]}
+        attest={CAP_ALL}
+        selectMode
+        onSelect={() => {}}
+        selectedId={null}
+      />,
+    );
+    // Newest is the hero; the older one collapses into the group, both keyed by
+    // their oldest-first index within the kind.
+    expect(screen.getByTestId("human-todo-hero")).toHaveTextContent(
+      "iter-a awaiting verdict",
+    );
+    const group = screen.getByTestId("todo-group-gate_verdict");
+    expect(within(group).getByTestId("todo-gate_verdict-0")).toHaveTextContent(
+      "iter-b awaiting verdict",
+    );
+  });
+
+  // --- ADVERSARIAL closure: the §6.5.4 calibration-bypass cannot reopen ---
+  //
+  // The invariant: in select mode NO verdict-WRITE affordance reaches the inbox
+  // for ANY kind — neither the live producer spellings (gate_verdict /
+  // finding_review) NOR the legacy generations folded by the deferKindOf family
+  // helper (bubble_unacked / state_file_gate). The verdict kinds have NO alias
+  // spelling (DEFER_KIND_ALIASES maps gate_verdict→gate_verdict,
+  // finding_review→finding_review only), so the only way a verdict writer could
+  // leak is the kind arriving verbatim — proved suppressed in BOTH the hero and
+  // the expandable group rows below.
+
+  it("suppresses the verdict writers in select mode across BOTH the hero AND the group rows, for every present kind", async () => {
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, CAP_ALL);
+      throw new Error(`unstubbed fetch: ${u}`);
+    });
+    // Two gate_verdict + two finding_review so each kind has a hero AND a
+    // collapsed group row — the suppression must hold in both placements. Plus a
+    // finding hero-tier check by giving findings the newest `since`.
+    render(
+      <HumanTodoPanel
+        initial={[
+          { kind: "gate_verdict", id: "iter-g1", title: "iter-g1 awaiting verdict", since: daysAgo(2), resolve_command: "gate_cli --iteration-id iter-g1" },
+          { kind: "gate_verdict", id: "iter-g2", title: "iter-g2 awaiting verdict", since: daysAgo(4), resolve_command: "gate_cli --iteration-id iter-g2" },
+          { kind: "finding_review", id: "f-1", title: "f-1 surfaced", since: daysAgo(3), resolve_command: "finding_session f-1" },
+          { kind: "finding_review", id: "f-2", title: "f-2 surfaced", since: daysAgo(5), resolve_command: "finding_session f-2" },
+        ]}
+        attest={CAP_ALL}
+        selectMode
+        onSelect={() => {}}
+        selectedId={null}
+      />,
+    );
+
+    // Defer mounts for all four (it is kept); the verdict writers never do.
+    await waitFor(() => expect(screen.getAllByTestId("defer-form").length).toBe(4));
+    // No verdict-WRITE affordance anywhere in the inbox — not the form testids,
+    // not their submit buttons. This is the bypass closure for these kinds.
+    expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
+    expect(screen.queryByTestId("finding-review-form")).toBeNull();
+    expect(screen.queryByRole("button", { name: "valid" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "invalid" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "needs_revision" })).toBeNull();
+    // And the group rows (the expandable second-copy of each kind) carry no
+    // writer either — verified by there being exactly zero verdict form nodes.
+    expect(screen.queryAllByTestId("gate-verdict-form")).toHaveLength(0);
+    expect(screen.queryAllByTestId("finding-review-form")).toHaveLength(0);
+  });
+
+  it("suppresses verdict writers for the LEGACY producer spellings too, but keeps their non-verdict surfaces (bubble_unacked → ack stays; state_file_gate → defer-only)", async () => {
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, CAP_ALL);
+      throw new Error(`unstubbed fetch: ${u}`);
+    });
+    render(
+      <HumanTodoPanel
+        initial={[
+          // legacy ack spelling — folds to bubble_ack; ack is NOT a verdict, stays
+          { kind: "bubble_unacked", id: "bub-legacy", title: "legacy bubble", since: daysAgo(1), resolve_command: "ack_cli --bubble-run-id bub-legacy" },
+          // legacy state-gate spelling — folds to state_gate; defer-only
+          { kind: "state_file_gate", id: "gate-legacy", title: "legacy state gate", since: daysAgo(2), resolve_command: "edit run_state/week1.state.json" },
+        ]}
+        attest={CAP_ALL}
+        selectMode
+        onSelect={() => {}}
+        selectedId={null}
+      />,
+    );
+
+    // No verdict writer is reachable for either legacy spelling.
+    await waitFor(() => expect(screen.getAllByTestId("defer-form").length).toBeGreaterThanOrEqual(1));
+    expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
+    expect(screen.queryByTestId("finding-review-form")).toBeNull();
+    // bubble_unacked keeps its ack channel (not a gate decision); state_file_gate
+    // keeps only defer. Neither is a calibration-bypassing verdict write.
+    expect(screen.getByTestId("bubble-ack-form")).toBeInTheDocument();
+  });
+
+  it("HOSTILE: a row with an EMPTY-string id is NOT selectable and never fires onSelect('') — asText('') is '' not null", () => {
+    // asText("") returns "" (the string path), so `id !== null` alone would
+    // make this row a selector and fire onSelect("") — a bad selection key the
+    // cockpit's .find() can never match. The selector guard must require a
+    // NON-EMPTY string id; the row still RENDERS (it needs the human) but as
+    // plain text, not a clickable selector.
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, CAP_ALL);
+      throw new Error(`unstubbed fetch: ${u}`);
+    });
+    const onSelect = vi.fn();
+    render(
+      <HumanTodoPanel
+        initial={[
+          { kind: "gate_verdict", id: "", title: "empty-id row", since: daysAgo(1), resolve_command: "gate_cli --iteration-id ''" },
+        ] as unknown as HumanTodoItem[]}
+        attest={CAP_ALL}
+        selectMode
+        onSelect={onSelect}
+        selectedId={null}
+      />,
+    );
+    const hero = screen.getByTestId("human-todo-hero");
+    // The row still renders (the human still needs it) — but the title is NOT a
+    // selector button.
+    expect(hero).toHaveTextContent("empty-id row");
+    expect(
+      within(hero).queryByRole("button", { name: /empty-id row/ }),
+    ).toBeNull();
+    // And the verdict writer is suppressed (select mode) regardless.
+    expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("HOSTILE: a row with a NON-STRING id is NOT selectable and never fires onSelect with a bad id", () => {
+    // asText(number/object) → null/stringified; an object/array id is dropped to
+    // null by asText, so the row must not be a selector. (A numeric id WOULD
+    // stringify, but the producer's ids are strings; the attack is the object id
+    // that asText refuses to render.)
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, CAP_ALL);
+      throw new Error(`unstubbed fetch: ${u}`);
+    });
+    const onSelect = vi.fn();
+    render(
+      <HumanTodoPanel
+        initial={[
+          { kind: "gate_verdict", id: { nested: "id" }, title: "object-id row", since: daysAgo(1), resolve_command: "gate_cli" },
+          { kind: "gate_verdict", id: ["arr", "id"], title: "array-id row", since: daysAgo(2), resolve_command: "gate_cli" },
+        ] as unknown as HumanTodoItem[]}
+        attest={CAP_ALL}
+        selectMode
+        onSelect={onSelect}
+        selectedId={null}
+      />,
+    );
+    // Neither object-id nor array-id row is a clickable selector.
+    expect(screen.queryByRole("button", { name: /object-id row/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /array-id row/ })).toBeNull();
+    // No verdict writer leaks; no onSelect fired with a non-string id.
+    expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("HOSTILE: an OBJECT/ARRAY kind groups under 'unknown' and routes through the family helper to suppress every keyed writer in select mode", () => {
+    // kind is producer-owned: the parent coerces a non-string kind to "unknown"
+    // (asText), deferKindOf("unknown") → null, so NO keyed family renders — the
+    // verdict writers cannot leak through an object kind spoofing gate_verdict.
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, CAP_ALL);
+      throw new Error(`unstubbed fetch: ${u}`);
+    });
+    render(
+      <HumanTodoPanel
+        initial={[
+          { kind: { spoof: "gate_verdict" }, id: "obj-kind-1", title: "object-kind row", since: daysAgo(1), resolve_command: "x" },
+          { kind: ["gate_verdict"], id: "arr-kind-1", title: "array-kind row", since: daysAgo(2), resolve_command: "x" },
+        ] as unknown as HumanTodoItem[]}
+        attest={CAP_ALL}
+        selectMode
+        onSelect={() => {}}
+        selectedId={null}
+      />,
+    );
+    expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
+    expect(screen.queryByTestId("finding-review-form")).toBeNull();
+    expect(screen.queryByRole("button", { name: "valid" })).toBeNull();
+    // The rows still render under the raw "unknown" group (they need the human).
+    expect(screen.getByTestId("todo-group-unknown")).toBeInTheDocument();
+  });
+
+  it("clicking the kept Defer / BubbleAck / Copy controls does NOT also fire onSelect (the selector is the title only, not the whole row)", async () => {
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, CAP_ALL);
+      throw new Error(`unstubbed fetch: ${u}`);
+    });
+    const onSelect = vi.fn();
+    render(
+      <HumanTodoPanel
+        initial={[BUBBLE_ITEM]}
+        attest={CAP_ALL}
+        selectMode
+        onSelect={onSelect}
+        selectedId={null}
+      />,
+    );
+
+    const hero = screen.getByTestId("human-todo-hero");
+    // BubbleAck form mounts; clicking inside it (its disclosure summary) must
+    // not bubble up to a row-level selection.
+    expect(await within(hero).findByTestId("bubble-ack-form")).toBeInTheDocument();
+
+    // The Copy button on the CLI fallback — clicking it must not select the row.
+    const copy = within(hero).getByRole("button", { name: "Copy resolve command" });
+    fireEvent.click(copy);
+    expect(onSelect).not.toHaveBeenCalled();
+
+    // The Defer disclosure summary — clicking it expands defer, not selects.
+    const defer = within(hero).getByTestId("defer-form");
+    const deferSummary = defer.querySelector("summary");
+    if (deferSummary) fireEvent.click(deferSummary);
+    expect(onSelect).not.toHaveBeenCalled();
+
+    // Only the title selector fires onSelect — prove the affordance still works.
+    const titleSelector = within(hero).getByRole("button", { name: /Bubble from coord-1/ });
+    fireEvent.click(titleSelector);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith("coord-1");
   });
 });

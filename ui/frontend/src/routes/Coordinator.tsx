@@ -14,7 +14,35 @@
 import { useEffect, useState } from "react";
 import CoordinatorCycleCard from "../components/CoordinatorCycleCard";
 import { getCoordinatorCycles } from "../api/http";
+import { useNow } from "../time";
 import type { CoordinatorCycle } from "../types/schemas";
+
+// The two render-boundary filter axes. Defaults are range="all" +
+// direction="newest" so the unfiltered view (every renderable row, newest
+// first) matches the polled-sort contract and the existing hardening tests.
+type Range = "all" | "today" | "week";
+type Direction = "newest" | "oldest";
+
+// True when `cycle`'s timestamp falls inside the selected window. "all" keeps
+// everything (incl. NaN/unparseable timestamps); "today"/"week" key off the
+// parsed ISO date and EXCLUDE a row whose timestamp won't parse — a coordinate
+// with no legible date can't claim to be "today". `nowMs` is the live clock
+// (useNow), never a module-top Date.now(), so the bucket boundary tracks the
+// current render instead of import time.
+function inRange(cycle: CoordinatorCycle, range: Range, nowMs: number): boolean {
+  if (range === "all") return true;
+  const t = Date.parse(timestampKey(cycle));
+  if (Number.isNaN(t)) return false;
+  if (range === "week") return nowMs - t <= 7 * 24 * 60 * 60 * 1000;
+  // "today" = same calendar day in local time (matches the human's wall clock).
+  const a = new Date(t);
+  const b = new Date(nowMs);
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
 
 interface Props {
   initial?: CoordinatorCycle[];
@@ -64,10 +92,29 @@ export default function Coordinator({ initial, pollMs = 5000 }: Props) {
   const [cycles, setCycles] = useState<CoordinatorCycle[]>(initial ?? []);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(initial !== undefined);
+  // Defaults keep the unfiltered, newest-first view (the polled-sort contract).
+  const [range, setRange] = useState<Range>("all");
+  const [direction, setDirection] = useState<Direction>("newest");
+  // Live clock for the date buckets; only consulted when range !== "all", so the
+  // default view never depends on the tick.
+  const now = useNow(60_000);
 
   // Filter at the render boundary so BOTH the `initial` (test) path and the
-  // polled path get the same guard: a malformed row never reaches a card.
-  const renderable = cycles.filter(isRenderableCycle);
+  // polled path get the same guard: a malformed row never reaches a card. Then
+  // apply the time-range bucket and the sort direction — both composed HERE
+  // rather than in the poll effect, so flipping a control re-derives the view
+  // without re-fetching and the polled sort stays the single source of order.
+  const renderable = cycles
+    .filter(isRenderableCycle)
+    .filter((c) => inRange(c, range, now))
+    .sort((a, b) => {
+      const cmp = timestampKey(b).localeCompare(timestampKey(a));
+      return direction === "newest" ? cmp : -cmp;
+    });
+
+  const rangeCaption =
+    range === "today" ? "today" : range === "week" ? "this week" : "all";
+  const dirCaption = direction === "newest" ? "newest first" : "oldest first";
 
   useEffect(() => {
     if (initial !== undefined) return;
@@ -112,11 +159,32 @@ export default function Coordinator({ initial, pollMs = 5000 }: Props) {
       <div className="flex items-baseline gap-3">
         <h1 className="text-base font-semibold text-zinc-100">Coordinator</h1>
         <span className="text-[10px] text-zinc-600">
-          /api/coordinator/cycles · newest first
+          /api/coordinator/cycles · {rangeCaption} · {dirCaption}
         </span>
-        <span className="ml-auto text-[11px] text-zinc-500">
-          {renderable.length}
-        </span>
+        <div className="ml-auto flex items-baseline gap-2">
+          <select
+            aria-label="time range"
+            value={range}
+            onChange={(e) => setRange(e.target.value as Range)}
+            className="rounded border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-[11px] text-zinc-300 focus:border-zinc-600 focus:outline-none"
+          >
+            <option value="all">all time</option>
+            <option value="today">today</option>
+            <option value="week">this week</option>
+          </select>
+          <button
+            type="button"
+            aria-label="sort direction"
+            title="toggle newest/oldest first"
+            onClick={() =>
+              setDirection((d) => (d === "newest" ? "oldest" : "newest"))
+            }
+            className="rounded border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-[11px] text-zinc-400 hover:text-zinc-200 focus:border-zinc-600 focus:outline-none"
+          >
+            {direction === "newest" ? "newest first" : "oldest first"}
+          </button>
+          <span className="text-[11px] text-zinc-500">{renderable.length}</span>
+        </div>
       </div>
       <p className="mt-1 text-xs text-zinc-500">
         One cycle = one narrative: the auto-chosen topic, the plan and each

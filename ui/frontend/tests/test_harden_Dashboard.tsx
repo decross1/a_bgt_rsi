@@ -137,6 +137,8 @@ vi.mock("../src/api/http", () => ({
   // SystemActivityHero mirrors + HUMAN TODO panel (quiet defaults).
   getCoordinatorActive: vi.fn().mockResolvedValue(null),
   getHumanTodo: vi.fn().mockResolvedValue({ items: [], counts: {} }),
+  // InFlightRollup feed (FE5): Dashboard polls getProcesses in the HERO effect.
+  getProcesses: vi.fn().mockResolvedValue({ processes: [] }),
 }));
 
 // SystemActivityHero's live-calls feed (Dashboard polls the activity monitor).

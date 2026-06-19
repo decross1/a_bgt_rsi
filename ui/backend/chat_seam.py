@@ -90,10 +90,12 @@ _MAX_ENVELOPE_DEPTH = 32
 
 def _encode_safe(value, limit: int = _MAX_ENVELOPE_DEPTH) -> bool:
     """True if `value` is JSON-encode-safe for a FastAPI JSONResponse: it nests
-    no deeper than `limit` AND contains no non-finite float (NaN/Infinity). The
-    walk is ITERATIVE (an explicit stack) so the guard cannot itself overflow on
-    the pathological input it exists to reject — same idiom as the cockpit's
-    ``_within_depth``, extended to also reject non-finite floats."""
+    no deeper than `limit`, contains no non-finite float (NaN/Infinity), and
+    contains no string carrying a lone/unpaired surrogate code point. The walk is
+    ITERATIVE (an explicit stack) so the guard cannot itself overflow on the
+    pathological input it exists to reject — same idiom as the cockpit's
+    ``_within_depth``. Chat envelopes are MODEL output, so a stray surrogate /
+    non-finite float is a real vector."""
     stack = [(value, 0)]
     while stack:
         node, depth = stack.pop()
@@ -101,8 +103,19 @@ def _encode_safe(value, limit: int = _MAX_ENVELOPE_DEPTH) -> bool:
             return False
         if isinstance(node, float) and not math.isfinite(node):
             return False
+        if isinstance(node, str) and not node.isascii():
+            # A lone/unpaired surrogate (a producer/model ``"\udXXX"``) parses
+            # fine but is not UTF-8-encodable, so JSONResponse 500s AFTER the read
+            # (same valid-to-parse / fatal-to-encode class as NaN/Infinity).
+            # isascii() fast-paths; only a surrogate trips the encode probe.
+            try:
+                node.encode("utf-8")
+            except UnicodeEncodeError:
+                return False
         if isinstance(node, dict):
-            for v in node.values():
+            for k, v in node.items():
+                # a surrogate can ride a dict KEY too — push at the same depth
+                stack.append((k, depth))
                 stack.append((v, depth + 1))
         elif isinstance(node, list):
             for v in node:

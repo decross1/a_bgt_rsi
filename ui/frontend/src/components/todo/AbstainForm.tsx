@@ -1,9 +1,11 @@
 // AbstainForm — outcome 6: abstain. The HONEST no-verdict exit — the human
 // records NO verdict, the finding is left to re-look later (it is NOT validated,
-// NOT rejected, NOT deferred). POSTs /api/todo/abstain, which — once the seam
-// lands — shells the abstain argv. Until then the endpoint is an honest STUB:
-// {status:"stub", would_run:[...argv]}, writing NOTHING (inviolate rule 4). No
-// execute button (D-046 / rule 8).
+// NOT rejected, NOT deferred). Abstain is a SESSION-EXIT, not an in-UI one-shot:
+// `available` is false BY DESIGN. POSTs /api/todo/abstain return a read-only
+// would-run preview ({status:"stub", would_run:[...argv]}, writing NOTHING —
+// inviolate rule 4); the actual abstention stays a primary-session step (no
+// execute button — D-046 / rule 8). The cockpit shows the exit and its argv; it
+// does not run it.
 //
 // The copy must make the no-verdict semantics explicit so abstain is never
 // mistaken for a soft sign-off (rule 4 — a near-miss is not coerced to a pass).
@@ -12,8 +14,8 @@ import { postAbstain, TodoError, type TodoResult } from "../../api/todo";
 
 interface Props {
   findingId: string;
-  /** actions.abstain from GET /api/todo/available — false keeps the form in its
-   *  honest stub state (submit disabled). */
+  /** actions.abstain from GET /api/todo/available — false BY DESIGN (abstain is
+   *  a session-exit, not an in-UI one-shot); the form stays preview-only. */
   available: boolean;
   onSubmitted?: () => void;
 }
@@ -95,9 +97,9 @@ export default function AbstainForm({ findingId, available, onSubmitted }: Props
       </div>
       {!isAvailable && (
         <div data-testid="abstain-stub" className="mt-0.5 text-[10px] text-zinc-500">
-          stub — lights up when the abstain seam lands
-          (docs/todo_cockpit_seam_plan.md). Posts now return a read-only
-          would-run preview and write nothing.
+          abstain is a session-exit, not an in-UI one-shot — preview only. The
+          would-run argv below shows the exit; recording the abstention stays a
+          primary-session step (nothing is written from here).
         </div>
       )}
       <div data-testid="abstain-semantics" className="mt-1 text-[10px] text-zinc-500">
@@ -153,7 +155,7 @@ export default function AbstainForm({ findingId, available, onSubmitted }: Props
               verdict (rule 4). resultObj is {} for any non-object body, so the
               stub-vs-recorded probe below reads from a safe map. */}
           {resultObj.stub === true || resultObj.status === "stub" || !isResultObject
-            ? "stub response — nothing written (the seam is not live)"
+            ? "stub response — nothing written (preview only; abstain is a session-exit)"
             : "abstention recorded — no verdict; the finding stays open for re-look"}
           {Array.isArray(resultObj.would_run) && (
             <pre

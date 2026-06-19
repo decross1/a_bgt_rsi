@@ -821,6 +821,122 @@ skipped, or coerced.
 
 ---
 
+## §2026-06-19 — the /todo cockpit S2 reframe + two page wins
+
+Work order: `human/sessions/2026-06-19.md` "## UI session work order"; authoritative
+per-page spec `docs/ui_reframe_plan.md` (§1 cockpit, §2 Dashboard, §4 Coordinator — the
+S2 slice; §3 Activity + §5 Experiments are S3, deferred + gated on primary producers).
+The human ruled **flag-2** (calibratedId → per-id `Set`), now in-scope. Built by this UI
+session via **four Dynamic Workflows** (Understand 6 readers → Build 7 → Reconcile 4 →
+Harden 3 = 20 agents) + heavy serial integration. Scope: `ui/` + this file only.
+
+**North star:** the cockpit is the owner's **sign-off to applied-tier experiments** —
+literature-stage iterations auto-advance (observable, not gated); the owner is reserved
+for the substantive end-of-pipeline decisions. The flow: *pick → read the journey →
+optional blind calibration → interrogate → decide.*
+
+### What shipped — the cockpit (§1)
+
+- **Literature auto-advance** (`human_todo.py` `_gate_verdict_items`): only pending
+  iterations carrying a usable `experiment_outcome` dict surface as blocking
+  `gate_verdict` inbox items; literature-stage pending rows are dropped (observable via
+  `/api/loop_v0/iterations`). On live data this took `gate_verdict` from ~18 to ~7–9
+  experiment-bearing items; `finding_review` (5) is untouched, so the inbox is reserved
+  for substantive escalations, not emptied.
+- **Select-only inbox** (`HumanTodoPanel` `selectMode`) — **this closes the §6.5.4
+  calibration-bypass AT THE SOURCE**: in select mode the inline verdict writers
+  (`GateVerdictForm`/`FindingReviewForm`) are suppressed (gated by family via
+  `deferKindOf`, both producer spellings), so a verdict can no longer be written from
+  the inbox with no calibration; rows become selectors driving the workspace; `BubbleAck`
+  + `Defer` + the CLI fallback stay inline. Default-off keeps legacy behavior.
+- **PipelineJourney** (NEW `components/todo/PipelineJourney.tsx`) — the read-only
+  context view: a pipeline ribbon (8 steps; experiments greyed = Phase 2) + the journey
+  (hypothesis → retrieval + relevance → novelty + rationale → critic verdict + the
+  contradicting paper / "uncontradicted" → experiment-outcome slot) + an honest
+  "literature-stage — not experimentally tested" label. Backed by a NEW read-only GET
+  **`/api/iteration/{id}/journey`** (`iteration_journey.py`) returning the full
+  `IterationRecord`; handles both families (a gate_verdict iteration directly; a finding
+  via `getFindingDetail` → `source_iteration_id`). Reuses the `IterationDetailModal`
+  rendering idioms.
+- **Calibration is OPTIONAL + per-id** (flag-2): the forced "locked until calibration"
+  gate is **REMOVED** — the resolution forms render unconditionally. `CalibrationCapture`
+  is opt-in/blind, recorded ONCE per id (`calibratedIds: Set`, a `captured` prop) so a
+  switch-away-and-back never re-prompts (no double `calibration_entry`).
+- **Reveal-gated interrogation** (the D-054 forced-gate rework for an opt-in flow): the
+  interactive panes (tutor chat + two-voice + the tutor overview) are hidden behind a
+  default-collapsed "reveal decision support" toggle (per-id `revealedIds: Set`), so a
+  blind calibration is not contaminated by them — **without forcing calibration**
+  (revealing requires no capture). The static journey is the pre-calibration basis.
+- **Honest banner + explainer** (`Todo.tsx`): the false "STUBS … write nothing" banner is
+  rewritten to the sign-off-to-applied-tier framing; a collapsible "what am I being
+  asked?" explainer names the two research validations (gate-verdict = whole iteration;
+  finding-review = one claim) + three ops/info (bubble-ack, stale-active-run, state-gate).
+- **Stale stub-comment sweep**: the "seam lands / would-run / writes nothing" copy across
+  `api/todo.ts` + the 6 leaf components (authorize_fix/directive_signoff are live execs;
+  spawn_topic/abstain are honest session-exits; tutor/two-voice chat are live) — corrected
+  to honest capability-off / session-exit framing. (The D-044 Todo.tsx code-comment was
+  already fixed in the U2/U3/U4 round; the work-order line refs were stale.)
+
+### Page wins (§2 + §4)
+
+- **Dashboard in-flight rollup** (NEW `InFlightRollup.tsx`): a compact "what's running"
+  list (active iteration / coordinator run / running processes) + "N findings awaiting
+  your applied sign-off" (`counts.finding_review`); reads `/api/loop_v0/active`,
+  `/api/coordinator/active`, the new `getProcesses` (`/api/loop_v0/processes`). The
+  health strip + **both LLM panels (Gemma + Qwen)** are untouched.
+- **Coordinator time-range filter**: today / this-week / all + a newest/oldest direction
+  toggle, defaulting to all + newest-first (the existing history is unchanged by default).
+
+### Adversarial harden — 3 real bugs caught + fixed
+
+1. **PipelineJourney cross-family stale-state** (H1): a finding's failed `getFindingDetail`
+   left `detailFailed` set, falsely sticking a subsequently-selected healthy *iteration* on
+   "journey unavailable". Fixed by family-gating the flag; +7 pins.
+2. **Empty-string-id selector guard** (H2): a row with `id:""` became a clickable selector
+   firing `onSelect("")`. The **security invariant held** (verdict writers stayed suppressed
+   for every kind — proven by static trace), but the guard was tightened to a non-empty
+   string; +6 pins.
+3. **Surrogate-string encoder-500** (H3): a lone/unpaired surrogate (`"\ud800"`) parses but
+   is not UTF-8-encodable → `JSONResponse` 500s after the read (the same valid-to-parse /
+   fatal-to-encode class as NaN/Infinity, on a string + dict keys). Fixed in
+   `iteration_journey._encoder_safe`; the integrator then **closed the same gap in the
+   sibling `finding_detail._encoder_safe` + `chat_seam._encode_safe`** (chat is model
+   output — highest risk) and pinned all three.
+
+### Gate (authoritative)
+
+`tsc --noEmit` clean · **vitest 1412 pass** (96 files) · **pytest 663 pass** · real
+`env -u MOCK_LLM` smoke (journey GET, the reclassify, processes, coordinator, cockpit all
+serve live data). No test was weakened, skipped, or coerced; the heavy Todo-shell test
+reconciliation (≈70 tests across 6 files) preserved every kind-gate / robustness / fence
+invariant verbatim (reworked the forced-gate flow to the opt-in + reveal-gate + per-id Set
+model).
+
+### Flagged for a primary/human ruling (NOT silently decided)
+
+- **`test_validate_iterations` (2 cases) FAIL — pre-existing, NOT the reframe.** The live
+  `loop_memory.jsonl` has a **duplicate `iter-2026-06-19-006`** (2 rows); the test asserts a
+  unique "load journal `<id>`" label and trips `getMultipleElementsFound`. The UI renders
+  both rows fine; I touched neither `ResolvedIterationsList` nor that test. This is a
+  primary-side data-integrity issue — **dedupe the data, or define the duplicate-id UI
+  behavior** (and/or make the test robust). Left for the primary; the reframe suite is
+  otherwise fully green.
+- **The literature signal = `experiment_outcome` presence** — the only clean in-data
+  discriminator + it matches the north star, but the spec named the behavior not the field.
+  Confirm; if a different signal (an explicit tier/stage marker) is intended, the
+  `_gate_verdict_items` predicate is the single swap point.
+- **The calibration-flow decision** (opt-in + reveal-gated interrogation; the D-054 forced
+  gate removed) is my resolution of the work order's "re-thought for an opt-in flow" — a
+  one-line change either direction if the human prefers a harder gate.
+- **spawn_topic / abstain frontend reshape** still deferred (gated on
+  `docs/cockpit_seam_wiring.md` open Q1 — in-UI exit verb vs terminal). The forms are
+  disabled (no live POST), so the `ref_id`/`kind` client-signature drift is latent.
+- **§3 Activity** (real per-worker decode/ETA) + **§5 Experiments** (card wall + applied-paper
+  refinement) are S3 — gated on the primary's `logs/worker_activity.jsonl` + the applied-paper
+  CLI seam respectively.
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to

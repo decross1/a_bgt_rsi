@@ -99,7 +99,7 @@ describe("CalibrationCapture hardening — confidence bounds + non-number/NaN", 
     expect(screen.getByText("1.00")).toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByRole("button", { name: /capture calibration → open verdict/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     );
     await waitFor(() => expect(onCaptured).toHaveBeenCalledTimes(1));
     expect(onCaptured).toHaveBeenCalledWith({ prediction: "survives", confidence: 1 });
@@ -120,7 +120,7 @@ describe("CalibrationCapture hardening — confidence bounds + non-number/NaN", 
     });
     expect(screen.getByText("0.00")).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: /capture calibration → open verdict/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     );
     await waitFor(() => expect(onCaptured).toHaveBeenCalledTimes(1));
     expect(onCaptured).toHaveBeenCalledWith({ prediction: "fails", confidence: 0 });
@@ -145,7 +145,7 @@ describe("CalibrationCapture hardening — confidence bounds + non-number/NaN", 
     expect(container.innerHTML).not.toContain("NaN");
     expect(screen.getByText("0.50")).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: /capture calibration → open verdict/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     );
     await waitFor(() => expect(onCaptured).toHaveBeenCalledTimes(1));
     expect(onCaptured).toHaveBeenCalledWith({ prediction: "unknown", confidence: 0.5 });
@@ -168,7 +168,7 @@ describe("CalibrationCapture hardening — confidence bounds + non-number/NaN", 
     });
     expect(container.innerHTML).not.toContain("Infinity");
     fireEvent.click(
-      screen.getByRole("button", { name: /capture calibration → open verdict/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     );
     await waitFor(() => expect(onCaptured).toHaveBeenCalledTimes(1));
     const draft = onCaptured.mock.calls[0][0] as { confidence: number };
@@ -190,7 +190,7 @@ describe("CalibrationCapture hardening — confidence bounds + non-number/NaN", 
     });
     expect(screen.getByText("0.70")).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: /capture calibration → open verdict/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     );
     await waitFor(() => expect(onCaptured).toHaveBeenCalledTimes(1));
     expect(onCaptured).toHaveBeenCalledWith({
@@ -211,7 +211,7 @@ describe("CalibrationCapture hardening — capture-BEFORE-verdict ordering under
       target: { value: "survives" },
     });
     fireEvent.click(
-      screen.getByRole("button", { name: /capture calibration → open verdict/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     );
     // The error path renders, but the verdict must NEVER be opened on a failed
     // capture — onCaptured stays unfired.
@@ -233,7 +233,7 @@ describe("CalibrationCapture hardening — capture-BEFORE-verdict ordering under
       target: { value: "survives" },
     });
     fireEvent.click(
-      screen.getByRole("button", { name: /capture calibration → open verdict/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     );
     await waitFor(() =>
       expect(screen.getByTestId("calibration-error")).toBeInTheDocument(),
@@ -253,7 +253,7 @@ describe("CalibrationCapture hardening — capture-BEFORE-verdict ordering under
       target: { value: "   " },
     });
     expect(
-      screen.getByRole("button", { name: /capture calibration → open verdict/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     ).toBeDisabled();
     expect(onCaptured).not.toHaveBeenCalled();
   });
@@ -302,7 +302,7 @@ describe("CalibrationCapture hardening — malformed refId prop", () => {
       target: { value: "survives" },
     });
     fireEvent.click(
-      screen.getByRole("button", { name: /capture calibration → open verdict/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     );
     await waitFor(() => expect(onCaptured).toHaveBeenCalledTimes(1));
     // Degraded to an empty ref — never the string "null"/"undefined".
@@ -352,7 +352,7 @@ describe("CalibrationCapture hardening — onCaptured throwing AFTER a successfu
       target: { value: "captured then callback throws" },
     });
     fireEvent.click(
-      screen.getByRole("button", { name: /capture calibration → open verdict/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     );
     await waitFor(() => expect(onCaptured).toHaveBeenCalledTimes(1));
 
@@ -365,7 +365,7 @@ describe("CalibrationCapture hardening — onCaptured throwing AFTER a successfu
     // The capture form is gone (no re-present → no double-write on retry).
     expect(
       screen.queryByRole("button", {
-        name: /capture calibration → open verdict/i,
+        name: /record blind calibration/i,
       }),
     ).toBeNull();
     errSpy.mockRestore();
@@ -384,7 +384,7 @@ describe("CalibrationCapture hardening — onCaptured throwing AFTER a successfu
       target: { value: "post fails" },
     });
     fireEvent.click(
-      screen.getByRole("button", { name: /capture calibration → open verdict/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     );
     await waitFor(() =>
       expect(screen.getByTestId("calibration-error")).toBeInTheDocument(),
@@ -410,7 +410,7 @@ describe("CalibrationCapture hardening — malformed refId prop (POST path)", ()
       target: { value: "survives" },
     });
     fireEvent.click(
-      screen.getByRole("button", { name: /capture calibration → open verdict/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     );
     await waitFor(() => expect(onCaptured).toHaveBeenCalledTimes(1));
     // Degraded to an empty ref — never the string "null"/"undefined".

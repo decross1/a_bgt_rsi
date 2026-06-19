@@ -16,6 +16,7 @@ import HealthStrip from "../components/HealthStrip";
 import HealthVerdict, {
   excludeQwenReadErrors,
 } from "../components/HealthVerdict";
+import InFlightRollup from "../components/InFlightRollup";
 import JournalScroll from "../components/JournalScroll";
 import NaraPromptForm from "../components/NaraPromptForm";
 import ProcessGrid from "../components/ProcessGrid";
@@ -32,6 +33,7 @@ import {
   getHealth,
   getHumanTodo,
   getIterations,
+  getProcesses,
 } from "../api/http";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { useNow } from "../time";
@@ -41,6 +43,7 @@ import type {
   CoordinatorActiveRun,
   Health,
   IterationRecord,
+  ProcessRow,
   TelemetrySample,
 } from "../types/schemas";
 
@@ -65,6 +68,15 @@ export default function Dashboard() {
     useState<ActiveIteration | null>(null);
   const [coordinatorActive, setCoordinatorActive] =
     useState<CoordinatorActiveRun | null>(null);
+  // The /processes rollup feeds the InFlightRollup's running-subprocess rows
+  // (FE5). Coerced to an array on every set so a malformed/legacy body never
+  // flows a non-array into the rollup's `.filter`.
+  const [processes, setProcesses] = useState<ProcessRow[]>([]);
+  // Findings awaiting the human's applied sign-off — the two-validation model's
+  // finding_review count (one claim awaiting review), NOT the A+B decision count
+  // above. Drives the InFlightRollup's next-step line; kept separate so the
+  // dashboard's "N need you →" escalation badge stays the A+B blocking count.
+  const [findingsAwaiting, setFindingsAwaiting] = useState<number>(0);
   // PART 1 coupling (2026-06-14 work order): the dashboard's at-a-glance
   // escalation signal that replaces the removed HumanTodoPanel mount. N is the
   // REAL-decision count = taxonomy A (gate_verdict) + B (state_gate) ONLY —
@@ -115,6 +127,16 @@ export default function Dashboard() {
       getCoordinatorActive()
         .then(setCoordinatorActive)
         .catch(() => {});
+      // The in-flight rollup's running-subprocess feed. processes is
+      // producer-owned (the /processes rollup); a legacy/empty/mid-rotation
+      // body could omit `processes`, hand back `null`, or a non-array. Coerce
+      // to [] (the getIterations idiom) so a malformed response never flows a
+      // non-array into InFlightRollup's `.filter`. Fails quiet like the others.
+      getProcesses()
+        .then((r) =>
+          setProcesses(Array.isArray(r?.processes) ? r.processes : []),
+        )
+        .catch(() => {});
     };
     load();
     const id = setInterval(load, 7000);
@@ -151,6 +173,12 @@ export default function Dashboard() {
           // to 0, so guarding null/undefined to {} is sufficient.
           const counts = (r?.counts ?? {}) as Record<string, unknown>;
           setNeedsYouCount(num(counts.gate_verdict) + num(counts.state_gate));
+          // The InFlightRollup's "N findings awaiting your applied sign-off"
+          // next-step line. finding_review is the two-validation model's
+          // claim-awaiting-review count — DELIBERATELY separate from the A+B
+          // blocking decisions above (a finding awaiting review is not a
+          // blocking gate). Same clamp so one bad field can't NaN the line.
+          setFindingsAwaiting(num(counts.finding_review));
         })
         .catch(() => {});
     load();
@@ -290,6 +318,20 @@ export default function Dashboard() {
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <VllmPanel samples={cleanSamples} liveCalls={liveCalls} />
         <QwenPanel samples={cleanSamples} liveCalls={liveCalls} />
+      </div>
+
+      {/* IN FLIGHT rollup (FE5): one compact read-only list of what is RUNNING
+          across the apparatus — the active loop iteration, the coordinator
+          cycle, tracked subprocesses — plus the human-owned next steps
+          (experiment bridging placeholder + findings awaiting sign-off). Sits
+          below the health/LLM row and above the LOOP_V0 launcher glance. */}
+      <div className="mt-4">
+        <InFlightRollup
+          activeIteration={activeIteration}
+          coordinatorActive={coordinatorActive}
+          processes={processes}
+          findingsAwaiting={findingsAwaiting}
+        />
       </div>
 
       {/* LOOP_V0 high-level glance: compact active line + launcher. */}

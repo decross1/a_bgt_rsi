@@ -96,6 +96,10 @@ vi.mock("../src/api/http", async () => {
     // panel. Quiet defaults: no registered run, empty queue.
     getCoordinatorActive: vi.fn().mockResolvedValue(null),
     getHumanTodo: vi.fn().mockResolvedValue({ items: [], counts: {} }),
+    // InFlightRollup feed (FE5): Dashboard polls getProcesses in the HERO 7s
+    // effect. Quiet empty default — the closed-allowlist mock would otherwise
+    // hand back an undefined mock and Dashboard would throw on the call.
+    getProcesses: vi.fn().mockResolvedValue({ processes: [] }),
   };
 });
 

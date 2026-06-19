@@ -10,7 +10,14 @@
 // adds an error-banner check to its settle condition) is renamed
 // renderPollingQuietlyR5 to avoid colliding with the identical r2/r3 helper, and
 // its call sites are updated to match.
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Coordinator from "../src/routes/Coordinator";
 import type { CoordinatorCycle } from "../src/types/schemas";
@@ -713,5 +720,160 @@ describe("Coordinator hardening — r5: empty/absent bodies + boundary counts", 
     expect(screen.queryByTestId("coordinator-cycle-card")).toBeNull();
     expect(hasCrashBanner()).toBe(false);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// FE4 — time-range filter + sort-direction toggle (render-boundary, `initial`).
+// ===========================================================================
+//
+// SLICE FE4 — the Coordinator header gains a time-range filter (all / today /
+// this-week) and a newest/oldest-first sort toggle. The contract: DEFAULTS are
+// range=all + direction=newest, so the unfiltered view is byte-for-byte the
+// prior behavior (the r1/r2/r3/r5 hardening rounds above stay green untouched).
+//
+// Both axes compose at the RENDER boundary over the already-filtered renderable
+// rows (the poll-effect sort is not touched), so we drive them through the
+// synchronous `initial` path — no network, no microtask flush, just the
+// controls. Date buckets read `useNow()`, so fixtures are stamped relative to
+// the real wall clock at render time (a today-row = `new Date().toISOString()`,
+// an old row = a fixed 2020 date well outside the 7-day window).
+//
+// A row's `topic` is rendered as text by CoordinatorCycleCard, so presence /
+// absence of a topic string is the per-row visibility probe; the header count
+// span (`renderable.length`) is read inside the header div to avoid colliding
+// with the bulk-content topics.
+const FE4_OLD: CoordinatorCycle = {
+  timestamp: "2020-01-01T00:00:00Z",
+  run_id: "fe4_old",
+  agent: "coordinator",
+  topic: "FE4-OLD-ROW",
+  topic_source: "arxiv_pick",
+  status: "executed",
+  plan: [{ action: "noop", args: {} }],
+  outcomes: [{ action: "noop", status: "passed" }],
+  promoted_finding_ids: [],
+  bubble_run_ids: [],
+} as unknown as CoordinatorCycle;
+
+function fe4Today(topic: string): CoordinatorCycle {
+  return {
+    timestamp: new Date().toISOString(),
+    run_id: `fe4_today_${topic}`,
+    agent: "coordinator",
+    topic,
+    topic_source: "arxiv_pick",
+    status: "executed",
+    plan: [{ action: "noop", args: {} }],
+    outcomes: [{ action: "noop", status: "passed" }],
+    promoted_finding_ids: [],
+    bubble_run_ids: [],
+  } as unknown as CoordinatorCycle;
+}
+
+// A structurally-renderable row whose timestamp will NOT parse — it must live in
+// `all` but be excluded from `today`/`week`.
+const FE4_NAN_TS: CoordinatorCycle = {
+  timestamp: "not-a-real-date",
+  run_id: "fe4_nan",
+  agent: "coordinator",
+  topic: "FE4-NAN-ROW",
+  topic_source: "arxiv_pick",
+  status: "executed",
+  plan: [{ action: "noop", args: {} }],
+  outcomes: [{ action: "noop", status: "passed" }],
+  promoted_finding_ids: [],
+  bubble_run_ids: [],
+} as unknown as CoordinatorCycle;
+
+describe("Coordinator FE4 — time-range filter + sort-direction toggle", () => {
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  // Default (range=all + direction=newest): every renderable row shows, ordered
+  // newest-first by timestamp — the prior unfiltered behavior, unchanged.
+  it("defaults to all rows, newest-first", () => {
+    const a = "2026-06-09T08:00:00Z";
+    const b = "2026-06-09T10:00:00Z";
+    const c = "2026-06-09T12:00:00Z";
+    render(
+      <Coordinator
+        initial={[
+          { ...FE4_OLD, timestamp: a, run_id: "ord_a", topic: "ROW-A" },
+          { ...FE4_OLD, timestamp: c, run_id: "ord_c", topic: "ROW-C" },
+          { ...FE4_OLD, timestamp: b, run_id: "ord_b", topic: "ROW-B" },
+        ]}
+      />,
+    );
+    const cards = screen.getAllByTestId("coordinator-cycle-card");
+    expect(cards).toHaveLength(3);
+    // Newest first: C (12:00) → B (10:00) → A (08:00).
+    const order = cards.map((card) => within(card).getByText(/ROW-[ABC]/).textContent);
+    expect(order).toEqual(["ROW-C", "ROW-B", "ROW-A"]);
+    // Caption reflects the defaults.
+    expect(screen.getByText(/all · newest first/)).toBeInTheDocument();
+  });
+
+  // Flipping the direction toggle reverses the order (oldest-first) without
+  // touching the row set.
+  it("oldest-first reverses the order when the direction toggle is flipped", () => {
+    render(
+      <Coordinator
+        initial={[
+          { ...FE4_OLD, timestamp: "2026-06-09T08:00:00Z", run_id: "r_a", topic: "ROW-A" },
+          { ...FE4_OLD, timestamp: "2026-06-09T12:00:00Z", run_id: "r_c", topic: "ROW-C" },
+          { ...FE4_OLD, timestamp: "2026-06-09T10:00:00Z", run_id: "r_b", topic: "ROW-B" },
+        ]}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText("sort direction"));
+    const cards = screen.getAllByTestId("coordinator-cycle-card");
+    const order = cards.map((card) => within(card).getByText(/ROW-[ABC]/).textContent);
+    expect(order).toEqual(["ROW-A", "ROW-B", "ROW-C"]);
+    expect(screen.getByText(/all · oldest first/)).toBeInTheDocument();
+  });
+
+  // The `today` filter keeps a today-stamped row and hides an old one.
+  it("the today filter shows a today row and hides an old one", () => {
+    render(<Coordinator initial={[fe4Today("FE4-TODAY-ROW"), FE4_OLD]} />);
+
+    // Before filtering, both are present.
+    expect(screen.getByText("FE4-TODAY-ROW")).toBeInTheDocument();
+    expect(screen.getByText("FE4-OLD-ROW")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("time range"), {
+      target: { value: "today" },
+    });
+
+    expect(screen.getByText("FE4-TODAY-ROW")).toBeInTheDocument();
+    expect(screen.queryByText("FE4-OLD-ROW")).toBeNull();
+    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(1);
+    expect(screen.getByText(/today · newest first/)).toBeInTheDocument();
+  });
+
+  // A NaN/unparseable-timestamp row is INCLUDED in `all` but EXCLUDED from
+  // `today` and `week`.
+  it("a NaN-timestamp row is in all, excluded from today and week", () => {
+    render(<Coordinator initial={[FE4_NAN_TS, fe4Today("FE4-TODAY-ROW")]} />);
+
+    // all (default): both visible.
+    expect(screen.getByText("FE4-NAN-ROW")).toBeInTheDocument();
+    expect(screen.getByText("FE4-TODAY-ROW")).toBeInTheDocument();
+
+    // today: the NaN row drops, the today row stays.
+    fireEvent.change(screen.getByLabelText("time range"), {
+      target: { value: "today" },
+    });
+    expect(screen.queryByText("FE4-NAN-ROW")).toBeNull();
+    expect(screen.getByText("FE4-TODAY-ROW")).toBeInTheDocument();
+
+    // week: still drops the NaN row.
+    fireEvent.change(screen.getByLabelText("time range"), {
+      target: { value: "week" },
+    });
+    expect(screen.queryByText("FE4-NAN-ROW")).toBeNull();
+    expect(screen.getByText("FE4-TODAY-ROW")).toBeInTheDocument();
   });
 });

@@ -16,8 +16,10 @@ import type {
   Health,
   HealthSignalsResponse,
   HumanTodoResponse,
+  IterationJourneyResponse,
   IterationsResponse,
   JournalResponse,
+  ProcessesResponse,
   SurfacedFindingsResponse,
   TelemetrySample,
   WorkloadHint,
@@ -103,6 +105,18 @@ export async function getActiveIteration(): Promise<ActiveIteration | null> {
 
 export const getIterations = () =>
   getJSON<IterationsResponse>("/api/loop_v0/iterations");
+
+// The full pipeline journey for one iteration (PipelineJourney, S2 reframe).
+// Unknown id -> {found:false} at 200, so the journey view degrades in place.
+export const getIterationJourney = (iterationId: string) =>
+  getJSON<IterationJourneyResponse>(
+    `/api/iteration/${encodeURIComponent(iterationId)}/journey`,
+  );
+
+// Subprocesses spawned since backend boot (the Dashboard in-flight rollup).
+// Always 200 {processes: [...]} — no 204.
+export const getProcesses = () =>
+  getJSON<ProcessesResponse>("/api/loop_v0/processes");
 
 export const getJournalEntry = (iterationId: string) =>
   getJSON<JournalResponse>(

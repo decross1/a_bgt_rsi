@@ -1,9 +1,10 @@
 // AuthorizeFixForm — outcome 4 (NET-NEW, gated): authorize an AUTONOMOUS fix.
-// POSTs /api/todo/authorize_fix, which — once the PART-2 seam lands — enqueues
-// a spawn-contract a later dev session dispatches; the coding agent produces a
-// BRANCH + tests + report that lands ONLY via the merge gate. Until the seam
-// lands the endpoint is an honest STUB: it returns {status:"stub", would_run:
-// [...argv]} and writes NOTHING (inviolate rule 4 — a stub never fakes a write).
+// POSTs /api/todo/authorize_fix — a LIVE exec — which enqueues a spawn-contract
+// a later dev session dispatches; the coding agent produces a BRANCH + tests +
+// report that lands ONLY via the merge gate. When the capability is enabled the
+// endpoint records the enqueue; if a backend returns {status:"stub", would_run:
+// [...argv]} (a body that wrote NOTHING) we report that honestly (inviolate rule
+// 4 — never claim a write a body did not make).
 //
 // HARD LINE (the form copy must say this): UI approval authorizes the WORK, not
 // a merge. The human approves enqueuing the spawn-contract; a human/gated-primary
@@ -11,15 +12,15 @@
 // the would-run argv is read-only (D-046 / rule 8).
 //
 // Self-gates on the cockpit capability: when `available` (actions.authorize_fix)
-// is false the form sits in its honest stub state and the submit is disabled —
-// "lights up when the spawn-contract enqueue seam lands".
+// is false the exec is not enabled in this environment, so the submit is disabled
+// and a read-only would-run preview shows what it WOULD run.
 import { useState } from "react";
 import { postAuthorizeFix, TodoError, type TodoResult } from "../../api/todo";
 
 interface Props {
   findingId: string;
-  /** actions.authorize_fix from GET /api/todo/available — false keeps the form
-   *  in its honest stub state (submit disabled). */
+  /** actions.authorize_fix from GET /api/todo/available — false means the exec
+   *  is not enabled in this environment (submit disabled, preview only). */
   available: boolean;
   onSubmitted?: () => void;
 }
@@ -47,7 +48,7 @@ export default function AuthorizeFixForm({ findingId, available, onSubmitted }: 
   const [submitting, setSubmitting] = useState(false);
 
   // Coerce both props strictly. `available` is the cockpit capability flag
-  // (producer-owned) — a non-boolean must NOT enable the gated form via truthy
+  // (producer-owned) — a non-boolean must NOT enable the live exec via truthy
   // coercion (mirrors api/todo.ts asAvailability's `=== true`). `findingId` is
   // coerced to a safe string so a malformed id degrades to the placeholder.
   const isAvailable = available === true;
@@ -82,9 +83,9 @@ export default function AuthorizeFixForm({ findingId, available, onSubmitted }: 
       </div>
       {!isAvailable && (
         <div data-testid="authorize-fix-stub" className="mt-0.5 text-[10px] text-zinc-500">
-          stub — lights up when the spawn-contract enqueue seam lands
-          (docs/todo_cockpit_seam_plan.md). Posts now return a read-only
-          would-run preview and write nothing.
+          capability disabled — the authorize_fix exec is not enabled in this
+          environment (actions.authorize_fix is off). The would-run argv below is
+          a read-only preview; nothing is enqueued from here.
         </div>
       )}
       <div data-testid="authorize-fix-discipline" className="mt-1 rounded border border-amber-900/60 bg-amber-950/30 px-2 py-1 text-[10px] text-amber-300">
@@ -143,7 +144,7 @@ export default function AuthorizeFixForm({ findingId, available, onSubmitted }: 
       {result !== null && (
         <div data-testid="authorize-fix-result" className="mt-1 text-[11px] text-violet-300">
           {result.stub === true || result.status === "stub"
-            ? "stub response — nothing written (the seam is not live)"
+            ? "stub response — nothing written (the exec is not enabled here)"
             : "spawn-contract enqueued — a dev session will dispatch it"}
           {Array.isArray(result.would_run) && (
             <pre

@@ -1,9 +1,11 @@
 // App-level wiring for the /todo COCKPIT: the "/todo" route now renders the
 // uncertainty-resolution cockpit (routes/Todo.tsx) — ConcurrencyWarning + the
-// HumanTodoPanel inbox + pre-verdict calibration + the six resolution forms —
-// and the nav carries a "todo" tab. Rendered through the real <App/>
-// (BrowserRouter), navigated via history.pushState, so the route table itself
-// is under test (2026-06-14 work order PART 2).
+// HumanTodoPanel inbox (SELECT-ONLY) + the WORKSPACE (selected-item header +
+// PipelineJourney + optional CalibrationCapture + the kind-gated resolution
+// forms, which render UNCONDITIONALLY post-reframe) — and the nav carries a
+// "todo" tab. Rendered through the real <App/> (BrowserRouter), navigated via
+// history.pushState, so the route table itself is under test (S2 reframe,
+// docs/ui_reframe_plan.md §1).
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -51,7 +53,7 @@ vi.mock("../src/api/todo", async (importOriginal) => {
 import App from "../src/App";
 
 describe("/todo route wiring", () => {
-  it("renders the /todo cockpit (inbox + resolution area) and a 'todo' nav tab", async () => {
+  it("renders the /todo cockpit (inbox select-only + workspace resolution area) and a 'todo' nav tab", async () => {
     window.history.pushState({}, "", "/todo");
     render(<App />);
 
@@ -61,18 +63,41 @@ describe("/todo route wiring", () => {
     // The route mounts the cockpit shell, with the HumanTodoPanel inbox inside.
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
     expect(screen.getByTestId("human-todo-panel")).toBeInTheDocument();
-    // The queue item surfaces once getHumanTodo resolves. The title legitimately
-    // appears more than once (the inbox row + the tutor panel header, which is
-    // handed the selected item's title), so assert at-least-one, not exactly-one.
+
+    // The WORKSPACE (resolution area) is wired in alongside the inbox — the new
+    // cockpit structure: inbox (select-only) ABOVE, resolve-a-selected-item
+    // workspace BELOW. This proves the route mounts the REAL cockpit, not a stub.
+    expect(screen.getByTestId("todo-resolution-area")).toBeInTheDocument();
+
+    // The queue item getHumanTodo returns flows through to the cockpit: the
+    // selection defaults to the first item, so the workspace surfaces the
+    // selected-item header carrying that item's real id + title. The title
+    // legitimately appears more than once (the workspace header + journey, and
+    // the inbox row once its list settles), so assert at-least-one.
     await waitFor(() =>
       expect(
         screen.getAllByText("iter-2026-06-05-001 awaiting verdict").length,
       ).toBeGreaterThanOrEqual(1),
     );
-    // The resolve command renders verbatim in the inbox (the backend owns its
-    // exact text); the resolution forms are calibration-locked, so it is unique.
-    expect(
-      screen.getByText(/orchestrator\.gate_cli --iteration-id iter-2026-06-05-001/),
-    ).toBeInTheDocument();
+    const selected = screen.getByTestId("todo-selected-item");
+    expect(selected).toHaveTextContent("iter-2026-06-05-001");
+
+    // The kind-gated resolution forms render UNCONDITIONALLY for the selection
+    // (the forced pre-verdict calibration gate is REMOVED — there is no
+    // resolution-locked element). The default-selected gate_verdict (ITERATION)
+    // item keys the iteration-only GateVerdictForm; the forced gate is gone.
+    await waitFor(() =>
+      expect(screen.getByTestId("resolution-forms")).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("resolution-locked")).toBeNull();
+    // GateVerdictForm self-gates on the attest capability (resolved async), so
+    // waitFor it. The U5 kind-gate holds through the route: an ITERATION item
+    // keys ONLY the iteration family — NO finding-keyed form renders.
+    await waitFor(() =>
+      expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("finding-review-form")).toBeNull();
+    expect(screen.queryByTestId("authorize-fix-form")).toBeNull();
+    expect(screen.queryByTestId("two-voice-chat-pane")).toBeNull();
   });
 });

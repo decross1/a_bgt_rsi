@@ -75,6 +75,8 @@ vi.mock("../src/api/http", () => ({
   getCoordinatorActive: vi.fn().mockResolvedValue(null),
   // The endpoint under test — overridden per case.
   getHumanTodo: vi.fn().mockResolvedValue({ items: [], counts: {} }),
+  // InFlightRollup feed (FE5): Dashboard polls getProcesses in the HERO effect.
+  getProcesses: vi.fn().mockResolvedValue({ processes: [] }),
 }));
 
 vi.mock("../src/api/activity", () => ({

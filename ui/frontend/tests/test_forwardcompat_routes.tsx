@@ -363,6 +363,8 @@ vi.mock("../src/api/http", () => ({
     .mockResolvedValue({ health_signals: D.EMPTY_HEALTH }),
   // HUMAN TODO endpoint: quiet empty-queue default.
   getHumanTodo: vi.fn().mockResolvedValue({ items: [], counts: {} }),
+  // InFlightRollup feed (FE5): Dashboard polls getProcesses in the HERO effect.
+  getProcesses: vi.fn().mockResolvedValue({ processes: [] }),
   startIteration: vi.fn().mockResolvedValue({ pid: 1 }),
 }));
 

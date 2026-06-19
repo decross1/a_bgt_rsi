@@ -22,6 +22,7 @@ from .coordinator import register as register_coordinator
 from .experiments import register as register_experiments
 from .finding_detail import register as register_finding_detail
 from .human_todo import register as register_human_todo
+from .iteration_journey import register as register_iteration_journey
 from .loop_v0 import register as register_loop_v0
 from .tailer import JsonlTailer
 from .todo_cockpit import register as register_todo_cockpit
@@ -249,6 +250,11 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     # iteration under memory/ (reuses the coordinator memory dir, like
     # human_todo). Writes NOTHING — the tutor is fenced from the verdict (D-054).
     register_finding_detail(app, memory_dir=Path(coordinator_memory))
+
+    # S2 cockpit reframe: read-only full-pipeline journey for one iteration
+    # (PipelineJourney). Reads loop_memory.jsonl under memory/ (same dir as
+    # finding_detail/human_todo). Writes NOTHING.
+    register_iteration_journey(app, memory_dir=Path(coordinator_memory))
 
     # D-046 write-back seam: argv-exec of the blessed CLIs (runner defaults
     # to subprocess.run in production; tests inject a stub).

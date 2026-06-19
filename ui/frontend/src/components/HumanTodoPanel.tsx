@@ -202,6 +202,9 @@ function TodoRow({
   hero,
   actions,
   onAttested,
+  selectMode,
+  onSelect,
+  selectedId,
 }: {
   item: HumanTodoItem;
   kind: string;
@@ -212,6 +215,15 @@ function TodoRow({
   // forms degrade to the copy-paste fallback (rendered open).
   actions: AttestActions | null;
   onAttested: () => void;
+  // Select-only mode (FE1): when true the row's GATED writers
+  // (GateVerdictForm / FindingReviewForm) are SUPPRESSED — clicking the title
+  // selects the item for the calibration-capture flow instead of writing a
+  // verdict with no calibration. BubbleAck / Defer / the CLI fallback stay
+  // inline (they are not the calibration-bypass). Default-off: absent → the
+  // inline writers render exactly as before.
+  selectMode?: boolean;
+  onSelect?: (id: string) => void;
+  selectedId?: string | null;
 }) {
   const title = asText(item.title);
   const id = asText(item.id);
@@ -224,14 +236,36 @@ function TodoRow({
   // an unknown kind has no blessed CLI, so it gets no form and no defer —
   // copy-paste only. Forms need the item id verbatim as the CLI argument.
   const family = id !== null ? deferKindOf(kind) : null;
+  // Select-only mode gates OFF the calibration-bypassing direct writers BY
+  // FAMILY (deferKindOf folds both spellings: bubble_unacked→bubble_ack,
+  // state_file_gate→state_gate). gate_verdict + finding_review write a verdict
+  // on click with no calibration — suppress them here. bubble_ack stays (it is
+  // an ack channel, not a gate decision); defer + CLI fallback stay too.
+  const writerSuppressed =
+    selectMode === true &&
+    (family === "gate_verdict" || family === "finding_review");
   const directForm =
-    actions !== null && family !== null
+    actions !== null && family !== null && !writerSuppressed
       ? (family === "gate_verdict" && actions.gate_verdict) ||
         (family === "finding_review" && actions.finding_review) ||
         (family === "bubble_ack" && actions.bubble_ack)
       : false;
   const deferForm = actions !== null && actions.defer && family !== null;
   const hasFormSurface = directForm || deferForm;
+
+  // The title becomes a SELECTOR in select mode (id-guarded). It is a
+  // standalone button on the title/header region ONLY — not a whole-<li>
+  // onClick, which would swallow clicks meant for the kept BubbleAck / Defer /
+  // Copy controls below it. The id must be a NON-EMPTY string: asText("")
+  // returns "" (not null), so `id !== null` alone would make an empty-id row
+  // selectable and fire onSelect("") — a bad selection key the cockpit cannot
+  // .find() or target. Require length so onSelect never fires with a bad id.
+  const selectId = id !== null && id !== "" ? id : null;
+  const selectable = selectMode === true && selectId !== null;
+  const isSelected = selectable && selectedId != null && selectedId === selectId;
+  const selectThis = () => {
+    if (selectId !== null) onSelect?.(selectId);
+  };
 
   // Open-deferral tag (additive backend fields: deferred + deferral{note,by,at}).
   const deferralRaw = item.deferral;
@@ -268,9 +302,24 @@ function TodoRow({
         </div>
       )}
       <div className={`flex flex-wrap items-baseline gap-2 text-xs ${hero ? "mt-1" : ""}`}>
-        <span className={hero ? "text-sm text-zinc-100" : "text-zinc-200"}>
-          {title ?? id ?? "(untitled)"}
-        </span>
+        {selectable ? (
+          <button
+            type="button"
+            onClick={selectThis}
+            aria-pressed={isSelected}
+            className={
+              isSelected
+                ? `rounded border border-emerald-700 bg-emerald-950/30 px-1.5 py-0.5 text-left ${hero ? "text-sm text-zinc-100" : "text-zinc-200"}`
+                : `rounded border border-transparent px-1.5 py-0.5 text-left hover:border-zinc-700 ${hero ? "text-sm text-zinc-100" : "text-zinc-200"}`
+            }
+          >
+            {title ?? id ?? "(untitled)"}
+          </button>
+        ) : (
+          <span className={hero ? "text-sm text-zinc-100" : "text-zinc-200"}>
+            {title ?? id ?? "(untitled)"}
+          </span>
+        )}
         {item.deferred === true && (
           <span
             data-testid="todo-deferred-tag"
@@ -298,10 +347,10 @@ function TodoRow({
           their direct resolution is not blessed (contract table row 5). */}
       {id !== null && hasFormSurface && (
         <div className="mt-1.5 space-y-1.5">
-          {family === "gate_verdict" && actions!.gate_verdict && (
+          {!writerSuppressed && family === "gate_verdict" && actions!.gate_verdict && (
             <GateVerdictForm iterationId={id} onResolved={onAttested} />
           )}
-          {family === "finding_review" && actions!.finding_review && (
+          {!writerSuppressed && family === "finding_review" && actions!.finding_review && (
             <FindingReviewForm findingId={id} onResolved={onAttested} />
           )}
           {family === "bubble_ack" && actions!.bubble_ack && (
@@ -342,9 +391,25 @@ interface Props {
   // resolve it live (polling mode only); null = unknown (degrade quietly);
   // an object = use as-is. Fixture (`initial`) renders NEVER fetch it.
   attest?: AttestAvailable | null;
+  // Select-only mode (FE1): when true the inbox is a SELECTOR for the
+  // calibration-capture flow — each row's title becomes a clickable selector
+  // (onSelect(id), aria-pressed off selectedId) and the GATED writers
+  // (GateVerdictForm / FindingReviewForm) are suppressed so no verdict is
+  // written without calibration. Default-off (absent/false) leaves the inline
+  // writers exactly as they were.
+  selectMode?: boolean;
+  onSelect?: (id: string) => void;
+  selectedId?: string | null;
 }
 
-export default function HumanTodoPanel({ initial, pollMs = 10000, attest }: Props) {
+export default function HumanTodoPanel({
+  initial,
+  pollMs = 10000,
+  attest,
+  selectMode,
+  onSelect,
+  selectedId,
+}: Props) {
   const [items, setItems] = useState<HumanTodoItem[]>(initial ?? []);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(initial !== undefined);
@@ -545,6 +610,9 @@ export default function HumanTodoPanel({ initial, pollMs = 10000, attest }: Prop
             hero
             actions={attestActions}
             onAttested={onAttested}
+            selectMode={selectMode}
+            onSelect={onSelect}
+            selectedId={selectedId}
           />
         </ul>
       )}
@@ -592,6 +660,9 @@ export default function HumanTodoPanel({ initial, pollMs = 10000, attest }: Prop
                   hero={false}
                   actions={attestActions}
                   onAttested={onAttested}
+                  selectMode={selectMode}
+                  onSelect={onSelect}
+                  selectedId={selectedId}
                 />
               ))}
             </ul>

@@ -112,7 +112,7 @@ describe("CalibrationCapture", () => {
     expect(onCaptured).not.toHaveBeenCalled();
 
     const button = screen.getByRole("button", {
-      name: /capture calibration → open verdict/i,
+      name: /record blind calibration/i,
     });
     // Required prediction gates the button.
     expect(button).toBeDisabled();

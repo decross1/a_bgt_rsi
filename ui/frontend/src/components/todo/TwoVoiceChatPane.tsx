@@ -10,11 +10,11 @@
 // carries an explicit addressee selector to encode that.
 //
 // TWO MODES on `available`:
-//   - available!==true → the STUB (unchanged): backed by the two-stance
-//     extension of orchestrator/finding_session.py — a seam shown read-only.
-//     No real model calls; the transcript is whatever fixture turns are passed
-//     in, the human's queued turn is held locally and NOT sent, the turn/token
-//     caps are shown read-only, and the banner says so.
+//   - available!==true → CAPABILITY OFF (unchanged behavior): the two-voice chat
+//     exec is not enabled in this environment. No real model calls; the
+//     transcript is whatever fixture turns are passed in, the human's queued turn
+//     is held locally and NOT sent, the turn/token caps are shown read-only, and
+//     the banner says so.
 //   - available===true → LIVE (U3, 2026-06-18 work order): the send button
 //     posts ONE human-directed turn (at the selected addressee) over the
 //     `finding_session chat --mode two_voice` seam via useChatSession, and the
@@ -34,7 +34,8 @@ interface Props {
   /** Prior transcript turns to render (fixture/stub today; the live transcript
    *  is the finding_session two-stance seam). */
   turns?: ChatTurn[];
-  /** false until the two_voice_chat primary seam lands (cockpit availability). */
+  /** cockpit availability — false means the two-voice chat exec is not enabled
+   *  in this environment (preview-only; no model calls). */
   available?: boolean;
   /** Read-only cap intent surfaced to the human (the seam enforces the real
    *  caps; this only displays the intent). */
@@ -114,14 +115,14 @@ export default function TwoVoiceChatPane({
   // leak "[object Object]".
   const safeFindingId = asText(findingId, "");
 
-  // LIVE chat session (U3) — only meaningful when the seam is available. The
+  // LIVE chat session (U3) — only meaningful when the capability is enabled. The
   // hook is always mounted (hooks can't be conditional), but it does NOT call a
   // model until `send` runs, and `send` only runs from the live branch's
   // button. Replies are producer-owned and defensively coerced inside the hook.
   const live = useChatSession("two_voice", safeFindingId);
 
   // --- LIVE branch (available===true): post real turns + render stance-tagged
-  // replies. The stub branch below is UNCHANGED so its tests stay green. ---
+  // replies. The capability-off branch below is UNCHANGED so its tests stay green. ---
   if (available === true) {
     const liveSendDisabled = live.sending || draft.trim().length === 0;
     const onLiveSend = () => {
@@ -262,7 +263,7 @@ export default function TwoVoiceChatPane({
     );
   }
 
-  // --- STUB branch (available!==true): UNCHANGED. ---
+  // --- CAPABILITY-OFF branch (available!==true): UNCHANGED behavior. ---
   // `turns` is producer-owned (the live transcript is the finding_session
   // two-stance seam). A non-array body (null / object / number / a bare 404
   // default) must degrade to the empty state, never crash `.length` / `.map`.
@@ -306,8 +307,8 @@ export default function TwoVoiceChatPane({
         data-testid="two-voice-stub-banner"
         className="mt-1 text-[10px] text-zinc-500"
       >
-        stub — lights up when the finding_session two-voice seam lands. No model
-        calls happen here yet; your turn is held locally, not sent.
+        capability disabled — the two-voice chat exec is not enabled in this
+        environment. No model calls happen here; your turn is held locally, not sent.
       </div>
 
       {/* Transcript (fixture/stub turns). */}
@@ -370,7 +371,7 @@ export default function TwoVoiceChatPane({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           aria-label="two-voice turn input"
-          placeholder={`direct a turn at the ${addressee} (stub — not sent)`}
+          placeholder={`direct a turn at the ${addressee} (disabled — not sent)`}
           rows={2}
           className="mt-1 w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
         />
@@ -379,7 +380,7 @@ export default function TwoVoiceChatPane({
             type="button"
             disabled
             data-testid="two-voice-send"
-            title="stub — lights up when the finding_session two-voice seam lands"
+            title="disabled — the two-voice chat exec is not enabled in this environment"
             className="rounded border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-zinc-600 disabled:cursor-not-allowed"
           >
             send turn
@@ -387,7 +388,7 @@ export default function TwoVoiceChatPane({
           <span className="text-[10px] text-zinc-600">
             {available
               ? `directed at ${addressee} · ${safeFindingId}`
-              : "disabled — seam not yet live"}
+              : "disabled — capability not enabled in this environment"}
           </span>
         </div>
       </div>
