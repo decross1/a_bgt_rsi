@@ -1,9 +1,9 @@
 // SpawnTopicForm — outcome 5: spawn a follow-up TOPIC from a finding into the
-// finding_followups queue. POSTs /api/todo/spawn_topic, which — once the seam
-// lands — shells the cockpit-driven followups argv. Until then the endpoint is
-// an honest STUB: it returns {status:"stub", would_run:[...argv]} and writes
-// NOTHING (inviolate rule 4). No execute button — the would-run argv is
-// read-only (D-046 / rule 8).
+// finding_followups queue. Spawning a topic is a SESSION-EXIT, not an in-UI
+// one-shot: `available` is false BY DESIGN. POSTs /api/todo/spawn_topic return a
+// read-only would-run preview ({status:"stub", would_run:[...argv]}, writing
+// NOTHING — inviolate rule 4); enqueuing the topic stays a primary-session step.
+// No execute button — the would-run argv is read-only (D-046 / rule 8).
 //
 // Two required fields: the kind ("finding" | "step" — the followup taxonomy) and
 // the new topic (what to chase next). The submit stays disabled until the topic
@@ -15,8 +15,8 @@ type SpawnKind = "finding" | "step";
 
 interface Props {
   findingId: string;
-  /** actions.spawn_topic from GET /api/todo/available — false keeps the form in
-   *  its honest stub state (submit disabled). */
+  /** actions.spawn_topic from GET /api/todo/available — false BY DESIGN (spawn
+   *  topic is a session-exit, not an in-UI one-shot); the form stays preview-only. */
   available: boolean;
   onSubmitted?: () => void;
 }
@@ -92,9 +92,9 @@ export default function SpawnTopicForm({ findingId, available, onSubmitted }: Pr
       </div>
       {!isAvailable && (
         <div data-testid="spawn-topic-stub" className="mt-0.5 text-[10px] text-zinc-500">
-          stub — lights up when the finding_followups cockpit seam lands
-          (docs/todo_cockpit_seam_plan.md). Posts now return a read-only
-          would-run preview and write nothing.
+          spawning a topic is a session-exit, not an in-UI one-shot — preview
+          only. The would-run argv below shows the exit; enqueuing it to
+          finding_followups stays a primary-session step (nothing is written here).
         </div>
       )}
 
@@ -152,7 +152,7 @@ export default function SpawnTopicForm({ findingId, available, onSubmitted }: Pr
       {result !== null && (
         <div data-testid="spawn-topic-result" className="mt-1 text-[11px] text-cyan-300">
           {result.stub === true || result.status === "stub"
-            ? "stub response — nothing written (the seam is not live)"
+            ? "stub response — nothing written (preview only; spawn topic is a session-exit)"
             : "follow-up topic enqueued to finding_followups"}
           {Array.isArray(result.would_run) && (
             <pre

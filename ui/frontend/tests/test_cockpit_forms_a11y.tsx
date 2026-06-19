@@ -65,12 +65,13 @@ describe("a11y — AuthorizeFixForm", () => {
     expect(pre).toHaveAccessibleName(/would run/i);
   });
 
-  it("stub state conveys disabled via the disabled attribute, not color alone", () => {
-    // available !== true → honest stub; the submit must be programmatically
-    // disabled (perceivable to AT), and the stub copy is TEXT not just a tone.
+  it("capability-off state conveys disabled via the disabled attribute, not color alone", () => {
+    // available !== true → authorize_fix exec not enabled here; the submit must
+    // be programmatically disabled (perceivable to AT), and the reason is TEXT
+    // not just a tone.
     render(<AuthorizeFixForm findingId="f1" available={false} />);
     expect(screen.getByRole("button", { name: /authorize fix/i })).toBeDisabled();
-    expect(screen.getByTestId("authorize-fix-stub")).toHaveTextContent(/stub/i);
+    expect(screen.getByTestId("authorize-fix-stub")).toHaveTextContent(/not enabled in this environment/i);
   });
 });
 
@@ -97,7 +98,7 @@ describe("a11y — SpawnTopicForm", () => {
     expect(screen.getByLabelText(/new topic/i).tagName.toLowerCase()).toBe("input");
   });
 
-  it("submit is a real button; would-run <pre> is named; stub disables submit", () => {
+  it("submit is a real button; would-run <pre> is named; session-exit disables submit", () => {
     render(<SpawnTopicForm findingId="f1" available={false} />);
     const btn = screen.getByRole("button", { name: /spawn topic/i });
     expect(btn).toHaveAttribute("type", "button");
@@ -105,7 +106,7 @@ describe("a11y — SpawnTopicForm", () => {
     const pre = screen.getByTestId("spawn-topic-argv");
     expect(pre.tagName.toLowerCase()).toBe("pre");
     expect(pre).toHaveAccessibleName(/would run/i);
-    expect(screen.getByTestId("spawn-topic-stub")).toHaveTextContent(/stub/i);
+    expect(screen.getByTestId("spawn-topic-stub")).toHaveTextContent(/session-exit, not an in-UI one-shot/i);
   });
 });
 
@@ -131,10 +132,10 @@ describe("a11y — AbstainForm", () => {
     expect(pre).toHaveAccessibleName(/would run/i);
   });
 
-  it("stub state disables submit (conveyed, not color-only)", () => {
+  it("session-exit state disables submit (conveyed, not color-only)", () => {
     render(<AbstainForm findingId="f1" available={false} />);
     expect(screen.getByRole("button", { name: /^abstain$/i })).toBeDisabled();
-    expect(screen.getByTestId("abstain-stub")).toHaveTextContent(/stub/i);
+    expect(screen.getByTestId("abstain-stub")).toHaveTextContent(/session-exit, not an in-UI one-shot/i);
   });
 });
 
@@ -173,12 +174,12 @@ describe("a11y — DirectiveSignOffField", () => {
     expect(errSpy).not.toHaveBeenCalled();
   });
 
-  it("stub state disables the directive submit (conveyed, not color-only)", () => {
+  it("capability-off state disables the directive submit (conveyed, not color-only)", () => {
     render(<DirectiveSignOffField findingId="iter-1" note="why" available={false} />);
     expect(
       screen.getByRole("button", { name: /sign off with directive/i }),
     ).toBeDisabled();
-    expect(screen.getByTestId("directive-signoff-stub")).toHaveTextContent(/stub/i);
+    expect(screen.getByTestId("directive-signoff-stub")).toHaveTextContent(/not enabled in this environment/i);
   });
 });
 
@@ -204,7 +205,7 @@ describe("a11y — CalibrationCapture", () => {
     render(
       <CalibrationCapture refId="f1" available={true} onCaptured={() => {}} />,
     );
-    const btn = screen.getByRole("button", { name: /capture calibration/i });
+    const btn = screen.getByRole("button", { name: /record blind calibration/i });
     expect(btn.tagName.toLowerCase()).toBe("button");
     expect(btn).toHaveAttribute("type", "button");
   });
@@ -220,7 +221,7 @@ describe("a11y — CalibrationCapture", () => {
     );
     // Empty prediction → capture disabled, perceivable via the disabled attr.
     expect(
-      screen.getByRole("button", { name: /capture calibration/i }),
+      screen.getByRole("button", { name: /record blind calibration/i }),
     ).toBeDisabled();
   });
 });

@@ -103,6 +103,8 @@ def test_pending_gate_without_feedback_appears(tmp_path):
             "ended_at": "2026-06-09T18:08:00Z",
             "gate_status": "pending",
             "seed": {"topic": "Risk-dominance under history transparency"},
+            # Experiment-bearing -> a blocking gate_verdict item.
+            "experiment_outcome": {"verdict": "supports", "delta": 0.12},
         },
         # Non-pending row must NOT appear.
         {
@@ -135,6 +137,9 @@ def test_pending_gate_disappears_once_feedback_row_exists(tmp_path):
             "ended_at": "2026-06-09T18:08:00Z",
             "gate_status": "pending",
             "seed": {"topic": "soon to be gated"},
+            # Experiment-bearing so the loop_feedback row — not the eo guard —
+            # is what removes it from the inbox.
+            "experiment_outcome": {"verdict": "supports"},
         },
     ])
     _write_jsonl(tmp_path / "coord_memory" / "loop_feedback.jsonl", [
@@ -149,6 +154,59 @@ def test_pending_gate_disappears_once_feedback_row_exists(tmp_path):
     body = client.get("/api/human_todo").json()
     assert body["items"] == []
     assert body["counts"]["gate_verdict"] == 0
+
+
+# ─── gate_verdict: experiment_outcome discriminator ────────────────────
+# Only experiment/applied-stage iterations (a usable experiment_outcome
+# dict) are gated; literature-stage pending rows auto-advance and are
+# dropped from the blocking inbox (still observable via /api/loop_v0/iterations).
+
+
+def test_pending_gate_with_experiment_outcome_surfaces(tmp_path):
+    client = _client(tmp_path)
+    _write_jsonl(tmp_path / "coord_memory" / "loop_memory.jsonl", [
+        {"iteration_id": "iter-exp-001", "gate_status": "pending",
+         "ended_at": "2026-06-09T18:00:00Z", "seed": {"topic": "experiment-stage"},
+         "experiment_outcome": {"verdict": "supports", "delta": 0.2}},
+    ])
+    body = client.get("/api/human_todo").json()
+    assert body["counts"]["gate_verdict"] == 1
+    [item] = body["items"]
+    assert item["id"] == "iter-exp-001"
+
+
+def test_pending_gate_without_experiment_outcome_does_not_surface(tmp_path):
+    client = _client(tmp_path)
+    _write_jsonl(tmp_path / "coord_memory" / "loop_memory.jsonl", [
+        # Literature-stage: pending, no loop_feedback, but no experiment_outcome
+        # -> auto-advances, never blocks the inbox.
+        {"iteration_id": "iter-lit-001", "gate_status": "pending",
+         "ended_at": "2026-06-09T18:00:00Z", "seed": {"topic": "literature-stage"}},
+    ])
+    body = client.get("/api/human_todo").json()
+    assert body["counts"]["gate_verdict"] == 0
+    assert body["items"] == []
+
+
+def test_pending_gate_with_non_dict_or_empty_experiment_outcome_does_not_surface(tmp_path):
+    client = _client(tmp_path)
+    _write_jsonl(tmp_path / "coord_memory" / "loop_memory.jsonl", [
+        # Empty dict: not a usable outcome.
+        {"iteration_id": "iter-empty", "gate_status": "pending",
+         "ended_at": "2026-06-09T18:00:00Z", "seed": {"topic": "empty eo"},
+         "experiment_outcome": {}},
+        # Non-dict (string): not a usable outcome.
+        {"iteration_id": "iter-str", "gate_status": "pending",
+         "ended_at": "2026-06-09T18:00:00Z", "seed": {"topic": "string eo"},
+         "experiment_outcome": "supports"},
+        # Non-dict (null): not a usable outcome.
+        {"iteration_id": "iter-null", "gate_status": "pending",
+         "ended_at": "2026-06-09T18:00:00Z", "seed": {"topic": "null eo"},
+         "experiment_outcome": None},
+    ])
+    body = client.get("/api/human_todo").json()
+    assert body["counts"]["gate_verdict"] == 0
+    assert body["items"] == []
 
 
 # ─── finding_review (status-audit override) ────────────────────────────
@@ -291,7 +349,8 @@ def test_malformed_jsonl_lines_skipped(tmp_path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         '{"iteration_id":"iter-2026-06-09-001","gate_status":"pending",'
-        '"ended_at":"2026-06-09T18:00:00Z","seed":{"topic":"survives noise"}}\n'
+        '"ended_at":"2026-06-09T18:00:00Z","seed":{"topic":"survives noise"},'
+        '"experiment_outcome":{"verdict":"supports"}}\n'
         "not-json-and-should-be-skipped\n"
         "42\n"  # valid JSON but not a row record
         '{"iteration_id":"iter-2026-06-09-002","gate_status":"pending"\n',
@@ -320,7 +379,8 @@ def test_items_sorted_oldest_first_across_kinds(tmp_path):
     client = _client(tmp_path)
     _write_jsonl(tmp_path / "coord_memory" / "loop_memory.jsonl", [
         {"iteration_id": "iter-2026-06-09-001", "gate_status": "pending",
-         "ended_at": "2026-06-09T18:00:00Z", "seed": {"topic": "newer gate"}},
+         "ended_at": "2026-06-09T18:00:00Z", "seed": {"topic": "newer gate"},
+         "experiment_outcome": {"verdict": "supports"}},
     ])
     _write_jsonl(tmp_path / "coord_memory" / "coordinator_bubbles.jsonl", [
         {"timestamp": "2026-06-08T10:00:00Z", "run_id": "cyc-old",
@@ -395,7 +455,8 @@ def _pending_gate_rows(tmp_path) -> None:
     _write_jsonl(tmp_path / "coord_memory" / "loop_memory.jsonl", [
         {"iteration_id": "iter-2026-06-09-001", "gate_status": "pending",
          "ended_at": "2026-06-09T18:00:00Z",
-         "seed": {"topic": "deferral fold subject"}},
+         "seed": {"topic": "deferral fold subject"},
+         "experiment_outcome": {"verdict": "supports"}},
     ])
 
 

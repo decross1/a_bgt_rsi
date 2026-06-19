@@ -15,18 +15,19 @@
 //     vllm-qwen novelty-skeptic independence decision, the two-voice fence; it
 //     has no place on this single-voice teaching surface).
 //
-// AVAILABILITY: `available` (actions.two_voice_chat-style flag the cockpit
-// threads) gates the live path. available!==true keeps the pane in an honest
-// disabled stub (send disabled, a stub banner) — it never calls a model. The
-// live transcript + errors come from useChatSession("tutor", findingId), whose
-// replies are producer-owned and defensively coerced before render.
+// AVAILABILITY: `available` (the cockpit chat-capability flag) gates the live
+// path. available!==true means the tutor chat exec is not enabled in this
+// environment — the pane sits disabled (send disabled, a capability-off banner)
+// and never calls a model. The live transcript + errors come from
+// useChatSession("tutor", findingId), whose replies are producer-owned and
+// defensively coerced before render.
 import { useState } from "react";
 import { useChatSession } from "./useChatSession";
 
 interface Props {
   findingId: string;
-  /** Gate from GET /api/todo/available — false keeps the pane in its honest
-   *  disabled stub (no model calls). Mirrors TwoVoiceChatPane's `available`. */
+  /** Gate from GET /api/todo/available — false means the tutor chat exec is not
+   *  enabled in this environment (no model calls). Mirrors TwoVoiceChatPane. */
   available?: boolean;
 }
 
@@ -83,8 +84,8 @@ export default function TutorChatPane({ findingId, available = false }: Props) {
           data-testid="tutor-chat-stub-banner"
           className="mt-1 text-[10px] text-zinc-500"
         >
-          stub — lights up when the finding_session tutor chat seam is available.
-          No model calls happen here yet; your message is not sent.
+          capability disabled — the tutor chat exec is not enabled in this
+          environment. No model calls happen here; your message is not sent.
         </div>
       )}
 
@@ -123,7 +124,7 @@ export default function TutorChatPane({ findingId, available = false }: Props) {
           placeholder={
             isLive
               ? "ask the tutor about this finding"
-              : "ask the tutor (stub — not sent)"
+              : "ask the tutor (disabled — not sent)"
           }
           rows={2}
           className="w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
@@ -137,7 +138,7 @@ export default function TutorChatPane({ findingId, available = false }: Props) {
             title={
               isLive
                 ? "send a message to the tutor"
-                : "stub — lights up when the tutor chat seam is available"
+                : "disabled — the tutor chat exec is not enabled in this environment"
             }
             className={
               "rounded border border-zinc-600 bg-zinc-900 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-zinc-300 hover:bg-zinc-800 " +
@@ -156,7 +157,7 @@ export default function TutorChatPane({ findingId, available = false }: Props) {
           )}
           {!isLive && (
             <span className="text-[10px] text-zinc-600">
-              disabled — seam not yet available
+              disabled — capability not enabled in this environment
             </span>
           )}
         </div>

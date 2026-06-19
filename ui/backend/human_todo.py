@@ -14,8 +14,12 @@ One endpoint, wired by ``register`` into the existing FastAPI app:
   ``{kind, id, title, since, detail, resolve_command}``. Kinds:
 
   - ``gate_verdict``     — ``loop_memory.jsonl`` rows with
-    ``gate_status="pending"`` and NO row in ``loop_feedback.jsonl``
-    (orchestrator/gate_cli.py is the resolve channel).
+    ``gate_status="pending"``, NO row in ``loop_feedback.jsonl``, AND a
+    usable (non-empty dict) ``experiment_outcome``. The cockpit gates
+    only experiment/applied-stage iterations awaiting owner sign-off;
+    literature-stage pending rows (no ``experiment_outcome``) AUTO-ADVANCE
+    — they stay observable via ``/api/loop_v0/iterations`` but never
+    block the inbox (orchestrator/gate_cli.py is the resolve channel).
   - ``finding_review``   — ``surfaced_findings.jsonl`` rows whose EFFECTIVE
     status (base row overridden by the LAST
     ``surfaced_findings.status.jsonl`` row per finding_id) is ``surfaced``
@@ -155,6 +159,13 @@ def _gate_verdict_items(memory_dir: Path) -> list[dict]:
             continue
         iteration_id = _as_text(row.get("iteration_id"))
         if not iteration_id or iteration_id in feedback_ids:
+            continue
+        # Only experiment/applied-stage iterations are gated. The in-data
+        # signal is a usable experiment_outcome dict; literature-stage rows
+        # (absent/non-dict/empty experiment_outcome) auto-advance and are
+        # dropped from the blocking inbox (still observable elsewhere).
+        eo = row.get("experiment_outcome")
+        if not isinstance(eo, dict) or not eo:
             continue
         seed = row.get("seed") if isinstance(row.get("seed"), dict) else {}
         items.append(_item(

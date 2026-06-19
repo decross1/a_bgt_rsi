@@ -430,6 +430,23 @@ def test_deeply_nested_evidence_degrades_not_500(tmp_path):
     assert body["evidence"] is None  # pathological field dropped, never 500
 
 
+def test_lone_surrogate_string_degrades_not_500(tmp_path):
+    """A producer ``"\\udXXX"`` escape decodes into a LONE surrogate str: valid
+    to parse, but not UTF-8-encodable, so the JSONResponse encoder formerly
+    500'd AFTER the read (the same class as NaN/Infinity, on a string). The
+    pathological field drops to null; the finding stays found:true."""
+    client = _client(tmp_path)
+    mem = _memory_dir(tmp_path)
+    row = _finding_row()
+    row["claim"] = "ok\ud834bad"  # a lone (unpaired) surrogate in a string value
+    _write_jsonl(mem / "surfaced_findings.jsonl", [row])
+    resp = client.get("/api/finding/sf-iter-2026-06-09-003")
+    assert resp.status_code == 200  # NOT 500
+    body = resp.json()
+    assert body["found"] is True
+    assert body["claim"] is None  # the unencodable field dropped, never 500
+
+
 def test_deeply_nested_source_iteration_member_degrades_not_500(tmp_path):
     """A thousands-deep value in a JOINED loop_memory field (nara_summary) is
     surfaced in the source_iteration projection and formerly 500'd. Only that

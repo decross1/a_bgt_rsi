@@ -5,19 +5,30 @@
 // forms + the aux panes (which want a finding_id). The fix gates the forms by
 // selected.kind so selected.id is never crossed into the wrong family.
 //
-// The contract this suite holds (work order PART U5):
+// S2 REFRAME (cockpit model, 2026-06-19): the FORCED calibration gate is GONE.
+// The kind-gated resolution forms render UNCONDITIONALLY on selection — there is
+// NO resolution-locked element anymore. Calibration is OPTIONAL + PER-ID (a Set:
+// once recorded for an id it is never re-prompted on switch-away-and-back). The
+// interactive aux trio (tutor-panel overview + tutor-chat-pane + two-voice-chat-
+// pane, wrapped in todo-aux-interactive) is REVEAL-gated, not calibration-gated:
+// for a finding item a reveal-interrogation button is shown, and clicking it
+// mounts the trio. The kind-gate INVARIANT is unchanged in intent.
+//
+// The contract this suite holds (work order PART U5, restated for the reframe):
 //   - gate_verdict (ITERATION item, selected.id is an iteration_id) →
-//       GateVerdictForm + DirectiveSignOffField render;
-//       FindingReviewForm / AuthorizeFix / SpawnTopic / Abstain / TwoVoice /
-//       Tutor are ABSENT.
+//       GateVerdictForm renders;
+//       FindingReviewForm / DirectiveSignOff / AuthorizeFix / SpawnTopic /
+//       Abstain are ABSENT, and NO aux (no reveal button, no trio) at any phase.
 //   - finding_review (FINDING item, selected.id is a finding_id) →
-//       the finding-keyed set + TwoVoice + Tutor render;
-//       GateVerdictForm + DirectiveSignOffField are ABSENT.
+//       the finding-keyed form set renders; an INTERROGATE section with a
+//       reveal-interrogation button is present; clicking it mounts the aux trio
+//       (TwoVoice + TutorChat + Tutor) keyed to the real finding_id;
+//       GateVerdictForm is ABSENT.
 //   - any OTHER kind (bubble_ack / state_gate / …) → NEITHER keyed family;
-//       only DeferForm + CalibrationCapture.
-//   - DeferForm + CalibrationCapture render for ALL kinds. Calibration is the
-//       pre-verdict ORDERING gate: it is captured FIRST and the kind-appropriate
-//       forms appear only after onCaptured fires (that gate is unchanged).
+//       only DeferForm + CalibrationCapture; NO aux at any phase.
+//   - DeferForm + CalibrationCapture render for ALL kinds. The resolution FORMS
+//       render immediately on selection (no calibration prerequisite); the aux
+//       trio renders only AFTER the reveal-interrogation click (finding kind).
 //
 // Network is stubbed by URL (mirrors test_todo_route.tsx). Crucially, the
 // attest capability probe answers LIVE (gate_verdict + finding_review + defer
@@ -111,24 +122,65 @@ function renderTodo(item: HumanTodoItem) {
   );
 }
 
-// Drive the ORDERING gate open: calibration is captured FIRST, which reveals the
-// kind-appropriate resolution forms (the gate itself is kind-agnostic).
-async function captureCalibration() {
+// S2 REFRAME helper — record an OPTIONAL blind calibration for the CURRENT
+// selection. Calibration NO LONGER reveals the forms (they are already present);
+// it only records the per-id flag and flips CalibrationCapture into its
+// "recorded" state. The button label is "record blind calibration" now (was
+// "capture calibration -> open verdict"); the recorded copy is "blind
+// calibration recorded for this item." (was "the verdict form is now open").
+async function recordCalibration() {
   // Calibration capture is always present once an item is selected.
   expect(screen.getByTestId("calibration-capture")).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
     target: { value: "survives the attack panel 2/3" },
   });
-  fireEvent.click(screen.getByRole("button", { name: /capture calibration/i }));
+  fireEvent.click(
+    screen.getByRole("button", { name: /record blind calibration/i }),
+  );
   await waitFor(() =>
-    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument(),
+    expect(screen.getByTestId("calibration-captured")).toBeInTheDocument(),
+  );
+  expect(
+    screen.getByText(/blind calibration recorded for this item/i),
+  ).toBeInTheDocument();
+}
+
+// S2 REFRAME helper — REVEAL the interactive interrogation trio for the current
+// (finding) selection. The trio is reveal-gated, not calibration-gated: pre-click
+// the trio is absent and the reveal-interrogation button is present; clicking it
+// mounts todo-aux-interactive (tutor-panel + tutor-chat-pane + two-voice-chat-
+// pane). Asserting the button presence first keeps this honest for finding kinds.
+async function revealInterrogation() {
+  const button = screen.getByTestId("reveal-interrogation");
+  fireEvent.click(button);
+  await waitFor(() =>
+    expect(screen.getByTestId("todo-aux-interactive")).toBeInTheDocument(),
+  );
+}
+
+// Select an inbox row by its item. The inbox selector button is labelled by the
+// row's TITLE (HumanTodoPanel renders `title ?? id` in select mode), so we click
+// by title and then confirm the workspace header now points at the item's id —
+// the selection key the kind-gate routes on. Returns once the workspace reflects
+// the new selection.
+async function selectRow(item: HumanTodoItem) {
+  const label = item.title ?? item.id;
+  fireEvent.click(screen.getByRole("button", { name: label as string }));
+  await waitFor(() =>
+    expect(
+      within(screen.getByTestId("todo-selected-item")).getByText(item.id as string),
+    ).toBeInTheDocument(),
   );
 }
 
 describe("Todo cockpit — U5 kind-gate", () => {
   it("a gate_verdict (ITERATION) item shows the iteration-keyed forms ONLY", async () => {
     renderTodo(GATE_VERDICT_ITEM);
-    await captureCalibration();
+
+    // S2: the resolution forms render UNCONDITIONALLY — no calibration needed.
+    await waitFor(() =>
+      expect(screen.getByTestId("resolution-forms")).toBeInTheDocument(),
+    );
 
     // ITERATION-keyed forms present (gate-verdict self-gates on the LIVE attest
     // capability — it resolves async, so waitFor its form testid).
@@ -136,17 +188,21 @@ describe("Todo cockpit — U5 kind-gate", () => {
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
 
-    // FINDING-keyed forms + aux panes ABSENT — no iteration_id reaches them.
-    // directive-signoff is now FINDING-keyed (it signs off a finding via
+    // FINDING-keyed forms + aux ABSENT — no iteration_id reaches them.
+    // directive-signoff is FINDING-keyed (it signs off a finding via
     // finding_session --set-status validated --directive; wiring doc 1d).
     expect(screen.queryByTestId("directive-signoff-field")).toBeNull();
     expect(screen.queryByTestId("finding-review-form")).toBeNull();
     expect(screen.queryByTestId("authorize-fix-form")).toBeNull();
     expect(screen.queryByTestId("spawn-topic-form")).toBeNull();
     expect(screen.queryByTestId("abstain-form")).toBeNull();
+    // No interrogate section, no reveal button, no aux trio for an iteration item.
+    expect(screen.queryByTestId("todo-interrogate")).toBeNull();
+    expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
+    expect(screen.queryByTestId("todo-aux-interactive")).toBeNull();
     expect(screen.queryByTestId("two-voice-chat-pane")).toBeNull();
+    expect(screen.queryByTestId("tutor-chat-pane")).toBeNull();
     expect(screen.queryByTestId("tutor-panel")).toBeNull();
-    expect(screen.queryByTestId("todo-aux")).toBeNull();
 
     // Kind-agnostic surfaces still present.
     await waitFor(() =>
@@ -155,13 +211,10 @@ describe("Todo cockpit — U5 kind-gate", () => {
     expect(screen.getByTestId("calibration-capture")).toBeInTheDocument();
   });
 
-  it("a finding_review (FINDING) item shows the finding-keyed forms + aux ONLY", async () => {
+  it("a finding_review (FINDING) item shows the finding-keyed forms + reveals aux", async () => {
     renderTodo(FINDING_REVIEW_ITEM);
-    await captureCalibration();
 
-    // FINDING-keyed forms present (finding-review self-gates on the LIVE attest
-    // capability — resolves async, so waitFor it; the three stub forms render
-    // synchronously off the cockpit `available` prop).
+    // S2: forms render unconditionally on selection (no calibration prereq).
     await waitFor(() =>
       expect(screen.getByTestId("finding-review-form")).toBeInTheDocument(),
     );
@@ -171,12 +224,20 @@ describe("Todo cockpit — U5 kind-gate", () => {
     expect(screen.getByTestId("spawn-topic-form")).toBeInTheDocument();
     expect(screen.getByTestId("abstain-form")).toBeInTheDocument();
 
-    // Aux panes present — selected.id here is a real finding_id.
-    expect(screen.getByTestId("todo-aux")).toBeInTheDocument();
+    // The INTERROGATE section + reveal button are present (finding kind). The aux
+    // trio is REVEAL-gated: absent until the reveal-interrogation click.
+    expect(screen.getByTestId("todo-interrogate")).toBeInTheDocument();
+    expect(screen.getByTestId("reveal-interrogation")).toBeInTheDocument();
+    expect(screen.queryByTestId("todo-aux-interactive")).toBeNull();
+    expect(screen.queryByTestId("two-voice-chat-pane")).toBeNull();
+    expect(screen.queryByTestId("tutor-chat-pane")).toBeNull();
+    expect(screen.queryByTestId("tutor-panel")).toBeNull();
+
+    // Reveal → the trio mounts — selected.id here is a real finding_id.
+    await revealInterrogation();
     expect(screen.getByTestId("two-voice-chat-pane")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByTestId("tutor-panel")).toBeInTheDocument(),
-    );
+    expect(screen.getByTestId("tutor-chat-pane")).toBeInTheDocument();
+    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
 
     // ITERATION-keyed forms ABSENT — no finding_id reaches GateVerdictForm.
     expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
@@ -189,7 +250,12 @@ describe("Todo cockpit — U5 kind-gate", () => {
 
   it("a bubble_ack (OTHER) item shows NEITHER keyed family — only Defer + Calibration", async () => {
     renderTodo(BUBBLE_ACK_ITEM);
-    await captureCalibration();
+
+    // S2: forms render unconditionally — but this is an OTHER kind, so neither
+    // keyed family renders; the resolution-forms wrapper carries only Defer.
+    await waitFor(() =>
+      expect(screen.getByTestId("resolution-forms")).toBeInTheDocument(),
+    );
 
     // Neither family renders.
     expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
@@ -198,9 +264,12 @@ describe("Todo cockpit — U5 kind-gate", () => {
     expect(screen.queryByTestId("authorize-fix-form")).toBeNull();
     expect(screen.queryByTestId("spawn-topic-form")).toBeNull();
     expect(screen.queryByTestId("abstain-form")).toBeNull();
+    // No aux of any kind for an OTHER kind — no interrogate section/button/trio.
+    expect(screen.queryByTestId("todo-interrogate")).toBeNull();
+    expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
+    expect(screen.queryByTestId("todo-aux-interactive")).toBeNull();
     expect(screen.queryByTestId("two-voice-chat-pane")).toBeNull();
     expect(screen.queryByTestId("tutor-panel")).toBeNull();
-    expect(screen.queryByTestId("todo-aux")).toBeNull();
 
     // Defer (kind-aware) + Calibration DO render for the OTHER kinds.
     expect(screen.getByTestId("calibration-capture")).toBeInTheDocument();
@@ -211,7 +280,10 @@ describe("Todo cockpit — U5 kind-gate", () => {
 
   it("a state_file_gate (OTHER) item likewise shows NEITHER keyed family", async () => {
     renderTodo(STATE_GATE_ITEM);
-    await captureCalibration();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("resolution-forms")).toBeInTheDocument(),
+    );
 
     expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
     expect(screen.queryByTestId("directive-signoff-field")).toBeNull();
@@ -219,7 +291,8 @@ describe("Todo cockpit — U5 kind-gate", () => {
     expect(screen.queryByTestId("authorize-fix-form")).toBeNull();
     expect(screen.queryByTestId("spawn-topic-form")).toBeNull();
     expect(screen.queryByTestId("abstain-form")).toBeNull();
-    expect(screen.queryByTestId("todo-aux")).toBeNull();
+    expect(screen.queryByTestId("todo-interrogate")).toBeNull();
+    expect(screen.queryByTestId("todo-aux-interactive")).toBeNull();
 
     // state_file_gate is a defer-ONLY kind — defer is its only in-UI action.
     await waitFor(() =>
@@ -228,20 +301,26 @@ describe("Todo cockpit — U5 kind-gate", () => {
     expect(screen.getByTestId("defer-only-note")).toBeInTheDocument();
   });
 
-  it("ORDERING preserved: the kind-appropriate forms are LOCKED until calibration", async () => {
-    // A gate_verdict item: before calibration the iteration-keyed forms are
-    // absent (locked); the lock note + calibration capture show first.
+  it("the kind-appropriate forms render UNCONDITIONALLY (the forced calibration gate is GONE)", async () => {
+    // S2 reframe: a gate_verdict item shows the iteration-keyed form IMMEDIATELY —
+    // there is NO resolution-locked element and the forms do NOT wait on
+    // calibration. (This REPLACES the retired "forms are LOCKED until calibration"
+    // ORDERING test: the positive assertion of the new behavior, same coverage.)
     renderTodo(GATE_VERDICT_ITEM);
-    expect(screen.queryByTestId("resolution-forms")).toBeNull();
-    expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
-    expect(screen.getByTestId("resolution-locked")).toBeInTheDocument();
+    // resolution-forms is present from the start — no lock, no calibration step.
+    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
+    expect(screen.queryByTestId("resolution-locked")).toBeNull();
     expect(screen.getByTestId("calibration-capture")).toBeInTheDocument();
-
-    // After calibration: the iteration-keyed form reveals (attest resolves async).
-    await captureCalibration();
+    // The iteration-keyed form reveals once the attest capability resolves async —
+    // NOT because any calibration was recorded.
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
+
+    // Recording the OPTIONAL calibration does NOT change which forms are present;
+    // it only flips the capture into its recorded state. The form is still there.
+    await recordCalibration();
+    expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument();
     expect(screen.queryByTestId("resolution-locked")).toBeNull();
   });
 });
@@ -255,9 +334,12 @@ describe("Todo cockpit — U5 kind-gate", () => {
 // `items` prop bypasses every coercion). These blocks attack that invariant.
 // ===========================================================================
 
-// The keyed form testids, grouped by the family their id is keyed for. The
+// The keyed FORM testids, grouped by the family their id is keyed for. The
 // invariant: for an "other"-classed kind NEITHER group renders; the two groups
-// are mutually exclusive for the enum kinds.
+// are mutually exclusive for the enum kinds. NOTE the aux PANES (tutor-panel /
+// tutor-chat-pane / two-voice-chat-pane) are NOT in this list — under the reframe
+// they are reveal-gated, not rendered on selection; their absence is asserted via
+// the interrogate section + trio (see expectNoAux below), not as a keyed form.
 const ITERATION_KEYED = ["gate-verdict-form"] as const;
 const FINDING_KEYED = [
   "finding-review-form",
@@ -265,15 +347,27 @@ const FINDING_KEYED = [
   "authorize-fix-form",
   "spawn-topic-form",
   "abstain-form",
-  "two-voice-chat-pane",
+] as const;
+
+// The aux surfaces — the finding-only interrogate section, its reveal button, the
+// revealed trio wrapper, and the three interactive panes. For an "other"/iteration
+// kind NONE of these exist at any phase (there is no reveal button to even click).
+const AUX_SURFACES = [
+  "todo-interrogate",
+  "reveal-interrogation",
+  "todo-aux-interactive",
   "tutor-panel",
+  "tutor-chat-pane",
+  "two-voice-chat-pane",
 ] as const;
 
 function expectNoKeyedForms() {
   for (const id of ITERATION_KEYED) expect(screen.queryByTestId(id)).toBeNull();
   for (const id of FINDING_KEYED) expect(screen.queryByTestId(id)).toBeNull();
-  // The aux SECTION wrapper is also absent (it is finding-gated as a whole).
-  expect(screen.queryByTestId("todo-aux")).toBeNull();
+}
+
+function expectNoAux() {
+  for (const id of AUX_SURFACES) expect(screen.queryByTestId(id)).toBeNull();
 }
 
 // Build a HumanTodoItem with a real string id but a hostile `kind`. The id is a
@@ -293,7 +387,8 @@ describe("Todo cockpit — U5 kind-gate: HOSTILE kind values all route to OTHER"
   // whitespace/wrong-case/unknown) is "other" and renders NEITHER keyed family —
   // only the kind-agnostic DeferForm + CalibrationCapture. A non-string kind that
   // slipped past would (a) crash on no comparison, or worse (b) accidentally key a
-  // form with a finding_id↔iteration_id crossed. We prove NEITHER family renders.
+  // form with a finding_id↔iteration_id crossed. We prove NEITHER family renders,
+  // AND that the finding-only aux (interrogate section/reveal/trio) never appears.
   const HOSTILE_KINDS: ReadonlyArray<readonly [string, unknown]> = [
     ["null", null],
     ["undefined", undefined],
@@ -311,15 +406,28 @@ describe("Todo cockpit — U5 kind-gate: HOSTILE kind values all route to OTHER"
   for (const [label, kind] of HOSTILE_KINDS) {
     it(`kind = ${label} → NEITHER keyed family renders, no crash`, async () => {
       renderTodo(itemWithKind(kind));
-      // The row is selectable (id is a valid string) and the cockpit mounts.
+      // The row is selectable (id is a valid string) and the cockpit mounts. The
+      // inbox selector button is labelled by the row's title (HumanTodoPanel
+      // renders `title ?? id`); the SELECTED item's id surfaces in the workspace
+      // header, proving the valid string id is the live selection key.
       expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "iter-hostile-0001" })).toBeInTheDocument();
-      await captureCalibration();
+      expect(screen.getByRole("button", { name: "hostile-kind probe row" })).toBeInTheDocument();
+      expect(
+        within(screen.getByTestId("todo-selected-item")).getByText("iter-hostile-0001"),
+      ).toBeInTheDocument();
+
+      // S2: the resolution-forms wrapper renders unconditionally — but for a
+      // hostile (→"other") kind it carries NEITHER keyed family.
+      await waitFor(() =>
+        expect(screen.getByTestId("resolution-forms")).toBeInTheDocument(),
+      );
 
       // THE INVARIANT: not one iteration-keyed NOR finding-keyed form rendered —
       // classifyKind sent the hostile kind to "other", so selected.id (which would
       // be neither a real iteration_id nor finding_id) is crossed into no family.
       expectNoKeyedForms();
+      // And the finding-only aux never appears — there is no reveal path for it.
+      expectNoAux();
 
       // The kind-AGNOSTIC calibration capture still renders — the human is never
       // stranded on a blank cockpit. (DeferForm is NOT asserted here: it owns its
@@ -337,17 +445,19 @@ describe("Todo cockpit — U5 kind-gate: HOSTILE kind values all route to OTHER"
 describe("Todo cockpit — U5 kind-gate: aux panes get a NON-EMPTY real finding_id", () => {
   // THE OLD BUG this pins gone: the aux panes used to be handed `selected?.id ?? ""`
   // — an empty-string finding_id for a non-finding selection. Now they mount ONLY
-  // for a real finding_review item, and the id they receive is the item's real,
-  // non-empty finding_id. We prove the value by READING it out of the DOM where
-  // each pane legitimately surfaces it under LIVE availability:
+  // for a real finding_review item, ONLY after the reveal-interrogation click, and
+  // the id they receive is the item's real, non-empty finding_id. We prove the
+  // value by READING it out of the DOM where each pane legitimately surfaces it
+  // under LIVE availability:
   //   - TwoVoiceChatPane (two_voice_chat:true) renders "directed at both · <id>".
   //   - TutorPanel surfaces "(<id>)" in its unavailable branch (found:false stub).
   it("a finding_review item feeds the REAL finding_id to both aux panes (never \"\")", async () => {
     renderTodo(FINDING_REVIEW_ITEM); // id = "sf-2026-06-14-001"
-    await captureCalibration();
+    // Reveal the interrogation (the aux is reveal-gated, not calibration-gated).
+    await revealInterrogation();
 
-    // Aux section mounts (finding-keyed).
-    const aux = await screen.findByTestId("todo-aux");
+    // The revealed trio wrapper mounts (finding-keyed).
+    const aux = await screen.findByTestId("todo-aux-interactive");
 
     // TwoVoiceChatPane: LIVE availability renders the real id after "· ".
     const twoVoice = within(aux).getByTestId("two-voice-chat-pane");
@@ -367,20 +477,29 @@ describe("Todo cockpit — U5 kind-gate: aux panes get a NON-EMPTY real finding_
   // The mirror that makes the proof bite: for a NON-finding selection the aux
   // panes are ABSENT entirely (so the empty-string id can never be constructed —
   // the code path that built it is gone, not merely guarded). A gate_verdict item
-  // carries an iteration_id; it must NEVER reach the finding-keyed aux.
+  // carries an iteration_id; it must NEVER reach the finding-keyed aux, and there
+  // is no reveal button to even attempt it.
   it("a gate_verdict item mounts NO aux pane — the iteration_id never reaches them", async () => {
     renderTodo(GATE_VERDICT_ITEM);
-    await captureCalibration();
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    // No aux section, no panes — the iteration_id "iter-2026-06-14-002" is fenced
-    // out of the finding-keyed family entirely.
-    expect(screen.queryByTestId("todo-aux")).toBeNull();
+    // No interrogate section, no reveal button, no panes — the iteration_id
+    // "iter-2026-06-14-002" is fenced out of the finding-keyed family entirely.
+    expect(screen.queryByTestId("todo-interrogate")).toBeNull();
+    expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
+    expect(screen.queryByTestId("todo-aux-interactive")).toBeNull();
     expect(screen.queryByTestId("two-voice-chat-pane")).toBeNull();
     expect(screen.queryByTestId("tutor-panel")).toBeNull();
-    // And the iteration_id text never appears inside a (non-existent) tutor.
-    expect(screen.queryByText(/\(iter-2026-06-14-002\)/)).toBeNull();
+    expect(screen.queryByTestId("tutor-chat-pane")).toBeNull();
+    // The iteration_id never reaches a finding-keyed aux surface. The two id-
+    // echoing aux surfaces are the tutor (which prints "(<id>)") and the two-voice
+    // pane (which prints "directed at both · <id>"); BOTH are absent, so the
+    // iteration_id is fenced from the aux. (We scope to those aux surfaces rather
+    // than the whole DOM: the iteration_id LEGITIMATELY appears in the read-only
+    // PipelineJourney + the selected-item header for the iteration being resolved.)
+    expect(screen.queryByText(/directed at both · iter-2026-06-14-002/)).toBeNull();
+    expect(screen.queryByTestId("tutor-unavailable")).toBeNull();
   });
 });
 
@@ -389,9 +508,9 @@ describe("Todo cockpit — U5 kind-gate: selection SWITCHING unmounts the wrong 
   // track the CURRENT selection's kind: switching finding→gate must UNMOUNT the
   // finding-keyed forms + aux and MOUNT the iteration-keyed forms (and reverse).
   // A stale wrong-keyed form lingering would cross an id into the wrong family.
-  // NOTE: switching to a not-yet-calibrated sibling RE-LOCKS the forms (per-item
-  // ordering gate, pinned in test_harden_TodoShell), so we re-capture after each
-  // switch before asserting the revealed family.
+  // S2: the forms render UNCONDITIONALLY on selection — no calibration step between
+  // switches. The reveal is per-id (a Set), so an aux reveal on one item does not
+  // carry to a sibling of a different kind (the kind-gate excludes it anyway).
   function renderPair() {
     return render(
       <MemoryRouter initialEntries={["/todo"]}>
@@ -405,53 +524,45 @@ describe("Todo cockpit — U5 kind-gate: selection SWITCHING unmounts the wrong 
 
   it("finding_review → gate_verdict: finding forms + aux UNMOUNT, iteration forms MOUNT", async () => {
     renderPair();
-    // The first item (finding_review) is default-selected. Calibrate → finding set.
-    await captureCalibration();
+    // The first item (finding_review) is default-selected — its forms are present
+    // immediately, and we reveal its aux trio.
     await waitFor(() =>
       expect(screen.getByTestId("finding-review-form")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("todo-aux")).toBeInTheDocument();
+    await revealInterrogation();
+    expect(screen.getByTestId("todo-aux-interactive")).toBeInTheDocument();
 
-    // Switch to the gate_verdict item (its id is the chooser button label).
-    fireEvent.click(screen.getByRole("button", { name: "iter-2026-06-14-002" }));
-    // Per-item ordering gate re-locks; re-capture to reveal the new family.
-    await waitFor(() =>
-      expect(screen.getByTestId("resolution-locked")).toBeInTheDocument(),
-    );
-    await captureCalibration();
+    // Switch to the gate_verdict item (selected by its inbox row title).
+    await selectRow(GATE_VERDICT_ITEM);
 
-    // Iteration-keyed forms now mount...
+    // Iteration-keyed form now mounts...
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    // ...and EVERY finding-keyed surface (incl. directive-signoff now) + the aux
-    // is GONE (no stale lingering).
+    // ...and EVERY finding-keyed surface (incl. directive-signoff) + the aux
+    // (interrogate section, reveal button, trio, panes) is GONE (no stale lingering).
     for (const id of FINDING_KEYED) expect(screen.queryByTestId(id)).toBeNull();
-    expect(screen.queryByTestId("todo-aux")).toBeNull();
+    expectNoAux();
   });
 
   it("gate_verdict → finding_review: iteration forms UNMOUNT, finding forms + aux MOUNT", async () => {
     renderPair();
-    // Switch to the gate_verdict item FIRST and calibrate it.
-    fireEvent.click(screen.getByRole("button", { name: "iter-2026-06-14-002" }));
-    await captureCalibration();
+    // Switch to the gate_verdict item FIRST.
+    await selectRow(GATE_VERDICT_ITEM);
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    expect(screen.queryByTestId("todo-aux")).toBeNull();
+    expectNoAux();
 
-    // Switch back to the finding_review item.
-    fireEvent.click(screen.getByRole("button", { name: "sf-2026-06-14-001" }));
-    await waitFor(() =>
-      expect(screen.getByTestId("resolution-locked")).toBeInTheDocument(),
-    );
-    await captureCalibration();
-
-    // Finding-keyed forms + aux now mount...
+    // Switch back to the finding_review item — its forms mount immediately.
+    await selectRow(FINDING_REVIEW_ITEM);
     await waitFor(() =>
       expect(screen.getByTestId("finding-review-form")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("todo-aux")).toBeInTheDocument();
+    // The interrogate section + reveal button are back; reveal mounts the trio.
+    expect(screen.getByTestId("todo-interrogate")).toBeInTheDocument();
+    await revealInterrogation();
+    expect(screen.getByTestId("todo-aux-interactive")).toBeInTheDocument();
     expect(screen.getByTestId("two-voice-chat-pane")).toBeInTheDocument();
     // ...and the iteration-keyed forms are GONE.
     for (const id of ITERATION_KEYED) expect(screen.queryByTestId(id)).toBeNull();
@@ -486,10 +597,15 @@ describe("Todo cockpit — U5 kind-gate: safeItems drops hostile finding rows", 
           />
         </MemoryRouter>,
       );
-      // Only the valid iteration row is selectable — the hostile finding was dropped.
-      expect(screen.getByRole("button", { name: "iter-valid-0007" })).toBeInTheDocument();
+      // Only the valid iteration row is selectable — the hostile finding was
+      // dropped. The selector button is labelled by the row's title; the valid
+      // row's title button is present and the dropped finding's title button is
+      // not, and the workspace header points at the valid row's id.
+      expect(screen.getByRole("button", { name: "the only selectable row" })).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "bad finding" })).toBeNull();
-      await captureCalibration();
+      expect(
+        within(screen.getByTestId("todo-selected-item")).getByText("iter-valid-0007"),
+      ).toBeInTheDocument();
 
       // The (default-selected) valid row is an ITERATION → finding-keyed surfaces
       // are absent, AND the dropped finding never injected one either.
@@ -497,7 +613,7 @@ describe("Todo cockpit — U5 kind-gate: safeItems drops hostile finding rows", 
         expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
       );
       for (const id of FINDING_KEYED) expect(screen.queryByTestId(id)).toBeNull();
-      expect(screen.queryByTestId("todo-aux")).toBeNull();
+      expectNoAux();
     });
   }
 
@@ -518,12 +634,10 @@ describe("Todo cockpit — U5 kind-gate: safeItems drops hostile finding rows", 
   });
 });
 
-// The kind-appropriate RESOLUTION FORMS — the verdict-bearing forms that the
-// pre-verdict ordering gate (ARCH §6.5.4) locks behind calibration. This is the
-// "six resolution forms" set the shell gates (Todo.tsx block 3), as DISTINCT from
-// the aux panes (block 4 — two-voice + tutor), which are NOT inside that gate (see
-// the documented-as-built observation below). For a finding item the verdict
-// FORMS are the four finding-keyed forms; the aux is intentionally separate.
+// The kind-appropriate RESOLUTION FORMS — the verdict-bearing forms. S2 reframe:
+// these render UNCONDITIONALLY on selection (the forced calibration gate is GONE).
+// This is the "resolution forms" set the shell renders (Todo.tsx resolution-forms
+// block), as DISTINCT from the aux trio (the reveal-gated interrogation panes).
 const FINDING_VERDICT_FORMS = [
   "finding-review-form",
   "authorize-fix-form",
@@ -531,195 +645,187 @@ const FINDING_VERDICT_FORMS = [
   "abstain-form",
 ] as const;
 
-describe("Todo cockpit — U5 kind-gate: calibration ORDERING holds for BOTH kinds", () => {
-  // The pre-verdict ordering gate (calibration FIRST) must lock the kind-
-  // APPROPRIATE RESOLUTION FORMS for EACH kind, not just gate_verdict. Before
-  // calibration: resolution-locked shows, resolution-forms is absent, and no
-  // verdict-bearing form of the selected kind's family is present.
-  it("a finding_review item: the finding RESOLUTION FORMS are LOCKED until calibration", async () => {
+describe("Todo cockpit — U5 kind-gate: forms render unconditionally for BOTH kinds", () => {
+  // S2 reframe: the kind-APPROPRIATE RESOLUTION FORMS render IMMEDIATELY on
+  // selection for EACH kind — there is NO resolution-locked element and NO
+  // calibration prerequisite. (REPLACES the retired "LOCKED until calibration"
+  // ORDERING tests with the positive assertion of the new unconditional behavior;
+  // the kind-gate coverage — which family renders for which kind — is preserved.)
+  it("a finding_review item: the finding RESOLUTION FORMS render unconditionally", async () => {
     renderTodo(FINDING_REVIEW_ITEM);
-    // Pre-calibration: locked; the verdict-bearing finding forms are all absent.
-    expect(screen.getByTestId("resolution-locked")).toBeInTheDocument();
-    expect(screen.queryByTestId("resolution-forms")).toBeNull();
-    for (const id of FINDING_VERDICT_FORMS) expect(screen.queryByTestId(id)).toBeNull();
+    // Present from the start — no lock, no calibration step.
+    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
+    expect(screen.queryByTestId("resolution-locked")).toBeNull();
     expect(screen.getByTestId("calibration-capture")).toBeInTheDocument();
 
-    // After calibration: the finding-keyed verdict forms reveal.
-    await captureCalibration();
+    // The finding-keyed verdict forms are all present without any calibration.
     await waitFor(() =>
       expect(screen.getByTestId("finding-review-form")).toBeInTheDocument(),
     );
     for (const id of FINDING_VERDICT_FORMS) expect(screen.getByTestId(id)).toBeInTheDocument();
+
+    // Recording the OPTIONAL calibration leaves the forms in place (no toggle).
+    await recordCalibration();
+    for (const id of FINDING_VERDICT_FORMS) expect(screen.getByTestId(id)).toBeInTheDocument();
     expect(screen.queryByTestId("resolution-locked")).toBeNull();
   });
 
-  it("an iteration (gate_verdict) item: iteration-keyed forms are LOCKED until calibration", async () => {
+  it("an iteration (gate_verdict) item: iteration-keyed form renders unconditionally", async () => {
     renderTodo(GATE_VERDICT_ITEM);
-    expect(screen.getByTestId("resolution-locked")).toBeInTheDocument();
-    expect(screen.queryByTestId("resolution-forms")).toBeNull();
-    for (const id of ITERATION_KEYED) expect(screen.queryByTestId(id)).toBeNull();
+    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
+    expect(screen.queryByTestId("resolution-locked")).toBeNull();
     expect(screen.getByTestId("calibration-capture")).toBeInTheDocument();
 
-    await captureCalibration();
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    // directive-signoff is finding-keyed now — absent for a gate_verdict item.
+    // directive-signoff is finding-keyed — absent for a gate_verdict item.
     expect(screen.queryByTestId("directive-signoff-field")).toBeNull();
+
+    await recordCalibration();
+    expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument();
     expect(screen.queryByTestId("resolution-locked")).toBeNull();
   });
 
-  // ── DOCUMENTED AS-BUILT BEHAVIOR (flagged, not silently blessed) ───────────
-  // FINDING this verifier surfaces: for a finding_review item the aux panes
-  // (two-voice interrogation + tutor, Todo.tsx block 4) render BEFORE calibration
-  // is captured — they are gated ONLY by `selected !== null && kindClass ===
-  // "finding"`, NOT by `calibrated`. The four verdict FORMS (asserted above) ARE
-  // locked; only the aux is not. The U5 kind-gate invariant is intact (the aux is
-  // finding-keyed and receives a real finding_id — never an iteration_id, never
-  // "").  Whether the aux SHOULD also sit behind the pre-verdict calibration gate
-  // is a SEPARATE contract (ARCH §6.5.4 scopes the ordering lock to "the verdict
-  // form opens"; the work-order 2026-06-14 PART 2 lists the aux as a distinct
-  // affordance, and Todo.tsx's header scopes the gate to "the six resolution
-  // forms"). This test PINS the current behavior so a future change to it is
-  // deliberate and visible; the contamination-risk note is in the report's
-  // residual_risks for the human/primary to rule on — it is NOT silently "fixed"
-  // here (would invent a contract the spec does not state, inviolate rule 8) nor
-  // silently accepted.
-  it("RESOLVED: pre-calibration the tutor OVERVIEW renders; the INTERACTIVE aux gates on calibration (D-054)", async () => {
-    // Resolution of the 2026-06-17 aux-vs-calibration flag: the static tutor
-    // OVERVIEW is the BASIS for the calibration prediction, so it is visible
-    // PRE-calibration; the INTERACTIVE panes (live tutor chat + two-voice
-    // interrogation) are decision-support that could bias the pre-verdict
-    // calibration signal §6.5.4 measures, so they unlock only AFTER calibration.
+  // The interactive aux trio is REVEAL-gated (NOT calibration-gated). For a
+  // finding item the static-overview tutor now lives INSIDE the revealed trio
+  // (it is no longer shown pre-reveal). Pre-reveal: the reveal button is present
+  // and the trio (tutor-panel overview + tutor-chat-pane + two-voice-chat-pane) is
+  // absent; after the reveal click the trio mounts. (REPLACES the retired D-054
+  // "pre-calibration tutor overview shows / interactive unlocks after calibration"
+  // contract: the gate is now the reveal click, not calibration.)
+  it("RESOLVED: the interactive aux trio is REVEAL-gated, not calibration-gated", async () => {
     renderTodo(FINDING_REVIEW_ITEM);
-    // Pre-calibration: verdict forms locked...
-    expect(screen.getByTestId("resolution-locked")).toBeInTheDocument();
-    expect(screen.queryByTestId("resolution-forms")).toBeNull();
-    for (const id of FINDING_VERDICT_FORMS) expect(screen.queryByTestId(id)).toBeNull();
-    // ...the tutor OVERVIEW (the prediction basis) IS shown...
-    expect(screen.getByTestId("todo-aux")).toBeInTheDocument();
-    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
-    // ...but the INTERACTIVE interrogation panes are NOT yet rendered.
+    // Forms render unconditionally (finding-review self-gates on the LIVE attest
+    // capability, which resolves async — waitFor it; the rest are synchronous).
+    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("finding-review-form")).toBeInTheDocument(),
+    );
+    for (const id of FINDING_VERDICT_FORMS) expect(screen.getByTestId(id)).toBeInTheDocument();
+    // ...the interrogate section + reveal button are present...
+    expect(screen.getByTestId("todo-interrogate")).toBeInTheDocument();
+    expect(screen.getByTestId("reveal-interrogation")).toBeInTheDocument();
+    // ...but NOTHING in the trio (including the static tutor overview) is mounted
+    // yet — the trio is reveal-gated and the tutor now lives inside it.
     expect(screen.queryByTestId("todo-aux-interactive")).toBeNull();
+    expect(screen.queryByTestId("tutor-panel")).toBeNull();
     expect(screen.queryByTestId("two-voice-chat-pane")).toBeNull();
     expect(screen.queryByTestId("tutor-chat-pane")).toBeNull();
 
-    // After calibration, the interactive interrogation unlocks.
-    await captureCalibration();
+    // After the REVEAL click (no calibration involved), the trio mounts in full.
+    await revealInterrogation();
     expect(screen.getByTestId("todo-aux-interactive")).toBeInTheDocument();
+    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
     expect(screen.getByTestId("two-voice-chat-pane")).toBeInTheDocument();
     expect(screen.getByTestId("tutor-chat-pane")).toBeInTheDocument();
   });
 
-  // The MIRROR for an iteration item: NO aux pane renders pre- OR post-calibration
-  // (the aux is finding-keyed). So the iteration_id is fenced from the aux at every
-  // phase — the documented aux-pre-calibration behavior cannot cross an iteration_id.
-  it("an iteration item renders NO aux pane at any phase (iteration_id fenced from aux)", async () => {
+  // The MIRROR for an iteration item: NO aux at any phase (the aux is finding-
+  // keyed). So the iteration_id is fenced from the aux — no interrogate section,
+  // no reveal button, and recording calibration cannot conjure one.
+  it("an iteration item renders NO aux at any phase (iteration_id fenced from aux)", async () => {
     renderTodo(GATE_VERDICT_ITEM);
-    expect(screen.queryByTestId("todo-aux")).toBeNull(); // pre-calibration
-    await captureCalibration();
+    expectNoAux(); // pre-calibration: no interrogate section, no reveal, no trio
+    await recordCalibration();
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    expect(screen.queryByTestId("todo-aux")).toBeNull(); // post-calibration
-    expect(screen.queryByTestId("two-voice-chat-pane")).toBeNull();
+    expectNoAux(); // post-calibration: STILL no aux — calibration does not reveal it
   });
 });
 
 // ===========================================================================
-// ADVERSARIAL-VERIFY additions, ROUND 2 (independent auditor, 2026-06-18).
-// The D-054 aux calibration-gate (Todo.tsx block 4): for a finding_review item
-// the static tutor OVERVIEW (testid tutor-panel) renders PRE-calibration, but the
-// INTERACTIVE panes (todo-aux-interactive wrapper + tutor-chat-pane + two-voice-
-// chat-pane) mount ONLY after calibration is captured. The existing "RESOLVED"
-// test pins the single-selection phase transition; these blocks attack the gate
-// where it is most likely to leak: SELECTION SWITCHING between two FINDINGS (the
-// per-item ordering must RE-LOCK the interactive panes on a not-yet-calibrated
-// sibling), the gate's INDEPENDENCE from the kind-gate, and the interactive panes'
-// total absence (not just two-voice but the tutor-chat-pane + the wrapper) under
-// HOSTILE kinds. The interactive trio is distinct from the static tutor-panel and
-// must be enumerated as such — the FINDING_KEYED list above carries tutor-panel,
-// NOT tutor-chat-pane, so a leak of the live chat pane would slip past it.
+// ADVERSARIAL-VERIFY additions, ROUND 2 (independent auditor, 2026-06-18,
+// REWORKED for the S2 reframe 2026-06-19). The aux REVEAL-gate (Todo.tsx
+// interrogate block): for a finding_review item the interrogate section + a
+// reveal-interrogation button render on selection, but the INTERACTIVE trio
+// (todo-aux-interactive wrapper + tutor-panel + tutor-chat-pane + two-voice-
+// chat-pane) mounts ONLY after the reveal click. The OLD D-054 calibration-gate
+// is GONE — the trio gates on the REVEAL click, not on calibration. The reveal
+// is tracked PER ID (a Set), so it STICKS across a switch-away-and-back (it does
+// NOT re-lock). These blocks attack the reveal-gate where it is most likely to
+// leak: SELECTION SWITCHING between two FINDINGS, the gate's INDEPENDENCE from the
+// kind-gate, and the trio's total absence under HOSTILE kinds.
 // ===========================================================================
 
 // A SECOND finding_review item, distinct id, so we can switch between two findings
-// and prove the calibration-gate is tracked PER ITEM (calibrating A must not leave
-// B's interactive panes unlocked). Its id is a real, non-empty finding_id.
+// and prove the reveal-gate is tracked PER ID. Its id is a real, non-empty
+// finding_id.
 const FINDING_REVIEW_ITEM_B: HumanTodoItem = {
   kind: "finding_review",
   id: "sf-2026-06-15-009",
   title: "Finding: equilibrium shading persists under second-price tie-break",
 };
 
-// The INTERACTIVE aux trio — the panes D-054 gates behind calibration. Distinct
-// from the static tutor-panel OVERVIEW (which renders pre-cal). A leak of ANY of
-// these pre-calibration is the contamination D-054 forbids.
+// The INTERACTIVE aux trio — the panes the reveal-interrogation click mounts. The
+// static tutor-panel OVERVIEW now lives INSIDE the trio (it is no longer shown
+// pre-reveal), so it is part of this set. A leak of ANY of these pre-reveal would
+// break the "blind if used" protection the reveal-gate preserves.
 const AUX_INTERACTIVE = [
   "todo-aux-interactive",
+  "tutor-panel",
   "tutor-chat-pane",
   "two-voice-chat-pane",
 ] as const;
 
-function expectInteractiveLocked() {
+function expectInteractiveHidden() {
   for (const id of AUX_INTERACTIVE) expect(screen.queryByTestId(id)).toBeNull();
 }
-function expectInteractiveUnlocked() {
+function expectInteractiveRevealed() {
   for (const id of AUX_INTERACTIVE) expect(screen.getByTestId(id)).toBeInTheDocument();
 }
 
-describe("Todo cockpit — D-054 aux calibration-gate: static overview vs interactive panes", () => {
-  // The crisp single-selection contract, asserted on the FULL interactive trio
-  // (the RESOLVED test omits the todo-aux-interactive wrapper from its pre-cal
-  // absence check and never asserts tutor-chat-pane's presence post-cal alongside
-  // the wrapper). PRE-cal: tutor-panel overview present, interactive trio absent.
-  // POST-cal: the SAME tutor-panel overview still present AND the interactive trio
-  // mounts. The static overview never disappears — it is the calibration BASIS.
-  it("finding pre-cal: tutor OVERVIEW shows, interactive trio absent; post-cal: trio mounts, overview persists", async () => {
+describe("Todo cockpit — aux REVEAL-gate: hidden trio vs revealed interactive panes", () => {
+  // The crisp single-selection contract, asserted on the FULL interactive trio.
+  // PRE-reveal: the interrogate section + reveal button are up, the trio absent.
+  // POST-reveal: the interactive trio mounts in full. (REWORKED from the retired
+  // D-054 calibration-gate: the gate is the REVEAL click now, not calibration.)
+  it("finding pre-reveal: reveal button shows, trio absent; post-reveal: trio mounts", async () => {
     renderTodo(FINDING_REVIEW_ITEM);
 
-    // PRE-calibration: the aux SECTION + the static overview are up...
-    expect(screen.getByTestId("todo-aux")).toBeInTheDocument();
-    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
-    // ...but NONE of the interactive panes (nor their grid wrapper) exist yet.
-    expectInteractiveLocked();
-    // The verdict forms are also still locked (the ordering gate is shut).
-    expect(screen.getByTestId("resolution-locked")).toBeInTheDocument();
+    // PRE-reveal: the interrogate section + reveal button are up...
+    expect(screen.getByTestId("todo-interrogate")).toBeInTheDocument();
+    expect(screen.getByTestId("reveal-interrogation")).toBeInTheDocument();
+    // ...but NONE of the interactive trio exists yet.
+    expectInteractiveHidden();
+    // The verdict forms render unconditionally (no lock) — the reveal-gate is
+    // independent of them.
+    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
+    expect(screen.queryByTestId("resolution-locked")).toBeNull();
 
-    await captureCalibration();
+    await revealInterrogation();
 
-    // POST-calibration: the interactive trio mounts in full...
-    expectInteractiveUnlocked();
-    // ...and the static overview is STILL present (it was the prediction basis,
-    // not a thing that toggles off when the interactive panes arrive).
-    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
-    expect(screen.getByTestId("todo-aux")).toBeInTheDocument();
+    // POST-reveal: the interactive trio mounts in full.
+    expectInteractiveRevealed();
+    // The reveal button is consumed (the trio replaces it).
+    expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
   });
 
-  // INDEPENDENCE of the calibration-gate from the kind-gate: an ITERATION item
-  // has NO aux at all (kind-gate excludes it) — so the calibration-gate has nothing
-  // to gate. Neither the static overview NOR the interactive trio appears at ANY
-  // phase. This proves the two gates compose: kind-gate decides IF aux exists,
-  // calibration-gate decides WHEN the interactive subset of it unlocks.
-  it("an iteration item: NO aux overview and NO interactive trio at either phase (gates compose)", async () => {
+  // INDEPENDENCE of the reveal-gate from the kind-gate: an ITERATION item has NO
+  // aux at all (kind-gate excludes it) — so there is no interrogate section, no
+  // reveal button, and the trio never appears at ANY phase, even after recording
+  // calibration. This proves the two gates compose: the kind-gate decides IF aux
+  // exists, the reveal-gate decides WHEN the trio mounts.
+  it("an iteration item: NO interrogate section and NO interactive trio (gates compose)", async () => {
     renderTodo(GATE_VERDICT_ITEM);
-    // Pre-cal: no aux section, no overview, no interactive trio.
-    expect(screen.queryByTestId("todo-aux")).toBeNull();
-    expect(screen.queryByTestId("tutor-panel")).toBeNull();
-    expectInteractiveLocked();
+    // Pre: no interrogate section, no reveal button, no trio.
+    expect(screen.queryByTestId("todo-interrogate")).toBeNull();
+    expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
+    expectInteractiveHidden();
 
-    await captureCalibration();
+    await recordCalibration();
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    // Post-cal: STILL no aux of any kind — the interactive panes never mount for
-    // an iteration item even once calibration is captured.
-    expect(screen.queryByTestId("todo-aux")).toBeNull();
-    expect(screen.queryByTestId("tutor-panel")).toBeNull();
-    expectInteractiveLocked();
+    // Post: STILL no aux of any kind — the trio never mounts for an iteration item.
+    expect(screen.queryByTestId("todo-interrogate")).toBeNull();
+    expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
+    expectInteractiveHidden();
   });
 });
 
-describe("Todo cockpit — D-054 aux calibration-gate: PER-ITEM re-lock across finding↔finding switch", () => {
+describe("Todo cockpit — aux REVEAL-gate: PER-ID reveal STICKS across finding↔finding switch", () => {
   function renderTwoFindings() {
     return render(
       <MemoryRouter initialEntries={["/todo"]}>
@@ -731,22 +837,21 @@ describe("Todo cockpit — D-054 aux calibration-gate: PER-ITEM re-lock across f
     );
   }
 
-  // The sharpest D-054 attack: TWO findings. Calibrate finding A → A's interactive
-  // panes unlock. Switch to finding B (not yet calibrated) → the interactive panes
-  // must RE-LOCK (the per-item ordering gate tracks calibratedId === selected.id,
-  // so a calibrated sibling does NOT carry its unlock across). Crucially the static
-  // tutor OVERVIEW for B still shows (it is the basis for B's own calibration) and
-  // carries B's REAL finding_id — never A's, never "". Then calibrate B → B unlocks.
-  it("calibrate finding A, switch to finding B: interactive panes RE-LOCK until B is calibrated", async () => {
+  // The sharpest reveal-gate attack: TWO findings. Reveal finding A → A's trio
+  // mounts, keyed to A's real finding_id. Switch to finding B (not yet revealed) →
+  // B's trio is HIDDEN (the reveal is per-id, so A's reveal does NOT carry across)
+  // and B shows its OWN reveal button. B's would-be trio carries B's REAL
+  // finding_id — never A's, never "". Then reveal B → B's trio mounts.
+  it("reveal finding A, switch to finding B: B's trio is HIDDEN until B is revealed", async () => {
     renderTwoFindings();
 
-    // Finding A is default-selected. Pre-cal: interactive locked, overview shows.
-    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
-    expectInteractiveLocked();
+    // Finding A is default-selected. Pre-reveal: trio hidden, reveal button shown.
+    expect(screen.getByTestId("reveal-interrogation")).toBeInTheDocument();
+    expectInteractiveHidden();
 
-    // Calibrate A → A's interactive trio unlocks, fed A's real finding_id.
-    await captureCalibration();
-    expectInteractiveUnlocked();
+    // Reveal A → A's interactive trio mounts, fed A's real finding_id.
+    await revealInterrogation();
+    expectInteractiveRevealed();
     {
       const twoVoiceA = screen.getByTestId("two-voice-chat-pane");
       expect(
@@ -754,23 +859,20 @@ describe("Todo cockpit — D-054 aux calibration-gate: PER-ITEM re-lock across f
       ).toBeInTheDocument();
     }
 
-    // Switch to finding B (its id is the chooser button label).
-    fireEvent.click(screen.getByRole("button", { name: "sf-2026-06-15-009" }));
+    // Switch to finding B (selected by its inbox row title).
+    await selectRow(FINDING_REVIEW_ITEM_B);
 
-    // B is NOT yet calibrated → the per-item gate RE-LOCKS the interactive panes,
-    // even though A was calibrated. The verdict forms re-lock too.
+    // B is NOT yet revealed → the per-id reveal-gate keeps B's trio HIDDEN, even
+    // though A was revealed. B shows its own reveal button.
     await waitFor(() =>
-      expect(screen.getByTestId("resolution-locked")).toBeInTheDocument(),
+      expect(screen.getByTestId("reveal-interrogation")).toBeInTheDocument(),
     );
-    expectInteractiveLocked();
-    // But B's static OVERVIEW is shown (the basis for B's calibration) and carries
-    // B's OWN finding_id — A's unlock did not leak A's id into B's aux.
-    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
+    expectInteractiveHidden();
 
-    // Calibrate B → NOW B's interactive trio unlocks, fed B's real finding_id
+    // Reveal B → NOW B's interactive trio mounts, fed B's real finding_id
     // (sf-2026-06-15-009), never A's (sf-2026-06-14-001), never "".
-    await captureCalibration();
-    expectInteractiveUnlocked();
+    await revealInterrogation();
+    expectInteractiveRevealed();
     const twoVoiceB = screen.getByTestId("two-voice-chat-pane");
     expect(
       within(twoVoiceB).getByText(/directed at both · sf-2026-06-15-009/),
@@ -779,46 +881,87 @@ describe("Todo cockpit — D-054 aux calibration-gate: PER-ITEM re-lock across f
     expect(within(twoVoiceB).queryByText(/sf-2026-06-14-001/)).toBeNull();
   });
 
-  // The reverse direction + a calibrated→calibrated round trip: switching BACK to
-  // finding A (already calibrated earlier this render) must NOT auto-unlock — the
-  // gate keys on the LAST captured id, and a switch away then back lands on the
-  // most-recent calibratedId. We assert the deterministic current behavior: A
-  // re-locks on return because calibratedId now points at B (only one slot). This
-  // pins the single-slot calibratedId semantics so a future multi-slot change is
-  // a DELIBERATE, visible edit.
-  it("round trip A→B→A: returning to A re-locks (single-slot calibratedId semantics)", async () => {
+  // The round-trip that INVERTS the old single-slot semantics: the reveal is now a
+  // per-id SET (flag-2), so a reveal STICKS. Reveal A, reveal B, switch BACK to A →
+  // A STAYS revealed (the Set persists; no re-lock, no re-prompt). This pins the
+  // per-id Set semantics so a future change is a DELIBERATE, visible edit. (This
+  // INVERTS the retired "round trip A→B→A re-locks (single-slot)" test.)
+  it("round trip A→B→A: A STAYS revealed (per-id Set persists, no re-lock)", async () => {
     renderTwoFindings();
 
-    // Calibrate A.
-    await captureCalibration();
-    expectInteractiveUnlocked();
+    // Reveal A.
+    await revealInterrogation();
+    expectInteractiveRevealed();
 
-    // Switch to B, calibrate B → calibratedId now points at B.
-    fireEvent.click(screen.getByRole("button", { name: "sf-2026-06-15-009" }));
+    // Switch to B, reveal B → both ids are now in the revealed Set.
+    await selectRow(FINDING_REVIEW_ITEM_B);
     await waitFor(() =>
-      expect(screen.getByTestId("resolution-locked")).toBeInTheDocument(),
+      expect(screen.getByTestId("reveal-interrogation")).toBeInTheDocument(),
     );
-    await captureCalibration();
-    expectInteractiveUnlocked();
+    await revealInterrogation();
+    expectInteractiveRevealed();
 
-    // Switch BACK to A → calibratedId (=== B's id) !== A's id, so A re-locks.
-    fireEvent.click(screen.getByRole("button", { name: "sf-2026-06-14-001" }));
+    // Switch BACK to A → A's id is STILL in the revealed Set, so A's trio is
+    // immediately present again with NO re-reveal, NO reveal button.
+    await selectRow(FINDING_REVIEW_ITEM);
     await waitFor(() =>
-      expect(screen.getByTestId("resolution-locked")).toBeInTheDocument(),
+      expect(screen.getByTestId("todo-aux-interactive")).toBeInTheDocument(),
     );
-    expectInteractiveLocked();
-    // A's static overview is back (basis for re-calibrating A).
-    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
+    expectInteractiveRevealed();
+    expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
+    // And it carries A's OWN id again (not B's) — no stale-id leak on return.
+    const twoVoiceA = screen.getByTestId("two-voice-chat-pane");
+    expect(
+      within(twoVoiceA).getByText(/directed at both · sf-2026-06-14-001/),
+    ).toBeInTheDocument();
+    expect(within(twoVoiceA).queryByText(/sf-2026-06-15-009/)).toBeNull();
+  });
+
+  // CALIBRATION is the per-id INVERSE: the old "round-trip A→B→A re-LOCKS / re-
+  // prompts calibration" assertion INVERTS — calibration is a per-id Set too, so
+  // calibrating A then returning to A still shows "recorded" (NOT re-prompted).
+  it("round trip A→B→A: A's calibration STAYS recorded (per-id Set, no re-prompt)", async () => {
+    renderTwoFindings();
+
+    // Record calibration for A → A shows the recorded state.
+    await recordCalibration();
+    expect(
+      screen.getByText(/blind calibration recorded for this item/i),
+    ).toBeInTheDocument();
+
+    // Switch to B → B is NOT calibrated, so its capture form is re-presented
+    // (the record button is back; no "recorded" copy for B yet).
+    await selectRow(FINDING_REVIEW_ITEM_B);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /record blind calibration/i }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/blind calibration recorded for this item/i)).toBeNull();
+    await recordCalibration();
+
+    // Switch BACK to A → A is STILL in the calibrated Set, so it shows "recorded"
+    // and is NOT re-prompted (no record button for A).
+    await selectRow(FINDING_REVIEW_ITEM);
+    await waitFor(() =>
+      expect(
+        screen.getByText(/blind calibration recorded for this item/i),
+      ).toBeInTheDocument(),
+    );
+    // The capture form is NOT re-presented for A (the per-id Set persists).
+    expect(
+      screen.queryByRole("button", { name: /record blind calibration/i }),
+    ).toBeNull();
   });
 });
 
-describe("Todo cockpit — D-054 aux calibration-gate: hostile kinds NEVER mount the interactive trio", () => {
-  // The kind-gate excludes the aux for any non-finding kind, so the calibration-
-  // gate's interactive trio must be absent for a HOSTILE kind at BOTH phases —
-  // even after calibration is captured. (The hostile-kind block above asserts the
-  // keyed FORMS absent and lists tutor-panel + two-voice-chat-pane, but does NOT
-  // enumerate tutor-chat-pane or the todo-aux-interactive wrapper — a live tutor
-  // chat pane leaking for a hostile kind would slip past it. We close that here.)
+describe("Todo cockpit — aux REVEAL-gate: hostile kinds NEVER mount the interactive trio", () => {
+  // The kind-gate excludes the aux for any non-finding kind, so the reveal-gate's
+  // interactive trio must be absent for a HOSTILE kind at BOTH phases — there is no
+  // interrogate section and no reveal button to even click, and recording
+  // calibration cannot conjure one. (The hostile-kind block above asserts the keyed
+  // FORMS absent; this closes the aux-trio side, enumerating tutor-chat-pane + the
+  // todo-aux-interactive wrapper a live chat-pane leak would otherwise slip past.)
   const HOSTILE_AUX_KINDS: ReadonlyArray<readonly [string, unknown]> = [
     ["null", null],
     ["an object spoofing finding_review", { kind: "finding_review" }],
@@ -830,15 +973,18 @@ describe("Todo cockpit — D-054 aux calibration-gate: hostile kinds NEVER mount
   for (const [label, kind] of HOSTILE_AUX_KINDS) {
     it(`kind = ${label} → no interactive aux trio pre- OR post-calibration`, async () => {
       renderTodo(itemWithKind(kind));
-      // Pre-cal: no aux section, no interactive trio.
-      expect(screen.queryByTestId("todo-aux")).toBeNull();
-      expectInteractiveLocked();
+      // Pre: no interrogate section, no reveal button, no trio.
+      expect(screen.queryByTestId("todo-interrogate")).toBeNull();
+      expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
+      expectInteractiveHidden();
 
-      // Even AFTER calibration is captured, the interactive trio must stay absent
-      // (the kind-gate excludes the aux entirely; calibration cannot conjure it).
-      await captureCalibration();
-      expect(screen.queryByTestId("todo-aux")).toBeNull();
-      expectInteractiveLocked();
+      // Even AFTER recording calibration, the trio must stay absent (the kind-gate
+      // excludes the aux entirely; calibration cannot conjure it, nor is there a
+      // reveal button to click).
+      await recordCalibration();
+      expect(screen.queryByTestId("todo-interrogate")).toBeNull();
+      expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
+      expectInteractiveHidden();
       // The kind-agnostic calibration capture is still present (never stranded).
       expect(screen.getByTestId("calibration-capture")).toBeInTheDocument();
     });

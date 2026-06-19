@@ -1,20 +1,16 @@
-// CalibrationCapture — the pre-verdict calibration capture (ARCH §6.5.4 /
-// research_program_v2 red-flag). The cockpit captures the human's PREDICTION +
-// CONFIDENCE *before* a verdict is recorded, then opens the verdict form. That
-// ordering is the contract: this component captures FIRST, and only on a
-// successful capture fires `onCaptured` — the shell uses that callback to then
-// reveal the verdict form (the verdict form is never shown by this component).
+// CalibrationCapture — the OPTIONAL pre-verdict calibration capture (ARCH §6.5.4
+// / research_program_v2 red-flag). The owner MAY record a PREDICTION + CONFIDENCE
+// BEFORE they see the decision support — a "blind" prediction whose accuracy is
+// itself research data. It is OPT-IN: it no longer GATES the resolution forms
+// (the owner can decide without it). Recorded ONCE per item id — the shell tracks
+// a per-id Set and passes `captured`, so a switch-away-and-back never re-prompts
+// (flag-2: no double calibration_entry).
 //
-// Persistence: POST /api/todo/calibration (api/todo.ts postCalibration), which
-// — once the seam lands — shells the calibration CLI that writes the
-// `calibration_entry` run-log event. Until then the endpoint is an honest STUB:
-// it surfaces the would-run argv read-only and writes NOTHING (inviolate rule
-// 4). This component never writes a ledger itself.
-//
-// STUB note: the capability flag `calibration` is false until the primary seam
-// lands; the banner says so. Capture still works locally (the draft is held in
-// component state and handed to onCaptured) — what is STUBBED is the durable
-// write, not the human's input.
+// Persistence: POST /api/todo/calibration (api/todo.ts postCalibration) shells
+// the blessed calibration CLI that writes the `calibration_entry` run-log event
+// when actions.calibration is enabled (the writer landed P4 / D-055). When the
+// capability is OFF the input is captured locally but not durably written; the
+// banner says so. This component never writes a ledger itself.
 import { useState } from "react";
 import { postCalibration } from "../../api/todo";
 import type { CalibrationDraft } from "../../types/todo";
@@ -28,9 +24,12 @@ interface Props {
    *  DURABLE write (calibration_cli absent in this env); local capture still
    *  works. The calibration_entry writer itself landed (P4 / D-055). */
   available?: boolean;
-  /** Fired AFTER a successful capture — the shell then reveals the verdict
-   *  form. Carries the captured draft so the shell can echo it. This is the
-   *  ordering contract: calibration FIRST, verdict SECOND. */
+  /** true when this item's id is already in the shell's calibrated Set — show
+   *  the "recorded" state, do NOT re-prompt (flag-2: no double calibration_entry
+   *  on switch-away-and-back). */
+  captured?: boolean;
+  /** Fired AFTER a successful capture, carrying the captured draft. Calibration
+   *  is OPTIONAL — this does not gate anything; the shell records the id. */
   onCaptured: (draft: CalibrationDraft) => void;
 }
 
@@ -50,6 +49,7 @@ function cleanConfidence(n: number): number {
 export default function CalibrationCapture({
   refId,
   available = false,
+  captured = false,
   onCaptured,
 }: Props) {
   const [prediction, setPrediction] = useState("");
@@ -70,6 +70,9 @@ export default function CalibrationCapture({
   // "NaN"/"Infinity" label or push the slider out of its [0,1] track.
   const safeConfidence = cleanConfidence(confidence);
   const disabled = phase === "submitting" || prediction.trim().length === 0;
+  // Already recorded for this id (the shell's per-id Set) OR just captured here.
+  // Either way show the "recorded" state and never re-present the form (flag-2).
+  const recorded = captured || phase === "captured";
 
   const capture = async () => {
     const draft: CalibrationDraft = {
@@ -79,7 +82,8 @@ export default function CalibrationCapture({
     setPhase("submitting");
     setErrorDetail(null);
     try {
-      // Stub today: returns the would-run argv read-only, writes nothing.
+      // POST shells the blessed calibration CLI when actions.calibration is on
+      // (writes the calibration_entry); when off it returns a read-only preview.
       // FLAT body — the backend takes prediction + confidence as top-level fields.
       await postCalibration({
         ref_id: safeRefId,
@@ -118,8 +122,8 @@ export default function CalibrationCapture({
       className="rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5"
     >
       <div className="text-[10px] uppercase tracking-wide text-zinc-600">
-        pre-verdict calibration (ARCH §6.5.4) · captured FIRST, then the verdict
-        opens
+        optional blind calibration (ARCH §6.5.4) · record a prediction before the
+        decision support, if you want one
       </div>
       {!available && (
         <div
@@ -132,14 +136,14 @@ export default function CalibrationCapture({
         </div>
       )}
 
-      {phase !== "captured" && (
+      {!recorded && (
         <>
           <input
             type="text"
             value={prediction}
             onChange={(e) => setPrediction(e.target.value)}
             aria-label="calibration prediction (required)"
-            placeholder="your prediction (required — before you see the verdict)"
+            placeholder="optional — predict the outcome before you interrogate"
             className="mt-1 w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
           />
           <label className="mt-1.5 flex items-center gap-2 text-[11px] text-zinc-400">
@@ -163,7 +167,7 @@ export default function CalibrationCapture({
               onClick={capture}
               className="rounded border border-sky-800 bg-sky-950 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-sky-300 hover:bg-sky-900 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900 disabled:text-zinc-600"
             >
-              capture calibration → open verdict
+              record blind calibration
             </button>
             {phase === "submitting" && (
               <span data-testid="calibration-submitting" className="text-[11px] text-zinc-500">
@@ -174,9 +178,9 @@ export default function CalibrationCapture({
         </>
       )}
 
-      {phase === "captured" && (
+      {recorded && (
         <div data-testid="calibration-captured" className="mt-1 text-[11px] text-emerald-400">
-          calibration captured — the verdict form is now open.
+          blind calibration recorded for this item.
         </div>
       )}
 

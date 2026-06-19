@@ -10,6 +10,17 @@
 // pins ONLY the degrade-on-garbage guards (safeActions / safeItems). Each `it`
 // pins one fix. We render and assert the cockpit root mounts (no crash/blank)
 // plus the specific legible fallback for that malformed input.
+//
+// S2 COCKPIT-REFRAME RECONCILE: the forced calibration-before-forms ordering
+// gate is REMOVED. The resolution forms render UNCONDITIONALLY for any selection
+// (calibration is OPTIONAL + recorded per-id, never re-prompted on switch-back).
+// The interactive aux trio (tutor + tutor-chat + two-voice) is now REVEAL-gated
+// (the reveal-interrogation button, finding-kind only), NOT calibration-gated.
+// Every robustness invariant below is PRESERVED — only the FLOW to reach the
+// forms / the aux changed: a robustness test no longer captures calibration to
+// reveal the forms (they are already there); a test that needs the two-voice
+// surface clicks reveal-interrogation to mount the trio. The kind-gate, the
+// safeItems/safeActions drops, and the deep-deref coercions are untouched.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
@@ -74,16 +85,25 @@ function renderTodo(props: Parameters<typeof Todo>[0] = {}) {
   );
 }
 
-// Drive the calibration gate open so the resolution forms (which read the
-// per-outcome action flags) actually render — that's where a malformed
-// `actions` would crash if unguarded.
-async function unlockResolution() {
-  fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
-    target: { value: "p" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: /capture calibration/i }));
+// S2 reframe: the resolution forms now render UNCONDITIONALLY (no calibration
+// gate). The malformed-`actions` crash hazard lives in the forms (which read the
+// per-outcome flags); they are present immediately, so just confirm they mounted
+// — no calibration capture needed.
+async function expectFormsPresent() {
   await waitFor(() =>
     expect(screen.getByTestId("resolution-forms")).toBeInTheDocument(),
+  );
+}
+
+// The interactive aux trio (tutor-chat + two-voice + tutor-panel) is REVEAL-
+// gated now (finding-kind only): pre-reveal it is absent; clicking reveal-
+// interrogation mounts it. Tests that assert on a surface INSIDE the trio (e.g.
+// two-voice-send) must reveal it first. This replaces the old calibration gate:
+// the trio gates on the reveal click, never on calibration.
+async function revealAux() {
+  fireEvent.click(screen.getByTestId("reveal-interrogation"));
+  await waitFor(() =>
+    expect(screen.getByTestId("todo-aux-interactive")).toBeInTheDocument(),
   );
 }
 
@@ -93,7 +113,9 @@ describe("TodoShell hardening — malformed availability prop (safeActions)", ()
   it("availability=null degrades to all-seams-stubbed (no crash)", async () => {
     renderTodo({ availability: null as unknown as CockpitAvailability, items: FINDING_ITEMS });
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
-    await unlockResolution();
+    // forms render unconditionally now; the aux trio (two-voice) is reveal-gated.
+    await expectFormsPresent();
+    await revealAux();
     // two-voice send is gated off actions.two_voice_chat → disabled when stub.
     expect(screen.getByTestId("two-voice-send")).toBeDisabled();
   });
@@ -104,7 +126,8 @@ describe("TodoShell hardening — malformed availability prop (safeActions)", ()
       items: FINDING_ITEMS,
     });
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
-    await unlockResolution();
+    await expectFormsPresent();
+    await revealAux();
     expect(screen.getByTestId("two-voice-send")).toBeDisabled();
   });
 
@@ -114,7 +137,8 @@ describe("TodoShell hardening — malformed availability prop (safeActions)", ()
       items: FINDING_ITEMS,
     });
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
-    await unlockResolution();
+    await expectFormsPresent();
+    await revealAux();
     expect(screen.getByTestId("two-voice-send")).toBeDisabled();
   });
 
@@ -124,7 +148,8 @@ describe("TodoShell hardening — malformed availability prop (safeActions)", ()
       items: FINDING_ITEMS,
     });
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
-    await unlockResolution();
+    await expectFormsPresent();
+    await revealAux();
     expect(screen.getByTestId("two-voice-send")).toBeDisabled();
   });
 
@@ -147,14 +172,15 @@ describe("TodoShell hardening — malformed availability prop (safeActions)", ()
       items: FINDING_ITEMS,
     });
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
-    await unlockResolution();
+    await expectFormsPresent();
+    await revealAux();
     // two_voice_chat was "on" (truthy, not === true) → still gated off.
     expect(screen.getByTestId("two-voice-send")).toBeDisabled();
   });
 
   it("VALID live availability still lights the seam up (behavior preserved)", async () => {
     renderTodo({ availability: AVAILABILITY_LIVE, items: FINDING_ITEMS });
-    await unlockResolution();
+    await expectFormsPresent();
     const abstain = screen.getByTestId("abstain-form");
     fireEvent.change(within(abstain).getByLabelText(/abstain note/i), {
       target: { value: "revisit later" },
@@ -218,8 +244,12 @@ describe("TodoShell hardening — malformed items list (safeItems)", () => {
       items: mixed as unknown as HumanTodoItem[],
     });
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
-    // exactly the one valid item is selectable (its id is the chooser button).
-    expect(screen.getByRole("button", { name: "iter-good" })).toBeInTheDocument();
+    // exactly the one valid item is selectable. In select mode the inbox row's
+    // selector button is labeled by its title (id is the fallback only when no
+    // title); the one kept element carries a title, so match it.
+    expect(
+      screen.getByRole("button", { name: "the one valid item" }),
+    ).toBeInTheDocument();
     // no crash from the dropped null/empty-id elements.
     expect(screen.queryByTestId("todo-no-selection")).toBeNull();
   });
@@ -267,66 +297,117 @@ describe("TodoShell hardening — malformed getHumanTodo body (fetch path)", () 
     );
   });
 
-  it("getHumanTodo body with malformed items elements => only valid items selectable", async () => {
+  it("getHumanTodo body with malformed items elements => only the valid item surfaces", async () => {
+    // The fetch path's safeItems(resp?.items) drops the null + empty-id elements
+    // and keeps the one valid element. With `items` ABSENT the shell drives its
+    // OWN selection from the fetched list, so the valid item surfaces as the
+    // workspace selection (todo-selected-item) — never .find/.map on a malformed
+    // element, never the honest no-selection state.
     humanTodoBody = {
       items: [null, { id: "" }, { id: "iter-from-fetch", kind: "gate_verdict" }],
       counts: {},
     };
     renderTodo({ availability: AVAILABILITY_LIVE });
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "iter-from-fetch" }),
-      ).toBeInTheDocument(),
+      expect(screen.getByTestId("todo-selected-item")).toHaveTextContent(
+        "iter-from-fetch",
+      ),
     );
+    // the malformed siblings were dropped, not surfaced as a no-selection blank.
+    expect(screen.queryByTestId("todo-no-selection")).toBeNull();
+    // and the valid selection drives the forms (forms render unconditionally).
+    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
   });
 });
 
-describe("TodoShell hardening — calibration-before-forms ordering gate", () => {
-  // The ordering gate must hold even with a malformed availability: forms stay
-  // LOCKED until calibration fires, then reveal — never auto-unlock or crash.
-  it("forms stay LOCKED before calibration even with null availability", () => {
+describe("TodoShell reframe — forms render unconditionally + per-id calibration", () => {
+  // S2 reframe: the forced calibration-before-forms ordering gate is REMOVED.
+  // resolution-locked no longer exists; the forms render UNCONDITIONALLY for any
+  // selection. This replaces the old "forms LOCKED before calibration" coverage
+  // with the POSITIVE assertion of the new behavior (forms present immediately,
+  // even with a malformed availability — the guard still doesn't crash).
+  it("forms render UNCONDITIONALLY (no calibration) even with null availability", () => {
     renderTodo({
       availability: null as unknown as CockpitAvailability,
       items: TODO_ITEMS,
     });
-    expect(screen.getByTestId("resolution-locked")).toBeInTheDocument();
-    expect(screen.queryByTestId("resolution-forms")).toBeNull();
-    // calibration capture renders FIRST.
+    // The forced gate is gone: there is NO resolution-locked element, and the
+    // forms are present immediately — no calibration capture required.
+    expect(screen.queryByTestId("resolution-locked")).toBeNull();
+    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
+    // Calibration capture is still PRESENT (optional, not a gate) and did not
+    // crash on the null availability.
     expect(screen.getByTestId("calibration-capture")).toBeInTheDocument();
   });
 
-  it("a finding with NO id is dropped, so the ordering gate cannot point at it", () => {
+  it("a finding with NO id is dropped, so no selection can point at it", () => {
     // An item missing its id can't be a verdict target; safeItems drops it,
-    // leaving the next valid item (or no-selection) — the gate never opens on a
-    // target it cannot calibrate.
+    // leaving the next valid item (or no-selection) — nothing can be resolved on
+    // a target without an id (the selection key + the forms' target).
     renderTodo({
       availability: AVAILABILITY_LIVE,
       items: [{ kind: "gate_verdict", title: "no id" }] as unknown as HumanTodoItem[],
     });
     expect(screen.getByTestId("todo-no-selection")).toBeInTheDocument();
     expect(screen.queryByTestId("calibration-capture")).toBeNull();
+    // and with no selection there are no forms either.
+    expect(screen.queryByTestId("resolution-forms")).toBeNull();
   });
 
   // ADVERSARIAL-VERIFY additions. The shallow guards (safeItems / safeActions)
   // validate the SELECTION KEY (`id`) but forward the rest of a valid item's
   // producer-owned fields (`kind`, `title`) RAW into the resolution-area
-  // children. These probe the DEEPER derefs + the ordering gate across a switch.
+  // children. These probe the DEEPER derefs + the per-id calibration Set across
+  // a switch.
 
-  // Switching to a not-yet-calibrated item must RE-LOCK the forms (each item's
-  // verdict is preceded by ITS OWN calibration — calibratedId is per-id). A
-  // closure/stale-id bug here would leak item A's calibration onto item B.
-  it("switching to an un-calibrated sibling RE-LOCKS the forms (per-item gate)", async () => {
+  // flag-2: calibration is recorded PER ID into a Set and NEVER re-prompted when
+  // you switch away from a calibrated item and back. A closure/stale-id bug here
+  // would either leak item A's calibration onto item B, or LOSE A's calibration
+  // when you return. This pins the round-trip A→B→A: A stays recorded, B is its
+  // own un-calibrated item (each id's calibration is independent), and the forms
+  // are present throughout (they no longer gate on calibration).
+  it("per-id calibration: A→B→A keeps A recorded (no re-prompt), forms always present", async () => {
     renderTodo({ availability: AVAILABILITY_LIVE, items: TODO_ITEMS });
-    // Calibrate the first (default-selected) item → its forms open.
-    await unlockResolution();
+    // The first item is default-selected; the forms are present immediately.
     expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
-    // Switch to the SECOND item via its chooser button.
-    fireEvent.click(screen.getByRole("button", { name: TODO_ITEMS[1].id }));
-    // The ordering contract must re-assert: the sibling has no calibration yet.
-    await waitFor(() =>
-      expect(screen.getByTestId("resolution-locked")).toBeInTheDocument(),
+    // Record a blind calibration for item A (the default selection).
+    fireEvent.change(screen.getByLabelText(/calibration prediction/i), {
+      target: { value: "p" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: /record blind calibration/i }),
     );
-    expect(screen.queryByTestId("resolution-forms")).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByTestId("calibration-captured")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("calibration-captured")).toHaveTextContent(
+      /blind calibration recorded for this item/i,
+    );
+
+    // Switch to the SECOND item (its select button is labeled by its title).
+    fireEvent.click(
+      screen.getByRole("button", { name: TODO_ITEMS[1].title as string }),
+    );
+    // B is its OWN un-calibrated item: it re-presents the calibration FORM (not
+    // the recorded state) — per-id, so A's calibration did NOT leak onto B.
+    await waitFor(() =>
+      expect(screen.queryByTestId("calibration-captured")).toBeNull(),
+    );
+    expect(screen.getByLabelText(/calibration prediction/i)).toBeInTheDocument();
+    // …and B's forms are present anyway (no calibration gate).
+    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
+
+    // Switch BACK to A: the per-id Set persists — A STILL shows "recorded" and is
+    // NEVER re-prompted (the old "switch-back RE-LOCKS / re-prompts" is inverted).
+    fireEvent.click(
+      screen.getByRole("button", { name: TODO_ITEMS[0].title as string }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("calibration-captured")).toBeInTheDocument(),
+    );
+    expect(screen.queryByLabelText(/calibration prediction/i)).toBeNull();
+    // A's forms remain present throughout.
+    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
   });
 });
 
@@ -342,7 +423,8 @@ describe("TodoShell hardening — valid id but malformed sibling fields (deep de
     // OBJECT-title → TutorPanel React-child coercion uses a finding_review kind
     // (otherwise the tutor would correctly be hidden). The OBJECT-KIND →
     // DeferForm probe is covered separately below ("OBJECT kind with LIVE
-    // defer capability renders no defer form").
+    // defer capability renders no defer form"). S2 reframe: the tutor now lives
+    // inside the REVEAL-gated aux trio (no longer pre-calibration), so reveal it.
     const nasty = [
       {
         id: "sf-nasty",
@@ -358,9 +440,11 @@ describe("TodoShell hardening — valid id but malformed sibling fields (deep de
       items: nasty as unknown as HumanTodoItem[],
     });
     // The valid id is selectable — the item was NOT dropped (id is a string).
+    // The object title is not renderable, so the inbox selector falls back to id.
     expect(screen.getByRole("button", { name: "sf-nasty" })).toBeInTheDocument();
-    await unlockResolution();
-    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
+    // forms render unconditionally; reveal the aux trio so the tutor mounts.
+    await expectFormsPresent();
+    await revealAux();
     // The tutor (handed the object title) degraded legibly — NOT "[object Object]".
     expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
     expect(screen.queryByText(/\[object Object\]/)).toBeNull();
@@ -376,8 +460,10 @@ describe("TodoShell hardening — valid id but malformed sibling fields (deep de
       availability: AVAILABILITY_LIVE,
       items: nasty as unknown as HumanTodoItem[],
     });
+    // array title is not renderable → inbox selector falls back to the id.
     expect(screen.getByRole("button", { name: "sf-arr" })).toBeInTheDocument();
-    await unlockResolution();
+    await expectFormsPresent();
+    await revealAux();
     expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
   });
 
@@ -415,11 +501,13 @@ describe("TodoShell hardening — valid id but malformed sibling fields (deep de
         { id: "iter-objkind", kind: { malformed: true }, title: "ok title" },
       ] as unknown as HumanTodoItem[],
     });
-    expect(screen.getByRole("button", { name: "iter-objkind" })).toBeInTheDocument();
-    await unlockResolution();
-    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
+    // the inbox selector is labeled by the (renderable) title here.
+    expect(screen.getByRole("button", { name: "ok title" })).toBeInTheDocument();
+    // forms render unconditionally — no calibration needed to reach the defer path.
+    await expectFormsPresent();
     // A garbage kind has no blessed defer mapping => the defer form is absent,
     // and crucially the cockpit did not blank.
+    expect(screen.queryByTestId("defer-form")).toBeNull();
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
   });
 
@@ -452,7 +540,8 @@ describe("TodoShell hardening — valid id but malformed sibling fields (deep de
         { id: "iter-valid-kind", kind: "gate_verdict", title: "ok" },
       ] as unknown as HumanTodoItem[],
     });
-    await unlockResolution();
+    // forms render unconditionally — no calibration needed to reach the defer form.
+    await expectFormsPresent();
     await waitFor(() =>
       expect(screen.getByTestId("defer-form")).toBeInTheDocument(),
     );
@@ -464,6 +553,10 @@ describe("TodoShell hardening — duplicate ids + fetch undefined body", () => {
   // finding). Both pass safeItems; .find returns the first; React keys collide
   // (a console warning) but the page must NOT blank.
   it("duplicate ids render without blanking (first is the selection target)", () => {
+    // Two rows carry the SAME id (a re-queued finding). Both pass safeItems; the
+    // selection .find returns the first; the React keys collide (a console
+    // warning) but the page must NOT blank. In select mode each row's selector
+    // is labeled by its title, so the two rows surface as two distinct buttons.
     const dupes = [
       { id: "iter-dup", kind: "gate_verdict", title: "first" },
       { id: "iter-dup", kind: "gate_verdict", title: "second" },
@@ -473,9 +566,14 @@ describe("TodoShell hardening — duplicate ids + fetch undefined body", () => {
       items: dupes as unknown as HumanTodoItem[],
     });
     expect(screen.getByTestId("todo-cockpit")).toBeInTheDocument();
-    // Both chooser buttons render (same label); the cockpit did not blank.
-    expect(screen.getAllByRole("button", { name: "iter-dup" }).length).toBe(2);
+    // Both rows render (their titles label the selectors); the cockpit did not
+    // blank — duplicate ids degrade to a console key-warning, never a crash.
+    expect(screen.getByRole("button", { name: "first" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "second" })).toBeInTheDocument();
     expect(screen.queryByTestId("todo-no-selection")).toBeNull();
+    // The first duplicate is the selection target (.find returns it) → its forms
+    // are present (forms render unconditionally for the selected item).
+    expect(screen.getByTestId("resolution-forms")).toBeInTheDocument();
   });
 
   // getHumanTodo's getJSON casts the body with no shape check; a 200 whose JSON

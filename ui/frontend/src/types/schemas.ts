@@ -398,6 +398,33 @@ export interface IterationsResponse {
   iterations: IterationRecord[];
 }
 
+// GET /api/iteration/{iteration_id}/journey — the full pipeline journey for one
+// iteration (PipelineJourney, the S2 cockpit reframe). Returns the whole
+// loop_memory row as an IterationRecord. Unknown id -> {found:false} at HTTP 200
+// (the journey view degrades in place, never 404-blanks).
+export interface IterationJourneyResponse {
+  found: boolean;
+  iteration_id: string;
+  iteration?: IterationRecord | null;
+}
+
+// One row of GET /api/loop_v0/processes — a subprocess spawned since the backend
+// booted (the Dashboard in-flight rollup). `status` is left open (forward-compat
+// house style): running | exited_clean | exited_error_<rc> | killed_signal_<sig>.
+export interface ProcessRow {
+  pid: number;
+  topic?: string | null;
+  started_at?: string | null;
+  ended_at?: string | null;
+  status?: string | null;
+  exit_code?: number | null;
+  [key: string]: unknown;
+}
+
+export interface ProcessesResponse {
+  processes: ProcessRow[];
+}
+
 export interface JournalResponse {
   iteration_id: string;
   path: string;

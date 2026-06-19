@@ -1,10 +1,10 @@
-// Cockpit (/todo) fetch client for the NEW /api/todo/* STUB endpoints (Role B
-// foundation). These back the cockpit's NEW resolution outcomes, which are NOT
-// yet blessed: the PART-2 primary-session seams (docs/todo_cockpit_seam_plan.md
-// — the two-voice finding_session extension, the resolution-outcome CLIs, the
-// outcome-4 enqueue) have not shipped. So ui/backend serves /api/todo/* as
-// honest STUBS: they surface the would-run argv READ-ONLY and write NOTHING
-// (inviolate rule 4 — a stub never fakes a write or a verdict).
+// Cockpit (/todo) fetch client for the /api/todo/* endpoints. The seams have
+// LANDED: ui/backend execs the blessed orchestrator CLI for each outcome —
+// authorize_fix, directive_signoff, calibration, and the tutor/two-voice chat
+// are live execs (capability-gated by GET /api/todo/available's action flags);
+// spawn_topic / abstain are honest SESSION-EXITS (no in-UI one-shot — preview
+// only). When a capability flag is OFF the endpoint returns a read-only would-run
+// preview and writes NOTHING (inviolate rule 4 — never a faked write/verdict).
 //
 // This client deliberately mirrors api/attest.ts's idiom: the same API_BASE,
 // the same 404 == version-skew quiet degradation, the same {rc, stderr}/error
@@ -43,9 +43,9 @@ export class TodoError extends Error {
   }
 }
 
-// Stub/CLI success payloads are producer-owned JSON; callers must probe, not
-// assume. For the STUB seams the body is the read-only would-run preview, e.g.
-// `{stub: true, lights_up_when: "...", would_run: ["...argv..."]}` — never a
+// CLI success payloads are producer-owned JSON; callers must probe, not assume.
+// When a capability is OFF (or for a session-exit) the body is a read-only
+// would-run preview, e.g. `{status: "stub", would_run: ["...argv..."]}` — never a
 // fabricated ledger row.
 export type TodoResult = Record<string, unknown>;
 
@@ -181,10 +181,12 @@ async function postTodo(path: string, body: Record<string, unknown>): Promise<To
   return ok as TodoResult;
 }
 
-// --- POST endpoints (STUB seams) ---
-// Each posts to a thin ui/backend endpoint that, once the seam lands, shells
-// the blessed orchestrator CLI for that outcome. Until then the endpoint is a
-// read-only stub returning the would-run argv (it writes NOTHING).
+// --- POST endpoints ---
+// Each posts to a thin ui/backend endpoint that shells the blessed orchestrator
+// CLI for that outcome: authorize_fix / directive_signoff / calibration are LIVE
+// execs gated by their action flag; spawn_topic / abstain are honest
+// SESSION-EXITS (no in-UI one-shot). When a capability is OFF the endpoint
+// returns a read-only would-run preview and writes NOTHING.
 
 // Outcome 4 — authorize an autonomous fix → enqueue a spawn-contract that a
 // later dev session dispatches (stage (i); the human merges the branch). The
@@ -225,8 +227,9 @@ export const postAbstain = (body: {
   note: string;
 }) => postTodo("/api/todo/abstain", body);
 
-// Pre-verdict calibration capture (ARCH §6.5.4) — persist the human's
-// prediction + confidence as a calibration_entry BEFORE the verdict opens.
+// Optional blind calibration (ARCH §6.5.4) — persist the human's prediction +
+// confidence as a calibration_entry. Opt-in: it no longer gates the verdict (the
+// owner may decide without it); the calibration_entry writer landed P4/D-055.
 // FLAT body (the backend takes `confidence` as a top-level number in [0,1]),
 // not a nested {calibration:{...}}.
 export const postCalibration = (body: {

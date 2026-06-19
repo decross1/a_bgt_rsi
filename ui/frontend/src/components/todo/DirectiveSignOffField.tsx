@@ -24,8 +24,8 @@ interface Props {
   /** the sign-off audit note (required by the sign-off CLI for the directive
    *  variant — the integrator passes the same note its verdict form collects). */
   note: string;
-  /** actions.directive_signoff from GET /api/todo/available — false keeps the
-   *  field in its honest stub state (directive submit disabled). */
+  /** actions.directive_signoff from GET /api/todo/available — false means the
+   *  exec is not enabled in this environment (directive submit disabled). */
   available: boolean;
   /** lift the directive value so the integrator can drive a combined submit. */
   onDirectiveChange?: (directive: string) => void;
@@ -109,9 +109,9 @@ export default function DirectiveSignOffField({
       </div>
       {available !== true && (
         <div data-testid="directive-signoff-stub" className="mt-0.5 text-[10px] text-zinc-500">
-          stub — lights up when the directive sign-off seam lands
-          (docs/todo_cockpit_seam_plan.md). Posts now return a read-only
-          would-run preview and write nothing.
+          capability disabled — the directive sign-off exec is not enabled in this
+          environment (actions.directive_signoff is off). The would-run argv below
+          is a read-only preview; no directive is recorded from here.
         </div>
       )}
 
@@ -177,7 +177,7 @@ export default function DirectiveSignOffField({
           {result.stub === true ||
           result.status === "stub" ||
           Array.isArray(result.would_run)
-            ? "stub response — nothing written (the seam is not live)"
+            ? "stub response — nothing written (the exec is not enabled here)"
             : "sign-off recorded with directive"}
           {Array.isArray(result.would_run) && (
             <pre

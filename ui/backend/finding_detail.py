@@ -44,9 +44,10 @@ _MAX_INT_DIGITS = 600
 def _encoder_safe(value, limit: int = _MAX_FIELD_DEPTH) -> bool:
     """True if `value` can be JSON-encoded without 500ing the response encoder:
     it nests no deeper than `limit`, contains no int whose magnitude exceeds the
-    digit bound, and contains no non-finite float (NaN/Infinity/-Infinity).
+    digit bound, contains no non-finite float (NaN/Infinity/-Infinity), and
+    contains no string carrying a lone/unpaired surrogate code point.
     Iterative (no recursion of its own — it must not itself overflow on the
-    pathological input it guards). Mirrors todo_cockpit._within_depth."""
+    pathological input it guards). Mirrors iteration_journey._encoder_safe."""
     stack = [(value, 0)]
     while stack:
         node, depth = stack.pop()
@@ -62,8 +63,24 @@ def _encoder_safe(value, limit: int = _MAX_FIELD_DEPTH) -> bool:
         elif isinstance(node, float):
             if not math.isfinite(node):
                 return False
+        elif isinstance(node, str):
+            # A producer-written ``"\udXXX"`` escape decodes through json.loads
+            # into a LONE surrogate str: valid to parse, but FastAPI's
+            # JSONResponse emits UTF-8 and a lone surrogate is not encodable, so
+            # the encoder raises UnicodeEncodeError AFTER the read's try/except
+            # (the same valid-to-parse / fatal-to-encode class as NaN/Infinity).
+            # str.isascii() fast-paths the common case; only a surrogate trips it.
+            if not node.isascii():
+                try:
+                    node.encode("utf-8")
+                except UnicodeEncodeError:
+                    return False
         elif isinstance(node, dict):
-            for v in node.values():
+            for k, v in node.items():
+                # A surrogate can ride a dict KEY too (a producer ``"\udXXX"``
+                # key parses fine but 500s the same UTF-8 encode); push it at the
+                # same depth so the str-branch inspects it.
+                stack.append((k, depth))
                 stack.append((v, depth + 1))
         elif isinstance(node, list):
             for v in node:

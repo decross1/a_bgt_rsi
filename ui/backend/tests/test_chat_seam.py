@@ -441,6 +441,18 @@ def test_start_deeply_nested_stdout_is_502_not_500(repo):
     assert resp.json()["rc"] == 0
 
 
+def test_start_surrogate_string_stdout_is_502_not_500(repo):
+    # A lone/unpaired surrogate in an envelope STRING (model output can carry it)
+    # parses fine but is not UTF-8-encodable — would 500 the encoder without the
+    # str-branch guard. Surface it as the honest 502 contract break, never 500.
+    env = '{"ok":true,"mode":"tutor","action":"start","stances":null,"x":"ok\\ud800bad"}'
+    runner = StubRunner(returncode=0, stdout=env + "\n")
+    resp = _server_client(repo, runner).post(
+        "/api/todo/chat/start", json={"mode": "tutor", "finding_id": "sf-001"})
+    assert resp.status_code == 502           # degraded, never 500
+    assert resp.json()["rc"] == 0
+
+
 def test_turn_deeply_nested_stdout_is_502_not_500(repo):
     runner = StubRunner(returncode=0, stdout=_deep_envelope(5000) + "\n")
     resp = _server_client(repo, runner).post("/api/todo/chat/turn", json={
