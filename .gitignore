@@ -75,6 +75,11 @@ run_state/health_signals.jsonl
 run_state/skill_signals.jsonl
 run_state/events.jsonl
 
+# Experiment-bridge call logs (LOOP_V0_CALLS_LOG=<exp>/runs/calls.jsonl, set by
+# each experiment's loop_bridge/replication_driver). Machine-generated runtime logs.
+experiments/runs/
+experiments/*/runs/
+
 # Layer-3 loop memory (per ARCHITECTURE.md §4.4) — sibling to chroma_db/
 # (Layers 1+2). Machine-generated; one row per Nara iteration.
 memory/*
