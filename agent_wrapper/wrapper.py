@@ -162,7 +162,15 @@ def _emit(record, log_path):
     if log_path is None:
         MEMORY_LOG.append(record)
     else:
-        with open(log_path, "a") as fh:
+        # Ensure the log dir exists. Experiment loop_bridge / replication_driver
+        # modules set LOOP_V0_CALLS_LOG to <exp>/runs/calls.jsonl at IMPORT time
+        # but only mkdir it inside their main(); when autoresearch imports them
+        # the env var leaks process-wide and the dir may be absent, which would
+        # fail every call_sync (root cause of the 2026-06-19 experiment-grounded
+        # chain stalls: hypothesize/novelty/critic all FileNotFoundError'd).
+        p = Path(log_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a") as fh:
             fh.write(json.dumps(record) + "\n")
     return record
 
