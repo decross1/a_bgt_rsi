@@ -24,7 +24,9 @@ lit-pipe detail.
   (`iter-2026-06-19-001/002/003`) ran complete 5-step chains with no
   truncation. The 3-iteration exit criterion is materially met (pending the
   owner reading journals 076/077/078). Loops 1 (falsification) + 2
-  (rediscovery) demonstrated; 019-003 is a novel surviving Loop-3 seed.
+  (rediscovery) demonstrated; 019-003 is a novel surviving Loop-3 seed. The
+  4-session roadmap to the full loop + applied tier:
+  [`docs/roadmap_full_loop.md`](docs/roadmap_full_loop.md).
 - **UI.** The 2026-06-10 observability overhaul shipped; the 2026-06-14
   dashboard reframe + `/todo` cockpit (stubbed) merged. **2026-06-17/18 (pushed,
   `b8ca85f`): the verdict-fenced tutor is live** — orchestrator tutor engine +
