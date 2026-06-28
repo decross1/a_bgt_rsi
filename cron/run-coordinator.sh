@@ -79,9 +79,16 @@ fi
 
 # The cycle. env -u MOCK_LLM (rule 10: a stubbed embedder makes the cycle
 # meaningless); NARA_SKEPTIC=1 arms the vllm-qwen skeptic seam in the critic.
-log "launch: coordinator --once --execute --budget $BUDGET (NARA_SKEPTIC=1)"
+# NARA_PROMOTION_VOTE_ADVISORY=1 (D-053, owner-flipped 2026-06-25): the
+# adversarial promotion vote still RUNS and annotates, but no longer GATES
+# promotion — the human/cockpit is the calibration the automatic vote could
+# not be. Reverts by unsetting the var (dark by default, fail-open). This
+# stops the twice-daily starvation: every cycle since the runway went live
+# (D-049, 2026-06-18) chose promote_findings and promoted ZERO findings
+# because the survive-iff-minority-refute vote refuted them all.
+log "launch: coordinator --once --execute --budget $BUDGET (NARA_SKEPTIC=1 NARA_PROMOTION_VOTE_ADVISORY=1)"
 rc=0
-env -u MOCK_LLM NARA_SKEPTIC=1 "$PYTHON" -m orchestrator.coordinator \
+env -u MOCK_LLM NARA_SKEPTIC=1 NARA_PROMOTION_VOTE_ADVISORY=1 "$PYTHON" -m orchestrator.coordinator \
   --once --execute --budget "$BUDGET" || rc=$?
 log "done rc=$rc"
 exit "$rc"
