@@ -2948,3 +2948,35 @@ apparatus acceptance. **Implementation is GATED** behind the human's go: a singl
 `emit_skill_signal` one-append helper (rule 8) + the conftest extension; (b)/(c) may ship
 first. Follows the D-046 precedent — the apparatus is the single merge/commit authority
 and owns whether it takes on a cross-boundary obligation.
+
+## D-057 — GB10 unified-memory budget: trim Gemma util 0.40→0.30 so both vLLM servers co-reside under the 30 GiB OS margin (margin HELD, not lowered)
+
+**Date.** 2026-06-28. **Context.** The D-049 coordinator runway refused every cycle
+2026-06-26 → 06-27 on `preflight_mem` (`MemAvailable=22GiB < need(0)+margin(30)=30GiB`).
+Root cause: restoring `vllm-qwen` (2026-06-25) plus the orphaned, unhealthy
+`openshell-nara-sandbox` pushed the GB10 unified pool (121.7 GiB) under the OS margin.
+The two NVFP4 27B-class servers pin the pool via `--gpu-memory-utilization`: gemma 0.40
+(~49 GiB) + qwen 0.25 (~30 GiB) ≈ 79 GiB. Weights are ~18.6–18.9 GiB EACH
+(near-incompressible per vLLM startup profiles); the only real slack is KV cache.
+
+**Diagnosis.** gemma@0.40 carried **26 GiB / 21.87× KV headroom** — wildly oversized for
+the apparatus's single-stream orchestration. qwen@0.25 has only **6.87 GiB KV slack**
+(its weights dominate its budget), so it is not the lever.
+
+**Decision.** Trim **GEMMA 0.40 → 0.30** (now 12 GiB KV / 10.1× concurrency for 32k —
+ample); leave **QWEN at 0.25**. Result: **MemAvailable ~35 GiB with BOTH resident**;
+`preflight_mem.sh 0` PASSES. Captured the exact production launch for both servers in
+[`cron/serve-models.sh`](cron/serve-models.sh) (closes the un-scripted `docker run` gap;
+both containers `--restart unless-stopped`). Stopped the orphaned `openshell-nara-sandbox`
+(idle since the D-051 probe; ~1 GiB).
+
+**Inviolate.** The 30 GiB OS margin was **HELD, not lowered** (inviolate rule 7; the
+2026-06-08 arm-C freeze disproved a thin margin). Gemma re-verified on **MARLIN** MoE
+(inviolate rule 2): `Using 'MARLIN' NvFp4 MoE backend`.
+
+**Reversibility.** Re-raise via a `cron/serve-models.sh` util edit + re-run `preflight_mem.sh`;
+never raise utilization without confirming the margin still clears with both servers up.
+
+**Structural note.** This single box cannot run both 27B servers with generous KV on each
+*and* the 30 GiB margin — the trim is the standing accommodation. Deeper options
+(on-demand qwen load per cycle; a second box) are deferred; named so they are not lost.
