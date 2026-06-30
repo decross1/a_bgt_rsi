@@ -2980,3 +2980,40 @@ never raise utilization without confirming the margin still clears with both ser
 **Structural note.** This single box cannot run both 27B servers with generous KV on each
 *and* the 30 GiB margin — the trim is the standing accommodation. Deeper options
 (on-demand qwen load per cycle; a second box) are deferred; named so they are not lost.
+
+## D-058 — P4 v0: ship the dedup-keystone topic miner (`mine_paper_gap`); single cosine τ_dup demoted, lexical Jaccard load-bearing
+
+**Date.** 2026-06-30. **Context.** The closed-loop-autonomy keystone — let the apparatus
+propose its own research topics instead of waiting on a human `spawn_topic` — designed in
+[`docs/p4_topic_autogen_design.md`](docs/p4_topic_autogen_design.md) (10-agent design
+workflow + adversarial judge). The near-dup pathology is LIVE: the un-starved cron promotes
+near-identical hypotheses into the cockpit every 12h (25 items, heavy 5×/3× clusters).
+
+**Decision.** Ship **v0 = the dedup keystone + a non-generative selector** (owner Q1). The
+honest headline (from the design panel): the keystone is a **dedup** problem, not LLM
+generation — gap-*ranking* is near-random at the current corpus size and the "independent Qwen
+screen" is inert at the topic seam. A real **BGE-M3 falsifier on the 21 live backlog claims**
+proved a single cosine τ_dup **cannot** separate reworded near-dups from distinct findings
+(lowest intra-cluster 0.875 < highest cross-distinct 0.938). So:
+- **Lexical Jaccard is the load-bearing dedup layer**; cosine τ_dup is a HIGH (0.97)
+  near-identical-only filter, a tunable constant — NOT the gate (agent Q3, grounded by the
+  falsifier).
+- Topics are **extracted arXiv titles, never Gemma generations** → defuses the same-model
+  echo; topic-gen **SELECTS, never scores novelty** — the downstream Qwen skeptic + the loop's
+  `novelty_classify` stay the novelty authority (agent Q4).
+- On-domain cap **inert/smoke-only** (`ANCHOR_MIN=None`; in-domain anchor measured 0.505–0.607,
+  no off-domain examples — corpus is pre-filtered upstream) (agent Q5/Q6).
+- **No Qwen at the topic seam** in v0 (agent Q7). **Ledger-only `paper_gap` provenance**, NO
+  `seed.source` schema enum edit (owner Q2; `_run_loop_iteration` hardcodes `source="coordinator"`).
+
+**What shipped (ecf5408).** `workers/mine_paper_gap.py` (7-layer `_dedup`) + 8 tests; a budgeted
+`mine_paper_gap` coordinator action (cost 1); the graft-4 `_topic_suggestions` origin-tag fix
+(mined rows surface as a non-preferred source, not masquerading as human follow-ups).
+Verified: full suite 1314 green; real `env -u MOCK_LLM` smoke mined 20 live papers in 31s with
+no false-positive drops; the falsifier-oracle test collapses the live near-dup cluster to 1.
+
+**Scope / reversibility.** v0 stops FUTURE near-dups at the TOPIC seam; the existing 25 cockpit
+near-dups still need human triage (or a future dedup-at-promotion pass). Fully reversible —
+remove one menu entry; constants are env/module-tunable. **v1 deferred** (owner Q2): thread a
+real `source="paper_gap"` through `run_iteration` + `journal_writer` (a spine edit) in the next
+couple of sessions. Implements the design doc's Decisions(2026-06-30).
