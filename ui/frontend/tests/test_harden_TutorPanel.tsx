@@ -14,7 +14,10 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import TutorPanel from "../src/components/todo/TutorPanel";
-import type { FindingDetail } from "../src/types/schemas";
+import type {
+  FindingDetail,
+  IterationJourneyResponse,
+} from "../src/types/schemas";
 // The component self-fetches getFindingDetail when no `detail` prop is injected.
 // The self-fetch-path tests below spy on THIS module so they stay deterministic
 // (no real :8700 round-trip) — NOTE jsdom DOES define `globalThis.fetch`, so an
@@ -816,7 +819,10 @@ describe("TutorPanel — WRITE / MUTATION SAFETY (D-046 / rule 4): the tutor onl
     expect(src).not.toMatch(/\bonResolved\b\s*[:(]/); // not a prop, not a call
     expect(src).not.toMatch(/method\s*:\s*["'](POST|PUT|PATCH|DELETE)["']/i);
     expect(src).not.toMatch(/\bgate_cli\b/);
-    // The ONLY api/http import is the read-only getFindingDetail.
+    // The api/http imports are BOTH read-only GETs and NOTHING else: the finding
+    // overview (getFindingDetail) + the iteration overview (getIterationJourney,
+    // kind="iteration"). Neither writes; no mutating client may join them — a
+    // future edit that imported a POST client would have to defeat this list.
     const httpImport = src.match(
       /import\s*\{([^}]*)\}\s*from\s*["']\.\.\/\.\.\/api\/http["']/,
     );
@@ -825,7 +831,7 @@ describe("TutorPanel — WRITE / MUTATION SAFETY (D-046 / rule 4): the tutor onl
       .split(",")
       .map((s: string) => s.trim())
       .filter(Boolean);
-    expect(named).toEqual(["getFindingDetail"]);
+    expect(named).toEqual(["getFindingDetail", "getIterationJourney"]);
   });
 
   it("verdict-shaped extra props are inert AND issue no write (no fetch beyond the read)", async () => {
@@ -951,5 +957,288 @@ describe("TutorPanel — FENCE holds by construction across the LOADED state (ve
     expect(text).not.toMatch(/you should/i);
     expect(text).not.toMatch(/\boutweighs?\b/i);
     expect(text).not.toMatch(/this finding is (valid|invalid|correct|wrong)/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ITERATION KIND (Part B) — a gate_verdict (ITERATION) cockpit item is now
+// interrogable. For kind="iteration" the overview comes from the iteration
+// JOURNEY (getIterationJourney → response.iteration), NOT a finding detail
+// (which 404s for an iter-* id). These pin: (1) the injected-journey overview
+// renders (topic / critic / gate / novelty / hypothesis visible); (2) found:false
+// / missing / malformed iteration → the SAME 'unavailable' branch, id echoed, no
+// crash; (3) the FENCE for iterations — the FINDING accept/deny mechanical line +
+// considerations are ABSENT (those are finding semantics, wrong for an iteration);
+// (4) kind defaulting to "finding" preserves today's behavior EXACTLY. Plus the
+// self-fetch path + back-compat for the iteration side.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// A well-formed iteration journey (the happy path). Every iteration field the
+// overview reads (seed.topic / hypothesis.text / novelty.class / critique.verdict
+// / gate_status / nara_summary) is producer-owned + unvalidated.
+const FULL_JOURNEY: IterationJourneyResponse = {
+  found: true,
+  iteration_id: "iter-2026-06-14-003",
+  iteration: {
+    iteration_id: "iter-2026-06-14-003",
+    started_at: "2026-06-14T09:00:00Z",
+    ended_at: "2026-06-14T09:40:00Z",
+    journal_entry_path: "journal/iterations/003.md",
+    seed: { topic: "tail-risk mispricing in thin books" },
+    hypothesis: {
+      text: "Order books thin asymmetrically before a resolution.",
+    },
+    novelty: { class: "novel" },
+    critique: { verdict: "survives" },
+    gate_status: "pending",
+    nara_summary: "Surfaced a candidate asymmetric-thinning signal.",
+  },
+};
+
+// Cast helper for the journey side — values illegal per the prop type but legal
+// in the JSONL the producer actually writes; the runtime must survive them.
+const badJourney = (v: unknown) => v as unknown as IterationJourneyResponse;
+
+describe("TutorPanel — ITERATION kind renders the iteration overview from an injected journey", () => {
+  it("(1) injected journey → iteration overview (topic / critic / gate / novelty / hypothesis), panel present", () => {
+    render(
+      <TutorPanel
+        findingId="iter-2026-06-14-003"
+        kind="iteration"
+        journey={FULL_JOURNEY}
+      />,
+    );
+    const panel = screen.getByTestId("tutor-panel");
+    expect(panel).toBeInTheDocument();
+    expect(screen.getByTestId("tutor-overview")).toBeInTheDocument();
+    // The header names the iteration family (not the finding family).
+    expect(panel).toHaveTextContent(/tutor \/ iteration overview/i);
+    // The required iteration fields are all surfaced.
+    expect(panel).toHaveTextContent("tail-risk mispricing in thin books"); // seed.topic
+    expect(panel).toHaveTextContent(
+      "Order books thin asymmetrically before a resolution.",
+    ); // hypothesis.text
+    expect(panel).toHaveTextContent("iter-2026-06-14-003"); // iteration id
+    expect(panel).toHaveTextContent("Surfaced a candidate asymmetric-thinning signal."); // nara_summary
+    expect(panel).toHaveTextContent("pending"); // gate_status
+    expect(panel).toHaveTextContent("novel"); // novelty.class
+    expect(panel).toHaveTextContent("survives"); // critique.verdict
+    // No garbage leaked.
+    const text = panel.textContent ?? "";
+    expect(text).not.toContain("[object Object]");
+    expect(text).not.toMatch(/NaN|Infinity|undefined/);
+  });
+
+  it("(2a) found:false → 'iteration overview unavailable', id echoed, no overview, no crash", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(
+      <TutorPanel
+        findingId="iter-missing"
+        kind="iteration"
+        journey={{ found: false, iteration_id: "iter-missing" }}
+      />,
+    );
+    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
+    const un = screen.getByTestId("tutor-unavailable");
+    expect(un).toHaveTextContent(/iteration overview unavailable/i);
+    expect(un).toHaveTextContent("(iter-missing)"); // id echoed
+    expect(screen.queryByTestId("tutor-overview")).toBeNull();
+    expect(errSpy).not.toHaveBeenCalled();
+  });
+
+  it("(2b) found:true but iteration ABSENT / a non-object → unavailable, no crash", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const iteration of [undefined, null, "a string", [1, 2], 42, Number.NaN] as unknown[]) {
+      render(
+        <TutorPanel
+          findingId="iter-x"
+          kind="iteration"
+          journey={badJourney({ found: true, iteration_id: "iter-x", iteration })}
+        />,
+      );
+      expect(screen.getByTestId("tutor-unavailable")).toBeInTheDocument();
+      expect(screen.queryByTestId("tutor-overview")).toBeNull();
+      const text = screen.getByTestId("tutor-panel").textContent ?? "";
+      expect(text).not.toContain("[object Object]");
+      expect(text).not.toMatch(/NaN|Infinity/);
+      cleanup();
+    }
+    expect(errSpy).not.toHaveBeenCalled();
+  });
+
+  it("(2c) an ARRAY / primitive injected journey → unavailable, fence shown, no '.found' on a primitive", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const j of [badJourney(null), badJourney([{ found: true }]), badJourney("str"), badJourney(42)]) {
+      render(<TutorPanel findingId="iter-bad" kind="iteration" journey={j} />);
+      expect(screen.getByTestId("tutor-unavailable")).toBeInTheDocument();
+      expect(screen.getByTestId("tutor-fence-note")).toBeInTheDocument();
+      expect(screen.queryByTestId("tutor-overview")).toBeNull();
+      cleanup();
+    }
+    expect(errSpy).not.toHaveBeenCalled();
+  });
+
+  it("(2d) found present but NOT strictly true (1 / 'true' / null) → unavailable (strict === true)", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    for (const f of [1, "true", null, 0] as unknown[]) {
+      render(
+        <TutorPanel
+          findingId="iter-ft"
+          kind="iteration"
+          journey={badJourney({
+            found: f,
+            iteration_id: "iter-ft",
+            iteration: FULL_JOURNEY.iteration,
+          })}
+        />,
+      );
+      expect(screen.getByTestId("tutor-unavailable")).toBeInTheDocument();
+      expect(screen.queryByTestId("tutor-overview")).toBeNull();
+      cleanup();
+    }
+    expect(errSpy).not.toHaveBeenCalled();
+  });
+
+  it("(2e) a malformed iteration whose FIELDS are objects/arrays/NaN → fields drop, no leak, no crash", () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(
+      <TutorPanel
+        findingId="iter-malformed"
+        kind="iteration"
+        journey={badJourney({
+          found: true,
+          iteration_id: "iter-malformed",
+          iteration: {
+            iteration_id: "iter-malformed",
+            seed: { topic: { nested: "obj" } },
+            hypothesis: { text: ["a", "b"] },
+            novelty: { class: { x: 1 } },
+            critique: { verdict: Number.NaN },
+            gate_status: [["g"]],
+            nara_summary: { s: 1 },
+          },
+        })}
+      />,
+    );
+    // An object iteration block with garbage fields still LOADS (the block is an
+    // object); each field drops individually rather than crashing React.
+    const panel = screen.getByTestId("tutor-panel");
+    const text = panel.textContent ?? "";
+    expect(text).not.toContain("[object Object]");
+    expect(text).not.toMatch(/NaN|Infinity/);
+    // The one legal scalar (iteration_id) still surfaces.
+    expect(panel).toHaveTextContent("iter-malformed");
+    expect(errSpy).not.toHaveBeenCalled();
+  });
+
+  it("(3) THE FENCE for iterations — the FINDING accept/deny mechanical line + considerations are ABSENT", () => {
+    render(
+      <TutorPanel
+        findingId="iter-2026-06-14-003"
+        kind="iteration"
+        journey={FULL_JOURNEY}
+      />,
+    );
+    const panel = screen.getByTestId("tutor-panel");
+    const text = panel.textContent ?? "";
+    // The finding-only outcome-effects block + considerations block DO NOT render.
+    expect(screen.queryByTestId("tutor-outcome-effects")).toBeNull();
+    expect(screen.queryByTestId("tutor-considerations")).toBeNull();
+    // None of the FINDING mechanical-outcome wording leaks onto an iteration.
+    expect(text).not.toMatch(/loop_feedback/i);
+    expect(text).not.toMatch(/writes a valid/i);
+    expect(text).not.toMatch(/writes an invalid/i);
+    expect(text).not.toMatch(/accept\s*→/i);
+    expect(text).not.toMatch(/deny\s*→/i);
+    expect(text).not.toMatch(/in_review/i);
+    expect(text).not.toMatch(/considerations (for|against)/i);
+    // The visible fence note STILL holds and cites the REAL source (NOT D-044).
+    const fence = screen.getByTestId("tutor-fence-note");
+    expect(fence).toHaveTextContent(/does not affect your verdict/i);
+    expect(fence).toHaveTextContent(/2026-06-14 note PART 2/i);
+    expect(fence).toHaveTextContent(/inviolate rule 4/i);
+    expect(fence).toHaveTextContent(/D-053/);
+    expect(text).not.toMatch(/D-044/);
+    // STRUCTURAL fence: no interactive affordance on the iteration surface either.
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("combobox")).toBeNull();
+    for (const tag of ["button", "input", "select", "textarea", "form", "a"]) {
+      expect(panel.querySelector(tag)).toBeNull();
+    }
+  });
+
+  it("(4) kind defaulting to 'finding' preserves today's behavior EXACTLY (back-compat)", () => {
+    // No kind prop → the finding overview, with the finding-only blocks present.
+    render(<TutorPanel findingId="sf-001" detail={FULL} />);
+    const panel = screen.getByTestId("tutor-panel");
+    expect(panel).toHaveTextContent(/tutor \/ finding overview/i);
+    expect(screen.getByTestId("tutor-outcome-effects")).toBeInTheDocument();
+    expect(screen.getByTestId("tutor-considerations")).toBeInTheDocument();
+    expect(panel).toHaveTextContent(/loop_feedback/i);
+    // Explicit kind="finding" is identical to the default.
+    cleanup();
+    render(<TutorPanel findingId="sf-001" kind="finding" detail={FULL} />);
+    expect(screen.getByTestId("tutor-outcome-effects")).toBeInTheDocument();
+    expect(screen.getByTestId("tutor-considerations")).toBeInTheDocument();
+  });
+});
+
+describe("TutorPanel — ITERATION self-fetch path (no `journey` prop): GET the journey, degrade in place", () => {
+  it("self-fetch calls getIterationJourney (NOT getFindingDetail) and renders the overview", async () => {
+    const c = watchConsole();
+    const jSpy = vi
+      .spyOn(http, "getIterationJourney")
+      .mockResolvedValue(FULL_JOURNEY);
+    const fSpy = vi.spyOn(http, "getFindingDetail").mockResolvedValue(FULL);
+    render(<TutorPanel findingId="iter-2026-06-14-003" kind="iteration" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("tutor-overview")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("tutor-panel")).toHaveTextContent(
+      "tail-risk mispricing in thin books",
+    );
+    expect(jSpy).toHaveBeenCalledWith("iter-2026-06-14-003");
+    // The finding endpoint (which 404s for an iter-* id) is NEVER hit.
+    expect(fSpy).not.toHaveBeenCalled();
+    expect(c.error).not.toHaveBeenCalled();
+    expect(c.warn).not.toHaveBeenCalled();
+  });
+
+  it("a REJECTED iteration self-fetch → 'unavailable', fence still shown, never throws", async () => {
+    const c = watchConsole();
+    vi.spyOn(http, "getIterationJourney").mockRejectedValue(
+      new Error("network down"),
+    );
+    render(<TutorPanel findingId="iter-reject" kind="iteration" />);
+    await waitFor(() =>
+      expect(screen.getByTestId("tutor-unavailable")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("tutor-fence-note")).toBeInTheDocument();
+    expect(screen.queryByTestId("tutor-overview")).toBeNull();
+    expect(c.error).not.toHaveBeenCalled();
+  });
+
+  it("an injected `journey` SUPPRESSES the iteration self-fetch (no network call)", async () => {
+    const jSpy = vi
+      .spyOn(http, "getIterationJourney")
+      .mockResolvedValue(FULL_JOURNEY);
+    render(
+      <TutorPanel findingId="iter-x" kind="iteration" journey={FULL_JOURNEY} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    expect(jSpy).not.toHaveBeenCalled();
+  });
+
+  it("an empty / whitespace-only id (kind='iteration') → idle, fires NO fetch", async () => {
+    const jSpy = vi
+      .spyOn(http, "getIterationJourney")
+      .mockResolvedValue(FULL_JOURNEY);
+    render(<TutorPanel findingId="   " kind="iteration" />);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(screen.getByTestId("tutor-idle")).toHaveTextContent(
+      /select an iteration/i,
+    );
+    expect(jSpy).not.toHaveBeenCalled();
   });
 });

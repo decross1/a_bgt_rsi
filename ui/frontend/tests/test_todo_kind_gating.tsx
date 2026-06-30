@@ -14,11 +14,18 @@
 // for a finding item a reveal-interrogation button is shown, and clicking it
 // mounts the trio. The kind-gate INVARIANT is unchanged in intent.
 //
-// The contract this suite holds (work order PART U5, restated for the reframe):
+// The contract this suite holds (work order PART U5, + the 2026-06-30 work order
+// that makes gate-verdict ITERATIONS interrogable):
 //   - gate_verdict (ITERATION item, selected.id is an iteration_id) →
-//       GateVerdictForm renders;
+//       GateVerdictForm renders and is the ONLY disposition;
 //       FindingReviewForm / DirectiveSignOff / AuthorizeFix / SpawnTopic /
-//       Abstain are ABSENT, and NO aux (no reveal button, no trio) at any phase.
+//       Abstain are ABSENT.
+//       AUX (2026-06-30): an INTERROGATE section + reveal-interrogation button
+//       ARE now present (iterations are interrogable — the backend chat seam
+//       accepts an iter-* id); clicking reveal mounts the aux trio (TwoVoice +
+//       TutorChat + Tutor) keyed to the iter-id. THE FENCE HOLDS: the chat is
+//       decision SUPPORT only — no verdict/disposition is reachable from it; the
+//       sole iteration disposition stays GateVerdictForm.
 //   - finding_review (FINDING item, selected.id is a finding_id) →
 //       the finding-keyed form set renders; an INTERROGATE section with a
 //       reveal-interrogation button is present; clicking it mounts the aux trio
@@ -28,7 +35,8 @@
 //       only DeferForm + CalibrationCapture; NO aux at any phase.
 //   - DeferForm + CalibrationCapture render for ALL kinds. The resolution FORMS
 //       render immediately on selection (no calibration prerequisite); the aux
-//       trio renders only AFTER the reveal-interrogation click (finding kind).
+//       trio renders only AFTER the reveal-interrogation click (finding OR
+//       iteration kind).
 //
 // Network is stubbed by URL (mirrors test_todo_route.tsx). Crucially, the
 // attest capability probe answers LIVE (gate_verdict + finding_review + defer
@@ -196,13 +204,18 @@ describe("Todo cockpit — U5 kind-gate", () => {
     expect(screen.queryByTestId("authorize-fix-form")).toBeNull();
     expect(screen.queryByTestId("spawn-topic-form")).toBeNull();
     expect(screen.queryByTestId("abstain-form")).toBeNull();
-    // No interrogate section, no reveal button, no aux trio for an iteration item.
-    expect(screen.queryByTestId("todo-interrogate")).toBeNull();
-    expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
-    expect(screen.queryByTestId("todo-aux-interactive")).toBeNull();
-    expect(screen.queryByTestId("two-voice-chat-pane")).toBeNull();
-    expect(screen.queryByTestId("tutor-chat-pane")).toBeNull();
-    expect(screen.queryByTestId("tutor-panel")).toBeNull();
+    // 2026-06-30: an iteration is now INTERROGABLE — the interrogate section +
+    // reveal button ARE present, but the interactive trio stays hidden until the
+    // reveal click. (The disposition is still GateVerdictForm only — the fence.)
+    expectAuxRevealableTrioHidden();
+    // Reveal → the trio mounts (keyed to the iter-id), and STILL no finding-keyed
+    // disposition appears; GateVerdictForm remains the ONLY way to dispose.
+    await revealInterrogation();
+    expect(screen.getByTestId("two-voice-chat-pane")).toBeInTheDocument();
+    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("finding-review-form")).toBeNull();
+    expect(screen.queryByTestId("directive-signoff-field")).toBeNull();
+    expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument();
 
     // Kind-agnostic surfaces still present.
     await waitFor(() =>
@@ -370,6 +383,26 @@ function expectNoAux() {
   for (const id of AUX_SURFACES) expect(screen.queryByTestId(id)).toBeNull();
 }
 
+// The interactive trio (the panes the reveal click mounts) — distinct from the
+// interrogate SECTION + reveal button, which are present for an interrogable
+// (finding OR iteration) kind even pre-reveal.
+const INTERACTIVE_TRIO = [
+  "todo-aux-interactive",
+  "tutor-panel",
+  "tutor-chat-pane",
+  "two-voice-chat-pane",
+] as const;
+
+// An interrogable kind (finding OR gate-verdict iteration) PRE-reveal: the
+// interrogate section + reveal button are present, but the interactive trio is
+// hidden until the reveal click. (For an "other"/hostile kind use expectNoAux —
+// there is no interrogate section at all.)
+function expectAuxRevealableTrioHidden() {
+  expect(screen.getByTestId("todo-interrogate")).toBeInTheDocument();
+  expect(screen.getByTestId("reveal-interrogation")).toBeInTheDocument();
+  for (const id of INTERACTIVE_TRIO) expect(screen.queryByTestId(id)).toBeNull();
+}
+
 // Build a HumanTodoItem with a real string id but a hostile `kind`. The id is a
 // VALID selection key (a non-empty string), so safeItems keeps the row and the
 // gate is actually exercised on the kind — exactly the path we want to attack.
@@ -479,27 +512,28 @@ describe("Todo cockpit — U5 kind-gate: aux panes get a NON-EMPTY real finding_
   // the code path that built it is gone, not merely guarded). A gate_verdict item
   // carries an iteration_id; it must NEVER reach the finding-keyed aux, and there
   // is no reveal button to even attempt it.
-  it("a gate_verdict item mounts NO aux pane — the iteration_id never reaches them", async () => {
+  it("a gate_verdict item: the aux panes are fed its real iter-id (interrogation works; GateVerdictForm still the only disposition)", async () => {
     renderTodo(GATE_VERDICT_ITEM);
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    // No interrogate section, no reveal button, no panes — the iteration_id
-    // "iter-2026-06-14-002" is fenced out of the finding-keyed family entirely.
-    expect(screen.queryByTestId("todo-interrogate")).toBeNull();
-    expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
-    expect(screen.queryByTestId("todo-aux-interactive")).toBeNull();
-    expect(screen.queryByTestId("two-voice-chat-pane")).toBeNull();
-    expect(screen.queryByTestId("tutor-panel")).toBeNull();
-    expect(screen.queryByTestId("tutor-chat-pane")).toBeNull();
-    // The iteration_id never reaches a finding-keyed aux surface. The two id-
-    // echoing aux surfaces are the tutor (which prints "(<id>)") and the two-voice
-    // pane (which prints "directed at both · <id>"); BOTH are absent, so the
-    // iteration_id is fenced from the aux. (We scope to those aux surfaces rather
-    // than the whole DOM: the iteration_id LEGITIMATELY appears in the read-only
-    // PipelineJourney + the selected-item header for the iteration being resolved.)
-    expect(screen.queryByText(/directed at both · iter-2026-06-14-002/)).toBeNull();
-    expect(screen.queryByTestId("tutor-unavailable")).toBeNull();
+    // 2026-06-30: an iteration is interrogable. Pre-reveal the interactive trio is
+    // hidden; the interrogate section + reveal button are present.
+    expectAuxRevealableTrioHidden();
+    // Reveal → the trio mounts, fed the REAL iter-id "iter-2026-06-14-002" (a
+    // non-empty id — never the old "" fallback). The two-voice pane echoes it
+    // after "· ", exactly as it echoes a finding_id for a finding item.
+    await revealInterrogation();
+    const aux = await screen.findByTestId("todo-aux-interactive");
+    const twoVoice = within(aux).getByTestId("two-voice-chat-pane");
+    expect(
+      within(twoVoice).getByText(/directed at both · iter-2026-06-14-002/),
+    ).toBeInTheDocument();
+    expect(within(twoVoice).queryByText(/directed at both · $/)).toBeNull();
+    // THE FENCE: no finding-keyed disposition is reachable for the iteration —
+    // GateVerdictForm remains the SOLE way to dispose of it (the chat is support).
+    for (const id of FINDING_KEYED) expect(screen.queryByTestId(id)).toBeNull();
+    expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument();
   });
 });
 
@@ -539,20 +573,24 @@ describe("Todo cockpit — U5 kind-gate: selection SWITCHING unmounts the wrong 
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    // ...and EVERY finding-keyed surface (incl. directive-signoff) + the aux
-    // (interrogate section, reveal button, trio, panes) is GONE (no stale lingering).
+    // ...EVERY finding-keyed surface (incl. directive-signoff) is GONE (no stale
+    // lingering), and the finding's REVEALED trio unmounts on the switch. The gate
+    // is itself interrogable, so its OWN interrogate section + reveal button are
+    // present, but the trio is HIDDEN (reveal is per-id; the gate's id was never
+    // revealed). The gate's disposition stays GateVerdictForm only.
     for (const id of FINDING_KEYED) expect(screen.queryByTestId(id)).toBeNull();
-    expectNoAux();
+    expectAuxRevealableTrioHidden();
   });
 
   it("gate_verdict → finding_review: iteration forms UNMOUNT, finding forms + aux MOUNT", async () => {
     renderPair();
-    // Switch to the gate_verdict item FIRST.
+    // Switch to the gate_verdict item FIRST. It is interrogable (its own reveal
+    // button), but its interactive trio is hidden until revealed.
     await selectRow(GATE_VERDICT_ITEM);
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    expectNoAux();
+    expectAuxRevealableTrioHidden();
 
     // Switch back to the finding_review item — its forms mount immediately.
     await selectRow(FINDING_REVIEW_ITEM);
@@ -608,12 +646,14 @@ describe("Todo cockpit — U5 kind-gate: safeItems drops hostile finding rows", 
       ).toBeInTheDocument();
 
       // The (default-selected) valid row is an ITERATION → finding-keyed surfaces
-      // are absent, AND the dropped finding never injected one either.
+      // are absent, AND the dropped finding never injected one either. The
+      // iteration's OWN interrogate aux is revealable (trio hidden pre-reveal) —
+      // that aux belongs to the iteration, not the dropped finding (which is gone).
       await waitFor(() =>
         expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
       );
       for (const id of FINDING_KEYED) expect(screen.queryByTestId(id)).toBeNull();
-      expectNoAux();
+      expectAuxRevealableTrioHidden();
     });
   }
 
@@ -724,14 +764,24 @@ describe("Todo cockpit — U5 kind-gate: forms render unconditionally for BOTH k
   // The MIRROR for an iteration item: NO aux at any phase (the aux is finding-
   // keyed). So the iteration_id is fenced from the aux — no interrogate section,
   // no reveal button, and recording calibration cannot conjure one.
-  it("an iteration item renders NO aux at any phase (iteration_id fenced from aux)", async () => {
+  it("an iteration item: aux is reveal-gated (interrogable); GateVerdictForm stays the sole disposition", async () => {
     renderTodo(GATE_VERDICT_ITEM);
-    expectNoAux(); // pre-calibration: no interrogate section, no reveal, no trio
+    // 2026-06-30: iterations gained the interrogation aux. Pre-calibration: reveal
+    // button present, interactive trio hidden.
+    expectAuxRevealableTrioHidden();
     await recordCalibration();
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    expectNoAux(); // post-calibration: STILL no aux — calibration does not reveal it
+    // Recording calibration does NOT reveal the trio (the reveal-gate is
+    // independent of calibration).
+    expectAuxRevealableTrioHidden();
+    // Reveal → the trio mounts; the disposition is STILL GateVerdictForm only (no
+    // finding-keyed form, no verdict path from the chat — the fence holds).
+    await revealInterrogation();
+    expect(screen.getByTestId("todo-aux-interactive")).toBeInTheDocument();
+    for (const id of FINDING_KEYED) expect(screen.queryByTestId(id)).toBeNull();
+    expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument();
   });
 });
 
@@ -807,21 +857,27 @@ describe("Todo cockpit — aux REVEAL-gate: hidden trio vs revealed interactive 
   // reveal button, and the trio never appears at ANY phase, even after recording
   // calibration. This proves the two gates compose: the kind-gate decides IF aux
   // exists, the reveal-gate decides WHEN the trio mounts.
-  it("an iteration item: NO interrogate section and NO interactive trio (gates compose)", async () => {
+  it("an iteration item IS interrogable: interrogate section present, trio reveal-gated (gates compose)", async () => {
     renderTodo(GATE_VERDICT_ITEM);
-    // Pre: no interrogate section, no reveal button, no trio.
-    expect(screen.queryByTestId("todo-interrogate")).toBeNull();
-    expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
+    // Pre: the iteration is interrogable — interrogate section + reveal present,
+    // trio hidden. The kind-gate now ALLOWS aux for an iteration (as for a
+    // finding); the reveal-gate controls WHEN the trio mounts — the gates compose.
+    expect(screen.getByTestId("todo-interrogate")).toBeInTheDocument();
+    expect(screen.getByTestId("reveal-interrogation")).toBeInTheDocument();
     expectInteractiveHidden();
 
     await recordCalibration();
     await waitFor(() =>
       expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
     );
-    // Post: STILL no aux of any kind — the trio never mounts for an iteration item.
-    expect(screen.queryByTestId("todo-interrogate")).toBeNull();
-    expect(screen.queryByTestId("reveal-interrogation")).toBeNull();
+    // Calibration does not reveal the trio (the reveal-gate is independent).
     expectInteractiveHidden();
+
+    // Reveal → the trio mounts; GateVerdictForm stays the sole disposition (fence).
+    await revealInterrogation();
+    expectInteractiveRevealed();
+    expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument();
+    for (const id of FINDING_KEYED) expect(screen.queryByTestId(id)).toBeNull();
   });
 });
 

@@ -1003,6 +1003,73 @@ Scope held: `ui/` + this file only (14 files, all under `ui/frontend/`).
 
 ---
 
+## §2026-06-30 (round 2) — chat-on-iterations + resolve rail (`ui/` only)
+
+Work order: `human/sessions/2026-06-28.md` "## UI session work order — chat-on-iterations + resolve
+rail (added 2026-06-30)" (A/B/C). The cockpit is widened so a gate-verdict ITERATION can be
+interrogated like a finding, the chat-seam exec cap is decoupled from the attest write cap, and a
+right-side resolve rail is added for the 25+-item backlog. Worktree FF'd clean to `main` (`d57dc08`
+→ `c41570c` → integrated; the producer half `0a78298` already landed). Built via **two Dynamic
+Workflows** (a 3-agent parallel BUILD on disjoint limbs, then a 4-dimension fence-focused
+ADVERSARIAL REVIEW) + serial integration of the spine (`Todo.tsx` + the kind-gating test) by this
+session. **The verdict fence is the load-bearing invariant and was the review's #1 target.**
+
+### A — chat-seam timeout decoupled from the attest write cap (`ui/backend`, REQUIRED)
+A real two-voice turn takes ~170–180s (Qwen reasoning > the old 120s cap), so the seam killed it.
+`attest._exec_blessed` gains a keyword-only `timeout: int = _EXEC_TIMEOUT_S` (default 120 — the
+attest WRITE endpoints stay tight); `chat_seam` adds `_CHAT_TIMEOUT_S=300` and threads it through
+`_exec_chat`, with `chat_start`/`chat_turn` passing `timeout=300` explicitly. The other
+`_exec_blessed` caller (`todo_cockpit.py`) is unbroken (keyword-only default). +6 timeout-pin tests.
+
+### B — interrogation for gate-verdict (iteration) items
+- `TutorPanel.tsx`: new optional `kind?: "finding"|"iteration"` (default "finding", fully
+  back-compat) + a `journey?` injection. For an iteration it self-fetches `getIterationJourney(id)`
+  (not `getFindingDetail`, which 404s for an `iter-*` id) and renders a NEUTRAL read-only iteration
+  overview, **deliberately omitting the finding accept/deny mechanical-outcome line + considerations**
+  (finding semantics, wrong for an iteration) — which makes the fence *more* explicit. Same testid /
+  fence note (D-053, not D-044) / idle-unavailable-loaded degradation. +18 iteration tests.
+- `Todo.tsx` (spine, integrator): the aux reveal guard widened `kindClass === "finding"` →
+  `(… || "iteration")`; `kind={…}` passed to `TutorPanel`; a per-selection `key` added to
+  `TutorPanel` (consistency with its already-keyed siblings — removes a one-frame cross-kind
+  stale-overview flicker the review surfaced). **The resolution-FORMS block is UNCHANGED: an
+  iteration still renders only `GateVerdictForm` (the sole disposition).**
+- `test_todo_kind_gating.tsx` (spine, integrator): **10 iteration tests honestly reworked** from
+  "iteration has NO aux" → "iteration IS interrogable (reveal-gated trio) but `GateVerdictForm` stays
+  its ONLY disposition; finding-keyed forms absent; no disposition reachable from chat". A new helper
+  `expectAuxRevealableTrioHidden()` pins the pre-reveal state. **Hostile/"other" kinds keep NO aux**
+  (only gate-verdict iterations + findings gained it). Rule 4 honored — the fence is still pinned for
+  iterations, not weakened.
+
+### C — right-side RESOLVE RAIL (the nav fix for a 25+-item backlog)
+New `ResolveRail.tsx` (+ `test_ResolveRail.tsx`, 12 tests): a persistent, **fetch-free** navigator
+over the SAME lifted `todoItems` — grouped by kind (gate-verdicts / findings / other) with counts,
+**near-dup clusters collapsed** via an in-file first-6-words title-stem heuristic (the cron promotes
+near-dup findings every 12h), **kind filter + free-text search** (title OR id), and the SAME
+`onSelect(id)` selection contract as the inbox (the two stay in lockstep). Verdict-fenced
+(selection-only, no disposition path). Mounted in `Todo.tsx` as a right flex column. The robust
+backend `cluster_id` (P4 BGE-M3 dedup) is the documented follow-on; v0 heuristic is the cure's stopgap.
+
+### Verification (authoritative)
+- `tsc --noEmit` clean · `vite build` clean · **frontend vitest 1438 pass** (97 files; 1414 → 1438)
+  · **backend pytest 669 pass** (`ui/.venv-ui`, `MOCK_LLM=1`).
+- **LIVE two-voice smoke (the headline — real models, my new backend in-process):** a real
+  `two_voice` turn on a real iteration (`iter-2026-06-05-004`) → real gemma (defender, :8000) +
+  qwen (attacker, :8001) → **both voices returned**, wall-clock **181.5s** — which **exceeds the old
+  120s cap** (the old seam would have 502'd this exact turn) and completes under the new 300s cap.
+  Proves Part A AND the iteration-interrogation premise end-to-end. The attacker returned a
+  substantive "VERDICT: UNSOUND…" critique — decision support, with no disposition reachable (fence).
+- **Adversarial review (fence-focused, 4 dimensions → adversarial verify):** **0 confirmed findings.**
+  The one raised finding (the keyless-TutorPanel flicker) was refuted as non-blocking AND fixed anyway
+  (the `key` above). The review independently confirmed: `GateVerdictForm` is the sole iteration
+  disposition, the chat/tutor expose no verdict path, the kind-gating rework still pins the fence, the
+  rail/clustering is robust on hostile input, and the backend timeout threading breaks no caller.
+- The verdict-SUBMISSION half (submit → item leaves) was NOT exercised live — the owner's
+  decision-ledger write; covered by the green `test_attest_forms` re-poll tests.
+
+Scope held: `ui/` only (10 files: 4 `ui/backend`, 6 `ui/frontend` incl. 2 new) + this file.
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to

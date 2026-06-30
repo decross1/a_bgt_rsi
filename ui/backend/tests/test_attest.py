@@ -428,6 +428,23 @@ def test_defer_422_spawns_nothing(repo, payload):
     assert runner.calls == []
 
 
+# ─── the fast WRITE cap stays tight at 120s ─────────────────────────────
+# The chat seam raised its exec cap to 300s for live two-voice turns, but that
+# decoupling must NOT loosen the attest write cap: a one-shot validate-then-
+# append write keeps the 120s default (the attest endpoints pass NO timeout
+# kwarg, so _exec_blessed's _EXEC_TIMEOUT_S default holds).
+
+
+@pytest.mark.parametrize("endpoint", sorted(_VALID_PAYLOADS))
+def test_attest_write_keeps_120s_cap(repo, endpoint):
+    runner = StubRunner(returncode=0, stdout=json.dumps({"ok": True}) + "\n")
+    resp = _client(repo, runner).post(
+        f"/api/attest/{endpoint}", json=_VALID_PAYLOADS[endpoint])
+    assert resp.status_code == 200
+    [call] = runner.calls
+    assert call["kwargs"]["timeout"] == 120       # fast write cap, never widened
+
+
 # ─── failure semantics — every endpoint, one contract ───────────────────
 
 

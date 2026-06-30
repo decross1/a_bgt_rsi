@@ -40,6 +40,7 @@ import TwoVoiceChatPane from "../components/todo/TwoVoiceChatPane";
 import TutorChatPane from "../components/todo/TutorChatPane";
 import TutorPanel from "../components/todo/TutorPanel";
 import PipelineJourney from "../components/todo/PipelineJourney";
+import ResolveRail from "../components/todo/ResolveRail";
 
 import { getCockpitAvailability, COCKPIT_UNAVAILABLE } from "../api/todo";
 import { getHumanTodo } from "../api/http";
@@ -275,8 +276,14 @@ export default function Todo({ availability, items, pollMs = 10000 }: Props) {
         </details>
       </header>
 
-      {/* 1) shared-models warn/queue guard — self-fetches; self-hides when idle. */}
-      <ConcurrencyWarning />
+      {/* The cockpit body sits beside a persistent right-side RESOLVE RAIL — a
+          richer navigator over the SAME lifted todoItems (grouped by kind,
+          near-dup clusters collapsed, filter + search). It drives the same
+          selection as the inbox; it is the nav answer to a 25+ item backlog. */}
+      <div className="flex gap-4">
+        <div className="min-w-0 flex-1">
+          {/* 1) shared-models warn/queue guard — self-fetches; self-hides when idle. */}
+          <ConcurrencyWarning />
 
       {/* 2) the INBOX — select-only (the calibration-bypass is closed at the
           source: the inline verdict writers are suppressed; a row is a selector
@@ -342,10 +349,13 @@ export default function Todo({ availability, items, pollMs = 10000 }: Props) {
               onCaptured={captureCalibration}
             />
 
-            {/* INTERROGATE (finding items only) — decision support, hidden by
-                default so an optional blind calibration is not contaminated.
-                Revealing requires NO calibration. */}
-            {kindClass === "finding" && (
+            {/* INTERROGATE (finding AND gate-verdict iteration items) — decision
+                support, hidden by default so an optional blind calibration is not
+                contaminated. Revealing requires NO calibration. For an iteration
+                the panes interrogate the iter-* id (the backend chat seam accepts
+                it); the disposition stays GateVerdictForm only (the verdict fence
+                — chat exposes no verdict path). */}
+            {(kindClass === "finding" || kindClass === "iteration") && (
               <div data-testid="todo-interrogate">
                 {!interrogationRevealed ? (
                   <button
@@ -368,8 +378,10 @@ export default function Todo({ availability, items, pollMs = 10000 }: Props) {
                         independence (Qwen attacker independent from Gemma
                         defender), cited on that pane. */}
                     <TutorPanel
+                      key={`tutor-${selected.id}`}
                       findingId={selected.id}
                       title={selected.title ?? undefined}
+                      kind={kindClass === "iteration" ? "iteration" : "finding"}
                     />
                     <div className="grid gap-3 md:grid-cols-2">
                       <TutorChatPane
@@ -431,6 +443,16 @@ export default function Todo({ availability, items, pollMs = 10000 }: Props) {
           </div>
         )}
       </section>
+        </div>
+
+        {/* persistent right-side RESOLVE RAIL — selection-only navigation over
+            the same lifted todoItems (no fetch, no disposition path — fenced). */}
+        <ResolveRail
+          items={todoItems}
+          selectedId={selected?.id ?? null}
+          onSelect={setSelectedId}
+        />
+      </div>
     </div>
   );
 }

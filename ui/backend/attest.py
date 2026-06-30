@@ -116,12 +116,18 @@ def _require_enum(value, allowed: tuple, field: str) -> str:
     return value
 
 
-def _exec_blessed(runner, repo_root: Path, module: str, args: list[str]):
+def _exec_blessed(runner, repo_root: Path, module: str, args: list[str],
+                  *, timeout: int = _EXEC_TIMEOUT_S):
     """Exec one blessed CLI invocation; return the endpoint response.
 
     Discipline (contract principle 1): argv ARRAY only — `runner` is called
     with a list, never a joined string, never ``shell=True``; ``cwd`` is the
     primary repo root; the interpreter is ``.venv-chroma/bin/python``.
+
+    ``timeout`` defaults to the fast ``_EXEC_TIMEOUT_S`` write cap — the attest
+    write endpoints (one-shot validate-then-append) keep it. A slow caller (the
+    chat seam, which fans out to a live two-voice model turn) passes a larger
+    cap explicitly; the fast write cap is never loosened on its behalf.
 
     - rc != 0  -> 502 ``{rc, stderr}`` with stderr VERBATIM (principle 3).
     - rc == 0  -> the CLI's stdout parsed as JSON and returned (principle 4).
@@ -137,7 +143,7 @@ def _exec_blessed(runner, repo_root: Path, module: str, args: list[str]):
     argv = [str(python_bin), "-m", module, *args]
     try:
         proc = runner(argv, cwd=str(repo_root), capture_output=True,
-                      text=True, timeout=_EXEC_TIMEOUT_S)
+                      text=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as exc:
         # Spawn-level failure (missing interpreter, timeout, …): same 502
         # surface so the frontend renders one failure shape.

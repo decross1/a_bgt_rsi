@@ -15,26 +15,50 @@
 //     session note PART 2 + inviolate rule 4 + D-053 (NOT D-044 — D-044 is the
 //     vllm-qwen novelty-skeptic independence decision, a different fence).
 //
-// DATA: the overview comes from GET /api/finding/{finding_id} (getFindingDetail),
-// a READ-ONLY join of surfaced_findings.jsonl with its source loop_memory.jsonl
-// iteration (the GET writes nothing — the tutor cannot mutate state either). The
-// `detail` prop is the test-injection override (mirrors Todo.tsx's availability/
-// items overrides): when provided we render it directly and DO NOT fetch. An
-// empty findingId renders the idle "select a finding" state with no fetch; a
-// failed/empty fetch degrades to "detail unavailable" — never a throw, never a
-// blank.
+// DATA: the FINDING overview comes from GET /api/finding/{finding_id}
+// (getFindingDetail), a READ-ONLY join of surfaced_findings.jsonl with its source
+// loop_memory.jsonl iteration (the GET writes nothing — the tutor cannot mutate
+// state either). The `detail` prop is the test-injection override (mirrors
+// Todo.tsx's availability/items overrides): when provided we render it directly
+// and DO NOT fetch. An empty findingId renders the idle "select a finding" state
+// with no fetch; a failed/empty fetch degrades to "detail unavailable" — never a
+// throw, never a blank.
+//
+// ITERATION overview (kind="iteration"): a gate_verdict (ITERATION) cockpit item
+// is interrogated by iteration_id, for which /api/finding/{id} 404s. So for
+// kind="iteration" the overview instead comes from GET /api/iteration/{id}/journey
+// (getIterationJourney — the SAME read-only GET PipelineJourney consumes; no
+// backend change). It renders a NEUTRAL read-only iteration overview (topic /
+// hypothesis / novelty / critic / gate / summary) — NOT the finding accept/deny
+// mechanical-outcome line or the for/against considerations, which are FINDING
+// semantics and wrong for an iteration (whose dispositions are valid/
+// needs_revision/invalid via GateVerdictForm). The `journey` prop is the
+// iteration-side test-injection override (mirrors `detail` for findings). Both
+// GETs are read-only; the fence note + idle/unavailable/loaded degradation are
+// identical across the two kinds.
 import { useEffect, useState } from "react";
-import type { FindingDetail } from "../../types/schemas";
-import { getFindingDetail } from "../../api/http";
+import type { FindingDetail, IterationJourneyResponse } from "../../types/schemas";
+import { getFindingDetail, getIterationJourney } from "../../api/http";
 
 interface Props {
+  /** The selected cockpit item's id. A finding_id for kind="finding" (default),
+   *  an iteration_id for kind="iteration". The prop name stays `findingId` for
+   *  back-compat; the integrator passes selected.id for either kind. */
   findingId: string;
   /** A short human-readable title/claim to anchor the explanation (legacy
    *  back-compat; the fetched detail's title wins when present). */
   title?: string;
-  /** Injected detail — when provided, wins and SUPPRESSES the self-fetch. The
-   *  test-injection / preview override (mirrors Todo.tsx availability/items). */
+  /** Which family the id belongs to. "finding" (default) → the finding overview
+   *  (getFindingDetail); "iteration" → the iteration overview (getIterationJourney).
+   *  Absent ⇒ "finding", so existing call-sites behave EXACTLY as before. */
+  kind?: "finding" | "iteration";
+  /** Injected finding detail — when provided (and kind="finding"), wins and
+   *  SUPPRESSES the finding self-fetch. Test-injection / preview override
+   *  (mirrors Todo.tsx availability/items). */
   detail?: FindingDetail;
+  /** Injected iteration journey — when provided (and kind="iteration"), wins and
+   *  SUPPRESSES the iteration self-fetch (the iteration-side mirror of `detail`). */
+  journey?: IterationJourneyResponse;
 }
 
 // Every field on FindingDetail is producer-owned and unvalidated (the backend
@@ -52,6 +76,17 @@ function asText(value: unknown): string {
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
   if (typeof value === "boolean") return String(value);
   return "";
+}
+
+// Re-coerce a typed-but-unvalidated block to a plain record, or null when it is a
+// non-object (string / array / number / NaN / null). The PipelineJourney.asRecord
+// idiom (the sibling consuming the same journey): a non-record degrades to "no
+// block" rather than crashing on a property read. The per-field asText still
+// guards every value read out of the record.
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 // One labelled line: render only when the coerced value is non-empty (absent
@@ -97,20 +132,28 @@ function EvidenceRef({ label, value }: { label: string; value: unknown }) {
   );
 }
 
-export default function TutorPanel({ findingId, title, detail }: Props) {
+export default function TutorPanel({
+  findingId,
+  title,
+  kind = "finding",
+  detail,
+  journey,
+}: Props) {
   const idText = asText(findingId);
+  const isIteration = kind === "iteration";
 
-  // Self-fetch when no detail is injected and there IS a finding to explain.
-  // Mirrors ConcurrencyWarning's self-fetch idiom: a live-flag cleanup, and a
-  // swallowed rejection so a failed fetch (network error, non-2xx throw, or
+  // FINDING self-fetch — when no detail is injected and there IS a finding to
+  // explain. Mirrors ConcurrencyWarning's self-fetch idiom: a live-flag cleanup,
+  // and a swallowed rejection so a failed fetch (network error, non-2xx throw, or
   // `fetch` undefined under jsdom) degrades to "detail unavailable" rather than
   // surfacing an unhandled rejection or a console error. We never fabricate a
-  // detail.
+  // detail. The iteration family does NOT fetch a finding detail.
   const [fetched, setFetched] = useState<FindingDetail | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
-    // Injected detail wins → no fetch. Empty findingId → idle, no fetch.
-    if (detail !== undefined || idText.length === 0) return;
+    // Iteration kind → not this fetch. Injected detail wins → no fetch. Empty
+    // findingId → idle, no fetch.
+    if (isIteration || detail !== undefined || idText.length === 0) return;
     let live = true;
     setFetched(null);
     setFailed(false);
@@ -125,7 +168,31 @@ export default function TutorPanel({ findingId, title, detail }: Props) {
     return () => {
       live = false;
     };
-  }, [detail, idText]);
+  }, [isIteration, detail, idText]);
+
+  // ITERATION self-fetch — the iteration-family mirror: GET the journey for the
+  // iteration_id (injected `journey` suppresses it; empty id stays idle). Same
+  // live-flag cleanup + swallowed rejection so a failed/late fetch degrades to
+  // "unavailable" rather than throwing, blanking, or leaking a stale view.
+  const [fetchedJourney, setFetchedJourney] =
+    useState<IterationJourneyResponse | null>(null);
+  const [journeyFailed, setJourneyFailed] = useState(false);
+  useEffect(() => {
+    if (!isIteration || journey !== undefined || idText.length === 0) return;
+    let live = true;
+    setFetchedJourney(null);
+    setJourneyFailed(false);
+    getIterationJourney(idText)
+      .then((j) => {
+        if (live) setFetchedJourney(j);
+      })
+      .catch(() => {
+        if (live) setJourneyFailed(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, [isIteration, journey, idText]);
 
   const titleText = asText(title);
 
@@ -137,7 +204,7 @@ export default function TutorPanel({ findingId, title, detail }: Props) {
       className="rounded border border-indigo-900/60 bg-indigo-950/20 px-2 py-1.5"
     >
       <div className="text-[10px] uppercase tracking-wide text-indigo-400">
-        tutor / finding overview
+        tutor / {isIteration ? "iteration" : "finding"} overview
       </div>
       {/* THE VISIBLE FENCE — cites the REAL source (NOT D-044). It explains; it
           never recommends. */}
@@ -151,6 +218,94 @@ export default function TutorPanel({ findingId, title, detail }: Props) {
       {body}
     </div>
   );
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // ITERATION FAMILY — a gate_verdict (ITERATION) item is being interrogated.
+  // The overview comes from the iteration JOURNEY (getIterationJourney →
+  // response.iteration), NOT a finding detail. It is a NEUTRAL, READ-ONLY
+  // overview: it deliberately renders NO finding accept/deny mechanical-outcome
+  // line and NO for/against considerations — those are FINDING semantics (a
+  // valid loop_feedback row, etc.) and WRONG for an iteration, whose dispositions
+  // are valid/needs_revision/invalid via GateVerdictForm. Omitting them makes the
+  // verdict-fence MORE explicit, not less. The shared `chrome` (header + fence
+  // note) renders in every iteration state too.
+  // ─────────────────────────────────────────────────────────────────────────
+  if (isIteration) {
+    // i) Idle — nothing selected and nothing injected. No fetch ran.
+    if (idText.length === 0 && journey === undefined) {
+      return chrome(
+        <div
+          data-testid="tutor-idle"
+          className="mt-1 text-[11px] text-zinc-500"
+        >
+          Select an iteration to see its overview.
+        </div>,
+      );
+    }
+
+    // Resolve the journey: the injected prop wins; else the fetched one. The
+    // iteration record renders ONLY on found:true with an OBJECT iteration block;
+    // a failed fetch / found:false / non-object iteration degrades to unavailable.
+    const resolvedJourney: IterationJourneyResponse | null =
+      journey !== undefined ? journey : fetchedJourney;
+    const journeyObj = asRecord(resolvedJourney);
+    const iter =
+      journeyObj !== null && journeyObj.found === true
+        ? asRecord(journeyObj.iteration)
+        : null;
+
+    // ii) Unavailable — degrade in place, echoing the id; never throw, never blank.
+    if (journeyFailed || iter === null) {
+      return chrome(
+        <div
+          data-testid="tutor-unavailable"
+          className="mt-1 text-[11px] text-zinc-500"
+        >
+          {titleText.length > 0 ? (
+            <>
+              <span className="text-zinc-400">{titleText}</span>
+              {" — "}
+            </>
+          ) : null}
+          iteration overview unavailable.
+          {idText.length > 0 ? (
+            <span className="text-zinc-600"> ({idText})</span>
+          ) : null}
+        </div>,
+      );
+    }
+
+    // iii) Loaded — a neutral, read-only iteration overview. Every value is
+    // producer-owned/unvalidated: the non-object iteration block already dropped
+    // above; each field is asText/asRecord coerced so a garbage field drops
+    // individually and a raw object never reaches React as a child.
+    const seed = asRecord(iter.seed);
+    const hypothesis = asRecord(iter.hypothesis);
+    const novelty = asRecord(iter.novelty);
+    const critique = asRecord(iter.critique);
+    const topicText = asText(seed?.topic);
+
+    return chrome(
+      <div data-testid="tutor-overview">
+        {/* TOPIC (seed.topic) anchors the explanation. */}
+        {topicText.length > 0 ? (
+          <div className="mt-1 text-[11px] font-medium text-zinc-200">
+            {topicText}
+          </div>
+        ) : null}
+        <Field label="iteration" value={iter.iteration_id} />
+        <Field label="hypothesis" value={hypothesis?.text} />
+        <Field label="summary" value={iter.nara_summary} />
+        <Field label="gate" value={iter.gate_status} />
+
+        {/* quiet classification badges — novelty class + critic verdict. */}
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          <Badge label="novelty" value={novelty?.class} />
+          <Badge label="critic" value={critique?.verdict} />
+        </div>
+      </div>,
+    );
+  }
 
   // 1) Idle — nothing selected to explain. No fetch ran.
   if (idText.length === 0 && detail === undefined) {

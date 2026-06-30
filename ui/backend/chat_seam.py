@@ -57,6 +57,15 @@ from .attest import _PRIMARY_REPO, _exec_blessed
 # The one blessed module this seam execs (its only writer of record).
 _CHAT_MODULE = "orchestrator.finding_session"
 
+# Exec cap for a chat turn. DECOUPLED from attest's fast write cap
+# (``_EXEC_TIMEOUT_S = 120``): a real two_voice turn runs BOTH voices
+# concurrently and a live turn measured ~170s (Qwen reasoning alone exceeds
+# 120s), so the chat seam raises its own cap to 300s (margin over the 170s
+# observation). The attest WRITE cap stays tight at 120s — the seam threads
+# this larger value into ``_exec_blessed`` explicitly, never widening the
+# shared default.
+_CHAT_TIMEOUT_S = 300
+
 # Frozen enums — mirrors of the CLI's own argparse ``choices``, never wider:
 #   CHAT_MODES  — finding_session.py:1150 (TUTOR_MODE, "two_voice")
 #   ADDRESSEES  — two_voice_turn addressee (defender|attacker|both)
@@ -123,12 +132,16 @@ def _encode_safe(value, limit: int = _MAX_ENVELOPE_DEPTH) -> bool:
     return True
 
 
-def _exec_chat(run, root, args):
+def _exec_chat(run, root, args, *, timeout: int = _CHAT_TIMEOUT_S):
     """Exec the blessed chat CLI and return an ENCODE-SAFE response.
 
     Delegates to ``attest._exec_blessed`` (the one blessed-exec path), then hardens
     the success branch against a pathological stdout envelope that would otherwise
     500 the response encoder (deep nesting / non-finite float / huge bigint).
+
+    ``timeout`` is the chat exec cap (default ``_CHAT_TIMEOUT_S`` = 300s), threaded
+    into ``_exec_blessed`` so a live two-voice turn is not killed by attest's fast
+    120s write cap.
 
     - ``_exec_blessed`` already maps rc!=0, spawn failure, and zero-exit
       non-JSON to a 502 ``JSONResponse`` — those pass straight through.
@@ -138,7 +151,7 @@ def _exec_chat(run, root, args):
     - A returned dict/list is depth/finite-checked; if it is not encode-safe it is
       a contract break -> 502 (never a 500, never a clipped/faked reply shape)."""
     try:
-        result = _exec_blessed(run, root, _CHAT_MODULE, args)
+        result = _exec_blessed(run, root, _CHAT_MODULE, args, timeout=timeout)
     except ValueError:
         # json.loads of a >4300-digit int raises a bare ValueError (not a
         # JSONDecodeError) inside _exec_blessed; treat as a broken envelope.
@@ -212,7 +225,7 @@ def register(
             "chat", "start",
             "--mode", mode,
             "--finding-id", finding_id,
-        ])
+        ], timeout=_CHAT_TIMEOUT_S)
 
     @router.post("/turn")
     def chat_turn(payload: dict = Body(...)):
@@ -246,7 +259,7 @@ def register(
             # two_voice: forward only when provided; the CLI defaults to "both".
             args += ["--addressee",
                      _require_enum(addressee, ADDRESSEES, "addressee")]
-        return _exec_chat(run, root, args)
+        return _exec_chat(run, root, args, timeout=_CHAT_TIMEOUT_S)
 
     app.include_router(router)
     return router
