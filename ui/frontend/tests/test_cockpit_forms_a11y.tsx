@@ -215,9 +215,9 @@ describe("a11y — CalibrationCapture", () => {
       <CalibrationCapture refId="f1" available={false} onCaptured={() => {}} />,
     );
     // The unavailable state carries readable text (not just a tone class):
-    // the input is captured locally but not durably written.
+    // calibration is not available and the input is a preview that won't record.
     expect(screen.getByTestId("calibration-stub-banner")).toHaveTextContent(
-      /not durably written|captured locally/i,
+      /not available|preview only|will not be recorded/i,
     );
     // Empty prediction → capture disabled, perceivable via the disabled attr.
     expect(

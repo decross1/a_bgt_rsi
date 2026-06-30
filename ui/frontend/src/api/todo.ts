@@ -3,8 +3,8 @@
 // authorize_fix, directive_signoff, calibration, and the tutor/two-voice chat
 // are live execs (capability-gated by GET /api/todo/available's action flags);
 // spawn_topic / abstain are honest SESSION-EXITS (no in-UI one-shot — preview
-// only). When a capability flag is OFF the endpoint returns a read-only would-run
-// preview and writes NOTHING (inviolate rule 4 — never a faked write/verdict).
+// only). When a capability flag is OFF the endpoint is preview-only: it returns a
+// response that writes NOTHING (inviolate rule 4 — never a faked write/verdict).
 //
 // This client deliberately mirrors api/attest.ts's idiom: the same API_BASE,
 // the same 404 == version-skew quiet degradation, the same {rc, stderr}/error
@@ -44,9 +44,9 @@ export class TodoError extends Error {
 }
 
 // CLI success payloads are producer-owned JSON; callers must probe, not assume.
-// When a capability is OFF (or for a session-exit) the body is a read-only
-// would-run preview, e.g. `{status: "stub", would_run: ["...argv..."]}` — never a
-// fabricated ledger row.
+// When a capability is OFF (or for a session-exit) the body is preview-only and
+// writes NOTHING — callers probe `.would_run` / `.stub` and an absent key reads
+// as "no preview", never a fabricated ledger row.
 export type TodoResult = Record<string, unknown>;
 
 // Producer-owned bodies may be empty / non-JSON (an HTML error page, a 204-ish
@@ -185,8 +185,8 @@ async function postTodo(path: string, body: Record<string, unknown>): Promise<To
 // Each posts to a thin ui/backend endpoint that shells the blessed orchestrator
 // CLI for that outcome: authorize_fix / directive_signoff / calibration are LIVE
 // execs gated by their action flag; spawn_topic / abstain are honest
-// SESSION-EXITS (no in-UI one-shot). When a capability is OFF the endpoint
-// returns a read-only would-run preview and writes NOTHING.
+// SESSION-EXITS (no in-UI one-shot). When a capability is OFF the endpoint is
+// preview-only: it returns a response that writes NOTHING.
 
 // Outcome 4 — authorize an autonomous fix → enqueue a spawn-contract that a
 // later dev session dispatches (stage (i); the human merges the branch). The

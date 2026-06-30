@@ -9,7 +9,8 @@
 // the writer is `finding_session --set-status <FINDING_ID> validated --directive`.
 // POSTs /api/todo/directive_signoff, which execs that blessed CLI (the UI never
 // writes a ledger directly — D-046). No execute affordance beyond the submit; the
-// would-run argv is shown read-only (D-046 / rule 8).
+// argv is shown read-only (D-046 / rule 8). When the capability is OFF the form
+// is preview-only and writes NOTHING.
 //
 // It is a small CONTROLLED field: the integrator owns the findingId and the
 // note (the sign-off's audit note) and lifts the directive value via

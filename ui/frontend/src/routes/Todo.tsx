@@ -264,6 +264,10 @@ export default function Todo({ availability, items, pollMs = 10000 }: Props) {
               human gate in the run state.
             </div>
             <div className="text-[10px] text-zinc-600">
+              Optional blind calibration — record a prediction before
+              interrogation if you want to, but you can decide without it.
+            </div>
+            <div className="text-[10px] text-zinc-600">
               Literature-stage iterations auto-advance and appear on
               Activity/Resolved, not here.
             </div>
@@ -361,7 +365,8 @@ export default function Todo({ availability, items, pollMs = 10000 }: Props) {
                     {/* the finding overview + the live interrogation. The tutor
                         is fenced from the verdict (2026-06-14 PART 2 · rule 4 ·
                         D-053/D-054); D-044 governs the two-voice interrogator's
-                        independence, cited on that pane. */}
+                        independence (Qwen attacker independent from Gemma
+                        defender), cited on that pane. */}
                     <TutorPanel
                       findingId={selected.id}
                       title={selected.title ?? undefined}

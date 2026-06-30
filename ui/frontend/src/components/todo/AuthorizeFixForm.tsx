@@ -2,9 +2,9 @@
 // POSTs /api/todo/authorize_fix — a LIVE exec — which enqueues a spawn-contract
 // a later dev session dispatches; the coding agent produces a BRANCH + tests +
 // report that lands ONLY via the merge gate. When the capability is enabled the
-// endpoint records the enqueue; if a backend returns {status:"stub", would_run:
-// [...argv]} (a body that wrote NOTHING) we report that honestly (inviolate rule
-// 4 — never claim a write a body did not make).
+// endpoint records the enqueue. When it is OFF the form is preview-only: the
+// submit is disabled and the body writes NOTHING, which we report honestly
+// (inviolate rule 4 — never claim a write a body did not make).
 //
 // HARD LINE (the form copy must say this): UI approval authorizes the WORK, not
 // a merge. The human approves enqueuing the spawn-contract; a human/gated-primary

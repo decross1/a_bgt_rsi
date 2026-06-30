@@ -125,6 +125,12 @@ export default function FindingReviewForm({ findingId, onResolved }: Props) {
               </span>
             )}
           </div>
+          <div data-testid="finding-review-guidance" className="mt-1 text-[10px] leading-snug text-zinc-500">
+            <span className="text-emerald-400">validated</span> = sign off ·{" "}
+            <span className="text-amber-400">in_review</span> = keep
+            interrogating, stays in queue ·{" "}
+            <span className="text-red-400">rejected</span> = dismiss.
+          </div>
         </>
       )}
 

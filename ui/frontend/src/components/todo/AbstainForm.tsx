@@ -1,11 +1,10 @@
 // AbstainForm — outcome 6: abstain. The HONEST no-verdict exit — the human
 // records NO verdict, the finding is left to re-look later (it is NOT validated,
 // NOT rejected, NOT deferred). Abstain is a SESSION-EXIT, not an in-UI one-shot:
-// `available` is false BY DESIGN. POSTs /api/todo/abstain return a read-only
-// would-run preview ({status:"stub", would_run:[...argv]}, writing NOTHING —
-// inviolate rule 4); the actual abstention stays a primary-session step (no
-// execute button — D-046 / rule 8). The cockpit shows the exit and its argv; it
-// does not run it.
+// `available` is false BY DESIGN, so the form is preview-only and writes NOTHING
+// (inviolate rule 4); the actual abstention stays a primary-session step (no
+// execute button — D-046 / rule 8). The cockpit shows the exit; it does not run
+// it.
 //
 // The copy must make the no-verdict semantics explicit so abstain is never
 // mistaken for a soft sign-off (rule 4 — a near-miss is not coerced to a pass).

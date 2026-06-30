@@ -307,8 +307,8 @@ export default function TwoVoiceChatPane({
         data-testid="two-voice-stub-banner"
         className="mt-1 text-[10px] text-zinc-500"
       >
-        capability disabled — the two-voice chat exec is not enabled in this
-        environment. No model calls happen here; your turn is held locally, not sent.
+        two-voice chat is not available in this environment (the exec is not
+        enabled). Your input below is a preview only and will not be sent.
       </div>
 
       {/* Transcript (fixture/stub turns). */}

@@ -189,6 +189,12 @@ describe("GateVerdictForm", () => {
     expect(valid).toBeEnabled();
     expect(needsRevision).toBeEnabled();
     expect(invalid).toBeEnabled();
+
+    // outcome guidance: what each verdict actually does for the loop
+    const guidance = screen.getByTestId("gate-verdict-guidance");
+    expect(guidance).toHaveTextContent(/valid\s*=\s*approved/i);
+    expect(guidance).toHaveTextContent(/needs_revision\s*=\s*paused/i);
+    expect(guidance).toHaveTextContent(/invalid\s*=\s*rejected/i);
   });
 
   it("POSTs the clicked verdict then RE-POLLS the queue; the item leaving is the rendered confirmation", async () => {
@@ -307,6 +313,12 @@ describe("FindingReviewForm", () => {
     await typeNote("finding review note (required)", "replicated by hand");
     expect(validated).toBeEnabled();
     expect(rejected).toBeEnabled();
+
+    // outcome guidance: what each status does to the finding
+    const guidance = screen.getByTestId("finding-review-guidance");
+    expect(guidance).toHaveTextContent(/validated\s*=\s*sign off/i);
+    expect(guidance).toHaveTextContent(/in_review\s*=\s*keep interrogating/i);
+    expect(guidance).toHaveTextContent(/rejected\s*=\s*dismiss/i);
   });
 
   it("renders the ENVELOPE success shape: status_audit_row with its human:ui stamp (validated leaves the queue)", async () => {
