@@ -47,6 +47,7 @@ import argparse
 import json
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -157,6 +158,66 @@ def _join_iteration(iteration_id: str | None, loop_memory_path) -> dict[str, Any
     return found
 
 
+def _resolve_context(subject_id: str, surfaced_path, loop_memory_path):
+    """Resolve (finding, iteration_id, record) for a finding_id (sf-*) OR an
+    iteration_id (iter-*).
+
+    A `sf-*` id loads the surfaced finding (promoted) and joins its source
+    iteration. An `iter-*` id is a PRE-GATE cockpit interrogation: it loads the
+    iteration_record from loop_memory directly with an EMPTY finding ({}), and
+    the seed framing degrades to 'awaiting a gate' (NOT 'promoted/survived' —
+    see _posture). Raises KeyError when neither a surfaced finding NOR an
+    iteration record matches — never a silent empty seed (inviolate rule 7;
+    contrast _join_iteration's graceful {} for a finding that still carries its
+    own claim)."""
+    if subject_id.startswith("iter-"):
+        record = _join_iteration(subject_id, loop_memory_path)
+        if not record:
+            raise KeyError(
+                f"no iteration_record with iteration_id={subject_id!r} "
+                f"in {loop_memory_path}"
+            )
+        return {}, subject_id, record
+    finding = _load_finding(subject_id, surfaced_path)
+    iteration_id = (finding.get("source_iteration_id")
+                    or finding.get("iteration_id"))
+    return finding, iteration_id, _join_iteration(iteration_id, loop_memory_path)
+
+
+def _posture(finding: dict[str, Any], refutations: list[str]) -> dict[str, str]:
+    """Honest framing strings for an interrogation seed, by claim posture.
+
+    A non-empty `finding` is a PROMOTED surfaced finding (it cleared the loop
+    chain + a human gate). An EMPTY finding is a pre-gate cockpit interrogation
+    of an iteration that is AWAITING a gate — the seed must NOT tell the models
+    it was promoted or that it 'survived' (inviolate rule 4: framing is never
+    coerced; the iteration's redteam may have returned fatal_flaw/undecidable —
+    priming the voices that it already cleared a gate biases the very
+    interrogation the human opened)."""
+    if finding:
+        return {
+            "noun": "PROMOTED research finding",
+            "status": (
+                "This finding already passed the loop's automated chain and a "
+                f"human gate; the {len(refutations)} prior skeptic attack(s) "
+                "below were mounted against it and it survived."
+            ),
+            "refutation_header": "ATTACKS ALREADY MOUNTED (and survived)",
+        }
+    return {
+        "noun": "research iteration AWAITING a human gate",
+        "status": (
+            "This iteration has NOT yet passed a human gate — the human is "
+            "interrogating it now to decide. The loop's own critic verdicts "
+            "below are UNRESOLVED (they may include a fatal_flaw or undecidable "
+            "verdict); do not treat the claim as already vindicated."
+        ),
+        "refutation_header": (
+            "PRIOR CRITIQUES FROM THE LOOP (unresolved — the human is judging them)"
+        ),
+    }
+
+
 def _read_journal_text(record: dict[str, Any]) -> str:
     """Read the journal entry text for the iteration, if its path is present
     and the file exists. Missing -> '' (seed degrades gracefully)."""
@@ -243,15 +304,14 @@ def _build_seed(finding: dict[str, Any], record: dict[str, Any],
     )
     evidence_block = "\n".join(f"  - {e}" for e in evidence_lines) or "  (no structured evidence captured)"
     journal_block = journal_text.strip()[:4000] if journal_text.strip() else "(no journal entry text)"
+    p = _posture(finding, refutations)
 
     return (
-        "You are defending a PROMOTED research finding under human "
-        "interrogation in the a_bgt_rsi apparatus.\n"
+        f"You are defending a {p['noun']} under human interrogation in the "
+        "a_bgt_rsi apparatus.\n"
         "\n"
-        "This finding already passed the loop's automated chain and a human "
-        f"gate. {len(refutations)} skeptic attack(s) were mounted against it "
-        "and it survived. The human is now sitting down to push on it harder, "
-        "to see whether it holds up or rubberbands back under pressure.\n"
+        f"{p['status']} The human is now pushing on it harder, to see whether "
+        "it holds up or rubberbands back under pressure.\n"
         "\n"
         "Your job is to defend it HONESTLY. Concede where the evidence is "
         "thin. Cite the specific metric, value, and trial-count when you make "
@@ -263,7 +323,7 @@ def _build_seed(finding: dict[str, Any], record: dict[str, Any],
         "\n"
         f"EVIDENCE ON RECORD:\n{evidence_block}\n"
         "\n"
-        f"ATTACKS ALREADY MOUNTED (and why it survived them):\n{refutation_block}\n"
+        f"{p['refutation_header']}:\n{refutation_block}\n"
         "\n"
         f"JOURNAL ENTRY:\n{journal_block}\n"
     )
@@ -315,17 +375,16 @@ def _build_skeptic_seed(finding: dict[str, Any], record: dict[str, Any],
     )
     evidence_block = "\n".join(f"  - {e}" for e in evidence_lines) or "  (no structured evidence captured)"
     journal_block = journal_text.strip()[:4000] if journal_text.strip() else "(no journal entry text)"
+    p = _posture(finding, refutations)
 
     return (
         "You are the INDEPENDENT SKEPTIC in the a_bgt_rsi apparatus — a "
-        "DIFFERENT model from the one that generated this finding. The "
+        "DIFFERENT model from the one that generated this claim. The "
         "apparatus's own model authored and defends it; your job is to mount "
         "the strongest HONEST attack on the claim under human interrogation.\n"
         "\n"
-        f"This finding already passed the loop's automated chain and a human "
-        f"gate. {len(refutations)} skeptic attack(s) were mounted against it "
-        "and it survived. Do not assume that settles it: the human wants the "
-        "hardest remaining objection found.\n"
+        f"{p['status']} Do not assume the prior critiques settle it: the human "
+        "wants the hardest remaining objection found.\n"
         "\n"
         "Attack it HONESTLY. Look for: thin or cherry-picked evidence, an "
         "over-stated claim the metric does not support, a confound the "
@@ -341,7 +400,7 @@ def _build_skeptic_seed(finding: dict[str, Any], record: dict[str, Any],
         "\n"
         f"EVIDENCE ON RECORD:\n{evidence_block}\n"
         "\n"
-        f"ATTACKS ALREADY MOUNTED (find a NEW or stronger one):\n{refutation_block}\n"
+        f"{p['refutation_header']} — find a NEW or stronger objection:\n{refutation_block}\n"
         "\n"
         f"JOURNAL ENTRY:\n{journal_block}\n"
     )
@@ -391,13 +450,14 @@ def _build_tutor_seed(finding: dict[str, Any], record: dict[str, Any],
     )
     evidence_block = "\n".join(f"  - {e}" for e in evidence_lines) or "  (no structured evidence captured)"
     journal_block = journal_text.strip()[:4000] if journal_text.strip() else "(no journal entry text)"
+    p = _posture(finding, refutations)
 
     return (
-        "You are a TUTOR helping a human UNDERSTAND a promoted research "
-        "finding in the a_bgt_rsi apparatus. This is a teaching session, not a "
-        "judgement: your job is to probe and explain so the human grasps what "
-        "the finding claims, what the evidence does and does not establish, and "
-        "where the open questions are.\n"
+        f"You are a TUTOR helping a human UNDERSTAND a {p['noun']} in the "
+        "a_bgt_rsi apparatus. This is a teaching session, not a judgement: "
+        "your job is to probe and explain so the human grasps what the claim "
+        "asserts, what the evidence does and does not establish, and where the "
+        "open questions are.\n"
         "\n"
         "Teach honestly and neutrally. Explain the claim and the evidence in "
         "plain terms, surface the assumptions and the limits, and answer the "
@@ -406,16 +466,16 @@ def _build_tutor_seed(finding: dict[str, Any], record: dict[str, Any],
         "invent evidence that is not in the record below.\n"
         "\n"
         "Do NOT render a verdict, recommendation, or disposition. Do NOT tell "
-        "the human to accept, reject, validate, or reject this finding, and do "
+        "the human to accept, reject, validate, or reject this claim, and do "
         "NOT estimate a confidence for them. The human reaches their own "
         "conclusion; you only help them understand. If they ask you to decide, "
         "explain the considerations on each side instead of choosing.\n"
         "\n"
-        f"THE FINDING:\n  {claim}\n"
+        f"THE CLAIM:\n  {claim}\n"
         "\n"
         f"EVIDENCE ON RECORD:\n{evidence_block}\n"
         "\n"
-        f"ADVERSARIAL ATTACKS IT SURVIVED:\n{refutation_block}\n"
+        f"{p['refutation_header']}:\n{refutation_block}\n"
         "\n"
         f"JOURNAL ENTRY:\n{journal_block}\n"
     )
@@ -481,10 +541,8 @@ def start_two_voice_session(
     defender; attacker=vllm-qwen honest skeptic). NO LLM call yet.
 
     Returns {session_id, finding, stances}."""
-    finding = _load_finding(finding_id, surfaced_path)
-    iteration_id = (finding.get("source_iteration_id")
-                    or finding.get("iteration_id"))
-    record = _join_iteration(iteration_id, loop_memory_path)
+    finding, iteration_id, record = _resolve_context(
+        finding_id, surfaced_path, loop_memory_path)
     journal_text = _read_journal_text(record)
     refutations = _refutation_summaries(finding, record)
     defender_seed = _build_seed(finding, record, journal_text, refutations)
@@ -624,10 +682,8 @@ def start_tutor_session(
     transcript rows; nothing here touches loop_feedback, status-audit, or
     followups, and the `mode='tutor'` tag makes end_session reject the
     transcript. Returns {session_id, finding}."""
-    finding = _load_finding(finding_id, surfaced_path)
-    iteration_id = (finding.get("source_iteration_id")
-                    or finding.get("iteration_id"))
-    record = _join_iteration(iteration_id, loop_memory_path)
+    finding, iteration_id, record = _resolve_context(
+        finding_id, surfaced_path, loop_memory_path)
     journal_text = _read_journal_text(record)
     refutations = _refutation_summaries(finding, record)
     seed = _build_tutor_seed(finding, record, journal_text, refutations)
@@ -874,11 +930,24 @@ def two_voice_turn(
     active_run.write_active_run(
         run_id, kind="ad_hoc", label=f"finding-session(2v) {finding_id}")
     try:
-        replies = [
-            _stance_turn(path, rows, stance, user_msg, session_id,
-                         finding_id, turn_index, now)
-            for stance in stances
-        ]
+        if len(stances) == 1:
+            replies = [_stance_turn(path, rows, stances[0], user_msg,
+                                    session_id, finding_id, turn_index, now)]
+        else:
+            # Run the two stances CONCURRENTLY: they hit two SEPARATE vLLM
+            # servers (gemma :8000 defender, qwen :8001 attacker), so a 'both'
+            # turn's wall-clock drops from t_gemma+t_qwen to max(...) — under the
+            # chat timeout (both models resident, ~35 GiB headroom, D-057). Each
+            # worker re-sets run_id: ThreadPoolExecutor threads do NOT inherit
+            # the contextvar, and the wrapper's call-log stamps run_id from it
+            # (mandatory logging, rule 6). ex.map preserves STANCES order, so the
+            # envelope stays [defender, attacker].
+            def _worker(stance):
+                set_run_id(run_id)
+                return _stance_turn(path, rows, stance, user_msg, session_id,
+                                    finding_id, turn_index, now)
+            with ThreadPoolExecutor(max_workers=len(stances)) as ex:
+                replies = list(ex.map(_worker, stances))
     finally:
         active_run.clear_active_run()
         set_run_id(None)
