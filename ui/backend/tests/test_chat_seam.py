@@ -355,6 +355,34 @@ def test_turn_422_spawns_nothing(repo, payload):
     assert runner.calls == []
 
 
+# ─── exec cap is the 300s chat cap, decoupled from attest's 120s write ──
+# A live two_voice turn runs both voices concurrently and measured ~170s, so
+# the chat seam raises its exec cap to 300s. Both endpoints must thread that cap
+# into the runner — NOT attest's fast 120s write cap (see test_attest for the
+# write side staying tight).
+
+
+def test_start_threads_300s_chat_timeout(repo):
+    runner = StubRunner(returncode=0,
+                        stdout=json.dumps(_start_env("tutor", None)) + "\n")
+    resp = _client(repo, runner).post(
+        "/api/todo/chat/start", json={"mode": "tutor", "finding_id": "sf-001"})
+    assert resp.status_code == 200
+    [call] = runner.calls
+    assert call["kwargs"]["timeout"] == 300       # chat cap, not the 120s write cap
+
+
+def test_turn_threads_300s_chat_timeout(repo):
+    runner = StubRunner(returncode=0,
+                        stdout=json.dumps(_two_voice_turn_env("both")) + "\n")
+    resp = _client(repo, runner).post("/api/todo/chat/turn", json={
+        "mode": "two_voice", "finding_id": "sf-001",
+        "session_id": "sess-abc", "message": "interrogate this"})
+    assert resp.status_code == 200
+    [call] = runner.calls
+    assert call["kwargs"]["timeout"] == 300       # chat cap, not the 120s write cap
+
+
 # ─── failure semantics — both endpoints, one contract ───────────────────
 
 
