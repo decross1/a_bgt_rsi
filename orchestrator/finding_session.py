@@ -590,6 +590,62 @@ def _count_turns(rows: list[dict[str, Any]]) -> int:
     return sum(1 for r in rows if r.get("type") == "user")
 
 
+def _cross_session_context(
+    session_path: str | os.PathLike,
+    *,
+    max_turns: int = 6,
+    max_chars: int = 3000,
+) -> str | None:
+    """Read-only digest of the OTHER interrogation sessions on the SAME finding.
+
+    The tutor and the two voices are sibling `*.jsonl` files in this finding's
+    session dir; by default each turn replays only its OWN transcript, so the
+    defender can't see what the human explored with the tutor (and vice versa).
+    This gathers the most recent user+assistant turns from the OTHER sessions,
+    labeled by source, so the voices share context. It is PURE CONTEXT — no
+    verdict, no memory store, no model call; the transcripts already coexist on
+    disk. Returns the labeled block (capped to the last `max_turns` turns and
+    `max_chars`), or None when there are no sibling turns. NEVER raises (a
+    cross-session read failure must not break the live turn)."""
+    try:
+        cur = Path(session_path)
+        root = cur.parent
+        if not root.is_dir():
+            return None
+        turns: list[str] = []
+        for f in sorted(root.glob("*.jsonl")):
+            if f.name == cur.name:
+                continue
+            rows = _read_jsonl(f)
+            if not rows:
+                continue
+            seed = rows[0] if rows[0].get("type") == "system_seed" else {}
+            mode = "tutor" if seed.get("mode") == TUTOR_MODE else "two-voice"
+            for row in rows:
+                text = (row.get("content") or "").strip()
+                if not text:
+                    continue
+                if row.get("type") == "user":
+                    turns.append(f"[{mode}] human: {text}")
+                elif row.get("type") == "assistant":
+                    who = row.get("stance") or "tutor"
+                    turns.append(f"[{mode}/{who}]: {text}")
+        if not turns:
+            return None
+        block = "\n".join(turns[-max_turns:])
+        if len(block) > max_chars:
+            block = "…" + block[-max_chars:]
+        return (
+            "CROSS-SESSION CONTEXT — prior discussion on THIS SAME finding in "
+            "other interrogation sessions (read-only: what the human has "
+            "already explored with the tutor / the other voice). It is NOT a "
+            "verdict and does not bind you; use it to stay consistent and avoid "
+            "re-treading ground:\n" + block
+        )
+    except OSError:
+        return None
+
+
 def session_turn(
     finding_id: str,
     session_id: str,
@@ -740,6 +796,13 @@ def tutor_turn(
                 "turn_index": prior_turns, "capped": True}
 
     messages, _seed_backend = _replay_messages(rows)
+    # Fold the sibling-session digest INTO the seed (the single leading system
+    # message) — robust across chat templates that reject a non-leading system
+    # message. Symmetric: the tutor sees the two-voice exchange.
+    _ctx = _cross_session_context(path)
+    if _ctx and messages and messages[0].get("role") == "system":
+        messages[0] = {"role": "system",
+                       "content": messages[0]["content"] + "\n\n" + _ctx}
     messages.append({"role": "user", "content": user_msg})
     turn_index = prior_turns + 1
 
@@ -826,6 +889,13 @@ def _stance_turn(
     defense or (for the attacker) a fabricated concession that the claim
     holds. The caller appends the single shared `user` row."""
     messages, seed_backend = _replay_stance_messages(rows, stance)
+    # Fold the sibling-session digest INTO this stance's seed (leading system
+    # message) so this voice sees what the human explored with the tutor / the
+    # other voice. Robust across chat templates (no non-leading system message).
+    _ctx = _cross_session_context(path)
+    if _ctx and messages and messages[0].get("role") == "system":
+        messages[0] = {"role": "system",
+                       "content": messages[0]["content"] + "\n\n" + _ctx}
     messages.append({"role": "user", "content": user_msg})
     use_backend = seed_backend or STANCE_BACKEND[stance]
     try:
