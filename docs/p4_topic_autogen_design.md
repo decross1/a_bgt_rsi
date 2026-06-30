@@ -2,8 +2,9 @@
 
 > Produced 2026-06-30 by a dynamic workflow (`wf_348ded4c-e13`, 10 agents:
 > understand → 3 diverse designs → adversarial judge → synthesis). This is a
-> **reviewable design for a future P4 session** — NOT yet built. The 7 open
-> questions at the end are the human decision agenda. Full transcript:
+> **reviewable design for a future P4 session** — NOT yet built. Decisions
+> recorded 2026-06-30 (owner: Q1–2; agent best-judgment: Q3–7) + a real
+> BGE-M3 falsifier run (below); **build-ready**. Full transcript:
 > `tasks/w2x1bbzn6.output`.
 
 ## The honest headline
@@ -88,20 +89,47 @@ cluster collapses to ≤1 survivor** (≥4/5 and ≥2/3 flagged). **FALSIFIED if
 run also *fixes* τ_dup. Companion cut: hand-label top-gap vs bottom-gap papers (expect weak
 separation at n=66 — the honest signal to ship dedup-only and defer gap-ranking).
 
-## Open questions for the human (the P4-session decision agenda)
-1. **Ship v0 at n=66?** Gap-ranking is near-random now; the real value is the dedup keystone +
-   a non-generative autonomous source. Ship the keystone now, treat gap-ranking as latent
-   (revisit n≈150)? Or wait for more corpus?
-2. **Schema provenance:** accept `source="coordinator"` + ledger-only `paper_gap` for v0 (no spine
-   edit, recommended), or pay for threaded `source=` + `journal_writer` revalidation now?
-3. **τ_dup on only 8 labeled positives** — enough, or label more near-dup pairs first? (Too high →
-   amplification; too low → kills novel-on-domain ideas that sit near prior work by construction.)
-4. **BGE-M3 blind spot is irreducible** — the gap is measured in the same space the novelty scorer
-   uses; a reframed rediscovery reads as a gap. Confirm: the downstream Qwen skeptic stays the
-   trusted novelty gate; topic-gen never scores novelty.
-5. **Confabulation risk is elevated** — gap-mining selects *for* papers most unfamiliar to Gemma
-   (FASE precedent 2026-06-09). Mitigation = pass the abstract as grounding. Cap how far off-familiar?
-6. **`anchor_cosine` returns None under MOCK_LLM** (`domain_anchor.py:105-109`) — accept the on-domain
-   gate as smoke-only, not unit-covered?
-7. **Qwen advisory annotation** — keep as a non-gating ledger note (some signal, pages Qwen, costs
-   RAM under the 30 GiB margin), or cut from v0?
+## Falsifier result (run 2026-06-30, real BGE-M3 — zero model paging)
+
+Ran the keystone falsifier on the 21 live backlog claims. **The single-cosine τ_dup graft does
+NOT cleanly work; the multi-layer dedup does.**
+- 3 title-stem clusters: public-goods+noisy-observation **×6 (intra-cosine 1.000 — identical
+  restatements)**, public-goods ×2 (0.929), coordination+fictitious-play ×2 (0.875).
+- Cross-DISTINCT max cosine: **0.938**.
+- **No clean τ separates them:** lowest intra-cluster (0.875) < highest cross-distinct (0.938),
+  margin **−0.063**. A τ low enough to catch the reworded coordination pair (≤0.875) false-flags
+  distinct findings; a τ high enough to preserve distinct (>0.938) misses the reworded clusters.
+
+**Implication (refines the design):** cosine τ_dup is ONE weak layer, not the keystone. Set it
+**high (~0.97)** to catch only near-identical restatements (the ×6 at 1.000). The **reworded**
+near-dups share long prose stems, so the **lexical Jaccard layer** (already in `_dedup`) is what
+actually separates them from distinct findings. The layered dedup survives the falsifier; the
+single threshold does not — exactly what the zero-cost falsifier exists to catch before any build.
+
+## Decisions (2026-06-30)
+
+1. **Ship v0?** → **SHIP the keystone** *(owner)*. Dedup + non-generative selector now; gap-ranking
+   latent until n≈150. The near-dup pile-up is live (cron promotes clusters every 12h).
+2. **Schema provenance** → **`source="coordinator"` + ledger-only `paper_gap` for v0** *(owner)*;
+   prepare the threaded-`source=` v1 in the next couple of sessions.
+3. **τ_dup / dedup mechanism** → *(agent, grounded by the falsifier)* **Do NOT rely on a tuned
+   cosine τ_dup** — it can't separate reworded near-dups from distinct findings at this scale. Set
+   cosine τ_dup **high (~0.97, near-identical only)**; make the **lexical Jaccard + intra-batch
+   greedy + density-aware** layers load-bearing. Log τ_dup as tunable, not the gate. Keeps the
+   design's multi-layer `_dedup`; drops graft #1's "calibrate τ on the clusters" as primary.
+4. **BGE-M3 blind spot** → *(agent)* **Confirmed: topic-gen SELECTS, never scores novelty.** The
+   downstream Qwen skeptic (own retrieval, D-044) + the loop's `novelty_classify` stay the novelty
+   authority. The falsifier reinforces it — BGE-M3 cosine can't even separate dups cleanly, so it's
+   a selection heuristic only.
+5. **Confabulation cap** → *(agent)* **Cap via the existing on-domain anchor** — a seed must be
+   in-domain (cs.MA/cs.GT/econ.TH) AND a gap, not merely maximally far; always pass the abstract as
+   grounding. Reject "gaps" that are only off-scope/nonsense.
+6. **`anchor_cosine` MOCK_LLM gap** → *(agent)* **Accept smoke-only** for the on-domain gate
+   (genuinely embedding-dependent); unit-test the rest of `_dedup` with deterministic stub vectors;
+   cover the gate with one real `env -u MOCK_LLM` smoke.
+7. **Qwen advisory annotation** → *(agent)* **CUT from v0.** Inert at the topic seam (critique +
+   falsifier); pages Qwen for little signal under the 30 GiB margin. v0 = dedup + selector, no Qwen
+   at the topic seam; the downstream hypothesis-level skeptic is untouched. Revisit only on need.
+
+**Status:** **build-ready** for a future P4 session (dedup-keystone v0). A `DECISIONS.md` entry is
+filed at build time; the agent-judgment calls (3–7) are defaults the owner may override then.
