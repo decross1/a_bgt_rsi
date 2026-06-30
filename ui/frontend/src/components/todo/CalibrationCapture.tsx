@@ -130,9 +130,9 @@ export default function CalibrationCapture({
           data-testid="calibration-stub-banner"
           className="mt-0.5 text-[10px] text-zinc-500"
         >
-          calibration_cli not reachable in this environment — your input is
-          captured locally but not durably written (the calibration_entry writer
-          itself landed in P4 / D-055).
+          calibration capture is not available in this environment (the CLI is
+          not reachable). Your input below is a preview only and will not be
+          recorded.
         </div>
       )}
 

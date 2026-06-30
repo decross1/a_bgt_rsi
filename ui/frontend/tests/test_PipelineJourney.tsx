@@ -190,6 +190,10 @@ describe("PipelineJourney — JOURNEY blocks render read-only from the iteration
     expect(out).toHaveTextContent("0.31");
     expect(screen.queryByTestId("journey-outcome-placeholder")).toBeNull();
     expect(screen.getByTestId("journey-stage-label")).toHaveTextContent(/experiment-bridged/i);
+    // the stage BANNER above the ribbon names the applied tier
+    const banner = screen.getByTestId("journey-stage-banner");
+    expect(banner).toHaveAttribute("data-stage", "applied");
+    expect(banner).toHaveTextContent(/applied-tier/i);
   });
 
   it("experiment-outcome ABSENT renders the Phase-2 placeholder + a literature-stage label", () => {
@@ -200,6 +204,10 @@ describe("PipelineJourney — JOURNEY blocks render read-only from the iteration
     );
     expect(screen.queryByTestId("journey-outcome-present")).toBeNull();
     expect(screen.getByTestId("journey-stage-label")).toHaveTextContent(/literature-stage/i);
+    // the stage BANNER above the ribbon names the literature stage
+    const banner = screen.getByTestId("journey-stage-banner");
+    expect(banner).toHaveAttribute("data-stage", "literature");
+    expect(banner).toHaveTextContent(/literature-stage/i);
     // the experiment / outcome ribbon steps are NOT lit when no outcome exists
     expect(screen.getByTestId("ribbon-step-outcome")).toHaveAttribute("data-reached", "false");
   });

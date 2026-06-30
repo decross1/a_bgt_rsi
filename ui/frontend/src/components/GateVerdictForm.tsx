@@ -121,6 +121,13 @@ export default function GateVerdictForm({ iterationId, onResolved }: Props) {
               </span>
             )}
           </div>
+          <div data-testid="gate-verdict-guidance" className="mt-1 text-[10px] leading-snug text-zinc-500">
+            <span className="text-emerald-400">valid</span> = approved, loop
+            advances ·{" "}
+            <span className="text-amber-400">needs_revision</span> = paused for
+            refinement ·{" "}
+            <span className="text-red-400">invalid</span> = rejected.
+          </div>
         </>
       )}
 

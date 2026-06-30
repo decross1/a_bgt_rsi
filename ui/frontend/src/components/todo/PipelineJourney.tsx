@@ -331,6 +331,17 @@ function stageLabel(row: IterationRecord): string {
   return "literature-stage — judged on retrieval, not experimentally tested (Phase 2)";
 }
 
+// The SHORT stage tag for the banner ABOVE the ribbon — literature-stage vs
+// applied-tier, inferred PURELY from whether an experiment_outcome block is
+// present (frontend inference; no backend stage field needed — the loop is
+// literature-stage until β / D-040, so an outcome means it reached the applied
+// tier). Mirrors stageLabel's predicate so the top banner and the bottom detail
+// line never disagree.
+function stageBanner(row: IterationRecord): { label: string; applied: boolean } {
+  const applied = asRecord(row.experiment_outcome) !== null;
+  return { label: applied ? "applied-tier" : "literature-stage", applied };
+}
+
 interface Props {
   /** The SELECTED cockpit item. `item.id` is an iteration_id for gate_verdict
    *  items, a finding_id for finding_review items. */
@@ -524,6 +535,32 @@ export default function PipelineJourney({ item, journey, detail }: Props) {
           {findingClaim}
         </div>
       ) : null}
+
+      {/* the honest STAGE BANNER above the ribbon — names the tier this
+          iteration actually reached (applied vs literature), inferred from the
+          experiment_outcome block. applied = quiet cyan; literature = quiet
+          zinc (never amber — it is not a warning, just where the loop is). */}
+      {(() => {
+        const banner = stageBanner(iterationRecord);
+        return (
+          <div
+            data-testid="journey-stage-banner"
+            data-stage={banner.applied ? "applied" : "literature"}
+            className={`mt-1.5 rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+              banner.applied
+                ? "border-cyan-900/60 bg-cyan-950/30 text-cyan-300"
+                : "border-zinc-800 bg-zinc-950 text-zinc-500"
+            }`}
+          >
+            {banner.label}
+            <span className="ml-1 normal-case tracking-normal text-zinc-600">
+              {banner.applied
+                ? "— an experiment outcome was bridged in"
+                : "— judged on retrieval, not experimentally tested"}
+            </span>
+          </div>
+        );
+      })()}
 
       <div className="mt-1.5">
         <PipelineRibbon row={iterationRecord} />

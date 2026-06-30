@@ -937,6 +937,72 @@ model).
 
 ---
 
+## §2026-06-30 — cockpit sign-off UX polish (S2 polish, `ui/` only)
+
+Work order: `human/sessions/2026-06-28.md` "## UI session work order — cockpit sign-off UX".
+**Polish/clarity/trust, NOT a rebuild** — the S2 reframe already landed (`782fc87`). The
+primary adversarially verified **no backend/spine dependency** (the `calibration_cli` "needs an
+iteration_id?" candidate was a false alarm — `ref_id` is opaque), so this round is `ui/`-only.
+Worktree fast-forwarded clean to `main` (`d57dc08`; the 3 intervening commits are 06-25/06-28
+ops + session notes, **zero `ui/` touch**). Built by the session directly (light, bounded edits;
+no workflow warranted).
+
+### Priority 1 — clarity & messaging
+
+- **`Todo.tsx` D-044 citation corrected** — the interrogation comment now reads "D-044 governs
+  the two-voice interrogator's independence (Qwen attacker independent from Gemma defender)",
+  so the fence a future reader sees is the *right* one (D-053/D-054 = verdict-fence; D-044 =
+  interrogator-independence — distinct).
+- **Calibration-optional surfaced** — the `/todo` header explainer gains a line: "Optional blind
+  calibration — record a prediction before interrogation if you want to, but you can decide
+  without it." (The forced unlock gate was already removed in the S2 reframe; this makes the
+  opt-in legible.)
+- **Capability-off messaging unified** — `CalibrationCapture` and `TwoVoiceChatPane`
+  `available=false` banners rewritten to the same "… is not available in this environment …
+  Your input below is a preview only and will not be {recorded,sent}." wording (was
+  "not durably written" / "held locally" — inconsistent, jargon-y).
+- **`PipelineJourney` stage banner** — a new `journey-stage-banner` ABOVE the ribbon names the
+  tier this iteration reached: **applied-tier** (quiet cyan) when `experiment_outcome` is present,
+  **literature-stage** (quiet zinc, never amber) when absent. Frontend inference, no backend
+  stage field (primary confirmed). Mirrors the existing bottom `stageLabel` predicate so the two
+  never disagree.
+- **Verdict/status outcome guidance** — `GateVerdictForm` gains `gate-verdict-guidance`
+  (valid = approved, loop advances · needs_revision = paused for refinement · invalid = rejected);
+  `FindingReviewForm` gains `finding-review-guidance` (validated = sign off · in_review = keep
+  interrogating, stays in queue · rejected = dismiss). Text verified against the real enums
+  (`VERDICT_ORDER` / `STATUS_ORDER`).
+
+### Priority 2 — comment hygiene
+
+Stale "stub / would_run envelope" framing simplified to "preview-only" in `AuthorizeFixForm`,
+`DirectiveSignOffField`, `AbstainForm`, `api/todo.ts` leading comments (authorize_fix /
+directive_signoff are LIVE execs now; abstain is a session-exit — the old all-stub framing was
+stale). **No rendered text, testid, or field-handling logic touched** — the deferred
+spawn_topic/abstain frontend reshape (gated on wiring-doc Q1) stays deferred; the `.would_run` /
+`.stub` key-probing detail callers rely on is kept.
+
+### Verification
+
+- `tsc --noEmit` clean · `vite build` clean · **vitest 1414 pass** (96 files; baseline 1414 held —
+  the 6 new assertions live inside existing `it()` blocks so the count is unchanged while the new
+  banner/guidance/wording is now pinned).
+- One test contract honestly updated (not coerced): `test_cockpit_forms_a11y.tsx` calibration-banner
+  assertion re-pinned from `/not durably written|captured locally/` to the new
+  `/not available|preview only|will not be recorded/` wording (inviolate rule 4).
+- **Real `:8700` smoke (read-path):** the live backend (byte-identical `ui/backend` to HEAD —
+  no `ui/` change `f16a967..d57dc08`) serves the cockpit's real data: capability flags correct
+  (authorize_fix/directive_signoff/calibration/two_voice ON; spawn_topic/abstain session-exits),
+  idle, backlog 4 gate_verdict + 21 finding_review. A real gate item (`iter-2026-06-05-004`,
+  `experiment_outcome` present) renders the new banner as **applied-tier**; a real finding
+  (`sf-iter-2026-05-26-008`) resolves claim + source iteration for the TutorPanel/journey path.
+  The **write half** (submit verdict → item leaves the inbox) was NOT exercised live — those are
+  the owner's decision-ledger writes (human go/no-go is the payload); it is covered by the green
+  `test_attest_forms` re-poll tests (POST gate_verdict → re-poll empty queue → item leaves).
+
+Scope held: `ui/` + this file only (14 files, all under `ui/frontend/`).
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to

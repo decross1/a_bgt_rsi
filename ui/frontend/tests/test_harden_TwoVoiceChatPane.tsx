@@ -85,7 +85,13 @@ describe("TwoVoiceChatPane hardening — valid input unchanged (no regression)",
     );
     expect(screen.getByTestId("two-voice-cap-intent")).toHaveTextContent(/24 turns/);
     expect(screen.getByTestId("two-voice-cap-intent")).toHaveTextContent(/1024 tok/);
-    expect(screen.getByTestId("two-voice-stub-banner")).toBeInTheDocument();
+    // the capability-off banner uses the unified "not available … preview" wording
+    expect(screen.getByTestId("two-voice-stub-banner")).toHaveTextContent(
+      /not available/i,
+    );
+    expect(screen.getByTestId("two-voice-stub-banner")).toHaveTextContent(
+      /preview only/i,
+    );
     expectPanePresent();
     expect(errorSpy).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
