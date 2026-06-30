@@ -150,3 +150,16 @@ def test_tutor_sees_two_voice_discussion_symmetric(tmp_path, monkeypatch):
     blob = json.dumps(captured[0])
     assert "CROSS-SESSION CONTEXT" in blob
     assert "150 trials cannot rule out the confound" in blob
+
+
+# --------------------------------------------------------------------------- #
+# apparatus primer — every interrogation seed cues the agent on the system     #
+# --------------------------------------------------------------------------- #
+
+def test_apparatus_primer_in_all_seeds():
+    for builder in (fs._build_seed, fs._build_skeptic_seed, fs._build_tutor_seed):
+        seed = builder({}, {}, "", [])
+        assert "CORPUS-RELATIVE" in seed
+        assert "5-step chain" in seed
+        assert "top-10 nearest neighbors" in seed
+        assert "ml_intern" in seed

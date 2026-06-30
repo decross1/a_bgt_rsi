@@ -267,6 +267,35 @@ def _refutation_summaries(finding: dict[str, Any],
     return deduped
 
 
+# Static apparatus primer folded into every interrogation seed so the tutor and
+# the two voices reason about the apparatus's REAL boundaries (corpus-relative
+# verdicts, retrieval limits) instead of inferring them ad hoc. Kept to STABLE,
+# verified facts about the 5-step loop; update it if the pipeline changes.
+_APPARATUS_PRIMER = (
+    "HOW THE APPARATUS PRODUCED THIS RECORD — reason about its boundaries "
+    "honestly; the verdicts below are CORPUS-RELATIVE, not absolute:\n"
+    "- The loop is a fixed 5-step chain: hypothesize -> retrieve_literature "
+    "(the top-10 nearest neighbors by BGE-M3 vector similarity over a chroma "
+    "index of TWO layers: live arXiv `papers_recent` + a foundational "
+    "game-theory textbook layer) -> novelty_classify -> literature-critic -> "
+    "journal.\n"
+    "- 'novel' means no close match was found IN those ~10 retrieved documents; "
+    "'survives' means none of them CONTRADICTED the claim. Both are relative to "
+    "what the vector search surfaced — NOT a guarantee of absolute novelty or "
+    "of theoretical soundness.\n"
+    "- The loop considers ONLY what semantic retrieval returns: no manual "
+    "review, no keyword sweep. Prior work phrased differently (other "
+    "terminology, no matching metric name) can be missed. A conditional "
+    "ml_intern step can fetch more papers when the retrieval signal is weak, "
+    "but it does not always run.\n"
+    "- A separate redteam adversarially pre-checks the hypothesis's STRUCTURE "
+    "(e.g. it flags a bare reported data-point that is not a falsifiable claim), "
+    "distinct from the literature-critic's retrieval-grounded verdict.\n"
+    "When the human asks how the apparatus handled this iteration, explain these "
+    "boundaries accurately; do not overstate what the verdicts establish."
+)
+
+
 def _build_seed(finding: dict[str, Any], record: dict[str, Any],
                 journal_text: str, refutations: list[str]) -> str:
     """Compose the system-prompt SEED for the defender."""
@@ -326,6 +355,7 @@ def _build_seed(finding: dict[str, Any], record: dict[str, Any],
         f"{p['refutation_header']}:\n{refutation_block}\n"
         "\n"
         f"JOURNAL ENTRY:\n{journal_block}\n"
+        f"\n{_APPARATUS_PRIMER}\n"
     )
 
 
@@ -403,6 +433,7 @@ def _build_skeptic_seed(finding: dict[str, Any], record: dict[str, Any],
         f"{p['refutation_header']} — find a NEW or stronger objection:\n{refutation_block}\n"
         "\n"
         f"JOURNAL ENTRY:\n{journal_block}\n"
+        f"\n{_APPARATUS_PRIMER}\n"
     )
 
 
@@ -478,6 +509,7 @@ def _build_tutor_seed(finding: dict[str, Any], record: dict[str, Any],
         f"{p['refutation_header']}:\n{refutation_block}\n"
         "\n"
         f"JOURNAL ENTRY:\n{journal_block}\n"
+        f"\n{_APPARATUS_PRIMER}\n"
     )
 
 
