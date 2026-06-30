@@ -157,6 +157,23 @@ ACTIONS: dict[str, dict[str, Any]] = {
         ),
         "handler_ref": "orchestrator.coordinator:handle_forecast_markets",
     },
+    "mine_paper_gap": {
+        "description": (
+            "Mine recent arXiv papers (papers_recent) for an in-domain topic "
+            "GAP and DEDUP it against the backlog — the keystone that stops "
+            "near-duplicate topics piling into the cockpit. NON-generative: the "
+            "topic is an extracted paper title, never an LLM generation. Emits "
+            "up to max_emit new_topic suggestions (origin=coordinator_propose). "
+            "Worth a slot when the topic_suggestions queue is thin."
+        ),
+        "cost": 1,
+        "arg_schema": _obj_schema(
+            {"n": {"type": "integer", "minimum": 1},
+             "max_emit": {"type": "integer", "minimum": 1}},
+            [],
+        ),
+        "handler_ref": "workers.mine_paper_gap:mine_paper_gap",
+    },
 }
 
 

@@ -18,11 +18,12 @@ from orchestrator.coordinator_actions import (
 def test_known_actions_returns_v2_menu():
     # v2 (2026-06-10 Session 3): + run_experiment (T3 reverse path) and
     # forecast_markets (exp007 paper workstream). Still NO trade action.
+    # + mine_paper_gap (2026-06-30, P4 v0 dedup-keystone topic miner).
     menu = known_actions()
     names = {a["name"] for a in menu}
     assert names == {
         "run_loop_iteration", "promote_findings", "bubble_up", "noop",
-        "run_experiment", "forecast_markets",
+        "run_experiment", "forecast_markets", "mine_paper_gap",
     }
     for entry in menu:
         assert set(entry) == {"name", "description", "arg_schema", "cost"}
@@ -149,7 +150,7 @@ def test_noop_is_free_and_counts_toward_max_only():
 def test_actions_registry_is_the_v2_menu():
     assert set(ACTIONS) == {
         "run_loop_iteration", "promote_findings", "bubble_up", "noop",
-        "run_experiment", "forecast_markets",
+        "run_experiment", "forecast_markets", "mine_paper_gap",
     }
     assert ACTIONS["run_loop_iteration"]["cost"] == 3
     assert ACTIONS["promote_findings"]["cost"] == 2
@@ -157,6 +158,7 @@ def test_actions_registry_is_the_v2_menu():
     assert ACTIONS["noop"]["cost"] == 0
     assert ACTIONS["run_experiment"]["cost"] == 5
     assert ACTIONS["forecast_markets"]["cost"] == 3
+    assert ACTIONS["mine_paper_gap"]["cost"] == 1
     # No action may ever name a trading surface.
     for spec in ACTIONS.values():
         assert "trade" not in spec["handler_ref"].lower()

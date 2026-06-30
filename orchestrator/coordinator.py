@@ -237,7 +237,12 @@ def _topic_suggestions(
     for row in _read_jsonl(followups_path)[-2:]:
         topic = row.get("new_topic")
         if isinstance(topic, str) and topic.strip():
-            out.append({"topic": topic, "source": "finding_followup"})
+            # graft 4 (P4): machine-mined rows share this queue but must NOT
+            # masquerade as human follow-ups (which the planner prefers below).
+            src = ("coordinator_propose"
+                   if row.get("origin") == "coordinator_propose"
+                   else "finding_followup")
+            out.append({"topic": topic, "source": src})
     try:
         topic, source = pick_morning_topic(loop_memory_path=loop_memory_path)
         out.append({"topic": topic, "source": source})
@@ -401,6 +406,9 @@ def _planner_system_prompt(budget: int) -> str:
         "experiment (tier 'synthetic'; run_real only with strong reason).\n"
         "forecast_markets is the standing applied-tier PAPER workstream —\n"
         "worth one slot when no fresher applied data exists; it never trades.\n"
+        "mine_paper_gap proposes a fresh, deduped arXiv topic when the\n"
+        "topic_suggestions queue is thin — cheap insurance against repeating a\n"
+        "near-duplicate of a prior hypothesis.\n"
         "Prefer fewer, higher-value actions; the total cost of the\n"
         f"actions must not exceed {budget}.\n"
         "\n"
@@ -598,6 +606,7 @@ def _default_execute_handlers() -> dict[str, Callable[..., Any]]:
     pulls in nara / finding_promotion only when an --execute cycle runs."""
     from orchestrator.nara import run_iteration as _run_iteration
     from orchestrator.finding_promotion import promote_findings as _promote_findings
+    from workers.mine_paper_gap import mine_paper_gap as _mine_paper_gap
 
     def _run_loop_iteration(*, topic: str) -> Any:
         return _run_iteration(topic, source="coordinator")
@@ -607,6 +616,9 @@ def _default_execute_handlers() -> dict[str, Callable[..., Any]]:
         _persist_near_misses(result)
         return result
 
+    def _mine_gap(*, n: int = 20, max_emit: int = 2) -> Any:
+        return _mine_paper_gap(n=n, max_emit=max_emit)
+
     return {
         "run_loop_iteration": _run_loop_iteration,
         "promote_findings": _promote,
@@ -614,6 +626,7 @@ def _default_execute_handlers() -> dict[str, Callable[..., Any]]:
         "noop": handle_noop,
         "run_experiment": handle_run_experiment,
         "forecast_markets": handle_forecast_markets,
+        "mine_paper_gap": _mine_gap,
     }
 
 
