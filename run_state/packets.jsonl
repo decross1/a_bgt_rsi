@@ -1,0 +1,6 @@
+{"ts": "2026-08-14T23:40:31.245481Z", "status": "dispatched", "packet_id": "PKT-EXAMPLE", "attempt": 1}
+{"ts": "2026-08-14T23:40:31.758172Z", "status": "failed", "packet_id": "PKT-EXAMPLE", "attempt": 1, "test_output_digest": "11ea8e164504327ca17d1743ef2b29e02f4b983328f8011b1c55e7f0882709c2", "decided_by": "dispatcher"}
+{"ts": "2026-08-14T23:40:31.758474Z", "status": "dispatched", "packet_id": "PKT-EXAMPLE", "attempt": 2}
+{"ts": "2026-08-14T23:40:31.886197Z", "status": "budget_exhausted", "packet_id": "PKT-EXAMPLE", "attempt": 2, "test_output_digest": "11ea8e164504327ca17d1743ef2b29e02f4b983328f8011b1c55e7f0882709c2", "decided_by": "dispatcher"}
+{"ts": "2026-08-14T23:42:09.608196Z", "status": "dispatched", "packet_id": "PKT-EXAMPLE", "attempt": 1}
+{"ts": "2026-08-14T23:42:11.664268Z", "status": "done", "packet_id": "PKT-EXAMPLE", "attempt": 1, "test_output_digest": "a71df3ef716cabe43ead70bd8311cda3aeadcb986bea501da0ea9262f31c3925", "decided_by": "dispatcher"}

@@ -45,6 +45,12 @@ verifies the acceptance test FAILS before the agent starts
 (`acceptance_criteria.must_fail_before: true` — a test that already passes
 proves nothing, rule 4).
 
+**Packet-authoring rule (2026-08-14 e2e lesson):** `test_cmd` re-runs inside
+the packet **worktree**, where relative paths like `.venv-chroma/bin/python`
+do not exist — use the **absolute** interpreter path. The dispatcher also
+requires the agent to **commit** its work on the packet branch: a green test
+over a dirty tree is not a mergeable branch and is scored `failed`.
+
 ### 3. Review — the framework `code-review` skill on the local range
 
 The verification gate is the **framework `code-review` skill**

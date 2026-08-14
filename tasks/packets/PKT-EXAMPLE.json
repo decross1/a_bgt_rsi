@@ -17,7 +17,7 @@
     "git diff --quiet -- orchestrator/todo_cli.py"
   ],
   "acceptance_criteria": {
-    "test_cmd": "MOCK_LLM=1 .venv-chroma/bin/python -m pytest tests/test_todo_cli_version.py -x -q",
+    "test_cmd": "MOCK_LLM=1 /home/decross1/projects/a_bgt_rsi/.venv-chroma/bin/python -m pytest tests/test_todo_cli_version.py -x -q",
     "must_fail_before": true
   },
   "budgets": {

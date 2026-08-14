@@ -211,6 +211,7 @@ def dispatch_packet(
 
     final_status = "budget_exhausted"
     digest = ""
+    verify_tail = ""
     premerge_ok: bool | None = None
     attempts_used = 0
     worktree: Path | None = None
@@ -252,6 +253,11 @@ def dispatch_packet(
         except subprocess.TimeoutExpired:
             verify_out, verify_rc = "acceptance re-run timed out", 1
         digest = _digest(verify_out)
+        # Diagnosability (2026-08-14 e2e lesson): a digest alone made a
+        # failing verify undiagnosable from the ledger — carry the output
+        # tail on failed attempts (same class as the coordinator cycle rows
+        # dropping planner state).
+        verify_tail = verify_out.strip()[-300:] if verify_rc != 0 else ""
 
         attempt_status = "failed"
         premerge_ok = None
@@ -291,6 +297,8 @@ def dispatch_packet(
             "ts": _utcnow_iso(), "status": attempt_status,
             "packet_id": packet_id, "attempt": attempt,
             "test_output_digest": digest, "decided_by": "dispatcher",
+            **({"verify_tail": verify_tail} if verify_tail else {}),
+            **({"agent_error": agent_error} if agent_error else {}),
         })
         log(
             {
@@ -318,6 +326,8 @@ def dispatch_packet(
         "premerge_ok": premerge_ok,
         "merged": False,  # NEVER merges; the primary session owns the merge.
     }
+    if final_status != "done" and verify_tail:
+        report["verify_tail"] = verify_tail
     if final_status != "done":
         rollback = packet["rollback"]
         hint = (
