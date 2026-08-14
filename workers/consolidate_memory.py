@@ -255,9 +255,10 @@ def _plan_cluster(cluster: dict, feedback_by_iter: dict, derive_level_fn: Callab
         via = m["joined_via"]
         events.append({"event_type": "member_added", "ts": ts, "cluster_id": cid,
                        "member_id": m["id"],
+                       **({"as_elite": True} if m is elite else {}),
                        "accept_reason": f"{via['layer']}"
-                                        + (f":{via['margin']:.3f}" if isinstance(
-                                            via.get("margin"), float) else "")})
+                                        + (f":{via['score']:.3f}" if isinstance(
+                                            via.get("score"), float) else "")})
     for m in cluster["members"]:
         if m is not elite and m["joined_via"]["layer"] in _NEAR_DUP_LAYERS:
             archive.append({"archived_at": ts, "cluster_id": cid,

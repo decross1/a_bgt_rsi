@@ -162,7 +162,18 @@ def detect_stall(report: dict, ledger_events_this_cycle: int) -> dict | None:
             promoted = result.get("promoted")
             if isinstance(promoted, list):
                 promotions += len(promoted)
-    if iteration_dispatches or promotions or ledger_events_this_cycle:
+    # Any other substantive executed action IS activity — run_experiment,
+    # forecast_markets, mine_paper_gap, bubble_up are exactly what the D-059
+    # planner prompt orders for ladder gaps; flagging such a cycle RED would
+    # be a false alarm that trains alarm fatigue. Only noop and an
+    # empty-pool promote pass are non-activity.
+    other_actions = sum(
+        1 for row in executed
+        if row.get("action") not in (None, "noop", "promote_findings",
+                                     "run_loop_iteration")
+    )
+    if (iteration_dispatches or promotions or other_actions
+            or ledger_events_this_cycle):
         return None
     return {
         "signal": "loop_stalled",
@@ -170,8 +181,9 @@ def detect_stall(report: dict, ledger_events_this_cycle: int) -> dict | None:
         "detail": (
             "coordinator cycle "
             f"{(report or {}).get('run_id', 'unknown')} dispatched 0 "
-            "run_loop_iteration actions, promoted 0 findings, and the "
-            "idea ledger recorded 0 events this cycle — the loop did not move"
+            "run_loop_iteration actions, promoted 0 findings, executed no "
+            "other substantive action, and the idea ledger recorded 0 "
+            "events this cycle — the loop did not move"
         ),
     }
 

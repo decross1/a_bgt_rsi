@@ -174,7 +174,17 @@ def dispatch_packet(
             )
 
     # --- red-first: the acceptance test must FAIL before any work.
-    proc = _sh(test_cmd, repo_root, timeout=timeout_sec)
+    try:
+        proc = _sh(test_cmd, repo_root, timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        # A hung acceptance test is a refusal, not a crash (2026-08-14
+        # review): no attempt burned, structured reason returned.
+        return _refusal(
+            packet_id, "acceptance_test_timeout",
+            f"acceptance test {test_cmd!r} timed out after {timeout_sec}s "
+            "during the red-first check",
+            log,
+        )
     if proc.returncode == 0:
         return _refusal(
             packet_id, "nothing_to_do",
@@ -216,11 +226,18 @@ def dispatch_packet(
         worktree = _ensure_worktree(repo_root, packet_id)
 
         agent_error: str | None = None
+        # Secrets never reach a packet agent (mirrors the frontier_cli
+        # env-strip guard; 2026-08-14 review): the agent inherits the
+        # environment MINUS the metered/vendor keys.
+        spawn_env = {k: v for k, v in os.environ.items()
+                     if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                                  "OPENAI_API_KEY", "SEMANTIC_SCHOLAR_API_KEY")}
+        spawn_env.update(agent_env)
         try:
             subprocess.run(
                 list(agent_cmd), cwd=str(worktree), timeout=timeout_sec,
                 capture_output=True, text=True,
-                env={**os.environ, **agent_env},
+                env=spawn_env,
             )
         except subprocess.TimeoutExpired:
             agent_error = f"agent timed out after {timeout_sec}s"
@@ -239,14 +256,28 @@ def dispatch_packet(
         attempt_status = "failed"
         premerge_ok = None
         if verify_rc == 0:
-            merge_base = _sh(f"git merge-base HEAD {base_sha}", worktree).stdout.strip()
-            gate = subprocess.run(
-                ["bash", str(PREMERGE_SCRIPT), merge_base or base_sha,
-                 str(budgets["max_diff_lines"])],
-                cwd=str(worktree), capture_output=True, text=True,
-            )
-            premerge_ok = gate.returncode == 0
-            attempt_status = "done" if premerge_ok else "failed"
+            # Done requires COMMITTED work: a green test over an uncommitted
+            # working tree is not a mergeable branch (2026-08-14 review pin —
+            # the premerge gate diffs commits, so a dirty tree sailed
+            # through it with an empty range). The agent must commit.
+            dirty = _sh("git status --porcelain", worktree).stdout.strip()
+            if dirty:
+                agent_error = (agent_error or "") + (
+                    " agent left uncommitted changes "
+                    f"({len(dirty.splitlines())} paths) — done requires a "
+                    "committed branch"
+                ).strip()
+            else:
+                merge_base = _sh(
+                    f"git merge-base HEAD {base_sha}", worktree
+                ).stdout.strip()
+                gate = subprocess.run(
+                    ["bash", str(PREMERGE_SCRIPT), merge_base or base_sha,
+                     str(budgets["max_diff_lines"])],
+                    cwd=str(worktree), capture_output=True, text=True,
+                )
+                premerge_ok = gate.returncode == 0
+                attempt_status = "done" if premerge_ok else "failed"
 
         is_terminal = (
             attempt_status == "done"

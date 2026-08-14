@@ -191,6 +191,15 @@ def test_l2_invalid_summary_fails():
     assert derive(row)["level"] == "L1"
 
 
+def test_l2_invalid_summary_case_insensitive():
+    """2026-08-14 review regression: lowercase 'invalid' must also fail L2
+    (the pre-D-059 gate was case-insensitive)."""
+    for s in ("invalid: harness crashed", "Invalid run, Verdict=NO"):
+        row = _l2_row()
+        row["experiment_outcome"]["summary"] = s
+        assert derive(row)["level"] == "L1", s
+
+
 def test_l2_summary_missing_fails():
     row = _l2_row()
     del row["experiment_outcome"]["summary"]

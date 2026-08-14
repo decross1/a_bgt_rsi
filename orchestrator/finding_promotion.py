@@ -560,6 +560,16 @@ def _promote_findings(
         for f in _read_jsonl(feedback_path)
         if isinstance(f.get("iteration_id"), str)
     }
+    # Health rows feed derive_level's `provisional` marker (e.g. a finding
+    # whose L1 rests on a blind external search carries
+    # external_search_blind). Resolved at call time via the cycle-log module
+    # attr so the conftest tmp-path patch applies (2026-08-14 review: this
+    # was previously always [] — the marker could never reach a finding).
+    try:
+        from orchestrator import coordinator_cycle_log as _ccl
+        health_rows = _read_jsonl(_ccl.DEFAULT_HEALTH_PATH)
+    except Exception:
+        health_rows = []
     already = {
         r.get("finding_id")
         for r in _read_jsonl(surfaced_path)
@@ -636,9 +646,12 @@ def _promote_findings(
                 still.append(row)
                 continue
             if screen.get("verdict") == "veto":
+                basis = ((screen.get("methods") or {}).get("reasoning")
+                         or (screen.get("novelty") or {}).get("reasoning")
+                         or "no reasoning returned")
                 near_misses.append({
                     "source_iteration_id": iid,
-                    "reason": "frontier_veto",
+                    "reason": f"frontier opposed-jobs veto: {str(basis)[:200]}",
                     "stage": "frontier",
                     "frontier_screen": screen,
                 })
@@ -659,7 +672,7 @@ def _promote_findings(
         iid = row["iteration_id"]
         claim = _claim_text(row)
 
-        pre = derive_level(row, feedback.get(iid), None, [])
+        pre = derive_level(row, feedback.get(iid), None, health_rows)
         if pre["level"] != "L3":
             missing = "; ".join(pre["missing_for_next"]) or "unmet rungs"
             near_misses.append({
@@ -709,7 +722,7 @@ def _promote_findings(
             row,
             feedback.get(iid),
             {"survived": tally["survived"]},
-            [],
+            health_rows,
         )
         if derived["level"] not in ("L4", "L5"):
             near_misses.append({
@@ -761,6 +774,8 @@ def _promote_findings(
             "evidence_level": derived["level"],
             "cluster_id": _ledger_cluster_for(iid),
         }
+        if derived.get("provisional"):
+            finding["evidence_provisional"] = derived["provisional"]
         if iid in frontier_reviews:
             finding["frontier_screen"] = frontier_reviews[iid]
 

@@ -30,6 +30,7 @@ import hashlib
 import json
 import math
 import os
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -351,12 +352,16 @@ def mine_paper_gap(
         # LOOP_V1 P3 (D-060): survivors ALSO land on the idea-ledger agenda
         # as pre-closed paper niches + agenda candidates, so topic selection
         # is agenda-first and the mined paper's claim is closed ground that a
-        # future hypothesis must beat with a delta. Fail-open: a missing
-        # ledger (pre-consolidation) skips silently; the followups row above
-        # is unchanged either way.
+        # future hypothesis must beat with a delta. Gated on the ledger
+        # FILE EXISTING: consolidation (Wave 4) is the ledger's creator —
+        # this seam must never conjure the ledger pre-consolidation
+        # (2026-08-14 review; the old comment claimed a silent skip while
+        # the code would have created the file). Failures are LOGGED.
         try:
             from workers.idea_ledger import append_event, load_state
             lp = DEFAULT_IDEA_LEDGER
+            if not Path(lp).exists():
+                raise FileNotFoundError("idea ledger absent (pre-consolidation)")
             state = load_state(lp)
             cid = f"cl-paper-{c['arxiv_id'].replace('/', '_')}"
             ts = _utcnow()
@@ -369,8 +374,9 @@ def mine_paper_gap(
                 append_event(lp, {"event_type": "agenda_item_added", "ts": ts,
                                   "cluster_id": cid, "topic": c["title"],
                                   "source": "paper_gap"})
-        except Exception:
-            pass
+        except Exception as exc:  # logged fail-open — never silent (rule 7)
+            print(f"[mine_paper_gap] idea-ledger seed skipped for "
+                  f"{c['arxiv_id']}: {exc}", file=sys.stderr)
 
     summary = {
         "sampled": len(papers),

@@ -61,7 +61,10 @@ def _eligible(cluster: dict[str, Any]) -> str | None:
     the cluster is not a rejection target (open/surfaced live ideas)."""
     if not isinstance(cluster, dict):
         return None
-    if cluster.get("origin") == "paper_niche":
+    # The reducer stamps paper niches with origin "paper_seed"
+    # (workers/idea_ledger.py _new_cluster via niche_seeded) — the old
+    # "paper_niche" literal matched nothing (2026-08-14 review).
+    if cluster.get("origin") in ("paper_seed", "paper_niche"):
         return "paper_niche"
     if cluster.get("status") == "killed":
         return "killed"
@@ -119,9 +122,15 @@ def match(hypothesis_text: str, ledger_state: dict) -> dict[str, Any]:
             basis, score, threshold = "cosine_tau_dup", cos, _mpg.TAU_DUP
         else:
             continue
-        if best is None or score > best["score"]:  # ties keep first (sorted cid)
+        # Cross-base ranking uses the EXCESS over the base's own threshold —
+        # raw scores are incommensurable (lexical lives near 0.6, cosine near
+        # 0.97; comparing them raw let a marginal cosine hit outrank a
+        # decisive lexical one — 2026-08-14 review).
+        excess = score - threshold
+        if best is None or excess > best["excess"]:  # ties keep first (sorted cid)
             best = {"cluster_id": cid, "status": status, "basis": basis,
-                    "score": round(score, 4), "threshold": threshold}
+                    "score": round(score, 4), "threshold": threshold,
+                    "excess": excess}
 
     if best is None:
         return no_match

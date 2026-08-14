@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -251,8 +252,9 @@ def meta_review(
             extra = [ln for ln in conditioning_lines(state, topic)
                      if isinstance(ln, str) and ln.strip()][:3]
             bullets = (bullets + extra)[:8]
-    except Exception:
-        pass
+    except Exception as exc:  # logged fail-open — never silent (rule 7)
+        print(f"[meta_review] idea-ledger conditioning skipped: {exc}",
+              file=sys.stderr)
 
     return {
         "status": "passed",

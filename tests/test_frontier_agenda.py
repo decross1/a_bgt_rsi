@@ -98,13 +98,18 @@ def test_synthesize_appends_proposals_with_pinned_shape(tmp_path):
     assert all("## Live work" in c[2] and c[1] == fa.ROLE for c in calls)
 
 
-def test_synthesize_appends_across_runs(tmp_path):
+def test_synthesize_idempotent_across_identical_runs(tmp_path):
+    """2026-08-14 review: proposal_id is ts-free by design, so an unchanged
+    projection re-run must SKIP already-agenda'd ids (append-only still — no
+    rewrite; just zero new rows), not accumulate duplicate `proposed` rows."""
     agenda = tmp_path / "frontier_agenda.jsonl"
     invoke = make_invoke({"claude": _record(_proposals_json(1)),
                           "codex": _record("not json")})
-    fa.synthesize(STATE, invoke, agenda_path=agenda)
-    fa.synthesize(STATE, invoke, agenda_path=agenda)
-    assert len(_read_rows(agenda)) == 2  # append-only, never rewritten
+    first = fa.synthesize(STATE, invoke, agenda_path=agenda)
+    assert len(first) == 1
+    second = fa.synthesize(STATE, invoke, agenda_path=agenda)
+    assert second == []
+    assert len(_read_rows(agenda)) == 1
 
 
 # --- empty-ledger refusal ----------------------------------------------------

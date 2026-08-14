@@ -58,6 +58,7 @@ from workers.redteam_critic import redteam_critic as _redteam_critic
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_IDEA_LEDGER = REPO_ROOT / "memory" / "idea_ledger.jsonl"
 LOOP_MEMORY_PATH = REPO_ROOT / "memory" / "loop_memory.jsonl"  # ARCHITECTURE.md §4.4 — Layer-3
 ACTIVE_PATH = "run_state/active_iteration.json"  # relative to REPO_ROOT
 CALLS_LOG_PATH = REPO_ROOT / "logs" / "calls.jsonl"
@@ -332,7 +333,7 @@ def _failure_match_consult(
     try:
         from workers.failure_match import match as _fm_match
         from workers.idea_ledger import load_state
-        state = load_state(REPO_ROOT / "memory" / "idea_ledger.jsonl")
+        state = load_state(DEFAULT_IDEA_LEDGER)
     except Exception:
         return None
     if not state:

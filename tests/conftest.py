@@ -17,6 +17,7 @@ import pytest
 
 from agent_wrapper import worker_activity
 from orchestrator import active_run, coordinator, coordinator_cycle_log
+from orchestrator import finding_promotion
 from orchestrator import finding_session, iteration_cache, nara
 from orchestrator import restate_skeptic
 from orchestrator import skill_signals
@@ -73,6 +74,17 @@ def _no_live_artifacts(tmp_path, monkeypatch):
                         tmp_path / "promotion_near_misses.jsonl")
     monkeypatch.setattr(coordinator, "DEFAULT_FOLLOWUPS",
                         tmp_path / "finding_followups.jsonl")
+    # LOOP_V1 (D-060) idea-ledger paths — same leak class as the run log:
+    # today the real memory/idea_ledger.jsonl does not exist, so unpatched
+    # tests pass BY ACCIDENT; the moment Wave-4 consolidation creates it,
+    # coordinator/promotion/nara tests would read (and promotion could
+    # APPEND to) real append-only state. Pinned by the 2026-08-14 review.
+    monkeypatch.setattr(coordinator, "DEFAULT_IDEA_LEDGER",
+                        tmp_path / "idea_ledger.jsonl")
+    monkeypatch.setattr(finding_promotion, "DEFAULT_IDEA_LEDGER",
+                        tmp_path / "idea_ledger.jsonl")
+    monkeypatch.setattr(nara, "DEFAULT_IDEA_LEDGER",
+                        tmp_path / "idea_ledger.jsonl")
     monkeypatch.setattr(nara, "_DEFAULT_LOG_PATH",
                         str(tmp_path / "calls.jsonl"))
     # topicality.check() is driven directly by nara (not via the runtime),

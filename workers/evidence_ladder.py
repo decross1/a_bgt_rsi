@@ -127,7 +127,10 @@ def _rung_l2(row: dict[str, Any]) -> tuple[bool, list[str]]:
     summary = outcome.get("summary")
     if not isinstance(summary, str):
         missing.append("experiment_outcome.summary absent")
-    elif "INVALID" in summary:
+    elif "INVALID" in summary.upper():
+        # Case-insensitive — the pre-D-059 gate used summary.upper() and a
+        # lowercase "invalid: harness crashed" must not pass L2 (2026-08-14
+        # review regression).
         missing.append("experiment_outcome.summary is INVALID")
 
     return (not missing, missing)

@@ -117,6 +117,25 @@ def test_persist_near_misses_appends_rows(tmp_path):
     assert len(path.read_text().splitlines()) == 1
 
 
+def test_persist_near_misses_keyed_dedup(tmp_path):
+    """P0 (LOOP_V1) zombie pin: the same (source_iteration_id, stage, reason)
+    re-persisted next cycle appends ZERO rows — the stalled 2026-08-05..14
+    loop re-appended the same ~140 rows/day, 5,513 rows of duplication."""
+    path = tmp_path / "promotion_near_misses.jsonl"
+    result = {"promoted": [], "near_misses": [
+        {"source_iteration_id": "iter-X", "reason": "quorum unmet",
+         "stage": "adversarial"},
+    ]}
+    co._persist_near_misses(result, path=path)
+    co._persist_near_misses(result, path=path)  # identical next cycle
+    assert len(path.read_text().splitlines()) == 1
+    # A genuinely new reason still appends.
+    co._persist_near_misses({"near_misses": [
+        {"source_iteration_id": "iter-X", "reason": "refuted 3/3",
+         "stage": "adversarial"}]}, path=path)
+    assert len(path.read_text().splitlines()) == 2
+
+
 # ── follow-up topic surfacing (the orphaned queue gets a consumer) ───────
 
 def test_followup_topics_surface_first(tmp_path, monkeypatch):

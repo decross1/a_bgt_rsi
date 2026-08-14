@@ -196,9 +196,19 @@ def synthesize(
                         "from this vendor (fail-open)", vendor, result["error"])
             continue
         proposals.extend(_vendor_proposals(vendor, result.get("text", ""), ts))
-    if proposals and not dry_run:
-        _append_rows(Path(agenda_path), proposals)
-    return proposals
+    # Re-run idempotency (2026-08-14 review): proposal_id hashes vendor+
+    # topic+rationale (deliberately ts-free), so an unchanged projection
+    # yields the SAME ids next week — skip ids already on the agenda file
+    # instead of appending duplicate `proposed` rows.
+    existing = set(load_agenda(agenda_path).keys())
+    fresh = [row for row in proposals if row["proposal_id"] not in existing]
+    skipped = len(proposals) - len(fresh)
+    if skipped:
+        log.info("frontier_agenda: %d proposal(s) already on the agenda, "
+                 "skipped (idempotent re-run)", skipped)
+    if fresh and not dry_run:
+        _append_rows(Path(agenda_path), fresh)
+    return fresh
 
 
 def load_agenda(path: str | Path = DEFAULT_AGENDA) -> dict[str, dict]:
@@ -253,6 +263,17 @@ def main(argv: list[str] | None = None) -> int:
     if not args.once:
         p.print_help(sys.stderr)
         return 2
+    # G1 ToS gate lives HERE, not only in the cron wrapper (2026-08-14
+    # review: `python -m orchestrator.frontier_agenda --once` bypassed the
+    # sentinel). A dry-run never calls vendors for real prompts is false —
+    # dry-run still invokes them — so BOTH modes require the sentinel.
+    sentinel = REPO_ROOT / "run_state" / "frontier_tos_ratified"
+    if not sentinel.exists():
+        print(f"REFUSE: G1 frontier ToS gate not cleared ({sentinel} absent). "
+              "Human creates the sentinel after the per-vendor ToS decision "
+              "(LOOP_V1 G1). This refusal is the designed dark state.",
+              file=sys.stderr)
+        return 3
     from agent_wrapper.frontier_cli import invoke_frontier
     state = load_state(args.ledger) if Path(args.ledger).exists() else {}
     proposals = synthesize(state, invoke_frontier,

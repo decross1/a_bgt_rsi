@@ -153,6 +153,16 @@ def test_stall_none_when_any_axis_active(executed, ledger_events):
     assert lh.detect_stall(_report(executed), ledger_events) is None
 
 
+def test_stall_none_on_other_substantive_actions():
+    """False-RED pin (2026-08-14 review): a cycle executing run_experiment /
+    mine_paper_gap / forecast_markets — exactly what the D-059 planner
+    orders for ladder gaps — is ACTIVE, not stalled."""
+    for action in ("run_experiment", "mine_paper_gap", "forecast_markets",
+                   "bubble_up"):
+        report = _report([{"action": action, "status": "passed"}])
+        assert lh.detect_stall(report, 0) is None, action
+
+
 def test_stall_fires_on_empty_pool_promote_pass():
     """The 2026-08-05..14 zombie shape: promote_findings executed + 'passed'
     but promoted NOTHING, no iteration, no ledger movement -> stalled."""
