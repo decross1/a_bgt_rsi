@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a-bgt-rsi.local/schema/task_packet.schema.json",
+  "title": "LOOP_V1 task packet",
+  "description": "One dispatchable unit of coding work handed to a coding agent. Every field is required and the shape is closed (additionalProperties:false): a packet that omits a budget, a rollback plan, or its forbidden actions is not dispatchable. Packets live under tasks/packets/PKT-*.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "objective",
+    "files_in_scope",
+    "files_out_of_scope",
+    "preconditions",
+    "acceptance_criteria",
+    "budgets",
+    "forbidden_actions",
+    "rollback"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "pattern": "^PKT-[A-Za-z0-9][A-Za-z0-9_-]*$",
+      "description": "Packet identifier; matches the filename stem under tasks/packets/."
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 2000,
+      "description": "What the packet accomplishes, stated so the acceptance test can falsify it."
+    },
+    "files_in_scope": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "Repo-relative paths the agent may create or edit. Everything else is out of bounds."
+    },
+    "files_out_of_scope": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "Paths explicitly named as untouchable (spine files, run_state/, ui/, ...). Redundant with files_in_scope by design -- belt and braces."
+    },
+    "preconditions": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "Shell commands that must each exit 0 before dispatch (e.g. a clean worktree check, a file-exists check)."
+    },
+    "acceptance_criteria": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["test_cmd", "must_fail_before"],
+      "properties": {
+        "test_cmd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The single shell command whose exit code decides done. Run once before work (must fail) and once after (must pass)."
+        },
+        "must_fail_before": {
+          "const": true,
+          "description": "Always true: a test that already passes proves nothing about the change (rule 4 -- validations are never coerced, including vacuous ones)."
+        }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_attempts", "wall_clock_minutes", "max_diff_lines"],
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Dispatch attempts before the packet escalates to the human."
+        },
+        "wall_clock_minutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60,
+          "description": "Per-attempt wall-clock cap."
+        },
+        "max_diff_lines": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Cap on added+removed lines in the produced diff (inviolate rule 8: bounded codegen)."
+        }
+      }
+    },
+    "forbidden_actions": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "description": "Actions the agent must not take (e.g. 'git push', 'edit files outside files_in_scope', 'install packages')."
+    },
+    "rollback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["branch_delete", "notes"],
+      "properties": {
+        "branch_delete": {
+          "type": "boolean",
+          "description": "Whether failure cleanup is simply deleting the work branch."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Any manual rollback steps beyond branch deletion; empty string when none."
+        }
+      }
+    }
+  }
+}

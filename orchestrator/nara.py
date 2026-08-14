@@ -313,6 +313,71 @@ def _hypothesize_retry(
         }
 
 
+def _failure_match_consult(
+    runtime: Runtime,
+    captured: dict,
+    iteration_id: str,
+    topic: str,
+    parent_request_id: str | None,
+) -> dict | None:
+    """LOOP_V1 P3 (D-060) — mandatory negative-memory consult after
+    hypothesize. Matches the hypothesis against the idea ledger's killed
+    clusters + pre-closed paper niches. On a match, ONE re-hypothesize runs
+    with the kill reason as the critique (adopt-or-reject made mechanical):
+    resolution "adopt" = the hypothesis was revised away from the dead
+    ground; "reject" = the revision failed/stood, the match is recorded and
+    the chain proceeds (never blocks). A missing/empty ledger is the
+    legitimate pre-consolidation state -> None. Returns the record's
+    idea_ledger.failure_match block (or None when no ledger/no match)."""
+    try:
+        from workers.failure_match import match as _fm_match
+        from workers.idea_ledger import load_state
+        state = load_state(REPO_ROOT / "memory" / "idea_ledger.jsonl")
+    except Exception:
+        return None
+    if not state:
+        return None
+    hyp_text = (captured.get("hypothesis") or {}).get("text") or ""
+    if not hyp_text.strip():
+        return None
+    try:
+        res = _fm_match(hyp_text, state)
+    except Exception:
+        return None
+    if res.get("status") == "none":
+        return None
+    kr = res.get("kill_reason") if isinstance(res.get("kill_reason"), dict) else {}
+    kill_code = kr.get("code")
+    runtime.log_event({
+        "event_type": "loop_v0_failure_match",
+        "iteration_id": iteration_id,
+        "matched_cluster_id": res.get("matched_cluster_id"),
+        "match_status": res.get("status"),
+        "kill_reason": kill_code,
+        "parent_request_id": parent_request_id,
+    })
+    resolution = "reject"
+    if res.get("delta_required"):
+        critique = (
+            f"This ground is CLOSED in the idea ledger "
+            f"({res.get('status')}: {kill_code or 'prior work'} — "
+            f"{kr.get('detail') or 'no detail'}). Either articulate a "
+            f"concrete delta the closed claim lacks, or propose a "
+            f"materially different mechanism."
+        )
+        revised = _hypothesize_retry(runtime, topic, critique, parent_request_id)
+        if (isinstance(revised, dict) and revised.get("status") == "passed"
+                and isinstance(revised.get("result"), dict)):
+            captured["hypothesis"] = revised["result"]
+            iteration_cache.write_entry(iteration_id, "hypothesis", revised)
+            resolution = "adopt"
+    return {
+        "matched_cluster_id": res.get("matched_cluster_id"),
+        "kill_reason": kill_code,
+        "resolution": resolution,
+    }
+
+
 def _initial_active(
     iteration_id: str,
     topic: str,
@@ -550,6 +615,10 @@ def _run_iteration_impl(
     # attempts at 2.
     redteam_result: dict | None = None
     redteam_retries = 0
+    # LOOP_V1 P3 (D-060) — negative-memory consult state; set once after
+    # hypothesize lands (fires at most once per iteration).
+    failure_match_block: dict | None = None
+    failure_match_done = False
     # Slice-2 ML-Intern (D-038) — orchestrator-driven topic-based S2
     # backfill. Fires at most ONCE per iteration when retrieve_literature
     # signals escalation; the guard stops a re-escalating weak topic from
@@ -843,6 +912,17 @@ def _run_iteration_impl(
                         iteration_id, cache_key, tool_result
                     )
 
+                # LOOP_V1 P3 (D-060) — DETERMINISTIC negative-memory consult.
+                # Runs BEFORE red-team so the red-team attacks the final
+                # (possibly revised) hypothesis. Orchestrator-driven, not a
+                # Nara tool; at most once per iteration; never blocks.
+                if (name == "hypothesize" and "hypothesis" in captured
+                        and not failure_match_done):
+                    failure_match_done = True
+                    failure_match_block = _failure_match_consult(
+                        runtime, captured, iteration_id, topic, last_id,
+                    )
+
                 # Loop v1 Step 2.5 — DETERMINISTIC red-team retry sub-loop.
                 # After hypothesize lands, red-team the hypothesis ITSELF
                 # before downstream budget is spent. This is orchestrator-
@@ -1104,6 +1184,10 @@ def _run_iteration_impl(
         rt_res = dict(redteam_result["result"])
         rt_res["retries_used"] = redteam_retries
         record["redteam"] = rt_res
+
+    # LOOP_V1 P3 (D-060) — store the negative-memory consult outcome.
+    if failure_match_block is not None:
+        record["idea_ledger"] = {"failure_match": failure_match_block}
 
     # Loop v1 Step 8 — open the human gate. A verdict is written later via
     # orchestrator.gate_cli to memory/loop_feedback.jsonl.

@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/decross1/a_bgt_rsi/schema/idea_ledger.schema.json",
+  "title": "Idea-ledger event record",
+  "description": "One line of memory/idea_ledger.jsonl (LOOP_V1 P3, D-060). The ledger is an APPEND-ONLY event log; all cluster state is a deterministic reduction (workers/idea_ledger.py). Discriminated on event_type. Eight members: cluster_created, member_added, evidence_level_changed, cluster_killed, cluster_reopened, niche_seeded, agenda_item_added, agenda_item_consumed. kill_reason codes are a closed enum — programmatic builders only, never LLM prose (Honest Lying 0/121 result).",
+  "type": "object",
+  "$defs": {
+    "ts": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 / RFC 3339 UTC timestamp of the event."
+    },
+    "cluster_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable cluster (niche) identifier, e.g. 'cl-2026-08-14-001'."
+    },
+    "member_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Member identifier — normally an iteration_id."
+    },
+    "evidence_level": {
+      "type": "string",
+      "enum": ["L0", "L1", "L2", "L3", "L4", "L5"],
+      "description": "Evidence-ladder rung (workers/evidence_ladder.py derivation)."
+    },
+    "claim": {
+      "type": "object",
+      "description": "Canonical claim record (workers/claim_extract.py shape).",
+      "required": ["problem", "mechanism", "predicted_effect"],
+      "properties": {
+        "problem": {"type": "string"},
+        "mechanism": {"type": "string"},
+        "predicted_effect": {"type": "string"},
+        "evidence_ref": {"type": "object"}
+      }
+    },
+    "kill_reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "evidence_key", "detail"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "redteam_fatal_flaw",
+            "adversarial_refuted",
+            "experiment_invalid",
+            "experiment_null_effect",
+            "paper_prior_exists"
+          ],
+          "description": "Closed enum — built ONLY by the programmatic builders in workers/idea_ledger.py."
+        },
+        "evidence_key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Pointer to the condemning evidence, e.g. 'iteration:<id>:redteam'."
+        },
+        "detail": {
+          "type": "string",
+          "description": "Deterministic template text assembled from structured fields — never free LLM prose."
+        }
+      }
+    },
+    "reopening_condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requires", "evidence_kind"],
+      "properties": {
+        "requires": {"const": "new_evidence"},
+        "evidence_kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The kind of new evidence that reopens the cluster, e.g. 'articulated_delta', 'replication', 'experiment_rerun'."
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "title": "cluster_created",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_type", "ts", "cluster_id", "origin", "member_id"],
+      "properties": {
+        "event_type": {"const": "cluster_created"},
+        "ts": {"$ref": "#/$defs/ts"},
+        "cluster_id": {"$ref": "#/$defs/cluster_id"},
+        "origin": {
+          "type": "string",
+          "enum": ["iteration", "paper_gap", "consolidation", "manual"],
+          "description": "Where the founding member came from."
+        },
+        "member_id": {"$ref": "#/$defs/member_id"},
+        "iteration_id": {"type": "string"},
+        "claim": {"$ref": "#/$defs/claim"},
+        "evidence_level": {"$ref": "#/$defs/evidence_level"}
+      }
+    },
+    {
+      "title": "member_added",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_type", "ts", "cluster_id", "member_id"],
+      "properties": {
+        "event_type": {"const": "member_added"},
+        "ts": {"$ref": "#/$defs/ts"},
+        "cluster_id": {"$ref": "#/$defs/cluster_id"},
+        "member_id": {"$ref": "#/$defs/member_id"},
+        "iteration_id": {"type": "string"},
+        "claim": {"$ref": "#/$defs/claim"},
+        "as_elite": {
+          "type": "boolean",
+          "description": "True when accept_candidate judged this member equivalent-or-better than the incumbent elite; the reducer promotes it (claim required)."
+        },
+        "accept_reason": {
+          "type": "string",
+          "description": "The accept_candidate reason string, for audit."
+        }
+      }
+    },
+    {
+      "title": "evidence_level_changed",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_type", "ts", "cluster_id", "evidence_level"],
+      "properties": {
+        "event_type": {"const": "evidence_level_changed"},
+        "ts": {"$ref": "#/$defs/ts"},
+        "cluster_id": {"$ref": "#/$defs/cluster_id"},
+        "evidence_level": {"$ref": "#/$defs/evidence_level"},
+        "basis": {
+          "type": "string",
+          "description": "Pointer to the derivation basis, e.g. 'evidence_ladder:iter-...'."
+        }
+      }
+    },
+    {
+      "title": "cluster_killed",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_type", "ts", "cluster_id", "kill_reason", "reopening_condition"],
+      "properties": {
+        "event_type": {"const": "cluster_killed"},
+        "ts": {"$ref": "#/$defs/ts"},
+        "cluster_id": {"$ref": "#/$defs/cluster_id"},
+        "kill_reason": {"$ref": "#/$defs/kill_reason"},
+        "reopening_condition": {"$ref": "#/$defs/reopening_condition"}
+      }
+    },
+    {
+      "title": "cluster_reopened",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_type", "ts", "cluster_id", "evidence"],
+      "properties": {
+        "event_type": {"const": "cluster_reopened"},
+        "ts": {"$ref": "#/$defs/ts"},
+        "cluster_id": {"$ref": "#/$defs/cluster_id"},
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["evidence_kind"],
+          "properties": {
+            "evidence_kind": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Must match the killed cluster's reopening_condition.evidence_kind — the reducer REFUSES a mismatched reopen (rule 4)."
+            },
+            "evidence_key": {"type": "string"},
+            "detail": {"type": "string"}
+          }
+        }
+      }
+    },
+    {
+      "title": "niche_seeded",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_type", "ts", "cluster_id", "paper"],
+      "properties": {
+        "event_type": {"const": "niche_seeded"},
+        "ts": {"$ref": "#/$defs/ts"},
+        "cluster_id": {"$ref": "#/$defs/cluster_id"},
+        "paper": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["arxiv_id", "title"],
+          "properties": {
+            "arxiv_id": {"type": "string", "minLength": 1},
+            "title": {"type": "string", "minLength": 1},
+            "abstract": {"type": "string"}
+          }
+        }
+      }
+    },
+    {
+      "title": "agenda_item_added",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_type", "ts", "cluster_id", "topic", "source"],
+      "properties": {
+        "event_type": {"const": "agenda_item_added"},
+        "ts": {"$ref": "#/$defs/ts"},
+        "cluster_id": {"$ref": "#/$defs/cluster_id"},
+        "topic": {"type": "string", "minLength": 1},
+        "source": {
+          "type": "string",
+          "enum": ["paper_gap", "frontier_proposed", "ladder_gap", "human"],
+          "description": "Provenance of the agenda item (frontier items land status: proposed upstream; only accepted ones reach this ledger)."
+        }
+      }
+    },
+    {
+      "title": "agenda_item_consumed",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_type", "ts", "cluster_id", "topic"],
+      "properties": {
+        "event_type": {"const": "agenda_item_consumed"},
+        "ts": {"$ref": "#/$defs/ts"},
+        "cluster_id": {"$ref": "#/$defs/cluster_id"},
+        "topic": {"type": "string", "minLength": 1},
+        "consumed_by": {
+          "type": "string",
+          "description": "e.g. the iteration_id the topic seeded."
+        }
+      }
+    }
+  ]
+}

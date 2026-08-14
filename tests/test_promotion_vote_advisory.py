@@ -1,25 +1,23 @@
-"""D-053: the NON-GATING adversarial PROMOTION vote (mirrors D-052).
+"""D-059: the evidence ladder supersedes D-053's advisory flip.
 
-D-053 demotes the adversarial promotion vote from a GATE to a NON-GATING
-advisory, env-gated DARK by default:
+The adversarial promotion vote is now the L3->L4 rung — neither a binary
+gate nor a non-gating advisory:
 
-  - Flag OFF (default, NARA_PROMOTION_VOTE_ADVISORY unset): EXACTLY today's
-    behavior — a 3/3-refuted candidate does NOT promote, and the promoted
-    finding carries NO advisory field. Byte-identical to before.
-  - Flag ON (NARA_PROMOTION_VOTE_ADVISORY=1): a candidate that cleared
-    _passes_threshold (novel + survives) PROMOTES regardless of the vote; the
-    vote still RUNS (so its opinion is captured) and rides on the surfaced
-    finding as an ADDITIVE `promotion_vote_advisory: {n_refuted, n_voting,
-    survived, margin}` — recorded, never blocking. The vote's real outcome is
-    NEVER silently coerced (inviolate rule 4): a 3/3 refute stays survived=False
-    in the advisory even though the finding promotes.
-  - NARA_PROMOTION_MAX_CANDIDATES (int): when set, lifts/overrides the
-    max_candidates cap (for the cargo experiment). Unset = today's default.
+  - The retired NARA_PROMOTION_VOTE_ADVISORY flag is INERT: a 3/3-refuted
+    candidate never promotes, no matter the env.
+  - The vote runs ONLY on candidates already at L3 (a below-L3 candidate is
+    near-missed with the exact test it owes, and no Qwen spend happens).
+  - Surfacing requires the post-vote derived level to reach L4+, which
+    consults BOTH previously-ignored negatives: the vote outcome AND
+    redteam.verdict == "proceed".
+  - NARA_PROMOTION_MAX_CANDIDATES (int): unchanged — when set, lifts/
+    overrides the max_candidates cap. Unset = the caller's value.
+  - NARA_FRONTIER_SCREEN (D-061): DARK by default — unset leaves the funnel
+    frontier-free (no frontier near-misses, no frontier_screen annotation).
 
-These tests pin those properties. They reuse the same offline harness as
-tests/test_finding_promotion.py: run_subagent (the Qwen skeptics) and call_sync
-(the Gemma synthesis) are monkeypatched, so nothing leaves the process under
-MOCK_LLM=1, and all jsonl fixtures live in tmp_path.
+Same offline harness as tests/test_finding_promotion.py: run_subagent (the
+Qwen skeptics) and call_sync (the Gemma synthesis) are monkeypatched, so
+nothing leaves the process under MOCK_LLM=1; all jsonl fixtures in tmp_path.
 
 Run standalone:
     MOCK_LLM=1 ./.venv-chroma/bin/python -m pytest tests/test_promotion_vote_advisory.py
@@ -41,8 +39,12 @@ from orchestrator.subagent import SubAgentResult
 
 
 def _row(iid, *, novelty="novel", critic="survives",
-         hypothesis="Unprimed LLMs rediscover strategyproof truthful bidding."):
-    return {
+         hypothesis="Unprimed LLMs rediscover strategyproof truthful bidding.",
+         exp="default", redteam="proceed", relevance=True, ctc=True):
+    if exp == "default":
+        exp = {"experiment_id": "exp_fixture", "metric": "m", "value": 1.0,
+               "trials": 1000, "summary": "Verdict=YES. fixture effect +0.8%."}
+    r = {
         "iteration_id": iid,
         "started_at": "2026-06-01T00:00:00Z",
         "ended_at": "2026-06-01T00:01:00Z",
@@ -56,6 +58,17 @@ def _row(iid, *, novelty="novel", critic="survives",
         "model_version": "test",
         "wrapper_call_ids": ["x"],
     }
+    if relevance:
+        r["retrieval"] = {"relevance": {"relevance": 0.8, "low_confidence": False,
+                                        "reason": "fixture"}}
+    if redteam is not None:
+        r["redteam"] = {"verdict": redteam, "critique": f"redteam {iid}",
+                        "confidence": 0.8}
+    if exp is not None:
+        r["experiment_outcome"] = exp
+    if ctc:
+        r["cross_tier_comparison"] = {"replicated": True, "note": "fixture"}
+    return r
 
 
 def _write_jsonl(path: Path, rows):
@@ -105,13 +118,13 @@ def _stub_synthesis(monkeypatch):
     monkeypatch.setattr(fp, "call_sync", stub)
 
 
-# ── 1. flag OFF (DARK default): the vote still gates; no advisory field ──
+# ── 1. the retired advisory flag is INERT ──────────────────────────────
 
 
-def test_flag_off_three_of_three_refuted_not_promoted(monkeypatch, tmp_path):
-    """NARA_PROMOTION_VOTE_ADVISORY unset: a 3/3-refuted candidate is NOT
-    promoted (today's gate) and lands as an adversarial near_miss."""
-    monkeypatch.delenv("NARA_PROMOTION_VOTE_ADVISORY", raising=False)
+def test_refuted_never_promotes_even_with_retired_flag_set(monkeypatch, tmp_path):
+    """A 3/3-refuted candidate never promotes — NARA_PROMOTION_VOTE_ADVISORY=1
+    is dead env (D-059 retired the D-053 flip)."""
+    monkeypatch.setenv("NARA_PROMOTION_VOTE_ADVISORY", "1")
     p = _paths(tmp_path)
     _write_jsonl(p["loop_memory_path"], [_row("iter-2026-06-01-001")])
     _stub_skeptics(monkeypatch, ["refuted", "refuted", "refuted"])
@@ -123,146 +136,104 @@ def test_flag_off_three_of_three_refuted_not_promoted(monkeypatch, tmp_path):
     assert "refuted" in nm[0]["reason"]
 
 
-def test_flag_off_promoted_finding_has_no_advisory_field(monkeypatch, tmp_path):
-    """Flag OFF: a survivor promotes WITHOUT a promotion_vote_advisory key — the
-    OFF-path finding is byte-identical to before."""
-    monkeypatch.delenv("NARA_PROMOTION_VOTE_ADVISORY", raising=False)
+def test_promoted_finding_has_no_advisory_field(monkeypatch, tmp_path):
+    """No promotion_vote_advisory key exists anymore — the vote outcome lives
+    in `adversarial` and the derived `evidence_level`."""
     p = _paths(tmp_path)
     _write_jsonl(p["loop_memory_path"], [_row("iter-2026-06-01-001")])
     _stub_skeptics(monkeypatch, ["stands", "stands", "stands"])
     _stub_synthesis(monkeypatch)
     out = fp.promote_findings(**p, n_skeptics=3)
     assert len(out["promoted"]) == 1
-    assert "promotion_vote_advisory" not in out["promoted"][0]
-    # And the persisted line carries no advisory either.
-    line = p["surfaced_path"].read_text().splitlines()[0]
-    assert "promotion_vote_advisory" not in json.loads(line)
+    finding = out["promoted"][0]
+    assert "promotion_vote_advisory" not in finding
+    assert finding["evidence_level"] == "L4"
+    line = json.loads(p["surfaced_path"].read_text().splitlines()[0])
+    assert "promotion_vote_advisory" not in line
+    assert line["evidence_level"] == "L4"
 
 
-# ── 2. flag ON: the same 3/3-refuted candidate PROMOTES with the advisory ──
+# ── 2. the ladder is the gate ──────────────────────────────────────────
 
 
-def test_flag_on_three_of_three_refuted_is_promoted_with_advisory(
-    monkeypatch, tmp_path
-):
-    """NARA_PROMOTION_VOTE_ADVISORY=1: the same 3/3-refuted candidate IS
-    promoted AND carries promotion_vote_advisory recording the REAL vote
-    outcome (survived=False, n_refuted=3) — recorded, never coerced (rule 4)."""
-    monkeypatch.setenv("NARA_PROMOTION_VOTE_ADVISORY", "1")
+def test_survivor_without_redteam_proceed_capped_below_l4(monkeypatch, tmp_path):
+    """Vote survived but redteam absent -> derived level < L4 -> near_miss at
+    the ladder stage (the second previously-ignored negative is load-bearing)."""
     p = _paths(tmp_path)
-    _write_jsonl(p["loop_memory_path"], [_row("iter-2026-06-01-001")])
-    _stub_skeptics(monkeypatch, ["refuted", "refuted", "refuted"])
+    _write_jsonl(p["loop_memory_path"],
+                 [_row("iter-2026-06-01-001", redteam=None)])
+    _stub_skeptics(monkeypatch, ["stands", "stands", "stands"])
     _stub_synthesis(monkeypatch)
     out = fp.promote_findings(**p, n_skeptics=3)
-    assert len(out["promoted"]) == 1
-    adv = out["promoted"][0]["promotion_vote_advisory"]
-    assert adv == {
-        "n_refuted": 3, "n_voting": 3, "survived": False, "margin": -3
-    }
-    # The vote's verdict is recorded, NOT silently coerced into survival.
-    assert out["promoted"][0]["adversarial"]["survived"] is False
-    # The dissent is still surfaced as a near_miss (observable, never silent).
-    assert any(n["stage"] == "adversarial" for n in out["near_misses"])
-    # Persisted line carries the advisory too.
-    line = p["surfaced_path"].read_text().splitlines()[0]
-    assert json.loads(line)["promotion_vote_advisory"]["survived"] is False
+    assert out["promoted"] == []
+    nm = [n for n in out["near_misses"] if n["stage"] == "ladder"]
+    assert len(nm) == 1
+    assert "redteam" in nm[0]["reason"]
 
 
-def test_flag_on_survivor_records_true_outcome(monkeypatch, tmp_path):
-    """Flag ON, a genuine 3/3-stands survivor: it promotes AND its advisory
-    records survived=True (the real outcome, not a blanket override)."""
-    monkeypatch.setenv("NARA_PROMOTION_VOTE_ADVISORY", "1")
+def test_below_l3_candidate_defers_vote_no_qwen_spend(monkeypatch, tmp_path):
+    """A literature-only candidate (no experiment) is near-missed with the
+    test it owes and the Qwen skeptics are never invoked."""
+    p = _paths(tmp_path)
+    _write_jsonl(p["loop_memory_path"],
+                 [_row("iter-2026-06-01-001", exp=None, ctc=False)])
+    calls = _stub_skeptics(monkeypatch, ["stands", "stands", "stands"])
+    _stub_synthesis(monkeypatch)
+    out = fp.promote_findings(**p, n_skeptics=3)
+    assert out["promoted"] == []
+    nm = [n for n in out["near_misses"] if n["stage"] == "ladder"]
+    assert len(nm) == 1
+    assert "vote deferred" in nm[0]["reason"]
+    assert calls["i"] == 0  # no skeptic spend below L3
+
+
+def test_frontier_screen_dark_by_default(monkeypatch, tmp_path):
+    """NARA_FRONTIER_SCREEN unset: no frontier near-misses, no annotation."""
+    monkeypatch.delenv("NARA_FRONTIER_SCREEN", raising=False)
     p = _paths(tmp_path)
     _write_jsonl(p["loop_memory_path"], [_row("iter-2026-06-01-001")])
     _stub_skeptics(monkeypatch, ["stands", "stands", "stands"])
     _stub_synthesis(monkeypatch)
     out = fp.promote_findings(**p, n_skeptics=3)
     assert len(out["promoted"]) == 1
-    adv = out["promoted"][0]["promotion_vote_advisory"]
-    assert adv == {
-        "n_refuted": 0, "n_voting": 3, "survived": True, "margin": 3
-    }
+    assert "frontier_screen" not in out["promoted"][0]
+    assert all(n["stage"] != "frontier" for n in out["near_misses"])
+    assert not fp._frontier_screen_enabled()
 
 
-def test_flag_on_inconclusive_quorum_still_promotes_with_advisory(
-    monkeypatch, tmp_path
-):
-    """Flag ON: even an unmet-quorum (inconclusive) vote does not block a
-    threshold-passer; the advisory records the real n_voting below quorum."""
-    monkeypatch.setenv("NARA_PROMOTION_VOTE_ADVISORY", "1")
-    p = _paths(tmp_path)
-    _write_jsonl(p["loop_memory_path"], [_row("iter-2026-06-01-001")])
-    # 2 timeouts + 1 stands -> n_voting=1 < quorum=2 (inconclusive).
-    _stub_skeptics(monkeypatch, ["timeout", "timeout", "stands"])
-    _stub_synthesis(monkeypatch)
-    out = fp.promote_findings(**p, n_skeptics=3)
-    assert len(out["promoted"]) == 1
-    adv = out["promoted"][0]["promotion_vote_advisory"]
-    assert adv["n_voting"] == 1
-    assert adv["survived"] is False
-    assert out["qwen_failures"] == 2
-    assert any("inconclusive" in n["reason"] for n in out["near_misses"])
-
-
-# ── 3. NARA_PROMOTION_MAX_CANDIDATES lifts the cap ─────────────────────
+# ── 3. NARA_PROMOTION_MAX_CANDIDATES (unchanged by D-059) ──────────────
 
 
 def test_max_candidates_env_lifts_caller_cap(monkeypatch, tmp_path):
-    """NARA_PROMOTION_MAX_CANDIDATES=3 overrides a caller max_candidates=1:
-    all three gate-survivors are voted + promoted (the cargo lever)."""
-    monkeypatch.setenv("NARA_PROMOTION_MAX_CANDIDATES", "3")
-    monkeypatch.delenv("NARA_PROMOTION_VOTE_ADVISORY", raising=False)
-    p = _paths(tmp_path)
-    rows = [_row(f"iter-2026-06-01-00{i}") for i in range(1, 4)]
-    _write_jsonl(p["loop_memory_path"], rows)
-    calls = _stub_skeptics(monkeypatch, ["stands"] * 9)
-    _stub_synthesis(monkeypatch)
-    out = fp.promote_findings(**p, max_candidates=1, n_skeptics=3)
-    assert len(out["promoted"]) == 3       # cap lifted from 1 -> 3
-    assert calls["i"] == 9                  # 3 candidates * 3 skeptics
-    assert not any("capped" in n["reason"] for n in out["near_misses"])
-
-
-def test_max_candidates_env_unset_keeps_caller_cap(monkeypatch, tmp_path):
-    """Env UNSET (dark default): the caller's max_candidates=1 is honored
-    exactly as today — two survivors are capped."""
-    monkeypatch.delenv("NARA_PROMOTION_MAX_CANDIDATES", raising=False)
-    p = _paths(tmp_path)
-    rows = [_row(f"iter-2026-06-01-00{i}") for i in range(1, 4)]
-    _write_jsonl(p["loop_memory_path"], rows)
-    calls = _stub_skeptics(monkeypatch, ["stands"] * 9)
-    _stub_synthesis(monkeypatch)
-    out = fp.promote_findings(**p, max_candidates=1, n_skeptics=3)
-    assert len(out["promoted"]) == 1
-    assert calls["i"] == 3
-    assert len([n for n in out["near_misses"] if "capped" in n["reason"]]) == 2
-
-
-def test_max_candidates_env_bad_value_ignored(monkeypatch, tmp_path):
-    """A non-int env value is IGNORED (never silently coerced) — the caller's
-    cap stands."""
-    monkeypatch.setenv("NARA_PROMOTION_MAX_CANDIDATES", "not-an-int")
+    monkeypatch.setenv("NARA_PROMOTION_MAX_CANDIDATES", "2")
     p = _paths(tmp_path)
     rows = [_row(f"iter-2026-06-01-00{i}") for i in range(1, 4)]
     _write_jsonl(p["loop_memory_path"], rows)
     _stub_skeptics(monkeypatch, ["stands"] * 9)
     _stub_synthesis(monkeypatch)
-    out = fp.promote_findings(**p, max_candidates=1, n_skeptics=3)
-    assert len(out["promoted"]) == 1       # bad env ignored, cap=1 stands
+    out = fp.promote_findings(**p, n_skeptics=3, max_candidates=1)
+    assert len(out["promoted"]) == 2
+    capped = [n for n in out["near_misses"] if "capped" in n["reason"]]
+    assert len(capped) == 1
 
 
-# ── 4. dark-default byte-identical (helpers are no-ops when unset) ─────
-
-
-def test_helpers_dark_by_default(monkeypatch):
-    """With both env flags unset the D-053 helpers are no-ops: the vote stays
-    gating and the cap is the caller's value unchanged."""
-    monkeypatch.delenv("NARA_PROMOTION_VOTE_ADVISORY", raising=False)
+def test_max_candidates_env_unset_keeps_caller_cap(monkeypatch, tmp_path):
     monkeypatch.delenv("NARA_PROMOTION_MAX_CANDIDATES", raising=False)
-    assert fp._promotion_vote_advisory() is False
-    assert fp._max_candidates_override(None) is None
-    assert fp._max_candidates_override(3) == 3
+    p = _paths(tmp_path)
+    rows = [_row(f"iter-2026-06-01-00{i}") for i in range(1, 4)]
+    _write_jsonl(p["loop_memory_path"], rows)
+    _stub_skeptics(monkeypatch, ["stands"] * 9)
+    _stub_synthesis(monkeypatch)
+    out = fp.promote_findings(**p, n_skeptics=3, max_candidates=1)
+    assert len(out["promoted"]) == 1
 
 
-if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__, "-v"]))
+def test_max_candidates_env_bad_value_ignored(monkeypatch, tmp_path):
+    monkeypatch.setenv("NARA_PROMOTION_MAX_CANDIDATES", "not-an-int")
+    p = _paths(tmp_path)
+    rows = [_row(f"iter-2026-06-01-00{i}") for i in range(1, 3)]
+    _write_jsonl(p["loop_memory_path"], rows)
+    _stub_skeptics(monkeypatch, ["stands"] * 6)
+    _stub_synthesis(monkeypatch)
+    out = fp.promote_findings(**p, n_skeptics=3, max_candidates=1)
+    assert len(out["promoted"]) == 1

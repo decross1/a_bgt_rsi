@@ -23,6 +23,7 @@ from agent_wrapper.wrapper import call_sync
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOOP_MEMORY = REPO_ROOT / "memory" / "loop_memory.jsonl"
 DEFAULT_FEEDBACK = REPO_ROOT / "memory" / "loop_feedback.jsonl"
+DEFAULT_IDEA_LEDGER = REPO_ROOT / "memory" / "idea_ledger.jsonl"
 
 CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 
@@ -236,6 +237,22 @@ def meta_review(
             "wrapper_request_id": wrapper_rid,
             "parent_request_id": parent_request_id,
         }
+
+    # LOOP_V1 P3 (D-060): append the idea-ledger projection's deterministic
+    # conditioning lines (graveyard adjacency + agenda context) so generation
+    # sees the negative memory. Additive, capped, and fail-open — a missing/
+    # empty ledger (pre-consolidation) changes nothing.
+    try:
+        from workers.idea_ledger import load_state
+        from workers.idea_projection import conditioning_lines
+        state = load_state(DEFAULT_IDEA_LEDGER)
+        if state:
+            topic = str((rows[-1].get("seed") or {}).get("topic") or "")
+            extra = [ln for ln in conditioning_lines(state, topic)
+                     if isinstance(ln, str) and ln.strip()][:3]
+            bullets = (bullets + extra)[:8]
+    except Exception:
+        pass
 
     return {
         "status": "passed",

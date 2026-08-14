@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a-bgt-rsi.local/schema/frontier_call.schema.json",
+  "title": "LOOP_V1 frontier-call ledger row",
+  "description": "One row of run_state/frontier_calls.jsonl, appended by agent_wrapper.frontier_cli.invoke_frontier BEFORE every return (real, mock, and every error path). The writer is the source of truth for this shape: it always writes the eight required fields, with verdict always null at that layer (the review layer owns verdicts). candidate_id and reasoning_digest are declared per LOOP_V1 P2 for the review layer's rows (the frontier-vs-local calibration join key and digest) but are OPTIONAL here because frontier_cli does not write them. Append-only ledger; rows are never edited.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "timestamp",
+    "vendor",
+    "cli_version",
+    "role",
+    "verdict",
+    "duration_ms",
+    "exit_code",
+    "prompt_sha256"
+  ],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC ISO 8601 with trailing Z, e.g. 2026-08-14T12:00:00.000000Z."
+    },
+    "vendor": {
+      "type": "string",
+      "enum": ["claude", "codex"],
+      "description": "Which frontier CLI was invoked (frontier_cli._VENDOR_BINARIES)."
+    },
+    "cli_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Output of `<cli> --version` (memoized per process); 'unknown' when the probe fails; 'mock' under MOCK_LLM."
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Caller-declared role for the call, e.g. methods_reviewer / novelty_reviewer."
+    },
+    "candidate_id": {
+      "type": ["string", "null"],
+      "description": "Join key vs the local (Qwen) vote fields for the frontier-vs-local calibration dataset (LOOP_V1 P2). Review-layer field; frontier_cli does not write it."
+    },
+    "verdict": {
+      "type": ["string", "null"],
+      "enum": ["veto", "pass", "inconclusive", null],
+      "description": "Always null at the frontier_cli layer -- the review layer owns verdicts."
+    },
+    "reasoning_digest": {
+      "type": ["string", "null"],
+      "description": "Short digest of the reviewer's reasoning (LOOP_V1 P2). Review-layer field; frontier_cli does not write it."
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Wall-clock milliseconds for the call; 0 under MOCK_LLM."
+    },
+    "exit_code": {
+      "type": "integer",
+      "description": "CLI process exit code; -1 on timeout, 127 on launch failure, 0 under MOCK_LLM."
+    },
+    "prompt_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 hex digest of the exact prompt string (the prompt itself is never logged)."
+    }
+  }
+}

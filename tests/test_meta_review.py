@@ -16,6 +16,15 @@ sys.path.insert(0, str(REPO_ROOT))
 from workers import meta_review as mr_mod
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_idea_ledger(tmp_path, monkeypatch):
+    """D-060 hermeticity: meta_review appends idea-ledger conditioning lines
+    from DEFAULT_IDEA_LEDGER — point it at a nonexistent tmp path so these
+    tests never read the real repo ledger."""
+    monkeypatch.setattr(mr_mod, "DEFAULT_IDEA_LEDGER",
+                        tmp_path / "no_idea_ledger.jsonl")
+
+
 def _fake_call_sync(completion_text: str, request_id: str = "req-mr"):
     def stub(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=None,
              caller_tag="unspecified", parent_request_id=None,

@@ -41,6 +41,7 @@ from workers.retrieval_relevance import _neighbor_overlap, _tokenize
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOOP_MEMORY = REPO_ROOT / "memory" / "loop_memory.jsonl"
 DEFAULT_FOLLOWUPS = REPO_ROOT / "memory" / "finding_followups.jsonl"
+DEFAULT_IDEA_LEDGER = REPO_ROOT / "memory" / "idea_ledger.jsonl"
 DEFAULT_LEDGER = REPO_ROOT / "memory" / "topic_proposals.jsonl"
 DEFAULT_EMBED_CACHE = REPO_ROOT / "run_state" / "loop_memory_embeddings.json"
 PAPERS_RECENT = "papers_recent"
@@ -347,6 +348,29 @@ def mine_paper_gap(
             "created_at": _utcnow(),
         })
         emitted_topics.append(c["title"])
+        # LOOP_V1 P3 (D-060): survivors ALSO land on the idea-ledger agenda
+        # as pre-closed paper niches + agenda candidates, so topic selection
+        # is agenda-first and the mined paper's claim is closed ground that a
+        # future hypothesis must beat with a delta. Fail-open: a missing
+        # ledger (pre-consolidation) skips silently; the followups row above
+        # is unchanged either way.
+        try:
+            from workers.idea_ledger import append_event, load_state
+            lp = DEFAULT_IDEA_LEDGER
+            state = load_state(lp)
+            cid = f"cl-paper-{c['arxiv_id'].replace('/', '_')}"
+            ts = _utcnow()
+            if cid not in state:
+                append_event(lp, {"event_type": "niche_seeded", "ts": ts,
+                                  "cluster_id": cid,
+                                  "paper": {"arxiv_id": c["arxiv_id"],
+                                            "title": c["title"],
+                                            "abstract": c["abstract"] or ""}})
+                append_event(lp, {"event_type": "agenda_item_added", "ts": ts,
+                                  "cluster_id": cid, "topic": c["title"],
+                                  "source": "paper_gap"})
+        except Exception:
+            pass
 
     summary = {
         "sampled": len(papers),

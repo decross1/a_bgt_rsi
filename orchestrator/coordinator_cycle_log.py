@@ -228,6 +228,17 @@ def cycle_row_from_report(
         "outcomes": outcomes,
         "promoted_finding_ids": promoted,
         "bubble_run_ids": bubble_run_ids,
+        # P0 (LOOP_V1) forensics: the planner's actual input (compacted) and
+        # its rejected/replanned attempts — the 2026-08 stall was undiagnosable
+        # from the cycles log because both were dropped here.
+        "planner_state": {
+            "gaps": list(state.get("gaps") or []),
+            "topic_suggestions": suggestions if isinstance(suggestions, list) else [],
+            "n_recent_findings": len(state.get("recent_findings") or []),
+            "n_surfaced_pending": len(state.get("surfaced_pending") or []),
+            "n_open_threads": len(state.get("open_threads") or []),
+        },
+        "planner_attempts": report.get("attempts") or [],
     }
     if dispatched is not None:
         out["dispatched_iteration_id"] = dispatched
@@ -360,6 +371,7 @@ def emit_health_signals(
     health_path: str | os.PathLike | None = None,
     run_log_path: str | os.PathLike | None = None,
     calls_log_path: str | os.PathLike | None = None,
+    alert_flag_path: str | os.PathLike | None = None,
 ) -> list[dict[str, Any]]:
     """Derive + append degraded health signals for this cycle's dispatched
     iteration. Returns the list of signals written ([] if none / on failure).
@@ -380,18 +392,39 @@ def emit_health_signals(
     try:
         executed = report.get("executed") or []
         iteration_id = _dispatched_iteration_id(executed)
-        if iteration_id is None:
-            return signals
-        run_log_rows = _read_jsonl(run_log_path)
-        calls_rows = _read_jsonl(calls_log_path)
-        mi = detect_ml_intern_zero(iteration_id, run_log_rows)
-        qw = detect_qwen_degraded(iteration_id, calls_rows)
-        for sig in (mi, qw):
-            if sig is None:
-                continue
-            sig = {"timestamp": _utcnow_iso(), "run_id": report.get("run_id"), **sig}
+        # Per-iteration detectors stay scoped to a dispatched iteration.
+        if iteration_id is not None:
+            run_log_rows = _read_jsonl(run_log_path)
+            calls_rows = _read_jsonl(calls_log_path)
+            mi = detect_ml_intern_zero(iteration_id, run_log_rows)
+            qw = detect_qwen_degraded(iteration_id, calls_rows)
+            for sig in (mi, qw):
+                if sig is None:
+                    continue
+                sig = {"timestamp": _utcnow_iso(),
+                       "run_id": report.get("run_id"), **sig}
+                _append_jsonl(health_path, sig)
+                signals.append(sig)
+        # P0 (LOOP_V1): coordinator-level detectors run EVERY cycle — the
+        # 2026-08-05..14 stall emitted zero signals precisely because the
+        # channel was scoped to dispatched iterations, so a stalled loop was
+        # indistinguishable from a healthy one. Silence is what a stalled
+        # loop emits; the detector must not share the loop's silence.
+        from orchestrator import loop_health
+        stall = loop_health.detect_stall(report, 0)
+        if stall is not None:
+            sig = {"timestamp": _utcnow_iso(),
+                   "run_id": report.get("run_id"), **stall}
             _append_jsonl(health_path, sig)
             signals.append(sig)
+        level = "red" if stall is not None else (
+            "amber" if signals else "ok")
+        # Flag defaults to a SIBLING of health_path (run_state/loop_alert.json
+        # in production; tmp_path in tests) — hermetic by construction.
+        flag = alert_flag_path or Path(health_path).with_name("loop_alert.json")
+        loop_health.write_alert_flag(
+            flag, level, [s.get("signal", "unknown") for s in signals],
+        )
     except Exception:
         return signals
     return signals

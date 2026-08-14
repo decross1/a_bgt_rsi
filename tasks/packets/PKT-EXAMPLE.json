@@ -1,0 +1,39 @@
+{
+  "task_id": "PKT-EXAMPLE",
+  "objective": "Add a --version flag to orchestrator/todo_cli.py that prints the repo's todo_cli schema version string and exits 0, so operators can check which CLI they are driving without reading source.",
+  "files_in_scope": [
+    "orchestrator/todo_cli.py",
+    "tests/test_todo_cli_version.py"
+  ],
+  "files_out_of_scope": [
+    "orchestrator/nara.py",
+    "orchestrator/tool_registry.py",
+    "schema/iteration_record.schema.json",
+    "run_state/",
+    "ui/"
+  ],
+  "preconditions": [
+    "test -f orchestrator/todo_cli.py",
+    "git diff --quiet -- orchestrator/todo_cli.py"
+  ],
+  "acceptance_criteria": {
+    "test_cmd": "MOCK_LLM=1 .venv-chroma/bin/python -m pytest tests/test_todo_cli_version.py -x -q",
+    "must_fail_before": true
+  },
+  "budgets": {
+    "max_attempts": 2,
+    "wall_clock_minutes": 15,
+    "max_diff_lines": 60
+  },
+  "forbidden_actions": [
+    "git push",
+    "git commit on main",
+    "editing any file outside files_in_scope",
+    "installing or upgrading packages",
+    "network access"
+  ],
+  "rollback": {
+    "branch_delete": true,
+    "notes": ""
+  }
+}

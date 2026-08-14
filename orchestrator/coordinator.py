@@ -52,6 +52,7 @@ DEFAULT_ACTIVE_RUN = REPO_ROOT / "run_state" / "active_run.json"
 DEFAULT_COORDINATOR_BUBBLES = REPO_ROOT / "memory" / "coordinator_bubbles.jsonl"
 DEFAULT_FOLLOWUPS = REPO_ROOT / "memory" / "finding_followups.jsonl"
 DEFAULT_NEAR_MISSES = REPO_ROOT / "memory" / "promotion_near_misses.jsonl"
+DEFAULT_IDEA_LEDGER = REPO_ROOT / "memory" / "idea_ledger.jsonl"
 # Pause file: when present, every cycle refuses to run (β kill switch,
 # D-049). Checked BEFORE any registration or LLM call.
 PAUSE_PATH = REPO_ROOT / "run_state" / "pause_coordinator"
@@ -234,6 +235,17 @@ def _topic_suggestions(
     if followups_path is None:
         followups_path = DEFAULT_FOLLOWUPS
     out: list[dict[str, str]] = []
+    # (0) D-060 agenda-first: open idea-ledger agenda items lead. The agenda
+    # carries provenance (what opened it), so topic selection advances the
+    # program instead of chasing the day's arXiv draw. Missing/empty ledger
+    # degrades silently — pre-consolidation state is legitimate.
+    try:
+        from workers.idea_ledger import load_state
+        from workers.idea_projection import agenda_topics
+        for item in agenda_topics(load_state(DEFAULT_IDEA_LEDGER))[:3]:
+            out.append({"topic": item["topic"], "source": "agenda"})
+    except Exception:
+        pass
     for row in _read_jsonl(followups_path)[-2:]:
         topic = row.get("new_topic")
         if isinstance(topic, str) and topic.strip():
@@ -243,6 +255,8 @@ def _topic_suggestions(
                    if row.get("origin") == "coordinator_propose"
                    else "finding_followup")
             out.append({"topic": topic, "source": src})
+    # The morning arXiv pick is the LAST resort — an agenda candidate, not
+    # the program driver (D-060; the Jul-Aug seed churn came from here).
     try:
         topic, source = pick_morning_topic(loop_memory_path=loop_memory_path)
         out.append({"topic": topic, "source": source})
@@ -367,6 +381,25 @@ def assess_state(
             "not yet through promotion"
         )
 
+    # --- D-059/P0 un-zombie gaps: staleness + ladder-owed tests. These are
+    # the gaps that never starve: "await human" gaps saturate and freeze the
+    # planner (the 2026-08-05..14 fixed point); these two always argue for
+    # doing research. Pure reads; failures degrade silently. ---
+    try:
+        from datetime import datetime, timezone
+        from orchestrator.loop_health import staleness_gap
+        stale = staleness_gap(rows, datetime.now(timezone.utc))
+        if stale:
+            gaps.append(stale)
+    except Exception:
+        pass
+    try:
+        from orchestrator.loop_health import ladder_gaps
+        from workers.idea_ledger import load_state
+        gaps.extend(ladder_gaps(load_state(DEFAULT_IDEA_LEDGER)))
+    except Exception:
+        pass
+
     return {
         "in_flight": in_flight,
         "recent_findings": recent_findings,
@@ -400,8 +433,18 @@ def _planner_system_prompt(budget: int) -> str:
         "worth doing. When the state's 'topic_suggestions' is non-empty and a\n"
         "loop iteration is worthwhile, use a suggested topic VERBATIM as the\n"
         "run_loop_iteration 'topic' arg (it is a real candidate already vetted\n"
-        "for scope). Topics with source 'finding_followup' are HUMAN-spawned\n"
-        "follow-ups — prefer them over fresh picks. Use run_experiment only\n"
+        "for scope). Topic preference order: source 'agenda' (the research\n"
+        "program's own open questions — advancing these IS the job) >\n"
+        "'finding_followup' (HUMAN-spawned) > everything else; the arXiv\n"
+        "morning pick is a last resort, not the program driver.\n"
+        "\n"
+        "GAP SEMANTICS (D-059 evidence ladder): gaps like 'k candidate(s) at\n"
+        "Lx awaiting <test>' are LADDER gaps — actionable by YOU (run the owed\n"
+        "test: an experiment for L1, a loop iteration/battery for L2-L3).\n"
+        "'await human' gaps are NOT actionable by you — never let them freeze\n"
+        "the plan into promote-only cycles; a 'loop has not iterated' gap\n"
+        "means research is OWED and a run_loop_iteration belongs in the plan.\n"
+        "Use run_experiment only\n"
         "when a recent novel+surviving finding clearly maps to a built\n"
         "experiment (tier 'synthetic'; run_real only with strong reason).\n"
         "forecast_markets is the standing applied-tier PAPER workstream —\n"
@@ -638,21 +681,36 @@ def _persist_near_misses(
     The 2026-06-09 cycle promoted 0/5 candidates and the per-candidate
     WHY was lost (the cycle log keeps action status only). One row per
     near-miss, append-only, never raises. path=None resolves at call time
-    (patchable)."""
+    (patchable).
+
+    P0 (LOOP_V1): keyed dedup on (source_iteration_id, stage, reason) — the
+    stalled 2026-08-05..14 cycles re-appended the same ~140 rows/day, 5,513
+    rows of pure duplication. Legacy rows stay untouched (append-only) and
+    seed the key set; only novel keys append."""
     if path is None:
         path = DEFAULT_NEAR_MISSES
     try:
         misses = (result or {}).get("near_misses") if isinstance(result, dict) else None
         if not misses:
             return
-        ts = _utcnow_iso()
         p = Path(path)
+        seen = {
+            (r.get("source_iteration_id"), r.get("stage"), r.get("reason"))
+            for r in _read_jsonl(p)
+        }
+        ts = _utcnow_iso()
         p.parent.mkdir(parents=True, exist_ok=True)
         with open(p, "a") as fh:
             for nm in misses:
-                if isinstance(nm, dict):
-                    fh.write(json.dumps(
-                        {"timestamp": ts, **nm}, ensure_ascii=False) + "\n")
+                if not isinstance(nm, dict):
+                    continue
+                key = (nm.get("source_iteration_id"), nm.get("stage"),
+                       nm.get("reason"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                fh.write(json.dumps(
+                    {"timestamp": ts, **nm}, ensure_ascii=False) + "\n")
     except Exception:
         return
 

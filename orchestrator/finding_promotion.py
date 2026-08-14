@@ -62,14 +62,16 @@ _VALIDATOR = jsonschema.Draft7Validator(_SCHEMA)
 CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 
 
-def _promotion_vote_advisory() -> bool:
-    """D-053 (mirrors D-052): when NARA_PROMOTION_VOTE_ADVISORY=1 the
-    adversarial promotion vote is DEMOTED from a gate to a NON-GATING advisory
-    — a candidate that cleared _passes_threshold promotes regardless of the
-    vote, and the real vote outcome rides as an additive
-    `promotion_vote_advisory` field. DARK by default: unset/!="1" leaves the
-    vote gating exactly as before (byte-identical)."""
-    return os.environ.get("NARA_PROMOTION_VOTE_ADVISORY") == "1"
+def _frontier_screen_enabled() -> bool:
+    """D-061: when NARA_FRONTIER_SCREEN=1 the frontier opposed-jobs review
+    (Claude=methods / Codex=novelty) runs as a VETO stage between the cheap
+    gate and the local Qwen vote. A veto is an attention filter: it near-misses
+    the candidate with both reviews attached; survivors carry the reviews as
+    an annotation. DARK by default — unset leaves the funnel frontier-free.
+    (The retired NARA_PROMOTION_VOTE_ADVISORY flip is superseded by the
+    evidence ladder, D-059: the vote is now the L3->L4 rung, neither a binary
+    gate nor a non-gating advisory.)"""
+    return os.environ.get("NARA_FRONTIER_SCREEN") == "1"
 
 
 def _max_candidates_override(max_candidates: int | None) -> int | None:
@@ -127,59 +129,81 @@ def _sub(row: dict[str, Any], key: str) -> dict[str, Any]:
     return v if isinstance(v, dict) else {}
 
 
+DEFAULT_IDEA_LEDGER = REPO_ROOT / "memory" / "idea_ledger.jsonl"
+_LEDGER_STATE_CACHE: dict[str, Any] = {}
+
+
+def _ledger_cluster_for(iteration_id: str) -> str | None:
+    """cluster_id whose members include this iteration, or None. A missing/
+    unreadable ledger is a legitimate pre-consolidation state — fail-open to
+    None (the finding still records evidence_level; only the cluster join is
+    absent). Cached per (path, mtime) so the loop doesn't re-reduce."""
+    path = DEFAULT_IDEA_LEDGER
+    try:
+        key = f"{path}:{path.stat().st_mtime_ns}"
+    except OSError:
+        return None
+    if key not in _LEDGER_STATE_CACHE:
+        try:
+            from workers.idea_ledger import load_state
+            _LEDGER_STATE_CACHE.clear()
+            _LEDGER_STATE_CACHE[key] = load_state(path)
+        except Exception:
+            return None
+    state = _LEDGER_STATE_CACHE[key]
+    for cid, cluster in state.items():
+        if iteration_id in (cluster.get("members") or []):
+            return cid
+    return None
+
+
+def _record_level_event(iteration_id: str, level: str, errors: list[str]) -> None:
+    """Append an evidence_level_changed event for the promoted iteration's
+    cluster. No cluster (pre-consolidation) -> no-op; a write failure is
+    RECORDED in errors (explicit, never silent) but doesn't block promotion."""
+    cid = _ledger_cluster_for(iteration_id)
+    if cid is None:
+        return
+    try:
+        from workers.idea_ledger import append_event
+        append_event(DEFAULT_IDEA_LEDGER, {
+            "event_type": "evidence_level_changed",
+            "ts": _utcnow_iso(),
+            "cluster_id": cid,
+            "evidence_level": level,
+            "basis": f"promotion:{iteration_id}",
+        })
+        _LEDGER_STATE_CACHE.clear()
+    except Exception as exc:
+        errors.append(f"{iteration_id}: idea-ledger level event failed: {exc}")
+
+
 # ── 1. cheap threshold gate ──────────────────────────────────────────
 
 
 def _passes_threshold(
     row: dict[str, Any], human_verdict: str | None
 ) -> tuple[bool, str | None]:
-    """Pure-Python gate. Returns (passes, reason_if_failed).
+    """Pure-Python gate, D-059: the cheap gate IS the evidence ladder.
 
-    Pass conditions (all must hold):
-      - novelty.class == "novel"  OR  surprising-vs-theory
-        (novelty.class in {novel, unclear} AND an experiment_outcome is
-         present AND its summary matches /Verdict=NO|signed_residual/i)
-      - critic.verdict == "survives"
-      - no human "invalid" verdict on this iteration
-      - if an experiment_outcome is present: trials >= MIN_TRIALS and the
-        summary is not an INVALID run
+    Pass conditions:
+      - no human "invalid" verdict on this iteration, AND
+      - derivable evidence level >= L1 (literature-consistent: relevance ok,
+        novelty novel — or unclear + surprising-vs-theory, which the ladder's
+        L1 rung itself admits — critique survives, redteam != fatal_flaw:
+        the ladder consults the negative signals the old threshold ignored).
     """
+    from workers.evidence_ladder import LEVELS, derive_level
+
     if human_verdict == "invalid":
         return False, "human verdict is 'invalid'"
 
-    novelty = _sub(row, "novelty")
-    nov_class = novelty.get("class")
-    critique = _sub(row, "critique")
-    crit_verdict = critique.get("verdict")
-    exp = _sub(row, "experiment_outcome")
-    has_exp = bool(exp)
-    summary = str(exp.get("summary") or "")
-
-    if crit_verdict != "survives":
-        return False, f"critic verdict is {crit_verdict!r} (not 'survives')"
-
-    # Experiment-outcome quality gate (only when an outcome is attached).
-    if has_exp:
-        if "INVALID" in summary.upper():
-            return False, "experiment_outcome summary is INVALID"
-        trials = exp.get("trials")
-        if not isinstance(trials, int) or trials < MIN_TRIALS:
-            return False, (
-                f"experiment_outcome trials={trials} below floor {MIN_TRIALS}"
-            )
-
-    is_novel = nov_class == "novel"
-    is_surprising = (
-        nov_class in {"novel", "unclear"}
-        and has_exp
-        and bool(_SURPRISE_RE.search(summary))
-    )
-    if not (is_novel or is_surprising):
-        return False, (
-            f"novelty class {nov_class!r} is not 'novel' and the result is "
-            "not surprising-vs-theory"
-        )
-    return True, None
+    feedback_row = {"verdict": human_verdict} if human_verdict else None
+    derived = derive_level(row, feedback_row, None, [])
+    if LEVELS.index(derived["level"]) >= LEVELS.index("L1"):
+        return True, None
+    missing = "; ".join(derived["missing_for_next"]) or "below L1"
+    return False, f"evidence ladder {derived['level']} < L1 ({missing})"
 
 
 # ── 2. cross-model adversarial multi-vote ────────────────────────────
@@ -588,15 +612,67 @@ def _promote_findings(
 
     resolved_be = get_backend(backend or DEFAULT_BACKEND)
 
-    # D-053: when armed, the vote is a NON-GATING advisory — it still RUNS (so
-    # its opinion is captured) but never blocks a threshold-passer. DARK by
-    # default (vote gates, exactly as before).
-    vote_advisory = _promotion_vote_advisory()
+    # ── pass A2 (D-061, env-gated dark): frontier opposed-jobs veto ──
+    # A veto is an attention filter, not evidence: it removes the candidate
+    # from this pass with both reviews attached; survivors carry the reviews
+    # as an annotation. Inconclusive/outage NEVER blocks (fail-open seam).
+    frontier_reviews: dict[str, dict[str, Any]] = {}
+    if _frontier_screen_enabled() and survivors:
+        from agent_wrapper.frontier_cli import invoke_frontier
+        from workers.frontier_review import screen_candidate
+        still: list[dict[str, Any]] = []
+        for row in survivors:
+            iid = row["iteration_id"]
+            try:
+                screen = screen_candidate(
+                    {"iteration_id": iid, "claim": _claim_text(row),
+                     "novelty": _sub(row, "novelty"),
+                     "critique": _sub(row, "critique"),
+                     "experiment_outcome": _sub(row, "experiment_outcome") or None},
+                    invoke_frontier,
+                )
+            except Exception as exc:  # outage = no veto, logged, never a block
+                errors.append(f"{iid}: frontier screen error (fail-open): {exc}")
+                still.append(row)
+                continue
+            if screen.get("verdict") == "veto":
+                near_misses.append({
+                    "source_iteration_id": iid,
+                    "reason": "frontier_veto",
+                    "stage": "frontier",
+                    "frontier_screen": screen,
+                })
+                continue
+            frontier_reviews[iid] = screen
+            still.append(row)
+        survivors = still
 
-    # ── pass B: adversarial multi-vote over survivors ──
+    # ── pass B: adversarial multi-vote over survivors (D-059: the vote IS
+    # the L3->L4 rung test — it runs ONLY on candidates already at L3, and
+    # surfacing requires the post-vote derived level to reach L4+, which
+    # consults BOTH previously-ignored negatives: the vote outcome and
+    # redteam.verdict. Below-L3 candidates are near-missed with the exact
+    # test they owe — the coordinator's ladder-gap signal). ──
+    from workers.evidence_ladder import derive_level, next_test_owed
+
     for row in survivors:
         iid = row["iteration_id"]
         claim = _claim_text(row)
+
+        pre = derive_level(row, feedback.get(iid), None, [])
+        if pre["level"] != "L3":
+            missing = "; ".join(pre["missing_for_next"]) or "unmet rungs"
+            near_misses.append({
+                "source_iteration_id": iid,
+                "reason": (
+                    f"evidence ladder {pre['level']} < L3 — adversarial vote "
+                    f"deferred (owes: {next_test_owed(pre['level'])}; "
+                    f"missing: {missing})"
+                ),
+                "stage": "ladder",
+            })
+            continue
+
         tally = _adversarial_vote(
             row,
             claim,
@@ -606,10 +682,6 @@ def _promote_findings(
         )
         total_qwen_failures += tally["qwen_failures"]
 
-        # The vote's real outcome (never silently coerced — rule 4). When the
-        # advisory flag is OFF these two checks GATE (continue); when ON they
-        # only RECORD a near_miss and fall through to promotion with the
-        # advisory attached.
         if tally["n_voting"] < tally["quorum"]:
             near_misses.append({
                 "source_iteration_id": iid,
@@ -620,9 +692,8 @@ def _promote_findings(
                 ),
                 "stage": "adversarial",
             })
-            if not vote_advisory:
-                continue
-        elif not tally["survived"]:
+            continue
+        if not tally["survived"]:
             near_misses.append({
                 "source_iteration_id": iid,
                 "reason": (
@@ -632,13 +703,26 @@ def _promote_findings(
                 ),
                 "stage": "adversarial",
             })
-            if not vote_advisory:
-                continue
+            continue
 
-        # Promote. (Gate-OFF path: only true survivors reach here.
-        # Advisory-ON path: every threshold-passer reaches here regardless of
-        # the vote, which rides as promotion_vote_advisory below.)
-        # Synthesize + assemble + validate + append.
+        derived = derive_level(
+            row,
+            feedback.get(iid),
+            {"survived": tally["survived"]},
+            [],
+        )
+        if derived["level"] not in ("L4", "L5"):
+            near_misses.append({
+                "source_iteration_id": iid,
+                "reason": (
+                    f"evidence ladder {derived['level']} < L4 "
+                    f"({'; '.join(derived['missing_for_next']) or 'unmet rungs'})"
+                ),
+                "stage": "ladder",
+            })
+            continue
+
+        # Promote: only true L4+ survivors reach here.
         why, change = _synthesize(claim, row, parent_request_id=parent_request_id)
         exp = _sub(row, "experiment_outcome")
         finding = {
@@ -672,18 +756,13 @@ def _promote_findings(
             "what_would_change_it": change,
             "promoted_at": _utcnow_iso(),
             "status": "surfaced",
+            # D-059/D-060 additive fields (surfaced_finding schema keeps
+            # additionalProperties: true — no schema edit needed).
+            "evidence_level": derived["level"],
+            "cluster_id": _ledger_cluster_for(iid),
         }
-        # D-053: when the vote is a non-gating advisory, ride its real outcome
-        # as an ADDITIVE field — recorded, never blocking. Added ONLY when
-        # armed so the OFF-path finding is byte-identical to before. Schema
-        # accepts it (surfaced_finding additionalProperties: true).
-        if vote_advisory:
-            finding["promotion_vote_advisory"] = {
-                "n_refuted": tally["n_refuted"],
-                "n_voting": tally["n_voting"],
-                "survived": tally["survived"],
-                "margin": tally["adversarial_margin"],
-            }
+        if iid in frontier_reviews:
+            finding["frontier_screen"] = frontier_reviews[iid]
 
         errs = list(_VALIDATOR.iter_errors(finding))
         if errs:
@@ -703,6 +782,7 @@ def _promote_findings(
             sp.parent.mkdir(parents=True, exist_ok=True)
             with open(sp, "a") as fh:
                 fh.write(json.dumps(finding, ensure_ascii=False) + "\n")
+            _record_level_event(iid, derived["level"], errors)
         already.add(finding["finding_id"])
         promoted.append(finding)
 

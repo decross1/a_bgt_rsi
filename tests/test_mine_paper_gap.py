@@ -29,6 +29,16 @@ sys.path.insert(0, str(REPO_ROOT))
 from workers import mine_paper_gap as mpg
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_idea_ledger(tmp_path, monkeypatch):
+    """D-060 hermeticity: mine_paper_gap seeds paper niches + agenda items
+    into DEFAULT_IDEA_LEDGER — point it at a tmp path so these tests never
+    write the real repo ledger (which happened once, 2026-08-14, and was
+    cleaned; this fixture is the pin)."""
+    monkeypatch.setattr(mpg, "DEFAULT_IDEA_LEDGER",
+                        tmp_path / "idea_ledger.jsonl")
+
+
 # Marker -> fixed vector. Orthogonal unit vectors give clean cosines; the
 # reworded near-dups (k1/k2/k3) are MUTUALLY orthogonal so the cosine layers
 # stay silent and ONLY the lexical layer can collapse them.

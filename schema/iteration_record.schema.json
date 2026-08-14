@@ -216,6 +216,25 @@
       "type": "array",
       "items": {"type": "string"},
       "description": "request_ids of every wrapper call this iteration produced."
+    },
+    "idea_ledger": {
+      "type": "object",
+      "description": "LOOP_V1 P3 (D-060): optional idea-ledger overlay written by the orchestrator — cluster join, derived evidence level, and the negative-memory consult outcome.",
+      "additionalProperties": false,
+      "properties": {
+        "cluster_id":     {"type": ["string", "null"]},
+        "evidence_level": {"type": "string", "enum": ["L0", "L1", "L2", "L3", "L4", "L5"]},
+        "failure_match": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["matched_cluster_id", "resolution"],
+          "properties": {
+            "matched_cluster_id": {"type": ["string", "null"]},
+            "kill_reason":        {"type": ["string", "null"]},
+            "resolution":         {"type": "string", "enum": ["adopt", "reject", "none"]}
+          }
+        }
+      }
     }
   }
 }

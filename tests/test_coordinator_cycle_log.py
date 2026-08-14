@@ -282,16 +282,43 @@ def test_emit_health_signals_writes_both_when_degraded(tmp_path):
     assert all("timestamp" in r for r in rows)
 
 
-def test_emit_health_signals_noop_when_no_dispatch(tmp_path):
+def test_emit_health_signals_stall_when_no_dispatch(tmp_path):
+    """P0 (LOOP_V1, replaces the pre-D-059 no-dispatch noop pin): a cycle
+    that dispatched nothing, promoted nothing, and moved no ledger cluster
+    now emits a loop_stalled signal and a RED alert flag — the 2026-08-05..14
+    zombie ran 20 such cycles with the health channel structurally silent."""
     health = tmp_path / "health_signals.jsonl"
+    flag = tmp_path / "loop_alert.json"
     rep = _report(executed=[
         {"action": "noop", "status": "passed", "result": {}},
     ])
     sigs = ccl.emit_health_signals(rep, health_path=str(health),
                                    run_log_path=str(tmp_path / "nope.jsonl"),
-                                   calls_log_path=str(tmp_path / "nope2.jsonl"))
+                                   calls_log_path=str(tmp_path / "nope2.jsonl"),
+                                   alert_flag_path=str(flag))
+    assert len(sigs) == 1
+    assert sigs[0]["signal"] == "loop_stalled"
+    assert health.exists()
+    payload = json.loads(flag.read_text())
+    assert payload["level"] == "red"
+    assert "loop_stalled" in payload["reasons"]
+
+
+def test_emit_health_signals_ok_flag_on_active_cycle(tmp_path):
+    """An iteration-dispatching cycle with healthy detectors writes an OK
+    flag (the alert surface always reflects the latest cycle)."""
+    health = tmp_path / "health_signals.jsonl"
+    flag = tmp_path / "loop_alert.json"
+    rep = _report(executed=[
+        {"action": "run_loop_iteration", "status": "passed",
+         "result": {"iteration_id": "iter-2026-08-14-001"}},
+    ])
+    sigs = ccl.emit_health_signals(rep, health_path=str(health),
+                                   run_log_path=str(tmp_path / "nope.jsonl"),
+                                   calls_log_path=str(tmp_path / "nope2.jsonl"),
+                                   alert_flag_path=str(flag))
     assert sigs == []
-    assert not health.exists()
+    assert json.loads(flag.read_text())["level"] == "ok"
 
 
 def test_emit_health_signals_no_signal_when_healthy(tmp_path):

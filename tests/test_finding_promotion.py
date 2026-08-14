@@ -39,8 +39,19 @@ def _row(
     novelty="novel",
     critic="survives",
     hypothesis="Unprimed LLMs rediscover strategyproof truthful bidding.",
-    exp=None,
+    exp="default",
+    redteam="proceed",
+    relevance=True,
+    ctc=True,
 ):
+    # D-059 fixtures carry ladder-grade evidence by default: sound retrieval
+    # relevance (L1), a sound experiment (L2), replication evidence (L3), and
+    # a redteam "proceed" (required at L4) — so vote-path tests exercise the
+    # L3->L4 rung the vote now IS. Tests that pin a specific rejection
+    # override these.
+    if exp == "default":
+        exp = {"experiment_id": "exp_fixture", "metric": "m", "value": 1.0,
+               "trials": 1000, "summary": "Verdict=YES. fixture effect +0.8%."}
     r = {
         "iteration_id": iid,
         "started_at": "2026-06-01T00:00:00Z",
@@ -55,8 +66,16 @@ def _row(
         "model_version": "test",
         "wrapper_call_ids": ["x"],
     }
+    if relevance:
+        r["retrieval"] = {"relevance": {"relevance": 0.8, "low_confidence": False,
+                                        "reason": "fixture"}}
+    if redteam is not None:
+        r["redteam"] = {"verdict": redteam, "critique": f"redteam {iid}",
+                        "confidence": 0.8}
     if exp is not None:
         r["experiment_outcome"] = exp
+    if ctc:
+        r["cross_tier_comparison"] = {"replicated": True, "note": "fixture"}
     return r
 
 
@@ -152,7 +171,8 @@ def test_threshold_falsified_critic_is_near_miss(monkeypatch, tmp_path):
     _stub_synthesis(monkeypatch)
     out = fp.promote_findings(**p)
     assert out["promoted"] == []
-    assert any("critic verdict" in nm["reason"] for nm in out["near_misses"])
+    assert any("critique.verdict='falsified'" in nm["reason"]
+               for nm in out["near_misses"])
 
 
 def test_threshold_human_invalid_is_near_miss(monkeypatch, tmp_path):

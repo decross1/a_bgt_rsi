@@ -160,6 +160,15 @@ def _promotable_row(iid):
         },
         "novelty": {"class": "novel", "rationale": "novelty rationale"},
         "critique": {"verdict": "survives", "rationale": "critic rationale"},
+        # D-059: promotable now means ladder-grade — L1 relevance, L2 sound
+        # experiment, L3 replication, redteam "proceed" (the vote is L3->L4).
+        "retrieval": {"relevance": {"relevance": 0.8, "low_confidence": False,
+                                    "reason": "fixture"}},
+        "redteam": {"verdict": "proceed", "critique": "rt", "confidence": 0.8},
+        "experiment_outcome": {"experiment_id": "exp_fixture", "metric": "m",
+                               "value": 1.0, "trials": 1000,
+                               "summary": "Verdict=YES. fixture effect."},
+        "cross_tier_comparison": {"replicated": True, "note": "fixture"},
         "journal_entry_path": "journal/iterations/001.md",
         "nara_summary": "summary",
         "tool_calls_made": ["journal_writer"],

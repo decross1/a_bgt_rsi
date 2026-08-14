@@ -77,18 +77,30 @@ if ! preflight_mem_guard "$MEM_NEED_GIB"; then
   exit 0
 fi
 
+# Secrets seam (P0, LOOP_V1 2026-08-14): cron does NOT inherit the user's
+# interactive shell env, so SEMANTIC_SCHOLAR_API_KEY was absent in every
+# cron cycle — the true cause of the 24× ml_intern_zero_papers signals
+# (external search blind on ~60% of iterations; the arXiv-429 theory was
+# wrong). The human creates cron/secrets.env (git-ignored) with:
+#   export SEMANTIC_SCHOLAR_API_KEY=...
+# Absence is LOUD, never silent (rule 7).
+SECRETS_ENV="$REPO_ROOT/cron/secrets.env"
+# shellcheck source=/dev/null
+[ -f "$SECRETS_ENV" ] && source "$SECRETS_ENV"
+if [ -z "${SEMANTIC_SCHOLAR_API_KEY:-}" ]; then
+  log "WARN: SEMANTIC_SCHOLAR_API_KEY absent (no $SECRETS_ENV) — external"
+  log "WARN: search will be BLIND this cycle (ml_intern_zero_papers expected)."
+fi
+
 # The cycle. env -u MOCK_LLM (rule 10: a stubbed embedder makes the cycle
 # meaningless); NARA_SKEPTIC=1 arms the vllm-qwen skeptic seam in the critic.
-# NARA_PROMOTION_VOTE_ADVISORY=1 (D-053, owner-flipped 2026-06-25): the
-# adversarial promotion vote still RUNS and annotates, but no longer GATES
-# promotion — the human/cockpit is the calibration the automatic vote could
-# not be. Reverts by unsetting the var (dark by default, fail-open). This
-# stops the twice-daily starvation: every cycle since the runway went live
-# (D-049, 2026-06-18) chose promote_findings and promoted ZERO findings
-# because the survive-iff-minority-refute vote refuted them all.
-log "launch: coordinator --once --execute --budget $BUDGET (NARA_SKEPTIC=1 NARA_PROMOTION_VOTE_ADVISORY=1)"
+# D-059 (2026-08-14) retired NARA_PROMOTION_VOTE_ADVISORY (D-053): the vote is
+# now the evidence ladder's L3->L4 rung — surfacing requires L4+, and the vote
+# only runs on L3 candidates. The 06-25 flip's measured outcome (31/31 refuted
+# findings promoted, zero human-dispositioned) is recorded in D-059.
+log "launch: coordinator --once --execute --budget $BUDGET (NARA_SKEPTIC=1)"
 rc=0
-env -u MOCK_LLM NARA_SKEPTIC=1 NARA_PROMOTION_VOTE_ADVISORY=1 "$PYTHON" -m orchestrator.coordinator \
+env -u MOCK_LLM NARA_SKEPTIC=1 "$PYTHON" -m orchestrator.coordinator \
   --once --execute --budget "$BUDGET" || rc=$?
 log "done rc=$rc"
 exit "$rc"

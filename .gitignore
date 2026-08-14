@@ -106,3 +106,5 @@ run_state/coordinator_budget.jsonl
 run_state/d049_ratified
 run_state/pause_coordinator
 run_state/.coordinator-cron.lock
+cron/secrets.env
+run_state/loop_alert.json
