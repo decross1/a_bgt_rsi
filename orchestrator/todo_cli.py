@@ -19,6 +19,8 @@ JSON so a calling UI can surface it verbatim.
 from __future__ import annotations
 
 import argparse
+
+TODO_CLI_SCHEMA_VERSION = "todo_cli/1.0 (D-046)"
 import json
 import sys
 from datetime import datetime, timezone
@@ -163,6 +165,12 @@ def list_deferred(*, path: Path | None = None) -> list[dict]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        import sys as _sys
+        argv = _sys.argv[1:]
+    if argv and argv[0] == "--version":
+        print(TODO_CLI_SCHEMA_VERSION)
+        return 0
     p = argparse.ArgumentParser(
         description="Bubble acks + dev-session deferrals (D-046).")
     sub = p.add_subparsers(dest="cmd", required=True)
