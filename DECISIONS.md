@@ -3017,3 +3017,64 @@ near-dups still need human triage (or a future dedup-at-promotion pass). Fully r
 remove one menu entry; constants are env/module-tunable. **v1 deferred** (owner Q2): thread a
 real `source="paper_gap"` through `run_iteration` + `journal_writer` (a spine edit) in the next
 couple of sessions. Implements the design doc's Decisions(2026-06-30).
+
+## D-059 — Evidence ladder L0–L5; surfacing bar = L4+; supersedes D-053's advisory flip
+
+**Date.** 2026-08-14. **Context.** The 06-25 `NARA_PROMOTION_VOTE_ADVISORY=1` flip (D-053)
+was designed to un-starve promotion and let the human calibrate. Measured outcome after 50
+days: **all 31 surfaced findings carry `adversarial.survived=false` (3/3 refuted), 16 carry
+`redteam.verdict=fatal_flaw`, and zero were ever human-dispositioned** — the cockpit became
+a queue of unanimously-refuted candidates, the human disengaged, and the backlog gap then
+starved the planner into a 20-cycle no-op fixed point (2026-08-05 → 08-14). `_passes_threshold`
+reads 3 of ~15 available signals and consults neither negative one.
+
+**Decision.** A single **evidence ladder** replaces both the binary gate and the non-gating
+advisory: L0 asserted · L1 literature-consistent (relevance ok + novelty + critique survives
++ redteam ≠ fatal_flaw) · L2 synthetic-tier experiment (trials ≥ 30) · L3 robustness/replication
+· **L4 adversarial-survived (vote `survived=true` AND redteam `proceed` — the two previously
+ignored signals ARE the L3→L4 gate)** · L5 human-validated. **Only L4+ surfaces to the
+cockpit.** Surfacing is a bar, not a quota: zero-survivor weeks report a count, never a coerced
+promotion. Rung derivation is pure code (rule 4: missing signal ≠ pass). The
+`NARA_PROMOTION_VOTE_ADVISORY` env branch is retired; the vote writes `evidence_level_changed`
+events instead of gating a binary surface.
+
+**Alternatives.** (a) Keep the advisory + hand-triage the 31 — rejected: the owner's measured
+behavior (n=0 dispositions) is the falsifier; (b) re-harden the vote as a binary gate —
+rejected: reproduces the pre-D-053 starvation with no gradation. **Reversibility.** Ladder
+thresholds are module constants; surfacing bar is one constant; existing ledgers untouched
+(demotions are append-only overlay events, D-060).
+
+## D-060 — Idea ledger + MAP-Elites acceptance as the apparatus's memory; deep-wiki shape rejected; LLM judge gated behind a pre-registered calibration
+
+**Date.** 2026-08-14. **Context.** Measured duplication pathology: 8–10× lexical restatement
+clusters (May), seed-level rediscovery incl. re-deriving a retrieved paper 5 iterations
+running (Jul–Aug; 18 distinct seeds across 40 iterations). Root cause is bookkeeping, not
+retrieval: nothing records idea status (open / in-progress / killed-with-reason) and nothing
+injects it into topic selection or generation. gbrain is process telemetry and firewalled from
+the runtime (D-014) — the memory must be a runtime artifact.
+
+**Decision.** (1) **`memory/idea_ledger.jsonl`** — append-only events (`cluster_created`,
+`member_added`, `evidence_level_changed`, `cluster_killed`, `cluster_reopened`,
+`niche_seeded`, `agenda_item_*`); cluster state = deterministic reduction; existing ledgers
+never rewritten. (2) **Clusters = niches; MAP-Elites elite rule**: a candidate entering a
+populated cluster must differ from or beat the elite; prefilter = the D-058 lexical/cosine
+layers; the **LLM equivalence-or-better judge activates only if it passes a pre-registered
+calibration** against the known restatement clusters (precision ≥ .90, recall ≥ .80,
+false-equivalence ≤ 10%, symmetry ≤ 10%, flip ≤ 15% — each checked independently, never
+coerced; fail → prefilter-only stands, judge logs advisory). (3) **Programmatic kill reasons**
+(from run records — never LLM prose) + evidence-keyed reopening conditions; **paper niches
+pre-closed** (rediscovery must articulate a delta); **mandatory adopt-or-reject** of matched
+failure records at generation time. (4) Deterministic three-section **`ideas.md`** projection
+(live / graveyard / agenda-with-provenance) consumed by topic selection + hypothesize
+conditioning; **agenda-first topics** (arxiv picks become agenda candidates).
+
+**Alternatives.** Karpathy-style LLM-compiled wiki — **rejected on measured grounds** at this
+corpus scale (~100 structured rows): LLM-compiled context measured net-negative in 5/8
+settings (arXiv:2602.11988); summary-poisoning/self-citation reports; memory agents barely
+beat bare LLMs on invalidation (Memora/FAMA, arXiv:2604.20006); free-prose failure
+reflections 0/121 correct vs 86% programmatic (arXiv:2605.29463); mandatory-consultation
+typed negative memory outperforms (arXiv:2606.21024); MAP-Elites/IDEAAgent lineage grounds
+the acceptance rule (arXiv:2607.22375). A wiki-shaped synthesis layer stays a candidate for
+the EXTERNAL literature corpus (Phase 2, frontier-synthesized, after S2 search is healthy).
+**Reversibility.** The ledger is an overlay; deleting it restores today's behavior. The judge
+seam is injected and defaults to prefilter-only.
