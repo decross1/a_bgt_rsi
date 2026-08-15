@@ -45,6 +45,22 @@ cases = [json.loads(l) for l in
 
 rows = []
 t0 = time.perf_counter()
+# Fail-fast liveness probe (downtime lesson 2026-08-15): the 3.8 sweep burned
+# 1h54m of a prod-down window on a failure the FIRST case already proved
+# (parser incompatibility -> verdict None). One probe case; a null verdict
+# or a >180s wall means systematic breakage — abort the sweep, keep the
+# window short, report the liveness FAIL honestly.
+probe = cases[0]
+t = time.perf_counter()
+r = attack(probe["hypothesis"], iteration_id=f"qwen_ab_{label}_probe")
+probe_s = time.perf_counter() - t
+if r.get("verdict") is None or probe_s > 180:
+    print(f"LIVENESS FAIL-FAST: probe case {probe['case_id']} -> "
+          f"verdict={r.get('verdict')} in {probe_s:.0f}s — aborting sweep "
+          f"(systematic unparseable/starvation; D-044 liveness = FAIL)")
+    sys.exit(3)
+print(f"probe OK: {probe['case_id']} -> {r.get('verdict')} ({probe_s:.0f}s)")
+
 for i, c in enumerate(cases, 1):
     t = time.perf_counter()
     r = attack(c["hypothesis"], iteration_id=f"qwen_ab_{label}_{c['case_id']}")
