@@ -681,3 +681,237 @@ def test_skeptic_crash_is_recorded_not_fatal(cache, monkeypatch):
     assert out["status"] == "passed"
     assert out["result"]["verdict"] == "survives"
     assert out["result"]["skeptic_verdict"].startswith("error:")
+
+
+# ── D-065: skeptic provenance is carried, never dropped ──────────────
+
+
+@pytest.mark.parametrize("backend,model", [
+    ("vllm-qwen", "qwen3.6-27b-nvfp4-mtp"),
+    ("vllm-gemma", "gemma-4-26b-a4b-nvfp4"),
+])
+def test_skeptic_tag_reflects_the_actual_backend(cache, monkeypatch, backend, model):
+    """The tag must be the backend that ACTUALLY ran — this is what makes
+    the D-041/D-044 independence claim checkable from the record."""
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.delenv("NARA_DEBATE", raising=False)
+    monkeypatch.delenv("CRITIC_BACKEND", raising=False)
+    _install_fake_skeptic(monkeypatch, lambda *a, **k: {
+        "attack_verdict": "survives_attack", "rationale": "r",
+        "contradicting_doc_id": None, "backend": backend, "model": model,
+    })
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "prov-1", _neighbors("a"))
+    out = crit_mod.critic_loop_v0("h", "prov-1")
+    assert out["result"]["skeptic_backend"] == backend
+    assert out["result"]["skeptic_model"] == model
+    # subagent_backend is a DIFFERENT field: it stays on the CRITIC's
+    # backend whichever model ran the skeptic. Reading it as the skeptic's
+    # tag is exactly the misreading D-065 closes.
+    assert out["result"]["subagent_backend"] == "vllm-gemma"
+
+
+def test_a_skeptic_verdict_is_never_untagged(cache, monkeypatch):
+    """Even an attack() that omits provenance leaves the fields present —
+    an untagged skeptic verdict is impossible for new records."""
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_SKEPTIC_BACKEND", "vllm-qwen")
+    monkeypatch.delenv("NARA_DEBATE", raising=False)
+    _install_fake_skeptic(monkeypatch, lambda *a, **k: {
+        "attack_verdict": "survives_attack", "rationale": "r",
+    })
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "prov-2", _neighbors("a"))
+    res = crit_mod.critic_loop_v0("h", "prov-2")["result"]
+    assert res["skeptic_verdict"] == "survives_attack"
+    assert res["skeptic_backend"] == "vllm-qwen"   # configured fallback
+    assert res["skeptic_model"] is None            # never guessed
+    assert isinstance(res["skeptic_wall_seconds"], float)
+
+
+def test_skeptic_crash_is_still_tagged(cache, monkeypatch):
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_SKEPTIC_BACKEND", "vllm-qwen")
+    monkeypatch.delenv("NARA_DEBATE", raising=False)
+    def broken(*a, **k):
+        raise RuntimeError("qwen down")
+    _install_fake_skeptic(monkeypatch, broken)
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "prov-3", _neighbors("a"))
+    res = crit_mod.critic_loop_v0("h", "prov-3")["result"]
+    assert res["skeptic_verdict"].startswith("error:")
+    assert res["skeptic_backend"] == "vllm-qwen"
+    assert res["skeptic_model"] is None
+
+
+def _install_fake_restate(monkeypatch, impl):
+    import sys
+    import types
+    import orchestrator
+    mod = types.ModuleType("orchestrator.restate_skeptic")
+    mod.restate_attack = impl
+    monkeypatch.setitem(sys.modules, "orchestrator.restate_skeptic", mod)
+    monkeypatch.setattr(orchestrator, "restate_skeptic", mod, raising=False)
+    return mod
+
+
+def test_restate_skeptic_provenance_is_carried(cache, monkeypatch):
+    monkeypatch.setenv("NARA_RESTATE_SKEPTIC", "1")
+    monkeypatch.delenv("NARA_SKEPTIC", raising=False)
+    _install_fake_restate(monkeypatch, lambda *a, **k: {
+        "restate_verdict": "not_restated", "rationale": "r",
+        "restating_doc_id": None, "canonical_statement": "c",
+        "backend": "vllm-qwen", "model": "qwen3.6-27b-nvfp4-mtp",
+    })
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "prov-4", _neighbors("a"))
+    _stage_novelty(cache, "prov-4", "rediscovery")
+    res = crit_mod.critic_loop_v0("h", "prov-4")["result"]
+    assert res["restate_verdict"] == "not_restated"
+    assert res["restate_backend"] == "vllm-qwen"
+    assert res["restate_model"] == "qwen3.6-27b-nvfp4-mtp"
+
+
+# ── D-065: the debate variant is DARK unless NARA_DEBATE=1 ───────────
+
+
+def _install_fake_debate(monkeypatch, impl):
+    from workers import debate as debate_mod
+    monkeypatch.setattr(debate_mod, "debate", impl)
+    return debate_mod
+
+
+def _debate_out(verdict, rounds=2, stop_reason="defender_conceded", turns=None):
+    return {
+        "verdict": verdict,
+        "rounds": rounds,
+        "stop_reason": stop_reason,
+        "transcript": turns if turns is not None else [
+            {"round": 1, "role": "challenger", "backend": "vllm-qwen",
+             "model": "qwen3.6-27b-nvfp4-mtp", "text": "OBJECT: doc-a states it",
+             "wall_seconds": 1.5},
+            {"round": 1, "role": "defender", "backend": "vllm-gemma",
+             "model": "gemma-4-26b-a4b-nvfp4", "text": "CONCEDE: it does",
+             "wall_seconds": 2.0},
+        ],
+    }
+
+
+def test_debate_is_dark_by_default(cache, monkeypatch):
+    """Env unset: the single-shot attack runs exactly once and debate()
+    is never called — today's behavior, byte for byte."""
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.delenv("NARA_DEBATE", raising=False)
+    attack_calls, debate_calls = [], []
+    _install_fake_skeptic(monkeypatch, lambda *a, **k: attack_calls.append(1) or {
+        "attack_verdict": "survives_attack", "rationale": "r",
+        "contradicting_doc_id": None, "backend": "vllm-qwen", "model": "m",
+    })
+    _install_fake_debate(
+        monkeypatch, lambda *a, **k: debate_calls.append(1) or _debate_out("refuted"))
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "dbt-1", _neighbors("a"))
+    res = crit_mod.critic_loop_v0("h", "dbt-1")["result"]
+    assert attack_calls == [1]
+    assert debate_calls == []
+    assert "debate" not in res
+    assert res["verdict"] == "survives"
+
+
+def test_debate_armed_replaces_the_single_shot_attack(cache, monkeypatch):
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_DEBATE", "1")
+    attack_calls, seen = [], {}
+    _install_fake_skeptic(monkeypatch, lambda *a, **k: attack_calls.append(1) or {})
+    def fake_debate(claim, evidence, *, iteration_id=None, **kw):
+        seen["claim"], seen["evidence"], seen["iteration_id"] = (
+            claim, evidence, iteration_id)
+        return _debate_out("survives_debate", stop_reason="challenger_conceded")
+    _install_fake_debate(monkeypatch, fake_debate)
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "dbt-2", _neighbors("a"))
+    res = crit_mod.critic_loop_v0("hyp text", "dbt-2")["result"]
+    assert attack_calls == []
+    assert seen["claim"] == "hyp text"
+    assert seen["iteration_id"] == "dbt-2"
+    assert seen["evidence"] is None  # the debate retrieves its own (D-041)
+    # Backward compatibility: the terminal verdict still rides here.
+    assert res["skeptic_verdict"] == "survives_debate"
+    assert res["verdict"] == "survives"           # survives_debate: no override
+    assert res["debate"]["stop_reason"] == "challenger_conceded"
+    assert res["debate"]["rounds"] == 2
+    # The skeptic tag in a debate is the CHALLENGER's.
+    assert res["skeptic_backend"] == "vllm-qwen"
+    assert res["skeptic_model"] == "qwen3.6-27b-nvfp4-mtp"
+    assert res["skeptic_wall_seconds"] == 3.5
+
+
+def test_debate_refuted_overrides_to_undecidable(cache, monkeypatch):
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_DEBATE", "1")
+    _install_fake_skeptic(monkeypatch, lambda *a, **k: {})
+    _install_fake_debate(monkeypatch, lambda *a, **k: _debate_out("refuted"))
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "dbt-3", _neighbors("a"))
+    res = crit_mod.critic_loop_v0("h", "dbt-3")["result"]
+    assert res["verdict"] == "undecidable"
+    assert res["verdict_overridden_from"] == "survives"
+    assert "debate verdict='refuted'" in res["override_reason"]
+
+
+def test_debate_inconclusive_overrides_to_undecidable(cache, monkeypatch):
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_DEBATE", "1")
+    _install_fake_skeptic(monkeypatch, lambda *a, **k: {})
+    _install_fake_debate(
+        monkeypatch,
+        lambda *a, **k: _debate_out("inconclusive", rounds=4,
+                                    stop_reason="round_cap"))
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "dbt-4", _neighbors("a"))
+    res = crit_mod.critic_loop_v0("h", "dbt-4")["result"]
+    assert res["verdict"] == "undecidable"
+    assert res["debate"]["stop_reason"] == "round_cap"
+
+
+def test_debate_transcript_is_capped_in_the_record(cache, monkeypatch):
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_DEBATE", "1")
+    long_turns = [
+        {"round": i // 2 + 1,
+         "role": "challenger" if i % 2 == 0 else "defender",
+         "backend": "vllm-qwen" if i % 2 == 0 else "vllm-gemma",
+         "model": "qwen3.6-27b-nvfp4-mtp" if i % 2 == 0 else "gemma-4-26b-a4b-nvfp4",
+         "text": "OBJECT: " + "x" * 2000, "wall_seconds": 1.0}
+        for i in range(8)
+    ]
+    _install_fake_skeptic(monkeypatch, lambda *a, **k: {})
+    _install_fake_debate(
+        monkeypatch,
+        lambda *a, **k: _debate_out("inconclusive", rounds=4,
+                                    stop_reason="round_cap", turns=long_turns))
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "dbt-5", _neighbors("a"))
+    res = crit_mod.critic_loop_v0("h", "dbt-5")["result"]
+    transcript = res["debate"]["transcript"]
+    assert len(transcript) == crit_mod.DEBATE_TRANSCRIPT_TURNS == 6
+    assert all(len(t["text"]) <= crit_mod.DEBATE_TURN_TEXT_CHARS for t in transcript)
+    assert all(t["backend"] and t["model"] for t in transcript)
+
+
+def test_debate_crash_is_recorded_not_fatal(cache, monkeypatch):
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_DEBATE", "1")
+    monkeypatch.setenv("NARA_SKEPTIC_BACKEND", "vllm-qwen")
+    def boom(*a, **k):
+        raise RuntimeError("debate exploded")
+    _install_fake_skeptic(monkeypatch, lambda *a, **k: {})
+    _install_fake_debate(monkeypatch, boom)
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "dbt-6", _neighbors("a"))
+    out = crit_mod.critic_loop_v0("h", "dbt-6")
+    assert out["status"] == "passed"
+    assert out["result"]["verdict"] == "survives"
+    assert out["result"]["skeptic_verdict"].startswith("error:")
+    assert out["result"]["skeptic_backend"] == "vllm-qwen"
+    assert "debate" not in out["result"]

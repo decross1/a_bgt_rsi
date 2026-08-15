@@ -117,7 +117,43 @@
         "verdict_overridden_from": {"type": "string"},
         "override_reason":         {"type": "string"},
         "skeptic_verdict":         {"type": ["string", "null"]},
-        "restate_verdict":         {"type": ["string", "null"]}
+        "skeptic_backend":         {"type": ["string", "null"], "description": "D-065. Backend registry name that RAN the skeptic exchange (e.g. 'vllm-qwen'). NOT the same as subagent_backend, which is the critic sub-agent's backend — without this field the D-041/D-044 independence claim is unverifiable from the record. Present whenever skeptic_verdict is."},
+        "skeptic_model":           {"type": ["string", "null"], "description": "D-065. Model/provenance string the skeptic backend resolved to. Null when the exchange crashed before a backend resolved."},
+        "skeptic_wall_seconds":    {"type": "number"},
+        "debate": {
+          "description": "D-065. Bounded multi-turn adversarial debate that replaces the single-shot skeptic exchange when NARA_DEBATE=1 (dark by default). Absent otherwise.",
+          "type": "object",
+          "required": ["verdict", "rounds", "stop_reason", "transcript"],
+          "properties": {
+            "verdict": {
+              "type": ["string", "null"],
+              "enum": ["refuted", "survives_debate", "inconclusive", null]
+            },
+            "rounds":      {"type": ["integer", "null"], "minimum": 0},
+            "stop_reason": {"type": ["string", "null"]},
+            "transcript": {
+              "description": "Bounded excerpt (<=6 turns, text truncated) of the exchange. Every model turn carries the backend/model that produced it; an error row carries nulls.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["round", "role", "backend", "model", "text"],
+                "properties": {
+                  "round":        {"type": "integer", "minimum": 0},
+                  "role":         {"type": "string", "enum": ["challenger", "defender", "system"]},
+                  "backend":      {"type": ["string", "null"]},
+                  "model":        {"type": ["string", "null"]},
+                  "text":         {"type": "string"},
+                  "wall_seconds": {"type": "number"},
+                  "error":        {"type": ["string", "null"]}
+                }
+              }
+            }
+          }
+        },
+        "restate_verdict":         {"type": ["string", "null"]},
+        "restate_backend":         {"type": ["string", "null"], "description": "D-065. Backend registry name that RAN the restatement skeptic (default vllm-qwen via NARA_SKEPTIC_BACKEND)."},
+        "restate_model":           {"type": ["string", "null"]},
+        "restate_wall_seconds":    {"type": "number"}
       }
     },
     "experiment_outcome": {

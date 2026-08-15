@@ -3195,3 +3195,36 @@ rewrites to survive a reviewer is the reviewer's point); kill-on-first-veto
 events are additive; deleting them restores the pre-D-064 reduction exactly.
 Coordinator `refine_idea` action wiring is deliberately deferred to the
 integrator (not built in the same pass as the mechanism).
+
+## D-065 — Adversarial debate replaces the single-shot skeptic exchange (dark); skeptic provenance is recorded
+
+**Date.** 2026-08-15 (owner-ratified params: `run_state/overrides.jsonl`
+`D065_debate_params_ratified`). **Context.** Reading a critic record, the owner
+asked for "a real back and forth… like a real research debate" and "can we tag
+what model ran this". Verification found a hole: `novelty_skeptic.attack()` (and
+`restate_skeptic`) RETURN `backend`/`model`, but `critic_loop_v0` kept only the
+verdict string — so every recorded `skeptic_verdict` was **untagged**, making the
+D-041/D-044 independence claim (Qwen challenges Gemma) unverifiable from the
+record. The exchange was also single-shot: one attack, one verdict, no rebuttal.
+
+**Decision.** (A) **Provenance is carried through** on BOTH skeptic paths:
+`critique.skeptic_backend/skeptic_model/skeptic_wall_seconds` and
+`restate_backend/restate_model/restate_wall_seconds` (additive schema; no
+invented turn counts — `attack()` is one `call_sync`, so no `turns_used` is
+fabricated). (B) **`workers/debate.py`**: bounded multi-turn debate — challenger
+(vllm-qwen) attacks, defender (vllm-gemma) must rebut specifically or CONCEDE,
+repeat; **MAX_DEBATE_ROUNDS = 4** (owner-ratified). Stop criteria: defender
+concedes → `refuted`; explicit challenger concession → `survives_debate` (the
+ONLY route in); challenger repeats a substantively identical objection
+(lexical Jaccard ≥ 0.8) → **`converged` → `inconclusive`** (owner-ratified:
+converged is NEUTRAL, never survival); cap reached → `inconclusive`. Every turn
+is stored with its own backend/model tag. **Dark by default**: requires
+`NARA_SKEPTIC=1` AND `NARA_DEBATE=1`; unset = today's behavior byte-identical.
+The debate does its OWN retrieval (evidence=None from the critic) so the
+challenger never inherits the critic's neighbor set — preserving exactly the
+shared-blind-spot break D-041 exists for.
+
+**Reversibility.** Unset `NARA_DEBATE`; the provenance fields are additive and
+harmless. **Known downstream note:** with debate armed, the battery's
+`skeptic_verdict` column reads `survives_debate` where it read `survives_attack`
+(no code compares that literal; flagged, not silently normalized).

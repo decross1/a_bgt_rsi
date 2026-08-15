@@ -26,6 +26,7 @@ verdict enums, different intended use.
 from __future__ import annotations
 
 import os
+import time
 from typing import Any
 
 from agent_wrapper.backends import get_backend
@@ -41,6 +42,12 @@ from orchestrator.subagent import (
 
 
 ALLOWED_VERDICTS = ("survives", "falsified", "restated", "malformed", "undecidable")
+
+# Caps on the debate transcript copied into the iteration record (D-065).
+# The full transcript stays in workers.debate's return value; the record
+# carries a bounded excerpt so loop_memory rows stay readable.
+DEBATE_TRANSCRIPT_TURNS = 6
+DEBATE_TURN_TEXT_CHARS = 600
 
 
 CRITIC_AGENT_SYSTEM_PROMPT = (
@@ -221,6 +228,123 @@ def _post_validate(payload: dict, valid_doc_ids: set[str]) -> tuple[dict, list[s
     )
 
 
+def _configured_skeptic_backend() -> str:
+    """Backend name the skeptics are CONFIGURED to run on (same env +
+    default as orchestrator.novelty_skeptic / restate_skeptic). Used to
+    tag provenance on the paths where no resolved backend comes back —
+    a crash, or an attack() that omits the field."""
+    return os.environ.get("NARA_SKEPTIC_BACKEND", "vllm-qwen")
+
+
+def _run_single_attack(
+    result: dict, hypothesis_text: str, iteration_id: str | None
+) -> tuple[bool, str | None]:
+    """The single-shot skeptic exchange (D-041/D-044 attack()).
+
+    Returns (ran, override_reason). ran=False means the seam was a no-op
+    (module absent / no attack()) and the caller must not act. Mutates
+    `result` in place with the verdict AND the skeptic's own provenance.
+    """
+    try:
+        from orchestrator import novelty_skeptic  # lazy: module may not exist yet
+    except ImportError:
+        return (False, None)
+    attack = getattr(novelty_skeptic, "attack", None)
+    if not callable(attack):
+        return (False, None)
+    t0 = time.perf_counter()
+    try:
+        out = attack(hypothesis_text, iteration_id=iteration_id) or {}
+    except Exception as exc:  # a skeptic crash is recorded, never fatal
+        result["skeptic_verdict"] = f"error: {type(exc).__name__}: {exc}"[:200]
+        result["skeptic_backend"] = _configured_skeptic_backend()
+        result["skeptic_model"] = None
+        result["skeptic_wall_seconds"] = round(time.perf_counter() - t0, 3)
+        return (True, None)
+    attack_verdict = out.get("attack_verdict")
+    result["skeptic_verdict"] = attack_verdict
+    # D-065: the SKEPTIC's own provenance. `subagent_backend`/`_model`
+    # above describe the CRITIC sub-agent (gemma by default), so without
+    # these fields a record cannot show whether the independent Qwen or
+    # the same-weights Gemma judged the claim — the D-041/D-044
+    # independence claim was unverifiable from the record. attack() has
+    # always returned backend/model; only the carry-through was missing.
+    result["skeptic_backend"] = out.get("backend") or _configured_skeptic_backend()
+    result["skeptic_model"] = out.get("model") or None
+    # Measured HERE, not returned by attack(): the single-shot attack has
+    # no turn/wall accounting of its own (one call_sync).
+    result["skeptic_wall_seconds"] = round(time.perf_counter() - t0, 3)
+    return (
+        True,
+        f"skeptic attack_verdict={attack_verdict!r}: "
+        + (out.get("rationale") or "")[:300],
+    )
+
+
+def _run_debate_exchange(
+    result: dict, hypothesis_text: str, iteration_id: str | None
+) -> tuple[bool, str | None]:
+    """The NARA_DEBATE=1 variant of the skeptic exchange (D-065).
+
+    Replaces the single-shot attack with workers.debate's bounded
+    multi-turn exchange (challenger on the independent backend, defender
+    on the apparatus's own). The terminal verdict keeps riding on
+    `skeptic_verdict` for backward compatibility; the model-tagged
+    transcript lands additively under `debate`. Same (ran, reason)
+    contract as _run_single_attack.
+    """
+    try:
+        from workers import debate as debate_mod  # lazy: dark by default
+    except ImportError:
+        return (False, None)
+    try:
+        out = debate_mod.debate(
+            hypothesis_text, None, iteration_id=iteration_id
+        ) or {}
+    except Exception as exc:  # a debate crash is recorded, never fatal
+        result["skeptic_verdict"] = f"error: {type(exc).__name__}: {exc}"[:200]
+        result["skeptic_backend"] = _configured_skeptic_backend()
+        result["skeptic_model"] = None
+        return (True, None)
+
+    transcript = [
+        {**t, "text": str(t.get("text") or "")[:DEBATE_TURN_TEXT_CHARS]}
+        for t in (out.get("transcript") or [])[:DEBATE_TRANSCRIPT_TURNS]
+        if isinstance(t, dict)
+    ]
+    verdict = out.get("verdict")
+    result["skeptic_verdict"] = verdict
+    # The CHALLENGER is the skeptic in a debate, so its tag is what
+    # `skeptic_backend`/`skeptic_model` mean here; the defender's tag
+    # rides on its own transcript turns.
+    challenger_turns = [t for t in transcript if t.get("role") == "challenger"]
+    last_challenger = challenger_turns[-1] if challenger_turns else {}
+    result["skeptic_backend"] = (
+        last_challenger.get("backend") or _configured_skeptic_backend()
+    )
+    result["skeptic_model"] = last_challenger.get("model") or None
+    result["skeptic_wall_seconds"] = round(
+        sum(
+            t.get("wall_seconds") or 0.0
+            for t in transcript
+            if isinstance(t.get("wall_seconds"), (int, float))
+        ),
+        3,
+    )
+    result["debate"] = {
+        "verdict":     verdict,
+        "rounds":      out.get("rounds"),
+        "stop_reason": out.get("stop_reason"),
+        "transcript":  transcript,
+    }
+    return (
+        True,
+        f"debate verdict={verdict!r} after {out.get('rounds')} round(s) "
+        f"(stop_reason={out.get('stop_reason')!r}): "
+        + (transcript[-1].get("text") if transcript else "")[:300],
+    )
+
+
 def _maybe_run_skeptic(
     result: dict, hypothesis_text: str, iteration_id: str | None
 ) -> None:
@@ -232,29 +356,27 @@ def _maybe_run_skeptic(
     corroboration). Gated OFF by default: env NARA_SKEPTIC must be "1" and
     orchestrator.novelty_skeptic must exist and export attack(); otherwise
     this is a no-op. Mutates `result` in place.
+
+    Env NARA_DEBATE=1 (inside an armed NARA_SKEPTIC=1 seam) swaps the
+    single-shot attack for the bounded multi-turn debate (D-065). Unset —
+    the default — the exchange is byte-identical to the pre-D-065 path
+    apart from the additive skeptic_* provenance tags.
     """
     if os.environ.get("NARA_SKEPTIC", "0") != "1":
         return
-    try:
-        from orchestrator import novelty_skeptic  # lazy: module may not exist yet
-    except ImportError:
-        return
-    attack = getattr(novelty_skeptic, "attack", None)
-    if not callable(attack):
-        return
-    try:
-        out = attack(hypothesis_text, iteration_id=iteration_id) or {}
-    except Exception as exc:  # a skeptic crash is recorded, never fatal
-        result["skeptic_verdict"] = f"error: {type(exc).__name__}: {exc}"[:200]
-        return
-    attack_verdict = out.get("attack_verdict")
-    result["skeptic_verdict"] = attack_verdict
-    if attack_verdict in ("refuted", "inconclusive"):
-        result["verdict_overridden_from"] = result.get("verdict")
-        result["override_reason"] = (
-            f"skeptic attack_verdict={attack_verdict!r}: "
-            + (out.get("rationale") or "")[:300]
+    if os.environ.get("NARA_DEBATE", "0") == "1":
+        ran, override_reason = _run_debate_exchange(
+            result, hypothesis_text, iteration_id
         )
+    else:
+        ran, override_reason = _run_single_attack(
+            result, hypothesis_text, iteration_id
+        )
+    if not ran:
+        return
+    if result.get("skeptic_verdict") in ("refuted", "inconclusive") and override_reason:
+        result["verdict_overridden_from"] = result.get("verdict")
+        result["override_reason"] = override_reason
         result["verdict"] = "undecidable"
 
 
@@ -291,6 +413,7 @@ def _maybe_run_restate_skeptic(
     restate_attack = getattr(restate_skeptic, "restate_attack", None)
     if not callable(restate_attack):
         return
+    t0 = time.perf_counter()
     try:
         out = restate_attack(
             hypothesis_text, iteration_id=iteration_id,
@@ -298,9 +421,18 @@ def _maybe_run_restate_skeptic(
         ) or {}
     except Exception as exc:  # a skeptic crash is recorded, never fatal
         result["restate_verdict"] = f"error: {type(exc).__name__}: {exc}"[:200]
+        result["restate_backend"] = _configured_skeptic_backend()
+        result["restate_model"] = None
+        result["restate_wall_seconds"] = round(time.perf_counter() - t0, 3)
         return
     restate_verdict = out.get("restate_verdict")
     result["restate_verdict"] = restate_verdict
+    # D-065 provenance, same hole as the survives-attack skeptic:
+    # restate_attack() has always returned backend/model (default
+    # vllm-qwen via NARA_SKEPTIC_BACKEND); only the carry-through was missing.
+    result["restate_backend"] = out.get("backend") or _configured_skeptic_backend()
+    result["restate_model"] = out.get("model") or None
+    result["restate_wall_seconds"] = round(time.perf_counter() - t0, 3)
     if restate_verdict == "restated" and out.get("restating_doc_id"):
         result["verdict_overridden_from"] = result.get("verdict")
         result["override_reason"] = (
@@ -341,12 +473,24 @@ def critic_loop_v0(
             # restatement-skeptic flip):
             "verdict_overridden_from": str,
             "override_reason": str,
-            # only when the skeptic seam ran (env NARA_SKEPTIC=1):
+            # only when the skeptic seam ran (env NARA_SKEPTIC=1). The
+            # backend/model are the SKEPTIC's own (D-065) — distinct from
+            # subagent_backend/_model, which describe the critic:
             "skeptic_verdict": str | None,
+            "skeptic_backend": str,
+            "skeptic_model": str | None,
+            "skeptic_wall_seconds": float,
+            # only when the debate variant ran (NARA_SKEPTIC=1 AND
+            # NARA_DEBATE=1) — bounded multi-turn transcript, every turn
+            # tagged with the backend/model that produced it:
+            "debate": {"verdict", "rounds", "stop_reason", "transcript"},
             # only when the restatement-skeptic seam ran (env
             # NARA_RESTATE_SKEPTIC=1, novelty=rediscovery, clean
             # survives/undecidable):
             "restate_verdict": str | None,
+            "restate_backend": str,
+            "restate_model": str | None,
+            "restate_wall_seconds": float,
         } | None,
         "errors": [str, ...],
         "wrapper_request_id": str | None,
