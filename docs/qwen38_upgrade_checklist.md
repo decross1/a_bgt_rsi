@@ -214,3 +214,24 @@ human-ratified per the entrenchment tier list).
   (D-044), not this backend — unaffected by cutover.
 - UI: `ui/sampler/sampler.py` keys metrics as `vllm_qwen` by URL (`:8001`),
   not by model name — unaffected; the dashboard keeps both LLM health panels.
+
+## Battery result 2026-08-15 (window #1) — VERDICT: NO CUTOVER under v0.21.0
+
+Stage-3a ladder sweep vs 3.8 (`bench/critic_eval/runs/stage3a_qwen3.8-27b-nvfp4-mtp_20260815T083124Z.json`):
+**liveness FAIL 22/22** — the model produces coherent adversarial reasoning
+prose but NEVER a parseable verdict (verdict null across the sweep) at an
+avg **311.6 s/case** (vs ~2 min for the whole D-044 3.6 step-1 validation).
+Failure signature = the v0.21.0 `--reasoning-parser qwen3` mis-handling
+3.8's reasoning stream until token starvation — a **pin-amendment-class
+incompatibility** (checklist §1 open question now ANSWERED: v0.21.0 does
+NOT usably support 3.8's parser/MTP stack), not a model-quality result.
+Kill/no-false-kill checks unreachable behind the liveness fail (rule 4:
+that is a FAIL, not a partial).
+
+Consequences: (a) same-day 3.6 control run SKIPPED as moot — 3.8 fails
+before any comparison; D-044's standing 3.6 validation remains the control;
+(b) D-0zz is NOT filed — no pin change proposed; cutover BLOCKED until a
+vLLM pin amendment (ratified per inviolate rule 2) provides working 3.8
+parser/MTP support, then this battery re-runs; (c) 3.8 weights stay on disk
+(cheap, ready). Window closed 08:38Z: prod restored, fresh MARLIN line
+verified, preflight PASS (55 GiB), 22 min before the 09:00Z cron.

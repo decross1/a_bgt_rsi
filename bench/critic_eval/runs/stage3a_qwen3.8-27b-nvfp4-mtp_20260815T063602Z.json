@@ -1,0 +1,276 @@
+{
+  "generated_at": "2026-08-15T06:36:02.667123+00:00",
+  "served_model": "qwen3.8-27b-nvfp4-mtp",
+  "checks": {
+    "kill": {
+      "pass": false
+    },
+    "no_false_kill": {
+      "pass": true,
+      "novel_on_01_verdict": null
+    },
+    "liveness": {
+      "pass": false,
+      "unparseable": [
+        "novel_on_01_quant_lockin",
+        "novel_on_02_critic_flip_model",
+        "novel_on_03_levelk_quantal_bridge",
+        "redisc_on_01_tft_reciprocity",
+        "redisc_on_02_folk_theorem",
+        "redisc_on_03_quantal_response",
+        "fase_off_01_semantic_entropy",
+        "fase_off_02_db_index_tuning",
+        "nonsense_01_word_salad",
+        "nonsense_02_not_a_question",
+        "falsifiable_01_finite_pd_cooperate",
+        "falsifiable_02_dominant_tft",
+        "camo_off_01_fase_gt_vocab",
+        "camo_off_02_btree_mechanism",
+        "camo_off_03_framework_coordination",
+        "camo_off_04_raft_punishment",
+        "drift_off_01_rag_chunk_overlap",
+        "drift_off_02_belief_distillation",
+        "canary_on_01_ultimatum_plain",
+        "canary_on_02_hawkdove_ess",
+        "canary_on_03_llm_gt_hybrid",
+        "pbeauty_068_01_levelk"
+      ]
+    }
+  },
+  "all_pass": false,
+  "verdict_by_expected": {
+    "survives": [
+      null,
+      null,
+      null,
+      null
+    ],
+    "restated": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "falsified": [
+      null,
+      null,
+      null,
+      null
+    ],
+    "malformed": [
+      null,
+      null
+    ],
+    "undecidable": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "total_seconds": 54.3,
+  "rows": [
+    {
+      "case_id": "novel_on_01_quant_lockin",
+      "expected_critic": "survives",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 12.3
+    },
+    {
+      "case_id": "novel_on_02_critic_flip_model",
+      "expected_critic": "survives",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 2.1
+    },
+    {
+      "case_id": "novel_on_03_levelk_quantal_bridge",
+      "expected_critic": "survives",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 2.2
+    },
+    {
+      "case_id": "redisc_on_01_tft_reciprocity",
+      "expected_critic": "restated",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 1.5
+    },
+    {
+      "case_id": "redisc_on_02_folk_theorem",
+      "expected_critic": "restated",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 1.6
+    },
+    {
+      "case_id": "redisc_on_03_quantal_response",
+      "expected_critic": "restated",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 1.8
+    },
+    {
+      "case_id": "fase_off_01_semantic_entropy",
+      "expected_critic": "falsified",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 2.0
+    },
+    {
+      "case_id": "fase_off_02_db_index_tuning",
+      "expected_critic": "falsified",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 1.6
+    },
+    {
+      "case_id": "nonsense_01_word_salad",
+      "expected_critic": "malformed",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 1.4
+    },
+    {
+      "case_id": "nonsense_02_not_a_question",
+      "expected_critic": "malformed",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 1.2
+    },
+    {
+      "case_id": "falsifiable_01_finite_pd_cooperate",
+      "expected_critic": "falsified",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 1.7
+    },
+    {
+      "case_id": "falsifiable_02_dominant_tft",
+      "expected_critic": "falsified",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 1.5
+    },
+    {
+      "case_id": "camo_off_01_fase_gt_vocab",
+      "expected_critic": "undecidable",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 2.7
+    },
+    {
+      "case_id": "camo_off_02_btree_mechanism",
+      "expected_critic": "undecidable",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 3.0
+    },
+    {
+      "case_id": "camo_off_03_framework_coordination",
+      "expected_critic": "undecidable",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 2.2
+    },
+    {
+      "case_id": "camo_off_04_raft_punishment",
+      "expected_critic": "undecidable",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 2.2
+    },
+    {
+      "case_id": "drift_off_01_rag_chunk_overlap",
+      "expected_critic": "undecidable",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 2.1
+    },
+    {
+      "case_id": "drift_off_02_belief_distillation",
+      "expected_critic": "undecidable",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 2.1
+    },
+    {
+      "case_id": "canary_on_01_ultimatum_plain",
+      "expected_critic": "restated",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 1.8
+    },
+    {
+      "case_id": "canary_on_02_hawkdove_ess",
+      "expected_critic": "restated",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 2.6
+    },
+    {
+      "case_id": "canary_on_03_llm_gt_hybrid",
+      "expected_critic": "survives",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 2.6
+    },
+    {
+      "case_id": "pbeauty_068_01_levelk",
+      "expected_critic": "restated",
+      "verdict": null,
+      "contradicting_doc_id": null,
+      "reason_head": "wrapper.call_sync failed: NotFoundError: Error code: 404 - {'error': {'message': 'The model `qwen3.6-27b-nvfp4-mtp` does not exist.', 'type': 'NotFoundError', '",
+      "raw_status": null,
+      "seconds": 2.2
+    }
+  ]
+}
