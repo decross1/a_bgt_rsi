@@ -26,6 +26,9 @@ const SKEW_404_ENDPOINTS: ReadonlySet<string> = new Set([
   "/api/attest/finding_review",
   "/api/attest/bubble_ack",
   "/api/attest/defer",
+  // S4 lab channel: a backend predating /api/channel/* degrades quietly.
+  "/api/channel/timeline",
+  "/api/channel/available",
 ]);
 
 /** True when `err` is a 404 from a KNOWN list/capability endpoint — i.e.

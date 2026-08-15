@@ -36,9 +36,24 @@ def _client(tmp_path):
 
 
 def test_health(tmp_path):
-    body = _client(tmp_path).get("/api/health").json()
+    # Forward-only tailer semantics (2026-08-15 fix): the first /api/health
+    # ATTACHES at the telemetry file's EOF — pre-existing history is never
+    # re-parsed (the 6.5GB hang), so last_seen starts None and picks up the
+    # first sample appended AFTER the attach.
+    client = _client(tmp_path)
+    body = client.get("/api/health").json()
     assert body["ok"] is True
-    assert body["telemetry_last_seen"] == "2026-05-18T10:00:00.000+00:00"
+    assert body["telemetry_last_seen"] is None
+
+    telemetry = tmp_path / "telemetry.jsonl"
+    with open(telemetry, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({
+            "timestamp": "2026-05-18T10:00:05.000+00:00",
+            "gpu": None, "host": None, "vllm": None,
+            "processes": [], "read_errors": None,
+        }) + "\n")
+    body = client.get("/api/health").json()
+    assert body["telemetry_last_seen"] == "2026-05-18T10:00:05.000+00:00"
 
 
 def test_telemetry_recent(tmp_path):

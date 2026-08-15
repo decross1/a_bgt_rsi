@@ -41,7 +41,13 @@ class LogStore:
         for path, kind in self._log_files():
             tailer = self._tailers.get(path)
             if tailer is None:
-                tailer = JsonlTailer(path)
+                # replay=True: the LogStore RELIES on replay — its in-memory
+                # indexes (calls_by_id/children/orch_by_task) ARE the file
+                # history, so a first attach must read from byte 0. These are
+                # the bounded day*/exp*/orchestrator logs, not the giant
+                # telemetry/calls tails the 2026-08-15 EOF-attach default
+                # protects against.
+                tailer = JsonlTailer(path, replay=True)
                 self._tailers[path] = tailer
             for record in tailer.read_new():
                 if kind == "orchestrator":

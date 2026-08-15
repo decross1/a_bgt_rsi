@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import LoopAlertBanner from "./components/LoopAlertBanner";
+import Channel from "./routes/Channel";
 import Cycles from "./routes/Cycles";
 import DossierIndex from "./routes/DossierIndex";
 import DossierReader from "./routes/DossierReader";
@@ -20,6 +21,8 @@ const NAV = [
   { to: "/", label: "pulse", end: true },
   { to: "/ladder", label: "ladder", end: false },
   { to: "/dossier", label: "dossiers", end: false },
+  // S4: the lab channel — the always-on human ⇄ Nara ⇄ PI conversation.
+  { to: "/channel", label: "channel", end: false },
 ];
 
 // Engine-internal destinations, collapsed. A plain <details> disclosure (no
@@ -121,6 +124,9 @@ export default function App() {
           <Route path="/dossier" element={<DossierIndex />} />
           <Route path="/dossier/:id" element={<DossierReader />} />
           <Route path="/todo" element={<Navigate to="/dossier" replace />} />
+          {/* S4: the lab channel (timeline + turn + delegate; no
+              disposition surface — the fence). */}
+          <Route path="/channel" element={<Channel />} />
           {/* Engine internals. /coordinator bookmarks redirect to the
               renamed /cycles; /dashboard + /activity are gone (S3). */}
           <Route path="/cycles" element={<Cycles />} />

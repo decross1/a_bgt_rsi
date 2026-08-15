@@ -2595,3 +2595,124 @@ ui/
 
 Nothing outside `ui/` is created — the telemetry schema and output live
 at `ui/schema/` and `ui/logs/` (r3).
+
+## §2026-08-15 S4 — the Lab Channel surface + tailer first-attach fix (`ui/` only)
+
+Plan: `docs/ui_simplification_plan_2026-08-15.md` §S4 (owner-added mid-loop).
+Built by a worktree-isolated build agent (spawn `loop10h-ui-s4-channel`) on top
+of merged S1+S2+S3 (`2bca9bc`); primary gates + merges. The primary's half —
+the blessed `orchestrator/lab_channel.py` CLI (`timeline` / `turn` /
+`delegate`, transcript `memory/lab_channel.jsonl`) — had already landed; this
+slice is the UI half plus one operational bugfix.
+
+### Backend — `ui/backend/lab_channel_seam.py` (NEW, + test suite)
+
+Chat-seam idiom throughout: argv-array exec of the ONE blessed CLI
+(`orchestrator.lab_channel`), cwd = primary repo root, interpreter
+`.venv-chroma/bin/python`, runner-injectable, NO shell, NO env manipulation
+(the server's `env -u MOCK_LLM` semantics ride in), rc!=0 → 502 `{rc, stderr}`
+with stderr VERBATIM, seam writes nothing (structural grep pinned).
+
+- `GET /api/channel/available` — capability handshake (attest idiom:
+  existence-check CLI module + interpreter; never execs).
+- `GET /api/channel/timeline?since=&limit=` — execs `timeline` under a SHORT
+  30s cap (pure read); parses the printed `"<ts>  [<kind>]  <message>"` lines
+  back to `{rows:[{ts,kind,message}]}` — a multi-line message (model reply)
+  is reattached as a continuation of its row, never dropped mid-row. `since`
+  is argv-hygiene-validated (digit-leading ISO charset — can never parse as a
+  flag); `limit` bounded [1,1000].
+- `POST /api/channel/turn` `{role: nara|pi, message}` — capability-gated:
+  probe fails → an honest PREVIEW (`{status:"preview", would_run}`) that
+  execs/writes NOTHING; live → execs `turn` under the chat seam's 300s cap
+  and returns `{status, role, reply}` (reply = CLI stdout verbatim).
+- `POST /api/channel/delegate` `{kind: research|improvement, text,
+  cluster_id?, objective?}` — the human-click hand-off; same capability
+  preview; live → execs `delegate` under the fast 120s write cap via
+  `attest._exec_blessed` and returns the CLI's stdout JSON verbatim (the
+  written rows + transcript mirror). `cluster_id` id-charset-validated
+  (no leading dash); blank `objective` is 422, never silently dropped.
+- FENCE pinned in `backend/tests/test_lab_channel_seam.py` (51 cases): the
+  router surface is exactly {available, timeline, turn, delegate} — every
+  disposition-verb probe 404s; extra payload keys (verdict/set_status/--by)
+  are never forwarded into argv; 422 validation always precedes any spawn.
+- Registered in `app.py` after the cockpit seams.
+
+### Frontend — `routes/Channel.tsx` + `api/channel.ts` (NEW, + suite)
+
+- Nav: `pulse · ladder · dossiers · channel · engine ▾` — `/channel` sits
+  between dossiers and engine per the work order.
+- ONE feed merging the stored turns with the CLI's read-time-derived events:
+  voice bubbles in ChatPane's visual language (rounded bordered rows,
+  uppercase voice labels; human zinc / nara emerald / pi indigo,
+  prototype-safe own-key chrome lookup) and event system-lines with kind
+  chips — cycle / kill / promotion / alert (+ quiet ladder/event fallbacks) —
+  keyed off the events' stable message prefixes. Poll ~10s with an inclusive
+  `since` cursor + full-identity dedupe; first load bounded (limit 400).
+- Turn composer: role selector (ask nara · operations / ask pi · research)
+  with the ONE-MODEL HONESTY note rendered beside it (both voices are the
+  same local Gemma — never independent confirmation; the independent Qwen
+  skeptic lives in the dossier reader's two-voice chat). Send gated on the
+  `/api/channel/available` probe (capability-off banner, disabled send —
+  ChatPane's availability idiom); a turn success triggers an immediate feed
+  refresh; a failure renders the CLI stderr verbatim.
+- Delegate composer: kind selector (research/improvement) + text
+  (+ optional cluster-id / objective) → "review delegation…" renders a
+  CONFIRM CARD naming exactly what will be written where (research:
+  agenda_item_added → memory/idea_ledger.jsonl on the named cluster or
+  cl-human-delegations auto-created, + the DELEGATED mirror row;
+  improvement: one authorize_fix packet row → memory/authorize_fix_queue.jsonl
+  + the mirror row). **The confirm click is the ONLY path that posts**; any
+  edit invalidates a pending card; cancel posts nothing.
+- Empty state; version-skew 404 on `/api/channel/timeline` →
+  EndpointMissingNote (both channel GETs added to SKEW_404_ENDPOINTS);
+  non-404 failures stay honestly red.
+- `tests/test_channel.tsx` (16 cases) pins: feed render incl. all four event
+  chips, honesty note, turn post threading the selected role, capability-off
+  (send disabled + nothing posted), the confirm-card flow (review does NOT
+  post; confirm posts exactly once with the threaded payload; cancel/edit
+  post nothing), stderr-verbatim errors, skew, and the FENCE (no
+  verdict/disposition testid or button verb anywhere on the page).
+- DEVIATION (declared): the work order said "extract shared bits [of
+  ChatPane] rather than duplicating if clean" — not clean: ChatPane is
+  session-local, stance/addressee-parameterized and pin-laden; the channel
+  feed is a transcript-with-events. Extracting a shared bubble primitive
+  would have been abstraction for two call sites with different shapes
+  (inviolate rule 8). The visual language is matched by idiom instead;
+  ChatPane and its pins are untouched.
+
+### Tailer fix — first attach seeks to EOF (`ui/backend/tailer.py`)
+
+The 2026-08-15 operational hang: a backend restart re-parsed the whole
+6.5GB telemetry file inside `/api/health` (offset started at 0). Now
+`JsonlTailer.read_new` ATTACHES on first call — offset = current file size,
+first read returns `[]` — so history is never replayed; only lines appended
+after attach are parsed. `replay=True` opts back into the legacy
+from-byte-0 first read.
+
+Consumer sweep (the semantic change is history-not-replayed):
+
+- `app.py /api/health` telemetry tailer — the bug site; now forward-only.
+  `telemetry_last_seen` is null after a restart until the next sample lands
+  (seconds) — pinned honestly in test_api::test_health.
+- `app.py /api/live` websocket — already called `seek_to_end()` explicitly;
+  unchanged behavior.
+- **`chain.py LogStore` RELIED on replay** — its in-memory indexes ARE the
+  file history (the /chain/req/:id inspector would have gone blind to all
+  pre-restart records). It now constructs `JsonlTailer(path, replay=True)`
+  (bounded day*/exp*/orchestrator logs, not the giant tails), with the
+  reliance documented at the construction site. No other consumer exists.
+- Regression pinned in test_tailer: 10k-line pre-existing file → first
+  read [], appended line → returned; plus attach-on-missing-file, the
+  replay opt-in contract, and reset()/seek_to_end() semantics.
+
+### Verification (this worktree)
+
+- frontend vitest **932 pass** (66 files; 916 + the new channel suite) ·
+  `tsc --noEmit` clean
+- ui-backend pytest **661 pass** (`.venv-chroma`, `MOCK_LLM=1`; 605 + the
+  seam suite + tailer regressions)
+- The real `:8700` smoke (nav to /channel against live data; a real
+  `env -u MOCK_LLM` turn; timeline showing the live transcript + events;
+  one delegate round-trip) is the PRIMARY's post-merge step. NOTE: the
+  running binary predates `/api/channel/*` — until restart the page shows
+  the EndpointMissingNote skew state by design.
