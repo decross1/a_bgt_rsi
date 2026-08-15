@@ -17,11 +17,9 @@ export interface ExperimentListItem extends ExperimentFlags {
   title: string;
 }
 
-export interface ExperimentsListResponse {
-  available: boolean;
-  reason?: string;
-  experiments: ExperimentListItem[];
-}
+// (ExperimentsListResponse died with the /api/experiments INDEX endpoint in
+// UI simplification S3; ExperimentListItem survives as ResearchExperiment's
+// base — /api/research is the index the page renders.)
 
 // exp001-shape summary.json. Producer fields beyond these may exist; the
 // per-opponent rows are passed through generically.

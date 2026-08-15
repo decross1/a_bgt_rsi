@@ -19,7 +19,9 @@ curl -s localhost:8700/api/health
 | `GET /api/health` | `{ok, telemetry_last_seen, version}` |
 | `GET /api/chain/{task_id}` | full causal tree for a task (404 if unknown) |
 | `GET /api/recent_tasks?limit=50` | recent orchestrator dispatches, latest first |
-| `GET /api/state` | `run_state/week1.state.json` passthrough |
+
+(The week1-state passthrough endpoint was retired in UI simplification S3
+— nothing rendered it.)
 
 `WS /api/live` is build step 6.4 and is not implemented yet.
 
@@ -29,7 +31,6 @@ curl -s localhost:8700/api/health
   `calls.jsonl`; see `ui_plan.md` §4.2). Indexed by `request_id`.
 - **Orchestrator** — `logs/orchestrator.jsonl`, indexed by `task_id`.
 - **Telemetry** — `ui/logs/telemetry.jsonl` (for `/api/health`).
-- **State** — `run_state/week1.state.json`.
 
 All are tailed incrementally by byte offset (`tailer.py`) — files are
 never re-slurped, so `/api/chain` stays fast during active runs.

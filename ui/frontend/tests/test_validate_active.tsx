@@ -1,30 +1,31 @@
 // REAL-DATA validation for the coordinator "active phases" surface
-// (CoordinatorPhases, fed by getCoordinatorActive()). The companion
-// test_coordinator_phases.tsx covers the component against the fixture; THIS
-// file validates the end-to-end render path against the shapes the LIVE
-// backend actually returns — the two real cases observed on 2026-06-09:
+// (CoordinatorPhases — fed post-S3 from the D-047 registry: the /cycles page
+// polls getActiveRuns() and hands the kind==="coordinator" doc down; the old
+// /api/coordinator/active mirror + getCoordinatorActive() died in S3). The
+// companion test_coordinator_phases.tsx covers the component against the
+// fixture; THIS file validates the end-to-end render path against the shapes
+// the LIVE backend actually returns:
 //
-//   (a) run_state/active_run.json is ABSENT → GET /api/coordinator/active is
-//       204 (verified in-process against the real repo) → getCoordinatorActive()
-//       resolves null → CoordinatorPhases renders the QUIET IDLE state
-//       (data-testid coordinator-idle), never a blank gap or a crash.
-//   (b) a real coordinator cycle is in flight → the backend serves the
-//       active_run JSON the producer writes (orchestrator/active_run.py +
+//   (a) no live coordinator run → GET /api/activity/active_runs returns
+//       {runs: []} (or runs of other kinds only) → the page derives null →
+//       CoordinatorPhases renders the QUIET IDLE state (data-testid
+//       coordinator-idle), never a blank gap or a crash.
+//   (b) a real coordinator cycle is in flight → the registry serves the
+//       active-run doc the producer writes (orchestrator/active_run.py +
 //       schema/active_run.schema.json) → CoordinatorPhases renders the
 //       assess→plan→validate→dispatch stepper with the chosen-topic narration.
 //
-// We drive getCoordinatorActive() itself (not a hand-built prop) so the 204→null
-// contract is exercised, mocking fetch the way test_baseline_card.tsx /
-// test_activity_monitor.tsx do. Each case also asserts a clean render: no
-// console.error / console.warn (the "renders without console errors" gate —
-// there is no headless browser, so jsdom + a console spy stands in).
+// We drive getActiveRuns() itself (not a hand-built prop) so the registry
+// contract is exercised, mocking fetch the way the panel suites do. Each case
+// also asserts a clean render: no console.error / console.warn.
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CoordinatorPhases from "../src/components/CoordinatorPhases";
-import { getCoordinatorActive } from "../src/api/http";
+import { getActiveRuns } from "../src/api/http";
+import type { ActiveRun } from "../src/types/activity";
 import type { CoordinatorActiveRun } from "../src/types/schemas";
 
-// A real coordinator active_run, shaped from orchestrator/active_run.py's
+// A real coordinator active-run doc, shaped from orchestrator/active_run.py's
 // write_active_run/update_active_run + schema/active_run.schema.json (NOT the
 // test fixture): required {run_id, kind, label, started_at}, plus current_step
 // / step_started_at / narration from update_active_run. `n_err` is a
@@ -32,7 +33,7 @@ import type { CoordinatorActiveRun } from "../src/types/schemas";
 // included to prove real rows with extra keys render fine. There is NO
 // top-level `topic` field — the chosen topic lives in narration (per the EMIT
 // reconciliation in ui_plan.md §AUTONOMY OBSERVABILITY).
-const REAL_ACTIVE_RUN: CoordinatorActiveRun & { n_err: number } = {
+const REAL_ACTIVE_RUN: ActiveRun = {
   run_id: "coordinator-2026-06-09T12:00:00",
   kind: "coordinator",
   label: "coordinator_cycle",
@@ -46,25 +47,25 @@ const REAL_ACTIVE_RUN: CoordinatorActiveRun & { n_err: number } = {
   n_err: 0,
 };
 
-// Mirror the live backend's 204 (active_run.json absent): empty body, status
-// 204. getCoordinatorActive() branches on resp.status === 204 → null. Matches
-// the {status:204, ok:false} mock in test_activity_monitor.tsx.
-function mockFetch204(): void {
-  vi.spyOn(globalThis, "fetch").mockResolvedValue({
-    status: 204,
-    ok: false,
-  } as Response);
-}
-
-function mockFetchActive(run: CoordinatorActiveRun): void {
+function mockRegistry(runs: ActiveRun[]): void {
   vi.spyOn(globalThis, "fetch").mockResolvedValue({
     status: 200,
     ok: true,
-    json: async () => run,
+    json: async () => ({ runs, skipped: 0 }),
   } as Response);
 }
 
-describe("CoordinatorPhases — validated against live backend shapes", () => {
+// The /cycles page's derivation, verbatim: the registry doc whose kind is
+// "coordinator", else null (idle).
+function coordinatorRunOf(runs: ActiveRun[]): CoordinatorActiveRun | null {
+  return (
+    (runs.find((r) => r != null && r.kind === "coordinator") as
+      | CoordinatorActiveRun
+      | undefined) ?? null
+  );
+}
+
+describe("CoordinatorPhases — validated against live registry shapes", () => {
   let errorSpy: ReturnType<typeof vi.spyOn>;
   let warnSpy: ReturnType<typeof vi.spyOn>;
 
@@ -74,13 +75,20 @@ describe("CoordinatorPhases — validated against live backend shapes", () => {
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("absent active_run.json → 204 → getCoordinatorActive() null → quiet idle (no crash)", async () => {
-    mockFetch204();
+  it("empty registry (plus non-coordinator runs) → null → quiet idle (no crash)", async () => {
+    // A live experiment run in the registry is NOT a coordinator cycle — the
+    // phases panel must still read idle.
+    mockRegistry([
+      {
+        run_id: "exp-2026-06-09-001",
+        kind: "experiment",
+        label: "exp003 probe",
+        started_at: "2026-06-09T11:00:00+00:00",
+      },
+    ]);
 
-    // The real backend returns 204 when run_state/active_run.json is absent
-    // (validated in-process against the real repo). The helper must yield null,
-    // not throw.
-    const activeRun = await getCoordinatorActive();
+    const body = await getActiveRuns();
+    const activeRun = coordinatorRunOf(body.runs);
     expect(activeRun).toBeNull();
 
     render(<CoordinatorPhases activeRun={activeRun} />);
@@ -100,10 +108,11 @@ describe("CoordinatorPhases — validated against live backend shapes", () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it("a real coordinator active_run → 200 → renders the stepper + narration (no crash)", async () => {
-    mockFetchActive(REAL_ACTIVE_RUN);
+  it("a real coordinator doc in the registry → renders the stepper + narration (no crash)", async () => {
+    mockRegistry([REAL_ACTIVE_RUN]);
 
-    const activeRun = await getCoordinatorActive();
+    const body = await getActiveRuns();
+    const activeRun = coordinatorRunOf(body.runs);
     expect(activeRun).not.toBeNull();
     expect(activeRun?.kind).toBe("coordinator");
 
@@ -131,10 +140,8 @@ describe("CoordinatorPhases — validated against live backend shapes", () => {
       "Truthfulness of VCG in combinatorial auctions",
     );
     expect(narration).toHaveTextContent("topic_source=coordinator");
-    // The required run_id renders as the header chip. (run_id is typed
-    // optional on CoordinatorActiveRun for forward-compat, but this fixture
-    // provably sets it — assert non-null so getByText takes a Matcher.)
-    expect(screen.getByText(REAL_ACTIVE_RUN.run_id!)).toBeInTheDocument();
+    // The required run_id renders as the header chip.
+    expect(screen.getByText(REAL_ACTIVE_RUN.run_id)).toBeInTheDocument();
     // Idle state is NOT shown when a cycle is live.
     expect(screen.queryByTestId("coordinator-idle")).toBeNull();
 
@@ -144,10 +151,10 @@ describe("CoordinatorPhases — validated against live backend shapes", () => {
 
   it("a real coordinator run mid-open with current_step null → no phase highlighted, no crash", async () => {
     // write_active_run opens the run BEFORE the first update_active_run sets a
-    // step, so the live file can legitimately carry current_step:null (schema
+    // step, so the live doc can legitimately carry current_step:null (schema
     // allows ["string","null"]). The stepper must still render — every phase
     // reads "future", nothing highlighted — and must not throw.
-    const opening: CoordinatorActiveRun = {
+    const opening: ActiveRun = {
       run_id: "coordinator-2026-06-09T12:05:00",
       kind: "coordinator",
       label: "coordinator_cycle",
@@ -155,8 +162,9 @@ describe("CoordinatorPhases — validated against live backend shapes", () => {
       current_step: null,
       narration: null,
     };
-    mockFetchActive(opening);
-    const activeRun = await getCoordinatorActive();
+    mockRegistry([opening]);
+    const body = await getActiveRuns();
+    const activeRun = coordinatorRunOf(body.runs);
 
     render(<CoordinatorPhases activeRun={activeRun} />);
 

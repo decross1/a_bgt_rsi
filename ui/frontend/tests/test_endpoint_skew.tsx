@@ -6,9 +6,9 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  getActiveIteration,
   getActiveRuns,
   getHumanTodo,
+  getLadder,
   HttpError,
 } from "../src/api/http";
 import EndpointMissingNote, {
@@ -58,7 +58,7 @@ describe("HttpError (api/http)", () => {
     expect((err as HttpError).detail).toBe("active_run unreadable: boom");
   });
 
-  it("bespoke fetcher (getActiveIteration) throws HttpError too", async () => {
+  it("bespoke fetcher (getLadder) throws HttpError too", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -70,7 +70,7 @@ describe("HttpError (api/http)", () => {
         },
       } as unknown as Response),
     );
-    const err = await getActiveIteration().then(
+    const err = await getLadder().then(
       () => null,
       (e: unknown) => e,
     );
@@ -80,12 +80,12 @@ describe("HttpError (api/http)", () => {
     expect((err as HttpError).detail).toBe("Internal Server Error");
   });
 
-  it("getActiveIteration still resolves null on 204 (no iteration)", async () => {
+  it("getLadder still resolves null on 204 (no ledger on this checkout)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ status: 204, ok: false } as Response),
     );
-    await expect(getActiveIteration()).resolves.toBeNull();
+    await expect(getLadder()).resolves.toBeNull();
   });
 });
 

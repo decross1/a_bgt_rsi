@@ -3,8 +3,8 @@
 // (the backend sorts newest-first): topic · status · errored count ·
 // promoted findings · age. Tones: status "no_valid_plan" amber (the loop
 // planned nothing actionable), errored outcomes red, promoted findings
-// emerald. Links into the coordinator narrative (/coordinator today; the
-// route is renamed /cycles in S3).
+// emerald. Links into the cycle narrative at /cycles (the S3 rename of the
+// old /coordinator route — the S1 deviation is now resolved).
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getCoordinatorCycles } from "../api/http";
@@ -122,7 +122,7 @@ export default function LastCycleLine({ initial, pollMs = 30000 }: Props) {
         {ageLabel(last.timestamp, Date.now())}
       </span>
       <Link
-        to="/coordinator"
+        to="/cycles"
         className="ml-auto text-[11px] text-zinc-600 hover:text-zinc-300"
       >
         cycles →

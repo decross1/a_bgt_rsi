@@ -21,8 +21,8 @@
 //   - hypothesis.candidates_considered;
 //   - the LAZY journal disclosure (JournalScroll mounts on first open);
 //   - the links section (/chain/req/<first wrapper call>, /experiments/<id>,
-//     the matching coordinator cycle → /coordinator for now [S3 renames the
-//     route to /cycles]).
+//     the matching coordinator cycle → /cycles [the S3 route rename — the
+//     S2 deviation is resolved]).
 // GateVerdictForm is NOT absorbed — the reader's disposition footer owns the
 // forms (the verdict fence).
 //
@@ -414,7 +414,7 @@ function JourneyLinks({ row }: { row: IterationRecord }) {
         {cycleRunId !== null && (
           <Link
             data-testid="journey-cycle-link"
-            to="/coordinator"
+            to="/cycles"
             className="text-sky-300 underline hover:text-sky-200"
           >
             coordinator cycle {cycleRunId || "(unnamed run)"}

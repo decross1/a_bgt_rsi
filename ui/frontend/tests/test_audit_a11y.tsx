@@ -1,5 +1,6 @@
-// A11Y AUDIT — the autonomy-observability surfaces (CoordinatorCycleCard, the
-// four panels, CoordinatorPhases, the /coordinator route). The apparatus moves
+// A11Y AUDIT — the autonomy-observability surfaces (CoordinatorCycleCard,
+// CoordinatorPhases, the /cycles route). (The panel + red-flags describes died
+// with their components in UI simplification S3.) The apparatus moves
 // the human from operator to *auditor*; an auditor who relies on a screen
 // reader or who can't perceive the amber/red/emerald color coding must still be
 // able to read the loop's decisions. There is no headless browser / axe here,
@@ -17,18 +18,10 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import CoordinatorCycleCard from "../src/components/CoordinatorCycleCard";
 import CoordinatorPhases from "../src/components/CoordinatorPhases";
-import SurfacedFindingsPanel from "../src/components/SurfacedFindingsPanel";
-import BubblesPanel from "../src/components/BubblesPanel";
-import HealthSignalsPanel from "../src/components/HealthSignalsPanel";
-import RedFlagsTrendStrip from "../src/components/RedFlagsTrendStrip";
-import Coordinator from "../src/routes/Coordinator";
+import Cycles from "../src/routes/Cycles";
 import {
   COORDINATOR_CYCLES_FIXTURE,
   ACTIVE_RUN_FIXTURE,
-  SURFACED_FINDINGS_FIXTURE,
-  BUBBLES_FIXTURE,
-  HEALTH_SIGNALS_FIXTURE,
-  ITERATIONS_COORD_FIXTURE,
 } from "../src/fixtures/coordinator";
 
 const ERRORED_CYCLE = COORDINATOR_CYCLES_FIXTURE[0]; // failed-dispatch case
@@ -145,78 +138,14 @@ describe("a11y audit — CoordinatorPhases stepper", () => {
   });
 });
 
-describe("a11y audit — the four dashboard panels", () => {
-  it("each panel has a heading and list semantics for its rows", () => {
-    const cases: Array<[string, () => HTMLElement, RegExp, number]> = [
-      [
-        "SurfacedFindings",
-        () =>
-          render(<SurfacedFindingsPanel initial={SURFACED_FINDINGS_FIXTURE} />)
-            .container,
-        /surfaced findings/i,
-        SURFACED_FINDINGS_FIXTURE.length,
-      ],
-      [
-        "Bubbles",
-        () => render(<BubblesPanel initial={BUBBLES_FIXTURE} />).container,
-        /bubbles/i,
-        BUBBLES_FIXTURE.length,
-      ],
-      [
-        "HealthSignals",
-        () =>
-          render(<HealthSignalsPanel initial={HEALTH_SIGNALS_FIXTURE} />)
-            .container,
-        /degraded signals/i,
-        HEALTH_SIGNALS_FIXTURE.length,
-      ],
-    ];
-    for (const [, renderFn, headingRe, rowCount] of cases) {
-      const container = renderFn();
-      const scope = within(container);
-      // A heading names the panel.
-      expect(scope.getByRole("heading", { name: headingRe })).toBeInTheDocument();
-      // Rows are a list of listitems.
-      const list = scope.getByRole("list");
-      expect(within(list).getAllByRole("listitem").length).toBe(rowCount);
-    }
-  });
-
-  it("HealthSignalsPanel signals are labeled by TEXT, not amber color alone", () => {
-    render(<HealthSignalsPanel initial={HEALTH_SIGNALS_FIXTURE} />);
-    // The two degraded signals must be readable without perceiving amber: each
-    // chip humanizes its signal id to a text label. Match the exact humanized
-    // chip text (the phrase also appears in the row's detail prose, so a loose
-    // regex would match >1 node — pin the chip label form). getAllByText keeps
-    // it robust if a future fixture repeats a signal.
-    expect(
-      screen.getAllByText("ml-intern · 0 papers").length,
-    ).toBeGreaterThan(0);
-    expect(
-      screen.getAllByText("qwen · empty content").length,
-    ).toBeGreaterThan(0);
-  });
-});
-
-describe("a11y audit — RedFlagsTrendStrip (color is not the only signal)", () => {
-  it("each red-flag tile carries a text label and a textual count, not just a tone", () => {
-    render(<RedFlagsTrendStrip iterations={ITERATIONS_COORD_FIXTURE} />);
-    // The suspected-false-novel tile is the trust-critical one whose VALUE goes
-    // amber/red — but its meaning is carried by the label text + the "N of M"
-    // count, perceivable independent of color.
-    const tile = screen.getByTestId("red-flag-suspected-false-novel");
-    expect(tile).toHaveTextContent(/suspected false-novel/i);
-    expect(tile).toHaveTextContent(/of/i); // "N of M" textual denominator
-    expect(screen.getByRole("heading", { name: /red flags/i })).toBeInTheDocument();
-  });
-});
-
-describe("a11y audit — /coordinator route over LIVE-shaped rows", () => {
+describe("a11y audit — /cycles route over LIVE-shaped rows", () => {
   it("renders every cycle as a named article landmark, including the errored one", () => {
-    render(<Coordinator initial={COORDINATOR_CYCLES_FIXTURE} />);
+    render(
+      <Cycles initial={COORDINATOR_CYCLES_FIXTURE} initialPhasesRun={null} />,
+    );
     // The page heading.
     expect(
-      screen.getByRole("heading", { name: /coordinator/i, level: 1 }),
+      screen.getByRole("heading", { name: /cycles/i, level: 1 }),
     ).toBeInTheDocument();
     // Each cycle is an <article> landmark. getAllByRole("article") is the
     // assistive-tech view of the list; it must find one per renderable cycle.

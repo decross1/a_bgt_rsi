@@ -74,54 +74,9 @@ def _client(tmp_path, *, popen=None) -> tuple[TestClient, dict]:
     return TestClient(app), captured
 
 
-def test_active_returns_204_when_no_iteration_in_flight(tmp_path):
-    client, _ = _client(tmp_path)
-    resp = client.get("/api/loop_v0/active")
-    assert resp.status_code == 204
-    assert resp.content == b""
-
-
-def test_active_returns_json_when_present(tmp_path):
-    client, _ = _client(tmp_path)
-    # Field names mirror schema/active_iteration.schema.json. The producer
-    # writes `latest_narration` (not `narration`); see nara.py:182 and the
-    # 2026-05-26 code-review B1 finding.
-    active = {
-        "iteration_id": "iter-2026-05-26-001",
-        "topic": "TfT dominance",
-        "started_at": "2026-05-26T14:00:00Z",
-        "current_step": "query_chroma",
-        "latest_narration": "Nara: querying Chroma.",
-        "tool_calls_so_far": [],
-    }
-    (tmp_path / "run_state" / "active_iteration.json").write_text(
-        json.dumps(active), encoding="utf-8")
-    resp = client.get("/api/loop_v0/active")
-    assert resp.status_code == 200
-    assert resp.json() == active
-
-
-def test_active_returns_204_when_file_disappears_mid_read(tmp_path):
-    """Regression: producer atomically deletes active_iteration.json at
-    iteration end (nara.py finally-block). The endpoint's exists() may
-    return True but read_text() then raises FileNotFoundError. The
-    polling UI must see 204, not 500. See 2026-05-26 code-review N4."""
-    import unittest.mock as mock
-    client, _ = _client(tmp_path)
-    path = tmp_path / "run_state" / "active_iteration.json"
-    path.write_text(json.dumps({"iteration_id": "x"}), encoding="utf-8")
-
-    real_read_text = type(path).read_text
-
-    def race_read_text(self, *args, **kwargs):
-        if str(self) == str(path):
-            raise FileNotFoundError(str(self))
-        return real_read_text(self, *args, **kwargs)
-
-    with mock.patch.object(type(path), "read_text", race_read_text):
-        resp = client.get("/api/loop_v0/active")
-    assert resp.status_code == 204
-    assert resp.content == b""
+# (The GET /active + GET /processes cases died with those endpoints in UI
+# simplification S3; the process-status REAP semantics stay pinned below via
+# the /iterations join — the surviving observable.)
 
 
 def test_iterations_empty_when_log_missing(tmp_path):
@@ -252,9 +207,7 @@ def test_start_with_real_subprocess_invokes_env_unset(tmp_path):
 
 
 @pytest.mark.parametrize("path", [
-    "/api/loop_v0/active",
     "/api/loop_v0/iterations",
-    "/api/loop_v0/processes",
 ])
 def test_endpoints_routed(tmp_path, path):
     # Smoke that the router is mounted on the app at the expected prefix.
@@ -285,71 +238,36 @@ class _CompletableProc:
         self._rc = rc
 
 
-def test_processes_empty_at_startup(tmp_path):
-    client, _ = _client(tmp_path)
-    resp = client.get("/api/loop_v0/processes")
-    assert resp.status_code == 200
-    assert resp.json() == {"processes": []}
-
-
-def test_start_registers_process_as_running(tmp_path):
+def test_iterations_join_reports_error_and_kill_statuses(tmp_path):
+    """PORTED from the deleted /processes suite (S3): the reap semantics —
+    non-zero rc -> exited_error_<rc>, negative rc -> killed_signal_<sig> —
+    stay pinned via the /iterations join, the surviving observable."""
     procs: list[_CompletableProc] = []
     def popen(cmd, cwd=None, **kw):
-        p = _CompletableProc(pid=1000 + len(procs))
+        p = _CompletableProc(pid=6000 + len(procs))
         procs.append(p)
         return p
     client, _ = _client(tmp_path, popen=popen)
-    resp = client.post("/api/loop_v0/start", json={"topic": "alpha"})
-    assert resp.status_code == 202
-    listed = client.get("/api/loop_v0/processes").json()["processes"]
-    assert len(listed) == 1
-    assert listed[0]["topic"] == "alpha"
-    assert listed[0]["status"] == "running"
-    assert listed[0]["exit_code"] is None
-    assert listed[0]["ended_at"] is None
-    assert "proc" not in listed[0]  # internal handle stripped
-
-
-def test_process_transitions_to_exited_clean_on_rc_zero(tmp_path):
-    procs: list[_CompletableProc] = []
-    def popen(cmd, cwd=None, **kw):
-        p = _CompletableProc(pid=2000 + len(procs))
-        procs.append(p)
-        return p
-    client, _ = _client(tmp_path, popen=popen)
-    client.post("/api/loop_v0/start", json={"topic": "beta"})
-    procs[0].complete(0)  # subprocess "exits clean"
-    listed = client.get("/api/loop_v0/processes").json()["processes"]
-    assert listed[0]["status"] == "exited_clean"
-    assert listed[0]["exit_code"] == 0
-    assert listed[0]["ended_at"] is not None
-
-
-def test_process_transitions_to_exited_error(tmp_path):
-    procs: list[_CompletableProc] = []
-    def popen(cmd, cwd=None, **kw):
-        p = _CompletableProc(pid=3000 + len(procs))
-        procs.append(p)
-        return p
-    client, _ = _client(tmp_path, popen=popen)
-    client.post("/api/loop_v0/start", json={"topic": "gamma"})
-    procs[0].complete(2)  # non-zero exit
-    listed = client.get("/api/loop_v0/processes").json()["processes"]
-    assert listed[0]["status"] == "exited_error_2"
-    assert listed[0]["exit_code"] == 2
-
-
-def test_process_transitions_to_killed_on_negative_rc(tmp_path):
-    procs: list[_CompletableProc] = []
-    def popen(cmd, cwd=None, **kw):
-        p = _CompletableProc(pid=4000 + len(procs))
-        procs.append(p)
-        return p
-    client, _ = _client(tmp_path, popen=popen)
-    client.post("/api/loop_v0/start", json={"topic": "delta"})
-    procs[0].complete(-9)  # SIGKILL
-    listed = client.get("/api/loop_v0/processes").json()["processes"]
-    assert listed[0]["status"] == "killed_signal_9"
+    client.post("/api/loop_v0/start", json={"topic": "topic-err"})
+    client.post("/api/loop_v0/start", json={"topic": "topic-kill"})
+    procs[0].complete(2)   # non-zero exit
+    procs[1].complete(-9)  # SIGKILL
+    (tmp_path / "memory" / "loop_memory.jsonl").write_text(
+        json.dumps({
+            "iteration_id": "iter-e",
+            "ended_at": "2026-05-26T14:00:00Z",
+            "seed": {"topic": "topic-err", "source": "human_ui"},
+        }) + "\n" + json.dumps({
+            "iteration_id": "iter-k",
+            "ended_at": "2026-05-26T15:00:00Z",
+            "seed": {"topic": "topic-kill", "source": "human_ui"},
+        }) + "\n",
+        encoding="utf-8")
+    rows = {r["iteration_id"]: r
+            for r in client.get("/api/loop_v0/iterations").json()["iterations"]}
+    assert rows["iter-e"]["process_status"] == "exited_error_2"
+    assert rows["iter-e"]["process_exit_code"] == 2
+    assert rows["iter-k"]["process_status"] == "killed_signal_9"
 
 
 def test_iterations_join_process_status_by_topic(tmp_path):

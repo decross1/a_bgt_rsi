@@ -5,16 +5,10 @@
 
 import type { ActiveRunsResponse } from "../types/activity";
 import type {
-  ActiveIteration,
-  AppState,
-  BaselineResponse,
-  BubblesResponse,
   ChainResponse,
-  CoordinatorActiveRun,
   CoordinatorCyclesResponse,
   FindingDetail,
   Health,
-  HealthSignalsResponse,
   HumanTodoResponse,
   IdeasResponse,
   IterationJourneyResponse,
@@ -22,8 +16,6 @@ import type {
   JournalResponse,
   LadderResponse,
   LoopAlert,
-  ProcessesResponse,
-  SurfacedFindingsResponse,
   TelemetrySample,
   WorkloadHint,
 } from "../types/schemas";
@@ -83,28 +75,16 @@ export const getChainByRequest = (requestId: string) =>
 
 export const getHealth = () => getJSON<Health>("/api/health");
 
-export const getState = () => getJSON<AppState>("/api/state");
-
 export const getRecentTelemetry = (limit = 300) =>
   getJSON<{ samples: TelemetrySample[] }>(`/api/telemetry/recent?limit=${limit}`);
-
-export const getBaseline = () => getJSON<BaselineResponse>("/api/baseline");
 
 export const getWorkloadHint = () =>
   getJSON<WorkloadHint>("/api/workload_hint");
 
 // --- LOOP_V0 endpoints (ui/backend/loop_v0.py) ---
-
-// GET /api/loop_v0/active returns 204 when no iteration is in flight. Caller
-// gets `null` in that case rather than an error.
-export async function getActiveIteration(): Promise<ActiveIteration | null> {
-  const resp = await fetch(`${API_BASE}/api/loop_v0/active`);
-  if (resp.status === 204) return null;
-  if (!resp.ok) {
-    throw await errorFromResponse(resp);
-  }
-  return (await resp.json()) as ActiveIteration;
-}
+// (The single-slot active-iteration mirror + the processes rollup were
+// retired in UI simplification S3 — the D-047 registry, getActiveRuns below,
+// is the one live-run source.)
 
 export const getIterations = () =>
   getJSON<IterationsResponse>("/api/loop_v0/iterations");
@@ -116,41 +96,19 @@ export const getIterationJourney = (iterationId: string) =>
     `/api/iteration/${encodeURIComponent(iterationId)}/journey`,
   );
 
-// Subprocesses spawned since backend boot (the Dashboard in-flight rollup).
-// Always 200 {processes: [...]} — no 204.
-export const getProcesses = () =>
-  getJSON<ProcessesResponse>("/api/loop_v0/processes");
-
 export const getJournalEntry = (iterationId: string) =>
   getJSON<JournalResponse>(
     `/api/loop_v0/journal/${encodeURIComponent(iterationId)}`,
   );
 
-// --- AUTONOMY OBSERVABILITY endpoints (ui/backend/coordinator.py) ---
-// Surface the coordinator loop so the human-as-auditor can see what it decided
-// and on what basis. All read-only; tolerant of absent (gitignored) data files.
+// --- AUTONOMY OBSERVABILITY (ui/backend/coordinator.py) ---
+// The one surviving coordinator endpoint post-S3: the cycle narrative. The
+// findings/bubbles/health_signals/active siblings were retired with their
+// panels (the dossier picker + OweStrip + LoopAlertBanner + the D-047
+// registry cover those reads now).
 
 export const getCoordinatorCycles = () =>
   getJSON<CoordinatorCyclesResponse>("/api/coordinator/cycles");
-
-// GET /api/coordinator/active returns 204 when no cycle is live (mirrors
-// getActiveIteration). Caller gets `null` rather than an error.
-export async function getCoordinatorActive(): Promise<CoordinatorActiveRun | null> {
-  const resp = await fetch(`${API_BASE}/api/coordinator/active`);
-  if (resp.status === 204) return null;
-  if (!resp.ok) {
-    throw await errorFromResponse(resp);
-  }
-  return (await resp.json()) as CoordinatorActiveRun;
-}
-
-export const getSurfacedFindings = () =>
-  getJSON<SurfacedFindingsResponse>("/api/coordinator/findings");
-
-export const getBubbles = () => getJSON<BubblesResponse>("/api/coordinator/bubbles");
-
-export const getHealthSignals = () =>
-  getJSON<HealthSignalsResponse>("/api/coordinator/health_signals");
 
 // --- HUMAN TODO (ui/backend, observability_reconciliation_plan.md §B3) ---
 // Read-only composition of everything awaiting a human: pending gate verdicts,

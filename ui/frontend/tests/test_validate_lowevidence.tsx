@@ -1,11 +1,12 @@
 // VALIDATION (not just unit) — pin the low-evidence surface (isLowEvidence +
-// RedFlagsTrendStrip) to the REAL 49 rows of memory/loop_memory.jsonl, the live
-// data contract these self-checks run over. The jsdom stand-in for "renders
+// LowEvidenceBadge) to the REAL 49 rows of memory/loop_memory.jsonl, the live
+// data contract these self-checks run over. (The RedFlagsTrendStrip half of
+// this suite died with the strip in UI simplification S3.) The jsdom stand-in for "renders
 // without console errors" (no headless browser in this stack): render and spy
 // on console.error/console.warn.
 //
-// Complementary to the existing unit tests (test_low_evidence_badge.tsx,
-// test_red_flags_trend_strip.tsx) which exercise hand-built fixtures. This file
+// Complementary to the existing unit tests (test_low_evidence_badge.tsx)
+// which exercise hand-built fixtures. This file
 // instead pins the SHAPE of production data, which accretes under the tests:
 //   - relevance-bearing rows grow with the diagnostic ladder (1 of 49 on
 //     2026-06-09, all low_confidence:false; 5 of 57 on 2026-06-10 INCLUDING
@@ -21,7 +22,7 @@
 // would-fire path stays pinned independent of the live cohort's contents. If
 // the producer's schema drifts (or the cohort shifts), this is the test that
 // catches the surface choking, going quiet, or over-alarming.
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -29,7 +30,6 @@ import { fileURLToPath } from "node:url";
 import LowEvidenceBadge, {
   isLowEvidence,
 } from "../src/components/LowEvidenceBadge";
-import RedFlagsTrendStrip from "../src/components/RedFlagsTrendStrip";
 import type { IterationRecord } from "../src/types/schemas";
 
 // Resolve the primary repo root by walking UP from this test file's directory
@@ -80,14 +80,6 @@ function loadRealIterations(): IterationRecord[] {
 }
 
 const REAL = loadRealIterations();
-
-// Spy that fails the test if React (or our code) logs while rendering — the
-// jsdom equivalent of "renders without console errors".
-function watchConsole() {
-  const error = vi.spyOn(console, "error").mockImplementation(() => {});
-  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-  return { error, warn };
-}
 
 afterEach(() => {
   cleanup();
@@ -149,81 +141,6 @@ describe("low-evidence surface — validation against REAL loop_memory.jsonl", (
     }
   });
 
-  it("RedFlagsTrendStrip computes over ALL real rows with no NaN, no throw, no console.error", () => {
-    const spy = watchConsole();
-    const { container } = render(<RedFlagsTrendStrip iterations={REAL} />);
-    expect(screen.getByTestId("red-flags-trend-strip")).toBeInTheDocument();
-    // Real denominators exist, so every tile renders a numeric percent — never a
-    // NaN leaking from a divide, never an em-dash (those are the empty state).
-    for (const id of [
-      "red-flag-novel-rate",
-      "red-flag-suspected-false-novel",
-      "red-flag-off-domain",
-    ]) {
-      const tile = within(screen.getByTestId(id));
-      expect(tile.getByText(/^\d+%$/)).toBeInTheDocument();
-    }
-    expect(container.innerHTML).not.toContain("NaN");
-    expect(spy.error).not.toHaveBeenCalled();
-    expect(spy.warn).not.toHaveBeenCalled();
-  });
-
-  it("the trust tiles render EXACTLY the rates the real cohort dictates (no over- or under-alarm)", () => {
-    watchConsole();
-    render(<RedFlagsTrendStrip iterations={REAL} />);
-    // Cohort invariant, not a dated literal: recompute each tile's numerator
-    // from the raw rows with the strip's own definitions, then assert the
-    // rendered percent + "N of M" line match exactly. The old literal-"0%"
-    // pin rotted the day live row iter-2026-06-09-007 landed off-domain
-    // (1 of 55+); this form asserts the same honesty either way — a clean
-    // cohort MUST read 0% and stay quiet zinc, a flagged cohort MUST read its
-    // real rate with the amber/red emphasis (the auditor still notices: a
-    // false-novel/off-domain appearance flips the tile's tone, not this test).
-    const total = REAL.length;
-    const pct = (n: number) => `${Math.round((n / total) * 100)}%`; // strip's pct()
-    const suspectCount = REAL.filter(
-      (r) =>
-        (r.novelty?.class === "novel" || r.critique?.verdict === "survives") &&
-        isLowEvidence(r),
-    ).length;
-    const offDomainCount = REAL.filter(
-      (r) => r.retrieval?.relevance?.low_confidence === true,
-    ).length;
-
-    const suspect = screen.getByTestId("red-flag-suspected-false-novel");
-    expect(within(suspect).getByText(pct(suspectCount))).toBeInTheDocument();
-    expect(
-      within(suspect).getByText(`${suspectCount} of ${total}`),
-    ).toBeInTheDocument();
-    // Tone tracks the count: ANY suspected false-novel escalates (amber, red
-    // at the ≥25% tier); zero stays quiet zinc — never an alarm on a clean loop.
-    if (suspectCount > 0) {
-      expect(suspect.innerHTML).toMatch(/amber|red/);
-    } else {
-      expect(suspect.innerHTML).not.toMatch(/amber|red/);
-    }
-
-    const offDomain = screen.getByTestId("red-flag-off-domain");
-    expect(within(offDomain).getByText(pct(offDomainCount))).toBeInTheDocument();
-    expect(
-      within(offDomain).getByText(`${offDomainCount} of ${total}`),
-    ).toBeInTheDocument();
-    // Off-domain retrieval is degraded-not-broken → amber when present
-    // (iter-2026-06-09-007 makes this 1 of 57 live), quiet zinc when absent.
-    if (offDomainCount > 0) {
-      expect(offDomain.innerHTML).toMatch(/amber/);
-    } else {
-      expect(offDomain.innerHTML).not.toMatch(/amber|red/);
-    }
-
-    // The novel-rate tile reads its real cohort rate too (21+ of the live rows
-    // are novel) — proving the numerators read the real verdicts, not zeros.
-    const novelCount = REAL.filter((r) => r.novelty?.class === "novel").length;
-    expect(novelCount).toBeGreaterThan(0);
-    const novel = screen.getByTestId("red-flag-novel-rate");
-    expect(within(novel).getByText(pct(novelCount))).toBeInTheDocument();
-  });
-
   it("an off-domain / low_confidence:true row WOULD flag (the trigger pinned independent of the live cohort)", () => {
     // Construct the false-novel shape in-test — novel/survives resting on
     // off-domain retrieval — so the would-fire path stays pinned no matter
@@ -247,22 +164,14 @@ describe("low-evidence surface — validation against REAL loop_memory.jsonl", (
       novelty: { class: "novel" },
       critique: { verdict: "survives" },
     };
-    // 1) the per-row guard fires …
+    // The per-row guard fires and the badge lights amber (suspect, not
+    // broken). (The trust-tile escalation half died with RedFlagsTrendStrip
+    // in S3 — the ladder surfaces own cohort-level alarming now.)
     expect(isLowEvidence(offDomainRow)).toBe(true);
-    const { unmount } = render(<LowEvidenceBadge record={offDomainRow} />);
+    render(<LowEvidenceBadge record={offDomainRow} />);
     const badge = screen.getByTestId("low-evidence-badge");
     expect(badge).toHaveTextContent(/low-evidence/i);
     expect(badge.className).toContain("amber"); // suspect, not broken
-    unmount();
-
-    // 2) … and dropped among the real rows, the trust tiles escalate: the
-    // suspected-false-novel + off-domain tiles go non-zero and amber/red.
-    render(<RedFlagsTrendStrip iterations={[...REAL, offDomainRow]} />);
-    const suspect = screen.getByTestId("red-flag-suspected-false-novel");
-    expect(within(suspect).queryByText("0%")).toBeNull(); // no longer quiet 0%
-    expect(suspect.innerHTML).toMatch(/amber|red/);
-    const offDomainTile = screen.getByTestId("red-flag-off-domain");
-    expect(offDomainTile.innerHTML).toMatch(/amber|red/);
   });
 
   it("the empty-neighbors trigger also fires (structural backstop for 0-retrieval)", () => {

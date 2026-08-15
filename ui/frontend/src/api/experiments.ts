@@ -3,7 +3,6 @@
 // to touch the shared http.ts.
 import type {
   ExperimentDetail,
-  ExperimentsListResponse,
   ResearchResponse,
 } from "../types/experiments";
 
@@ -25,8 +24,9 @@ async function getJSON<T>(path: string): Promise<T> {
   return (await resp.json()) as T;
 }
 
-export const getExperiments = () =>
-  getJSON<ExperimentsListResponse>("/api/experiments");
+// (The /api/experiments INDEX endpoint + its getExperiments client were
+// retired in UI simplification S3 — /api/research is the experiments index
+// the page actually renders; /api/experiments/{expId} stays for the detail.)
 
 export const getExperimentDetail = (expId: string) =>
   getJSON<ExperimentDetail>(

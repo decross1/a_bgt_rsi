@@ -102,50 +102,8 @@ def _make_exp002(root: Path) -> None:
     (d / "notes.md").write_text("notes\n", encoding="utf-8")
 
 
-# ─── list endpoint ────────────────────────────────────────────────────
-
-
-def test_list_available_false_when_dir_absent(tmp_path):
-    client = _client(tmp_path / "does_not_exist")
-    resp = client.get("/api/experiments")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["available"] is False
-    assert body["experiments"] == []
-
-
-def test_list_reports_per_experiment_flags(tmp_path):
-    root = tmp_path / "experiments"
-    root.mkdir()
-    _make_exp001(root)
-    _make_exp003(root)
-    _make_exp002(root)
-    # A scaffolding dir that must be skipped.
-    (root / "fixtures").mkdir()
-
-    client = _client(root)
-    body = client.get("/api/experiments").json()
-    assert body["available"] is True
-    by_id = {e["id"]: e for e in body["experiments"]}
-    assert "fixtures" not in by_id
-
-    e1 = by_id["exp001_repeated_pd"]
-    assert e1["has_summary_json"] is True
-    assert e1["has_summary_md"] is False
-    assert e1["has_per_round"] is True
-    assert e1["has_trials"] is False
-    assert e1["n_results_files"] >= 2
-
-    e3 = by_id["exp003_vickrey_rediscovery"]
-    assert e3["has_summary_md"] is True
-    assert e3["has_trials"] is True
-    assert e3["has_summary_json"] is False
-
-    e2 = by_id["exp002_loop_v0_robustness"]
-    assert e2["has_results_dir"] is False
-    assert e2["has_summary_json"] is False
-    assert e2["has_summary_md"] is False
-    assert e2["n_results_files"] == 0
+# (The list-endpoint cases died with the /api/experiments INDEX endpoint in
+# UI simplification S3 — /api/research is the index the page renders.)
 
 
 # ─── detail endpoint: json shape (exp001) ─────────────────────────────

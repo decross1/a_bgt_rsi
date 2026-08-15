@@ -1,4 +1,4 @@
-// PAGE A — ActivityGraph tests. @xyflow/react does not mount custom node
+// /graph — ActivityGraph tests (the S3 thin-page home of the graph). @xyflow/react does not mount custom node
 // labels under jsdom, so the graph exposes an sr-only node list of the same
 // GraphNodeCell cells; the asserted color + deep-link contract lives there.
 import { fireEvent, render, screen, within } from "@testing-library/react";
@@ -24,9 +24,9 @@ beforeAll(() => {
 
 function renderWithRouter(ui: React.ReactElement) {
   return render(
-    <MemoryRouter initialEntries={["/activity"]}>
+    <MemoryRouter initialEntries={["/graph"]}>
       <Routes>
-        <Route path="/activity" element={ui} />
+        <Route path="/graph" element={ui} />
         <Route
           path="/chain/req/:requestId"
           element={<div data-testid="inspector-landing">inspector</div>}

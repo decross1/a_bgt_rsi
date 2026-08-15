@@ -28,11 +28,8 @@ import { render, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
-  Bubble,
   CoordinatorCycle,
-  HealthSignal,
   IterationRecord,
-  SurfacedFinding,
   TelemetrySample,
 } from "../src/types/schemas";
 import type {
@@ -219,10 +216,6 @@ const D = vi.hoisted(() => {
     },
   ] as unknown as CoordinatorCycle[];
 
-  const EMPTY_FINDINGS = [] as SurfacedFinding[];
-  const EMPTY_BUBBLES = [] as Bubble[];
-  const EMPTY_HEALTH = [] as HealthSignal[];
-
   // Minimal-but-real /api/research body so Experiments walks its happy path
   // around the coordinator-cycles section under test.
   const RESEARCH = {
@@ -316,9 +309,6 @@ const D = vi.hoisted(() => {
   return {
     FC_ITERATIONS,
     FC_CYCLES,
-    EMPTY_FINDINGS,
-    EMPTY_BUBBLES,
-    EMPTY_HEALTH,
     RESEARCH,
     MONITOR,
     GRAPH,
@@ -344,27 +334,16 @@ vi.mock("../src/api/http", () => ({
     telemetry_last_seen: new Date().toISOString(),
     version: "test",
   }),
-  getState: vi.fn().mockResolvedValue({ current_day: "2026-06-09" }),
   getIterations: vi.fn().mockResolvedValue({ iterations: D.FC_ITERATIONS }),
   getJournalEntry: vi.fn().mockResolvedValue({
     iteration_id: "iter-2026-06-09-101",
     path: "journal/iterations/101.md",
     content: "# Journal\n\nbody",
   }),
-  getActiveIteration: vi.fn().mockResolvedValue(null),
-  getBaseline: vi.fn().mockResolvedValue({ rows: [] }),
   getWorkloadHint: vi.fn().mockResolvedValue({ regime: "idle" }),
   getCoordinatorCycles: vi.fn().mockResolvedValue({ cycles: D.FC_CYCLES }),
-  getCoordinatorActive: vi.fn().mockResolvedValue(null),
-  getSurfacedFindings: vi.fn().mockResolvedValue({ findings: D.EMPTY_FINDINGS }),
-  getBubbles: vi.fn().mockResolvedValue({ bubbles: D.EMPTY_BUBBLES }),
-  getHealthSignals: vi
-    .fn()
-    .mockResolvedValue({ health_signals: D.EMPTY_HEALTH }),
   // HUMAN TODO endpoint: quiet empty-queue default.
   getHumanTodo: vi.fn().mockResolvedValue({ items: [], counts: {} }),
-  // InFlightRollup feed (FE5): Dashboard polls getProcesses in the HERO effect.
-  getProcesses: vi.fn().mockResolvedValue({ processes: [] }),
   startIteration: vi.fn().mockResolvedValue({ pid: 1 }),
   // S1 additions: the NowBoard registry poll (Pulse mounts it live) and the
   // /ladder endpoint pair — the ladder payload below carries an UNKNOWN
@@ -411,20 +390,17 @@ vi.mock("../src/api/http", () => ({
 vi.mock("../src/api/activity", () => ({
   getActivityGraph: vi.fn().mockResolvedValue(D.GRAPH),
   getActivityMonitor: vi.fn().mockResolvedValue(D.MONITOR),
-  getActiveRun: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("../src/api/experiments", () => ({
   getResearch: vi.fn().mockResolvedValue(D.RESEARCH),
-  getExperiments: vi.fn().mockResolvedValue({ available: true, experiments: [] }),
   getExperimentDetail: vi.fn().mockResolvedValue(null),
 }));
 
 // Imported AFTER the mocks are declared (vi.mock is hoisted).
-import Dashboard from "../src/routes/Dashboard";
-import Activity from "../src/routes/Activity";
+import Cycles from "../src/routes/Cycles";
 import Experiments from "../src/routes/Experiments";
-import Coordinator from "../src/routes/Coordinator";
+import Graph from "../src/routes/Graph";
 import Ladder from "../src/routes/Ladder";
 import Pulse from "../src/routes/Pulse";
 import DossierIndex from "../src/routes/DossierIndex";
@@ -455,22 +431,16 @@ describe("routes survive the announced additive contract (undecidable / novelty_
     vi.clearAllMocks();
   });
 
-  it("Dashboard: undecidable + override siblings + novelty_axes + 5 relevance siblings, mixed with legacy rows", async () => {
-    const { error, warn } = await renderRouteQuietly(<Dashboard />);
-    expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
-    expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
-  });
-
-  it("Coordinator: cycles carrying unknown topic_source / extra keys beside the normal trio", async () => {
+  it("Cycles: cycles carrying unknown topic_source / extra keys beside the normal trio", async () => {
     const { error, warn } = await renderRouteQuietly(
-      <Coordinator pollMs={1_000_000} />,
+      <Cycles pollMs={1_000_000} />,
     );
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });
 
-  it("Activity: forward-compat cycles (errored row still derives; extra outcome keys ignored)", async () => {
-    const { error, warn } = await renderRouteQuietly(<Activity />);
+  it("Graph (S3 thin page): empty forward-compat graph renders console-clean", async () => {
+    const { error, warn } = await renderRouteQuietly(<Graph />);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });
