@@ -3164,3 +3164,34 @@ CLAUDE.md guardrail bullet amended accordingly (Tier S, ratified herein).
 **Reversibility.** `run_state/pause_coordinator` halts everything instantly;
 crontab line reverts to `0 9,15`; cap reverts via `COORDINATOR_DAILY_CAP`;
 the daemon is `systemctl --user stop/disable nara-daemon`.
+
+## D-064 — Critique-refine cycle: 5 bounded rounds of frontier feedback → Nara revision → re-screen, before a kill
+
+**Date.** 2026-08-15 (owner-specified mechanism, same session as D-063).
+**Context.** The frontier screen kills efficiently (F1: 3 of 8 open clusters on
+cited prior work), but a veto carries *improvement information* — "here is the
+prior art / here is the missing control" — that was being discarded with the
+idea. The owner's framing: reviewers vet AND advise, Nara refines, critique
+repeats, "maybe we limit this to 5 times before an IDEA gets killed."
+
+**Decision.** `workers/refine_cycle.py`: for a vetoed/pre-kill cluster, collect
+BOTH frontier reviewers' reasoning + closest_prior_work as improvement
+feedback, revise the claim through the hypothesize-retry pattern, re-screen,
+and repeat — **hard cap MAX_REFINE_ROUNDS=5** (out-of-band values RAISE, never
+clamp). Each round appends an additive `cluster_refined` ledger event
+{round, feedback_digest, refined_claim}; exhaustion appends `cluster_killed`
+coded `paper_prior_exists` (final novelty veto cited concrete prior) else
+`adversarial_refuted`, carrying the refinement history. A pass STOPS the cycle
+and — only when the cluster's stored `reopening_condition.evidence_kind` is
+`articulated_delta` — reopens it; any other required kind reports
+`reopen_skipped` rather than forging evidence (rule 4). Refinement **never
+auto-promotes**: a survivor re-enters at its honest rung and still owes its
+rung's test.
+
+**Alternatives.** Unbounded refinement (rejected: an idea that needs six
+rewrites to survive a reviewer is the reviewer's point); kill-on-first-veto
+(status quo ante — discards the actionable half of the critique).
+**Reversibility.** The worker is opt-in (CLI/coordinator action); the ledger
+events are additive; deleting them restores the pre-D-064 reduction exactly.
+Coordinator `refine_idea` action wiring is deliberately deferred to the
+integrator (not built in the same pass as the mechanism).
