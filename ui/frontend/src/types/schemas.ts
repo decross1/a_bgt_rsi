@@ -670,3 +670,54 @@ export interface IdeasResponse {
   markdown?: string | null;
   [key: string]: unknown;
 }
+
+// --- LADDER (GET /api/ladder, UI simplification S1) ---
+// The reduced idea-ledger state (ui/backend/ladder.py over
+// workers/idea_ledger.load_state + idea_projection helpers). 204 (no ledger
+// on this checkout) -> null at the client; 404 = version skew (older
+// backend binary). Every field is producer-owned/defensive-optional; the
+// /ladder page coerces per-field.
+
+// One reduced cluster row. kill_reason / reopening_condition are the
+// ledger's own dicts, passed through verbatim (null while the cluster lives).
+export interface LadderCluster {
+  cluster_id: string;
+  stem?: string | null;
+  status?: "open" | "surfaced" | "killed" | string | null;
+  evidence_level?: string | null;
+  origin?: string | null;
+  member_count?: number | null;
+  last_event_ts?: string | null;
+  kill_reason?: {
+    code?: string | null;
+    evidence_key?: string | null;
+    detail?: string | null;
+    [key: string]: unknown;
+  } | null;
+  reopening_condition?: {
+    requires?: string | null;
+    evidence_kind?: string | null;
+    [key: string]: unknown;
+  } | null;
+  open_agenda_count?: number | null;
+  [key: string]: unknown;
+}
+
+// One open agenda item (idea_projection.agenda_topics shape).
+export interface LadderAgendaItem {
+  topic?: string | null;
+  source?: string | null;
+  cluster_id?: string | null;
+  [key: string]: unknown;
+}
+
+export interface LadderResponse {
+  clusters?: LadderCluster[];
+  // Non-killed clusters per rung, zero-filled L0..L5.
+  histogram?: Record<string, number>;
+  counts?: { open?: number; surfaced?: number; killed?: number };
+  agenda?: LadderAgendaItem[];
+  // Per-rung "next test owed" labels (workers/evidence_ladder wording).
+  next_owed?: Record<string, string>;
+  [key: string]: unknown;
+}

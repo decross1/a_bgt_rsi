@@ -56,6 +56,7 @@ import DeferForm from "./DeferForm";
 import EndpointMissingNote from "./EndpointMissingNote";
 import FindingReviewForm from "./FindingReviewForm";
 import GateVerdictForm from "./GateVerdictForm";
+import { ageLabel, clearsLadderBar, evidenceLevelOf } from "../ladderBar";
 import type { HumanTodoItem } from "../types/schemas";
 
 // Humanized labels for the known queue kinds. Looked up by OWN key only (the
@@ -137,54 +138,21 @@ function asText(v: unknown): string | null {
 }
 
 // --- evidence ladder (2026-08-14 work order B) -------------------------
-// finding_review items now carry `evidence_level` ("L0".."L5", D-059) when
-// their surfaced row has one; the inbox bar is L4/L5. Legacy rows (all 31
-// pre-ladder findings) have NO level — below-bar by definition, hidden
-// behind the "show demoted" toggle rather than deleted (they stay listed,
-// just de-prioritized). Non-finding kinds (gates, bubbles, stale run,
-// state gates) are OPERATIONAL items, not ladder claims — the bar never
-// hides them (hiding a blocking state_gate would fake an unblocked loop).
-const BAR_LEVELS = new Set(["L4", "L5"]);
-
-// Normalized level ("L0".."L9" shape) or null for absent/malformed — the
-// field is producer-owned, so anything that is not an L<digit> string reads
-// as "no level" (below-bar), never as a crash or a fake pass.
-function evidenceLevelOf(item: HumanTodoItem): string | null {
-  const raw = asText(item.evidence_level);
-  if (!raw) return null;
-  const norm = raw.trim().toUpperCase();
-  return /^L\d$/.test(norm) ? norm : null;
-}
+// The bar logic (BAR_LEVELS / evidenceLevelOf / clearsLadderBar / ageLabel)
+// moved VERBATIM to src/ladderBar.ts (UI simplification S1) so the Pulse
+// OweStrip shares the one definition of "clears the bar". The inbox bar is
+// L4/L5; legacy no-level rows are below-bar by definition, hidden behind the
+// "show demoted" toggle rather than deleted. Operational kinds are never
+// bar-hidden (hiding a blocking state_gate would fake an unblocked loop).
 
 function isFindingItem(item: HumanTodoItem): boolean {
   return asText(item.kind) === "finding_review";
-}
-
-function clearsLadderBar(item: HumanTodoItem): boolean {
-  const level = evidenceLevelOf(item);
-  return level !== null && BAR_LEVELS.has(level);
 }
 
 function kindLabel(kind: string): string {
   return Object.prototype.hasOwnProperty.call(KIND_LABELS, kind)
     ? KIND_LABELS[kind]
     : kind;
-}
-
-// Compact age ("4d" / "3h" / "12m") from an ISO `since`. Producer-owned: a
-// non-string / unparseable timestamp renders "—" — an item of unknown age is
-// shown, never faked fresh.
-function ageLabel(iso: unknown, nowMs: number): string {
-  const s = asText(iso);
-  if (!s) return "—";
-  const t = Date.parse(s);
-  if (Number.isNaN(t)) return "—";
-  const mins = Math.max(0, Math.floor((nowMs - t) / 60_000));
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 48) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
 }
 
 // Copy button for the resolve command. navigator.clipboard is absent in

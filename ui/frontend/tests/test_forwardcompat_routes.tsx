@@ -366,6 +366,46 @@ vi.mock("../src/api/http", () => ({
   // InFlightRollup feed (FE5): Dashboard polls getProcesses in the HERO effect.
   getProcesses: vi.fn().mockResolvedValue({ processes: [] }),
   startIteration: vi.fn().mockResolvedValue({ pid: 1 }),
+  // S1 additions: the NowBoard registry poll (Pulse mounts it live) and the
+  // /ladder endpoint pair — the ladder payload below carries an UNKNOWN
+  // status + an unknown extra key + an out-of-enum kill code shape, per this
+  // file's bar: current renders survive rows with unknown fields/values.
+  getActiveRuns: vi.fn().mockResolvedValue({ runs: [], skipped: 0 }),
+  getLadder: vi.fn().mockResolvedValue({
+    clusters: [
+      {
+        cluster_id: "cl-fc-001",
+        stem: "forward-compat cluster",
+        status: "quarantined", // never-announced status value
+        evidence_level: "L7", // beyond the known rungs
+        origin: "future_channel",
+        member_count: 1,
+        last_event_ts: "2026-08-15T00:00:00Z",
+        kill_reason: null,
+        reopening_condition: null,
+        open_agenda_count: 0,
+        future_key: { nested: "object" },
+      },
+      {
+        cluster_id: "cl-fc-002",
+        stem: "killed with unknown code",
+        status: "killed",
+        evidence_level: "L1",
+        origin: "consolidation",
+        member_count: 2,
+        last_event_ts: "2026-08-14T00:00:00Z",
+        kill_reason: { code: "toString", detail: "prototype-colliding code" },
+        reopening_condition: { requires: "new_evidence" },
+        open_agenda_count: 0,
+      },
+    ],
+    histogram: { L0: 0, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0, L7: 1 },
+    counts: { open: 0, surfaced: 0, killed: 1 },
+    agenda: [{ topic: "fc topic", source: "toString", cluster_id: "cl-fc-001" }],
+    next_owed: { L0: "x", L1: "x", L2: "x", L3: "x", L4: "x", L5: "x" },
+    unknown_top_level: true,
+  }),
+  getIdeas: vi.fn().mockResolvedValue({ markdown: "# Ideas\n" }),
 }));
 
 vi.mock("../src/api/activity", () => ({
@@ -385,6 +425,8 @@ import Dashboard from "../src/routes/Dashboard";
 import Activity from "../src/routes/Activity";
 import Experiments from "../src/routes/Experiments";
 import Coordinator from "../src/routes/Coordinator";
+import Ladder from "../src/routes/Ladder";
+import Pulse from "../src/routes/Pulse";
 
 // Spy on console.error / console.warn around a render + a full async flush —
 // the cheap jsdom stand-in for "no browser console errors". Two waitFor ticks
@@ -434,6 +476,18 @@ describe("routes survive the announced additive contract (undecidable / novelty_
 
   it("Experiments: research index + forward-compat coordinator cycles", async () => {
     const { error, warn } = await renderRouteQuietly(<Experiments />);
+    expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
+    expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
+  });
+
+  it("Pulse (S1 home): forward-compat cycles + empty registry, console-clean", async () => {
+    const { error, warn } = await renderRouteQuietly(<Pulse />);
+    expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
+    expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
+  });
+
+  it("Ladder (S1): unknown status/rung/kill-code shapes degrade quietly", async () => {
+    const { error, warn } = await renderRouteQuietly(<Ladder />);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });

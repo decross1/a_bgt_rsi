@@ -206,3 +206,30 @@ def test_attest_available_live_or_version_skew():
     actions = body.get("actions")
     assert isinstance(actions, dict)
     assert set(actions) == {"gate_verdict", "finding_review", "bubble_ack", "defer"}
+
+
+def test_ladder_live_or_version_skew():
+    """``/api/ladder`` (UI simplification S1): the reduced idea-ledger state.
+    200 with the full projection once the served binary includes it — the
+    primary ledger held 70 clusters at ship time and the event log is
+    append-only, so the count only grows (lower bound stays green). 204 is
+    the honest no-ledger state; 404 == version skew until the post-merge
+    restart. Longer probe timeout: the first hit lazy-imports the reducer
+    and reduces the whole ledger."""
+    resp = httpx.get(f"{BASE_URL}/api/ladder", timeout=10.0)
+    if resp.status_code == 404:
+        pytest.skip("served binary predates /api/ladder (restart pending)")
+    if resp.status_code == 204:
+        pytest.skip("no idea ledger on this checkout — honest empty state")
+    assert resp.status_code == 200
+    body = resp.json()
+    clusters = body.get("clusters")
+    assert isinstance(clusters, list)
+    assert len(clusters) >= 70
+    counts = body.get("counts")
+    assert isinstance(counts, dict)
+    assert set(counts) == {"open", "surfaced", "killed"}
+    assert sum(counts.values()) == len(clusters)
+    assert set(body.get("histogram", {})) == {"L0", "L1", "L2", "L3", "L4", "L5"}
+    assert set(body.get("next_owed", {})) == {"L0", "L1", "L2", "L3", "L4", "L5"}
+    assert isinstance(body.get("agenda"), list)
