@@ -6,7 +6,7 @@ One read-only GET, wired by ``register`` into the existing FastAPI app
 the /ladder page's payload:
 
     {clusters: [{cluster_id, stem, status, evidence_level, origin,
-                 member_count, last_event_ts, kill_reason,
+                 members, member_count, last_event_ts, kill_reason,
                  reopening_condition, open_agenda_count}],
      histogram: {L0..L5: n},        # non-killed clusters per rung
      counts: {open, surfaced, killed},
@@ -97,6 +97,12 @@ def register(
                 for a in agenda_items
                 if isinstance(a, dict) and a.get("status") != "consumed"
             )
+            # The member ids themselves (normally iteration_ids — see the
+            # schema's member_id def; niche-seeded clusters carry
+            # "paper:<arxiv_id>"). R1's peek panel links the iteration-shaped
+            # ones onward to /dossier/:id, so the list ships, not just its
+            # length.
+            members = list(c.get("members") or [])
             clusters.append({
                 "cluster_id": cid,
                 # Reuse the projection's deterministic naming/owed helpers —
@@ -105,7 +111,8 @@ def register(
                 "status": status,
                 "evidence_level": level,
                 "origin": c.get("origin"),
-                "member_count": len(c.get("members") or []),
+                "members": members,
+                "member_count": len(members),
                 "last_event_ts": c.get("last_event_ts"),
                 "kill_reason": c.get("kill_reason"),
                 "reopening_condition": c.get("reopening_condition"),
