@@ -2716,3 +2716,62 @@ Consumer sweep (the semantic change is history-not-replayed):
   one delegate round-trip) is the PRIMARY's post-merge step. NOTE: the
   running binary predates `/api/channel/*` — until restart the page shows
   the EndpointMissingNote skew state by design.
+
+## §2026-08-15 loop3h-ui-hotfix — Channel encoding + chat layout + brain link
+
+Three owner-reported hotfixes (worktree `agent-a78c433484cba7252`; the full
+channel revamp comes separately — these are surgical).
+
+### 1. `routes/Channel.tsx` encoding corruption (git saw binary)
+
+Root cause: `rowKey()`'s dedupe separator was written as TWO RAW NUL BYTES
+inside a template literal — valid JS, but git treats any NUL-bearing file as
+binary (`file` said "data"; diffs showed `Bin`). Rewritten as clean UTF-8
+with escaped `\u0000` sequences; behavior identical. `file` now says
+"JavaScript source, UTF-8 text" and `git diff --no-index /dev/null` renders
+it as text (+852). NOTE: the one transition diff old→binary-blob → new-text
+still prints `Bin` because the PRE-image contains NULs — every diff after
+this commit is a normal text diff.
+
+### 2. Wall-of-text feed → chat layout (same rewrite)
+
+- First load = NEWEST 40 rows only (the CLI's `--limit` keeps the newest N;
+  was 400 oldest-first filling the viewport past the composer).
+- Viewport-bounded flex column: the feed scrolls in its own
+  `overflow-y-auto` container, newest at the BOTTOM, auto-scroll pinned to
+  the bottom while the reader is there; the composer dock is always visible
+  below the feed.
+- "load older" button at the feed top widens the full-fetch window
+  (+40 per click, capped at the seam's `_MAX_LIMIT` 1000) and prepends —
+  dedupe absorbs the newest-N overlap; shown only while a full window
+  suggests older rows exist.
+- nara/pi bubble bodies render through `MiniMarkdown` (real replies are
+  markdown; they rendered raw). Human turns stay verbatim pre-wrap.
+- Event walls: runs of >=3 consecutive same-chip events collapse into one
+  line ("6 cluster kills — expand"); expanding is per-run and sticky.
+- The delegate composer is now a `<details>` disclosure in the dock
+  (everything inside unchanged; the confirm card remains the ONLY posting
+  path — the fence pins all still pass).
+
+### 3. Brain nav link was a dead tab
+
+`App.tsx` linked `:5174/dashboard.html` — nothing listens on 5174. The
+framework `brain_server.py` serves the real "brain · governance" dashboard
+at `:5180/dashboard.html` (bound 0.0.0.0, verified serving HTML
+2026-08-15). Link repointed to `:5180`, same hostname-derived pattern.
+
+### Test/verification (this worktree)
+
+- `test_channel.tsx`: 24 pass — every original fence/composer/skew pin kept
+  + 8 new pins (newest-40 first load, chronological newest-at-bottom,
+  overflow-container + docked composer, load-older widen/prepend/hide,
+  fixture mode hides load-older, MiniMarkdown for nara/pi + raw human,
+  wall collapse/expand, under-threshold runs stay individual).
+- frontend vitest **940 pass** (66 files) · `tsc --noEmit` clean.
+- ui-backend pytest **661 pass** (`MOCK_LLM=1`). One PRE-EXISTING red
+  repaired en route (fails identically on main): the June-era
+  `test_live_cycle_provenance_snapshot` pin `all(topic_source ==
+  "arxiv_pick")` rotted when D-060 agenda-first went live (real cycles now
+  carry `topic_source="agenda"`); the invariant is now membership in the
+  coordinator's suggestion-source enum — flagged for the primary's review,
+  not silently coerced.

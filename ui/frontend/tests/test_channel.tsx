@@ -5,7 +5,20 @@
 // CONFIRM-CARD flow — the confirm click is the ONLY path that posts — and
 // THE FENCE: no disposition surface exists anywhere on the page. Skew (404
 // on /api/channel/timeline) renders the quiet EndpointMissingNote.
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+//
+// loop3h-ui-hotfix pins: first live load asks for only the NEWEST 40 rows;
+// the feed is chronological (newest at the bottom) in its own overflow-y
+// scroll container with the composer docked below; "load older" widens the
+// limit window and prepends; nara/pi bubble bodies render through
+// MiniMarkdown (human turns stay verbatim); runs of >=3 consecutive
+// same-kind events collapse into one expandable wall line.
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelRow } from "../src/api/channel";
 
@@ -144,6 +157,163 @@ describe("/channel feed", () => {
         "exec failed",
       ),
     );
+  });
+});
+
+// n sequential human rows one minute apart, oldest first ("m<minute>").
+function makeRows(n: number, startMin = 0): ChannelRow[] {
+  return Array.from({ length: n }, (_, i) => {
+    const min = startMin + i;
+    const hh = String(Math.floor(min / 60)).padStart(2, "0");
+    const mm = String(min % 60).padStart(2, "0");
+    return {
+      ts: `2026-08-15T${hh}:${mm}:00Z`,
+      kind: "human",
+      message: `m${min}`,
+    };
+  });
+}
+
+describe("/channel chat layout + paging (loop3h-ui-hotfix)", () => {
+  const LIVE_CAP = {
+    available: true,
+    actions: { timeline: true, turn: true, delegate: true },
+  };
+
+  it("first live load requests only the NEWEST 40 rows (no 400-row wall)", async () => {
+    mocks.getChannelAvailability.mockResolvedValue(LIVE_CAP);
+    mocks.getChannelTimeline.mockResolvedValue({ rows: [] });
+    render(<Channel />);
+    await waitFor(() =>
+      expect(mocks.getChannelTimeline).toHaveBeenCalledWith(undefined, 40),
+    );
+  });
+
+  it("renders chronological with the newest at the bottom (fixture order sorted)", () => {
+    // Deliberately shuffled: pi (10:07), cycle event (10:00), human (10:05).
+    render(
+      <Channel
+        initial={[ROWS[6], ROWS[0], ROWS[4]]}
+        initialAvailable={true}
+      />,
+    );
+    const feed = screen.getByTestId("channel-feed");
+    const nodes = Array.from(
+      feed.querySelectorAll(
+        '[data-testid^="channel-turn-"], [data-testid="channel-event-row"]',
+      ),
+    );
+    expect(nodes).toHaveLength(3);
+    expect(nodes[0]).toHaveTextContent("kv-cache probing"); // 10:00 oldest, top
+    expect(nodes[1]).toHaveTextContent("what is running?"); // 10:05
+    expect(nodes[2]).toHaveTextContent("experiment_outcome"); // 10:07 newest, bottom
+  });
+
+  it("the feed scrolls in its own container with the composer docked below", () => {
+    render(<Channel initial={ROWS} initialAvailable={true} />);
+    const feed = screen.getByTestId("channel-feed");
+    expect(feed.className).toContain("overflow-y-auto");
+    expect(screen.getByTestId("channel-page").className).toContain("flex-col");
+    // The composer FOLLOWS the feed in document order — docked below it.
+    const composer = screen.getByTestId("channel-composer");
+    expect(
+      feed.compareDocumentPosition(composer) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("'load older' widens the limit window and prepends the older rows", async () => {
+    const older = makeRows(5, 0); // m0..m4 — the older tail
+    const newest40 = makeRows(40, 5); // m5..m44 — the first-load window
+    mocks.getChannelAvailability.mockResolvedValue(LIVE_CAP);
+    mocks.getChannelTimeline
+      .mockResolvedValue({ rows: [] }) // any later poll: quiet
+      .mockResolvedValueOnce({ rows: newest40 })
+      .mockResolvedValueOnce({ rows: [...older, ...newest40] });
+    render(<Channel />);
+
+    // A full first-load window ⇒ older rows may exist ⇒ the button shows.
+    await waitFor(() =>
+      expect(screen.getByTestId("channel-load-older")).toBeInTheDocument(),
+    );
+    expect(screen.getAllByTestId("channel-turn-human")).toHaveLength(40);
+
+    fireEvent.click(screen.getByTestId("channel-load-older"));
+    await waitFor(() =>
+      expect(mocks.getChannelTimeline).toHaveBeenLastCalledWith(undefined, 80),
+    );
+    await waitFor(() =>
+      expect(screen.getAllByTestId("channel-turn-human")).toHaveLength(45),
+    );
+    // Prepended: oldest first at the top, newest still at the bottom.
+    const turns = screen.getAllByTestId("channel-turn-human");
+    expect(turns[0]).toHaveTextContent("m0");
+    expect(turns[44]).toHaveTextContent("m44");
+    // 45 < the 80 window ⇒ nothing older remains ⇒ the button disappears.
+    await waitFor(() =>
+      expect(screen.queryByTestId("channel-load-older")).toBeNull(),
+    );
+  });
+
+  it("fixture mode never shows 'load older' (it belongs to the live window)", () => {
+    render(<Channel initial={makeRows(60)} initialAvailable={true} />);
+    expect(screen.queryByTestId("channel-load-older")).toBeNull();
+  });
+
+  it("nara/pi bubble bodies render through MiniMarkdown; human turns stay raw", () => {
+    const rows: ChannelRow[] = [
+      { ts: "2026-08-15T10:00:00Z", kind: "human", message: "**not markdown**" },
+      {
+        ts: "2026-08-15T10:01:00Z",
+        kind: "nara",
+        message: "reply with **bold** and `code`",
+      },
+      { ts: "2026-08-15T10:02:00Z", kind: "pi", message: "- item one\n- item two" },
+    ];
+    render(<Channel initial={rows} initialAvailable={true} />);
+    const nara = screen.getByTestId("channel-turn-nara");
+    expect(within(nara).getByTestId("mini-markdown")).toBeInTheDocument();
+    expect(within(nara).getByText("bold").tagName).toBe("STRONG");
+    const pi = screen.getByTestId("channel-turn-pi");
+    expect(within(pi).getByTestId("mini-markdown")).toBeInTheDocument();
+    expect(within(pi).getByText("item one").tagName).toBe("LI");
+    // The human's own turn is NOT interpreted — asterisks and all.
+    const human = screen.getByTestId("channel-turn-human");
+    expect(within(human).queryByTestId("mini-markdown")).toBeNull();
+    expect(human).toHaveTextContent("**not markdown**");
+  });
+
+  it("collapses runs of >=3 consecutive same-kind events; expand reveals them", () => {
+    const kills: ChannelRow[] = [1, 2, 3, 4].map((n) => ({
+      ts: `2026-08-15T11:0${n}:00Z`,
+      kind: "event",
+      message: `cluster killed: cl-${n} — reason ${n}`,
+    }));
+    // cycle event (10:00) + human (10:05) sit outside the 4-kill run.
+    render(
+      <Channel initial={[ROWS[0], ROWS[4], ...kills]} initialAvailable={true} />,
+    );
+
+    const wall = screen.getByTestId("channel-event-wall");
+    expect(wall).toHaveTextContent("4 cluster kills — expand");
+    // Only the lone cycle event renders as an individual event row.
+    expect(screen.getAllByTestId("channel-event-row")).toHaveLength(1);
+    expect(screen.getAllByTestId("channel-event-chip")).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId("channel-event-wall-expand"));
+    expect(screen.queryByTestId("channel-event-wall")).toBeNull();
+    expect(screen.getAllByTestId("channel-event-row")).toHaveLength(5);
+  });
+
+  it("short same-kind runs (under 3) stay individual rows", () => {
+    const twoKills: ChannelRow[] = [1, 2].map((n) => ({
+      ts: `2026-08-15T11:0${n}:00Z`,
+      kind: "event",
+      message: `cluster killed: cl-${n}`,
+    }));
+    render(<Channel initial={twoKills} initialAvailable={true} />);
+    expect(screen.queryByTestId("channel-event-wall")).toBeNull();
+    expect(screen.getAllByTestId("channel-event-row")).toHaveLength(2);
   });
 });
 
