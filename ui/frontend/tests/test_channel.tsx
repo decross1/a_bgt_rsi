@@ -12,6 +12,13 @@
 // limit window and prepends; nara/pi bubble bodies render through
 // MiniMarkdown (human turns stay verbatim); runs of >=3 consecutive
 // same-kind events collapse into one expandable wall line.
+//
+// R4 pins (the designed conversation surface): document-style voice blocks
+// (avatar · name · time · body) with a per-voice accent and the human's own
+// tint; events as compact subordinate rows; the all/conversation/events
+// filter chips; UTC day dividers; reference chips (cl-*/iter-*/sf-*) that
+// PEEK rather than inline the object; the pending block on a turn in flight
+// (no stop affordance — the seam has no abort verb); jump-to-present.
 import {
   fireEvent,
   render,
@@ -19,6 +26,8 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import type { ReactElement } from "react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelRow } from "../src/api/channel";
 
@@ -27,6 +36,9 @@ const mocks = vi.hoisted(() => ({
   getChannelTimeline: vi.fn(),
   postChannelTurn: vi.fn(),
   postChannelDelegate: vi.fn(),
+  getLadder: vi.fn(),
+  getFindingDetail: vi.fn(),
+  getIterationJourney: vi.fn(),
 }));
 vi.mock("../src/api/channel", () => ({
   getChannelAvailability: mocks.getChannelAvailability,
@@ -35,7 +47,10 @@ vi.mock("../src/api/channel", () => ({
   postChannelDelegate: mocks.postChannelDelegate,
 }));
 // EndpointMissingNote self-fetches /api/health when no version prop is
-// passed; mock the http module so the skew test stays fetch-free.
+// passed; mock the http module so the skew test stays fetch-free. The three
+// reference-peek reads (R4) live in the same module and are mocked here too —
+// the peek is the ONLY thing on this page that touches them, and only on a
+// chip click.
 vi.mock("../src/api/http", () => ({
   getHealth: vi.fn().mockResolvedValue({
     ok: true,
@@ -43,6 +58,9 @@ vi.mock("../src/api/http", () => ({
     telemetry_last_seen: null,
     version: "testsha",
   }),
+  getLadder: mocks.getLadder,
+  getFindingDetail: mocks.getFindingDetail,
+  getIterationJourney: mocks.getIterationJourney,
 }));
 
 import Channel from "../src/routes/Channel";
@@ -504,6 +522,479 @@ describe("/channel delegate confirm-card flow", () => {
   });
 });
 
+describe("/channel voice blocks (R4)", () => {
+  it("a turn is a document-style block: avatar mark · name · time · body", () => {
+    render(<Channel initial={[ROWS[4], ROWS[5]]} initialAvailable={true} />);
+    const human = screen.getByTestId("channel-turn-human");
+    expect(within(human).getByTestId("channel-voice-avatar")).toBeInTheDocument();
+    expect(within(human).getByTestId("channel-voice-name")).toHaveTextContent(
+      "you",
+    );
+    // The day lives on the divider, so a turn carries only its time — and it
+    // carries the full ts machine-readably.
+    const time = within(human).getByTestId("channel-voice-time");
+    expect(time).toHaveTextContent("10:05");
+    expect(time).toHaveAttribute("dateTime", "2026-08-15T10:05:00Z");
+    expect(within(human).getByTestId("channel-voice-body")).toHaveTextContent(
+      "what is running?",
+    );
+  });
+
+  it("each voice carries its own accent; only the human's turn is tinted", () => {
+    render(
+      <Channel initial={[ROWS[4], ROWS[5], ROWS[6]]} initialAvailable={true} />,
+    );
+    const human = screen.getByTestId("channel-turn-human");
+    const nara = screen.getByTestId("channel-turn-nara");
+    const pi = screen.getByTestId("channel-turn-pi");
+    const accent = (el: HTMLElement) => el.style.getPropertyValue("--voice-accent");
+    // Three distinct accents — the rail + name color is what tells voices apart.
+    expect(new Set([accent(human), accent(nara), accent(pi)]).size).toBe(3);
+    expect(accent(nara)).toBe("var(--voice-nara)");
+    expect(accent(pi)).toBe("var(--voice-pi)");
+    // Document-style blocks, not bubbles: the ONE surface fill is the human's
+    // own-turn tint.
+    expect(human).toHaveClass("chn-turn--own");
+    expect(nara).not.toHaveClass("chn-turn--own");
+    expect(pi).not.toHaveClass("chn-turn--own");
+    for (const el of [human, nara, pi]) expect(el).toHaveClass("chn-turn");
+  });
+
+  it("an unknown producer kind renders the neutral fallback voice, never a prototype member", () => {
+    const rows: ChannelRow[] = [
+      { ts: "2026-08-15T10:00:00Z", kind: "toString", message: "hostile kind" },
+      { ts: "2026-08-15T10:01:00Z", kind: "future_voice", message: "new voice" },
+    ];
+    render(<Channel initial={rows} initialAvailable={true} />);
+    const hostile = screen.getByTestId("channel-turn-toString");
+    expect(within(hostile).getByTestId("channel-voice-name")).toHaveTextContent(
+      "voice",
+    );
+    expect(hostile.style.getPropertyValue("--voice-accent")).toBe(
+      "var(--voice-other)",
+    );
+    expect(hostile).not.toHaveClass("chn-turn--own");
+    expect(screen.getByTestId("channel-turn-future_voice")).toHaveTextContent(
+      "new voice",
+    );
+  });
+
+  it("the delegation mirror row's prefix becomes an activity chip, not prose", () => {
+    const rows: ChannelRow[] = [
+      {
+        ts: "2026-08-15T10:00:00Z",
+        kind: "human",
+        message: "DELEGATED[research]: probe the eviction schedule",
+      },
+    ];
+    render(<Channel initial={rows} initialAvailable={true} />);
+    expect(screen.getByTestId("channel-activity-chip")).toHaveTextContent(
+      "delegated · research",
+    );
+    const body = screen.getByTestId("channel-voice-body");
+    expect(body).toHaveTextContent("probe the eviction schedule");
+    expect(body).not.toHaveTextContent("DELEGATED[research]");
+  });
+
+  it("an ordinary turn gets NO activity chip (no tool-use field exists to invent one from)", () => {
+    render(<Channel initial={[ROWS[5]]} initialAvailable={true} />);
+    expect(screen.queryByTestId("channel-activity-chip")).toBeNull();
+  });
+});
+
+describe("/channel system events (R4)", () => {
+  it("an event is a compact single-line row (glyph · label · text · time), not a voice block", () => {
+    render(<Channel initial={[ROWS[1]]} initialAvailable={true} />);
+    const row = screen.getByTestId("channel-event-row");
+    expect(row).toHaveClass("chn-event");
+    expect(row).not.toHaveClass("chn-turn");
+    expect(row.querySelector(".chn-event-glyph")).not.toBeNull();
+    expect(screen.getByTestId("channel-event-chip")).toHaveTextContent("kill");
+    expect(row.querySelector("time")).toHaveTextContent("10:01");
+    // Speech carries the avatar/name header; an event never does.
+    expect(within(row).queryByTestId("channel-voice-avatar")).toBeNull();
+  });
+
+  it("the collapsed run reads as one timeline row with the count as the affordance", () => {
+    const kills: ChannelRow[] = [1, 2, 3].map((n) => ({
+      ts: `2026-08-15T11:0${n}:00Z`,
+      kind: "event",
+      message: `cluster killed: cl-${n} — reason ${n}`,
+    }));
+    render(<Channel initial={kills} initialAvailable={true} />);
+    const wall = screen.getByTestId("channel-event-wall");
+    expect(wall).toHaveClass("chn-event");
+    expect(wall.querySelector(".chn-event-glyph")).not.toBeNull();
+    const expand = screen.getByTestId("channel-event-wall-expand");
+    expect(expand).toHaveClass("chn-collapse");
+    expect(expand).toHaveTextContent("3 cluster kills — expand");
+    // The run's span is still legible from the collapsed row.
+    expect(wall.querySelector("time")).toHaveTextContent("11:01");
+    expect(wall.querySelector("time")).toHaveTextContent("11:03");
+  });
+});
+
+describe("/channel filter chips (R4)", () => {
+  it("conversation hides events; events hides speech; all restores both", () => {
+    render(<Channel initial={ROWS} initialAvailable={true} />);
+    expect(screen.getAllByTestId("channel-event-row")).toHaveLength(4);
+    expect(screen.getAllByTestId(/^channel-turn-/)).toHaveLength(3);
+
+    fireEvent.click(screen.getByTestId("channel-filter-conversation"));
+    expect(screen.queryAllByTestId("channel-event-row")).toHaveLength(0);
+    expect(screen.getAllByTestId(/^channel-turn-/)).toHaveLength(3);
+
+    fireEvent.click(screen.getByTestId("channel-filter-events"));
+    expect(screen.getAllByTestId("channel-event-row")).toHaveLength(4);
+    expect(screen.queryAllByTestId(/^channel-turn-/)).toHaveLength(0);
+
+    fireEvent.click(screen.getByTestId("channel-filter-all"));
+    expect(screen.getAllByTestId("channel-event-row")).toHaveLength(4);
+    expect(screen.getAllByTestId(/^channel-turn-/)).toHaveLength(3);
+  });
+
+  it("the active filter is aria-pressed (all by default)", () => {
+    render(<Channel initial={ROWS} initialAvailable={true} />);
+    expect(screen.getByTestId("channel-filter-all")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    fireEvent.click(screen.getByTestId("channel-filter-events"));
+    expect(screen.getByTestId("channel-filter-events")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByTestId("channel-filter-all")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("a filter that empties the feed says the rows are HIDDEN, not absent", () => {
+    render(<Channel initial={[ROWS[4]]} initialAvailable={true} />);
+    fireEvent.click(screen.getByTestId("channel-filter-events"));
+    expect(screen.getByTestId("channel-filter-empty")).toHaveTextContent(
+      "the filter is hiding them",
+    );
+    // The honest "nothing ever happened" state is a DIFFERENT state.
+    expect(screen.queryByTestId("channel-empty")).toBeNull();
+  });
+});
+
+describe("/channel day dividers (R4)", () => {
+  it("splits the feed by UTC day, in order, naming the zone", () => {
+    const rows: ChannelRow[] = [
+      { ts: "2026-08-14T23:50:00Z", kind: "human", message: "late" },
+      { ts: "2026-08-15T00:10:00Z", kind: "nara", message: "early" },
+      { ts: "2026-08-15T09:00:00Z", kind: "human", message: "later" },
+    ];
+    render(<Channel initial={rows} initialAvailable={true} />);
+    const dividers = screen.getAllByTestId("channel-day-divider");
+    expect(dividers).toHaveLength(2);
+    expect(dividers[0]).toHaveTextContent("Aug 14, 2026 · UTC");
+    expect(dividers[1]).toHaveTextContent("Aug 15, 2026 · UTC");
+  });
+
+  it("a row whose ts does not parse lands under an honest 'undated' divider", () => {
+    const rows: ChannelRow[] = [
+      { ts: "", kind: "human", message: "no timestamp survived the seam" },
+    ];
+    render(<Channel initial={rows} initialAvailable={true} />);
+    expect(screen.getByTestId("channel-day-divider")).toHaveTextContent(
+      "undated",
+    );
+  });
+
+  it("a collapsed event run never spans a day divider", () => {
+    // Four kills, two on each side of midnight: two runs of two, not one of 4.
+    const kills: ChannelRow[] = [
+      "2026-08-14T23:40:00Z",
+      "2026-08-14T23:50:00Z",
+      "2026-08-15T00:10:00Z",
+      "2026-08-15T00:20:00Z",
+    ].map((ts, i) => ({
+      ts,
+      kind: "event",
+      message: `cluster killed: cl-${i} — reason`,
+    }));
+    render(<Channel initial={kills} initialAvailable={true} />);
+    expect(screen.queryByTestId("channel-event-wall")).toBeNull();
+    expect(screen.getAllByTestId("channel-event-row")).toHaveLength(4);
+    expect(screen.getAllByTestId("channel-day-divider")).toHaveLength(2);
+  });
+});
+
+// Fixtures for the reference peek. Each is the SHAPE the real endpoint
+// returns (found-flagged for finding/journey, a cluster list for the ladder).
+const LADDER_PAYLOAD = {
+  clusters: [
+    {
+      cluster_id: "cl-x",
+      stem: "eviction bias survives 4-bit quantization",
+      status: "killed",
+      evidence_level: "L2",
+      member_count: 3,
+      last_event_ts: "2026-08-15T10:01:00Z",
+      kill_reason: { code: "rediscovery", detail: "already in the literature" },
+    },
+  ],
+  histogram: {},
+  counts: {},
+  agenda: [],
+};
+
+const inRouter = (ui: ReactElement) => render(<MemoryRouter>{ui}</MemoryRouter>);
+
+describe("/channel reference chips → peek (R4)", () => {
+  it("ids the apparatus wrote render as chips inline, without swallowing punctuation", () => {
+    const rows: ChannelRow[] = [
+      {
+        ts: "2026-08-15T10:00:00Z",
+        kind: "human",
+        message: "did cl-x die before iter-2026-08-15-001, or after sf-009?",
+      },
+    ];
+    inRouter(<Channel initial={rows} initialAvailable={true} />);
+    const chips = screen.getAllByTestId("channel-ref-chip");
+    expect(chips.map((c) => c.textContent)).toEqual([
+      "cl-x",
+      "iter-2026-08-15-001",
+      "sf-009",
+    ]);
+    expect(chips.map((c) => c.getAttribute("data-ref-kind"))).toEqual([
+      "cluster",
+      "iteration",
+      "finding",
+    ]);
+    // The surrounding prose survives verbatim, punctuation and all.
+    expect(screen.getByTestId("channel-voice-body")).toHaveTextContent(
+      "did cl-x die before iter-2026-08-15-001, or after sf-009?",
+    );
+    // A chip is inert until clicked — no page load ever fetches these.
+    expect(mocks.getLadder).not.toHaveBeenCalled();
+    expect(mocks.getFindingDetail).not.toHaveBeenCalled();
+    expect(mocks.getIterationJourney).not.toHaveBeenCalled();
+  });
+
+  it("a cluster chip peeks the ladder row — and never inlines it into the thread", async () => {
+    mocks.getLadder.mockResolvedValue(LADDER_PAYLOAD);
+    inRouter(<Channel initial={[ROWS[1]]} initialAvailable={true} />);
+
+    fireEvent.click(screen.getByTestId("channel-ref-chip"));
+    await waitFor(() =>
+      expect(screen.getByTestId("channel-peek-body")).toBeInTheDocument(),
+    );
+    expect(mocks.getLadder).toHaveBeenCalledTimes(1);
+    const peek = screen.getByTestId("peek-panel");
+    expect(within(peek).getByTestId("channel-peek-headline")).toHaveTextContent(
+      "eviction bias survives 4-bit quantization",
+    );
+    expect(peek).toHaveTextContent("killed");
+    expect(peek).toHaveTextContent("rediscovery");
+    expect(within(peek).getByTestId("channel-peek-link")).toHaveAttribute(
+      "href",
+      "/ladder",
+    );
+    // THE THREAD IS NOT AN OBJECT VIEWER: the feed still shows only the chip.
+    expect(screen.getByTestId("channel-feed")).not.toHaveTextContent(
+      "eviction bias survives 4-bit quantization",
+    );
+  });
+
+  it("a finding chip peeks /api/finding/{id} and links to its dossier", async () => {
+    mocks.getFindingDetail.mockResolvedValue({
+      found: true,
+      finding_id: "sf-009",
+      title: "eviction bias holds at 4-bit",
+      claim: "the bias is unchanged under NVFP4",
+      status: "promoted",
+      novelty_class: "novel",
+      source_iteration_id: "iter-2026-08-15-001",
+    });
+    inRouter(<Channel initial={[ROWS[2]]} initialAvailable={true} />);
+
+    fireEvent.click(screen.getByTestId("channel-ref-chip"));
+    await waitFor(() =>
+      expect(screen.getByTestId("channel-peek-body")).toBeInTheDocument(),
+    );
+    expect(mocks.getFindingDetail).toHaveBeenCalledWith("sf-009");
+    const peek = screen.getByTestId("peek-panel");
+    expect(within(peek).getByTestId("channel-peek-headline")).toHaveTextContent(
+      "eviction bias holds at 4-bit",
+    );
+    expect(peek).toHaveTextContent("the bias is unchanged under NVFP4");
+    expect(within(peek).getByTestId("channel-peek-link")).toHaveAttribute(
+      "href",
+      "/dossier/sf-009",
+    );
+  });
+
+  it("an iteration chip peeks the journey endpoint", async () => {
+    mocks.getIterationJourney.mockResolvedValue({
+      found: true,
+      iteration_id: "iter-2026-08-15-001",
+      iteration: {
+        iteration_id: "iter-2026-08-15-001",
+        started_at: "2026-08-15T09:00:00Z",
+        ended_at: "2026-08-15T09:40:00Z",
+        seed: { topic: "kv-cache eviction under quantization" },
+        gate_status: "valid",
+        novelty: { class: "novel" },
+      },
+    });
+    const rows: ChannelRow[] = [
+      {
+        ts: "2026-08-15T10:00:00Z",
+        kind: "human",
+        message: "what came out of iter-2026-08-15-001?",
+      },
+    ];
+    inRouter(<Channel initial={rows} initialAvailable={true} />);
+
+    fireEvent.click(screen.getByTestId("channel-ref-chip"));
+    await waitFor(() =>
+      expect(screen.getByTestId("channel-peek-body")).toBeInTheDocument(),
+    );
+    expect(mocks.getIterationJourney).toHaveBeenCalledWith(
+      "iter-2026-08-15-001",
+    );
+    const peek = screen.getByTestId("peek-panel");
+    expect(within(peek).getByTestId("channel-peek-headline")).toHaveTextContent(
+      "kv-cache eviction under quantization",
+    );
+    expect(peek).toHaveTextContent("valid");
+    expect(within(peek).getByTestId("channel-peek-link")).toHaveAttribute(
+      "href",
+      "/dossier/iter-2026-08-15-001",
+    );
+  });
+
+  it("an id the backend does not know renders an honest not-found, never an invented summary", async () => {
+    mocks.getFindingDetail.mockResolvedValue({
+      found: false,
+      finding_id: "sf-009",
+    });
+    inRouter(<Channel initial={[ROWS[2]]} initialAvailable={true} />);
+
+    fireEvent.click(screen.getByTestId("channel-ref-chip"));
+    await waitFor(() =>
+      expect(screen.getByTestId("channel-peek-missing")).toHaveTextContent(
+        "sf-009 is not in surfaced_findings",
+      ),
+    );
+    expect(screen.queryByTestId("channel-peek-body")).toBeNull();
+    expect(screen.queryByTestId("channel-peek-headline")).toBeNull();
+  });
+
+  it("a cluster id absent from the ledger reads as absent, not as an empty cluster", async () => {
+    mocks.getLadder.mockResolvedValue({ ...LADDER_PAYLOAD, clusters: [] });
+    inRouter(<Channel initial={[ROWS[1]]} initialAvailable={true} />);
+    fireEvent.click(screen.getByTestId("channel-ref-chip"));
+    await waitFor(() =>
+      expect(screen.getByTestId("channel-peek-missing")).toHaveTextContent(
+        "cl-x is not in the idea ledger",
+      ),
+    );
+  });
+
+  it("a version-skew 404 on the peek read degrades quietly, writing nothing", async () => {
+    mocks.getLadder.mockRejectedValue(
+      Object.assign(new Error("404 Not Found"), { status: 404 }),
+    );
+    inRouter(<Channel initial={[ROWS[1]]} initialAvailable={true} />);
+    fireEvent.click(screen.getByTestId("channel-ref-chip"));
+    await waitFor(() =>
+      expect(screen.getByTestId("channel-peek-missing")).toHaveTextContent(
+        "version skew",
+      ),
+    );
+    expect(screen.queryByTestId("channel-peek-error")).toBeNull();
+  });
+
+  it("a model turn keeps its MiniMarkdown body; its ids ride a chip row beneath", () => {
+    const rows: ChannelRow[] = [
+      {
+        ts: "2026-08-15T10:00:00Z",
+        kind: "nara",
+        message: "**cl-x** died; see sf-009 and cl-x again",
+      },
+    ];
+    inRouter(<Channel initial={rows} initialAvailable={true} />);
+    const nara = screen.getByTestId("channel-turn-nara");
+    expect(within(nara).getByTestId("mini-markdown")).toBeInTheDocument();
+    const refRow = within(nara).getByTestId("channel-voice-refs");
+    // Deduped, in first-mention order.
+    expect(
+      within(refRow)
+        .getAllByTestId("channel-ref-chip")
+        .map((c) => c.textContent),
+    ).toEqual(["cl-x", "sf-009"]);
+  });
+
+  it("Esc closes the peek (the R0 panel behavior is really wired)", async () => {
+    mocks.getLadder.mockResolvedValue(LADDER_PAYLOAD);
+    inRouter(<Channel initial={[ROWS[1]]} initialAvailable={true} />);
+    fireEvent.click(screen.getByTestId("channel-ref-chip"));
+    await waitFor(() =>
+      expect(screen.getByTestId("peek-panel")).toBeInTheDocument(),
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("peek-panel")).toBeNull());
+  });
+});
+
+describe("/channel pending turn + jump to present (R4)", () => {
+  it("a turn in flight shows a pending block; no stop affordance is faked", async () => {
+    let settle: (v: unknown) => void = () => {};
+    mocks.postChannelTurn.mockReturnValue(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+    mocks.getChannelTimeline.mockResolvedValue({ rows: [] });
+    render(<Channel initial={[]} initialAvailable={true} />);
+
+    fireEvent.change(screen.getByLabelText("channel turn input"), {
+      target: { value: "what is alive?" },
+    });
+    fireEvent.click(screen.getByTestId("channel-send"));
+
+    const pending = await screen.findByTestId("channel-pending-turn");
+    expect(pending).toHaveTextContent("nara is composing");
+    // The seam exposes no abort verb, so the page offers no stop button
+    // rather than a button that would not actually stop the CLI.
+    const feedButtons = within(screen.getByTestId("channel-feed"))
+      .queryAllByRole("button")
+      .map((b) => (b.textContent ?? "").toLowerCase())
+      .join(" · ");
+    for (const verb of ["stop", "abort", "cancel", "interrupt"]) {
+      expect(feedButtons).not.toContain(verb);
+    }
+
+    settle({ status: "passed" });
+    await waitFor(() =>
+      expect(screen.queryByTestId("channel-pending-turn")).toBeNull(),
+    );
+  });
+
+  it("scrolling up reveals 'jump to present'; clicking it returns to the newest row", () => {
+    render(<Channel initial={ROWS} initialAvailable={true} />);
+    const feed = screen.getByTestId("channel-feed");
+    // jsdom reports every height as 0 — give the scroller a real geometry.
+    Object.defineProperty(feed, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(feed, "clientHeight", { value: 300, configurable: true });
+
+    expect(screen.queryByTestId("channel-jump-present")).toBeNull();
+    feed.scrollTop = 0;
+    fireEvent.scroll(feed);
+    expect(screen.getByTestId("channel-jump-present")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("channel-jump-present"));
+    expect(feed.scrollTop).toBe(1000);
+    expect(screen.queryByTestId("channel-jump-present")).toBeNull();
+  });
+});
+
 describe("/channel fence — no disposition surface anywhere", () => {
   it("renders no verdict/disposition control on the whole page", () => {
     const { container } = render(
@@ -526,5 +1017,33 @@ describe("/channel fence — no disposition surface anywhere", () => {
       "approve", "promote", "kill"]) {
       expect(buttonText).not.toContain(verb);
     }
+  });
+
+  it("the reference peek is read-only too — a summary and one link, no disposition", async () => {
+    mocks.getFindingDetail.mockResolvedValue({
+      found: true,
+      finding_id: "sf-009",
+      title: "eviction bias holds at 4-bit",
+      status: "promoted",
+      novelty_class: "novel",
+    });
+    inRouter(<Channel initial={[ROWS[2]]} initialAvailable={true} />);
+    fireEvent.click(screen.getByTestId("channel-ref-chip"));
+    await waitFor(() =>
+      expect(screen.getByTestId("channel-peek-body")).toBeInTheDocument(),
+    );
+
+    // The panel is portal-rendered, so the fence is checked on the panel.
+    const peek = screen.getByTestId("peek-panel");
+    for (const fragment of ["verdict", "disposition", "sign-off", "signoff",
+      "finding-review", "gate-verdict"]) {
+      expect(peek.querySelector(`[data-testid*="${fragment}"]`)).toBeNull();
+    }
+    expect(peek.querySelectorAll("form")).toHaveLength(0);
+    expect(peek.querySelectorAll("textarea")).toHaveLength(0);
+    // Its only button is the panel's own close control.
+    const peekButtons = Array.from(peek.querySelectorAll("button"));
+    expect(peekButtons).toHaveLength(1);
+    expect(peekButtons[0]).toHaveAttribute("aria-label", "close panel");
   });
 });
