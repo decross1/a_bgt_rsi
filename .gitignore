@@ -109,3 +109,4 @@ run_state/.coordinator-cron.lock
 cron/secrets.env
 run_state/loop_alert.json
 run_state/frontier_tos_ratified
+run_state/loop_memory_embeddings.json
