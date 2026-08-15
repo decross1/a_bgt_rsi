@@ -102,6 +102,15 @@ log "launch: coordinator --once --execute --budget $BUDGET (NARA_SKEPTIC=1)"
 rc=0
 env -u MOCK_LLM NARA_SKEPTIC=1 "$PYTHON" -m orchestrator.coordinator \
   --once --execute --budget "$BUDGET" || rc=$?
+# Post-cycle: fold any NEW iterations into the idea ledger (2026-08-15 gap —
+# consolidation was one-shot, so iterations after it lived outside the ladder
+# entirely and D-064 refinement could not reach them). Incremental by design
+# (member ids already processed are skipped); failures are logged, never fatal
+# to the cycle.
+"$PYTHON" -m workers.consolidate_memory --execute >> "$REPO_ROOT/logs/consolidate-cron.log" 2>&1 \
+  && log "ledger: incremental consolidation ok" \
+  || log "WARN: incremental consolidation failed (see logs/consolidate-cron.log)"
+
 log "done rc=$rc"
 exit "$rc"
 

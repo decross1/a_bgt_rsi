@@ -116,6 +116,9 @@ def test_ladder_reduces_fixture_ledger(tmp_path):
     assert a["evidence_level"] == "L4"
     assert a["stem"] == "KV-cache eviction bias"  # elite claim's problem
     assert a["member_count"] == 1
+    # The member IDS ship too (R1 peek panel links iteration-shaped members
+    # onward to /dossier/:id) — member_count stays their length.
+    assert a["members"] == ["iter-001"]
     assert a["origin"] == "consolidation"
     assert a["kill_reason"] is None
 
