@@ -1,21 +1,27 @@
-// PAGE /coordinator — the missing cycle narrative. The autonomous coordinator
-// loop ran "dark" (an unlabeled ad_hoc blip on the activity panel); this page
-// is where a human auditor reads the whole arc of each cycle. One
-// <CoordinatorCycleCard> per row of run_state/coordinator_cycles.jsonl,
-// newest-first: the auto-chosen topic (+ its source) → the plan as per-action
-// status chips (executed/skipped/errored+error) → the linked iteration →
-// promoted findings → bubbles. See ui_plan.md §AUTONOMY OBSERVABILITY.
+// PAGE /cycles (Coordinator renamed, UI simplification S3) — the cycle
+// narrative. The autonomous coordinator loop ran "dark" (an unlabeled ad_hoc
+// blip on the old activity panel); this page is where a human auditor reads
+// the whole arc of each cycle. CoordinatorPhases at the top shows the LIVE
+// cycle's assess → plan → validate → dispatch stepper (fed from the D-047
+// multi-run registry — the /api/coordinator/active mirror retired in S3);
+// below it, one <CoordinatorCycleCard> per row of
+// run_state/coordinator_cycles.jsonl, newest-first: the auto-chosen topic
+// (+ its source) → the plan as per-action status chips
+// (executed/skipped/errored+error) → the linked iteration → promoted
+// findings → bubbles. See ui_plan.md §AUTONOMY OBSERVABILITY.
 //
-// Poll discipline mirrors ResolvedIterationsList: an `initial` prop bypasses
-// polling (tests render synchronously from the fixture); otherwise it polls
-// getCoordinatorCycles() at ~0.2 Hz, cleans up on unmount, and surfaces an
-// error string rather than throwing. The data file is gitignored and may be
-// absent → backend returns {cycles:[]} → a clean empty state, never a blank gap.
+// Poll discipline mirrors ResolvedIterationsList's (its historical source):
+// an `initial` prop bypasses polling (tests render synchronously from the
+// fixture); otherwise it polls getCoordinatorCycles() at ~0.2 Hz, cleans up
+// on unmount, and surfaces an error string rather than throwing. The data
+// file is gitignored and may be absent → backend returns {cycles:[]} → a
+// clean empty state, never a blank gap.
 import { useEffect, useState } from "react";
 import CoordinatorCycleCard from "../components/CoordinatorCycleCard";
-import { getCoordinatorCycles } from "../api/http";
+import CoordinatorPhases from "../components/CoordinatorPhases";
+import { getActiveRuns, getCoordinatorCycles } from "../api/http";
 import { useNow } from "../time";
-import type { CoordinatorCycle } from "../types/schemas";
+import type { CoordinatorActiveRun, CoordinatorCycle } from "../types/schemas";
 
 // The two render-boundary filter axes. Defaults are range="all" +
 // direction="newest" so the unfiltered view (every renderable row, newest
@@ -47,6 +53,10 @@ function inRange(cycle: CoordinatorCycle, range: Range, nowMs: number): boolean 
 interface Props {
   initial?: CoordinatorCycle[];
   pollMs?: number;
+  // The live coordinator run for the phases stepper. Injected (even as null)
+  // by tests to bypass the registry poll; otherwise the page polls the D-047
+  // registry (getActiveRuns) and picks the kind==="coordinator" doc.
+  initialPhasesRun?: CoordinatorActiveRun | null;
 }
 
 // run_state/coordinator_cycles.jsonl is producer-owned and append-only — a
@@ -88,10 +98,19 @@ function timestampKey(cycle: CoordinatorCycle | null | undefined): string {
     : String(cycle?.timestamp ?? "");
 }
 
-export default function Coordinator({ initial, pollMs = 5000 }: Props) {
+export default function Cycles({
+  initial,
+  pollMs = 5000,
+  initialPhasesRun,
+}: Props) {
   const [cycles, setCycles] = useState<CoordinatorCycle[]>(initial ?? []);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(initial !== undefined);
+  // The live coordinator run (phases stepper). null = idle; fed from the
+  // D-047 registry below unless a test injected it.
+  const [phasesRun, setPhasesRun] = useState<CoordinatorActiveRun | null>(
+    initialPhasesRun ?? null,
+  );
   // Defaults keep the unfiltered, newest-first view (the polled-sort contract).
   const [range, setRange] = useState<Range>("all");
   const [direction, setDirection] = useState<Direction>("newest");
@@ -154,10 +173,41 @@ export default function Coordinator({ initial, pollMs = 5000 }: Props) {
     };
   }, [initial, pollMs]);
 
+  // The phases stepper's feed: the D-047 multi-run registry (the ONE live-run
+  // source post-S3; the /api/coordinator/active mirror is retired). Quiet-fail
+  // like the old Dashboard mirror feeds — a dead registry endpoint leaves the
+  // stepper idle, it never blanks the narrative below.
+  useEffect(() => {
+    if (initialPhasesRun !== undefined) return;
+    let active = true;
+    const load = () =>
+      getActiveRuns()
+        .then((r) => {
+          if (!active) return;
+          const runs = Array.isArray(r?.runs) ? r.runs : [];
+          const live = runs.find(
+            (run) => run != null && run.kind === "coordinator",
+          );
+          setPhasesRun((live as CoordinatorActiveRun | undefined) ?? null);
+        })
+        .catch(() => {});
+    load();
+    const id = setInterval(load, pollMs);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, [initialPhasesRun, pollMs]);
+
   return (
     <div className="mx-auto max-w-7xl p-5" data-testid="coordinator-page">
+      {/* The LIVE cycle first (moved here from the deleted /activity page):
+          what stage the loop is in right now and why — or a quiet idle. */}
+      <div className="mb-4">
+        <CoordinatorPhases activeRun={phasesRun} />
+      </div>
       <div className="flex items-baseline gap-3">
-        <h1 className="text-base font-semibold text-zinc-100">Coordinator</h1>
+        <h1 className="text-base font-semibold text-zinc-100">Cycles</h1>
         <span className="text-[10px] text-zinc-600">
           /api/coordinator/cycles · {rangeCaption} · {dirCaption}
         </span>

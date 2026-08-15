@@ -67,11 +67,11 @@ describe("LastCycleLine", () => {
     expect(screen.queryByTestId("last-cycle-findings")).toBeNull();
   });
 
-  it("links into the coordinator narrative", () => {
+  it("links into the cycle narrative at /cycles (the S3 rename)", () => {
     renderLine([EXECUTED]);
     expect(screen.getByRole("link", { name: /cycles/ })).toHaveAttribute(
       "href",
-      "/coordinator",
+      "/cycles",
     );
   });
 

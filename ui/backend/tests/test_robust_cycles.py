@@ -5,21 +5,21 @@ human-as-auditor view; a hard error there is worse than a skipped row).
 Mirrors test_coordinator.py's TestClient-against-tmp_path idiom (side-effect
 free: every path points at tmp_path, no real run_state/memory reads/writes).
 
-Covers, for the /cycles source helper (`_read_jsonl`) and the /active reader:
-  (a) file absent                         -> empty body / 204, not 500
+Covers, for the /cycles source helper (`_read_jsonl`):
+  (a) file absent                         -> empty body, not 500
   (b) malformed lines interleaved w/ valid -> malformed skipped, valid served
   (c) non-dict JSON lines (bare number /   -> skipped (regression: a bare scalar
       string / array)                          is VALID JSON, survives json.loads,
                                                and `.get` on it crashed the sort)
   (d) a large file (5k rows)               -> served, newest-first, no error
-  (e) /active exists()->read race          -> 204, not 500 (file deleted mid-read)
 
 The non-dict case (c) is the real fixed bug: `_read_jsonl` appended whatever
 `json.loads` returned, so a line like ``42`` landed in `rows`, and the
 endpoint's ``rows.sort(key=lambda r: r.get("timestamp"))`` then raised
 ``AttributeError: 'int' object has no attribute 'get'`` — an unhandled 500.
-The same helper backs /cycles, /findings, /bubbles, /health_signals, so the
-regression is asserted on /cycles and spot-checked across the others.
+(/cycles is the ONE surviving coordinator endpoint post-S3: the /active
+reader + the findings/bubbles/health_signals spot-checks died with their
+endpoints in UI simplification S3.)
 """
 from __future__ import annotations
 
@@ -90,13 +90,6 @@ def test_cycles_absent_file_is_empty_not_500(tmp_path):
     assert resp.json() == {"cycles": []}
 
 
-def test_active_absent_file_is_204_not_500(tmp_path):
-    client = _client(tmp_path)
-    resp = client.get("/api/coordinator/active")
-    assert resp.status_code == 204
-    assert resp.content == b""
-
-
 # ─── (b) malformed lines interleaved with valid ──────────────────────────
 
 
@@ -156,44 +149,6 @@ def test_cycles_only_non_dict_lines_yields_empty(tmp_path):
     assert resp.json() == {"cycles": []}
 
 
-def test_all_jsonl_endpoints_tolerate_non_dict_lines(tmp_path):
-    """The same `_read_jsonl` helper backs findings / bubbles / health_signals;
-    a bare-scalar line interleaved with a valid dict must not 500 any of them."""
-    client = _client(tmp_path)
-    crs = tmp_path / "coord_run_state"
-    cm = tmp_path / "coord_memory"
-    crs.mkdir(parents=True, exist_ok=True)
-    cm.mkdir(parents=True, exist_ok=True)
-
-    (cm / "surfaced_findings.jsonl").write_text(
-        "123\n"
-        '{"finding_id":"f1","promoted_at":"2026-06-09T00:00:00Z"}\n',
-        encoding="utf-8",
-    )
-    (cm / "coordinator_bubbles.jsonl").write_text(
-        '"oops"\n'
-        '{"run_id":"b1","timestamp":"2026-06-09T00:00:00Z"}\n',
-        encoding="utf-8",
-    )
-    (crs / "health_signals.jsonl").write_text(
-        "[1, 2]\n"
-        '{"signal":"s1","timestamp":"2026-06-09T00:00:00Z"}\n',
-        encoding="utf-8",
-    )
-
-    rf = client.get("/api/coordinator/findings")
-    assert rf.status_code == 200
-    assert [f["finding_id"] for f in rf.json()["findings"]] == ["f1"]
-
-    rb = client.get("/api/coordinator/bubbles")
-    assert rb.status_code == 200
-    assert [b["run_id"] for b in rb.json()["bubbles"]] == ["b1"]
-
-    rh = client.get("/api/coordinator/health_signals")
-    assert rh.status_code == 200
-    assert [s["signal"] for s in rh.json()["health_signals"]] == ["s1"]
-
-
 # ─── (d) a large file ────────────────────────────────────────────────────
 
 
@@ -216,30 +171,3 @@ def test_cycles_large_file_served_without_error(tmp_path):
     # newest-first: the highest-index (latest timestamp) row leads.
     assert cycles[0]["run_id"] == f"cyc-{n - 1:05d}"
     assert cycles[-1]["run_id"] == "cyc-00000"
-
-
-# ─── (e) active exists()->read race ──────────────────────────────────────
-
-
-def test_active_file_deleted_mid_read_is_204_not_500(tmp_path):
-    """The producer atomically deletes active_run.json at cycle end; exists()
-    can return True while the subsequent read_text() raises FileNotFoundError.
-    The polling UI must see 204, not 500."""
-    import unittest.mock as mock
-
-    client = _client(tmp_path)
-    path = tmp_path / "coord_run_state" / "active_run.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"kind": "coordinator"}), encoding="utf-8")
-
-    real_read_text = type(path).read_text
-
-    def race_read_text(self, *args, **kwargs):
-        if str(self) == str(path):
-            raise FileNotFoundError(str(self))
-        return real_read_text(self, *args, **kwargs)
-
-    with mock.patch.object(type(path), "read_text", race_read_text):
-        resp = client.get("/api/coordinator/active")
-    assert resp.status_code == 204
-    assert resp.content == b""

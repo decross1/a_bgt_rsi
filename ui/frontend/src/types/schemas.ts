@@ -71,14 +71,6 @@ export interface Health {
   version: string;
 }
 
-// run_state/week1.state.json passthrough — only the fields the UI reads.
-export interface AppState {
-  plan_id?: string;
-  current_day?: string;
-  completed_tasks?: string[];
-  [key: string]: unknown;
-}
-
 // --- telemetry (mirrors ui/schema/telemetry.jsonl.schema.json) ---
 
 export interface GpuSample {
@@ -129,20 +121,6 @@ export interface TelemetrySample {
   read_errors: Record<string, string> | null;
 }
 
-// --- healthy-baseline card (/api/baseline) ---
-
-export interface BaselineRow {
-  key: string;
-  label: string;
-  value: string;
-  source: "measured" | "documented";
-  documented?: string;
-}
-
-export interface BaselineResponse {
-  rows: BaselineRow[];
-}
-
 // Message shape from the /api/live WebSocket.
 export interface LiveMessage {
   source: "telemetry" | "orchestrator";
@@ -151,9 +129,11 @@ export interface LiveMessage {
 
 // --- LOOP_V0 ---
 // Shared contract: the primary session writes run_state/active_iteration.json
-// + memory/loop_memory.jsonl + journal/iterations/NNN.md; the UI reads
-// them via /api/loop_v0/active, /api/loop_v0/iterations and
-// /api/loop_v0/journal/{id}. See LOOP_V0.md and ui_plan.md §LOOP_V0.
+// + memory/loop_memory.jsonl + journal/iterations/NNN.md; the UI reads them
+// via /api/loop_v0/iterations and /api/loop_v0/journal/{id} (the single-slot
+// active mirror retired in S3 — the D-047 registry is the live-run source;
+// ActiveIteration stays as the nowVerdict input type). See LOOP_V0.md and
+// ui_plan.md §LOOP_V0.
 
 // Matches schema/active_iteration.schema.json. current_step is the tool
 // currently in flight, "starting" at iteration open, or "nara_thinking"
@@ -388,7 +368,7 @@ export interface IterationRecord {
   wrapper_call_ids?: string[];
   seed_value?: number | null;
   // Joined in by /api/loop_v0/iterations when the topic matches a tracked
-  // subprocess. Mirrors `/api/loop_v0/processes`. Absent when no match.
+  // subprocess (the backend's in-memory spawn tracker). Absent when no match.
   process_status?: string;
   process_pid?: number;
   process_exit_code?: number;
@@ -408,23 +388,6 @@ export interface IterationJourneyResponse {
   iteration?: IterationRecord | null;
 }
 
-// One row of GET /api/loop_v0/processes — a subprocess spawned since the backend
-// booted (the Dashboard in-flight rollup). `status` is left open (forward-compat
-// house style): running | exited_clean | exited_error_<rc> | killed_signal_<sig>.
-export interface ProcessRow {
-  pid: number;
-  topic?: string | null;
-  started_at?: string | null;
-  ended_at?: string | null;
-  status?: string | null;
-  exit_code?: number | null;
-  [key: string]: unknown;
-}
-
-export interface ProcessesResponse {
-  processes: ProcessRow[];
-}
-
 export interface JournalResponse {
   iteration_id: string;
   path: string;
@@ -435,7 +398,8 @@ export interface JournalResponse {
 // Mirrors of the coordinator-loop data contracts (ui_autonomy_observability_plan.md
 // §"Data contracts"). The primary session writes these as append-only JSONL,
 // gitignored, read live by ui/backend/coordinator.py exactly as loop_memory.jsonl
-// is. The UI reads them via /api/coordinator/{cycles,active,findings,bubbles}.
+// is. Post-S3 the UI reads /api/coordinator/cycles (the narrative) — the
+// findings/bubbles/health_signals/active siblings retired with their panels.
 // Fields are kept optional/forward-compatible (like IterationRecord) so an EMIT
 // schema addition does not break the views; `status`/`severity`/etc. stay open
 // strings so an unrecognized enum value renders generically rather than crashing.
@@ -474,38 +438,6 @@ export interface CoordinatorCycle {
   bubble_run_ids?: string[];
 }
 
-// One row of memory/surfaced_findings.jsonl (promote_findings output —
-// orchestrator/finding_promotion.py:_promote_findings). The display field is
-// `title`; `claim`/`why_it_matters` add context; `novelty_class`/`critic_verdict`
-// are the badges; `source_iteration_id` links the iteration; `promoted_at` is
-// the time field (NOT `timestamp`). No `agent` field — promotion is the
-// coordinator's. The index signature stays forward-compatible.
-export interface SurfacedFinding {
-  finding_id: string;
-  source_iteration_id?: string | null;
-  title?: string | null;
-  claim?: string | null;
-  novelty_class?: string | null;
-  critic_verdict?: string | null;
-  why_it_matters?: string | null;
-  status?: string | null;
-  promoted_at?: string | null;
-  [key: string]: unknown;
-}
-
-// One row of memory/coordinator_bubbles.jsonl — the loop's "raise to the human"
-// channel (orchestrator/coordinator.py:_persist_bubble_up). The whole row is
-// {timestamp, run_id, finding_ids, note}: `note` is the message, `finding_ids`
-// the findings being raised. No bubble_id/agent/severity — a bubble IS the
-// escalation, always coordinator-emitted.
-export interface Bubble {
-  timestamp?: string | null;
-  run_id?: string | null;
-  finding_ids?: string[];
-  note?: string | null;
-  [key: string]: unknown;
-}
-
 // run_state/active_run.json — the coordinator's live cycle (the generalized
 // active_run helper, kind="coordinator"). The live row is {run_id, kind, label,
 // started_at, current_step, narration, step_started_at}: `current_step` walks
@@ -523,35 +455,6 @@ export interface CoordinatorActiveRun {
 
 export interface CoordinatorCyclesResponse {
   cycles: CoordinatorCycle[];
-}
-
-export interface SurfacedFindingsResponse {
-  findings: SurfacedFinding[];
-}
-
-export interface BubblesResponse {
-  bubbles: Bubble[];
-}
-
-// One row of run_state/health_signals.jsonl — a degraded-but-not-broken signal
-// derived per coordinator cycle (orchestrator/coordinator_cycle_log.py):
-// `ml_intern_zero_papers` (ran but stored 0 papers) or
-// `qwen_degraded_empty_content` (generated but emitted empty content). All
-// carry severity "degraded" — the UI renders them amber, not red. The index
-// signature keeps the signal-specific fields (papers_stored / empty_calls / …)
-// forward-compatible.
-export interface HealthSignal {
-  signal: string;
-  severity?: string | null;
-  timestamp?: string | null;
-  run_id?: string | null;
-  iteration_id?: string | null;
-  detail?: string | null;
-  [key: string]: unknown;
-}
-
-export interface HealthSignalsResponse {
-  health_signals: HealthSignal[];
 }
 
 // --- HUMAN TODO (GET /api/human_todo) ---

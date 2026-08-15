@@ -1,8 +1,10 @@
-// PAGE A (/activity) fetchers. Own module so PAGE A does not edit the
-// shared api/http.ts. Reuses the same API_BASE derivation pattern.
+// Activity fetchers (the /graph page + Pulse's monitor poll). Own module so
+// the original PAGE A build did not edit the shared api/http.ts; kept
+// separate post-S3 for the same reason. Reuses the API_BASE derivation.
+// (The /api/activity/active_run SINGULAR mirror was retired in S3 — the
+// D-047 registry, getActiveRuns in api/http.ts, is the live-run source.)
 import { HttpError } from "./http";
 import type {
-  ActiveRun,
   ActivityGraphResponse,
   MonitorResponse,
 } from "../types/activity";
@@ -37,22 +39,3 @@ export const getActivityGraph = (
 
 export const getActivityMonitor = (limit = 25) =>
   getJSON<MonitorResponse>(`/api/activity/monitor?limit=${limit}`);
-
-// GET /api/activity/active_run returns 204 when no run is in flight (the
-// driver deletes active_run.json on completion). Caller gets `null` then,
-// rather than an error — mirrors getActiveIteration.
-export async function getActiveRun(): Promise<ActiveRun | null> {
-  const resp = await fetch(`${API_BASE}/api/activity/active_run`);
-  if (resp.status === 204) return null;
-  if (!resp.ok) {
-    let detail = resp.statusText;
-    try {
-      const body = (await resp.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      /* no JSON body */
-    }
-    throw new HttpError(resp.status, detail);
-  }
-  return (await resp.json()) as ActiveRun;
-}

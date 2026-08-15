@@ -1368,6 +1368,142 @@ DossierIndex, DossierReader + App routes), 4 absorbed/trimmed (PipelineJourney,
 TutorPanel, ResolvedIterationsList, App), 6 src deletions; tests: 4 new, 6
 updated, 11 deleted.
 
+## §2026-08-15 S3 — UI simplification slice 3: deletions sweep + nav cleanup (`ui/` only)
+
+Plan: `docs/ui_simplification_plan_2026-08-15.md` (§Route fates, §Kill list,
+§Phasing S3). Built by a worktree-isolated build agent (spawn `loop10h-ui-s3`)
+on top of merged S1+S2 (`6e4c961`); primary gates + merges. This is the slice
+that makes the 3-surface shell FINAL: everything the plan marked DIE is gone.
+
+### Routes + nav (the final shell)
+
+- **DELETED** `routes/Dashboard.tsx`, `routes/Activity.tsx`, `routes/Ideas.tsx`
+  (all unmounted since S1/S2; the Ideas body lives on as the /ladder fallback).
+- **NEW `routes/Graph.tsx`** (~110L thin page): mounts ActivityGraph with the
+  data fetch ported from Activity.tsx — 5 s poll, change-detection signature so
+  react-flow only relayouts on real change, overview/full DetailToggle.
+- **`routes/Coordinator.tsx` → `routes/Cycles.tsx`** (git mv; component renamed
+  `Cycles`, h1 "Cycles", `coordinator-page` testid kept — dozens of pins read
+  it). **CoordinatorPhases mounts at its top**. DEVIATION from the task's
+  literal "port the fetch from Activity.tsx": the ported fetch was
+  getCoordinatorActive() → `/api/coordinator/active`, which THIS slice retires
+  — so the stepper feeds from the D-047 registry instead (`getActiveRuns()`,
+  pick `kind==="coordinator"`, quiet-fail; `initialPhasesRun` prop for tests),
+  per the plan's Pulse note that the registry is the one live-run source. The
+  two `/api/coordinator/active` caption strings in CoordinatorPhases now read
+  `/api/activity/active_runs`.
+- **`App.tsx` final nav**: `pulse · ladder · dossiers · engine ▾ (cycles,
+  experiments, graph) · brain↗`. Routes `/cycles` + `/graph`; redirects
+  `/coordinator`→`/cycles` (NEW), `/todo`→`/dossier`, `/ideas`→`/ladder`;
+  `/dashboard` + `/activity` REMOVED entirely.
+- **S1/S2 deferred link flips executed**: LastCycleLine → `/cycles`;
+  PipelineJourney `journey-cycle-link` → `/cycles` (both "for now /coordinator"
+  deviations resolved; pins updated in test_last_cycle_line +
+  test_PipelineJourney).
+
+### Component deletions (all verified import-orphaned first)
+
+SystemActivityHero (nowVerdict.ts STAYS — Pulse/NowBoard use it),
+InFlightRollup, ActiveIterationPanel, RedFlagsTrendStrip, HealthSignalsPanel,
+SurfacedFindingsPanel, BubblesPanel, ResolvedIterationsList (JournalScroll
+STAYS — PipelineJourney), BaselineCard, ProcessGrid, LiveCallsBanner,
+ActiveWorkersPanel, SyntheticInferencePanel. Only Dashboard.tsx/Activity.tsx
+imported any of them — nothing needed folding. CoordinatorPhases + ActivityGraph
+survive at their new mounts.
+
+### Client / type / fixture prune
+
+- `api/http.ts`: getState, getBaseline, getProcesses, getSurfacedFindings,
+  getBubbles, getHealthSignals, getActiveIteration, getCoordinatorActive
+  (the last two: their endpoints retire below; Pulse never polled them).
+- `api/activity.ts`: getActiveRun (singular; getActiveRuns stays in http.ts).
+- `api/experiments.ts`: getExperiments (index; getResearch is the real index).
+- `types/schemas.ts`: AppState, BaselineRow/BaselineResponse,
+  ProcessRow/ProcessesResponse, SurfacedFinding(+Response), Bubble(+Response),
+  HealthSignal(+Response). ActiveIteration/CoordinatorActiveRun STAY
+  (nowVerdict inputs + CoordinatorPhases prop + fixtures).
+- `types/experiments.ts`: ExperimentsListResponse (ExperimentListItem stays —
+  ResearchExperiment's base).
+- Fixtures: coordinator SURFACED_FINDINGS/BUBBLES/HEALTH_SIGNALS fixtures;
+  experiments EXPERIMENTS_LIST fixtures; activity MONITOR_*/ACTIVE_RUN
+  fixtures (only the two GRAPH fixtures survive).
+
+### Backend endpoint retirements (each verified consumerless in src first)
+
+`/api/state` + `/api/baseline` (+ `baseline.py` module; bench CSVs untouched;
+create_app signature + env overrides unchanged — the params stay accepted),
+`/api/experiments` index (KEEP `/{exp_id}` + `/api/research`),
+`/api/coordinator/{findings,bubbles,health_signals,active}` (KEEP `/cycles`),
+`/api/activity/active_run` singular (KEEP `/active_runs` + `/monitor` +
+`/graph`; the registry still wraps the legacy mirror itself),
+`/api/loop_v0/{active,processes}` (KEEP POST `/start`, `/iterations`,
+`/journal/{id}`; the in-memory spawn tracker survives — /start records and
+/iterations joins process_status). In-process route-table check confirms
+exactly the intended surviving set.
+
+### Test prune / rewrite
+
+- Frontend DELETED (32 files): the task's §Kill-list 28 (dashboard ×3, hero ×2,
+  InFlightRollup, active-iteration ×3 [incl. step_strip + stale_active_run],
+  findings ×3, bubbles ×2, health-signals ×2, red-flags ×3, resolved-list ×4
+  [undecidable-verdict pins ported to test_chips first — the only one missing
+  was the single-field overrideTooltip form], harden_Activity,
+  activity_monitor, failed_dispatch_grouping, baseline_card) + 4 collateral
+  suites of the same dead surfaces (test_ideas_board; test_audit_states — all
+  four subjects deleted; test_validate_iterations + test_revalidate_live_rows
+  — live-data twins of the killed resolved-list suite; the browse they
+  validated moved to the dossier index, which has its own suite) +
+  test_validate_panels_empty.
+- Route sweeps REWRITTEN for the final shell (test_forwardcompat_routes /
+  test_validate_routes_console: Pulse · Ladder · Cycles · Graph · Experiments ·
+  DossierIndex; retired-client mocks dropped). test_activity_graph re-pointed
+  at /graph; test_coordinator_route + test_harden_Coordinator re-pointed at
+  Cycles (+ a new phases-mount case; the harden mock gained getActiveRuns);
+  test_validate_active now drives getActiveRuns (the registry contract) into
+  CoordinatorPhases; test_endpoint_skew's bespoke-204 cases re-pointed at
+  getLadder; test_audit_a11y/consistency/perf pruned to the surviving
+  surfaces; test_validate_lowevidence kept its badge half only.
+- Backend DELETED: test_baseline.py, test_robust_{findings,bubbles,
+  health_signals,active}.py. PRUNED retired-endpoint cases from
+  test_api / test_experiments / test_coordinator / test_loop_v0 /
+  test_robust_cycles / test_live_8700 / test_validate_live_real_data (the
+  /api/ladder probe KEPT) **+ test_activity.py** (the singular /active_run
+  cases — an addition to the task's list; its endpoint died here too). The
+  /processes reap semantics (exited_error_<rc> / killed_signal_<sig>) were
+  PORTED into a /iterations-join test, not lost.
+
+### Verification (this worktree)
+
+- frontend vitest **916 pass** (65 files; 1396 → 916 — the honest S3 shrink
+  tracking ~32 deleted suites) · `tsc --noEmit` clean
+- ui-backend pytest **605 pass** (`.venv-chroma`, `MOCK_LLM=1`; 680 → 605)
+- `git grep` retired-endpoint gate over `ui/`: clean except
+  `ui/notes/ui-build.md` + `ui/notes/validation_report.md` — DATED running-log
+  history (same class as this file's history), left un-rewritten by design.
+- The real `:8700` full-nav smoke (every nav destination + all three
+  redirects live; ensure-cron check) is the PRIMARY's post-merge step per the
+  plan's S3 gate. NOTE for that restart: the retired endpoints 404 from the
+  new binary — the pre-restart frontend build briefly shows
+  EndpointMissingNote-class degradation, which is the known version-skew
+  pattern, not a defect.
+
+### Follow-on — cluster_id join for the dossier picker
+
+DossierIndex still clusters findings by ResolveRail's ported 6-word
+`titleStem` heuristic. Now that `/api/ladder` serves real
+`LadderCluster.cluster_id` rows (and D-059 producers stamp
+`evidence_level` through human_todo), the right join is by ledger
+`cluster_id` — replace the stem heuristic with a cluster_id lookup once the
+human_todo/finding rows carry it end-to-end (EMIT-side addition), and let the
+picker's groups link to their `/ladder` cluster rows. Until then the stem
+comment in DossierIndex marks the seam.
+
+Scope held: `ui/` + this file only. Frontend: 2 new routes (Graph, Cycles via
+git-mv rename), App/CoordinatorPhases/LastCycleLine/PipelineJourney touched,
+16 src files deleted, 4 clients + 10 types + 3 fixture groups pruned; tests
+32 deleted, 12 rewritten/re-pointed. Backend: baseline.py deleted, 5 modules
+pruned of retired handlers, 5 suites deleted, 8 pruned.
+
 ---
 
 ## Historical sections (UI v1, pre-LOOP_V0)

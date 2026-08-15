@@ -16,10 +16,8 @@
 //     NOT low-evidence-flagged (correct: on-domain). novelty/critique also carry
 //     low_confidence:false (present in the real row). Plus a human_cli row and a
 //     loop_memory_probe row for the seed.source spread (33/15/1 live).
-//   - findings / bubbles / health_signals: ABSENT on disk -> endpoints return
-//     empty arrays -> the panels must show a clean empty state, never a crash.
-//   - active_run.json: ABSENT -> /api/coordinator/active is 204 -> getCoordinatorActive
-//     resolves null; getActiveRun/getActiveIteration likewise null.
+//   - the human-todo queue: sources absent on disk -> empty queue (the calm
+//     state); the registry poll returns no live runs.
 //
 // Each route fetches through the api/http (+ api/activity, api/experiments)
 // helpers and the telemetry hook; those modules are mocked to hand back the
@@ -28,11 +26,8 @@ import { render, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
-  Bubble,
   CoordinatorCycle,
-  HealthSignal,
   IterationRecord,
-  SurfacedFinding,
   TelemetrySample,
   VllmSample,
 } from "../src/types/schemas";
@@ -167,11 +162,6 @@ const D = vi.hoisted(() => {
       journal_entry_path: "journal/iterations/015.md",
     },
   ] as IterationRecord[];
-
-  // findings / bubbles / health_signals are ABSENT on disk -> empty arrays.
-  const EMPTY_FINDINGS = [] as SurfacedFinding[];
-  const EMPTY_BUBBLES = [] as Bubble[];
-  const EMPTY_HEALTH = [] as HealthSignal[];
 
   // A faithful /api/research snapshot: 3 tiers (synthetic / semi_synthetic /
   // applied) + 2 untiered, the live tier ids, with a real bad-verdict and a
@@ -349,9 +339,6 @@ const D = vi.hoisted(() => {
   return {
     REAL_CYCLES,
     REAL_ITERATIONS,
-    EMPTY_FINDINGS,
-    EMPTY_BUBBLES,
-    EMPTY_HEALTH,
     REAL_RESEARCH,
     REAL_MONITOR,
     REAL_GRAPH,
@@ -376,29 +363,17 @@ vi.mock("../src/api/http", () => ({
     telemetry_last_seen: new Date().toISOString(),
     version: "test",
   }),
-  getState: vi.fn().mockResolvedValue({ current_day: "2026-06-09" }),
   getIterations: vi.fn().mockResolvedValue({ iterations: D.REAL_ITERATIONS }),
   getJournalEntry: vi.fn().mockResolvedValue({
     iteration_id: "iter-2026-06-09-002",
     path: "journal/iterations/065.md",
     content: "# Journal\n\nbody",
   }),
-  getActiveIteration: vi.fn().mockResolvedValue(null),
-  getBaseline: vi.fn().mockResolvedValue({ rows: [] }),
   getWorkloadHint: vi.fn().mockResolvedValue({ regime: "idle" }),
-  // Coordinator-loop endpoints: real cycles; absent files -> empty arrays;
-  // no live cycle -> null (the 204 path).
+  // Coordinator loop: real cycles (the one surviving coordinator endpoint).
   getCoordinatorCycles: vi.fn().mockResolvedValue({ cycles: D.REAL_CYCLES }),
-  getCoordinatorActive: vi.fn().mockResolvedValue(null),
-  getSurfacedFindings: vi.fn().mockResolvedValue({ findings: D.EMPTY_FINDINGS }),
-  getBubbles: vi.fn().mockResolvedValue({ bubbles: D.EMPTY_BUBBLES }),
-  getHealthSignals: vi
-    .fn()
-    .mockResolvedValue({ health_signals: D.EMPTY_HEALTH }),
   // HUMAN TODO sources mostly absent on disk -> empty queue (the calm state).
   getHumanTodo: vi.fn().mockResolvedValue({ items: [], counts: {} }),
-  // InFlightRollup feed (FE5): Dashboard polls getProcesses in the HERO effect.
-  getProcesses: vi.fn().mockResolvedValue({ processes: [] }),
   startIteration: vi.fn().mockResolvedValue({ pid: 1 }),
   // S1 additions: the NowBoard registry poll (Pulse mounts it live), and the
   // /ladder page's endpoint pair (204-null ledger -> ideas.md fallback body).
@@ -412,21 +387,18 @@ vi.mock("../src/api/http", () => ({
 vi.mock("../src/api/activity", () => ({
   getActivityGraph: vi.fn().mockResolvedValue(D.REAL_GRAPH),
   getActivityMonitor: vi.fn().mockResolvedValue(D.REAL_MONITOR),
-  getActiveRun: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("../src/api/experiments", () => ({
   getResearch: vi.fn().mockResolvedValue(D.REAL_RESEARCH),
-  getExperiments: vi.fn().mockResolvedValue({ available: true, experiments: [] }),
   getExperimentDetail: vi.fn().mockResolvedValue(null),
 }));
 
 // Imported AFTER the mocks are declared (vi.mock is hoisted, so the routes
 // pick up the mocked modules).
-import Dashboard from "../src/routes/Dashboard";
-import Activity from "../src/routes/Activity";
+import Cycles from "../src/routes/Cycles";
 import Experiments from "../src/routes/Experiments";
-import Coordinator from "../src/routes/Coordinator";
+import Graph from "../src/routes/Graph";
 import Ladder from "../src/routes/Ladder";
 import Pulse from "../src/routes/Pulse";
 import DossierIndex from "../src/routes/DossierIndex";
@@ -463,9 +435,9 @@ describe("routes render against real data without console errors", () => {
     vi.clearAllMocks();
   });
 
-  it("Coordinator: 13-style real cycles incl. errored + empty-outcomes rows", async () => {
+  it("Cycles: 13-style real cycles incl. errored + empty-outcomes rows", async () => {
     const { error, warn } = await renderRouteQuietly(
-      <Coordinator pollMs={1_000_000} />,
+      <Cycles pollMs={1_000_000} />,
     );
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
@@ -477,14 +449,8 @@ describe("routes render against real data without console errors", () => {
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });
 
-  it("Activity: real cycles (errored+empty), idle monitor, null active run", async () => {
-    const { error, warn } = await renderRouteQuietly(<Activity />);
-    expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
-    expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
-  });
-
-  it("Dashboard: real iterations (relevance row), empty findings/bubbles/health", async () => {
-    const { error, warn } = await renderRouteQuietly(<Dashboard />);
+  it("Graph (S3 thin page): real empty graph renders console-clean", async () => {
+    const { error, warn } = await renderRouteQuietly(<Graph />);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });

@@ -1,14 +1,13 @@
 """LOOP_V0 endpoints. Surfaces what Nara is doing to the dashboard.
 
-Five endpoints, all wired by ``register`` into the existing FastAPI app:
+Three endpoints post-S3 (UI simplification: the ``/processes`` rollup and the
+``/active`` single-slot mirror retired with their Dashboard consumers — the
+D-047 registry at ``/api/activity/active_runs`` is the live-run source), all
+wired by ``register`` into the existing FastAPI app:
 
 - ``POST /api/loop_v0/start``  — body ``{"topic": str}``; subprocess-spawns
   ``orchestrator.loop_v0_cli`` under ``env -u MOCK_LLM`` with cwd set to the
   primary worktree (not this UI worktree). Returns 202 + the spawned PID.
-- ``GET  /api/loop_v0/processes`` — subprocess status for iterations spawned
-  since backend boot. Newest first.
-- ``GET  /api/loop_v0/active`` — reads ``run_state/active_iteration.json``;
-  returns 204 No Content when the file is absent.
 - ``GET  /api/loop_v0/iterations`` — reads ``memory/loop_memory.jsonl``,
   newest-first by ``ended_at``. Returns ``{"iterations": []}`` if absent.
 - ``GET  /api/loop_v0/journal/{iteration_id}`` — reads the journal entry at
@@ -27,7 +26,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Body, HTTPException, Response
+from fastapi import APIRouter, Body, HTTPException
 
 
 def _utcnow_iso() -> str:
@@ -106,7 +105,9 @@ def register(
 ) -> APIRouter:
     """Attach the LOOP_V0 router. `loop_memory_path` defaults to
     `<repo_root>/memory/loop_memory.jsonl` (the Layer-3 location per
-    ARCHITECTURE.md §4.4). Tests can pin alternates."""
+    ARCHITECTURE.md §4.4). Tests can pin alternates. `run_state_dir` stays
+    accepted (unused since the /active mirror retired in S3) so the
+    create_app wiring + env overrides are unchanged."""
     if loop_memory_path is None:
         loop_memory_path = Path(repo_root) / "memory" / "loop_memory.jsonl"
     router = APIRouter(prefix="/api/loop_v0", tags=["loop_v0"])
@@ -177,38 +178,11 @@ def register(
             }
         return {"pid": pid, "topic": topic}
 
-    @router.get("/processes")
-    def processes():
-        """Subprocess status for iterations spawned since backend boot.
-        Each entry: `{pid, topic, started_at, ended_at, status, exit_code}`.
-        `status` ∈ {`running`, `exited_clean`, `exited_error_<rc>`,
-        `killed_signal_<sig>`}. Newest first."""
-        _reap_processes()
-        rows = []
-        for info in _processes.values():
-            # Drop the Popen handle from the API surface.
-            rows.append({k: v for k, v in info.items() if k != "proc"})
-        rows.sort(key=lambda r: r.get("started_at") or "", reverse=True)
-        return {"processes": rows}
-
-    @router.get("/active")
-    def active():
-        path = Path(run_state_dir) / "active_iteration.json"
-        if not path.exists():
-            return Response(status_code=204)
-        # Race: the producer deletes this file atomically at iteration end.
-        # If the polling client hits the path between our `exists()` and
-        # `read_text()`, treat the FileNotFoundError as 204 (same as the
-        # cold path), not as 500 — the iteration just finished.
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return Response(status_code=204)
-        except (OSError, json.JSONDecodeError) as exc:
-            raise HTTPException(
-                status_code=500, detail=f"active_iteration unreadable: {exc}"
-            ) from exc
-        return data
+    # (GET /processes and GET /active were retired in UI simplification S3:
+    # the in-flight rollup + active-iteration panel died with the Dashboard,
+    # and the D-047 registry (/api/activity/active_runs) is the live-run
+    # source. The `_processes` tracker itself survives — POST /start still
+    # records spawns and /iterations still joins their status in.)
 
     @router.get("/iterations")
     def iterations():

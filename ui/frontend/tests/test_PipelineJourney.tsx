@@ -920,8 +920,8 @@ describe("PipelineJourney — ABSORBED links + lazy journal", () => {
     renderAbsorbed();
     const link = await screen.findByTestId("journey-cycle-link");
     expect(link).toHaveTextContent("coordinator_ab12cd34");
-    // /coordinator for now — S3 renames the route to /cycles.
-    expect(link.getAttribute("href")).toBe("/coordinator");
+    // /cycles — the S3 route rename (the S2 "/coordinator for now" resolved).
+    expect(link.getAttribute("href")).toBe("/cycles");
   });
 
   it("a failed cycle fetch (older backend / skew) silently drops the cycle link — never a red state", async () => {

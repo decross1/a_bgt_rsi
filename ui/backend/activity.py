@@ -30,7 +30,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter
 
 from .chain import LogStore, build_chain, recent_tasks
 
@@ -600,33 +600,10 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
                 "synthetic_inference": inference,
                 "generated_at": _utcnow_iso()}
 
-    @router.get("/active_run")
-    def active_run():
-        """The single 'what is running now' state, regardless of run kind.
-
-        Mirrors loop_v0's /active: 204 when the file is absent (no run in
-        flight, the driver deletes it on completion), the parsed JSON when
-        present (ALL keys passed through, including unknown ones a later
-        nemoclaw revision may add — additionalProperties true in the schema),
-        500 only on a genuinely unreadable/corrupt file. The delete-race
-        between exists() and read is treated as 204, not 500."""
-        if not active_run_path.exists():
-            return Response(status_code=204)
-        try:
-            text = active_run_path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return Response(status_code=204)
-        # A zero-length (or whitespace-only) read is the mid-write window of a
-        # non-atomic producer, not a corrupt file — treat it as "no run" (204)
-        # rather than a 500 page-error banner.
-        if not text.strip():
-            return Response(status_code=204)
-        try:
-            return json.loads(text)
-        except (OSError, json.JSONDecodeError) as exc:
-            raise HTTPException(
-                status_code=500, detail=f"active_run unreadable: {exc}"
-            ) from exc
+    # (The SINGULAR /active_run mirror endpoint was retired in UI
+    # simplification S3 — /active_runs below is the one live-run source; it
+    # still wraps the legacy single-slot active_run.json mirror itself on a
+    # pre-D-047 apparatus, so nothing is lost.)
 
     @router.get("/active_runs")
     def active_runs():

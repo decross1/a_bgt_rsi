@@ -1,53 +1,11 @@
 // Page B fixtures covering all three on-disk shapes. Components take an
-// `initial` prop so tests bypass the network entirely.
+// `initial` prop so tests bypass the network entirely. (The old
+// /api/experiments INDEX fixtures died with that endpoint in S3 — the
+// research-tier fixtures below are the index the page renders.)
 import type {
   ExperimentDetail,
-  ExperimentsListResponse,
   ResearchResponse,
 } from "../../types/experiments";
-
-// List response: one of each shape.
-export const EXPERIMENTS_LIST_FIXTURE: ExperimentsListResponse = {
-  available: true,
-  experiments: [
-    {
-      id: "exp001_repeated_pd",
-      title: "exp001 repeated pd",
-      has_results_dir: true,
-      has_summary_json: true,
-      has_summary_md: false,
-      has_per_round: true,
-      has_trials: false,
-      n_results_files: 7,
-    },
-    {
-      id: "exp003_vickrey_rediscovery",
-      title: "exp003 vickrey rediscovery",
-      has_results_dir: true,
-      has_summary_json: false,
-      has_summary_md: true,
-      has_per_round: false,
-      has_trials: true,
-      n_results_files: 3,
-    },
-    {
-      id: "exp002_loop_v0_robustness",
-      title: "exp002 loop v0 robustness",
-      has_results_dir: false,
-      has_summary_json: false,
-      has_summary_md: false,
-      has_per_round: false,
-      has_trials: false,
-      n_results_files: 0,
-    },
-  ],
-};
-
-export const EXPERIMENTS_LIST_UNAVAILABLE: ExperimentsListResponse = {
-  available: false,
-  reason: "experiments dir absent",
-  experiments: [],
-};
 
 // exp001 — JSON-shaped detail with a per-opponent table + per-round series.
 export const DETAIL_JSON_FIXTURE: ExperimentDetail = {

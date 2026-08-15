@@ -48,10 +48,6 @@ from backend.coordinator import _read_jsonl
 # the module constants (not re-hardcoded) so this test follows the same source
 # of truth as the served app and survives a path change.
 _CYCLES_PATH = app_module.DEFAULT_COORDINATOR_RUN_STATE / "coordinator_cycles.jsonl"
-_ACTIVE_PATH = app_module.DEFAULT_COORDINATOR_RUN_STATE / "active_run.json"
-_HEALTH_PATH = app_module.DEFAULT_COORDINATOR_RUN_STATE / "health_signals.jsonl"
-_FINDINGS_PATH = app_module.DEFAULT_COORDINATOR_MEMORY / "surfaced_findings.jsonl"
-_BUBBLES_PATH = app_module.DEFAULT_COORDINATOR_MEMORY / "coordinator_bubbles.jsonl"
 
 # Keys the frontend ``CoordinatorCycle`` type reads as non-optional
 # (ui/frontend/src/types/schemas.ts). The card crashes / mis-renders if a real
@@ -174,55 +170,7 @@ def test_live_cycle_provenance_snapshot(client):
         assert isinstance(o.get("error"), str) and o["error"]
 
 
-# ─── findings / bubbles / health_signals — clean empty state while absent ──
-
-
-def test_findings_endpoint_clean_empty_state(client):
-    """{findings: [...]} always; an empty list while the file is absent (the
-    clean-empty-state the panel renders), never a crash."""
-    resp = client.get("/api/coordinator/findings")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert set(body.keys()) == {"findings"}
-    assert isinstance(body["findings"], list)
-    if not _FINDINGS_PATH.exists():
-        assert body["findings"] == []
-
-
-def test_bubbles_endpoint_clean_empty_state(client):
-    resp = client.get("/api/coordinator/bubbles")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert set(body.keys()) == {"bubbles"}
-    assert isinstance(body["bubbles"], list)
-    if not _BUBBLES_PATH.exists():
-        assert body["bubbles"] == []
-
-
-def test_health_signals_endpoint_clean_empty_state(client):
-    resp = client.get("/api/coordinator/health_signals")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert set(body.keys()) == {"health_signals"}
-    assert isinstance(body["health_signals"], list)
-    if not _HEALTH_PATH.exists():
-        assert body["health_signals"] == []
-
-
-# ─── active — 204 idle state while no cycle is in flight ───────────────────
-
-
-def test_active_clean_idle_state(client):
-    """204 (empty body) while active_run.json is absent → the Activity panel
-    shows a clean idle state, not a blank gap or a 500. If a cycle is mid-flight
-    (the file exists), it must instead be valid JSON the panel can render."""
-    resp = client.get("/api/coordinator/active")
-    if not _ACTIVE_PATH.exists():
-        assert resp.status_code == 204
-        assert resp.content == b""
-    else:
-        assert resp.status_code == 200
-        data = resp.json()
-        assert isinstance(data, dict)
-        # Sanity that on-disk JSON round-trips through the endpoint unchanged.
-        assert data == json.loads(_ACTIVE_PATH.read_text(encoding="utf-8"))
+# (The findings / bubbles / health_signals / active validation cases died
+# with those endpoints in UI simplification S3 — /api/coordinator/cycles is
+# the one surviving coordinator endpoint; the D-047 registry serves the live
+# run.)

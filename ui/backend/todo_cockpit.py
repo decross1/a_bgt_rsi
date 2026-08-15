@@ -330,7 +330,8 @@ def register(
     @router.get("/concurrency")
     def concurrency():
         """The ONE real (non-stub) read endpoint: read-only
-        ``run_state/active_run.json`` (the same file coordinator/active reads) so
+        ``run_state/active_run.json`` (the legacy single-slot mirror the D-047
+        registry also falls back to) so
         the cockpit can warn when an iteration is mid-flight (seam-1 concurrency
         guard). Absent file => ``{active: false}``. Never writes. Reads the
         run-state mirror only; on a malformed/unreadable file we fail safe to

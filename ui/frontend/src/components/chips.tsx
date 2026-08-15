@@ -62,9 +62,10 @@ export function toneFor(
   return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : fallback;
 }
 
-// Process-status badge. `status` mirrors /api/loop_v0/processes:
+// Process-status badge. `status` mirrors the backend's subprocess tracker
+// (joined onto /api/loop_v0/iterations rows as process_status post-S3):
 // running / exited_clean / exited_error_<rc> / killed_signal_<sig>.
-// `status` is producer-owned (joined from /api/loop_v0/processes); a malformed
+// `status` is producer-owned; a malformed
 // row can hand a number/object, and `.startsWith` then throws
 // ("status.startsWith is not a function") and takes the row down. A non-string
 // is treated as "no status" — the `typeof` guards stand in for the previous

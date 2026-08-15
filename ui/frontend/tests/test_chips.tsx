@@ -270,6 +270,12 @@ describe("overrideTooltip / OverrideProvenance", () => {
       }),
     ).toBeUndefined();
     expect(overrideTooltip(null)).toBeUndefined();
+    // PORTED from test_undecidable_verdict (S3): an override with ONLY
+    // verdict_overridden_from (the novelty-side low-confidence downgrade)
+    // carries just that part — no dangling "; skeptic said".
+    expect(overrideTooltip({ verdict_overridden_from: "novel" })).toBe(
+      "overridden from novel",
+    );
   });
 
   it("OverrideProvenance renders the three fields as VISIBLE text; nothing on an empty block", () => {

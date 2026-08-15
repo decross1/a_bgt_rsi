@@ -23,9 +23,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import SourceBadge, { sourceTone } from "../src/components/SourceBadge";
 import AgentBadge from "../src/components/AgentBadge";
 import CoordinatorCycleCard from "../src/components/CoordinatorCycleCard";
-import SurfacedFindingsPanel from "../src/components/SurfacedFindingsPanel";
-import BubblesPanel from "../src/components/BubblesPanel";
-import HealthSignalsPanel from "../src/components/HealthSignalsPanel";
 import { COORDINATOR_CYCLES_FIXTURE } from "../src/fixtures/coordinator";
 import type { CoordinatorCycle } from "../src/types/schemas";
 
@@ -170,57 +167,10 @@ describe("audit: status/severity tones vs provenance tones stay in distinct sema
 });
 
 // ---------------------------------------------------------------------------
-// 4. EMPTY-STATE convention is UNIFORM across the three new autonomy panels.
-//    Each: a `<name>-panel` root testid, a dedicated `*-empty` testid that
-//    renders under initial=[], a header count of 0, and NO console noise. A
-//    human seeing an absent gitignored data file must get a clean "nothing
-//    here" — never a blank gap or a crash (the dark-loop failure this work
-//    exists to fix).
+// 4. (RETIRED in UI simplification S3) The three autonomy panels'
+//    clean-empty-convention audit died with the panels — the dossier picker
+//    owns the honest empty states now (test_dossier_index).
 // ---------------------------------------------------------------------------
-describe("audit: the three autonomy panels share a uniform clean-empty convention", () => {
-  const PANELS = [
-    {
-      name: "SurfacedFindingsPanel",
-      el: <SurfacedFindingsPanel initial={[]} />,
-      panelTestid: "surfaced-findings-panel",
-      emptyTestid: "findings-empty",
-    },
-    {
-      name: "BubblesPanel",
-      el: <BubblesPanel initial={[]} />,
-      panelTestid: "bubbles-panel",
-      emptyTestid: "bubbles-empty",
-    },
-    {
-      name: "HealthSignalsPanel",
-      el: <HealthSignalsPanel initial={[]} />,
-      panelTestid: "health-signals-panel",
-      emptyTestid: "health-signals-empty",
-    },
-  ];
-
-  for (const p of PANELS) {
-    it(`${p.name}: initial=[] → panel root + a dedicated empty-state node, no console errors`, () => {
-      const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-      render(p.el);
-      const panel = screen.getByTestId(p.panelTestid);
-      expect(panel).toBeInTheDocument();
-
-      // The empty state is its own testid'd node (not a silent blank).
-      const empty = within(panel).getByTestId(p.emptyTestid);
-      expect(empty).toBeInTheDocument();
-      expect(empty.textContent?.trim().length).toBeGreaterThan(0);
-
-      // Header count reads 0 (the shared `ml-auto text-[11px]` count span).
-      expect(panel).toHaveTextContent(/(^|\D)0(\D|$)/);
-
-      expect(errSpy).not.toHaveBeenCalled();
-      expect(warnSpy).not.toHaveBeenCalled();
-    });
-  }
-});
 
 // ---------------------------------------------------------------------------
 // 5. The two PROVENANCE badge families (AgentBadge = who acted, SourceBadge =

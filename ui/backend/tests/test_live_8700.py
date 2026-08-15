@@ -115,36 +115,9 @@ def test_cycles_live_rows_carry_frontend_keys():
         assert not missing, f"cycles[{i}] missing CoordinatorCycle keys: {missing}"
 
 
-def test_active_is_200_or_204():
-    resp = _get("/api/coordinator/active")
-    assert resp.status_code in (200, 204), (
-        f"/active returned {resp.status_code} — a 404 means the served process "
-        "is pre-merge / stale code"
-    )
-    if resp.status_code == 200:
-        # A live run must be a renderable object with the join-key `kind`.
-        body = resp.json()
-        assert isinstance(body, dict)
-        assert "kind" in body
-
-
-@pytest.mark.parametrize(
-    ("path", "wrapper_key"),
-    [
-        ("/api/coordinator/findings", "findings"),
-        ("/api/coordinator/bubbles", "bubbles"),
-        ("/api/coordinator/health_signals", "health_signals"),
-    ],
-)
-def test_wrapper_endpoints_return_keyed_list(path, wrapper_key):
-    resp = _get(path)
-    assert resp.status_code == 200
-    body = resp.json()
-    assert isinstance(body, dict), f"{path} did not return the wrapper object"
-    assert wrapper_key in body, f"{path} missing its '{wrapper_key}' wrapper key"
-    # Row counts are cohort-variant (files are append-only and may be absent →
-    # empty list); the list-valued wrapper is the contract the panels render.
-    assert isinstance(body[wrapper_key], list)
+# (The /api/coordinator/{active,findings,bubbles,health_signals} live probes
+# died with those endpoints in UI simplification S3 — post-restart the served
+# binary 404s them by design; /cycles above is the surviving probe.)
 
 
 def test_human_todo_live_wrapper_shape_and_kinds():

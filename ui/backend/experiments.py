@@ -6,11 +6,12 @@ has no ``results/`` directory at all. These endpoints DETECT what each
 experiment carries and degrade honestly — they never assume a uniform
 schema and never fabricate fields that are absent.
 
-Two endpoints, wired by ``register`` into the existing FastAPI app:
+Two endpoints post-S3 (the ``GET /api/experiments`` index retired in UI
+simplification S3 — ``/api/research`` is the index the page renders), wired
+by ``register`` into the existing FastAPI app:
 
-- ``GET /api/experiments`` — scans ``<experiments_dir>/*/`` and probes each
-  experiment's ``results/`` dir, returning a flag-set per experiment.
-  ``available:false`` when ``experiments_dir`` is absent (never a 500).
+- ``GET /api/research`` — the tier-grouped research index (probe flags +
+  verdict + loop_memory bridge per experiment).
 - ``GET /api/experiments/{expId}`` — parses what EXISTS for one experiment:
   a parsed ``summary.json`` + a bounded per-opponent per-round aggregate of
   ``per_round.jsonl`` (the file can be large — we aggregate, never dump),
@@ -540,24 +541,9 @@ def register(
     router = APIRouter(prefix="/api/experiments", tags=["experiments"])
     research_router = APIRouter(prefix="/api/research", tags=["research"])
 
-    @router.get("")
-    def list_experiments():
-        if not experiments_dir.is_dir():
-            return {"available": False, "reason": "experiments dir absent",
-                    "experiments": []}
-        out = []
-        for child in sorted(experiments_dir.iterdir()):
-            if not child.is_dir() or child.name in _SKIP_DIRS:
-                continue
-            if child.name.startswith("."):
-                continue
-            probe = _probe(child / "results")
-            out.append({
-                "id": child.name,
-                "title": _title_from_id(child.name),
-                **probe,
-            })
-        return {"available": True, "experiments": out}
+    # (The GET /api/experiments INDEX endpoint was retired in UI
+    # simplification S3 — /api/research below is the index the /experiments
+    # page renders; the per-experiment detail stays.)
 
     @router.get("/{exp_id}")
     def experiment_detail(exp_id: str):

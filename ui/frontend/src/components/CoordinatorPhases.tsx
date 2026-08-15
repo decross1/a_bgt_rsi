@@ -5,9 +5,10 @@
 // See ui_plan.md §AUTONOMY OBSERVABILITY ("make absence legible", "one cycle =
 // one narrative").
 //
-// Pure + prop-driven: the parent (Coordinator/Activity page) polls
-// getCoordinatorActive() and hands us the result, so this component renders
-// synchronously from a fixture in tests — no fetch to mock.
+// Pure + prop-driven: the parent (the /cycles page post-S3) polls the D-047
+// multi-run registry (getActiveRuns) and hands us the kind==="coordinator"
+// doc, so this component renders synchronously from a fixture in tests — no
+// fetch to mock. (The old /api/coordinator/active mirror was retired in S3.)
 //
 // State per phase relative to current_step's position in the ordered phases:
 //   prior   -> done   (quiet emerald — it's been walked through)
@@ -88,7 +89,7 @@ export default function CoordinatorPhases({
             Coordinator phases
           </h2>
           <span className="text-[10px] text-zinc-600">
-            /api/coordinator/active
+            /api/activity/active_runs
           </span>
         </div>
         <div className="mt-2 text-sm text-zinc-500" data-testid="coordinator-idle">
@@ -121,7 +122,7 @@ export default function CoordinatorPhases({
         <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
           Coordinator phases
         </h2>
-        <span className="text-[10px] text-zinc-600">/api/coordinator/active</span>
+        <span className="text-[10px] text-zinc-600">/api/activity/active_runs</span>
         {/* run_id is producer-owned JSONL — a malformed/legacy row could carry a
             non-string (object/array) here. Guard on `typeof === "string"` so a
             bad value is dropped (the chip just omits, like a null run_id) rather

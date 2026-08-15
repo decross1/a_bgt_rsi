@@ -19,7 +19,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import Coordinator from "../src/routes/Coordinator";
+import Cycles from "../src/routes/Cycles";
 import type { CoordinatorCycle } from "../src/types/schemas";
 
 // ---------------------------------------------------------------------------
@@ -34,6 +34,9 @@ import type { CoordinatorCycle } from "../src/types/schemas";
 let RESPONSE: unknown = { cycles: [] };
 vi.mock("../src/api/http", () => ({
   getCoordinatorCycles: vi.fn(() => Promise.resolve(RESPONSE)),
+  // The S3 Cycles page also polls the D-047 registry for the phases stepper;
+  // an empty registry keeps the stepper idle across every round.
+  getActiveRuns: vi.fn(() => Promise.resolve({ runs: [], skipped: 0 })),
 }));
 
 // A well-formed row, so the malformed/scale/content rows are exercised AROUND a
@@ -64,7 +67,7 @@ function mk(over: Record<string, unknown>): CoordinatorCycle {
 async function renderPollingQuietly() {
   const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-  render(<Coordinator pollMs={999_999} />);
+  render(<Cycles pollMs={999_999} />);
   await waitFor(() => {
     const settled =
       document.querySelector('[data-testid="coordinator-cycle-card"]') !==
@@ -175,7 +178,7 @@ describe("Coordinator hardening — r1: partial/legacy producer rows", () => {
     // The whole-page render must not throw even though several rows are malformed.
     expect(() =>
       render(
-        <Coordinator
+        <Cycles
           initial={[
             NO_PLAN_NO_OUTCOMES,
             GOOD,
@@ -208,7 +211,7 @@ describe("Coordinator hardening — r1: partial/legacy producer rows", () => {
 
     expect(() =>
       render(
-        <Coordinator
+        <Cycles
           initial={[NO_PLAN_NO_OUTCOMES, NULL_ARRAYS, ALL_OPTIONAL_MISSING]}
         />,
       ),
@@ -354,7 +357,7 @@ describe("Coordinator hardening — r2: malformed value TYPES", () => {
 
     expect(() =>
       render(
-        <Coordinator
+        <Cycles
           initial={[
             mk({ timestamp: 1_749_452_273, topic: { o: 1 } as unknown as string }),
             mk({ timestamp: Infinity, topic: [9] as unknown as string }),
@@ -508,7 +511,7 @@ describe("Coordinator hardening — r3: scale + content", () => {
 
     expect(() =>
       render(
-        <Coordinator
+        <Cycles
           initial={[
             mk({ run_id: "coordinator_dup", topic: "INIT-DUP-A" }),
             mk({ run_id: "coordinator_dup", topic: "INIT-DUP-B" }),
@@ -593,7 +596,7 @@ describe("Coordinator hardening — r3: scale + content", () => {
 async function renderPollingQuietlyR5() {
   const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-  render(<Coordinator pollMs={999_999} />);
+  render(<Cycles pollMs={999_999} />);
   await waitFor(() => {
     const page = document.querySelector('[data-testid="coordinator-page"]');
     const settled =
@@ -799,7 +802,7 @@ describe("Coordinator FE4 — time-range filter + sort-direction toggle", () => 
     const b = "2026-06-09T10:00:00Z";
     const c = "2026-06-09T12:00:00Z";
     render(
-      <Coordinator
+      <Cycles
         initial={[
           { ...FE4_OLD, timestamp: a, run_id: "ord_a", topic: "ROW-A" },
           { ...FE4_OLD, timestamp: c, run_id: "ord_c", topic: "ROW-C" },
@@ -820,7 +823,7 @@ describe("Coordinator FE4 — time-range filter + sort-direction toggle", () => 
   // touching the row set.
   it("oldest-first reverses the order when the direction toggle is flipped", () => {
     render(
-      <Coordinator
+      <Cycles
         initial={[
           { ...FE4_OLD, timestamp: "2026-06-09T08:00:00Z", run_id: "r_a", topic: "ROW-A" },
           { ...FE4_OLD, timestamp: "2026-06-09T12:00:00Z", run_id: "r_c", topic: "ROW-C" },
@@ -837,7 +840,7 @@ describe("Coordinator FE4 — time-range filter + sort-direction toggle", () => 
 
   // The `today` filter keeps a today-stamped row and hides an old one.
   it("the today filter shows a today row and hides an old one", () => {
-    render(<Coordinator initial={[fe4Today("FE4-TODAY-ROW"), FE4_OLD]} />);
+    render(<Cycles initial={[fe4Today("FE4-TODAY-ROW"), FE4_OLD]} />);
 
     // Before filtering, both are present.
     expect(screen.getByText("FE4-TODAY-ROW")).toBeInTheDocument();
@@ -856,7 +859,7 @@ describe("Coordinator FE4 — time-range filter + sort-direction toggle", () => 
   // A NaN/unparseable-timestamp row is INCLUDED in `all` but EXCLUDED from
   // `today` and `week`.
   it("a NaN-timestamp row is in all, excluded from today and week", () => {
-    render(<Coordinator initial={[FE4_NAN_TS, fe4Today("FE4-TODAY-ROW")]} />);
+    render(<Cycles initial={[FE4_NAN_TS, fe4Today("FE4-TODAY-ROW")]} />);
 
     // all (default): both visible.
     expect(screen.getByText("FE4-NAN-ROW")).toBeInTheDocument();

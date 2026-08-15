@@ -15,7 +15,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .activity import register as register_activity
 from .attest import register as register_attest
-from .baseline import compute_baseline
 from .chain import LogStore, build_chain_by_request_id
 from .chat_seam import register as register_chat_seam
 from .coordinator import register as register_coordinator
@@ -149,14 +148,11 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         capped = min(max(limit, 1), 2000)
         return {"samples": _tail_lines(telemetry_file, capped)}
 
-    @app.get("/api/baseline")
-    def baseline():
-        """Healthy-baseline card rows, each annotated measured vs documented.
-
-        Data-driven from bench/mtp.csv (MTP-enabled), bench/day1.csv and
-        run_state metric_log when those exist; documented constants otherwise.
-        """
-        return compute_baseline(bench_csv, state_file, mtp_csv)
+    # (The baseline and week1-state passthrough endpoints were retired in UI
+    # simplification S3 with their card/panel consumers — BaselineCard died,
+    # and nothing read the state passthrough. The bench CSVs + state file
+    # stay on disk and the create_app parameters stay accepted so the launch
+    # scripts' env overrides keep working unchanged.)
 
     @app.get("/api/workload_hint")
     def workload_hint(sample_size: int = 200, window_s: int = 120):
@@ -170,16 +166,6 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         capped = min(max(sample_size, 10), 2000)
         return compute_workload_hint(logs_dir, sample_size=capped,
                                      window_s=max(10, window_s))
-
-    @app.get("/api/state")
-    def state():
-        path = Path(state_file)
-        if not path.exists():
-            raise HTTPException(status_code=404, detail="state file not found")
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise HTTPException(status_code=500, detail=f"state unreadable: {exc}")
 
     @app.websocket("/api/live")
     async def live(websocket: WebSocket):

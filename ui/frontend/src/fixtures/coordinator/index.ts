@@ -1,8 +1,8 @@
-// Autonomy-observability fixtures the coordinator panels + downstream
-// component tests build against until the primary session (EMIT) has shipped
-// run_state/coordinator_cycles.jsonl, run_state/active_run.json,
-// memory/surfaced_findings.jsonl, and memory/coordinator_bubbles.jsonl.
-// See ui_autonomy_observability_plan.md §"Data contracts".
+// Autonomy-observability fixtures for the surviving coordinator surfaces
+// (the /cycles narrative + CoordinatorPhases) and downstream component
+// suites. Mirrors run_state/coordinator_cycles.jsonl + the live-run doc.
+// See ui_autonomy_observability_plan.md §"Data contracts". (The surfaced-
+// findings / bubbles / health-signals fixtures died with their panels in S3.)
 //
 // Design intent baked into these fixtures (so the views can be tested against
 // the real failure modes, not happy paths):
@@ -12,12 +12,9 @@
 //   - ITERATIONS_COORD_FIXTURE carries the false-novel bug: novel/survives on
 //     low/thin retrieval relevance — the low-evidence badge driver.
 import type {
-  Bubble,
   CoordinatorActiveRun,
   CoordinatorCycle,
-  HealthSignal,
   IterationRecord,
-  SurfacedFinding,
 } from "../../types/schemas";
 
 // Two cycles. Cycle 1 is a clean coordinator-chosen dispatch that promoted a
@@ -94,86 +91,8 @@ export const ACTIVE_RUN_FIXTURE: CoordinatorActiveRun = {
   started_at: "2026-06-09T12:00:00Z",
 };
 
-export const SURFACED_FINDINGS_FIXTURE: SurfacedFinding[] = [
-  {
-    finding_id: "sf-iter-2026-06-09-003",
-    source_iteration_id: "iter-2026-06-09-003",
-    title: "Level-k convergence rate in p-beauty contests refines Nagel (1995)",
-    claim:
-      "Level-k reasoning converges ~1 level/round faster than Nagel (1995) under the measured payoff structure.",
-    novelty_class: "novel",
-    critic_verdict: "survives",
-    why_it_matters:
-      "A faster convergence rate would tighten the level-k calibration the loop conditions on.",
-    status: "surfaced",
-    promoted_at: "2026-06-09T13:20:00Z",
-  },
-  {
-    finding_id: "sf-iter-2026-06-09-001",
-    source_iteration_id: "iter-2026-06-09-001",
-    title: "VCG elicits truthful bids in the measured combinatorial setting",
-    claim:
-      "VCG achieves 96.5% truthful bids in the exp004 combinatorial-auction bridge.",
-    novelty_class: "rediscovery",
-    critic_verdict: "restated",
-    why_it_matters:
-      "Confirms the VCG-truthfulness bridge that conditions downstream iterations.",
-    status: "surfaced",
-    promoted_at: "2026-06-09T10:05:00Z",
-  },
-];
-
-export const BUBBLES_FIXTURE: Bubble[] = [
-  {
-    timestamp: "2026-06-09T11:35:00Z",
-    run_id: "cyc-2026-06-09-002",
-    finding_ids: ["sf-iter-2026-06-09-002"],
-    note:
-      "A novel/survives verdict rested on off-domain retrieval (code-quality topic vs game-theory books) — eyeball before trusting.",
-  },
-  {
-    timestamp: "2026-06-09T11:34:00Z",
-    run_id: "cyc-2026-06-09-002",
-    finding_ids: [],
-    note: "ml-intern returned 0 papers for this topic — external evidence is silent.",
-  },
-  {
-    timestamp: "2026-06-09T10:06:00Z",
-    run_id: "cyc-2026-06-09-001",
-    finding_ids: ["sf-iter-2026-06-09-001"],
-    note: "Promoted 1 finding to surfaced_findings this cycle.",
-  },
-];
-
-// Degraded-but-not-broken health signals (run_state/health_signals.jsonl) — the
-// two the EMIT layer derives per cycle. Both severity "degraded" → rendered
-// amber, never red: the route/worker ran, the output was just thin.
-export const HEALTH_SIGNALS_FIXTURE: HealthSignal[] = [
-  {
-    signal: "ml_intern_zero_papers",
-    severity: "degraded",
-    timestamp: "2026-06-09T11:34:00Z",
-    run_id: "cyc-2026-06-09-002",
-    iteration_id: "iter-2026-06-09-002",
-    papers_stored: 0,
-    detail:
-      "ml_intern ran but stored 0 papers; the external-search layer was blind — any verdict this iteration rests on LOCAL literature only.",
-  },
-  {
-    signal: "qwen_degraded_empty_content",
-    severity: "degraded",
-    timestamp: "2026-06-09T11:33:00Z",
-    run_id: "cyc-2026-06-09-002",
-    iteration_id: "iter-2026-06-09-002",
-    empty_calls: 2,
-    total_calls: 3,
-    detail:
-      "Qwen returned empty content on 2/3 calls this iteration (route up but unusable). The independent skeptic is DEGRADED, not down.",
-  },
-];
-
-// Iteration rows for the Dashboard's Recent Iterations + low-evidence badge +
-// red-flags strip tests. Three rows:
+// Iteration rows for the low-evidence badge / novelty-chip / source-badge
+// suites (originally the Dashboard's Recent Iterations list, which died in S3). Three rows:
 //   (i)   coordinator-triggered, healthy evidence (seed.source "coordinator").
 //   (ii)  the FALSE-NOVEL bug: novel/survives but retrieval.relevance.flag
 //         "low" — drives the low-evidence badge + suspected-false-novel count.
