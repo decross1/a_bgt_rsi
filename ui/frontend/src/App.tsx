@@ -1,5 +1,7 @@
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
+import LoopAlertBanner from "./components/LoopAlertBanner";
 import Activity from "./routes/Activity";
+import Ideas from "./routes/Ideas";
 import Coordinator from "./routes/Coordinator";
 import Dashboard from "./routes/Dashboard";
 import ExperimentDetail from "./routes/ExperimentDetail";
@@ -16,6 +18,7 @@ const NAV = [
   { to: "/activity", label: "activity", end: false },
   { to: "/coordinator", label: "coordinator", end: false },
   { to: "/experiments", label: "experiments", end: false },
+  { to: "/ideas", label: "ideas", end: false },
 ];
 
 // The /todo route is now the uncertainty-resolution COCKPIT (routes/Todo.tsx):
@@ -77,6 +80,9 @@ export default function App() {
             call-chain inspector at /chain/req/&lt;request_id&gt;
           </span>
         </header>
+        {/* Page-top loop-alert surface (work order A): red/amber off
+            run_state/loop_alert.json; invisible when ok & fresh. */}
+        <LoopAlertBanner />
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/todo" element={<Todo />} />
@@ -84,6 +90,8 @@ export default function App() {
           <Route path="/coordinator" element={<Coordinator />} />
           <Route path="/experiments" element={<Experiments />} />
           <Route path="/experiments/:expId" element={<ExperimentDetail />} />
+          {/* Read-only ideas board (memory/ideas.md projection). */}
+          <Route path="/ideas" element={<Ideas />} />
           {/* Wrapper-rooted tool-call chains (logs/calls.jsonl). */}
           <Route path="/chain/req/:requestId" element={<Inspector />} />
         </Routes>

@@ -16,9 +16,11 @@ import type {
   Health,
   HealthSignalsResponse,
   HumanTodoResponse,
+  IdeasResponse,
   IterationJourneyResponse,
   IterationsResponse,
   JournalResponse,
+  LoopAlert,
   ProcessesResponse,
   SurfacedFindingsResponse,
   TelemetrySample,
@@ -153,6 +155,29 @@ export const getHealthSignals = () =>
 // Read-only composition of everything awaiting a human: pending gate verdicts,
 // findings in review, unacked bubbles, stale active_run, state-file gates.
 export const getHumanTodo = () => getJSON<HumanTodoResponse>("/api/human_todo");
+
+// --- LOOP ALERT + IDEAS (ui/backend/loop_alert.py, 2026-08-14 work order) ---
+// GET /api/loop_alert returns 204 when run_state/loop_alert.json has never
+// been written -> null (mirrors getCoordinatorActive). The BANNER judges
+// staleness off updated_at; this client just fetches.
+export async function getLoopAlert(): Promise<LoopAlert | null> {
+  const resp = await fetch(`${API_BASE}/api/loop_alert`);
+  if (resp.status === 204) return null;
+  if (!resp.ok) {
+    throw await errorFromResponse(resp);
+  }
+  return (await resp.json()) as LoopAlert;
+}
+
+// GET /api/ideas returns 204 when memory/ideas.md is absent -> null.
+export async function getIdeas(): Promise<IdeasResponse | null> {
+  const resp = await fetch(`${API_BASE}/api/ideas`);
+  if (resp.status === 204) return null;
+  if (!resp.ok) {
+    throw await errorFromResponse(resp);
+  }
+  return (await resp.json()) as IdeasResponse;
+}
 
 // --- FINDING DETAIL (ui/backend finding_detail.py, U1 2026-06-17 work order) ---
 // Read-only finding overview for the /todo tutor: joins surfaced_findings.jsonl

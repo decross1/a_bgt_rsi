@@ -136,6 +136,35 @@ function asText(v: unknown): string | null {
   return null;
 }
 
+// --- evidence ladder (2026-08-14 work order B) -------------------------
+// finding_review items now carry `evidence_level` ("L0".."L5", D-059) when
+// their surfaced row has one; the inbox bar is L4/L5. Legacy rows (all 31
+// pre-ladder findings) have NO level — below-bar by definition, hidden
+// behind the "show demoted" toggle rather than deleted (they stay listed,
+// just de-prioritized). Non-finding kinds (gates, bubbles, stale run,
+// state gates) are OPERATIONAL items, not ladder claims — the bar never
+// hides them (hiding a blocking state_gate would fake an unblocked loop).
+const BAR_LEVELS = new Set(["L4", "L5"]);
+
+// Normalized level ("L0".."L9" shape) or null for absent/malformed — the
+// field is producer-owned, so anything that is not an L<digit> string reads
+// as "no level" (below-bar), never as a crash or a fake pass.
+function evidenceLevelOf(item: HumanTodoItem): string | null {
+  const raw = asText(item.evidence_level);
+  if (!raw) return null;
+  const norm = raw.trim().toUpperCase();
+  return /^L\d$/.test(norm) ? norm : null;
+}
+
+function isFindingItem(item: HumanTodoItem): boolean {
+  return asText(item.kind) === "finding_review";
+}
+
+function clearsLadderBar(item: HumanTodoItem): boolean {
+  const level = evidenceLevelOf(item);
+  return level !== null && BAR_LEVELS.has(level);
+}
+
 function kindLabel(kind: string): string {
   return Object.prototype.hasOwnProperty.call(KIND_LABELS, kind)
     ? KIND_LABELS[kind]
@@ -419,6 +448,9 @@ export default function HumanTodoPanel({
   // full poll interval (the form already re-polled for ITS confirmation;
   // this refresh keeps the panel's list in step).
   const [refreshTick, setRefreshTick] = useState(0);
+  // Ladder toggle: below-bar findings are hidden by default; the human opts
+  // into seeing them ("show demoted (N)"). Session-local, default off.
+  const [showDemoted, setShowDemoted] = useState(false);
 
   useEffect(() => {
     if (initial !== undefined) return;
@@ -452,13 +484,37 @@ export default function HumanTodoPanel({
       typeof it === "object" && it !== null && !Array.isArray(it),
   );
 
+  // Ladder partition (work order B): finding_review rows below L4 (including
+  // all legacy no-level rows) are DEMOTED — off the default inbox, behind the
+  // toggle. Operational kinds are never demoted (see the ladder note above).
+  const findingRows = rows.filter(isFindingItem);
+  const demoted = findingRows.filter((it) => !clearsLadderBar(it));
+  const surfacedFindingCount = findingRows.length - demoted.length;
+  const visible = showDemoted
+    ? rows
+    : rows.filter((it) => !isFindingItem(it) || clearsLadderBar(it));
+
+  // Per-level histogram over ALL finding rows (demoted included) — derived
+  // from the items themselves, no extra fetch. Absent/malformed level counts
+  // under "no level" (the legacy bucket), honestly.
+  const levelCounts = new Map<string, number>();
+  for (const it of findingRows) {
+    const level = evidenceLevelOf(it) ?? "no level";
+    levelCounts.set(level, (levelCounts.get(level) ?? 0) + 1);
+  }
+  const levelOrder = [...levelCounts.keys()].sort((a, b) => {
+    if (a === "no level") return 1;
+    if (b === "no level") return -1;
+    return b.localeCompare(a); // L5 first, down the ladder
+  });
+
   // Group by kind (a missing/non-string kind groups under "unknown" rather
   // than being dropped — the item still needs the human), items oldest-first
   // within each group. A missing `since` sorts FIRST (oldest) — an item of
   // unknown age must not jump ahead of known-old items, and must never win
   // the "newest" hero slot over a dated item.
   const groups = new Map<string, HumanTodoItem[]>();
-  for (const row of rows) {
+  for (const row of visible) {
     const kind = asText(row.kind) ?? "unknown";
     const group = groups.get(kind);
     if (group) group.push(row);
@@ -484,14 +540,18 @@ export default function HumanTodoPanel({
     return 0; // both unknown: Map preserves first-appearance order; sort is stable
   });
 
-  const total = rows.length;
+  // The badge counts what the inbox SHOWS (demoted rows re-enter it only
+  // when toggled visible — the toggle itself carries their count).
+  const total = visible.length;
 
   // Capability handshake — polling mode only, lazily once something needs a
   // form, and never when `initial`/`attest` pin the render (fixture renders
   // must stay deterministic: no live fetch may decide their DOM). Cached per
   // page-load in api/attest; a 404 (version-skew) or failure resolves
   // unavailable, degrading every form to the copy-paste fallback.
-  const hasRows = total > 0;
+  // Off ALL rows (demoted included) — a toggled-visible demoted row still
+  // renders its forms, so the capability must already be resolved.
+  const hasRows = rows.length > 0;
   useEffect(() => {
     if (attest !== undefined) return;
     if (initial !== undefined) return;
@@ -573,10 +633,44 @@ export default function HumanTodoPanel({
           </div>
         ))}
 
-      {loaded && total === 0 && !error && (
+      {loaded && rows.length === 0 && !error && (
         <div className="mt-2 text-sm text-zinc-500" data-testid="human-todo-empty">
           Nothing needs you — the loop is unblocked.
         </div>
+      )}
+
+      {/* Evidence-ladder strip (work order B). Honest zero-week state: no
+          finding cleared the L4 bar — say so, with the per-level histogram
+          derived from the items themselves (no extra fetch). The demoted
+          toggle is the ONLY way below-bar findings enter the inbox. */}
+      {loaded && !error && surfacedFindingCount === 0 && (
+        <div className="mt-2 text-xs text-zinc-500" data-testid="ladder-empty">
+          Nothing cleared L4 this week.
+        </div>
+      )}
+      {findingRows.length > 0 && !error && (
+        <div
+          className="mt-1 font-mono text-[10px] text-zinc-600"
+          data-testid="ladder-counts"
+        >
+          ladder:{" "}
+          {levelOrder
+            .map((level) => `${level} ×${levelCounts.get(level)}`)
+            .join(" · ")}
+        </div>
+      )}
+      {demoted.length > 0 && !error && (
+        <button
+          type="button"
+          data-testid="ladder-toggle"
+          aria-pressed={showDemoted}
+          onClick={() => setShowDemoted((v) => !v)}
+          className="mt-1.5 rounded border border-zinc-700 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
+        >
+          {showDemoted
+            ? `hide demoted (${demoted.length})`
+            : `show demoted (${demoted.length})`}
+        </button>
       )}
 
       {/* Write-back unavailable: quiet zinc, never red (a known capability

@@ -580,6 +580,10 @@ export interface HumanTodoItem {
   since?: string | null;
   detail?: string | null;
   resolve_command?: string | null;
+  // Evidence-ladder level ("L0".."L5") passed through verbatim on
+  // finding_review items whose surfaced row carries one (D-059 producers).
+  // ABSENT on legacy rows — the cockpit reads absence as below-bar/demoted.
+  evidence_level?: string | null;
   [key: string]: unknown;
 }
 
@@ -641,5 +645,28 @@ export interface FindingDetail {
   source_iteration_id?: string | null;
   evidence?: FindingEvidence | null;
   source_iteration?: FindingSourceIteration | null;
+  [key: string]: unknown;
+}
+
+// --- LOOP ALERT (GET /api/loop_alert, 2026-08-14 work order A) ---
+// run_state/loop_alert.json verbatim (orchestrator/loop_health.py's
+// write_alert_flag, rewritten every executed coordinator cycle). 204 = the
+// flag has never been written on this checkout -> the client gets null.
+// Every field is producer-owned/defensive-optional; the banner coerces.
+export interface LoopAlert {
+  level?: "red" | "amber" | "ok" | string | null;
+  reasons?: unknown;
+  // ISO timestamp of the last executed cycle. The FRONTEND judges staleness
+  // (~26h) off this — a fresh "ok" hides the banner; a stale one cannot.
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+// --- IDEAS BOARD (GET /api/ideas, 2026-08-14 work order C) ---
+// memory/ideas.md verbatim — the deterministic idea-ledger projection
+// (workers/idea_projection.py). Read-only; a plain markdown render is the
+// correct surface. 204 (absent file) -> null at the client.
+export interface IdeasResponse {
+  markdown?: string | null;
   [key: string]: unknown;
 }
