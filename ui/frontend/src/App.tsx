@@ -1,30 +1,36 @@
-import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import LoopAlertBanner from "./components/LoopAlertBanner";
 import Activity from "./routes/Activity";
-import Ideas from "./routes/Ideas";
 import Coordinator from "./routes/Coordinator";
 import Dashboard from "./routes/Dashboard";
 import ExperimentDetail from "./routes/ExperimentDetail";
 import Experiments from "./routes/Experiments";
 import Inspector from "./routes/Inspector";
+import Ladder from "./routes/Ladder";
+import Pulse from "./routes/Pulse";
 import Todo from "./routes/Todo";
 
-// Primary destinations, surfaced as a nav on every page so the dashboard,
-// human queue, activity graph, coordinator narrative, and experiment
-// digestion are all one click apart.
+// UI simplification S1 shell (docs/ui_simplification_plan_2026-08-15.md):
+// the nav is the three owner surfaces — pulse (healthy + do I owe anything),
+// ladder (what's cooking), todo (the resolution cockpit; becomes /dossier in
+// S2) — with everything engine-internal collapsed behind "engine ▾". The old
+// Dashboard stays reachable at /dashboard until S3 removes it; /ideas folds
+// into /ladder via redirect.
 const NAV = [
-  { to: "/", label: "dashboard", end: true },
+  { to: "/", label: "pulse", end: true },
+  { to: "/ladder", label: "ladder", end: false },
   { to: "/todo", label: "todo", end: false },
-  { to: "/activity", label: "activity", end: false },
-  { to: "/coordinator", label: "coordinator", end: false },
-  { to: "/experiments", label: "experiments", end: false },
-  { to: "/ideas", label: "ideas", end: false },
 ];
 
-// The /todo route is now the uncertainty-resolution COCKPIT (routes/Todo.tsx):
-// the HumanTodoPanel inbox + the two-voice interrogation + pre-verdict
-// calibration + the six resolution forms. PART 1 removed the panel from the
-// dashboard, so /todo is its single home (2026-06-14 work order).
+// Engine-internal destinations, collapsed. A plain <details> disclosure (no
+// new deps): the panel overlays absolutely so opening it never reflows the
+// page body.
+const ENGINE_NAV = [
+  { to: "/dashboard", label: "dashboard" },
+  { to: "/activity", label: "activity" },
+  { to: "/coordinator", label: "coordinator" },
+  { to: "/experiments", label: "experiments" },
+];
 
 function NavTab({
   to,
@@ -64,6 +70,28 @@ export default function App() {
             {NAV.map((item) => (
               <NavTab key={item.to} {...item} />
             ))}
+            <details className="group relative" data-testid="engine-nav">
+              <summary className="cursor-pointer list-none border-b-2 border-transparent pb-1 font-mono text-sm text-zinc-400 transition-colors hover:text-zinc-100">
+                engine ▾
+              </summary>
+              <div className="absolute left-0 top-full z-20 mt-1 flex min-w-36 flex-col gap-1 rounded border border-zinc-800 bg-zinc-950 px-3 py-2 shadow-lg">
+                {ENGINE_NAV.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) =>
+                      `font-mono text-sm transition-colors ${
+                        isActive
+                          ? "text-zinc-100"
+                          : "text-zinc-400 hover:text-zinc-100"
+                      }`
+                    }
+                  >
+                    {item.label}
+                  </NavLink>
+                ))}
+              </div>
+            </details>
             {/* Cross-nav to the agent-system brain dashboard (http.server
                 :5174). Built from the page hostname — not localhost — so the
                 link works over the LAN exactly like API_BASE does. */}
@@ -84,14 +112,18 @@ export default function App() {
             run_state/loop_alert.json; invisible when ok & fresh. */}
         <LoopAlertBanner />
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Pulse />} />
+          <Route path="/ladder" element={<Ladder />} />
+          {/* /ideas folded into /ladder (its ideas.md render is the ladder
+              page's fallback body). */}
+          <Route path="/ideas" element={<Navigate to="/ladder" replace />} />
           <Route path="/todo" element={<Todo />} />
+          {/* Old surfaces stay reachable until S3 removes them. */}
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/activity" element={<Activity />} />
           <Route path="/coordinator" element={<Coordinator />} />
           <Route path="/experiments" element={<Experiments />} />
           <Route path="/experiments/:expId" element={<ExperimentDetail />} />
-          {/* Read-only ideas board (memory/ideas.md projection). */}
-          <Route path="/ideas" element={<Ideas />} />
           {/* Wrapper-rooted tool-call chains (logs/calls.jsonl). */}
           <Route path="/chain/req/:requestId" element={<Inspector />} />
         </Routes>

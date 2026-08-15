@@ -1136,6 +1136,106 @@ frontend: 7 src files incl. 2 new, 3 new + 4 touched test files).
 
 ---
 
+## §2026-08-15 S1 — UI simplification slice 1: shell + Pulse + Ladder (`ui/` only)
+
+Plan: `docs/ui_simplification_plan_2026-08-15.md` (3-surface rebuild, §Phasing S1).
+Built by a worktree-isolated build agent (spawn `loop10h-ui-s1`); primary gates +
+merges. Old surfaces stay reachable; the UI is shippable between slices.
+
+### Backend — NEW `GET /api/ladder` (`ui/backend/ladder.py`)
+
+- `loop_alert.py` register-fn idiom; `register(app, repo_root=loop_v0_repo,
+  memory_dir=coordinator_memory)` in `app.py`. LAZY handler import of
+  `workers.idea_ledger.load_state` + `workers.idea_projection` (sys.path gains
+  the primary repo root — uvicorn's cwd is `ui/`); the REAL reducer runs, never a
+  reimplementation. Absent `memory/idea_ledger.jsonl` → 204; unreadable/invalid
+  ledger (malformed JSON, schema-invalid event, reducer violation) → honest 500
+  with detail (rule 4). Returns `{clusters[cluster_id, stem, status,
+  evidence_level, origin, member_count, last_event_ts, kill_reason,
+  reopening_condition, open_agenda_count], histogram (non-killed per rung,
+  L0..L5 zero-filled), counts{open,surfaced,killed}, agenda, next_owed}`.
+- Tests: NEW `test_ladder.py` (absent→204; happy fixture ledger through the real
+  reducer; malformed-line 500; schema-invalid-event 500) + a live `/api/ladder`
+  probe in `test_live_8700.py` (≥70 clusters; 404 skips as version skew until the
+  post-merge restart). In-process smoke over the primary ledger: 200, 70 clusters.
+
+### Frontend — the S1 shell
+
+- **`App.tsx`:** nav = `pulse · ladder · todo · engine ▾ (dashboard, activity,
+  coordinator, experiments) · brain↗` (engine = a plain `<details>` dropdown, no
+  new deps). Routes: `/` → NEW Pulse; `/ladder` → NEW Ladder; `/ideas` →
+  `<Navigate to="/ladder" replace>`; old Dashboard moves to `/dashboard`
+  (S3 removes it); everything else unchanged.
+- **NEW `routes/Pulse.tsx`** — owns the WS telemetry stream; HealthVerdict inputs
+  lifted VERBATIM from Dashboard (cleanSamples / ageMs-NaN guard /
+  excludeQwenReadErrors / gemmaUp debounce); polls only `getHealth` +
+  `getActivityMonitor(1)` — the retired `getActiveIteration`/
+  `getCoordinatorActive` mirrors are NOT polled (pinned in test_pulse). Layout:
+  HealthVerdict → NowBoard (the ONE now-card) → OweStrip → LastCycleLine →
+  HealthStrip → ModelServerCard ×2 → NaraPromptForm behind a disclosure.
+- **`NowBoard.tsx` extended in place** (poll/skew-note/stale-amber untouched):
+  NEW optional `liveCalls`/`telemetry` props light a RUNNING/BUSY/IDLE headline
+  strip (`now-verdict`); "registered" derives from the D-047 registry itself
+  (`runs.length > 0`), busy/idle from the shared `computeActivity`. Old mounts
+  (no feed props) render byte-identically.
+- **NEW `components/nowVerdict.ts`** — SystemActivityHero's pure
+  `computeActivity` + callsRecent/topGroupPhrases/buildEvidence ported VERBATIM
+  (behavior pins ported to `test_now_verdict.tsx`; the hero's own suite kept —
+  it dies in S3). `SystemActivityHero.tsx` is now a thin shell importing it;
+  still mounts on `/dashboard`.
+- **NEW `src/ladderBar.ts`** — BAR_LEVELS / evidenceLevelOf / clearsLadderBar /
+  ageLabel extracted VERBATIM from `HumanTodoPanel.tsx` (which now imports them;
+  zero behavior change, suites green) so the OweStrip shares the one bar.
+- **NEW `components/OweStrip.tsx`** — one `/api/human_todo` poll; ONLY
+  gate_verdict + state_gate families + L4/L5-bar findings; rows link
+  `/dossier/:id` (S2 route — forward-404 expected until then); ladder histogram
+  line over ALL finding rows; 404 → honest "queue UNKNOWN".
+- **NEW `components/LastCycleLine.tsx`** — cycles[0] one-liner (topic · status ·
+  errored red · +N findings emerald · age); `no_valid_plan` amber; links
+  `/coordinator` for now (**deviation from the plan's `/cycles`**: that route
+  lands at the S3 rename — a working link beats a dead one; S3 flips it).
+- **NEW `components/ModelServerCard.tsx`** — parameterized VllmPanel+QwenPanel
+  merge (props: title, servedModel, pick, samples, liveCalls, accent,
+  workloadHint, transientDropBanner). DrivingLine + the two served-model
+  constants moved in; testids are now `<servedModel>-status/-driving/-details`.
+  Qwen keeps its tri-state body + deliberately-binary hard-red badge; Gemma
+  keeps the workload pill. **DELETED:** `VllmPanel.tsx`, `QwenPanel.tsx`,
+  `ActiveRunCard.tsx` (dead), `test_vllm_panel.tsx`, `test_qwen_panel.tsx`, and
+  the ActiveRunCard describe-block in `test_activity_monitor.tsx`. Dashboard
+  now mounts the card ×2.
+- **NEW `routes/Ladder.tsx`** — counts header; pure-div rung histogram labeled
+  with `next_owed`; status/rung filter chips (toggle = all); cluster table with
+  expandable killed rows (kill code + evidence-keyed reopen condition); agenda
+  section. 404 (version skew — `/api/ladder` added to the EndpointMissingNote
+  known set) → quiet note + ideas.md fallback; 204 → honest "no idea ledger
+  yet" + same fallback (the old Ideas.tsx body, folded in; `routes/Ideas.tsx`
+  itself is unmounted and dies in S3). `getLadder()` + `LadderResponse` types
+  added to `api/http.ts` / `types/schemas.ts`.
+
+### Tests
+
+NEW: `test_pulse.tsx`, `test_owe_strip.tsx`, `test_last_cycle_line.tsx`,
+`test_ladder_page.tsx`, `test_now_verdict.tsx`, `test_model_server_card.tsx`
+(50 tests). Updated: both route sweeps (`test_forwardcompat_routes` — Pulse +
+Ladder renders incl. unknown-status/rung/kill-code degradation;
+`test_validate_routes_console` — Pulse + Ladder console-clean), `test_dashboard`
+(new status testid), `test_activity_monitor` (ActiveRunCard block removed).
+
+### Verification (this worktree)
+
+- frontend vitest **1490 pass** (104 files; 1457 → 1490) · `tsc --noEmit` clean
+- ui-backend pytest **679 pass + 1 skip** (`.venv-chroma`, `MOCK_LLM=1`; the
+  skip = the new live ladder probe against the pre-S1 running binary — honest
+  version skew until the post-merge restart)
+- The real `:8700` smoke (curl `/api/ladder` → 70 clusters; `/` + `/ladder`
+  live; ensure-cron) is the PRIMARY's post-merge step per the plan's S1 gate.
+
+Scope held: `ui/` + this file only (backend: `ladder.py` NEW + `app.py` wired +
+2 test files; frontend: 8 new src/route files, 6 touched, 3 deleted; tests: 6
+new, 5 touched, 2 deleted).
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to

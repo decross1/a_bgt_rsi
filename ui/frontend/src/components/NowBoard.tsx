@@ -1,6 +1,10 @@
-// NowBoard — PAGE A's multi-run board, fed by GET /api/activity/active_runs
-// (the D-047 registry: run_state/active_runs/<run_id>.json, one file per LIVE
-// run). It takes over the hero's run slot from the single-run ActiveRunCard:
+// NowBoard — the ONE merged now-card (UI simplification S1). Fed by GET
+// /api/activity/active_runs (the D-047 registry: run_state/active_runs/
+// <run_id>.json, one file per LIVE run), plus OPTIONAL liveCalls/telemetry
+// feeds that light a RUNNING/BUSY/IDLE headline strip (shared verdict logic
+// in nowVerdict.ts — "registered" derives from the registry itself, so the
+// strip absorbs SystemActivityHero without the two retired mirror endpoints).
+// It took over the hero's run slot from the single-run ActiveRunCard:
 // one card per registered run — kind chip, label, current_step, progress —
 // with a STALE-HEARTBEAT amber state when `now - heartbeat_at > 120s` (a
 // `legacy_mirror` run has no heartbeat semantics, so its freshest timestamp
@@ -13,8 +17,16 @@
 import { useEffect, useState } from "react";
 import { getActiveRuns } from "../api/http";
 import { elapsed, useNow } from "../time";
-import type { ActiveRun, ActiveRunsResponse } from "../types/activity";
+import type { ActiveRun, ActiveRunsResponse, LiveCalls } from "../types/activity";
+import type { TelemetrySample } from "../types/schemas";
 import EndpointMissingNote, { isVersionSkew404 } from "./EndpointMissingNote";
+import {
+  buildEvidence,
+  computeActivity,
+  STATE_LABEL,
+  STATE_TONE,
+  type ActivityVerdict,
+} from "./nowVerdict";
 
 const ACTIVE_RUNS_ENDPOINT = "/api/activity/active_runs";
 const POLL_MS = 5000;
@@ -169,9 +181,48 @@ export interface NowBoardProps {
   live?: boolean;
   // Injectable clock for staleness tests; defaults to the shared 1 Hz clock.
   nowMs?: number;
+  // HEADLINE-STRIP feeds (UI simplification S1 — the merged now-card). BOTH
+  // optional and ADDITIVE: when neither is provided (old mounts: /activity)
+  // the strip does not render and the board is byte-identical to before.
+  // "Registered" derives from the D-047 registry itself (runs.length > 0) —
+  // NOT from the retired activeIteration/coordinatorActive mirrors — so the
+  // strip can never claim RUNNING off a stale mirror; busy/idle come from
+  // the shared computeActivity (nowVerdict.ts) over these two feeds.
+  liveCalls?: LiveCalls | null;
+  telemetry?: TelemetrySample | null;
 }
 
-export default function NowBoard({ initial, live = false, nowMs }: NowBoardProps) {
+// The one-line verdict for the strip. Registered wins (a registry run IS
+// provenance); the first run is named the way the hero named its mirrors.
+function stripVerdict(
+  runs: ActiveRun[],
+  liveCalls: LiveCalls | null | undefined,
+  telemetry: TelemetrySample | null | undefined,
+  now: number,
+): ActivityVerdict {
+  if (runs.length > 0) {
+    const first = runs[0];
+    const label = [asText(first.label) || asText(first.kind) || asText(first.run_id),
+      asText(first.current_step)]
+      .filter(Boolean)
+      .join(" · ");
+    const more = runs.length > 1 ? ` (+${runs.length - 1} more)` : "";
+    return {
+      state: "registered",
+      headline: `RUNNING — ${label || "registered run"}${more}`,
+      evidence: buildEvidence({ liveCalls, telemetry }, now),
+    };
+  }
+  return computeActivity({ liveCalls, telemetry }, now);
+}
+
+export default function NowBoard({
+  initial,
+  live = false,
+  nowMs,
+  liveCalls,
+  telemetry,
+}: NowBoardProps) {
   const tick = useNow();
   const now = nowMs ?? tick;
   const [data, setData] = useState<ActiveRunsResponse | null>(initial ?? null);
@@ -248,8 +299,46 @@ export default function NowBoard({ initial, live = false, nowMs }: NowBoardProps
       ? data.skipped
       : 0;
 
+  // The strip only renders when a feed prop was provided at all — an old
+  // mount (no feeds) must not claim IDLE without data.
+  const stripLive = liveCalls !== undefined || telemetry !== undefined;
+  const verdict = stripLive
+    ? stripVerdict(runs, liveCalls, telemetry, now)
+    : null;
+  const tone = verdict ? STATE_TONE[verdict.state] : null;
+
   return (
     <section data-testid="now-board" className="space-y-2">
+      {verdict && tone && (
+        <div
+          data-testid="now-verdict"
+          data-state={verdict.state}
+          className={`rounded border ${tone.border} bg-zinc-900/40 px-4 py-3`}
+        >
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span className="flex items-center gap-2">
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${tone.dot}`}
+                aria-hidden
+              />
+              <span
+                className={`text-lg font-semibold tracking-wide ${tone.text}`}
+              >
+                {STATE_LABEL[verdict.state]}
+              </span>
+            </span>
+            <span className="text-sm text-zinc-400">{verdict.headline}</span>
+          </div>
+          {verdict.evidence.length > 0 && (
+            <div
+              className="mt-1 font-mono text-xs text-zinc-500"
+              data-testid="now-verdict-evidence"
+            >
+              {verdict.evidence.join(" · ")}
+            </div>
+          )}
+        </div>
+      )}
       <div className="flex items-baseline gap-2">
         <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
           Now board

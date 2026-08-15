@@ -20,6 +20,7 @@ import type {
   IterationJourneyResponse,
   IterationsResponse,
   JournalResponse,
+  LadderResponse,
   LoopAlert,
   ProcessesResponse,
   SurfacedFindingsResponse,
@@ -167,6 +168,20 @@ export async function getLoopAlert(): Promise<LoopAlert | null> {
     throw await errorFromResponse(resp);
   }
   return (await resp.json()) as LoopAlert;
+}
+
+// --- LADDER (ui/backend/ladder.py, UI simplification S1) ---
+// GET /api/ladder returns 204 when memory/idea_ledger.jsonl has never been
+// written on this checkout -> null (mirrors getIdeas). A 404 means the
+// RUNNING BINARY predates the endpoint — version skew, which the HttpError
+// status lets the /ladder page render as a quiet EndpointMissingNote.
+export async function getLadder(): Promise<LadderResponse | null> {
+  const resp = await fetch(`${API_BASE}/api/ladder`);
+  if (resp.status === 204) return null;
+  if (!resp.ok) {
+    throw await errorFromResponse(resp);
+  }
+  return (await resp.json()) as LadderResponse;
 }
 
 // GET /api/ideas returns 204 when memory/ideas.md is absent -> null.

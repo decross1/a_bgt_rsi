@@ -18,14 +18,16 @@ import HealthVerdict, {
 } from "../components/HealthVerdict";
 import InFlightRollup from "../components/InFlightRollup";
 import JournalScroll from "../components/JournalScroll";
+import ModelServerCard, {
+  QWEN_SERVED_MODEL,
+  VLLM_SERVED_MODEL,
+} from "../components/ModelServerCard";
 import NaraPromptForm from "../components/NaraPromptForm";
 import ProcessGrid from "../components/ProcessGrid";
-import QwenPanel from "../components/QwenPanel";
 import RedFlagsTrendStrip from "../components/RedFlagsTrendStrip";
 import ResolvedIterationsList from "../components/ResolvedIterationsList";
 import SurfacedFindingsPanel from "../components/SurfacedFindingsPanel";
 import SystemActivityHero from "../components/SystemActivityHero";
-import VllmPanel from "../components/VllmPanel";
 import { getActivityMonitor } from "../api/activity";
 import {
   getActiveIteration,
@@ -316,8 +318,24 @@ export default function Dashboard() {
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <VllmPanel samples={cleanSamples} liveCalls={liveCalls} />
-        <QwenPanel samples={cleanSamples} liveCalls={liveCalls} />
+        <ModelServerCard
+          title="gemma-4-26b-a4b"
+          servedModel={VLLM_SERVED_MODEL}
+          pick={(s) => s.vllm}
+          samples={cleanSamples}
+          liveCalls={liveCalls}
+          accent="zinc"
+          workloadHint
+        />
+        <ModelServerCard
+          title="Qwen3.6-27B · NVFP4-MTP"
+          servedModel={QWEN_SERVED_MODEL}
+          pick={(s) => s.vllm_qwen}
+          samples={cleanSamples}
+          liveCalls={liveCalls}
+          accent="sky"
+          transientDropBanner
+        />
       </div>
 
       {/* IN FLIGHT rollup (FE5): one compact read-only list of what is RUNNING

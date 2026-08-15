@@ -21,6 +21,7 @@ const SKEW_404_ENDPOINTS: ReadonlySet<string> = new Set([
   "/api/activity/active_runs",
   "/api/attest/available",
   "/api/human_todo",
+  "/api/ladder",
   "/api/attest/gate_verdict",
   "/api/attest/finding_review",
   "/api/attest/bubble_ack",

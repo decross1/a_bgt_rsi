@@ -400,6 +400,13 @@ vi.mock("../src/api/http", () => ({
   // InFlightRollup feed (FE5): Dashboard polls getProcesses in the HERO effect.
   getProcesses: vi.fn().mockResolvedValue({ processes: [] }),
   startIteration: vi.fn().mockResolvedValue({ pid: 1 }),
+  // S1 additions: the NowBoard registry poll (Pulse mounts it live), and the
+  // /ladder page's endpoint pair (204-null ledger -> ideas.md fallback body).
+  getActiveRuns: vi.fn().mockResolvedValue({ runs: [], skipped: 0 }),
+  getLadder: vi.fn().mockResolvedValue(null),
+  getIdeas: vi
+    .fn()
+    .mockResolvedValue({ markdown: "# Ideas\n\n## Live work\n\n(none)\n" }),
 }));
 
 vi.mock("../src/api/activity", () => ({
@@ -420,6 +427,8 @@ import Dashboard from "../src/routes/Dashboard";
 import Activity from "../src/routes/Activity";
 import Experiments from "../src/routes/Experiments";
 import Coordinator from "../src/routes/Coordinator";
+import Ladder from "../src/routes/Ladder";
+import Pulse from "../src/routes/Pulse";
 
 // Spy on console.error / console.warn around a render + a full async flush.
 // We render inside a MemoryRouter (Experiments uses <Link>); a route that does
@@ -475,6 +484,18 @@ describe("routes render against real data without console errors", () => {
 
   it("Dashboard: real iterations (relevance row), empty findings/bubbles/health", async () => {
     const { error, warn } = await renderRouteQuietly(<Dashboard />);
+    expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
+    expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
+  });
+
+  it("Pulse (S1 home): hero + now-card + owe strip + cycle line + model cards", async () => {
+    const { error, warn } = await renderRouteQuietly(<Pulse />);
+    expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
+    expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
+  });
+
+  it("Ladder (S1): 204-null ledger -> honest empty + ideas.md fallback", async () => {
+    const { error, warn } = await renderRouteQuietly(<Ladder />);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });

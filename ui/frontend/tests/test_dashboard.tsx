@@ -132,7 +132,9 @@ describe("Dashboard realignment", () => {
     renderDashboard();
     // Gemma panel header + up status (vllm block present).
     expect(screen.getByText("gemma-4-26b-a4b")).toBeInTheDocument();
-    expect(screen.getByTestId("vllm-status")).toHaveTextContent("up");
+    expect(screen.getByTestId("gemma-4-26b-a4b-status")).toHaveTextContent(
+      "up",
+    );
     // Qwen panel still present (untouched by the refactor).
     expect(screen.getByText(/Qwen3.6-27B/)).toBeInTheDocument();
   });

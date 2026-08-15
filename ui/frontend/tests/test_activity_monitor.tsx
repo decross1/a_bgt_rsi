@@ -8,7 +8,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import ActiveRunCard from "../src/components/ActiveRunCard";
 import ActiveWorkersPanel from "../src/components/ActiveWorkersPanel";
 import LiveCallsBanner from "../src/components/LiveCallsBanner";
 import SyntheticInferencePanel from "../src/components/SyntheticInferencePanel";
@@ -229,36 +228,9 @@ describe("SyntheticInferencePanel (subordinate)", () => {
   });
 });
 
-describe("ActiveRunCard (HERO)", () => {
-  it("renders nothing when data is null (no run in flight)", () => {
-    const { container } = render(<ActiveRunCard data={null} />);
-    expect(
-      container.querySelector('[data-testid="active-run-card"]'),
-    ).toBeNull();
-  });
-
-  it("renders label, kind, step and progress when a run is present", () => {
-    render(<ActiveRunCard data={ACTIVE_RUN_FIXTURE} />);
-    const card = screen.getByTestId("active-run-card");
-    expect(card).toHaveTextContent("exp003 paraphrase probe");
-    expect(card).toHaveTextContent("experiment");
-    expect(screen.getByTestId("active-run-step")).toHaveTextContent(
-      "retrieve_literature",
-    );
-    expect(screen.getByTestId("active-run-progress")).toHaveTextContent(
-      "3/10 papers",
-    );
-    // The narration + model surface too.
-    expect(screen.getByTestId("active-run-narration")).toHaveTextContent(
-      /scoring candidate seeds/i,
-    );
-    expect(screen.getByTestId("active-run-model")).toHaveTextContent(
-      "gemma-4-26b-a4b",
-    );
-    // Live elapsed cell is present and formatted (well-formed, never "—").
-    expect(screen.getByTestId("active-run-elapsed").textContent).not.toBe("—");
-  });
-});
+// The ActiveRunCard (single-run HERO) describe block was REMOVED in UI
+// simplification S1 with the component itself — dead since NowBoard (the
+// D-047 multi-run board) took over its slot; see test_now_board.tsx.
 
 describe("LiveCallsBanner", () => {
   it("renders recent wrapper-call activity when active", () => {
