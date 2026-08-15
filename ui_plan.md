@@ -1587,6 +1587,103 @@ guarded scrollIntoView + ResizeObserver stubs (cmdk). Suite 980 green
 (baseline 932, zero route tests broken by the shell), tsc clean, vite build
 clean (Geist woff2 self-hosted, ~69KB total).
 
+## §2026-08-15 R1 — /ladder rebuilt as the lab's visual centerpiece (`ui/` only)
+
+Built by a worktree build agent (spawn `loop3h-revamp-r1-ladder`) on merged
+main @ 0483fd5. R1 is the first ROUTE redesign on top of the R0 system: it
+consumes the R0 tokens/primitives and invents no parallels. Owner brief: "way
+too much text… more graphs/flowcharts… intuitive, easy to look at."
+
+### What replaced what
+
+The old page was a counts line + a div histogram + filter chips + a cluster
+table + an agenda list — all text, one column. It is now:
+
+- **Header: an aggregate FUNNEL strip** (`components/ladder/LadderFunnel.tsx`,
+  hand-rolled SVG, no chart lib). Six centered bars L0→L5, each as wide as the
+  number of clusters that REACHED that rung, with gray kill-ribbons dropping
+  out of each rung into one graveyard node. Beside it the page's ONE chart.
+- **Body: a KANBAN board** (`LadderBoard.tsx`) — six rung columns + a
+  Graveyard column collapsed by default, grouped by `kill_reason.code` with
+  tombstones keeping their rung-at-death glyph. A card carries FOUR things:
+  stem (2-line clamp), `RungGlyph`, age, one metric. Everything else is one
+  click away in a `PeekPanel` (`ClusterPeek.tsx`), which is also the single
+  path onward to a member's `/dossier/:id`.
+- **A board|table toggle** (`LadderTable.tsx`) — one dataset, two views; the
+  table is dense sortable `ListRow`s (`data-density="dense"`, `tabular-nums`)
+  and doubles as the charts' WCAG-clean twin.
+- **Deleted:** the status/rung filter chips and the standalone agenda list.
+  The board IS the rung filter; agenda items moved into the peek, with the
+  page-level open-agenda count kept in the counts strip.
+
+### The funnel's arithmetic (the part that must stay honest)
+
+`reached[k] = (live clusters at rungs ≥ k, off the backend histogram) +
+(killed clusters whose rung-at-death is ≥ k)` — monotone non-increasing **by
+construction**, so the narrowing is real rather than cosmetic. The ribbon out
+of rung k is `killsByRung[k]` (killed exactly there). The bar narrows by MORE
+than its ribbon whenever clusters are simply still resting at that rung; the
+column count carries that remainder and the funnel caption says so. All of it
+is one pure module, `components/ladder/ladderModel.ts` — the funnel, board,
+chart and table are four renderings of one derivation, never four.
+
+Honest-degradation rules kept: a cluster whose `evidence_level` is not an
+L0..L5 string has NO rung — it is off the board and out of the funnel, and the
+page says how many out loud (`ladder-unrung-note`) rather than faking an L0.
+Graveyard grouping uses a `Map`, so a producer kill code of `"toString"`
+cannot collide with `Object.prototype` (the forward-compat fixture ships
+exactly that).
+
+### Backend (one field)
+
+`ui/backend/ladder.py` now ships `members` (the member id list) beside
+`member_count`, which is its length. The peek links the iteration-shaped ones
+(`iter-*` / `sf-*`) onward to `/dossier/:id`; `paper:<arxiv_id>` members are
+not dossiers and render unlinked. No other payload change.
+
+### Design decisions worth carrying to R2-R4
+
+- **Charts:** the `dataviz` skill drove this. One series ⇒ one hue and no
+  legend (title names it); no gridlines; direct labels so no value is
+  tooltip-only; the chart box includes the x-axis band. Rung color reuses the
+  RungGlyph mapping (L4/L5 emerald, L0-L3 sky, killed zinc) so a reader learns
+  the encoding once — that is the R0 status set used for status, not a
+  categorical palette, so the categorical-palette validator does not apply.
+- **`recharts` with explicit `width`/`height`, NOT `ResponsiveContainer`** —
+  fixed panel, deterministic, and it keeps the route console-silent under
+  jsdom (the two route console-clean suites render /ladder unmocked).
+- **SVG bar animation rides `transform: scaleX()`**, per the system's
+  transform/opacity-only motion rule (CSS transitions on SVG `width` are not
+  portable). The horizontal corner radius is pre-divided by the scale
+  (`rx = 4/f`, `ry = 4`) so the rounded ends stay 4px at every width.
+- **Board cards are `<button>`s styled from the tokens**, not `Card` — a
+  `<section>` inside a `<button>` is invalid content model. `Card` is used for
+  the two strip panels, `ListRow` for the table.
+- **Palette:** `registerPaletteActions` adds two verbs under a "Ladder" group
+  — "toggle graveyard", "switch ladder view". "Go to ladder" was NOT
+  registered: `CommandPalette`'s built-in `ROUTES` already ships `nav-ladder`,
+  and a route-local duplicate would only add a second identical row.
+
+### Verification
+
+The three views were **rendered and looked at** (jsdom → static HTML against
+the built CSS → headless-chromium screenshot), which caught five things tests
+could not: the "surfacing bar" label sitting under the kill ribbons, the
+funnel bars reading as saturated slabs, the chart card stretching to a
+half-empty box, the Graveyard column pushed off a 1400px viewport (rung
+columns 210→180), and the stem printed twice in the peek (panel header +
+body). All fixed.
+
+Tests: `tests/test_ladder_page.tsx` rewritten, 7 → 22 tests (funnel
+arithmetic + monotonicity, ribbon presence, kanban bucketing, killed→
+graveyard routing, collapse/group-by-code, tombstone glyph, one-metric cards,
+unrung reporting, peek from tombstone + from live card, member dossier links,
+Esc close, view toggle, table sort, palette verbs, chart mapping, 204/404/500
+and empty-ledger states). The suite was **mutation-checked**: breaking the
+killed→graveyard routing and dropping killed clusters from `reached` fails 6
+tests. Backend `test_ladder.py` pins the new `members` field. Frontend suite
+1003 green (71 files), backend 661 green, tsc clean, vite build clean.
+
 ---
 
 ## Historical sections (UI v1, pre-LOOP_V0)

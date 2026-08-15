@@ -589,6 +589,9 @@ export interface LadderCluster {
   status?: "open" | "surfaced" | "killed" | string | null;
   evidence_level?: string | null;
   origin?: string | null;
+  // Member ids — normally iteration_ids (niche-seeded clusters carry
+  // "paper:<arxiv_id>"); member_count is their length.
+  members?: string[] | null;
   member_count?: number | null;
   last_event_ts?: string | null;
   kill_reason?: {
