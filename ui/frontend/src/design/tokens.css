@@ -1,0 +1,162 @@
+/* ============================================================================
+   design/tokens.css — the R0 design-token system (UI revamp foundation).
+
+   Imported ONCE in main.tsx, after index.css, so these tokens override the
+   legacy shared-block vars where names collide (--font-mono). The legacy
+   src/tokens.css shared block is UNTOUCHED — it is fence-checked against the
+   framework brain copy by scripts/check_design_tokens.py and stays authoritative
+   for the older custom styles that still read it.
+
+   Rules of the system (R1-R4 agents: consume these, don't invent parallels):
+   - ONE neutral family (zinc, oklch). Background is near-black, never #000.
+     Elevation = a LIGHTER surface step + a 1px border. No card shadows.
+   - ONE accent (restrained sky-indigo). Used ONLY for links, the primary
+     action, focus rings, and the active nav item. Never for status.
+   - A SEPARATE semantic status set (emerald/amber/rose/sky/zinc) reserved
+     EXCLUSIVELY for run/rung status (StatusDot, RungGlyph, run chips).
+   - Two text colors only: --fg and --fg-muted. Hierarchy beyond that comes
+     from weight (450/550/650), not more grays.
+   - Spacing sits on a 4px grid. Motion is transform/opacity only and
+     collapses under prefers-reduced-motion.
+   ========================================================================== */
+
+:root {
+  /* ---- neutral ramp (zinc, oklch) — 50..950 ------------------------------ */
+  --neutral-50: oklch(0.985 0 0);
+  --neutral-100: oklch(0.967 0.001 286.4);
+  --neutral-200: oklch(0.92 0.004 286.3);
+  --neutral-300: oklch(0.871 0.006 286.3);
+  --neutral-400: oklch(0.705 0.015 286.1);
+  --neutral-500: oklch(0.552 0.016 285.9);
+  --neutral-600: oklch(0.442 0.017 285.8);
+  --neutral-700: oklch(0.37 0.013 285.8);
+  --neutral-800: oklch(0.274 0.006 286);
+  --neutral-900: oklch(0.21 0.006 285.9);
+  --neutral-950: oklch(0.141 0.005 285.8);
+
+  /* ---- surfaces (dark-first; elevation = lighter step + 1px border) ------ */
+  --bg: oklch(0.16 0.005 285.8);          /* app background — near-black, not #000 */
+  --surface-1: oklch(0.19 0.005 285.8);   /* card / panel */
+  --surface-2: oklch(0.225 0.006 285.9);  /* hover step / inset */
+  --surface-3: oklch(0.26 0.006 286);     /* raised (menus, palette) */
+  --surface-glass: oklch(0.16 0.005 285.8 / 0.72); /* sticky header + palette scrim ONLY */
+
+  --border-1: oklch(0.274 0.006 286);     /* default 1px hairline */
+  --border-2: oklch(0.37 0.013 285.8);    /* emphasized / interactive borders */
+
+  /* ---- text (two colors only) -------------------------------------------- */
+  --fg: oklch(0.92 0.004 286.3);
+  --fg-muted: oklch(0.705 0.015 286.1);
+
+  /* ---- accent (ONE; links / primary action / focus / active nav) --------- */
+  --accent: oklch(0.7 0.13 250);
+  --accent-hover: oklch(0.76 0.14 250);
+  --accent-muted: oklch(0.7 0.13 250 / 0.15); /* subtle tint bg (active-nav pill) */
+  --accent-fg: oklch(0.97 0.01 250);          /* text on solid accent */
+  --focus-ring: var(--accent);
+
+  /* ---- semantic status set (run/rung status ONLY) ------------------------ */
+  --status-ok: oklch(0.72 0.17 162);      /* emerald — pass / clears bar / done */
+  --status-warn: oklch(0.8 0.16 84);      /* amber — degraded / attention */
+  --status-bad: oklch(0.71 0.19 13);      /* rose — failed / killed-hot */
+  --status-info: oklch(0.746 0.16 232);   /* sky — running / in-progress rungs */
+  --status-idle: oklch(0.552 0.016 285.9);/* zinc — idle / killed / no level */
+  --status-ok-bg: oklch(0.72 0.17 162 / 0.12);
+  --status-warn-bg: oklch(0.8 0.16 84 / 0.12);
+  --status-bad-bg: oklch(0.71 0.19 13 / 0.12);
+  --status-info-bg: oklch(0.746 0.16 232 / 0.12);
+  --status-idle-bg: oklch(0.552 0.016 285.9 / 0.12);
+
+  /* ---- type -------------------------------------------------------------- */
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo,
+    Consolas, monospace;
+  --text-meta: 12px;      /* timestamps, counts, secondary meta */
+  --text-ui: 13px;        /* base UI: rows, labels, nav, controls */
+  --text-prose: 14px;     /* reading bodies (dossier, journal) */
+  --text-prose-lg: 15px;  /* long-form reading */
+  --text-title: 16px;     /* section titles */
+  --text-title-lg: 20px;  /* page titles */
+  --weight-normal: 450;
+  --weight-medium: 550;
+  --weight-semibold: 650;
+
+  /* ---- radii ------------------------------------------------------------- */
+  --radius-control: 6px;  /* buttons, inputs, rows, chips-with-corners */
+  --radius-card: 10px;    /* cards, panels, the palette */
+  --radius-pill: 9999px;  /* pills, dots */
+
+  /* ---- spacing (4px grid) ------------------------------------------------ */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* ---- motion (transform/opacity only) ----------------------------------- */
+  --motion-enter: 200ms;
+  --motion-exit: 150ms;
+  --motion-hover: 120ms;
+  --motion-panel: 250ms;  /* the PeekPanel slide */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+
+  /* ---- density (ListRow height; switch via data-attr, not new classes) --- */
+  --row-h: 36px;
+}
+
+[data-density="dense"] {
+  --row-h: 28px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-enter: 0ms;
+    --motion-exit: 0ms;
+    --motion-hover: 0ms;
+    --motion-panel: 0ms;
+  }
+}
+
+/* ---- base ---------------------------------------------------------------- */
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-ui);
+  font-weight: var(--weight-normal);
+}
+
+/* Tabular figures on every numeric/mono span — IDs, counts, durations line up. */
+code,
+pre,
+kbd,
+samp,
+.font-mono,
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Accent-colored focus for keyboard users; quiet for pointer users. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ---- page-container utilities (route-level widths) ------------------------
+   Boards/tables go full-bleed; prose/dossier columns cap at ~760px. Routes
+   adopt these in R1-R4; defined here so the widths are tokens, not folklore. */
+.page-full {
+  width: 100%;
+  padding: var(--space-4) var(--space-6);
+}
+.page-prose {
+  max-width: 760px;
+  margin-inline: auto;
+  padding: var(--space-4) var(--space-6);
+}

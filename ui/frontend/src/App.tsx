@@ -1,5 +1,7 @@
 import { BrowserRouter, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import LoopAlertBanner from "./components/LoopAlertBanner";
+import CommandPalette from "./design/CommandPalette";
+import "./design/primitives.css";
 import Channel from "./routes/Channel";
 import Cycles from "./routes/Cycles";
 import DossierIndex from "./routes/DossierIndex";
@@ -48,10 +50,12 @@ function NavTab({
       to={to}
       end={end}
       className={({ isActive }) =>
-        `border-b-2 pb-1 font-mono text-sm transition-colors ${
+        // R0 shell: the active nav item is the ONE accent usage in the nav
+        // (design/tokens.css — accent is links/primary-action/focus/active-nav).
+        `border-b-2 pb-1 text-[13px] font-[550] transition-colors ${
           isActive
-            ? "border-emerald-500 text-zinc-100"
-            : "border-transparent text-zinc-400 hover:text-zinc-100"
+            ? "border-[var(--accent)] text-[var(--accent)]"
+            : "border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]"
         }`
       }
     >
@@ -63,9 +67,11 @@ function NavTab({
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-zinc-950 text-zinc-200">
-        <header className="flex items-center gap-5 border-b border-zinc-800 px-6 py-3">
-          <span className="font-mono text-xs uppercase tracking-wide text-zinc-500">
+      <div className="min-h-screen bg-[var(--bg)] text-[var(--fg)]">
+        {/* R0 shell: sticky glass header — with the palette scrim, the only
+            two allowed translucent/blurred surfaces (design/primitives.css). */}
+        <header className="dsn-header flex items-center gap-5 px-6 py-3">
+          <span className="font-mono text-xs uppercase tracking-wide text-[var(--fg-muted)]">
             apparatus observability
           </span>
           <nav className="flex items-center gap-4">
@@ -73,19 +79,20 @@ export default function App() {
               <NavTab key={item.to} {...item} />
             ))}
             <details className="group relative" data-testid="engine-nav">
-              <summary className="cursor-pointer list-none border-b-2 border-transparent pb-1 font-mono text-sm text-zinc-400 transition-colors hover:text-zinc-100">
+              <summary className="cursor-pointer list-none border-b-2 border-transparent pb-1 text-[13px] font-[550] text-[var(--fg-muted)] transition-colors hover:text-[var(--fg)]">
                 engine ▾
               </summary>
-              <div className="absolute left-0 top-full z-20 mt-1 flex min-w-36 flex-col gap-1 rounded border border-zinc-800 bg-zinc-950 px-3 py-2 shadow-lg">
+              {/* Menus elevate by surface step + 1px border — never shadow. */}
+              <div className="absolute left-0 top-full z-20 mt-1 flex min-w-36 flex-col gap-1 rounded-[6px] border border-[var(--border-1)] bg-[var(--surface-3)] px-3 py-2">
                 {ENGINE_NAV.map((item) => (
                   <NavLink
                     key={item.to}
                     to={item.to}
                     className={({ isActive }) =>
-                      `font-mono text-sm transition-colors ${
+                      `text-[13px] font-[550] transition-colors ${
                         isActive
-                          ? "text-zinc-100"
-                          : "text-zinc-400 hover:text-zinc-100"
+                          ? "text-[var(--accent)]"
+                          : "text-[var(--fg-muted)] hover:text-[var(--fg)]"
                       }`
                     }
                   >
@@ -101,15 +108,16 @@ export default function App() {
               href={`http://${window.location.hostname}:5174/dashboard.html`}
               target="_blank"
               rel="noreferrer"
-              className="border-b-2 border-transparent pb-1 font-mono text-sm text-zinc-400 transition-colors hover:text-zinc-100"
+              className="border-b-2 border-transparent pb-1 text-[13px] font-[550] text-[var(--fg-muted)] transition-colors hover:text-[var(--fg)]"
             >
-              brain<span aria-hidden="true" className="ml-0.5 text-zinc-600">↗</span>
+              brain<span aria-hidden="true" className="ml-0.5">↗</span>
             </a>
           </nav>
-          <span className="ml-auto text-xs text-zinc-600">
-            call-chain inspector at /chain/req/&lt;request_id&gt;
+          <span className="ml-auto text-xs text-[var(--fg-muted)]">
+            ⌘K to jump · call-chain inspector at /chain/req/&lt;request_id&gt;
           </span>
         </header>
+        <CommandPalette />
         {/* Page-top loop-alert surface (work order A): red/amber off
             run_state/loop_alert.json; invisible when ok & fresh. */}
         <LoopAlertBanner />
