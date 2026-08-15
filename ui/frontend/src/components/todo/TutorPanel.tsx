@@ -8,9 +8,10 @@
 //     setter prop. It is STRUCTURALLY unable to influence or auto-fill the
 //     verdict, because it is never handed the means to.
 //   - It renders NO recommendation and NO accept/deny steer. The mechanical
-//     outcome-effects line states what each outcome DOES (neutrally); the
-//     pros/cons enumeration lists considerations UNWEIGHTED — no "this outweighs
-//     that", no "you should".
+//     outcome-effects line states what each outcome DOES (neutrally). The old
+//     unweighted pros/cons "considerations" section was trimmed away in UI
+//     simplification S2 (the reader keeps claim / provenance / evidence refs +
+//     the neutral outcome-effects + the fence note).
 //   - The visible fence note cites the REAL source of the fence: the 2026-06-14
 //     session note PART 2 + inviolate rule 4 + D-053 (NOT D-044 — D-044 is the
 //     vllm-qwen novelty-skeptic independence decision, a different fence).
@@ -450,39 +451,10 @@ export default function TutorPanel({
         </div>
       </div>
 
-      {/* NEUTRAL UNWEIGHTED considerations — enumerated, NOT weighted, NO steer. */}
-      <div
-        data-testid="tutor-considerations"
-        className="mt-1.5 grid gap-1 sm:grid-cols-2"
-      >
-        <div className="rounded border border-zinc-800/60 bg-zinc-950/40 px-1.5 py-1">
-          <div className="text-[10px] uppercase tracking-wide text-zinc-600">
-            considerations for
-          </div>
-          <ul className="mt-0.5 list-disc pl-3 text-[10px] leading-snug text-zinc-500">
-            <li>the claim survived the critic to be surfaced at all.</li>
-            <li>the source iteration + evidence refs above are inspectable.</li>
-            <li>accepting records it for the loop to build on.</li>
-          </ul>
-        </div>
-        <div className="rounded border border-zinc-800/60 bg-zinc-950/40 px-1.5 py-1">
-          <div className="text-[10px] uppercase tracking-wide text-zinc-600">
-            considerations against
-          </div>
-          <ul className="mt-0.5 list-disc pl-3 text-[10px] leading-snug text-zinc-500">
-            <li>
-              the &ldquo;what would change it&rdquo; line names what is still
-              unsettled.
-            </li>
-            <li>novelty / critic chips may rest on thin or off-domain retrieval.</li>
-            <li>in_review keeps it open if you are not yet decided.</li>
-          </ul>
-        </div>
-      </div>
-
-      <div className="mt-1.5 text-[10px] text-zinc-600">
-        These are unweighted considerations, not a recommendation.
-      </div>
+      {/* The unweighted pros/cons "considerations" section was DELETED here
+          (UI simplification S2 — the dossier reader trims the tutor to claim /
+          provenance / evidence refs + the neutral outcome-effects line; the
+          fence note above is unchanged). */}
     </div>,
   );
 }

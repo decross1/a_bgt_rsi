@@ -427,6 +427,7 @@ import Experiments from "../src/routes/Experiments";
 import Coordinator from "../src/routes/Coordinator";
 import Ladder from "../src/routes/Ladder";
 import Pulse from "../src/routes/Pulse";
+import DossierIndex from "../src/routes/DossierIndex";
 
 // Spy on console.error / console.warn around a render + a full async flush —
 // the cheap jsdom stand-in for "no browser console errors". Two waitFor ticks
@@ -488,6 +489,12 @@ describe("routes survive the announced additive contract (undecidable / novelty_
 
   it("Ladder (S1): unknown status/rung/kill-code shapes degrade quietly", async () => {
     const { error, warn } = await renderRouteQuietly(<Ladder />);
+    expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
+    expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
+  });
+
+  it("DossierIndex (S2): forward-compat iteration rows render console-clean in the picker", async () => {
+    const { error, warn } = await renderRouteQuietly(<DossierIndex />);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });

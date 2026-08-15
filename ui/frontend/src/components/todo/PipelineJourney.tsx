@@ -1,10 +1,30 @@
-// PipelineJourney — the /todo cockpit's read-only JOURNEY view for the SELECTED
-// item (S2 cockpit reframe, slice FE2). It answers "what pipeline produced the
-// thing I'm about to resolve?" by replaying the eight loop steps for ONE
+// PipelineJourney — the dossier reader's read-only JOURNEY spine (S2 cockpit
+// reframe slice FE2; extended in UI simplification S2 to absorb the retired
+// IterationDetailModal's unique sections). It answers "what pipeline produced
+// the thing I'm about to resolve?" by replaying the eight loop steps for ONE
 // iteration: hypothesis → retrieval → relevance → novelty → critic →
 // experiments (Phase-2, greyed) → gate → outcome. It NEVER recommends and NEVER
-// writes — the verdict path is elsewhere (the cockpit's resolution forms); this
-// surface only shows the journey, read-only.
+// writes — the verdict path is elsewhere (the reader's disposition footer);
+// this surface only shows the journey, read-only.
+//
+// ABSORBED from IterationDetailModal (UI simplification S2 — the modal died;
+// every unique section moved HERE, per the plan's absorption table):
+//   - the VERDICT HEADER badge row (full chip set + override provenance as
+//     VISIBLE text, both blocks);
+//   - NoveltyAxesChip + the FULL evidence grid (category / rule_fired /
+//     topicality_advisory / anchor_cosine / curated_overlap / neighbor_spread)
+//     + the low-evidence detail inline (amber box);
+//   - the redteam adversarial detail (skeptic_verdict, critique / suggested
+//     revision / confidence / retries_used);
+//   - conditioning bullets ("conditioned by");
+//   - experiment extras (trials, results_path, object-valued value rows);
+//   - hypothesis.candidates_considered;
+//   - the LAZY journal disclosure (JournalScroll mounts on first open);
+//   - the links section (/chain/req/<first wrapper call>, /experiments/<id>,
+//     the matching coordinator cycle → /coordinator for now [S3 renames the
+//     route to /cycles]).
+// GateVerdictForm is NOT absorbed — the reader's disposition footer owns the
+// forms (the verdict fence).
 //
 // TWO ITEM FAMILIES (both resolve to ONE iteration's journey):
 //   - gate_verdict (ITERATION): item.id IS an iteration_id. Self-fetch
@@ -30,13 +50,39 @@
 // default and surfaces here only as the raw value in a quiet zinc line — NEVER
 // with amber / low-evidence styling (it is non-gating; never cry wolf).
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import type {
   FindingDetail,
   HumanTodoItem,
   IterationJourneyResponse,
   IterationRecord,
 } from "../../types/schemas";
-import { getFindingDetail, getIterationJourney } from "../../api/http";
+import {
+  getCoordinatorCycles,
+  getFindingDetail,
+  getIterationJourney,
+} from "../../api/http";
+import {
+  Badge,
+  ExperimentChip,
+  GATE_TONE,
+  NOVELTY_TONE,
+  OverrideProvenance,
+  RedteamChip,
+  VERDICT_TONE,
+  conditioningBullets,
+  overrideTooltip,
+  processLabel,
+  processTone,
+  seedTopic,
+  shortTimestamp,
+  toneFor,
+} from "../chips";
+import JournalScroll from "../JournalScroll";
+import LowEvidenceBadge, { isLowEvidence } from "../LowEvidenceBadge";
+import NoveltyAxesChip from "../NoveltyAxesChip";
+import SourceBadge from "../SourceBadge";
+import TopicalityAdvisoryBadge from "../TopicalityAdvisoryBadge";
 
 // The shared scalar guard — the TutorPanel.asText / SourceBadge.asText idiom. A
 // string trims; a finite number / boolean stringifies; anything else (object,
@@ -172,7 +218,214 @@ function Section({
   );
 }
 
-// The journey blocks for ONE iteration — read-only, the IterationDetailModal
+// A quiet "key  value" grid line (the absorbed modal DetailRow idiom); renders
+// nothing when the value has no usable scalar form (absent on legacy rows →
+// the line is omitted, not faked).
+function DetailRow({ k, v }: { k: string; v: unknown }) {
+  const text = asText(v);
+  if (!text) return null;
+  return (
+    <>
+      <span className="text-zinc-500">{k}</span>
+      <span className="break-words">{text}</span>
+    </>
+  );
+}
+
+// First usable wrapper call id → the /chain/req/<id> inspector target.
+function firstWrapperCallId(row: IterationRecord): string | null {
+  const ids = row.wrapper_call_ids;
+  if (!Array.isArray(ids)) return null;
+  const first = ids.find((v) => typeof v === "string" && v.trim().length > 0);
+  return first ?? null;
+}
+
+// The low-evidence detail INLINE (what LowEvidenceBadge's tooltip says),
+// composed from the same relevance fields the badge reads. (Absorbed from the
+// modal verbatim.)
+function lowEvidenceDetail(row: IterationRecord): string {
+  const relevance = row.retrieval?.relevance;
+  const parts: string[] = [];
+  if (relevance?.low_confidence === true) {
+    const why =
+      typeof relevance.reason === "string" && relevance.reason.trim()
+        ? relevance.reason
+        : null;
+    parts.push(
+      why
+        ? `retrieval flagged low-confidence — ${why}`
+        : "retrieval flagged low-confidence",
+    );
+  }
+  if (
+    Array.isArray(row.retrieval?.neighbors) &&
+    row.retrieval!.neighbors!.length === 0
+  ) {
+    parts.push("0 retrieved neighbors");
+  }
+  const category = asText(relevance?.category);
+  if (category) parts.push(`category: ${category}`);
+  const ruleFired = asText(relevance?.rule_fired);
+  if (ruleFired) parts.push(`rule: ${ruleFired}`);
+  const why = parts.length ? parts.join("; ") : "thin / off-domain retrieval";
+  return `Low-evidence verdict: ${why}. The verdict rests on thin or off-domain retrieval — eyeball before trusting.`;
+}
+
+// The absorbed modal VERDICT HEADER — the full badge set (novelty class + axes,
+// critique verdict, redteam, gate, process, source, low-evidence, topicality
+// advisory, experiment chip) + the timestamp + the topic line + the override
+// provenance AS VISIBLE TEXT for both blocks. Read-only chips; no close button
+// (this is an inline spine section, not a dialog).
+function VerdictHeader({ row }: { row: IterationRecord }) {
+  return (
+    <div data-testid="journey-verdict-header" className="mt-1.5">
+      <div className="flex flex-wrap items-baseline gap-2 text-xs">
+        <span className="font-mono text-zinc-100">{asText(row.iteration_id)}</span>
+        <Badge
+          text={row.novelty?.class}
+          tone={toneFor(
+            NOVELTY_TONE,
+            row.novelty?.class,
+            "bg-zinc-800 text-zinc-400",
+          )}
+          title={overrideTooltip(row.novelty)}
+        />
+        <NoveltyAxesChip axes={row.novelty?.novelty_axes} />
+        <Badge
+          text={row.critique?.verdict}
+          tone={toneFor(
+            VERDICT_TONE,
+            row.critique?.verdict,
+            "bg-zinc-800 text-zinc-400",
+          )}
+          title={overrideTooltip(row.critique)}
+        />
+        <RedteamChip redteam={row.redteam} />
+        <Badge
+          text={row.gate_status}
+          tone={toneFor(GATE_TONE, row.gate_status, "")}
+        />
+        <Badge
+          text={processLabel(row.process_status)}
+          tone={processTone(row.process_status)}
+        />
+        {/* Provenance for EVERY source — the condensed list rows show only the
+            nemoclaw β signal; the full origin story reads here. */}
+        <SourceBadge source={row.seed?.source} />
+        <LowEvidenceBadge record={row} />
+        <TopicalityAdvisoryBadge record={row} />
+        <ExperimentChip outcome={row.experiment_outcome} />
+        <span className="ml-auto font-mono text-[10px] text-zinc-500">
+          {shortTimestamp(row.ended_at)}
+        </span>
+      </div>
+      {seedTopic(row) && (
+        <div className="mt-1.5 text-sm text-zinc-200">{seedTopic(row)}</div>
+      )}
+      <OverrideProvenance
+        label="novelty"
+        testid="journey-override-novelty"
+        block={row.novelty}
+      />
+      <OverrideProvenance
+        label="critique"
+        testid="journey-override-critique"
+        block={row.critique}
+      />
+    </div>
+  );
+}
+
+// The absorbed modal LINKS section — the lazy journal disclosure + the deep
+// links out of the dossier: the wrapper call chain, the experiment page, and
+// the coordinator cycle whose dispatched_iteration_id matches. The cycle-join
+// fetch is GUARDED: a 404/older backend, a missing mock, or a malformed body
+// all degrade to "no cycle link" — never a red state inside the journey.
+function JourneyLinks({ row }: { row: IterationRecord }) {
+  const iterationId = asText(row.iteration_id);
+
+  const [cycleRunId, setCycleRunId] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    setCycleRunId(null);
+    (async () => {
+      try {
+        const r = await getCoordinatorCycles();
+        const cycles = Array.isArray(r?.cycles) ? r.cycles : [];
+        const match = cycles.find(
+          (c) =>
+            c != null &&
+            typeof c === "object" &&
+            c.dispatched_iteration_id === iterationId,
+        );
+        if (active && match) {
+          setCycleRunId(typeof match.run_id === "string" ? match.run_id : "");
+        }
+      } catch {
+        /* endpoint absent/unreachable — no cycle link */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [iterationId]);
+
+  // Journal mounts LAZILY on first disclosure-open: avoids fetching for a
+  // dossier the human only glances at (the absorbed modal contract).
+  const [journalOpen, setJournalOpen] = useState(false);
+
+  const outcome = asRecord(row.experiment_outcome);
+  const expId = asText(outcome?.experiment_id);
+  const chainId = firstWrapperCallId(row);
+
+  return (
+    <Section title="journal + links" testid="journey-links">
+      {iterationId.length > 0 ? (
+        <details
+          data-testid="journey-journal"
+          onToggle={(e) => setJournalOpen((e.target as HTMLDetailsElement).open)}
+          className="rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1"
+        >
+          <summary className="cursor-pointer text-[11px] text-zinc-400">
+            journal entry
+          </summary>
+          {journalOpen && <JournalScroll iterationId={iterationId} />}
+        </details>
+      ) : null}
+      <div className="mt-2 flex flex-wrap gap-3 text-[11px]">
+        {chainId && (
+          <Link
+            data-testid="journey-chain-link"
+            to={`/chain/req/${encodeURIComponent(chainId)}`}
+            className="text-sky-300 underline hover:text-sky-200"
+          >
+            call chain {chainId.slice(0, 8)}…
+          </Link>
+        )}
+        {expId && (
+          <Link
+            data-testid="journey-experiment-link"
+            to={`/experiments/${encodeURIComponent(expId)}`}
+            className="text-sky-300 underline hover:text-sky-200"
+          >
+            experiment {expId}
+          </Link>
+        )}
+        {cycleRunId !== null && (
+          <Link
+            data-testid="journey-cycle-link"
+            to="/coordinator"
+            className="text-sky-300 underline hover:text-sky-200"
+          >
+            coordinator cycle {cycleRunId || "(unnamed run)"}
+          </Link>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+// The journey blocks for ONE iteration — read-only, the absorbed modal
 // rendering idioms reused (hypothesis / retrieval+relevance / novelty / critic +
 // contradicting paper / experiment-outcome / honest stage label). Every value is
 // asText-coerced; absent blocks render their own quiet placeholder.
@@ -207,6 +460,31 @@ function JourneyBlocks({ row }: { row: IterationRecord }) {
   // amber. Absent on every normal row (advisory is dark by default).
   const topicalityAdvisory = asText(relevance?.topicality_advisory);
 
+  // hypothesis.candidates_considered (absorbed modal line): a finite number
+  // only — NaN/garbage drops the line rather than faking a count.
+  const candidatesRaw = hypothesis?.candidates_considered;
+  const candidates =
+    typeof candidatesRaw === "number" && Number.isFinite(candidatesRaw)
+      ? candidatesRaw
+      : null;
+
+  // Conditioning bullets (absorbed "conditioned by" section) — the shared
+  // chips.conditioningBullets guard: non-array → [], junk entries filtered.
+  const bullets = conditioningBullets(row);
+
+  // experiment_outcome.value is scalar OR object (multi-metric); only a usable
+  // scalar renders as "value" — an object renders its own scalar entries
+  // instead (never "[object Object]"). Absorbed modal idiom.
+  const scalarValue = asText(outcome?.value);
+  const objectValueEntries =
+    outcome?.value != null &&
+    typeof outcome.value === "object" &&
+    !Array.isArray(outcome.value)
+      ? Object.entries(outcome.value as Record<string, unknown>)
+          .map(([k, v]) => [k, asText(v)] as const)
+          .filter(([, v]) => v !== "")
+      : [];
+
   return (
     <div data-testid="journey-blocks">
       {/* hypothesis */}
@@ -216,6 +494,14 @@ function JourneyBlocks({ row }: { row: IterationRecord }) {
         ) : (
           <p className="text-zinc-500">no hypothesis text on this row</p>
         )}
+        {candidates !== null ? (
+          <div
+            data-testid="journey-candidates"
+            className="mt-1 text-[11px] text-zinc-400"
+          >
+            candidates considered: {candidates}
+          </div>
+        ) : null}
       </Section>
 
       {/* retrieval + relevance */}
@@ -260,8 +546,33 @@ function JourneyBlocks({ row }: { row: IterationRecord }) {
                 </span>
               </div>
             ) : null}
+            {/* the FULL evidence diagnostic grid (absorbed modal section 3):
+                the ladder diagnostics beyond the frozen trio. Absent fields
+                omit their line (legacy rows), never fake a value. */}
+            <div
+              data-testid="journey-evidence-grid"
+              className="mt-1.5 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 font-mono text-[11px]"
+            >
+              <DetailRow k="category" v={relevance.category} />
+              <DetailRow k="rule_fired" v={relevance.rule_fired} />
+              <DetailRow k="anchor_cosine" v={relevance.anchor_cosine} />
+              <DetailRow k="curated_overlap" v={relevance.curated_overlap} />
+              <DetailRow k="neighbor_spread" v={relevance.neighbor_spread} />
+            </div>
           </div>
         ) : null}
+        {/* the low-evidence detail INLINE (absorbed modal amber box) — only
+            when the badge itself would fire; the D-052 advisory above stays
+            OUT of this amber lane (non-gating; never cry wolf). */}
+        {isLowEvidence(row) && (
+          <div
+            data-testid="journey-low-evidence-detail"
+            className="mt-2 rounded border border-amber-900/50 bg-amber-950/20 px-2 py-1.5 text-[11px] text-amber-200/90"
+          >
+            <LowEvidenceBadge record={row} />
+            <p className="mt-1">{lowEvidenceDetail(row)}</p>
+          </div>
+        )}
       </Section>
 
       {/* novelty */}
@@ -293,9 +604,47 @@ function JourneyBlocks({ row }: { row: IterationRecord }) {
             <span className="text-zinc-500">uncontradicted</span>
           )}
         </div>
+        <Field label="skeptic verdict" value={critique?.skeptic_verdict} />
         {critique === null ? (
           <p className="text-zinc-500">no critique block on this row</p>
         ) : null}
+        {/* the redteam ADVERSARIAL DETAIL (absorbed modal section 4): the
+            clean proceed/0 chip that never earns a row's alarm slot reads
+            here, with every redteam field. Absent block → no sub-section. */}
+        {row.redteam != null && typeof row.redteam === "object" && (
+          <div data-testid="journey-redteam" className="mt-2">
+            <RedteamChip redteam={row.redteam} />
+            <div className="mt-1 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-[11px]">
+              <DetailRow k="redteam critique" v={row.redteam.critique} />
+              <DetailRow
+                k="suggested revision"
+                v={row.redteam.suggested_revision}
+              />
+              <DetailRow k="confidence" v={row.redteam.confidence} />
+              <DetailRow k="retries used" v={row.redteam.retries_used} />
+            </div>
+          </div>
+        )}
+      </Section>
+
+      {/* conditioned by — the meta_review bullets this iteration was primed
+          with (absorbed modal section 5; the inner testid keeps the modal's
+          conditioning-<id> shape so the moved-scope pins read 1:1). */}
+      <Section title="conditioned by" testid="journey-conditioning">
+        {bullets.length > 0 ? (
+          <div
+            data-testid={`conditioning-${asText(row.iteration_id) || "row"}`}
+            className="rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1"
+          >
+            <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-zinc-400">
+              {bullets.map((bullet, i) => (
+                <li key={i}>{bullet}</li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <p className="text-zinc-500">no conditioning bullets on this row</p>
+        )}
       </Section>
 
       {/* experiment outcome — Phase-2 placeholder when absent */}
@@ -304,7 +653,18 @@ function JourneyBlocks({ row }: { row: IterationRecord }) {
           <div data-testid="journey-outcome-present">
             <Field label="experiment" value={outcome.experiment_id} />
             <Field label="metric" value={outcome.metric} />
-            <Field label="value" value={outcome.value} />
+            {/* value: scalar renders as-is; a multi-metric OBJECT renders its
+                own scalar entries (absorbed modal idiom — never
+                "[object Object]", junk sub-values dropped). */}
+            {scalarValue.length > 0 ? (
+              <Field label="value" value={outcome.value} />
+            ) : (
+              objectValueEntries.map(([k, v]) => (
+                <Field key={k} label={`value.${k}`} value={v} />
+              ))
+            )}
+            <Field label="trials" value={outcome.trials} />
+            <Field label="results" value={outcome.results_path} />
             <Field label="summary" value={outcome.summary} />
           </div>
         ) : (
@@ -536,6 +896,10 @@ export default function PipelineJourney({ item, journey, detail }: Props) {
         </div>
       ) : null}
 
+      {/* the absorbed modal VERDICT HEADER — the full badge row + override
+          provenance as visible text (the row surfaces keep tooltip-only). */}
+      <VerdictHeader row={iterationRecord} />
+
       {/* the honest STAGE BANNER above the ribbon — names the tier this
           iteration actually reached (applied vs literature), inferred from the
           experiment_outcome block. applied = quiet cyan; literature = quiet
@@ -577,6 +941,9 @@ export default function PipelineJourney({ item, journey, detail }: Props) {
         <span className="uppercase tracking-wide text-zinc-600">stage</span>{" "}
         {stageLabel(iterationRecord)}
       </div>
+
+      {/* the absorbed journal disclosure + deep links out of the dossier. */}
+      <JourneyLinks row={iterationRecord} />
     </div>,
   );
 }

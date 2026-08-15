@@ -17,26 +17,17 @@
 //
 // No headless browser exists; "renders clean" = jsdom render + a console
 // spy (vi.spyOn) asserted not-called, the repo's standing stand-in.
-import { render, screen, within, cleanup, fireEvent } from "@testing-library/react";
+import { render, screen, within, cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
-import * as http from "../src/api/http";
 
 import SourceBadge, { sourceTone } from "../src/components/SourceBadge";
 import AgentBadge from "../src/components/AgentBadge";
 import CoordinatorCycleCard from "../src/components/CoordinatorCycleCard";
-import ResolvedIterationsList from "../src/components/ResolvedIterationsList";
 import SurfacedFindingsPanel from "../src/components/SurfacedFindingsPanel";
 import BubblesPanel from "../src/components/BubblesPanel";
 import HealthSignalsPanel from "../src/components/HealthSignalsPanel";
-import {
-  COORDINATOR_CYCLES_FIXTURE,
-  ITERATIONS_COORD_FIXTURE,
-} from "../src/fixtures/coordinator";
-import type {
-  CoordinatorCycle,
-  IterationRecord,
-} from "../src/types/schemas";
+import { COORDINATOR_CYCLES_FIXTURE } from "../src/fixtures/coordinator";
+import type { CoordinatorCycle } from "../src/types/schemas";
 
 afterEach(() => {
   cleanup();
@@ -111,9 +102,9 @@ describe("audit: SourceBadge provenance tones are pinned and pairwise distinct",
 //    is a cycle's topic_source or an iteration's seed.source. This is the
 //    "provenance everywhere, read it the same everywhere" invariant.
 // ---------------------------------------------------------------------------
-describe("audit: a provenance value reads identically on a cycle card and an iteration row", () => {
+describe("audit: a provenance value reads identically on a cycle card and an iteration surface", () => {
   for (const source of ["nemoclaw_agent", "coordinator", "arxiv_pick"]) {
-    it(`"${source}" → same hue on CoordinatorCycleCard.topic_source and ResolvedIterationsList seed.source`, () => {
+    it(`"${source}" → same hue on CoordinatorCycleCard.topic_source and the iteration SourceBadge`, () => {
       // Cycle card: topic_source lives under the stable wrapper testid.
       const cycle: CoordinatorCycle = {
         ...COORDINATOR_CYCLES_FIXTURE[1],
@@ -126,26 +117,15 @@ describe("audit: a provenance value reads identically on a cycle card and an ite
       const cardHue = hueOf(cardBadge.className);
       cleanup();
 
-      // Iterations list: seed.source on a row. `initial` bypasses polling.
-      const row: IterationRecord = {
-        ...ITERATIONS_COORD_FIXTURE[0],
-        iteration_id: `iter-audit-${source}`,
-        seed: { topic: "audit row", source },
-      };
-      // 2026-06-10 condense: only nemoclaw_agent badges in the ROW; every
-      // source badges in the IterationDetailModal — read the hue there.
-      vi.spyOn(http, "getCoordinatorCycles").mockResolvedValue({ cycles: [] });
-      render(
-        <MemoryRouter>
-          <ResolvedIterationsList initial={[row]} />
-        </MemoryRouter>,
-      );
-      fireEvent.click(screen.getByLabelText(`load journal iter-audit-${source}`));
-      const modal = within(screen.getByTestId("iteration-detail-modal"));
-      const rowHue = hueOf(modal.getAllByTestId("source-badge")[0].className);
+      // Iteration side (S2): the detail modal died; every source now badges in
+      // the dossier reader's PipelineJourney verdict header, which mounts the
+      // SAME SourceBadge with seed.source. Rendering the shared badge directly
+      // pins the same invariant (one component, one hue per provenance).
+      render(<SourceBadge source={source} />);
+      const iterHue = hueOf(screen.getByTestId("source-badge").className);
 
       expect(cardHue).not.toBeNull();
-      expect(rowHue).toBe(cardHue);
+      expect(iterHue).toBe(cardHue);
     });
   }
 });

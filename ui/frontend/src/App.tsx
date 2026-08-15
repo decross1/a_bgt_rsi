@@ -3,23 +3,25 @@ import LoopAlertBanner from "./components/LoopAlertBanner";
 import Activity from "./routes/Activity";
 import Coordinator from "./routes/Coordinator";
 import Dashboard from "./routes/Dashboard";
+import DossierIndex from "./routes/DossierIndex";
+import DossierReader from "./routes/DossierReader";
 import ExperimentDetail from "./routes/ExperimentDetail";
 import Experiments from "./routes/Experiments";
 import Inspector from "./routes/Inspector";
 import Ladder from "./routes/Ladder";
 import Pulse from "./routes/Pulse";
-import Todo from "./routes/Todo";
 
-// UI simplification S1 shell (docs/ui_simplification_plan_2026-08-15.md):
+// UI simplification S2 shell (docs/ui_simplification_plan_2026-08-15.md):
 // the nav is the three owner surfaces — pulse (healthy + do I owe anything),
-// ladder (what's cooking), todo (the resolution cockpit; becomes /dossier in
-// S2) — with everything engine-internal collapsed behind "engine ▾". The old
-// Dashboard stays reachable at /dashboard until S3 removes it; /ideas folds
-// into /ladder via redirect.
+// ladder (what's cooking), dossiers (the reader — the product) — with
+// everything engine-internal collapsed behind "engine ▾". The old /todo
+// cockpit died this slice (/todo redirects to /dossier); the old Dashboard
+// stays reachable at /dashboard until S3 removes it; /ideas folds into
+// /ladder via redirect.
 const NAV = [
   { to: "/", label: "pulse", end: true },
   { to: "/ladder", label: "ladder", end: false },
-  { to: "/todo", label: "todo", end: false },
+  { to: "/dossier", label: "dossiers", end: false },
 ];
 
 // Engine-internal destinations, collapsed. A plain <details> disclosure (no
@@ -117,7 +119,11 @@ export default function App() {
           {/* /ideas folded into /ladder (its ideas.md render is the ladder
               page's fallback body). */}
           <Route path="/ideas" element={<Navigate to="/ladder" replace />} />
-          <Route path="/todo" element={<Todo />} />
+          {/* the dossier surfaces (S2): index picker + per-id reader. The old
+              /todo cockpit is retired — its bookmark redirects. */}
+          <Route path="/dossier" element={<DossierIndex />} />
+          <Route path="/dossier/:id" element={<DossierReader />} />
+          <Route path="/todo" element={<Navigate to="/dossier" replace />} />
           {/* Old surfaces stay reachable until S3 removes them. */}
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/activity" element={<Activity />} />
