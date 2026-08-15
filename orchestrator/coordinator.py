@@ -703,6 +703,12 @@ def _default_execute_handlers() -> dict[str, Callable[..., Any]]:
     def _mine_gap(*, n: int = 20, max_emit: int = 2) -> Any:
         return _mine_paper_gap(n=n, max_emit=max_emit)
 
+    def _refine_idea(*, cluster_id: str, max_rounds: int = 5) -> Any:
+        """D-064: bounded critique-refine on one cluster. Imported lazily so
+        the frontier CLI seam is only touched when the action actually runs."""
+        from workers.refine_cycle import refine_cluster
+        return refine_cluster(cluster_id, max_rounds=max_rounds)
+
     return {
         "run_loop_iteration": _run_loop_iteration,
         "promote_findings": _promote,
@@ -711,6 +717,7 @@ def _default_execute_handlers() -> dict[str, Callable[..., Any]]:
         "run_experiment": handle_run_experiment,
         "forecast_markets": handle_forecast_markets,
         "mine_paper_gap": _mine_gap,
+        "refine_idea": _refine_idea,
     }
 
 

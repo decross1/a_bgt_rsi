@@ -24,6 +24,7 @@ def test_known_actions_returns_v2_menu():
     assert names == {
         "run_loop_iteration", "promote_findings", "bubble_up", "noop",
         "run_experiment", "forecast_markets", "mine_paper_gap",
+        "refine_idea",   # D-064 (2026-08-15): bounded critique-refine
     }
     for entry in menu:
         assert set(entry) == {"name", "description", "arg_schema", "cost"}
@@ -151,7 +152,9 @@ def test_actions_registry_is_the_v2_menu():
     assert set(ACTIONS) == {
         "run_loop_iteration", "promote_findings", "bubble_up", "noop",
         "run_experiment", "forecast_markets", "mine_paper_gap",
+        "refine_idea",   # D-064 (2026-08-15): bounded critique-refine cycle
     }
+    assert ACTIONS["refine_idea"]["cost"] == 2
     assert ACTIONS["run_loop_iteration"]["cost"] == 3
     assert ACTIONS["promote_findings"]["cost"] == 2
     assert ACTIONS["bubble_up"]["cost"] == 1

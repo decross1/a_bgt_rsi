@@ -174,6 +174,28 @@ ACTIONS: dict[str, dict[str, Any]] = {
         ),
         "handler_ref": "workers.mine_paper_gap:mine_paper_gap",
     },
+    "refine_idea": {
+        "description": (
+            "D-064 critique-refine cycle on ONE killed or vetoed cluster: both "
+            "frontier reviewers give improvement feedback (prior work, missing "
+            "controls), Nara revises the claim to address it, the screen runs "
+            "again — up to 5 bounded rounds, then a coded kill with the full "
+            "refinement history. A pass STOPS the cycle; it never auto-promotes "
+            "(a survivor re-enters at its honest rung and still owes that rung's "
+            "test), and a reopen happens only when the cluster's stored "
+            "reopening_condition is the evidence kind a frontier pass actually "
+            "provides. Worth a slot when a cluster died on a critique that named "
+            "concrete prior work or a fixable confound — the improvement "
+            "information is otherwise discarded with the idea."
+        ),
+        "cost": 2,
+        "arg_schema": _obj_schema(
+            {"cluster_id": {"type": "string", "minLength": 1},
+             "max_rounds": {"type": "integer", "minimum": 1, "maximum": 5}},
+            ["cluster_id"],
+        ),
+        "handler_ref": "workers.refine_cycle:refine_cluster",
+    },
 }
 
 
