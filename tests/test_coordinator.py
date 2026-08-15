@@ -69,6 +69,9 @@ def state_files(tmp_path):
         "source_iteration_id": "iter-2026-06-05-099",
         "title": "An older surfaced finding",
         "status": "surfaced",
+        # D-059 bar-aware pending: only L4/L5 findings count as awaiting the
+        # human; a row without evidence_level is legacy/below-bar info.
+        "evidence_level": "L4",
     }) + "\n")
     # active_run.json absent -> idle.
     return {

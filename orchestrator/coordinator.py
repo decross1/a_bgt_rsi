@@ -267,6 +267,24 @@ def _topic_suggestions(
     return out
 
 
+def _killed_member_ids() -> set:
+    """Member ids of KILLED idea-ledger clusters (memoization-free pure read;
+    absent/unreadable ledger -> empty set, fail-open)."""
+    try:
+        from workers.idea_ledger import load_state
+        state = load_state(DEFAULT_IDEA_LEDGER)
+    except Exception:
+        return set()
+    out: set = set()
+    for c in state.values():
+        if c.get("status") == "killed":
+            for m in c.get("members") or []:
+                out.add(m)
+                if isinstance(m, str) and m.startswith("sf-"):
+                    out.add(m[3:])
+    return out
+
+
 def assess_state(
     *,
     loop_memory_path: str | os.PathLike = DEFAULT_LOOP_MEMORY,
@@ -334,20 +352,36 @@ def assess_state(
             "gate_status": r.get("gate_status"),
             "human_verdict": human_verdict,
         })
-        # An "open thread" = a recent iteration with no human verdict yet.
+        # An "open thread" = a recent iteration with no human verdict yet —
+        # EXCLUDING members of killed clusters (D-059: the ladder already
+        # disposed of them; a gate verdict on a dead cluster's iteration is
+        # not owed). Ledger absent -> no exclusion (fail-open).
         if human_verdict is None and r.get("gate_status") == "pending":
-            open_threads.append(iid)
+            if iid not in _killed_member_ids():
+                open_threads.append(iid)
 
-    # --- surfaced findings awaiting review ---
+    # --- surfaced findings awaiting review (D-059 bar-aware) ---
+    # Only findings that CLEARED the ladder bar (evidence_level L4/L5) await
+    # the human; legacy pre-ladder rows (no evidence_level — the demoted 31)
+    # are counted separately as information, never as owed attention. This
+    # was the "clear the 31 findings" echo the channel kept recommending
+    # after consolidation had already demoted them (owner-reported
+    # 2026-08-15).
     surfaced_pending: list[dict[str, Any]] = []
+    surfaced_below_bar = 0
     for sf in _read_jsonl(surfaced_path):
         status = sf.get("status")
-        if status in ("surfaced", "in_review"):
+        if status not in ("surfaced", "in_review"):
+            continue
+        if sf.get("evidence_level") in ("L4", "L5"):
             surfaced_pending.append({
                 "finding_id": sf.get("finding_id"),
                 "title": str(sf.get("title") or "")[:200],
                 "status": status,
+                "evidence_level": sf.get("evidence_level"),
             })
+        else:
+            surfaced_below_bar += 1
 
     # --- experiments discovery (filesystem inspection only) ---
     try:
@@ -367,6 +401,10 @@ def assess_state(
         gaps.append(
             f"{len(surfaced_pending)} surfaced finding(s) await human review"
         )
+    # Below-bar legacy findings are INFORMATION, not a gap of any kind —
+    # they ride in the state as `surfaced_below_bar` (see return) so the
+    # planner/channel can mention them without the daemon's work_exists or
+    # the planner reading them as owed work.
     # novel-but-unpromoted: a recent novel+survives iteration with no surfaced row.
     surfaced_src = {
         sf.get("source_iteration_id") for sf in _read_jsonl(surfaced_path)
@@ -408,6 +446,7 @@ def assess_state(
         "open_threads": open_threads,
         "gaps": gaps,
         "surfaced_pending": surfaced_pending,
+        "surfaced_below_bar": surfaced_below_bar,
         "experiments": experiments,
         "topic_suggestions": _topic_suggestions(loop_memory_path),
     }

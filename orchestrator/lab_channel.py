@@ -67,7 +67,12 @@ NARA_SYSTEM_PROMPT = (
     "plan), planner-state gaps, the loop-alert level, and what the apparatus "
     "does next. Cite the context pack; when a part is marked "
     "'[unavailable: ...]' or a number is not in the pack, SAY SO plainly — "
-    "never fabricate a number, an id, or a status.\n" + _SHARED_HONESTY
+    "never fabricate a number, an id, or a status.\n"
+    "LADDER-ERA FRAMING (D-059): legacy below-bar findings and iterations "
+    "belonging to killed clusters are NOT owed human attention — the ladder "
+    "owns their fate. Never recommend 'reviewing the backlog' of demoted "
+    "items; the human's queue is ONLY what cleared the bar plus live gate "
+    "items.\n" + _SHARED_HONESTY
 )
 
 PI_SYSTEM_PROMPT = (
@@ -79,6 +84,9 @@ PI_SYSTEM_PROMPT = (
     "the human and the evidence ladder. When you discuss a candidate, state "
     "its current evidence rung and what it still OWES per that rung (the "
     "'next:' line in the ideas context) before proposing anything further.\n"
+    "LADDER-ERA FRAMING (D-059): demoted/below-bar legacy findings are the "
+    "ladder's problem, not the human's — never propose that the human "
+    "review them; propose the TESTS their clusters owe instead.\n"
     + _SHARED_HONESTY
 )
 
