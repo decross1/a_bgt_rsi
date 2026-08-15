@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/decross1/a_bgt_rsi/schema/idea_ledger.schema.json",
   "title": "Idea-ledger event record",
-  "description": "One line of memory/idea_ledger.jsonl (LOOP_V1 P3, D-060). The ledger is an APPEND-ONLY event log; all cluster state is a deterministic reduction (workers/idea_ledger.py). Discriminated on event_type. Eight members: cluster_created, member_added, evidence_level_changed, cluster_killed, cluster_reopened, niche_seeded, agenda_item_added, agenda_item_consumed. kill_reason codes are a closed enum — programmatic builders only, never LLM prose (Honest Lying 0/121 result).",
+  "description": "One line of memory/idea_ledger.jsonl (LOOP_V1 P3, D-060). The ledger is an APPEND-ONLY event log; all cluster state is a deterministic reduction (workers/idea_ledger.py). Discriminated on event_type. Nine members: cluster_created, member_added, evidence_level_changed, cluster_killed, cluster_reopened, niche_seeded, agenda_item_added, agenda_item_consumed, cluster_refined. kill_reason codes are a closed enum — programmatic builders only, never LLM prose (Honest Lying 0/121 result).",
   "type": "object",
   "$defs": {
     "ts": {
@@ -225,6 +225,32 @@
         "consumed_by": {
           "type": "string",
           "description": "e.g. the iteration_id the topic seeded."
+        }
+      }
+    },
+    {
+      "title": "cluster_refined",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_type", "ts", "cluster_id", "round", "refined_claim"],
+      "properties": {
+        "event_type": {"const": "cluster_refined"},
+        "ts": {"$ref": "#/$defs/ts"},
+        "cluster_id": {"$ref": "#/$defs/cluster_id"},
+        "round": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "1-based critique-refine round (workers/refine_cycle.py; MAX_REFINE_ROUNDS=5 hard cap, D-064)."
+        },
+        "refined_claim": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The revised claim text after this round's reviewer critiques (worker-capped ~1200 chars)."
+        },
+        "feedback_digest": {
+          "type": "string",
+          "description": "Short joined heads of both frontier reviewers' critiques that drove this revision."
         }
       }
     }

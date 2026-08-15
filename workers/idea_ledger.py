@@ -62,7 +62,7 @@ _SURFACED_LEVELS = frozenset({"L4", "L5"})
 _EVENT_TYPES = frozenset({
     "cluster_created", "member_added", "evidence_level_changed",
     "cluster_killed", "cluster_reopened", "niche_seeded",
-    "agenda_item_added", "agenda_item_consumed",
+    "agenda_item_added", "agenda_item_consumed", "cluster_refined",
 })
 
 _schema_cache: dict[str, Any] | None = None
@@ -218,6 +218,17 @@ def reduce_events(events: list[dict]) -> dict[str, dict]:
                 c["agenda"].append({
                     "topic": ev["topic"], "source": ev["source"],
                     "status": "pending", "ts": ts,
+                })
+            elif et == "cluster_refined":
+                # D-064 (workers/refine_cycle.py): latest revision + history.
+                # Keys are additive-on-first-event so refine-free ledgers
+                # reduce byte-identically to their pre-D-064 states.
+                c["refined_claim"] = ev["refined_claim"]
+                c.setdefault("refine_history", []).append({
+                    "round": ev["round"],
+                    "ts": ts,
+                    "refined_claim": ev["refined_claim"],
+                    "feedback_digest": ev.get("feedback_digest"),
                 })
             elif et == "agenda_item_consumed":
                 hit = next((a for a in c["agenda"]
