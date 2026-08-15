@@ -234,12 +234,22 @@ def dispatch_packet(
                      if k not in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
                                   "OPENAI_API_KEY", "SEMANTIC_SCHOLAR_API_KEY")}
         spawn_env.update(agent_env)
+        # The agent's own output is EVIDENCE, not noise: a builder that
+        # refused an out-of-scope write, or blew its context window, says so
+        # on stdout and nowhere else. Dropping it (as this did until
+        # 2026-08-15) makes those failures invisible in packets.jsonl.
+        agent_tail = ""
+        agent_rc: int | None = None
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 list(agent_cmd), cwd=str(worktree), timeout=timeout_sec,
                 capture_output=True, text=True,
                 env=spawn_env,
             )
+            agent_rc = proc.returncode
+            agent_tail = ((proc.stdout or "") + (proc.stderr or "")).strip()[-800:]
+            if proc.returncode != 0:
+                agent_error = f"agent exited {proc.returncode}"
         except subprocess.TimeoutExpired:
             agent_error = f"agent timed out after {timeout_sec}s"
         except (FileNotFoundError, OSError) as exc:
@@ -298,6 +308,10 @@ def dispatch_packet(
             "test_output_digest": digest, "decided_by": "dispatcher",
             **({"verify_tail": verify_tail} if verify_tail else {}),
             **({"agent_error": agent_error} if agent_error else {}),
+            **({"agent_rc": agent_rc} if agent_rc is not None else {}),
+            # Only on a non-done attempt: a green build needs no post-mortem.
+            **({"agent_tail": agent_tail}
+               if agent_tail and attempt_status != "done" else {}),
         })
         log(
             {

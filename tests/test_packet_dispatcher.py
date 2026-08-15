@@ -239,3 +239,21 @@ def test_consume_authorize_fix_queue_maps_enqueued_rows(tmp_path):
 
 def test_consume_authorize_fix_queue_missing_file_is_empty(tmp_path):
     assert pd.consume_authorize_fix_queue(tmp_path / "absent.jsonl") == []
+
+
+def test_agent_output_is_captured_on_a_failed_attempt(tmp_path):
+    """2026-08-15: the dispatcher discarded the agent's stdout, so a builder
+    that REFUSED an out-of-scope write (qwen_builder does exactly that,
+    loudly) left no trace in packets.jsonl — the failure was invisible. A
+    non-done attempt now carries agent_rc + an agent_tail excerpt."""
+    repo = _mk_repo(tmp_path)
+    agent = _mk_agent(
+        tmp_path,
+        "echo 'REFUSED: model tried to write orchestrator/nara.py'\nexit 3\n")
+    report, lines, sink = _dispatch(repo, tmp_path, agent, _packet())
+    assert report["status"] != "done"
+    closes = [l for l in lines if l["status"] in ("failed", "budget_exhausted")]
+    assert closes, "a refused attempt must close the ledger line"
+    last = closes[-1]
+    assert last["agent_rc"] == 3
+    assert "REFUSED" in last["agent_tail"]
