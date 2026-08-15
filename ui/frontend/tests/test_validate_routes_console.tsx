@@ -379,6 +379,16 @@ vi.mock("../src/api/http", () => ({
   // /ladder page's endpoint pair (204-null ledger -> ideas.md fallback body).
   getActiveRuns: vi.fn().mockResolvedValue({ runs: [], skipped: 0 }),
   getLadder: vi.fn().mockResolvedValue(null),
+  // The lab's queue (Pulse's secondary zone): a cold checkout answers with
+  // gaps and empty ledger lists — the honest "nothing queued" render.
+  getLabTodo: vi.fn().mockResolvedValue({
+    agent_gaps: [],
+    human_gaps: [],
+    owed: [],
+    agenda: [],
+    refine_candidates: [],
+    generated_at: "2026-08-15T12:00:00Z",
+  }),
   getIdeas: vi
     .fn()
     .mockResolvedValue({ markdown: "# Ideas\n\n## Live work\n\n(none)\n" }),

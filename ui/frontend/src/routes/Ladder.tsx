@@ -18,6 +18,7 @@
 // version skew → EndpointMissingNote) or the ledger has never been written
 // (204 → honest "no idea ledger yet"). Read-only throughout.
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 
 import EndpointMissingNote, {
   isVersionSkew404,
@@ -209,6 +210,17 @@ export default function Ladder({ initial, initialIdeas, pollMs = 30_000 }: Props
           it. Only L4+ surfaces to you (D-059); the rest is the machine&apos;s
           to advance or kill.
         </p>
+        {/* The lab's QUEUE (what these clusters owe next, plus the agenda and
+            the refine candidates) lives in Pulse's secondary zone — this board
+            is the state, that panel is the to-do. Pulse scrolls to the anchor
+            on arrival. */}
+        <Link
+          to="/#lab-queue"
+          data-testid="ladder-lab-queue-link"
+          style={{ fontSize: "var(--text-meta)", color: "var(--accent)" }}
+        >
+          lab queue →
+        </Link>
         <div className="flex" style={{ gap: "var(--space-1)" }}>
           {viewBtn("board")}
           {viewBtn("table")}

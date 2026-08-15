@@ -384,6 +384,33 @@ vi.mock("../src/api/http", () => ({
     next_owed: { L0: "x", L1: "x", L2: "x", L3: "x", L4: "x", L5: "x" },
     unknown_top_level: true,
   }),
+  // The lab's queue on Pulse, held to the same bar: an owed group parked on a
+  // rung beyond the known ladder, a prototype-colliding kill code, and an
+  // unannounced top-level key must all render without a console error.
+  getLabTodo: vi.fn().mockResolvedValue({
+    agent_gaps: ["1 open cluster(s) at L7 awaiting something new"],
+    human_gaps: ["3 recent iteration(s) await a human gate verdict"],
+    owed: [
+      {
+        test: "a test this build has never heard of",
+        rung: "L7",
+        clusters: [
+          {
+            cluster_id: "cl-fc-001",
+            stem: "forward-compat cluster",
+            last_event_ts: "2026-08-15T00:00:00Z",
+            future_key: { nested: "object" },
+          },
+        ],
+      },
+    ],
+    agenda: [{ topic: "fc topic", source: "toString", cluster_id: "cl-fc-001" }],
+    refine_candidates: [
+      { cluster_id: "cl-fc-002", stem: "killed with unknown code", kill_code: "toString" },
+    ],
+    generated_at: "2026-08-15T00:00:00Z",
+    unknown_top_level: true,
+  }),
   getIdeas: vi.fn().mockResolvedValue({ markdown: "# Ideas\n" }),
 }));
 

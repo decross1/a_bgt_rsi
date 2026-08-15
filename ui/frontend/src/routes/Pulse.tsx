@@ -10,6 +10,10 @@
 //   1. HERO — OweStrip: what the human actually owes (gate verdicts + L4/L5
 //      findings). Biggest type, highest contrast, first thing read. Everything
 //      below the ladder bar renders inside it as ONE muted line, never a row.
+//   1b. LabTodo — the LAB's queue (what Nara and the PI advance on their own),
+//      directly under the hero and deliberately quieter. The two queues are
+//      adjacent so the ownership line is obvious, and the panel points back up
+//      at the hero rather than restating the human's work.
 //   2. The loop's state — "Running now" (the D-047 registry as Vercel-style
 //      deployment cards), then the lab-activity sparkgrid + the L0->L5 ladder
 //      mini-funnel side by side.
@@ -21,6 +25,7 @@
 // It also owns the ONE /api/coordinator/cycles poll, handing the rows to both
 // LastCycleLine and the sparkgrid instead of letting them each poll.
 import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import Card from "../design/Card";
 import { registerPaletteActions } from "../design/CommandPalette";
 import HealthStrip from "../components/HealthStrip";
@@ -28,6 +33,7 @@ import HealthVerdict, {
   excludeQwenReadErrors,
 } from "../components/HealthVerdict";
 import LabSparkgrid from "../components/LabSparkgrid";
+import LabTodo from "../components/LabTodo";
 import LadderMiniFunnel from "../components/LadderMiniFunnel";
 import LastCycleLine from "../components/LastCycleLine";
 import ModelServerCard, {
@@ -84,8 +90,10 @@ export default function Pulse() {
   const [iterations, setIterations] = useState<IterationRecord[]>([]);
   const [launchOpen, setLaunchOpen] = useState(false);
   const now = useNow();
+  const { hash } = useLocation();
 
   const heroRef = useRef<HTMLDivElement>(null);
+  const labQueueRef = useRef<HTMLDivElement>(null);
   const activityRef = useRef<HTMLDivElement>(null);
   const launchRef = useRef<HTMLDetailsElement>(null);
 
@@ -124,6 +132,13 @@ export default function Pulse() {
     return () => clearInterval(id);
   }, []);
 
+  // Arriving from /ladder's "lab queue →" link (`/#lab-queue`): React Router
+  // does not scroll for a hash, so bring the zone into view once.
+  useEffect(() => {
+    if (hash !== "#lab-queue") return;
+    labQueueRef.current?.scrollIntoView?.({ block: "start" });
+  }, [hash]);
+
   // Pulse's verbs in the ⌘K palette (the R0 registerPaletteActions seam).
   // Registered once — the closures read refs and setState, both stable.
   useEffect(() => {
@@ -135,6 +150,13 @@ export default function Pulse() {
         group: "Pulse",
         keywords: ["todo", "queue", "gate", "verdict", "finding"],
         perform: () => scrollTo(heroRef.current),
+      },
+      {
+        id: "pulse-lab-queue",
+        label: "lab queue",
+        group: "Pulse",
+        keywords: ["nara", "pi", "todo", "owed", "agenda", "refine", "cluster"],
+        perform: () => scrollTo(labQueueRef.current),
       },
       {
         id: "pulse-activity",
@@ -245,8 +267,17 @@ export default function Pulse() {
       </div>
 
       {/* ── 1 · HERO — what you owe ─────────────────────────────────────── */}
-      <div ref={heroRef}>
+      {/* id: LabTodo's blocked-on-you line points back UP at this hero rather
+          than restating the same work as a second list. */}
+      <div id="what-you-owe" ref={heroRef}>
         <OweStrip />
+      </div>
+
+      {/* ── 1b · the LAB's queue — secondary to the hero, by design ─────── */}
+      {/* The human's queue is the hero; what Nara and the PI advance on their
+          own sits directly under it, quieter. */}
+      <div ref={labQueueRef} style={{ marginTop: "var(--space-4)" }}>
+        <LabTodo />
       </div>
 
       {/* ── 2 · the loop's state ────────────────────────────────────────── */}

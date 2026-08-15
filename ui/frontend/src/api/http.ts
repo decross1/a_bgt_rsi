@@ -14,6 +14,7 @@ import type {
   IterationJourneyResponse,
   IterationsResponse,
   JournalResponse,
+  LabTodoResponse,
   LadderResponse,
   LoopAlert,
   TelemetrySample,
@@ -141,6 +142,15 @@ export async function getLadder(): Promise<LadderResponse | null> {
   }
   return (await resp.json()) as LadderResponse;
 }
+
+// --- LAB TODO (ui/backend/lab_todo.py) ---
+// GET /api/lab_todo — the LAB's queue (assess_state's agent-actionable gaps +
+// the ledger's owed tests / agenda / refine candidates), the counterpart to
+// getHumanTodo's "what the human owes". Always 200 on a backend that has it,
+// even on a cold checkout (gaps ship, the ledger lists are empty); a 404 means
+// the RUNNING BINARY predates the endpoint — version skew, which the HttpError
+// status lets LabTodo render as a quiet EndpointMissingNote.
+export const getLabTodo = () => getJSON<LabTodoResponse>("/api/lab_todo");
 
 // GET /api/ideas returns 204 when memory/ideas.md is absent -> null.
 export async function getIdeas(): Promise<IdeasResponse | null> {

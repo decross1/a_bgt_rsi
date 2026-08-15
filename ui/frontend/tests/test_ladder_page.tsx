@@ -348,6 +348,18 @@ describe("/ladder peek panel", () => {
   });
 });
 
+describe("/ladder header", () => {
+  it("points at the lab's QUEUE, which lives in Pulse's secondary zone", () => {
+    // This board is the ladder's STATE; what those clusters owe next (plus
+    // the agenda and the refine candidates) is the LabTodo panel on Pulse.
+    renderLadder({ initial: FIXTURE });
+    expect(screen.getByTestId("ladder-lab-queue-link")).toHaveAttribute(
+      "href",
+      "/#lab-queue",
+    );
+  });
+});
+
 describe("/ladder view toggle", () => {
   it("switches between the board and the table over the same dataset", () => {
     renderLadder({ initial: FIXTURE });
