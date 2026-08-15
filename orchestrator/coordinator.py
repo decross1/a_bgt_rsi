@@ -60,7 +60,9 @@ PAUSE_PATH = REPO_ROOT / "run_state" / "pause_coordinator"
 # EXECUTED cycle {date, run_id, spent}; a new execute cycle refuses when
 # today's total would exceed the cap. Dry-runs are never charged.
 BUDGET_LEDGER_PATH = REPO_ROOT / "run_state" / "coordinator_budget.jsonl"
-DAILY_BUDGET_CAP = int(os.environ.get("COORDINATOR_DAILY_CAP", "18"))
+# D-063 (2026-08-15, owner-ratified): 18 -> 60 for hourly/always-on cadence
+# (24 cycles x ~2.5 avg cost; ~50 min GPU/day). Env-overridable as before.
+DAILY_BUDGET_CAP = int(os.environ.get("COORDINATOR_DAILY_CAP", "60"))
 
 CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 

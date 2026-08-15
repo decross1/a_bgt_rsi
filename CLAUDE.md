@@ -220,10 +220,12 @@ These do not bend.
 
 - Polymarket live trading — design-only until CFTC compliance work
   is done (Phase 2+).
-- Continuous-running orchestrator — not yet; LOOP_V0 is single-shot,
-  human-triggered iterations, except as bounded by [`D-040`](DECISIONS.md)
-  once β ships (D-040 is ratified but takes effect only at β; until then
-  this guardrail stands unchanged).
+- Continuous-running orchestrator — **PERMITTED as of D-063 (2026-08-15,
+  owner-ratified, executing D-040's β clause)**: hourly cron cadence +
+  an event-driven daemon, ALWAYS behind the full gate ladder (flock,
+  pause file, D-049 sentinel, memory preflight, daily budget ledger
+  cap 60, stall detector + loop_alert). The pause file
+  (`run_state/pause_coordinator`) remains the human kill switch.
 - Fine-tuning / training runs — not in LOOP_V0.
 - Model roles are FIXED (G5 fix 2026-08-15 — the old "second model
   excluded (D-033)" bullet was stale; D-033 was superseded in live

@@ -3137,3 +3137,30 @@ the June Qwen redteam fatal_flaw; novelty: von Wangenheim prior) — first calib
 datapoint = frontier/local agreement. **Reversibility.** `rm run_state/frontier_tos_ratified`
 darkens every frontier path (CLI + cron refuse, test-pinned); the promotion stage is
 env-gated off by default.
+
+## D-063 — Always-on Nara: hourly cadence + event-driven daemon (executes D-040's β clause; owner-ratified)
+
+**Date.** 2026-08-15 (ratification row `D063_ratify_always_on` in
+`run_state/overrides.jsonl`). **Context.** The continuous-orchestrator guardrail
+was written pre-β with D-040 as its sunset clause. β shipped 06-18; on 08-15 the
+loop proved itself autonomous twice in production (un-blind clean iteration at
+09:00Z; agenda-first cycle at 15:00Z), and the safety inventory the June zombie
+demanded now exists: stall detector + red loop_alert, container watchdog cron,
+budget ledger, keyed near-misses, pause-file kill switch, and the L4+ surfacing
+bar (volume cannot flood the human — it accumulates on ladder rungs).
+
+**Decision.** (1) **Stage 1 (immediate):** coordinator cron `0 9,15` → hourly
+`0 * * * *`; `DAILY_BUDGET_CAP` 18 → 60 (24 cycles × ~2.5 avg cost ≈ ~50 min
+GPU/day; env-overridable unchanged). (2) **Stage 2:** resident
+`orchestrator/nara_daemon.py` under systemd --user (Restart=always): wakes on
+EVENTS (agenda additions, mined papers, lab-channel delegations, packet
+completions) with a heartbeat floor + idle backoff; every pass runs the SAME
+gate ladder as cron/run-coordinator.sh (flock, pause, D-049 sentinel,
+preflight, budget). Cron stays as belt-and-braces until the daemon shows a
+clean week, then retires by a follow-up note. (3) **Stage 3:** lab-channel
+messages wake the daemon; Nara posts cycle results to the channel.
+CLAUDE.md guardrail bullet amended accordingly (Tier S, ratified herein).
+
+**Reversibility.** `run_state/pause_coordinator` halts everything instantly;
+crontab line reverts to `0 9,15`; cap reverts via `COORDINATOR_DAILY_CAP`;
+the daemon is `systemctl --user stop/disable nara-daemon`.
