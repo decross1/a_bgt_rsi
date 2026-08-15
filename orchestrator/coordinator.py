@@ -409,16 +409,33 @@ def assess_state(
     surfaced_src = {
         sf.get("source_iteration_id") for sf in _read_jsonl(surfaced_path)
     }
-    novel_unpromoted = [
-        f["iteration_id"] for f in recent_findings
-        if f["novelty"] == "novel"
-        and f["critic"] == "survives"
-        and f["iteration_id"] not in surfaced_src
-    ]
+    # D-059: novel+surviving is NOT promotable on its own — promote_findings
+    # defers anything below L3 (the vote IS the L3->L4 rung). Reporting the
+    # bare novel+surviving count invited the planner to spend a slot on a
+    # promotion pass that provably could not promote, producing a genuine
+    # no-op cycle (caught red by the stall detector 2026-08-15T23:00Z). Only
+    # vote-ready (L3) iterations are an actionable promotion gap.
+    _rows_by_id = {r.get("iteration_id"): r for r in recent
+                   if isinstance(r.get("iteration_id"), str)}
+    novel_unpromoted: list[str] = []
+    try:
+        from workers.evidence_ladder import derive_level
+        for f in recent_findings:
+            iid = f["iteration_id"]
+            if (f["novelty"] != "novel" or f["critic"] != "survives"
+                    or iid in surfaced_src):
+                continue
+            row = _rows_by_id.get(iid)
+            if row is None:
+                continue
+            if derive_level(row, feedback.get(iid), None, [])["level"] == "L3":
+                novel_unpromoted.append(iid)
+    except Exception:
+        novel_unpromoted = []
     if novel_unpromoted:
         gaps.append(
-            f"{len(novel_unpromoted)} recent novel+surviving iteration(s) "
-            "not yet through promotion"
+            f"{len(novel_unpromoted)} iteration(s) at L3 are vote-ready for "
+            "promotion (novel + survives + replication)"
         )
 
     # --- D-059/P0 un-zombie gaps: staleness + ladder-owed tests. These are

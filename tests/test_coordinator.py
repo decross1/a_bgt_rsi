@@ -106,8 +106,14 @@ def test_assess_state_builds_snapshot(state_files):
     # surfaced finding with status "surfaced" -> pending review.
     assert any(s["finding_id"] == "sf-iter-2026-06-05-099"
                for s in snap["surfaced_pending"])
-    # gaps mention the novel+surviving unpromoted iter-001.
-    assert any("not yet through promotion" in g for g in snap["gaps"])
+    # D-059 (2026-08-15): novel+surviving alone is NOT a promotion gap —
+    # promote_findings defers anything below L3, so reporting it invited the
+    # planner to burn a slot on a pass that could not promote (a real no-op
+    # cycle, caught red by the stall detector at 23:00Z). The fixture's
+    # iter-001 has no experiment/replication, so it derives below L3 and is
+    # correctly ABSENT from the gaps; only L3 iterations are vote-ready.
+    assert not any("through promotion" in g for g in snap["gaps"])
+    assert not any("vote-ready" in g for g in snap["gaps"])
     # experiments discovered via tier_registry (real, read-only).
     assert isinstance(snap["experiments"], dict)
 
