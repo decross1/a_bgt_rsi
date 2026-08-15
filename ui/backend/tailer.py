@@ -6,17 +6,32 @@ remembers a byte offset and returns only records from lines appended
 since the last read. A trailing partial line (writer mid-append) is held
 back until its newline arrives. If the file shrinks (truncation or
 rotation) the offset resets to 0.
+
+FIRST-ATTACH SEMANTICS (2026-08-15 fix): by default the tailer attaches
+at EOF — the first ``read_new`` (or ``seek_to_end``) records the file's
+current size and returns nothing; only lines appended AFTER that are
+ever parsed. This is the fix for the 6.5GB ``/api/health`` hang
+(2026-08-15, rotated operationally): a backend restart must never
+re-parse a giant pre-existing telemetry/call log just to tail it.
+History is therefore NOT replayed. The one consumer whose in-memory
+index IS the history — ``chain.LogStore`` — opts back in with
+``replay=True`` (its files are the bounded day/exp logs, and without
+replay the /chain inspector would go blind to pre-restart records).
 """
 import json
 from pathlib import Path
 
 
 class JsonlTailer:
-    def __init__(self, path):
+    def __init__(self, path, replay=False):
         self.path = Path(path)
-        self._offset = 0
+        # None == "not yet attached": the first read attaches at the file's
+        # CURRENT size (forward-only). replay=True keeps the legacy
+        # from-byte-0 first read for index-building consumers (chain.LogStore).
+        self._offset = 0 if replay else None
 
     def reset(self):
+        """Explicitly replay from the start of the file on the next read."""
         self._offset = 0
 
     def seek_to_end(self):
@@ -30,7 +45,15 @@ class JsonlTailer:
             self._offset = 0
 
     def read_new(self):
-        """Return a list of parsed objects from newly-appended complete lines."""
+        """Return a list of parsed objects from newly-appended complete lines.
+
+        The FIRST call attaches: it seeks to the file's current end and
+        returns [] (unless constructed with replay=True) — a pre-existing
+        file, however large, is never re-parsed on attach.
+        """
+        if self._offset is None:       # first attach -> EOF, never replay
+            self.seek_to_end()
+            return []
         if not self.path.exists():
             return []
         try:
