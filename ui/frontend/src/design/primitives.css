@@ -1,0 +1,214 @@
+/* design/primitives.css — component classes for the R0 shared primitives.
+   Consumes ONLY design/tokens.css custom properties. Motion is
+   transform/opacity, driven by the motion tokens (which collapse to 0ms
+   under prefers-reduced-motion); animations are additionally hard-disabled
+   there so infinite loops (pulse, shimmer) truly stop. */
+
+/* ---- StatusDot ----------------------------------------------------------- */
+.dsn-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: currentColor;
+  flex: none;
+}
+.dsn-dot--pulse {
+  animation: dsn-pulse 1.6s var(--ease-out) infinite;
+}
+@keyframes dsn-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* ---- Skeleton ------------------------------------------------------------ */
+.dsn-skeleton {
+  background: var(--surface-2);
+  border-radius: var(--radius-control);
+  animation: dsn-shimmer 1.2s ease-in-out infinite alternate;
+}
+.dsn-skeleton--card {
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-card);
+  background: var(--surface-1);
+  animation: none; /* the card shell is static; its inner lines shimmer */
+}
+@keyframes dsn-shimmer {
+  from { opacity: 1; }
+  to { opacity: 0.45; }
+}
+
+/* ---- ListRow ------------------------------------------------------------- */
+.dsn-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--row-h);
+  padding-inline: var(--space-3);
+  border-radius: var(--radius-control);
+  font-size: var(--text-ui);
+  transition: background-color var(--motion-hover) ease-out;
+}
+.dsn-row--interactive {
+  cursor: pointer;
+}
+.dsn-row--interactive:hover,
+.dsn-row--selected {
+  background: var(--surface-2);
+}
+
+/* ---- Card ---------------------------------------------------------------- */
+.dsn-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-card);
+  padding: var(--space-4);
+}
+
+/* ---- PeekPanel (Linear-style right slide-over) --------------------------- */
+.dsn-peek-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: oklch(0 0 0 / 0.4);
+  animation: dsn-fade-in var(--motion-enter) var(--ease-out);
+}
+.dsn-peek-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 41;
+  width: var(--peek-width, 480px);
+  max-width: 92vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-1);
+  border-left: 1px solid var(--border-1);
+  animation: dsn-slide-in var(--motion-panel) var(--ease-out);
+}
+.dsn-peek-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-1);
+  font-size: var(--text-title);
+  font-weight: var(--weight-medium);
+}
+.dsn-peek-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+@keyframes dsn-slide-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes dsn-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ---- CommandPalette ------------------------------------------------------ */
+/* The scrim is one of the two allowed glass surfaces (the other: app header). */
+.dsn-palette-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: dsn-fade-in var(--motion-enter) var(--ease-out);
+}
+.dsn-palette {
+  position: fixed;
+  z-index: 51;
+  top: 18vh;
+  left: 50%;
+  width: 560px;
+  max-width: 92vw;
+  transform: translateX(-50%);
+  background: var(--surface-3);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  animation: dsn-palette-in var(--motion-enter) var(--ease-out);
+}
+@keyframes dsn-palette-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+.dsn-palette [cmdk-input] {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-1);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-prose);
+  outline: none;
+}
+.dsn-palette [cmdk-input]::placeholder {
+  color: var(--fg-muted);
+}
+.dsn-palette [cmdk-list] {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: var(--space-2);
+}
+.dsn-palette [cmdk-group-heading] {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  color: var(--fg-muted);
+}
+.dsn-palette [cmdk-item] {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-control);
+  font-size: var(--text-ui);
+  color: var(--fg);
+  cursor: pointer;
+}
+.dsn-palette [cmdk-item][data-selected="true"] {
+  background: var(--surface-2);
+  color: var(--accent-hover);
+}
+.dsn-palette [cmdk-empty] {
+  padding: var(--space-4);
+  font-size: var(--text-ui);
+  color: var(--fg-muted);
+}
+.dsn-palette-hint {
+  margin-left: auto;
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+/* ---- App shell ----------------------------------------------------------- */
+/* Sticky translucent header — the ONE allowed glass besides the palette scrim. */
+.dsn-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dsn-dot--pulse,
+  .dsn-skeleton,
+  .dsn-peek-backdrop,
+  .dsn-peek-panel,
+  .dsn-palette-scrim,
+  .dsn-palette {
+    animation: none;
+  }
+}

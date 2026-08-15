@@ -1,5 +1,24 @@
 import "@testing-library/jest-dom/vitest";
 
+// jsdom has no Element.prototype.scrollIntoView; cmdk (the R0 CommandPalette)
+// calls it on the selected item. Guarded no-op — steps aside if jsdom ships it.
+if (
+  typeof Element !== "undefined" &&
+  typeof Element.prototype.scrollIntoView !== "function"
+) {
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+}
+
+// jsdom has no ResizeObserver; cmdk observes its list for height animation.
+// Guarded inert stub — observations never fire, which cmdk tolerates.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
 // jsdom (29.x) declares HTMLDialogElement but does not implement
 // showModal()/close() — calling them throws "is not a function". The
 // IterationDetailModal rides the NATIVE <dialog> element (no new deps), so

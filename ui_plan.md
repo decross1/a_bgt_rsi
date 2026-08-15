@@ -1506,6 +1506,89 @@ pruned of retired handlers, 5 suites deleted, 8 pruned.
 
 ---
 
+## §2026-08-15 R0 — UI revamp foundation: design-token system + shared primitives (`ui/` only)
+
+Built by a worktree build agent (spawn `loop3h-revamp-r0-design-system`) on
+merged main @ f1d0c2a. R0 is the FOUNDATION slice of the full revamp: tokens,
+type, shared primitives, app-shell restyle. **No route redesigns here** —
+routes keep rendering under the new tokens; R1-R4 restyle them one at a time
+on top of this system.
+
+### The token system (R1-R4: consume these, never invent parallels)
+
+`ui/frontend/src/design/tokens.css` — imported once in `main.tsx` AFTER
+`index.css` (so it wins name collisions, e.g. `--font-mono`). The legacy
+`src/tokens.css` shared block is UNTOUCHED (fence-checked against the
+framework brain copy by `check_design_tokens.py`); old custom styles keep
+reading it, new work reads ONLY the design tokens:
+
+- **Neutrals (one family, zinc, oklch):** `--neutral-50 … --neutral-950`;
+  semantic aliases `--bg` (near-black oklch 0.16, never #000), `--surface-1/2/3`
+  (elevation = lighter step + 1px border; NO card shadows), `--surface-glass`
+  (ONLY the sticky header + palette scrim), `--border-1/2`.
+- **Text (two colors only):** `--fg`, `--fg-muted`. Hierarchy beyond that is
+  weight: `--weight-normal/medium/semibold` (450/550/650).
+- **Accent (ONE, sky-indigo oklch 0.70 0.13 250):** `--accent`,
+  `--accent-hover`, `--accent-muted`, `--accent-fg`, `--focus-ring` — used
+  ONLY for links, primary action, focus, active nav. Never status.
+- **Status set (EXCLUSIVELY run/rung status):** `--status-ok/warn/bad/info/idle`
+  (+ `-bg` tints) = emerald/amber/rose/sky/zinc.
+- **Type:** `--font-sans` (Geist Variable) / `--font-mono` (Geist Mono
+  Variable), self-hosted via `@fontsource-variable/geist{,-mono}` (imported in
+  `main.tsx`); sizes `--text-meta/ui/prose/prose-lg/title/title-lg`
+  (12/13/14/15/16/20px); `tabular-nums` applied globally to
+  `code/pre/kbd/samp/.font-mono/.tnum`.
+- **Radii:** `--radius-control` 6px / `--radius-card` 10px / `--radius-pill`.
+- **Spacing (4px grid):** `--space-1..12`.
+- **Motion (transform/opacity only):** `--motion-enter/exit/hover/panel`
+  (200/150/120/250ms), `--ease-out/in`; ALL collapse to 0ms under
+  `prefers-reduced-motion` (animations also hard-disabled in primitives.css).
+- **Density:** rows ride `--row-h` (36px); a container's
+  `data-density="dense"` switches it to 28px — no per-component props.
+- **Page widths (utility classes):** `.page-full` (boards/tables),
+  `.page-prose` (~760px reading column — dossier/journal). Routes adopt in
+  R1-R4.
+
+### Shared primitives (`ui/frontend/src/design/`, styles in `primitives.css`)
+
+- **`RungGlyph`** — THE rung representation everywhere from now on: 16px
+  six-segment ring, one segment per L0..L5 (D-059), rung Lk lights k+1
+  segments (L5 = full ring); L4/L5 emerald (clears bar), L0-L3 sky, killed =
+  gray with rung preserved; non-L0..L5 producer values light NOTHING (`rungIndex`
+  mirrors ladderBar's producer-owned normalization). role=img + D-059 label.
+- **`StatusDot`** — semantic status dot (`ok/warn/bad/info/idle`); `pulse`
+  ONLY when genuinely running.
+- **`PeekPanel`** — Linear-style right slide-over (250ms, focus-trapped, Esc +
+  backdrop close, focus-restore, width prop ~420-520, default 480). Pure
+  presentation; fetches nothing. R1+ uses it for row → detail peeks.
+- **`CommandPalette`** — cmdk ⌘K/Ctrl+K palette, mounted globally in App;
+  "Go to" entries for all 7 routes; `registerPaletteActions([...]) → unsubscribe`
+  is the seam R1-R4 use to add verbs (routes only in R0).
+- **`Skeleton` / `SkeletonRows` / `SkeletonCard`** — shape-matching shimmer
+  (rows at `--row-h`; card shell); role=status "loading".
+- **`ListRow`** — 36px dense row, hover = one surface step; onClick ⇒
+  keyboard-operable button. **`Card`** — surface-1 + border-1 + radius-card.
+
+### App shell (restyle only)
+
+Sticky glass header (`.dsn-header`, blur 12px — with the palette scrim the
+only two glass surfaces), nav active state moved emerald → accent, engine
+menu elevates by surface step (shadow removed), CommandPalette mounted, "⌘K
+to jump" hint in the header.
+
+### Deps + tests
+
+Deps added: `cmdk` 1.1.1, `@fontsource-variable/geist` + `-geist-mono` 5.3.0,
+`@dagrejs/dagre` 3.1.1 (pre-staged for the R-slice react-flow relayout).
+Tests: 5 new suites / 48 tests (`test_design_rung_glyph` 13,
+`test_design_peek_panel` 10, `test_design_command_palette` 9,
+`test_design_skeleton` 5, `test_design_primitives` 11); setup.ts gains
+guarded scrollIntoView + ResizeObserver stubs (cmdk). Suite 980 green
+(baseline 932, zero route tests broken by the shell), tsc clean, vite build
+clean (Geist woff2 self-hosted, ~69KB total).
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to
