@@ -23,6 +23,8 @@
 // computeVerdict is pure so it can be unit-tested directly; the component is
 // a thin presentational shell over it.
 
+import StatusDot, { type Status } from "../design/StatusDot";
+
 export type VerdictLevel = "healthy" | "degraded" | "down";
 
 export interface VerdictInput {
@@ -119,44 +121,54 @@ const LEVEL_LABEL: Record<VerdictLevel, string> = {
   down: "DOWN",
 };
 
-// Tailwind tone per level — matches the zinc/emerald/amber/red idiom.
-const LEVEL_TONE: Record<VerdictLevel, { dot: string; text: string; border: string }> = {
-  healthy: {
-    dot: "bg-emerald-400",
-    text: "text-emerald-300",
-    border: "border-emerald-800/60",
-  },
-  degraded: {
-    dot: "bg-amber-400",
-    text: "text-amber-300",
-    border: "border-amber-800/60",
-  },
-  down: {
-    dot: "bg-red-500",
-    text: "text-red-300",
-    border: "border-red-800/60",
-  },
+// Semantic status token per level (revamp R3 — was a Tailwind zinc/emerald/
+// amber/red panel). Health is a STATE, so it wears the status set, never the
+// accent. The verdict also lost its panel chrome: on the redesigned Pulse it
+// is a compact line in the page's identity bar, because the owed queue — not
+// system health — is the hero.
+const LEVEL_STATUS: Record<VerdictLevel, Status> = {
+  healthy: "ok",
+  degraded: "warn",
+  down: "bad",
+};
+
+const LEVEL_COLOR: Record<VerdictLevel, string> = {
+  healthy: "var(--status-ok)",
+  degraded: "var(--status-warn)",
+  down: "var(--status-bad)",
 };
 
 export default function HealthVerdict(props: VerdictInput) {
   const verdict = computeVerdict(props);
-  const tone = LEVEL_TONE[verdict.level];
 
   return (
     <div
       data-testid="health-verdict"
       data-level={verdict.level}
-      className={`flex flex-wrap items-center gap-x-4 gap-y-1 rounded border ${tone.border} bg-zinc-900/40 px-4 py-3`}
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "center",
+        gap: "var(--space-2)",
+        fontSize: "var(--text-meta)",
+        color: "var(--fg-muted)",
+      }}
     >
-      <span className="flex items-center gap-2">
-        <span className={`h-2.5 w-2.5 rounded-full ${tone.dot}`} aria-hidden />
-        <span className={`text-lg font-semibold tracking-wide ${tone.text}`}>
-          {LEVEL_LABEL[verdict.level]}
-        </span>
+      <StatusDot
+        status={LEVEL_STATUS[verdict.level]}
+        label={LEVEL_LABEL[verdict.level]}
+      />
+      <span
+        style={{
+          fontWeight: "var(--weight-semibold)",
+          color: LEVEL_COLOR[verdict.level],
+        }}
+      >
+        {LEVEL_LABEL[verdict.level]}
       </span>
-      <span className="text-sm text-zinc-400">{verdict.headline}</span>
+      <span>{verdict.headline}</span>
       {verdict.reasons.length > 1 && (
-        <span className="text-xs text-zinc-500" data-testid="health-verdict-reasons">
+        <span data-testid="health-verdict-reasons">
           {verdict.reasons.slice(1).join(" · ")}
         </span>
       )}

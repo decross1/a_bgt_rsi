@@ -1779,6 +1779,127 @@ was 980), `tsc --noEmit` clean, `vite build` clean.
 
 ---
 
+## §2026-08-15 R3 — Pulse becomes a designed dashboard (`ui/` only)
+
+Built by a worktree build agent (spawn `loop3h-revamp-r3-pulse`) on merged main
+@ 0483fd5 (R0 design system). Consumes the R0 tokens/primitives; invents no
+parallel system. Surface was `routes/Pulse.tsx` + its Pulse-EXCLUSIVE components
+— `App.tsx`, `Ladder.tsx`, `DossierReader.tsx`, `PipelineJourney.tsx` and
+`Channel.tsx` were owned by concurrent agents and are untouched.
+
+### The three zones (deliberately UNEQUAL emphasis)
+
+The old page was seven stacked panels of near-equal weight. It is now three
+zones read top-down in the F-pattern:
+
+0. **Identity bar** — hostname · backend sha · `HealthVerdict`, which lost its
+   panel chrome and is now a compact status LINE. Health is a precondition, not
+   the headline.
+1. **HERO — `OweStrip`** at `--text-title-lg`/`--weight-semibold`: gate verdicts
+   + L4/L5 findings, the human's real queue. Rows carry a `StatusDot` (bad =
+   blocking, ok = clears the bar) and a `RungGlyph`.
+2. **The loop's state** — "Running now" (`NowBoard`, restyled to Vercel-style
+   deployment cards), then `LabSparkgrid` + `LadderMiniFunnel` side by side.
+3. **Secondary, dense** (`data-density="dense"`, separated by a hairline) —
+   `LastCycleLine`, `HealthStrip`, the two `ModelServerCard`s, launch disclosure.
+
+New components: `components/LabSparkgrid.tsx`, `components/LadderMiniFunnel.tsx`.
+Pulse registers three ⌘K verbs through the R0 `registerPaletteActions` seam
+(`review what you owe` / `show lab activity` / `launch an iteration`, the last
+opening the now-controlled disclosure) and withdraws them on unmount. Pulse also
+took over the single `/api/coordinator/cycles` poll, feeding both LastCycleLine
+and the sparkgrid instead of each polling.
+
+### Deviations from the work order — all deliberate, all verified
+
+1. **`surfaced_below_bar` IS NOT ON THE WIRE.** The order said the backend now
+   returns it. It does not: the identifier exists ONLY as an in-memory int in
+   `orchestrator/coordinator.py` `assess_state()` (lines 371/384/405/449), is
+   not persisted to `coordinator_cycles.jsonl`, and `/api/human_todo` returns
+   exactly `{items, counts}`. Backend is outside this agent's surface, so the
+   count is **derived client-side** from the same `items[]` (finding_review rows
+   that do not clear the bar). Verified against the live :8700 backend: the
+   derivation yields **31**, exactly the figure the order quoted. If the field
+   is ever put on the wire, prefer it and delete the derivation.
+2. **Sparkgrid ramp is QUARTILES over distinct day totals, not a fraction of the
+   max.** Falsified against real data: the live 12-week window is heavy-tailed
+   (65 active days at 1–4 events against a single 125-event day), and
+   max-scaling put **64 of 65 active days in one class** — a heatmap that only
+   says "ran / did not run". Quartiles over the distinct totals spread the same
+   data across all four lit classes (measured on the real payload: 44/17/2/2).
+   A window with one distinct total has no magnitude information, so every
+   active day takes the top class rather than reading as near-noise.
+3. **The ladder funnel hides on 204/404 but NOT on 500.** The order said hide on
+   404/204 with no error noise; that is honored (absence of a ladder shows no
+   funnel). A 500 is different — `ladder.py` raises it deliberately on an
+   unreadable/invalid ledger, so hiding it would misreport a broken ledger as
+   "no ladder yet". It degrades to one muted line instead.
+4. **`NowBoard` was restyled IN PLACE, not replaced.** It already carried the
+   D-047 registry poll, heartbeat-staleness, version-skew-404 and per-field
+   producer-owned coercion; a new component would have re-litigated all of it.
+   The RUNNING/BUSY/IDLE verdict banner is DEMOTED to a compact line in the
+   card header (same verdict, same testids) so it stops competing with the hero.
+5. **Idle wording.** Kept "no registered runs" (accurate to the D-047 registry,
+   which holds experiment/iteration/coordinator runs, not only cycles) rather
+   than the order's "no cycles running", and appended the order's substantive
+   clause — `· last finished Xh ago`, dropped entirely when unknown.
+6. **`ModelServerCard` internals untouched.** The order asked for it
+   "compact/secondary"; that is achieved by PLACEMENT in the dense bottom zone.
+   Rewriting a 359-line shared card's internals was out of scope (inviolate
+   rule 8).
+7. **10px sparkgrid cells are below the ~24px hit-target guidance**, as the
+   order specifies. Mitigated per the dataviz rules: totals are also carried as
+   TEXT in the summary line, so no value is hover-gated, and the grid has a
+   `role="img"` summary label.
+8. **Tone assertions moved off Tailwind color classes.** `LastCycleLine` spans
+   now carry `data-tone`, and a stale `NowBoard` card is asserted via its
+   `StatusDot` `data-status`/pulse state — the token system has no
+   `text-red-400` to match on. Error/skew paths kept their existing classes.
+
+### Anti-patterns explicitly avoided
+
+No KPI-tile carpet (zero equal-weight stat tiles). One sequential single-hue
+ramp for the heatmap (accent hue 250, lightness ascending, 5 classes, `less →
+more` legend) — the status set stays reserved for run/rung state. Pulsing is
+opt-in and means genuinely running: a live run's dot pulses, a stale-heartbeat
+run goes static amber, the idle board never pulses. The demoted mass renders as
+information, never as a queue.
+
+### Tests
+
+2 new suites + 4 extended: `test_lab_sparkgrid` (14 — UTC day keys, window
+edges, producer-owned junk dropped rather than counted as today, the heavy-tail
+regression), `test_ladder_mini_funnel` (8 — 204/404 hide, 500 does NOT hide,
+malformed histogram, unknown rungs summed), `test_owe_strip` (+3 — hero renders
+owed only, below-bar is one muted info line that never inflates the count),
+`test_pulse` (+3 — palette verbs register/withdraw, funnel hides on 204, the
+failed-cycles-read pin below), `test_now_board` (+2 — pulse only when live,
+idle names last-finish), `test_last_cycle_line` (retoned). Suite **1017 green**
+(baseline 988), `tsc --noEmit` clean, `vite build` clean.
+
+Route fixtures that feed the sparkgrid were made RELATIVE to now: hard-coded
+dates would have silently stopped being counted once the wall clock passed the
+trailing window — a test decaying into a false pass.
+
+### Caught in self-review (both fixed, one pinned)
+
+- **An honesty regression this slice introduced.** Folding LastCycleLine's poll
+  into Pulse meant a REJECTED `/api/coordinator/cycles` read left `cyclesLoaded`
+  false forever, so the line vanished — reading as "the loop has done nothing"
+  where the old self-fetching component had shown an error. Now a failed read
+  renders "the loop's last cycle is UNKNOWN, not absent". Pinned by a test
+  verified to FAIL against the pre-fix code.
+- **`lastFinishedIso` trusted the endpoints' sort order** (`cycles[0]` /
+  `iterations[0]`). It now scans every timestamp, so a producer whose ordering
+  degrades understates nothing.
+
+**Real-data smoke** (temporary suite, run then deleted): Pulse rendered against
+payloads captured live from :8700 — 4 owed gate verdicts, 31 below-bar findings,
+the real ladder histogram (L0 9 / L1 3), and 344 events bucketing into the
+sparkgrid with zero unparseable timestamps — console-clean.
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to

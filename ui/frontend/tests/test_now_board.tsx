@@ -5,7 +5,7 @@
 // quiet EndpointMissingNote on a version-skew 404. All run docs here are
 // CONSTRUCTED (explicitly synthetic), shaped exactly like
 // run_state/active_runs/*.json; fetches are stubbed — no live backend.
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import NowBoard, { staleRefMs } from "../src/components/NowBoard";
 import type { ActiveRun } from "../src/types/activity";
@@ -77,10 +77,56 @@ describe("NowBoard cards", () => {
     );
     const card = screen.getByTestId("now-run-exp009_cournot_0610");
     expect(card).toHaveAttribute("data-stale", "true");
-    expect(card.className).toContain("amber");
+    // R3: the card wears the semantic status set, and a stale run's dot goes
+    // WARN and stops pulsing — a dead run must never look alive.
+    const dot = within(card).getByTestId("status-dot");
+    expect(dot).toHaveAttribute("data-status", "warn");
+    expect(dot.className).not.toContain("dsn-dot--pulse");
     expect(
       screen.getByTestId("now-run-stale-exp009_cournot_0610"),
     ).toHaveTextContent(/stale heartbeat/i);
+  });
+
+  it("a LIVE run pulses; the idle board never does", () => {
+    const { unmount } = render(
+      <NowBoard nowMs={NOW} initial={{ runs: [REGISTRY_RUN], skipped: 0 }} />,
+    );
+    const live = within(
+      screen.getByTestId("now-run-exp009_cournot_0610"),
+    ).getByTestId("status-dot");
+    expect(live).toHaveAttribute("data-status", "ok");
+    expect(live.className).toContain("dsn-dot--pulse");
+    unmount();
+
+    render(<NowBoard nowMs={NOW} initial={{ runs: [], skipped: 0 }} />);
+    const idle = within(screen.getByTestId("now-board-empty")).getByTestId(
+      "status-dot",
+    );
+    expect(idle).toHaveAttribute("data-status", "idle");
+    expect(idle.className).not.toContain("dsn-dot--pulse");
+  });
+
+  it("the idle state names when the loop last finished — and stays silent when unknown", () => {
+    const { unmount } = render(
+      <NowBoard
+        nowMs={NOW}
+        initial={{ runs: [], skipped: 0 }}
+        lastFinishedIso="2026-06-10T09:00:00.000Z"
+      />,
+    );
+    expect(screen.getByTestId("now-board-empty")).toHaveTextContent(
+      "last finished 3h ago",
+    );
+    unmount();
+
+    // No known last-finish: the clause is DROPPED, never faked as "just now".
+    render(<NowBoard nowMs={NOW} initial={{ runs: [], skipped: 0 }} />);
+    expect(screen.getByTestId("now-board-empty")).toHaveTextContent(
+      /no registered runs/i,
+    );
+    expect(screen.getByTestId("now-board-empty").textContent).not.toContain(
+      "last finished",
+    );
   });
 
   it("a registry run WITHOUT heartbeat_at makes no staleness claim", () => {

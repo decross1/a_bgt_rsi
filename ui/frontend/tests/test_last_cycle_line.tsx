@@ -44,10 +44,12 @@ describe("LastCycleLine", () => {
     );
     const errored = screen.getByTestId("last-cycle-errored");
     expect(errored).toHaveTextContent("2 errored");
-    expect(errored.className).toContain("text-red-400");
+    // R3: tone moved off Tailwind color classes onto the semantic status
+    // tokens; `data-tone` is the assertable contract now.
+    expect(errored).toHaveAttribute("data-tone", "bad");
     const findings = screen.getByTestId("last-cycle-findings");
     expect(findings).toHaveTextContent("+2 findings");
-    expect(findings.className).toContain("text-emerald-400");
+    expect(findings).toHaveAttribute("data-tone", "ok");
   });
 
   it("tints no_valid_plan amber", () => {
@@ -56,7 +58,7 @@ describe("LastCycleLine", () => {
     ]);
     const status = screen.getByTestId("last-cycle-status");
     expect(status).toHaveTextContent("no_valid_plan");
-    expect(status.className).toContain("text-amber-400");
+    expect(status).toHaveAttribute("data-tone", "warn");
   });
 
   it("omits the errored/findings chips at zero (quiet, not '0 errored')", () => {
