@@ -119,17 +119,15 @@ describe("TutorPanel — the finding OVERVIEW renders from an injected detail", 
     expect(effects).toHaveTextContent(/in_review/i);
   });
 
-  it("renders the UNWEIGHTED considerations enumeration (for AND against)", () => {
+  it("the considerations section is GONE (UI simplification S2 trim)", () => {
+    // The unweighted pros/cons enumeration was deleted with the dossier-reader
+    // trim: the tutor keeps claim/provenance/evidence refs + the neutral
+    // outcome-effects line + the fence note, nothing else.
     render(<TutorPanel findingId="sf-001" detail={FULL} />);
-    const cons = screen.getByTestId("tutor-considerations");
-    expect(cons).toHaveTextContent(/considerations for/i);
-    expect(cons).toHaveTextContent(/considerations against/i);
-    // The "for" list and the "against" list both carry at least one item.
-    expect(cons).toHaveTextContent(/survived the critic/i);
-    expect(cons).toHaveTextContent(/what would change it/i);
-    // It is labelled as unweighted, NOT a recommendation.
-    const panel = screen.getByTestId("tutor-panel");
-    expect(panel).toHaveTextContent(/unweighted considerations, not a recommendation/i);
+    expect(screen.queryByTestId("tutor-considerations")).toBeNull();
+    expect(
+      screen.queryByText(/unweighted considerations/i),
+    ).toBeNull();
   });
 
   it("DROPS absent fields — a sparse detail shows only what it has, no empty/garbage rows", () => {
@@ -352,12 +350,13 @@ describe("TutorPanel — THE VERDICT FENCE (D-054, load-bearing) holds by constr
     expect(text).not.toMatch(/\bbest (choice|option)\b/i);
     expect(text).not.toMatch(/\b(accept|deny) it\b/i); // no "accept it" / "deny it" imperative
     expect(text).not.toMatch(/this finding is (valid|invalid|correct|wrong)/i);
-    // The ONLY occurrences of "recommend" are the two negated disclaimers.
+    // The ONLY occurrence of "recommend" is the fence note's negated
+    // disclaimer ("it never recommends") — the considerations footer's second
+    // disclaimer died with the S2 trim.
     const recommendHits = text.match(/recommend\w*/gi) ?? [];
-    expect(recommendHits).toEqual(["recommends", "recommendation"]);
-    // It DOES affirmatively state it is not a recommendation.
+    expect(recommendHits).toEqual(["recommends"]);
+    // It DOES affirmatively state it never recommends.
     expect(text).toMatch(/it never recommends/i);
-    expect(text).toMatch(/not a recommendation/i);
   });
 
   it("the verdict-form testids never leak into the tutor surface", () => {
@@ -935,11 +934,12 @@ describe("TutorPanel — FENCE holds by construction across the LOADED state (ve
 
   it("the tutor's OWN steer-words are only the NEGATED disclaimers (no naked imperative leaks)", () => {
     // Producer strings may say "you should accept this"; that is DATA echoed in a
-    // text span, never the tutor's own copy. But the tutor's OWN sanctioned uses
-    // of "recommend" remain exactly the two negated disclaimers. We assert the
-    // disclaimers are present AND that no NEW recommend-token was introduced by
-    // the component beyond producer echoes — by checking the disclaimers exist on
-    // a NO-producer-steer detail.
+    // text span, never the tutor's own copy. But the tutor's OWN sanctioned use
+    // of "recommend" remains exactly the fence note's negated disclaimer (the
+    // considerations footer's second disclaimer died with the S2 trim). We
+    // assert the disclaimer is present AND that no NEW recommend-token was
+    // introduced by the component beyond producer echoes — by checking on a
+    // NO-producer-steer detail.
     const clean: FindingDetail = {
       found: true,
       finding_id: "sf-clean",
@@ -948,12 +948,9 @@ describe("TutorPanel — FENCE holds by construction across the LOADED state (ve
     };
     render(<TutorPanel findingId="sf-clean" detail={clean} />);
     const text = screen.getByTestId("tutor-panel").textContent ?? "";
-    // With NO producer steer, the tutor's own copy uses "recommend" exactly twice:
-    // "it never recommends" + "not a recommendation".
-    expect(text.match(/recommend\w*/gi) ?? []).toEqual([
-      "recommends",
-      "recommendation",
-    ]);
+    // With NO producer steer, the tutor's own copy uses "recommend" exactly
+    // once: "it never recommends" (the fence note).
+    expect(text.match(/recommend\w*/gi) ?? []).toEqual(["recommends"]);
     expect(text).not.toMatch(/you should/i);
     expect(text).not.toMatch(/\boutweighs?\b/i);
     expect(text).not.toMatch(/this finding is (valid|invalid|correct|wrong)/i);
@@ -1170,17 +1167,18 @@ describe("TutorPanel — ITERATION kind renders the iteration overview from an i
 
   it("(4) kind defaulting to 'finding' preserves today's behavior EXACTLY (back-compat)", () => {
     // No kind prop → the finding overview, with the finding-only blocks present.
+    // (The considerations block died in the S2 trim — the outcome-effects line
+    // is the remaining finding-only marker.)
     render(<TutorPanel findingId="sf-001" detail={FULL} />);
     const panel = screen.getByTestId("tutor-panel");
     expect(panel).toHaveTextContent(/tutor \/ finding overview/i);
     expect(screen.getByTestId("tutor-outcome-effects")).toBeInTheDocument();
-    expect(screen.getByTestId("tutor-considerations")).toBeInTheDocument();
     expect(panel).toHaveTextContent(/loop_feedback/i);
     // Explicit kind="finding" is identical to the default.
     cleanup();
     render(<TutorPanel findingId="sf-001" kind="finding" detail={FULL} />);
     expect(screen.getByTestId("tutor-outcome-effects")).toBeInTheDocument();
-    expect(screen.getByTestId("tutor-considerations")).toBeInTheDocument();
+    expect(screen.queryByTestId("tutor-considerations")).toBeNull();
   });
 });
 

@@ -18,8 +18,16 @@
 // unvalidated — a legacy/partial/buggy row can hand a field a null, number,
 // object, array, or NaN; the runtime must survive them (asText drops by typeof,
 // no deref).
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render as rtlRender,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PipelineJourney from "../src/components/todo/PipelineJourney";
 import type {
   FindingDetail,
@@ -28,6 +36,22 @@ import type {
   IterationRecord,
 } from "../src/types/schemas";
 import * as http from "../src/api/http";
+
+// S2: PipelineJourney absorbed the retired IterationDetailModal's LINKS
+// section, so it renders real <Link>s — every mount needs a Router. The local
+// render override keeps the existing call sites unchanged (RTL re-applies the
+// wrapper on rerender too).
+const render = (ui: React.ReactElement) =>
+  rtlRender(ui, { wrapper: MemoryRouter });
+
+// The absorbed links section joins the coordinator cycles on every LOADED
+// journey. Stub it file-wide so no test ever reaches a live :8700 backend
+// (the retired modal suite's rule); tests that pin the cycle link re-stub.
+beforeEach(() => {
+  vi.spyOn(http, "getCoordinatorCycles").mockResolvedValue({
+    cycles: [],
+  } as never);
+});
 
 afterEach(() => {
   cleanup();
@@ -583,5 +607,430 @@ describe("PipelineJourney — VERIFIER: the D-052 advisory never wears an alarm 
     const adv = screen.getByTestId("journey-topicality-advisory");
     expect(adv.className).not.toMatch(/amber|red|orange|yellow/);
     expect(adv.innerHTML).not.toMatch(/amber|red|orange|yellow|low-evidence/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ABSORBED-MODAL pins (UI simplification S2). IterationDetailModal died; its
+// unique sections moved into this journey per the plan's absorption table.
+// These pins are PORTED from tests/test_iteration_detail_modal.tsx — same
+// fixtures, same assertions, re-addressed at the journey testids.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// A fully-loaded SYNTHETIC row exercising every absorbed section at once.
+// (Constructed for coverage — explicitly not a live row. The
+// experiment_outcome block is the verbatim-real exp003 bridge from
+// loop_memory.jsonl.)
+const FULL_ABSORBED: IterationRecord = {
+  iteration_id: "iter-modal-full",
+  started_at: "2026-06-10T10:00:00Z",
+  ended_at: "2026-06-10T10:05:00Z",
+  seed: {
+    topic: "Synthetic full-coverage row for the absorbed journey",
+    source: "coordinator",
+  },
+  hypothesis: {
+    text: "LLM bidders shade bids under ascending pressure.",
+    candidates_considered: 3,
+  },
+  retrieval: {
+    k: 8,
+    neighbors: [{ doc_id: "d1" }],
+    relevance: {
+      relevance: 0.42,
+      low_confidence: true,
+      reason: "thin: only one sharp neighbor",
+      anchor_cosine: 0.31,
+      curated_overlap: 0.05,
+      neighbor_spread: 0.6,
+      topicality: "unsure",
+      category: "thin",
+      rule_fired: "R2",
+    },
+  },
+  novelty: {
+    class: "unclear",
+    rationale: "Neighbors cover auctions but not the shading mechanism.",
+    novelty_axes: {
+      phenomenon: "known",
+      substrate: "unstudied_llm",
+      predicted_direction: "matches",
+    },
+    verdict_overridden_from: "novel",
+    override_reason: "low-confidence retrieval downgraded the class",
+  },
+  critique: {
+    verdict: "undecidable",
+    rationale: "No contradicting neighbor; corpus too thin to judge.",
+    contradicting_paper_id: "vickrey1961-chunk-9",
+    verdict_overridden_from: "survives",
+    override_reason: "skeptic attack_verdict='refuted'",
+    skeptic_verdict: "refuted",
+  },
+  redteam: {
+    verdict: "proceed",
+    critique: "Mechanism is testable but underspecified.",
+    suggested_revision: "Pin the auction format before running.",
+    confidence: 0.7,
+    retries_used: 0,
+  },
+  meta_review: {
+    conditioning_bullets: ["carried bullet alpha", "carried bullet beta"],
+    rows_considered: 5,
+  },
+  gate_status: "pending",
+  // Verbatim-real bridge block (loop_memory.jsonl, exp003).
+  experiment_outcome: {
+    experiment_id: "exp003_vickrey_rediscovery",
+    metric: "truthful_bid_fraction",
+    value: 1.0,
+    summary:
+      "Verdict=YES. Fraction of trials with mean |bid - valuation| <= 5: 100.00%.",
+    results_path: "experiments/exp003_vickrey_rediscovery/results/summary.md",
+    trials: 50,
+  },
+  process_status: "exited_clean",
+  wrapper_call_ids: ["c502cb94-46bb-42cf-8394-0ffbf2f2063e"],
+  journal_entry_path: "journal/iterations/full.md",
+};
+
+function renderAbsorbed(row: IterationRecord = FULL_ABSORBED) {
+  render(
+    <PipelineJourney
+      item={iterItem(row.iteration_id)}
+      journey={journeyOf(row)}
+    />,
+  );
+  return screen.getByTestId("journey-loaded");
+}
+
+describe("PipelineJourney — ABSORBED verdict header (full badge set + visible overrides)", () => {
+  it("renders the full badge set the modal header carried", () => {
+    const loaded = renderAbsorbed();
+    const header = within(loaded).getByTestId("journey-verdict-header");
+    // Full badges: novelty class, axes chip, critique verdict, redteam (the
+    // clean chip the row dropped), gate, process, source, low-evidence,
+    // experiment.
+    expect(within(header).getByText("unclear")).toBeInTheDocument();
+    expect(within(header).getByTestId("novelty-axes-chip")).toBeInTheDocument();
+    expect(within(header).getByText("undecidable")).toBeInTheDocument();
+    expect(within(header).getByTestId("redteam-chip")).toHaveTextContent(
+      /proceed/,
+    );
+    expect(within(header).getByText("pending")).toBeInTheDocument();
+    expect(within(header).getByText("pid clean")).toBeInTheDocument();
+    expect(within(header).getByTestId("source-badge")).toHaveTextContent(
+      "coordinator",
+    );
+    expect(within(header).getByTestId("low-evidence-badge")).toBeInTheDocument();
+    expect(within(header).getByTestId("experiment-chip")).toBeInTheDocument();
+  });
+
+  it("override provenance is VISIBLE TEXT for BOTH blocks (the row keeps tooltip-only)", () => {
+    const loaded = renderAbsorbed();
+    const nov = within(loaded).getByTestId("journey-override-novelty");
+    expect(nov).toHaveTextContent("overridden from novel");
+    expect(nov).toHaveTextContent(
+      "reason: low-confidence retrieval downgraded the class",
+    );
+    const crit = within(loaded).getByTestId("journey-override-critique");
+    expect(crit).toHaveTextContent("overridden from survives");
+    expect(crit).toHaveTextContent("reason: skeptic attack_verdict='refuted'");
+    expect(crit).toHaveTextContent("skeptic said refuted");
+  });
+
+  it("hypothesis carries candidates_considered", () => {
+    const loaded = renderAbsorbed();
+    expect(within(loaded).getByTestId("journey-candidates")).toHaveTextContent(
+      "candidates considered: 3",
+    );
+  });
+});
+
+describe("PipelineJourney — ABSORBED evidence grid + low-evidence inline", () => {
+  it("renders the full relevance diagnostic grid (incl. the ladder diagnostics)", () => {
+    const loaded = renderAbsorbed();
+    const grid = within(loaded).getByTestId("journey-evidence-grid");
+    for (const pair of [
+      ["category", "thin"],
+      ["rule_fired", "R2"],
+      ["anchor_cosine", "0.31"],
+      ["curated_overlap", "0.05"],
+      ["neighbor_spread", "0.6"],
+    ] as const) {
+      expect(grid).toHaveTextContent(pair[0]);
+      expect(grid).toHaveTextContent(pair[1]);
+    }
+    // The frozen trio + topicality still read in the relevance block.
+    const rel = within(loaded).getByTestId("journey-relevance");
+    expect(rel).toHaveTextContent("0.42");
+    expect(rel).toHaveTextContent("thin: only one sharp neighbor");
+    expect(rel).toHaveTextContent("unsure");
+  });
+
+  it("the low-evidence detail renders INLINE (what the badge's tooltip says)", () => {
+    const loaded = renderAbsorbed();
+    const detail = within(loaded).getByTestId("journey-low-evidence-detail");
+    expect(detail).toHaveTextContent(/retrieval flagged low-confidence/);
+    expect(detail).toHaveTextContent(/category: thin/);
+    expect(detail).toHaveTextContent(/rule: R2/);
+  });
+
+  it("a confident row renders NO low-evidence box (the amber lane stays honest)", () => {
+    render(
+      <PipelineJourney
+        item={iterItem(FULL_ITER.iteration_id)}
+        journey={journeyOf(FULL_ITER)}
+      />,
+    );
+    expect(screen.queryByTestId("journey-low-evidence-detail")).toBeNull();
+  });
+});
+
+describe("PipelineJourney — ABSORBED adversarial detail (skeptic + redteam)", () => {
+  it("renders the skeptic verdict and every redteam field", () => {
+    const loaded = renderAbsorbed();
+    const critic = within(loaded).getByTestId("journey-critic");
+    expect(critic).toHaveTextContent(
+      "No contradicting neighbor; corpus too thin to judge.",
+    );
+    expect(critic).toHaveTextContent("vickrey1961-chunk-9");
+    expect(critic).toHaveTextContent("refuted");
+    const redteam = within(loaded).getByTestId("journey-redteam");
+    expect(redteam).toHaveTextContent("Mechanism is testable but underspecified.");
+    expect(redteam).toHaveTextContent("Pin the auction format before running.");
+    expect(redteam).toHaveTextContent("0.7"); // confidence
+    expect(redteam).toHaveTextContent("retries used");
+    // The clean proceed/0 chip renders quiet here (it never earns a row's
+    // alarm slot) — the moved-scope contract.
+    expect(within(redteam).getByTestId("redteam-chip").className).toContain(
+      "zinc",
+    );
+  });
+
+  it("no redteam block → no redteam sub-section (pre-v1 rows fake nothing)", () => {
+    render(
+      <PipelineJourney
+        item={iterItem(FULL_ITER.iteration_id)}
+        journey={journeyOf(FULL_ITER)}
+      />,
+    );
+    expect(screen.queryByTestId("journey-redteam")).toBeNull();
+  });
+});
+
+describe("PipelineJourney — ABSORBED conditioning bullets", () => {
+  it("renders the bullets under the SAME conditioning-<id> testid the modal used", () => {
+    const loaded = renderAbsorbed();
+    const cond = within(loaded).getByTestId("conditioning-iter-modal-full");
+    expect(within(cond).getByText("carried bullet alpha")).toBeInTheDocument();
+    expect(within(cond).getByText("carried bullet beta")).toBeInTheDocument();
+  });
+
+  it("no bullets → the honest placeholder", () => {
+    render(
+      <PipelineJourney
+        item={iterItem(FULL_ITER.iteration_id)}
+        journey={journeyOf(FULL_ITER)}
+      />,
+    );
+    expect(
+      screen.getByTestId("journey-conditioning"),
+    ).toHaveTextContent("no conditioning bullets on this row");
+  });
+});
+
+describe("PipelineJourney — ABSORBED experiment extras", () => {
+  it("renders trials + results_path + the Verdict=YES chip tone", () => {
+    const loaded = renderAbsorbed();
+    const outcome = within(loaded).getByTestId("journey-outcome-present");
+    expect(outcome).toHaveTextContent("exp003_vickrey_rediscovery");
+    expect(outcome).toHaveTextContent("truthful_bid_fraction");
+    expect(outcome).toHaveTextContent("50");
+    expect(outcome).toHaveTextContent(
+      "experiments/exp003_vickrey_rediscovery/results/summary.md",
+    );
+    expect(outcome).toHaveTextContent(/Verdict=YES\. Fraction of trials/);
+    const chip = within(loaded).getByTestId("experiment-chip");
+    expect(chip).toHaveTextContent("exp verdict=YES");
+    expect(chip.className).toContain("emerald");
+  });
+
+  it("a multi-metric OBJECT value renders only its SCALAR entries (value.<k> rows)", () => {
+    const multi: IterationRecord = {
+      ...FULL_ABSORBED,
+      iteration_id: "iter-multi-metric",
+      experiment_outcome: {
+        experiment_id: "exp-multi",
+        metric: "bundle",
+        value: { sub_a: 0.5, junk: { deep: true } } as unknown as number,
+        summary: "Verdict=NO. mixed bundle.",
+      },
+    };
+    render(
+      <PipelineJourney item={iterItem(multi.iteration_id)} journey={journeyOf(multi)} />,
+    );
+    const outcome = screen.getByTestId("journey-outcome-present");
+    expect(outcome).toHaveTextContent("value.sub_a");
+    expect(outcome).toHaveTextContent("0.5");
+    expect(outcome).not.toHaveTextContent("value.junk");
+    expect(outcome.innerHTML).not.toMatch(/object Object/);
+  });
+});
+
+describe("PipelineJourney — ABSORBED links + lazy journal", () => {
+  it("links the call chain from wrapper_call_ids[0] and the experiment page from the outcome", () => {
+    const loaded = renderAbsorbed();
+    const links = within(loaded).getByTestId("journey-links");
+    const chain = within(links).getByTestId("journey-chain-link");
+    expect(chain.getAttribute("href")).toBe(
+      "/chain/req/c502cb94-46bb-42cf-8394-0ffbf2f2063e",
+    );
+    const exp = within(links).getByTestId("journey-experiment-link");
+    expect(exp.getAttribute("href")).toBe(
+      "/experiments/exp003_vickrey_rediscovery",
+    );
+  });
+
+  it("the coordinator cycle whose dispatched_iteration_id matches gets a link; no match → no link", async () => {
+    vi.spyOn(http, "getCoordinatorCycles").mockResolvedValue({
+      cycles: [
+        {
+          timestamp: "2026-06-10T09:00:00Z",
+          run_id: "coordinator_ab12cd34",
+          agent: "coordinator",
+          topic: "x",
+          topic_source: "coordinator",
+          plan: [],
+          outcomes: [],
+          dispatched_iteration_id: "iter-modal-full",
+        },
+        {
+          timestamp: "2026-06-10T08:00:00Z",
+          run_id: "coordinator_ffffffff",
+          agent: "coordinator",
+          topic: "y",
+          topic_source: "coordinator",
+          plan: [],
+          outcomes: [],
+          dispatched_iteration_id: "iter-other",
+        },
+      ],
+    } as never);
+    renderAbsorbed();
+    const link = await screen.findByTestId("journey-cycle-link");
+    expect(link).toHaveTextContent("coordinator_ab12cd34");
+    // /coordinator for now — S3 renames the route to /cycles.
+    expect(link.getAttribute("href")).toBe("/coordinator");
+  });
+
+  it("a failed cycle fetch (older backend / skew) silently drops the cycle link — never a red state", async () => {
+    vi.spyOn(http, "getCoordinatorCycles").mockRejectedValue(
+      new Error("404 not found"),
+    );
+    const c = watchConsole();
+    renderAbsorbed();
+    await waitFor(() => expect(http.getCoordinatorCycles).toHaveBeenCalled());
+    expect(screen.queryByTestId("journey-cycle-link")).toBeNull();
+    expect(screen.getByTestId("pipeline-journey")).not.toHaveTextContent(/404/);
+    expect(c.error).not.toHaveBeenCalled();
+  });
+
+  it("the journal mounts LAZILY on disclosure open (no fetch before)", async () => {
+    const journalSpy = vi.spyOn(http, "getJournalEntry").mockResolvedValue({
+      iteration_id: "iter-modal-full",
+      path: "journal/iterations/full.md",
+      content: "# Journal\n\njourney journal body",
+    });
+    const loaded = renderAbsorbed();
+    expect(journalSpy).not.toHaveBeenCalled();
+    expect(within(loaded).queryByTestId("journal-scroll")).toBeNull();
+
+    const details = within(loaded).getByTestId("journey-journal");
+    // jsdom does not auto-fire toggle on summary click; set open + toggle.
+    (details as HTMLDetailsElement).open = true;
+    fireEvent(details, new Event("toggle", { bubbles: false }));
+    await waitFor(() =>
+      expect(within(loaded).getByTestId("journal-scroll")).toBeInTheDocument(),
+    );
+    expect(journalSpy).toHaveBeenCalledWith("iter-modal-full");
+    await waitFor(() =>
+      expect(
+        within(loaded).getByText("journey journal body"),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("a bare legacy row invents NO chain/experiment/cycle links", () => {
+    const bare = {
+      iteration_id: "iter-bare-legacy",
+      started_at: "2026-05-01T10:00:00Z",
+      ended_at: "2026-05-01T10:05:00Z",
+      journal_entry_path: "journal/iterations/bare.md",
+    } as unknown as IterationRecord;
+    render(
+      <PipelineJourney item={iterItem("iter-bare-legacy")} journey={journeyOf(bare)} />,
+    );
+    expect(screen.queryByTestId("journey-chain-link")).toBeNull();
+    expect(screen.queryByTestId("journey-experiment-link")).toBeNull();
+    expect(screen.queryByTestId("journey-cycle-link")).toBeNull();
+  });
+});
+
+describe("PipelineJourney — ABSORBED sections degrade on garbled producer rows", () => {
+  it("garbled fields in every absorbed section — no [object Object], no NaN, no crash", () => {
+    const c = watchConsole();
+    const garbled = {
+      iteration_id: "iter-garbled-absorbed",
+      started_at: "2026-06-10T10:00:00Z",
+      ended_at: { seconds: 1 },
+      seed: { topic: 42, source: ["x"] },
+      hypothesis: { text: { nested: true }, candidates_considered: NaN },
+      retrieval: {
+        relevance: {
+          relevance: NaN,
+          low_confidence: true,
+          reason: { r: 1 },
+          topicality: {},
+          category: 3,
+          rule_fired: ["R9"],
+        },
+      },
+      novelty: { class: "novel", novelty_axes: "garbage" },
+      critique: {
+        verdict: "undecidable",
+        rationale: ["a"],
+        skeptic_verdict: { v: "x" },
+      },
+      redteam: { verdict: "proceed", retries_used: NaN, confidence: Infinity },
+      meta_review: { conditioning_bullets: "one string" },
+      experiment_outcome: {
+        experiment_id: 7,
+        metric: { m: 1 },
+        value: { sub_a: 0.5, junk: { deep: true } },
+        summary: 12,
+      },
+      journal_entry_path: "journal/iterations/garbled.md",
+    } as unknown as IterationRecord;
+    const { container } = rtlRender(
+      <MemoryRouter>
+        <PipelineJourney
+          item={iterItem("iter-garbled-absorbed")}
+          journey={journeyOf(garbled)}
+        />
+      </MemoryRouter>,
+    );
+    expect(container.innerHTML).not.toMatch(/object Object/);
+    expect(container.innerHTML).not.toMatch(/NaN/);
+    // The multi-metric object value renders only its SCALAR entries.
+    const outcome = screen.getByTestId("journey-outcome-present");
+    expect(outcome).toHaveTextContent("value.sub_a");
+    expect(outcome).not.toHaveTextContent("value.junk");
+    // Candidates line dropped (NaN), conditioning degraded to the placeholder.
+    expect(screen.queryByTestId("journey-candidates")).toBeNull();
+    expect(screen.getByTestId("journey-conditioning")).toHaveTextContent(
+      "no conditioning bullets on this row",
+    );
+    expect(c.error).not.toHaveBeenCalled();
   });
 });

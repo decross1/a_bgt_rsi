@@ -1234,6 +1234,140 @@ Scope held: `ui/` + this file only (backend: `ladder.py` NEW + `app.py` wired +
 2 test files; frontend: 8 new src/route files, 6 touched, 3 deleted; tests: 6
 new, 5 touched, 2 deleted).
 
+## §2026-08-15 S2 — UI simplification slice 2: the Dossier reader (`ui/` only)
+
+Plan: `docs/ui_simplification_plan_2026-08-15.md` (§Dossier reader, §Kill list
+S2 items, §Phasing S2). Built by a worktree-isolated build agent (spawn
+`loop10h-ui-s2`) on top of merged S1 (`afb693e`); primary gates + merges.
+
+### The Dossier surfaces (frontend only — no backend change this slice)
+
+- **NEW `src/components/chips.tsx`** — the shared chip primitives moved
+  VERBATIM out of IterationDetailModal.tsx (which dies this slice):
+  NOVELTY/VERDICT/GATE tone maps (undecidable keeps its deliberate /40 quiet
+  entry), `toneFor` (own-key prototype-collision guard), `badgeText`, `Badge`,
+  `RedteamChip`/`redteamAlarm`, `ExperimentChip`/`experimentVerdict`,
+  `conditioningBullets`, `seedTopic`, `shortTimestamp`, `processTone`/
+  `processLabel`, `overrideTooltip`, and `OverrideProvenance` (now exported).
+  ResolvedIterationsList re-imports from here (one import-churn) and DROPS its
+  modal mount — a card click keeps only the onSelect journal behavior; the
+  drill-in is the dossier reader. NEW `test_chips.tsx` carries the ported pins
+  (toneFor collision, undecidable /40 tone, badgeText, experimentVerdict,
+  conditioningBullets).
+- **PipelineJourney absorbs the modal** (582→~1030L, the reader's spine): per
+  the plan's absorption table — verdict-header badge row
+  (`journey-verdict-header`: novelty + axes chip + critique + redteam + gate +
+  process + SourceBadge for EVERY source + low-evidence + topicality advisory
+  + experiment chip + timestamp + topic), OverrideProvenance blocks as visible
+  text (`journey-override-novelty`/`-critique`), "conditioned by"
+  (`journey-conditioning`, inner `conditioning-<id>` testid kept 1:1), the
+  full evidence grid (`journey-evidence-grid`: category / rule_fired /
+  anchor_cosine / curated_overlap / neighbor_spread) + the
+  `journey-low-evidence-detail` amber box, redteam adversarial detail
+  (`journey-redteam` + critique skeptic_verdict line), experiment extras
+  (trials / results_path / object-valued `value.<k>` rows),
+  `journey-candidates`, the LAZY `journey-journal` disclosure (JournalScroll
+  mounts on first open), and the links section (`journey-chain-link` →
+  /chain/req/{firstWrapperCallId}, `journey-experiment-link`,
+  `journey-cycle-link` via the guarded coordinator-cycle join → `/coordinator`
+  for now [S3 renames to /cycles]). GateVerdictForm NOT absorbed — the
+  reader's footer owns the forms. `test_PipelineJourney.tsx` extended with the
+  modal's section pins (ported from test_iteration_detail_modal, "ABSORBED"
+  describes; every mount now Router-wrapped, cycle join stubbed file-wide).
+- **NEW `src/components/todo/ChatPane.tsx`** (~370L) — TutorChatPane +
+  TwoVoiceChatPane merged into ONE mode-parameterized pane
+  (`mode: "tutor" | "two_voice"`): mode selects the useChatSession mode, the
+  fence-note citation (tutor: 2026-06-14 PART 2 · rule 4 · D-053/D-054, NEVER
+  D-044; two_voice: NEW `two-voice-fence-note` citing D-044 independence), the
+  accent, the addressee selector (two_voice only), and stance-labeled replies
+  (own-key stance guards kept). STRUCTURALLY fence-preserving: the prop
+  surface is exactly {findingId, mode, available?, turnCap?, tokenCap?} — no
+  verdict/confidence/onResolved/setter prop exists. useChatSession untouched.
+  Per-mode testids kept (tutor-chat-* / two-voice-*) so ported pins read 1:1.
+  The old capability-off fixture `turns` prop did NOT survive the merge (the
+  off branch shows the empty state + disabled send; CHAT_TURNS_STUB stays a
+  type fixture). NEW `test_ChatPane.tsx` covers both modes; the fence-note
+  assertions carried verbatim (incl. the wire-fence: only the two chat verbs
+  ever fire).
+- **TutorPanel TRIMMED** — the unweighted pros/cons "considerations" section
+  (+ its "not a recommendation" footer) deleted; keeps claim / provenance /
+  evidence-refs + the neutral outcome-effects line + the fence note. The
+  tutor's own copy now uses "recommend" exactly once (the fence note) —
+  re-pinned in test_harden_TutorPanel (considerations cases dropped/inverted).
+- **NEW `routes/DossierIndex.tsx` (/dossier, ~490L)** — the fetch-owning
+  picker: getHumanTodo (10s poll) + getIterations (30s). Sections owe-first:
+  (1) YOU OWE = gate_verdict + state_gate families; (2) CLEARED THE BAR =
+  clearsLadderBar findings (honest "Nothing cleared L4 this week." empty
+  state); (3) EVERYTHING ELSE searchable — below-bar/legacy findings (the
+  pre-ladder 31), bubbles, stale runs, unknown kinds, + the resolved-iteration
+  history with verdict/novelty/gate chips (browse moved here from the
+  Dashboard list). ResolveRail's titleStem/buildCells 6-word-stem clustering
+  ported VERBATIM (+ cluster_id-future comment); every row is a
+  `<Link to="/dossier/<id>">`; the deferred sky chip ported (testid
+  `todo-deferred-tag` kept); 404 → honest "queue UNKNOWN". NEW
+  `test_dossier_index.tsx` (owe-first sectioning, stem clustering, search,
+  honest empty states, deferred chip, hostile rows).
+- **NEW `routes/DossierReader.tsx` (/dossier/:id, ~430L)** — kind from
+  getHumanTodo().find(id) else the sf-*/iter-* prefix (queue-miss rows from
+  the index's history section); ConcurrencyWarning → header (id · kind chip ·
+  title · deferred tag · "not in the live queue" honesty note) → trimmed
+  TutorPanel (interrogable kinds) → PipelineJourney spine → CalibrationCapture
+  (opt-in, pre-reveal; per-id captured Set lifted here) → reveal fence button
+  → ChatPane mode=tutor + mode=two_voice (per-id revealed Set) → the
+  kind-gated UNCONDITIONAL disposition footer: gate_verdict → GateVerdictForm
+  + the CLI-fallback `<details>` ported verbatim from the modal (testid
+  renamed `modal-gate-cli`→`dossier-gate-cli`; command string verbatim);
+  finding_review → FindingReviewForm + DirectiveSignOffField + AuthorizeFixForm
+  + SpawnTopicForm + AbstainForm; bubble_ack/bubble_unacked → BubbleAckForm;
+  ALL kinds → DeferForm. Capability wiring (getCockpitAvailability +
+  strict-true safeActions + safeItems) lifted verbatim from Todo.tsx.
+- **`App.tsx`**: nav `pulse · ladder · dossiers · engine ▾ · brain↗`; routes
+  `/dossier` + `/dossier/:id`; `/todo` → `<Navigate to="/dossier" replace>`.
+  Both route sweeps gained a DossierIndex console-clean render.
+
+### Deletions (this slice)
+
+`routes/Todo.tsx`, `components/HumanTodoPanel.tsx` (ladderBar.ts was extracted
+in S1 — OweStrip unaffected), `components/todo/ResolveRail.tsx`,
+`TutorChatPane.tsx`, `TwoVoiceChatPane.tsx`, `components/IterationDetailModal.tsx`
++ dead suites: test_iteration_detail_modal, test_TutorChatPane,
+test_harden_TwoVoiceChatPane, test_human_todo_panel, test_human_todo_inbox,
+test_ladder_inbox, test_ResolveRail, test_todo_route, test_todo_route_wiring,
+test_harden_TodoShell, test_todo_kind_gating (17 files). PORTED, not lost:
+kind-gating pins → NEW `test_dossier_reader.tsx` (iteration → GateVerdictForm
+ONLY; finding → the finding set; bubble → ack only; state-gate → defer-only;
+hostile kinds → other; chat never exposes a disposition; prefix fallback;
+unconditional forms; capability flow); chip pins → test_chips; modal section
+pins → test_PipelineJourney; two-voice/tutor pane pins → test_ChatPane;
+test_cockpit_interrogation re-pointed (TwoVoice block → ChatPane suite;
+considerations assertions inverted); test_audit_consistency's modal-hue
+comparison now reads the shared SourceBadge directly;
+test_resolved_iterations_list's modal describes pruned (row-half pins kept).
+test_cockpit_resolution_forms + test_cockpit_forms_a11y unchanged (leaf-form
+suites).
+
+### Verification (this worktree)
+
+- frontend vitest **1396 pass** (97 files; 1490 → 1396 — an honest shrink of
+  ~94 tests tracking the deleted surfaces, with 133 tests across the 5 new/
+  extended suites) · `tsc --noEmit` clean
+- ui-backend pytest **680 pass** (`.venv-chroma`, `MOCK_LLM=1`; the S1 live
+  ladder probe now passes against the restarted post-S1 binary) — no backend
+  change this slice
+- FENCE PROOF: ChatPane's Props = {findingId, mode, available?, turnCap?,
+  tokenCap?}; `grep -in "verdict|onResolved|confidence"` over ChatPane.tsx
+  hits only the fence-note copy. Pinned in test_ChatPane + the reader's
+  "chat NEVER exposes a disposition" describe.
+- The real `:8700` smoke (gate_verdict dossier from the owe strip: journey
+  full evidence + overrides + journal; chat capability-gated; GateVerdictForm
+  sole disposition; sf-* dossier resolves its source iteration; /todo
+  redirect) is the PRIMARY's post-merge step per the plan's S2 gate.
+
+Scope held: `ui/` + this file only. Frontend: 5 new src files (chips, ChatPane,
+DossierIndex, DossierReader + App routes), 4 absorbed/trimmed (PipelineJourney,
+TutorPanel, ResolvedIterationsList, App), 6 src deletions; tests: 4 new, 6
+updated, 11 deleted.
+
 ---
 
 ## Historical sections (UI v1, pre-LOOP_V0)

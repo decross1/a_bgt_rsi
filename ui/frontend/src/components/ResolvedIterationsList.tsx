@@ -8,14 +8,13 @@
 // one line (full text in the title attr). Everything else — NoveltyAxesChip,
 // conditioning bullets, the process badge, non-nemoclaw source badges, the
 // displaced alarm chips, the override provenance as visible text — lives in
-// the IterationDetailModal, which a card click opens (the click ALSO keeps
-// the existing `onSelect` journal behavior). Focus returns to the opening
-// card when the modal closes.
+// the DOSSIER READER's PipelineJourney spine (UI simplification S2, which
+// absorbed and retired IterationDetailModal); a card click keeps the existing
+// `onSelect` journal behavior.
 //
 // The shared chip primitives (tone maps, Badge, RedteamChip, ExperimentChip,
-// the scalar guards) moved VERBATIM to IterationDetailModal.tsx and are
-// imported back from there, keeping the dependency one-directional
-// (list → modal).
+// the scalar guards) live VERBATIM in components/chips.tsx (S2; formerly in
+// IterationDetailModal.tsx, which died with the modal).
 //
 // The endpoint returns ALL rows newest-first, which grows without bound. To
 // keep the dashboard a high-level, scannable history this component paginates
@@ -36,10 +35,10 @@
 // another page it offers "go to selected" (jumps to that page); if a filter
 // excludes it entirely it offers "clear filters". onSelect / the selectedId
 // highlight keep working on any visible row.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getIterations } from "../api/http";
 import type { IterationRecord } from "../types/schemas";
-import IterationDetailModal, {
+import {
   Badge,
   ExperimentChip,
   GATE_TONE,
@@ -52,7 +51,7 @@ import IterationDetailModal, {
   seedTopic,
   shortTimestamp,
   toneFor,
-} from "./IterationDetailModal";
+} from "./chips";
 import LowEvidenceBadge, { isLowEvidence } from "./LowEvidenceBadge";
 import TopicalityAdvisoryBadge from "./TopicalityAdvisoryBadge";
 import SourceBadge from "./SourceBadge";
@@ -180,14 +179,6 @@ export default function ResolvedIterationsList({
   const [verdict, setVerdict] = useState("");
   const [topic, setTopic] = useState("");
   const [page, setPage] = useState(0);
-
-  // Detail-modal state: the clicked ROW SNAPSHOT (not just the id — duplicate
-  // iteration_ids exist on the append-only log, and a poll may swap `rows`
-  // under the open modal; the snapshot keeps the modal honest about what was
-  // clicked). `openerRef` holds the opening card button so focus returns to
-  // it when the modal closes (the Task-4 dialog contract).
-  const [openRow, setOpenRow] = useState<IterationRecord | null>(null);
-  const openerRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     if (initial !== undefined) return;
@@ -433,13 +424,11 @@ export default function ResolvedIterationsList({
               <li key={`${row.iteration_id || "iter"}-${i}`}>
                 <button
                   type="button"
-                  onClick={(e) => {
-                    // The click keeps the existing journal behavior AND
-                    // opens the detail modal (Task 4) — opening the modal
-                    // selects the iteration.
+                  onClick={() => {
+                    // The click keeps the existing journal behavior. The old
+                    // detail modal died in S2 — the full drill-in is the
+                    // dossier reader (/dossier/<iteration_id>).
                     onSelect?.(row.iteration_id);
-                    openerRef.current = e.currentTarget;
-                    setOpenRow(row);
                   }}
                   className={
                     selected
@@ -539,19 +528,6 @@ export default function ResolvedIterationsList({
             next
           </button>
         </div>
-      )}
-
-      {/* Detail modal — mounted ONLY while open (its <dialog> calls
-          showModal() on mount). Closing restores focus to the opening card. */}
-      {openRow && (
-        <IterationDetailModal
-          row={openRow}
-          onClose={() => {
-            setOpenRow(null);
-            openerRef.current?.focus();
-            openerRef.current = null;
-          }}
-        />
       )}
     </div>
   );

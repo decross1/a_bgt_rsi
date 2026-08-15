@@ -429,6 +429,7 @@ import Experiments from "../src/routes/Experiments";
 import Coordinator from "../src/routes/Coordinator";
 import Ladder from "../src/routes/Ladder";
 import Pulse from "../src/routes/Pulse";
+import DossierIndex from "../src/routes/DossierIndex";
 
 // Spy on console.error / console.warn around a render + a full async flush.
 // We render inside a MemoryRouter (Experiments uses <Link>); a route that does
@@ -496,6 +497,12 @@ describe("routes render against real data without console errors", () => {
 
   it("Ladder (S1): 204-null ledger -> honest empty + ideas.md fallback", async () => {
     const { error, warn } = await renderRouteQuietly(<Ladder />);
+    expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
+    expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
+  });
+
+  it("DossierIndex (S2): empty queue + real iterations render console-clean", async () => {
+    const { error, warn } = await renderRouteQuietly(<DossierIndex />);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });

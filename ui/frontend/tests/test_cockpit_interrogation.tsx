@@ -1,8 +1,8 @@
-// Role-E cockpit interrogation surfaces — the four STUB components that light up
-// when the PART-2 primary-session seams land (2026-06-14 session note "## UI
-// session work order" PART 2). All four are exercised against the typed fixtures
-// in src/fixtures/todo (no network): ConcurrencyWarning, CalibrationCapture,
-// TutorPanel, TwoVoiceChatPane.
+// Role-E cockpit interrogation surfaces — the leaf components the DOSSIER
+// READER mounts (originally the /todo cockpit's; the reader inherited them in
+// UI simplification S2). Exercised against the typed fixtures in
+// src/fixtures/todo (no network): ConcurrencyWarning, CalibrationCapture,
+// TutorPanel.
 //
 // What this asserts, per the work order:
 //   - ConcurrencyWarning: mid-flight => the warn/queue banner shows (naming the
@@ -11,10 +11,13 @@
 //     contract the shell uses to then reveal the verdict); persists via the
 //     STUB postCalibration (writes nothing).
 //   - TutorPanel: exposes NO verdict affordance — the fence is visible and the
-//     component takes no verdict props.
-//   - TwoVoiceChatPane: the two-stance layout (Gemma DEFENDS / Qwen ATTACKS),
-//     the human turn-input directing at defender/attacker/both, the stub banner,
-//     and the read-only turn/token-cap intent.
+//     component takes no verdict props. (The unweighted considerations section
+//     was TRIMMED in S2 — the reader keeps claim/provenance/evidence refs +
+//     the neutral outcome-effects line only.)
+//
+// The two-voice pane's coverage moved to tests/test_ChatPane.tsx when the
+// TutorChatPane + TwoVoiceChatPane pair merged into the mode-parameterized
+// ChatPane (S2).
 //
 // The only network surface touched is postCalibration (POST /api/todo/calibration);
 // it is stubbed to return the would-run STUB preview — the test never execs a CLI
@@ -24,9 +27,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import ConcurrencyWarning from "../src/components/todo/ConcurrencyWarning";
 import CalibrationCapture from "../src/components/todo/CalibrationCapture";
 import TutorPanel from "../src/components/todo/TutorPanel";
-import TwoVoiceChatPane from "../src/components/todo/TwoVoiceChatPane";
 import {
-  CHAT_TURNS_STUB,
   CONCURRENCY_IDLE,
   CONCURRENCY_MIDFLIGHT,
 } from "../src/fixtures/todo";
@@ -172,10 +173,9 @@ describe("TutorPanel", () => {
     expect(screen.getByTestId("tutor-fence-note")).toHaveTextContent(
       /does not affect your verdict/i,
     );
-    // It teaches; it NEVER recommends (the considerations are explicitly
-    // unweighted and disclaimed).
-    expect(screen.getByTestId("tutor-considerations")).toBeInTheDocument();
-    expect(screen.getByText(/not a recommendation/i)).toBeInTheDocument();
+    // S2 TRIM: the unweighted pros/cons considerations section is GONE — the
+    // tutor teaches via claim/provenance/evidence + the neutral outcome line.
+    expect(screen.queryByTestId("tutor-considerations")).toBeNull();
     // No verdict-shaped control: no valid/invalid/needs_revision buttons, no
     // verdict-labelled inputs leak in through this teaching surface.
     expect(screen.queryByRole("button", { name: /valid/i })).toBeNull();
@@ -188,39 +188,5 @@ describe("TutorPanel", () => {
   });
 });
 
-// --- TwoVoiceChatPane ---
-
-describe("TwoVoiceChatPane", () => {
-  it("renders the two-stance layout, the cap intent, and the stub banner", () => {
-    render(
-      <TwoVoiceChatPane findingId="sf-iter-x" turns={CHAT_TURNS_STUB} turnCap={24} tokenCap={1024} />,
-    );
-    // D-044: Gemma defends, Qwen attacks (the interrogator is not the author).
-    expect(screen.getByTestId("stance-defender")).toHaveTextContent(/Gemma DEFENDS/i);
-    expect(screen.getByTestId("stance-attacker")).toHaveTextContent(/Qwen ATTACKS/i);
-    // Cap intent shown read-only.
-    expect(screen.getByTestId("two-voice-cap-intent")).toHaveTextContent(/24 turns/);
-    expect(screen.getByTestId("two-voice-cap-intent")).toHaveTextContent(/1024 tok/);
-    // Stub banner present; no model calls.
-    expect(screen.getByTestId("two-voice-stub-banner")).toBeInTheDocument();
-    // Both fixture turns rendered.
-    expect(screen.getByTestId("chat-turn-defender")).toBeInTheDocument();
-    expect(screen.getByTestId("chat-turn-attacker")).toBeInTheDocument();
-  });
-
-  it("lets the human direct a turn at defender / attacker / both (not a spectator debate)", () => {
-    render(<TwoVoiceChatPane findingId="sf-iter-x" turns={CHAT_TURNS_STUB} />);
-    const defenderBtn = screen.getByRole("button", { name: "defender" });
-    const attackerBtn = screen.getByRole("button", { name: "attacker" });
-    const bothBtn = screen.getByRole("button", { name: "both" });
-    // Default addressee is "both".
-    expect(bothBtn).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(attackerBtn);
-    expect(attackerBtn).toHaveAttribute("aria-pressed", "true");
-    expect(bothBtn).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(defenderBtn);
-    expect(defenderBtn).toHaveAttribute("aria-pressed", "true");
-    // The send turn is disabled in the stub (no model calls).
-    expect(screen.getByTestId("two-voice-send")).toBeDisabled();
-  });
-});
+// (TwoVoiceChatPane coverage moved to tests/test_ChatPane.tsx — the pane
+// merged into the mode-parameterized ChatPane in UI simplification S2.)
