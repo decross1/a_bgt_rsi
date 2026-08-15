@@ -15,7 +15,9 @@
 // every field is producer-owned, so a malformed scalar drops its cell rather
 // than crashing the board.
 import { useEffect, useState } from "react";
+import StatusDot, { type Status as StatusName } from "../design/StatusDot";
 import { getActiveRuns } from "../api/http";
+import { ageLabel } from "../ladderBar";
 import { elapsed, useNow } from "../time";
 import type { ActiveRun, ActiveRunsResponse, LiveCalls } from "../types/activity";
 import type { TelemetrySample } from "../types/schemas";
@@ -24,7 +26,7 @@ import {
   buildEvidence,
   computeActivity,
   STATE_LABEL,
-  STATE_TONE,
+  type ActivityState,
   type ActivityVerdict,
 } from "./nowVerdict";
 
@@ -95,17 +97,7 @@ function RunCard({ run, now }: { run: ActiveRun; now: number }) {
   // Live elapsed since the current step began, falling back to the run start.
   const since = asText(run.step_started_at) || asText(run.started_at) || null;
 
-  const tone = stale
-    ? {
-        card: "border-amber-800/60 bg-amber-950/20",
-        chip: "border-amber-700/60 text-amber-300",
-        elapsed: "text-amber-300",
-      }
-    : {
-        card: "border-emerald-800/50 bg-emerald-950/20",
-        chip: "border-emerald-700/60 text-emerald-300",
-        elapsed: "text-emerald-300",
-      };
+  const muted = { fontSize: "var(--text-meta)", color: "var(--fg-muted)" };
 
   return (
     <div
@@ -113,45 +105,77 @@ function RunCard({ run, now }: { run: ActiveRun; now: number }) {
       id={runId ? `run-${runId}` : undefined}
       data-testid={`now-run-${runId || "unidentified"}`}
       data-stale={stale ? "true" : "false"}
-      className={`rounded border p-3 ${tone.card}`}
+      style={{
+        background: "var(--surface-2)",
+        border: `1px solid ${stale ? "var(--status-warn)" : "var(--border-1)"}`,
+        borderRadius: "var(--radius-card)",
+        padding: "var(--space-3)",
+      }}
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <div className="flex flex-wrap items-baseline gap-2">
-          {kind && (
-            <span
-              className={`rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${tone.chip}`}
-            >
-              {kind}
-            </span>
-          )}
-          {label && (
-            <span className="text-sm font-medium text-zinc-100">{label}</span>
-          )}
-          {legacy && (
-            <span
-              data-testid="legacy-mirror-chip"
-              title="wrapped from the single-slot active_run.json mirror (pre-D-047 apparatus)"
-              className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400"
-            >
-              legacy mirror
-            </span>
-          )}
-        </div>
-        <span className={`font-mono text-xs ${tone.elapsed}`}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: "var(--space-2)",
+        }}
+      >
+        {/* The ONLY animated element on the card, and it pulses only while a
+            run is genuinely alive — a stale heartbeat goes static amber. */}
+        <StatusDot
+          status={stale ? "warn" : "ok"}
+          pulse={!stale}
+          label={stale ? "stale heartbeat" : "running"}
+        />
+        {label && (
+          <span
+            style={{
+              fontSize: "var(--text-prose)",
+              fontWeight: "var(--weight-medium)",
+              color: "var(--fg)",
+            }}
+          >
+            {label}
+          </span>
+        )}
+        {kind && <span style={muted}>{kind}</span>}
+        {legacy && (
+          <span
+            data-testid="legacy-mirror-chip"
+            title="wrapped from the single-slot active_run.json mirror (pre-D-047 apparatus)"
+            style={muted}
+          >
+            legacy mirror
+          </span>
+        )}
+        <span
+          className="tnum"
+          style={{
+            marginLeft: "auto",
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--text-meta)",
+            color: stale ? "var(--status-warn)" : "var(--fg)",
+          }}
+        >
           {elapsed(since, now)}
         </span>
       </div>
 
-      <div className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs">
-        {runId && <span className="font-mono text-zinc-500">{runId}</span>}
-        {currentStep && (
-          <span className="text-zinc-300">
-            <span className="text-zinc-500">step:</span>{" "}
-            <span className="font-mono">{currentStep}</span>
-          </span>
-        )}
+      <div
+        style={{
+          marginTop: "var(--space-2)",
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "baseline",
+          gap: "var(--space-3)",
+          fontFamily: "var(--font-mono)",
+          ...muted,
+        }}
+      >
+        {runId && <span>{runId}</span>}
+        {currentStep && <span style={{ color: "var(--fg)" }}>{currentStep}</span>}
         {hasProgress && (
-          <span className="font-mono text-zinc-300">
+          <span className="tnum">
             {progressDone || "?"}/{progressTotal || "?"}
             {progressUnit ? ` ${progressUnit}` : ""}
           </span>
@@ -160,11 +184,17 @@ function RunCard({ run, now }: { run: ActiveRun; now: number }) {
 
       {stale && (
         <div
-          className="mt-2 text-xs text-amber-400"
           data-testid={`now-run-stale-${runId || "unidentified"}`}
+          style={{
+            marginTop: "var(--space-2)",
+            fontSize: "var(--text-meta)",
+            color: "var(--status-warn)",
+          }}
         >
           stale heartbeat — last sign of life{" "}
-          <span className="font-mono">{elapsed(new Date(ref!).toISOString(), now)}</span>{" "}
+          <span className="tnum" style={{ fontFamily: "var(--font-mono)" }}>
+            {elapsed(new Date(ref!).toISOString(), now)}
+          </span>{" "}
           ago{legacy ? " (freshest timestamp of the legacy mirror)" : ""}
         </div>
       )}
@@ -190,6 +220,11 @@ export interface NowBoardProps {
   // the shared computeActivity (nowVerdict.ts) over these two feeds.
   liveCalls?: LiveCalls | null;
   telemetry?: TelemetrySample | null;
+  // R3: the ISO instant the loop last FINISHED something (newest coordinator
+  // cycle / iteration end). Used ONLY to qualify the idle state — "nothing is
+  // running, and here is when something last did" — never to imply a run is
+  // live. Absent/unparseable simply drops the clause.
+  lastFinishedIso?: string | null;
 }
 
 // The one-line verdict for the strip. Registered wins (a registry run IS
@@ -222,6 +257,7 @@ export default function NowBoard({
   nowMs,
   liveCalls,
   telemetry,
+  lastFinishedIso,
 }: NowBoardProps) {
   const tick = useNow();
   const now = nowMs ?? tick;
@@ -305,68 +341,119 @@ export default function NowBoard({
   const verdict = stripLive
     ? stripVerdict(runs, liveCalls, telemetry, now)
     : null;
-  const tone = verdict ? STATE_TONE[verdict.state] : null;
+  // R3: the verdict was a full-width banner competing with the owed hero. It
+  // is now a compact status line on this card's header — same verdict, same
+  // testids, demoted emphasis.
+  const verdictDot: Record<ActivityState, StatusName> = {
+    registered: "ok",
+    "busy-unregistered": "warn",
+    idle: "idle",
+  };
+  const lastFinished = lastFinishedIso ? ageLabel(lastFinishedIso, now) : "—";
 
   return (
-    <section data-testid="now-board" className="space-y-2">
-      {verdict && tone && (
-        <div
-          data-testid="now-verdict"
-          data-state={verdict.state}
-          className={`rounded border ${tone.border} bg-zinc-900/40 px-4 py-3`}
+    <section
+      data-testid="now-board"
+      style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}
+    >
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: "var(--space-2)",
+        }}
+      >
+        <h3
+          style={{
+            margin: 0,
+            fontSize: "var(--text-title)",
+            fontWeight: "var(--weight-medium)",
+            color: "var(--fg)",
+          }}
         >
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span className="flex items-center gap-2">
-              <span
-                className={`h-2.5 w-2.5 rounded-full ${tone.dot}`}
-                aria-hidden
-              />
-              <span
-                className={`text-lg font-semibold tracking-wide ${tone.text}`}
-              >
-                {STATE_LABEL[verdict.state]}
-              </span>
-            </span>
-            <span className="text-sm text-zinc-400">{verdict.headline}</span>
-          </div>
-          {verdict.evidence.length > 0 && (
-            <div
-              className="mt-1 font-mono text-xs text-zinc-500"
-              data-testid="now-verdict-evidence"
-            >
-              {verdict.evidence.join(" · ")}
-            </div>
-          )}
-        </div>
-      )}
-      <div className="flex items-baseline gap-2">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-          Now board
+          Running now
         </h3>
-        <span className="text-xs text-zinc-600">
+        <span style={{ fontSize: "var(--text-meta)", color: "var(--fg-muted)" }}>
           {runs.length} registered run{runs.length === 1 ? "" : "s"}
         </span>
-        {skipped > 0 && (
+        {verdict && (
           <span
-            className="ml-auto text-[11px] text-amber-500/80"
-            data-testid="now-board-skipped"
+            data-testid="now-verdict"
+            data-state={verdict.state}
+            style={{
+              marginLeft: "auto",
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--space-2)",
+              fontSize: "var(--text-meta)",
+              color: "var(--fg-muted)",
+            }}
           >
-            {skipped} unreadable run file{skipped === 1 ? "" : "s"} skipped
+            <StatusDot
+              status={verdictDot[verdict.state]}
+              pulse={verdict.state !== "idle"}
+              label={STATE_LABEL[verdict.state]}
+            />
+            {STATE_LABEL[verdict.state]}
           </span>
         )}
       </div>
+
+      {skipped > 0 && (
+        <div
+          data-testid="now-board-skipped"
+          style={{ fontSize: "var(--text-meta)", color: "var(--status-warn)" }}
+        >
+          {skipped} unreadable run file{skipped === 1 ? "" : "s"} skipped
+        </div>
+      )}
+
       {runs.length === 0 ? (
         <div
-          className="rounded border border-zinc-800 bg-zinc-950/40 px-3 py-2 text-sm text-zinc-500"
           data-testid="now-board-empty"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-2)",
+            background: "var(--surface-2)",
+            border: "1px solid var(--border-1)",
+            borderRadius: "var(--radius-card)",
+            padding: "var(--space-3)",
+            fontSize: "var(--text-ui)",
+            color: "var(--fg-muted)",
+          }}
         >
+          {/* Never a pulse, never a fake run: this is the honest idle state. */}
+          <StatusDot status="idle" label="idle" />
           no registered runs
+          {lastFinishedIso && <span>· last finished {lastFinished} ago</span>}
         </div>
       ) : (
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div
+          style={{
+            display: "grid",
+            gap: "var(--space-3)",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+          }}
+        >
           {runs.map((run, i) => (
             <RunCard key={asText(run.run_id) || `idx-${i}`} run={run} now={now} />
           ))}
+        </div>
+      )}
+
+      {verdict && verdict.evidence.length > 0 && (
+        <div
+          data-testid="now-verdict-evidence"
+          className="tnum"
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--text-meta)",
+            color: "var(--fg-muted)",
+          }}
+        >
+          {verdict.evidence.join(" · ")}
         </div>
       )}
     </section>

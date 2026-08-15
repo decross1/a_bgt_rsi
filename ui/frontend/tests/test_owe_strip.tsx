@@ -1,9 +1,9 @@
-// OweStrip — Pulse's "do I owe anything" strip. Pins: only blocking kinds
+// OweStrip — Pulse's HERO: the human's real queue. Pins: only blocking kinds
 // (gate_verdict + state_gate families) and L4+-bar findings render; the
-// demoted mass (legacy no-level findings) stays OFF the strip but is counted
-// honestly in the ladder histogram line; rows link into the dossier reader;
-// a 404 is an HONEST "queue UNKNOWN", never a calm empty state.
-import { render, screen, waitFor } from "@testing-library/react";
+// demoted mass (legacy no-level findings) stays OFF the queue and surfaces as
+// ONE muted info line pointing at the ladder (revamp R3); rows link into the
+// dossier reader; a 404 is an HONEST "queue UNKNOWN", never a calm empty state.
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import OweStrip from "../src/components/OweStrip";
@@ -75,19 +75,47 @@ describe("OweStrip", () => {
     expect(screen.getByText("L4")).toBeInTheDocument();
   });
 
-  it("ladder histogram line counts ALL finding rows (demoted included)", () => {
-    renderStrip([L4_FINDING, LEGACY_FINDING, { ...LEGACY_FINDING, id: "sf-legacy-002" }]);
-    const line = screen.getByTestId("owe-ladder-counts");
-    expect(line).toHaveTextContent("L4 ×1");
-    expect(line).toHaveTextContent("no level ×2");
+  it("the below-bar mass is ONE muted info line — never a queue", () => {
+    renderStrip([
+      L4_FINDING,
+      LEGACY_FINDING,
+      { ...LEGACY_FINDING, id: "sf-legacy-002" },
+    ]);
+    const line = screen.getByTestId("owe-below-bar");
+    expect(line).toHaveTextContent("2 below-bar findings demoted to the ladder");
+    // It points at the ladder, not at a dossier — it is not work.
+    expect(within(line).getByRole("link", { name: "ladder" })).toHaveAttribute(
+      "href",
+      "/ladder",
+    );
+    // And it never inflates the owed count, which is the human's real queue.
+    expect(screen.getByTestId("owe-count")).toHaveTextContent("1");
+    // No owe rows were minted for it (one row: the L4 finding).
+    expect(document.querySelectorAll('[data-testid^="owe-row-"]')).toHaveLength(1);
   });
 
-  it("empty owed queue is the calm state", () => {
+  it("no below-bar line at all when nothing is demoted", () => {
+    renderStrip([GATE, L4_FINDING]);
+    expect(screen.queryByTestId("owe-below-bar")).toBeNull();
+  });
+
+  it("empty owed queue is the designed, honest empty state", () => {
     renderStrip([LEGACY_FINDING, BUBBLE]);
     expect(screen.getByTestId("owe-empty")).toHaveTextContent(
-      "You owe nothing",
+      "Nothing owed — the loop is unblocked.",
     );
     expect(screen.getByTestId("owe-count")).toHaveTextContent("0");
+    // The demoted finding still gets its muted line — the calm state is
+    // "nothing OWED", not "nothing exists".
+    expect(screen.getByTestId("owe-below-bar")).toHaveTextContent(
+      "1 below-bar finding demoted",
+    );
+  });
+
+  it("hero rows carry the rung glyph for a bar-clearing finding", () => {
+    renderStrip([L4_FINDING]);
+    const glyph = screen.getByTestId("rung-glyph");
+    expect(glyph).toHaveAttribute("data-rung", "L4");
   });
 
   it("a 404 renders the HONEST queue-UNKNOWN state, never calm-empty", async () => {

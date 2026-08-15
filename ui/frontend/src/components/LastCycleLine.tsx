@@ -57,7 +57,10 @@ export default function LastCycleLine({ initial, pollMs = 30000 }: Props) {
 
   if (error) {
     return (
-      <div className="text-xs text-red-400" data-testid="last-cycle-error">
+      <div
+        data-testid="last-cycle-error"
+        style={{ fontSize: "var(--text-meta)", color: "var(--status-bad)" }}
+      >
         {error}
       </div>
     );
@@ -72,7 +75,10 @@ export default function LastCycleLine({ initial, pollMs = 30000 }: Props) {
 
   if (last == null) {
     return (
-      <div className="text-xs text-zinc-500" data-testid="last-cycle-empty">
+      <div
+        data-testid="last-cycle-empty"
+        style={{ fontSize: "var(--text-meta)", color: "var(--fg-muted)" }}
+      >
         no coordinator cycles yet
       </div>
     );
@@ -91,40 +97,54 @@ export default function LastCycleLine({ initial, pollMs = 30000 }: Props) {
 
   return (
     <div
-      className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded border border-zinc-800 bg-zinc-900/40 px-3 py-2 text-xs"
       data-testid="last-cycle-line"
+      style={{
+        display: "flex",
+        flexWrap: "wrap",
+        alignItems: "baseline",
+        gap: "var(--space-3)",
+        fontSize: "var(--text-meta)",
+        color: "var(--fg-muted)",
+      }}
     >
-      <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-        last cycle
-      </span>
-      <span className="text-zinc-200">{topic}</span>
+      <span>last cycle</span>
+      <span style={{ color: "var(--fg)" }}>{topic}</span>
       {status && (
         <span
           data-testid="last-cycle-status"
-          className={
-            status === "no_valid_plan" ? "text-amber-400" : "text-zinc-400"
-          }
+          data-tone={status === "no_valid_plan" ? "warn" : "neutral"}
+          style={{
+            color:
+              status === "no_valid_plan"
+                ? "var(--status-warn)"
+                : "var(--fg-muted)",
+          }}
         >
           {status}
         </span>
       )}
       {errored > 0 && (
-        <span className="text-red-400" data-testid="last-cycle-errored">
+        <span
+          data-testid="last-cycle-errored"
+          data-tone="bad"
+          style={{ color: "var(--status-bad)" }}
+        >
           {errored} errored
         </span>
       )}
       {findings > 0 && (
-        <span className="text-emerald-400" data-testid="last-cycle-findings">
+        <span
+          data-testid="last-cycle-findings"
+          data-tone="ok"
+          style={{ color: "var(--status-ok)" }}
+        >
           +{findings} finding{findings === 1 ? "" : "s"}
         </span>
       )}
-      <span className="font-mono text-[10px] text-zinc-500">
+      <span className="tnum" style={{ fontFamily: "var(--font-mono)" }}>
         {ageLabel(last.timestamp, Date.now())}
       </span>
-      <Link
-        to="/cycles"
-        className="ml-auto text-[11px] text-zinc-600 hover:text-zinc-300"
-      >
+      <Link to="/cycles" style={{ marginLeft: "auto", color: "var(--accent)" }}>
         cycles →
       </Link>
     </div>

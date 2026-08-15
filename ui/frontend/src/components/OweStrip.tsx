@@ -1,18 +1,25 @@
-// OweStrip — Pulse's "do I owe anything" strip (UI simplification S1). ONE
-// /api/human_todo poll, filtered to what the human actually OWES under the
-// 2026-08 selection-before-the-human inversion (D-059): blocking decisions
-// (gate_verdict + state_gate families) and finding_review items that CLEAR
-// the evidence-ladder bar (L4/L5 — shared logic in src/ladderBar.ts). The 31
-// pre-ladder findings and the informational kinds (bubbles, stale runs) stay
-// OFF this strip — they live in the dossier index's "everything else".
+// OweStrip — Pulse's HERO (revamp R3): the human's real queue, and the first
+// thing read on the page. ONE /api/human_todo poll, filtered to what the human
+// actually OWES under the 2026-08 selection-before-the-human inversion (D-059):
+// blocking decisions (gate_verdict + state_gate families) and finding_review
+// items that CLEAR the evidence-ladder bar (L4/L5 — shared logic in
+// src/ladderBar.ts). Rows link into the dossier reader (/dossier/:id).
 //
-// Rows link into the dossier reader (/dossier/:id — the route lands in S2;
-// until then the link 404s forward, which is expected). A ladder histogram
-// line (per-level counts over ALL finding rows) keeps the demoted mass
-// honest without listing it. A 404 from the endpoint is an HONEST "queue
-// UNKNOWN" — never a calm empty state off a dead endpoint.
-import { useEffect, useState } from "react";
+// THE DEMOTED MASS IS NOT A QUEUE. Findings that did not clear the bar render
+// as ONE muted one-liner ("N below-bar findings demoted to the ladder", linking
+// to /ladder) — never as rows, never as a count the human could read as work.
+// That line is derived CLIENT-SIDE from the same /api/human_todo items: the
+// backend's `surfaced_below_bar` counter exists only in-memory in
+// orchestrator/coordinator.py's assess_state() and is not on any wire today, so
+// deriving it is the only honest option (see the R3 ui_plan entry).
+//
+// A 404 from the endpoint is an HONEST "queue UNKNOWN" — never a calm empty
+// state off a dead endpoint.
+import { useEffect, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
+import RungGlyph from "../design/RungGlyph";
+import StatusDot from "../design/StatusDot";
+import "../design/primitives.css";
 import { getHumanTodo } from "../api/http";
 import { ageLabel, clearsLadderBar, evidenceLevelOf } from "../ladderBar";
 import type { HumanTodoItem } from "../types/schemas";
@@ -83,69 +90,106 @@ export default function OweStrip({ initial, pollMs = 10000 }: Props) {
   );
   const owedRows = rows.filter(owed);
 
-  // Ladder histogram over ALL finding rows (demoted included) — derived from
-  // the items themselves, no extra fetch. Absent/malformed level counts
-  // under "no level" (the legacy bucket), honestly.
-  const findingRows = rows.filter((it) => asText(it.kind) === "finding_review");
-  const levelCounts = new Map<string, number>();
-  for (const it of findingRows) {
-    const level = evidenceLevelOf(it) ?? "no level";
-    levelCounts.set(level, (levelCounts.get(level) ?? 0) + 1);
-  }
-  const levelOrder = [...levelCounts.keys()].sort((a, b) => {
-    if (a === "no level") return 1;
-    if (b === "no level") return -1;
-    return b.localeCompare(a); // L5 first, down the ladder
-  });
+  // The demoted mass: finding rows that did NOT clear the bar. Counted so the
+  // human knows it exists, rendered as information — not as work.
+  const belowBar = rows.filter(
+    (it) => asText(it.kind) === "finding_review" && !clearsLadderBar(it),
+  ).length;
 
   const endpointMissing = error !== null && /\b404\b/.test(error);
   const nowMs = Date.now();
 
   return (
-    <div
-      className="rounded border border-zinc-800 bg-zinc-900/40 p-4"
+    <section
       data-testid="owe-strip"
+      style={{
+        background: "var(--surface-1)",
+        border: "1px solid var(--border-1)",
+        borderRadius: "var(--radius-card)",
+        padding: "var(--space-5)",
+      }}
     >
-      <div className="flex items-baseline gap-2">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-          You owe
+      <header
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: "var(--space-3)",
+          marginBottom: "var(--space-4)",
+        }}
+      >
+        <h2
+          style={{
+            margin: 0,
+            fontSize: "var(--text-title-lg)",
+            fontWeight: "var(--weight-semibold)",
+            color: "var(--fg)",
+          }}
+        >
+          What you owe
         </h2>
-        <span className="text-[10px] text-zinc-600">
+        <span style={{ fontSize: "var(--text-meta)", color: "var(--fg-muted)" }}>
           gate verdicts + findings that cleared L4
         </span>
         <span
           data-testid="owe-count"
-          className={`ml-auto rounded px-1.5 py-0.5 text-[11px] ${
-            owedRows.length > 0
-              ? "bg-amber-950 text-amber-400"
-              : "text-zinc-500"
-          }`}
+          className="tnum"
+          style={{
+            marginLeft: "auto",
+            fontSize: "var(--text-title-lg)",
+            fontWeight: "var(--weight-semibold)",
+            color: owedRows.length > 0 ? "var(--status-warn)" : "var(--fg-muted)",
+          }}
         >
           {owedRows.length}
         </span>
-      </div>
+      </header>
 
       {error &&
         (endpointMissing ? (
           // Honest 404 state: the queue SOURCE is missing — say so, never
           // render the calm "you owe nothing" off a dead endpoint.
-          <div className="mt-2 text-xs text-amber-400" data-testid="owe-error">
+          <div
+            data-testid="owe-error"
+            style={{ fontSize: "var(--text-prose)", color: "var(--status-warn)" }}
+          >
             /api/human_todo returned 404 — the queue is UNKNOWN, not empty.
           </div>
         ) : (
-          <div className="mt-2 text-xs text-red-400" data-testid="owe-error">
+          <div
+            data-testid="owe-error"
+            style={{ fontSize: "var(--text-prose)", color: "var(--status-bad)" }}
+          >
             {error}
           </div>
         ))}
 
       {loaded && !error && owedRows.length === 0 && (
-        <div className="mt-2 text-sm text-zinc-500" data-testid="owe-empty">
-          You owe nothing — the loop is unblocked.
+        <div
+          data-testid="owe-empty"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-3)",
+            fontSize: "var(--text-prose-lg)",
+            color: "var(--fg)",
+          }}
+        >
+          <StatusDot status="ok" label="unblocked" />
+          Nothing owed — the loop is unblocked.
         </div>
       )}
 
       {owedRows.length > 0 && (
-        <ul className="mt-2 space-y-1.5">
+        <ul
+          style={{
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--space-1)",
+          }}
+        >
           {owedRows.map((item, i) => {
             const id = asText(item.id);
             const kind = asText(item.kind) ?? "unknown";
@@ -154,40 +198,77 @@ export default function OweStrip({ initial, pollMs = 10000 }: Props) {
             const blocking = isBlockingKind(kind);
             const body = (
               <>
-                <span
-                  aria-hidden="true"
-                  className={`inline-block h-1.5 w-1.5 self-center rounded-full ${
-                    blocking ? "bg-red-400" : "bg-emerald-400"
-                  }`}
+                <StatusDot
+                  status={blocking ? "bad" : "ok"}
+                  label={blocking ? "blocking" : "clears the bar"}
                 />
-                <span className="text-zinc-200">{title}</span>
+                {level && <RungGlyph level={level} size={14} />}
+                <span
+                  style={{
+                    fontSize: "var(--text-prose)",
+                    fontWeight: "var(--weight-medium)",
+                    color: "var(--fg)",
+                  }}
+                >
+                  {title}
+                </span>
                 {level && (
-                  <span className="rounded bg-emerald-950 px-1 py-0.5 text-[10px] text-emerald-400">
+                  <span
+                    className="tnum"
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "var(--text-meta)",
+                      color: "var(--status-ok)",
+                    }}
+                  >
                     {level}
                   </span>
                 )}
-                <span className="text-[10px] uppercase tracking-wide text-zinc-600">
+                <span
+                  style={{
+                    fontSize: "var(--text-meta)",
+                    color: "var(--fg-muted)",
+                  }}
+                >
                   {kind}
                 </span>
-                <span className="ml-auto font-mono text-[10px] text-zinc-500">
+                <span
+                  className="tnum"
+                  style={{
+                    marginLeft: "auto",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "var(--text-meta)",
+                    color: "var(--fg-muted)",
+                  }}
+                >
                   {ageLabel(item.since, nowMs)}
                 </span>
               </>
             );
+            const rowStyle: CSSProperties = {
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: "var(--space-3)",
+              minHeight: "var(--row-h)",
+              paddingInline: "var(--space-3)",
+              borderRadius: "var(--radius-control)",
+              textDecoration: "none",
+            };
             return (
               <li key={`${id ?? "owe"}-${i}`} data-testid={`owe-row-${i}`}>
                 {id ? (
-                  // Into the dossier reader (S2 route; forward-404 until then).
                   <Link
                     to={`/dossier/${encodeURIComponent(id)}`}
-                    className="flex flex-wrap items-baseline gap-2 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-zinc-600"
+                    className="dsn-row dsn-row--interactive"
+                    style={rowStyle}
                   >
                     {body}
                   </Link>
                 ) : (
                   // No usable id — still listed (it still needs the human),
                   // just not linkable.
-                  <div className="flex flex-wrap items-baseline gap-2 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs">
+                  <div className="dsn-row" style={rowStyle}>
                     {body}
                   </div>
                 )}
@@ -197,17 +278,22 @@ export default function OweStrip({ initial, pollMs = 10000 }: Props) {
         </ul>
       )}
 
-      {findingRows.length > 0 && !error && (
+      {belowBar > 0 && !error && (
+        // INFORMATION, not a queue: one muted line, no count badge, no rows.
         <div
-          className="mt-2 font-mono text-[10px] text-zinc-600"
-          data-testid="owe-ladder-counts"
+          data-testid="owe-below-bar"
+          style={{
+            marginTop: "var(--space-4)",
+            fontSize: "var(--text-meta)",
+            color: "var(--fg-muted)",
+          }}
         >
-          ladder:{" "}
-          {levelOrder
-            .map((level) => `${level} ×${levelCounts.get(level)}`)
-            .join(" · ")}
+          {belowBar} below-bar finding{belowBar === 1 ? "" : "s"} demoted to the{" "}
+          <Link to="/ladder" style={{ color: "var(--fg-muted)" }}>
+            ladder
+          </Link>
         </div>
       )}
-    </div>
+    </section>
   );
 }

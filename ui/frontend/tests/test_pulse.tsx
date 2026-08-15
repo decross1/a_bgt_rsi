@@ -3,9 +3,10 @@
 // two ModelServerCards + the launch disclosure. Route-level smoke against
 // mocked feeds: every surface mounts, the owed row links into the dossier
 // reader, and the render stays console-clean (the route-sweep bar).
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import CommandPalette from "../src/design/CommandPalette";
 import type { TelemetrySample } from "../src/types/schemas";
 
 const D = vi.hoisted(() => {
@@ -27,7 +28,17 @@ const D = vi.hoisted(() => {
     processes: [],
     read_errors: null,
   } as unknown as TelemetrySample;
-  return { samples: [sample, { ...sample }] };
+  // Event fixtures are RELATIVE to now: the sparkgrid only counts events
+  // inside its trailing window, so hard-coded dates would silently stop being
+  // counted once the wall clock moved past the window (a test that decays
+  // into a false pass).
+  const dayAgo = (n: number) =>
+    new Date(Date.now() - n * 86_400_000).toISOString();
+  return {
+    samples: [sample, { ...sample }],
+    iterEnded: [dayAgo(1), dayAgo(2)],
+    cycleAt: dayAgo(1),
+  };
 });
 
 vi.mock("../src/hooks/useTelemetryStream", () => ({
@@ -66,7 +77,7 @@ vi.mock("../src/api/http", () => ({
   getCoordinatorCycles: vi.fn().mockResolvedValue({
     cycles: [
       {
-        timestamp: "2026-08-14T09:30:00Z",
+        timestamp: D.cycleAt,
         run_id: "coordinator_001",
         agent: "coordinator",
         topic: "pulse smoke cycle",
@@ -92,6 +103,20 @@ vi.mock("../src/api/http", () => ({
   }),
   getActiveRuns: vi.fn().mockResolvedValue({ runs: [], skipped: 0 }),
   startIteration: vi.fn().mockResolvedValue({ pid: 1 }),
+  // R3 additions: the sparkgrid's second series, and the ladder mini-funnel.
+  getIterations: vi.fn().mockResolvedValue({
+    iterations: [
+      { iteration_id: "iter-a", ended_at: D.iterEnded[0] },
+      { iteration_id: "iter-b", ended_at: D.iterEnded[1] },
+    ],
+  }),
+  getLadder: vi.fn().mockResolvedValue({
+    clusters: [],
+    histogram: { L0: 9, L1: 4, L2: 2, L3: 1, L4: 1, L5: 0 },
+    counts: { open: 12, surfaced: 2, killed: 3 },
+    agenda: [],
+    next_owed: {},
+  }),
 }));
 
 vi.mock("../src/api/activity", () => ({
@@ -123,6 +148,9 @@ vi.mock("../src/api/activity", () => ({
 import Pulse from "../src/routes/Pulse";
 
 afterEach(() => {
+  // Pulse registers palette verbs on mount and withdraws them on unmount —
+  // an un-cleaned render would leak them into the next test's registry.
+  cleanup();
   vi.clearAllMocks();
 });
 
@@ -164,7 +192,36 @@ describe("Pulse (/)", () => {
       screen.getByRole("link", { name: /awaiting verdict/ }),
     ).toHaveAttribute("href", "/dossier/iter-2026-08-14-001");
 
-    // Last-cycle one-liner.
+    // The demoted mass is INFORMATION, not a queue: one muted line, and the
+    // owed count stays at the one real gate item.
+    await waitFor(() =>
+      expect(screen.getByTestId("owe-below-bar")).toHaveTextContent(
+        "1 below-bar finding demoted to the ladder",
+      ),
+    );
+    expect(screen.getByTestId("owe-count")).toHaveTextContent("1");
+
+    // Zone 2 — is the lab alive? Both series bucket into the sparkgrid.
+    await waitFor(() =>
+      expect(screen.getByTestId("lab-sparkgrid-summary")).toHaveTextContent(
+        "2 iterations · 1 coordinator cycle",
+      ),
+    );
+    // …and the idle run board names when the loop last finished, rather than
+    // implying nothing ever has.
+    expect(screen.getByTestId("now-board-empty")).toHaveTextContent(
+      /last finished .* ago/,
+    );
+
+    // Ladder mini-funnel, off /api/ladder's histogram.
+    await waitFor(() =>
+      expect(screen.getByTestId("ladder-funnel-L0")).toHaveAttribute(
+        "data-count",
+        "9",
+      ),
+    );
+
+    // Last-cycle one-liner (now fed by Pulse's single cycles poll).
     await waitFor(() =>
       expect(screen.getByTestId("last-cycle-line")).toHaveTextContent(
         "pulse smoke cycle",
@@ -195,6 +252,71 @@ describe("Pulse (/)", () => {
     ).toHaveLength(0);
     errSpy.mockRestore();
     warnSpy.mockRestore();
+  });
+
+  it("registers its verbs in the ⌘K palette, and withdraws them on unmount", async () => {
+    const { unmount } = render(
+      <MemoryRouter>
+        <CommandPalette />
+        <Pulse />
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("pulse-page")).toBeInTheDocument(),
+    );
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    expect(screen.getByText("launch an iteration")).toBeInTheDocument();
+    expect(screen.getByText("review what you owe")).toBeInTheDocument();
+    expect(screen.getByText("show lab activity")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape" });
+    unmount();
+
+    // A route's verbs must not outlive the route — the registry is global.
+    render(
+      <MemoryRouter>
+        <CommandPalette />
+      </MemoryRouter>,
+    );
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    expect(screen.queryByText("launch an iteration")).toBeNull();
+  });
+
+  it("the ladder mini-funnel HIDES on a 204, rather than showing empty rungs", async () => {
+    const { getLadder } = await import("../src/api/http");
+    vi.mocked(getLadder).mockResolvedValueOnce(null);
+    render(
+      <MemoryRouter>
+        <Pulse />
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("pulse-page")).toBeInTheDocument(),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("lab-sparkgrid")).toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("ladder-funnel")).toBeNull();
+  });
+
+  it("a FAILED cycles read says UNKNOWN — it never renders as an empty slot", async () => {
+    // Regression pin: Pulse took the cycles poll over from LastCycleLine, and
+    // an early cut swallowed the rejection — which silently removed the line
+    // entirely, reading as "the loop has done nothing" instead of "the read
+    // failed".
+    const { getCoordinatorCycles } = await import("../src/api/http");
+    vi.mocked(getCoordinatorCycles).mockRejectedValueOnce(new Error("500 boom"));
+    render(
+      <MemoryRouter>
+        <Pulse />
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("pulse-cycles-unavailable")).toHaveTextContent(
+        "UNKNOWN, not absent",
+      ),
+    );
+    expect(screen.queryByTestId("last-cycle-line")).toBeNull();
   });
 
   it("retired mirror endpoints are NOT polled (registered derives from the registry)", async () => {
