@@ -1753,7 +1753,10 @@ reveal gate. New pins assert each of these against the new structure.
 
 ### Tests
 
-`test_PipelineJourney.tsx` 47 → **62**, `test_dossier_reader.tsx` 21 → **30**.
+`test_PipelineJourney.tsx` 49 → **62**, `test_dossier_reader.tsx` 22 → **30**
+(verified by name-diffing the two suites against `0483fd5`: **zero** original
+test names dropped; the eight that read differently are ribbon→stepper
+rewordings of the same assertion).
 Every pre-R2 pin is **ported, none deleted**: assertions that read a flat
 always-open section now expand it first, and the three whose content MOVED
 (critic rationale, red-team prose, experiment trials + results_path) assert
@@ -1766,8 +1769,8 @@ fence. The degradation sweeps (`[object Object]` / `NaN` / hostile scalars) now
 instances on `globalThis.__IO_INSTANCES__` — inert for every other suite,
 drivable so scrollspy is really tested rather than skipped.
 
-Suite **1009 green / 71 files** (R0 baseline 980), `tsc --noEmit` clean,
-`vite build` clean.
+Suite **1024 green / 71 files** after merging R1 (1009 on R0 alone; R0 baseline
+was 980), `tsc --noEmit` clean, `vite build` clean.
 
 > Note for the integrator: the worktree had no `node_modules` and the main
 > checkout's copy predates R0's `cmdk` + Geist deps (its
