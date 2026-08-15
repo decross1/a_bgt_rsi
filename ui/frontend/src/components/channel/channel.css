@@ -1,0 +1,261 @@
+/* channel.css — the /channel conversation surface (revamp R4). Consumes the
+   R0 design tokens; the ONE thing it adds is a voice-identity dimension,
+   which R0 has no token for (its accent is reserved for links/primary/focus
+   and its status set EXCLUSIVELY for run/rung status — a speaker is neither).
+
+   The two model-voice hues are oklch siblings at the accent's lightness and
+   chroma, placed in the hue window the system leaves empty (accent 250,
+   status 13/84/162/232): 290 and 330. So they read as one family with the
+   rest of the UI and can never be mistaken for a status color. The human's
+   own voice takes NO hue — it is marked by a surface tint and the neutral
+   border, which is the strongest ownership cue at reading length. */
+.chn {
+  --voice-human: var(--border-2);
+  --voice-nara: oklch(0.72 0.12 290);
+  --voice-pi: oklch(0.74 0.12 330);
+  --voice-other: var(--border-1);
+}
+
+/* ---- the reading column -------------------------------------------------- */
+/* Document-style blocks, not bubbles: a 2px left accent rail in the voice's
+   color, the body flush under a name/time header. Bubbles stop scanning at
+   length; a rail keeps the left edge of the prose straight. */
+.chn-turn {
+  border-inline-start: 2px solid var(--voice-accent, var(--voice-other));
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
+  padding: var(--space-1) var(--space-3);
+}
+/* The human's own turns: a subtle surface tint so ownership is instant. */
+.chn-turn--own {
+  background: var(--surface-1);
+}
+
+.chn-turn-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 20px;
+}
+
+.chn-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--voice-accent, var(--voice-other));
+  border-radius: var(--radius-pill);
+  color: var(--voice-accent, var(--fg-muted));
+  background: var(--surface-1);
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.chn-name {
+  color: var(--voice-accent, var(--fg-muted));
+  font-size: var(--text-ui);
+  font-weight: var(--weight-medium);
+}
+
+.chn-time {
+  margin-inline-start: auto;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+.chn-body {
+  margin-top: 2px;
+  font-size: var(--text-prose);
+  line-height: 1.55;
+  color: var(--fg);
+}
+.chn-body--raw {
+  white-space: pre-wrap;
+}
+
+/* ---- system events: subordinate single-line rows ------------------------- */
+.chn-event {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding-inline: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+.chn-event-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--event-tone, var(--status-idle));
+  font-size: var(--text-meta);
+  line-height: 1;
+}
+
+.chn-event-label {
+  flex: none;
+  color: var(--event-tone, var(--status-idle));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+}
+
+.chn-event-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chn-event-time {
+  margin-inline-start: auto;
+  flex: none;
+  color: var(--neutral-600);
+}
+
+/* The GitHub-timeline collapse affordance: the glyph column continues the
+   event rail, the count is the button. */
+.chn-collapse {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--fg-muted);
+  font: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.chn-collapse:hover {
+  color: var(--fg);
+}
+
+/* ---- day dividers -------------------------------------------------------- */
+.chn-day {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  background: var(--bg);
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+.chn-day::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-1);
+}
+
+/* ---- filter chips -------------------------------------------------------- */
+.chn-chip {
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-3);
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+  cursor: pointer;
+  transition: color var(--motion-hover) ease-out;
+}
+.chn-chip:hover {
+  color: var(--fg);
+}
+.chn-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+/* The role selector's chips are the same chip in the VOICE's hue — pressing
+   one says which voice you are addressing, so it must match that voice's
+   blocks in the feed. */
+.chn-chip--voice[aria-pressed="true"] {
+  border-color: var(--voice-accent, var(--accent));
+  background: transparent;
+  color: var(--voice-accent, var(--accent));
+}
+
+/* ---- reference chips (cl-* / iter-* / sf-*) ------------------------------ */
+/* Link-shaped, so they take the accent — the one place the system says an
+   accent belongs. Clicking peeks; the referenced object is NEVER inlined. */
+.chn-ref {
+  display: inline;
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-pill);
+  padding: 0 6px;
+  background: var(--surface-1);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  cursor: pointer;
+}
+.chn-ref:hover {
+  border-color: var(--accent);
+  color: var(--accent-hover);
+}
+
+.chn-refrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  font-size: var(--text-meta);
+  color: var(--fg-muted);
+}
+
+/* ---- pending turn + jump-to-present -------------------------------------- */
+.chn-pending {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-inline-start: 2px dashed var(--voice-accent, var(--voice-other));
+  font-size: var(--text-ui);
+  color: var(--fg-muted);
+}
+
+.chn-jump {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-2);
+  transform: translateX(-50%);
+  z-index: 2;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-pill);
+  padding: var(--space-1) var(--space-3);
+  background: var(--surface-2);
+  color: var(--fg);
+  font-size: var(--text-meta);
+  cursor: pointer;
+}
+.chn-jump:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---- peek body ----------------------------------------------------------- */
+.chn-peek-label {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-meta);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+.chn-peek-value {
+  margin: 0;
+  font-size: var(--text-ui);
+  color: var(--fg);
+  /* A producer-owned id/stem has no length contract — it wraps rather than
+     running off the panel. */
+  overflow-wrap: anywhere;
+}

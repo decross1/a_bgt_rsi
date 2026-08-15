@@ -1897,6 +1897,116 @@ trailing window — a test decaying into a false pass.
 payloads captured live from :8700 — 4 owed gate verdicts, 31 below-bar findings,
 the real ladder histogram (L0 9 / L1 3), and 344 events bucketing into the
 sparkgrid with zero unparseable timestamps — console-clean.
+## §2026-08-15 R4 — the Channel as a designed conversation surface (`ui/` only)
+
+Built by a worktree build agent (spawn `loop3h-revamp-r4-channel`) on merged
+main @ e286544 (R0 system + R1 ladder + R2 dossier). The hotfix had already
+made `/channel` correct — clean UTF-8, newest-40, bottom-anchored, markdown
+bodies, event collapse. R4 is **presentation on top of that**: the seam, the
+poll/paging logic, the delegate write path and every fence pin are unchanged.
+
+### What changed
+
+1. **Document-style voice blocks, not bubbles.** A turn is now
+   `avatar mark · name · time` over its body, with a **2px left rail** in the
+   voice's color; the human's own turns take a `--surface-1` tint (ownership
+   without a hue). Bubbles stop scanning at length — the rail keeps the left
+   edge of the prose straight. Column stays at `max-w-3xl` (768px, the top of
+   the 720-768 band).
+2. **Events are subordinate single-line rows** — 16px glyph · uppercase tone
+   label · mono 12px text · time, at `--text-meta` against speech's
+   `--text-prose`. Tone rides the R0 **status set** (cycle=info, kill=bad,
+   promotion=ok, alert=warn, ladder=idle), which is legitimate: these rows
+   *are* run status. The >=3 same-chip collapse is kept and restyled as the
+   timeline affordance (same row grammar, the count is the button); a run now
+   **never spans a day divider**.
+3. **Filter chips** (all / conversation / events) over the loaded rows. A
+   filter that empties the feed says the rows are *hidden*, which is a
+   different state from the honest "nothing ever happened" empty.
+4. **Reference chips → peek.** `cl-*` / `iter-*` / `sf-*` ids the apparatus
+   wrote into a message render as chips; clicking opens the R0 `PeekPanel`
+   with a small fetched summary and ONE link onward —
+   `cl-*` → `GET /api/ladder` → `/ladder`, `sf-*` → `GET /api/finding/{id}` →
+   `/dossier/{id}`, `iter-*` → `GET /api/iteration/{id}/journey` →
+   `/dossier/{id}`. The object is **never inlined into the thread**; an id the
+   backend does not know renders an honest not-found (and a 404 reads as
+   version skew), never an invented summary. Nothing fetches until a click.
+5. **Day dividers** (UTC-labeled, sticky), **jump-to-present** when scrolled
+   up, and a **pending block** on the turn in flight (pulsing `StatusDot`,
+   naming the voice).
+
+New files: `components/channel/channelModel.ts` (all derivations, pure),
+`ChannelRefs.tsx`, `RefPeekBody.tsx`, `channel.css`.
+
+### Deviations (owner call)
+
+- **A voice-identity dimension is added to the token system.** R0 has no token
+  for *who is speaking* — its accent is reserved for links/primary/focus and
+  its status set EXCLUSIVELY for run/rung status, and a speaker is neither.
+  `channel.css` therefore defines `--voice-nara: oklch(0.72 0.12 290)` and
+  `--voice-pi: oklch(0.74 0.12 330)`: oklch siblings at the accent's lightness
+  and chroma, placed in the hue window the system leaves empty (accent 250,
+  status 13/84/162/232), so they read as one family and can never be mistaken
+  for a status color. The human takes **no hue** (neutral border + tint).
+- **The composer's role chips were re-toned off emerald** onto those same
+  voice hues. Emerald is `--status-ok`; with voices now colored, an emerald
+  "NARA" chip beside a violet nara block was actively misleading.
+- **`.page-prose` NOT adopted** (unlike R2): it brings its own
+  `margin-inline: auto` + padding, which fight the full-height flex column
+  this page needs. `mx-auto max-w-3xl` already lands at 768px.
+- **MiniMarkdown is not forked.** It is shared with the journal/experiment
+  readers, so model bodies keep it verbatim and their ids ride a **chip row
+  beneath the body**; plain bodies (human turns, event lines) get **inline**
+  chips. Same chip, same peek, two placements.
+- **No stop affordance on the pending turn.** The task allowed one only "if
+  the seam supports abort" — it does not: `postChannelTurn` is a plain POST
+  and the CLI's exec keeps running and still writes the transcript. A stop
+  button would be a lie; the pending block says so instead.
+- **No general activity chip.** The row shape is exactly `{ts, kind, message}`
+  — there is no tool-use/cycle field to key one off, and sniffing prose for
+  "cycle/kill/promotion" would be fabrication. The ONE activity that is really
+  in the data — the CLI's `DELEGATED[<kind>]:` mirror row — becomes a chip
+  that replaces the prefix prose.
+- **Inner testids are `channel-voice-*`, not `channel-turn-*`.** The hotfix
+  pin queries `[data-testid^="channel-turn-"]` to count blocks; naming the
+  avatar/name/time/body with that prefix would have silently broken it.
+
+### The fence (unchanged, re-pinned)
+
+The page still renders no disposition surface, `postChannelDelegate` is still
+reachable ONLY from the confirm card's confirm click, the capability-off
+preview and the skew `EndpointMissingNote` are byte-identical, and the
+one-model honesty note still sits beside the role selector. **New pin:** the
+reference peek is read-only too — no disposition testid, no form, no textarea,
+and its only button is the panel's own close control.
+
+### Verification
+
+The feed and the open peek were **rendered and looked at** (jsdom dump →
+static HTML against the built CSS → headless-chromium screenshot). It caught
+what tests could not: the `you` avatar mark overflowing its 20px circle
+(marks are now single letters), and the emerald role chip clashing with the
+violet nara voice. It also flagged an unwrapped peek headline, which turned
+out to be a dump artifact (the portal's `body{overflow:hidden}` is lost in an
+`innerHTML` snapshot) — `overflow-wrap: anywhere` was added anyway, since a
+producer id has no length contract.
+
+`tests/test_channel.tsx` 24 → **49** (every one of the 24 pre-R4 tests passes
+**unmodified** — zero assertions edited). New pins: voice-block structure,
+three distinct accents + own-tint, hostile `kind: "toString"` falling back to
+the neutral voice, the delegation activity chip (and its absence on ordinary
+turns), compact event rows, the restyled collapse row, the three filters +
+aria-pressed + hidden-not-absent, UTC day dividers + `undated` + runs never
+crossing midnight, ref-chip detection (punctuation not swallowed, nothing
+fetched until click), all three peek fetches + both not-found paths + skew,
+the model-turn chip row, Esc-close, the pending block with no faked stop, and
+jump-to-present. The new pins were **mutation-checked**: dropping day
+dividers fails 3, one accent for all voices fails 1, ignoring the filter fails
+1, not detecting ids fails 10, ignoring the finding `found` flag fails 1, and
+letting a run cross a day fails 1.
+
+Suite **1049 green / 71 files** (R2 baseline 1024), `tsc --noEmit` clean,
+`vite build` clean. No dependency added or changed.
 
 ---
 

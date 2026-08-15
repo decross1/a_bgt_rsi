@@ -1,33 +1,43 @@
 // Channel (/channel) — the always-on human ⇄ Nara ⇄ PI conversation surface
 // (UI simplification plan §S4, the lab channel). One feed merges the stored
-// transcript (human/nara/pi turns, rendered as chat bubbles in ChatPane's
-// visual language) with apparatus events the CLI derives at read time
-// (cycles / ladder kills / promotions / loop alerts — system lines with kind
-// chips). Below it: a turn composer with a role selector (ask Nara = the
-// operations voice / ask PI = the research voice), and a DELEGATE composer
-// whose confirm card is the ONLY path that posts a delegation.
+// transcript (human/nara/pi turns) with apparatus events the CLI derives at
+// read time (cycles / ladder kills / promotions / loop alerts). Below it: a
+// turn composer with a role selector (ask Nara = the operations voice / ask PI
+// = the research voice), and a DELEGATE composer whose confirm card is the
+// ONLY path that posts a delegation.
 //
 // CHAT LAYOUT (loop3h-ui-hotfix): the page is a viewport-bounded flex column
 // — the feed scrolls in its own overflow container (chronological, NEWEST AT
 // BOTTOM, auto-scroll pinned to the bottom while the reader stays there) and
 // the composer dock is always visible below it. First load asks the seam for
-// only the newest FIRST_LOAD_LIMIT rows (the CLI's --limit keeps the NEWEST
-// N); a "load older" button at the top of the feed refetches with a larger
-// limit and prepends (dedupe absorbs the overlap). Nara/PI bubble bodies
-// render through MiniMarkdown (real replies are markdown); runs of >=
-// COLLAPSE_MIN consecutive same-chip events collapse into one expandable
-// line ("6 cluster kills — expand").
+// only the newest FIRST_LOAD_LIMIT rows; "load older" refetches with a larger
+// limit and prepends (dedupe absorbs the overlap).
+//
+// R4 — the feed reads as a designed conversation rather than a log:
+//   · turns are DOCUMENT-STYLE voice blocks (avatar mark · name · time, body
+//     below, a 2px left rail in the voice's color; the human's own turns take
+//     a surface tint). Not bubbles — bubbles stop scanning at length.
+//   · events are compact single-line rows (16px glyph · label · text · time),
+//     visually subordinate to speech, with the same >=3 same-chip run collapse
+//     restyled as the timeline "N events — expand" affordance.
+//   · filter chips (all / conversation / events) over the loaded rows, day
+//     dividers in the feed, a jump-to-present affordance when scrolled up, and
+//     a pending block on the turn in flight.
+//   · ids the apparatus wrote (cl-* / iter-* / sf-*) render as reference chips
+//     that PEEK (R0 PeekPanel) — the referenced object is never inlined here.
 //
 // THE FENCE: no disposition surface exists anywhere on this page — the
 // blessed CLI behind it exposes exactly {timeline, turn, delegate} (no
 // verdict verb), and this page renders no verdict/disposition form. The
-// dossier reader's forms remain the only dispositions.
+// dossier reader's forms remain the only dispositions. The peek is read-only
+// and carries no disposition either.
 //
 // ONE-MODEL HONESTY (D-033/D-036): "nara" and "pi" are perspectives of the
 // SAME local model (Gemma) — never independent confirmation. The independent
 // adversarial skeptic (Qwen) lives in the dossier reader's two-voice chat,
 // not here; the note next to the role selector says so.
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import {
   getChannelAvailability,
   getChannelTimeline,
@@ -39,6 +49,27 @@ import EndpointMissingNote, {
   isVersionSkew404,
 } from "../components/EndpointMissingNote";
 import MiniMarkdown from "../components/MiniMarkdown";
+import { RefChipRow, RefText } from "../components/channel/ChannelRefs";
+import RefPeekBody from "../components/channel/RefPeekBody";
+import {
+  FILTERS,
+  activityOf,
+  collapseNoun,
+  eventChip,
+  groupFeed,
+  hhmm,
+  refsIn,
+  rowKey,
+  sortRows,
+} from "../components/channel/channelModel";
+import type {
+  ChannelFilter,
+  ChannelRef,
+  FeedItem,
+} from "../components/channel/channelModel";
+import PeekPanel from "../design/PeekPanel";
+import StatusDot from "../design/StatusDot";
+import "../components/channel/channel.css";
 
 const TIMELINE_ENDPOINT = "/api/channel/timeline";
 // First load = the newest N rows only (the CLI's --limit keeps the NEWEST N;
@@ -48,146 +79,49 @@ const FIRST_LOAD_LIMIT = 40;
 const OLDER_PAGE = 40;
 // …capped at the seam's _MAX_LIMIT (lab_channel_seam.py rejects more).
 const MAX_TIMELINE_LIMIT = 1000;
-// Runs of this many consecutive same-chip events collapse into one line.
-const COLLAPSE_MIN = 3;
 
 type Role = "nara" | "pi";
 type DelegateKind = "research" | "improvement";
 
-// ── event chips ─────────────────────────────────────────────────────────
-// The CLI's derived events carry no source field through the printed line,
-// but their messages open with stable prefixes (lab_channel.py's _*_events
-// builders) — the chip keys off those. Unknown shapes fall back to a quiet
-// generic "event" chip, never filtered out.
-const EVENT_CHIPS: ReadonlyArray<readonly [string, string, string]> = [
-  ["cycle:", "cycle", "border-sky-900/60 bg-sky-950/30 text-sky-300"],
-  ["cluster killed", "kill", "border-rose-900/60 bg-rose-950/30 text-rose-300"],
-  ["promoted:", "promotion", "border-emerald-900/60 bg-emerald-950/30 text-emerald-300"],
-  ["loop alert", "alert", "border-amber-900/60 bg-amber-950/30 text-amber-300"],
-  ["cluster created", "ladder", "border-zinc-700 bg-zinc-900 text-zinc-400"],
-  ["clusters created", "ladder", "border-zinc-700 bg-zinc-900 text-zinc-400"],
-  ["cluster reopened", "ladder", "border-zinc-700 bg-zinc-900 text-zinc-400"],
-];
-
-function eventChip(message: string): { label: string; tone: string } {
-  for (const [prefix, label, tone] of EVENT_CHIPS) {
-    if (message.startsWith(prefix)) return { label, tone };
-  }
-  return { label: "event", tone: "border-zinc-700 bg-zinc-900 text-zinc-500" };
-}
-
-// Collapsed-wall nouns per chip label ("6 cluster kills — expand").
-const COLLAPSE_NOUN: Record<string, string> = {
-  cycle: "cycles",
-  kill: "cluster kills",
-  promotion: "promotions",
-  alert: "loop alerts",
-  ladder: "ladder events",
-  event: "events",
-};
-
-// ── voice bubbles (ChatPane's visual language: rounded bordered rows with an
-// uppercase voice label; per-voice accents) ─────────────────────────────
-const VOICE_CHROME: Record<string, { label: string; frame: string }> = {
+// ── voices ──────────────────────────────────────────────────────────────
+// `accent` is a channel-local voice hue (see channel.css for why R0 has no
+// token for speaker identity); `own` marks the reader's own turns, which take
+// the surface tint instead of a hue.
+const VOICE: Record<
+  string,
+  { label: string; mark: string; accent: string; own?: boolean }
+> = {
   human: {
     label: "you",
-    frame: "border-zinc-700 bg-zinc-900/60 text-zinc-200",
+    mark: "y",
+    accent: "var(--voice-human)",
+    own: true,
   },
   nara: {
     label: "nara · operations voice",
-    frame: "border-emerald-900/60 bg-emerald-950/20 text-emerald-200",
+    mark: "n",
+    accent: "var(--voice-nara)",
   },
   pi: {
     label: "pi · research voice",
-    frame: "border-indigo-900/60 bg-indigo-950/20 text-indigo-200",
+    mark: "p",
+    accent: "var(--voice-pi)",
   },
 };
 
 const VOICE_FALLBACK = {
   label: "voice",
-  frame: "border-zinc-800/60 bg-zinc-950/40 text-zinc-400",
+  mark: "?",
+  accent: "var(--voice-other)",
+  own: false,
 };
 
-function voiceChrome(kind: string): { label: string; frame: string } {
+function voiceOf(kind: string) {
   // Own-key lookup — a producer kind named "toString" must not resolve a
-  // prototype member into the className (SourceBadge/chips idiom).
-  return Object.prototype.hasOwnProperty.call(VOICE_CHROME, kind)
-    ? VOICE_CHROME[kind]
+  // prototype member into the chrome (SourceBadge/chips idiom).
+  return Object.prototype.hasOwnProperty.call(VOICE, kind)
+    ? VOICE[kind]
     : VOICE_FALLBACK;
-}
-
-function rowKey(r: ChannelRow): string {
-  // `since` is INCLUSIVE (ts >= since), so the poll re-receives boundary
-  // rows — dedupe on the full identity. The NUL separator stays an ESCAPED
-  // backslash-u0000 sequence — a raw NUL byte in this source once made git
-  // treat the whole file as binary (the loop3h-ui-hotfix encoding bug).
-  return `${r.ts}\u0000${r.kind}\u0000${r.message}`;
-}
-
-function sortRows(rows: ChannelRow[]): ChannelRow[] {
-  // Chronological, newest last — the feed's bottom is "now".
-  return [...rows].sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
-}
-
-function shortTs(ts: string): string {
-  // "2026-08-15T10:05:30…Z" -> "08-15 10:05" — enough to anchor the feed.
-  const m = ts.match(/^\d{4}-(\d{2}-\d{2})T(\d{2}:\d{2})/);
-  return m ? `${m[1]} ${m[2]}` : ts;
-}
-
-// ── feed grouping: consecutive same-chip event runs collapse ────────────
-type FeedItem =
-  | { type: "single"; row: ChannelRow; key: string }
-  | {
-      type: "wall";
-      rows: ChannelRow[];
-      label: string;
-      tone: string;
-      key: string;
-    };
-
-function groupFeed(
-  rows: ChannelRow[],
-  expanded: ReadonlySet<string>,
-): FeedItem[] {
-  const items: FeedItem[] = [];
-  let i = 0;
-  while (i < rows.length) {
-    const r = rows[i];
-    if (r.kind !== "event") {
-      items.push({ type: "single", row: r, key: `${rowKey(r)}-${i}` });
-      i++;
-      continue;
-    }
-    const chip = eventChip(r.message);
-    let j = i + 1;
-    while (
-      j < rows.length &&
-      rows[j].kind === "event" &&
-      eventChip(rows[j].message).label === chip.label
-    ) {
-      j++;
-    }
-    const run = rows.slice(i, j);
-    // Keyed off the run's FIRST row identity (not its index) so an
-    // expanded wall stays expanded when "load older" prepends rows.
-    const wallKey = rowKey(run[0]);
-    if (run.length >= COLLAPSE_MIN && !expanded.has(wallKey)) {
-      items.push({
-        type: "wall",
-        rows: run,
-        label: chip.label,
-        tone: chip.tone,
-        key: wallKey,
-      });
-    } else {
-      run.forEach((rr, k) =>
-        items.push({ type: "single", row: rr, key: `${rowKey(rr)}-${i + k}` }),
-      );
-    }
-    i = j;
-  }
-  return items;
 }
 
 // What a delegation WRITES and WHERE — the confirm card renders this verbatim
@@ -236,11 +170,17 @@ export default function Channel({
   const [expandedWalls, setExpandedWalls] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  const [filter, setFilter] = useState<ChannelFilter>("all");
+  const [peek, setPeek] = useState<ChannelRef | null>(null);
+  const [atBottom, setAtBottom] = useState(true);
 
   // turn composer
   const [role, setRole] = useState<Role>("nara");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [pending, setPending] = useState<{ role: Role; message: string } | null>(
+    null,
+  );
   const [sendError, setSendError] = useState<string | null>(null);
 
   // delegate composer
@@ -349,7 +289,16 @@ export default function Channel({
   const onFeedScroll = useCallback(() => {
     const el = feedRef.current;
     if (!el) return;
-    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    pinnedRef.current = bottom;
+    setAtBottom(bottom);
+  }, []);
+
+  const jumpToPresent = useCallback(() => {
+    const el = feedRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    pinnedRef.current = true;
+    setAtBottom(true);
   }, []);
 
   useEffect(() => {
@@ -387,6 +336,7 @@ export default function Channel({
     if (sendDisabled) return;
     const message = draft.trim();
     setSending(true);
+    setPending({ role, message });
     setSendError(null);
     try {
       await postChannelTurn({ role, message });
@@ -405,6 +355,7 @@ export default function Channel({
       );
     } finally {
       setSending(false);
+      setPending(null);
     }
   };
 
@@ -455,6 +406,9 @@ export default function Channel({
     }
   };
 
+  // The selector names the voice you are addressing, so its active state takes
+  // that VOICE's accent — the same hue as that voice's blocks in the feed
+  // (it used to be emerald, which is the status set's "pass" color).
   const roleChip = (r: Role, label: string) => (
     <button
       key={r}
@@ -462,108 +416,162 @@ export default function Channel({
       data-testid={`channel-role-${r}`}
       aria-pressed={role === r}
       onClick={() => setRole(r)}
-      className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
-        role === r
-          ? "border-emerald-700 bg-emerald-950/40 text-emerald-300"
-          : "border-zinc-700 text-zinc-400 hover:text-zinc-200"
-      }`}
+      className="chn-chip chn-chip--voice"
+      style={{ "--voice-accent": VOICE[r].accent } as CSSProperties}
     >
       {label}
     </button>
   );
 
-  const feedItems = groupFeed(rows, expandedWalls);
+  const feedItems = groupFeed(rows, expandedWalls, filter);
+  const openPeek = (r: ChannelRef) => setPeek(r);
 
-  const renderRow = (item: Extract<FeedItem, { type: "single" }>) => {
+  // ── one turn: a document-style voice block ────────────────────────────
+  const renderTurn = (item: Extract<FeedItem, { type: "single" }>) => {
     const r = item.row;
-    if (r.kind === "event") {
-      const chip = eventChip(r.message);
-      return (
-        <div
-          key={item.key}
-          data-testid="channel-event-row"
-          className="flex items-baseline gap-2 px-1 text-[11px] text-zinc-500"
-        >
-          <span className="shrink-0 font-mono text-[10px] text-zinc-600">
-            {shortTs(r.ts)}
-          </span>
-          <span
-            data-testid="channel-event-chip"
-            className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-wide ${chip.tone}`}
-          >
-            {chip.label}
-          </span>
-          <span className="min-w-0 break-words">{r.message}</span>
-        </div>
-      );
-    }
-    const chrome = voiceChrome(r.kind);
-    // Model voices reply in markdown — render it. The human's own turns (and
-    // unknown kinds) stay verbatim pre-wrap text.
+    const voice = voiceOf(r.kind);
+    // Model voices reply in markdown — render it, and collect the ids it
+    // mentions into a chip row (MiniMarkdown is shared with the journal /
+    // experiment readers; R4 does not fork it to inline chips). The human's
+    // own turns (and unknown kinds) stay verbatim text with INLINE chips.
     const isModelVoice = r.kind === "nara" || r.kind === "pi";
+    const activity = activityOf(r.message);
+    const body = activity !== null ? activity.body : r.message;
+    return (
+      <article
+        key={item.key}
+        data-testid={`channel-turn-${r.kind}`}
+        data-voice={r.kind}
+        className={`chn-turn${voice.own ? " chn-turn--own" : ""}`}
+        style={{ "--voice-accent": voice.accent } as CSSProperties}
+      >
+        <div className="chn-turn-head">
+          <span
+            className="chn-avatar"
+            data-testid="channel-voice-avatar"
+            aria-hidden="true"
+          >
+            {voice.mark}
+          </span>
+          <span className="chn-name" data-testid="channel-voice-name">
+            {voice.label}
+          </span>
+          {activity !== null && (
+            <span
+              className="chn-ref"
+              data-testid="channel-activity-chip"
+              style={{ color: "var(--fg-muted)", cursor: "default" }}
+            >
+              {activity.label}
+            </span>
+          )}
+          <time
+            className="chn-time"
+            data-testid="channel-voice-time"
+            dateTime={r.ts}
+          >
+            {hhmm(r.ts)}
+          </time>
+        </div>
+        {isModelVoice ? (
+          <div className="chn-body" data-testid="channel-voice-body">
+            <MiniMarkdown source={body} />
+            <RefChipRow refs={refsIn(body)} onOpen={openPeek} />
+          </div>
+        ) : (
+          <div
+            className="chn-body chn-body--raw"
+            data-testid="channel-voice-body"
+          >
+            <RefText text={body} onOpen={openPeek} />
+          </div>
+        )}
+      </article>
+    );
+  };
+
+  // ── one system event: a compact, subordinate single-line row ──────────
+  const renderEvent = (item: Extract<FeedItem, { type: "single" }>) => {
+    const r = item.row;
+    const chip = eventChip(r.message);
     return (
       <div
         key={item.key}
-        data-testid={`channel-turn-${r.kind}`}
-        className={`rounded border px-2 py-1 text-[11px] ${chrome.frame}`}
+        data-testid="channel-event-row"
+        className="chn-event"
+        style={
+          { "--event-tone": `var(--status-${chip.tone})` } as CSSProperties
+        }
       >
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[10px] uppercase tracking-wide opacity-80">
-            {chrome.label}
-          </span>
-          <span className="font-mono text-[10px] text-zinc-600">
-            {shortTs(r.ts)}
-          </span>
-        </div>
-        {isModelVoice ? (
-          <div className="mt-0.5">
-            <MiniMarkdown source={r.message} />
-          </div>
-        ) : (
-          <div className="mt-0.5 whitespace-pre-wrap text-zinc-300">
-            {r.message}
-          </div>
-        )}
+        <span className="chn-event-glyph" aria-hidden="true">
+          {chip.glyph}
+        </span>
+        <span data-testid="channel-event-chip" className="chn-event-label">
+          {chip.label}
+        </span>
+        <span className="chn-event-text">
+          <RefText text={r.message} onOpen={openPeek} />
+        </span>
+        <time className="chn-event-time" dateTime={r.ts}>
+          {hhmm(r.ts)}
+        </time>
       </div>
     );
   };
 
+  const renderRow = (item: Extract<FeedItem, { type: "single" }>) =>
+    item.row.kind === "event" ? renderEvent(item) : renderTurn(item);
+
+  // The timeline collapse affordance: same row grammar as an event line, the
+  // count is the button ("N cluster kills — expand").
   const renderWall = (item: Extract<FeedItem, { type: "wall" }>) => (
     <div
       key={item.key}
       data-testid="channel-event-wall"
-      className="flex items-baseline gap-2 px-1 text-[11px] text-zinc-500"
+      className="chn-event"
+      style={{ "--event-tone": `var(--status-${item.tone})` } as CSSProperties}
     >
-      <span className="shrink-0 font-mono text-[10px] text-zinc-600">
-        {shortTs(item.rows[0].ts)} → {shortTs(item.rows[item.rows.length - 1].ts)}
+      <span className="chn-event-glyph" aria-hidden="true">
+        {item.glyph}
       </span>
-      <span
-        className={`shrink-0 rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-wide ${item.tone}`}
-      >
-        {item.label}
-      </span>
+      <span className="chn-event-label">{item.label}</span>
       <button
         type="button"
         data-testid="channel-event-wall-expand"
-        onClick={() =>
-          setExpandedWalls((prev) => new Set(prev).add(item.key))
-        }
-        className="text-zinc-400 underline decoration-dotted underline-offset-2 hover:text-zinc-200"
+        className="chn-collapse"
+        onClick={() => setExpandedWalls((prev) => new Set(prev).add(item.key))}
       >
-        {item.rows.length} {COLLAPSE_NOUN[item.label] ?? "events"} — expand
+        {item.rows.length} {collapseNoun(item.label)} — expand
       </button>
+      <time className="chn-event-time">
+        {hhmm(item.rows[0].ts)} → {hhmm(item.rows[item.rows.length - 1].ts)}
+      </time>
     </div>
   );
+
+  const renderItem = (item: FeedItem) => {
+    if (item.type === "day") {
+      return (
+        <div key={item.key} data-testid="channel-day-divider" className="chn-day">
+          <span>{item.label}</span>
+        </div>
+      );
+    }
+    return item.type === "wall" ? renderWall(item) : renderRow(item);
+  };
 
   return (
     // Viewport-bounded chat column (56px ≈ the app header; the ActivityGraph
     // viewport-calc idiom): feed scrolls in its own overflow container, the
-    // composer dock stays visible at the bottom of the page area.
+    // composer dock stays visible at the bottom of the page area. max-w-3xl
+    // = 768px — the top of the ~720-768px reading band (R0's .page-prose is
+    // not adopted here: it brings its own margins/padding, which fight the
+    // full-height flex column this page needs).
     <div
-      className="mx-auto flex h-[calc(100dvh-3.5rem)] max-w-3xl flex-col p-5 pb-3"
+      className="chn mx-auto flex h-[calc(100dvh-3.5rem)] max-w-3xl flex-col p-5 pb-3"
       data-testid="channel-page"
     >
-      <header className="mb-3 shrink-0">
+      <header className="mb-2 shrink-0">
         <h1 className="text-sm font-semibold uppercase tracking-wide text-zinc-300">
           /channel · lab channel
         </h1>
@@ -573,6 +581,23 @@ export default function Channel({
           · alerts) in one feed. Nothing here disposes of anything — verdicts
           live in the dossier reader.
         </p>
+        <div
+          className="mt-2 flex flex-wrap items-center gap-1.5"
+          data-testid="channel-filters"
+        >
+          {FILTERS.map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className="chn-chip"
+              data-testid={`channel-filter-${value}`}
+              aria-pressed={filter === value}
+              onClick={() => setFilter(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </header>
 
       {error !== null && (
@@ -585,31 +610,68 @@ export default function Channel({
 
       {/* ── the feed — its own scroll container, newest at the bottom ── */}
       {!skew && error === null && (
-        <div
-          ref={feedRef}
-          onScroll={onFeedScroll}
-          className="min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1"
-          data-testid="channel-feed"
-        >
-          {mayHaveOlder && (
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            ref={feedRef}
+            onScroll={onFeedScroll}
+            className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1"
+            data-testid="channel-feed"
+          >
+            {mayHaveOlder && (
+              <button
+                type="button"
+                disabled={loadingOlder}
+                onClick={() => void loadOlder()}
+                data-testid="channel-load-older"
+                className="mx-auto block rounded border border-zinc-700 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400 hover:text-zinc-200 disabled:cursor-not-allowed disabled:text-zinc-600"
+              >
+                {loadingOlder ? "loading older…" : "load older"}
+              </button>
+            )}
+            {loaded && rows.length === 0 && (
+              <div className="text-xs text-zinc-600" data-testid="channel-empty">
+                no channel activity yet — memory/lab_channel.jsonl has no turns
+                and no events derive from the ledgers. Ask a voice below.
+              </div>
+            )}
+            {rows.length > 0 && feedItems.length === 0 && (
+              <div
+                className="text-xs text-zinc-600"
+                data-testid="channel-filter-empty"
+              >
+                no {filter} rows in the loaded window — the other rows are
+                still there, the filter is hiding them.
+              </div>
+            )}
+            {feedItems.map(renderItem)}
+            {pending !== null && filter !== "events" && (
+              <div
+                data-testid="channel-pending-turn"
+                className="chn-pending"
+                style={
+                  {
+                    "--voice-accent": voiceOf(pending.role).accent,
+                  } as CSSProperties
+                }
+              >
+                <StatusDot status="info" pulse label={`${pending.role} is composing`} />
+                <span>
+                  {pending.role} is composing a reply — a live turn can take
+                  minutes. The seam has no abort verb, so it cannot be stopped
+                  from here; the reply lands in the transcript either way.
+                </span>
+              </div>
+            )}
+          </div>
+          {!atBottom && (
             <button
               type="button"
-              disabled={loadingOlder}
-              onClick={() => void loadOlder()}
-              data-testid="channel-load-older"
-              className="mx-auto block rounded border border-zinc-700 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400 hover:text-zinc-200 disabled:cursor-not-allowed disabled:text-zinc-600"
+              className="chn-jump"
+              data-testid="channel-jump-present"
+              onClick={jumpToPresent}
             >
-              {loadingOlder ? "loading older…" : "load older"}
+              jump to present ↓
             </button>
-          )}
-          {loaded && rows.length === 0 && (
-            <div className="text-xs text-zinc-600" data-testid="channel-empty">
-              no channel activity yet — memory/lab_channel.jsonl has no turns
-              and no events derive from the ledgers. Ask a voice below.
-            </div>
-          )}
-          {feedItems.map((item) =>
-            item.type === "wall" ? renderWall(item) : renderRow(item),
           )}
         </div>
       )}
@@ -847,6 +909,17 @@ export default function Channel({
           )}
         </details>
       </div>
+
+      {/* Reference peek — read-only summary + the one link onward. The object
+          is NEVER inlined into the thread. */}
+      <PeekPanel
+        open={peek !== null}
+        onClose={() => setPeek(null)}
+        title={peek?.id ?? ""}
+        width={440}
+      >
+        {peek !== null && <RefPeekBody refItem={peek} />}
+      </PeekPanel>
     </div>
   );
 }
