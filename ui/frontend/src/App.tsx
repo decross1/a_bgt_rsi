@@ -94,11 +94,15 @@ export default function App() {
                 ))}
               </div>
             </details>
-            {/* Cross-nav to the agent-system brain dashboard (http.server
-                :5174). Built from the page hostname — not localhost — so the
-                link works over the LAN exactly like API_BASE does. */}
+            {/* Cross-nav to the agent-system brain governance dashboard —
+                served by the framework's brain_server.py on :5180 (bound to
+                0.0.0.0; /dashboard.html verified serving HTML 2026-08-15).
+                The old :5174 http.server no longer listens — that link was a
+                dead tab (loop3h-ui-hotfix). Built from the page hostname —
+                not localhost — so the link works over the LAN exactly like
+                API_BASE does. */}
             <a
-              href={`http://${window.location.hostname}:5174/dashboard.html`}
+              href={`http://${window.location.hostname}:5180/dashboard.html`}
               target="_blank"
               rel="noreferrer"
               className="border-b-2 border-transparent pb-1 font-mono text-sm text-zinc-400 transition-colors hover:text-zinc-100"

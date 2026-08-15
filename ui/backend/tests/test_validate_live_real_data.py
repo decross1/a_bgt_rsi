@@ -150,16 +150,29 @@ def test_real_errored_outcomes_carry_an_error_string(client):
 )
 def test_live_cycle_provenance_snapshot(client):
     """Pins the live-cohort provenance invariants: every real cycle is
-    coordinator-authored and arxiv-picked. The errored sub-cohort is VARIANT —
+    coordinator-authored with a KNOWN topic provenance. The old pin here —
+    ``all(topic_source == "arxiv_pick")`` — was a 2026-06-09 snapshot that
+    rotted when D-060 agenda-first went live (2026-08 cron cycles carry
+    ``topic_source="agenda"``); per this module's own no-rotting-pins rule the
+    invariant is now membership in the coordinator's suggestion-source enum
+    (orchestrator/coordinator.py suggest sources + morning_topic seed.source),
+    not a single hardcoded value. The errored sub-cohort is VARIANT —
     the 2026-06-09 snapshot held 2 ``RuntimeError: boom`` dispatch failures,
     which the 2026-06-10 D-048 purge removed — so instead of pinning a count
     that rots with the data, assert the failed-dispatch field semantics on
     whatever errored rows exist. An empty errored cohort is the honest
     post-purge state, never a fabricated expectation of failure."""
+    known_topic_sources = {
+        "agenda",  # D-060 agenda-first (idea-ledger agenda items lead)
+        "finding_followup",  # queued human follow-up topics
+        "coordinator_propose",  # P4 machine-mined rows (never human-masked)
+        "arxiv_pick",  # morning pick primary (newest papers_recent title)
+        "loop_memory_probe",  # morning pick fallback / gap angle
+    }
     cycles = client.get("/api/coordinator/cycles").json()["cycles"]
     assert cycles, "expected ≥1 real coordinator cycle"
     assert all(c["agent"] == "coordinator" for c in cycles)
-    assert all(c["topic_source"] == "arxiv_pick" for c in cycles)
+    assert all(c["topic_source"] in known_topic_sources for c in cycles)
     errored = [
         o for c in cycles for o in c["outcomes"] if o.get("status") == "errored"
     ]
