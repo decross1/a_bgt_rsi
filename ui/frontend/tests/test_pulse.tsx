@@ -117,6 +117,26 @@ vi.mock("../src/api/http", () => ({
     agenda: [],
     next_owed: {},
   }),
+  // The lab's queue, mounted directly below the hero. Its human_gaps deliver
+  // the SAME pending gate verdict the OweStrip fixture above carries — the
+  // pin below is that it renders as a pointer, never as a second copy of the
+  // human's queue.
+  getLabTodo: vi.fn().mockResolvedValue({
+    agent_gaps: ["4 open cluster(s) at L1 awaiting synthetic experiment"],
+    human_gaps: ["1 recent iteration(s) await a human gate verdict"],
+    owed: [
+      {
+        test: "synthetic experiment",
+        rung: "L1",
+        clusters: [
+          { cluster_id: "cl-a", stem: "KV-cache eviction bias", last_event_ts: null },
+        ],
+      },
+    ],
+    agenda: [],
+    refine_candidates: [],
+    generated_at: new Date().toISOString(),
+  }),
 }));
 
 vi.mock("../src/api/activity", () => ({
@@ -201,6 +221,29 @@ describe("Pulse (/)", () => {
     );
     expect(screen.getByTestId("owe-count")).toHaveTextContent("1");
 
+    // 2b — and what is the LAB carrying? The lab's queue sits directly below
+    // the hero, in DOM order (the hierarchy is the point: the human's queue
+    // is the hero, the lab's is the secondary zone).
+    await waitFor(() =>
+      expect(screen.getByTestId("lab-todo")).toHaveTextContent(
+        "1 cluster owes synthetic experiment",
+      ),
+    );
+    const page = screen.getByTestId("pulse-page");
+    const order = Array.from(
+      page.querySelectorAll("[data-testid='owe-strip'], [data-testid='lab-todo']"),
+    ).map((el) => el.getAttribute("data-testid"));
+    expect(order).toEqual(["owe-strip", "lab-todo"]);
+
+    // The human-owed gap the lab reports is a POINTER to the hero, never a
+    // second copy of the human's queue.
+    expect(screen.getByTestId("lab-todo-blocked")).toHaveTextContent(
+      "1 of the loop's gaps wait on you",
+    );
+    expect(screen.getByTestId("lab-todo").textContent).not.toContain(
+      "await a human gate verdict",
+    );
+
     // Zone 2 — is the lab alive? Both series bucket into the sparkgrid.
     await waitFor(() =>
       expect(screen.getByTestId("lab-sparkgrid-summary")).toHaveTextContent(
@@ -269,6 +312,7 @@ describe("Pulse (/)", () => {
     expect(screen.getByText("launch an iteration")).toBeInTheDocument();
     expect(screen.getByText("review what you owe")).toBeInTheDocument();
     expect(screen.getByText("show lab activity")).toBeInTheDocument();
+    expect(screen.getByText("lab queue")).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape" });
     unmount();
 
@@ -317,6 +361,23 @@ describe("Pulse (/)", () => {
       ),
     );
     expect(screen.queryByTestId("last-cycle-line")).toBeNull();
+  });
+
+  it("arriving at /#lab-queue scrolls the lab's queue into view", async () => {
+    // /ladder's "lab queue →" link navigates here with a hash; React Router
+    // does not scroll for one, so Pulse does it. Without this the link would
+    // land the reader at the top of Pulse with no sign of why.
+    const scrollSpy = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+    render(
+      <MemoryRouter initialEntries={["/#lab-queue"]}>
+        <Pulse />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(scrollSpy).toHaveBeenCalled());
+    const scrolled = scrollSpy.mock.instances[0] as Element;
+    expect(scrolled.querySelector("[data-testid='lab-todo']")).not.toBeNull();
   });
 
   it("retired mirror endpoints are NOT polled (registered derives from the registry)", async () => {

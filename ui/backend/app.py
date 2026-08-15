@@ -23,6 +23,7 @@ from .finding_detail import register as register_finding_detail
 from .human_todo import register as register_human_todo
 from .iteration_journey import register as register_iteration_journey
 from .lab_channel_seam import register as register_lab_channel_seam
+from .lab_todo import register as register_lab_todo
 from .ladder import register as register_ladder
 from .loop_alert import register as register_loop_alert
 from .loop_v0 import register as register_loop_v0
@@ -248,6 +249,17 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     register_ladder(
         app,
         repo_root=Path(loop_v0_repo),
+        memory_dir=Path(coordinator_memory),
+    )
+
+    # The lab's OWN queue (2026-08-15 work order): what Nara + the PI advance
+    # without the human. Composes assess_state's gaps (split by the daemon's
+    # own agent/human rule) with the idea ledger's owed tests / agenda /
+    # refine candidates. Same repo_root + run_state/memory split as above.
+    register_lab_todo(
+        app,
+        repo_root=Path(loop_v0_repo),
+        run_state_dir=Path(coordinator_run_state),
         memory_dir=Path(coordinator_memory),
     )
 

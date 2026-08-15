@@ -627,3 +627,59 @@ export interface LadderResponse {
   next_owed?: Record<string, string>;
   [key: string]: unknown;
 }
+
+// --- LAB TODO (GET /api/lab_todo) ---
+// The LAB's own queue — what Nara + the PI advance without the human, as
+// opposed to /api/human_todo (what the human owes). Composed by
+// ui/backend/lab_todo.py from coordinator.assess_state's gaps (split by
+// nara_daemon's own agent/human rule) + the idea ledger. Always 200 on a
+// backend that has it (a cold checkout returns gaps with empty lists); a 404
+// means the RUNNING BINARY predates the endpoint (version skew). Every field
+// is producer-owned/defensive-optional; the panel coerces per-field.
+
+// One cluster inside an owed-test group.
+export interface LabTodoOwedCluster {
+  cluster_id?: string | null;
+  stem?: string | null;
+  last_event_ts?: string | null;
+  [key: string]: unknown;
+}
+
+// The OPEN clusters parked on one rung, and the test that rung owes
+// (workers/idea_projection._owed — the same text ideas.md renders).
+export interface LabTodoOwedGroup {
+  test?: string | null;
+  rung?: string | null;
+  clusters?: LabTodoOwedCluster[];
+  [key: string]: unknown;
+}
+
+// A killed cluster D-064's `refine_idea` could still improve: a critique-shaped
+// kill (redteam_fatal_flaw / paper_prior_exists) with no refine_history yet.
+export interface LabTodoRefineCandidate {
+  cluster_id?: string | null;
+  stem?: string | null;
+  kill_code?: string | null;
+  [key: string]: unknown;
+}
+
+export interface LabTodoResponse {
+  // assess_state gaps the AGENT can advance (the daemon's work_exists set).
+  agent_gaps?: string[];
+  // assess_state gaps that wait on the HUMAN — surfaced as ONE muted line
+  // pointing at the OweStrip hero, never as a second todo list.
+  human_gaps?: string[];
+  // WHICH path produced the gaps (rule 7 — the fallback is named, never
+  // silent): "assess_state" = a live read; "last_cycle" = the gaps the
+  // coordinator persisted on its most recent cycle (the production backend
+  // cannot import the coordinator — see ui/backend/lab_todo.py); and
+  // "unavailable" = neither, which the panel renders as UNKNOWN, not empty.
+  gaps_source?: "assess_state" | "last_cycle" | "unavailable" | string | null;
+  // The cycle timestamp the gaps are from — null on the live path.
+  gaps_as_of?: string | null;
+  owed?: LabTodoOwedGroup[];
+  agenda?: LadderAgendaItem[];
+  refine_candidates?: LabTodoRefineCandidate[];
+  generated_at?: string | null;
+  [key: string]: unknown;
+}

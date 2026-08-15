@@ -3279,3 +3279,136 @@ at `:5180/dashboard.html` (bound 0.0.0.0, verified serving HTML
   carry `topic_source="agenda"`); the invariant is now membership in the
   coordinator's suggestion-source enum — flagged for the primary's review,
   not silently coerced.
+
+## §2026-08-15 loop3h-lab-todo — the lab's queue (`ui/` only)
+
+Owner ask, verbatim: *"Where can I easily see what nara and the pi have on
+their 'todo' list like that"* — after the PI produced a concrete plan in the
+channel naming clusters and the test each owes. The data existed but was
+scattered across `/ladder`, `memory/ideas.md` and channel replies. This is
+the single surface, built in worktree `agent-aa65160c176f30651` on merged
+main @ aa1acfc.
+
+### Backend — NEW `GET /api/lab_todo` (`ui/backend/lab_todo.py`)
+
+Read-only, registered in `app.py` with the same `repo_root` /
+`coordinator_run_state` / `coordinator_memory` split the coordinator +
+human_todo registrations use. Returns:
+
+```
+{agent_gaps: [str], human_gaps: [str],
+ gaps_source: "assess_state"|"last_cycle"|"unavailable", gaps_as_of: iso|null,
+ owed: [{test, rung, clusters:[{cluster_id, stem, last_event_ts}]}],
+ agenda: [{topic, source, cluster_id}],
+ refine_candidates: [{cluster_id, stem, kill_code}],
+ generated_at: iso}
+```
+
+Everything is REUSED: gap SENTENCES are the coordinator's own strings, the
+stems + next-owed test text are `workers/idea_projection._stem` / `._owed`
+(the same text `ideas.md` renders), and the reduction is the real
+`workers/idea_ledger.load_state`. `owed` groups OPEN clusters by their
+rung's owed test — L4/L5 derive status `surfaced`, so live groups are L0-L3
+plus any off-enum rung (reported as itself, never coerced onto the ladder).
+`refine_candidates` = KILLED clusters with a CRITIQUE-shaped kill code
+(`redteam_fatal_flaw` / `paper_prior_exists`) and no `refine_history` yet —
+what D-064's `refine_idea` could still improve; capped at 12 newest-first
+(the paper-seeded graveyard is thousands long). Absent ledger still returns
+gaps with empty lists (a cold checkout is not an error); a malformed/invalid
+ledger is an honest 500 (rule 4).
+
+**The gap-split rule, exactly as implemented:** a gap string containing
+`"await a human gate verdict"` or `"await human review"` is HUMAN-owed;
+every other string is agent-actionable. That is
+`orchestrator/nara_daemon.py`'s `HUMAN_GAP_MARKERS` / `agent_actionable_gaps`
+— the same predicate the daemon's `work_exists` runs — so this surface can
+never disagree with what the daemon will act on. Non-string entries are
+dropped by both lists.
+
+### The production-venv discovery (why `gaps_source` exists)
+
+A first cut called `coordinator.assess_state` directly and passed every test.
+It would have been DEAD on :8700. The live backend runs from **`ui/.venv`**,
+a deliberately thin read-only venv (fastapi / jsonschema / psutil — **no
+`openai`, no `chromadb`**), and `orchestrator/coordinator.py` imports
+`agent_wrapper.wrapper` at module scope:
+
+```
+$ ui/.venv/bin/python -c "from orchestrator import coordinator"
+ModuleNotFoundError: No module named 'openai'
+```
+
+The tests missed it because ui-backend pytest runs under `.venv-chroma`,
+which has everything. So the seam is layered and the payload SAYS which path
+answered (rule 7 — a fallback is explicit and named, never silent):
+
+- **`assess_state`** — live, preferred, used wherever the coordinator is
+  importable (dev / `.venv-chroma`).
+- **`last_cycle`** — the `planner_state.gaps` the coordinator PERSISTED on
+  its newest `run_state/coordinator_cycles.jsonl` row, with that cycle's
+  timestamp in `gaps_as_of`. Still the coordinator's own sentences; nothing
+  is re-derived in `ui/`. This is the production path.
+- **`unavailable`** — neither. The panel renders UNKNOWN, never "idle".
+
+`HUMAN_GAP_MARKERS` is mirrored in `lab_todo.py` rather than imported (the
+daemon is unimportable for the same reason), and pinned against
+`nara_daemon.HUMAN_GAP_MARKERS` by a test so drift fails loudly.
+
+**Flagged for the primary session (NOT worked around from `ui/`):**
+`assess_state` ends with `_topic_suggestions` → `pick_morning_topic` →
+`orchestrator/chroma_query`, which loads the BGE-M3 embedder (~3-5 s, then
+resident) and queries Chroma. Any backend served from `.venv-chroma` WITHOUT
+`MOCK_LLM` therefore pays that inside a 30 s UI poll. Production dodges it
+only because the import fails first. A cheap `assess_state(..., topics=False)`
+seam (or splitting the gap derivation out of the coordinator module) would
+let the UI take the live path safely.
+
+### Frontend — `components/LabTodo.tsx` on Pulse
+
+Mounted directly BELOW the `OweStrip` hero — the visual rule is the point:
+the human's queue is the hero (title-lg/semibold), the lab's queue is the
+secondary zone (title/medium) and never competes with it. Header "The lab's
+queue" + the ownership line *"what Nara and the PI advance on their own —
+not your queue"*. Sections, each with an honest empty state:
+
+- **Owed tests** — one expandable row per rung: `RungGlyph` + rung + "N
+  clusters owe <test>", cluster ids/stems under it, each linking to /ladder.
+- **Agenda** — queued topics with their provenance.
+- **Refine candidates** — count + ids + kill codes, with a muted note that
+  `refine_idea` is a COORDINATOR action (cost 2) the planner spends a slot
+  on. There is no button; the panel has zero `role=button` nodes, pinned.
+- **On the coordinator's list** — `agent_gaps` verbatim (added: the order
+  put the field on the wire without a consumer, and it is the most literal
+  answer to the owner's question), plus the `last_cycle` as-of line.
+- **Now blocked on you** — ONE muted line, "N of the loop's gaps wait on
+  you", linking UP to the hero anchor `#what-you-owe`. The gap text itself is
+  never restated here; pinned by a test that the panel contains no
+  "await a human gate verdict" string.
+
+A skew 404 → `EndpointMissingNote` (`/api/lab_todo` added to the known-skew
+set); any other failure says the queue is UNKNOWN, not empty. Producer-owned
+coercion throughout (gap entries must be non-empty STRINGS — a stray number
+would otherwise inflate the "waits on you" count).
+
+`getLabTodo()` added to `api/http.ts` + `LabTodo*` types in
+`types/schemas.ts`. Pulse registers a fourth ⌘K verb, **"lab queue"**, and
+the `/ladder` header gains a `lab queue →` link to `/#lab-queue` (the board
+is the ladder's STATE; the panel is the to-do). React Router does not scroll
+for a hash, so Pulse scrolls the zone into view on arrival — pinned by a test
+verified to FAIL against the pre-fix code.
+
+### Verification (this worktree)
+
+- ui-backend pytest **674 pass** (`MOCK_LLM=1 .venv-chroma`), 13 new in
+  `test_lab_todo.py`: gap split + daemon-parity + the mirrored-constant pin,
+  fixture-ledger grouping / agenda / refine selection / cap-and-order,
+  absent ledger, malformed + schema-invalid ledger (both honest 500s), the
+  three `gaps_source` paths, and one UNPATCHED test that pins the real
+  `assess_state` call wiring (kwarg names) while asserting only shape.
+- frontend vitest **1095 pass** (74 files, 15 new) · `tsc --noEmit` clean ·
+  `vite build` clean.
+- **Real-data smoke under the PRODUCTION venv** (`ui/.venv` interpreter,
+  worktree code, live primary-checkout paths): 200, `gaps_source=last_cycle`
+  as of the 20:01Z cycle, 3 agent gaps / 1 human gap, owed L0×9 + L1×3,
+  2 agenda topics, 12 refine candidates — identical gap text to a live
+  `assess_state` run under `.venv-chroma`.
