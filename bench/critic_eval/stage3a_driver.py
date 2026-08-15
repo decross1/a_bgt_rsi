@@ -25,6 +25,21 @@ sys.path.insert(0, str(REPO))
 from orchestrator.novelty_skeptic import attack  # noqa: E402
 
 label = sys.argv[1] if len(sys.argv) > 1 else "unlabeled"
+
+# A/B seam: the registry hard-pins vllm-qwen to the 3.6 model name
+# (agent_wrapper/wrapper.py:96-100), but the window serves whichever model
+# `label` names on :8001. Re-register so every call targets — and LOGS —
+# the actually-served model (first 3.8 run failed 22/22 on the name
+# mismatch; the liveness check caught it exactly as designed).
+if label != "unlabeled":
+    from agent_wrapper.backends import register_backend
+    from agent_wrapper.backends.ollama_openai import OllamaBackend
+    import agent_wrapper.wrapper  # noqa: F401  (ensures base registrations ran)
+    register_backend(OllamaBackend(
+        name="vllm-qwen",
+        base_url="http://127.0.0.1:8001/v1",
+        model=label,
+    ))
 cases = [json.loads(l) for l in
          open(REPO / "experiments/lit_falsification_battery/cases.jsonl")]
 
