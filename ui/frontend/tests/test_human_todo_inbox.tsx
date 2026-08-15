@@ -492,6 +492,8 @@ const FINDING_ITEM: HumanTodoItem = {
   id: "f-0042",
   title: "Finding f-0042 surfaced",
   since: daysAgo(2),
+  // clears the ladder bar (work order B) — below-L4 findings are demoted
+  evidence_level: "L4",
   resolve_command: "python -m orchestrator.finding_session",
 };
 const BUBBLE_ITEM: HumanTodoItem = {
@@ -698,8 +700,8 @@ describe("HumanTodoPanel — select-only mode (FE1)", () => {
         initial={[
           { kind: "gate_verdict", id: "iter-g1", title: "iter-g1 awaiting verdict", since: daysAgo(2), resolve_command: "gate_cli --iteration-id iter-g1" },
           { kind: "gate_verdict", id: "iter-g2", title: "iter-g2 awaiting verdict", since: daysAgo(4), resolve_command: "gate_cli --iteration-id iter-g2" },
-          { kind: "finding_review", id: "f-1", title: "f-1 surfaced", since: daysAgo(3), resolve_command: "finding_session f-1" },
-          { kind: "finding_review", id: "f-2", title: "f-2 surfaced", since: daysAgo(5), resolve_command: "finding_session f-2" },
+          { kind: "finding_review", id: "f-1", title: "f-1 surfaced", since: daysAgo(3), resolve_command: "finding_session f-1", evidence_level: "L4" },
+          { kind: "finding_review", id: "f-2", title: "f-2 surfaced", since: daysAgo(5), resolve_command: "finding_session f-2", evidence_level: "L5" },
         ]}
         attest={CAP_ALL}
         selectMode

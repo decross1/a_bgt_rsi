@@ -37,7 +37,8 @@ import type { HumanTodoItem } from "../src/types/schemas";
 // no crash) are kind-agnostic, so these tests are driven with a finding_review
 // item — adjusting the fixture KIND to match the gate, NOT the guard's intent.
 const FINDING_ITEMS: HumanTodoItem[] = [
-  { kind: "finding_review", id: "sf-harden-001", title: "finding under harden" },
+  // evidence_level clears the ladder bar so the row stays inbox-visible.
+  { kind: "finding_review", id: "sf-harden-001", title: "finding under harden", evidence_level: "L4" },
 ];
 
 // --- network stub (mirrors test_todo_route.tsx) -------------------------
@@ -429,6 +430,7 @@ describe("TodoShell hardening — valid id but malformed sibling fields (deep de
       {
         id: "sf-nasty",
         kind: "finding_review",
+        evidence_level: "L4", // clears the ladder bar — row stays visible
         // title as an object: TutorPanel renders title as a child → would throw
         // "Objects are not valid as a React child" if not coerced to text.
         title: { not: "a string" },
@@ -454,7 +456,7 @@ describe("TodoShell hardening — valid id but malformed sibling fields (deep de
   // — finding_review kind so the FINDING-keyed tutor renders (U5 kind-gate).
   it("a valid item with an ARRAY title still mounts and shows no raw array text", async () => {
     const nasty = [
-      { id: "sf-arr", kind: "finding_review", title: ["a", "b"] },
+      { id: "sf-arr", kind: "finding_review", title: ["a", "b"], evidence_level: "L4" },
     ];
     renderTodo({
       availability: AVAILABILITY_LIVE,

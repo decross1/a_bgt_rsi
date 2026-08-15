@@ -46,6 +46,11 @@ An item whose ``ref_id`` has an open deferral gets ``deferred: true`` plus
 a ``deferral: {note, by, at}`` block — it is STILL listed and STILL counted
 (the contract: a deferral assigns the work; it does not resolve the item).
 No existing keys change.
+
+Evidence ladder (2026-08-14, additive): a ``finding_review`` item carries
+``evidence_level`` verbatim when its surfaced_findings row has one (new rows
+do, per finding_promotion.py / D-059). Legacy rows stay key-absent — the
+cockpit reads absence as below-bar.
 """
 from __future__ import annotations
 
@@ -197,14 +202,23 @@ def _finding_review_items(memory_dir: Path) -> list[dict]:
         status = overrides.get(fid, _as_text(finding.get("status")))
         if status not in ("surfaced", "in_review"):
             continue
-        items.append(_item(
+        item = _item(
             "finding_review",
             fid,
             _as_text(finding.get("title")) or fid,
             _as_text(finding.get("promoted_at")),
             f"promoted finding awaits human interrogation (status: {status})",
             _FINDING_RESOLVE_TEMPLATE.format(finding_id=fid),
-        ))
+        )
+        # Evidence-ladder pass-through (2026-08-14 work order B): new
+        # surfaced rows carry `evidence_level` (finding_promotion.py, D-059);
+        # the cockpit inbox filters on it (L4/L5 = above the bar). ADDITIVE
+        # and only when present as a string — legacy rows stay key-absent,
+        # which the frontend reads as below-bar/demoted.
+        level = finding.get("evidence_level")
+        if isinstance(level, str) and level:
+            item["evidence_level"] = level
+        items.append(item)
     return items
 
 

@@ -23,6 +23,7 @@ from .experiments import register as register_experiments
 from .finding_detail import register as register_finding_detail
 from .human_todo import register as register_human_todo
 from .iteration_journey import register as register_iteration_journey
+from .loop_alert import register as register_loop_alert
 from .loop_v0 import register as register_loop_v0
 from .tailer import JsonlTailer
 from .todo_cockpit import register as register_todo_cockpit
@@ -240,6 +241,14 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     # endpoints read (loop_memory/feedback/findings under memory/, active_run
     # + week1.state.json under run_state/) — reuse the coordinator paths.
     register_human_todo(
+        app,
+        run_state_dir=Path(coordinator_run_state),
+        memory_dir=Path(coordinator_memory),
+    )
+
+    # 2026-08-14 work order A+C: loop-alert flag + ideas-board read seams.
+    # Same primary-checkout run_state/memory split as the coordinator reads.
+    register_loop_alert(
         app,
         run_state_dir=Path(coordinator_run_state),
         memory_dir=Path(coordinator_memory),

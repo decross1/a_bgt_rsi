@@ -32,6 +32,8 @@ const TODO_FIXTURE: HumanTodoItem[] = [
     id: "f-0042",
     title: "Finding f-0042 surfaced",
     since: "2026-06-07T09:00:00Z",
+    // clears the ladder bar (work order B) — below-L4 findings are demoted
+    evidence_level: "L4",
     resolve_command: "python -m orchestrator.finding_session",
   },
   {

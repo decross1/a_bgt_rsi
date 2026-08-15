@@ -65,6 +65,8 @@ const FINDING_REVIEW_ITEM: HumanTodoItem = {
   kind: "finding_review",
   id: "sf-2026-06-14-001",
   title: "Finding: shading is dominated under VCG (survives 2/3)",
+  // clears the ladder bar (work order B) — the inbox row must stay clickable
+  evidence_level: "L4",
 };
 const BUBBLE_ACK_ITEM: HumanTodoItem = {
   kind: "bubble_unacked",
@@ -806,6 +808,7 @@ const FINDING_REVIEW_ITEM_B: HumanTodoItem = {
   kind: "finding_review",
   id: "sf-2026-06-15-009",
   title: "Finding: equilibrium shading persists under second-price tie-break",
+  evidence_level: "L4",
 };
 
 // The INTERACTIVE aux trio — the panes the reveal-interrogation click mounts. The

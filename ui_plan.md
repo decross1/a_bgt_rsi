@@ -1070,6 +1070,72 @@ Scope held: `ui/` only (10 files: 4 `ui/backend`, 6 `ui/frontend` incl. 2 new) +
 
 ---
 
+## §2026-08-15 — evidence-ladder cockpit + alert surface (`ui/` only)
+
+Work order: `human/sessions/2026-08-14.md` "## UI session work order — evidence-ladder
+cockpit + alert surface" (A/B/C). Built by a worktree-isolated build agent
+(spawn `loop1h-ui-workorder`); primary gates + merges.
+
+### A — loop-alert banner (page-top)
+
+- **NEW `ui/backend/loop_alert.py`** — read-only `GET /api/loop_alert` serving
+  `run_state/loop_alert.json` verbatim (204 when absent; garbled = honest 500; the
+  `coordinator.active` delete-race idiom). Wired in `app.py` on the coordinator
+  run_state/memory paths. **NEW `GET /api/ideas`** in the same module (work order C).
+- **NEW `LoopAlertBanner.tsx`**, mounted in `App.tsx` above `<Routes>` (every page).
+  red = "LOOP STALLED" + reasons verbatim; amber = "loop degraded" + reasons;
+  ok & fresh = INVISIBLE. **Staleness is the frontend's judgment**: `updated_at`
+  older than ~26h renders the amber "no cycle telemetry since <ts>" note EVEN over
+  "ok" (the silent-cron catch); a flag with no readable `updated_at` renders the
+  honest "freshness unknown" amber. Absent flag / fetch failure / skew-404 /
+  unknown level = nothing — the banner never alarms off a shape it can't read.
+  Polls 60s; `initial` + `nowMs` fixture overrides (house idiom).
+
+### B — ladder-first inbox
+
+- **Backend (additive):** `human_todo.py` `finding_review` items now carry
+  `evidence_level` verbatim when the surfaced row has one (string-only pass-through;
+  legacy rows stay key-absent). No existing keys change.
+- **`HumanTodoPanel.tsx`:** finding_review rows below the L4/L5 bar — including
+  ALL legacy no-level rows — are **demoted**: off the default inbox, behind a
+  "show demoted (N)" toggle (`ladder-toggle`, session-local, default off). The
+  count badge counts what the inbox shows. **Operational kinds (gate_verdict /
+  bubbles / stale run / state_gate) are never demoted** — they are not ladder
+  claims, and hiding a blocking gate would fake an unblocked loop (interpretation
+  recorded; the work order's "inbox shows ONLY findings at L4/L5" is read as the
+  bar on findings). Zero-cleared weeks render the honest "Nothing cleared L4 this
+  week" (`ladder-empty`) + a per-level histogram derived from the items themselves
+  (`ladder-counts`, no extra fetch; absent/malformed level = the "no level" bucket).
+  Malformed `evidence_level` (non-`L<digit>` string, number, object) reads as
+  below-bar, never a crash or a fake pass.
+- NOT touched: `ResolveRail` still navigates ALL items (it is a navigator, not
+  the inbox); `Todo.tsx` selection still spans the full lifted list, so a demoted
+  item stays workable once selected from the rail.
+
+### C — ideas board (read-only v0)
+
+- **NEW route `/ideas`** (`routes/Ideas.tsx`, nav tab added): renders
+  `memory/ideas.md` via `GET /api/ideas` + the existing `MiniMarkdown` (the file is
+  a deterministic projection — plain markdown render is correct). Absent file =
+  honest "no ideas board yet"; no editing affordance (asserted read-only in tests).
+
+### Verification
+
+- `tsc --noEmit` clean · **vitest 1457 pass / 98 files** (baseline 1438/97; +19 new
+  across `test_loop_alert_banner` / `test_ladder_inbox` / `test_ideas_board`) ·
+  backend **pytest 675 pass** (+6 new in `test_loop_alert.py`, incl. the
+  evidence_level pass-through).
+- 9 existing tests updated honestly (not coerced): finding_review fixtures that the
+  tests expect inbox-VISIBLE gained `evidence_level: "L4"` — the new contract is
+  that only bar-clearing findings render by default (inviolate rule 4).
+- The real `:8700` smoke is the PRIMARY's post-merge step (per the spawn contract);
+  not run from this worktree.
+
+Scope held: `ui/` + this file only (backend: 3 files incl. 1 new + 1 new test;
+frontend: 7 src files incl. 2 new, 3 new + 4 touched test files).
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to
