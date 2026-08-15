@@ -60,6 +60,16 @@ interface Props {
   /** Injected iteration journey — when provided (and kind="iteration"), wins and
    *  SUPPRESSES the iteration self-fetch (the iteration-side mirror of `detail`). */
   journey?: IterationJourneyResponse;
+  /** R2 SUMMARY variant for the dossier reader header block: trim the overview
+   *  to its CLAIM + EVIDENCE REFS (+ the classification badges), dropping the
+   *  prose dump — the source-iteration block, "what would change it", "why it
+   *  matters", and the mechanical outcome-effects line. Everything dropped is
+   *  either duplicated by the journey spine directly below (the source
+   *  iteration IS the journey) or documented on the disposition forms
+   *  themselves. It is PRESENTATION ONLY: the fence note still renders, and
+   *  this component still accepts no verdict-shaped prop. Absent ⇒ false, so
+   *  every existing call-site renders EXACTLY as before. */
+  compact?: boolean;
 }
 
 // Every field on FindingDetail is producer-owned and unvalidated (the backend
@@ -139,6 +149,7 @@ export default function TutorPanel({
   kind = "finding",
   detail,
   journey,
+  compact = false,
 }: Props) {
   const idText = asText(findingId);
   const isIteration = kind === "iteration";
@@ -295,9 +306,16 @@ export default function TutorPanel({
           </div>
         ) : null}
         <Field label="iteration" value={iter.iteration_id} />
-        <Field label="hypothesis" value={hypothesis?.text} />
-        <Field label="summary" value={iter.nara_summary} />
-        <Field label="gate" value={iter.gate_status} />
+        {/* R2 compact: hypothesis / summary / gate all read on the journey
+            stepper directly below — repeating them here is the prose dump the
+            reader is trying to lose. */}
+        {!compact ? (
+          <>
+            <Field label="hypothesis" value={hypothesis?.text} />
+            <Field label="summary" value={iter.nara_summary} />
+            <Field label="gate" value={iter.gate_status} />
+          </>
+        ) : null}
 
         {/* quiet classification badges — novelty class + critic verdict. */}
         <div className="mt-1.5 flex flex-wrap gap-1">
@@ -390,8 +408,9 @@ export default function TutorPanel({
       ) : null}
       <Field label="claim" value={d.claim} />
 
-      {/* SOURCE ITERATION */}
-      {srcObj !== null ? (
+      {/* SOURCE ITERATION — dropped under R2 compact: the journey spine
+          immediately below IS this iteration, rendered in full. */}
+      {srcObj !== null && !compact ? (
         <div
           data-testid="tutor-source-iteration"
           className="mt-1.5 rounded border border-zinc-800/60 bg-zinc-950/40 px-1.5 py-1"
@@ -406,9 +425,14 @@ export default function TutorPanel({
         </div>
       ) : null}
 
-      {/* WHAT WOULD CHANGE IT / blocker, and WHY IT MATTERS */}
-      <Field label="what would change it" value={d.what_would_change_it} />
-      <Field label="why it matters" value={d.why_it_matters} />
+      {/* WHAT WOULD CHANGE IT / blocker, and WHY IT MATTERS — the prose pair
+          R2 compact drops (claim + evidence refs are the summary). */}
+      {!compact ? (
+        <>
+          <Field label="what would change it" value={d.what_would_change_it} />
+          <Field label="why it matters" value={d.why_it_matters} />
+        </>
+      ) : null}
 
       {/* EVIDENCE REFS (read-only) — evidence is a DICT; drop absent refs. */}
       {evObj !== null ? (
@@ -435,7 +459,10 @@ export default function TutorPanel({
         <Badge label="status" value={d.status} />
       </div>
 
-      {/* NEUTRAL MECHANICAL outcome-effects — what each outcome DOES, no steer. */}
+      {/* NEUTRAL MECHANICAL outcome-effects — what each outcome DOES, no steer.
+          R2 compact drops it: the disposition forms below state their own
+          effects, and the fence note above still renders in every variant. */}
+      {!compact ? (
       <div
         data-testid="tutor-outcome-effects"
         className="mt-2 rounded border border-zinc-800/60 bg-zinc-950/40 px-1.5 py-1 text-[10px] leading-snug text-zinc-500"
@@ -450,6 +477,7 @@ export default function TutorPanel({
           in_review → leaves it queued (no row written).
         </div>
       </div>
+      ) : null}
 
       {/* The unweighted pros/cons "considerations" section was DELETED here
           (UI simplification S2 — the dossier reader trims the tutor to claim /

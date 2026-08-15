@@ -1,0 +1,108 @@
+/* journeyStepper.css — the R2 sticky subway map above the dossier journey.
+   Consumes ONLY design/tokens.css custom properties (R0 rule: consume the
+   tokens, never invent parallels). Node color comes exclusively from the
+   semantic status set, via the shared StatusDot primitive. */
+
+/* The map sticks UNDER the app's own sticky glass header. --dsn-header-h is
+   the shell's header height; the fallback matches the current .dsn-header
+   (px-6 py-3 around a 13px nav row). R0 reserved --surface-glass for the
+   header + palette scrim; R2 adds this third glass surface deliberately —
+   it is a header-adjacent sticky bar, not a card. */
+.dsn-stepper {
+  position: sticky;
+  top: var(--dsn-header-h, 49px);
+  z-index: 20;
+  overflow-x: auto;
+  padding: var(--space-2) 0;
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.dsn-stepper-rail {
+  display: flex;
+  align-items: flex-start;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 100%;
+}
+
+.dsn-station {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 62px;
+  display: flex;
+  justify-content: center;
+}
+
+/* The line between adjacent stations — drawn behind the nodes. */
+.dsn-station + .dsn-station::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  right: 50%;
+  left: -50%;
+  height: 1px;
+  background: var(--border-2);
+  z-index: 0;
+}
+
+.dsn-station-btn {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: none;
+  border: none;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  color: var(--fg-muted);
+  font-family: inherit;
+  font-size: var(--text-meta);
+  line-height: 1.2;
+  transition: color var(--motion-hover) var(--ease-out);
+}
+
+.dsn-station-btn:hover {
+  color: var(--fg);
+}
+
+.dsn-station-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* The node itself sits on an opaque chip so the rail does not run through it. */
+.dsn-station-node {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--bg);
+  border: 1px solid var(--border-2);
+}
+
+.dsn-station-btn[data-active="true"] {
+  color: var(--fg);
+  font-weight: var(--weight-semibold);
+}
+
+/* Active station is marked with the ONE accent (never a status color). */
+.dsn-station-btn[data-active="true"] .dsn-station-node {
+  border-color: var(--accent);
+}
+
+.dsn-station-label {
+  white-space: nowrap;
+}
+
+/* A station the pipeline never reached reads dimmer than one it did. */
+.dsn-station-btn[data-reached="false"] .dsn-station-label {
+  opacity: 0.6;
+}

@@ -1,14 +1,24 @@
-// PipelineJourney — the /todo cockpit's read-only JOURNEY view (slice FE2).
-// These tests pin: (1) the PIPELINE RIBBON marks which of the 8 steps the row
-// reached, with the experiment step ALWAYS greyed + Phase-2-labelled; (2) the
-// JOURNEY blocks render read-only from an IterationRecord (hypothesis /
-// retrieval+relevance / novelty / critic + contradicting-paper both branches /
-// experiment-outcome present + Phase-2 placeholder); (3) BOTH item families —
-// gate_verdict (item.id IS the iteration id) and finding_review (item.id is a
-// finding id → getFindingDetail → source_iteration_id → getIterationJourney),
-// via injection AND via self-fetch; (4) the D-052 advisory surfaces quiet
-// (never amber); (5) DEGRADES on every malformed / absent / not-found shape
-// without throwing or blanking.
+// PipelineJourney — the dossier reader's read-only JOURNEY view.
+//
+// R2 (2026-08-15) rebuilt the PRESENTATION on progressive disclosure; the data
+// contract, the degradation contract and the fence are untouched. These tests
+// pin, in the new structure: (1) the STICKY SUBWAY-MAP STEPPER renders eight
+// stations colored by each step's REAL outcome (the pre-R2 ribbon's
+// reached/not-reached semantics survive as data-reached); (2) every section is
+// COLLAPSED to one verdict line by default and expanding reveals the prose;
+// (3) the heavy raw evidence — retrieved chunk texts, full critic / red-team
+// prose, experiment trials — drills into the R0 PeekPanel; (4) BOTH item
+// families — gate_verdict (item.id IS the iteration id) and finding_review
+// (item.id is a finding id → getFindingDetail → source_iteration_id →
+// getIterationJourney), via injection AND via self-fetch; (5) the D-052
+// advisory surfaces quiet (never amber, and it never colors a station);
+// (6) DEGRADES on every malformed / absent / not-found shape without throwing
+// or blanking.
+//
+// EVERY pre-R2 pin is PORTED, never deleted: assertions that used to read a
+// flat always-open section now expand that section first, and the three
+// assertions whose content MOVED to the peek (critic rationale, red-team
+// prose, experiment trials + results_path) assert against the peek body.
 //
 // The `journey` / `detail` props are the test-injection overrides (mirror
 // TutorPanel's `detail`): when provided the panel renders them WITHOUT a fetch,
@@ -19,6 +29,7 @@
 // object, array, or NaN; the runtime must survive them (asText drops by typeof,
 // no deref).
 import {
+  act,
   cleanup,
   fireEvent,
   render as rtlRender,
@@ -29,6 +40,7 @@ import {
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PipelineJourney from "../src/components/todo/PipelineJourney";
+import { STATION_KEYS } from "../src/components/todo/journeyStations";
 import type {
   FindingDetail,
   HumanTodoItem,
@@ -62,6 +74,47 @@ afterEach(() => {
 // producer actually writes; the runtime must survive them.
 const bad = (v: unknown) => v as unknown as never;
 
+// ── R2 disclosure helpers ──────────────────────────────────────────────────
+// Sections are collapsed by default, so every prose assertion opens its
+// section first. This is what "port the pin" means under progressive
+// disclosure: the invariant is unchanged, the path to it is one click longer.
+function expand(key: string) {
+  fireEvent.click(screen.getByTestId(`journey-toggle-${key}`));
+}
+
+function expandAll() {
+  for (const k of STATION_KEYS) {
+    const btn = screen.queryByTestId(`journey-toggle-${k}`);
+    if (btn !== null) fireEvent.click(btn);
+  }
+}
+
+// The setup.ts IntersectionObserver stub records its instances so scrollspy can
+// be driven deliberately (jsdom never intersects anything on its own).
+interface StubIO {
+  callback: IntersectionObserverCallback;
+  elements: Set<Element>;
+}
+function ioInstances(): StubIO[] {
+  return ((globalThis as unknown as Record<string, unknown>)
+    .__IO_INSTANCES__ ?? []) as StubIO[];
+}
+function intersect(...testids: string[]) {
+  const all = ioInstances();
+  expect(all.length).toBeGreaterThan(0); // the stub must be installed
+  const io = all[all.length - 1];
+  const entries = testids.map((t) => ({
+    target: screen.getByTestId(t),
+    isIntersecting: true,
+  }));
+  act(() => {
+    io.callback(
+      entries as unknown as IntersectionObserverEntry[],
+      io as unknown as IntersectionObserver,
+    );
+  });
+}
+
 // Watch BOTH error and warn — a React child-type violation logs console.error;
 // an unhandled-rejection / act() leak logs console.error/warn. The jsdom
 // stand-in for "rendered cleanly" is: neither was called.
@@ -73,7 +126,7 @@ function watchConsole() {
 }
 
 // A fully-populated iteration that reached every (non-Phase-2) step AND carries
-// an experiment outcome (so the experiment/outcome steps light too).
+// an experiment outcome (so the experiment station lights too).
 const FULL_ITER: IterationRecord = {
   iteration_id: "iter-2026-06-14-003",
   started_at: "2026-06-14T09:00:00Z",
@@ -124,25 +177,97 @@ const FINDING: FindingDetail = {
   source_iteration: { iteration_id: "iter-2026-06-14-003", topic: "tail-risk" },
 };
 
-describe("PipelineJourney — the RIBBON marks reached steps; experiments greyed Phase-2", () => {
-  it("renders all 8 steps; the FULL iteration lights every non-Phase-2 step", () => {
+// ═══════════════════════════════════════════════════════════════════════════
+// R2 — the STICKY SUBWAY-MAP STEPPER (ports the pre-R2 PipelineRibbon pins)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("PipelineJourney — the STEPPER draws 8 stations colored by real outcome", () => {
+  it("renders all 8 stations; the FULL iteration marks every step it reached", () => {
     render(<PipelineJourney item={iterItem("iter-2026-06-14-003")} journey={journeyOf(FULL_ITER)} />);
-    const ribbon = screen.getByTestId("pipeline-ribbon");
-    for (const k of ["hypothesis", "retrieval", "relevance", "novelty", "critic", "experiments", "gate", "outcome"]) {
-      expect(screen.getByTestId(`ribbon-step-${k}`)).toBeInTheDocument();
+    expect(screen.getByTestId("journey-stepper")).toBeInTheDocument();
+    for (const k of [
+      "hypothesis",
+      "retrieval",
+      "relevance",
+      "novelty",
+      "critic",
+      "redteam",
+      "experiment",
+      "verdict",
+    ]) {
+      expect(screen.getByTestId(`stepper-station-${k}`)).toBeInTheDocument();
     }
-    // Non-Phase-2 steps the FULL iteration reached are marked reached.
-    for (const k of ["hypothesis", "retrieval", "relevance", "novelty", "critic", "gate"]) {
-      expect(screen.getByTestId(`ribbon-step-${k}`)).toHaveAttribute("data-reached", "true");
+    // The steps THIS row reached are marked reached (the pre-R2 ribbon pin).
+    for (const k of ["hypothesis", "retrieval", "relevance", "novelty", "critic", "verdict"]) {
+      expect(screen.getByTestId(`stepper-station-${k}`)).toHaveAttribute(
+        "data-reached",
+        "true",
+      );
     }
-    // The experiment step is ALWAYS Phase-2-flagged and carries the label.
-    const exp = screen.getByTestId("ribbon-step-experiments");
-    expect(exp).toHaveAttribute("data-phase2", "true");
-    expect(exp).toHaveTextContent(/phase 2/i);
-    expect(ribbon).toHaveTextContent(/hypothesis/i);
+    // FULL_ITER carries no redteam block — that station is honestly un-reached.
+    expect(screen.getByTestId("stepper-station-redteam")).toHaveAttribute(
+      "data-reached",
+      "false",
+    );
+    // The experiment station is ALWAYS Phase-2-flagged (the loop is
+    // literature-stage until β / D-040) — the pre-R2 ribbon's contract.
+    expect(screen.getByTestId("stepper-station-experiment")).toHaveAttribute(
+      "data-phase2",
+      "true",
+    );
+    // …and the visible "Phase 2" marker rides the section's summary row.
+    expect(screen.getByTestId("journey-experiment")).toHaveTextContent(/phase 2/i);
   });
 
-  it("an early-halted iteration greys the steps it never reached", () => {
+  it("station COLOR is the step's real outcome, from the semantic status set only", () => {
+    render(<PipelineJourney item={iterItem("x")} journey={journeyOf(FULL_ITER)} />);
+    // passed → ok (emerald)
+    for (const k of ["hypothesis", "retrieval", "relevance", "novelty", "critic", "experiment"]) {
+      expect(screen.getByTestId(`stepper-station-${k}`)).toHaveAttribute(
+        "data-status",
+        "ok",
+      );
+    }
+    // a pending human gate → info (sky, GATE_TONE's own pending color)
+    expect(screen.getByTestId("stepper-station-verdict")).toHaveAttribute(
+      "data-status",
+      "info",
+    );
+    // a step that never ran → idle (zinc)
+    expect(screen.getByTestId("stepper-station-redteam")).toHaveAttribute(
+      "data-status",
+      "idle",
+    );
+    // Only the five semantic status tokens ever appear — never a bespoke hue.
+    for (const k of STATION_KEYS) {
+      expect(
+        screen.getByTestId(`stepper-station-${k}`).getAttribute("data-status"),
+      ).toMatch(/^(ok|warn|bad|info|idle)$/);
+    }
+  });
+
+  it("a FLAGGED step reads warn and a FAILED one reads bad — never coerced to ok", () => {
+    const flagged: IterationRecord = {
+      ...FULL_ITER,
+      // zero neighbors is a real retrieval flag
+      retrieval: {
+        k: 4,
+        neighbors: [],
+        relevance: { relevance: 0.2, low_confidence: true, reason: "thin" },
+      },
+      novelty: { class: "nonsense", rationale: "incoherent" },
+      critique: { verdict: "falsified", rationale: "a prior result contradicts it." },
+      gate_status: "invalid",
+    };
+    render(<PipelineJourney item={iterItem("x")} journey={journeyOf(flagged)} />);
+    expect(screen.getByTestId("stepper-station-retrieval")).toHaveAttribute("data-status", "warn");
+    expect(screen.getByTestId("stepper-station-relevance")).toHaveAttribute("data-status", "warn");
+    expect(screen.getByTestId("stepper-station-novelty")).toHaveAttribute("data-status", "bad");
+    expect(screen.getByTestId("stepper-station-critic")).toHaveAttribute("data-status", "bad");
+    expect(screen.getByTestId("stepper-station-verdict")).toHaveAttribute("data-status", "bad");
+  });
+
+  it("an early-halted iteration marks the stations it never reached", () => {
     const early: IterationRecord = {
       iteration_id: "iter-early",
       started_at: "x",
@@ -153,12 +278,175 @@ describe("PipelineJourney — the RIBBON marks reached steps; experiments greyed
       journal_entry_path: "j.md",
     };
     render(<PipelineJourney item={iterItem("iter-early")} journey={journeyOf(early)} />);
-    expect(screen.getByTestId("ribbon-step-hypothesis")).toHaveAttribute("data-reached", "true");
-    expect(screen.getByTestId("ribbon-step-retrieval")).toHaveAttribute("data-reached", "true");
-    expect(screen.getByTestId("ribbon-step-relevance")).toHaveAttribute("data-reached", "false");
-    expect(screen.getByTestId("ribbon-step-novelty")).toHaveAttribute("data-reached", "false");
-    expect(screen.getByTestId("ribbon-step-critic")).toHaveAttribute("data-reached", "false");
-    expect(screen.getByTestId("ribbon-step-gate")).toHaveAttribute("data-reached", "false");
+    expect(screen.getByTestId("stepper-station-hypothesis")).toHaveAttribute("data-reached", "true");
+    expect(screen.getByTestId("stepper-station-retrieval")).toHaveAttribute("data-reached", "true");
+    for (const k of ["relevance", "novelty", "critic", "redteam", "experiment", "verdict"]) {
+      expect(screen.getByTestId(`stepper-station-${k}`)).toHaveAttribute("data-reached", "false");
+      expect(screen.getByTestId(`stepper-station-${k}`)).toHaveAttribute("data-status", "idle");
+    }
+    // reached-but-empty retrieval is a FLAG, not a pass — 0 neighbors is real.
+    expect(screen.getByTestId("stepper-station-retrieval")).toHaveAttribute("data-status", "warn");
+  });
+
+  it("clicking a station scrolls to its section and marks it current", () => {
+    const scrollSpy = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+    render(<PipelineJourney item={iterItem("x")} journey={journeyOf(FULL_ITER)} />);
+    fireEvent.click(screen.getByTestId("stepper-station-critic"));
+    expect(scrollSpy).toHaveBeenCalled();
+    const station = screen.getByTestId("stepper-station-critic");
+    expect(station).toHaveAttribute("data-active", "true");
+    expect(station).toHaveAttribute("aria-current", "step");
+    // Navigation is NOT disclosure — the section stays collapsed.
+    expect(screen.queryByTestId("journey-body-critic")).toBeNull();
+  });
+
+  it("SCROLLSPY marks the topmost section in view as the current station", () => {
+    render(<PipelineJourney item={iterItem("x")} journey={journeyOf(FULL_ITER)} />);
+    expect(screen.getByTestId("stepper-station-novelty")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+    // novelty + critic both in the band → the EARLIER station wins.
+    intersect("journey-novelty", "journey-critic");
+    expect(screen.getByTestId("stepper-station-novelty")).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(screen.getByTestId("stepper-station-critic")).toHaveAttribute(
+      "data-active",
+      "false",
+    );
+  });
+
+  it("the stepper still renders (all stations idle) when the journey is unavailable", () => {
+    render(
+      <PipelineJourney
+        item={iterItem("iter-nf")}
+        journey={{ found: false, iteration_id: "iter-nf", iteration: null }}
+      />,
+    );
+    expect(screen.getByTestId("journey-stepper")).toBeInTheDocument();
+    for (const k of STATION_KEYS) {
+      const station = screen.getByTestId(`stepper-station-${k}`);
+      expect(station).toHaveAttribute("data-reached", "false");
+      expect(station).toHaveAttribute("data-status", "idle");
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// R2 — PROGRESSIVE DISCLOSURE: one verdict line per section by default
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("PipelineJourney — sections are COLLAPSED to one verdict line by default", () => {
+  it("no section body is mounted until the human expands it", () => {
+    render(<PipelineJourney item={iterItem("x")} journey={journeyOf(FULL_ITER)} />);
+    for (const k of STATION_KEYS) {
+      expect(screen.queryByTestId(`journey-body-${k}`)).toBeNull();
+      expect(screen.getByTestId(`journey-toggle-${k}`)).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+    }
+    // The prose the sections hold is therefore NOT on the page.
+    expect(
+      screen.queryByText("no prior asymmetric-thinning result in retrieval."),
+    ).toBeNull();
+    expect(
+      screen.queryByText("Order books thin asymmetrically before resolution."),
+    ).toBeNull();
+  });
+
+  it("the collapsed line states the step's outcome — the 15-second read", () => {
+    render(<PipelineJourney item={iterItem("x")} journey={journeyOf(FULL_ITER)} />);
+    expect(screen.getByTestId("journey-summary-hypothesis")).toHaveTextContent(
+      /stated · 4 candidates/,
+    );
+    expect(screen.getByTestId("journey-summary-retrieval")).toHaveTextContent(
+      /3 neighbors · k=8/,
+    );
+    expect(screen.getByTestId("journey-summary-relevance")).toHaveTextContent("0.82");
+    expect(screen.getByTestId("journey-summary-novelty")).toHaveTextContent("novel");
+    expect(screen.getByTestId("journey-summary-critic")).toHaveTextContent(
+      /survives · uncontradicted/,
+    );
+    expect(screen.getByTestId("journey-summary-redteam")).toHaveTextContent(
+      /no red-team pass on this row/,
+    );
+    expect(screen.getByTestId("journey-summary-verdict")).toHaveTextContent("pending");
+  });
+
+  it("expanding reveals the prose; each section's state is INDEPENDENT", () => {
+    render(<PipelineJourney item={iterItem("x")} journey={journeyOf(FULL_ITER)} />);
+    expand("hypothesis");
+    expect(screen.getByTestId("journey-body-hypothesis")).toHaveTextContent(
+      "Order books thin asymmetrically before resolution.",
+    );
+    expect(screen.getByTestId("journey-toggle-hypothesis")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    // Opening one section opens ONLY that one.
+    for (const k of STATION_KEYS.filter((s) => s !== "hypothesis")) {
+      expect(screen.queryByTestId(`journey-body-${k}`)).toBeNull();
+    }
+    // …and it collapses again on a second click.
+    expand("hypothesis");
+    expect(screen.queryByTestId("journey-body-hypothesis")).toBeNull();
+  });
+
+  it("expansion lives in COMPONENT STATE — nothing is written to localStorage", () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    render(<PipelineJourney item={iterItem("x")} journey={journeyOf(FULL_ITER)} />);
+    expandAll();
+    expect(setItem).not.toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// R2 — PEEK drill-in for the heavy raw evidence
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("PipelineJourney — raw evidence drills into the PeekPanel", () => {
+  it("retrieved CHUNK TEXTS open in the peek, not inline", () => {
+    const withChunks: IterationRecord = {
+      ...FULL_ITER,
+      retrieval: {
+        ...FULL_ITER.retrieval!,
+        neighbors: [
+          { id: "chunk-a", text: "Thin books precede resolution in 3 of 4 venues.", score: 0.81 },
+          { id: "chunk-b", text: "No asymmetry observed in the control window." },
+        ],
+      },
+    };
+    render(<PipelineJourney item={iterItem("x")} journey={journeyOf(withChunks)} />);
+    // Not inline — the chunk prose is nowhere on the page until the peek opens.
+    expect(
+      screen.queryByText(/Thin books precede resolution/),
+    ).toBeNull();
+    expand("retrieval");
+    fireEvent.click(screen.getByTestId("journey-peek-chunks"));
+    const peek = screen.getByTestId("peek-chunks");
+    expect(peek).toHaveTextContent("chunk-a");
+    expect(peek).toHaveTextContent("Thin books precede resolution in 3 of 4 venues.");
+    expect(peek).toHaveTextContent("No asymmetry observed in the control window.");
+    // It is the R0 PeekPanel: a focus-trapped right slide-over dialog.
+    expect(screen.getByTestId("peek-panel")).toHaveAttribute("aria-modal", "true");
+    // Esc closes it.
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("peek-chunks")).toBeNull();
+  });
+
+  it("the peek button is absent when there is nothing raw to show", () => {
+    const noNeighbors: IterationRecord = {
+      ...FULL_ITER,
+      retrieval: { k: 4, neighbors: [], relevance: FULL_ITER.retrieval!.relevance },
+    };
+    render(<PipelineJourney item={iterItem("x")} journey={journeyOf(noNeighbors)} />);
+    expand("retrieval");
+    expect(screen.queryByTestId("journey-peek-chunks")).toBeNull();
   });
 });
 
@@ -166,6 +454,7 @@ describe("PipelineJourney — JOURNEY blocks render read-only from the iteration
   it("renders hypothesis, retrieval (k + neighbors) + relevance, novelty, critic", () => {
     render(<PipelineJourney item={iterItem("iter-2026-06-14-003")} journey={journeyOf(FULL_ITER)} />);
     const panel = screen.getByTestId("pipeline-journey");
+    expandAll();
 
     expect(screen.getByTestId("journey-hypothesis")).toHaveTextContent(
       "Order books thin asymmetrically before resolution.",
@@ -185,8 +474,12 @@ describe("PipelineJourney — JOURNEY blocks render read-only from the iteration
     expect(screen.getByTestId("journey-novelty")).toHaveTextContent(
       "no prior asymmetric-thinning result in retrieval.",
     );
-    // critic verdict + rationale
+    // critic verdict + rationale (the rationale now reads in the peek)
     expect(screen.getByTestId("journey-critic")).toHaveTextContent("survives");
+    fireEvent.click(screen.getByTestId("journey-peek-critic"));
+    expect(screen.getByTestId("peek-critic")).toHaveTextContent(
+      "no contradicting paper surfaced.",
+    );
     expect(panel.textContent ?? "").not.toContain("[object Object]");
   });
 
@@ -196,6 +489,7 @@ describe("PipelineJourney — JOURNEY blocks render read-only from the iteration
       critique: { verdict: "restated", rationale: "a prior paper says this.", contradicting_paper_id: "arxiv-2401.00001" },
     };
     render(<PipelineJourney item={iterItem("x")} journey={journeyOf(withContra)} />);
+    expand("critic");
     const contra = screen.getByTestId("journey-contradicting-paper");
     expect(contra).toHaveTextContent(/contradicted by/i);
     expect(contra).toHaveTextContent("arxiv-2401.00001");
@@ -203,18 +497,20 @@ describe("PipelineJourney — JOURNEY blocks render read-only from the iteration
 
   it("contradicting paper: a null id renders 'uncontradicted'", () => {
     render(<PipelineJourney item={iterItem("x")} journey={journeyOf(FULL_ITER)} />);
+    expand("critic");
     expect(screen.getByTestId("journey-contradicting-paper")).toHaveTextContent(/uncontradicted/i);
   });
 
   it("experiment-outcome PRESENT renders the bridge fields; an HONEST stage label says experiment-bridged", () => {
     render(<PipelineJourney item={iterItem("x")} journey={journeyOf(FULL_ITER)} />);
+    expand("experiment");
     const out = screen.getByTestId("journey-outcome-present");
     expect(out).toHaveTextContent("exp004");
     expect(out).toHaveTextContent("effect_size");
     expect(out).toHaveTextContent("0.31");
     expect(screen.queryByTestId("journey-outcome-placeholder")).toBeNull();
     expect(screen.getByTestId("journey-stage-label")).toHaveTextContent(/experiment-bridged/i);
-    // the stage BANNER above the ribbon names the applied tier
+    // the stage BANNER names the applied tier
     const banner = screen.getByTestId("journey-stage-banner");
     expect(banner).toHaveAttribute("data-stage", "applied");
     expect(banner).toHaveTextContent(/applied-tier/i);
@@ -223,30 +519,37 @@ describe("PipelineJourney — JOURNEY blocks render read-only from the iteration
   it("experiment-outcome ABSENT renders the Phase-2 placeholder + a literature-stage label", () => {
     const litStage: IterationRecord = { ...FULL_ITER, experiment_outcome: null };
     render(<PipelineJourney item={iterItem("x")} journey={journeyOf(litStage)} />);
+    // The collapsed line ALREADY says it — the placeholder reads on expand.
+    expect(screen.getByTestId("journey-summary-experiment")).toHaveTextContent(
+      /literature-stage — not experimentally tested \(Phase 2\)/i,
+    );
+    expand("experiment");
     expect(screen.getByTestId("journey-outcome-placeholder")).toHaveTextContent(
       /literature-stage — not experimentally tested \(Phase 2\)/i,
     );
     expect(screen.queryByTestId("journey-outcome-present")).toBeNull();
     expect(screen.getByTestId("journey-stage-label")).toHaveTextContent(/literature-stage/i);
-    // the stage BANNER above the ribbon names the literature stage
+    // the stage BANNER names the literature stage
     const banner = screen.getByTestId("journey-stage-banner");
     expect(banner).toHaveAttribute("data-stage", "literature");
     expect(banner).toHaveTextContent(/literature-stage/i);
-    // the experiment / outcome ribbon steps are NOT lit when no outcome exists
-    expect(screen.getByTestId("ribbon-step-outcome")).toHaveAttribute("data-reached", "false");
+    // the experiment station is NOT lit when no outcome exists
+    expect(screen.getByTestId("stepper-station-experiment")).toHaveAttribute("data-reached", "false");
   });
 });
 
 describe("PipelineJourney — the D-052 topicality advisory surfaces QUIET, never amber", () => {
+  const withAdvisory: IterationRecord = {
+    ...FULL_ITER,
+    retrieval: {
+      ...FULL_ITER.retrieval!,
+      relevance: { ...FULL_ITER.retrieval!.relevance!, topicality_advisory: "off" },
+    },
+  };
+
   it("renders the raw advisory value when present, with NO amber low-evidence styling", () => {
-    const withAdvisory: IterationRecord = {
-      ...FULL_ITER,
-      retrieval: {
-        ...FULL_ITER.retrieval!,
-        relevance: { ...FULL_ITER.retrieval!.relevance!, topicality_advisory: "off" },
-      },
-    };
     render(<PipelineJourney item={iterItem("x")} journey={journeyOf(withAdvisory)} />);
+    expand("relevance");
     const adv = screen.getByTestId("journey-topicality-advisory");
     expect(adv).toHaveTextContent(/non-gating/i);
     expect(adv).toHaveTextContent("off");
@@ -255,8 +558,19 @@ describe("PipelineJourney — the D-052 topicality advisory surfaces QUIET, neve
     expect(adv.className).not.toMatch(/amber/);
   });
 
+  it("the advisory NEVER colors the relevance station (non-gating stays non-gating)", () => {
+    render(<PipelineJourney item={iterItem("x")} journey={journeyOf(withAdvisory)} />);
+    // low_confidence is false on this row, so the station stays a clean pass
+    // even though the advisory dissents.
+    expect(screen.getByTestId("stepper-station-relevance")).toHaveAttribute(
+      "data-status",
+      "ok",
+    );
+  });
+
   it("renders NO advisory line when the field is absent (the normal row)", () => {
     render(<PipelineJourney item={iterItem("x")} journey={journeyOf(FULL_ITER)} />);
+    expand("relevance");
     expect(screen.queryByTestId("journey-topicality-advisory")).toBeNull();
   });
 });
@@ -294,7 +608,7 @@ describe("PipelineJourney — FINDING family (item.id is a finding_id)", () => {
     expect(c.error).not.toHaveBeenCalled();
   });
 
-  it("a finding whose detail FAILS to load → unavailable, ribbon still shown, no throw", async () => {
+  it("a finding whose detail FAILS to load → unavailable, stepper still shown, no throw", async () => {
     const c = watchConsole();
     vi.spyOn(http, "getFindingDetail").mockRejectedValue(new Error("network"));
     const jSpy = vi.spyOn(http, "getIterationJourney").mockResolvedValue(journeyOf(FULL_ITER));
@@ -302,7 +616,7 @@ describe("PipelineJourney — FINDING family (item.id is a finding_id)", () => {
     await waitFor(() => expect(screen.getByTestId("journey-unavailable")).toBeInTheDocument());
     // no source iteration was ever resolved → the journey endpoint is never hit
     expect(jSpy).not.toHaveBeenCalled();
-    expect(screen.getByTestId("pipeline-ribbon")).toBeInTheDocument();
+    expect(screen.getByTestId("journey-stepper")).toBeInTheDocument();
     expect(c.error).not.toHaveBeenCalled();
   });
 
@@ -335,12 +649,12 @@ describe("PipelineJourney — ITERATION family (item.id is an iteration_id)", ()
     expect(c.error).not.toHaveBeenCalled();
   });
 
-  it("a REJECTED journey fetch → unavailable, ribbon still shown, no console error", async () => {
+  it("a REJECTED journey fetch → unavailable, stepper still shown, no console error", async () => {
     const c = watchConsole();
     vi.spyOn(http, "getIterationJourney").mockRejectedValue(new Error("down"));
     render(<PipelineJourney item={iterItem("iter-x")} />);
     await waitFor(() => expect(screen.getByTestId("journey-unavailable")).toBeInTheDocument());
-    expect(screen.getByTestId("pipeline-ribbon")).toBeInTheDocument();
+    expect(screen.getByTestId("journey-stepper")).toBeInTheDocument();
     expect(screen.queryByTestId("journey-loaded")).toBeNull();
     expect(c.error).not.toHaveBeenCalled();
   });
@@ -367,7 +681,7 @@ describe("PipelineJourney — OTHER item kinds get a quiet note", () => {
 });
 
 describe("PipelineJourney — DEGRADES on malformed / not-found journey (never throws, never blanks)", () => {
-  it("found:false journey → 'journey unavailable', ribbon present, no overview", () => {
+  it("found:false journey → 'journey unavailable', stepper present, no overview", () => {
     const c = watchConsole();
     render(
       <PipelineJourney
@@ -377,7 +691,7 @@ describe("PipelineJourney — DEGRADES on malformed / not-found journey (never t
     );
     expect(screen.getByTestId("pipeline-journey")).toBeInTheDocument();
     expect(screen.getByTestId("journey-unavailable")).toHaveTextContent(/journey unavailable/i);
-    expect(screen.getByTestId("pipeline-ribbon")).toBeInTheDocument();
+    expect(screen.getByTestId("journey-stepper")).toBeInTheDocument();
     expect(screen.queryByTestId("journey-loaded")).toBeNull();
     expect(c.error).not.toHaveBeenCalled();
   });
@@ -432,12 +746,21 @@ describe("PipelineJourney — DEGRADES on malformed / not-found journey (never t
     expect(() =>
       render(<PipelineJourney item={iterItem("iter-bad")} journey={malformed} />),
     ).not.toThrow();
+    // EVERY section open — a collapsed section would pass this vacuously.
+    expandAll();
     const panel = screen.getByTestId("pipeline-journey");
     const text = panel.textContent ?? "";
     expect(text).not.toContain("[object Object]");
     expect(text).not.toMatch(/NaN|Infinity/);
     // the one legal scalar neighbor ({id:"ok-neighbor"}) survives the preview
     expect(screen.getByTestId("journey-neighbors")).toHaveTextContent("ok-neighbor");
+    // …and the raw-chunk peek coerces just as hard
+    fireEvent.click(screen.getByTestId("journey-peek-chunks"));
+    const peekText = screen.getByTestId("peek-chunks").textContent ?? "";
+    expect(peekText).toContain("ok-neighbor");
+    expect(peekText).not.toContain("[object Object]");
+    expect(peekText).not.toMatch(/NaN|Infinity/);
+    fireEvent.keyDown(document, { key: "Escape" });
     // a malformed object topicality_advisory renders NO advisory line (dropped)
     expect(screen.queryByTestId("journey-topicality-advisory")).toBeNull();
     // the one legal field (novelty.rationale: 7) survives as raw text
@@ -536,11 +859,18 @@ describe("PipelineJourney — VERIFIER: deep-deref-safe coercion of hostile prod
     expect(() =>
       render(<PipelineJourney item={iterItem("iter-hostile")} journey={hostile} />),
     ).not.toThrow();
+    expandAll();
     const text = screen.getByTestId("pipeline-journey").textContent ?? "";
     expect(text).not.toContain("[object Object]");
     expect(text).not.toMatch(/NaN|Infinity|Symbol|\d+n\b/);
     // a non-string contradicting_paper_id drops → uncontradicted (never a leak)
     expect(screen.getByTestId("journey-contradicting-paper")).toHaveTextContent(/uncontradicted/i);
+    // every station still resolves to a legal semantic status
+    for (const k of STATION_KEYS) {
+      expect(
+        screen.getByTestId(`stepper-station-${k}`).getAttribute("data-status"),
+      ).toMatch(/^(ok|warn|bad|info|idle)$/);
+    }
     expect(c.error).not.toHaveBeenCalled();
   });
 
@@ -557,8 +887,18 @@ describe("PipelineJourney — VERIFIER: deep-deref-safe coercion of hostile prod
       />,
     );
     expect(screen.getByTestId("pipeline-journey")).toBeInTheDocument();
+    expandAll();
+    // no neighbor preview, and the relevance step honestly reports "no block"
+    // rather than inventing one from an array.
     expect(screen.queryByTestId("journey-neighbors")).toBeNull();
-    expect(screen.queryByTestId("journey-relevance")).toBeNull();
+    expect(screen.getByTestId("journey-relevance")).toHaveTextContent(
+      /no relevance block on this row/,
+    );
+    expect(screen.queryByTestId("journey-evidence-grid")).toBeNull();
+    expect(screen.getByTestId("stepper-station-relevance")).toHaveAttribute(
+      "data-reached",
+      "false",
+    );
     expect(c.error).not.toHaveBeenCalled();
   });
 });
@@ -573,7 +913,7 @@ describe("PipelineJourney — VERIFIER: finding usable but its journey fetch fai
     expect(screen.getByTestId("journey-finding-claim")).toHaveTextContent(
       "Order books thin asymmetrically before a resolution.",
     );
-    expect(screen.getByTestId("pipeline-ribbon")).toBeInTheDocument();
+    expect(screen.getByTestId("journey-stepper")).toBeInTheDocument();
     expect(c.error).not.toHaveBeenCalled();
   });
 
@@ -604,6 +944,7 @@ describe("PipelineJourney — VERIFIER: the D-052 advisory never wears an alarm 
       },
     };
     render(<PipelineJourney item={iterItem("x")} journey={journeyOf(withAdvisory)} />);
+    expand("relevance");
     const adv = screen.getByTestId("journey-topicality-advisory");
     expect(adv.className).not.toMatch(/amber|red|orange|yellow/);
     expect(adv.innerHTML).not.toMatch(/amber|red|orange|yellow|low-evidence/);
@@ -614,7 +955,8 @@ describe("PipelineJourney — VERIFIER: the D-052 advisory never wears an alarm 
 // ABSORBED-MODAL pins (UI simplification S2). IterationDetailModal died; its
 // unique sections moved into this journey per the plan's absorption table.
 // These pins are PORTED from tests/test_iteration_detail_modal.tsx — same
-// fixtures, same assertions, re-addressed at the journey testids.
+// fixtures, same assertions, re-addressed at the journey testids (and, under
+// R2, at the section that now owns each one).
 // ═══════════════════════════════════════════════════════════════════════════
 
 // A fully-loaded SYNTHETIC row exercising every absorbed section at once.
@@ -704,7 +1046,7 @@ function renderAbsorbed(row: IterationRecord = FULL_ABSORBED) {
   return screen.getByTestId("journey-loaded");
 }
 
-describe("PipelineJourney — ABSORBED verdict header (full badge set + visible overrides)", () => {
+describe("PipelineJourney — ABSORBED verdict header (full badge set, always visible)", () => {
   it("renders the full badge set the modal header carried", () => {
     const loaded = renderAbsorbed();
     const header = within(loaded).getByTestId("journey-verdict-header");
@@ -726,31 +1068,61 @@ describe("PipelineJourney — ABSORBED verdict header (full badge set + visible 
     expect(within(header).getByTestId("experiment-chip")).toBeInTheDocument();
   });
 
-  it("override provenance is VISIBLE TEXT for BOTH blocks (the row keeps tooltip-only)", () => {
-    const loaded = renderAbsorbed();
-    const nov = within(loaded).getByTestId("journey-override-novelty");
+  it("override provenance is VISIBLE TEXT for BOTH blocks — now WITH the step it explains", () => {
+    renderAbsorbed();
+    // R2 moved each override out of the header and into its own section.
+    expand("novelty");
+    const nov = screen.getByTestId("journey-override-novelty");
     expect(nov).toHaveTextContent("overridden from novel");
     expect(nov).toHaveTextContent(
       "reason: low-confidence retrieval downgraded the class",
     );
-    const crit = within(loaded).getByTestId("journey-override-critique");
+    expand("critic");
+    const crit = screen.getByTestId("journey-override-critique");
     expect(crit).toHaveTextContent("overridden from survives");
     expect(crit).toHaveTextContent("reason: skeptic attack_verdict='refuted'");
     expect(crit).toHaveTextContent("skeptic said refuted");
   });
 
   it("hypothesis carries candidates_considered", () => {
-    const loaded = renderAbsorbed();
-    expect(within(loaded).getByTestId("journey-candidates")).toHaveTextContent(
+    renderAbsorbed();
+    expand("hypothesis");
+    expect(screen.getByTestId("journey-candidates")).toHaveTextContent(
       "candidates considered: 3",
+    );
+  });
+
+  it("the quiet-lane verdicts keep their chip tone on the stepper (no new alarm)", () => {
+    renderAbsorbed();
+    // chips.tsx deliberately renders `unclear` / `undecidable` quiet-grey —
+    // "could not be judged" is not a wolf to cry. The stepper mirrors that
+    // rather than inventing a second color language.
+    expect(screen.getByTestId("stepper-station-novelty")).toHaveAttribute(
+      "data-status",
+      "idle",
+    );
+    expect(screen.getByTestId("stepper-station-critic")).toHaveAttribute(
+      "data-status",
+      "idle",
+    );
+    // …while the genuinely-flagged low-confidence retrieval DOES read warn.
+    expect(screen.getByTestId("stepper-station-relevance")).toHaveAttribute(
+      "data-status",
+      "warn",
+    );
+    // …and both are still marked REACHED (grey ≠ "never ran").
+    expect(screen.getByTestId("stepper-station-critic")).toHaveAttribute(
+      "data-reached",
+      "true",
     );
   });
 });
 
 describe("PipelineJourney — ABSORBED evidence grid + low-evidence inline", () => {
   it("renders the full relevance diagnostic grid (incl. the ladder diagnostics)", () => {
-    const loaded = renderAbsorbed();
-    const grid = within(loaded).getByTestId("journey-evidence-grid");
+    renderAbsorbed();
+    expand("relevance");
+    const grid = screen.getByTestId("journey-evidence-grid");
     for (const pair of [
       ["category", "thin"],
       ["rule_fired", "R2"],
@@ -761,16 +1133,17 @@ describe("PipelineJourney — ABSORBED evidence grid + low-evidence inline", () 
       expect(grid).toHaveTextContent(pair[0]);
       expect(grid).toHaveTextContent(pair[1]);
     }
-    // The frozen trio + topicality still read in the relevance block.
-    const rel = within(loaded).getByTestId("journey-relevance");
+    // The frozen trio + topicality still read in the relevance section.
+    const rel = screen.getByTestId("journey-relevance");
     expect(rel).toHaveTextContent("0.42");
     expect(rel).toHaveTextContent("thin: only one sharp neighbor");
     expect(rel).toHaveTextContent("unsure");
   });
 
   it("the low-evidence detail renders INLINE (what the badge's tooltip says)", () => {
-    const loaded = renderAbsorbed();
-    const detail = within(loaded).getByTestId("journey-low-evidence-detail");
+    renderAbsorbed();
+    expand("relevance");
+    const detail = screen.getByTestId("journey-low-evidence-detail");
     expect(detail).toHaveTextContent(/retrieval flagged low-confidence/);
     expect(detail).toHaveTextContent(/category: thin/);
     expect(detail).toHaveTextContent(/rule: R2/);
@@ -783,22 +1156,27 @@ describe("PipelineJourney — ABSORBED evidence grid + low-evidence inline", () 
         journey={journeyOf(FULL_ITER)}
       />,
     );
+    expand("relevance");
     expect(screen.queryByTestId("journey-low-evidence-detail")).toBeNull();
   });
 });
 
 describe("PipelineJourney — ABSORBED adversarial detail (skeptic + redteam)", () => {
   it("renders the skeptic verdict and every redteam field", () => {
-    const loaded = renderAbsorbed();
-    const critic = within(loaded).getByTestId("journey-critic");
-    expect(critic).toHaveTextContent(
-      "No contradicting neighbor; corpus too thin to judge.",
-    );
+    renderAbsorbed();
+    expand("critic");
+    const critic = screen.getByTestId("journey-critic");
     expect(critic).toHaveTextContent("vickrey1961-chunk-9");
     expect(critic).toHaveTextContent("refuted");
-    const redteam = within(loaded).getByTestId("journey-redteam");
-    expect(redteam).toHaveTextContent("Mechanism is testable but underspecified.");
-    expect(redteam).toHaveTextContent("Pin the auction format before running.");
+    // The critic PROSE now drills into the peek (R2) rather than inlining.
+    fireEvent.click(screen.getByTestId("journey-peek-critic"));
+    expect(screen.getByTestId("peek-critic")).toHaveTextContent(
+      "No contradicting neighbor; corpus too thin to judge.",
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expand("redteam");
+    const redteam = screen.getByTestId("journey-redteam");
     expect(redteam).toHaveTextContent("0.7"); // confidence
     expect(redteam).toHaveTextContent("retries used");
     // The clean proceed/0 chip renders quiet here (it never earns a row's
@@ -806,23 +1184,37 @@ describe("PipelineJourney — ABSORBED adversarial detail (skeptic + redteam)", 
     expect(within(redteam).getByTestId("redteam-chip").className).toContain(
       "zinc",
     );
+    // …and the red-team PROSE drills into the peek.
+    fireEvent.click(screen.getByTestId("journey-peek-redteam"));
+    const peek = screen.getByTestId("peek-redteam");
+    expect(peek).toHaveTextContent("Mechanism is testable but underspecified.");
+    expect(peek).toHaveTextContent("Pin the auction format before running.");
   });
 
-  it("no redteam block → no redteam sub-section (pre-v1 rows fake nothing)", () => {
+  it("no redteam block → no redteam DETAIL (pre-v1 rows fake nothing)", () => {
     render(
       <PipelineJourney
         item={iterItem(FULL_ITER.iteration_id)}
         journey={journeyOf(FULL_ITER)}
       />,
     );
-    expect(screen.queryByTestId("journey-redteam")).toBeNull();
+    // The STATION always exists (the map has eight stops) but it says so
+    // honestly and mounts no detail block, no chip, no peek.
+    expect(screen.getByTestId("journey-summary-redteam")).toHaveTextContent(
+      "no red-team pass on this row",
+    );
+    expand("redteam");
+    expect(screen.queryByTestId("journey-redteam-detail")).toBeNull();
+    expect(screen.queryByTestId("journey-peek-redteam")).toBeNull();
   });
 });
 
 describe("PipelineJourney — ABSORBED conditioning bullets", () => {
   it("renders the bullets under the SAME conditioning-<id> testid the modal used", () => {
-    const loaded = renderAbsorbed();
-    const cond = within(loaded).getByTestId("conditioning-iter-modal-full");
+    renderAbsorbed();
+    // R2: conditioning primed the hypothesis, so it lives in that section.
+    expand("hypothesis");
+    const cond = screen.getByTestId("conditioning-iter-modal-full");
     expect(within(cond).getByText("carried bullet alpha")).toBeInTheDocument();
     expect(within(cond).getByText("carried bullet beta")).toBeInTheDocument();
   });
@@ -834,24 +1226,30 @@ describe("PipelineJourney — ABSORBED conditioning bullets", () => {
         journey={journeyOf(FULL_ITER)}
       />,
     );
-    expect(
-      screen.getByTestId("journey-conditioning"),
-    ).toHaveTextContent("no conditioning bullets on this row");
+    expand("hypothesis");
+    expect(screen.getByTestId("journey-conditioning")).toHaveTextContent(
+      "no conditioning bullets on this row",
+    );
   });
 });
 
 describe("PipelineJourney — ABSORBED experiment extras", () => {
-  it("renders trials + results_path + the Verdict=YES chip tone", () => {
-    const loaded = renderAbsorbed();
-    const outcome = within(loaded).getByTestId("journey-outcome-present");
+  it("renders the outcome fields inline and trials + results_path in the peek", () => {
+    renderAbsorbed();
+    expand("experiment");
+    const outcome = screen.getByTestId("journey-outcome-present");
     expect(outcome).toHaveTextContent("exp003_vickrey_rediscovery");
     expect(outcome).toHaveTextContent("truthful_bid_fraction");
-    expect(outcome).toHaveTextContent("50");
-    expect(outcome).toHaveTextContent(
+    expect(outcome).toHaveTextContent(/Verdict=YES\. Fraction of trials/);
+    // R2: the trial count + results path are RAW EVIDENCE → the peek.
+    fireEvent.click(screen.getByTestId("journey-peek-trials"));
+    const peek = screen.getByTestId("peek-trials");
+    expect(peek).toHaveTextContent("50");
+    expect(peek).toHaveTextContent(
       "experiments/exp003_vickrey_rediscovery/results/summary.md",
     );
-    expect(outcome).toHaveTextContent(/Verdict=YES\. Fraction of trials/);
-    const chip = within(loaded).getByTestId("experiment-chip");
+    fireEvent.keyDown(document, { key: "Escape" });
+    const chip = screen.getByTestId("experiment-chip");
     expect(chip).toHaveTextContent("exp verdict=YES");
     expect(chip.className).toContain("emerald");
   });
@@ -870,11 +1268,17 @@ describe("PipelineJourney — ABSORBED experiment extras", () => {
     render(
       <PipelineJourney item={iterItem(multi.iteration_id)} journey={journeyOf(multi)} />,
     );
+    expand("experiment");
     const outcome = screen.getByTestId("journey-outcome-present");
     expect(outcome).toHaveTextContent("value.sub_a");
     expect(outcome).toHaveTextContent("0.5");
     expect(outcome).not.toHaveTextContent("value.junk");
     expect(outcome.innerHTML).not.toMatch(/object Object/);
+    // A stated Verdict=NO is a FAILED station — never coerced to a pass.
+    expect(screen.getByTestId("stepper-station-experiment")).toHaveAttribute(
+      "data-status",
+      "bad",
+    );
   });
 });
 
@@ -1020,6 +1424,8 @@ describe("PipelineJourney — ABSORBED sections degrade on garbled producer rows
         />
       </MemoryRouter>,
     );
+    // EVERY section open — otherwise the innerHTML sweep passes vacuously.
+    expandAll();
     expect(container.innerHTML).not.toMatch(/object Object/);
     expect(container.innerHTML).not.toMatch(/NaN/);
     // The multi-metric object value renders only its SCALAR entries.
