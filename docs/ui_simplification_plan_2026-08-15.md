@@ -220,3 +220,23 @@ integration: Qwen A/B window now self-serve (docker allow rule added by
 owner 2026-08-15) — open window → stage3a driver both models → restore +
 MARLIN/margin verify → D-0zz draft; frontier F1 sweep + F2 re-calibration
 interleave; PushNotification updates every ~10 min.
+
+## S4 — Lab Channel (owner-added mid-loop 2026-08-15)
+
+The always-on human⇄Nara⇄PI conversation surface (the rubberband cockpit's
+natural form). Primary half (building now, spawn loop10h-lab-channel-core
++ amend1): `orchestrator/lab_channel.py` blessed CLI — `timeline`
+(deterministic merge of stored turns + events derived AT READ TIME from
+coordinator_cycles / idea-ledger kills / promotions / loop_alert; derived
+events never stored), `turn --role nara|pi` (context pack = ideas.md +
+newest planner_state + loop_alert + transcript tail; roles honestly labeled
+as perspectives of ONE model — Qwen stays the independent voice in the
+finding-session seam), `delegate --kind research|improvement` (research →
+agenda_item_added source:human; improvement → authorize_fix_queue row the
+packet dispatcher accepts — "put it on your todo list" is literal).
+Transcript: memory/lab_channel.jsonl, append-only, never loop_memory.
+FENCE: no disposition verbs; CLI surface is exactly {timeline, turn,
+delegate}; directives are human-invoked. UI half (after S3): ui/backend
+seam wrapping the CLI (chat_seam idiom, 300s cap) + a Channel pane (S2's
+ChatPane front end + event feed + proposed-directive cards that call
+delegate on confirm click).
