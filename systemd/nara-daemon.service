@@ -1,0 +1,34 @@
+# nara-daemon.service — D-063 Stage-2 always-on Nara daemon (systemd --user).
+#
+# Install (run by the HUMAN, never an agent):
+#   mkdir -p ~/.config/systemd/user
+#   cp /home/decross1/projects/a_bgt_rsi/systemd/nara-daemon.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now nara-daemon
+#   loginctl enable-linger decross1     # once, for boot persistence
+#
+# Stop:
+#   soft — touch /home/decross1/projects/a_bgt_rsi/run_state/pause_coordinator
+#          (the daemon stays resident but every pass refuses; human removes
+#          the file to resume)
+#   hard — systemctl --user stop nara-daemon
+#
+# The daemon runs the SAME gate ladder as cron/run-coordinator.sh on every
+# pass (flock on the same lock file, D-049 sentinel, pause file, memory
+# preflight, daily budget), so cron and daemon can coexist while cron stays
+# belt-and-braces (D-063: cron retires after a clean daemon week, by a
+# follow-up note).
+
+[Unit]
+Description=Nara always-on daemon (D-063 Stage 2) — event-driven coordinator scheduler
+After=docker.service
+
+[Service]
+Type=simple
+ExecStart=/home/decross1/projects/a_bgt_rsi/.venv-chroma/bin/python -m orchestrator.nara_daemon
+WorkingDirectory=/home/decross1/projects/a_bgt_rsi
+Restart=always
+RestartSec=30
+Environment=NARA_SKEPTIC=1
+
+[Install]
+WantedBy=default.target
