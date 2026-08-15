@@ -5,7 +5,7 @@ It is the operating contract: the rules that don't bend, and the
 pointer set for what's being built right now.
 
 New sessions read [`START_HERE.md`](START_HERE.md) first for orientation,
-then this file. The active build plan is [`LOOP_V0.md`](LOOP_V0.md).
+then this file. The active build plan is [`LOOP_V1.md`](LOOP_V1.md).
 The current session's working note is the most recent file under
 [`human/sessions/`](human/sessions/).
 
@@ -114,7 +114,8 @@ next.
    central question, the sandbox spectrum, the cross-cutting practices.
    Every primary session reads this; it's what keeps build work tethered
    to why the apparatus exists.
-4. Read [`LOOP_V0.md`](LOOP_V0.md) — the active build plan.
+4. Read [`LOOP_V1.md`](LOOP_V1.md) — the active build plan (LOOP_V0.md is the
+   record of the completed v0 slice).
 5. Read the most recent file in [`human/sessions/`](human/sessions/)
    — that's the current session's focus and prior-session handoff.
 6. Run `.venv-chroma/bin/python -m orchestrator.todo_cli list-deferred`
@@ -224,9 +225,14 @@ These do not bend.
   once β ships (D-040 is ratified but takes effect only at β; until then
   this guardrail stands unchanged).
 - Fine-tuning / training runs — not in LOOP_V0.
-- Second model — excluded; the apparatus is single-model on
-  Gemma 4 26B-A4B-NVFP4 (D-033). Same-model novelty scoring stays
-  mitigated by logged human sampling per ARCHITECTURE.md §6 step 6.
+- Model roles are FIXED (G5 fix 2026-08-15 — the old "second model
+  excluded (D-033)" bullet was stale; D-033 was superseded in live
+  practice by D-035/D-041/D-044): **Gemma 4 26B-A4B-NVFP4 is the sole
+  generator/PI**; **Qwen (vllm-qwen) is the standing independent
+  skeptic**; **frontier CLIs (Claude Max / Codex) are falsifiers only**
+  (D-061) — veto/annotate, never generate, never write loop_memory or
+  the brain. Reproducibility rule: any call a reader needs to reproduce
+  a finding runs on pinned local weights.
 
 ## Where things live
 
@@ -234,7 +240,7 @@ These do not bend.
 | --- | --- |
 | Orientation | [`START_HERE.md`](START_HERE.md) |
 | **Core essence of the project (the WHY)** | [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md) |
-| Active build plan | [`LOOP_V0.md`](LOOP_V0.md) |
+| Active build plan | [`LOOP_V1.md`](LOOP_V1.md) |
 | Today's focus / handoff | most recent note in [`human/sessions/`](human/sessions/) |
 | UI session work order | the current session note's "## UI session work order" subsection |
 | Session index | [`human/sessions/INDEX.md`](human/sessions/INDEX.md) |
@@ -256,7 +262,7 @@ Plan-mode files under `~/.claude/plans/` are **scratch** — per-machine,
 un-versioned, invisible to the repo and to a UI session. **Any plan that
 will be executed is committed into the repo before/at execution:**
 
-- active cross-workstream work → [`LOOP_V0.md`](LOOP_V0.md) or a `docs/`
+- active cross-workstream work → [`LOOP_V1.md`](LOOP_V1.md) or a `docs/`
   detail-doc;
 - a UI work order → the session note's "## UI session work order"
   subsection;

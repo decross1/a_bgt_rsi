@@ -3105,3 +3105,35 @@ primary merged `--no-ff` (cc2b542); the first run caught the relative-venv workt
 trap and digest-only ledger opacity (both fixed + documented). **Reversibility.**
 The dispatcher is dev-time, primary-invoked; coordinator-runtime dispatch is
 explicitly deferred (D-014 line, its own future gated decision).
+
+## D-061 — Frontier critic tier: Claude Max + Codex as falsifiers-only inside the promotion funnel (executes D-041 step 3; supersedes-in-part D-012's no-routing posture for this seam)
+
+**Date.** 2026-08-15 (G1 cleared + G5 ratified by owner; overrides.jsonl). **Context.**
+The owner pays Claude Max + ChatGPT subscriptions; the LOOP_V1 design routes them as an
+adversarial early screen while local pinned models remain the PI. D-041's skeptic ladder
+already named Claude as its design-only step 3; D-033's "second model excluded" was
+superseded in live practice by D-035/D-044 (this entry also ratifies the CLAUDE.md
+bullet fix recording that).
+
+**Decision.** (1) **Roles are opposed and fixed**: Claude = methods reviewer, Codex =
+novelty reviewer (env-overridable); disagreement cross-runs once, persistent
+disagreement -> inconclusive + escalation row. (2) **Falsifier-only**: verdicts are
+vetoes/annotations — attention filters. A veto cannot contaminate reproducibility
+(survivors' evidence stays local+pinned); frontier NEVER generates, never writes
+loop_memory or the brain (annotate-only firewall, D-014-adjacent). (3) **Seam**:
+env-gated `NARA_FRONTIER_SCREEN` veto stage in `finding_promotion` between the cheap
+gate and the Qwen vote; fail-open on outage (a frontier outage never blocks the local
+loop); plus the weekly agenda-synthesis cron (proposals land `status: proposed`, inert
+until accepted). (4) **Every call ledgered** in `run_state/frontier_calls.jsonl` —
+this doubles as the frontier-vs-local calibration dataset. (5) **Routing rule** (from
+the 2026-08 restructure review): a call a reader needs to reproduce a finding runs
+local/pinned; everything else is rentable. (6) `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`
+are stripped from every spawned CLI env (test-pinned) — subscription auth only, never
+silent metered billing.
+
+**Evidence.** First real screen 2026-08-15: both vendors independently vetoed
+`iter-2026-08-04-001` with cited critiques (methods: tautological FOC, concurring with
+the June Qwen redteam fatal_flaw; novelty: von Wangenheim prior) — first calibration
+datapoint = frontier/local agreement. **Reversibility.** `rm run_state/frontier_tos_ratified`
+darkens every frontier path (CLI + cron refuse, test-pinned); the promotion stage is
+env-gated off by default.

@@ -268,11 +268,10 @@ def dispatch_packet(
             # through it with an empty range). The agent must commit.
             dirty = _sh("git status --porcelain", worktree).stdout.strip()
             if dirty:
-                agent_error = (agent_error or "") + (
-                    " agent left uncommitted changes "
-                    f"({len(dirty.splitlines())} paths) — done requires a "
-                    "committed branch"
-                ).strip()
+                note = (f"agent left uncommitted changes "
+                        f"({len(dirty.splitlines())} paths) — done requires "
+                        f"a committed branch")
+                agent_error = f"{agent_error}; {note}" if agent_error else note
             else:
                 merge_base = _sh(
                     f"git merge-base HEAD {base_sha}", worktree
