@@ -29,6 +29,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import jsonschema
 
@@ -226,3 +227,113 @@ def clear_active_run() -> None:
         twin = _run_path(mirror["run_id"])
         if twin.exists():
             twin.unlink()
+
+
+# ── stale-run reaping (2026-08-15) ───────────────────────────────────────────
+# A run that dies without clear_active_run() (crash, SIGKILL, closed session)
+# leaves its registry file behind forever: the dashboard renders it as a run
+# with an ever-growing "stale heartbeat" (two June entries were still showing
+# 57 and 46 days later). Reaping is EXPLICIT and append-only — the doc moves
+# to run_state/active_runs/abandoned/ with a recorded reason, never deleted —
+# so a post-mortem can still read what the run was doing when it died.
+STALE_RUN_HOURS = float(os.environ.get("STALE_RUN_HOURS", "2"))
+
+
+def _abandoned_dir() -> Path:
+    runs_dir = RUNS_DIR
+    if ACTIVE_RUN_PATH.parent != REPO_ROOT / "run_state":
+        runs_dir = ACTIVE_RUN_PATH.parent / "active_runs"
+    return runs_dir / "abandoned"
+
+
+def _age_hours(doc: dict, now: datetime) -> float | None:
+    ts = doc.get("heartbeat_at") or doc.get("started_at")
+    if not isinstance(ts, str):
+        return None
+    try:
+        then = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    return (now - then).total_seconds() / 3600.0
+
+
+def reap_stale_runs(
+    *, stale_hours: float | None = None, now: datetime | None = None,
+    log: Any = None,
+) -> list[dict]:
+    """Move registry entries whose heartbeat is older than `stale_hours` into
+    active_runs/abandoned/, recording each in the run log. Returns the reaped
+    records. A doc with an unreadable/absent timestamp is LEFT ALONE (never
+    reaped on a guess — rule 4). Never raises: a reap failure on one file
+    does not block the others."""
+    stale_hours = STALE_RUN_HOURS if stale_hours is None else stale_hours
+    now = now or datetime.now(timezone.utc)
+    runs_dir = RUNS_DIR
+    if ACTIVE_RUN_PATH.parent != REPO_ROOT / "run_state":
+        runs_dir = ACTIVE_RUN_PATH.parent / "active_runs"
+    if not runs_dir.exists():
+        return []
+    reaped: list[dict] = []
+    for path in sorted(runs_dir.glob("*.json")):
+        doc = _read_json(path)
+        if doc is None:
+            continue
+        age = _age_hours(doc, now)
+        if age is None or age < stale_hours:
+            continue
+        rec = {"run_id": doc.get("run_id") or path.stem,
+               "kind": doc.get("kind"), "label": doc.get("label"),
+               "age_hours": round(age, 2),
+               "reason": f"heartbeat older than {stale_hours}h — run died "
+                         f"without clear_active_run()"}
+        try:
+            dest_dir = _abandoned_dir()
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            doc["abandoned_at"] = _utcnow_iso()
+            doc["abandoned_reason"] = rec["reason"]
+            _atomic_write(doc, dest_dir / path.name)
+            path.unlink()
+            # A reaped run must not keep owning the foreground mirror.
+            mirror = _read_json(ACTIVE_RUN_PATH)
+            if mirror is not None and mirror.get("run_id") == rec["run_id"]:
+                ACTIVE_RUN_PATH.unlink()
+        except OSError as exc:
+            rec["error"] = f"{type(exc).__name__}: {exc}"
+        reaped.append(rec)
+        try:
+            emit = log
+            if emit is None:
+                from orchestrator.runtime import append_run_log as emit
+            emit({"task_id": "reap_stale_run", "agent": "active_run",
+                  "status": "passed" if "error" not in rec else "failed",
+                  "observable_actual": (
+                      f"{rec['run_id']} abandoned after {rec['age_hours']}h"
+                      + (f" ({rec['error']})" if "error" in rec else "")),
+                  "observable_expected": "stale registry entries reaped, not deleted",
+                  "duration_ms": 0})
+        except Exception:
+            pass
+    return reaped
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    p = argparse.ArgumentParser(description="Active-run registry maintenance.")
+    p.add_argument("--reap", action="store_true",
+                   help="move stale entries to active_runs/abandoned/")
+    p.add_argument("--stale-hours", type=float, default=None)
+    args = p.parse_args(argv)
+    if not args.reap:
+        p.print_help()
+        return 2
+    reaped = reap_stale_runs(stale_hours=args.stale_hours)
+    for r in reaped:
+        print(f"reaped {r['run_id']} ({r['age_hours']}h) — {r['reason']}")
+    print(f"{len(reaped)} stale run(s) reaped")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -19,6 +19,14 @@ if docker ps -a --format '{{.Names}}' | grep -q '^vllm-qwen-ab'; then
   exit 0
 fi
 
+# Reap stale run-registry entries (2026-08-15): a session that dies without
+# clear_active_run() otherwise shows on the dashboard as a "run" forever (two
+# June entries were still there 57 days later). Explicit + append-only: docs
+# move to run_state/active_runs/abandoned/ with a reason, never deleted.
+REPO="/home/decross1/projects/a_bgt_rsi"
+"$REPO/.venv-chroma/bin/python" -m orchestrator.active_run --reap 2>&1 \
+  | grep -v '^0 stale run' || true
+
 rc=0
 for c in vllm-gemma4 vllm-qwen; do
   running=$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null || echo "absent")
