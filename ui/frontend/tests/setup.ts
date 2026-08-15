@@ -19,6 +19,43 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   };
 }
 
+// jsdom has no IntersectionObserver; the R2 dossier stepper observes its
+// journey sections for scrollspy. Guarded stub that RECORDS its instances on
+// globalThis.__IO_INSTANCES__ so a test can drive the callback DELIBERATELY —
+// nothing ever fires on its own, so every other suite sees an inert observer.
+if (typeof globalThis.IntersectionObserver === "undefined") {
+  const instances: unknown[] = [];
+  class StubIntersectionObserver {
+    callback: IntersectionObserverCallback;
+    elements = new Set<Element>();
+    root = null;
+    rootMargin = "";
+    thresholds: number[] = [];
+    constructor(cb: IntersectionObserverCallback) {
+      this.callback = cb;
+      instances.push(this);
+    }
+    observe(el: Element) {
+      this.elements.add(el);
+    }
+    unobserve(el: Element) {
+      this.elements.delete(el);
+    }
+    disconnect() {
+      this.elements.clear();
+      const i = instances.indexOf(this);
+      if (i >= 0) instances.splice(i, 1);
+    }
+    takeRecords(): IntersectionObserverEntry[] {
+      return [];
+    }
+  }
+  globalThis.IntersectionObserver =
+    StubIntersectionObserver as unknown as typeof IntersectionObserver;
+  (globalThis as unknown as Record<string, unknown>).__IO_INSTANCES__ =
+    instances;
+}
+
 // jsdom (29.x) declares HTMLDialogElement but does not implement
 // showModal()/close() — calling them throws "is not a function". The
 // IterationDetailModal rides the NATIVE <dialog> element (no new deps), so

@@ -1686,6 +1686,99 @@ tests. Backend `test_ladder.py` pins the new `members` field. Frontend suite
 
 ---
 
+## §2026-08-15 R2 — the Dossier reader: readable in 15 seconds (`ui/` only)
+
+Built by a worktree build agent (spawn `loop3h-revamp-r2-dossier`) on merged
+main @ 0483fd5 (R0 design system). Owner's complaint, verbatim: *"the Dossier,
+it's just WAY too much text."* R2 is **presentation only** — the verdict fence,
+the kind-gate, the reveal gate and every data contract are byte-for-byte
+unchanged (`git diff` touches zero lines of the disposition footer).
+
+### What changed
+
+1. **Sticky subway-map stepper** (`components/todo/JourneyStepper.tsx` +
+   `journeyStepper.css`) — eight stations (hypothesis · retrieval · relevance ·
+   novelty · critic · **red-team** · experiment · verdict), each node a shared
+   `StatusDot` colored by that step's real outcome, joined by a rail, sticky
+   under the app header, the in-view section marked by scrollspy, a click
+   scrolling to its section. It replaces the flat always-lit `PipelineRibbon`.
+2. **Station model** (`components/todo/journeyStations.ts`, pure/testable) —
+   `stationsFor(row)` derives each station's `status`, one-line `summary`,
+   `reached` and `phase2` from the producer row. **Color mirrors the existing
+   chip tone family** (`chips.tsx` NOVELTY_TONE / VERDICT_TONE / GATE_TONE /
+   ExperimentChip): emerald→ok, amber→warn, red→bad, sky→info, zinc→idle. That
+   is why `unclear` novelty and `undecidable` critique read **idle, not amber** —
+   chips.tsx deliberately keeps them quiet ("could not be judged" is not a wolf
+   to cry) and R2 does not get to re-tone them. `reached` is carried separately
+   so "never ran" and "ran, no clean verdict" stay distinguishable.
+3. **Every section collapses to ONE verdict line** — status glyph · label ·
+   summary · chevron. Bodies are **unmounted** until expanded (not merely
+   hidden), so the prose is genuinely absent from a dossier the human only
+   glances at. Expansion is per-section `useState` — **never localStorage**
+   (pinned).
+4. **PeekPanel drill-in** for the heavy raw evidence: retrieved **chunk texts**
+   (new — the ids-only preview never carried them), full **critic** rationale,
+   full **red-team** critique + suggested revision, **experiment trials +
+   results_path**. Everything else stays inline.
+5. **Header block** — id · kind · `RungGlyph(evidence_level)` (only for a real
+   L0..L5; absence is never a fake L0) · title · coarse age from the queue
+   row's `since`. **TutorPanel gained an additive `compact` prop** used only
+   here: keeps claim + evidence refs + badges + the fence note, drops the
+   source-iteration block, "what would change it", "why it matters" and the
+   outcome-effects line. Default (`compact` absent) renders exactly as before,
+   so every existing TutorPanel suite is untouched.
+
+### The fence (unchanged, re-pinned)
+
+`GateVerdictForm` / `FindingReviewForm` + the aux forms remain the only
+dispositions and still render **unconditionally**; `ChatPane` still takes only
+`{findingId, mode, available}` — no verdict-shaped prop; calibration stays
+pre-reveal and gates nothing; expanding a journey section does **not** open the
+reveal gate. New pins assert each of these against the new structure.
+
+### Deviations (owner call)
+
+- **Third glass surface.** R0 reserved `--surface-glass` for the app header +
+  palette scrim. The sticky stepper is a deliberate third — the task asked for
+  "the R0 glass treatment" on a header-adjacent sticky bar. Not a card.
+- **`.page-prose` adopted** on `/dossier/:id` (was `max-w-5xl`). R0 names the
+  dossier as a ~760px reading column for R1-R4; narrower lines are part of the
+  legibility fix. One class to revert if the forms feel cramped at 760px.
+- **Verdict-header chip row kept always-visible.** It is chips, not prose, and
+  carries provenance the stations do not (source, low-evidence, process, axes).
+  The *override provenance* (which IS prose) moved out of it into the novelty /
+  critic sections, with the step it explains.
+- **"Collapsed fits one screen"** holds for the journey spine; the disposition
+  footer below is inherently tall and was out of scope.
+
+### Tests
+
+`test_PipelineJourney.tsx` 49 → **62**, `test_dossier_reader.tsx` 22 → **30**
+(verified by name-diffing the two suites against `0483fd5`: **zero** original
+test names dropped; the eight that read differently are ribbon→stepper
+rewordings of the same assertion).
+Every pre-R2 pin is **ported, none deleted**: assertions that read a flat
+always-open section now expand it first, and the three whose content MOVED
+(critic rationale, red-team prose, experiment trials + results_path) assert
+against the peek body. New pins cover the 8 stations + outcome colors, the
+warn/bad path, scrollspy, click-to-scroll, collapsed-by-default, independent
+expansion, no-localStorage, peek open/Esc, the compact tutor trim, and the
+fence. The degradation sweeps (`[object Object]` / `NaN` / hostile scalars) now
+**expand every section first** so they cannot pass vacuously.
+`tests/setup.ts` gains a guarded `IntersectionObserver` stub that records its
+instances on `globalThis.__IO_INSTANCES__` — inert for every other suite,
+drivable so scrollspy is really tested rather than skipped.
+
+Suite **1024 green / 71 files** after merging R1 (1009 on R0 alone; R0 baseline
+was 980), `tsc --noEmit` clean, `vite build` clean.
+
+> Note for the integrator: the worktree had no `node_modules` and the main
+> checkout's copy predates R0's `cmdk` + Geist deps (its
+> `test_design_command_palette` suite cannot resolve `cmdk`). A fresh `npm ci`
+> in `ui/frontend` fixes it; no dependency was added or changed by R2.
+
+---
+
 ## Historical sections (UI v1, pre-LOOP_V0)
 
 The sections below were written before the 2026-05-26 direction change to

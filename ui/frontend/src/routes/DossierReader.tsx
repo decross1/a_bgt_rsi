@@ -36,6 +36,8 @@ import ChatPane from "../components/todo/ChatPane";
 import TutorPanel from "../components/todo/TutorPanel";
 import PipelineJourney from "../components/todo/PipelineJourney";
 
+import RungGlyph, { rungIndex } from "../design/RungGlyph";
+
 import { getCockpitAvailability, COCKPIT_UNAVAILABLE } from "../api/todo";
 import { getHumanTodo } from "../api/http";
 import type { CockpitAvailability, CockpitActions } from "../types/todo";
@@ -99,6 +101,21 @@ function classifyKind(kind: unknown): KindClass {
   if (kind === "finding_review") return "finding";
   if (kind === "bubble_ack" || kind === "bubble_unacked") return "bubble";
   return "other";
+}
+
+// COARSE age for the header ("how long has this been waiting?"). `since` is
+// producer-owned: a non-string / unparseable value yields "" so the line is
+// DROPPED rather than showing "NaNd". Deliberately coarse — time.elapsed()
+// renders minutes ("4320m 0s") which is unreadable for a days-old dossier.
+function ageText(since: unknown, nowMs: number): string {
+  if (typeof since !== "string" || since.length === 0) return "";
+  const t = Date.parse(since);
+  if (Number.isNaN(t)) return "";
+  const mins = Math.max(0, Math.floor((nowMs - t) / 60000));
+  if (mins < 60) return `${mins}m old`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 48) return `${hours}h old`;
+  return `${Math.floor(hours / 24)}d old`;
 }
 
 // Fallback kind for an id NOT in the live queue: its prefix names the family
@@ -175,6 +192,9 @@ export default function DossierReader({ availability, items }: Props) {
       : kindFromPrefix(dossierId);
   const kindClass = classifyKind(resolvedKind);
   const title = item !== null ? asText(item.title) : "";
+  // How long this has been waiting (the queue row's `since`). Coarse and
+  // computed once per render — no live clock for a days-scale number.
+  const age = item !== null ? ageText(item.since, Date.now()) : "";
 
   // The journey item PipelineJourney replays: the live queue item when
   // present, else a synthesized pointer carrying the resolved kind.
@@ -211,7 +231,7 @@ export default function DossierReader({ availability, items }: Props) {
 
   if (dossierId.length === 0) {
     return (
-      <div className="mx-auto max-w-5xl p-5" data-testid="dossier-reader">
+      <div className="page-prose" data-testid="dossier-reader">
         <div data-testid="dossier-no-id" className="text-[11px] text-zinc-500">
           no dossier id — pick one from{" "}
           <Link to="/dossier" className="text-sky-300 underline">
@@ -226,11 +246,14 @@ export default function DossierReader({ availability, items }: Props) {
   const interrogable = kindClass === "iteration" || kindClass === "finding";
 
   return (
-    <div className="mx-auto max-w-5xl p-5" data-testid="dossier-reader">
+    // R0 `.page-prose` — the ~760px reading column the design system reserves
+    // for the dossier / journal routes (R1-R4 adopt it; this is the dossier's).
+    <div className="page-prose" data-testid="dossier-reader">
       {/* shared-models warn/queue guard — self-fetches; self-hides when idle. */}
       <ConcurrencyWarning />
 
-      {/* header: id · kind chip · title · deferred tag */}
+      {/* header (R2): id · kind · RungGlyph(evidence_level) · title · age. One
+          scannable strip — the reader's "what am I looking at" line. */}
       <header className="mt-3" data-testid="dossier-header">
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
           <Link
@@ -242,6 +265,14 @@ export default function DossierReader({ availability, items }: Props) {
           <span className="rounded border border-sky-800 bg-sky-950 px-1.5 py-0.5 font-mono text-[10px] text-sky-300">
             {dossierId}
           </span>
+          {/* THE rung representation (R0 RungGlyph, D-059) — rendered only when
+              the queue row actually carries an L0..L5 level; a legacy/absent/
+              malformed level shows NOTHING rather than a fake empty ring. */}
+          {rungIndex(item?.evidence_level) !== null ? (
+            <span data-testid="dossier-rung" className="flex items-center">
+              <RungGlyph level={item?.evidence_level} />
+            </span>
+          ) : null}
           {resolvedKind !== null ? (
             <span
               data-testid="dossier-kind"
@@ -270,21 +301,34 @@ export default function DossierReader({ availability, items }: Props) {
               deferred to dev session
             </span>
           )}
+          {age.length > 0 && (
+            <span
+              data-testid="dossier-age"
+              className="ml-auto text-[10px] text-zinc-600"
+            >
+              {age}
+            </span>
+          )}
         </div>
         {title.length > 0 && (
-          <div className="mt-1 text-sm text-zinc-200">{title}</div>
+          <div className="mt-1 text-[15px] font-[550] text-zinc-100">
+            {title}
+          </div>
         )}
       </header>
 
       <div className="mt-3 space-y-3">
         {/* the trimmed tutor OVERVIEW (finding/iteration families only — the
-            tutor teaches a claim or an iteration; bubbles/gates have none). */}
+            tutor teaches a claim or an iteration; bubbles/gates have none).
+            R2: `compact` cuts it to the claim + evidence refs — the prose it
+            used to dump is either the journey below or on the forms. */}
         {interrogable && (
           <TutorPanel
             key={`tutor-${dossierId}`}
             findingId={dossierId}
             title={title.length > 0 ? title : undefined}
             kind={kindClass === "iteration" ? "iteration" : "finding"}
+            compact
           />
         )}
 

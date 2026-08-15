@@ -440,3 +440,204 @@ describe("DossierReader — header + spine", () => {
     );
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// R2 (2026-08-15) — "make the dossier readable in 15 seconds". Presentation
+// only: the verdict fence below is byte-for-byte the same set of forms.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("DossierReader — R2 header block (id · kind · rung · title · age)", () => {
+  it("a finding carrying an evidence_level shows THE RungGlyph (D-059)", () => {
+    renderReader(FINDING_REVIEW_ITEM.id, [FINDING_REVIEW_ITEM]);
+    const header = screen.getByTestId("dossier-header");
+    const rung = within(header).getByTestId("dossier-rung");
+    // The R0 glyph, keyed to the row's real level — not a re-implementation.
+    expect(within(rung).getByTestId("rung-glyph")).toHaveAttribute(
+      "data-rung",
+      "L4",
+    );
+  });
+
+  it("a row with NO evidence_level shows no glyph — absence is never a fake L0", () => {
+    renderReader(GATE_VERDICT_ITEM.id, [GATE_VERDICT_ITEM]);
+    expect(screen.queryByTestId("dossier-rung")).toBeNull();
+  });
+
+  it("a malformed evidence_level shows no glyph either (producer-owned field)", () => {
+    renderReader("sf-bad-level", [
+      {
+        kind: "finding_review",
+        id: "sf-bad-level",
+        title: "bad level",
+        evidence_level: "L9-ish",
+      },
+    ]);
+    expect(screen.queryByTestId("dossier-rung")).toBeNull();
+  });
+
+  it("the AGE reads from the queue row's `since`, coarse; an absent/garbage one drops the line", () => {
+    const since = new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString();
+    renderReader("sf-aged", [
+      { kind: "finding_review", id: "sf-aged", title: "aged", since },
+    ]);
+    expect(screen.getByTestId("dossier-age")).toHaveTextContent("3d old");
+    cleanup();
+
+    renderReader("sf-nodate", [
+      { kind: "finding_review", id: "sf-nodate", title: "no date", since: "not-a-date" },
+    ]);
+    expect(screen.queryByTestId("dossier-age")).toBeNull();
+  });
+});
+
+describe("DossierReader — R2 tutor summary is trimmed to claim + evidence refs", () => {
+  // The reader's TutorPanel self-fetches; feed it a REAL finding detail so the
+  // loaded (not the "unavailable") branch is what gets asserted.
+  function stubFindingDetail() {
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/todo/concurrency")) return jsonResponse(200, { active: false });
+      if (u.endsWith("/api/human_todo")) return jsonResponse(200, { items: [], counts: {} });
+      if (u.endsWith("/api/attest/available"))
+        return jsonResponse(200, { available: true, actions: { finding_review: true, defer: true } });
+      if (u.includes("/api/finding/"))
+        return jsonResponse(200, {
+          found: true,
+          finding_id: FINDING_REVIEW_ITEM.id,
+          title: "Shading is dominated under VCG",
+          claim: "Bidders stop shading once the payment rule is second-price.",
+          what_would_change_it: "A counter-example auction where shading still pays.",
+          why_it_matters: "It is the whole basis for the truthful-bidding claim.",
+          source_iteration_id: "iter-2026-06-14-002",
+          source_iteration: { iteration_id: "iter-2026-06-14-002", topic: "auctions" },
+          evidence: {
+            journal_entry_path: "journal/iterations/002.md",
+            results_path: "experiments/exp003/results/summary.md",
+          },
+        });
+      if (u.includes("/journey"))
+        return jsonResponse(200, { found: false, iteration_id: "x", iteration: null });
+      if (u.endsWith("/api/coordinator/cycles")) return jsonResponse(200, { cycles: [] });
+      return jsonResponse(404, {});
+    });
+  }
+
+  it("keeps the claim + evidence refs; DROPS the prose dump", async () => {
+    stubFindingDetail();
+    renderReader(FINDING_REVIEW_ITEM.id, [FINDING_REVIEW_ITEM]);
+    await waitFor(() =>
+      expect(screen.getByTestId("tutor-overview")).toBeInTheDocument(),
+    );
+    const tutor = screen.getByTestId("tutor-panel");
+    // KEPT — the claim and the read-only evidence refs.
+    expect(tutor).toHaveTextContent(
+      "Bidders stop shading once the payment rule is second-price.",
+    );
+    expect(within(tutor).getByTestId("tutor-evidence")).toHaveTextContent(
+      "journal/iterations/002.md",
+    );
+    // DROPPED — the prose dump. The source iteration IS the journey below.
+    expect(screen.queryByTestId("tutor-source-iteration")).toBeNull();
+    expect(screen.queryByTestId("tutor-outcome-effects")).toBeNull();
+    expect(tutor).not.toHaveTextContent(
+      "A counter-example auction where shading still pays.",
+    );
+    expect(tutor).not.toHaveTextContent(
+      "It is the whole basis for the truthful-bidding claim.",
+    );
+  });
+
+  it("the tutor FENCE NOTE still renders in the compact variant (the fence is not a style)", async () => {
+    stubFindingDetail();
+    renderReader(FINDING_REVIEW_ITEM.id, [FINDING_REVIEW_ITEM]);
+    await waitFor(() =>
+      expect(screen.getByTestId("tutor-overview")).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("tutor-fence-note")).toHaveTextContent(/D-053/);
+    expect(screen.getByTestId("tutor-fence-note")).toHaveTextContent(
+      /it never recommends/i,
+    );
+  });
+});
+
+describe("DossierReader — R2 the journey opens COLLAPSED under the sticky stepper", () => {
+  // A real journey so the loaded (sectioned) branch renders inside the reader.
+  function stubJourney() {
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/todo/concurrency")) return jsonResponse(200, { active: false });
+      if (u.endsWith("/api/human_todo")) return jsonResponse(200, { items: [], counts: {} });
+      if (u.endsWith("/api/attest/available"))
+        return jsonResponse(200, { available: true, actions: { gate_verdict: true, defer: true } });
+      if (u.includes("/journey"))
+        return jsonResponse(200, {
+          found: true,
+          iteration_id: GATE_VERDICT_ITEM.id,
+          iteration: {
+            iteration_id: GATE_VERDICT_ITEM.id,
+            started_at: "2026-06-14T09:00:00Z",
+            ended_at: "2026-06-14T09:40:00Z",
+            hypothesis: { text: "A long hypothesis paragraph the reader should not dump." },
+            retrieval: { k: 8, neighbors: ["p-a"], relevance: { relevance: 0.8, low_confidence: false } },
+            novelty: { class: "novel", rationale: "a rationale paragraph" },
+            critique: { verdict: "survives", rationale: "a critic paragraph" },
+            gate_status: "pending",
+            journal_entry_path: "j.md",
+          },
+        });
+      if (u.includes("/api/finding/"))
+        return jsonResponse(200, { found: false, finding_id: "x" });
+      if (u.endsWith("/api/coordinator/cycles")) return jsonResponse(200, { cycles: [] });
+      return jsonResponse(404, {});
+    });
+  }
+
+  it("the stepper renders 8 stations and NO section body is mounted", async () => {
+    stubJourney();
+    renderReader(GATE_VERDICT_ITEM.id, [GATE_VERDICT_ITEM]);
+    await waitFor(() =>
+      expect(screen.getByTestId("journey-loaded")).toBeInTheDocument(),
+    );
+    const stepper = screen.getByTestId("journey-stepper");
+    for (const k of [
+      "hypothesis",
+      "retrieval",
+      "relevance",
+      "novelty",
+      "critic",
+      "redteam",
+      "experiment",
+      "verdict",
+    ]) {
+      expect(within(stepper).getByTestId(`stepper-station-${k}`)).toBeInTheDocument();
+      expect(screen.queryByTestId(`journey-body-${k}`)).toBeNull();
+    }
+    // The prose is genuinely absent from the page, not merely hidden.
+    expect(
+      screen.queryByText("A long hypothesis paragraph the reader should not dump."),
+    ).toBeNull();
+    expect(screen.queryByText("a critic paragraph")).toBeNull();
+  });
+
+  it("expanding a section reveals its prose and leaves the FENCE untouched", async () => {
+    stubJourney();
+    renderReader(GATE_VERDICT_ITEM.id, [GATE_VERDICT_ITEM]);
+    await waitFor(() =>
+      expect(screen.getByTestId("journey-loaded")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId("journey-toggle-hypothesis"));
+    expect(screen.getByTestId("journey-body-hypothesis")).toHaveTextContent(
+      "A long hypothesis paragraph the reader should not dump.",
+    );
+    // The disposition footer is EXACTLY as before: GateVerdictForm only, and
+    // still the only iteration-keyed disposition on the page.
+    await waitFor(() =>
+      expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
+    );
+    for (const id of FINDING_KEYED) expect(screen.queryByTestId(id)).toBeNull();
+    expect(screen.queryByTestId("resolution-locked")).toBeNull();
+    // Expanding a journey section did NOT reveal the interrogation either —
+    // the reveal fence is a separate gate and stays closed.
+    expectAuxRevealableTrioHidden();
+  });
+});
