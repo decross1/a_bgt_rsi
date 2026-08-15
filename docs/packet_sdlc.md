@@ -114,9 +114,9 @@ the entrenchment tiers below.
 
 ## Entrenchment tiers
 
-> **Status: DRAFT — pending G4 human ratification.** Until the human
-> ratifies (logged in `run_state/overrides.jsonl` or DECISIONS.md), this
-> table is the working norm the premerge gate encodes, not settled law.
+> **Status: RATIFIED 2026-08-15 (G4).** Owner approval recorded in
+> `run_state/overrides.jsonl` (`G4_ratify_entrenchment_tiers`); this table is
+> settled law, enforced mechanically by `tools/premerge_check.sh`.
 
 | Tier | Paths / artifacts | Merge bar |
 |---|---|---|

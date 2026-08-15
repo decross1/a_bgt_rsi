@@ -3078,3 +3078,30 @@ the acceptance rule (arXiv:2607.22375). A wiki-shaped synthesis layer stays a ca
 the EXTERNAL literature corpus (Phase 2, frontier-synthesized, after S2 search is healthy).
 **Reversibility.** The ledger is an overlay; deleting it restores today's behavior. The judge
 seam is injected and defaults to prefilter-only.
+
+## D-062 — Task-packet micro-orgs (stage-(ii) of the D-046 authorize-fix path) + entrenchment tiers ratified
+
+**Date.** 2026-08-15. **Context.** LOOP_V1 P4: the orchestrator (and primary session)
+can spawn bounded engineering micro-orgs, with mechanical enforcement FIRST (the PoE
+teardown's two loudest lessons: its merge robot never merged once — the gate wasn't
+installed — and its only real-money budget was silently unmeasured).
+
+**Decision.** (1) Work unit = a **task packet** (`schema/task_packet.schema.json`;
+a field the dispatcher doesn't mechanically read is documentation, not control).
+(2) **`orchestrator/packet_dispatcher.py`**: attempt incremented BEFORE invoke;
+ack decided by the dispatcher (acceptance test re-run + `tools/premerge_check.sh`),
+never the agent; red-first (must_fail_before); done requires a COMMITTED branch;
+secrets stripped from the agent env; NEVER merges. Ledger `run_state/packets.jsonl`
+(machine-enforced control; `spawn.jsonl` stays a discipline). Human overrides →
+`run_state/overrides.jsonl` via `orchestrator/override_log.py` (human-only actors).
+(3) **Entrenchment tiers ratified by the owner (G4, 2026-08-15, overrides.jsonl)**:
+Tier P (workers/tools/tests/docs/bench/experiments) merges on green + framework
+code-review; Tier S (spine, schema/, version pins, promotion-bar constants,
+CLAUDE.md, DECISIONS.md, cron/serve-models.sh, run_state semantics) additionally
+requires logged human ratification. Full pipeline: `docs/packet_sdlc.md`.
+
+**Evidence.** Real e2e 2026-08-14/15: PKT-EXAMPLE done on attempt 1, premerge green,
+primary merged `--no-ff` (cc2b542); the first run caught the relative-venv worktree
+trap and digest-only ledger opacity (both fixed + documented). **Reversibility.**
+The dispatcher is dev-time, primary-invoked; coordinator-runtime dispatch is
+explicitly deferred (D-014 line, its own future gated decision).
