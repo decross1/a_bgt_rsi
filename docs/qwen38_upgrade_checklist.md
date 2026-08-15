@@ -43,13 +43,21 @@ Grounded facts (checked read-only at authoring time):
 
 ## 1. Acquisition (human gate: weight acquisition)
 
-- [ ] Target artifact: Qwen 3.8-27B in **NVFP4 ModelOpt** quantization
-      (`--quantization modelopt` must keep working) **with an MTP head**
-      matching what 3.6 ships (3.6 uses speculative method `qwen3_5_mtp`).
-- [ ] Destination path: `/mnt/models/qwen3.8-27b-nvfp4-mtp` (sibling of 3.6;
-      3.6 is NOT deleted — §5 rollback).
-- [ ] Disk: ~19 GiB free needed alongside 3.6. Verified available (3.1 TiB
-      free at authoring). Re-check with `df -h /mnt/models` before download.
+- [x] Target artifact: **`Inferact/Qwen3.8-27B-NVFP4`** (G6-approved,
+      acquired 2026-08-15): quant `modelopt` ✓, `hf_quant_config.json` ✓,
+      MTP experts shard (`nvfp4_experts_mtp.safetensors`) ✓, arch
+      `Qwen3_5ForConditionalGeneration` (same family as 3.6 → `qwen3_5_mtp`
+      + `qwen3`/`qwen3_coder` parsers expected to hold under v0.21.0 — see
+      the open question below, confirmed at the live A/B). Candidates
+      REJECTED with reasons: sakamakismile 3.8 + unsloth = compressed-tensors
+      (the slower SM120 path 3.6 deliberately migrated away from); RadixArk =
+      no MTP; uzairkhn = bitsandbytes.
+- [x] Destination path: `/mnt/models/qwen3.8-27b-nvfp4-mtp` (25 GiB on disk;
+      3.6 NOT deleted — §5 rollback). Integrity: upstream
+      `safetensors-md5sum.txt` shipped EMPTY (noted honestly); verified
+      instead by hub-side hash-validated download (exit 0) + all 7
+      safetensors shards parse cleanly + index total_size matches (26.38 GB).
+- [x] Disk: 3.0 TiB free after download (`df` 2026-08-15).
 - [ ] **OPEN QUESTION (pin-amendment class, resolved by READING not pulling):**
       does vLLM `v0.21.0` support Qwen 3.8's MTP method and its
       reasoning/tool-call parsers? 3.6 runs `"method":"qwen3_5_mtp"` +
