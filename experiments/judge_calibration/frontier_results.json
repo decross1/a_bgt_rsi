@@ -1,0 +1,56 @@
+{
+  "generated_at": "2026-08-15T06:58:40.283338Z",
+  "loop_memory_path": "/home/decross1/projects/a_bgt_rsi/memory/loop_memory.jsonl",
+  "mock_llm": false,
+  "temps": [
+    0.2
+  ],
+  "seed": 0,
+  "counts": {
+    "positives": 6,
+    "hard_negatives": 30,
+    "random_negatives": 20,
+    "calls": 112,
+    "parse_failures": 2
+  },
+  "metrics": {
+    "equiv_precision": 0.3103,
+    "equiv_recall": 0.75,
+    "false_equiv_rate": 0.2,
+    "symmetry_disagree_rate": 0.2321,
+    "verdict_flip_rate": null
+  },
+  "checks": {
+    "equiv_precision": {
+      "value": 0.3103,
+      "threshold": 0.9,
+      "direction": ">=",
+      "pass": false
+    },
+    "equiv_recall": {
+      "value": 0.75,
+      "threshold": 0.8,
+      "direction": ">=",
+      "pass": false
+    },
+    "false_equiv_rate": {
+      "value": 0.2,
+      "threshold": 0.1,
+      "direction": "<=",
+      "pass": false
+    },
+    "symmetry_disagree_rate": {
+      "value": 0.2321,
+      "threshold": 0.1,
+      "direction": "<=",
+      "pass": false
+    },
+    "verdict_flip_rate": {
+      "value": null,
+      "threshold": 0.15,
+      "direction": "<=",
+      "pass": false
+    }
+  },
+  "all_pass": false
+}
