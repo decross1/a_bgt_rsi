@@ -726,6 +726,20 @@ def _default_execute_handlers() -> dict[str, Callable[..., Any]]:
         from workers.refine_cycle import refine_cluster
         return refine_cluster(cluster_id, max_rounds=max_rounds)
 
+    def _improve_system(*, max_rounds: int = 3, emit: bool = True) -> Any:
+        """D-066: telemetry -> proposal -> frontier debate -> red-first packet.
+
+        Dark by default (the menu hides it), and the flag is checked HERE too
+        so a hallucinated action name cannot spend frontier calls. The refusal
+        is a returned status, never a silent noop — the cycle records it."""
+        from orchestrator.coordinator_actions import DARK_ACTIONS
+        flag = DARK_ACTIONS["improve_system"]
+        if not os.environ.get(flag):
+            return {"status": "refused",
+                    "reason": f"improve_system is dark: {flag} is unset"}
+        from orchestrator.self_improve import plan_improvement
+        return plan_improvement(max_rounds=max_rounds, emit=emit)
+
     return {
         "run_loop_iteration": _run_loop_iteration,
         "promote_findings": _promote,
@@ -735,6 +749,7 @@ def _default_execute_handlers() -> dict[str, Callable[..., Any]]:
         "forecast_markets": handle_forecast_markets,
         "mine_paper_gap": _mine_gap,
         "refine_idea": _refine_idea,
+        "improve_system": _improve_system,
     }
 
 

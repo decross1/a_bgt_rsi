@@ -19,6 +19,7 @@ in the coordinator, not here.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from jsonschema import Draft7Validator
@@ -196,7 +197,41 @@ ACTIONS: dict[str, dict[str, Any]] = {
         ),
         "handler_ref": "workers.refine_cycle:refine_cluster",
     },
+    "improve_system": {
+        "description": (
+            "D-066 self-improvement loop: mine the lab's OWN telemetry (run "
+            "log, health signals, loop alert, cycle repeats, daemon log) for a "
+            "named failing signal, propose ONE small Tier-P improvement to the "
+            "apparatus itself, debate it with both frontier falsifiers for up "
+            "to 3 rounds, and — only on an affirmative pass — write the "
+            "acceptance test, PROVE IT RED by running it, and emit a task "
+            "packet + queue row for the Qwen builder. Emits nothing on a veto "
+            "or an inconclusive review, and can only touch Tier-P paths "
+            "(workers/ tools/ tests/ docs/ bench/ experiments/) — the spine, "
+            "schema, pins and decision log are refused, not escalated. Worth a "
+            "slot when the state shows a REPEATING operational failure the "
+            "research actions cannot fix."
+        ),
+        "cost": 4,
+        "arg_schema": _obj_schema(
+            {"max_rounds": {"type": "integer", "minimum": 1, "maximum": 3},
+             "emit": {"type": "boolean"}},
+            [],
+        ),
+        "handler_ref": "orchestrator.self_improve:plan_improvement",
+    },
 }
+
+# Dark-by-default actions: on the menu only when their env flag is set (the
+# D-065 idiom). A dark action still validates if a planner hallucinates its
+# name — the handler refuses it, so the flag is enforced twice, and the
+# refusal is logged rather than silently swallowed.
+DARK_ACTIONS: dict[str, str] = {"improve_system": "NARA_SELF_IMPROVE"}
+
+
+def _is_enabled(name: str) -> bool:
+    flag = DARK_ACTIONS.get(name)
+    return flag is None or bool(os.environ.get(flag))
 
 
 def known_actions() -> list[dict[str, Any]]:
@@ -213,6 +248,7 @@ def known_actions() -> list[dict[str, Any]]:
             "cost": spec["cost"],
         }
         for name, spec in ACTIONS.items()
+        if _is_enabled(name)
     ]
 
 

@@ -141,10 +141,17 @@ def test_codex_command_shape(tmp_path, fake_run, real_mode):
         ledger_path=tmp_path / "l.jsonl",
     )
     main = fake_run.calls[-1]["cmd"]
+    # Model + effort are PINNED by this module, not inherited from the
+    # machine-global ~/.codex/config.toml (2026-08-16: that config's gpt-5.6 /
+    # "max" started returning 400 and took this reviewer dark for 6 hours).
     assert main == [
         "codex", "exec", "--skip-git-repo-check",
-        "--sandbox", "read-only", "--json", "novelty?",
+        "--sandbox", "read-only",
+        "-m", fc.CODEX_MODEL,
+        "-c", f"model_reasoning_effort={fc.CODEX_REASONING_EFFORT}",
+        "--json", "novelty?",
     ]
+    assert (fc.CODEX_MODEL, fc.CODEX_REASONING_EFFORT) == ("gpt-5.5", "high")
     assert res["text"] == "codex says hi"
     assert res["cli_version"] == "9.9.9-test"
 

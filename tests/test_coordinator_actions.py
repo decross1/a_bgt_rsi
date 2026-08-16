@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from orchestrator.coordinator_actions import (
     ACTIONS,
+    DARK_ACTIONS,
     MAX_ACTIONS,
     known_actions,
     validate_plan,
@@ -25,6 +26,7 @@ def test_known_actions_returns_v2_menu():
         "run_loop_iteration", "promote_findings", "bubble_up", "noop",
         "run_experiment", "forecast_markets", "mine_paper_gap",
         "refine_idea",   # D-064 (2026-08-15): bounded critique-refine
+        # improve_system (D-066) is DARK — see the dark-action tests below.
     }
     for entry in menu:
         assert set(entry) == {"name", "description", "arg_schema", "cost"}
@@ -153,7 +155,9 @@ def test_actions_registry_is_the_v2_menu():
         "run_loop_iteration", "promote_findings", "bubble_up", "noop",
         "run_experiment", "forecast_markets", "mine_paper_gap",
         "refine_idea",   # D-064 (2026-08-15): bounded critique-refine cycle
+        "improve_system",  # D-066 (2026-08-16): dark self-improvement loop
     }
+    assert ACTIONS["improve_system"]["cost"] == 4
     assert ACTIONS["refine_idea"]["cost"] == 2
     assert ACTIONS["run_loop_iteration"]["cost"] == 3
     assert ACTIONS["promote_findings"]["cost"] == 2
@@ -165,3 +169,40 @@ def test_actions_registry_is_the_v2_menu():
     # No action may ever name a trading surface.
     for spec in ACTIONS.values():
         assert "trade" not in spec["handler_ref"].lower()
+
+
+# ── dark actions (D-066) ────────────────────────────────────────────────────
+
+def test_improve_system_is_off_the_menu_until_its_flag_is_set(monkeypatch):
+    """Dark by default: the planner cannot select what it cannot see, so an
+    unset flag costs zero frontier calls."""
+    monkeypatch.delenv(DARK_ACTIONS["improve_system"], raising=False)
+    assert "improve_system" not in {a["name"] for a in known_actions()}
+    monkeypatch.setenv(DARK_ACTIONS["improve_system"], "1")
+    menu = {a["name"]: a for a in known_actions()}
+    assert "improve_system" in menu
+    assert menu["improve_system"]["cost"] == 4
+    assert "handler_ref" not in menu["improve_system"]
+
+
+def test_dark_action_still_validates_so_the_handler_is_the_second_fence(
+        monkeypatch):
+    """A hallucinated dark action name is NOT a schema error — the validator
+    knows the action. The env fence lives in the handler too, which refuses
+    and records the refusal (never a silent noop)."""
+    monkeypatch.delenv(DARK_ACTIONS["improve_system"], raising=False)
+    res = validate_plan([{"action": "improve_system", "args": {}}], budget=4)
+    assert res["ok"] is True, res["errors"]
+    assert res["normalized"][0]["handler_ref"] == (
+        "orchestrator.self_improve:plan_improvement")
+
+
+def test_improve_system_args_are_capped_at_the_debate_ceiling():
+    over = validate_plan(
+        [{"action": "improve_system", "args": {"max_rounds": 4}}], budget=4)
+    assert over["ok"] is False
+    assert any("max_rounds" in e for e in over["errors"])
+    ok = validate_plan(
+        [{"action": "improve_system", "args": {"max_rounds": 3,
+                                               "emit": True}}], budget=4)
+    assert ok["ok"] is True, ok["errors"]

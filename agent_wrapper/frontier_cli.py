@@ -13,8 +13,10 @@ What it does
    - "claude": ``claude -p --output-format json <prompt>`` — stdout is one
      JSON object; the reply text is its ``result`` field.
    - "codex":  ``codex exec --skip-git-repo-check --sandbox read-only
+     -m <CODEX_MODEL> -c model_reasoning_effort=<CODEX_REASONING_EFFORT>
      --json <prompt>`` — stdout is JSONL events; the reply text is the last
-     ``agent_message`` event.
+     ``agent_message`` event. The model/effort are PINNED here (see
+     ``CODEX_MODEL``) rather than inherited from ~/.codex/config.toml.
 2. Spawns with ``os.environ`` minus ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN
    (MANDATORY — the key is set globally on this host and would silently
    reroute the Max-subscription ``claude`` CLI onto the metered API).
@@ -52,6 +54,18 @@ _STRIPPED_ENV_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 _VENDOR_BINARIES = {"claude": "claude", "codex": "codex"}
 
+# Codex model + reasoning effort are pinned HERE, not inherited from the
+# machine-global ~/.codex/config.toml. On 2026-08-16 that config's
+# `model = "gpt-5.6"` / `model_reasoning_effort = "max"` both started coming
+# back 400 ("not supported when using Codex with a ChatGPT account"), which
+# silently took the novelty/risk half of the D-061 falsifier panel dark
+# between 2026-08-15T19:30Z and the fix — 32 clean calls, then every call
+# nonzero. The apparatus states what it runs on rather than inheriting a file
+# it does not version. Env-overridable so a restored entitlement (or a vendor
+# rename) needs no code change.
+CODEX_MODEL = os.environ.get("FRONTIER_CODEX_MODEL", "gpt-5.5")
+CODEX_REASONING_EFFORT = os.environ.get("FRONTIER_CODEX_EFFORT", "high")
+
 # Cap on stderr text carried into an error message.
 _STDERR_TAIL_CHARS = 500
 
@@ -73,7 +87,10 @@ def _build_cmd(vendor: str, prompt: str) -> List[str]:
     if vendor == "codex":
         return [
             "codex", "exec", "--skip-git-repo-check",
-            "--sandbox", "read-only", "--json", prompt,
+            "--sandbox", "read-only",
+            "-m", CODEX_MODEL,
+            "-c", f"model_reasoning_effort={CODEX_REASONING_EFFORT}",
+            "--json", prompt,
         ]
     raise ValueError(
         f"unknown vendor {vendor!r}; expected one of "

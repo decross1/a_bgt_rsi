@@ -537,3 +537,38 @@ def test_plan_end_to_end_emits_on_a_pass(tmp_path):
     assert (tmp_path / "authorize_fix_queue.jsonl").exists()
     assert {e["status"] for e in logged} >= {"passed"}
     assert all(e["task_id"].startswith("self_improve:") for e in logged)
+
+
+# ── coordinator wiring (D-066) ──────────────────────────────────────────────
+
+def test_coordinator_handler_refuses_while_dark_and_calls_nothing(monkeypatch):
+    """The env fence is enforced in the HANDLER too, so a hallucinated action
+    name cannot spend a frontier call. The refusal is returned (the cycle
+    records it), never a silent noop."""
+    from orchestrator import coordinator, coordinator_actions
+    monkeypatch.delenv(coordinator_actions.DARK_ACTIONS["improve_system"],
+                       raising=False)
+
+    def _boom(**kwargs):  # pragma: no cover - must never run
+        raise AssertionError("plan_improvement ran while the action was dark")
+
+    monkeypatch.setattr(si, "plan_improvement", _boom)
+    out = coordinator._default_execute_handlers()["improve_system"]()
+    assert out["status"] == "refused"
+    assert "NARA_SELF_IMPROVE" in out["reason"]
+
+
+def test_coordinator_handler_runs_the_loop_when_armed(monkeypatch):
+    from orchestrator import coordinator, coordinator_actions
+    monkeypatch.setenv(coordinator_actions.DARK_ACTIONS["improve_system"], "1")
+    seen: dict = {}
+
+    def _fake(**kwargs):
+        seen.update(kwargs)
+        return {"approved": False, "emitted": False, "reason": "stub"}
+
+    monkeypatch.setattr(si, "plan_improvement", _fake)
+    out = coordinator._default_execute_handlers()["improve_system"](
+        max_rounds=2, emit=False)
+    assert out["reason"] == "stub"
+    assert seen == {"max_rounds": 2, "emit": False}

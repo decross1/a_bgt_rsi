@@ -3229,6 +3229,53 @@ harmless. **Known downstream note:** with debate armed, the battery's
 `skeptic_verdict` column reads `survives_debate` where it read `survives_attack`
 (no code compares that literal; flagged, not silently normalized).
 
+## D-066 — Nara plans improvements to the apparatus itself: telemetry evidence → frontier debate → red-first packet → Qwen builder (dark)
+
+**Date.** 2026-08-16. **Context.** The owner asked for "the orchestrator to go
+through a debate loop with frontier intelligence to plan an improvement on the
+system itself, something small, and this then gets broken down enough into a
+development task that can be shipped to qwen or an organization of developers".
+Every prior loop pointed outward at research; the apparatus had no seam for
+changing itself, so its own repeating operational failures (the D-063 daemon
+log, cycle repeats, near-miss floods) accumulated with nowhere to go but the
+owner's attention.
+
+**Decision.** `orchestrator/self_improve.py` — a bounded planner, not an agent:
+
+1. **Evidence is telemetry, not ambition.** `gather_evidence()` is pure reads
+   over the run log, health signals, loop alert, coordinator cycles (including
+   repeat detection), near-misses and the daemon log. A source that cannot be
+   read lands in an explicit `unavailable` list — a missing signal is reported,
+   never treated as a clean one (rule 4). A proposal must name the live signal
+   it answers.
+2. **Both frontier falsifiers must AFFIRM.** `review()` runs the D-061 pair as
+   opposed jobs (feasibility / risk-scope). Only an affirmative `pass`
+   proceeds; a veto **or an inconclusive** sends the proposal to `revise()` and
+   round again, capped at **MAX_IMPROVE_ROUNDS = 3** (the cap raises rather
+   than clamping). Exhaustion emits nothing and returns the full transcript.
+3. **Red-first is PROVEN, not asserted.** `emit_packet()` writes the acceptance
+   test and then RUNS it; only **rc 1** (a real failure) allows the packet.
+   A passing test, a collection error, or any other rc refuses the emission —
+   a test that was never red cannot certify the fix that follows.
+4. **Tier P only.** Every file the packet touches is checked against
+   `TIER_P_PREFIXES` (workers/ tools/ tests/ docs/ bench/ experiments/). A
+   Tier-S path (the spine, `schema/`, version pins, `CLAUDE.md`,
+   `DECISIONS.md`, `cron/serve-models.sh`, run_state semantics) is **refused**,
+   not escalated — self-modification stops at the entrenchment line D-062 drew.
+5. **The exit is the existing SDLC, not a new one.** The packet + queue row
+   are the D-062 artifacts, so the work leaves through the dispatcher (Qwen
+   builder, file scope, attempt cap), `tools/premerge_check.sh` and the full
+   suite, and the primary session remains the single merge authority.
+6. **Dark by default.** The coordinator action `improve_system` (cost 4) is in
+   `DARK_ACTIONS`, keyed to `NARA_SELF_IMPROVE`. Unset, it is absent from the
+   planner menu — the planner cannot choose what it cannot see — and the
+   handler refuses it a second time, so a hallucinated action name cannot spend
+   a frontier call. The refusal is returned and recorded, never a silent noop.
+
+**Reversibility.** Unset `NARA_SELF_IMPROVE` and the action disappears from the
+menu; nothing else in the cycle changes. Emitted packets are ordinary D-062
+packets and are killed the ordinary way.
+
 ## D-067 — The lab channel gains an attributable participant registry; Oracle enters as observer-only mission steward
 
 **Date.** 2026-08-16. **Context.** Another session ("Oracle") was ratified by the
@@ -3275,3 +3322,32 @@ fix, restated the ordered path with the real artifacts and explicitly refused
 the step it could not verify. **Reversibility.** Drop `"oracle"` from
 `_PARTICIPANTS` — historical rows keep their recorded kind and render under the
 neutral fallback voice; no ledger is rewritten.
+
+## D-068 — Frontier vendor invocation is pinned in-repo, not inherited from the machine-global CLI config
+
+**Date.** 2026-08-16. **Context.** The first live D-066 run showed every
+`risk_scope_reviewer` call returning "frontier invoke error: nonzero". The
+cause was outside the repo: `~/.codex/config.toml` pins `model = "gpt-5.6"` and
+`model_reasoning_effort = "max"`, and both began returning HTTP 400 ("not
+supported when using Codex with a ChatGPT account"). Ledger evidence in
+`run_state/frontier_calls.jsonl`: **32 consecutive clean codex calls, last OK
+2026-08-15T19:30:02Z, then every call nonzero.** For roughly six hours every
+D-061 consumer — the F1 screens, the D-064 refine cycle, the D-066 debate —
+silently ran on a **one-reviewer panel** while still reporting an "opposed
+jobs" review. The second reviewer's failure surfaced only as `inconclusive`,
+which reads like a reviewer's judgment, not an outage.
+
+**Decision.** `agent_wrapper/frontier_cli.py` pins the codex invocation:
+`CODEX_MODEL = "gpt-5.5"` and `CODEX_REASONING_EFFORT = "high"`, passed
+explicitly as `-m` / `-c model_reasoning_effort=...` and overridable by
+`FRONTIER_CODEX_MODEL` / `FRONTIER_CODEX_EFFORT`. The apparatus states what it
+runs on rather than inheriting a machine-global file it does not version — the
+same reason the vLLM image and CUDA versions are pinned verbatim. The owner's
+`~/.codex/config.toml` is left untouched (it serves other projects, and the
+entitlement may return). Verified live: exit 0 with a returned reply. The
+command shape is test-pinned.
+
+**Standing lesson (not yet built).** A degraded frontier vendor is currently
+indistinguishable from a hesitant reviewer. Frontier-vendor health belongs in
+the loop-alert surface; until it is there, a panel can go half-dark for hours
+without anything noticing. Filed as open work in the 2026-08-16 session note.
