@@ -24,7 +24,9 @@ fi
 # June entries were still there 57 days later). Explicit + append-only: docs
 # move to run_state/active_runs/abandoned/ with a reason, never deleted.
 REPO="/home/decross1/projects/a_bgt_rsi"
-"$REPO/.venv-chroma/bin/python" -m orchestrator.active_run --reap 2>&1 \
+# cd is load-bearing: `-m orchestrator.active_run` resolves against CWD, and
+# cron's CWD is $HOME (296 silent ModuleNotFoundError firings, 08-15..08-16).
+(cd "$REPO" && "$REPO/.venv-chroma/bin/python" -m orchestrator.active_run --reap 2>&1) \
   | grep -v '^0 stale run' || true
 
 rc=0
