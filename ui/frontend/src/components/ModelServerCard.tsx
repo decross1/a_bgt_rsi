@@ -25,8 +25,11 @@ import type { LiveCalls } from "../types/activity";
 import type { TelemetrySample, VllmSample, WorkloadHint } from "../types/schemas";
 import Sparkline from "./Sparkline";
 
-// The model names the two vLLM servers serve (live facts, 2026-06-10).
-// Exported here since VllmPanel/QwenPanel (their former homes) are deleted.
+// LAST-RESORT fallbacks only. These are what the servers served on
+// 2026-06-10; they are NOT the truth about what is running now. The live name
+// comes from GET /api/served_models — on 2026-08-16 these constants had the
+// dashboard announcing "Qwen3.6" for an hour while :8001 served 3.8, which is
+// why a card title must never be sourced from here.
 export const VLLM_SERVED_MODEL = "gemma-4-26b-a4b";
 export const QWEN_SERVED_MODEL = "qwen3.6-27b-nvfp4-mtp";
 

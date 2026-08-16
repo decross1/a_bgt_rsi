@@ -44,7 +44,7 @@ import NaraPromptForm from "../components/NaraPromptForm";
 import NowBoard from "../components/NowBoard";
 import OweStrip from "../components/OweStrip";
 import { getActivityMonitor } from "../api/activity";
-import { getCoordinatorCycles, getHealth, getIterations } from "../api/http";
+import { getCoordinatorCycles, getHealth, getIterations, getServedModels } from "../api/http";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { useNow } from "../time";
 import type { LiveCalls } from "../types/activity";
@@ -74,6 +74,11 @@ function newestIso(candidates: unknown[]): string | null {
 export default function Pulse() {
   const { samples, latest, connected } = useTelemetryStream();
   const [health, setHealth] = useState<Health | null>(null);
+  // Live served-model names — the card titles must not be strings (an A/B
+  // window on 2026-08-16 had the dashboard announcing 3.6 while 3.8 served).
+  const [servedModels, setServedModels] = useState<
+    Record<string, { model: string | null; error: string | null }> | null
+  >(null);
   // The live wrapper-call aggregate — feeds the NowBoard headline strip and
   // both ModelServerCards' "driving" sub-lines. limit=1 keeps the monitor
   // payload cheap (only its live_calls block is read). Fails quiet.
@@ -101,6 +106,17 @@ export default function Pulse() {
     const loadHealth = () => getHealth().then(setHealth).catch(() => {});
     loadHealth();
     const id = setInterval(loadHealth, 10000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Polled, not read once: a model server can be swapped under a running
+  // dashboard (that is exactly how the 2026-08-16 mislabel happened). A failed
+  // read leaves the previous value rather than blanking the card; a reachable
+  // endpoint reporting no model renders "unknown".
+  useEffect(() => {
+    const load = () => getServedModels().then(setServedModels).catch(() => {});
+    load();
+    const id = setInterval(load, 15000);
     return () => clearInterval(id);
   }, []);
 
@@ -348,8 +364,8 @@ export default function Pulse() {
           }}
         >
           <ModelServerCard
-            title="gemma-4-26b-a4b"
-            servedModel={VLLM_SERVED_MODEL}
+            title={servedModels?.gemma?.model ?? "unknown"}
+            servedModel={servedModels?.gemma?.model ?? VLLM_SERVED_MODEL}
             pick={(s) => s.vllm}
             samples={cleanSamples}
             liveCalls={liveCalls}
@@ -357,8 +373,8 @@ export default function Pulse() {
             workloadHint
           />
           <ModelServerCard
-            title="Qwen3.6-27B · NVFP4-MTP"
-            servedModel={QWEN_SERVED_MODEL}
+            title={servedModels?.qwen?.model ?? "unknown"}
+            servedModel={servedModels?.qwen?.model ?? QWEN_SERVED_MODEL}
             pick={(s) => s.vllm_qwen}
             samples={cleanSamples}
             liveCalls={liveCalls}

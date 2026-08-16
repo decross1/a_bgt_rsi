@@ -369,6 +369,12 @@ vi.mock("../src/api/http", () => ({
     path: "journal/iterations/065.md",
     content: "# Journal\n\nbody",
   }),
+  // Live served-model probe (2026-08-16): the card titles read from this,
+  // never from a constant.
+  getServedModels: vi.fn().mockResolvedValue({
+    gemma: { url: "http://localhost:8000", model: "gemma-4-26b-a4b", error: null },
+    qwen: { url: "http://localhost:8001", model: "qwen3.6-27b-nvfp4-mtp", error: null },
+  }),
   getWorkloadHint: vi.fn().mockResolvedValue({ regime: "idle" }),
   // Coordinator loop: real cycles (the one surviving coordinator endpoint).
   getCoordinatorCycles: vi.fn().mockResolvedValue({ cycles: D.REAL_CYCLES }),

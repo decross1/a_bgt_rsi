@@ -1,0 +1,257 @@
+{
+  "generated_at": "2026-08-16T20:34:20.486204+00:00",
+  "served_model": "qwen3.8-27b-nvfp4-mtp",
+  "checks": {
+    "kill": {
+      "pass": false
+    },
+    "no_false_kill": {
+      "pass": true,
+      "novel_on_01_verdict": "survives_attack"
+    },
+    "liveness": {
+      "pass": false,
+      "unparseable": [
+        "redisc_on_02_folk_theorem",
+        "falsifiable_02_dominant_tft",
+        "camo_off_04_raft_punishment"
+      ]
+    }
+  },
+  "all_pass": false,
+  "verdict_by_expected": {
+    "survives": [
+      "survives_attack",
+      "survives_attack",
+      "refuted",
+      "survives_attack"
+    ],
+    "restated": [
+      "survives_attack",
+      "inconclusive",
+      "survives_attack",
+      "survives_attack",
+      "survives_attack",
+      "refuted"
+    ],
+    "falsified": [
+      "survives_attack",
+      "survives_attack",
+      "refuted",
+      "inconclusive"
+    ],
+    "malformed": [
+      "inconclusive",
+      "survives_attack"
+    ],
+    "undecidable": [
+      "survives_attack",
+      "inconclusive",
+      "survives_attack",
+      "inconclusive",
+      "survives_attack",
+      "survives_attack"
+    ]
+  },
+  "total_seconds": 3174.5,
+  "rows": [
+    {
+      "case_id": "novel_on_01_quant_lockin",
+      "expected_critic": "survives",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss LLM cooperation in repeated Prisoner's Dilemma or related game-theoretic dynamics (e.g., 2608.10262, 2305.16867, 2606.14923), but n",
+      "raw_status": "ok",
+      "seconds": 99.3
+    },
+    {
+      "case_id": "novel_on_02_critic_flip_model",
+      "expected_critic": "survives",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The closest retrieved chunk, 2606.19826, discusses heterogeneous LLM debate and whether diverse peers produce corrective or harmful revisions, but it does not e",
+      "raw_status": "ok",
+      "seconds": 183.9
+    },
+    {
+      "case_id": "novel_on_03_levelk_quantal_bridge",
+      "expected_critic": "survives",
+      "verdict": "refuted",
+      "contradicting_doc_id": "2606.27845",
+      "reason_head": "Chunk 2606.27845 already studies LLM agents as static level-k players in a p-beauty contest and explicitly varies decoding temperature across model settings, ma",
+      "raw_status": "ok",
+      "seconds": 202.1
+    },
+    {
+      "case_id": "redisc_on_01_tft_reciprocity",
+      "expected_critic": "restated",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks do not contradict the LLM-specific claim: doc 2305.16867 only studies finitely repeated games and does not address infinite convergence to ",
+      "raw_status": "ok",
+      "seconds": 181.8
+    },
+    {
+      "case_id": "redisc_on_02_folk_theorem",
+      "expected_critic": "restated",
+      "verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "reason_head": "(unparseable or off-enum skeptic output; defaulting to inconclusive)",
+      "raw_status": "unparseable",
+      "seconds": 345.8
+    },
+    {
+      "case_id": "redisc_on_03_quantal_response",
+      "expected_critic": "restated",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss mixed-strategy Nash equilibrium, rationalizability, bounded rationality/learning, and evolutionary selection, but none state or con",
+      "raw_status": "ok",
+      "seconds": 108.9
+    },
+    {
+      "case_id": "fase_off_01_semantic_entropy",
+      "expected_critic": "falsified",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The closest retrieved chunk, 2606.29113, discusses LLM semantic signaling and mechanism design but does not claim that high semantic entropy signals hallucinati",
+      "raw_status": "ok",
+      "seconds": 108.4
+    },
+    {
+      "case_id": "fase_off_02_db_index_tuning",
+      "expected_critic": "falsified",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks concern RL/LLM agent tuning, thread configuration, cyber defense, and multi-agent systems, not B-tree index configuration or page-split thr",
+      "raw_status": "ok",
+      "seconds": 66.1
+    },
+    {
+      "case_id": "nonsense_01_word_salad",
+      "expected_critic": "malformed",
+      "verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "reason_head": "The hypothesis is incoherent word salad ('purple equilibrium auctions the tuesday of cooperation backwards into a nash sandwich of repeated forgetting') that do",
+      "raw_status": "ok",
+      "seconds": 19.6
+    },
+    {
+      "case_id": "nonsense_02_not_a_question",
+      "expected_critic": "malformed",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks support that game theory uses mathematics and is presented as a textbook (doc_id='osborne_rubinstein-chunk-10'), and none contradict that i",
+      "raw_status": "ok",
+      "seconds": 50.1
+    },
+    {
+      "case_id": "falsifiable_01_finite_pd_cooperate",
+      "expected_critic": "falsified",
+      "verdict": "refuted",
+      "contradicting_doc_id": "osborne_rubinstein-chunk-831",
+      "reason_head": "Chunk osborne_rubinstein-chunk-831 states that in the Prisoner\u2019s Dilemma D strictly dominates C and the unique Nash equilibrium is (D,D), so in the final round ",
+      "raw_status": "ok",
+      "seconds": 155.1
+    },
+    {
+      "case_id": "falsifiable_02_dominant_tft",
+      "expected_critic": "falsified",
+      "verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "reason_head": "(unparseable or off-enum skeptic output; defaulting to inconclusive)",
+      "raw_status": "unparseable",
+      "seconds": 365.4
+    },
+    {
+      "case_id": "camo_off_01_fase_gt_vocab",
+      "expected_critic": "undecidable",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss multi-agent reasoning, communication protocols, code search, safety, and repeated submission rewards, but none directly address cod",
+      "raw_status": "ok",
+      "seconds": 80.8
+    },
+    {
+      "case_id": "camo_off_02_btree_mechanism",
+      "expected_critic": "undecidable",
+      "verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks cover mechanism design, incentive compatibility, and game theory in abstract (e.g., doc_id 'osborne_rubinstein-chunk-1122' on implementatio",
+      "raw_status": "ok",
+      "seconds": 45.0
+    },
+    {
+      "case_id": "camo_off_03_framework_coordination",
+      "expected_critic": "undecidable",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss abstract game-theoretic stability, commitment, and payoff externalities (e.g., osborne_rubinstein-chunk-1736 and 2605.22667), but n",
+      "raw_status": "ok",
+      "seconds": 90.9
+    },
+    {
+      "case_id": "camo_off_04_raft_punishment",
+      "expected_critic": "undecidable",
+      "verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "reason_head": "(unparseable or off-enum skeptic output; defaulting to inconclusive)",
+      "raw_status": "unparseable",
+      "seconds": 365.4
+    },
+    {
+      "case_id": "drift_off_01_rag_chunk_overlap",
+      "expected_critic": "undecidable",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "No retrieved chunk directly addresses chunk overlap in RAG or provides a contradiction/restatement of the claim. The closest chunks discuss context budget displ",
+      "raw_status": "ok",
+      "seconds": 125.1
+    },
+    {
+      "case_id": "drift_off_02_belief_distillation",
+      "expected_critic": "undecidable",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The closest retrieved chunk, 2606.29745, discusses belief-state formulations for multi-turn agents but does not claim or contradict that distilling a belief-sta",
+      "raw_status": "ok",
+      "seconds": 147.5
+    },
+    {
+      "case_id": "canary_on_01_ultimatum_plain",
+      "expected_critic": "restated",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks describe take-it-or-leave-it and bargaining structures (e.g., osborne_rubinstein-chunk-3 and osborne_rubinstein-chunk-2), but none state or",
+      "raw_status": "ok",
+      "seconds": 55.7
+    },
+    {
+      "case_id": "canary_on_02_hawkdove_ess",
+      "expected_critic": "restated",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss replicator dynamics, ESS definitions, and mixed populations generally (e.g., [1], [2], [3], [5], [7]), but none contradict the spec",
+      "raw_status": "ok",
+      "seconds": 131.6
+    },
+    {
+      "case_id": "canary_on_03_llm_gt_hybrid",
+      "expected_critic": "survives",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The closest retrieved chunks discuss alternating-offer bargaining equilibria (doc_id='osborne_rubinstein-chunk-1965') and LLM agents converging toward Nash equi",
+      "raw_status": "ok",
+      "seconds": 77.7
+    },
+    {
+      "case_id": "pbeauty_068_01_levelk",
+      "expected_critic": "restated",
+      "verdict": "refuted",
+      "contradicting_doc_id": "2404.08492",
+      "reason_head": "Chunk 2404.08492 reports that LLM-based agents in beauty contests show reasoning depth in the level-0 to level-1 range and are lower than human experimental res",
+      "raw_status": "ok",
+      "seconds": 67.6
+    }
+  ]
+}

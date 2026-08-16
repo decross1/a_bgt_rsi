@@ -76,6 +76,20 @@ export const getChainByRequest = (requestId: string) =>
 
 export const getHealth = () => getJSON<Health>("/api/health");
 
+// Live served-model names, per vLLM endpoint (2026-08-16). The Pulse model
+// cards used to carry HARDCODED titles: during an A/B window the dashboard
+// announced "Qwen3.6-27B · NVFP4-MTP" while :8001 was serving 3.8. A panel
+// that names a model must name the one actually answering, so the name is
+// fetched, never remembered. `model: null` (with `error`) renders as
+// "unknown", which is true — the old behaviour was a confident lie.
+export interface ServedModel {
+  url: string;
+  model: string | null;
+  error: string | null;
+}
+export const getServedModels = () =>
+  getJSON<Record<string, ServedModel>>("/api/served_models");
+
 export const getRecentTelemetry = (limit = 300) =>
   getJSON<{ samples: TelemetrySample[] }>(`/api/telemetry/recent?limit=${limit}`);
 

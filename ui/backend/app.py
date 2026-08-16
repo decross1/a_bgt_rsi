@@ -23,6 +23,7 @@ from .finding_detail import register as register_finding_detail
 from .human_todo import register as register_human_todo
 from .iteration_journey import register as register_iteration_journey
 from .lab_channel_seam import register as register_lab_channel_seam
+from .served_models import register as register_served_models
 from .lab_todo import register as register_lab_todo
 from .ladder import register as register_ladder
 from .loop_alert import register as register_loop_alert
@@ -292,6 +293,11 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     # argv-exec of the blessed `orchestrator.lab_channel` CLI (timeline /
     # turn / delegate; no disposition verb exists on the CLI or here).
     register_lab_channel_seam(app, repo_root=Path(loop_v0_repo))
+
+    # The live served-model names. A panel that names a model must name the
+    # one actually answering — on 2026-08-16 the dashboard announced "Qwen3.6"
+    # for a full hour while :8001 served 3.8, because the label was a string.
+    register_served_models(app)
 
     return app
 

@@ -90,6 +90,12 @@ vi.mock("../src/api/http", () => ({
       },
     ],
   }),
+  // Live served-model probe (2026-08-16): the card titles read from this,
+  // never from a constant.
+  getServedModels: vi.fn().mockResolvedValue({
+    gemma: { url: "http://localhost:8000", model: "gemma-4-26b-a4b", error: null },
+    qwen: { url: "http://localhost:8001", model: "qwen3.6-27b-nvfp4-mtp", error: null },
+  }),
   getWorkloadHint: vi.fn().mockResolvedValue({
     available: false,
     sample_size: 0,
@@ -393,5 +399,39 @@ describe("Pulse (/)", () => {
     await waitFor(() =>
       expect(screen.getByTestId("pulse-page")).toBeInTheDocument(),
     );
+  });
+
+  it("the model cards name the model that is ACTUALLY serving, not a constant", async () => {
+    // 2026-08-16: an A/B window served Qwen 3.8 on :8001 while this card kept
+    // announcing "Qwen3.6-27B · NVFP4-MTP" — the title was a hardcoded string.
+    // The title must track the live probe, whatever it reports.
+    const http = await import("../src/api/http");
+    (http.getServedModels as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        gemma: { url: "u", model: "gemma-4-26b-a4b", error: null },
+        qwen: { url: "u", model: "qwen3.8-27b-nvfp4-mtp", error: null },
+      });
+    render(
+      <MemoryRouter>
+        <Pulse />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("qwen3.8-27b-nvfp4-mtp")).toBeInTheDocument();
+    expect(screen.queryByText("Qwen3.6-27B · NVFP4-MTP")).toBeNull();
+  });
+
+  it("an unreachable model server reads UNKNOWN, never a remembered name", async () => {
+    const http = await import("../src/api/http");
+    (http.getServedModels as unknown as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        gemma: { url: "u", model: null, error: "OSError: refused" },
+        qwen: { url: "u", model: null, error: "OSError: refused" },
+      });
+    render(
+      <MemoryRouter>
+        <Pulse />
+      </MemoryRouter>,
+    );
+    expect(await screen.findAllByText("unknown")).toHaveLength(2);
   });
 });
