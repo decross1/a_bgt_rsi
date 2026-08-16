@@ -54,6 +54,10 @@ _NEXT_TEST = {
 
 _LEVELS = ("red", "amber", "ok")
 
+# How many consecutive nonzero-exit frontier calls make a vendor "down".
+# Three, because a single 429/timeout is noise and two is a coincidence.
+FRONTIER_DOWN_STREAK = 3
+
 
 def _parse_ts(value: Any) -> datetime | None:
     """ISO-8601 string -> aware UTC datetime, else None. Accepts 'Z' suffix
@@ -186,6 +190,55 @@ def detect_stall(report: dict, ledger_events_this_cycle: int) -> dict | None:
             "events this cycle — the loop did not move"
         ),
     }
+
+
+def detect_frontier_vendor_down(frontier_rows: list) -> list[dict]:
+    """A frontier vendor whose last FRONTIER_DOWN_STREAK calls ALL exited
+    nonzero is down, not hesitant.
+
+    On 2026-08-16 the codex CLI began returning HTTP 400 for the model pinned
+    in the machine-global config. Every D-061 consumer kept running and kept
+    reporting an "opposed jobs" review — because a dead vendor surfaces one
+    layer up as `inconclusive`, which is indistinguishable from a reviewer
+    declining to commit. The panel ran half-dark for six hours and nothing
+    noticed. This detector is the thing that would have noticed.
+
+    Only rows carrying an INTEGER exit_code are judged; an absent or
+    non-integer code is unknown, and unknown is never scored as either a
+    success or a failure (rule 4). A vendor with fewer than the streak's worth
+    of judgeable rows yields no signal — too little evidence is not health."""
+    by_vendor: dict[str, list[dict]] = {}
+    for row in frontier_rows or []:
+        if not isinstance(row, dict):
+            continue
+        vendor = row.get("vendor")
+        code = row.get("exit_code")
+        if not isinstance(vendor, str) or not isinstance(code, int):
+            continue
+        by_vendor.setdefault(vendor, []).append(row)
+
+    out: list[dict] = []
+    for vendor, rows in sorted(by_vendor.items()):
+        recent = rows[-FRONTIER_DOWN_STREAK:]
+        if len(recent) < FRONTIER_DOWN_STREAK:
+            continue
+        if any(r["exit_code"] == 0 for r in recent):
+            continue
+        last_ok = next((r.get("timestamp") for r in reversed(rows)
+                        if r["exit_code"] == 0), None)
+        out.append({
+            "signal": f"frontier_vendor_down:{vendor}",
+            "severity": "degraded",
+            "detail": (
+                f"the last {FRONTIER_DOWN_STREAK} {vendor} calls all exited "
+                f"nonzero (codes: "
+                f"{', '.join(str(r['exit_code']) for r in recent)}); last "
+                f"clean call {last_ok or 'never in this ledger'}. A reviewer "
+                "reported as 'inconclusive' may be a dead CLI, not a "
+                "judgment — check the vendor before trusting a panel verdict"
+            ),
+        })
+    return out
 
 
 def write_alert_flag(path, level: str, reasons: list[str]) -> None:

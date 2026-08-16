@@ -235,3 +235,52 @@ def test_cli_check_invalid_level_exits_red(tmp_path):
 
 def test_cli_without_check_exits_nonzero():
     assert lh.main([]) == 2
+
+
+# ── frontier vendor health (2026-08-16, D-068) ──────────────────────────────
+
+def _fc(vendor, code, ts="2026-08-16T01:00:00Z"):
+    return {"timestamp": ts, "vendor": vendor, "exit_code": code}
+
+
+def test_frontier_vendor_down_after_a_streak_of_nonzero_exits():
+    rows = [_fc("codex", 0, "2026-08-15T19:30:02Z"),
+            _fc("codex", 1, "2026-08-16T01:55:44Z"),
+            _fc("codex", 1, "2026-08-16T01:56:08Z"),
+            _fc("codex", 1, "2026-08-16T01:56:36Z"),
+            _fc("claude", 0), _fc("claude", 0), _fc("claude", 0)]
+    sigs = lh.detect_frontier_vendor_down(rows)
+    assert [s["signal"] for s in sigs] == ["frontier_vendor_down:codex"]
+    assert sigs[0]["severity"] == "degraded"
+    # The detail must carry the last CLEAN call, so the outage window is
+    # readable without re-deriving it from the ledger.
+    assert "2026-08-15T19:30:02Z" in sigs[0]["detail"]
+
+
+def test_one_clean_call_inside_the_window_clears_the_vendor():
+    rows = [_fc("codex", 1), _fc("codex", 0), _fc("codex", 1)]
+    assert lh.detect_frontier_vendor_down(rows) == []
+
+
+def test_too_few_judgeable_rows_is_not_health():
+    """Under the streak length there is not enough evidence either way — and
+    'not enough evidence' is never reported as healthy OR as down."""
+    assert lh.detect_frontier_vendor_down(
+        [_fc("codex", 1), _fc("codex", 1)]) == []
+
+
+def test_unknown_exit_codes_are_never_scored():
+    """A row with a missing / non-integer exit_code is unknown. It is not a
+    success and not a failure — it is skipped (rule 4)."""
+    rows = [{"vendor": "codex"}, {"vendor": "codex", "exit_code": None},
+            {"vendor": "codex", "exit_code": "1"}, "not-a-row",
+            _fc("codex", 1), _fc("codex", 1)]
+    assert lh.detect_frontier_vendor_down(rows) == []
+    assert lh.detect_frontier_vendor_down(rows + [_fc("codex", 1)])[0][
+        "signal"] == "frontier_vendor_down:codex"
+
+
+def test_a_vendor_that_never_succeeded_says_so_honestly():
+    rows = [_fc("codex", 1), _fc("codex", 1), _fc("codex", 1)]
+    detail = lh.detect_frontier_vendor_down(rows)[0]["detail"]
+    assert "never in this ledger" in detail

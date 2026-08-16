@@ -110,3 +110,7 @@ cron/secrets.env
 run_state/loop_alert.json
 run_state/frontier_tos_ratified
 run_state/loop_memory_embeddings.json
+
+# Repo-owned CODEX_HOME for the frontier CLI seam (our config.toml + a
+# SYMLINK to the machine auth.json — never commit either).
+run_state/codex_home/

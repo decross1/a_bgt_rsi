@@ -46,6 +46,7 @@ DEFAULT_CYCLES_PATH = REPO_ROOT / "run_state" / "coordinator_cycles.jsonl"
 DEFAULT_HEALTH_PATH = REPO_ROOT / "run_state" / "health_signals.jsonl"
 DEFAULT_RUN_LOG = REPO_ROOT / "run_state" / "week1.run.jsonl"
 DEFAULT_CALLS_LOG = REPO_ROOT / "logs" / "calls.jsonl"
+DEFAULT_FRONTIER_CALLS = REPO_ROOT / "run_state" / "frontier_calls.jsonl"
 
 # A completion at or below this length (after strip) is treated as
 # empty-content for the qwen-degraded signal: Qwen-MTP burns max_tokens on
@@ -371,6 +372,7 @@ def emit_health_signals(
     health_path: str | os.PathLike | None = None,
     run_log_path: str | os.PathLike | None = None,
     calls_log_path: str | os.PathLike | None = None,
+    frontier_calls_path: str | os.PathLike | None = None,
     alert_flag_path: str | os.PathLike | None = None,
 ) -> list[dict[str, Any]]:
     """Derive + append degraded health signals for this cycle's dispatched
@@ -388,6 +390,8 @@ def emit_health_signals(
         run_log_path = DEFAULT_RUN_LOG
     if calls_log_path is None:
         calls_log_path = DEFAULT_CALLS_LOG
+    if frontier_calls_path is None:
+        frontier_calls_path = DEFAULT_FRONTIER_CALLS
     signals: list[dict[str, Any]] = []
     try:
         executed = report.get("executed") or []
@@ -411,6 +415,15 @@ def emit_health_signals(
         # indistinguishable from a healthy one. Silence is what a stalled
         # loop emits; the detector must not share the loop's silence.
         from orchestrator import loop_health
+        # A dead frontier CLI reads as an "inconclusive" reviewer one layer
+        # up — indistinguishable from judgment. Cycle-scoped like the stall
+        # detector, for the same reason: the failure is silent by nature.
+        for sig in loop_health.detect_frontier_vendor_down(
+                _read_jsonl(frontier_calls_path)):
+            sig = {"timestamp": _utcnow_iso(),
+                   "run_id": report.get("run_id"), **sig}
+            _append_jsonl(health_path, sig)
+            signals.append(sig)
         stall = loop_health.detect_stall(report, 0)
         if stall is not None:
             sig = {"timestamp": _utcnow_iso(),

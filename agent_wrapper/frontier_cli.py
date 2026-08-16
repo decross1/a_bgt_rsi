@@ -65,6 +65,9 @@ _VENDOR_BINARIES = {"claude": "claude", "codex": "codex"}
 # rename) needs no code change.
 CODEX_MODEL = os.environ.get("FRONTIER_CODEX_MODEL", "gpt-5.5")
 CODEX_REASONING_EFFORT = os.environ.get("FRONTIER_CODEX_EFFORT", "high")
+# Repo-owned CODEX_HOME (gitignored): our own config.toml + a symlink to the
+# machine's auth.json. See _ensure_codex_home.
+CODEX_HOME_DIR = REPO_ROOT / "run_state" / "codex_home"
 
 # Cap on stderr text carried into an error message.
 _STDERR_TAIL_CHARS = 500
@@ -77,8 +80,46 @@ def _now_utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _spawn_env() -> Dict[str, str]:
-    return {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV_KEYS}
+def _spawn_env(vendor: Optional[str] = None) -> Dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV_KEYS}
+    if vendor == "codex":
+        home = _ensure_codex_home()
+        if home is not None:
+            env["CODEX_HOME"] = str(home)
+    return env
+
+
+def _ensure_codex_home() -> Optional[Path]:
+    """A repo-owned CODEX_HOME so the apparatus does not read the machine's
+    global ~/.codex/config.toml.
+
+    That file is shared with the owner's other projects and is rewritten by
+    the CLI itself: on 2026-08-16 it acquired an `[agents]` table mid-session
+    that the installed codex could not parse, and every call started failing
+    in ~35ms — a second outage of the same class as D-068, hours after the
+    first. The apparatus keeps its own two-line config and borrows only the
+    credential (a SYMLINK, never a copy — a copied token is a token that
+    outlives its rotation).
+
+    Returns None when the credential is absent: there is nowhere else for it
+    to come from, so we leave CODEX_HOME unset and let the call fail with the
+    real error rather than manufacturing a broken home directory."""
+    auth = Path.home() / ".codex" / "auth.json"
+    if not auth.exists():
+        return None
+    try:
+        CODEX_HOME_DIR.mkdir(parents=True, exist_ok=True)
+        # Rewritten every call: the pin is whatever this module says NOW, so a
+        # stale home can never silently outvote CODEX_MODEL.
+        (CODEX_HOME_DIR / "config.toml").write_text(
+            f'model = "{CODEX_MODEL}"\n'
+            f'model_reasoning_effort = "{CODEX_REASONING_EFFORT}"\n')
+        link = CODEX_HOME_DIR / "auth.json"
+        if not link.exists() and not link.is_symlink():
+            link.symlink_to(auth)
+    except OSError:
+        return None
+    return CODEX_HOME_DIR
 
 
 def _build_cmd(vendor: str, prompt: str) -> List[str]:
@@ -105,7 +146,8 @@ def _cli_version(vendor: str) -> str:
     try:
         proc = subprocess.run(
             [_VENDOR_BINARIES[vendor], "--version"],
-            capture_output=True, text=True, timeout=15, env=_spawn_env(),
+            capture_output=True, text=True, timeout=15,
+            env=_spawn_env(vendor),
         )
         version = proc.stdout.strip() or "unknown"
     except (OSError, subprocess.SubprocessError):
@@ -220,7 +262,7 @@ def invoke_frontier(
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True,
-            timeout=timeout_s, env=_spawn_env(),
+            timeout=timeout_s, env=_spawn_env(vendor),
         )
     except subprocess.TimeoutExpired:
         duration_ms = int((time.perf_counter() - t0) * 1000)

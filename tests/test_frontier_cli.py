@@ -315,3 +315,58 @@ def test_version_probe_failure_yields_unknown(tmp_path, monkeypatch,
     )
     assert res["cli_version"] == "unknown"
     assert res["error"] is None
+
+
+# ── repo-owned CODEX_HOME (2026-08-16, second D-068-class outage) -------------
+
+def _fake_home(tmp_path, monkeypatch, *, with_auth=True):
+    home = tmp_path / "home"
+    (home / ".codex").mkdir(parents=True)
+    if with_auth:
+        (home / ".codex" / "auth.json").write_text('{"token": "t"}')
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(fc, "CODEX_HOME_DIR", tmp_path / "codex_home")
+    return home
+
+
+def test_codex_spawns_with_a_repo_owned_home_carrying_our_pins(tmp_path,
+                                                              monkeypatch):
+    """The machine-global ~/.codex/config.toml is shared with other projects
+    and is rewritten by the CLI itself — twice on 2026-08-16 it broke every
+    call. The apparatus reads its OWN config and borrows only the credential."""
+    _fake_home(tmp_path, monkeypatch)
+    env = fc._spawn_env("codex")
+    assert env["CODEX_HOME"] == str(tmp_path / "codex_home")
+    cfg = (tmp_path / "codex_home" / "config.toml").read_text()
+    assert f'model = "{fc.CODEX_MODEL}"' in cfg
+    assert f'model_reasoning_effort = "{fc.CODEX_REASONING_EFFORT}"' in cfg
+    # The credential is BORROWED, not copied — a copied token outlives its
+    # rotation.
+    link = tmp_path / "codex_home" / "auth.json"
+    assert link.is_symlink()
+    assert link.resolve() == (tmp_path / "home" / ".codex" / "auth.json")
+
+
+def test_the_pin_is_rewritten_every_call_so_a_stale_home_cannot_outvote_it(
+        tmp_path, monkeypatch):
+    _fake_home(tmp_path, monkeypatch)
+    fc._spawn_env("codex")
+    (tmp_path / "codex_home" / "config.toml").write_text('model = "stale"\n')
+    fc._spawn_env("codex")
+    assert 'model = "stale"' not in (
+        tmp_path / "codex_home" / "config.toml").read_text()
+
+
+def test_other_vendors_are_untouched_by_the_codex_home(tmp_path, monkeypatch):
+    _fake_home(tmp_path, monkeypatch)
+    assert "CODEX_HOME" not in fc._spawn_env("claude")
+    assert "CODEX_HOME" not in fc._spawn_env()
+
+
+def test_absent_credential_leaves_codex_home_unset_rather_than_faking_one(
+        tmp_path, monkeypatch):
+    """There is nowhere else for the credential to come from, so the call is
+    left to fail with the REAL error instead of on a manufactured home."""
+    _fake_home(tmp_path, monkeypatch, with_auth=False)
+    assert "CODEX_HOME" not in fc._spawn_env("codex")
+    assert not (tmp_path / "codex_home").exists()

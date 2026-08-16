@@ -3351,3 +3351,40 @@ command shape is test-pinned.
 indistinguishable from a hesitant reviewer. Frontier-vendor health belongs in
 the loop-alert surface; until it is there, a panel can go half-dark for hours
 without anything noticing. Filed as open work in the 2026-08-16 session note.
+
+## D-069 — The frontier CLI seam gets a repo-owned CODEX_HOME (amends D-068 the same day)
+
+**Date.** 2026-08-16. **Context.** Hours after D-068 pinned the codex model
+in-repo, codex broke again — this time in ~35ms with
+`Error loading config.toml: invalid type: string "fast", expected struct
+AgentRoleToml in 'agents'`. The machine-global `~/.codex/config.toml` had been
+rewritten **mid-session** (mtime 02:04:47Z, during a live review round): an
+`[agents]` table appeared above two keys that had been top-level, and the
+installed CLI could not parse the result. D-068 pinned WHAT model we ask for;
+it did not stop us from reading a mutable file we neither own nor version.
+
+**Decision.** `agent_wrapper/frontier_cli.py` spawns codex with
+`CODEX_HOME` pointed at `run_state/codex_home/` (gitignored): a two-line
+`config.toml` carrying `CODEX_MODEL` / `CODEX_REASONING_EFFORT`, plus a
+**symlink** to `~/.codex/auth.json`. The credential is borrowed, never copied
+— a copied token is a token that outlives its rotation. The config is
+rewritten on every call, so a stale home can never outvote the module's pin.
+If the credential is absent the seam leaves `CODEX_HOME` unset and lets the
+call fail with the real error rather than manufacturing a home directory.
+Verified live: exit 0 through the isolated home while the global config was
+still unparseable.
+
+**The owner's `~/.codex/config.toml` was deliberately NOT repaired.** It is
+shared with other projects, it changed while this session was running, and the
+`[agents]` block is not ours — editing it could stomp a concurrent edit. It is
+still broken for any codex invocation that does not set `CODEX_HOME`, and that
+is the owner's call to make.
+
+**Companion detector.** `loop_health.detect_frontier_vendor_down()` fires when
+a vendor's last `FRONTIER_DOWN_STREAK = 3` calls all exit nonzero, and
+`emit_health_signals` now runs it every cycle. Rows without an integer
+`exit_code` are unknown and are scored as neither success nor failure; fewer
+than a streak's worth of judgeable rows yields no signal, because too little
+evidence is not health. This is the thing that would have caught D-068 six
+hours earlier: a dead vendor surfaces one layer up as `inconclusive`, which
+is indistinguishable from a reviewer declining to commit.
