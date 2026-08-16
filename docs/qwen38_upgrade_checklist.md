@@ -215,6 +215,46 @@ human-ratified per the entrenchment tier list).
 - UI: `ui/sampler/sampler.py` keys metrics as `vllm_qwen` by URL (`:8001`),
   not by model name — unaffected; the dashboard keeps both LLM health panels.
 
+## Window #2 — 2026-08-16 19:36–20:36Z, fixed driver: 3.8 is ALIVE. Still NO CUTOVER, for a different reason.
+
+Owner-authorized. 3.6 stopped, preflight PASS (79 GiB), 3.8 served on the
+canonical flags, stage-3a re-run on the FIXED driver, 3.6 restored, coordinator
+paused for the window and resumed after. Gemma untouched; its MARLIN MoE line
+re-verified. Run artifact:
+`bench/critic_eval/runs/stage3a_qwen3.8-27b-nvfp4-mtp_20260816T203420Z.json`.
+
+| check | window #1 (broken driver) | window #2 (fixed) |
+| --- | --- | --- |
+| liveness | FAIL 0/22 parseable | **19/22 parseable** |
+| no_false_kill | "pass" — vacuously (None ≠ refuted) | **PASS on a real verdict** (`survives_attack`) |
+| kill | FAIL (verdicts were all null) | FAIL (1 of the 2 falsifiable cases was unparseable) |
+| verdicts | none | 14 survives_attack · 5 inconclusive · 3 refuted |
+| per case | mean 311s (2 outliers at 2232/2570s) | mean 140s, min 20s, max 365s, total 53 min |
+
+**The v0.21.0 "pin-amendment-class incompatibility" conclusion is dead.** The
+reasoning parser works, MTP works, verdicts parse, and per-case latency is
+*better* than window #1 recorded. The old 2232s/2570s outliers do not reappear.
+
+**What actually fails now: our own token budget.** 3.8 reasons markedly longer
+than 3.6. Observed output lengths this window included 3144, 3308 and 2924
+tokens — all of which would have returned EMPTY under the 3072 cap that was in
+force during window #1, which is exactly the "coherent prose, no parseable
+verdict" signature recorded then. Both causes were real and stacked: the
+instrument discarded the verdict AND the cap starved a third of the cases. At
+the current 6144 (D-070), **3 of 23 calls still hit the cap and returned empty**
+— and one of those three is `falsifiable_02_dominant_tft`, which is why the
+kill check fails.
+
+**Attempted and DISCARDED:** a re-run of the 3 failing cases at a 12288 cap
+returned "parsed / inconclusive" in 1.5–9.2s. Those results are not evidence —
+the calls log recorded **zero model calls** for them, so the path errored out
+early rather than exercising the model. Nothing is claimed from it.
+
+**Therefore:** cutover stays blocked, but the open question is now narrow and
+cheap — does 3.8 pass the kill check when its cap is large enough to let it
+finish? That needs one more window with a raised cap, not a vLLM pin amendment.
+3.8 weights stay on disk; 3.6 remains resident and serving.
+
 ## ⚠ 2026-08-16 — window #1's verdict is RETRACTED: the instrument was broken
 
 `bench/critic_eval/stage3a_driver.py` read `result["verdict"]` and
