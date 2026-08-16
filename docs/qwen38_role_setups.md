@@ -246,6 +246,85 @@ experiment moot.
   (`stage3a_..._20260815T063602Z.json`, 22 cases in 54 s — calls errored
   before reaching the model); keep it labeled as a non-run.
 
+## 9. Oracle qualification proposal — verification results (2026-08-16 ~23:00Z)
+
+Oracle (mission steward, observer-only) proposed a matched-FP8 qualification
+design via the lab channel (`memory/lab_channel.jsonl:15`; Nara's Tier-S /
+low-priority / owner-decision classification at lines 16+18 — verified
+verbatim). Its external claims were adversarially verified
+(`oracle-claims-verify-wf_70523c3d`, 3 agents, primary sources incl.
+image-layer extraction). Results:
+
+**CONFIRMED:**
+- `Qwen/Qwen3.6-27B-FP8 @ e89b16eb…` and `Qwen/Qwen3.8-27B-FP8 @ 017b9c7a…`
+  are the exact current main revisions; the two checkpoints are structurally
+  identical (config field-for-field except transformers_version; byte-identical
+  quantization_config incl. the 882-entry exclusion list; identical MTP
+  structure) and have **exactly equal safetensors totals: 30,866,866,928 B
+  (28.75 GiB) each**. A genuinely clean matched pair. Caveat: tokenizer/
+  chat-template files differ slightly between 3.6 and 3.8 — each arm must use
+  its own. Both official-by-namespace (Qwen org; HF isVerified:false, no badge).
+- **vLLM PR #51812** ("Align Qwen GDN gates with speculative tokens", merged
+  2026-08-11): real silent-correctness fix — in mixed batches the GDN gate
+  tensors are consumed misaligned with the gathered spec-token Q/K/V rows.
+  NOT in v0.27.1 (Oracle correct); first tag containing it is **v0.27.2rc0
+  (pre-release)** — no stable release has it as of 2026-08-16.
+- **The defect EXISTS at v0.21.0 → production 3.6 serving runs the pre-fix
+  code.** Severity assessment: fires only when a spec-verify step shares a
+  batch with non-spec rows; measured incidence elsewhere ~0.5/1000 GDN
+  builds (prefix caching ON — ours is OFF, removing one trigger; chunked
+  prefill is on and max-num-seqs 2, so mixed batches remain possible when
+  both slots are busy); effect ≈2.8e-3 mean logprob perturbation with **zero
+  demonstrated emitted-token changes**. Silent, tiny, real. Not an
+  emergency; recorded here and added to the pin-amendment trigger list
+  (§3). Distinct open bugs #47123/#49918/#51562 (decode misclassification →
+  actual garbage on hybrid Qwen + MTP) are NOT fixed by #51812 and their
+  v0.21.0 reachability is unassessed; no garbled-output signature exists in
+  our ledger (all empty-content events are cap-exhaustion).
+- Recipe YAML at commit `00257689…` exact; `vllm/vllm-openai:qwen38` digests
+  exact (manifest list `4a2f33a8…`, ARM64 `541e0e47…`); **GB300-only
+  verification** confirmed verbatim; GB10 absent from the hardware map AND
+  from the NVFP4 variant's supported_hardware — local qualification
+  mandatory, as the proposal itself said.
+
+**REFUTED (one, load-bearing):**
+- "The recipe runtime contains the GDN/MTP correctness fix." It does not, on
+  its default path. The qwen38 image is an **Inferact fork build**
+  (`inferactinc/dev:wtn-3a09141…`, vllm version `0.1.dev19754+g3a0914114`,
+  commit not present upstream, CUDA 13.0.1) created **15 minutes before**
+  #51812 merged; the file extracted from the image layer still passes
+  unsorted `a=a, b=b` gates on the default (`triton`) spec path. A
+  fix-equivalent gather exists only in a fork-only fused path behind
+  `VLLM_QWEN3_5_GDN_DECODE_KERNEL=fused` (default `triton`).
+
+**Design implications (reconciled):**
+1. The core quality experiment is untouched: with **MTP off** (the design's
+   own first step) the #51812 path never executes, on any runtime.
+2. For the MTP-on serving-factor arms, three honest options: (a) accept a
+   symmetric-bug A/B (both arms equally affected — internally valid,
+   absolutely off by a sub-noise epsilon); (b) set the fork's
+   `VLLM_QWEN3_5_GDN_DECODE_KERNEL=fused` (fork-only semantics, unverified);
+   (c) wait for stable v0.27.2 and re-pin the eval runtime by digest then.
+   Recommend (a) now, (c) when available.
+3. Provenance caveat for the eval runtime: digest-pinned but source-
+   unauditable (fork commit). Acceptable for an *eval* runtime (production
+   pin untouched); record it in the decision entry.
+4. BF16-KV-first departs from the recipe's verified configuration (both
+   verified launch commands use fp8 KV) — fine as an eval variable, but
+   label it unverified-territory per the recipe's own standard.
+5. FP8 arms are **solo windows**: 28.75 GiB weights + overhead cannot
+   co-reside with Gemma under the 30 GiB margin at any sane util. Budget
+   window time accordingly (Gemma stopped, MARLIN re-verified after).
+6. Downloads: 2 × 30.87 GB = **61.7 GB**; disk has ~3.0 TB free — trivial,
+   but weights acquisition remains a G6-class owner go/no-go.
+
+**Owner decision menu (per Nara's classification: ratify / defer / reject):**
+ratifying the *design* commits to nothing operational — execution needs a
+scheduled solo window, the weights go/no-go, and budget. The recommendation
+recorded by both Oracle and this session: ratify the bounded design (with
+amendments 1–5 above), schedule execution after budget replenishes, no
+production cutover.
+
 ## Standing UNVERIFIED list
 
 Inferact calibration recipe; exact 27B release date (~Aug 14, third-party)
