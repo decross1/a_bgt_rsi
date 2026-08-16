@@ -63,8 +63,14 @@ _VENDOR_BINARIES = {"claude": "claude", "codex": "codex"}
 # nonzero. The apparatus states what it runs on rather than inheriting a file
 # it does not version. Env-overridable so a restored entitlement (or a vendor
 # rename) needs no code change.
-CODEX_MODEL = os.environ.get("FRONTIER_CODEX_MODEL", "gpt-5.5")
-CODEX_REASONING_EFFORT = os.environ.get("FRONTIER_CODEX_EFFORT", "high")
+# gpt-5.6-sol at effort "max" (owner-directed 2026-08-16, after the account
+# regained 5.6-class access). Both were probed live through the isolated home
+# before pinning: model reachable, and max/xhigh/high all accepted — the
+# falsifier tier gets the deepest tier the account will serve, since its whole
+# job is finding the defect the local models missed. gpt-5.5 + "high" was the
+# D-068 recovery pin and remains the known-good fallback.
+CODEX_MODEL = os.environ.get("FRONTIER_CODEX_MODEL", "gpt-5.6-sol")
+CODEX_REASONING_EFFORT = os.environ.get("FRONTIER_CODEX_EFFORT", "max")
 # Repo-owned CODEX_HOME (gitignored): our own config.toml + a symlink to the
 # machine's auth.json. See _ensure_codex_home.
 CODEX_HOME_DIR = REPO_ROOT / "run_state" / "codex_home"

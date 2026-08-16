@@ -151,7 +151,10 @@ def test_codex_command_shape(tmp_path, fake_run, real_mode):
         "-c", f"model_reasoning_effort={fc.CODEX_REASONING_EFFORT}",
         "--json", "novelty?",
     ]
-    assert (fc.CODEX_MODEL, fc.CODEX_REASONING_EFFORT) == ("gpt-5.5", "high")
+    # Pinned, not inherited (D-068/D-069). Moved to the 5.6-class reviewer on
+    # 2026-08-16 once the account regained access; both values were probed
+    # live before the pin changed.
+    assert (fc.CODEX_MODEL, fc.CODEX_REASONING_EFFORT) == ("gpt-5.6-sol", "max")
     assert res["text"] == "codex says hi"
     assert res["cli_version"] == "9.9.9-test"
 
