@@ -42,7 +42,7 @@ from agent_wrapper.wrapper import call_sync, set_run_id
 from orchestrator import active_run, coordinator_cycle_log, tier_registry
 from orchestrator.coordinator_actions import known_actions, validate_plan
 from orchestrator.morning_topic import pick_morning_topic
-from orchestrator.runtime import set_current_agent
+from orchestrator.runtime import append_run_log, set_current_agent
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOOP_MEMORY = REPO_ROOT / "memory" / "loop_memory.jsonl"
@@ -63,6 +63,74 @@ BUDGET_LEDGER_PATH = REPO_ROOT / "run_state" / "coordinator_budget.jsonl"
 # D-063 (2026-08-15, owner-ratified): 18 -> 60 for hourly/always-on cadence
 # (24 cycles x ~2.5 avg cost; ~50 min GPU/day). Env-overridable as before.
 DAILY_BUDGET_CAP = int(os.environ.get("COORDINATOR_DAILY_CAP", "60"))
+# The cap is a DAY's budget, but first-come-first-served spends it by late
+# morning: the 2026-08-16 cadence (hourly cron + the 30-min daemon heartbeat,
+# both picking the 3-unit run_loop_iteration every time) burned 57/60 across 19
+# cycles by 11:00, and the next NINE hourly cycles produced nothing but empty
+# "no valid plan (daily_budget_exhausted)" rows. The 2.5-average the cap was
+# sized on never materialised — the planner has never once chosen a cheaper
+# action. So the allowance now GROWS WITH THE CLOCK: a cycle may spend only up
+# to the day's elapsed share, which paces the lab across all 24 hours instead
+# of racing to exhaustion and idling for 13. The floor keeps the first cycle
+# of the day runnable.
+BUDGET_PACING = os.environ.get("COORDINATOR_BUDGET_PACING", "1") != "0"
+
+# ACTIVITY PORTFOLIO (owner directive 2026-08-16): "some time on ideation and
+# debate, some time progressing current research across their stages, some time
+# evaluating what is wrong with the system and delegating to a dev team, and
+# some time on review/SDLC." One undifferentiated pool does not produce that —
+# on 2026-08-16 the planner spent 100% of the day's 60 units on ideation, all
+# 19 cycles on ONE topic, and touched no other class. Each class now draws from
+# its OWN daily share, so exhausting ideation cannot starve research, system
+# work, or SDLC: it just means today's ideation is done.
+#
+# Nara still chooses WHAT to do inside a class; the portfolio only decides how
+# much of the day each class may have. Shares are fractions of DAILY_BUDGET_CAP
+# and are env-overridable per class.
+ACTIVITY_CLASS_OF = {
+    "run_loop_iteration": "ideation",
+    "mine_paper_gap": "ideation",
+    "refine_idea": "ideation",      # the amend half of propose->kill->amend
+    "bubble_up": "research",
+    "promote_findings": "research",
+    "run_experiment": "research",
+    "forecast_markets": "research",
+    "improve_system": "system",
+    "noop": "free",                 # costs 0; never charged to a class
+}
+ACTIVITY_SHARES = {
+    "ideation": float(os.environ.get("COORDINATOR_SHARE_IDEATION", "0.40")),
+    "research": float(os.environ.get("COORDINATOR_SHARE_RESEARCH", "0.35")),
+    "system": float(os.environ.get("COORDINATOR_SHARE_SYSTEM", "0.15")),
+    "sdlc": float(os.environ.get("COORDINATOR_SHARE_SDLC", "0.10")),
+}
+
+
+def activity_budget_state() -> dict[str, dict[str, int]]:
+    """Per-class {spent, share, remaining} for today — the planner reads this
+    so it stops planning into a class whose day is done (an all-skipped plan
+    is another empty cycle on the dashboard)."""
+    spent = _daily_spent_by_class()
+    out: dict[str, dict[str, int]] = {}
+    for cls in ACTIVITY_SHARES:
+        share = class_allowance(cls)
+        used = spent.get(cls, 0)
+        out[cls] = {"spent": used, "share": share,
+                    "remaining": max(0, share - used)}
+    return out
+
+
+def activity_class(action_name: str) -> str:
+    """The portfolio class an action draws from. An UNMAPPED action is a
+    contract gap, not an excuse to spend from nowhere — it charges to
+    'ideation', the largest share, and says so in the ledger row."""
+    return ACTIVITY_CLASS_OF.get(action_name, "ideation")
+
+
+def class_allowance(cls: str, *, cap: int | None = None) -> int:
+    """This class's slice of the daily cap (floor 0; unknown class -> 0)."""
+    cap = DAILY_BUDGET_CAP if cap is None else cap
+    return int(cap * ACTIVITY_SHARES.get(cls, 0.0))
 
 CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 
@@ -89,6 +157,23 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _budget_allowance(now: "datetime | None" = None,
+                     cap: int | None = None,
+                     floor: int = 3) -> int:
+    """Today's spendable budget SO FAR — the elapsed share of the daily cap.
+
+    At 00:00 this is `floor` (one cycle, so the day can start); at 23:59 it is
+    the full cap. Pacing is disabled with COORDINATOR_BUDGET_PACING=0, in which
+    case the whole cap is available immediately (the pre-2026-08-16 behaviour).
+    """
+    cap = DAILY_BUDGET_CAP if cap is None else cap
+    if not BUDGET_PACING:
+        return cap
+    now = now or datetime.now(timezone.utc)
+    elapsed = (now.hour * 3600 + now.minute * 60 + now.second) / 86400.0
+    return max(floor, min(cap, int(cap * elapsed) + floor))
+
+
 def _daily_spent(
     *, path: str | os.PathLike | None = None, today: str | None = None,
 ) -> int:
@@ -105,8 +190,33 @@ def _daily_spent(
     return total
 
 
+def _daily_spent_by_class(
+    *, path: str | os.PathLike | None = None, today: str | None = None,
+) -> dict[str, int]:
+    """Today's spend per activity class. Rows written before the portfolio
+    existed carry no by_class map; they are counted under 'ideation', which is
+    what they in fact were — not silently dropped."""
+    if path is None:
+        path = BUDGET_LEDGER_PATH
+    if today is None:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    out: dict[str, int] = {}
+    for row in _read_jsonl(path):
+        if row.get("date") != today:
+            continue
+        by = row.get("by_class")
+        if isinstance(by, dict):
+            for cls, amount in by.items():
+                if isinstance(amount, int):
+                    out[cls] = out.get(cls, 0) + amount
+        elif isinstance(row.get("spent"), int):
+            out["ideation"] = out.get("ideation", 0) + row["spent"]
+    return out
+
+
 def _charge_daily_ledger(
     run_id: str, spent: int, *, path: str | os.PathLike | None = None,
+    by_class: dict[str, int] | None = None,
 ) -> None:
     """Append one executed-cycle charge row. Append-only; never raises."""
     if path is None:
@@ -120,6 +230,7 @@ def _charge_daily_ledger(
                 "timestamp": _utcnow_iso(),
                 "run_id": run_id,
                 "spent": int(spent),
+                "by_class": {k: int(v) for k, v in (by_class or {}).items()},
             }, ensure_ascii=False) + "\n")
     except Exception:
         return
@@ -245,7 +356,14 @@ def _topic_suggestions(
         from workers.idea_ledger import load_state
         from workers.idea_projection import agenda_topics
         for item in agenda_topics(load_state(DEFAULT_IDEA_LEDGER))[:3]:
-            out.append({"topic": item["topic"], "source": "agenda"})
+            # cluster_id RIDES ALONG so a dispatched agenda topic can be
+            # marked consumed. Without it the item stayed open forever: 26 of
+            # the 30 executed cycles to 2026-08-16 ran the SAME topic, because
+            # agenda_topics kept returning it and the planner is instructed to
+            # take an agenda topic verbatim. Zero agenda_item_consumed events
+            # existed in 251 ledger events.
+            out.append({"topic": item["topic"], "source": "agenda",
+                        "cluster_id": item.get("cluster_id")})
     except Exception:
         pass
     for row in _read_jsonl(followups_path)[-2:]:
@@ -265,6 +383,36 @@ def _topic_suggestions(
     except Exception:
         pass
     return out
+
+
+def _consume_agenda_topic(topic: Any, state: dict[str, Any] | None) -> None:
+    """Mark a dispatched agenda topic CONSUMED so it stops leading the queue.
+
+    Nothing wrote this event before 2026-08-16: `agenda_topics` correctly skips
+    consumed items, but no consumer existed, so the same item led every cycle —
+    26 of 30 executed cycles ran one topic. Fail-open (a ledger write must
+    never break a cycle that already did its work), and only for a topic that
+    really came from an agenda suggestion carrying its cluster_id."""
+    if not isinstance(topic, str) or not topic.strip():
+        return
+    suggestions = (state or {}).get("topic_suggestions") or []
+    match = next(
+        (sg for sg in suggestions
+         if isinstance(sg, dict) and sg.get("source") == "agenda"
+         and sg.get("topic") == topic and sg.get("cluster_id")),
+        None)
+    if match is None:
+        return
+    try:
+        from workers.idea_ledger import append_event
+        append_event(DEFAULT_IDEA_LEDGER, {
+            "event_type": "agenda_item_consumed",
+            "ts": _utcnow_iso(),
+            "cluster_id": match["cluster_id"],
+            "topic": topic,
+        })
+    except Exception:
+        return
 
 
 def _killed_member_ids() -> set:
@@ -466,6 +614,7 @@ def assess_state(
         "surfaced_below_bar": surfaced_below_bar,
         "experiments": experiments,
         "topic_suggestions": _topic_suggestions(loop_memory_path),
+        "activity_budget": activity_budget_state(),
     }
 
 
@@ -510,6 +659,20 @@ def _planner_system_prompt(budget: int) -> str:
         "mine_paper_gap proposes a fresh, deduped arXiv topic when the\n"
         "topic_suggestions queue is thin — cheap insurance against repeating a\n"
         "near-duplicate of a prior hypothesis.\n"
+        "ACTIVITY PORTFOLIO — the day is divided between classes of work, and\n"
+        "each class has its OWN remaining budget in the state's\n"
+        "'activity_budget'. ideation = run_loop_iteration, mine_paper_gap,\n"
+        "refine_idea; research = run_experiment, promote_findings,\n"
+        "forecast_markets, bubble_up; system = improve_system. An action whose\n"
+        "class has 'remaining': 0 WILL BE SKIPPED — do not plan it, plan from a\n"
+        "class that still has room. This is deliberate: ideation must not eat\n"
+        "the day and leave the research already on the ladder unadvanced.\n"
+        "AMEND BEFORE PROPOSING: when a cluster was killed on a critique that\n"
+        "named fixable prior work or a confound, refine_idea (cost 2) amends it\n"
+        "and re-screens. A new run_loop_iteration proposes ANOTHER idea and\n"
+        "leaves the old one dead; prefer amending a near-miss over proposing\n"
+        "again, and never re-propose a topic already in topic_suggestions'\n"
+        "recent history.\n"
         "Prefer fewer, higher-value actions; the total cost of the\n"
         f"actions must not exceed {budget}.\n"
         "\n"
@@ -844,16 +1007,32 @@ def coordinator_cycle(
     # Dry-runs are never charged or blocked.
     if not dry_run:
         spent_today = _daily_spent()
-        if spent_today + budget > DAILY_BUDGET_CAP:
+        allowance = _budget_allowance()
+        if spent_today + budget > allowance:
+            # Two DIFFERENT refusals, never conflated: the day's cap is truly
+            # gone, or this cycle is merely early for its share.
+            exhausted = spent_today + budget > DAILY_BUDGET_CAP
+            status = ("daily_budget_exhausted" if exhausted
+                      else "daily_budget_paced")
+            detail = (f"daily ledger {spent_today} + cycle budget {budget} > "
+                      + (f"cap {DAILY_BUDGET_CAP}" if exhausted
+                         else f"elapsed-share allowance {allowance} of cap "
+                              f"{DAILY_BUDGET_CAP}")
+                      + " (run_state/coordinator_budget.jsonl)")
             report = {
-                "run_id": run_id, "status": "daily_budget_exhausted",
-                "errors": [
-                    f"daily ledger {spent_today} + cycle budget {budget} "
-                    f"> cap {DAILY_BUDGET_CAP} (run_state/coordinator_budget.jsonl)"
-                ],
+                "run_id": run_id, "status": status, "errors": [detail],
                 "plan": [], "executed": [], "bubble_up": [], "attempts": [],
             }
-            coordinator_cycle_log.write_coordinator_cycle(report)
+            # A refusal is NOT a cycle: writing it to coordinator_cycles.jsonl
+            # is what put nine empty "no valid plan" rows on the dashboard in
+            # one afternoon. It is still logged (rule 6) — as what it is.
+            append_run_log({
+                "task_id": "coordinator:budget_refusal", "status": "refused",
+                "observable_actual": detail,
+                "observable_expected": (
+                    "a cycle whose budget fits today's elapsed share"),
+                "duration_ms": 0.0,
+            }, agent="coordinator")
             return report
     set_run_id(run_id)
     set_current_agent("coordinator")
@@ -979,10 +1158,25 @@ def _coordinator_cycle(
     handlers = execute_handlers or _default_execute_handlers()
     executed: list[dict[str, Any]] = []
     spent = 0
+    # Portfolio state: today's per-class spend BEFORE this cycle, so a class
+    # that has had its day cannot take the whole cycle budget again.
+    class_spent = _daily_spent_by_class()
+    cycle_by_class: dict[str, int] = {}
     for step in validated:
         name = step["name"]
         args = step.get("args", {})
         cost = int(step.get("cost", 0))
+        cls = activity_class(name)
+        if cost and cls != "free":
+            used, allow = class_spent.get(cls, 0), class_allowance(cls)
+            if used + cost > allow:
+                executed.append({
+                    "action": name, "status": "skipped",
+                    "reason": (f"activity share spent: {cls} used {used} + "
+                               f"{cost} > today's {cls} share {allow} "
+                               f"(cap {DAILY_BUDGET_CAP})"),
+                })
+                continue
         if spent + cost > budget:
             executed.append({
                 "action": name, "status": "skipped",
@@ -1002,13 +1196,18 @@ def _coordinator_cycle(
                 "action": name, "status": "passed", "result": result,
             })
             spent += cost
+            if cost and cls != "free":
+                class_spent[cls] = class_spent.get(cls, 0) + cost
+                cycle_by_class[cls] = cycle_by_class.get(cls, 0) + cost
+            if name == "run_loop_iteration":
+                _consume_agenda_topic(args.get("topic"), state)
         except Exception as exc:
             executed.append({
                 "action": name, "status": "error",
                 "reason": f"{type(exc).__name__}: {exc}",
             })
 
-    _charge_daily_ledger(run_id, spent)
+    _charge_daily_ledger(run_id, spent, by_class=cycle_by_class)
     bubbles = _collect_bubble_up(validated, executed=executed)
     _persist_bubble_up(bubbles, run_id=run_id)
     report = {

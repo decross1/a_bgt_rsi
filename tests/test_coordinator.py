@@ -302,3 +302,55 @@ def test_over_budget_plan_rejected(monkeypatch, state_files):
     assert report["status"] == "no_valid_plan"
     assert called == []
     assert any("budget" in e for e in report["errors"])
+
+
+# ── agenda consumption (2026-08-16) ─────────────────────────────────────────
+
+def test_dispatched_agenda_topic_is_marked_consumed(tmp_path, monkeypatch):
+    """Nothing wrote agenda_item_consumed before 2026-08-16, so one item led
+    the queue forever: 26 of 30 executed cycles ran the SAME topic. The
+    projection already skipped consumed items — the consumer was missing."""
+    written: list = []
+    monkeypatch.setattr(coord, "DEFAULT_IDEA_LEDGER", tmp_path / "ledger.jsonl")
+    import workers.idea_ledger as il
+    monkeypatch.setattr(il, "append_event",
+                        lambda path, ev: written.append(ev))
+    state = {"topic_suggestions": [
+        {"topic": "Liquid democracy centrality", "source": "agenda",
+         "cluster_id": "cl-paper-2608.13085"}]}
+    coord._consume_agenda_topic("Liquid democracy centrality", state)
+    assert len(written) == 1
+    assert written[0]["event_type"] == "agenda_item_consumed"
+    assert written[0]["cluster_id"] == "cl-paper-2608.13085"
+    assert written[0]["topic"] == "Liquid democracy centrality"
+
+
+def test_non_agenda_topics_are_never_marked_consumed(tmp_path, monkeypatch):
+    """A morning arXiv pick or a follow-up has no agenda item to close; writing
+    one would corrupt the reducer."""
+    written: list = []
+    import workers.idea_ledger as il
+    monkeypatch.setattr(il, "append_event", lambda path, ev: written.append(ev))
+    state = {"topic_suggestions": [
+        {"topic": "T", "source": "arxiv_morning"},
+        {"topic": "U", "source": "agenda"},            # no cluster_id carried
+    ]}
+    coord._consume_agenda_topic("T", state)
+    coord._consume_agenda_topic("U", state)
+    coord._consume_agenda_topic("never suggested", state)
+    coord._consume_agenda_topic(None, state)
+    assert written == []
+
+
+def test_consumption_failure_never_breaks_a_cycle(tmp_path, monkeypatch):
+    """The iteration already ran; a ledger write must not turn that into an
+    error (fail-open, rule 7)."""
+    import workers.idea_ledger as il
+
+    def _boom(path, ev):
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(il, "append_event", _boom)
+    state = {"topic_suggestions": [
+        {"topic": "T", "source": "agenda", "cluster_id": "cl-x"}]}
+    coord._consume_agenda_topic("T", state)  # must not raise

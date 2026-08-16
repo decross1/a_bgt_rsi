@@ -204,3 +204,140 @@ def test_run_experiment_handler_maps_args(monkeypatch):
     assert out["status"] == "passed"
     assert seen["reuse_results"] is True and seen["run_experiment"] is False
     assert seen["live"] is True and seen["source"] == "coordinator"
+
+
+# ── budget PACING (2026-08-16) ──────────────────────────────────────────────
+
+def test_allowance_grows_with_the_clock_and_starts_at_the_floor():
+    """The cap is a DAY's budget. First-come-first-served spent it by 11:00 on
+    2026-08-16 and left nine hourly cycles with nothing to do; the allowance is
+    the elapsed share instead."""
+    from datetime import datetime, timezone
+
+    def at(h, m=0):
+        return co._budget_allowance(
+            datetime(2026, 8, 16, h, m, tzinfo=timezone.utc), cap=60, floor=3)
+
+    assert at(0, 0) == 3            # the day can always start
+    assert at(6, 0) == 18           # a quarter of the day -> 15 + floor
+    assert at(12, 0) == 33
+    assert at(23, 59) == 60         # never exceeds the cap
+    # Monotonic: later in the day is never a smaller allowance.
+    hours = [at(h) for h in range(24)]
+    assert hours == sorted(hours)
+
+
+def test_pacing_can_be_disabled_and_then_the_whole_cap_is_available():
+    from datetime import datetime, timezone
+    import orchestrator.coordinator as mod
+    old = mod.BUDGET_PACING
+    try:
+        mod.BUDGET_PACING = False
+        assert mod._budget_allowance(
+            datetime(2026, 8, 16, 0, 1, tzinfo=timezone.utc), cap=60) == 60
+    finally:
+        mod.BUDGET_PACING = old
+
+
+def test_paced_refusal_is_distinct_from_exhaustion_and_writes_no_cycle_row(
+        tmp_path, monkeypatch):
+    """A refusal is not a cycle. Writing it to coordinator_cycles.jsonl is what
+    put nine empty 'no valid plan' rows on the dashboard in one afternoon — it
+    is logged as a refusal instead (rule 6 satisfied, dashboard not lied to)."""
+    ledger = tmp_path / "coordinator_budget.jsonl"
+    monkeypatch.setattr(co, "BUDGET_LEDGER_PATH", ledger)
+    monkeypatch.setattr(co, "PAUSE_PATH", tmp_path / "absent")
+    monkeypatch.setattr(co, "DAILY_BUDGET_CAP", 60)
+    monkeypatch.setattr(co, "_budget_allowance", lambda *a, **k: 6)
+    co._charge_daily_ledger("seed", 6, path=ledger)
+
+    wrote: list = []
+    monkeypatch.setattr(co.coordinator_cycle_log, "write_coordinator_cycle",
+                        lambda report, **kw: wrote.append(report))
+    report = co.coordinator_cycle(dry_run=False, budget=3,
+                                  **_cycle_kwargs(tmp_path))
+    # Under its elapsed share, but nowhere near the daily cap.
+    assert report["status"] == "daily_budget_paced"
+    assert "elapsed-share allowance" in report["errors"][0]
+    assert wrote == [], "a budget refusal must not be recorded as a cycle"
+
+
+def test_true_exhaustion_still_says_exhausted(tmp_path, monkeypatch):
+    ledger = tmp_path / "coordinator_budget.jsonl"
+    monkeypatch.setattr(co, "BUDGET_LEDGER_PATH", ledger)
+    monkeypatch.setattr(co, "PAUSE_PATH", tmp_path / "absent")
+    monkeypatch.setattr(co, "DAILY_BUDGET_CAP", 6)
+    monkeypatch.setattr(co, "_budget_allowance", lambda *a, **k: 6)
+    co._charge_daily_ledger("seed", 6, path=ledger)
+    report = co.coordinator_cycle(dry_run=False, budget=3,
+                                  **_cycle_kwargs(tmp_path))
+    assert report["status"] == "daily_budget_exhausted"
+    assert f"cap {6}" in report["errors"][0]
+
+
+# ── activity portfolio (owner directive 2026-08-16) ─────────────────────────
+
+def test_a_spent_class_is_skipped_while_other_classes_stay_open(
+        tmp_path, monkeypatch):
+    """The point of the portfolio: exhausting ideation must not stop research.
+    On 2026-08-16 one class took 100% of the day (19 cycles, one topic) and no
+    other class ran at all."""
+    ledger = tmp_path / "coordinator_budget.jsonl"
+    monkeypatch.setattr(co, "BUDGET_LEDGER_PATH", ledger)
+    monkeypatch.setattr(co, "PAUSE_PATH", tmp_path / "absent")
+    monkeypatch.setattr(co, "DAILY_BUDGET_CAP", 60)
+    monkeypatch.setattr(co, "_budget_allowance", lambda *a, **k: 60)
+    # Ideation already had its whole share today; research untouched.
+    co._charge_daily_ledger("seed", 24, path=ledger, by_class={"ideation": 24})
+
+    ran: list = []
+    _stub_plan(monkeypatch, [
+        {"action": "run_loop_iteration", "args": {"topic": "t"}},
+        {"action": "promote_findings", "args": {}},
+    ])
+    report = co.coordinator_cycle(
+        dry_run=False, budget=6,
+        execute_handlers={
+            "run_loop_iteration": lambda **k: ran.append("ideation"),
+            "promote_findings": lambda **k: ran.append("research"),
+        },
+        **_cycle_kwargs(tmp_path))
+    by_action = {e["action"]: e for e in report["executed"]}
+    assert by_action["run_loop_iteration"]["status"] == "skipped"
+    assert "activity share spent: ideation" in by_action["run_loop_iteration"]["reason"]
+    assert by_action["promote_findings"]["status"] == "passed"
+    assert ran == ["research"]
+
+
+def test_charge_row_records_the_class_breakdown(tmp_path, monkeypatch):
+    ledger = tmp_path / "coordinator_budget.jsonl"
+    monkeypatch.setattr(co, "BUDGET_LEDGER_PATH", ledger)
+    monkeypatch.setattr(co, "PAUSE_PATH", tmp_path / "absent")
+    monkeypatch.setattr(co, "_budget_allowance", lambda *a, **k: 60)
+    _stub_plan(monkeypatch, [{"action": "promote_findings", "args": {}}])
+    co.coordinator_cycle(dry_run=False, budget=6,
+                         execute_handlers={"promote_findings": lambda **k: None},
+                         **_cycle_kwargs(tmp_path))
+    row = [json.loads(l) for l in ledger.read_text().splitlines() if l.strip()][-1]
+    assert row["by_class"] == {"research": 2}
+
+
+def test_pre_portfolio_ledger_rows_count_as_ideation_not_as_nothing():
+    """Rows written before by_class existed were all ideation in fact. Counting
+    them as unclassified would hand today's ideation share back for free."""
+    import tempfile, os as _os
+    with tempfile.TemporaryDirectory() as d:
+        p = _os.path.join(d, "b.jsonl")
+        today = co.datetime.now(co.timezone.utc).strftime("%Y-%m-%d")
+        with open(p, "w") as fh:
+            fh.write(json.dumps({"date": today, "spent": 9}) + "\n")
+            fh.write(json.dumps({"date": today, "spent": 2,
+                                 "by_class": {"research": 2}}) + "\n")
+        assert co._daily_spent_by_class(path=p) == {"ideation": 9, "research": 2}
+
+
+def test_every_menu_action_has_a_portfolio_class():
+    """An unmapped action would silently draw from ideation. Catch it here."""
+    from orchestrator.coordinator_actions import ACTIONS
+    unmapped = sorted(set(ACTIONS) - set(co.ACTIVITY_CLASS_OF))
+    assert not unmapped, f"actions missing a portfolio class: {unmapped}"
