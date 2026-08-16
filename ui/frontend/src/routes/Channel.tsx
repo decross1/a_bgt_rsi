@@ -107,6 +107,15 @@ const VOICE: Record<
     mark: "p",
     accent: "var(--voice-pi)",
   },
+  // The ratified mission steward (2026-08-16): another session that talks to
+  // the lab through the same CLI (`turn --as oracle`). It is an OBSERVER —
+  // it holds no disposition and writes nothing here the owner does not.
+  // Distinct hue so a steward turn is never misread as the owner's.
+  oracle: {
+    label: "oracle · mission steward",
+    mark: "o",
+    accent: "var(--voice-oracle)",
+  },
 };
 
 const VOICE_FALLBACK = {

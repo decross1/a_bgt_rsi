@@ -8,11 +8,19 @@
    status 13/84/162/232): 290 and 330. So they read as one family with the
    rest of the UI and can never be mistaken for a status color. The human's
    own voice takes NO hue — it is marked by a surface tint and the neutral
-   border, which is the strongest ownership cue at reading length. */
+   border, which is the strongest ownership cue at reading length.
+
+   The oracle (mission steward) is NOT a voice of this apparatus — it is
+   another session addressing the lab — so it deliberately takes no apparatus
+   hue. Every remaining hue window is flanked by two status hues (13/84/162/
+   232), and a wrong read there would be a status read. It gets the brightest
+   neutral instead: unmistakable against both the dim neutral of the reader's
+   own turns and the two model hues, and impossible to confuse with status. */
 .chn {
   --voice-human: var(--border-2);
   --voice-nara: oklch(0.72 0.12 290);
   --voice-pi: oklch(0.74 0.12 330);
+  --voice-oracle: var(--neutral-300);
   --voice-other: var(--border-1);
 }
 

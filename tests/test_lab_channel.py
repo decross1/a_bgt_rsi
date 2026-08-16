@@ -226,6 +226,34 @@ def test_turn_refuses_empty_message_and_bad_role(tmp_path):
     assert not kw["transcript_path"].exists()  # raise wrote NOTHING
 
 
+def test_turn_author_defaults_to_human_and_records_oracle(tmp_path):
+    """The steward's turns are attributable: the stored row kind IS the author
+    (2026-08-16). Default stays "human" so every existing caller is unchanged."""
+    kw = _turn_paths(tmp_path)
+    lab_channel.turn(role="nara", message="owner asking", **kw)
+    lab_channel.turn(role="pi", message="steward asking", author="oracle", **kw)
+    assert [r["kind"] for r in _rows(kw["transcript_path"])] == [
+        "human", "nara", "oracle", "pi"]
+
+
+def test_turn_rejects_unknown_author(tmp_path):
+    """An unregistered author is refused, not coerced to human — an
+    unattributable row would be worse than no row (rule 4)."""
+    kw = _turn_paths(tmp_path, with_context=False)
+    with pytest.raises(ValueError, match="author"):
+        lab_channel.turn(role="nara", message="hi", author="anon", **kw)
+    assert not kw["transcript_path"].exists()
+
+
+def test_author_header_names_the_steward_and_its_limits():
+    """The header the voices read must SAY the oracle is an observer — the
+    participant list grants identity, never capability."""
+    assert lab_channel._author_header("human") == "HUMAN MESSAGE:"
+    oracle = lab_channel._author_header("oracle")
+    assert "ORACLE" in oracle
+    assert "observer" in oracle and "never edits" in oracle
+
+
 def test_turn_writes_run_log_row(tmp_path):
     lab_channel.turn(role="nara", message="log me",
                      **_turn_paths(tmp_path, with_context=False))
@@ -375,6 +403,9 @@ def test_cli_main_round_trip(tmp_path, monkeypatch):
                              "--text", "try X"]) == 0
     assert lab_channel.main(["timeline"]) == 0
     assert lab_channel.main(["turn", "--role", "pi", "--message", ""]) == 1
+    assert lab_channel.main(["turn", "--role", "nara", "--message", "steward",
+                             "--as", "oracle"]) == 0
     rows = _rows(tmp_path / "lab_channel.jsonl")
-    assert [r["kind"] for r in rows] == ["human", "pi", "human"]
-    assert rows[-1]["message"] == "DELEGATED[research]: try X"
+    assert [r["kind"] for r in rows] == ["human", "pi", "human",
+                                         "oracle", "nara"]
+    assert rows[2]["message"] == "DELEGATED[research]: try X"

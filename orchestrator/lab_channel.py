@@ -7,15 +7,18 @@ Exactly three subcommands (the fence test pins the surface):
              NEVER stored; pure reads, re-derived on every call.
   turn       one turn with a role voice ("nara" = coordinator/operations,
              "pi" = research): fail-open context pack -> Gemma via call_sync
-             -> append the human row THEN the reply row. MOCK_LLM=1 -> a
-             deterministic stub; nothing real is called.
+             -> append the author row THEN the reply row. `--as` names the
+             author (default "human"; "oracle" = the ratified mission steward,
+             an observer that holds no capability here) so every turn is
+             attributable. MOCK_LLM=1 -> a deterministic stub; nothing real
+             is called.
   delegate   the human's blessed hand-off seam (no LLM): research -> an
              agenda_item_added idea-ledger event (source "human");
              improvement -> an enqueue row consume_authorize_fix_queue
              accepts (the D-046/D-062 seam).
 
 Transcript: memory/lab_channel.jsonl — append-only, created on first write;
-rows {ts, kind: "human"|"nara"|"pi", message, context_digest?,
+rows {ts, kind: "human"|"oracle"|"nara"|"pi", message, context_digest?,
 wrapper_request_id?}. The channel never writes loop_memory; the idea ledger
 is written ONLY via delegate (workers.idea_ledger.append_event, validated).
 All ledger paths are injectable kwargs resolved at call time (None -> the
@@ -51,6 +54,12 @@ AGENT_NAME = "lab_channel"
 STANDING_CLUSTER = "cl-human-delegations"
 TRANSCRIPT_TAIL_ROWS = 12  # context-pack transcript tail size
 _ROLES = ("nara", "pi")
+# Who may ADDRESS the lab. "human" is the owner; "oracle" is the ratified
+# mission steward (2026-08-16) — an OBSERVER of this apparatus: it may
+# converse and propose through the blessed seams, never edit the system.
+# Adding a participant here does NOT grant any write capability: the
+# channel fence (no disposition verbs) binds every participant equally.
+_PARTICIPANTS = ("human", "oracle")
 
 _SHARED_HONESTY = (
     "Honesty (D-033/D-036): both channel voices run on the SAME underlying "
@@ -79,10 +88,29 @@ NARA_SYSTEM_PROMPT = (
     # its source for disposition-seam tokens, and a literal one in a prompt
     # string trips it. The fence stays blunt; the prose adapts.
     "SEAM HONESTY: when asked HOW to do something, name only seams that "
-    "exist (the channel's delegate verb for research/improvement work; the "
-    "authorize-fix queue; packet dispatch; the human's gate-verdict CLI; the "
-    "D-062 entrenchment tiers). If you do not know the seam, say so — never "
-    "invent a procedure.\n"
+    "exist. If you do not know the seam, say so — never invent a procedure. "
+    "The improvement path is ORDERED and you state it in this order, never "
+    "reordered or paraphrased into new steps: (1) the proposal enters as an "
+    "improvement delegation, which appends an enqueue row to the authorize-fix "
+    "queue (memory/authorize_fix_queue.jsonl); (2) an authorized row becomes a "
+    "task packet under schema/task_packet.schema.json — RED FIRST: its "
+    "acceptance test must exist and be observed FAILING before any builder "
+    "runs; (3) the packet dispatcher invokes the builder agent (Qwen on :8001) "
+    "under the packet's file scope and attempt cap; (4) tools/premerge_check.sh "
+    "plus the full suite gate the branch, and the primary session is the single "
+    "merge authority; (5) D-062 entrenchment decides autonomy: Tier P "
+    "(workers/, tools/, tests/, docs/, bench/, experiments/) flows through "
+    "automatically, Tier S (the orchestrator spine, schema/, version pins, "
+    "CLAUDE.md, DECISIONS.md, cron/serve-models.sh, run_state semantics) "
+    "requires the owner's ratification, and an untiered path is REFUSED. "
+    "Nara's own self-improvement loop (D-066, orchestrator/self_improve.py) "
+    "enters that same path at step 2. Research proposals are a DIFFERENT seam: "
+    "a research delegation writes an agenda item onto an idea-ledger cluster. "
+    "The human's verdict CLI is for gate verdicts on iterations — it is NOT a "
+    "step in the improvement path.\n"
+    "EVIDENCE A PROPOSAL MUST CARRY: a named live telemetry signal it is "
+    "responding to, and an acceptance test that fails today. Ambition, "
+    "argument, and a claimed benefit are not evidence.\n"
     "LADDER-ERA FRAMING (D-059): legacy below-bar findings and iterations "
     "belonging to killed clusters are NOT owed human attention — the ladder "
     "owns their fate. Never recommend 'reviewing the backlog' of demoted "
@@ -255,6 +283,18 @@ def timeline(*, transcript_path=None, cycles_path=None, idea_ledger_path=None,
 
 # ── turn: one conversational exchange with a role voice ──────────────────────
 
+def _author_header(author: str) -> str:
+    """How the voices are told WHO is speaking. The steward gets named so
+    a reply can be addressed to it — capability is unchanged."""
+    if author == "oracle":
+        return ("MESSAGE FROM ORACLE (ratified mission steward, "
+                "2026-08-16 — observer of this apparatus; it proposes "
+                "through the blessed seams and never edits the system. "
+                "Answer it with the same seam honesty you owe the "
+                "owner, and address it by name):")
+    return "HUMAN MESSAGE:"
+
+
 def _context_pack(*, ideas_md_path, cycles_path, loop_alert_path,
                   transcript_path) -> tuple[str, str]:
     """(pack_text, digest). Every part fails OPEN with an honest
@@ -284,14 +324,21 @@ def _context_pack(*, ideas_md_path, cycles_path, loop_alert_path,
     return "\n\n".join(sections), ";".join(marks)
 
 
-def turn(*, role: str, message: str, transcript_path=None, cycles_path=None,
+def turn(*, role: str, message: str, author: str = "human",
+         transcript_path=None, cycles_path=None,
          loop_alert_path=None, ideas_md_path=None, model: str | None = None,
          parent_request_id: str | None = None) -> dict[str, Any]:
     """One channel turn: context pack -> role-voiced reply -> append the
-    human row THEN the reply row. Refuses an empty message (raises; a blank
-    turn is never a silent noop). MOCK_LLM -> deterministic stub, no call."""
+    AUTHOR row THEN the reply row. `author` is who is addressing the lab
+    ("human" the owner, "oracle" the ratified mission steward) — it is stored
+    as the row kind so the exchange is attributable; it grants no capability.
+    Refuses an empty message (raises; a blank turn is never a silent noop).
+    MOCK_LLM -> deterministic stub, no call."""
     if role not in _ROLES:
         raise ValueError(f"role must be one of {_ROLES}, got {role!r}")
+    if author not in _PARTICIPANTS:
+        raise ValueError(
+            f"author must be one of {_PARTICIPANTS}, got {author!r}")
     if not isinstance(message, str) or not message.strip():
         raise ValueError("message must be non-empty — refusing a blank turn")
     message = message.strip()
@@ -315,7 +362,8 @@ def turn(*, role: str, message: str, transcript_path=None, cycles_path=None,
               else PI_SYSTEM_PROMPT},
              {"role": "user",
               "content": (f"CONTEXT PACK (the only ground truth you may "
-                          f"cite):\n\n{pack}\n\nHUMAN MESSAGE:\n{message}")}],
+                          f"cite):\n\n{pack}\n\n"
+                          f"{_author_header(author)}\n{message}")}],
             temperature=0.4, top_p=0.9, max_tokens=700,
             caller_tag=f"lab_channel:{role}",
             parent_request_id=parent_request_id,
@@ -324,7 +372,7 @@ def turn(*, role: str, message: str, transcript_path=None, cycles_path=None,
         rid = record.get("request_id")
 
     _append_jsonl(transcript,
-                  {"ts": _utcnow_iso(), "kind": "human", "message": message})
+                  {"ts": _utcnow_iso(), "kind": author, "message": message})
     reply_row: dict[str, Any] = {"ts": _utcnow_iso(), "kind": role,
                                  "message": reply, "context_digest": digest}
     if rid is not None:
@@ -420,6 +468,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_turn = sub.add_parser("turn", help="one conversational turn")
     p_turn.add_argument("--role", required=True, choices=list(_ROLES))
     p_turn.add_argument("--message", required=True)
+    p_turn.add_argument("--as", dest="author", default="human",
+                        choices=list(_PARTICIPANTS),
+                        help="who is addressing the lab (default: human)")
     p_del = sub.add_parser("delegate", help="hand work to the apparatus")
     p_del.add_argument("--kind", required=True,
                        choices=["research", "improvement"])
@@ -436,7 +487,8 @@ def main(argv: list[str] | None = None) -> int:
             for e in timeline(since=args.since, limit=args.limit):
                 print(f"{e['ts']}  [{e.get('kind', '?')}]  {e.get('message', '')}")
         elif args.cmd == "turn":
-            print(turn(role=args.role, message=args.message)["reply"])
+            print(turn(role=args.role, message=args.message,
+                       author=args.author)["reply"])
         else:
             print(json.dumps(
                 delegate(kind=args.kind, text=args.text,

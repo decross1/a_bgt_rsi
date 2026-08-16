@@ -10,18 +10,45 @@
 import type { ChannelRow } from "../../api/channel";
 
 // ── filters (client-side, over the rows already loaded) ─────────────────
-export type ChannelFilter = "all" | "conversation" | "events";
+export type ChannelFilter = "all" | "conversation" | "events" | "steward";
+
+// The ratified mission steward (2026-08-16) addresses the lab through the same
+// CLI as the owner (`turn --as oracle`), so its turns arrive as ordinary
+// transcript rows under this kind.
+export const STEWARD_KIND = "oracle";
 
 export const FILTERS: ReadonlyArray<readonly [ChannelFilter, string]> = [
   ["all", "all"],
   ["conversation", "conversation"],
   ["events", "events"],
+  ["steward", "steward"],
 ];
 
 export function matchesFilter(row: ChannelRow, filter: ChannelFilter): boolean {
   if (filter === "conversation") return row.kind !== "event";
   if (filter === "events") return row.kind === "event";
+  if (filter === "steward") return row.kind === STEWARD_KIND;
   return true;
+}
+
+// "steward" is the one filter that is not row-local: the exchange is the
+// steward's turn AND the voice reply the CLI writes directly after it (turn()
+// appends the author row, then the reply row). Adjacency in the sorted feed is
+// therefore the reply relation — nothing is inferred from the prose.
+export function keepFiltered(
+  rows: ChannelRow[],
+  filter: ChannelFilter,
+): ChannelRow[] {
+  if (filter !== "steward") {
+    return rows.filter((r) => matchesFilter(r, filter));
+  }
+  return rows.filter((r, i) => {
+    if (r.kind === STEWARD_KIND) return true;
+    const prev = rows[i - 1];
+    return (
+      !!prev && prev.kind === STEWARD_KIND && r.kind !== "event"
+    );
+  });
 }
 
 // ── event chips ─────────────────────────────────────────────────────────
@@ -203,7 +230,7 @@ export function groupFeed(
   expanded: ReadonlySet<string>,
   filter: ChannelFilter = "all",
 ): FeedItem[] {
-  const kept = rows.filter((r) => matchesFilter(r, filter));
+  const kept = keepFiltered(rows, filter);
   const items: FeedItem[] = [];
   let day: string | null = null;
   const openDay = (ts: string) => {

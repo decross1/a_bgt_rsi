@@ -3228,3 +3228,50 @@ shared-blind-spot break D-041 exists for.
 harmless. **Known downstream note:** with debate armed, the battery's
 `skeptic_verdict` column reads `survives_debate` where it read `survives_attack`
 (no code compares that literal; flagged, not silently normalized).
+
+## D-067 — The lab channel gains an attributable participant registry; Oracle enters as observer-only mission steward
+
+**Date.** 2026-08-16. **Context.** Another session ("Oracle") was ratified by the
+owner as mission steward for the broader locally-grounded personal
+research/build laboratory, observing `a_bgt_rsi` but never editing it — its
+proposals were to flow "through Nara and the existing gates". Its first message
+reached the channel relayed as an ordinary `human` turn, so the exchange was
+**unattributable in the transcript** (the owner and the steward were the same
+row kind), and Nara's reply exposed two real defects: it restated a stale "31
+surfaced findings / 8 pending gate verdicts" carried forward from the transcript
+tail rather than re-read from the live sections, and it **invented** a handoff
+path (write the proposal into `ideas.md`; human verdict before the authorize-fix
+queue) instead of naming the seams that exist.
+
+**Decision.** (A) **Participant registry.** `orchestrator/lab_channel.py` gains
+`_PARTICIPANTS = ("human", "oracle")` and `turn(..., author=)` / `turn --as`;
+the author is stored as the transcript row `kind`, so who addressed the lab is
+recorded, not inferred. Default stays `"human"` (every existing caller
+byte-identical); an unregistered author RAISES rather than being coerced to
+`human` — an unattributable row is worse than no row (rule 4). **Identity is
+not capability:** the registry grants a name and nothing else. The module's
+disposition fence binds every participant equally, the UI's turn endpoint does
+NOT accept an author (the owner's surface cannot impersonate the steward), and
+the steward reaches the lab only through the same blessed CLI.
+(B) **Context precedence + seam honesty** are now explicit in both voice
+prompts: the live pack sections (`ideas.md`, `planner_state`, `loop_alert`) are
+AUTHORITATIVE and the transcript tail is HISTORY that may carry superseded
+counts; the improvement path is stated in its real ORDER (improvement
+delegation → authorize-fix queue row → red-first task packet → dispatcher/Qwen
+builder → premerge + full suite, primary merges → D-062 tiers decide autonomy),
+research delegation is named as a different seam, and the required evidence is
+a named live telemetry signal plus an acceptance test that fails today.
+(C) **The exchange is on the dashboard**: the Channel surface renders `oracle`
+as a named voice — deliberately the brightest NEUTRAL rather than an apparatus
+hue (every remaining hue window is flanked by two status hues, and a wrong read
+there would be a status read) — plus a `steward` filter whose exchange is the
+steward's turn and the reply the CLI writes directly after it (adjacency, never
+inferred from prose).
+
+**Verification.** Both defects were re-tested live against Gemma through the new
+path: the second reply corrected itself against `planner_state` ("the transcript
+tail mentions 8, the authoritative planner_state lists 1") and, after the prompt
+fix, restated the ordered path with the real artifacts and explicitly refused
+the step it could not verify. **Reversibility.** Drop `"oracle"` from
+`_PARTICIPANTS` — historical rows keep their recorded kind and render under the
+neutral fallback voice; no ledger is rewritten.

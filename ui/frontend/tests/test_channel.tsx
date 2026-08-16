@@ -560,6 +560,30 @@ describe("/channel voice blocks (R4)", () => {
     for (const el of [human, nara, pi]) expect(el).toHaveClass("chn-turn");
   });
 
+  it("the oracle steward is a named voice, distinct from the reader's own", () => {
+    // 2026-08-16: another session addresses the lab through `turn --as oracle`.
+    // Its turns must never read as the owner's — so: own hue, no own-tint, and
+    // a label that says what it is.
+    const rows: ChannelRow[] = [
+      { ts: "2026-08-16T01:27:06Z", kind: "oracle", message: "steward asks" },
+      { ts: "2026-08-16T01:30:00Z", kind: "nara", message: "nara answers" },
+    ];
+    render(<Channel initial={rows} initialAvailable={true} />);
+    const oracle = screen.getByTestId("channel-turn-oracle");
+    expect(within(oracle).getByTestId("channel-voice-name")).toHaveTextContent(
+      "oracle · mission steward",
+    );
+    expect(oracle.style.getPropertyValue("--voice-accent")).toBe(
+      "var(--voice-oracle)",
+    );
+    expect(oracle).not.toHaveClass("chn-turn--own");
+    expect(oracle).not.toHaveClass("chn-turn--event");
+    // It is conversation, not an apparatus event — the filter must keep it.
+    expect(within(oracle).getByTestId("channel-voice-body")).toHaveTextContent(
+      "steward asks",
+    );
+  });
+
   it("an unknown producer kind renders the neutral fallback voice, never a prototype member", () => {
     const rows: ChannelRow[] = [
       { ts: "2026-08-15T10:00:00Z", kind: "toString", message: "hostile kind" },
@@ -651,6 +675,25 @@ describe("/channel filter chips (R4)", () => {
     fireEvent.click(screen.getByTestId("channel-filter-all"));
     expect(screen.getAllByTestId("channel-event-row")).toHaveLength(4);
     expect(screen.getAllByTestId(/^channel-turn-/)).toHaveLength(3);
+  });
+
+  it("the steward filter keeps the oracle exchange — its turn AND the reply", () => {
+    const rows: ChannelRow[] = [
+      { ts: "2026-08-16T01:00:00Z", kind: "human", message: "owner turn" },
+      { ts: "2026-08-16T01:00:01Z", kind: "nara", message: "reply to owner" },
+      { ts: "2026-08-16T01:27:06Z", kind: "oracle", message: "steward asks" },
+      { ts: "2026-08-16T01:27:07Z", kind: "nara", message: "reply to steward" },
+      { ts: "2026-08-16T01:30:00Z", kind: "event", message: "cycle: c1 — ok" },
+    ];
+    render(<Channel initial={rows} initialAvailable={true} />);
+    fireEvent.click(screen.getByTestId("channel-filter-steward"));
+    const turns = screen.getAllByTestId(/^channel-turn-/);
+    expect(turns).toHaveLength(2);
+    expect(turns[0]).toHaveTextContent("steward asks");
+    expect(turns[1]).toHaveTextContent("reply to steward");
+    // The owner's own exchange and apparatus events are not the steward's.
+    expect(screen.queryByText("reply to owner")).toBeNull();
+    expect(screen.queryAllByTestId("channel-event-row")).toHaveLength(0);
   });
 
   it("the active filter is aria-pressed (all by default)", () => {
