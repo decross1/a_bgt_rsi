@@ -81,7 +81,16 @@ DEFENDER_BACKEND = "vllm-gemma"
 # no ledger of its own — it inherits the same backend and persona as the
 # sites that do, and so inherits their measured failure.
 DEBATE_MAX_TOKENS_PER_TURN = 6144
-DEBATE_TURN_WALL_SECONDS = 90.0
+# The wall must be able to SPEND the token budget it advertises — the same
+# invariant ml_intern's backoff cap broke (D-070). Measured on this box:
+# qwen3.6 decodes ~22 tok/s and this qwen3.8 export ~16.5 tok/s, so a full
+# 6144-token turn needs ~280-370s. At the previous 90.0 a long turn was cut
+# mid-reasoning while the cap claimed otherwise — latent since D-070 raised
+# the tokens, and LIVE since D-071 armed the debate. Derived, not guessed, off
+# the slower of the two measured rates plus a prefill/queue margin.
+DEBATE_DECODE_TOK_PER_S = 16.5
+DEBATE_TURN_WALL_SECONDS = round(
+    DEBATE_MAX_TOKENS_PER_TURN / DEBATE_DECODE_TOK_PER_S + 50.0)
 
 ALLOWED_DEBATE_VERDICTS = ("refuted", "survives_debate", "inconclusive")
 

@@ -319,8 +319,14 @@ def _adversarial_vote(
     # max_tokens_TOTAL moves with the per-turn figure deliberately: at the
     # 8000 default a 6144 turn would leave under one further turn, spending
     # the very repair-retry that max_turns=4 exists for.
+    # max_wall_seconds is the budget for ALL turns, so it must cover at least
+    # one full-length answer plus the repair-retry it exists for. At the
+    # measured ~16.5 tok/s of the slower Qwen export a 6144-token turn needs
+    # ~370s; 240.0 could not fund even ONE, so a long verdict was wall-killed
+    # while the token cap claimed room. Raised with the tokens (D-070 changed
+    # one and not the other); the per-turn cap and max_turns are unchanged.
     budget = SubAgentBudget(
-        max_turns=4, max_wall_seconds=240.0, max_tokens_per_turn=6144,
+        max_turns=4, max_wall_seconds=800.0, max_tokens_per_turn=6144,
         max_tokens_total=16000,
     )
 

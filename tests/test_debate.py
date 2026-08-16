@@ -488,3 +488,27 @@ def test_end_to_end_with_stubbed_subagent_stays_bounded(live, monkeypatch):
     assert len(out["transcript"]) == 8
     assert all(t["backend"] and t["model"] for t in out["transcript"])
     assert {t["backend"] for t in out["transcript"]} == {"vllm-qwen", "vllm-gemma"}
+
+
+# ── the wall must be able to spend the tokens (2026-08-16) ──────────────────
+
+def test_turn_wall_can_fund_a_full_token_budget():
+    """A budget you cannot spend is a lie about how hard the model tried.
+
+    D-070 raised DEBATE_MAX_TOKENS_PER_TURN to 6144 and left the wall at 90s;
+    D-071 then armed the debate, so a long turn was being cut mid-reasoning in
+    the live loop. Pins the RELATIONSHIP, not the number — change either
+    constant and the other must follow."""
+    from workers import debate as d
+    needed = d.DEBATE_MAX_TOKENS_PER_TURN / d.DEBATE_DECODE_TOK_PER_S
+    assert d.DEBATE_TURN_WALL_SECONDS >= needed, (
+        f"wall {d.DEBATE_TURN_WALL_SECONDS}s cannot fund "
+        f"{d.DEBATE_MAX_TOKENS_PER_TURN} tokens at "
+        f"{d.DEBATE_DECODE_TOK_PER_S} tok/s (needs {needed:.0f}s)")
+
+
+def test_decode_rate_is_the_slower_measured_export_not_an_optimistic_one():
+    """Sized off the SLOWER of the two measured Qwen rates (3.8's ~16.5 tok/s,
+    vs 3.6's ~22), so the wall holds whichever is serving."""
+    from workers import debate as d
+    assert d.DEBATE_DECODE_TOK_PER_S <= 20.0
