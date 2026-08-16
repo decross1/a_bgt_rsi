@@ -115,7 +115,10 @@ def test_call_contract(no_mock, monkeypatch):
     assert topicality_skeptic.attack_topicality("my claim") == "off"
     assert captured["caller_tag"] == "topicality_attack"
     assert captured["backend"] == "vllm-qwen"
-    assert captured["max_tokens"] == 3072  # qwen reasoning channel; 512 starves
+    # Qwen reasoning channel; 512 starves and 3072 was itself binding by
+    # 2026-08-16 (4 empty completions of 228 at this site).
+    assert captured["max_tokens"] == topicality_skeptic.ATTACK_MAX_TOKENS
+    assert topicality_skeptic.ATTACK_MAX_TOKENS >= 6144
     assert captured["temperature"] == 0.0
     assert captured["messages"][1]["content"] == "my claim"
 

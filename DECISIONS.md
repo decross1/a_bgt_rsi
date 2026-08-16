@@ -3388,3 +3388,50 @@ than a streak's worth of judgeable rows yields no signal, because too little
 evidence is not health. This is the thing that would have caught D-068 six
 hours earlier: a dead vendor surfaces one layer up as `inconclusive`, which
 is indistinguishable from a reviewer declining to commit.
+
+## D-070 — Reasoning-backend token caps are sized from the measured tail, not from the non-reasoning persona; ml_intern's wall cap is made able to spend its own retry schedule
+
+**Date.** 2026-08-16. **Context.** The 04:00Z cycle raised
+`loop_alert.level=amber` with two signals, `ml_intern_zero_papers` and
+`qwen_degraded_empty_content`. Both detectors were right, and each pointed at
+a *self-inconsistent constant* rather than at an outage.
+
+**(A) Qwen token starvation.** `3072` was fixed on 2026-06-09 as the figure
+that stopped Qwen starving at 512/2048. Measured against the call ledger on
+2026-08-16 — 651 real Qwen calls — the p90 output for the independent-skeptic
+sites sat **AT** that cap; 43 calls hit it and 31 returned EMPTY content. The
+cap had become the thing it was introduced to fix. Raised to **6144** at every
+reasoning-backend skeptic site (`novelty_skeptic` worker + orchestrator,
+`topicality_skeptic`, `debate`, and the promotion-vote subagent), sized against
+the served 16k window with ~2k prompts. vLLM rejects rather than clamps, so the
+figure is sized, not guessed. For the promotion vote `max_tokens_total` moves
+with the per-turn figure (8000 → 16000): at the default a 6144 turn leaves under
+one further turn, spending the repair-retry `max_turns=4` exists for.
+
+**What it cost, precisely (the claim was checked, then corrected).** The first
+reading — "~4% of promotion votes were lost" — was **wrong**, and the vote
+records say so: all 31 recorded votes carry `qwen_failures=0`. That site has a
+repair-retry which absorbs a truncated turn, so what truncation cost there was
+*turns*: 12.5 calls per vote, ~4.2 per skeptic against a `max_turns` of 4 — the
+panel was running at the edge of its own turn budget. The verdicts genuinely
+lost were at the **single-call** sites, which have no repair turn: `attack`
+(4 of 48), `topicality_probe` (3 of 132), `topicality_attack` (1 of 96). Those
+degrade to inconclusive, which is honest but is a verdict the apparatus paid
+for and did not get.
+
+**(B) ml_intern could not spend its own retry budget.** `_BACKOFF_SCHEDULE =
+(5, 15, 30, 60)` against `wall_cap_s = 90.0`: after 5+15+30 = 50s the next
+backoff would exceed the cap, so the fourth retry was **structurally
+unreachable** — the worker advertised four retries and could take three. S2
+throttles its search endpoint in bursts that outlast 50s (the 04:00Z cycle
+429'd four times running while the 18:00, 19:00, 22:00 and 02:00 cycles
+recovered after one or two). The cap is now derived —
+`sum(_BACKOFF_SCHEDULE) + 70` — and a test pins the *relationship*, not the
+number: change the schedule and the cap must follow. Still a hard cap (rule 7),
+now an honest one. **The S2 key is fine** — verified live: keyed request 200,
+deliberately-bad key 403, anonymous 429.
+
+**Verification.** Both fixed paths were exercised live, not merely reasoned
+about: a real Qwen skeptic call returned a verdict using 1690 of 6144 tokens
+(28% headroom, non-empty content), and a real `ml_intern` fetch returned
+`status=passed`, 6 papers fetched / 3 stored.

@@ -52,6 +52,13 @@ from orchestrator import iteration_cache
 
 CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 
+# Independent (reasoning) backends spend the budget on a hidden channel
+# before the answer. Measured 2026-08-16: p90 output AT the old 3072 cap,
+# 31 empty completions across 651 calls. Prompts run ~2k against a 16k
+# window, so 6144 clears the tail with room to spare.
+ATTACK_MAX_TOKENS_INDEPENDENT = 6144
+
+
 # Same closed enum as novelty.class, so agreement is a direct equality.
 ALLOWED_CLASSES = ("novel", "rediscovery", "nonsense", "unclear")
 
@@ -339,9 +346,15 @@ def novelty_skeptic(
     # vllm-qwen 2026-06-09: finish_reason=length, content=None). Give the
     # independent routes generous headroom — the bound is an upper limit, so the
     # gemma persona still stops at its short verdict. 2048 still starved Qwen on
-    # the 2026-06-09 battery; 3072 is the value finding_promotion runs with and
-    # is the D-041 ladder's working figure.
-    skeptic_max_tokens = 512 if backend_name == DEFAULT_BACKEND else 3072
+    # the 2026-06-09 battery; 3072 became the D-041 ladder's working figure and
+    # was itself binding by 2026-08-16 — across 651 real Qwen calls the p90
+    # output sat AT that cap and 31 returned EMPTY content. Named here so the
+    # figure has ONE home per module and the tests can pin the constant rather
+    # than a literal.
+    SKEPTIC_MAX_TOKENS_DEFAULT_BACKEND = 512
+    skeptic_max_tokens = (SKEPTIC_MAX_TOKENS_DEFAULT_BACKEND
+                          if backend_name == DEFAULT_BACKEND
+                          else ATTACK_MAX_TOKENS_INDEPENDENT)
 
     try:
         record = call_sync(

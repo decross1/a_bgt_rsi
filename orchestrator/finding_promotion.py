@@ -307,8 +307,21 @@ def _adversarial_vote(
     # JSON, so the default 1024 truncates the {verdict,attack,confidence}
     # answer. Give it headroom + an extra turn for the repair-retry, and a
     # wider wall budget for the slower 27B reasoning model.
+    #
+    # 2026-08-16: 3072 was itself binding HERE — of 389 skeptic calls, 27 hit
+    # the cap and 15 returned EMPTY. No vote was LOST to it: all 31 recorded
+    # votes carry qwen_failures=0, because this site's repair-retry absorbs a
+    # truncated turn. What it cost was turns — 12.5 calls per vote, ~4.2 per
+    # skeptic against a max_turns of 4, i.e. the panel was running at the edge
+    # of its own turn budget and a second truncation would have spent it.
+    # (The sites that DO lose verdicts are the single-call ones — attack /
+    # topicality — which have no repair turn; they are raised too.)
+    # max_tokens_TOTAL moves with the per-turn figure deliberately: at the
+    # 8000 default a 6144 turn would leave under one further turn, spending
+    # the very repair-retry that max_turns=4 exists for.
     budget = SubAgentBudget(
-        max_turns=4, max_wall_seconds=240.0, max_tokens_per_turn=3072
+        max_turns=4, max_wall_seconds=240.0, max_tokens_per_turn=6144,
+        max_tokens_total=16000,
     )
 
     n_voting = 0

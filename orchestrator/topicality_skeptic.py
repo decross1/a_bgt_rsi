@@ -41,9 +41,10 @@ logger = logging.getLogger("topicality_skeptic")
 CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 
 # Qwen burns tokens on a hidden reasoning channel before the visible
-# answer and starves at 512/2048 (observed 2026-06-09, D-044) — 3072 is
-# the working figure the other independent-skeptic calls run with.
-ATTACK_MAX_TOKENS = 3072
+# answer and starves at 512/2048 (observed 2026-06-09, D-044). Raised with
+# the other independent-skeptic sites on 2026-08-16: 651 real Qwen calls to 2026-08-16 put the p90 output AT the 3072 cap for the independent-skeptic sites; 43 calls hit it and 31 returned EMPTY content
+# — this site lost 4 of 228 to it. Prompts run ~2k against a 16k window.
+ATTACK_MAX_TOKENS = 6144
 
 # REFUTE-framed against the primary judge's in-domain call: the attack
 # must name the claim's PRIMARY subject and the evidence that would test

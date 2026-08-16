@@ -115,3 +115,36 @@ def test_empty_hypothesis_errors(tmp_path):
     assert out["status"] == "error"
     assert out["result"] is None
     assert out["errors"]
+
+
+# ── the cap must be able to spend the schedule it declares (2026-08-16) ──────
+
+def test_default_wall_cap_can_actually_take_every_declared_backoff():
+    """A retry budget you cannot spend is a lie about how hard you tried.
+
+    At wall_cap_s=90 with a (5, 15, 30, 60) schedule the last backoff was
+    unreachable: 5+15+30 = 50s elapsed, 50+60 > 90, abandon. The 04:00Z cycle
+    on 2026-08-16 died exactly there while neighbouring cycles recovered after
+    one or two backoffs. This pins the RELATIONSHIP, not a number — change the
+    schedule and the cap must follow."""
+    assert mli._DEFAULT_WALL_CAP_S > sum(mli._BACKOFF_SCHEDULE)
+
+
+def test_the_full_schedule_is_reachable_under_the_default_cap(monkeypatch):
+    """Walk it: every backoff in the schedule is taken, and the failure at the
+    end is exhaustion — never 'abandoning ... would exceed wall cap'."""
+    slept: list = []
+    monkeypatch.setattr(mli.time, "sleep", lambda d: slept.append(d))
+    monkeypatch.setattr(mli.os, "environ", {"SEMANTIC_SCHOLAR_API_KEY": "k"})
+
+    class _R:
+        status_code = 429
+        headers: dict = {}
+
+    monkeypatch.setattr(mli.requests, "get", lambda *a, **k: _R())
+    with pytest.raises(mli.MLInternFetchError) as exc:
+        mli._s2_search("q", limit=5,
+                             wall_cap_s=mli._DEFAULT_WALL_CAP_S)
+    assert slept == list(mli._BACKOFF_SCHEDULE)
+    assert "abandoning" not in str(exc.value)
+    assert "failed after" in str(exc.value)

@@ -52,6 +52,15 @@ _S2_LIMIT_CAP = 25
 # network OSError), mirroring arxiv_scraper's pattern. Exhaustion raises
 # MLInternFetchError, which the worker body converts to an error envelope.
 _BACKOFF_SCHEDULE = (5, 15, 30, 60)
+# The wall cap must be able to SPEND the schedule it declares. At 90.0 the
+# final 60s backoff could never be taken: the 2026-08-16T04:00Z cycle burned
+# 5+15+30 = 50s, found 50+60 > 90, and abandoned — advertising four retries
+# while structurally permitting three. S2 throttles the search endpoint in
+# bursts that outlast 50s (that cycle 429'd four times running while 18:00,
+# 19:00, 22:00 and 02:00 recovered after one or two), so the missing retry is
+# exactly the one that matters. Cap = the full schedule + a request-round-trip
+# allowance; still a HARD cap (rule 7), just an honest one.
+_DEFAULT_WALL_CAP_S = float(sum(_BACKOFF_SCHEDULE) + 70)
 
 # Safety cap on a server-provided Retry-After (10 min) so a pathological
 # header value can't stall the worker past any reasonable wall cap.
@@ -247,7 +256,7 @@ def ml_intern(
     *,
     parent_request_id: str | None = None,
     limit: int = 20,
-    wall_cap_s: float = 90.0,
+    wall_cap_s: float = _DEFAULT_WALL_CAP_S,
     db_path: str | None = None,
 ) -> dict[str, Any]:
     """Fetch S2 papers for an escalated hypothesis, embed + store them.

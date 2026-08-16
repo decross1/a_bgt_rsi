@@ -60,10 +60,14 @@ ATTACK_RETRIEVAL_K = 10
 # Token config mirrors workers/novelty_skeptic.py: the non-reasoning
 # gemma persona stops at a short verdict, so 512 suffices on the default
 # backend; reasoning/MTP backends (Qwen) burn tokens on a hidden channel
-# first and starve at 512/2048 (observed 2026-06-09) — 3072 is the
-# working figure finding_promotion already runs with.
+# first and starve at 512/2048 (observed 2026-06-09). 3072 was the 2026-06
+# working figure; the ledger has since outgrown it — 651 real Qwen calls to 2026-08-16 put the p90 output AT the 3072 cap for the independent-skeptic sites; 43 calls hit it and 31 returned EMPTY content,
+# i.e. the cap was silently eating ~5% of independent verdicts (the
+# 2026-08-16T04:00Z qwen_degraded_empty_content alert). 6144 clears the
+# measured tail with the served 16k window still half free (prompts run
+# ~2k). vLLM REJECTS rather than clamps, so this stays sized, not guessed.
 ATTACK_MAX_TOKENS_DEFAULT_BACKEND = 512
-ATTACK_MAX_TOKENS_INDEPENDENT = 3072
+ATTACK_MAX_TOKENS_INDEPENDENT = 6144
 
 
 # Shared task body: the attack instructions + strict JSON schema. The

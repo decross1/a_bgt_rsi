@@ -322,9 +322,13 @@ def test_env_backend_override(cache, monkeypatch):
 
 # --- token starvation fix (D-041 step 1 prerequisite) ------------------------
 
-def test_worker_max_tokens_3072_for_non_default_backend(cache, monkeypatch):
-    # Independent (non-default) backends get 3072 — 512 and 2048 starved
-    # the Qwen reasoning channel (2026-06-09). Default backend stays 512.
+def test_worker_max_tokens_wide_for_non_default_backend(cache, monkeypatch):
+    # Independent (non-default) backends get the WIDE budget — 512 and 2048
+    # starved the Qwen reasoning channel (2026-06-09) and 3072 was itself
+    # binding by 2026-08-16 (p90 output AT the cap; 31 empty completions
+    # across 651 calls). Pinned to the constant AND to the measured floor, so
+    # a future retune cannot quietly drop back under the tail.
+    # Default backend stays 512 (the non-reasoning Gemma persona).
     captured = {}
     def stub(messages, **kwargs):
         captured["max_tokens"] = kwargs.get("max_tokens")
@@ -335,7 +339,8 @@ def test_worker_max_tokens_3072_for_non_default_backend(cache, monkeypatch):
     monkeypatch.setattr(ns_mod, "call_sync", stub)
     _stage(cache, "it-tok1", _neighbors("a"), gemma_class="novel")
     ns_mod.novelty_skeptic("h", "it-tok1", backend="vllm-qwen")
-    assert captured["max_tokens"] == 3072
+    assert captured["max_tokens"] == ns_mod.ATTACK_MAX_TOKENS_INDEPENDENT
+    assert ns_mod.ATTACK_MAX_TOKENS_INDEPENDENT >= 6144
     _stage(cache, "it-tok2", _neighbors("a"), gemma_class="novel")
     ns_mod.novelty_skeptic("h", "it-tok2", backend=ns_mod.DEFAULT_BACKEND)
     assert captured["max_tokens"] == 512
@@ -489,13 +494,15 @@ def test_attack_backend_selection_and_personas(no_mock, monkeypatch):
 
 
 def test_attack_token_config(no_mock, monkeypatch):
-    # 3072 for non-default backends (the starvation fix); 512 on the
-    # wrapper default backend.
+    # The wide budget for non-default backends (the starvation fix, widened
+    # 2026-08-16 to clear the measured tail); 512 on the wrapper default
+    # backend.
     _stub_retrieval(monkeypatch, _neighbors("a1"))
     cap = {}
     _stub_attack_call(monkeypatch, _attack_json("survives_attack"), captured=cap)
     atk_mod.attack("h", backend="ollama-coder")
-    assert cap["max_tokens"] == 3072
+    assert cap["max_tokens"] == atk_mod.ATTACK_MAX_TOKENS_INDEPENDENT
+    assert atk_mod.ATTACK_MAX_TOKENS_INDEPENDENT >= 6144
     cap2 = {}
     _stub_attack_call(monkeypatch, _attack_json("survives_attack"), captured=cap2)
     atk_mod.attack("h", backend=atk_mod.DEFAULT_BACKEND)

@@ -75,9 +75,12 @@ CHALLENGER_BACKEND_DEFAULT = "vllm-qwen"
 DEFENDER_BACKEND = "vllm-gemma"
 
 # Qwen's hidden reasoning channel starves at the subagent default 1024
-# (observed 2026-06-09); 3072 is the working figure the D-044 skeptics
-# already run with.
-DEBATE_MAX_TOKENS_PER_TURN = 3072
+# (observed 2026-06-09). Raised from 3072 with the other independent-skeptic
+# sites on 2026-08-16: across 651 real Qwen calls the p90 output sat AT the
+# 3072 cap and 31 calls returned EMPTY content. This site is dark, so it has
+# no ledger of its own — it inherits the same backend and persona as the
+# sites that do, and so inherits their measured failure.
+DEBATE_MAX_TOKENS_PER_TURN = 6144
 DEBATE_TURN_WALL_SECONDS = 90.0
 
 ALLOWED_DEBATE_VERDICTS = ("refuted", "survives_debate", "inconclusive")
