@@ -623,3 +623,30 @@ def test_propose_prompt_carries_the_inventory(monkeypatch):
     assert "REPO INVENTORY" in seen["user"]
     assert "orchestrator/self_improve.py: " in seen["user"]
     assert "GROUNDING (hard)" in seen["system"]
+
+
+def test_digest_tells_the_proposer_a_signal_is_the_apparatus_working():
+    """Three live rounds were lost to reading a detector's own detail string
+    as the defect ('build stall detection' — from the stall detector's
+    output). The digest now says what a signal IS."""
+    ev = si.gather_evidence(run_log_path="/nonexistent", health_path="/nope",
+                            alert_path="/nope", cycles_path="/nope",
+                            near_miss_path="/nope", daemon_log_path="/nope")
+    digest = ev["digest"]
+    assert "READING THESE SIGNALS" in digest
+    assert "the apparatus WORKING" in digest
+    assert "never the reporting" in digest
+
+
+def test_a_truncated_proposal_is_named_as_truncation_not_blamed_on_the_parser():
+    """A proposal carries a whole pytest module, so running out of tokens is
+    the likely failure — and 'not a JSON object' hides that. The refusal
+    stands either way (never a stub); only the diagnosis improves."""
+    with pytest.raises(ValueError) as exc:
+        si._parse_proposal('```json\n{"title": "x", "problem": "y')
+    assert "cut off" in str(exc.value)
+    assert f"max_tokens={si.PROPOSAL_MAX_TOKENS}" in str(exc.value)
+
+    with pytest.raises(ValueError) as plain:
+        si._parse_proposal("I cannot help with that.")
+    assert "cut off" not in str(plain.value)

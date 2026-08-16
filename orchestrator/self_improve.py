@@ -85,6 +85,12 @@ AGENT_NAME = "self_improve"
 
 # HARD cap on review rounds (out-of-band values RAISE, never clamp).
 MAX_IMPROVE_ROUNDS = 3
+# A proposal carries a COMPLETE pytest module in `acceptance_test_source`, so
+# it is long by construction. At 2000 the 2026-08-16 runs began returning JSON
+# that simply stopped mid-object, which surfaces as "not a JSON object" — a
+# parse complaint that hides a capacity problem. Sized against the served 32k
+# window, not guessed.
+PROPOSAL_MAX_TOKENS = 4000
 SECTION_LIMIT = 8              # per-section cap in the evidence dict
 RUN_LOG_SCAN_LINES = 2000
 NEAR_MISS_SCAN_LINES = 400
@@ -305,6 +311,16 @@ def _render_digest(ev: dict[str, Any]) -> str:
     block(f"run-log failures ({len(ev['failures'])}):",
           [f"  - [{f['status']}] {f['task_id']} (agent={f['agent']}): "
            f"{f['observable_actual']}" for f in ev["failures"]])
+    # Framing, learned the hard way (2026-08-16): three consecutive rounds
+    # were lost to the proposer reading a DETECTOR FIRING as the defect —
+    # "the loop_stalled signal says the loop stalled, so let us build stall
+    # detection", when the signal's existence proves the detector already
+    # works. A signal is the apparatus noticing; the defect is the condition.
+    out.append("READING THESE SIGNALS: a health signal or a detector's "
+               "detail string is the apparatus WORKING — it noticed. The "
+               "defect to fix is the CONDITION it reports, never the "
+               "reporting. If your change would build or 'ensure' the thing "
+               "that produced the line you quoted, you have misread it.")
     block(f"health signals ({len(ev['health'])}):",
           [f"  - {h['signal']} [{h['severity']}] x{h['count']} — last "
            f"{h['last_ts']} — {h['last_detail']}" for h in ev["health"]])
@@ -405,7 +421,7 @@ def _default_propose(digest: str) -> str:
         [{"role": "system", "content": _PROPOSE_SYSTEM},
          {"role": "user", "content": (f"{digest}\n\n{repo_inventory()}\n\n"
                                       "Return the JSON object.")}],
-        temperature=0.3, seed=0, max_tokens=2000,
+        temperature=0.3, seed=0, max_tokens=PROPOSAL_MAX_TOKENS,
         caller_tag="self_improve_propose",
     )
     return record.get("completion") or ""
@@ -427,7 +443,7 @@ def _default_revise(proposal: dict, critiques: str, round_no: int) -> str:
              f"Reviewer critiques:\n{critiques}\n\n"
              f"{repo_inventory()}\n\n"
              "Return the revised JSON object.")}],
-        temperature=0.3, seed=0, max_tokens=2000,
+        temperature=0.3, seed=0, max_tokens=PROPOSAL_MAX_TOKENS,
         caller_tag="self_improve_revise",
     )
     return record.get("completion") or ""
@@ -438,9 +454,16 @@ def _parse_proposal(text: str) -> dict[str, Any]:
     offending field — a malformed proposal is never coerced into a stub."""
     payload = _extract_json_object(text if isinstance(text, str) else "")
     if not isinstance(payload, dict):
+        raw = text if isinstance(text, str) else ""
+        # Name the likely cause instead of blaming the parser: an opening
+        # brace with no balanced close is a completion that ran out of tokens,
+        # not a model that answered in prose.
+        hint = (" — the text opens a JSON object that never closes, i.e. the "
+                f"completion was cut off (max_tokens={PROPOSAL_MAX_TOKENS})"
+                if "{" in raw and raw.count("{") > raw.count("}") else "")
         raise ValueError(
             "self_improve: proposal output is not a JSON object — refusing to "
-            f"substitute a stub (rule 4). Raw head: {_trim(text, 300)!r}")
+            f"substitute a stub (rule 4){hint}. Raw head: {_trim(raw, 300)!r}")
     out: dict[str, Any] = {}
     for field in PROPOSAL_FIELDS:
         value = payload.get(field)
