@@ -29,6 +29,7 @@ WorkingDirectory=/home/decross1/projects/a_bgt_rsi
 Restart=always
 RestartSec=30
 Environment=NARA_SKEPTIC=1
+Environment=NARA_DEBATE=1
 
 [Install]
 WantedBy=default.target

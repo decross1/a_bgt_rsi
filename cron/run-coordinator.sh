@@ -94,13 +94,20 @@ fi
 
 # The cycle. env -u MOCK_LLM (rule 10: a stubbed embedder makes the cycle
 # meaningless); NARA_SKEPTIC=1 arms the vllm-qwen skeptic seam in the critic.
+# NARA_DEBATE=1 (2026-08-16) replaces the single-shot attack with the D-065
+# bounded debate, ARMED on evidence: on 3 same-claim comparisons the debate
+# never rubber-stamped the single shot, and on one case it turned a
+# single-shot "survives_attack" into "refuted" via an explicit defender
+# CONCESSION in round 3 (bench/debate_eval/adoption_20260816.json). Cost is
+# 1.5x-5x, and the expensive cases are exactly the ones the single shot got
+# wrong.
 # D-059 (2026-08-14) retired NARA_PROMOTION_VOTE_ADVISORY (D-053): the vote is
 # now the evidence ladder's L3->L4 rung — surfacing requires L4+, and the vote
 # only runs on L3 candidates. The 06-25 flip's measured outcome (31/31 refuted
 # findings promoted, zero human-dispositioned) is recorded in D-059.
-log "launch: coordinator --once --execute --budget $BUDGET (NARA_SKEPTIC=1)"
+log "launch: coordinator --once --execute --budget $BUDGET (NARA_SKEPTIC=1 NARA_DEBATE=1)"
 rc=0
-env -u MOCK_LLM NARA_SKEPTIC=1 "$PYTHON" -m orchestrator.coordinator \
+env -u MOCK_LLM NARA_SKEPTIC=1 NARA_DEBATE=1 "$PYTHON" -m orchestrator.coordinator \
   --once --execute --budget "$BUDGET" || rc=$?
 # Post-cycle: fold any NEW iterations into the idea ledger (2026-08-15 gap —
 # consolidation was one-shot, so iterations after it lived outside the ladder

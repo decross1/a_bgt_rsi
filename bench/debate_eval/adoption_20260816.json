@@ -1,0 +1,86 @@
+{
+ "generated_at": "2026-08-16T19:40:00Z",
+ "purpose": "D-065 adoption gate: bounded debate vs single-shot skeptic on the SAME claims",
+ "challenger": "vllm-qwen qwen3.6-27b-nvfp4-mtp",
+ "defender": "vllm-gemma gemma-4-26b-a4b",
+ "cases": [
+  {
+   "label": "survives-case",
+   "single": {
+    "verdict": "survives_attack",
+    "seconds": 96.3
+   },
+   "debate": {
+    "verdict": "inconclusive",
+    "stop_reason": "round_cap",
+    "seconds": 428.3
+   }
+  },
+  {
+   "label": "refuted-case",
+   "single": {
+    "verdict": "refuted",
+    "seconds": 58.4
+   },
+   "debate": {
+    "verdict": "refuted",
+    "stop_reason": "defender_conceded",
+    "seconds": 85.9
+   }
+  },
+  {
+   "label": "inconclusive-case",
+   "claim": "Peer-selection mechanisms that weight by network centrality produce more representative committees than uniform sortition under partial participation.",
+   "single": {
+    "verdict": "survives_attack",
+    "seconds": 91.1,
+    "model": "ollama/qwen3.6-27b-nvfp4-mtp",
+    "rationale_head": "The retrieved chunks examine peer selection, liquid democracy representation, and network centrality for measuring voter power, but none directly compare centrality-weighted selection to uniform sorti"
+   },
+   "debate": {
+    "verdict": "refuted",
+    "rounds_used": 3,
+    "stop_reason": "defender_conceded",
+    "seconds": 468.6,
+    "turns": [
+     {
+      "round": 1,
+      "role": "challenger",
+      "model": "qwen3.6-27b-nvfp4-mtp",
+      "text_head": "OBJECT: The retrieved evidence characterizes network centrality as a metric for measuring voters' \"power\" and \"influence\" [7], rather than representation. Weighting selection by power risks concentrating committee member"
+     },
+     {
+      "round": 1,
+      "role": "defender",
+      "model": "gemma-4-26b-a4b",
+      "text_head": "REBUT: While centrality measures influence, the 'liquid profiles' framework [5] suggests that leveraging delegation graphs and trust transitivity can structure preferences to better reflect the collective will. Weighting"
+     },
+     {
+      "round": 2,
+      "role": "challenger",
+      "model": "qwen3.6-27b-nvfp4-mtp",
+      "text_head": "OBJECT: The claim conflates influence with representation. Doc 8 indicates that achieving proportional representation requires specific mechanisms like the Method of Equal Shares, which centrality weighting does not sati"
+     },
+     {
+      "round": 2,
+      "role": "defender",
+      "model": "gemma-4-26b-a4b",
+      "text_head": "REBUT: The challenger's reliance on the Method of Equal Shares [8] addresses proportional representation in the context of participatory budgeting, but fails to account for the 'liquid profiles' domain [5] where centrali"
+     },
+     {
+      "round": 3,
+      "role": "challenger",
+      "model": "qwen3.6-27b-nvfp4-mtp",
+      "text_head": "OBJECT: The defender's rebuttal misattributes claims to Doc 5, which discusses 'liquid profiles' and approval-based preferences but never mentions network centrality weighting or compares it to uniform sortition. Doc 7 e"
+     },
+     {
+      "round": 3,
+      "role": "defender",
+      "model": "gemma-4-26b-a4b",
+      "text_head": "CONCEDE: The challenger is correct; the provided evidence does not contain a direct comparison between centrality-weighted peer selection and uniform sortition regarding representativeness under partial participation, no"
+     }
+    ]
+   }
+  }
+ ]
+}

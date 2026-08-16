@@ -3435,3 +3435,47 @@ deliberately-bad key 403, anonymous 429.
 about: a real Qwen skeptic call returned a verdict using 1690 of 6144 tokens
 (28% headroom, non-empty content), and a real `ml_intern` fetch returned
 `status=passed`, 6 papers fetched / 3 stored.
+
+## D-071 — The bounded debate is ARMED (executes D-065's adoption gate on measured evidence)
+
+**Date.** 2026-08-16. **Context.** D-065 shipped `workers/debate.py` dark and
+required a comparison against the single-shot skeptic "before adopting". The
+comparison had never been run: across 128 iterations, **0** carried a debate
+transcript, and `NARA_DEBATE` appeared in no cron script, no unit file, and no
+environment. Meanwhile the owner, looking at the ideation surfaces, observed
+that nothing shows a back-and-forth — correctly, because none existed.
+
+**The comparison** (`bench/debate_eval/adoption_20260816.json`): three claims,
+each run through BOTH paths in the same session, challenger vllm-qwen
+(qwen3.6-27b-nvfp4-mtp) vs defender vllm-gemma (gemma-4-26b-a4b).
+
+| claim | single-shot | debate | stop | cost |
+| --- | --- | --- | --- | --- |
+| liquid-democracy centrality inflation | `survives_attack` (96s) | `inconclusive` | round_cap | 428s |
+| finite PD cooperation | `refuted` (58s) | `refuted` | defender_conceded | 86s |
+| centrality-weighted peer selection | `survives_attack` (91s) | **`refuted`** | defender_conceded (r3) | 469s |
+
+**Decision: arm it** (`NARA_DEBATE=1` in `cron/run-coordinator.sh` and
+`systemd/nara-daemon.service`). The evidence:
+
+1. **It never rubber-stamped.** In 2 of 3 cases the debate was strictly more
+   conservative than the single shot.
+2. **It caught a real over-certification.** On the third claim the single-shot
+   skeptic returned `survives_attack`; three debate rounds ended with the
+   DEFENDER conceding — "the provided evidence does not contain a direct
+   comparison between centrality-weighted peer selection and uniform sortition
+   regarding representativeness under partial participation". A `survives`
+   verdict the apparatus would have banked was wrong, and only the exchange
+   exposed it.
+3. **The disagreement is substantive, not stylistic.** The challenger's round-3
+   objection was that the defender *misattributed a claim to Doc 5* — a
+   citation check the single shot has no mechanism to perform.
+4. **Cost is bounded and correctly shaped**: 86s when the claim is plainly bad
+   (fast concession), 428–469s when it is contested. The expensive cases are
+   exactly the ones the single shot got wrong.
+
+**Reversibility.** Unset `NARA_DEBATE` in both places; the single-shot path is
+untouched and returns byte-identically. **Note for the record:** the
+single-shot skeptic remains the fallback whenever the debate errors, and
+`survives_debate` still requires an explicit challenger concession (D-065) —
+arming changes which exchange runs, not what counts as survival.
