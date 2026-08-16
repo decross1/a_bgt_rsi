@@ -215,6 +215,46 @@ human-ratified per the entrenchment tier list).
 - UI: `ui/sampler/sampler.py` keys metrics as `vllm_qwen` by URL (`:8001`),
   not by model name — unaffected; the dashboard keeps both LLM health panels.
 
+## ⚠ 2026-08-16 — window #1's verdict is RETRACTED: the instrument was broken
+
+`bench/critic_eval/stage3a_driver.py` read `result["verdict"]` and
+`result["status"]`. `orchestrator.novelty_skeptic.attack()` returns
+**`attack_verdict`**, `rationale`, `contradicting_doc_id`, `backend`, `model`
+— it has never returned either key the driver read. So the recorded verdict
+was `None` on every case, **for every model**, which made:
+
+- `liveness_ok` FALSE by construction (every case counted "unparseable"),
+- `kill_ok` FALSE by construction (`None == "refuted"` never holds),
+- `no_false_kill_ok` TRUE by construction (`None != "refuted"` always holds)
+  — a **false pass**, which is worse than the false fails.
+
+The stored rationales in the run artifact are coherent, on-topic adversarial
+prose and do **not** carry `attack()`'s `"(unparseable or off-enum skeptic
+output; defaulting to inconclusive)"` prefix — the prefix that a genuinely
+unparseable model reply would have produced. The most likely reading is that
+3.8 answered correctly and the instrument discarded the answer.
+
+**Therefore:** "liveness FAIL 22/22" is not evidence about Qwen 3.8, and the
+`pin-amendment-class incompatibility` conclusion below does **not** stand. It
+is neither confirmed nor refuted — it was never measured. The driver is fixed
+(`_verdict_of()` now RAISES on a contract break rather than returning a silent
+`None`, and `tests/test_stage3a_driver_contract.py` pins every result key the
+driver reads against what the worker returns).
+
+**What is still genuinely open**, and needs one more A/B window to settle:
+
+1. Re-run stage-3a against 3.8 on the fixed driver. This is the decisive test.
+2. Two cases in window #1 took 2232s and 2570s (the rest: 25–203s). That
+   latency is real regardless of the parsing bug and is its own question.
+3. The re-run also gets the D-070 token-cap fix for free: window #1 ran with
+   `ATTACK_MAX_TOKENS_INDEPENDENT = 3072`, which was measurably binding for
+   3.6 by 2026-08-16; it is 6144 now. A reasoning model with a longer chain of
+   thought is exactly what that cap punishes.
+
+The window is human-gated; nothing here authorizes one. 3.8 weights remain on
+disk at `/mnt/models/qwen3.8-27b-nvfp4-mtp` (25 GiB), 3.6 still resident and
+serving on :8001.
+
 ## Battery result 2026-08-15 (window #1) — VERDICT: NO CUTOVER under v0.21.0
 
 Stage-3a ladder sweep vs 3.8 (`bench/critic_eval/runs/stage3a_qwen3.8-27b-nvfp4-mtp_20260815T083124Z.json`):
