@@ -52,6 +52,7 @@ artifacts (no test file, no packet, no queue row, no run-log row).
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -249,6 +250,46 @@ def gather_evidence(
     return ev
 
 
+INVENTORY_DIRS = ("workers", "tools", "orchestrator", "agent_wrapper")
+
+
+def repo_inventory(root: str | Path | None = None) -> str:
+    """A deterministic map of the modules a proposal may name, and the public
+    top-level symbols each really exports.
+
+    The 2026-08-16 live runs failed three rounds in a row because the proposer
+    invented plausible-but-absent names (``workers/qwen_worker.py``, an
+    ``AgentWrapper`` class, a ``call_sync(prompt=...)`` signature). An
+    acceptance test written against a symbol that does not exist fails today
+    for the WRONG reason (ImportError) and can be made green by a shim the
+    runtime never calls — which is exactly the red-first loophole the
+    reviewers kept closing. Grounding is cheaper than three review rounds.
+
+    Pure AST read (never imports the modules); an unreadable file is skipped
+    rather than guessed at. Shell scripts are listed by path only — they have
+    no symbols to enumerate."""
+    base = Path(root) if root is not None else REPO_ROOT
+    lines: list[str] = []
+    for d in INVENTORY_DIRS:
+        for path in sorted((base / d).rglob("*.py")):
+            try:
+                tree = ast.parse(path.read_text())
+            except (OSError, SyntaxError):
+                continue
+            names = [n.name for n in tree.body
+                     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                       ast.ClassDef))
+                     and not n.name.startswith("_")]
+            rel = path.relative_to(base).as_posix()
+            lines.append(f"  {rel}: {', '.join(names) if names else '(no public symbols)'}")
+    for path in sorted((base / "tools").glob("*.sh")):
+        lines.append(f"  {path.relative_to(base).as_posix()}: (shell script)")
+    if not lines:
+        return "REPO INVENTORY: (unavailable — nothing readable under "
+    return ("REPO INVENTORY — every module you may name, with the PUBLIC "
+            "top-level symbols it actually exports:\n" + "\n".join(lines))
+
+
 def _render_digest(ev: dict[str, Any]) -> str:
     """Compact prompt-ready rendering of the evidence dict."""
     alert = ev["alert"]
@@ -318,7 +359,8 @@ _PROPOSE_SYSTEM = (
     "must fail because the improvement is missing, not because of a typo.\n"
     "  - Smallest change that fixes the named signal. No speculative "
     "abstraction, no new dependency, no refactor riding along, no rewrite.\n"
-    "  - At most 3 files in scope.\n\n"
+    "  - At most 3 files in scope.\n"
+    "  - GROUNDING (hard): every module path, function, class and call signature you name — in the change, in files_in_scope, and in the acceptance test — MUST appear in the REPO INVENTORY supplied below. Do NOT invent a module or a class because the name sounds right. If the fix you want needs a symbol that is not in the inventory, propose a DIFFERENT fix. A test that fails with ImportError, AttributeError or TypeError is failing for the WRONG reason and will be rejected.\n\n"
     + _PROPOSAL_SCHEMA_BLOCK
 )
 _REVISE_SYSTEM = (
@@ -361,7 +403,8 @@ def _default_propose(digest: str) -> str:
     from agent_wrapper.wrapper import call_sync
     record = call_sync(
         [{"role": "system", "content": _PROPOSE_SYSTEM},
-         {"role": "user", "content": f"{digest}\n\nReturn the JSON object."}],
+         {"role": "user", "content": (f"{digest}\n\n{repo_inventory()}\n\n"
+                                      "Return the JSON object.")}],
         temperature=0.3, seed=0, max_tokens=2000,
         caller_tag="self_improve_propose",
     )
@@ -382,6 +425,7 @@ def _default_revise(proposal: dict, critiques: str, round_no: int) -> str:
              f"Proposal (revision round {round_no}):\n"
              f"{json.dumps(proposal, ensure_ascii=False, indent=2)}\n\n"
              f"Reviewer critiques:\n{critiques}\n\n"
+             f"{repo_inventory()}\n\n"
              "Return the revised JSON object.")}],
         temperature=0.3, seed=0, max_tokens=2000,
         caller_tag="self_improve_revise",

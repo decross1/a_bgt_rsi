@@ -572,3 +572,54 @@ def test_coordinator_handler_runs_the_loop_when_armed(monkeypatch):
         max_rounds=2, emit=False)
     assert out["reason"] == "stub"
     assert seen == {"max_rounds": 2, "emit": False}
+
+
+# ── repo grounding (2026-08-16) ─────────────────────────────────────────────
+
+def test_repo_inventory_lists_real_modules_with_their_public_symbols(tmp_path):
+    """The inventory is an AST read of what EXISTS — the answer to three live
+    rounds lost to invented names (workers/qwen_worker.py, an AgentWrapper
+    class). It never imports the modules it lists."""
+    (tmp_path / "workers").mkdir()
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "orchestrator").mkdir()
+    (tmp_path / "agent_wrapper").mkdir()
+    (tmp_path / "workers" / "real.py").write_text(
+        "def public_fn():\n    pass\n\n\ndef _private():\n    pass\n\n\n"
+        "class PublicCls:\n    pass\n")
+    (tmp_path / "workers" / "empty.py").write_text("X = 1\n")
+    (tmp_path / "workers" / "broken.py").write_text("def (:\n")
+    (tmp_path / "tools" / "runner.sh").write_text("#!/bin/bash\n")
+
+    inv = si.repo_inventory(tmp_path)
+    assert "workers/real.py: public_fn, PublicCls" in inv
+    assert "_private" not in inv          # private symbols are not API
+    assert "workers/empty.py: (no public symbols)" in inv
+    assert "broken.py" not in inv         # unparseable is skipped, not guessed
+    assert "tools/runner.sh: (shell script)" in inv
+
+
+def test_repo_inventory_of_the_real_repo_names_modules_the_proposer_invented():
+    """Regression on the actual failure: the modules the live proposer reached
+    for are absent, and the ones it should have reached for are present."""
+    inv = si.repo_inventory()
+    assert "orchestrator/finding_promotion.py: " in inv
+    assert "agent_wrapper/wrapper.py: " in inv
+    assert "workers/qwen_worker.py" not in inv
+
+
+def test_propose_prompt_carries_the_inventory(monkeypatch):
+    seen: dict = {}
+
+    def _fake_call_sync(messages, **kwargs):
+        seen["system"] = messages[0]["content"]
+        seen["user"] = messages[1]["content"]
+        return {"completion": json.dumps(_proposal())}
+
+    monkeypatch.delenv("MOCK_LLM", raising=False)
+    import agent_wrapper.wrapper as wrapper_mod
+    monkeypatch.setattr(wrapper_mod, "call_sync", _fake_call_sync)
+    si._default_propose("EVIDENCE DIGEST\n  - something failed")
+    assert "REPO INVENTORY" in seen["user"]
+    assert "orchestrator/self_improve.py: " in seen["user"]
+    assert "GROUNDING (hard)" in seen["system"]
