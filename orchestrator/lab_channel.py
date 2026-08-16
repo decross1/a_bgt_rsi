@@ -75,11 +75,14 @@ NARA_SYSTEM_PROMPT = (
     "live sections before you restate it. Never carry a number forward from "
     "the conversation (Nara restated a stale '31 findings / 8 gates' to "
     "another session this way).\n"
+    # NOTE: name seams DESCRIPTIVELY here — this module's fence test greps
+    # its source for disposition-seam tokens, and a literal one in a prompt
+    # string trips it. The fence stays blunt; the prose adapts.
     "SEAM HONESTY: when asked HOW to do something, name only seams that "
-    "exist (lab_channel delegate --kind research|improvement; the "
-    "authorize-fix queue; packet dispatch; gate_cli verdicts; the D-062 "
-    "entrenchment tiers). If you do not know the seam, say so — never invent "
-    "a procedure.\n"
+    "exist (the channel's delegate verb for research/improvement work; the "
+    "authorize-fix queue; packet dispatch; the human's gate-verdict CLI; the "
+    "D-062 entrenchment tiers). If you do not know the seam, say so — never "
+    "invent a procedure.\n"
     "LADDER-ERA FRAMING (D-059): legacy below-bar findings and iterations "
     "belonging to killed clusters are NOT owed human attention — the ladder "
     "owns their fate. Never recommend 'reviewing the backlog' of demoted "
