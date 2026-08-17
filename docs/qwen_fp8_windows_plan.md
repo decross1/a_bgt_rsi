@@ -123,6 +123,24 @@ Piggybacked because serve swaps dominate window cost (role_setups R2):
 - (Optional, C3) 3b/3c/3d drivers — defer if time is short; deferral is
   stated, never silent.
 
+## Readiness (verified 2026-08-17 ~04:45Z — everything below is DONE)
+
+- ✅ Both FP8 checkpoints on disk, **byte-exact**: 66 safetensors each,
+  totals exactly 30,866,866,928 B, MTP shards exactly 477,202,224 B.
+- ✅ Eval image pulled at the immutable digest; `docker inspect` confirms
+  build-commit `3a0914114…`, created 2026-08-11T15:57:37Z (ARM64 fork build,
+  matching the D-072 verification record).
+- ✅ `bench/fp8_ab/` driver + tool probe built dark: 20 tests, suite 2080/0.
+  Sentinel `falsifiable_01` resolved at build time to the exact id
+  `falsifiable_01_finite_pd_cooperate`; runtime re-verifies all six ids and
+  fails loudly on mismatch. Both CLIs refuse under MOCK_LLM (rule 10). Real
+  invocations must pass `--image-digest sha256:4a2f33a8…` and the per-arm HF
+  revision from §0. Known soft spot: probe turn t08 uses
+  `tool_choice="required"` — if the fork build rejects it, the turn records
+  the HTTP error as data and the probe continues.
+- Still owed at window time (operator/integrator): rule-6 rows per step;
+  3b/3c/3d drivers remain unbuilt (Window C item 3 defers unless built).
+
 ## Reporting
 
 One run artifact per window under `bench/fp8_ab/runs/` (JSON, one per arm);
