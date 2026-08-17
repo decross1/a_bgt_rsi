@@ -3602,3 +3602,47 @@ skeptic-seat instrument for the *Inferact NVFP4 artifact*; the **quality**
 verdict between 3.6 and 3.8 now comes from the matched-FP8 comparison above.
 D-0zz (the pin-amendment/cutover entry) remains template-only, filed at
 cutover.
+
+## D-073 — SGLang+DSpark dev-agent serving track OPENED (gated; zero production contact)
+
+**Date.** 2026-08-17 (owner: "go forth", authorizing the recommendations in
+`docs/external_spark_brief_review_2026-08-17.md` §4). Overrides row:
+`D073_track_authorized`.
+
+**Context.** An owner-supplied external eval brief was adversarially
+verified (`wf_20eeb2f5`). Its central throughput lead is real hardware-wise:
+the `RadixArk/Qwen3.8-27B-DSpark` drafter exists (SGLang company's org) and
+a third party measured **34–38 tok/s vs ~27 baseline on a DGX Spark GB10**
+(SGLang + NVFP4). But the path is closed on vLLM: no released vLLM loads
+the drafter (arch misroute; fix PR #52197 OPEN), and the drafter ships with
+**no license file**. The community writeup behind the brief's larger
+numbers (up to 75 tok/s) is credible-but-single-source (0xBakeer repos,
+runnable harness, 1–2 runs/cell).
+
+**Decision.** Open a bounded evaluation track for SGLang+DSpark as a
+**dev-agent serving option** (the role in `docs/qwen38_role_setups.md` §5)
+— NOT a runtime/role/pin change. Gates, all blocking:
+- **T1 (license):** the drafter's terms must be resolved before any weight
+  download — monitor the repo for a license file or obtain clarification;
+  an unlicensed artifact is not pulled onto this box.
+- **T2 (isolation):** SGLang installs in its own venv/container, eval-only,
+  zero contact with production serving, `run_state/`, or the pins; serves
+  only in owner-scheduled windows under the pause-file discipline.
+- **T3 (instruments):** evaluation uses the adopted brief instruments —
+  generation-heavy AND edit-heavy decode fixtures, wall-clock per solved
+  task, prefill curves, temp-0 prefix-cache equivalence — plus reproduction
+  of the third-party 34–38 tok/s before any larger claim is credited.
+- **T4 (adoption):** any production or runtime use is a separate
+  owner-ratified decision entry. This entry authorizes evaluation only.
+
+**vLLM-side watch triggers** (either reopens the vLLM path and may obsolete
+T2's second engine): PR #52197 merged AND contained in a stable release;
+v0.27.2 stable (also carries the #51812 GDN fix — the standing
+pin-amendment trigger list in `docs/qwen38_role_setups.md` §3 gains both).
+
+**Explicitly NOT decided here:** any change to model roles (G5 stands), any
+production pin change (rule 2), the Ling-3.0-flash contingent (no trigger —
+our gates passed; watch-class scorecard only).
+
+**Reversibility.** Full — an isolated eval engine plus, at most, one
+drafter download after T1; deleting the venv/weights closes the track.

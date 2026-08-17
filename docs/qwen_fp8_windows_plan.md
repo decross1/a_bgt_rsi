@@ -141,6 +141,23 @@ Piggybacked because serve swaps dominate window cost (role_setups R2):
 - Still owed at window time (operator/integrator): rule-6 rows per step;
   3b/3c/3d drivers remain unbuilt (Window C item 3 defers unless built).
 
+## Adopted instruments (D-073 authorization, from the verified external brief)
+
+Future windows and the D-0zz battery add, alongside the stage batteries:
+- **Two decode fixtures**: edit-heavy (patch an existing ~2K-line file) AND
+  generation-heavy (new module from spec + new analytical prose) — spec
+  decode acceptance collapses on generation-heavy work (~99% vs ~29%
+  third-party measured), so edit-heavy numbers never stand in for the gate.
+- **Wall-clock per solved task** as the verbosity-honest capability metric
+  (3.8 reasons ~2-3× longer; t/s alone hides it).
+- **Prefill curves** (4K/8K/32K/64K) with unique prompts, max_tokens=1.
+- **Temp-0 byte-equivalence check** for prefix caching on/off before any
+  hybrid-model serve relies on caching (upstream correctness evidence is
+  currently NEGATIVE for caching on hybrids — production keeps it OFF).
+
+Watch triggers (re-price the pin amendment when they land): vLLM PR #52197
+merged+released (DSpark on vLLM); v0.27.2 stable (#51812 GDN fix).
+
 ## Reporting
 
 One run artifact per window under `bench/fp8_ab/runs/` (JSON, one per arm);
