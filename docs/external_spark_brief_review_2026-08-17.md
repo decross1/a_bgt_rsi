@@ -100,13 +100,40 @@ that our skeptic workload does not have.
    window: generation-heavy vs edit-heavy decode fixtures; wall-clock per
    solved task as the verbosity-honest metric; prefill curves; temp-0
    output-equivalence check for prefix caching.
-2. **Production follow-up (small, this week): the SM121 Marlin race.**
-   Establish whether the race behind `VLLM_MARLIN_USE_ATOMIC_ADD` exists in
-   v0.21.0's Marlin kernels — production Gemma runs MARLIN NvFp4 MoE on
-   SM121 every day. Gemma's clean battery history argues against gross
-   corruption; a rare race is the #51812 class of silent risk. Verify
-   upstream, then decide with the owner whether to set the var (env-only,
-   reversible) or document non-applicability.
+2. **Production follow-up: the SM121 Marlin race — RESOLVED 2026-08-17
+   (`wf_9f0b3600` + live probes).**
+   - **The "MANDATORY" claim is REFUTED for this deployment.** At v0.21.0
+     the flag is an *experimental performance opt-in* (default off,
+     PR #14138), read ONLY by dense Marlin linear wrappers with shape gates
+     (n<2048, k≥2048). Gemma's MoE Marlin path **hardcodes
+     use_atomic_add=False** (marlin_moe.py:156/:215 — the env var is dead
+     code there; wiring PR #48569 still open, framed as 1–3.6% perf), and
+     Qwen routes ZERO ops through Marlin (FlashInfer-CUTLASS; lm_head BF16;
+     MTP head unquantized). Polarity: =1 ENABLES atomicAdd; it fixes no
+     documented race. Setting it would be a false mitigation — NOT set.
+   - **Paper trail:** the one upstream-documented Marlin race (issues
+     #10656/#11205, A10G/SM86, 2024) was fixed by PR #11493 — contained in
+     our pin. The 2026 "SM121 MoE 256-thread race" exists only in an
+     uncited community folklore chain (0xBakeer→conselara→ai-muninn); no
+     vLLM issue/PR documents it; the community fix is an unmerged fork
+     patch. 0xBakeer's "documented" citation resolves to nothing.
+   - **Live probes (production, 2026-08-17):** 0 gross anomalies across
+     ~150 temp-0 calls (serialized + 8-stream burst) on both models. BUT a
+     genuine finding surfaced: **Gemma is NOT run-to-run byte-deterministic
+     at temp-0** (9–10/12 same-prompt divergences, even cached-vs-cached,
+     zero co-batching), while **Qwen IS (0/8)**. Mechanism consistent with
+     benign reduction-order drift in the MoE Marlin lock-based fp32 reduce
+     (lock-acquisition order varies run-to-run; non-associative fp addition;
+     argmax flips at near-ties) and/or MTP interactions — drift, not
+     corruption; all outputs coherent. Consequences: (a) D-022's
+     "determinism intact" phrasing overstates — "lossless" (target-verified)
+     holds, bitwise run-to-run reproducibility does not; correct at the next
+     decision entry. (b) Reproducibility of PI generations is statistical
+     (N-trial), never bitwise — the apparatus's N≥30 discipline already
+     assumes this; skeptic verdicts ARE bitwise-reproducible. (c) A rigorous
+     race-vs-drift separation would need an isolated window (pause +
+     caching/MTP ablations) — NOT currently warranted given zero corruption
+     signal and clean battery history.
 3. **Prefix caching**: production Qwen has it OFF — keep it off (negative
    upstream evidence). Note on our Window B arms: the fork build defaulted
    it ON; impact assessed LOW (MTP was off — the negative evidence is
