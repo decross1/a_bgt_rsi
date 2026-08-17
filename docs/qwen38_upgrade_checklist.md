@@ -5,6 +5,16 @@ human gate (LOOP_V1 P5: weight acquisition, A/B serve window, cutover
 ratification). Nothing in this document authorizes a cutover; ratification is
 the D-0zz entry below, filed at cutover time.
 
+> **D-072 (2026-08-17) supersedes-in-part the battery framing here.** The
+> **quality** verdict between 3.6 and 3.8 now comes from the ratified
+> matched-official-FP8 comparison (design + amendments in DECISIONS.md D-072;
+> evidence in `docs/qwen38_role_setups.md` §9). Stage 3a below remains the
+> skeptic-seat instrument for the Inferact NVFP4 artifact, which is now tested
+> LAST, as a deployment optimization, only if official 3.8-FP8 wins. Known
+> correction: the "~2 min" description of the D-044 validation at §"3.6
+> control" conflicts with the run log's 415 s row — the run-log row is
+> primary (D-072).
+
 ## 0. Current serve config (grounded 2026-08-14, read from `cron/serve-models.sh`)
 
 The EXACT production `docker run` flags for the resident Qwen server

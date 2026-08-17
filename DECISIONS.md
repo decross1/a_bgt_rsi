@@ -3479,3 +3479,126 @@ untouched and returns byte-identically. **Note for the record:** the
 single-shot skeptic remains the fallback whenever the debate errors, and
 `survives_debate` still requires an explicit challenger concession (D-065) —
 arming changes which exchange runs, not what counts as survival.
+
+## D-072 — Qwen 3.8 qualification design ratified: matched official-FP8 A/B on a digest-pinned eval runtime; production stays 3.6
+
+**Date.** 2026-08-17 (owner message: "ratify the design, file the decision
+entry"). Ratification row: `run_state/overrides.jsonl`
+`D072_ratify_qwen38_qualification_design`.
+
+**Context.** This is also the first decision entry for the 3.8 track (a
+record-keeping gap flagged 2026-08-16 — the windows lived only in
+`docs/qwen38_upgrade_checklist.md`, session notes, and commit messages).
+Catch-up record: weights acquired 2026-08-15 under G6
+(`/mnt/models/qwen3.8-27b-nvfp4-mtp` = Inferact/Qwen3.8-27B-NVFP4, modelopt
+NVFP4 **PTQ**); window #1 (08-15) verdict **RETRACTED** — instrument bug
+(stage3a driver read keys `attack()` never returned); **window #1 may only
+ever be cited as a retracted instrument-bug record**; window #2 (08-16,
+fixed driver) proved 3.8 ALIVE under pinned v0.21.0 (19/22 parseable,
+no_false_kill PASS, kill FAIL confounded by the repo's own 6144 cap) — the
+"pin-amendment-class incompatibility" conclusion is dead. Inputs to this
+decision: two research squads (synthesis in `docs/qwen38_role_setups.md`),
+the Oracle steward's proposal (`memory/lab_channel.jsonl:15`, Nara's Tier-S
+classification lines 16+18), and an adversarial verification of its external
+claims (`docs/qwen38_role_setups.md` §9) that CONFIRMED every pin and
+REFUTED one claim (see amendment 1).
+
+**Decision.** Ratify the bounded Qwen-only qualification design, amended:
+
+- **Production untouched.** Gemma stays on v0.21.0/MARLIN; Qwen 3.6 NVFP4
+  stays the production skeptic and the rollback; the production image pin is
+  unchanged (inviolate rule 2). This entry authorizes an *evaluation*
+  design, not a deployment.
+- **Quality instrument = the matched official pair:**
+  `Qwen/Qwen3.6-27B-FP8 @ e89b16ebf1988b3d6befa7de50abc2d76f26eb09` vs
+  `Qwen/Qwen3.8-27B-FP8 @ 017b9c7af6b5689d5dd426a76e0bc077eb5ca20a` —
+  verified structurally identical with exactly equal safetensors totals
+  (30,866,866,928 B each); each arm uses its own tokenizer/chat template
+  (they differ slightly).
+- **Eval runtime pinned by immutable digest** (Qwen eval only, never
+  production): `vllm/vllm-openai:qwen38`, manifest list
+  `sha256:4a2f33a884222f7049b983263ad9976f89452bb81affecf5b67d89ad35c1bc31`,
+  ARM64 `sha256:541e0e475418de6178b45c0d9ef420fb6be79bf43130a4d552cb668e425f4d27`,
+  build commit `3a0914114705fa38d4c3171d0746c1a6b6f10209`.
+- **Sequence** (each serve window owner-scheduled): (1) current 3.6 NVFP4
+  artifact on the eval runtime — runtime-regression isolation; (2) 3.6-FP8
+  vs 3.8-FP8 with **MTP off and BF16 KV first**, frozen prompt bytes,
+  retrieved docs + hashes, templates, seeds, sampling, call order, model
+  revisions, image identity; (3) six sentinel cases per arm — STOP on any
+  empty completion, provenance mismatch, call >10 min, CUDA/OOM/hang,
+  missing call record, sustained swap growth, or 30 GiB margin breach;
+  (4) full battery + tool/schema tests only after a clean sentinel;
+  (5) separate factor tests: reasoning_effort medium vs xhigh, MTP, FP8 KV,
+  batched-token tuning; (6) the Inferact NVFP4 artifact is tested LAST, as a
+  deployment optimization, only if official 3.8-FP8 wins.
+- **Adoption rule (pre-declared).** Quality equal → retain 3.6. Adopt 3.8
+  only with zero critical gate failures, no tool/schema regression, stable
+  memory + soak behavior, and a pre-declared acceptable latency/quality
+  trade-off. Cutover itself remains separately gated (G6 ratification,
+  D-0zz filed at cutover — unchanged by this entry).
+
+**Amendments forced by verification** (they modify the proposal as
+submitted):
+
+1. **The eval image does NOT contain the vLLM #51812 GDN/spec-gate fix on
+   its default path** (REFUTED claim): it is an Inferact fork build
+   (`0.1.dev19754+g3a0914114`, commit absent upstream, CUDA 13.0.1) created
+   15 minutes before the fix merged; image-layer extraction shows the
+   unfixed gate code on the default `triton` spec path. The MTP-off core of
+   the design is unaffected (the buggy path never executes). MTP-on factor
+   arms run as a symmetric-bug A/B for now; re-pin the eval runtime by
+   digest to stable v0.27.2 when it exists.
+2. **Eval-runtime provenance is digest-pinned but source-unauditable** —
+   acceptable for an eval runtime only; recorded here so no reader mistakes
+   it for a reproducibility-grade pin.
+3. **FP8 arms are SOLO windows.** 28.75 GiB weights cannot co-reside with
+   Gemma under the 30 GiB OS margin. Gemma is restored and its MARLIN line
+   re-verified after every window (rule 2).
+4. **BF16-KV-first is unverified territory** relative to the recipe's
+   verified fp8-KV configs — run it as the controlled variable it is, label
+   it as such.
+5. **GB10 is absent from the recipe's verified-hardware map AND the NVFP4
+   variant's supported_hardware** — local qualification is mandatory, and
+   "the recipe verified it" may never be cited as evidence on this box.
+
+**Execution gating — nothing operational is authorized today.** Weights
+download (2 × 30.87 GB; disk has ~3.0 TB free) is a G6-class go/no-go still
+owed by the owner; every serve window is owner-scheduled with the pause-file
+discipline window #2 used; execution is scheduled after the research budget
+replenishes; portfolio priority is Low per Nara's classification (the Liquid
+Democracy cycle stays the active focus).
+
+**Corrections folded in (append-only record).**
+- D-070's recorded numbers, re-measured from the ledger 2026-08-16:
+  attack-site lost verdicts were **3/48, not 4/48** (one case was a
+  truncated-JSON parse failure, not an empty); pre-fix p90 across the six
+  qwen3.6 skeptic sites was **2,861/3,072 (93% of cap)** with p95 at cap —
+  "p90 sat AT the cap" slightly overstated. Direction and conclusion of
+  D-070 unchanged.
+- `docs/qwen38_upgrade_checklist.md`'s "~2 min" description of the D-044
+  2026-06-09 validation conflicts with the run log's 415 s row
+  (`week1.run.jsonl:1133`); the run-log row is the primary record.
+- Both production Qwen checkpoints (3.6 sakamakismile, 3.8 Inferact) are
+  **PTQ, not QAT**; no QAT/QAD checkpoint of 3.8 exists anywhere, plain QAT
+  measurably degrades RL-post-trained models (NVIDIA QAD report), and a
+  local QAT/QAD run is outside the GB10's reach. QAT is a dead branch for
+  this track.
+- **Production note:** the #51812 defect exists at v0.21.0, so live 3.6
+  serving runs the pre-fix GDN gate code — silent and sub-noise (~2.8e-3
+  mean logprob perturbation, zero demonstrated emitted-token changes,
+  mixed-batch-only; the prefix-caching trigger is absent on our serve).
+  Recorded as a pin-amendment trigger, not an incident. The distinct
+  garbage-class decode-misclassification bugs (#47123/#49918/#51562) are
+  NOT fixed by #51812; their v0.21.0 reachability is unassessed and no
+  matching signature exists in our ledger.
+
+**Reversibility.** Full. Every artifact is additive (two new weights dirs, a
+digest-pinned eval image, bench artifacts); the production serve config is
+untouched; abandoning the qualification at any point costs disk and window
+time, nothing else.
+
+**Supersedes-in-part.** The checklist's stage-3a battery remains the
+skeptic-seat instrument for the *Inferact NVFP4 artifact*; the **quality**
+verdict between 3.6 and 3.8 now comes from the matched-FP8 comparison above.
+D-0zz (the pin-amendment/cutover entry) remains template-only, filed at
+cutover.
