@@ -1,11 +1,11 @@
 # Pre-registration — L1→L2 synthetic experiments (block of 2026-08-17)
 
-Status: exp010 and exp011 **LOCKED at commit time** after adversarial critique
-(`wf_2f651b79`, 3 critics, all FIX-REQUIRED; every required fix applied below
-and noted in each section's "Amendments from critique"). exp012 is a **v2
-redesign** (the critic proved v1's positive outcome was manufacturable in
-closed form from its own constants); v2 LOCKS only after a second critique
-returns SOUND — its build starts then, never before. Decision rules are final
+Status: **ALL THREE LOCKED.** exp010/exp011 locked at 331ca7a after
+adversarial critique (`wf_2f651b79`, all FIX-REQUIRED, every fix applied and
+noted per-section). exp012 v1 was refuted pre-lock (closed-form artifact),
+redesigned as v2 (quantization-only + fixation detection), re-critiqued
+(`recritic-exp012`: FIX-REQUIRED with closable text pins), and locked as
+v2.1 at the commit carrying this line with all re-critique fixes applied. Decision rules are final
 at lock — any later change is a new dated amendment section, never an edit
 (inviolate rule 4).
 
@@ -201,7 +201,7 @@ stratification.
 
 ---
 
-## exp012_lqg_spectral — cl-iter-2026-08-15-002 — **v2, LOCKS ONLY ON A SOUND RE-CRITIQUE**
+## exp012_lqg_spectral — cl-iter-2026-08-15-002 — **v2.1, LOCKED** (re-critique fixes applied)
 
 **Claim under test.** "Bounded rationality, modeled as a constraint on the
 precision of belief updating, slows the convergence rate of
@@ -230,7 +230,10 @@ with settling/fixation detection, which has no band geometry to fake.
 per seed; θ_0,i ~ U[−1,1] i.i.d. per seed; directed Erdős–Rényi graph
 p=0.35, no self-loops, drawn fresh per seed; if the drawn digraph's
 pre-rescale spectral radius < 1e−6 (acyclic instance), redraw and log the
-redraw count. Information matrix M = A · (ρ_eff / ρ(A)), with the REPORTED
+redraw count. Pairing (pinned): base seed 20260817; for seed index
+s ∈ {0..29}, the triple (A_s, b_s, θ0_s) is drawn once from RNG(base+s) and
+SHARED across all 7 ρ_eff values × 2 arms (paired design — only the M
+rescale and the belief map differ across a seed's 14 cells). Information matrix M = A · (ρ_eff / ρ(A)), with the REPORTED
 sweep variable ρ_eff := ρ(M) ∈ {0.21, 0.32, 0.42, 0.53, 0.63, 0.74, 0.84}
 (every value < 1: the classical instability boundary is outside the sweep by
 construction). Synchronous update, no separate damping factor:
@@ -246,44 +249,82 @@ construction). Synchronous update, no separate damping factor:
 **Convergence/settling criterion (band-free).**
 - T_full := first t with ‖θ_{t+1} − θ_t‖∞ < 1e−6 (pure geometric decay —
   deterministic and guaranteed).
-- T_bounded := first t with θ_{t+1} EXACTLY equal to θ_t (fixation of the
-  deterministic quantized map). Cycle detection: the trajectory of quantized
-  belief vectors Q_Δ(θ_t) is tracked in a hash set; a revisit without
-  fixation ⇒ limit cycle ⇒ T_bounded := t_max = 20000, row flagged
-  cycling=true (recorded, never dropped). No ε-band exists in the bounded
-  arm, so no noise/deadband-floor artifact can manufacture the threshold.
+- T_bounded, per-step check order (pinned): each step compute
+  q_t = Q_Δ(θ_t) and θ_{t+1} = b + M·q_t. Test FIXATION FIRST:
+  θ_{t+1} == θ_t (equivalently q_t == q_{t−1}, since the update depends only
+  on the quantized vector) ⇒ T_bounded = t. Only then test hash-set
+  membership: q_t seen before with q_t ≠ q_{t−1} ⇒ limit cycle (period ≥ 2)
+  ⇒ T_bounded := t_max = 20000, cycling=true. Third branch: t_max reached
+  with neither fixation nor revisit ⇒ T_bounded := t_max,
+  budget_exhausted=true, counted as capped wherever "capped/cycling" appears
+  in the rules. All rows recorded, never dropped. No ε-band exists in the
+  bounded arm, so no noise/deadband-floor artifact can manufacture the
+  threshold.
 
 **Trials.** 30 seeds × 7 ρ_eff values × 2 arms = 420 trial rows.
 
 **Closed-form null on record (H0_construction).** The naive deadband
-prediction is T_pred_bounded(ρ) ≈ ln(e_0 / r_dead(ρ)) / (−ln ρ) with
-r_dead(ρ) = ρ·(Δ/2)/(1−ρ) — SMOOTH in ρ, no breakpoint. analyze.py must
-compute and report max_ρ |log R_observed(ρ) − log R_pred(ρ)| and plot both;
-a genuine threshold is a departure from this smooth prediction. This is the
+prediction: e_0(ρ, arm) := median over seeds of ‖θ_0 − θ*‖∞ in that cell;
+T_pred_bounded(ρ) = ln(e_0 / r_dead(ρ)) / (−ln ρ) with
+r_dead(ρ) = ρ·(Δ/2)/(1−ρ); T_pred_full(ρ) = ln(e_0 / 1e−6) / (−ln ρ);
+R_pred = T_pred_bounded / T_pred_full — SMOOTH in ρ, no breakpoint (note:
+because fixation tolerance ≈ Δ/2 while the full arm's band is 1e−6, R_pred
+sits well BELOW 1 across the sweep). analyze.py must compute and report
+max_ρ |ln R_observed(ρ) − ln R_pred(ρ)| and both curves. The null's own
+mild curvature could clear ΔBIC alone — rule 3's positive-slope floor is
+the load-bearing defense against it, and is named as such here. This is the
 experiment's explicit adjudication of "the threshold is your construction's
 geometry".
 
-**Decision rule (v2 — final wording subject only to the re-critique gate).**
-R(ρ) := median T_bounded(ρ) / median T_full(ρ). effect_confirmed = TRUE iff
-ALL of:
-1. a continuous two-segment piecewise-linear fit of the 7 (ρ_eff, log R)
-   MEDIAN points (n=7 in BIC; k=4 vs k=2 parameters, penalty 2·ln 7) beats
-   the single-line fit by ΔBIC ≥ 10;
-2. fitted breakpoint interior: 0.32 ≤ ρ* ≤ 0.74, AND the two grid cells
-   immediately above ρ* each have < 50% capped/cycling trials in the bounded
-   arm (the decisive upper slope must come from uncensored cells);
-3. slope above ρ* ≥ 2.0 (log R per unit ρ_eff) AND ≥ 3× max(slope below,
+**Decision rule (LOCKED, v2.1).**
+R(ρ) := median T_bounded(ρ) / median T_full(ρ). All logs are natural logs
+(np.log) everywhere in these rules and the null comparison.
+effect_confirmed = TRUE iff ALL of:
+1. a continuous two-segment piecewise-linear fit of the 7 (ρ_eff, ln R)
+   MEDIAN points beats the single-line fit by ΔBIC ≥ 10, with the fit and
+   BIC pinned: unweighted least squares on the 7 median points;
+   BIC = n·ln(RSS/n) + k·ln(n) with n=7, k=4 (two-segment) vs k=2 (line);
+   ΔBIC = BIC_1seg − BIC_2seg; breakpoint by dense grid search (step 0.005)
+   over ρ* ∈ [0.21, 0.84] with ≥ 2 grid points required strictly on each
+   side of ρ*;
+2. fitted breakpoint interior: 0.32 ≤ ρ* < 0.74, AND the two grid cells
+   immediately above ρ* each have < 50% capped trials (cycling OR
+   budget_exhausted) in the bounded arm (the decisive upper slope must come
+   from uncensored cells);
+3. slope above ρ* ≥ 2.0 (ln R per unit ρ_eff) AND ≥ 3× max(slope below,
    0.25);
 4. stability: seed-level bootstrap B=1000 (resample seeds within each
    (ρ, arm) cell, recompute medians, refit rules 1–3): rules 1–3 hold in
-   ≥ 90% of resamples AND bootstrap IQR of ρ* ≤ 0.15.
-Reported non-gating: median R over cells below ρ* (the claim's "specifically
-when" implies ≈ 1 there); raw fitted ρ* and per-rule pass/fail in
-summary.json regardless of verdict.
+   ≥ 90% of resamples AND bootstrap IQR of ρ* ≤ 0.15, where the IQR is
+   computed over ALL B resamples (never the passing subset) and a resample
+   whose two-segment fit yields no ρ* inside [0.21, 0.84] or a degenerate
+   segment counts as a rules-failure for the ≥ 90% criterion;
+5. censoring robustness: rules 1–3 must ALSO hold when every bounded-arm
+   cell median is recomputed over non-cycling, non-budget-exhausted trials
+   only (survivor bias understates the effect — conservative). A breakpoint
+   present only under the T_bounded := t_max convention is adjudicated as
+   censoring geometry ⇒ effect_confirmed = FALSE, with the
+   cycling-fraction-vs-ρ curve reported as its own named non-gating finding.
+Reported non-gating: R vs R_pred tracking below ρ* (R_pred, not 1, is the
+no-threshold expectation — see H0_construction); raw fitted ρ* and per-rule
+pass/fail in summary.json regardless of verdict; cycling fraction per cell.
 
 **metric/value.** metric="slowdown_breakpoint_rho_eff", value = fitted ρ*
 (or −1.0 on Verdict=NO — never a fabricated threshold; raw fit still in
 summary.json).
+
+**Amendments from re-critique** (`recritic-exp012` on v2, all applied in
+v2.1): per-step check order pinned (fixation tested BEFORE hash-set revisit
+— the natural other order flags 100% of fixating trajectories as cycles);
+third termination branch (budget_exhausted) defined; censoring-robustness
+rule 5 added (sub-50% cycling cells could otherwise manufacture a
+rules-passing breakpoint from the t_max convention); BIC form, fit sample,
+grid search, and natural-log convention pinned; bootstrap accounting pinned
+(IQR over all resamples; out-of-range/degenerate = failure); interior
+window closed at the top (ρ* < 0.74); e_0 and T_pred_full defined;
+R_pred-not-1 expectation corrected; rule 3 named as the load-bearing
+defense against the null's own curvature; seed pairing pinned (shared
+(A,b,θ0) across a seed's 14 cells).
 
 **Amendments from critique** (`critic-exp012` v1 critique, applied in this
 redesign): quantization-only swap (their proposed alternative); fixed-band
