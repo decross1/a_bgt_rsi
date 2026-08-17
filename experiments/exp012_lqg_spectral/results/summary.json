@@ -1,0 +1,279 @@
+{
+  "experiment_id": "exp012_lqg_spectral",
+  "source_iteration_id": "cl-iter-2026-08-15-002",
+  "metric": "slowdown_breakpoint_rho_eff",
+  "value": -1.0,
+  "verdict": "NO",
+  "effect_confirmed": false,
+  "verdict_reason": "LOCKED criteria not met: failed rule1(dBIC), rule3(slopes), rule4(bootstrap), rule5(censoring).",
+  "scope_limit": "This environment is a linear belief-best-response contraction surrogate \u2014 it is NOT an LQG game (no state dynamics or cost matrices) and NOT partially nested (the sweep requires cyclic digraphs; genuinely nested/acyclic structures have adjacency spectral radius exactly 0, degenerating the claim's threshold quantity \u2014 this degeneracy is itself recorded as a finding about the claim's framing). Any Verdict binds to the surrogate; the evidence_level_changed / cluster event must carry this scope limit verbatim.",
+  "fit": {
+    "degenerate": false,
+    "rho_star": 0.735,
+    "value_at_break": -1.1935497968910325,
+    "slope_below": -0.7664588020969539,
+    "slope_above": -0.34028828932939614,
+    "rss_2seg": 0.0022016031842455154,
+    "rss_1seg": 0.003217968180949949,
+    "bic_2seg": -48.66771669442288,
+    "bic_1seg": -49.9025865733409,
+    "delta_bic": -1.234869878918019,
+    "line_slope": -0.7196455133078478
+  },
+  "rule1": {
+    "delta_bic": -1.234869878918019,
+    "delta_bic_min": 10.0,
+    "bic_1seg": -49.9025865733409,
+    "bic_2seg": -48.66771669442288,
+    "rss_1seg": 0.003217968180949949,
+    "rss_2seg": 0.0022016031842455154,
+    "pass": false
+  },
+  "rule2": {
+    "rho_star": 0.735,
+    "interior_lo": 0.32,
+    "interior_hi": 0.74,
+    "interior": true,
+    "cells_above": [
+      0.74,
+      0.84
+    ],
+    "capped_frac_cells_above": [
+      0.03333333333333333,
+      0.0
+    ],
+    "capped_frac_max": 0.5,
+    "pass": true
+  },
+  "rule3": {
+    "slope_above": -0.34028828932939614,
+    "slope_below": -0.7664588020969539,
+    "slope_above_min": 2.0,
+    "slope_ratio_min": 3.0,
+    "slope_below_floor": 0.25,
+    "pass": false
+  },
+  "rule4": {
+    "B": 1000,
+    "pass_fraction": 0.0,
+    "pass_fraction_min": 0.9,
+    "iqr_rho_star": 0.265,
+    "iqr_max": 0.15,
+    "n_degenerate": 0,
+    "rng_seed": 20260817,
+    "pass": false,
+    "n_seeds": 30
+  },
+  "rule5": {
+    "survivor_medians_bounded": [
+      4.0,
+      5.0,
+      6.0,
+      7.0,
+      9.0,
+      13.0,
+      21.5
+    ],
+    "empty_survivor_cells": [],
+    "fit": {
+      "rho_star": 0.67,
+      "delta_bic": -0.7057685011062205,
+      "slope_above": -0.3283029674333293,
+      "slope_below": -0.8311816137432818,
+      "degenerate": false
+    },
+    "rule1_pass": false,
+    "rule2_pass": true,
+    "rule3_pass": false,
+    "note": null,
+    "pass": false
+  },
+  "counts_match_lock": true,
+  "cell_counts": {
+    "0.21/FULL": 30,
+    "0.21/BOUNDED": 30,
+    "0.32/FULL": 30,
+    "0.32/BOUNDED": 30,
+    "0.42/FULL": 30,
+    "0.42/BOUNDED": 30,
+    "0.53/FULL": 30,
+    "0.53/BOUNDED": 30,
+    "0.63/FULL": 30,
+    "0.63/BOUNDED": 30,
+    "0.74/FULL": 30,
+    "0.74/BOUNDED": 30,
+    "0.84/FULL": 30,
+    "0.84/BOUNDED": 30
+  },
+  "medians": {
+    "rho_grid": [
+      0.21,
+      0.32,
+      0.42,
+      0.53,
+      0.63,
+      0.74,
+      0.84
+    ],
+    "median_t_full": [
+      9.0,
+      12.0,
+      15.0,
+      21.0,
+      28.0,
+      43.0,
+      73.5
+    ],
+    "median_t_bounded": [
+      4.0,
+      5.0,
+      6.0,
+      7.5,
+      9.0,
+      13.0,
+      21.5
+    ],
+    "ln_r": [
+      -0.8109302162163288,
+      -0.8754687373538999,
+      -0.916290731874155,
+      -1.0296194171811581,
+      -1.1349799328389845,
+      -1.1962507582320256,
+      -1.2292324710851739
+    ]
+  },
+  "h0_construction": {
+    "rho_grid": [
+      0.21,
+      0.32,
+      0.42,
+      0.53,
+      0.63,
+      0.74,
+      0.84
+    ],
+    "e0_bounded": [
+      1.553327124295281,
+      1.5539846849960322,
+      1.593186198966876,
+      1.6003569944908334,
+      1.7080220173229594,
+      2.0155918516414433,
+      2.469157349646432
+    ],
+    "e0_full": [
+      1.553327124295281,
+      1.5539846849960322,
+      1.593186198966876,
+      1.6003569944908334,
+      1.7080220173229594,
+      2.0155918516414433,
+      2.469157349646432
+    ],
+    "r_dead": [
+      0.006645569620253164,
+      0.011764705882352943,
+      0.018103448275862067,
+      0.028191489361702134,
+      0.04256756756756757,
+      0.07115384615384615,
+      0.13124999999999998
+    ],
+    "t_pred_bounded": [
+      3.4948334991985783,
+      4.285875653580797,
+      5.161251672780065,
+      6.3617894067934335,
+      7.99072571091842,
+      11.105171763070564,
+      16.830922323969457
+    ],
+    "t_pred_full": [
+      9.134610764051343,
+      12.511764096437567,
+      16.462521178028723,
+      22.50153754524597,
+      31.060054473920218,
+      48.21048790281013,
+      84.42272179195501
+    ],
+    "ln_r_pred": [
+      -0.9607848447862346,
+      -1.0713444450400453,
+      -1.1599072311874128,
+      -1.2632739511708568,
+      -1.3576409884950524,
+      -1.4681656643215233,
+      -1.6126187718383873
+    ],
+    "ln_r_observed": [
+      -0.8109302162163288,
+      -0.8754687373538999,
+      -0.916290731874155,
+      -1.0296194171811581,
+      -1.1349799328389845,
+      -1.1962507582320256,
+      -1.2292324710851739
+    ],
+    "abs_ln_gap": [
+      0.14985462856990583,
+      0.19587570768614548,
+      0.2436164993132578,
+      0.2336545339896987,
+      0.22266105565606797,
+      0.27191490608949764,
+      0.38338630075321345
+    ],
+    "max_abs_ln_gap": 0.38338630075321345,
+    "n_nonfinite_gaps": 0,
+    "note": "R_pred, not 1, is the no-threshold expectation; the null is SMOOTH in \u03c1 \u2014 rule 3's positive-slope floor is the load-bearing defense against its own curvature.",
+    "max_abs_ln_gap_below_rho_star": 0.2436164993132578
+  },
+  "cycling_fraction_vs_rho": {
+    "0.21": {
+      "n": 30,
+      "cycling_frac": 0.0,
+      "budget_exhausted_frac": 0.0,
+      "capped_frac": 0.0
+    },
+    "0.32": {
+      "n": 30,
+      "cycling_frac": 0.0,
+      "budget_exhausted_frac": 0.0,
+      "capped_frac": 0.0
+    },
+    "0.42": {
+      "n": 30,
+      "cycling_frac": 0.03333333333333333,
+      "budget_exhausted_frac": 0.0,
+      "capped_frac": 0.03333333333333333
+    },
+    "0.53": {
+      "n": 30,
+      "cycling_frac": 0.06666666666666667,
+      "budget_exhausted_frac": 0.0,
+      "capped_frac": 0.06666666666666667
+    },
+    "0.63": {
+      "n": 30,
+      "cycling_frac": 0.0,
+      "budget_exhausted_frac": 0.0,
+      "capped_frac": 0.0
+    },
+    "0.74": {
+      "n": 30,
+      "cycling_frac": 0.03333333333333333,
+      "budget_exhausted_frac": 0.0,
+      "capped_frac": 0.03333333333333333
+    },
+    "0.84": {
+      "n": 30,
+      "cycling_frac": 0.0,
+      "budget_exhausted_frac": 0.0,
+      "capped_frac": 0.0
+    }
+  },
+  "n_rows": 420,
+  "n_errors": 0
+}

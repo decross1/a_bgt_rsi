@@ -1,0 +1,88 @@
+{
+  "experiment_id": "exp010_audit_collusion",
+  "metric": "collusion_rate_gap_periodic_minus_random",
+  "value": 0.0,
+  "verdict": "NO",
+  "effect_confirmed": false,
+  "verdict_reason": "neither the level effect (rule 1) nor the timing mechanism (rule 2) met its LOCKED criterion.",
+  "rule1": {
+    "median_periodic": 0.0,
+    "median_random": 0.0,
+    "median_gap": 0.0,
+    "median_gap_min": 0.05,
+    "gap_pass": false,
+    "mwu_statistic": 1117.0,
+    "mwu_p": 6.775094480046549e-05,
+    "mwu_p_max": 0.01,
+    "p_pass": true,
+    "n_periodic": 40,
+    "n_random": 40,
+    "pass": false
+  },
+  "rule2": {
+    "mean_timing_gap": 0.02517142857142857,
+    "mean_timing_gap_min": 0.1,
+    "magnitude_pass": false,
+    "wilcoxon_statistic": 589.0,
+    "wilcoxon_p": 8.744388209709362e-06,
+    "wilcoxon_p_max": 0.01,
+    "wilcoxon_zero_method": "pratt",
+    "p_pass": true,
+    "n_gaps": 40,
+    "n_null_gaps": 0,
+    "pass": false
+  },
+  "counts_match_lock": true,
+  "q1_adjudication": {
+    "label": "REFUTED",
+    "vs_periodic": {
+      "median_gap": 0.0,
+      "mwu_p": 0.7312024377518123,
+      "supported": false
+    },
+    "vs_random": {
+      "median_gap": 0.0,
+      "mwu_p": 0.0006217082870133656,
+      "supported": false
+    }
+  },
+  "diagnostics": {
+    "PERIODIC": {
+      "n_valid": 40,
+      "n_error": 0,
+      "mean_collusion_rate": 0.022025,
+      "median_collusion_rate": 0.0,
+      "frac_seeds_cr_ge_0_5": 0.0,
+      "mean_agent_collude_rate_audit_rounds": 0.0055,
+      "mean_agent_collude_rate_non_audit_rounds": 0.08122857142857143
+    },
+    "RANDOM": {
+      "n_valid": 40,
+      "n_error": 0,
+      "mean_collusion_rate": 0.00295,
+      "median_collusion_rate": 0.0,
+      "frac_seeds_cr_ge_0_5": 0.0,
+      "mean_agent_collude_rate_audit_rounds": 0.013204023380647486,
+      "mean_agent_collude_rate_non_audit_rounds": 0.015537814806269772
+    },
+    "NONE": {
+      "n_valid": 40,
+      "n_error": 0,
+      "mean_collusion_rate": 0.0075250000000000004,
+      "median_collusion_rate": 0.0,
+      "frac_seeds_cr_ge_0_5": 0.0,
+      "mean_agent_collude_rate_audit_rounds": null,
+      "mean_agent_collude_rate_non_audit_rounds": 0.127
+    }
+  },
+  "placebo_random_timing_gap": {
+    "mean_timing_gap": 0.0005175748879920138,
+    "median_timing_gap": 0.0,
+    "n": 40,
+    "n_null": 0,
+    "note": "expected \u2248 0; a materially positive RANDOM gap flags metric contamination \u2014 reported, non-gating"
+  },
+  "ceiling_note": "Metric ceiling on record: a perfectly-timed PERIODIC pair caps at collusion_rate \u2248 0.875 while blind RANDOM collusion can approach 1.0; rule 1 therefore effectively requires RANDOM \u2264 ~0.825.",
+  "n_rows": 120,
+  "n_errors": 0
+}

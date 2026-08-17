@@ -80,4 +80,6 @@ def test_results_summary_resolution():
 
 
 def test_tiers_status_counts():
-    assert tr.tiers_status() == {"synthetic": 5, "semi_synthetic": 1, "applied": 1}
+    # 5→8 on 2026-08-17: exp010/exp011/exp012 (L2 block, PREREG_l2block) —
+    # deliberate pinned-test update for a documented registry change.
+    assert tr.tiers_status() == {"synthetic": 8, "semi_synthetic": 1, "applied": 1}

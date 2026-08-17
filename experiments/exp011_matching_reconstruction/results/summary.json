@@ -1,0 +1,91 @@
+{
+  "experiment_id": "exp011_matching_reconstruction",
+  "metric": "median_kendall_tau_at_termination",
+  "value": 0.6742425000000001,
+  "verdict": "NO",
+  "effect_confirmed": false,
+  "verdict_reason": "median tau 0.6742 < 0.9; only 30% of trials reached tau >= 0.8 (requires >= 90%).",
+  "rules": {
+    "rule1_median_tau": {
+      "threshold": 0.9,
+      "observed_median_tau": 0.6742425000000001,
+      "q_max": 44,
+      "max_queries_used": 44,
+      "budget_respected": true,
+      "pass": false
+    },
+    "rule2_trial_floor": {
+      "tau_floor": 0.8,
+      "required_fraction": 0.9,
+      "observed_fraction": 0.3,
+      "pass": false
+    }
+  },
+  "attribution": {
+    "case": "budget_limited",
+    "text": "Case (i) budget-limited: constraints were still accruing in the final 5 queries (median constraints_in_last5_queries = 1.5 > 0) \u2014 consistent with the panel's query-complexity refutation. exp011 counts as evidence FOR the refutation in this case.",
+    "refutation_supported": true,
+    "median_constraints_in_last5_queries": 1.5,
+    "median_unresolved_pairs": 21.5,
+    "median_idle_budget": 8.0
+  },
+  "diagnostics": {
+    "median_queries_used": 36.0,
+    "median_unresolved_pairs": 21.5,
+    "median_bits_per_query": 0.730263,
+    "bits_required_log2_12_factorial": 28.835455234075408,
+    "median_constraints_recorded": 27.0,
+    "median_of_median_deviation_size": 0.5,
+    "median_null_tau_p95": 0.365152
+  },
+  "stratified_tau_by_rank_t_best_natural_proposer": {
+    "1": {
+      "n": 5,
+      "median_tau": 0.363636
+    },
+    "2": {
+      "n": 8,
+      "median_tau": 0.575758
+    },
+    "3": {
+      "n": 10,
+      "median_tau": 0.6439395
+    },
+    "4": {
+      "n": 4,
+      "median_tau": 0.7272725
+    },
+    "5": {
+      "n": 5,
+      "median_tau": 0.787879
+    },
+    "6": {
+      "n": 1,
+      "median_tau": 0.878788
+    },
+    "7": {
+      "n": 2,
+      "median_tau": 0.9242425
+    },
+    "9": {
+      "n": 1,
+      "median_tau": 0.969697
+    },
+    "10": {
+      "n": 2,
+      "median_tau": 1.0
+    },
+    "11": {
+      "n": 1,
+      "median_tau": 1.0
+    },
+    "12": {
+      "n": 1,
+      "median_tau": 1.0
+    }
+  },
+  "control_arm_note": "No random-perturbation control arm was run in this block; the 2026-08-15 frontier methods review asked for one and the pre-registration requires its absence to be stated here.",
+  "n_trials": 40,
+  "n_valid": 40,
+  "n_errors": 0
+}

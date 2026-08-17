@@ -31,6 +31,9 @@ HARNESSES = [
     "experiments/exp004_combinatorial_auction/loop_bridge.py",
     "experiments/exp006_mechanism_design/loop_bridge.py",
     "experiments/exp007_polymarket/loop_bridge.py",
+    "experiments/exp010_audit_collusion/loop_bridge.py",
+    "experiments/exp011_matching_reconstruction/loop_bridge.py",
+    "experiments/exp012_lqg_spectral/loop_bridge.py",
     "experiments/replication_driver.py",
 ]
 

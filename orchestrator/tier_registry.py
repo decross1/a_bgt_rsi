@@ -59,6 +59,9 @@ _TIER_MAP: dict[str, list[str]] = {
         "exp004_combinatorial_auction",
         "exp005_mechanism_aware",
         "exp009_cournot",
+        "exp010_audit_collusion",
+        "exp011_matching_reconstruction",
+        "exp012_lqg_spectral",
     ],
     "semi_synthetic": [
         "exp006_mechanism_design",
