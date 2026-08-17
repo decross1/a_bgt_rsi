@@ -1,0 +1,275 @@
+{
+  "schema": "fp8_ab.toolprobe.v1",
+  "generated_at": "2026-08-17T08:20:36.116531+00:00",
+  "arm_label": "winB_38fp8",
+  "provenance": {
+    "image_digest": "sha256:4a2f33a884222f7049b983263ad9976f89452bb81affecf5b67d89ad35c1bc31",
+    "model_revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+    "endpoint": "http://127.0.0.1:8002/v1",
+    "served_model": "qwen3.8-27b-fp8",
+    "script_sha256": "5e6d0e95434e67f8cd8a9d2b707825526fbf7d3b7e1543422f90ace91fcd26eb",
+    "seed_base": 20260818,
+    "sampling": {
+      "temperature": 0.2,
+      "top_p": 0.95,
+      "max_tokens": 1024
+    },
+    "string_trap": {
+      "request_turn": "t06_string_args_replay",
+      "replayed_turn": "t05_echo_unicode"
+    }
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "name": "t01_get_time",
+      "expected_tools": [
+        "get_time"
+      ],
+      "tool_choice": {
+        "type": "function",
+        "function": {
+          "name": "get_time"
+        }
+      },
+      "string_args_trap": false,
+      "latency_s": 6.496,
+      "http_status": 200,
+      "shape": "structured",
+      "arguments_parseable": true,
+      "calls": [
+        {
+          "name": "get_time",
+          "arguments_raw": "{}",
+          "parseable": true
+        }
+      ],
+      "error": null
+    },
+    {
+      "turn": 2,
+      "name": "t02_add_small",
+      "expected_tools": [
+        "add_numbers"
+      ],
+      "tool_choice": {
+        "type": "function",
+        "function": {
+          "name": "add_numbers"
+        }
+      },
+      "string_args_trap": false,
+      "latency_s": 6.921,
+      "http_status": 200,
+      "shape": "structured",
+      "arguments_parseable": true,
+      "calls": [
+        {
+          "name": "add_numbers",
+          "arguments_raw": "{\"a\": 2, \"b\": 3}",
+          "parseable": true
+        }
+      ],
+      "error": null
+    },
+    {
+      "turn": 3,
+      "name": "t03_echo_plain",
+      "expected_tools": [
+        "echo"
+      ],
+      "tool_choice": {
+        "type": "function",
+        "function": {
+          "name": "echo"
+        }
+      },
+      "string_args_trap": false,
+      "latency_s": 5.046,
+      "http_status": 200,
+      "shape": "structured",
+      "arguments_parseable": true,
+      "calls": [
+        {
+          "name": "echo",
+          "arguments_raw": "{\"text\": \"alpha\"}",
+          "parseable": true
+        }
+      ],
+      "error": null
+    },
+    {
+      "turn": 4,
+      "name": "t04_add_negative",
+      "expected_tools": [
+        "add_numbers"
+      ],
+      "tool_choice": {
+        "type": "function",
+        "function": {
+          "name": "add_numbers"
+        }
+      },
+      "string_args_trap": false,
+      "latency_s": 8.211,
+      "http_status": 200,
+      "shape": "structured",
+      "arguments_parseable": true,
+      "calls": [
+        {
+          "name": "add_numbers",
+          "arguments_raw": "{\"a\": -7.5, \"b\": 2.25}",
+          "parseable": true
+        }
+      ],
+      "error": null
+    },
+    {
+      "turn": 5,
+      "name": "t05_echo_unicode",
+      "expected_tools": [
+        "echo"
+      ],
+      "tool_choice": {
+        "type": "function",
+        "function": {
+          "name": "echo"
+        }
+      },
+      "string_args_trap": false,
+      "latency_s": 7.674,
+      "http_status": 200,
+      "shape": "structured",
+      "arguments_parseable": true,
+      "calls": [
+        {
+          "name": "echo",
+          "arguments_raw": "{\"text\": \"καλημέρα κόσμε ✓\"}",
+          "parseable": true
+        }
+      ],
+      "error": null
+    },
+    {
+      "turn": 6,
+      "name": "t06_string_args_replay",
+      "expected_tools": [
+        "echo"
+      ],
+      "tool_choice": {
+        "type": "function",
+        "function": {
+          "name": "echo"
+        }
+      },
+      "string_args_trap": true,
+      "latency_s": 0.004,
+      "http_status": 400,
+      "shape": "absent",
+      "arguments_parseable": null,
+      "calls": [],
+      "error": "HTTP 400: {\"error\": {\"message\": \"3 validation errors:\\n  {'type': 'string_type', 'loc': ('body', 0, 'ChatCompletionMessageFunctionToolCallParam', 'function', 'arguments'), 'msg': 'Input should be a valid string', 'input': {'text': '\\u03ba\\u03b1\\u03bb\\u03b7\\u03bc\\u03ad\\u03c1\\u03b1 \\u03ba\\u03cc\\u03c3\\u03bc\\u03b"
+    },
+    {
+      "turn": 7,
+      "name": "t07_add_large",
+      "expected_tools": [
+        "add_numbers"
+      ],
+      "tool_choice": {
+        "type": "function",
+        "function": {
+          "name": "add_numbers"
+        }
+      },
+      "string_args_trap": false,
+      "latency_s": 11.052,
+      "http_status": 200,
+      "shape": "structured",
+      "arguments_parseable": true,
+      "calls": [
+        {
+          "name": "add_numbers",
+          "arguments_raw": "{\"a\": 123456789, \"b\": 987654321}",
+          "parseable": true
+        }
+      ],
+      "error": null
+    },
+    {
+      "turn": 8,
+      "name": "t08_multi_tool",
+      "expected_tools": [
+        "get_time",
+        "echo"
+      ],
+      "tool_choice": "required",
+      "string_args_trap": false,
+      "latency_s": 120.037,
+      "http_status": null,
+      "shape": "absent",
+      "arguments_parseable": null,
+      "calls": [],
+      "error": "ReadTimeout: HTTPConnectionPool(host='127.0.0.1', port=8002): Read timed out. (read timeout=120.0)"
+    },
+    {
+      "turn": 9,
+      "name": "t09_echo_json_payload",
+      "expected_tools": [
+        "echo"
+      ],
+      "tool_choice": {
+        "type": "function",
+        "function": {
+          "name": "echo"
+        }
+      },
+      "string_args_trap": false,
+      "latency_s": 9.509,
+      "http_status": 200,
+      "shape": "structured",
+      "arguments_parseable": true,
+      "calls": [
+        {
+          "name": "echo",
+          "arguments_raw": "{\"text\": \"{\\\"k\\\": [1, 2, 3]}\"}",
+          "parseable": true
+        }
+      ],
+      "error": null
+    },
+    {
+      "turn": 10,
+      "name": "t10_add_floats",
+      "expected_tools": [
+        "add_numbers"
+      ],
+      "tool_choice": {
+        "type": "function",
+        "function": {
+          "name": "add_numbers"
+        }
+      },
+      "string_args_trap": false,
+      "latency_s": 8.13,
+      "http_status": 200,
+      "shape": "structured",
+      "arguments_parseable": true,
+      "calls": [
+        {
+          "name": "add_numbers",
+          "arguments_raw": "{\"a\": 0.5, \"b\": 0.25}",
+          "parseable": true
+        }
+      ],
+      "error": null
+    }
+  ],
+  "summary": {
+    "structured": 8,
+    "xml_in_content": 0,
+    "absent": 2,
+    "http_errors": 2,
+    "arguments_parseable": 8
+  }
+}

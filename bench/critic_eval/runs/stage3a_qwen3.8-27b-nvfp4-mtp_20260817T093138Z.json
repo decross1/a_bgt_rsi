@@ -1,0 +1,253 @@
+{
+  "generated_at": "2026-08-17T09:31:38.607721+00:00",
+  "served_model": "qwen3.8-27b-nvfp4-mtp",
+  "checks": {
+    "kill": {
+      "pass": true
+    },
+    "no_false_kill": {
+      "pass": true,
+      "novel_on_01_verdict": "survives_attack"
+    },
+    "liveness": {
+      "pass": true,
+      "unparseable": []
+    }
+  },
+  "all_pass": true,
+  "verdict_by_expected": {
+    "survives": [
+      "survives_attack",
+      "survives_attack",
+      "survives_attack",
+      "survives_attack"
+    ],
+    "restated": [
+      "survives_attack",
+      "refuted",
+      "survives_attack",
+      "survives_attack",
+      "survives_attack",
+      "refuted"
+    ],
+    "falsified": [
+      "survives_attack",
+      "inconclusive",
+      "refuted",
+      "refuted"
+    ],
+    "malformed": [
+      "inconclusive",
+      "survives_attack"
+    ],
+    "undecidable": [
+      "inconclusive",
+      "survives_attack",
+      "inconclusive",
+      "inconclusive",
+      "survives_attack",
+      "inconclusive"
+    ]
+  },
+  "total_seconds": 3490.6,
+  "rows": [
+    {
+      "case_id": "novel_on_01_quant_lockin",
+      "expected_critic": "survives",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The closest retrieved chunks, 2608.10262 and 2305.16867, discuss LLM cooperation in repeated Prisoner's Dilemma settings but do not mention NVFP4 quantization, ",
+      "raw_status": "ok",
+      "seconds": 166.6
+    },
+    {
+      "case_id": "novel_on_02_critic_flip_model",
+      "expected_critic": "survives",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The closest retrieved chunk, doc_id='2606.19826', discusses heterogeneous LLM peers correcting one another but does not establish or refute the specific claim t",
+      "raw_status": "ok",
+      "seconds": 163.7
+    },
+    {
+      "case_id": "novel_on_03_levelk_quantal_bridge",
+      "expected_critic": "survives",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The closest retrieved work, 2606.27845, studies LLM agents as static level-k players in a p-beauty contest and varies temperature, but it does not establish a m",
+      "raw_status": "ok",
+      "seconds": 287.5
+    },
+    {
+      "case_id": "redisc_on_01_tft_reciprocity",
+      "expected_critic": "restated",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The closest LLM-specific chunk, 2305.16867, studies finitely repeated 2x2 games and does not report failure of LLMs to cooperate or contradict tit-for-tat-like ",
+      "raw_status": "ok",
+      "seconds": 102.5
+    },
+    {
+      "case_id": "redisc_on_02_folk_theorem",
+      "expected_critic": "restated",
+      "verdict": "refuted",
+      "contradicting_doc_id": "osborne_rubinstein-chunk-922",
+      "reason_head": "Chunk 922 states the perfect folk theorem that every feasible strictly enforceable payoff profile is a subgame-perfect equilibrium payoff profile of the infinit",
+      "raw_status": "ok",
+      "seconds": 1068.8
+    },
+    {
+      "case_id": "redisc_on_03_quantal_response",
+      "expected_critic": "restated",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss mixed-strategy Nash equilibrium, rationalizability, evolutionary/learning behavior, and equilibrium selection, but none state or co",
+      "raw_status": "ok",
+      "seconds": 58.7
+    },
+    {
+      "case_id": "fase_off_01_semantic_entropy",
+      "expected_critic": "falsified",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The closest retrieved chunks discuss LLM semantic signaling/mechanism design (2606.29113) and quality-based compensation with Nash equilibria (2607.14438), but ",
+      "raw_status": "ok",
+      "seconds": 56.0
+    },
+    {
+      "case_id": "fase_off_02_db_index_tuning",
+      "expected_critic": "falsified",
+      "verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks are mostly about RL/LLM agents, thread tuning, cyber defense, network slicing, and multi-agent systems, with no chunk addressing B-tree ind",
+      "raw_status": "ok",
+      "seconds": 43.7
+    },
+    {
+      "case_id": "nonsense_01_word_salad",
+      "expected_critic": "malformed",
+      "verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "reason_head": "The hypothesis is incoherent word salad ('Purple equilibrium auctions the tuesday of cooperation backwards into a nash sandwich of repeated forgetting') that do",
+      "raw_status": "ok",
+      "seconds": 37.1
+    },
+    {
+      "case_id": "nonsense_02_not_a_question",
+      "expected_critic": "malformed",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks support game theory as a mathematical/economic analytical field and explicitly describe a game theory textbook for a graduate course, but n",
+      "raw_status": "ok",
+      "seconds": 119.3
+    },
+    {
+      "case_id": "falsifiable_01_finite_pd_cooperate",
+      "expected_critic": "falsified",
+      "verdict": "refuted",
+      "contradicting_doc_id": "osborne_rubinstein-chunk-850",
+      "reason_head": "The retrieved foundational chunks state that the finitely repeated Prisoner's Dilemma has a unique subgame perfect equilibrium driven by backward induction, in ",
+      "raw_status": "ok",
+      "seconds": 52.0
+    },
+    {
+      "case_id": "falsifiable_02_dominant_tft",
+      "expected_critic": "falsified",
+      "verdict": "refuted",
+      "contradicting_doc_id": "osborne_rubinstein-chunk-831",
+      "reason_head": "osborne_rubinstein-chunk-831 states that in the Prisoner's Dilemma D strictly dominates C; against an opponent who always defects, a strategy that defects every",
+      "raw_status": "ok",
+      "seconds": 133.2
+    },
+    {
+      "case_id": "camo_off_01_fase_gt_vocab",
+      "expected_critic": "undecidable",
+      "verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "reason_head": "The closest retrieved chunks discuss repeated reward signals in autonomous agent loops (2608.04341) and non-adversarial interaction under adversarial design ass",
+      "raw_status": "ok",
+      "seconds": 108.6
+    },
+    {
+      "case_id": "camo_off_02_btree_mechanism",
+      "expected_critic": "undecidable",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss general mechanism design, incentive compatibility, auctions, and game-theoretic dilemmas, but none address B-tree page-split tuning",
+      "raw_status": "ok",
+      "seconds": 101.5
+    },
+    {
+      "case_id": "camo_off_03_framework_coordination",
+      "expected_critic": "undecidable",
+      "verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss abstract game-theoretic stability, MEV auction defection, team contests, AI worker mobility, and payoff convergence, but none addre",
+      "raw_status": "ok",
+      "seconds": 142.0
+    },
+    {
+      "case_id": "camo_off_04_raft_punishment",
+      "expected_critic": "undecidable",
+      "verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss repeated-game punishment and cooperation in general, but none address Raft\u2019s append-entries protocol, term escalation, or quorum pa",
+      "raw_status": "ok",
+      "seconds": 83.2
+    },
+    {
+      "case_id": "drift_off_01_rag_chunk_overlap",
+      "expected_critic": "undecidable",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss related failure modes such as context drift, context collapse, and declining marginal value of added evidence (2606.21666, 2606.228",
+      "raw_status": "ok",
+      "seconds": 115.1
+    },
+    {
+      "case_id": "drift_off_02_belief_distillation",
+      "expected_critic": "undecidable",
+      "verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss belief-state modeling, epistemic adaptivity, and learning/teaching models, but none address distilling a belief-state tracker into ",
+      "raw_status": "ok",
+      "seconds": 34.5
+    },
+    {
+      "case_id": "canary_on_01_ultimatum_plain",
+      "expected_critic": "restated",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks describe take-it-or-leave-it and bargaining structures (e.g., doc_id='osborne_rubinstein-chunk-576' and doc_id='osborne_rubinstein-chunk-73",
+      "raw_status": "ok",
+      "seconds": 96.9
+    },
+    {
+      "case_id": "canary_on_02_hawkdove_ess",
+      "expected_critic": "restated",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss general replicator dynamics and ESS conditions (e.g., hofbauer_sigmund_egpd-chunk-1, evolutionary-game-theory_compress-chunk-3, -ch",
+      "raw_status": "ok",
+      "seconds": 91.6
+    },
+    {
+      "case_id": "canary_on_03_llm_gt_hybrid",
+      "expected_critic": "survives",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved set contains no chunk that directly addresses RLHF-fine-tuned transformer agents in alternating-offer bargaining or their acceptance thresholds tr",
+      "raw_status": "ok",
+      "seconds": 73.7
+    },
+    {
+      "case_id": "pbeauty_068_01_levelk",
+      "expected_critic": "restated",
+      "verdict": "refuted",
+      "contradicting_doc_id": "2404.08492",
+      "reason_head": "doc_id 2404.08492 directly studies LLM-based agents in beauty contests and reports their reasoning depth falls within level-0 to 1, lower than human experimenta",
+      "raw_status": "ok",
+      "seconds": 175.1
+    }
+  ]
+}

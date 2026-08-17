@@ -1,0 +1,253 @@
+{
+  "generated_at": "2026-08-17T10:14:56.810357+00:00",
+  "served_model": "qwen3.6-27b-nvfp4-mtp",
+  "checks": {
+    "kill": {
+      "pass": true
+    },
+    "no_false_kill": {
+      "pass": true,
+      "novel_on_01_verdict": "survives_attack"
+    },
+    "liveness": {
+      "pass": true,
+      "unparseable": []
+    }
+  },
+  "all_pass": true,
+  "verdict_by_expected": {
+    "survives": [
+      "survives_attack",
+      "survives_attack",
+      "refuted",
+      "survives_attack"
+    ],
+    "restated": [
+      "survives_attack",
+      "refuted",
+      "survives_attack",
+      "survives_attack",
+      "refuted",
+      "refuted"
+    ],
+    "falsified": [
+      "survives_attack",
+      "survives_attack",
+      "refuted",
+      "refuted"
+    ],
+    "malformed": [
+      "inconclusive",
+      "refuted"
+    ],
+    "undecidable": [
+      "survives_attack",
+      "survives_attack",
+      "survives_attack",
+      "survives_attack",
+      "survives_attack",
+      "survives_attack"
+    ]
+  },
+  "total_seconds": 1985.5,
+  "rows": [
+    {
+      "case_id": "novel_on_01_quant_lockin",
+      "expected_critic": "survives",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved set contains no discussion of Gemma 4, NVFP4 quantization, or the specific cooperation rate bands claimed. Chunks such as 2305.16867 and 2608.1026",
+      "raw_status": "ok",
+      "seconds": 91.9
+    },
+    {
+      "case_id": "novel_on_02_critic_flip_model",
+      "expected_critic": "survives",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks examine heterogeneous debate dynamics, implementation lottery, and role specialization within a single model family, but none directly test",
+      "raw_status": "ok",
+      "seconds": 108.8
+    },
+    {
+      "case_id": "novel_on_03_levelk_quantal_bridge",
+      "expected_critic": "survives",
+      "verdict": "refuted",
+      "contradicting_doc_id": "2606.27845",
+      "reason_head": "Chunk 2606.27845 directly investigates LLM strategic behavior in p-beauty contests across a factorial design varying decoding temperature and concludes that LLM",
+      "raw_status": "ok",
+      "seconds": 113.4
+    },
+    {
+      "case_id": "redisc_on_01_tft_reciprocity",
+      "expected_critic": "restated",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks primarily examine LLM behavior in finitely repeated games, similarity-induced cooperation, or foundational game theory concepts like trigge",
+      "raw_status": "ok",
+      "seconds": 118.1
+    },
+    {
+      "case_id": "redisc_on_02_folk_theorem",
+      "expected_critic": "restated",
+      "verdict": "refuted",
+      "contradicting_doc_id": "osborne_rubinstein-chunk-922",
+      "reason_head": "The hypothesis is a direct restatement of the Perfect Folk Theorem. Retrieved chunk osborne_rubinstein-chunk-922 explicitly states Proposition 146.2, which asse",
+      "raw_status": "ok",
+      "seconds": 79.8
+    },
+    {
+      "case_id": "redisc_on_03_quantal_response",
+      "expected_critic": "restated",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks focus on standard mixed strategy Nash equilibria, rationalizability, trembling-hand perturbations, and evolutionary imitation dynamics, but",
+      "raw_status": "ok",
+      "seconds": 95.9
+    },
+    {
+      "case_id": "fase_off_01_semantic_entropy",
+      "expected_critic": "falsified",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "Chunks [3], [2], and [7] discuss LLM semantic signaling, auction theory, and mechanism design respectively, but none link semantic entropy to hallucination dete",
+      "raw_status": "ok",
+      "seconds": 84.3
+    },
+    {
+      "case_id": "fase_off_02_db_index_tuning",
+      "expected_critic": "falsified",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks exclusively cover unrelated domains such as LLM-augmented RL agents, multi-agent network slicing, simulation thread tuning, and cyber defen",
+      "raw_status": "ok",
+      "seconds": 75.6
+    },
+    {
+      "case_id": "nonsense_01_word_salad",
+      "expected_critic": "malformed",
+      "verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "reason_head": "The hypothesis is semantically incoherent and strings together game-theoretic jargon with undefined, nonsensical phrases (e.g., 'purple equilibrium', 'nash sand",
+      "raw_status": "ok",
+      "seconds": 78.3
+    },
+    {
+      "case_id": "nonsense_02_not_a_question",
+      "expected_critic": "malformed",
+      "verdict": "refuted",
+      "contradicting_doc_id": "osborne_rubinstein-chunk-0",
+      "reason_head": "The hypothesis merely restates established prior art explicitly documented in the retrieved chunks. For example, Osborne & Rubinstein explicitly state their wor",
+      "raw_status": "ok",
+      "seconds": 81.3
+    },
+    {
+      "case_id": "falsifiable_01_finite_pd_cooperate",
+      "expected_critic": "falsified",
+      "verdict": "refuted",
+      "contradicting_doc_id": "osborne_rubinstein-chunk-850",
+      "reason_head": "The retrieved chunks explicitly reference the unique subgame perfect equilibrium of the finitely repeated Prisoner's Dilemma and the logic of backward induction",
+      "raw_status": "ok",
+      "seconds": 90.9
+    },
+    {
+      "case_id": "falsifiable_02_dominant_tft",
+      "expected_critic": "falsified",
+      "verdict": "refuted",
+      "contradicting_doc_id": "osborne_rubinstein-chunk-900",
+      "reason_head": "Tit-for-tat is not a dominant strategy because it fails to be a best response against certain opponent strategies (e.g., against a strategy that defects in roun",
+      "raw_status": "ok",
+      "seconds": 154.3
+    },
+    {
+      "case_id": "camo_off_01_fase_gt_vocab",
+      "expected_critic": "undecidable",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks discuss multi-agent communication protocols, semantic information-flow control, and leaderboard-driven refinement loops, but none address t",
+      "raw_status": "ok",
+      "seconds": 59.4
+    },
+    {
+      "case_id": "camo_off_02_btree_mechanism",
+      "expected_critic": "undecidable",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks cover general mechanism design, game theory, auctions, and fair division, but none mention B-trees, database index page splits, fill factor",
+      "raw_status": "ok",
+      "seconds": 82.3
+    },
+    {
+      "case_id": "camo_off_03_framework_coordination",
+      "expected_critic": "undecidable",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks consist entirely of theoretical game theory and economics literature (e.g., stable sets, MEV auctions, team contests, trust games, and evol",
+      "raw_status": "ok",
+      "seconds": 36.6
+    },
+    {
+      "case_id": "camo_off_04_raft_punishment",
+      "expected_critic": "undecidable",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved set contains only general game-theoretic foundations on repeated games and unrelated papers on LLM inference or network topology privacy. None of ",
+      "raw_status": "ok",
+      "seconds": 86.0
+    },
+    {
+      "case_id": "drift_off_01_rag_chunk_overlap",
+      "expected_critic": "undecidable",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks focus on multi-agent coordination, context drift, memory management, and bandwidth constraints, but none address chunk overlap strategies o",
+      "raw_status": "ok",
+      "seconds": 59.3
+    },
+    {
+      "case_id": "drift_off_02_belief_distillation",
+      "expected_critic": "undecidable",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks primarily discuss game-theoretic learning models, social belief fusion, and epistemic decision processes, but none address distilling belie",
+      "raw_status": "ok",
+      "seconds": 63.9
+    },
+    {
+      "case_id": "canary_on_01_ultimatum_plain",
+      "expected_critic": "restated",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks only describe the theoretical rules of ultimatum and bargaining games (e.g., Chunk 3 outlines the accept/reject procedure) but contain no e",
+      "raw_status": "ok",
+      "seconds": 85.8
+    },
+    {
+      "case_id": "canary_on_02_hawkdove_ess",
+      "expected_critic": "restated",
+      "verdict": "refuted",
+      "contradicting_doc_id": "hofbauer_sigmund_egpd-chunk-58",
+      "reason_head": "The hypothesis merely restates the classic Hawk-Dove model and the standard evolutionary game theory result that frequency-dependent payoffs under replicator dy",
+      "raw_status": "ok",
+      "seconds": 92.4
+    },
+    {
+      "case_id": "canary_on_03_llm_gt_hybrid",
+      "expected_critic": "survives",
+      "verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "reason_head": "The retrieved chunks cover classical alternating-offer bargaining theory, KL-regularized RL fine-tuning objectives, and LLM behavior in beauty contests, but non",
+      "raw_status": "ok",
+      "seconds": 76.3
+    },
+    {
+      "case_id": "pbeauty_068_01_levelk",
+      "expected_critic": "restated",
+      "verdict": "refuted",
+      "contradicting_doc_id": "2404.08492",
+      "reason_head": "The hypothesis claims LLM agents match human experimental patterns of bounded reasoning depth, but retrieved chunk 2404.08492 explicitly states that LLM-based a",
+      "raw_status": "ok",
+      "seconds": 77.2
+    }
+  ]
+}
