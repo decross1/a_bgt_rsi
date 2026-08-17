@@ -66,8 +66,12 @@ ATTACK_RETRIEVAL_K = 10
 # 2026-08-16T04:00Z qwen_degraded_empty_content alert). 6144 clears the
 # measured tail with the served 16k window still half free (prompts run
 # ~2k). vLLM REJECTS rather than clamps, so this stays sized, not guessed.
+# NARA_ATTACK_MAX_TOKENS exists for A/B battery windows ONLY (D-072 /
+# checklist Rank-1: cap size is a declared battery variable, never a
+# silent retune) — production leaves it unset.
 ATTACK_MAX_TOKENS_DEFAULT_BACKEND = 512
-ATTACK_MAX_TOKENS_INDEPENDENT = 6144
+ATTACK_MAX_TOKENS_INDEPENDENT = int(
+    os.environ.get("NARA_ATTACK_MAX_TOKENS", "6144"))
 
 
 # Shared task body: the attack instructions + strict JSON schema. The

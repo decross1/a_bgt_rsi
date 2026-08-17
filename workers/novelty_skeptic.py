@@ -56,7 +56,10 @@ CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 # before the answer. Measured 2026-08-16: p90 output AT the old 3072 cap,
 # 31 empty completions across 651 calls. Prompts run ~2k against a 16k
 # window, so 6144 clears the tail with room to spare.
-ATTACK_MAX_TOKENS_INDEPENDENT = 6144
+# NARA_ATTACK_MAX_TOKENS: battery-window override only (D-072); production
+# leaves it unset.
+ATTACK_MAX_TOKENS_INDEPENDENT = int(
+    os.environ.get("NARA_ATTACK_MAX_TOKENS", "6144"))
 
 
 # Same closed enum as novelty.class, so agreement is a direct equality.
