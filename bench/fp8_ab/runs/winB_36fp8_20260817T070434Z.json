@@ -1,0 +1,1738 @@
+{
+  "schema": "fp8_ab.battery.v1",
+  "generated_at": "2026-08-17T05:48:53.404963+00:00",
+  "arm_label": "winB_36fp8",
+  "mode": "full",
+  "provenance": {
+    "image_digest": "sha256:4a2f33a884222f7049b983263ad9976f89452bb81affecf5b67d89ad35c1bc31",
+    "model_revision": "e89b16ebf1988b3d6befa7de50abc2d76f26eb09",
+    "endpoint": "http://127.0.0.1:8002/v1",
+    "served_model": "qwen3.6-27b-fp8",
+    "cases_path": "/home/decross1/projects/a_bgt_rsi/experiments/lit_falsification_battery/cases.jsonl",
+    "cases_sha256": "ff08ea2b88caf2c0038f15b65a91583742cd1fb1009d76982542bedf8638a1a9",
+    "sentinel_ids": [
+      "novel_on_01_quant_lockin",
+      "redisc_on_01_tft_reciprocity",
+      "canary_on_01_ultimatum_plain",
+      "falsifiable_01_finite_pd_cooperate",
+      "falsifiable_02_dominant_tft",
+      "camo_off_04_raft_punishment"
+    ],
+    "seed_base": 20260818,
+    "sampling": {
+      "temperature": 0.2,
+      "top_p": 0.95,
+      "max_tokens": 12288
+    },
+    "wall_cap_s": 600.0,
+    "effective_config": {
+      "arm_label": "winB_36fp8",
+      "model": "qwen3.6-27b-fp8",
+      "endpoint": "http://127.0.0.1:8002/v1",
+      "cap": 12288,
+      "full": true,
+      "seed_base": 20260818,
+      "image_digest": "sha256:4a2f33a884222f7049b983263ad9976f89452bb81affecf5b67d89ad35c1bc31",
+      "model_revision": "e89b16ebf1988b3d6befa7de50abc2d76f26eb09",
+      "cases_path": "/home/decross1/projects/a_bgt_rsi/experiments/lit_falsification_battery/cases.jsonl",
+      "cases_sha256": "ff08ea2b88caf2c0038f15b65a91583742cd1fb1009d76982542bedf8638a1a9"
+    }
+  },
+  "metrics_before": {
+    "spec_decode_num_accepted_tokens_total": null,
+    "spec_decode_num_draft_tokens_total": null,
+    "scraped_at": "2026-08-17T05:48:53.404981+00:00",
+    "scrape_error": null
+  },
+  "cases": [
+    {
+      "case_id": "novel_on_01_quant_lockin",
+      "case_index": 0,
+      "sentinel": true,
+      "expected_critic": "survives",
+      "seed": 20260818,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "2608.10262",
+          "sha256": "ee206718b0029a88bf9952c44ea3239bc4fa94035f23e791962a96bf0e9fe1d6"
+        },
+        {
+          "doc_id": "hofbauer_sigmund_egpd-chunk-87",
+          "sha256": "8d96b8f2e58c8d4e377aec9da5254b4a15e9849d14ef463e9e9354cd7aca8989"
+        },
+        {
+          "doc_id": "2305.16867",
+          "sha256": "995e5e9122fb4fee7d0634bfdee4e2bfdd0c5722818565fd0534601d1c161e45"
+        },
+        {
+          "doc_id": "hofbauer_sigmund_egpd-chunk-89",
+          "sha256": "f3d120fe8d24f210fc485f7d72fd4c0727e417ba3849691eeee187243997638f"
+        },
+        {
+          "doc_id": "2606.18965",
+          "sha256": "73fc028c41e182f952276b3c51144456499cf47c59fa53ee13c318cf31b3d457"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-2120",
+          "sha256": "5b8204ee1e48d4f7177edc14a103be6a041624d9390a97c3b93e238104efd83b"
+        },
+        {
+          "doc_id": "2608.00979",
+          "sha256": "abae34f43d87779c903259905cf6bd80fbe226c649dbeb110a44f0c4e1e837ee"
+        },
+        {
+          "doc_id": "blume_1995-chunk-107",
+          "sha256": "8c9a663daf519598f9ed6d7313e4b375d8452e0efd0253c008bd5e1f6033e006"
+        },
+        {
+          "doc_id": "2606.14923",
+          "sha256": "c412b059e26a359246736bde51bfd85d82b216a170cd670fb2d29d75c1049280"
+        },
+        {
+          "doc_id": "blume_1995-chunk-59",
+          "sha256": "b53cd7f9406f97a734aec37fca7258542f918ee57864c7f882595ed19526d521"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2305.16867",
+        "2606.14923",
+        "2606.18965",
+        "2608.00979",
+        "2608.10262",
+        "blume_1995-chunk-107",
+        "blume_1995-chunk-59",
+        "hofbauer_sigmund_egpd-chunk-87",
+        "hofbauer_sigmund_egpd-chunk-89",
+        "osborne_rubinstein-chunk-2120"
+      ],
+      "prompt_sha256": "e6ae8d36d17474e65f58fe618f1fc620d1228b10364adc88a5f3c3ad8761d5ff",
+      "wall_s": 187.288,
+      "http_status": 200,
+      "output_tokens": 1365,
+      "tok_s": 7.29,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved set consists of foundational game theory excerpts and recent empirical studies on other models (Chinese frontier LLMs, GPT-4.1 personas), with no "
+    },
+    {
+      "case_id": "redisc_on_01_tft_reciprocity",
+      "case_index": 3,
+      "sentinel": true,
+      "expected_critic": "restated",
+      "seed": 20260821,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "2606.18965",
+          "sha256": "73fc028c41e182f952276b3c51144456499cf47c59fa53ee13c318cf31b3d457"
+        },
+        {
+          "doc_id": "2608.12125",
+          "sha256": "5010d6924a8786d9192d536044b26db1ff9d9fffbbb2f96b6daf64bfd70d3ebc"
+        },
+        {
+          "doc_id": "2305.16867",
+          "sha256": "995e5e9122fb4fee7d0634bfdee4e2bfdd0c5722818565fd0534601d1c161e45"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-849",
+          "sha256": "3ad03504873103c5dbac488dae5a85703b2c95b006e4e713c472aa283fc97cfa"
+        },
+        {
+          "doc_id": "2608.01425",
+          "sha256": "6e22113ba9bad2f6f83bc21ec80070716ba9cfc5f14d50575bafe53c17d6360e"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-831",
+          "sha256": "f60d7899225db3438d85b4a40889e6577458ae79f322fa30dad93eb948b2ea0b"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-836",
+          "sha256": "f60d7899225db3438d85b4a40889e6577458ae79f322fa30dad93eb948b2ea0b"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-850",
+          "sha256": "01098e3c8305d0068e44ec9d31552ba2df5afb070ee3c275c20b2530ee4ac5c7"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-2120",
+          "sha256": "5b8204ee1e48d4f7177edc14a103be6a041624d9390a97c3b93e238104efd83b"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-830",
+          "sha256": "97f3e151734e6856f03b6554cb250f5028ab03cfab625f50c6ca30aff78ac2e1"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2305.16867",
+        "2606.18965",
+        "2608.01425",
+        "2608.12125",
+        "osborne_rubinstein-chunk-2120",
+        "osborne_rubinstein-chunk-830",
+        "osborne_rubinstein-chunk-831",
+        "osborne_rubinstein-chunk-836",
+        "osborne_rubinstein-chunk-849",
+        "osborne_rubinstein-chunk-850"
+      ],
+      "prompt_sha256": "5f2a40c88b8a21deb6e7e37a26b0cc5ffeb0dda32fc7555092ba6b0e16865b93",
+      "wall_s": 422.674,
+      "http_status": 200,
+      "output_tokens": 3350,
+      "tok_s": 7.93,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks focus on finitely repeated LLM interactions (2305.16867), cooperation induced by similarity signals (2608.12125), and foundational repeated"
+    },
+    {
+      "case_id": "canary_on_01_ultimatum_plain",
+      "case_index": 18,
+      "sentinel": true,
+      "expected_critic": "restated",
+      "seed": 20260836,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "hofbauer_sigmund_egpd-chunk-41",
+          "sha256": "aad86fdca3126b9ec0f162fa20995281fcc09d454f1159eea295d55552649840"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1554",
+          "sha256": "5adbe8148bfaf24a39f5e1ebbf2e2d5fb59295c53eaf75a1a34741aeb68f725c"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-576",
+          "sha256": "525b46bc9a707e230c7ff9304afd753ed2d1dbf0ad16eee07cf5d4ca2fa24e27"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-739",
+          "sha256": "cc86754c980ef035565629be0059957dc4f2ddc3e6b8d416450b69fb308c53d5"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-737",
+          "sha256": "5f719cb6bbb795854fbd941ecbdca23c03c933a501438c6c6733cfaf259c218f"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-653",
+          "sha256": "9d53074b321a6762820f921ca86b8c1b18bd7d1b436bc2d45cb3291476b20b14"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1491",
+          "sha256": "c0be71c8fe1b70488423815bcf0d6071d74e5386841d0df32fbe54cb4924d23f"
+        },
+        {
+          "doc_id": "hofbauer_sigmund_egpd-chunk-8",
+          "sha256": "490e2deecba05a3881c6325cbeda78bd20ad8399bd69b7a1daa14ef84227511a"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-767",
+          "sha256": "ec6d313d5ea2df6ccacf8141d32eda634328875857e94bd9b0a5220b12dda365"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-129",
+          "sha256": "639c1b1341ca5c84f98bc0ac921bfdd7b981da4007cb01a837dbbb6fabf93feb"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "hofbauer_sigmund_egpd-chunk-41",
+        "hofbauer_sigmund_egpd-chunk-8",
+        "osborne_rubinstein-chunk-129",
+        "osborne_rubinstein-chunk-1491",
+        "osborne_rubinstein-chunk-1554",
+        "osborne_rubinstein-chunk-576",
+        "osborne_rubinstein-chunk-653",
+        "osborne_rubinstein-chunk-737",
+        "osborne_rubinstein-chunk-739",
+        "osborne_rubinstein-chunk-767"
+      ],
+      "prompt_sha256": "a3ba91a1eb2b299a4457e7802fb37ac9a56b267a7151191e2819d69621cc3a98",
+      "wall_s": 201.715,
+      "http_status": 200,
+      "output_tokens": 1599,
+      "tok_s": 7.93,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks consist entirely of theoretical game theory descriptions (e.g., ultimatum game setup, bargaining models, prisoner's dilemma) and contain no"
+    },
+    {
+      "case_id": "falsifiable_01_finite_pd_cooperate",
+      "case_index": 10,
+      "sentinel": true,
+      "expected_critic": "falsified",
+      "seed": 20260828,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "osborne_rubinstein-chunk-831",
+          "sha256": "f60d7899225db3438d85b4a40889e6577458ae79f322fa30dad93eb948b2ea0b"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-836",
+          "sha256": "f60d7899225db3438d85b4a40889e6577458ae79f322fa30dad93eb948b2ea0b"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-850",
+          "sha256": "01098e3c8305d0068e44ec9d31552ba2df5afb070ee3c275c20b2530ee4ac5c7"
+        },
+        {
+          "doc_id": "2606.18965",
+          "sha256": "73fc028c41e182f952276b3c51144456499cf47c59fa53ee13c318cf31b3d457"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-2120",
+          "sha256": "5b8204ee1e48d4f7177edc14a103be6a041624d9390a97c3b93e238104efd83b"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-852",
+          "sha256": "f54fbc1a5a6c5a0fa537bc552f195f4d170011c628689baf9b195a49d10367d6"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1003",
+          "sha256": "7db2f7ed645132955f30529b2af1f424769db5d1a41ec1cc3dcec87d493b8930"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-738",
+          "sha256": "c6fd6a282800f14ba1473dc6b2e80dac79dc5395aedbb5cb4fb3911e939c6375"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-840",
+          "sha256": "39731a55154b109737a07a136d3942220964859dc69fb9f1e9de2fc8c3e00c50"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-849",
+          "sha256": "3ad03504873103c5dbac488dae5a85703b2c95b006e4e713c472aa283fc97cfa"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2606.18965",
+        "osborne_rubinstein-chunk-1003",
+        "osborne_rubinstein-chunk-2120",
+        "osborne_rubinstein-chunk-738",
+        "osborne_rubinstein-chunk-831",
+        "osborne_rubinstein-chunk-836",
+        "osborne_rubinstein-chunk-840",
+        "osborne_rubinstein-chunk-849",
+        "osborne_rubinstein-chunk-850",
+        "osborne_rubinstein-chunk-852"
+      ],
+      "prompt_sha256": "9c8a4cbaccc891df500a586d084a8a187ca13f203e91d4ce3060d8254b0c5f70",
+      "wall_s": 244.378,
+      "http_status": 200,
+      "output_tokens": 1940,
+      "tok_s": 7.94,
+      "parse_status": "ok",
+      "attack_verdict": "refuted",
+      "contradicting_doc_id": "osborne_rubinstein-chunk-850",
+      "rationale_head": "The hypothesis claims cooperation is sustained in every round, but standard backward induction dictates that the unique subgame perfect equilibrium for a finite"
+    },
+    {
+      "case_id": "falsifiable_02_dominant_tft",
+      "case_index": 11,
+      "sentinel": true,
+      "expected_critic": "falsified",
+      "seed": 20260829,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "osborne_rubinstein-chunk-886",
+          "sha256": "6dd1e0597bb8290c44785b29c75b6a6115efb73954971666ad52de84ba852f97"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-831",
+          "sha256": "f60d7899225db3438d85b4a40889e6577458ae79f322fa30dad93eb948b2ea0b"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-836",
+          "sha256": "f60d7899225db3438d85b4a40889e6577458ae79f322fa30dad93eb948b2ea0b"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-233",
+          "sha256": "1bd9b16d6c1d4699930a6757b2eb4402feae04b932fc87ec5114517a52b4ecf2"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-900",
+          "sha256": "445f404e43f273f460085fe8bf58fda5a43a41783c67a0779151c810cf8906e4"
+        },
+        {
+          "doc_id": "2606.18965",
+          "sha256": "73fc028c41e182f952276b3c51144456499cf47c59fa53ee13c318cf31b3d457"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-915",
+          "sha256": "85ca7aacced914870b9219c99e7e256ae041b010a71e3c9b10e70d20de2b2888"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1568",
+          "sha256": "6167a223b15fab8c114546c0d90b441989b10a43304157856e884000bc8f482b"
+        },
+        {
+          "doc_id": "hofbauer_sigmund_egpd-chunk-86",
+          "sha256": "24bbd95f786a2f998dfcf27f6927bd3ce81cb981792379da31dc42cc576f3e16"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-375",
+          "sha256": "a5c04700d0cae1f895c4aa7d179660e6888fddf9f421111dd7e3b0124f17a010"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2606.18965",
+        "evolutionary-game-theory_compress-chunk-233",
+        "hofbauer_sigmund_egpd-chunk-86",
+        "osborne_rubinstein-chunk-1568",
+        "osborne_rubinstein-chunk-375",
+        "osborne_rubinstein-chunk-831",
+        "osborne_rubinstein-chunk-836",
+        "osborne_rubinstein-chunk-886",
+        "osborne_rubinstein-chunk-900",
+        "osborne_rubinstein-chunk-915"
+      ],
+      "prompt_sha256": "ae0ff9c863dd83ea6a23258b3f4fccf47b649a9b8c6cd2ee34d958adf60f2463",
+      "wall_s": 254.61,
+      "http_status": 200,
+      "output_tokens": 2025,
+      "tok_s": 7.95,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks discuss stage-game dominance of Defection, grim trigger strategies, and evolutionary dynamics, but none mention Tit-for-tat or analyze its "
+    },
+    {
+      "case_id": "camo_off_04_raft_punishment",
+      "case_index": 15,
+      "sentinel": true,
+      "expected_critic": "undecidable",
+      "seed": 20260833,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "osborne_rubinstein-chunk-833",
+          "sha256": "a8adc4562b7cd61faf7faf0d8b6bf15c64aaa7459ec2d663a09144a7be4592ad"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-838",
+          "sha256": "a8adc4562b7cd61faf7faf0d8b6bf15c64aaa7459ec2d663a09144a7be4592ad"
+        },
+        {
+          "doc_id": "2605.15743",
+          "sha256": "99069b7ab00483e135879698da0bffa625493a046615dc59ee04f952b059540f"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-841",
+          "sha256": "67fa899bdc0423cc46f870ee40ecb17edc69810f8515e859ec0cce938eabd416"
+        },
+        {
+          "doc_id": "2605.24516",
+          "sha256": "0fc50c8e384db7ef7a59f8b64311945de1e47ff789d8da1d2b4dcce00bf7efd2"
+        },
+        {
+          "doc_id": "2608.14109",
+          "sha256": "604d46e92a209403af373e006d062d6938e3723f8115aa204e11dafe109c82f3"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-920",
+          "sha256": "524b2c97746e6f5c699a3f3f3751380b3fffed366fef66ae868ee03c3bc5f658"
+        },
+        {
+          "doc_id": "2608.09055",
+          "sha256": "432a2f95faedc0ab1c66f8790695a96339551589df8ae5c8f6d95888f9b029bd"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-404",
+          "sha256": "020888ed6fc4f81d13720840d9874b3fbc2065559379d4557470c4b65379cfab"
+        },
+        {
+          "doc_id": "hofbauer_sigmund_egpd-chunk-1",
+          "sha256": "99fe2f27b1e072d272152d48b76f95b44df6c5c82fb340bf70ea7704f28f5994"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2605.15743",
+        "2605.24516",
+        "2608.09055",
+        "2608.14109",
+        "evolutionary-game-theory_compress-chunk-404",
+        "hofbauer_sigmund_egpd-chunk-1",
+        "osborne_rubinstein-chunk-833",
+        "osborne_rubinstein-chunk-838",
+        "osborne_rubinstein-chunk-841",
+        "osborne_rubinstein-chunk-920"
+      ],
+      "prompt_sha256": "570f393dffffca2762d59804cdfb44d198005947638507e69bb5477988063c43",
+      "wall_s": 159.064,
+      "http_status": 200,
+      "output_tokens": 1266,
+      "tok_s": 7.96,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks cover abstract repeated-game theory, evolutionary dynamics, and unrelated ML/network security topics, but none mention the Raft consensus a"
+    },
+    {
+      "case_id": "novel_on_02_critic_flip_model",
+      "case_index": 1,
+      "sentinel": false,
+      "expected_critic": "survives",
+      "seed": 20260819,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "2607.26587",
+          "sha256": "9e4f7bd54188e8b1e6e6ff57256614c8c2ac9bb3ea5154658f3175888a268a9a"
+        },
+        {
+          "doc_id": "2606.19826",
+          "sha256": "1f06200c74390d519407d7c6ffcb5ede6cd957d7b7bb3bf4ea6810eafbe5d876"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-103",
+          "sha256": "e2925b1032693d85645bdedd1472bfe955456835fc52e40f14440c987d7ddb04"
+        },
+        {
+          "doc_id": "2606.22337",
+          "sha256": "0d9f05ab23cea663066c40caa7f92d3d1d915b5553371946c5586d2b1a8b1fb8"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-49",
+          "sha256": "c9dd22aab0eb683bfb40f94a79c4273dd1cfd8a902cd017371c374d342607bac"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-22",
+          "sha256": "98218dcb8f3cb3189c8bec95c0b7bc05014a84e86e826c3ebd138c0507437d20"
+        },
+        {
+          "doc_id": "2607.18006",
+          "sha256": "0a4aa5e9793ed33092acc6edd4f236e03504936a5a35d1d3d5ade1a61c4bcb93"
+        },
+        {
+          "doc_id": "2608.03421",
+          "sha256": "de67bd0caa2f8a7cf93ec046a407e52c0fa71706bb6eddeef31e117d0ab34836"
+        },
+        {
+          "doc_id": "2608.01476",
+          "sha256": "ccaed83dc69536f3c69535f9da718c73abf9bc5f998b4385c3399910423e05ab"
+        },
+        {
+          "doc_id": "2608.07414",
+          "sha256": "411d3d22903fcc0ce4d1ae9f2ef067d7149e0335ed4a0a4b096e5215d3aa8937"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2606.19826",
+        "2606.22337",
+        "2607.18006",
+        "2607.26587",
+        "2608.01476",
+        "2608.03421",
+        "2608.07414",
+        "camerer_bgt-chunk-103",
+        "camerer_bgt-chunk-22",
+        "camerer_bgt-chunk-49"
+      ],
+      "prompt_sha256": "89ef417e5224b8dd708bb3f2e4346b8be3e5e1f62671e3ecc0199d74a1cbf5ce",
+      "wall_s": 258.147,
+      "http_status": 200,
+      "output_tokens": 2057,
+      "tok_s": 7.97,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved set lacks evidence addressing model-family diversity in automated hypothesis falsification. While chunk [2] examines heterogeneous versus homogene"
+    },
+    {
+      "case_id": "novel_on_03_levelk_quantal_bridge",
+      "case_index": 2,
+      "sentinel": false,
+      "expected_critic": "survives",
+      "seed": 20260820,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "2404.08492",
+          "sha256": "48e5688cd395d67ebdc2fdaf2f466e3c6ba25fd1a60ad28683e6df0c2af0fee0"
+        },
+        {
+          "doc_id": "2502.03158",
+          "sha256": "3ad7fa1ad922823e287ae50384944fd73c694116c87235b4f89e82fdca9a20fe"
+        },
+        {
+          "doc_id": "2502.07443",
+          "sha256": "cb87f107a5a2bfeb71b4c3e16b40716ab73ceae65f5b54cc1c1a951a6b4d7a67"
+        },
+        {
+          "doc_id": "2606.27845",
+          "sha256": "619776cd3ce25f6a6641ae2d1f27f98cabaf6337980ed771e8fd1303c7618f68"
+        },
+        {
+          "doc_id": "2607.27536",
+          "sha256": "a0f48fc6af8fb1e902e6f73458c9002d2b14da03b8db529b8bc5a2be130fdf68"
+        },
+        {
+          "doc_id": "2608.02178",
+          "sha256": "c6611b40097e20fa132ecff5f75e7644f83f87d47cfce405d6179ae55ae2e0d6"
+        },
+        {
+          "doc_id": "2606.29113",
+          "sha256": "e559685fa960e55f9e37cf7b9b45baee4ae21146f0b775fe8372767e7c0cb489"
+        },
+        {
+          "doc_id": "2402.12348",
+          "sha256": "a592c8dbadf5284f9eca15c61370c839bba8a68dc933c72b1c8c52cf080c66bc"
+        },
+        {
+          "doc_id": "2608.01425",
+          "sha256": "6e22113ba9bad2f6f83bc21ec80070716ba9cfc5f14d50575bafe53c17d6360e"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-140",
+          "sha256": "c277f0977ab750b9b188dad0129f5fe3efbd6e69f9f67a2fcf29db0b56c384fb"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2402.12348",
+        "2404.08492",
+        "2502.03158",
+        "2502.07443",
+        "2606.27845",
+        "2606.29113",
+        "2607.27536",
+        "2608.01425",
+        "2608.02178",
+        "camerer_bgt-chunk-140"
+      ],
+      "prompt_sha256": "34d129d80578ba917ea41f6ee80fb59fb6a9ac7ac6c78207f9632f2097631797",
+      "wall_s": 348.848,
+      "http_status": 200,
+      "output_tokens": 2780,
+      "tok_s": 7.97,
+      "parse_status": "ok",
+      "attack_verdict": "refuted",
+      "contradicting_doc_id": "2606.27845",
+      "rationale_head": "Chunk 4 directly tests LLM agents in beauty contests under varied decoding temperatures and characterizes them as 'static level-k players,' demonstrating that t"
+    },
+    {
+      "case_id": "redisc_on_02_folk_theorem",
+      "case_index": 4,
+      "sentinel": false,
+      "expected_critic": "restated",
+      "seed": 20260822,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "osborne_rubinstein-chunk-1005",
+          "sha256": "974e97fe48185df97a36537ab12702c98079e1e89d68b64083718bcee00f79cb"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-968",
+          "sha256": "bd4f43ebd3c0ec6dfc7bc3e72a3bafd75a2a2eae0cf72f5045473e7e5d1fa0d9"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-935",
+          "sha256": "43f693c48af6854953efcff4b5e1f056e62f00e2e643b40c56173e499548c27e"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-920",
+          "sha256": "524b2c97746e6f5c699a3f3f3751380b3fffed366fef66ae868ee03c3bc5f658"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-925",
+          "sha256": "a5ef0251ac160e8ba15bd211a1cc8a3a953851735bdebb0a3ca595f324ac5da4"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-988",
+          "sha256": "857831b67baa579900252ecfe250d10c3356ec10312d6fcfa546530c2f651766"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-922",
+          "sha256": "6b9bae8c83674747087c3bbd6f73dbbef570196fa99c3e39f35eec4b03b562c2"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-999",
+          "sha256": "f924d8288ab0c77f63e186fba473e465688ca6b0c25b76ee2e56a716e94f1b65"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1995",
+          "sha256": "262d24af032508479eef7b517d39f7d8651297b58f08d872ccd5717d2189cdca"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-947",
+          "sha256": "6a365ceed06cd40ea5c3816566c80b5cc1eafd7f1d4f94483e30bc96359a9a98"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "osborne_rubinstein-chunk-1005",
+        "osborne_rubinstein-chunk-1995",
+        "osborne_rubinstein-chunk-920",
+        "osborne_rubinstein-chunk-922",
+        "osborne_rubinstein-chunk-925",
+        "osborne_rubinstein-chunk-935",
+        "osborne_rubinstein-chunk-947",
+        "osborne_rubinstein-chunk-968",
+        "osborne_rubinstein-chunk-988",
+        "osborne_rubinstein-chunk-999"
+      ],
+      "prompt_sha256": "49e7e55bc61718c155239e7e0c9dc1ada8f9c15b432194773133d9f8be26233d",
+      "wall_s": 171.652,
+      "http_status": 200,
+      "output_tokens": 1369,
+      "tok_s": 7.98,
+      "parse_status": "ok",
+      "attack_verdict": "refuted",
+      "contradicting_doc_id": "osborne_rubinstein-chunk-922",
+      "rationale_head": "The hypothesis is a direct restatement of the well-known Perfect Folk Theorem for infinitely repeated games, which is explicitly documented in the retrieved fou"
+    },
+    {
+      "case_id": "redisc_on_03_quantal_response",
+      "case_index": 5,
+      "sentinel": false,
+      "expected_critic": "restated",
+      "seed": 20260823,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "osborne_rubinstein-chunk-264",
+          "sha256": "4ee9843583db07e4ce0f8b04a66104d316e3230f895ab059c9dd9f169a66daf7"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-350",
+          "sha256": "44af0f26da67b89274efbcba79cbf734ee02d63e069e7d8a9b7b0a157521c63c"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-355",
+          "sha256": "44af0f26da67b89274efbcba79cbf734ee02d63e069e7d8a9b7b0a157521c63c"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-376",
+          "sha256": "f124bf6d86b2de71d465699511575eba37ed05c7387c94fb54405ffe4a1644ef"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-289",
+          "sha256": "8d200e2bb7184d1425e27ffeda50c83c44d651dd428213240fdbfb8509d5ba0d"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1453",
+          "sha256": "0a39fcdd3d6c1d26c8816d44cdb6d344f334507c2855e84ea6faab3ba6b2d219"
+        },
+        {
+          "doc_id": "learning_mutations_and_long.pdf-chunk-25",
+          "sha256": "457c93e0613375817a928c987ac9b9c90217688ce34f8d1138e08cca068dac3c"
+        },
+        {
+          "doc_id": "learning_mutations_and_long.pdf-chunk-2",
+          "sha256": "e13ad03ac1a8718faa32103a97b27c457f9b19a3024e604e40817342bcbec8e8"
+        },
+        {
+          "doc_id": "2607.17968",
+          "sha256": "a558486b6f50ac8da88edf1d43dee82fa31d660d0cb3cd27c83238352fb780a0"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-402",
+          "sha256": "a5a3903c225a825ad4572bd260abd62c6d0d529c87397f6329a604d51a971119"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2607.17968",
+        "evolutionary-game-theory_compress-chunk-402",
+        "learning_mutations_and_long.pdf-chunk-2",
+        "learning_mutations_and_long.pdf-chunk-25",
+        "osborne_rubinstein-chunk-1453",
+        "osborne_rubinstein-chunk-264",
+        "osborne_rubinstein-chunk-289",
+        "osborne_rubinstein-chunk-350",
+        "osborne_rubinstein-chunk-355",
+        "osborne_rubinstein-chunk-376"
+      ],
+      "prompt_sha256": "0e1458ab0e82dc6b3fff59e5816566b1b1d2b356f4d8019fb3882b11dedda834",
+      "wall_s": 159.996,
+      "http_status": 200,
+      "output_tokens": 1275,
+      "tok_s": 7.97,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks discuss mixed strategies, rationalizability, and evolutionary learning dynamics, but none mention logit-weighted choice, smooth probability"
+    },
+    {
+      "case_id": "fase_off_01_semantic_entropy",
+      "case_index": 6,
+      "sentinel": false,
+      "expected_critic": "falsified",
+      "seed": 20260824,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "2404.08492",
+          "sha256": "48e5688cd395d67ebdc2fdaf2f466e3c6ba25fd1a60ad28683e6df0c2af0fee0"
+        },
+        {
+          "doc_id": "2606.16389",
+          "sha256": "da668b1cd32322b23b6e85c8021304ae92afb0972715d8c7e2d46c0773e9ea65"
+        },
+        {
+          "doc_id": "2606.29113",
+          "sha256": "e559685fa960e55f9e37cf7b9b45baee4ae21146f0b775fe8372767e7c0cb489"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-272",
+          "sha256": "8202dae13b743a6185c2b4c927aefc253fccba935d3feb0c3ad41440c6af684c"
+        },
+        {
+          "doc_id": "young_1993-chunk-12",
+          "sha256": "807a11c782e985cb463915d3c4ddef3890aadb8eb7372277f6b9b2e641bc2c95"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-364",
+          "sha256": "90e87368883f1d25c7c5a3e6dce56a46da33aad28b5b4046e369c460e2a36317"
+        },
+        {
+          "doc_id": "2607.14438",
+          "sha256": "08b82b808b60633e7be46b80bc37e51361d45e5fffca1ff952261b99668bf524"
+        },
+        {
+          "doc_id": "2606.06380",
+          "sha256": "083d1a4388c76e051c5484b91d4560147ab2a98b7970257c22d0a797f12910bb"
+        },
+        {
+          "doc_id": "2502.03158",
+          "sha256": "3ad7fa1ad922823e287ae50384944fd73c694116c87235b4f89e82fdca9a20fe"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-347",
+          "sha256": "88c4a5d70eebb6a3964346bceb877cb3c4b287983d8adee76c97e7a82f543c96"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2404.08492",
+        "2502.03158",
+        "2606.06380",
+        "2606.16389",
+        "2606.29113",
+        "2607.14438",
+        "evolutionary-game-theory_compress-chunk-347",
+        "evolutionary-game-theory_compress-chunk-364",
+        "osborne_rubinstein-chunk-272",
+        "young_1993-chunk-12"
+      ],
+      "prompt_sha256": "ad9838d75808892d162a814c6e12b987b54c4758b043d2837c2ed1498d8d1923",
+      "wall_s": 209.767,
+      "http_status": 200,
+      "output_tokens": 1673,
+      "tok_s": 7.98,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks cover LLM strategic interactions, semantic signaling games, and compensation/auction mechanisms, but none discuss semantic entropy as a sig"
+    },
+    {
+      "case_id": "fase_off_02_db_index_tuning",
+      "case_index": 7,
+      "sentinel": false,
+      "expected_critic": "falsified",
+      "seed": 20260825,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "2608.06025",
+          "sha256": "00a1e01d689adfc9a12c9451020b3b1bd6102b6cd1379ec8c7f9f179816d7857"
+        },
+        {
+          "doc_id": "2608.03502",
+          "sha256": "d0f3b074ecce44b240882079a54b2b8919fe8e16b8844b6dbadaf3c3c77f406c"
+        },
+        {
+          "doc_id": "2608.04276",
+          "sha256": "a98abb3c30c9c0adb9a2267616843776984a392402877222ce78cde6710ea5f0"
+        },
+        {
+          "doc_id": "2608.04317",
+          "sha256": "f0900fcc2310ad5358d91903c65020ccf9efe832fe27636c5204a7842dbfe8d9"
+        },
+        {
+          "doc_id": "2608.13982",
+          "sha256": "dd08fe588a176a37ab49d69a918581e54f368e7cb46165550ebbb20acb860627"
+        },
+        {
+          "doc_id": "2606.25526",
+          "sha256": "957ea0b7a8baa16722dd3b6509b7ddddda361a0167975d7dde7d0048672f7675"
+        },
+        {
+          "doc_id": "2608.14109",
+          "sha256": "604d46e92a209403af373e006d062d6938e3723f8115aa204e11dafe109c82f3"
+        },
+        {
+          "doc_id": "2608.09251",
+          "sha256": "945147a59b814ee45a64efe9fd0c8676cea24e47c93d9c8be5e3f5e835358797"
+        },
+        {
+          "doc_id": "2605.15343",
+          "sha256": "47cc478d3bb261caf8354b85592d56aa6b73a6bd6b6d3413c6af1b4547010681"
+        },
+        {
+          "doc_id": "2608.01085",
+          "sha256": "8d833f446a4f566b4838b937c793d84e281530fe6d7e9195999ea18943ed276f"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2605.15343",
+        "2606.25526",
+        "2608.01085",
+        "2608.03502",
+        "2608.04276",
+        "2608.04317",
+        "2608.06025",
+        "2608.09251",
+        "2608.13982",
+        "2608.14109"
+      ],
+      "prompt_sha256": "e2fb259e95ba4746a46fadd8c75b17b24e05c477a5e433f473a49a0586806682",
+      "wall_s": 144.975,
+      "http_status": 200,
+      "output_tokens": 1154,
+      "tok_s": 7.96,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks focus on RL applications in simulation thread tuning, cyber defense, network slicing, and LLM agent coordination, with no mention of databa"
+    },
+    {
+      "case_id": "nonsense_01_word_salad",
+      "case_index": 8,
+      "sentinel": false,
+      "expected_critic": "malformed",
+      "seed": 20260826,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "osborne_rubinstein-chunk-273",
+          "sha256": "370b84aca94013380a4874b3350093329b09f900f936e7151796cc61154e1c63"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-912",
+          "sha256": "3c3145fa6d2ee45fa57a181034a4e32725c66e8bac2bde854b07ac1d033f07d5"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-137",
+          "sha256": "53840e0498cd3dc7a469b820e558f95bda11b25eb481e7f0f102cebeebf9176f"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-755",
+          "sha256": "520c24eab42a2fabd09947cee250f7ade855ab816839625e25bc9d51b7003332"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1375",
+          "sha256": "a99e30e6796ee53f14099d34c08137a52a34af9f191e6f1a2891ceb24700ff48"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-606",
+          "sha256": "f9abacf72f4dae7075f92a83e8ddbc7c52fb0609dd2068dd70e3e9555315ba18"
+        },
+        {
+          "doc_id": "2606.22434",
+          "sha256": "319a6c0bf2c6601551d971a1d3fffbc11c6693f854e824547437be079a6bd03c"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1379",
+          "sha256": "7cf2384ce031796ae64c5ab63f3d10298c0c6bf3d3487c99b78c0c3be27e05ee"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-289",
+          "sha256": "8d200e2bb7184d1425e27ffeda50c83c44d651dd428213240fdbfb8509d5ba0d"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-268",
+          "sha256": "587d0aacdc06e38ea1cbd86a4d5663bd235821c8718ba1809863beec319c0f18"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2606.22434",
+        "evolutionary-game-theory_compress-chunk-137",
+        "osborne_rubinstein-chunk-1375",
+        "osborne_rubinstein-chunk-1379",
+        "osborne_rubinstein-chunk-268",
+        "osborne_rubinstein-chunk-273",
+        "osborne_rubinstein-chunk-289",
+        "osborne_rubinstein-chunk-606",
+        "osborne_rubinstein-chunk-755",
+        "osborne_rubinstein-chunk-912"
+      ],
+      "prompt_sha256": "31cae336ead1b6841c7e9b34230320fa3a87f68b843a08b6602f0193095b55d2",
+      "wall_s": 91.773,
+      "http_status": 200,
+      "output_tokens": 729,
+      "tok_s": 7.94,
+      "parse_status": "ok",
+      "attack_verdict": "inconclusive",
+      "contradicting_doc_id": null,
+      "rationale_head": "The hypothesis is syntactically and semantically incoherent word salad that strings together game-theoretic terms without forming a testable or meaningful claim"
+    },
+    {
+      "case_id": "nonsense_02_not_a_question",
+      "case_index": 9,
+      "sentinel": false,
+      "expected_critic": "malformed",
+      "seed": 20260827,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "osborne_rubinstein-chunk-22",
+          "sha256": "67bd62acb1a10530924c0ee79786c4d6a9d6166e55fbaf2955bf7b5cb5aaa53c"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-26",
+          "sha256": "67bd62acb1a10530924c0ee79786c4d6a9d6166e55fbaf2955bf7b5cb5aaa53c"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-11",
+          "sha256": "6808cac35bf1bc084a22c98df89269818cae2c6e8d3b5d8d65f981aad91f4442"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-32",
+          "sha256": "4eaaeb41973f0b48b49e6c3c286f792a2a4bd491a76b67fc185296a3396e4540"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-31",
+          "sha256": "4f1e0078bf2390fd1ec6c78dfa3e52b126a607fd2a9d6f2f63db9234bdabb91b"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-25",
+          "sha256": "82aafbac19ad95c394e65e65f153abee9e9f66fda98710b24607b97a8a4ec66e"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-29",
+          "sha256": "82aafbac19ad95c394e65e65f153abee9e9f66fda98710b24607b97a8a4ec66e"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-24",
+          "sha256": "5da54ce191472fe3dd8ec43c9e62d72fac45c01b3b211ef266506e29625888be"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-28",
+          "sha256": "5da54ce191472fe3dd8ec43c9e62d72fac45c01b3b211ef266506e29625888be"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-0",
+          "sha256": "f5d33c71b1335a08ec97f7b54b2cd9ceaf8059ae1081bb2ec9197e9c4377f25b"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "camerer_bgt-chunk-11",
+        "osborne_rubinstein-chunk-0",
+        "osborne_rubinstein-chunk-22",
+        "osborne_rubinstein-chunk-24",
+        "osborne_rubinstein-chunk-25",
+        "osborne_rubinstein-chunk-26",
+        "osborne_rubinstein-chunk-28",
+        "osborne_rubinstein-chunk-29",
+        "osborne_rubinstein-chunk-31",
+        "osborne_rubinstein-chunk-32"
+      ],
+      "prompt_sha256": "0104355ee9aaf80853d8e51a03b9976ba09bd25c9fd94d621555884b928f3fda",
+      "wall_s": 213.833,
+      "http_status": 200,
+      "output_tokens": 1707,
+      "tok_s": 7.98,
+      "parse_status": "ok",
+      "attack_verdict": "refuted",
+      "contradicting_doc_id": "osborne_rubinstein-chunk-0",
+      "rationale_head": "The hypothesis merely restates prior art explicitly confirmed by the retrieved chunks, which describe game theory as a subject taught in graduate courses using "
+    },
+    {
+      "case_id": "camo_off_01_fase_gt_vocab",
+      "case_index": 12,
+      "sentinel": false,
+      "expected_critic": "undecidable",
+      "seed": 20260830,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "2606.05158",
+          "sha256": "90219922dddad6fd555c692e72c9b8fbecd9b1d61b130b0968b089b8be4fa181"
+        },
+        {
+          "doc_id": "2608.07383",
+          "sha256": "784485b4c8ca3c8900b7b6d9acfe5e0d20c509980b696c61397500e6f56214ff"
+        },
+        {
+          "doc_id": "2608.01507",
+          "sha256": "bf690c58d1637d172773781153eba4fc4f1d975bbed9992b823ca88b1974b247"
+        },
+        {
+          "doc_id": "2608.01425",
+          "sha256": "6e22113ba9bad2f6f83bc21ec80070716ba9cfc5f14d50575bafe53c17d6360e"
+        },
+        {
+          "doc_id": "2607.21210",
+          "sha256": "bdd23f1b9e9ee226ab90d294592b51624318a2b3cce52d79e66418f9b32aa3b4"
+        },
+        {
+          "doc_id": "2606.19135",
+          "sha256": "7b837274bcb9385a2ffa5d0131a3f95986bc3d87319db0aae43d72d513725ad3"
+        },
+        {
+          "doc_id": "2607.25255",
+          "sha256": "c6a6d103ae967adb0935497b7b02cf11f7ab9b45eff3513c9ec30cff6ae5e04f"
+        },
+        {
+          "doc_id": "2607.26385",
+          "sha256": "cf77e19ba693846de83a6354aab23d427aa02fb352fcc1ab66e370265eea36b3"
+        },
+        {
+          "doc_id": "2608.04341",
+          "sha256": "8fd73834427c7e92cc089343ea9910d6f32b6726a98930a9c59773fb7269eb96"
+        },
+        {
+          "doc_id": "2605.15573",
+          "sha256": "a759e831d6b6f09b2e542b85e7fb94ef004f0855ee00e9fa505af8622f150802"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2605.15573",
+        "2606.05158",
+        "2606.19135",
+        "2607.21210",
+        "2607.25255",
+        "2607.26385",
+        "2608.01425",
+        "2608.01507",
+        "2608.04341",
+        "2608.07383"
+      ],
+      "prompt_sha256": "3008ae8ec1fdabbab1db6355495127f2c669331fe4adf2ceaf2aa6421b00a675",
+      "wall_s": 199.722,
+      "http_status": 200,
+      "output_tokens": 1592,
+      "tok_s": 7.97,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks cover multi-agent communication protocols, latency pipelining, bidding games, code search, and information-flow control, but none discuss s"
+    },
+    {
+      "case_id": "camo_off_02_btree_mechanism",
+      "case_index": 13,
+      "sentinel": false,
+      "expected_critic": "undecidable",
+      "seed": 20260831,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "2606.30974",
+          "sha256": "73d4cfeaae71f76227da8e09ba02e2d1bd766a39adb6c0193ddf3c78d43dce34"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-55",
+          "sha256": "45a0c92dc4cac7f7d058a74012029f5dc0accafc29fc21c8cb6e60cbd0a48710"
+        },
+        {
+          "doc_id": "2605.24165",
+          "sha256": "132f5d727857a7c63f405704276655b9e54ad7442ffdabf762e805b788577bf1"
+        },
+        {
+          "doc_id": "2605.22438",
+          "sha256": "4e455a10c37c26ed71336cef1db327a6d84f609463e62e02db90e6dc02a38fa1"
+        },
+        {
+          "doc_id": "2606.15404",
+          "sha256": "22899ffb8be243ef0e2a23490e23cb66e0e2b2ba0d26d9e341f176968409f064"
+        },
+        {
+          "doc_id": "2605.25349",
+          "sha256": "efd846591d00a3a9b2076eadd6cdcc6025b9aa4531569a7d115c15cb979531f3"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1122",
+          "sha256": "5c2373409e1a5029a40c3ff6078f4799a172aec05eb516dca0d5bfec3ff5e49e"
+        },
+        {
+          "doc_id": "2606.10472",
+          "sha256": "ad3dc667b9efc7b7cd9160deb4c2d550169d69b7d3ebcd9ecef56fc4be9d4ff9"
+        },
+        {
+          "doc_id": "2605.24233",
+          "sha256": "18bf7b903d437c64cb057bcc156e933ac751f2c409b058bfc6d15942d15fa6c1"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-68",
+          "sha256": "6fbcba0900aaa026029c832105bd30458a6085c02551ed0328c18d028109864e"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2605.22438",
+        "2605.24165",
+        "2605.24233",
+        "2605.25349",
+        "2606.10472",
+        "2606.15404",
+        "2606.30974",
+        "evolutionary-game-theory_compress-chunk-55",
+        "evolutionary-game-theory_compress-chunk-68",
+        "osborne_rubinstein-chunk-1122"
+      ],
+      "prompt_sha256": "371e8c5382eceb7e565f85fb2960dec2984d66268482ae16c66e237089512f91",
+      "wall_s": 179.522,
+      "http_status": 200,
+      "output_tokens": 1431,
+      "tok_s": 7.97,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks cover general mechanism design, game theory, auctions, and fair division, but none mention B-trees, page-split tuning, fill factors, or dat"
+    },
+    {
+      "case_id": "camo_off_03_framework_coordination",
+      "case_index": 14,
+      "sentinel": false,
+      "expected_critic": "undecidable",
+      "seed": 20260832,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "osborne_rubinstein-chunk-1736",
+          "sha256": "e3bf437e54390008585b2d84075f9e3a74d97a70067cb1581197ea3b4397111e"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1741",
+          "sha256": "e3bf437e54390008585b2d84075f9e3a74d97a70067cb1581197ea3b4397111e"
+        },
+        {
+          "doc_id": "2605.22667",
+          "sha256": "4bce60dd2f1b5b3fea3b2c323dd00cf148446442707619cde39a7235104f1b98"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1830",
+          "sha256": "bd35b472ece13387fefe92a4504b7c4513ee2b658a4d4a1061b178d232d062be"
+        },
+        {
+          "doc_id": "2605.25349",
+          "sha256": "efd846591d00a3a9b2076eadd6cdcc6025b9aa4531569a7d115c15cb979531f3"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-126",
+          "sha256": "f62f867549efce601ab0c6aaa3947ffb97cc2681fa216a7e66e076ae5318b8b0"
+        },
+        {
+          "doc_id": "2606.29111",
+          "sha256": "8937ce1024dca2a767fbd45f83f0c00c783d6a7600a253277b978e46a6d59031"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-814",
+          "sha256": "c16405d30389518bf8121f1b31b236fe2e67f39b731533d9dc46ae303840e7fa"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1659",
+          "sha256": "53fd217280b617d043e27f8357e359daf6695802670bc9105531bced733c5158"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-74",
+          "sha256": "3288c6a3852d900886f2319cc74bca8f1c9ac0ec237bbcf4c5d56d7f4a679e1c"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2605.22667",
+        "2605.25349",
+        "2606.29111",
+        "camerer_bgt-chunk-126",
+        "camerer_bgt-chunk-74",
+        "evolutionary-game-theory_compress-chunk-814",
+        "osborne_rubinstein-chunk-1659",
+        "osborne_rubinstein-chunk-1736",
+        "osborne_rubinstein-chunk-1741",
+        "osborne_rubinstein-chunk-1830"
+      ],
+      "prompt_sha256": "314113f808e7ffd5d6658ad4a0605ee8dae1cb61cfc1ab7de09233d869a75df6",
+      "wall_s": 153.526,
+      "http_status": 200,
+      "output_tokens": 1223,
+      "tok_s": 7.97,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks consist of abstract game theory texts and unrelated empirical studies that do not mention software frameworks, React, Vue, or developer hir"
+    },
+    {
+      "case_id": "drift_off_01_rag_chunk_overlap",
+      "case_index": 16,
+      "sentinel": false,
+      "expected_critic": "undecidable",
+      "seed": 20260834,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "2606.18021",
+          "sha256": "a39bbe31bffd4418e21adf97fc0c64fb2c24cd9cfc7e3f79757d51c64708efe6"
+        },
+        {
+          "doc_id": "2607.12216",
+          "sha256": "29a1a6a00b85fe27b7b7776e09d2ee07df457757d457cfedddaab51a4d775567"
+        },
+        {
+          "doc_id": "2606.21666",
+          "sha256": "2143b73506d2b8ee9656336b32b2d22f5cbb929695c282c0055006e2c1a97c1e"
+        },
+        {
+          "doc_id": "2608.10509",
+          "sha256": "fdb9a7199179bb58125abaa8c17cdd85209254550aafe40ed2fc9b3131254adb"
+        },
+        {
+          "doc_id": "2606.22844",
+          "sha256": "b5fdff7d73b5925f6703311bc5627b5380ed2772f73f222aa6a75b2adabcba10"
+        },
+        {
+          "doc_id": "2607.00874",
+          "sha256": "48060547df51eba9964fae4a809473b74be51496a84839334a1bbdcc27d65c9d"
+        },
+        {
+          "doc_id": "2607.08504",
+          "sha256": "d8172674afda157c8a4fb3b1f1b5b88b3ca613e6179d1904c07066b361c452fd"
+        },
+        {
+          "doc_id": "2607.00918",
+          "sha256": "b4a19668a7cd71f9b3922027aa798330529cd03033a7d3c97d3b4df26a81ace0"
+        },
+        {
+          "doc_id": "2605.19748",
+          "sha256": "59b397c2fa988ecd799556454026c718681faec7668b5a638638325fb63c3592"
+        },
+        {
+          "doc_id": "2608.08389",
+          "sha256": "0428adefd848575a88ae735c5c6d11d35397d1b30994240ebfa39c83d89483da"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2605.19748",
+        "2606.18021",
+        "2606.21666",
+        "2606.22844",
+        "2607.00874",
+        "2607.00918",
+        "2607.08504",
+        "2607.12216",
+        "2608.08389",
+        "2608.10509"
+      ],
+      "prompt_sha256": "fc5b8eca63f8b39a759aee1294216d0c45898680e0124ee2c28aaf1577356abf",
+      "wall_s": 152.372,
+      "http_status": 200,
+      "output_tokens": 1214,
+      "tok_s": 7.97,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks focus on multi-agent context drift, memory management, V2X perception, and legal hallucination auditing, but none address RAG chunking stra"
+    },
+    {
+      "case_id": "drift_off_02_belief_distillation",
+      "case_index": 17,
+      "sentinel": false,
+      "expected_critic": "undecidable",
+      "seed": 20260835,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "camerer_bgt-chunk-22",
+          "sha256": "98218dcb8f3cb3189c8bec95c0b7bc05014a84e86e826c3ebd138c0507437d20"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-119",
+          "sha256": "512ee64a474896ce357fcc4dfde4b3ae3a1bf3dcd2c8b8fc1e49f441d73555ba"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-141",
+          "sha256": "3d812c0fb73dbcfef636d2de456b579c6da301537abba01dbbe052c7601db5af"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-87",
+          "sha256": "ec8721bdc60431e4d3412813a609836333e97d9d7a89af979a0916d3c5b84b81"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-149",
+          "sha256": "8bfe02b8cab5f42be23ab0e9f35b9676e138389b826c6983bcc6424231fb301b"
+        },
+        {
+          "doc_id": "2606.29745",
+          "sha256": "50fc67c3aeeaed35fe48aff6713ed58da3f5656ca3ad42c51d6f92a66f5ee8dd"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-96",
+          "sha256": "c802c6f74d3a34896a9a8e653f3bb4dc7853261038a9ae60e7745f5079cb1f53"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-49",
+          "sha256": "c9dd22aab0eb683bfb40f94a79c4273dd1cfd8a902cd017371c374d342607bac"
+        },
+        {
+          "doc_id": "2608.01367",
+          "sha256": "4920b9dbefd9a45c1332f2fb8b96c7b5dfaa286d1ad7a0baee085568e7c4fbce"
+        },
+        {
+          "doc_id": "2607.18735",
+          "sha256": "74cc36e2e95e39fed0e0beb27f54b90bdf2ace708dfe198ae9d347de15f2a835"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2606.29745",
+        "2607.18735",
+        "2608.01367",
+        "camerer_bgt-chunk-119",
+        "camerer_bgt-chunk-141",
+        "camerer_bgt-chunk-149",
+        "camerer_bgt-chunk-22",
+        "camerer_bgt-chunk-49",
+        "camerer_bgt-chunk-87",
+        "camerer_bgt-chunk-96"
+      ],
+      "prompt_sha256": "afde20a91ec35b3c718e53141e236b77ae3a4d55122c6311562ea68a4c2a3840",
+      "wall_s": 172.656,
+      "http_status": 200,
+      "output_tokens": 1377,
+      "tok_s": 7.98,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks discuss game-theoretic teaching models, epistemic decision processes, and social learning, but contain no information on distilling belief-"
+    },
+    {
+      "case_id": "canary_on_02_hawkdove_ess",
+      "case_index": 19,
+      "sentinel": false,
+      "expected_critic": "restated",
+      "seed": 20260837,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "hofbauer_sigmund_egpd-chunk-1",
+          "sha256": "99fe2f27b1e072d272152d48b76f95b44df6c5c82fb340bf70ea7704f28f5994"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-608",
+          "sha256": "f3acf1f9e429687f8d5afc8475de479cc1ba710c7892c0ab5eddd1e552baddd7"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-200",
+          "sha256": "57d7aa7ddc82d7d7576218e88274535f838c55139d2b4d7750c95a67f9ea8216"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-403",
+          "sha256": "d6359b9eea43585c543008a9e05ccc2d21a008c4771610ad3e21a1851c4332a6"
+        },
+        {
+          "doc_id": "hofbauer_sigmund_egpd-chunk-58",
+          "sha256": "43ae8847b3c58f33b9e00082ba47ff828a308c32069cec6ef30fba79fca6c5fe"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-462",
+          "sha256": "8b10975e413fbdd009095031338faf6f2692e69d0433680b9bdbcdd7af8fc90d"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-410",
+          "sha256": "9deb867fcf66138b785d3b5e3df05059a09637d07189ea01abe09989fc9fcc52"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-408",
+          "sha256": "7c1fc33170b1ca06822a35bdac24f307def90905fb831ceb3c6d5a2de11de841"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-884",
+          "sha256": "a3f2d23ffe649b89c0d5e98cfe7b0f5883138c2608702e97c34392bf7913d2f5"
+        },
+        {
+          "doc_id": "evolutionary-game-theory_compress-chunk-885",
+          "sha256": "20427fdf8327a6a66d6b32ab49dc827a947c7c6dc8b29b7bd286c0211f62ad70"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "evolutionary-game-theory_compress-chunk-200",
+        "evolutionary-game-theory_compress-chunk-403",
+        "evolutionary-game-theory_compress-chunk-408",
+        "evolutionary-game-theory_compress-chunk-410",
+        "evolutionary-game-theory_compress-chunk-462",
+        "evolutionary-game-theory_compress-chunk-608",
+        "evolutionary-game-theory_compress-chunk-884",
+        "evolutionary-game-theory_compress-chunk-885",
+        "hofbauer_sigmund_egpd-chunk-1",
+        "hofbauer_sigmund_egpd-chunk-58"
+      ],
+      "prompt_sha256": "362d68cf89c600b961bda1aace3ac93542229be1076d5d6e407d66bc7c82abb4",
+      "wall_s": 203.182,
+      "http_status": 200,
+      "output_tokens": 1621,
+      "tok_s": 7.98,
+      "parse_status": "ok",
+      "attack_verdict": "refuted",
+      "contradicting_doc_id": "hofbauer_sigmund_egpd-chunk-58",
+      "rationale_head": "The hypothesis describes the classic frequency-dependent selection mechanism of the Hawk-Dove game, which is explicitly identified in the retrieved literature a"
+    },
+    {
+      "case_id": "canary_on_03_llm_gt_hybrid",
+      "case_index": 20,
+      "sentinel": false,
+      "expected_critic": "survives",
+      "seed": 20260838,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "2607.26358",
+          "sha256": "805326922776c7b4b8185994c2ec4b6924c8cacf23cb6392763a20e5405bc3b6"
+        },
+        {
+          "doc_id": "2606.28710",
+          "sha256": "3aca6ae3ec5fc59d92191c313d7fb2499f6a26327edc785b85c191a9ab57d67d"
+        },
+        {
+          "doc_id": "2608.04276",
+          "sha256": "a98abb3c30c9c0adb9a2267616843776984a392402877222ce78cde6710ea5f0"
+        },
+        {
+          "doc_id": "young_1993-chunk-17",
+          "sha256": "c29d5bcde5bbb1cde9e9a2aab1a7624edaa5ab5c792b11c4a0d8d8d4f0e15c65"
+        },
+        {
+          "doc_id": "2605.21656",
+          "sha256": "d760871116bc4554c582ec163a9b1470acc1a54af9c2890e0429427a8f17b621"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1965",
+          "sha256": "88fbd3c597640ae09ed65bfd763bc38875531785b4451de8abab2e0a770606bd"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1023",
+          "sha256": "383491d5ff0448baa5360c6583fd0778e19e5d12f6beb06878752febfba18a71"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1027",
+          "sha256": "383491d5ff0448baa5360c6583fd0778e19e5d12f6beb06878752febfba18a71"
+        },
+        {
+          "doc_id": "2404.08492",
+          "sha256": "48e5688cd395d67ebdc2fdaf2f466e3c6ba25fd1a60ad28683e6df0c2af0fee0"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-1659",
+          "sha256": "53fd217280b617d043e27f8357e359daf6695802670bc9105531bced733c5158"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2404.08492",
+        "2605.21656",
+        "2606.28710",
+        "2607.26358",
+        "2608.04276",
+        "osborne_rubinstein-chunk-1023",
+        "osborne_rubinstein-chunk-1027",
+        "osborne_rubinstein-chunk-1659",
+        "osborne_rubinstein-chunk-1965",
+        "young_1993-chunk-17"
+      ],
+      "prompt_sha256": "6a722f2dca1be9078545876028a6391c160eb4d2248c493e97480f9041248352",
+      "wall_s": 225.111,
+      "http_status": 200,
+      "output_tokens": 1796,
+      "tok_s": 7.98,
+      "parse_status": "ok",
+      "attack_verdict": "survives_attack",
+      "contradicting_doc_id": null,
+      "rationale_head": "The retrieved chunks discuss foundational bargaining theory (osborne_rubinstein-chunk-1965), fine-tuning regularization frameworks (2607.26358), and LLM behavio"
+    },
+    {
+      "case_id": "pbeauty_068_01_levelk",
+      "case_index": 21,
+      "sentinel": false,
+      "expected_critic": "restated",
+      "seed": 20260839,
+      "sampling": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "max_tokens": 12288
+      },
+      "retrieved_docs": [
+        {
+          "doc_id": "2502.03158",
+          "sha256": "3ad7fa1ad922823e287ae50384944fd73c694116c87235b4f89e82fdca9a20fe"
+        },
+        {
+          "doc_id": "2404.08492",
+          "sha256": "48e5688cd395d67ebdc2fdaf2f466e3c6ba25fd1a60ad28683e6df0c2af0fee0"
+        },
+        {
+          "doc_id": "2605.22095",
+          "sha256": "366dbd2d91e9f9c6c55b9a64cd82f33abc99b2cd8ca5440c00d4829e4ce10f85"
+        },
+        {
+          "doc_id": "2606.27845",
+          "sha256": "619776cd3ce25f6a6641ae2d1f27f98cabaf6337980ed771e8fd1303c7618f68"
+        },
+        {
+          "doc_id": "2502.07443",
+          "sha256": "cb87f107a5a2bfeb71b4c3e16b40716ab73ceae65f5b54cc1c1a951a6b4d7a67"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-52",
+          "sha256": "121ca559d9cfb7382d96384707bff47842babd5a349076baad8bf6871aeb4cdc"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-144",
+          "sha256": "0cdec54c13bcf387c71dfd889495ecaa66f925b6f231c5cc75be77b9a4fd3d50"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-51",
+          "sha256": "979457c48874b8efb2abdcc58e75df1ee45b90f721e929c078f571ebd0cf6297"
+        },
+        {
+          "doc_id": "camerer_bgt-chunk-47",
+          "sha256": "3e67aeebd05a41a1e036e7fd53519227647cfd19ccccad1997ee20e5a0e13f2d"
+        },
+        {
+          "doc_id": "osborne_rubinstein-chunk-240",
+          "sha256": "928d9c4be085cc67d1c3c1b0c6e193adcc05002987d6414b750f65594134d5b2"
+        }
+      ],
+      "retrieved_doc_ids": [
+        "2404.08492",
+        "2502.03158",
+        "2502.07443",
+        "2605.22095",
+        "2606.27845",
+        "camerer_bgt-chunk-144",
+        "camerer_bgt-chunk-47",
+        "camerer_bgt-chunk-51",
+        "camerer_bgt-chunk-52",
+        "osborne_rubinstein-chunk-240"
+      ],
+      "prompt_sha256": "dc6655f908db9414e7cb2e7dfba1a2889633c5fa2d70206cdfae9f0291db9f32",
+      "wall_s": 132.97,
+      "http_status": 200,
+      "output_tokens": 1059,
+      "tok_s": 7.96,
+      "parse_status": "ok",
+      "attack_verdict": "refuted",
+      "contradicting_doc_id": "2404.08492",
+      "rationale_head": "Chunk 2404.08492 explicitly reports that LLM-based agents in beauty contests demonstrate reasoning depths ranging from level-0 to level-1, which is lower than t"
+    }
+  ],
+  "stop_reason": null,
+  "completed": true,
+  "metrics_after": {
+    "spec_decode_num_accepted_tokens_total": null,
+    "spec_decode_num_draft_tokens_total": null,
+    "scraped_at": "2026-08-17T07:04:34.957760+00:00",
+    "scrape_error": null
+  },
+  "total_wall_s": 4541.5,
+  "summary": {
+    "cases_run": 22,
+    "cases_planned": 22,
+    "parse_ok": 22,
+    "unparseable": [],
+    "verdicts": {
+      "novel_on_01_quant_lockin": "survives_attack",
+      "redisc_on_01_tft_reciprocity": "survives_attack",
+      "canary_on_01_ultimatum_plain": "survives_attack",
+      "falsifiable_01_finite_pd_cooperate": "refuted",
+      "falsifiable_02_dominant_tft": "survives_attack",
+      "camo_off_04_raft_punishment": "survives_attack",
+      "novel_on_02_critic_flip_model": "survives_attack",
+      "novel_on_03_levelk_quantal_bridge": "refuted",
+      "redisc_on_02_folk_theorem": "refuted",
+      "redisc_on_03_quantal_response": "survives_attack",
+      "fase_off_01_semantic_entropy": "survives_attack",
+      "fase_off_02_db_index_tuning": "survives_attack",
+      "nonsense_01_word_salad": "inconclusive",
+      "nonsense_02_not_a_question": "refuted",
+      "camo_off_01_fase_gt_vocab": "survives_attack",
+      "camo_off_02_btree_mechanism": "survives_attack",
+      "camo_off_03_framework_coordination": "survives_attack",
+      "drift_off_01_rag_chunk_overlap": "survives_attack",
+      "drift_off_02_belief_distillation": "survives_attack",
+      "canary_on_02_hawkdove_ess": "refuted",
+      "canary_on_03_llm_gt_hybrid": "survives_attack",
+      "pbeauty_068_01_levelk": "refuted"
+    }
+  }
+}

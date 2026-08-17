@@ -344,21 +344,27 @@ def test_probe_script_is_deterministic_and_trap_is_isolated():
     for i in range(10):
         assert tool_probe.build_messages(i) == tool_probe.build_messages(i)
 
-    def string_args(messages):
+    def dict_args(messages):
+        # Polarity fixed 2026-08-17: normal replays are spec-correct JSON
+        # STRINGS (dicts get HTTP-400d before reaching the model, proven on
+        # the first live run); the trap turn is the lone spec-VIOLATING dict.
         return [tc for m in messages if m.get("role") == "assistant"
                 for tc in (m.get("tool_calls") or [])
-                if isinstance(tc["function"]["arguments"], str)]
+                if isinstance(tc["function"]["arguments"], dict)]
 
-    # exactly one string-typed replay, only in the trap request (turn t06)
+    # exactly one dict-typed replay, only in the trap request (turn t06)
     trap_msgs = tool_probe.build_messages(tool_probe.TRAP_REQUEST_TURN)
-    trapped = string_args(trap_msgs)
+    trapped = dict_args(trap_msgs)
     assert len(trapped) == 1
-    assert json.loads(trapped[0]["function"]["arguments"]) == {
+    assert trapped[0]["function"]["arguments"] == {
         "text": "καλημέρα κόσμε ✓"}
     for i in range(10):
         if i == tool_probe.TRAP_REQUEST_TURN:
             continue
-        assert string_args(tool_probe.build_messages(i)) == []
+        assert dict_args(tool_probe.build_messages(i)) == []
+        for m in tool_probe.build_messages(i):
+            for tc in (m.get("tool_calls") or []):
+                assert isinstance(tc["function"]["arguments"], str)
     # the multi-tool turn replays as TWO calls in later histories
     multi = [m for m in tool_probe.build_messages(8)
              if m.get("role") == "assistant" and len(m.get("tool_calls") or []) == 2]

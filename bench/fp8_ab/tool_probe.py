@@ -144,16 +144,22 @@ def build_messages(turn_index: int) -> list[dict]:
     for j in range(turn_index):
         turn = TURNS[j]
         messages.append({"role": "user", "content": turn["user"]})
-        as_string = (turn_index == TRAP_REQUEST_TURN
-                     and j == TRAP_REPLAYED_TURN)
+        # Wire form (fixed 2026-08-17 after 9/10 HTTP-400s on the first live
+        # run): the OpenAI schema requires function.arguments to be a JSON
+        # STRING — dicts are rejected at request validation and never reach
+        # the model. Normal turns therefore replay strings (spec-correct);
+        # the TRAP turn now replays the spec-VIOLATING dict form that sloppy
+        # harnesses emit, so the trap measures server tolerance for it.
+        as_dict = (turn_index == TRAP_REQUEST_TURN
+                   and j == TRAP_REPLAYED_TURN)
         tool_calls, results = [], []
         for k, (tool, args) in enumerate(turn["expect"]):
             call_id = f"call_fp8ab_{j + 1:02d}_{k}"
             tool_calls.append({
                 "id": call_id, "type": "function",
                 "function": {"name": tool,
-                             "arguments": (json.dumps(args) if as_string
-                                           else args)}})
+                             "arguments": (args if as_dict
+                                           else json.dumps(args))}})
             results.append({"role": "tool", "tool_call_id": call_id,
                             "content": _tool_result(tool, args)})
         messages.append({"role": "assistant", "content": "",
