@@ -71,6 +71,7 @@ _EVENT_TYPES = frozenset({
 })
 
 _schema_cache: dict[str, Any] | None = None
+_validator_cache: Any = None
 
 
 def _schema() -> dict[str, Any]:
@@ -80,9 +81,27 @@ def _schema() -> dict[str, Any]:
     return _schema_cache
 
 
+def _validator() -> Any:
+    """The event validator, compiled ONCE per process (B1 perf fix
+    2026-08-18: ``jsonschema.validate()`` rebuilds the validator on every
+    call — ~9 ms × 323 ledger events put every load_state consumer,
+    /api/human_todo included, at ~3 s). Protocol-matching precompile:
+    ``validator_for()`` honors the schema's declared ``$schema`` dialect and
+    ``check_schema()`` runs once at compile time, so validation SEMANTICS
+    are identical to ``jsonschema.validate(event, _schema())`` — only the
+    per-event recompilation goes."""
+    global _validator_cache
+    if _validator_cache is None:
+        schema = _schema()
+        cls = jsonschema.validators.validator_for(schema)
+        cls.check_schema(schema)
+        _validator_cache = cls(schema)
+    return _validator_cache
+
+
 def validate_event(event: dict[str, Any]) -> None:
     """jsonschema-validate one event. Raises jsonschema.ValidationError."""
-    jsonschema.validate(event, _schema())
+    _validator().validate(event)
 
 
 # ── Event log I/O ────────────────────────────────────────────────────────────

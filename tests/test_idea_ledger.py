@@ -92,6 +92,46 @@ def test_schema_rejects_malformed(bad):
         idea_ledger.validate_event(bad)
 
 
+def test_precompiled_validator_pins_behavior_not_timing():
+    """B1 perf fix (2026-08-18): validate_event now runs on ONE module-scope
+    precompiled validator (jsonschema.validate() rebuilt it per event — ~9 ms
+    × 323 events made every load_state consumer ~3 s). The pin here is
+    BEHAVIOR, not timing: a bad event still rejects with ValidationError, a
+    good one still passes, and repeated calls reuse the same compiled
+    validator object (no per-call recompilation)."""
+    idea_ledger.validate_event(_created())  # good event still passes
+    with pytest.raises(jsonschema.ValidationError):
+        idea_ledger.validate_event(
+            {"event_type": "cluster_created", "ts": TS, "cluster_id": "c"}
+        )  # missing origin/member_id still rejects — semantics unchanged
+    with pytest.raises(jsonschema.ValidationError):
+        idea_ledger.validate_event(
+            {"event_type": "cluster_killed", "ts": TS, "cluster_id": "c",
+             "kill_reason": {"code": "llm_said_so", "evidence_key": "x",
+                             "detail": "d"},
+             "reopening_condition": {"requires": "new_evidence",
+                                     "evidence_kind": "k"}}
+        )  # non-enum kill code still rejects
+    # One compiled validator per process — the actual perf mechanism.
+    assert idea_ledger._validator() is idea_ledger._validator()
+
+
+def test_validate_event_uses_precompiled_validator(monkeypatch):
+    """Pins the WIRING, not just the memo: validate_event must go through
+    the compiled validator — a revert to jsonschema.validate(event, schema)
+    passes the behavior test above while restoring the ~3s regression
+    (review catch)."""
+    def _boom(*a, **kw):
+        raise AssertionError(
+            "validate_event called jsonschema.validate — per-call "
+            "recompilation regression")
+    monkeypatch.setattr(jsonschema, "validate", _boom)
+    idea_ledger.validate_event(_created())  # still valid via the compiled path
+    with pytest.raises(jsonschema.ValidationError):
+        idea_ledger.validate_event(
+            {"event_type": "cluster_created", "ts": TS, "cluster_id": "c"})
+
+
 def test_append_event_validates_before_writing(tmp_path):
     path = tmp_path / "ledger.jsonl"
     with pytest.raises(jsonschema.ValidationError):
