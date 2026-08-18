@@ -99,6 +99,14 @@ backend flag did not take effect; the model will appear to work but will
 not reason correctly. This is one of the apparatus's named silent-failure
 modes. See `DECISIONS.md` "vLLM MARLIN backend" and "CUDA 13.0 pin."
 
+**Frontier CLI binary resolution** (`agent_wrapper/frontier_cli.py`):
+the falsifier-tier CLIs resolve **env pin → `~/.npm-global/bin/<name>` →
+bare name on PATH**. Override with `FRONTIER_CLAUDE_BIN` /
+`FRONTIER_CODEX_BIN` (absolute path). Added 2026-08-18 after the first
+cron-context frontier screen resolved a stale root `claude` (exit 1) and
+no `codex` at all (exit 127) under cron's minimal PATH. If a vendor goes
+dark with exit 127/"unknown" cli_version, check resolution FIRST.
+
 ### 2.4 SM12x compatibility gap (sidebar)
 
 The DGX Spark's Blackwell GPU reports as **SM12x (compute capability 12.1)**,

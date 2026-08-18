@@ -127,7 +127,11 @@ def test_claude_command_shape(tmp_path, fake_run, real_mode):
         ledger_path=tmp_path / "l.jsonl",
     )
     main = fake_run.calls[-1]["cmd"]
-    assert main == ["claude", "-p", "--output-format", "json", "review this"]
+    # cmd[0] is RESOLVED (env pin > ~/.npm-global/bin > bare name) since the
+    # 2026-08-18 cron-PATH outage; the flag shape stays pinned verbatim.
+    assert main[0] == fc._resolve_binary("claude")
+    assert main[0].endswith("claude")
+    assert main[1:] == ["-p", "--output-format", "json", "review this"]
 
 
 def test_codex_command_shape(tmp_path, fake_run, real_mode):
@@ -144,8 +148,10 @@ def test_codex_command_shape(tmp_path, fake_run, real_mode):
     # Model + effort are PINNED by this module, not inherited from the
     # machine-global ~/.codex/config.toml (2026-08-16: that config's gpt-5.6 /
     # "max" started returning 400 and took this reviewer dark for 6 hours).
-    assert main == [
-        "codex", "exec", "--skip-git-repo-check",
+    assert main[0] == fc._resolve_binary("codex")
+    assert main[0].endswith("codex")
+    assert main[1:] == [
+        "exec", "--skip-git-repo-check",
         "--sandbox", "read-only",
         "-m", fc.CODEX_MODEL,
         "-c", f"model_reasoning_effort={fc.CODEX_REASONING_EFFORT}",
@@ -373,3 +379,21 @@ def test_absent_credential_leaves_codex_home_unset_rather_than_faking_one(
     _fake_home(tmp_path, monkeypatch, with_auth=False)
     assert "CODEX_HOME" not in fc._spawn_env("codex")
     assert not (tmp_path / "codex_home").exists()
+
+
+def test_resolve_binary_order(monkeypatch, tmp_path):
+    """Env pin > user npm install > bare name (2026-08-18 cron-PATH outage:
+    cron resolved a stale root claude 2.1.143 (exit 1) and no codex at all
+    (exit 127) because the current CLIs live only in ~/.npm-global/bin)."""
+    monkeypatch.setenv("FRONTIER_CODEX_BIN", "/pinned/codex")
+    assert fc._resolve_binary("codex") == "/pinned/codex"
+    monkeypatch.delenv("FRONTIER_CODEX_BIN", raising=False)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    exe = fake_bin / "codex"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    monkeypatch.setattr(fc, "_USER_NPM_BIN", fake_bin)
+    assert fc._resolve_binary("codex") == str(exe)
+    exe.unlink()
+    assert fc._resolve_binary("codex") == "codex"

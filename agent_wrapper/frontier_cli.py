@@ -54,6 +54,24 @@ _STRIPPED_ENV_KEYS = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 _VENDOR_BINARIES = {"claude": "claude", "codex": "codex"}
 
+# The user-level npm prefix where the CURRENT CLIs live. Under cron/systemd
+# the minimal PATH misses it: on 2026-08-18T06:00Z the first cron-context
+# frontier screen resolved a stale root install of claude (2.1.143, exit 1)
+# and no codex at all (exit 127). Resolution order: explicit env pin >
+# known user install > bare name (interactive PATH).
+_USER_NPM_BIN = Path.home() / ".npm-global" / "bin"
+
+
+def _resolve_binary(vendor: str) -> str:
+    name = _VENDOR_BINARIES[vendor]
+    pinned = os.environ.get(f"FRONTIER_{vendor.upper()}_BIN")
+    if pinned:
+        return pinned
+    local = _USER_NPM_BIN / name
+    if local.is_file() and os.access(local, os.X_OK):
+        return str(local)
+    return name
+
 # Codex model + reasoning effort are pinned HERE, not inherited from the
 # machine-global ~/.codex/config.toml. On 2026-08-16 that config's
 # `model = "gpt-5.6"` / `model_reasoning_effort = "max"` both started coming
@@ -130,10 +148,11 @@ def _ensure_codex_home() -> Optional[Path]:
 
 def _build_cmd(vendor: str, prompt: str) -> List[str]:
     if vendor == "claude":
-        return ["claude", "-p", "--output-format", "json", prompt]
+        return [_resolve_binary("claude"), "-p", "--output-format", "json",
+                prompt]
     if vendor == "codex":
         return [
-            "codex", "exec", "--skip-git-repo-check",
+            _resolve_binary("codex"), "exec", "--skip-git-repo-check",
             "--sandbox", "read-only",
             "-m", CODEX_MODEL,
             "-c", f"model_reasoning_effort={CODEX_REASONING_EFFORT}",
@@ -151,7 +170,7 @@ def _cli_version(vendor: str) -> str:
         return _version_cache[vendor]
     try:
         proc = subprocess.run(
-            [_VENDOR_BINARIES[vendor], "--version"],
+            [_resolve_binary(vendor), "--version"],
             capture_output=True, text=True, timeout=15,
             env=_spawn_env(vendor),
         )
