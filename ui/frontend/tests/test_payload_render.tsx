@@ -18,6 +18,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import MessageBody from "../src/components/payload/MessageBody";
+import EmptyCompletionNote from "../src/components/payload/EmptyCompletionNote";
 import ModelIO from "../src/routes/ModelIO";
 import type {
   DispatchTraceResponse,
@@ -347,4 +348,251 @@ it("expanded view is chips-first: role chips, one meta chip row, structured payl
   expect(document.body.textContent).not.toContain('"arguments"');
   expect(document.body.textContent).not.toContain('\\"text\\"');
   expect(document.body.textContent).not.toContain('"wrapper_request_id"');
+});
+
+// ─── 6. retrieval-station verdict cards (owner feedback: raw JSON hard to
+//        read). Detection is by KEY SIGNATURE (>=3 signature keys), never by
+//        caller name; near-misses fall through to the generic grid; values
+//        render AS LOGGED (no client-side re-judging). ─────────────────────
+
+const ESCALATION_RESULT = {
+  should_escalate: false,
+  max_score: 0.42,
+  distinct_books: 0,
+  books: [],
+  reason: "no book crossed the score threshold",
+  score_threshold: 0.7,
+  min_distinct_books: 3,
+};
+
+const TOPICALITY_PAYLOAD = {
+  relevance: 0.61,
+  low_confidence: false,
+  reason: "anchor cosine well above the R0 floor",
+  anchor_cosine: 0.82,
+  curated_overlap: null,
+  neighbor_spread: 0.4,
+  topicality: true,
+  category: "escalation_dynamics",
+  rule_fired: "R0",
+};
+
+it("renders the escalation verdict: NO-ESCALATE badge, meter with threshold tick, books chip, ONE reason line", () => {
+  render(
+    <MessageBody
+      role="tool"
+      content={JSON.stringify({
+        status: "passed",
+        result: ESCALATION_RESULT,
+        errors: [],
+      })}
+    />,
+  );
+  expect(screen.getByTestId("verdict-escalation")).toBeInTheDocument();
+  const badge = screen.getByTestId("escalate-badge");
+  expect(badge.textContent).toBe("no-escalate");
+  expect(badge.className).toContain("emerald");
+  // The envelope chrome stays.
+  expect(screen.getByTestId("envelope-status").textContent).toBe("passed");
+  // Threshold-tick math: domain = max(1, 0.42, 0.7) = 1 → fill 42%, tick 70%
+  // (CSSOM serializes the component's "42.0%" to "42%").
+  expect(screen.getByTestId("score-meter-fill").style.width).toBe("42%");
+  expect(screen.getByTestId("score-meter-tick").style.left).toBe("70%");
+  // Below the threshold → red fill.
+  expect(screen.getByTestId("score-meter-fill").className).toContain("rose");
+  expect(screen.getByTestId("books-chip").textContent).toBe("books 0/3");
+  const reason = screen.getByTestId("verdict-reason");
+  expect(reason.textContent).toBe("no book crossed the score threshold");
+  expect(reason.className).toContain("truncate"); // ONE line, dim
+  // The generic grid did NOT also render the fields.
+  expect(screen.queryByText("max_score: 0.42")).toBeNull();
+  expect(screen.queryByText("should_escalate: false")).toBeNull();
+  // Empty books array → no list details.
+  expect(screen.queryByTestId("verdict-books")).toBeNull();
+});
+
+it("escalation meter: green fill at/above threshold; the domain stretches to max_score (tick math)", () => {
+  render(
+    <MessageBody
+      role="tool"
+      content={JSON.stringify({
+        status: "passed",
+        result: {
+          ...ESCALATION_RESULT,
+          should_escalate: true,
+          max_score: 1.4,
+          distinct_books: 4,
+          books: ["book-a", "book-b", "book-c", "book-d"],
+        },
+        errors: [],
+      })}
+    />,
+  );
+  const badge = screen.getByTestId("escalate-badge");
+  expect(badge.textContent).toBe("escalate");
+  expect(badge.className).toContain("amber");
+  // domain = max(1, 1.4, 0.7) = 1.4 → fill 100%, tick at 50%.
+  expect(screen.getByTestId("score-meter-fill").style.width).toBe("100%");
+  expect(screen.getByTestId("score-meter-tick").style.left).toBe("50%");
+  expect(screen.getByTestId("score-meter-fill").className).toContain(
+    "emerald",
+  );
+  expect(screen.getByTestId("books-chip").textContent).toBe("books 4/3");
+  // Non-empty books stay reachable behind a collapsed details.
+  expect(screen.getByTestId("verdict-books")).toBeInTheDocument();
+  expect(screen.getByText(/4 books/)).toBeInTheDocument();
+});
+
+it("escalation with a missing score renders null-safe chips instead of a meter (values as logged)", () => {
+  const partial = {
+    should_escalate: false,
+    distinct_books: 1,
+    books: ["book-a"],
+    score_threshold: 0.7,
+    min_distinct_books: 3,
+  }; // 5 signature keys, but no max_score → no meter geometry to draw
+  render(
+    <MessageBody
+      role="tool"
+      content={JSON.stringify({ status: "passed", result: partial, errors: [] })}
+    />,
+  );
+  expect(screen.getByTestId("verdict-escalation")).toBeInTheDocument();
+  expect(screen.queryByTestId("score-meter")).toBeNull();
+  expect(document.body.textContent).toContain("max_score —");
+  expect(document.body.textContent).toContain("threshold 0.7");
+  expect(screen.getByTestId("books-chip").textContent).toBe("books 1/3");
+  // No reason logged → no reason line invented.
+  expect(screen.queryByTestId("verdict-reason")).toBeNull();
+});
+
+it("renders the topicality verdict from a BARE tool payload: badge, rule chip, metric row with null-safe dashes", () => {
+  render(
+    <MessageBody role="tool" content={JSON.stringify(TOPICALITY_PAYLOAD)} />,
+  );
+  expect(screen.getByTestId("verdict-topicality")).toBeInTheDocument();
+  const badge = screen.getByTestId("topicality-badge");
+  expect(badge.textContent).toBe("topical");
+  expect(badge.className).toContain("emerald");
+  expect(screen.getByTestId("category-chip").textContent).toBe(
+    "escalation_dynamics",
+  );
+  expect(screen.getByTestId("rule-chip").textContent).toBe("rule R0");
+  expect(screen.getByText("relevance: 0.61")).toBeInTheDocument();
+  expect(screen.getByTestId("low-confidence-chip").textContent).toBe(
+    "low_confidence: false",
+  );
+  const metrics = screen.getByTestId("metric-row");
+  expect(metrics.textContent).toContain("anchor_cosine 0.82");
+  expect(metrics.textContent).toContain("curated_overlap —"); // null → dash
+  expect(metrics.textContent).toContain("neighbor_spread 0.4");
+  expect(screen.getByTestId("verdict-reason").textContent).toBe(
+    "anchor cosine well above the R0 floor",
+  );
+  // Bare payload → no envelope chrome; the raw blob stays behind the toggle.
+  expect(screen.queryByTestId("envelope-status")).toBeNull();
+  expect(document.body.textContent).not.toContain('"anchor_cosine"');
+  fireEvent.click(screen.getByTestId("raw-toggle"));
+  expect(document.body.textContent).toContain('"anchor_cosine"');
+});
+
+it("renders the off-topic direction with warning tones and a low-confidence highlight (null category omitted)", () => {
+  render(
+    <MessageBody
+      role="tool"
+      content={JSON.stringify({
+        status: "passed",
+        result: {
+          ...TOPICALITY_PAYLOAD,
+          topicality: false,
+          low_confidence: true,
+          category: null,
+          anchor_cosine: null,
+        },
+        errors: [],
+      })}
+    />,
+  );
+  const badge = screen.getByTestId("topicality-badge");
+  expect(badge.textContent).toBe("off-topic");
+  expect(badge.className).toContain("amber");
+  expect(screen.getByTestId("low-confidence-chip").className).toContain(
+    "amber",
+  );
+  expect(screen.queryByTestId("category-chip")).toBeNull();
+  expect(screen.getByTestId("metric-row").textContent).toContain(
+    "anchor_cosine —",
+  );
+});
+
+it("falls through to the generic grid on a near-miss shape (only 2 signature keys)", () => {
+  render(
+    <MessageBody
+      role="tool"
+      content={JSON.stringify({
+        status: "passed",
+        result: { max_score: 0.4, score_threshold: 0.7, note: "two keys" },
+        errors: [],
+      })}
+    />,
+  );
+  expect(screen.queryByTestId("verdict-escalation")).toBeNull();
+  expect(screen.queryByTestId("verdict-topicality")).toBeNull();
+  expect(screen.queryByTestId("score-meter")).toBeNull();
+  // The generic grid rendered the fields instead.
+  expect(screen.getByTestId("tool-result-card")).toBeInTheDocument();
+  expect(screen.getByText("max_score: 0.4")).toBeInTheDocument();
+  expect(screen.getByText("score_threshold: 0.7")).toBeInTheDocument();
+});
+
+it("a BARE near-miss payload stays on the raw fail-safe (no verdict, no envelope, no crash)", () => {
+  const bare = '{"relevance": 0.5, "low_confidence": true}';
+  render(<MessageBody role="tool" content={bare} />);
+  expect(screen.queryByTestId("verdict-topicality")).toBeNull();
+  expect(screen.queryByTestId("tool-result-card")).toBeNull();
+  expect(screen.queryByTestId("raw-toggle")).toBeNull();
+  expect(document.body.textContent).toContain(bare);
+});
+
+// ─── 7. empty-completion contextualization (owner feedback: the EMPTY
+//        banner is misleading on retrieval-family calls, where
+//        completion-less is NORMAL — the tool result IS the output). ──────
+
+it("mutes the empty-completion line when the call carries tool results (retrieval-family)", () => {
+  render(
+    <EmptyCompletionNote
+      messages={[
+        { role: "system", content: "You are the escalation scorer." },
+        { role: "tool", content: ENVELOPE },
+      ]}
+    />,
+  );
+  const note = screen.getByTestId("empty-tool-note");
+  expect(note.textContent).toBe(
+    "no completion text — tool-result call (normal for retrieval/scoring stations)",
+  );
+  expect(note.className).toContain("zinc"); // muted, not alarming
+  expect(screen.queryByTestId("empty-loud")).toBeNull();
+  expect(document.body.textContent).not.toContain("EMPTY");
+});
+
+it("keeps the loud EMPTY treatment for a genuinely-empty GENERATION call (no tool results)", () => {
+  const { unmount } = render(
+    <EmptyCompletionNote
+      messages={[
+        { role: "system", content: "You are Nara." },
+        { role: "user", content: "Propose a hypothesis." },
+      ]}
+    />,
+  );
+  const loud = screen.getByTestId("empty-loud");
+  expect(loud.textContent).toBe(
+    "EMPTY — the model returned no completion text.",
+  );
+  expect(loud.className).toContain("rose");
+  expect(screen.queryByTestId("empty-tool-note")).toBeNull();
+  unmount();
+  // A malformed / absent messages field also stays loud — never guessed.
+  render(<EmptyCompletionNote messages={undefined} />);
+  expect(screen.getByTestId("empty-loud")).toBeInTheDocument();
 });

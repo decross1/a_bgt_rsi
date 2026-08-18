@@ -360,3 +360,157 @@ def test_dispatch_trace_absent_files_degrade_honestly(tmp_path):
         "tasks": [], "spawns": [],
         "generated_at": body["generated_at"],
     }
+
+
+# ─── /api/runtime_activity — the RUNTIME plane (owner feedback: the old
+#     top cards conflated dev build agents with runtime agents) ─────────
+
+# Shaped after the REAL caller_tag vocabulary observed in logs/calls.jsonl
+# 2026-08-18: promotion-panel skeptics + synthesize share a
+# promote_findings_<hash> run_id (parent null); two-voice session rows share
+# a finding_session_fs-<hash> run_id; debate turns are run_subagent children
+# tagged subagent.debate_<role> carrying the iteration id as
+# parent_request_id.
+QWEN = "qwen3.6-27b-nvfp4-mtp"
+SUBAGENT_ROWS = [
+    # Promotion panel run A: 3 skeptics (qwen) + the synthesize fan-in
+    # (gemma) — ONE group keyed by the shared run_id.
+    _call("2026-08-18T03:00:00Z", "sk1", model=QWEN, backend="vllm-qwen",
+          tag="subagent.finding_skeptic_1", run_id="promote_findings_aaa"),
+    _call("2026-08-18T03:00:01Z", "sk2", model=QWEN, backend="vllm-qwen",
+          tag="subagent.finding_skeptic_2", run_id="promote_findings_aaa"),
+    _call("2026-08-18T03:00:02Z", "sk3", model=QWEN, backend="vllm-qwen",
+          tag="subagent.finding_skeptic_3", run_id="promote_findings_aaa"),
+    _call("2026-08-18T03:00:03Z", "syn", tag="finding_promotion.synthesize",
+          run_id="promote_findings_aaa"),
+    # An OLDER promotion run B — a SEPARATE group (different run_id).
+    _call("2026-08-18T02:00:00Z", "skb", model=QWEN, backend="vllm-qwen",
+          tag="subagent.finding_skeptic_1", run_id="promote_findings_bbb"),
+    # Two-voice session.
+    _call("2026-08-18T03:10:00Z", "fsa", model=QWEN, backend="vllm-qwen",
+          tag="finding_session_attacker", run_id="finding_session_fs-1"),
+    _call("2026-08-18T03:10:05Z", "fsd", tag="finding_session_defender",
+          run_id="finding_session_fs-1"),
+    # Debate turns: no run_id; grouped by the shared parent_request_id.
+    _call("2026-08-18T03:20:00Z", "dbc", model=QWEN, backend="vllm-qwen",
+          tag="subagent.debate_challenger", parent="iter-2026-08-18-004"),
+    _call("2026-08-18T03:20:10Z", "dbd", tag="subagent.debate_defender",
+          parent="iter-2026-08-18-004"),
+    # NOT subagent work — Nara chain/station calls must be EXCLUDED even
+    # though they carry parent/run ids.
+    _call("2026-08-18T03:30:00Z", "nara1", tag="nara.run_iteration",
+          run_id="iter-2026-08-18-004", parent="iter-2026-08-18-004"),
+    _call("2026-08-18T03:30:01Z", "hyp1", tag="hypothesize",
+          run_id="iter-2026-08-18-004", parent="x-1"),
+]
+
+
+def test_runtime_activity_groups_subagent_families(tmp_path):
+    # CALL_ROWS tags (nara.run_iteration / skeptic_battery / nara.meta_review)
+    # are chain-plane too — none may leak into the groups.
+    client = _client(_setup(tmp_path, CALL_ROWS + SUBAGENT_ROWS))
+    body = client.get("/api/runtime_activity").json()
+    assert body["calls_available"] is True
+    groups = body["subagent_groups"]
+    # Exactly the 4 evidence-backed groups, newest-first by last activity.
+    assert [(g["family"], g["group_key"]) for g in groups] == [
+        ("debate", "iter-2026-08-18-004"),
+        ("two_voice_session", "finding_session_fs-1"),
+        ("promotion_panel", "promote_findings_aaa"),
+        ("promotion_panel", "promote_findings_bbb"),
+    ]
+    debate, two_voice, promo_a, promo_b = groups
+    # Debate: keyed by parent_request_id (rows carry no run_id).
+    assert debate["key_source"] == "parent_request_id"
+    assert debate["calls"] == 2
+    assert debate["label"] == "bounded debate"
+    assert sorted(debate["caller_tags"]) == [
+        "subagent.debate_challenger", "subagent.debate_defender"]
+    # Two-voice session.
+    assert two_voice["label"] == "two-voice session"
+    assert two_voice["key_source"] == "run_id"
+    assert two_voice["calls"] == 2
+    # Promotion run A: 3 skeptics + synthesize = 4 calls, one group; the
+    # skeptic count in the label is DERIVED from the tags present.
+    assert promo_a["calls"] == 4
+    assert promo_a["label"] == "promotion panel (3 skeptics)"
+    assert promo_a["key_source"] == "run_id"
+    assert set(promo_a["models"]) == {QWEN, "gemma-4-26b-a4b"}
+    assert promo_a["first_ts"] == "2026-08-18T03:00:00Z"
+    assert promo_a["last_ts"] == "2026-08-18T03:00:03Z"
+    # Promotion run B stays its own group with its own derived count.
+    assert promo_b["calls"] == 1
+    assert promo_b["label"] == "promotion panel (1 skeptic)"
+    # No chain-plane tag leaked into any group.
+    all_tags = {t for g in groups for t in g["caller_tags"]}
+    assert not any(t.startswith("nara.") or t == "hypothesize"
+                   or t == "skeptic_battery" for t in all_tags)
+
+
+def test_runtime_activity_generic_subagent_family(tmp_path):
+    rows = [_call("2026-08-18T04:00:00Z", "gx",
+                  tag="subagent.lit_scan", run_id="run-x")]
+    body = _client(_setup(tmp_path, rows)).get("/api/runtime_activity").json()
+    assert [(g["family"], g["label"]) for g in body["subagent_groups"]] == [
+        ("subagent:lit_scan", "lit_scan")]
+
+
+def test_runtime_activity_chain_joins_triples(tmp_path):
+    logs = _setup(tmp_path)
+    _write_jsonl(logs / "orchestrator.jsonl", ORCH_ROWS)
+    body = _client(logs).get("/api/runtime_activity").json()
+    assert body["orchestrator_available"] is True
+    chain = body["chain"]
+    assert [t["task_id"] for t in chain] == ["task-b", "task-a"]
+    # The receipt (latest row) owns the joined task's final state — same
+    # join as /api/dispatch_trace, shared helper.
+    assert chain[1]["task_type"] == "experiment_trial"
+    assert chain[1]["status"] == "passed"
+    assert chain[1]["duration_ms"] == 0.2
+    assert chain[0]["status"] == "dispatched"
+
+
+def test_runtime_activity_group_cap(tmp_path):
+    # 10 distinct promotion runs -> only the newest 8 groups come back.
+    rows = [
+        _call(f"2026-08-18T03:00:{i:02d}Z", f"cap-{i}", model=QWEN,
+              tag="subagent.finding_skeptic_1",
+              run_id=f"promote_findings_{i:02d}")
+        for i in range(10)
+    ]
+    body = _client(_setup(tmp_path, rows)).get("/api/runtime_activity").json()
+    groups = body["subagent_groups"]
+    assert len(groups) == 8
+    assert groups[0]["group_key"] == "promote_findings_09"
+    assert groups[-1]["group_key"] == "promote_findings_02"
+
+
+def test_runtime_activity_scan_bound_is_honest(tmp_path):
+    # A subagent burst buried beyond the byte bound is NOT grouped — and the
+    # response says the window was truncated rather than pretending the
+    # whole log was searched.
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    old = json.dumps(
+        _call("2026-08-01T00:00:00Z", "old-sk", model=QWEN,
+              tag="subagent.finding_skeptic_1",
+              run_id="promote_findings_old")) + "\n"
+    filler = "".join(
+        json.dumps(_call("2026-08-18T01:00:00Z", f"req-f{i}")) + "\n"
+        for i in range(200))                     # ≫ 16 KiB of chain rows
+    (logs / "calls.jsonl").write_text(old + filler, encoding="utf-8")
+    body = _client(logs, max_scan_bytes=16 * 1024) \
+        .get("/api/runtime_activity").json()
+    assert body["subagent_groups"] == []
+    assert body["window_truncated"] is True
+
+
+def test_runtime_activity_absent_files_degrade_honestly(tmp_path):
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    body = _client(logs).get("/api/runtime_activity").json()
+    assert body["orchestrator_available"] is False
+    assert body["calls_available"] is False
+    assert body["chain"] == []
+    assert body["subagent_groups"] == []
+    assert body["window_truncated"] is False

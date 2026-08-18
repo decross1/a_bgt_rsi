@@ -13,6 +13,7 @@ import {
   safeJson,
   scalarText,
 } from "./bits";
+import VerdictCard, { detectVerdictFamily } from "./VerdictCard";
 
 // passed = positive tone; every other status warns (the owner's spec — a
 // non-passed envelope always deserves a second look).
@@ -49,13 +50,18 @@ function ListValue({ k, items }: { k: string; items: unknown[] }) {
 }
 
 export default function ToolResultCard({ env }: { env: ToolEnvelope }) {
+  // A verdict-family result (escalation / topicality — detected by key
+  // signature, NEVER by caller name; see VerdictCard) replaces the generic
+  // grid; the envelope chrome (status badge, errors, ids) stays.
+  const family = detectVerdictFamily(env.result);
   const resultIsObject =
     env.result != null &&
     typeof env.result === "object" &&
     !Array.isArray(env.result);
-  const entries = resultIsObject
-    ? Object.entries(env.result as Record<string, unknown>)
-    : [];
+  const entries =
+    resultIsObject && family == null
+      ? Object.entries(env.result as Record<string, unknown>)
+      : [];
   // Counts / booleans / short strings ride the status line as chips; long
   // strings, arrays, and nested objects get their own block below.
   const chips: [string, string][] = [];
@@ -80,6 +86,13 @@ export default function ToolResultCard({ env }: { env: ToolEnvelope }) {
           </span>
         ))}
       </div>
+
+      {family != null && (
+        <VerdictCard
+          family={family}
+          data={env.result as Record<string, unknown>}
+        />
+      )}
 
       {blocks.map(([k, v]) => {
         if (typeof v === "string") {

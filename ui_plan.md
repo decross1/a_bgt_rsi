@@ -3475,3 +3475,107 @@ when-present, thought split, malformed-raw fallbacks, chips-first density
 integration with no raw-JSON string in the default render) · existing
 `test_model_io.tsx` 10 still green untouched · `tsc --noEmit` clean.
 **No service restarted** (integrator reloads).
+
+## §2026-08-18 Model I/O runtime-activity strip (`ui/` only, sprint-runtime-strip)
+
+Owner feedback on /model-io: "the top 2 cards are still REALLY verbose…
+is that ACTUALLY spawned agents? Or is that agent work being delegated
+here?" — the old strip conflated two planes: the spawn-ledger card showed
+DEV-side Claude-Code build agents (`run_state/spawn.jsonl`), the
+dispatch-triple card low-level plumbing. Replaced both with ONE compact
+**Runtime activity** card:
+
+- **nara chain** (runtime): latest orchestrator.jsonl tasks joined by
+  task_id (shared `_join_orch_tasks` helper, same join dispatch_trace
+  uses), one line each — status dot + station name (task_type) + age
+  ("3m"); task_id/status/stage ride the title attr. NOTE:
+  orchestrator.jsonl rows carry NO run_id field (checked: 0 occurrences),
+  so the chain is the task_id join, not a per-run_id group.
+- **subagent work** (runtime): recent calls.jsonl rows grouped by
+  caller_tag FAMILY × (parent_request_id else run_id) — families are the
+  observed vocabulary, never invented: `subagent.finding_skeptic_{1,2,3}`
+  + `finding_promotion.*` → "promotion panel (N skeptics)" (N derived from
+  the tags present; rows share `promote_findings_<hash>` run_ids),
+  `finding_session[_*]` → "two-voice session"
+  (`finding_session_fs-<hash>`), `subagent.debate_*` → "bounded debate"
+  (parent_request_id = iteration id), any other `subagent.<name>` →
+  labelled by its own name. One compact card per group: label + model
+  badge(s) + call count + last-activity age.
+- **build agents (dev — Claude Code workflow ledger)**: the spawn ledger
+  moved behind a collapsed-by-default toggle with that explicit label;
+  one-line entries (spawn_id + status chip + age), contract statement on
+  the title attr only — no prose in any view.
+
+Backend: new `GET /api/runtime_activity` in `backend/model_io.py`
+(runtime plane ONLY; spawns deliberately stay on `/api/dispatch_trace` so
+the plane split is on the wire too). Bounded as ever: chain = 512 KiB
+orchestrator tail; grouping = backward calls.jsonl scan capped at
+`min(max_scan_bytes, 4 MiB)`, ≤8 groups, `window_truncated` honest.
+Frontend keeps the endpoint's client local to `ModelIO.tsx` (this sprint
+owned only that route file); degradation stays quiet ("runtime state
+UNKNOWN, not idle" until first load, last state kept on poll failure).
+
+Verification: ui-backend pytest **714 pass** (6 new in `test_model_io.py`:
+family grouping incl. parent-vs-run_id keys + derived skeptic counts +
+chain-plane exclusion, generic `subagent.<name>` family, shared chain
+join, 8-group cap, honest scan bound, absent-files degradation) · vitest
+**1145 pass** (77 files; +4/-1 in `test_model_io.tsx`: strip render +
+plane labels, dev section collapsed-by-default with no contract prose,
+UNKNOWN-not-idle degradation, `ageOf` unit pins) · `tsc --noEmit` clean ·
+read-only in-process smoke on the REAL logs: 200 in 50ms, full 4 MiB
+scanned, `window_truncated: true`, chain populated, groups honestly empty
+(the last promotion panel ran 2026-08-04, outside the recent window); the
+family map validated offline against all 26 observed caller_tags.
+**No service restarted** (integrator reloads).
+
+## §2026-08-18 Retrieval-station verdict cards + EMPTY contextualization (`ui/` only, sprint-payload-render)
+
+Owner follow-up on /model-io: retrieval-station tool results still render
+as a raw field grid ("a little hard to read"), and the loud "EMPTY — the
+model returned no completion text" banner is MISLEADING on retrieval-family
+calls where completion-less is normal (the tool result IS the output).
+
+Built, inside the payload family (`ui/frontend/src/components/payload/`):
+
+- **`VerdictCard.tsx`** — two verdict shapes detected by KEY SIGNATURE
+  (>= 3 signature keys present; "reason" is shared between both payloads
+  and is not a signature key; a both-match is ambiguous → generic grid),
+  NEVER by caller name. **Escalation**
+  `{should_escalate, max_score, distinct_books, books, score_threshold,
+  min_distinct_books, reason}` → ESCALATE (amber) / NO-ESCALATE (emerald)
+  badge, a thin score meter (fill = max_score, tick = score_threshold on a
+  shared 0..max(1, score, threshold) domain, red-below/green-above — pure
+  display geometry, the verdict is never recomputed), a "books 0/3" chip,
+  non-empty `books` behind a collapsed details, reason as ONE dim truncated
+  prose line. **Topicality**
+  `{relevance, low_confidence, anchor_cosine, curated_overlap,
+  neighbor_spread, topicality, category, rule_fired, reason}` →
+  topical/off-topic badge + category chip, "rule R0" chip, relevance +
+  low_confidence chips (amber highlight when low_confidence), a small
+  metric row with null-safe dashes, one reason line. Values render AS
+  LOGGED. Wired in BOTH paths: ToolResultCard swaps its generic grid for
+  the verdict body when `env.result` matches (envelope chrome — status
+  badge, errors, ids — stays), and MessageBody dispatches a BARE
+  verdict-shaped tool payload (no envelope) straight to VerdictCard.
+  Near-miss shapes (2 signature keys) fall through to the generic grid;
+  malformed stays on the raw fail-safe; the per-card raw toggle still
+  carries the original blob.
+
+- **`EmptyCompletionNote.tsx`** — the empty-completion line, context-aware:
+  when the call's prompt messages contain a tool-result message
+  (retrieval-family pattern) it renders the muted "no completion text —
+  tool-result call (normal for retrieval/scoring stations)"; otherwise the
+  loud rose "EMPTY — the model returned no completion text." (byte-identical
+  to the current ModelIO banner). **Wiring handoff:** ModelIO.tsx is owned
+  by its own lane this sprint — its owner swaps the inline banner in
+  CallExpansion for `<EmptyCompletionNote messages={detail.prompt_messages} />`
+  (one-line change; until then the component is built + tested but not
+  live on the page).
+
+Verification: vitest **1142 pass** (77 files; 9 new in
+`test_payload_render.tsx`: escalation badge/meter/threshold-tick math
+(domain-stretch case incl.), null-safe no-meter fallback, topicality badge +
+rule chip + dash metrics from a BARE payload, off-topic/low-confidence
+warning tones, 2-signature-key near-miss fall-through in both the envelope
+and bare paths, empty-contextualization both directions) · `tsc --noEmit`
+clean. **No service restarted.**

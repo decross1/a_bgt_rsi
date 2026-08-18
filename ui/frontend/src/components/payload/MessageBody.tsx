@@ -14,6 +14,7 @@ import { safeJson } from "./bits";
 import ToolCallChips from "./ToolCallChips";
 import ToolResultCard from "./ToolResultCard";
 import ThoughtBlock from "./ThoughtBlock";
+import VerdictCard, { parseBareVerdict } from "./VerdictCard";
 
 // Raw view of whatever the message carried. Non-string content (malformed
 // row) is stringified for DISPLAY — shown, never a React-child crash.
@@ -40,9 +41,20 @@ export default function MessageBody({
   const calls = parseToolCalls(role, content, toolCalls);
   const envelope =
     calls == null && role === "tool" ? parseToolEnvelope(content) : null;
+  // A retrieval-station verdict logged BARE as tool content (no wrapper
+  // envelope) still gets the verdict rendering — detection is by key
+  // signature (see VerdictCard), never by caller name. Envelope-wrapped
+  // verdicts are ToolResultCard's job.
+  const bareVerdict =
+    calls == null && envelope == null && role === "tool"
+      ? parseBareVerdict(content)
+      : null;
   const split =
-    calls == null && envelope == null ? splitThought(content) : null;
-  const structured = calls != null || envelope != null || split != null;
+    calls == null && envelope == null && bareVerdict == null
+      ? splitThought(content)
+      : null;
+  const structured =
+    calls != null || envelope != null || bareVerdict != null || split != null;
 
   const raw = (
     <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap rounded bg-zinc-950/60 p-1.5 font-mono text-[13px] text-zinc-300">
@@ -71,6 +83,8 @@ export default function MessageBody({
             <ToolCallChips calls={calls} />
           ) : envelope != null ? (
             <ToolResultCard env={envelope} />
+          ) : bareVerdict != null ? (
+            <VerdictCard family={bareVerdict.family} data={bareVerdict.data} />
           ) : (
             // split is non-null here by construction of `structured`.
             <ThoughtBlock split={split!} />

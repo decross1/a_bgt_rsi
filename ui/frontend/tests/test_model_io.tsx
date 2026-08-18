@@ -12,7 +12,7 @@
 //     and the main-log-only footnote is always present.
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import ModelIO from "../src/routes/ModelIO";
+import ModelIO, { ageOf } from "../src/routes/ModelIO";
 import type {
   DispatchTraceResponse,
   ModelIOResponse,
@@ -121,6 +121,66 @@ const TRACE: DispatchTraceResponse = {
   generated_at: "2026-08-18T01:00:03Z",
 };
 
+// Runtime-activity fixture with ages ANCHORED TO NOW so the rendered "3m"
+// style ages are deterministic regardless of when the suite runs.
+const minsAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+
+const ACTIVITY = {
+  orchestrator_available: true,
+  calls_available: true,
+  chain: [
+    {
+      task_id: "exp012_FULL_s29_r0.84",
+      task_type: "experiment_trial",
+      status: "passed",
+      stage: "orchestrator_receipt",
+      duration_ms: 0.2,
+      ts: minsAgo(2),
+      run_id: null,
+    },
+    {
+      task_id: "pd_match_017",
+      task_type: "play_pd_match",
+      status: "dispatched",
+      stage: "orchestrator_dispatch",
+      duration_ms: null,
+      ts: minsAgo(9),
+      run_id: null,
+    },
+  ],
+  subagent_groups: [
+    {
+      family: "promotion_panel",
+      label: "promotion panel (3 skeptics)",
+      group_key: "promote_findings_d591099f",
+      key_source: "run_id",
+      calls: 12,
+      models: ["qwen3.6-27b-nvfp4-mtp"],
+      caller_tags: [
+        "finding_promotion.synthesize",
+        "subagent.finding_skeptic_1",
+        "subagent.finding_skeptic_2",
+        "subagent.finding_skeptic_3",
+      ],
+      first_ts: minsAgo(8),
+      last_ts: minsAgo(3),
+    },
+    {
+      family: "two_voice_session",
+      label: "two-voice session",
+      group_key: "finding_session_fs-a5f6dc7c7f70",
+      key_source: "run_id",
+      calls: 5,
+      models: ["qwen3.6-27b-nvfp4-mtp"],
+      caller_tags: ["finding_session_attacker", "finding_session_defender"],
+      first_ts: minsAgo(30),
+      last_ts: minsAgo(25),
+    },
+  ],
+  window_truncated: false,
+  generated_at: new Date().toISOString(),
+};
+
 type Routed = { status: number; body: unknown };
 
 function stubRoutes(handler: (url: string) => Routed) {
@@ -141,6 +201,8 @@ function happyHandler(url: string): Routed {
   if (url.includes("/api/model_io/")) return { status: 200, body: DETAIL };
   if (url.includes("/api/model_io")) return { status: 200, body: CALLS };
   if (url.includes("/api/dispatch_trace")) return { status: 200, body: TRACE };
+  if (url.includes("/api/runtime_activity"))
+    return { status: 200, body: ACTIVITY };
   if (url.includes("/api/health"))
     return { status: 200, body: { version: "abc1234" } };
   return { status: 404, body: { detail: "nope" } };
@@ -264,21 +326,91 @@ it("pause toggles to resume and reports the paused state", async () => {
   expect(screen.getByText("paused")).toBeInTheDocument();
 });
 
-// ─── the dispatch trace strip ───────────────────────────────────────────
+// ─── the runtime activity strip (plane separation) ──────────────────────
 
-it("renders the dispatch trace: orchestrator tasks + spawned agents", async () => {
+it("renders ONE runtime strip: nara chain lines + subagent group cards", async () => {
   stubRoutes(happyHandler);
   render(<ModelIO />);
   await waitFor(() =>
-    expect(screen.getAllByTestId("trace-task-row")).toHaveLength(1),
+    expect(screen.getAllByTestId("chain-line")).toHaveLength(2),
   );
-  expect(screen.getByText("exp012_FULL_s29")).toBeInTheDocument();
-  expect(screen.getByText("passed")).toBeInTheDocument();
-  expect(screen.getAllByTestId("trace-spawn-row")).toHaveLength(1);
-  expect(screen.getByText("sprint-build-io-viewer")).toBeInTheDocument();
+  // Plane (a): chain lines are station name + age, one-line dense.
+  expect(screen.getByText("nara chain")).toBeInTheDocument();
+  expect(screen.getByText("experiment_trial")).toBeInTheDocument();
+  expect(screen.getByText("play_pd_match")).toBeInTheDocument();
+  expect(screen.getByText("2m")).toBeInTheDocument(); // ts anchored to now
+  // Plane (b): one compact card per caller_tag-family group, with the
+  // family label, model badge, call count, and last-activity age.
+  expect(screen.getByText("subagent work")).toBeInTheDocument();
+  expect(screen.getAllByTestId("subagent-group")).toHaveLength(2);
+  expect(screen.getByText("promotion panel (3 skeptics)")).toBeInTheDocument();
+  expect(screen.getByText("two-voice session")).toBeInTheDocument();
+  expect(screen.getAllByText("qwen3.6-27b-nvfp4-mtp")).toHaveLength(2);
+  expect(screen.getByText("12 calls")).toBeInTheDocument();
+  expect(screen.getByText("3m")).toBeInTheDocument();
+  // The old two verbose cards are gone.
+  expect(screen.queryByTestId("trace-task-row")).toBeNull();
+  expect(screen.queryByTestId("trace-spawn-row")).toBeNull();
+});
+
+it("keeps the dev spawn ledger behind an explicitly-labelled toggle, collapsed by default", async () => {
+  stubRoutes(happyHandler);
+  render(<ModelIO />);
+  await waitFor(() =>
+    expect(screen.getAllByTestId("chain-line")).toHaveLength(2),
+  );
+  // Collapsed by default: no dev rows and no contract prose anywhere.
+  expect(screen.queryAllByTestId("dev-spawn-row")).toHaveLength(0);
   expect(
-    screen.getByText("Model I/O viewer + agent-dispatch trace"),
+    screen.queryByText("Model I/O viewer + agent-dispatch trace"),
+  ).toBeNull();
+  // The toggle names the plane: dev-side Claude Code, not runtime agents.
+  const toggle = screen.getByTestId("dev-spawn-toggle");
+  expect(toggle.textContent).toContain(
+    "build agents (dev — Claude Code workflow ledger)",
+  );
+  expect(toggle).toHaveAttribute("aria-expanded", "false");
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute("aria-expanded", "true");
+  // One-line entries: spawn_id + status chip + age — still no prose body.
+  const rows = screen.getAllByTestId("dev-spawn-row");
+  expect(rows).toHaveLength(1);
+  expect(screen.getByText("sprint-build-io-viewer")).toBeInTheDocument();
+  expect(screen.getByText("spawned")).toBeInTheDocument();
+  expect(
+    screen.queryByText("Model I/O viewer + agent-dispatch trace"),
+  ).toBeNull();
+  // Toggling again collapses it back.
+  fireEvent.click(toggle);
+  expect(screen.queryAllByTestId("dev-spawn-row")).toHaveLength(0);
+});
+
+it("says the runtime state is UNKNOWN when /api/runtime_activity never loads", async () => {
+  stubRoutes((url) =>
+    url.includes("/api/runtime_activity")
+      ? { status: 404, body: { detail: "Not Found" } }
+      : happyHandler(url),
+  );
+  render(<ModelIO />);
+  await waitFor(() =>
+    expect(screen.getAllByTestId("modelio-row")).toHaveLength(3),
+  );
+  expect(
+    screen.getByText(/runtime state UNKNOWN, not idle/),
   ).toBeInTheDocument();
+  expect(screen.queryAllByTestId("chain-line")).toHaveLength(0);
+});
+
+// ─── ageOf (compact ages: "3m") ─────────────────────────────────────────
+
+it("ageOf renders compact ages and honest dashes", () => {
+  const now = Date.parse("2026-08-18T12:00:00Z");
+  expect(ageOf("2026-08-18T11:59:48Z", now)).toBe("12s");
+  expect(ageOf("2026-08-18T11:57:00Z", now)).toBe("3m");
+  expect(ageOf("2026-08-18T07:00:00Z", now)).toBe("5h");
+  expect(ageOf("2026-08-13T12:00:00Z", now)).toBe("5d");
+  expect(ageOf(null, now)).toBe("—");
+  expect(ageOf("not-a-timestamp", now)).toBe("—");
 });
 
 // ─── honest degradations ────────────────────────────────────────────────

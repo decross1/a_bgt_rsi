@@ -2,11 +2,20 @@
 //
 // The health panels show THAT gemma/qwen are alive (KV usage, MTP, decode
 // tok/s) but nothing of what actually passes THROUGH them. This page is the
-// missing half: the dispatch trace up top (what Nara's orchestrator
-// dispatched + which agents were spawned under contract), and below it a
+// missing half: ONE compact runtime-activity strip up top, and below it a
 // live, filterable table of wrapper calls out of the MAIN call log —
 // model, caller, latency, tokens in/out, an EMPTY flag when a completion
 // came back blank, and a click-to-expand full prompt/completion reader.
+//
+// The strip (owner feedback 2026-08-18: "is that ACTUALLY spawned agents?")
+// separates the two planes the old top cards conflated:
+//  - RUNTIME plane (primary): Nara's latest chain tasks (orchestrator.jsonl
+//    triples) + recent SUBAGENT WORK grouped by caller_tag family out of
+//    calls.jsonl (/api/runtime_activity — grouping is caller_tag /
+//    parent_request_id / run_id evidence, never invented);
+//  - DEV plane (collapsed by default): the Claude-Code build-agent spawn
+//    ledger (run_state/spawn.jsonl via /api/dispatch_trace), explicitly
+//    labelled as dev-side, one line per entry, no contract prose.
 //
 // Honesty rules carried from the rest of the dashboard:
 //  - everything is backend-passthrough; a missing field renders as "—",
@@ -17,6 +26,7 @@
 //    their calls to runs/*.calls.jsonl (LOOP_V0_CALLS_LOG) and are NOT here.
 import { useEffect, useState } from "react";
 import Card from "../design/Card";
+import EmptyCompletionNote from "../components/payload/EmptyCompletionNote";
 import EndpointMissingNote, {
   isVersionSkew404,
 } from "../components/EndpointMissingNote";
@@ -68,6 +78,54 @@ function statusTone(status: string | null): string {
   }
 }
 
+// The same status families as dots (the chain lines carry a dot, not a
+// status word — one-line density; the word rides the title attribute).
+function statusDotTone(status: string | null): string {
+  switch (status) {
+    case "passed":
+    case "completed":
+      return "bg-emerald-400";
+    case "failed":
+    case "error":
+    case "rejected":
+    case "escalated":
+      return "bg-rose-400";
+    case "dispatched":
+    case "running":
+    case "spawned":
+      return "bg-sky-300";
+    default:
+      return "bg-zinc-600";
+  }
+}
+
+function StatusDot({ status }: { status: string | null }) {
+  return (
+    <span
+      aria-hidden
+      className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${statusDotTone(status)}`}
+    />
+  );
+}
+
+// Compact age ("3m") from an ISO timestamp. Exported for unit tests; the
+// nowMs parameter exists so tests never race the clock.
+export function ageOf(
+  ts: string | null | undefined,
+  nowMs: number = Date.now(),
+): string {
+  if (!ts) return "—";
+  const t = Date.parse(ts);
+  if (Number.isNaN(t)) return "—";
+  const s = Math.max(0, Math.floor((nowMs - t) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 48) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 // hh:mm:ss (UTC) out of an ISO timestamp — table-density time; the full
 // instant rides the title attribute. "—" when absent/short.
 function clockTime(ts: string | null): string {
@@ -79,99 +137,210 @@ const INPUT_CLS =
   "text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 " +
   "focus:outline-none";
 
-// ─── dispatch trace strip ───────────────────────────────────────────────
+// ─── runtime activity strip ─────────────────────────────────────────────
+//
+// Local types + fetcher for /api/runtime_activity: this build owns only
+// this route file, so the endpoint's client lives here rather than widening
+// api/modelIO.ts (same API_BASE derivation).
 
-function TraceStrip({ trace }: { trace: DispatchTraceResponse | null }) {
-  if (trace == null) return null;
+interface ChainTask {
+  task_id: string;
+  task_type: string | null;
+  status: string | null;
+  stage: string | null;
+  duration_ms: number | null;
+  ts: string | null;
+  run_id: string | null;
+}
+
+interface SubagentGroup {
+  family: string;
+  label: string;
+  group_key: string | null;
+  key_source: string | null;
+  calls: number;
+  models: string[];
+  caller_tags: string[];
+  first_ts: string | null;
+  last_ts: string | null;
+}
+
+interface RuntimeActivityResponse {
+  orchestrator_available: boolean;
+  calls_available: boolean;
+  chain: ChainTask[];
+  subagent_groups: SubagentGroup[];
+  window_truncated: boolean;
+  generated_at: string;
+}
+
+const RUNTIME_API_PORT = import.meta.env.VITE_API_PORT ?? "8700";
+const RUNTIME_API_BASE = `http://${window.location.hostname}:${RUNTIME_API_PORT}`;
+
+async function getRuntimeActivity(): Promise<RuntimeActivityResponse> {
+  const resp = await fetch(`${RUNTIME_API_BASE}/api/runtime_activity`);
+  if (!resp.ok) throw new Error(`runtime_activity ${resp.status}`);
+  return (await resp.json()) as RuntimeActivityResponse;
+}
+
+const CHAIN_LINES = 6;
+const PLANE_LABEL_CLS =
+  "text-[10px] uppercase tracking-wide text-zinc-500";
+
+function RuntimeStrip({
+  activity,
+  trace,
+}: {
+  activity: RuntimeActivityResponse | null;
+  trace: DispatchTraceResponse | null;
+}) {
+  // The dev-side build-agent ledger is a DIFFERENT plane — collapsed by
+  // default so the strip reads as runtime-only unless explicitly opened.
+  const [devOpen, setDevOpen] = useState(false);
+  // Defensive: an old backend (version skew) answers with a foreign body;
+  // render placeholders rather than crash.
+  const chain = Array.isArray(activity?.chain) ? activity.chain : [];
+  const groups = Array.isArray(activity?.subagent_groups)
+    ? activity.subagent_groups
+    : [];
+  const spawns = trace?.spawns ?? [];
   return (
-    <div
-      style={{
-        display: "grid",
-        gap: "var(--space-4)",
-        gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-      }}
-    >
-      <Card title="Dispatch trace" testId="modelio-trace-tasks">
-        {!trace.orchestrator_available ? (
-          <div className="text-xs text-zinc-500">
-            orchestrator.jsonl absent — no dispatch rows to show.
-          </div>
-        ) : trace.tasks.length === 0 ? (
-          <div className="text-xs text-zinc-500">
-            no recent dispatches in the log tail.
-          </div>
-        ) : (
-          <div>
-            {trace.tasks.map((t) => (
-              <div
-                key={t.task_id}
-                data-testid="trace-task-row"
-                className="flex items-baseline gap-2 border-b border-zinc-800/60 py-1 text-xs last:border-0"
-              >
+    <Card title="Runtime activity" testId="modelio-runtime-strip">
+      {activity == null ? (
+        <div className="text-xs text-zinc-500">
+          /api/runtime_activity not loaded — runtime state UNKNOWN, not idle.
+        </div>
+      ) : (
+        <>
+          {/* (a) Nara's chain: latest orchestrator tasks, one line each —
+              status dot + station name + age. */}
+          <div
+            className="flex flex-wrap items-center gap-x-4 gap-y-1"
+            data-testid="runtime-chain"
+          >
+            <span className={PLANE_LABEL_CLS}>nara chain</span>
+            {!activity.orchestrator_available ? (
+              <span className="text-xs text-zinc-600">
+                orchestrator.jsonl absent
+              </span>
+            ) : chain.length === 0 ? (
+              <span className="text-xs text-zinc-600">
+                no recent dispatches in the log tail
+              </span>
+            ) : (
+              chain.slice(0, CHAIN_LINES).map((t) => (
                 <span
-                  className="truncate font-mono text-zinc-300"
-                  style={{ maxWidth: "14rem" }}
-                  title={t.task_id}
+                  key={t.task_id}
+                  data-testid="chain-line"
+                  className="flex items-center gap-1.5 font-mono text-xs text-zinc-300"
+                  title={`${t.task_id} — ${t.status ?? "?"}${
+                    t.stage ? ` (${t.stage})` : ""
+                  }`}
                 >
-                  {t.task_id}
+                  <StatusDot status={t.status} />
+                  {t.task_type ?? t.task_id}
+                  <span className="text-zinc-600">{ageOf(t.ts)}</span>
                 </span>
-                <span className="text-zinc-500">{t.task_type ?? "—"}</span>
-                <span className={`ml-auto font-mono ${statusTone(t.status)}`}>
-                  {t.status ?? "—"}
-                </span>
-                <span className="font-mono text-zinc-500" title={t.ts ?? ""}>
-                  {clockTime(t.ts)}
-                </span>
-                {t.duration_ms != null && (
-                  <span className="font-mono text-zinc-600">
-                    {fmt(t.duration_ms, 1)}ms
+              ))
+            )}
+          </div>
+
+          {/* (b) Subagent work: one compact card per caller_tag-family
+              group — label + model badge(s) + call count + age. */}
+          <div
+            className="mt-2 flex flex-wrap items-center gap-2"
+            data-testid="runtime-subagents"
+          >
+            <span className={PLANE_LABEL_CLS}>subagent work</span>
+            {groups.length === 0 ? (
+              <span className="text-xs text-zinc-600">
+                no subagent work in the recent log tail
+              </span>
+            ) : (
+              groups.map((g) => (
+                <span
+                  key={`${g.family}-${g.group_key ?? "?"}`}
+                  data-testid="subagent-group"
+                  className="flex items-center gap-1.5 rounded border border-zinc-800 bg-zinc-900/50 px-2 py-0.5 text-xs"
+                  title={`${(g.caller_tags ?? []).join(", ")}${
+                    g.group_key ? ` — ${g.group_key}` : ""
+                  }`}
+                >
+                  <span className="text-zinc-200">{g.label}</span>
+                  {(g.models ?? []).map((m) => (
+                    <span
+                      key={m}
+                      className={`rounded px-1 font-mono text-[10px] ${modelTone(m)}`}
+                    >
+                      {m}
+                    </span>
+                  ))}
+                  <span className="font-mono text-zinc-500">
+                    {g.calls} calls
                   </span>
-                )}
-              </div>
-            ))}
+                  <span className="font-mono text-zinc-600">
+                    {ageOf(g.last_ts)}
+                  </span>
+                </span>
+              ))
+            )}
           </div>
-        )}
-      </Card>
-      <Card title="Spawned agents" testId="modelio-trace-spawns">
-        {!trace.spawn_available ? (
-          <div className="text-xs text-zinc-500">
-            spawn ledger absent — no agent contracts to show.
-          </div>
-        ) : trace.spawns.length === 0 ? (
-          <div className="text-xs text-zinc-500">spawn ledger is empty.</div>
-        ) : (
-          <div>
-            {trace.spawns.map((s, i) => (
-              <div
-                key={`${s.spawn_id ?? "?"}-${s.status ?? "?"}-${i}`}
-                data-testid="trace-spawn-row"
-                className="border-b border-zinc-800/60 py-1 text-xs last:border-0"
-              >
-                <div className="flex items-baseline gap-2">
-                  <span className="font-mono text-zinc-300">
+        </>
+      )}
+
+      {/* DEV plane: the Claude-Code build-agent spawn ledger, explicitly
+          labelled and collapsed by default. One line per entry; the
+          contract statement rides the title attribute only — no prose. */}
+      <div className="mt-2 border-t border-zinc-800/60 pt-1.5">
+        <button
+          type="button"
+          data-testid="dev-spawn-toggle"
+          aria-expanded={devOpen}
+          className="text-[11px] text-zinc-500 hover:text-zinc-300"
+          onClick={() => setDevOpen((o) => !o)}
+        >
+          {devOpen ? "▾" : "▸"} build agents (dev — Claude Code workflow
+          ledger)
+        </button>
+        {devOpen &&
+          (trace == null || !trace.spawn_available ? (
+            <div className="mt-1 text-xs text-zinc-600">
+              spawn ledger unavailable.
+            </div>
+          ) : spawns.length === 0 ? (
+            <div className="mt-1 text-xs text-zinc-600">
+              spawn ledger is empty.
+            </div>
+          ) : (
+            <div className="mt-1">
+              {spawns.map((s, i) => (
+                <div
+                  key={`${s.spawn_id ?? "?"}-${s.status ?? "?"}-${i}`}
+                  data-testid="dev-spawn-row"
+                  className="flex items-baseline gap-2 py-0.5 text-xs"
+                  title={s.task_statement ?? undefined}
+                >
+                  <span
+                    className="truncate font-mono text-zinc-400"
+                    style={{ maxWidth: "18rem" }}
+                  >
                     {s.spawn_id ?? "—"}
                   </span>
                   <span className={`font-mono ${statusTone(s.status)}`}>
                     {s.status ?? "—"}
                   </span>
                   <span
-                    className="ml-auto font-mono text-zinc-500"
+                    className="ml-auto font-mono text-zinc-600"
                     title={s.ts ?? ""}
                   >
-                    {clockTime(s.ts)}
+                    {ageOf(s.ts)}
                   </span>
                 </div>
-                {s.task_statement && (
-                  <div className="truncate text-zinc-500" title={s.task_statement}>
-                    {s.task_statement}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-    </div>
+              ))}
+            </div>
+          ))}
+      </div>
+    </Card>
   );
 }
 
@@ -226,9 +395,7 @@ function CallExpansion({
             testId="completion-body"
           />
         ) : (
-          <div className="text-xs text-rose-400">
-            EMPTY — the model returned no completion text.
-          </div>
+          <EmptyCompletionNote messages={detail.prompt_messages} />
         )}
       </div>
       {/* Metadata as ONE compact chip row (density pass) — only fields the
@@ -265,6 +432,9 @@ function CallExpansion({
 export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   const [data, setData] = useState<ModelIOResponse | null>(null);
   const [trace, setTrace] = useState<DispatchTraceResponse | null>(null);
+  const [activity, setActivity] = useState<RuntimeActivityResponse | null>(
+    null,
+  );
   const [error, setError] = useState<unknown>(null);
   const [stale, setStale] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -301,6 +471,14 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
         .catch(() => {
           /* the strip keeps its last state; the table's error line covers
              the unreachable-backend case */
+        });
+      getRuntimeActivity()
+        .then((r) => {
+          if (on) setActivity(r);
+        })
+        .catch(() => {
+          /* same quiet degradation: the strip keeps its last state (or its
+             honest "not loaded" line) on 404/skew/unreachable */
         });
     };
     load();
@@ -344,8 +522,9 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
         </span>
       </div>
 
-      {/* Top strip: the nara chain (orchestrator triples) + spawned agents. */}
-      <TraceStrip trace={trace} />
+      {/* Top strip: ONE runtime-activity card — nara chain + subagent
+          work, with the dev spawn ledger behind a collapsed toggle. */}
+      <RuntimeStrip activity={activity} trace={trace} />
 
       {/* Filters + live-state controls. */}
       <div className="mt-4 flex flex-wrap items-center gap-2">

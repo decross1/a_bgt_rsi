@@ -19,6 +19,13 @@ chain and the spawn ledger's agent contracts.
 - ``GET /api/dispatch_trace`` — recent orchestrator.jsonl
   dispatch → worker_invocation → receipt triples joined by task_id, plus the
   last entries of the spawn ledger ``run_state/spawn.jsonl``.
+- ``GET /api/runtime_activity`` — the RUNTIME plane only (owner feedback
+  2026-08-18: the old top cards conflated dev-side Claude-Code build agents
+  with the apparatus's own runtime agents): Nara's latest chain tasks out of
+  orchestrator.jsonl + recent SUBAGENT WORK grouped from calls.jsonl by
+  caller_tag family. The dev spawn ledger deliberately stays on
+  ``/api/dispatch_trace`` — the plane separation is on the wire, not just
+  in the view.
 
 BOUNDED TAIL READS, ALWAYS: calls.jsonl is tens of MB and grows hourly, so
 every request seeks from EOF and walks BACKWARD in blocks, stopping at the
@@ -72,6 +79,13 @@ TRACE_TAIL_BYTES = 512 * 1024
 SPAWN_TAIL_BYTES = 256 * 1024
 SPAWN_ENTRIES = 10
 SPAWN_STATEMENT_CHARS = 140
+
+# /api/runtime_activity bounds: the strip wants LIVE/recent work, so its
+# calls.jsonl grouping scan is bounded tighter than the list endpoint's
+# (min() with the register-time max_scan_bytes so tests can shrink it).
+CHAIN_ENTRIES = 8
+SUBAGENT_GROUP_LIMIT = 8
+SUBAGENT_SCAN_BYTES = 4 * 1024 * 1024
 
 
 def _env_path(var: str, default: Path) -> Path:
@@ -207,6 +221,76 @@ def _tail_records(path: Path, window_bytes: int) -> list[dict]:
         if isinstance(rec, dict):
             out.append(rec)
     return out
+
+
+def _subagent_family(tag: str) -> tuple[str, str] | None:
+    """Map a caller_tag to its SUBAGENT-WORK family ``(family_id, label)``,
+    or None when the tag is NOT subagent work (Nara chain / station calls —
+    nara.run_iteration, hypothesize, idea_judge, … — live on the other
+    plane and are excluded).
+
+    Families are EVIDENCE, never invented — derived from the caller_tag
+    vocabulary actually observed in logs/calls.jsonl (checked 2026-08-18):
+
+    - ``subagent.finding_skeptic_{1,2,3}`` + ``finding_promotion.synthesize``
+      → one promotion-panel run; a run's rows share
+      ``run_id "promote_findings_<hash>"`` (parent_request_id is null).
+    - ``finding_session`` / ``finding_session_{attacker,defender,tutor}``
+      → one two-voice session; rows share
+      ``run_id "finding_session_fs-<hash>"``.
+    - ``subagent.debate_{challenger,defender}`` → bounded-debate turns:
+      workers/debate.py names its run_subagent calls ``debate_<role>`` and
+      run_subagent tags every call ``subagent.<name>``
+      (orchestrator/subagent.py), passing the iteration id as
+      parent_request_id.
+    - any other ``subagent.<name>`` → a generic run_subagent child,
+      labelled honestly by its own name.
+    """
+    if tag.startswith("subagent.finding_skeptic_") \
+            or tag.startswith("finding_promotion."):
+        return "promotion_panel", "promotion panel"
+    if tag.startswith("subagent.debate_"):
+        return "debate", "bounded debate"
+    if tag.startswith("subagent."):
+        rest = tag[len("subagent."):]
+        return f"subagent:{rest}", rest
+    if tag == "finding_session" or tag.startswith("finding_session_"):
+        return "two_voice_session", "two-voice session"
+    return None
+
+
+def _join_orch_tasks(orch_path: Path, cap: int) -> list[dict]:
+    """orchestrator.jsonl triples joined by task_id, newest-first, capped.
+    The latest row (>= so equal-timestamp triples resolve to the LAST
+    file-order row — the receipt) owns status/stage/ts."""
+    groups: dict[str, dict] = {}
+    for rec in _tail_records(orch_path, TRACE_TAIL_BYTES):
+        task_id = rec.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            continue
+        ts = rec.get("timestamp")
+        instant = _parse_ts(ts)
+        grp = groups.setdefault(task_id, {
+            "task_id": task_id, "task_type": None, "status": None,
+            "stage": None, "duration_ms": None, "ts": None,
+            "run_id": None, "_instant": instant,
+        })
+        if grp["task_type"] is None:
+            grp["task_type"] = _passthrough_str(rec.get("task_type"))
+        if grp["run_id"] is None:
+            grp["run_id"] = _passthrough_str(rec.get("run_id"))
+        if isinstance(rec.get("duration_ms"), (int, float)):
+            grp["duration_ms"] = rec["duration_ms"]
+        if instant >= grp["_instant"]:
+            grp["_instant"] = instant
+            grp["status"] = _passthrough_str(rec.get("status"))
+            grp["stage"] = _passthrough_str(rec.get("stage"))
+            grp["ts"] = _passthrough_str(ts)
+    tasks = sorted(groups.values(), key=lambda g: g["_instant"],
+                   reverse=True)[:cap]
+    for grp in tasks:
+        del grp["_instant"]
+    return tasks
 
 
 def _prompt_preview(rec: dict) -> str | None:
@@ -360,35 +444,7 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
         the spawn ledger's last entries. Degrades per-source: an absent file
         is announced, never a 500 and never fabricated rows."""
         capped = min(max(limit, 1), 100)
-        groups: dict[str, dict] = {}
-        for rec in _tail_records(orch_path, TRACE_TAIL_BYTES):
-            task_id = rec.get("task_id")
-            if not isinstance(task_id, str) or not task_id:
-                continue
-            ts = rec.get("timestamp")
-            instant = _parse_ts(ts)
-            grp = groups.setdefault(task_id, {
-                "task_id": task_id, "task_type": None, "status": None,
-                "stage": None, "duration_ms": None, "ts": None,
-                "run_id": None, "_instant": instant,
-            })
-            if grp["task_type"] is None:
-                grp["task_type"] = _passthrough_str(rec.get("task_type"))
-            if grp["run_id"] is None:
-                grp["run_id"] = _passthrough_str(rec.get("run_id"))
-            if isinstance(rec.get("duration_ms"), (int, float)):
-                grp["duration_ms"] = rec["duration_ms"]
-            # Latest row (>= so equal-timestamp triples resolve to the LAST
-            # file-order row — the receipt) owns status/stage/ts.
-            if instant >= grp["_instant"]:
-                grp["_instant"] = instant
-                grp["status"] = _passthrough_str(rec.get("status"))
-                grp["stage"] = _passthrough_str(rec.get("stage"))
-                grp["ts"] = _passthrough_str(ts)
-        tasks = sorted(groups.values(), key=lambda g: g["_instant"],
-                       reverse=True)[:capped]
-        for grp in tasks:
-            del grp["_instant"]
+        tasks = _join_orch_tasks(orch_path, capped)
 
         # Spawn ledger: last SPAWN_ENTRIES raw entries, newest-first. The two
         # timestamp spellings on disk ("ts" and "timestamp") both pass
@@ -423,6 +479,97 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
             "spawn_available": spawn_path.exists(),
             "tasks": tasks,
             "spawns": spawns,
+            "generated_at": _utcnow_iso(),
+        }
+
+    @router.get("/runtime_activity")
+    def runtime_activity():
+        """The RUNTIME plane for the /model-io strip: Nara's latest chain
+        tasks + recent subagent work grouped by caller_tag family. The
+        dev-side spawn ledger stays on /api/dispatch_trace on purpose.
+
+        Grouping keys are EVIDENCE, never invented: rows group by
+        (family, parent_request_id-else-run_id). The observed subagent rows
+        carry a null parent_request_id and a per-run run_id
+        (promote_findings_<hash> / finding_session_fs-<hash>), so run_id is
+        usually the instance key; parent_request_id wins when present
+        (debate turns carry the iteration id there). orchestrator.jsonl
+        rows carry NO run_id field at all (checked 2026-08-18: zero
+        occurrences), so the chain is the task_id join — "latest task per
+        run_id" would fabricate a key the rows do not have.
+        """
+        scan_bound = min(max_scan_bytes, SUBAGENT_SCAN_BYTES)
+        records, state = _scan_backward(calls_path, scan_bound)
+        groups: dict[tuple, dict] = {}
+        for rec in records:
+            tag = rec.get("caller_tag")
+            if not isinstance(tag, str) or not tag:
+                continue
+            fam = _subagent_family(tag)
+            if fam is None:
+                continue
+            family_id, label = fam
+            key = _passthrough_str(rec.get("parent_request_id"))
+            key_source = "parent_request_id" if key else None
+            if key is None:
+                key = _passthrough_str(rec.get("run_id"))
+                key_source = "run_id" if key else None
+            instant = _parse_ts(rec.get("timestamp"))
+            ts = _passthrough_str(rec.get("timestamp"))
+            grp = groups.get((family_id, key))
+            if grp is None:
+                grp = groups[(family_id, key)] = {
+                    "family": family_id, "label": label,
+                    "group_key": key, "key_source": key_source,
+                    "calls": 0, "models": set(), "caller_tags": set(),
+                    "first_ts": None, "last_ts": None,
+                    "_first": instant, "_last": instant,
+                }
+            grp["calls"] += 1
+            model = _passthrough_str(rec.get("model"))
+            if model:
+                grp["models"].add(model)
+            grp["caller_tags"].add(tag)
+            if grp["last_ts"] is None or instant >= grp["_last"]:
+                grp["_last"] = instant
+                grp["last_ts"] = ts
+            if grp["first_ts"] is None or instant <= grp["_first"]:
+                grp["_first"] = instant
+                grp["first_ts"] = ts
+
+        newest = sorted(groups.values(), key=lambda g: g["_last"],
+                        reverse=True)[:SUBAGENT_GROUP_LIMIT]
+        subagent_groups = []
+        for grp in newest:
+            tags = sorted(grp["caller_tags"])
+            label = grp["label"]
+            if grp["family"] == "promotion_panel":
+                # Skeptic count DERIVED from the distinct tags actually in
+                # the group, never hardcoded.
+                n = sum(1 for t in tags
+                        if t.startswith("subagent.finding_skeptic_"))
+                if n:
+                    label = (f"promotion panel ({n} skeptic"
+                             f"{'s' if n != 1 else ''})")
+            subagent_groups.append({
+                "family": grp["family"], "label": label,
+                "group_key": grp["group_key"],
+                "key_source": grp["key_source"],
+                "calls": grp["calls"],
+                "models": sorted(grp["models"]),
+                "caller_tags": tags,
+                "first_ts": grp["first_ts"], "last_ts": grp["last_ts"],
+            })
+
+        return {
+            "orchestrator_available": orch_path.exists(),
+            "calls_available": calls_path.exists(),
+            "chain": _join_orch_tasks(orch_path, CHAIN_ENTRIES),
+            "subagent_groups": subagent_groups,
+            # True iff the byte bound stopped the grouping scan — older
+            # subagent work may exist unexamined.
+            "window_truncated": state["hit_bound"],
+            "scanned_bytes": state["scanned_bytes"],
             "generated_at": _utcnow_iso(),
         }
 
