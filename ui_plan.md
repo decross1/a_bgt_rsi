@@ -3412,3 +3412,39 @@ verified to FAIL against the pre-fix code.
   as of the 20:01Z cycle, 3 agent gaps / 1 human gap, owed L0×9 + L1×3,
   2 agenda topics, 12 refine candidates — identical gap text to a live
   `assess_state` run under `.venv-chroma`.
+
+## §2026-08-18 Model I/O viewer + dispatch trace (`ui/` only, sprint-build-io-viewer)
+
+Owner request: the dashboard showed THAT gemma/qwen are alive (KV, MTP,
+health stats) but nothing of what passes THROUGH them. New engine surface
+**/model-io**: top strip = dispatch trace (orchestrator triples joined by
+task_id + the spawn ledger's last 10 agent contracts), main = live table
+(5s poll, pause button) of wrapper calls — model badge (gemma emerald /
+qwen sky, the health-panel families), backend chip (passthrough, never
+derived), caller_tag tone, latency, in→out tokens, a loud EMPTY flag —
+click a row for the FULL role-labeled prompt messages + completion.
+Filters: model substring, caller_tag substring, run_id exact (server-side).
+Entry points: engine ▾ nav + "what's passing through →" beside Pulse's
+model server cards.
+
+Backend (`backend/model_io.py`, register-fn idiom, wired in app.py):
+`GET /api/model_io` (newest-first summaries; previews ~200 chars, prompt
+preview = last USER message), `GET /api/model_io/{request_id}` (full raw
+row), `GET /api/dispatch_trace`. All reads are BOUNDED BACKWARD TAIL SCANS
+from EOF (16 MiB cap, 256 KiB blocks — calls.jsonl is tens of MB and grows
+hourly; the whole file is never parsed per request); the bound is honest on
+the wire (`window_truncated`, and the detail 404 names the window). Reads
+the MAIN log only — experiments/bench redirect to `runs/*.calls.jsonl` via
+LOOP_V0_CALLS_LOG (stated as a page footnote; log picker = future work).
+`/api/model_io` + `/api/dispatch_trace` added to the known-skew-404 set.
+
+Verification: ui-backend pytest **698 pass** (`MOCK_LLM=1 .venv-chroma`; 20
+new in `test_model_io.py` incl. the 10k-junk-prefix guard + a real
+bound-exclusion pin) · sampler **7 pass** (`ui/.venv`) · vitest **1109
+pass** (75 files, 10 new in `test_model_io.tsx`) · `tsc --noEmit` clean ·
+`vite build` clean · read-only in-process smoke against the REAL logs:
+list 21ms (256 KiB scanned for 5 rows), detail 4ms, worst-case no-match
+filter 33ms at the full 16 MiB bound with `window_truncated: true`, trace
+30 tasks + 10 spawns. **No service restarted** — the live :8700 binary
+predates the endpoints until the ensure cron or the owner reloads it; the
+page degrades to the quiet EndpointMissingNote until then.

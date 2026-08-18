@@ -23,6 +23,7 @@ from .finding_detail import register as register_finding_detail
 from .human_todo import register as register_human_todo
 from .iteration_journey import register as register_iteration_journey
 from .lab_channel_seam import register as register_lab_channel_seam
+from .model_io import register as register_model_io
 from .served_models import register as register_served_models
 from .lab_todo import register as register_lab_todo
 from .ladder import register as register_ladder
@@ -298,6 +299,13 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     # one actually answering — on 2026-08-16 the dashboard announced "Qwen3.6"
     # for a full hour while :8001 served 3.8, because the label was a string.
     register_served_models(app)
+
+    # Model I/O viewer + dispatch trace (owner request 2026-08-18): what is
+    # actually passing THROUGH gemma/qwen (bounded tail of logs/calls.jsonl),
+    # the orchestrator dispatch chain, and the spawn ledger. Same logs_dir as
+    # register_activity; the spawn ledger resolves to the primary checkout
+    # (UI_SPAWN_LEDGER overrides). Read-only.
+    register_model_io(app, logs_dir=logs_dir)
 
     return app
 

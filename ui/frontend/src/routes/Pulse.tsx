@@ -25,7 +25,7 @@
 // It also owns the ONE /api/coordinator/cycles poll, handing the rows to both
 // LastCycleLine and the sparkgrid instead of letting them each poll.
 import { useEffect, useRef, useState } from "react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import Card from "../design/Card";
 import { registerPaletteActions } from "../design/CommandPalette";
 import HealthStrip from "../components/HealthStrip";
@@ -356,6 +356,24 @@ export default function Pulse() {
 
         <HealthStrip samples={cleanSamples} />
 
+        {/* Entry point to the Model I/O viewer (owner request 2026-08-18):
+            the cards below say the servers are healthy; this link answers
+            what is actually passing through them. */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            fontSize: "var(--text-meta)",
+          }}
+        >
+          <Link
+            to="/model-io"
+            data-testid="pulse-model-io-link"
+            className="text-[var(--fg-muted)] transition-colors hover:text-[var(--fg)]"
+          >
+            what&apos;s passing through →
+          </Link>
+        </div>
         <div
           style={{
             display: "grid",

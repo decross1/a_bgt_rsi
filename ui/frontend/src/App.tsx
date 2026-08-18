@@ -11,6 +11,7 @@ import Experiments from "./routes/Experiments";
 import Graph from "./routes/Graph";
 import Inspector from "./routes/Inspector";
 import Ladder from "./routes/Ladder";
+import ModelIO from "./routes/ModelIO";
 import Pulse from "./routes/Pulse";
 
 // The final UI-simplification shell (docs/ui_simplification_plan_2026-08-15.md,
@@ -34,6 +35,10 @@ const ENGINE_NAV = [
   { to: "/cycles", label: "cycles" },
   { to: "/experiments", label: "experiments" },
   { to: "/graph", label: "graph" },
+  // Model I/O (owner request 2026-08-18): what actually passes through
+  // gemma/qwen + the dispatch trace. Also reachable from Pulse's model
+  // server cards ("what's passing through →").
+  { to: "/model-io", label: "model i/o" },
 ];
 
 function NavTab({
@@ -146,6 +151,9 @@ export default function App() {
           <Route path="/graph" element={<Graph />} />
           <Route path="/experiments" element={<Experiments />} />
           <Route path="/experiments/:expId" element={<ExperimentDetail />} />
+          {/* Model I/O viewer: live wrapper-call table (logs/calls.jsonl)
+              + dispatch trace (orchestrator.jsonl / spawn ledger). */}
+          <Route path="/model-io" element={<ModelIO />} />
           {/* Wrapper-rooted tool-call chains (logs/calls.jsonl). */}
           <Route path="/chain/req/:requestId" element={<Inspector />} />
         </Routes>

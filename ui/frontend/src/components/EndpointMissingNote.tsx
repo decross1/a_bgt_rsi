@@ -30,6 +30,10 @@ const SKEW_404_ENDPOINTS: ReadonlySet<string> = new Set([
   // S4 lab channel: a backend predating /api/channel/* degrades quietly.
   "/api/channel/timeline",
   "/api/channel/available",
+  // Model I/O viewer (2026-08-18): the running :8700 binary predates these
+  // until its next reload — the page must degrade quietly, not go red.
+  "/api/model_io",
+  "/api/dispatch_trace",
 ]);
 
 /** True when `err` is a 404 from a KNOWN list/capability endpoint — i.e.
