@@ -3691,3 +3691,53 @@ bitwise — spot-verified post-cutover on the 3.8 serve.
 **Rollback.** 3.6 weights retained ≥30 days at
 `/mnt/models/qwen3.6-27b-nvfp4-mtp`; rollback = revert serve_qwen() + the
 one registry label, restart. **Reversibility: one function, minutes.**
+
+## D-075 — Research-workflow instrument repairs: redteam calibration + polarity, corpus extension, debate honesty, ledger hygiene (owner-ratified package)
+
+**Date.** 2026-08-18 (owner: "ratify all six" against the risk/reward
+table; overrides row `D075_ratified_all_six`). Diagnosis:
+`wf_c806049b` (3 measurers, exact counts over the real stores).
+
+**The evidence that forced this.** August (66 rows): the redteam said
+`fatal_flaw` on **52/52 parsed runs** (0 genuine proceeds since June; 3
+ever) and fail-OPENED to "proceed" on every schema_mismatch — so all 4
+August L1 climbs were parser accidents and 19 otherwise-clean rows were
+blocked by redteam alone (cap-removal counterfactual: 4→23). 20/21
+off-domain kills were the lab's OWN active topic (Liquid Democracy — the
+topicality anchors lack delegation/social-choice literature). Debates:
+5/6 real exchanges hit the 4-round cap mid-argument; refuted AND
+inconclusive both collapsed to `undecidable`; infra noise downgraded
+verdicts; one 470s debate was clobbered by a double critic dispatch.
+Ledger: 3 duplicate clusters minted from the 08-18 refill (one killed
+while its byte-identical original stays open); no duplicate/non-research
+kill codes exist; consolidation matches fresh-vs-fresh only.
+
+**Ratified fixes.**
+- **R1a** Redteam calibration battery (pre-registered discrimination bars;
+  known-good must proceed, known-bad must flag; re-seat on the independent
+  skeptic backend if Gemma fails). The fatal_flaw hard cap STAYS until the
+  battery verdict — never silently dropped.
+- **R1b** Redteam polarity: parse failure → verdict `unscored` (ladder
+  treats as ABSENT: acceptable at L1, blocks L4 where `proceed` is
+  required). Kills the parser-accident pathway both ways.
+- **R2** Corpus + topicality-anchor extension: delegation / liquid
+  democracy / social choice / sortition literature ingested; the active
+  research program must be in-domain to its own gates by construction.
+- **R3a** MAX_DEBATE_ROUNDS 4→6 (owner reverses their 2026-08-15 "4 is
+  fine": the cap measured as binding mid-argument on 5/6 exchanges).
+- **R3b** Debate honesty: infra-noise (challenger_error / unparseable)
+  never downgrades a verdict (logged, not scored); `defender_conceded`
+  maps to critique verdict **refuted** (information-preserving; harsher);
+  cache guard: a critique cache write may not clobber an existing debate
+  block with a debate-less result.
+- **R4** Ledger: kill codes `superseded_duplicate` (carries
+  duplicate_of) + `non_research_artifact` added to the closed enum
+  (schema + builders); consolidation matches fresh candidates against
+  EXISTING clusters before minting; then the 3 duplicates and 2
+  smoke-test clusters are retired with linkage.
+
+**Reversibility.** R1b/R3b/R4 are code with regression pins (revert =
+git); R3a is one constant; R2 is additive corpus content (collections
+are removable); R1a is an instrument evaluation. The fatal_flaw cap and
+all rung semantics remain exactly as D-059 defined them — these fixes
+repair the INSTRUMENTS feeding the rungs, not the rungs.
