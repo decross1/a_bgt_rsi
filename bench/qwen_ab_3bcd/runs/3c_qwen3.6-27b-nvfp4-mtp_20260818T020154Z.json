@@ -1,0 +1,129 @@
+{
+  "schema": "qwen_ab_3bcd.twovoice.v1",
+  "stage": "3c",
+  "generated_at": "2026-08-18T01:54:31.540571+00:00",
+  "arm": "qwen3.6-27b-nvfp4-mtp",
+  "provenance": {
+    "prereg": "experiments/PREREG_qwen_ab_3bcd_2026-08-18.md#3c",
+    "image": "vllm/vllm-openai:v0.21.0",
+    "endpoint": "http://127.0.0.1:8001/v1",
+    "served_models": {
+      "ids": [
+        "qwen3.6-27b-nvfp4-mtp"
+      ],
+      "error": null,
+      "url": "http://127.0.0.1:8001/v1/models"
+    },
+    "arm_label": "qwen3.6-27b-nvfp4-mtp",
+    "calls_log_path": "/home/decross1/projects/a_bgt_rsi/bench/qwen_ab_3bcd/runs/qwen3.6-27b-nvfp4-mtp.calls.jsonl",
+    "sessions_root": "/home/decross1/projects/a_bgt_rsi/bench/qwen_ab_3bcd/runs/sessions",
+    "surfaced_findings": {
+      "path": "/home/decross1/projects/a_bgt_rsi/memory/surfaced_findings.jsonl",
+      "sha256": "1353ae575043e44897e358d2de876e6ea1cbcbc230768b6188b651c5440395d8",
+      "findings": [
+        {
+          "finding_id": "sf-iter-2026-07-15-001",
+          "source_iteration_id": "iter-2026-07-15-001"
+        },
+        {
+          "finding_id": "sf-iter-2026-07-30-001",
+          "source_iteration_id": "iter-2026-07-30-001"
+        },
+        {
+          "finding_id": "sf-iter-2026-08-04-001",
+          "source_iteration_id": "iter-2026-08-04-001"
+        }
+      ]
+    },
+    "loop_memory_path": "/home/decross1/projects/a_bgt_rsi/memory/loop_memory.jsonl",
+    "finding_ids": [
+      "sf-iter-2026-07-15-001",
+      "sf-iter-2026-07-30-001",
+      "sf-iter-2026-08-04-001"
+    ],
+    "opening_user_msg": "Open this interrogation with your single strongest objection to the finding as stated. Ground it in the record above: name the specific metric, value, trial count, or retrieved-evidence gap you are contesting, and say exactly what evidence would change your mind. If the record does not let you decide a point, state that plainly rather than conceding it.",
+    "opening_user_msg_sha256": "a0e0797d1f94f8002b07df8f0f187450e80f9c7800c868933e9d3ad483b0de67",
+    "attacker_max_tokens": 4096,
+    "time_cap_s": 900.0,
+    "entry_points": {
+      "start": "orchestrator.finding_session.start_two_voice_session",
+      "turn": "orchestrator.finding_session.two_voice_turn(addressee='attacker')"
+    }
+  },
+  "fixtures": [
+    {
+      "finding_id": "sf-iter-2026-07-15-001",
+      "status": "ok",
+      "error": null,
+      "session_id": "fs-e156d493faef",
+      "request_id": "55831ab0-16f9-47c4-9846-f0a6922f2796",
+      "reply_head": "\n\nMy strongest objection is that the claim is structurally under-specified and entirely unquantified, rendering it unfalsifiable as stated. The specific retrieved-evidence gap I am contesting is the a",
+      "non_empty_visible": true,
+      "fail_open": false,
+      "capped": false,
+      "warning": null,
+      "wall_s": 149.964
+    },
+    {
+      "finding_id": "sf-iter-2026-07-30-001",
+      "status": "ok",
+      "error": null,
+      "session_id": "fs-e7ecc94e86ae",
+      "request_id": "f1746ead-923a-415f-abfe-1ad2177d5eb0",
+      "reply_head": "\n\nMy strongest objection is that the claim contains an internal theoretical contradiction between its stated operating condition and its proposed mechanism: it asserts that hierarchical models succeed",
+      "non_empty_visible": true,
+      "fail_open": false,
+      "capped": false,
+      "warning": null,
+      "wall_s": 133.965
+    },
+    {
+      "finding_id": "sf-iter-2026-08-04-001",
+      "status": "ok",
+      "error": null,
+      "session_id": "fs-ba70ce43bbcc",
+      "request_id": "2b939ed0-3354-4997-8d13-cf745c2f411c",
+      "reply_head": "\n\n**Strongest Objection:** The claim is mathematically ill-posed and behaviorally contradictory, resting on a derivative equality that lacks operational definition and contradicts the standard role of",
+      "non_empty_visible": true,
+      "fail_open": false,
+      "capped": false,
+      "warning": null,
+      "wall_s": 159.239
+    }
+  ],
+  "skipped": [],
+  "total_wall_s": 443.2,
+  "time_cap": {
+    "cap_s": 900.0,
+    "hit": false,
+    "fixtures_run": 3,
+    "fixtures_planned": 3
+  },
+  "completed": true,
+  "criteria": {
+    "gates": {
+      "non_empty_visible_3of3": {
+        "pass": true,
+        "observed": "3/3",
+        "criterion": "attacker reply has non-empty visible content after strip_channel_markup on 3/3"
+      },
+      "zero_fail_open": {
+        "pass": true,
+        "observed": 0,
+        "criterion": "zero replies equal to the '[attacker unavailable: ...]' fail-open string"
+      },
+      "empty_at_cap_zero": {
+        "pass": true,
+        "observed": 0,
+        "offenders": [],
+        "attacker_rows_in_log": 3,
+        "criterion": "empty-at-cap == 0 in the arm's calls log for caller_tag=finding_session_attacker (max_tokens=4096)"
+      }
+    },
+    "all_pass": true
+  },
+  "human_spot_check": {
+    "voice_distinctness": "pending human read of the session transcripts",
+    "sessions_root": "/home/decross1/projects/a_bgt_rsi/bench/qwen_ab_3bcd/runs/sessions"
+  }
+}

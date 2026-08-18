@@ -3646,3 +3646,48 @@ our gates passed; watch-class scorecard only).
 
 **Reversibility.** Full — an isolated eval engine plus, at most, one
 drafter download after T1; deleting the venv/weights closes the track.
+
+## D-074 — Qwen skeptic-seat CUTOVER: 3.6 → 3.8-27B-NVFP4 (executes D-072's qualification; the D-0zz entry)
+
+**Date.** 2026-08-18 (owner: "ratify the cutover"; overrides row
+`G6_cutover_ratified_D074`). **Tier S** (cron/serve-models.sh + the
+wrapper registry label), human-ratified per the entrenchment tier list.
+
+**The complete battery (all locked gates, both arms; instruments and
+artifacts in bench/critic_eval/runs/, bench/fp8_ab/runs/,
+bench/qwen_ab_3bcd/runs/; preregistrations in experiments/PREREG_*):**
+
+| Stage | 3.6-NVFP4 | 3.8-NVFP4 | Gate |
+| --- | --- | --- | --- |
+| 3a skeptic-ladder, 22 cases @12288 (prod pin) | ALL 3 PASS (08-17 control) | ALL 3 PASS (08-17, D-044 citations exact) | ✅ |
+| 3b promotion multi-vote, 3 pinned candidates, prod budgets | liveness PASS, empty-at-cap 0 | liveness PASS, empty-at-cap 0 | ✅ |
+| 3c two-voice attacker, 3 pinned findings | 3/3 all_pass | 3/3 all_pass | ✅ |
+| 3d restate hook, 4 cases (D-070 residual) | 4/4 all_pass | 4/4 all_pass | ✅ |
+| Quality: matched official-FP8 A/B (frozen provenance) | kill-pair SPLIT | kill-pair PASS | favors 3.8 |
+| Tool probe (fixed 10-turn script) | 9/10 structured | 8/10 (dict-trap + 1 timeout) | parity |
+
+Throughput on record: 23.6 tok/s (3.6+MTP eval runtime) · 16.6 avg-gen
+(3.8+MTP prod pin) · ~8 (FP8 MTP-off). 3.8 reasons longer per verdict;
+zero empty-at-cap at the D-070 caps across every 08-17/18 battery.
+
+**Decision.** vllm-qwen serves `/mnt/models/qwen3.8-27b-nvfp4-mtp`
+(Inferact NVFP4 PTQ, G6-acquired 08-15, hub-verified) as
+`qwen3.8-27b-nvfp4-mtp`; util 0.25→0.30 (role_setups Config-1 arithmetic —
+restores 3.6-equivalent KV headroom for the +5.5 GiB weights; D-057
+preflights before/after, margin untouched). Image pin v0.21.0 VERBATIM
+(rule 2 — window #2 proved the stack; the "pin-amendment" verdict died
+08-16). Roles unchanged (G5: Gemma PI, Qwen skeptic). Registry label
+updated at the single production site (agent_wrapper/wrapper.py).
+
+**Correction (append-only), riding per D-072's plan:** D-022's
+"determinism intact" OVERSTATES. Measured 2026-08-17: Gemma is not
+run-to-run byte-deterministic at temp-0 (benign reduction-order drift in
+the MoE-Marlin lock-based reduce; ~150-call probes, zero corruption,
+zero gross anomalies); Qwen (FlashInfer path) IS byte-deterministic
+(0/8). Lossless-vs-target holds; bitwise run-to-run does not. PI
+reproducibility is statistical (the N≥30 discipline); skeptic verdicts
+bitwise — spot-verified post-cutover on the 3.8 serve.
+
+**Rollback.** 3.6 weights retained ≥30 days at
+`/mnt/models/qwen3.6-27b-nvfp4-mtp`; rollback = revert serve_qwen() + the
+one registry label, restart. **Reversibility: one function, minutes.**

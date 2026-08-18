@@ -96,7 +96,7 @@ register_backend(AnthropicBackend())
 register_backend(OllamaBackend(
     name="vllm-qwen",
     base_url="http://127.0.0.1:8001/v1",
-    model="qwen3.6-27b-nvfp4-mtp",
+    model="qwen3.8-27b-nvfp4-mtp",  # D-074 cutover 2026-08-18 (was 3.6)
 ))
 DEFAULT_BACKEND = os.environ.get("WRAPPER_DEFAULT_BACKEND", "vllm-gemma")
 

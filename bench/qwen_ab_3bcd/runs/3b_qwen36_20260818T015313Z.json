@@ -1,0 +1,318 @@
+{
+  "schema": "qwen_ab_3bcd.3b.v1",
+  "stage": "3b",
+  "generated_at": "2026-08-18T01:35:18.056844+00:00",
+  "arm_label": "qwen36",
+  "bench_id": "qwen-ab-3b-qwen36-fd5d8b25",
+  "provenance": {
+    "prereg": "experiments/PREREG_qwen_ab_3bcd_2026-08-18.md#3b",
+    "image": "vllm/vllm-openai:v0.21.0",
+    "endpoint": "http://127.0.0.1:8001/v1",
+    "served_model_label": "qwen3.6-27b-nvfp4-mtp",
+    "served_models_live": {
+      "url": "http://127.0.0.1:8001/v1/models",
+      "ids": [
+        "qwen3.6-27b-nvfp4-mtp"
+      ],
+      "fetched_at": "2026-08-18T01:35:18.004571+00:00",
+      "error": null
+    },
+    "backend_reregistered": "vllm-qwen",
+    "calls_log_path": "/home/decross1/projects/a_bgt_rsi/bench/qwen_ab_3bcd/runs/qwen36.calls.jsonl",
+    "surfaced_path": "/home/decross1/projects/a_bgt_rsi/memory/surfaced_findings.jsonl",
+    "surfaced_sha256": "1353ae575043e44897e358d2de876e6ea1cbcbc230768b6188b651c5440395d8",
+    "loop_memory_path": "/home/decross1/projects/a_bgt_rsi/memory/loop_memory.jsonl",
+    "loop_memory_sha256": "d978ff77365cb5dbb6ea203c363f62140e3b3e167a72c27428efa2a9526d2ffb",
+    "expected_finding_ids": [
+      "sf-iter-2026-07-15-001",
+      "sf-iter-2026-07-30-001",
+      "sf-iter-2026-08-04-001"
+    ],
+    "fixtures": [
+      {
+        "finding_id": "sf-iter-2026-07-15-001",
+        "source_iteration_id": "iter-2026-07-15-001",
+        "promoted_at": "2026-07-15T15:05:28.427038Z",
+        "historical_adversarial": {
+          "n_skeptics": 3,
+          "n_voting": 3,
+          "n_refuted": 3,
+          "adversarial_margin": -3,
+          "survived": false,
+          "qwen_failures": 0
+        }
+      },
+      {
+        "finding_id": "sf-iter-2026-07-30-001",
+        "source_iteration_id": "iter-2026-07-30-001",
+        "promoted_at": "2026-07-31T09:05:58.323760Z",
+        "historical_adversarial": {
+          "n_skeptics": 3,
+          "n_voting": 3,
+          "n_refuted": 3,
+          "adversarial_margin": -3,
+          "survived": false,
+          "qwen_failures": 0
+        }
+      },
+      {
+        "finding_id": "sf-iter-2026-08-04-001",
+        "source_iteration_id": "iter-2026-08-04-001",
+        "promoted_at": "2026-08-04T15:06:38.095209Z",
+        "historical_adversarial": {
+          "n_skeptics": 3,
+          "n_voting": 3,
+          "n_refuted": 3,
+          "adversarial_margin": -3,
+          "survived": false,
+          "qwen_failures": 0
+        }
+      }
+    ],
+    "planned_finding_ids": [
+      "sf-iter-2026-07-15-001",
+      "sf-iter-2026-07-30-001",
+      "sf-iter-2026-08-04-001"
+    ],
+    "n_skeptics": 3,
+    "vote_budget": {
+      "max_turns": 4,
+      "max_tokens_per_turn": 6144,
+      "max_tokens_total": 16000,
+      "max_wall_seconds": 800.0
+    },
+    "time_cap_s": 3600.0,
+    "limit": null,
+    "effective_config": {
+      "arm_label": "qwen36",
+      "model_label": "qwen3.6-27b-nvfp4-mtp",
+      "image": "vllm/vllm-openai:v0.21.0",
+      "calls_log_path": "/home/decross1/projects/a_bgt_rsi/bench/qwen_ab_3bcd/runs/qwen36.calls.jsonl",
+      "bench_id": "qwen-ab-3b-qwen36-fd5d8b25",
+      "limit": null,
+      "n_skeptics": 3,
+      "time_cap_s": 3600.0,
+      "surfaced_path": "/home/decross1/projects/a_bgt_rsi/memory/surfaced_findings.jsonl",
+      "loop_memory_path": "/home/decross1/projects/a_bgt_rsi/memory/loop_memory.jsonl",
+      "surfaced_sha256": "1353ae575043e44897e358d2de876e6ea1cbcbc230768b6188b651c5440395d8",
+      "loop_memory_sha256": "d978ff77365cb5dbb6ea203c363f62140e3b3e167a72c27428efa2a9526d2ffb"
+    }
+  },
+  "candidates": [
+    {
+      "finding_id": "sf-iter-2026-07-15-001",
+      "source_iteration_id": "iter-2026-07-15-001",
+      "historical_adversarial": {
+        "n_skeptics": 3,
+        "n_voting": 3,
+        "n_refuted": 3,
+        "adversarial_margin": -3,
+        "survived": false,
+        "qwen_failures": 0
+      },
+      "claim_head": "An adversary can reconstruct the preference rankings of a specific agent by observing the deviation in the resulting stable matching when a small, targeted subset of agent preferences is perturbed.",
+      "status": "completed",
+      "tally": {
+        "n_voting": 3,
+        "n_refuted": 3,
+        "adversarial_margin": -3,
+        "survived": false,
+        "qwen_failures": 0,
+        "refutation_summaries": [
+          "The claim fundamentally mischaracterizes the information-theoretic properties of stable matching: the mapping from preference profiles to stable matchings is highly lossy and non-injective, meaning exponentially many distinct rankings produce identical outcomes, making full preference reconstruction theoretically impossible without unrealistic query budgets. Moreover, the described mechanism is not novel but merely a standard query-based inference attack (analogous to model inversion or side-channel analysis), and the framing of 'high-frequency audits reducing entropy to facilitate collusion' conflates deterministic algorithmic inversion with unrelated concepts. Real-world matching systems further obscure the signal through tie-breaking rules, aggregation, and noise, rendering the claimed reconstruction infeasible.",
+          "The claim misidentifies a well-established privacy vulnerability in stable matching as novel. Preference inference from matching outcomes under perturbations is a classic result in mechanism design and differential privacy literature, where stable matchings are known to be highly sensitive and inherently leak preference information without explicit noise injection. The described 'audit/synchronization' mechanism merely repackages standard inverse stable matching attacks, directly contradicting established findings that such inference is a known, non-novel threat model.",
+          "The claim falsely asserts novelty by ignoring extensive literature on preference inference attacks and information leakage in deterministic matching mechanisms. Systematic perturbation of inputs to reconstruct hidden rankings is a well-documented vulnerability in mechanism design, explicitly addressed by differential privacy frameworks for stable matchings and studies on strategy-proofness. The 'audit/synchronization' framing merely repackages a standard sensitivity analysis without introducing a new theoretical mechanism. Consequently, the claim contradicts established results showing that deterministic matchings inherently leak preference information without cryptographic or noise-based protections."
+        ],
+        "quorum": 2
+      },
+      "wall_s": 335.071,
+      "calls_appended": 3,
+      "skeptic_calls": 3
+    },
+    {
+      "finding_id": "sf-iter-2026-07-30-001",
+      "source_iteration_id": "iter-2026-07-30-001",
+      "historical_adversarial": {
+        "n_skeptics": 3,
+        "n_voting": 3,
+        "n_refuted": 3,
+        "adversarial_margin": -3,
+        "survived": false,
+        "qwen_failures": 0
+      },
+      "claim_head": "In ad-hoc teamwork, hierarchical models utilizing a latent capability parameter outperform flat reinforcement learning models in task-agnostic adaptation when environmental shifts are sudden and disco",
+      "status": "completed",
+      "tally": {
+        "n_voting": 3,
+        "n_refuted": 3,
+        "adversarial_margin": -3,
+        "survived": false,
+        "qwen_failures": 0,
+        "refutation_summaries": [
+          "The claim contradicts established findings in ad-hoc teamwork and meta-RL, where hierarchical or latent-variable models are consistently more brittle to sudden distribution shifts than flat models with fast adaptation, due to their reliance on slow latent updates and implicit stationarity assumptions. The proposed mechanism conflates partner exploration variance with representational capacity limits, lacking formal information-theoretic grounding and functioning as post-hoc rationalization rather than a testable causal pathway. Furthermore, without controlling for adaptation horizon, parameter efficiency, or training regimes, the reported performance gap is likely confounded by standard meta-learning dynamics rather than architectural hierarchy.",
+          "The claimed mechanism is a verbose restatement of well-established multi-agent RL phenomena: non-stationarity, distributional shift, and the information bottleneck in partner modeling. Foundational ad-hoc teamwork and meta-RL literature explicitly demonstrates that stochastic partner behavior degrades learning and that structured latent representations mitigate this, directly contradicting the novelty assertion. Furthermore, hierarchical architectures do not inherently guarantee superior adaptation to sudden shifts, as flat models with meta-learning or explicit uncertainty quantification frequently match or exceed them, leaving the causal link empirically unverified and theoretically redundant.",
+          "The claimed 'novel' mechanism is merely a repackaging of well-established multi-agent non-stationarity and information bottleneck theory, where high partner entropy simply exacerbates standard distributional shift and representation capacity limits rather than introducing a new phenomenon. Hierarchical latent capability models for decoupling partner behavior from task dynamics are already a standard paradigm in ad-hoc teamwork literature, rendering the architectural claim non-novel. The automated critic's novelty assessment is methodologically flawed, as absence in a narrow retrieval set does not constitute theoretical novelty, and the described bottleneck directly maps to known results in meta-RL and representation learning."
+        ],
+        "quorum": 2
+      },
+      "wall_s": 310.309,
+      "calls_appended": 3,
+      "skeptic_calls": 3
+    },
+    {
+      "finding_id": "sf-iter-2026-08-04-001",
+      "source_iteration_id": "iter-2026-08-04-001",
+      "historical_adversarial": {
+        "n_skeptics": 3,
+        "n_voting": 3,
+        "n_refuted": 3,
+        "adversarial_margin": -3,
+        "survived": false,
+        "qwen_failures": 0
+      },
+      "claim_head": "{\n  \"candidates\": [\n    \"In ascending-price auctions, the threshold for a 'loss-minimizing mistake' is defined as the bid level where the marginal increase in expected utility from winning is outweigh",
+      "status": "completed",
+      "tally": {
+        "n_voting": 3,
+        "n_refuted": 3,
+        "adversarial_margin": -3,
+        "survived": false,
+        "qwen_failures": 0,
+        "refutation_summaries": [
+          "The claimed first-order condition is mathematically incoherent: standard loss-aversion models incorporate the coefficient directly into the utility function, yielding a single optimality condition rather than equating separate utility and loss gradients. Additionally, the claim incorrectly asserts that the coefficient attenuates the loss gradient, whereas it amplifies loss sensitivity by definition. The Targeted-Loss Exposure Frontier appears to be fabricated jargon that contradicts established behavioral auction theory and standard optimization principles.",
+          "The defining equation \\frac{\\partial E[U|b]}{\\partial b} = \\lambda \\cdot \\frac{\\partial E[L|b]}{\\partial b} mis-specifies behavioral optimization by treating expected utility and expected loss as independent additive terms, whereas established prospect theory models embed the loss-aversion coefficient \\lambda directly into the utility function's loss domain, rendering the equation mathematically redundant. Additionally, the claim posits an undefined threshold \\tau that conditionally triggers Nash deviations, contradicting well-documented theoretical findings that loss aversion systematically shifts bidding strategies across all valuation ranges rather than at a discrete frontier. The term 'Targeted-Loss Exposure Frontier' and its purported linkage to predictive error thresholds are absent from auction theory and appear to be hallucinated constructs.",
+          "The proposed first-order condition is mathematically incoherent: expected utility already internalizes losses, so separating E[U] and E[L] and weighting the loss gradient by λ violates standard prospect theory formulations, which yield ∂E[V]/∂b = 0. Furthermore, incorporating loss aversion shifts the Nash equilibrium itself rather than causing deviations from the risk-neutral equilibrium, revealing a fundamental conceptual confusion. The Targeted-Loss Exposure Frontier appears to be a fabricated construct with no grounding in established auction theory or behavioral economics."
+        ],
+        "quorum": 2
+      },
+      "wall_s": 430.395,
+      "calls_appended": 4,
+      "skeptic_calls": 4
+    }
+  ],
+  "time_cap_hit": false,
+  "completed": true,
+  "criteria": {
+    "liveness": {
+      "fraction": 1.0,
+      "parseable_verdicts": 9,
+      "slots_run": 9,
+      "per_candidate": {
+        "sf-iter-2026-07-15-001": {
+          "qwen_failures": 0,
+          "pass": true
+        },
+        "sf-iter-2026-07-30-001": {
+          "qwen_failures": 0,
+          "pass": true
+        },
+        "sf-iter-2026-08-04-001": {
+          "qwen_failures": 0,
+          "pass": true
+        }
+      },
+      "pass": true,
+      "pass_definition": "all skeptic slots run returned parseable verdicts (fraction == 1.0; qwen_failures == 0 on every completed candidate); zero candidates completed = FAIL"
+    },
+    "empty_at_cap": {
+      "definition": "row with empty completion AND usage.output_tokens == max_tokens, computed from the arm's calls log (prereg Common)",
+      "count_whole_arm_log": 0,
+      "count_this_run": 0,
+      "rows": [],
+      "pass": true
+    },
+    "reported_non_gating": {
+      "votes_vs_history": [
+        {
+          "finding_id": "sf-iter-2026-07-15-001",
+          "historical": {
+            "n_skeptics": 3,
+            "n_voting": 3,
+            "n_refuted": 3,
+            "adversarial_margin": -3,
+            "survived": false,
+            "qwen_failures": 0
+          },
+          "current": {
+            "n_voting": 3,
+            "n_refuted": 3,
+            "adversarial_margin": -3,
+            "survived": false,
+            "qwen_failures": 0
+          },
+          "survived_agrees": true
+        },
+        {
+          "finding_id": "sf-iter-2026-07-30-001",
+          "historical": {
+            "n_skeptics": 3,
+            "n_voting": 3,
+            "n_refuted": 3,
+            "adversarial_margin": -3,
+            "survived": false,
+            "qwen_failures": 0
+          },
+          "current": {
+            "n_voting": 3,
+            "n_refuted": 3,
+            "adversarial_margin": -3,
+            "survived": false,
+            "qwen_failures": 0
+          },
+          "survived_agrees": true
+        },
+        {
+          "finding_id": "sf-iter-2026-08-04-001",
+          "historical": {
+            "n_skeptics": 3,
+            "n_voting": 3,
+            "n_refuted": 3,
+            "adversarial_margin": -3,
+            "survived": false,
+            "qwen_failures": 0
+          },
+          "current": {
+            "n_voting": 3,
+            "n_refuted": 3,
+            "adversarial_margin": -3,
+            "survived": false,
+            "qwen_failures": 0
+          },
+          "survived_agrees": true
+        }
+      ],
+      "calls_per_vote": {
+        "per_candidate": {
+          "sf-iter-2026-07-15-001": 3,
+          "sf-iter-2026-07-30-001": 3,
+          "sf-iter-2026-08-04-001": 4
+        },
+        "mean": 3.333,
+        "baseline_d070": 12.5
+      },
+      "wall_per_vote_s": {
+        "per_candidate": {
+          "sf-iter-2026-07-15-001": 335.071,
+          "sf-iter-2026-07-30-001": 310.309,
+          "sf-iter-2026-08-04-001": 430.395
+        },
+        "mean": 358.592
+      }
+    },
+    "ab_gate": {
+      "definition": "3.8 liveness >= 3.6 liveness AND 3.8 empty-at-cap == 0, evaluated over candidates completed in BOTH arms (prereg §3b) — cross-arm; the integrator evaluates it from both artifacts",
+      "evaluable_single_arm": false,
+      "this_arm": {
+        "liveness_fraction": 1.0,
+        "empty_at_cap_count": 0,
+        "candidates_completed": [
+          "sf-iter-2026-07-15-001",
+          "sf-iter-2026-07-30-001",
+          "sf-iter-2026-08-04-001"
+        ]
+      }
+    }
+  },
+  "errors": [],
+  "total_wall_s": 1075.8
+}

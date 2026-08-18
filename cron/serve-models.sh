@@ -46,17 +46,17 @@ serve_qwen() {
   docker rm -f vllm-qwen 2>/dev/null || true
   docker run -d --name vllm-qwen --restart unless-stopped --gpus all \
     -p 8001:8000 \
-    -v /mnt/models/qwen3.6-27b-nvfp4-mtp:/models/qwen3.6-27b-nvfp4-mtp \
+    -v /mnt/models/qwen3.8-27b-nvfp4-mtp:/models/qwen3.8-27b-nvfp4-mtp \
     "$IMAGE" \
-    --model /models/qwen3.6-27b-nvfp4-mtp \
-    --served-model-name qwen3.6-27b-nvfp4-mtp \
+    --model /models/qwen3.8-27b-nvfp4-mtp \
+    --served-model-name qwen3.8-27b-nvfp4-mtp \
     --trust-remote-code \
     --quantization modelopt \
     --language-model-only \
     --max-model-len 16384 \
     --max-num-seqs 2 \
     --kv-cache-dtype fp8 \
-    --gpu-memory-utilization 0.25 \
+    --gpu-memory-utilization 0.30 \
     --reasoning-parser qwen3 \
     --speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":3}' \
     --enable-auto-tool-choice \

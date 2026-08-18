@@ -1,0 +1,240 @@
+{
+  "schema": "qwen_ab_3bcd.restate.v1",
+  "stage": "3d",
+  "generated_at": "2026-08-18T02:01:56.474527+00:00",
+  "arm": "qwen3.6-27b-nvfp4-mtp",
+  "provenance": {
+    "prereg": "experiments/PREREG_qwen_ab_3bcd_2026-08-18.md#3d",
+    "image": "vllm/vllm-openai:v0.21.0",
+    "endpoint": "http://127.0.0.1:8001/v1",
+    "served_models": {
+      "ids": [
+        "qwen3.6-27b-nvfp4-mtp"
+      ],
+      "error": null,
+      "url": "http://127.0.0.1:8001/v1/models"
+    },
+    "arm_label": "qwen3.6-27b-nvfp4-mtp",
+    "calls_log_path": "/home/decross1/projects/a_bgt_rsi/bench/qwen_ab_3bcd/runs/qwen3.6-27b-nvfp4-mtp.calls.jsonl",
+    "cases_path": "/home/decross1/projects/a_bgt_rsi/experiments/lit_falsification_battery/cases.jsonl",
+    "cases_sha256": "ff08ea2b88caf2c0038f15b65a91583742cd1fb1009d76982542bedf8638a1a9",
+    "case_ids": [
+      "redisc_on_01_tft_reciprocity",
+      "redisc_on_03_quantal_response",
+      "canary_on_01_ultimatum_plain",
+      "canary_on_02_hawkdove_ess"
+    ],
+    "restate_max_tokens_prereg": 3072,
+    "restate_max_tokens_module": 3072,
+    "time_cap_s": 1800.0,
+    "entry_points": {
+      "attack": "orchestrator.restate_skeptic.restate_attack(hypothesis_text=..., iteration_id=None, backend='vllm-qwen', novelty_top_neighbor_id=None)"
+    }
+  },
+  "fixtures": [
+    {
+      "case_id": "redisc_on_01_tft_reciprocity",
+      "status": "ok",
+      "error": null,
+      "restate_verdict": "restated",
+      "canonical_statement_head": "In infinitely repeated Prisoner's Dilemma games, players converge to reciprocal trigger strategies that sustain cooperative outcomes via credible punishment threats, consistent with the folk theorem.",
+      "restating_doc_id": "osborne_rubinstein-chunk-979",
+      "rationale_head": "Chunk 1 explicitly states that in infinitely repeated games, mutually desirable outcomes are sustained by deterring deviation through the threat of punishment, directly matching the claim's core pheno",
+      "model": "ollama/qwen3.6-27b-nvfp4-mtp",
+      "backend": "vllm-qwen",
+      "canonicalize_parsed": true,
+      "judge_parsed": true,
+      "judge_verdict_from_log": "restated",
+      "judge_rows_in_log": 1,
+      "expected_novelty": "rediscovery",
+      "expected_critic": "restated",
+      "token_utilization": [
+        {
+          "caller_tag": "restate_canonicalize",
+          "request_id": "339d48e4-17ce-421a-88c3-4baecce1b9e7",
+          "output_tokens": 1465,
+          "max_tokens": 3072,
+          "utilization": 0.4769
+        },
+        {
+          "caller_tag": "restate_judge",
+          "request_id": "024180b8-889f-4441-9877-a71d9e51ed3b",
+          "output_tokens": 1541,
+          "max_tokens": 3072,
+          "utilization": 0.5016
+        }
+      ],
+      "wall_s": 141.278
+    },
+    {
+      "case_id": "redisc_on_03_quantal_response",
+      "status": "ok",
+      "error": null,
+      "restate_verdict": "not_restated",
+      "canonical_statement_head": "In a Quantal Response Equilibrium, players select strategies with probabilities that are smooth, monotonic functions of expected payoffs, producing a logit-weighted equilibrium that relaxes the determ",
+      "restating_doc_id": null,
+      "rationale_head": "None of the retrieved chunks describe Quantal Response Equilibrium or the specific mechanism where choice probabilities are smooth, monotonic functions of expected payoffs. The retrieved literature on",
+      "model": "ollama/qwen3.6-27b-nvfp4-mtp",
+      "backend": "vllm-qwen",
+      "canonicalize_parsed": true,
+      "judge_parsed": true,
+      "judge_verdict_from_log": "not_restated",
+      "judge_rows_in_log": 1,
+      "expected_novelty": "rediscovery",
+      "expected_critic": "restated",
+      "token_utilization": [
+        {
+          "caller_tag": "restate_canonicalize",
+          "request_id": "eef82420-e1d5-4d8a-a9c9-c0dc8d153c24",
+          "output_tokens": 1380,
+          "max_tokens": 3072,
+          "utilization": 0.4492
+        },
+        {
+          "caller_tag": "restate_judge",
+          "request_id": "29ea8323-f139-477f-8fee-228f315aa402",
+          "output_tokens": 1533,
+          "max_tokens": 3072,
+          "utilization": 0.499
+        }
+      ],
+      "wall_s": 128.764
+    },
+    {
+      "case_id": "canary_on_01_ultimatum_plain",
+      "status": "ok",
+      "error": null,
+      "restate_verdict": "not_restated",
+      "canonical_statement_head": "In the ultimatum game, responders reject low offers below approximately 20% despite incurring a personal cost.",
+      "restating_doc_id": null,
+      "rationale_head": "The retrieved chunks exclusively cover theoretical game theory concepts such as sequential bargaining equilibria, entry deterrence, and evolutionary payoff matrices, with none describing the empirical",
+      "model": "ollama/qwen3.6-27b-nvfp4-mtp",
+      "backend": "vllm-qwen",
+      "canonicalize_parsed": true,
+      "judge_parsed": true,
+      "judge_verdict_from_log": "not_restated",
+      "judge_rows_in_log": 1,
+      "expected_novelty": "rediscovery",
+      "expected_critic": "restated",
+      "token_utilization": [
+        {
+          "caller_tag": "restate_canonicalize",
+          "request_id": "76296a6a-8587-4d03-ac20-4d85cfa13f3a",
+          "output_tokens": 1253,
+          "max_tokens": 3072,
+          "utilization": 0.4079
+        },
+        {
+          "caller_tag": "restate_judge",
+          "request_id": "f13e20b9-49e5-415a-8e74-52a58d678dd7",
+          "output_tokens": 1505,
+          "max_tokens": 3072,
+          "utilization": 0.4899
+        }
+      ],
+      "wall_s": 125.26
+    },
+    {
+      "case_id": "canary_on_02_hawkdove_ess",
+      "status": "ok",
+      "error": null,
+      "restate_verdict": "restated",
+      "canonical_statement_head": "In the Hawk-Dove game, frequency-dependent selection yields a mixed evolutionarily stable strategy: when Hawks are rare, their expected payoff exceeds that of Doves, but as Hawk frequency increases, t",
+      "restating_doc_id": "hofbauer_sigmund_egpd-chunk-93",
+      "rationale_head": "The claim describes the frequency-dependent selection and stable coexistence in the Hawk-Dove game, where the cost of injury regulates the proportion of aggressive strategies. Chunk [6] explicitly sta",
+      "model": "ollama/qwen3.6-27b-nvfp4-mtp",
+      "backend": "vllm-qwen",
+      "canonicalize_parsed": true,
+      "judge_parsed": true,
+      "judge_verdict_from_log": "restated",
+      "judge_rows_in_log": 1,
+      "expected_novelty": "rediscovery",
+      "expected_critic": "restated",
+      "token_utilization": [
+        {
+          "caller_tag": "restate_canonicalize",
+          "request_id": "53a4df45-7639-461e-935c-64c5f8340661",
+          "output_tokens": 1666,
+          "max_tokens": 3072,
+          "utilization": 0.5423
+        },
+        {
+          "caller_tag": "restate_judge",
+          "request_id": "8a7c23b5-fca6-481b-986e-7d58eec2b3c1",
+          "output_tokens": 2157,
+          "max_tokens": 3072,
+          "utilization": 0.7021
+        }
+      ],
+      "wall_s": 163.159
+    }
+  ],
+  "skipped": [],
+  "total_wall_s": 558.5,
+  "time_cap": {
+    "cap_s": 1800.0,
+    "hit": false,
+    "cases_run": 4,
+    "cases_planned": 4
+  },
+  "completed": true,
+  "criteria": {
+    "gates": {
+      "canonicalize_nonnull_4of4": {
+        "pass": true,
+        "observed": "4/4",
+        "criterion": "canonicalize leg parses iff returned canonical_statement is non-null, 4/4"
+      },
+      "judge_log_parse_4of4": {
+        "pass": true,
+        "observed": "4/4",
+        "criterion": "calls-log row for caller_tag=restate_judge contains a JSON object with restate_verdict in the enum, 4/4 — measured from the log, never the fail-open return"
+      }
+    },
+    "all_pass": true,
+    "reported_non_gating": {
+      "token_utilization_vs_cap": {
+        "restate_canonicalize": {
+          "n": 4,
+          "max": 0.5423,
+          "mean": 0.4691
+        },
+        "restate_judge": {
+          "n": 4,
+          "max": 0.7021,
+          "mean": 0.5482
+        }
+      },
+      "verdict_vs_expected": [
+        {
+          "case_id": "redisc_on_01_tft_reciprocity",
+          "restate_verdict": "restated",
+          "judge_verdict_from_log": "restated",
+          "expected_novelty": "rediscovery",
+          "expected_critic": "restated"
+        },
+        {
+          "case_id": "redisc_on_03_quantal_response",
+          "restate_verdict": "not_restated",
+          "judge_verdict_from_log": "not_restated",
+          "expected_novelty": "rediscovery",
+          "expected_critic": "restated"
+        },
+        {
+          "case_id": "canary_on_01_ultimatum_plain",
+          "restate_verdict": "not_restated",
+          "judge_verdict_from_log": "not_restated",
+          "expected_novelty": "rediscovery",
+          "expected_critic": "restated"
+        },
+        {
+          "case_id": "canary_on_02_hawkdove_ess",
+          "restate_verdict": "restated",
+          "judge_verdict_from_log": "restated",
+          "expected_novelty": "rediscovery",
+          "expected_critic": "restated"
+        }
+      ]
+    }
+  }
+}
