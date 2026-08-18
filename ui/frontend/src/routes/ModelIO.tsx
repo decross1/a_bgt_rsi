@@ -32,6 +32,7 @@
 // that reports the byte cap honestly when it stops the scan.
 import { useEffect, useRef, useState } from "react";
 import Card from "../design/Card";
+import FrontierReviews from "../components/FrontierReviews";
 import EmptyCompletionNote from "../components/payload/EmptyCompletionNote";
 import EndpointMissingNote, {
   isVersionSkew404,
@@ -707,6 +708,10 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
       {/* Top strip: ONE runtime-activity card — nara chain + subagent
           work, with the dev spawn ledger behind a collapsed toggle. */}
       <RuntimeStrip activity={activity} trace={trace} />
+
+      {/* Frontier tier (D-061), sibling section: owns its own poll and
+          state — see components/FrontierReviews.tsx. */}
+      <FrontierReviews />
 
       {/* Filters + live-state controls. */}
       <div className="mt-4 flex flex-wrap items-center gap-2">

@@ -21,6 +21,7 @@ from .coordinator import register as register_coordinator
 from .doc_titles import register as register_doc_titles
 from .experiments import register as register_experiments
 from .finding_detail import register as register_finding_detail
+from .frontier_calls import register as register_frontier_calls
 from .human_todo import register as register_human_todo
 from .iteration_journey import register as register_iteration_journey
 from .lab_channel_seam import register as register_lab_channel_seam
@@ -321,6 +322,14 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     # the thin ui/.venv (no chromadb) the endpoint is an honest 503 and the
     # frontend keeps bare ids.
     register_doc_titles(app)
+
+    # The frontier tier's call ledger (D-061; NARA_FRONTIER_SCREEN armed
+    # 2026-08-18): bounded tail of run_state/frontier_calls.jsonl +
+    # the server-derived vendor-down streaks — on 2026-08-16 a dead codex
+    # CLI masqueraded as an "inconclusive" reviewer for ~6h. The ledger
+    # resolves to the primary checkout (UI_FRONTIER_LEDGER overrides).
+    # Read-only.
+    register_frontier_calls(app)
 
     return app
 

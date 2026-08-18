@@ -3684,3 +3684,66 @@ case, unresolved-absent, mixed batch, 400 over-cap, LRU no-re-query, honest
 in `test_doc_titles.tsx`: hook batch/cap-split/cache/failure + both surfaces
 title-vs-bare) · `tsc --noEmit` clean · real-store read-only smoke resolved
 all families on live ids. **No service restarted** (integrator reloads).
+
+## §2026-08-18 Frontier-tier visibility on /model-io (`ui/` + one register line, sprint-frontier-reviews)
+
+The frontier tier (D-061: claude = methods reviewer, codex = novelty
+reviewer, plus refine-cycle / improve-loop roles) logs every CLI call to
+`run_state/frontier_calls.jsonl` (shape: `schema/frontier_call.schema.json`)
+— and none of it was visible in the dashboard. The owner armed the
+promotion screen (`NARA_FRONTIER_SCREEN=1`), so the tier must be visible
+when it fires. The load-bearing rule is the 2026-08-16 codex incident: a
+dead vendor (HTTP 400 for ~6h) read as an "inconclusive" reviewer one layer
+up — **a dead vendor must never look like a quiet reviewer**.
+
+- **`backend/frontier_calls.py`** (NEW, register-fn idiom) —
+  `GET /api/frontier_calls?limit=30`: bounded tail-read (256 KiB ≈ 800
+  rows) of the ledger, newest-first PASSTHROUGH rows (verdict may be null
+  — the frontier_cli layer always writes null; candidate_id /
+  reasoning_digest are review-layer fields and may be absent), plus a
+  derived summary `{last_call_ts, calls_24h,
+  consecutive_nonzero_exit_by_vendor, vendors_down,
+  down_streak_threshold}` — the same vendor-down signal shape
+  `orchestrator/loop_health.py::detect_frontier_vendor_down` uses
+  (streak ≥ 3 consecutive nonzero exits; unjudgeable rows never scored
+  either way), derived from the SAME tail with the bound stated on the
+  wire (`window_bytes` / `window_truncated`; `calls_24h` is a floor when
+  truncated). Ledger resolves to the primary checkout;
+  `UI_FRONTIER_LEDGER` overrides; tests pin tmp paths + shrink the bound.
+  Absent file → `available: false`, never a 500. Read-only. One additive
+  register line in `app.py`.
+
+- **`src/components/FrontierReviews.tsx`** (NEW) + a two-line additive
+  mount in `ModelIO.tsx` (sibling card below the runtime strip) — one
+  line per call: vendor badge (LOCAL additive tone map per the roles.ts
+  additive-only contract: claude fuchsia — the `anthropic` family — and
+  codex teal, distinct from gemma-emerald/qwen-sky; own-key lookup only),
+  role, verdict chip (veto rose / pass emerald / inconclusive zinc /
+  null → honest "—"; unknown strings render raw in quiet zinc),
+  candidate_id small mono, nonzero `exit N` rose chip (outage evidence),
+  duration, age; `reasoning_digest` expands on click (rows without one
+  are not pretend-expandable). Rows of a server-derived down vendor carry
+  the amber **VENDOR DOWN?** chip (passthrough of `vendors_down` — the
+  frontend derives nothing). Empty tail → "no frontier calls in the
+  recent tail" + the note that the screen fires on promotion candidates
+  only; absent ledger, never-loaded endpoint (UNKNOWN not idle), and the
+  stated tail bound are all honest. Own poll (15 s), own local fetcher
+  (ModelIO's getRuntimeActivity precedent — no shared api/ client
+  widened).
+
+Verification: backend pytest (`.venv-chroma`) **743 pass** (11 new in
+`test_frontier_calls.py`: newest-first passthrough incl. null verdict,
+limit-vs-summary, streak detection + clean-exit closing + 2-is-not-down +
+unjudgeable-rows-skipped, bound honesty incl. summary-from-same-tail,
+24h-count filtering, empty file, missing file, malformed lines) · the one
+failure is `test_live_8700.py::test_ladder_live_or_version_skew` — a live
+:8700 `/api/ladder` probe ReadTimeout, pre-existing/environmental (no
+restart performed; the served binary predates this build) · vitest
+**1174 pass** (79 files; 9 new in `test_frontier_reviews.tsx`: row render
++ vendor tones, verdict chips + null dash, digest expand/collapse +
+non-expandable rows, vendor-down chip on down-vendor rows only + exit
+chip, no-chip-when-none-derived, empty state, UNKNOWN state, absent
+ledger, truncated-bound footnote, frontierAge) · `tsc --noEmit` clean ·
+read-only real-ledger smoke: 212 rows in window, both vendors streak 0,
+unknown role `agenda_synthesist` passes through raw. **No service
+restarted** (the endpoint goes live on the next :8700 reload).
