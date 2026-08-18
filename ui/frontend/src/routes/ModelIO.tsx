@@ -32,6 +32,9 @@ import {
 } from "../api/modelIO";
 import { backendTone, callerTagTone, TONE_QUIET } from "../roles";
 import { fmt } from "../format";
+import MessageBody from "../components/payload/MessageBody";
+import RoleChip from "../components/payload/RoleChip";
+import { CHIP_CLS } from "../components/payload/bits";
 
 // Model badge tone — the SAME color families as the health panels (gemma =
 // emerald, qwen = sky, per roles.ts BACKEND_TONE / ModelServerCard accents).
@@ -63,19 +66,6 @@ function statusTone(status: string | null): string {
     default:
       return "text-zinc-500";
   }
-}
-
-const ROLE_TONE: Record<string, string> = {
-  system: "text-zinc-400",
-  user: "text-sky-300",
-  assistant: "text-emerald-300",
-  tool: "text-amber-300",
-};
-
-function roleTone(role: string): string {
-  return Object.prototype.hasOwnProperty.call(ROLE_TONE, role)
-    ? ROLE_TONE[role]
-    : "text-zinc-500";
 }
 
 // hh:mm:ss (UTC) out of an ISO timestamp — table-density time; the full
@@ -207,47 +197,63 @@ function CallExpansion({
     ? detail.prompt_messages
     : [];
   return (
-    <div className="flex flex-col gap-2 py-2" data-testid="call-expansion">
+    <div className="flex flex-col gap-1.5 py-2" data-testid="call-expansion">
       {messages.map((m, i) => (
-        <div key={i}>
-          <div
-            className={`text-[10px] font-medium uppercase tracking-wide ${roleTone(m.role)}`}
-          >
-            {m.role}
+        <div
+          key={i}
+          className="rounded border border-zinc-800/60 bg-zinc-950/40 p-1.5"
+        >
+          <div className="mb-1">
+            <RoleChip role={m.role} />
           </div>
-          <pre
-            className="mt-0.5 max-h-64 overflow-y-auto whitespace-pre-wrap rounded border border-zinc-800 bg-zinc-950/60 p-2 font-mono text-xs text-zinc-300"
-            data-testid={`message-${m.role}-${i}`}
-          >
-            {m.content}
-          </pre>
+          <MessageBody
+            role={m.role}
+            content={m.content}
+            toolCalls={(m as { tool_calls?: unknown }).tool_calls}
+            testId={`message-${m.role}-${i}`}
+          />
         </div>
       ))}
-      <div>
-        <div className="text-[10px] font-medium uppercase tracking-wide text-fuchsia-300">
-          completion
+      <div className="rounded border border-zinc-800/60 bg-zinc-950/40 p-1.5">
+        <div className="mb-1">
+          <RoleChip role="completion" />
         </div>
         {typeof detail.completion === "string" &&
         detail.completion.trim() !== "" ? (
-          <pre
-            className="mt-0.5 max-h-64 overflow-y-auto whitespace-pre-wrap rounded border border-zinc-800 bg-zinc-950/60 p-2 font-mono text-xs text-zinc-100"
-            data-testid="completion-body"
-          >
-            {detail.completion}
-          </pre>
+          <MessageBody
+            role="assistant"
+            content={detail.completion}
+            testId="completion-body"
+          />
         ) : (
-          <div className="mt-0.5 text-xs text-rose-400">
+          <div className="text-xs text-rose-400">
             EMPTY — the model returned no completion text.
           </div>
         )}
       </div>
-      <div className="flex flex-wrap gap-x-4 text-[11px] text-zinc-500">
-        {detail.temperature != null && <span>temp {detail.temperature}</span>}
-        {detail.seed != null && <span>seed {String(detail.seed)}</span>}
+      {/* Metadata as ONE compact chip row (density pass) — only fields the
+          backend actually handed over ever render. */}
+      <div className="flex flex-wrap items-center gap-1.5" data-testid="meta-chips">
+        {detail.latency_ms != null && (
+          <span className={CHIP_CLS}>lat {fmt(detail.latency_ms, 0)}ms</span>
+        )}
+        {detail.usage?.input_tokens != null && (
+          <span className={CHIP_CLS}>in {detail.usage.input_tokens} tok</span>
+        )}
+        {detail.usage?.output_tokens != null && (
+          <span className={CHIP_CLS}>out {detail.usage.output_tokens} tok</span>
+        )}
+        {detail.temperature != null && (
+          <span className={CHIP_CLS}>temp {detail.temperature}</span>
+        )}
+        {detail.seed != null && (
+          <span className={CHIP_CLS}>seed {String(detail.seed)}</span>
+        )}
+        {detail.request_id && (
+          <span className={CHIP_CLS}>req {detail.request_id}</span>
+        )}
         {detail.parent_request_id && (
-          <span className="font-mono">
-            parent {detail.parent_request_id}
-          </span>
+          <span className={CHIP_CLS}>parent {detail.parent_request_id}</span>
         )}
       </div>
     </div>

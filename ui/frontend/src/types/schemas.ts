@@ -327,6 +327,25 @@ export interface IterationRecord {
     // Present only when the β skeptic-gate seam ran (env NARA_SKEPTIC=1,
     // D-041); may be null when the attack returned no verdict.
     skeptic_verdict?: string | null;
+    // Skeptic provenance (D-065 EMIT, workers/critic_loop_v0.py): which
+    // backend/model ran the attack and its wall time. Absent on older rows.
+    skeptic_backend?: string | null;
+    skeptic_model?: string | null;
+    skeptic_wall_seconds?: number | null;
+    // Bounded challenger⇄defender debate (D-071, armed 2026-08-17). Present
+    // only on iterations where the debate actually ran; the journey endpoint's
+    // iteration-cache join (backend/iteration_journey.py) fills it for rows
+    // whose loop_memory write lacks it. Transcript turns carry `round`, `role`
+    // ("challenger"|"defender"), `backend`, `model`, `text` (the producer key
+    // — consumers also accept `content` defensively), `wall_seconds`. A
+    // `stop_reason` of "challenger_conceded" is a machine-validated terminal
+    // event, not a prose turn — render it explicitly.
+    debate?: {
+      verdict?: string;
+      rounds?: number;
+      stop_reason?: string;
+      transcript?: unknown[];
+    } | null;
   } | null;
   // Loop v1 Step 1.5: conditioning synthesis from prior loop memory. The
   // bullets are injected into this iteration's initial message. Absent on

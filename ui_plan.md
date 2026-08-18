@@ -3448,3 +3448,30 @@ filter 33ms at the full 16 MiB bound with `window_truncated: true`, trace
 30 tasks + 10 spawns. **No service restarted** — the live :8700 binary
 predates the endpoints until the ensure cron or the owner reloads it; the
 page degrades to the quiet EndpointMissingNote until then.
+
+## §2026-08-18 Model I/O payload renderers (`ui/` only, sprint-payload-render)
+
+Owner live-feedback pass on /model-io: "insight great, payload rendering is
+raw JSON — really hard to read; less text dense, more visual." Built the
+render-only payload family `ui/frontend/src/components/payload/` (parse.ts
++ bits.tsx + ToolCallChips + ToolResultCard + ThoughtBlock + RoleChip +
+MessageBody) and applied it inside ModelIO's expanded call view: assistant
+tool_calls (BOTH the field form and the serialized-into-content escaped-JSON
+form the wrapper actually logs) → wrench chip-rows with parsed key:value
+args (2-line clamp + show-more on long strings); the tool-role
+{status,result,errors,wrapper_request_id,parent_request_id} envelope →
+status badge (passed=positive, else warning) + count chips + prose block +
+collapsed numbered lists ("3 all_candidates ▸") + errors ONLY when
+non-empty + muted id footer; channel markup (cleanup.py grammar) → dimmed
+italic "thought" block split from the visible answer; density pass: role
+chips, tighter 13px-mono message cards, ONE compact meta chip row.
+FAIL-SAFE everywhere: any parse miss renders the current raw <pre>
+(displayed, never hidden, never a crash); a per-card raw toggle keeps the
+original blob reachable. Reusable later by the dossier lane.
+
+Verification: vitest **1133 pass** (77 files; 11 new in
+`test_payload_render.tsx` incl. escaped-JSON args, envelope + errors-only-
+when-present, thought split, malformed-raw fallbacks, chips-first density
+integration with no raw-JSON string in the default render) · existing
+`test_model_io.tsx` 10 still green untouched · `tsc --noEmit` clean.
+**No service restarted** (integrator reloads).

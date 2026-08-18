@@ -95,6 +95,7 @@ import SourceBadge from "../SourceBadge";
 import TopicalityAdvisoryBadge from "../TopicalityAdvisoryBadge";
 import PeekPanel from "../../design/PeekPanel";
 import StatusDot from "../../design/StatusDot";
+import DebateExchange from "./DebateExchange";
 import JourneyStepper from "./JourneyStepper";
 import {
   STATION_KEYS,
@@ -451,9 +452,25 @@ const PEEK_TITLE: Record<PeekKind, string> = {
 };
 
 // One retrieved neighbor: an id-ish scalar plus whatever chunk text the
-// producer carried. A neighbor may be a bare id string OR an object; entries
-// with no usable scalar at all are dropped rather than rendered empty.
+// producer carried (`chunk_text` is the retrieval worker's EMIT key — the
+// journey endpoint's iteration-cache join fills it on rows whose loop_memory
+// write lacked it; text/chunk/content/snippet stay as legacy fallbacks). A
+// neighbor may be a bare id string OR an object; entries with no usable scalar
+// at all are dropped rather than rendered empty. Text renders as an EXPANDABLE
+// SNIPPET: collapsed to the first ~300 chars by default, "show more" per
+// neighbor for the full text (state lives here, resets with the peek).
+const SNIPPET_CHARS = 300;
+
 function ChunksPeek({ neighbors }: { neighbors: unknown[] }) {
+  const [openIdx, setOpenIdx] = useState<Set<number>>(new Set());
+  const toggleIdx = (i: number) =>
+    setOpenIdx((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+
   const rows = neighbors
     .map((n) => {
       const direct = asText(n);
@@ -469,7 +486,8 @@ function ChunksPeek({ neighbors }: { neighbors: unknown[] }) {
           : "");
       const text =
         obj !== null
-          ? asText(obj.text) ||
+          ? asText(obj.chunk_text) ||
+            asText(obj.text) ||
             asText(obj.chunk) ||
             asText(obj.content) ||
             asText(obj.snippet)
@@ -488,33 +506,56 @@ function ChunksPeek({ neighbors }: { neighbors: unknown[] }) {
         </p>
       ) : (
         <ol className="space-y-2">
-          {rows.map((r, i) => (
-            <li
-              key={i}
-              data-testid={`peek-chunk-${i}`}
-              className="rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5"
-            >
-              <div className="flex items-baseline gap-2">
-                <span className="font-mono text-[11px] text-zinc-300">
-                  {r.id || "(unnamed chunk)"}
-                </span>
-                {r.score.length > 0 ? (
-                  <span className="font-mono text-[10px] text-zinc-500">
-                    {r.score}
+          {rows.map((r, i) => {
+            const expanded = openIdx.has(i);
+            const truncated = r.text.length > SNIPPET_CHARS;
+            const shown =
+              truncated && !expanded
+                ? `${r.text.slice(0, SNIPPET_CHARS)}…`
+                : r.text;
+            return (
+              <li
+                key={i}
+                data-testid={`peek-chunk-${i}`}
+                className="rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5"
+              >
+                <div className="flex items-baseline gap-2">
+                  <span className="font-mono text-[11px] text-zinc-300">
+                    {r.id || "(unnamed chunk)"}
                   </span>
-                ) : null}
-              </div>
-              {r.text.length > 0 ? (
-                <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-zinc-400">
-                  {r.text}
-                </p>
-              ) : (
-                <p className="mt-1 text-[10px] text-zinc-600">
-                  id only — the producer carried no chunk text
-                </p>
-              )}
-            </li>
-          ))}
+                  {r.score.length > 0 ? (
+                    <span className="font-mono text-[10px] text-zinc-500">
+                      {r.score}
+                    </span>
+                  ) : null}
+                </div>
+                {r.text.length > 0 ? (
+                  <>
+                    <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-zinc-400">
+                      {shown}
+                    </p>
+                    {truncated ? (
+                      <button
+                        type="button"
+                        data-testid={`chunk-more-${i}`}
+                        aria-expanded={expanded}
+                        onClick={() => toggleIdx(i)}
+                        className="mt-1 rounded border border-zinc-800 px-1.5 py-0.5 text-[10px] text-sky-300 hover:border-zinc-600 hover:text-sky-200"
+                      >
+                        {expanded
+                          ? "show less"
+                          : `show more (${r.text.length} chars)`}
+                      </button>
+                    ) : null}
+                  </>
+                ) : (
+                  <p className="mt-1 text-[10px] text-zinc-600">
+                    id only — no cached chunk text for this neighbor
+                  </p>
+                )}
+              </li>
+            );
+          })}
         </ol>
       )}
     </div>
@@ -1137,6 +1178,12 @@ export default function PipelineJourney({ item, journey, detail }: Props) {
             )}
           </div>
           <Field label="skeptic verdict" value={critique?.skeptic_verdict} />
+          {/* D-071 bounded debate — renders ONLY when critique.debate exists;
+              pre-debate iterations keep the single-shot skeptic line above
+              exactly as-is (zero regression). */}
+          {asRecord(critique?.debate) !== null ? (
+            <DebateExchange debate={asRecord(critique?.debate)!} />
+          ) : null}
           {critique === null ? (
             <p className="text-zinc-500">no critique block on this row</p>
           ) : (

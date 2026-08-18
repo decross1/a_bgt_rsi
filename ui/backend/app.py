@@ -273,8 +273,15 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
 
     # S2 cockpit reframe: read-only full-pipeline journey for one iteration
     # (PipelineJourney). Reads loop_memory.jsonl under memory/ (same dir as
-    # finding_detail/human_todo). Writes NOTHING.
-    register_iteration_journey(app, memory_dir=Path(coordinator_memory))
+    # finding_detail/human_todo). Writes NOTHING. 2026-08-18: also wired to the
+    # per-iteration cache (run_state/iteration_cache/<id>/) for the bounded
+    # chunk_text + critique.debate fill-join — cache authoritative for those
+    # two blocks only, loop_memory for everything else.
+    register_iteration_journey(
+        app,
+        memory_dir=Path(coordinator_memory),
+        iteration_cache_dir=Path(coordinator_run_state) / "iteration_cache",
+    )
 
     # D-046 write-back seam: argv-exec of the blessed CLIs (runner defaults
     # to subprocess.run in production; tests inject a stub).

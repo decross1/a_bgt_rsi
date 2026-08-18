@@ -19,6 +19,25 @@ never 500s the encoder). The iteration_id is validated against the
 ``iter-YYYY-MM-DD-NNN`` shape Nara emits (loop_v0._safe_iteration_id); a
 non-conforming id can never be used as a path and joins to nothing => found:false,
 never traverses.
+
+ITERATION-CACHE JOIN (2026-08-18 dossier gaps): when ``iteration_cache_dir`` is
+wired, the endpoint FILLS two blocks the loop_memory row may lack, from that ONE
+iteration's cache dir (``run_state/iteration_cache/<iteration_id>/``) — a
+bounded read of at most two files, NEVER a Chroma query, NEVER a dir scan:
+
+- ``retrieval.json``  → ``result.neighbors[*].chunk_text`` joined by ``doc_id``
+  onto row neighbors that lack a usable ``chunk_text`` (fill-only; a neighbor
+  that already carries text is never clobbered);
+- ``critique.json``   → ``result.debate`` attached onto an EXISTING critique
+  block that lacks one (fill-only; a row with no critique block at all is never
+  given a fabricated one — that would fake a "critic reached" station).
+
+The cache dir is authoritative for these two enrichments; loop_memory stays
+authoritative for everything else. Every join failure — absent dir/file,
+over-cap file, malformed JSON, wrong shape, encoder-unsafe cache value — skips
+the enrichment and serves the un-enriched row: the join can never turn a good
+row into a 500 or a found:false. The iteration_id is only ever used as a path
+component AFTER _safe_iteration_id passes (no traversal).
 """
 from __future__ import annotations
 
@@ -153,10 +172,115 @@ def _read_jsonl(path: Path) -> list[dict]:
     return rows
 
 
-def register(app, *, memory_dir: Path) -> APIRouter:
+# Cache-join bound: one iteration's retrieval.json / critique.json each read in
+# full only when under this cap. Real files run tens of KB (10 neighbors × ~600
+# chars + a 6-turn debate); anything near the cap is producer garbage and the
+# enrichment (not the row) is skipped.
+_MAX_CACHE_FILE_BYTES = 4_000_000
+
+
+def _cache_result(cache_dir, iteration_id: str, filename: str):
+    """The ``result`` dict of ``<cache_dir>/<iteration_id>/<filename>``, or None.
+    Bounded (size cap, one named file), tolerant (absent / unreadable / malformed
+    / non-dict => None, never raises), read-only. Caller has already validated
+    iteration_id via _safe_iteration_id, so the path join cannot traverse."""
+    if cache_dir is None:
+        return None
+    path = Path(cache_dir) / iteration_id / filename
+    try:
+        if not path.is_file() or path.stat().st_size > _MAX_CACHE_FILE_BYTES:
+            return None
+        # read_text (not open()) — test_module_has_no_write_primitives pins this
+        # module to its ONE read-mode open() call site in _read_jsonl.
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        # ValueError covers JSONDecodeError, UnicodeDecodeError AND the bare
+        # int-digit-limit raise (the _read_jsonl rationale); OSError covers the
+        # delete-race and any permission fault — a cache file we cannot read is
+        # a cache file that does not enrich, never a 500.
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    result = parsed.get("result")
+    return result if isinstance(result, dict) else None
+
+
+def _has_text(neighbor) -> bool:
+    """True when a neighbor dict already carries a usable chunk_text."""
+    return (
+        isinstance(neighbor, dict)
+        and isinstance(neighbor.get("chunk_text"), str)
+        and bool(neighbor["chunk_text"].strip())
+    )
+
+
+def _enriched_row(row: dict, cache_dir, iteration_id: str) -> dict:
+    """Copy-on-write cache join: returns `row` itself when nothing was joined,
+    or a NEW dict with chunk_text / debate filled in from the iteration cache.
+    Fill-only, never clobbers, never fabricates a critique block. Pure dict/list
+    ops after the guarded reads — the call site still fences with try/except so
+    a surprise can only ever cost the enrichment, not the response."""
+    out = row
+
+    # 1) neighbor chunk_text — join by doc_id, only onto dict neighbors that
+    #    lack a usable text. The cache file is read at most once, and only when
+    #    at least one neighbor actually needs it.
+    retrieval = row.get("retrieval")
+    neighbors = retrieval.get("neighbors") if isinstance(retrieval, dict) else None
+    if isinstance(neighbors, list) and any(
+        isinstance(n, dict) and not _has_text(n) for n in neighbors
+    ):
+        cached = _cache_result(cache_dir, iteration_id, "retrieval.json")
+        cached_neighbors = cached.get("neighbors") if cached is not None else None
+        text_by_doc: dict[str, str] = {}
+        if isinstance(cached_neighbors, list):
+            for cn in cached_neighbors:
+                if not isinstance(cn, dict):
+                    continue
+                doc, text = cn.get("doc_id"), cn.get("chunk_text")
+                if (
+                    isinstance(doc, str)
+                    and doc
+                    and isinstance(text, str)
+                    and text.strip()
+                    and doc not in text_by_doc
+                ):
+                    text_by_doc[doc] = text
+        if text_by_doc:
+            changed = False
+            new_neighbors = []
+            for n in neighbors:
+                if isinstance(n, dict) and not _has_text(n):
+                    doc = n.get("doc_id")
+                    text = text_by_doc.get(doc) if isinstance(doc, str) else None
+                    if text is not None:
+                        n = {**n, "chunk_text": text}
+                        changed = True
+                new_neighbors.append(n)
+            if changed:
+                out = {**out, "retrieval": {**retrieval, "neighbors": new_neighbors}}
+
+    # 2) critique.debate — attach only onto an EXISTING critique dict that lacks
+    #    a dict debate. A row with no critique block keeps none (no fabricated
+    #    "critic reached"); a row already carrying a debate keeps its own.
+    critique = row.get("critique")
+    if isinstance(critique, dict) and not isinstance(critique.get("debate"), dict):
+        cached = _cache_result(cache_dir, iteration_id, "critique.json")
+        debate = cached.get("debate") if cached is not None else None
+        if isinstance(debate, dict):
+            out = {**out, "critique": {**critique, "debate": debate}}
+
+    return out
+
+
+def register(app, *, memory_dir: Path, iteration_cache_dir: Path | None = None) -> APIRouter:
     """Attach the iteration-journey router. Reads loop_memory.jsonl from
     ``memory_dir`` (the same memory dir coordinator.register / finding_detail use,
-    wired as ``register(app, memory_dir=Path(coordinator_memory))``). Read-only:
+    wired as ``register(app, memory_dir=Path(coordinator_memory))``). When
+    ``iteration_cache_dir`` is given (app.py wires
+    ``Path(coordinator_run_state) / "iteration_cache"``), the bounded cache join
+    above fills neighbor chunk_text + critique.debate; None (the default, and
+    every pre-join caller) disables the join entirely. Read-only:
     writes nothing, ever."""
     router = APIRouter(tags=["iteration_journey"])
 
@@ -187,6 +311,20 @@ def register(app, *, memory_dir: Path) -> APIRouter:
         # row flows through untouched (never coerced).
         if _safe(row) is None:
             return {"found": False, "iteration_id": iteration_id}
+
+        # Bounded iteration-cache join (module docstring): fill neighbor
+        # chunk_text + critique.debate from this ONE iteration's cache dir.
+        # Copy-on-write; ANY surprise costs only the enrichment, never the
+        # response — and an enrichment whose cache-sourced values are
+        # encoder-unsafe falls back to the clean un-enriched row (it must
+        # never demote a good row to found:false, nor 500).
+        if iteration_cache_dir is not None:
+            try:
+                enriched = _enriched_row(row, iteration_cache_dir, iteration_id)
+            except Exception:  # noqa: BLE001 — the never-500 fence for a join over producer-owned files
+                enriched = row
+            if enriched is not row and _safe(enriched) is not None:
+                row = enriched
 
         return {"found": True, "iteration_id": iteration_id, "iteration": row}
 
