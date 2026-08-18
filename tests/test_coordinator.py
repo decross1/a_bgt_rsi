@@ -196,6 +196,11 @@ def test_cycle_dry_run_returns_plan_calls_no_handler(monkeypatch, state_files):
 
 
 def test_cycle_execute_calls_handlers_in_order(monkeypatch, state_files):
+    # 2026-08-18: pin budget state — these tests leaked the REAL
+    # coordinator_budget.jsonl + wall clock (elapsed-share pacing), so they
+    # failed whenever run early in a UTC day. Never time-of-day-dependent.
+    monkeypatch.setattr(coord, "_daily_spent", lambda: 0)
+    monkeypatch.setattr(coord, "_budget_allowance", lambda: coord.DAILY_BUDGET_CAP)
     valid_plan = [
         {"action": "run_loop_iteration", "args": {"topic": "noisy PD"}},
         {"action": "promote_findings", "args": {"max_candidates": 2}},
@@ -222,6 +227,11 @@ def test_cycle_execute_calls_handlers_in_order(monkeypatch, state_files):
 
 
 def test_cycle_execute_handler_error_does_not_crash(monkeypatch, state_files):
+    # 2026-08-18: pin budget state — these tests leaked the REAL
+    # coordinator_budget.jsonl + wall clock (elapsed-share pacing), so they
+    # failed whenever run early in a UTC day. Never time-of-day-dependent.
+    monkeypatch.setattr(coord, "_daily_spent", lambda: 0)
+    monkeypatch.setattr(coord, "_budget_allowance", lambda: coord.DAILY_BUDGET_CAP)
     valid_plan = [{"action": "noop", "args": {"reason": "x"}}]
     monkeypatch.setattr(coord, "call_sync", _mock_call_sync_returning(valid_plan))
     handlers = {"noop": lambda **k: (_ for _ in ()).throw(RuntimeError("boom"))}
@@ -237,6 +247,11 @@ def test_cycle_execute_handler_error_does_not_crash(monkeypatch, state_files):
 
 
 def test_invalid_offmenu_plan_rejected_no_handler_called(monkeypatch, state_files):
+    # 2026-08-18: pin budget state — these tests leaked the REAL
+    # coordinator_budget.jsonl + wall clock (elapsed-share pacing), so they
+    # failed whenever run early in a UTC day. Never time-of-day-dependent.
+    monkeypatch.setattr(coord, "_daily_spent", lambda: 0)
+    monkeypatch.setattr(coord, "_budget_allowance", lambda: coord.DAILY_BUDGET_CAP)
     """An off-menu action is rejected on EVERY attempt -> no_valid_plan, and
     NO handler is ever called. This is the constrained-action-space guardrail."""
     bad_plan = [{"action": "launch_live_trade", "args": {"size": 1000}}]
@@ -354,3 +369,20 @@ def test_consumption_failure_never_breaks_a_cycle(tmp_path, monkeypatch):
     state = {"topic_suggestions": [
         {"topic": "T", "source": "agenda", "cluster_id": "cl-x"}]}
     coord._consume_agenda_topic("T", state)  # must not raise
+
+
+def test_budget_refusal_still_recomputes_health_alert(monkeypatch, state_files):
+    # 2026-08-18 regression pin: on 08-16 loop_alert.json froze 12h at "ok"
+    # through nine silent budget refusals. A refusal is not a cycle, but it
+    # MUST still recompute health signals (stall/staleness are decoupled from
+    # dispatch per P0).
+    called = {}
+    monkeypatch.setattr(coord, "_daily_spent", lambda: 999)
+    monkeypatch.setattr(coord, "_budget_allowance", lambda: 0)
+    monkeypatch.setattr(coord.coordinator_cycle_log, "emit_health_signals",
+                        lambda report, **kw: called.setdefault("report", report) or [])
+    report = coord.coordinator_cycle(
+        budget=6, dry_run=False, execute_handlers={}, **state_files)
+    assert report["status"] in ("daily_budget_exhausted", "daily_budget_paced")
+    assert "report" in called, "budget refusal must recompute health signals"
+    assert called["report"]["status"] == report["status"]

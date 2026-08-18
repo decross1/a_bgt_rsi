@@ -1033,6 +1033,12 @@ def coordinator_cycle(
                     "a cycle whose budget fits today's elapsed share"),
                 "duration_ms": 0.0,
             }, agent="coordinator")
+            # 2026-08-18: a refusal is not a cycle, but the ALERT must not
+            # freeze while refusals continue — on 08-16 loop_alert.json sat
+            # 12h stale at "ok" through nine silent refusals. Stall/staleness
+            # detectors run regardless of dispatch (P0 decoupling); a
+            # refusal-time recompute costs no model calls.
+            coordinator_cycle_log.emit_health_signals(report)
             return report
     set_run_id(run_id)
     set_current_agent("coordinator")
