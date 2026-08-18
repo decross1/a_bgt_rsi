@@ -273,6 +273,11 @@ def _utcnow() -> str:
 
 
 def run_arm(arm: str, out_path: Path, limit: int | None) -> int:
+    # A relative --out crashed the artifact write on the first live run
+    # (relative_to(REPO_ROOT) at the calls_log_dump field raised ValueError
+    # AFTER the calls were spent); anchor once, up front.
+    if not out_path.is_absolute():
+        out_path = REPO_ROOT / out_path
     cfg = ARMS[arm]
     os.environ["CRITIC_BACKEND"] = cfg["backend"]
 
@@ -390,7 +395,12 @@ def run_arm(arm: str, out_path: Path, limit: int | None) -> int:
         "limit": limit,
         "n_fixtures_run": len(rows),
         "calls_log_dump": (
-            str(calls_dump_path.relative_to(REPO_ROOT))
+            # repo-relative when inside the repo; absolute otherwise — an
+            # out-of-repo --out must never crash AFTER the calls are spent
+            # (review catch; same class as the relative-path crash).
+            (str(calls_dump_path.relative_to(REPO_ROOT))
+             if calls_dump_path.is_relative_to(REPO_ROOT)
+             else str(calls_dump_path))
             if calls_dump_path else None
         ),
         "rows": rows,

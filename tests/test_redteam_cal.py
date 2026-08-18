@@ -327,9 +327,21 @@ def test_prompt_swap_seam(monkeypatch):
     # revised variant: the module-constant override reaches run_subagent.
     revised = driver.apply_prompt_variant(rt_mod, "revised")
     assert revised == driver.load_revised_prompt()
-    assert revised != original
+    # R1a adoption 2026-08-18: the battery elected gemma-revised, so the
+    # production constant IS the revised text now (byte-identical — the
+    # swap asserted sha256 against the winning arm's artifact). Before
+    # adoption this asserted revised != original.
+    assert revised == original
     rt_mod.redteam_critic("some hypothesis", "iter-seam-2")
     assert captured["system_prompt"] == revised
+
+    # Third leg (review catch): with revised == original post-adoption, the
+    # two legs above are tautological about the SEAM itself — prove the
+    # module-constant override still reaches run_subagent with a sentinel.
+    monkeypatch.setattr(rt_mod, "REDTEAM_AGENT_SYSTEM_PROMPT",
+                        "SENTINEL-PROMPT-FOR-SEAM-TEST")
+    rt_mod.redteam_critic("some hypothesis", "iter-seam-3")
+    assert captured["system_prompt"] == "SENTINEL-PROMPT-FOR-SEAM-TEST"
 
 
 def test_revised_prompt_output_contract_byte_compatible():

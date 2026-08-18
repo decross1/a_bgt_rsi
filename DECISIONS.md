@@ -3741,3 +3741,48 @@ git); R3a is one constant; R2 is additive corpus content (collections
 are removable); R1a is an instrument evaluation. The fatal_flaw cap and
 all rung semantics remain exactly as D-059 defined them — these fixes
 repair the INSTRUMENTS feeding the rungs, not the rungs.
+
+## D-076 — R1a verdict: the redteam calibration battery elected gemma-revised; adoption executed per the locked rule
+
+**Date:** 2026-08-18. **Status:** executed (adoption pre-ratified by the
+R1a LOCK commit per `experiments/PREREG_redteam_cal_2026-08-18.md`
+§Adoption rule; backend re-seat clause unused — the winner keeps
+vllm-gemma).
+
+**The matrix (24 fixtures × 3 arms, artifacts in
+`bench/redteam_cal/runs/`):**
+
+| arm | bar1 unscored (≤2) | bar2 fatal on parsed known-bad (≥75%) | bar3 fatal on parsed known-good (≤35%) | verdict |
+| --- | --- | --- | --- | --- |
+| gemma-current (production) | 5 FAIL | 12/12 PASS | 6/7 (85.7%) FAIL | FAIL |
+| **gemma-revised** | **0 PASS** | **9/12 (75.0%) PASS** | **0/12 (0%) PASS** | **PASS — adopted** |
+| qwen38 (production budgets) | 18 FAIL | 6/6 PASS | 0/0 no-parse FAIL | FAIL |
+
+**What the numbers say.** Production was a constant condemner, not a
+discriminator: 18 of 19 parsed fixtures condemned, and all 5 parse
+failures fell on known-good rows (condemning is fast; a sound claim
+drives longer reasoning into the cap). The D-075 52/52 diagnosis is now
+a measured calibration failure, not an inference. gemma-revised is a
+real instrument: 75-point good/bad gap, zero unscored, and its bar-2
+pass is exactly at threshold (9/12) with misses concentrated in
+real-historical known-bad — the honest caveat from the prereg stands
+(this battery separates condemners and coins from calibrated
+instruments, not strong from mediocre). qwen38 at the pinned production
+budgets (max_wall 45s) timed out on 18/24 calls (62–74s each) — Qwen
+3.8 cannot hold the redteam seat inside the production envelope; any
+future re-attempt is a different (re-preregistered) configuration.
+
+**Execution.** `workers/redteam_critic.py::REDTEAM_AGENT_SYSTEM_PROMPT`
+replaced with the winning arm's text — byte-identity asserted at swap
+time (sha256 `7d44820d…f52dba` == the gemma-revised artifact's
+`prompt_sha256`). Seam test updated to pin the post-adoption identity.
+Daemon bounced. The fatal_flaw hard cap (evidence_ladder) STAYS, now
+backed by a calibrated instrument.
+
+**Battery integrity disclosure.** Attempt 1 (06:00Z) spent both gemma
+arms' calls, then crashed before the artifact write (driver bug: a
+relative `--out` broke `relative_to(REPO_ROOT)`); qwen38 was killed
+~2 calls in. Fixed, all three arms re-run clean (06:08–06:37Z).
+Re-runs are pure repeats: temp 0.0 greedy on pinned weights (D-074
+byte-determinism). First-attempt calls dumps retained beside the
+artifacts.

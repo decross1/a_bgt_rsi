@@ -1,0 +1,521 @@
+{
+  "prereg": "experiments/PREREG_redteam_cal_2026-08-18.md",
+  "arm": "qwen38",
+  "backend": "vllm-qwen",
+  "prompt_variant": "production",
+  "prompt_sha256": "3433ac5d862d9e749f00455b0ed1d0b422b743c50202cb6fe45774c1445ae0bc",
+  "fixtures_path": "bench/redteam_cal/fixtures.jsonl",
+  "fixtures_sha256": "1f8b738c509528a3e56549c851b482bcc1d36ee8aea3f97961f628b14e31cce4",
+  "budget": {
+    "max_turns": 3,
+    "max_wall_seconds": 45.0
+  },
+  "invocation_seam": "workers.redteam_critic.redteam_critic(hypothesis_text, iteration_id, parent_request_id=...) \u2014 production-faithful per orchestrator/nara.py:944",
+  "git_commit": "350ef5afc34069a74191816c953ca1b13ddfb20e",
+  "started_at": "2026-08-18T06:12:55.466613+00:00",
+  "ended_at": "2026-08-18T06:37:35.401059+00:00",
+  "limit": null,
+  "n_fixtures_run": 24,
+  "calls_log_dump": "bench/redteam_cal/runs/calls_qwen38_20260818T063735Z.jsonl",
+  "rows": [
+    {
+      "id": "rtc-good-hist-01",
+      "label": "known_good",
+      "provenance_class": "real-historical",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 62.829,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 62.829,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-good-hist-02",
+      "label": "known_good",
+      "provenance_class": "real-historical",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 65.731,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 65.73,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-good-hist-03",
+      "label": "known_good",
+      "provenance_class": "real-historical",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 67.886,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 67.886,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-good-batt-01",
+      "label": "known_good",
+      "provenance_class": "battery",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 68.614,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 68.614,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-good-batt-02",
+      "label": "known_good",
+      "provenance_class": "battery",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 70.802,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 70.802,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-good-batt-03",
+      "label": "known_good",
+      "provenance_class": "battery",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 70.593,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 70.593,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-good-cons-01",
+      "label": "known_good",
+      "provenance_class": "constructed",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 70.442,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 70.442,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-good-cons-02",
+      "label": "known_good",
+      "provenance_class": "constructed",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 71.144,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 71.143,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-good-cons-03",
+      "label": "known_good",
+      "provenance_class": "constructed",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 72.091,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 72.091,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-good-cons-04",
+      "label": "known_good",
+      "provenance_class": "constructed",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 69.355,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 69.355,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-good-cons-05",
+      "label": "known_good",
+      "provenance_class": "constructed",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 67.4,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 67.399,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-good-cons-06",
+      "label": "known_good",
+      "provenance_class": "constructed",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 71.273,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 71.273,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-bad-hist-01",
+      "label": "known_bad",
+      "provenance_class": "real-historical",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 71.308,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 71.308,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-bad-hist-02",
+      "label": "known_bad",
+      "provenance_class": "real-historical",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 64.358,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 64.358,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-bad-hist-03",
+      "label": "known_bad",
+      "provenance_class": "real-historical",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 71.476,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 71.475,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-bad-batt-01",
+      "label": "known_bad",
+      "provenance_class": "battery",
+      "verdict": "fatal_flaw",
+      "confidence": 0.98,
+      "critique_digest": "The hypothesis is not testable as stated because its key terms are undefined and semantically incoherent: 'purple equilibrium,' 'tuesday of cooperation,' and 'nash sandwich' have no operational meaning in game theory or experimental design.",
+      "wall_s": 23.815,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 23.814,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-batt-02",
+      "label": "known_bad",
+      "provenance_class": "battery",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 66.361,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 66.36,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-bad-cons-01",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 0.98,
+      "critique_digest": "The hypothesis is circular: it defines dispositional cooperativeness as the agent's observed cooperation rate in the same repeated Prisoner's Dilemma context, then claims that higher dispositional cooperativeness predicts higher cooperation",
+      "wall_s": 33.678,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 33.678,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-cons-02",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 0.95,
+      "critique_digest": "The hypothesis is unfalsifiable because it claims that any observed contribution profile confirms the latent social preference, while allowing the preference to manifest as generosity, free-riding, or any intermediate pattern depending on a",
+      "wall_s": 32.322,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 32.322,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-cons-03",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 0.86,
+      "critique_digest": "The hypothesis is not testable as stated because it relies on an undefined 'standard strategic-authenticity scale' and an unspecified set of bargaining/negotiation games, temperatures, and comparable model sizes. 'Strategic authenticity' is",
+      "wall_s": 64.597,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 64.597,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-cons-04",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 73.757,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 73.756,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-bad-cons-05",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 0.98,
+      "critique_digest": "The claim contradicts the established result that truthful bidding is a weakly dominant strategy in one-shot second-price auctions with independent private values. Overbidding cannot increase expected profit: if the second-highest bid is be",
+      "wall_s": 53.099,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 53.099,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-cons-06",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent budget exceeded after 1 turns; verdict unscored)",
+      "wall_s": 66.415,
+      "unscored": true,
+      "subagent_status": "timeout",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 66.415,
+      "errors": [
+        "sub-agent timeout; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "wall-clock cap 45.0s exceeded after 1 turns"
+      ]
+    },
+    {
+      "id": "rtc-bad-cons-07",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 0.98,
+      "critique_digest": "The hypothesis is unfalsifiable as stated because it defines its causal variable, phenomenal empathy, as in principle inaccessible to any behavioral or activation measurement. That makes the claim circular and impossible to test: no possibl",
+      "wall_s": 30.59,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-qwen",
+      "subagent_model": "qwen3.8-27b-nvfp4-mtp",
+      "subagent_wall_seconds": 30.59,
+      "errors": []
+    }
+  ],
+  "evaluation": {
+    "n_rows": 24,
+    "n_known_good": 12,
+    "n_known_bad": 12,
+    "n_unscored": 18,
+    "bars": {
+      "bar1": {
+        "name": "parse_health",
+        "unscored": 18,
+        "cap": 2,
+        "pass": false
+      },
+      "bar2": {
+        "name": "catches_the_bad",
+        "fatal": 6,
+        "parsed": 6,
+        "rate": 1.0,
+        "ci95": [
+          0.5407418735600995,
+          1.0
+        ],
+        "threshold": "fatal_flaw on >= 75% of parsed known-bad",
+        "pass": true
+      },
+      "bar3": {
+        "name": "passes_the_good",
+        "fatal": 0,
+        "parsed": 0,
+        "rate": null,
+        "ci95": null,
+        "threshold": "fatal_flaw on <= 35% of parsed known-good",
+        "pass": false
+      },
+      "bar4": {
+        "name": "gap",
+        "load_bearing": false,
+        "gap_points": null,
+        "note": "REPORTED, not load-bearing: bars 2 AND 3 at their thresholds already imply a >=40-point good/bad gap; this diagnostic can never bind."
+      }
+    },
+    "all_load_bearing_bars_pass": false,
+    "confusion": {
+      "known_good_by_provenance": {
+        "real-historical": {
+          "n": 3,
+          "fatal_flaw": 0,
+          "proceed": 0,
+          "unscored": 3
+        },
+        "battery": {
+          "n": 3,
+          "fatal_flaw": 0,
+          "proceed": 0,
+          "unscored": 3
+        },
+        "constructed": {
+          "n": 6,
+          "fatal_flaw": 0,
+          "proceed": 0,
+          "unscored": 6
+        }
+      },
+      "known_bad_by_provenance": {
+        "real-historical": {
+          "n": 3,
+          "fatal_flaw": 0,
+          "proceed": 0,
+          "unscored": 3
+        },
+        "battery": {
+          "n": 2,
+          "fatal_flaw": 1,
+          "proceed": 0,
+          "unscored": 1
+        },
+        "constructed": {
+          "n": 7,
+          "fatal_flaw": 5,
+          "proceed": 0,
+          "unscored": 2
+        }
+      }
+    },
+    "statistics_caveat": "At n=12/class a zero-discrimination coin passes bars 2 AND 3 with ~1.4% probability per arm and a weak 60/40 instrument with ~10% \u2014 this battery discriminates condemners and coins from calibrated instruments, not strong from mediocre ones."
+  }
+}

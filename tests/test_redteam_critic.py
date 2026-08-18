@@ -325,3 +325,20 @@ def test_caller_tag_in_subagent_call(monkeypatch):
     monkeypatch.setattr(rt_mod, "run_subagent", stub)
     rt_mod.redteam_critic("h", "iter-11")
     assert captured["name"] == "redteam_critic"
+
+
+def test_adopted_prompt_sha256_pins_d076_artifact():
+    """D-076 adoption anchor (review catch): the module constant must stay
+    byte-identical to the R1a WINNING ARM's prompt (gemma-revised artifact
+    prompt_sha256). A coordinated edit of the constant AND the frozen
+    revised_prompt.txt would drift silently past the relative seam test;
+    this absolute pin catches it. Changing the production prompt again
+    requires a new calibration battery (and then this pin changes WITH the
+    new artifact's hash)."""
+    import hashlib
+    from workers.redteam_critic import REDTEAM_AGENT_SYSTEM_PROMPT
+    assert hashlib.sha256(
+        REDTEAM_AGENT_SYSTEM_PROMPT.encode()
+    ).hexdigest() == (
+        "7d44820d99f71485b0734ad4362cb95212c0f327481c7de043d8079cc3f52dba"
+    )

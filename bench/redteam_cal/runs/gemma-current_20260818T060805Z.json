@@ -1,0 +1,485 @@
+{
+  "prereg": "experiments/PREREG_redteam_cal_2026-08-18.md",
+  "arm": "gemma-current",
+  "backend": "vllm-gemma",
+  "prompt_variant": "production",
+  "prompt_sha256": "3433ac5d862d9e749f00455b0ed1d0b422b743c50202cb6fe45774c1445ae0bc",
+  "fixtures_path": "bench/redteam_cal/fixtures.jsonl",
+  "fixtures_sha256": "1f8b738c509528a3e56549c851b482bcc1d36ee8aea3f97961f628b14e31cce4",
+  "budget": {
+    "max_turns": 3,
+    "max_wall_seconds": 45.0
+  },
+  "invocation_seam": "workers.redteam_critic.redteam_critic(hypothesis_text, iteration_id, parent_request_id=...) \u2014 production-faithful per orchestrator/nara.py:944",
+  "git_commit": "350ef5afc34069a74191816c953ca1b13ddfb20e",
+  "started_at": "2026-08-18T06:08:06.374197+00:00",
+  "ended_at": "2026-08-18T06:10:29.720370+00:00",
+  "limit": null,
+  "n_fixtures_run": 24,
+  "calls_log_dump": "bench/redteam_cal/runs/calls_gemma-current_20260818T061029Z.jsonl",
+  "rows": [
+    {
+      "id": "rtc-good-hist-01",
+      "label": "known_good",
+      "provenance_class": "real-historical",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent emitted schema-mismatched output; verdict unscored) {'verdict': 'proceed', 'critique': None, 'suggested_revision': None, 'confidence': 0.95}",
+      "wall_s": 6.155,
+      "unscored": true,
+      "subagent_status": "schema_mismatch",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 6.155,
+      "errors": [
+        "sub-agent schema mismatch; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "final payload failed schema validation: None is not of type 'string' at ['critique']"
+      ]
+    },
+    {
+      "id": "rtc-good-hist-02",
+      "label": "known_good",
+      "provenance_class": "real-historical",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent emitted schema-mismatched output; verdict unscored) {'verdict': 'proceed', 'critique': None, 'suggested_revision': None, 'confidence': 0.9}",
+      "wall_s": 5.43,
+      "unscored": true,
+      "subagent_status": "schema_mismatch",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 5.43,
+      "errors": [
+        "sub-agent schema mismatch; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "final payload failed schema validation: None is not of type 'string' at ['critique']"
+      ]
+    },
+    {
+      "id": "rtc-good-hist-03",
+      "label": "known_good",
+      "provenance_class": "real-historical",
+      "verdict": "fatal_flaw",
+      "confidence": 1.0,
+      "critique_digest": "The hypothesis is logically incoherent because 'convergence' requires an iterative learning mechanism or repeated interaction, yet the setup specifies 'single-round' auctions. If each auction is a discrete, independent event, agents cannot ",
+      "wall_s": 5.374,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 5.374,
+      "errors": []
+    },
+    {
+      "id": "rtc-good-batt-01",
+      "label": "known_good",
+      "provenance_class": "battery",
+      "verdict": "fatal_flaw",
+      "confidence": 0.85,
+      "critique_digest": "The hypothesis fails to distinguish between a meaningful change in strategic reasoning and a trivial collapse of the model's probability distribution (entropy reduction) caused by quantization noise. It also lacks a control for sampling tem",
+      "wall_s": 7.882,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 7.882,
+      "errors": []
+    },
+    {
+      "id": "rtc-good-batt-02",
+      "label": "known_good",
+      "provenance_class": "battery",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent emitted schema-mismatched output; verdict unscored) {'verdict': 'proceed', 'critique': None, 'suggested_revision': None, 'confidence': 0.9}",
+      "wall_s": 5.35,
+      "unscored": true,
+      "subagent_status": "schema_mismatch",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 5.35,
+      "errors": [
+        "sub-agent schema mismatch; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "final payload failed schema validation: None is not of type 'string' at ['critique']"
+      ]
+    },
+    {
+      "id": "rtc-good-batt-03",
+      "label": "known_good",
+      "provenance_class": "battery",
+      "verdict": "fatal_flaw",
+      "confidence": 0.9,
+      "critique_digest": "The hypothesis conflates sampling noise (temperature) with decision-making noise (quantal-response lambda), which are mathematically distinct processes applied at different stages of the inference pipeline. Furthermore, 'reasoning depth' is",
+      "wall_s": 8.901,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 8.901,
+      "errors": []
+    },
+    {
+      "id": "rtc-good-cons-01",
+      "label": "known_good",
+      "provenance_class": "constructed",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent emitted schema-mismatched output; verdict unscored) {'verdict': 'proceed', 'critique': None, 'suggested_revision': None, 'confidence': 0.95}",
+      "wall_s": 4.784,
+      "unscored": true,
+      "subagent_status": "schema_mismatch",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 4.784,
+      "errors": [
+        "sub-agent schema mismatch; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "final payload failed schema validation: None is not of type 'string' at ['critique']"
+      ]
+    },
+    {
+      "id": "rtc-good-cons-02",
+      "label": "known_good",
+      "provenance_class": "constructed",
+      "verdict": "proceed",
+      "confidence": 0.9,
+      "critique_digest": "The hypothesis is testable and the experimental design (swapping a single token) is a standard method for isolating semantic effects. While the mechanism (fairness priors vs. statistical pattern matching) is debatable, the effect itself is ",
+      "wall_s": 6.9,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 6.899,
+      "errors": []
+    },
+    {
+      "id": "rtc-good-cons-03",
+      "label": "known_good",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 0.85,
+      "critique_digest": "The hypothesis fails to decouple the 'end-game effect' (the natural decay of cooperation as a game nears its end) from the experimental variable (the display of the round count). As stated, the widening gap in the final three rounds is a pr",
+      "wall_s": 5.919,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 5.918,
+      "errors": []
+    },
+    {
+      "id": "rtc-good-cons-04",
+      "label": "known_good",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 0.85,
+      "critique_digest": "The hypothesis fails to account for the 'competence-strategy confound': at high temperatures (0.8), the deviation from Nash is more likely to be caused by mathematical/parsing errors than by strategic choice. Additionally, 'five rounds' is ",
+      "wall_s": 8.773,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 8.773,
+      "errors": []
+    },
+    {
+      "id": "rtc-good-cons-05",
+      "label": "known_good",
+      "provenance_class": "constructed",
+      "verdict": "unscored",
+      "confidence": 0.0,
+      "critique_digest": "(sub-agent emitted schema-mismatched output; verdict unscored) {'verdict': 'proceed', 'critique': None, 'suggested_revision': None, 'confidence': 1.0}",
+      "wall_s": 5.831,
+      "unscored": true,
+      "subagent_status": "schema_mismatch",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 5.831,
+      "errors": [
+        "sub-agent schema mismatch; verdict 'unscored' (D-075 R1b: never fail-open to 'proceed')",
+        "final payload failed schema validation: None is not of type 'string' at ['critique']"
+      ]
+    },
+    {
+      "id": "rtc-good-cons-06",
+      "label": "known_good",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 0.95,
+      "critique_digest": "The hypothesis confuses a sampling parameter (temperature) with a strategic property of the agent. Low-temperature sampling inherently reduces entropy and increases the likelihood of predictable patterns, making the 'failure' of a runs test",
+      "wall_s": 7.952,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 7.952,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-hist-01",
+      "label": "known_bad",
+      "provenance_class": "real-historical",
+      "verdict": "fatal_flaw",
+      "confidence": 0.85,
+      "critique_digest": "The hypothesis fails to decouple the mechanism (noise reduction) from the outcome (strategic capacity), as increasing context window length inherently alters both retrieval reliability and the complexity of patterns an agent can track. As s",
+      "wall_s": 7.404,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 7.403,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-hist-02",
+      "label": "known_bad",
+      "provenance_class": "real-historical",
+      "verdict": "fatal_flaw",
+      "confidence": 1.0,
+      "critique_digest": "The hypothesis commits a category error by treating the 'Moments Accountant' and 'R\u00e9nyi Differential Privacy' as competing frameworks. In practice, the Moments Accountant is the specific technique used to compute RDP bounds; therefore, the ",
+      "wall_s": 5.769,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 5.769,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-hist-03",
+      "label": "known_bad",
+      "provenance_class": "real-historical",
+      "verdict": "fatal_flaw",
+      "confidence": 0.95,
+      "critique_digest": "The hypothesis contradicts the core logic of Bayesian inference, which posits that agents should filter mean-zero noise to converge on the true mean, rather than accelerating decay. It also fails to define whether 'decay' refers to the cont",
+      "wall_s": 5.73,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 5.73,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-batt-01",
+      "label": "known_bad",
+      "provenance_class": "battery",
+      "verdict": "fatal_flaw",
+      "confidence": 1.0,
+      "critique_digest": "The hypothesis is composed of metaphorical nonsense ('tuesday of cooperation', 'nash sandwich') that lacks formal definitions. It is impossible to map these terms to game-theoretic variables, making the claim unfalsifiable and untestable.",
+      "wall_s": 3.756,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 3.756,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-batt-02",
+      "label": "known_bad",
+      "provenance_class": "battery",
+      "verdict": "fatal_flaw",
+      "confidence": 1.0,
+      "critique_digest": "The statement is a descriptive fact rather than a scientific hypothesis. It lacks a predictive relationship between variables, making it untestable via the scientific method; it is a sociological observation, not a research proposition.",
+      "wall_s": 3.66,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 3.659,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-cons-01",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 1.0,
+      "critique_digest": "The hypothesis is a tautology. It defines the independent variable (dispositional cooperativeness) as the exact dependent variable being measured (cooperation rate in the same setting), making the claim circular and unfalsifiable.",
+      "wall_s": 5.387,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 5.387,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-cons-02",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 1.0,
+      "critique_digest": "The hypothesis is a tautology; by stating that 'any observed contribution profile confirms the preference,' it renders the claim unfalsifiable. It provides no mechanism for distinguishing between a latent social preference and simple stocha",
+      "wall_s": 4.22,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 4.22,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-cons-03",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 0.95,
+      "critique_digest": "The hypothesis relies on an undefined 'standard strategic-authenticity scale' and makes an improbable universal claim that a specific delta will persist across all temperature settings. It fails to account for the non-linear impact of tempe",
+      "wall_s": 6.544,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 6.544,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-cons-04",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 0.95,
+      "critique_digest": "The hypothesis conflates a mathematical property (increased entropy/noise) with a psychological construct (risk appetite) without providing a way to decouple them. As phrased, it is unfalsifiable because any change in behavior caused by tem",
+      "wall_s": 7.313,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 7.313,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-cons-05",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 1.0,
+      "critique_digest": "The hypothesis contradicts the fundamental property of second-price auctions: overbidding increases the probability of winning at a price higher than the bidder's valuation, leading to negative utility. In a second-price mechanism, truthful",
+      "wall_s": 5.257,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 5.257,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-cons-06",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 1.0,
+      "critique_digest": "The hypothesis is logically incoherent: it defines the game as 'strictly one-shot' while invoking 'reciprocity' (a multi-round phenomenon) as the causal mechanism. Additionally, if agents are 'verified to comply' with playing their dominant",
+      "wall_s": 5.213,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 5.213,
+      "errors": []
+    },
+    {
+      "id": "rtc-bad-cons-07",
+      "label": "known_bad",
+      "provenance_class": "constructed",
+      "verdict": "fatal_flaw",
+      "confidence": 1.0,
+      "critique_digest": "The hypothesis is explicitly unfalsifiable by its own definition, as it stipulates that the causal mechanism is inaccessible to all possible measurement. A claim that cannot be disproven by any conceivable empirical data is a metaphysical a",
+      "wall_s": 3.84,
+      "unscored": false,
+      "subagent_status": "passed",
+      "subagent_backend": "vllm-gemma",
+      "subagent_model": "gemma-4-26b-a4b",
+      "subagent_wall_seconds": 3.84,
+      "errors": []
+    }
+  ],
+  "evaluation": {
+    "n_rows": 24,
+    "n_known_good": 12,
+    "n_known_bad": 12,
+    "n_unscored": 5,
+    "bars": {
+      "bar1": {
+        "name": "parse_health",
+        "unscored": 5,
+        "cap": 2,
+        "pass": false
+      },
+      "bar2": {
+        "name": "catches_the_bad",
+        "fatal": 12,
+        "parsed": 12,
+        "rate": 1.0,
+        "ci95": [
+          0.7353515306029488,
+          1.0
+        ],
+        "threshold": "fatal_flaw on >= 75% of parsed known-bad",
+        "pass": true
+      },
+      "bar3": {
+        "name": "passes_the_good",
+        "fatal": 6,
+        "parsed": 7,
+        "rate": 0.8571428571428571,
+        "ci95": [
+          0.4212768029568048,
+          0.9963897031380995
+        ],
+        "threshold": "fatal_flaw on <= 35% of parsed known-good",
+        "pass": false
+      },
+      "bar4": {
+        "name": "gap",
+        "load_bearing": false,
+        "gap_points": 14.286,
+        "note": "REPORTED, not load-bearing: bars 2 AND 3 at their thresholds already imply a >=40-point good/bad gap; this diagnostic can never bind."
+      }
+    },
+    "all_load_bearing_bars_pass": false,
+    "confusion": {
+      "known_good_by_provenance": {
+        "real-historical": {
+          "n": 3,
+          "fatal_flaw": 1,
+          "proceed": 0,
+          "unscored": 2
+        },
+        "battery": {
+          "n": 3,
+          "fatal_flaw": 2,
+          "proceed": 0,
+          "unscored": 1
+        },
+        "constructed": {
+          "n": 6,
+          "fatal_flaw": 3,
+          "proceed": 1,
+          "unscored": 2
+        }
+      },
+      "known_bad_by_provenance": {
+        "real-historical": {
+          "n": 3,
+          "fatal_flaw": 3,
+          "proceed": 0,
+          "unscored": 0
+        },
+        "battery": {
+          "n": 2,
+          "fatal_flaw": 2,
+          "proceed": 0,
+          "unscored": 0
+        },
+        "constructed": {
+          "n": 7,
+          "fatal_flaw": 7,
+          "proceed": 0,
+          "unscored": 0
+        }
+      }
+    },
+    "statistics_caveat": "At n=12/class a zero-discrimination coin passes bars 2 AND 3 with ~1.4% probability per arm and a weak 60/40 instrument with ~10% \u2014 this battery discriminates condemners and coins from calibrated instruments, not strong from mediocre ones."
+  }
+}
