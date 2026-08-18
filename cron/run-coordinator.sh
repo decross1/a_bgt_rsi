@@ -105,9 +105,9 @@ fi
 # now the evidence ladder's L3->L4 rung — surfacing requires L4+, and the vote
 # only runs on L3 candidates. The 06-25 flip's measured outcome (31/31 refuted
 # findings promoted, zero human-dispositioned) is recorded in D-059.
-log "launch: coordinator --once --execute --budget $BUDGET (NARA_SKEPTIC=1 NARA_DEBATE=1)"
+log "launch: coordinator --once --execute --budget $BUDGET (NARA_SKEPTIC=1 NARA_DEBATE=1 NARA_FRONTIER_SCREEN=1)"
 rc=0
-env -u MOCK_LLM NARA_SKEPTIC=1 NARA_DEBATE=1 "$PYTHON" -m orchestrator.coordinator \
+env -u MOCK_LLM NARA_SKEPTIC=1 NARA_DEBATE=1 NARA_FRONTIER_SCREEN=1 "$PYTHON" -m orchestrator.coordinator \
   --once --execute --budget "$BUDGET" || rc=$?
 # Post-cycle: fold any NEW iterations into the idea ledger (2026-08-15 gap —
 # consolidation was one-shot, so iterations after it lived outside the ladder
