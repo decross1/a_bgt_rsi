@@ -82,3 +82,26 @@ class TestHasEntry:
         assert ic.has_entry("iter-8", "nothing") is False
         ic.write_entry("iter-8", "hypothesis", {"text": "h"})
         assert ic.has_entry("iter-8", "critique") is False
+
+
+def test_write_entry_preserves_clobbered_debate(tmp_path, monkeypatch):
+    # D-075 R3b regression pin: a debate-less rewrite may not destroy an
+    # existing debate block — the prior payload survives as <key>.json.1.
+    import orchestrator.iteration_cache as ic
+    monkeypatch.setattr(ic, "CACHE_ROOT", tmp_path)
+    with_debate = {"status": "passed",
+                   "result": {"verdict": "undecidable",
+                              "debate": {"verdict": "survives_debate",
+                                         "rounds": 4, "transcript": []}}}
+    without = {"status": "passed", "result": {"verdict": "undecidable"}}
+    ic.write_entry("iter-x", "critique", with_debate)
+    ic.write_entry("iter-x", "critique", without)
+    live = ic.read_entry("iter-x", "critique")
+    assert "debate" not in (live.get("result") or {})  # last-write-wins stands
+    import json
+    preserved = json.loads((tmp_path / "iter-x" / "critique.json.1").read_text())
+    assert preserved["result"]["debate"]["verdict"] == "survives_debate"
+    # and a debate-bearing rewrite over a debate-less entry does NOT version
+    ic.write_entry("iter-y", "critique", without)
+    ic.write_entry("iter-y", "critique", with_debate)
+    assert not (tmp_path / "iter-y" / "critique.json.1").exists()

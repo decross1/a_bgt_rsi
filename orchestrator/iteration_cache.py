@@ -40,6 +40,23 @@ def write_entry(iteration_id: str, key: str, payload: dict) -> Path:
     d = cache_dir(iteration_id)
     d.mkdir(parents=True, exist_ok=True)
     path = d / f"{key}.json"
+    # D-075 R3b clobber guard: on 2026-08-18 a double critic dispatch
+    # erased a 470s debate transcript (iter-...-007) via last-write-wins.
+    # Evidence is never destroyed: when an overwrite would drop a debate
+    # block the prior payload is preserved side-by-side as <key>.json.N
+    # (append-only versions; readers still see last-write-wins at <key>).
+    if path.exists():
+        try:
+            old = json.loads(path.read_text())
+            old_debate = (old.get("result") or {}).get("debate")
+            new_debate = (payload.get("result") or {}).get("debate")
+            if old_debate and not new_debate:
+                n = 1
+                while (d / f"{key}.json.{n}").exists():
+                    n += 1
+                os.replace(path, d / f"{key}.json.{n}")
+        except (json.JSONDecodeError, OSError):
+            pass  # unreadable prior entry: plain overwrite, never a crash
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
     os.replace(tmp, path)

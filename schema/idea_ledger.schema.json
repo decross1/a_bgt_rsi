@@ -48,7 +48,9 @@
             "adversarial_refuted",
             "experiment_invalid",
             "experiment_null_effect",
-            "paper_prior_exists"
+            "paper_prior_exists",
+            "superseded_duplicate",
+            "non_research_artifact"
           ],
           "description": "Closed enum — built ONLY by the programmatic builders in workers/idea_ledger.py."
         },
