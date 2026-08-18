@@ -25,6 +25,10 @@ export PATH="/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 PRIMARY=/home/decross1/projects/a_bgt_rsi
 UI="$PRIMARY/ui"
 PY="$UI/.venv/bin/python"            # main-checkout venv (has fastapi/uvicorn/psutil)
+# Backend runs under .venv-chroma (2026-08-18): /api/doc_titles reads Chroma
+# metadata, and .venv-chroma carries uvicorn+fastapi+chromadb (+openai).
+# Sampler STAYS on ui/.venv (needs psutil, absent from .venv-chroma).
+BACKEND_PY="$UI/../.venv-chroma/bin/python"
 LOGDIR="$UI/logs/services"           # gitignored (logs/*)
 BACKEND_PORT=8700
 FRONTEND_PORT=5173
@@ -38,7 +42,7 @@ _proc_up()    { pgrep -f "$1" >/dev/null 2>&1; }
 # _launch <logfile> <workdir> <cmd...> — setsid-detached so it outlives this shell.
 _launch() { local log=$1 wd=$2; shift 2; ( cd "$wd" && setsid "$@" > "$log" 2>&1 < /dev/null & disown ); }
 
-_start_backend()  { _launch "$LOGDIR/backend.log" "$UI"          env -u MOCK_LLM "$PY" -m uvicorn backend.app:app --host 0.0.0.0 --port "$BACKEND_PORT"; }
+_start_backend()  { _launch "$LOGDIR/backend.log" "$UI"          env -u MOCK_LLM "$BACKEND_PY" -m uvicorn backend.app:app --host 0.0.0.0 --port "$BACKEND_PORT"; }
 _start_sampler()  { _launch "$LOGDIR/sampler.log" "$UI"          "$PY" -m sampler.sampler; }
 _start_frontend() { _launch "$LOGDIR/vite.log"    "$UI/frontend" npm run dev; }
 

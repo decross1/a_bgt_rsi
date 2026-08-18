@@ -9,7 +9,10 @@ chain and the spawn ledger's agent contracts.
 - ``GET /api/model_io`` — newest-first call summaries out of the MAIN call
   log ``logs/calls.jsonl`` (prompt/completion previews, tokens, latency,
   empty-completion flag), filterable by model / caller_tag / run_id /
-  since_ts. NOTE: experiments and bench redirect their calls to their own
+  since_ts, and pageable with ``before_ts`` (rows STRICTLY older than the
+  boundary, same newest-first order — the UI's "load older" seam; owner
+  request 2026-08-18: show only the last ~20 interactions and page back).
+  NOTE: experiments and bench redirect their calls to their own
   ``runs/*.calls.jsonl`` via ``LOOP_V0_CALLS_LOG`` — this slice reads the
   main log only (the frontend states that as a footnote; a log picker is
   future work).
@@ -108,6 +111,23 @@ def _parse_ts(ts) -> datetime:
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
         return datetime.min.replace(tzinfo=timezone.utc)
+
+
+# _parse_ts's unparseable sentinel — a row timestamp equal to it can never
+# prove it sits on either side of a paging/filter boundary.
+_UNPARSEABLE = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _filter_instant(raw: str, name: str) -> datetime:
+    """Parse a since_ts/before_ts query value. Unparseable is a loud 400 —
+    a broken filter never silently matches nothing/everything (inviolate
+    rule 4)."""
+    instant = _parse_ts(raw)
+    if instant == _UNPARSEABLE:
+        raise HTTPException(status_code=400,
+                            detail=f"{name} {raw!r} is not an ISO 8601 "
+                                   "timestamp")
+    return instant
 
 
 def _passthrough_str(value) -> str | None:
@@ -343,13 +363,18 @@ def _summary(rec: dict) -> dict:
 
 
 def _matches(rec: dict, *, model: str | None, caller_tag: str | None,
-             run_id: str | None, since: datetime | None) -> bool:
+             run_id: str | None, since: datetime | None,
+             before: datetime | None = None) -> bool:
     """Filter one raw record. model / caller_tag are CASE-INSENSITIVE
     SUBSTRING matches (view filters — "gemma" should match the full served
     name; this is a search box, not attribution, which stays exact-match in
     roles.ts). run_id is exact. since_ts keeps rows whose timestamp parses to
     an instant >= since — an unparseable timestamp cannot claim to be after
-    it, so it is excluded when the filter is active."""
+    it, so it is excluded when the filter is active. before keeps rows
+    STRICTLY older than it (the paging boundary row itself is excluded, so
+    consecutive pages tile with no duplicates); the same unparseable stance
+    applies — a row that cannot prove it is older is excluded, never guessed
+    into the page."""
     if model is not None:
         value = rec.get("model")
         if not isinstance(value, str) or model.lower() not in value.lower():
@@ -364,6 +389,10 @@ def _matches(rec: dict, *, model: str | None, caller_tag: str | None,
             return False
     if since is not None:
         if _parse_ts(rec.get("timestamp")) < since:
+            return False
+    if before is not None:
+        instant = _parse_ts(rec.get("timestamp"))
+        if instant == _UNPARSEABLE or instant >= before:
             return False
     return True
 
@@ -388,26 +417,31 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
     router = APIRouter(prefix="/api", tags=["model_io"])
 
     @router.get("/model_io")
-    def model_io(limit: int = 50, model: str | None = None,
+    def model_io(limit: int = 20, model: str | None = None,
                  caller_tag: str | None = None, run_id: str | None = None,
-                 since_ts: str | None = None):
-        """Newest-first call summaries from the tail of the MAIN call log."""
+                 since_ts: str | None = None, before_ts: str | None = None):
+        """Newest-first call summaries from the tail of the MAIN call log.
+
+        ``before_ts`` pages OLDER rows: strictly older than the boundary,
+        same newest-first order, same bounded backward scan. The scan
+        generator is lazy, so the window extends only as deep as the page
+        actually needs — newer-than-boundary rows are skipped, the walk
+        still stops at the first of (limit filled | file start |
+        ``max_scan_bytes``), and ``window_truncated`` keeps its honesty:
+        True means the byte cap stopped the scan with the page unfilled,
+        i.e. older rows may exist that were never examined (the UI's
+        "load older" button reports that instead of silently stopping)."""
         capped = min(max(limit, 1), 200)
-        since = None
-        if since_ts:
-            since = _parse_ts(since_ts)
-            if since == datetime.min.replace(tzinfo=timezone.utc):
-                # An unparseable filter must fail loudly, not silently match
-                # nothing/everything (inviolate rule 4).
-                raise HTTPException(status_code=400,
-                                    detail=f"since_ts {since_ts!r} is not an "
-                                           "ISO 8601 timestamp")
+        since = _filter_instant(since_ts, "since_ts") if since_ts else None
+        before = _filter_instant(before_ts, "before_ts") if before_ts \
+            else None
         records, state = _scan_backward(calls_path, max_scan_bytes)
         calls: list[dict] = []
         for rec in records:
             if not _matches(rec, model=model or None,
                             caller_tag=caller_tag or None,
-                            run_id=run_id or None, since=since):
+                            run_id=run_id or None, since=since,
+                            before=before):
                 continue
             calls.append(_summary(rec))
             if len(calls) >= capped:

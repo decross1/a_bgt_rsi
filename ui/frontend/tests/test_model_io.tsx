@@ -12,7 +12,7 @@
 //     and the main-log-only footnote is always present.
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import ModelIO, { ageOf } from "../src/routes/ModelIO";
+import ModelIO, { ageOf, sanitizePreview } from "../src/routes/ModelIO";
 import type {
   DispatchTraceResponse,
   ModelIOResponse,
@@ -457,4 +457,246 @@ it("always states the main-log-only scope as a footnote", async () => {
   const note = await screen.findByTestId("modelio-footnote");
   expect(note.textContent).toContain("logs/calls.jsonl");
   expect(note.textContent).toContain("runs/*.calls.jsonl");
+});
+
+// ─── preview sanitization (owner 2026-08-18: the preview subtext "is
+//     basically jibberish" — raw channel markup leaked into
+//     completion_preview) ───────────────────────────────────────────────
+
+// The owner's report, as the wrapper logs it (newlines; the row's CSS
+// collapses them to the spaces the owner saw).
+const OWNER_GIBBERISH =
+  "thought\n<|channel>thought\n<channel|>This iteration investigated the " +
+  "effect of memory depth on cooperation stability.";
+
+it("sanitizePreview turns the owner's gibberish into clean thought prose", () => {
+  const view = sanitizePreview(OWNER_GIBBERISH);
+  expect(view).not.toBeNull();
+  expect(view!.thought).toBe(true);
+  expect(view!.text).toContain("This iteration investigated");
+  // No raw channel token ever, and the stray lone label word is gone too.
+  expect(view!.text).not.toMatch(/<\|?(channel|analysis|final|message)/i);
+  expect(view!.text.startsWith("thought")).toBe(false);
+});
+
+it("sanitizePreview handles the space-collapsed form the owner pasted", () => {
+  const view = sanitizePreview(
+    "thought <|channel>thought <channel|>This iteration investigated...",
+  );
+  expect(view!.thought).toBe(true);
+  expect(view!.text).toContain("This iteration investigated");
+  expect(view!.text).not.toContain("<|channel>");
+});
+
+it("sanitizePreview shows ONLY the visible text when both channels exist", () => {
+  const view = sanitizePreview(
+    "<|channel>thought<channel|>secret reasoning<|final>\nThe verdict is NO.",
+  );
+  expect(view!.thought).toBe(false);
+  expect(view!.text).toBe("The verdict is NO.");
+  expect(view!.text).not.toContain("secret reasoning");
+});
+
+it("sanitizePreview strips a truncation-cut partial channel token", () => {
+  expect(sanitizePreview("The run held at r=0.84 <|chan")!.text).toBe(
+    "The run held at r=0.84",
+  );
+  expect(sanitizePreview("prose ends <channel|")!.text).toBe("prose ends");
+  // Legit comparisons survive — a space/digit after "<" is not a token.
+  expect(sanitizePreview("kept x < 5 in band")!.text).toBe(
+    "kept x < 5 in band",
+  );
+});
+
+it("sanitizePreview passes clean prose through and nulls markup-only/empty", () => {
+  expect(sanitizePreview("plain prose")).toEqual({
+    text: "plain prose",
+    thought: false,
+  });
+  expect(sanitizePreview("")).toBeNull();
+  expect(sanitizePreview(null)).toBeNull();
+  expect(sanitizePreview(undefined)).toBeNull();
+  // Nothing but markup → no preview, never a raw token.
+  expect(sanitizePreview("<|channel|>")).toBeNull();
+  expect(sanitizePreview("<|channel>thought")).toBeNull();
+});
+
+it("renders the gibberish preview as a thought chip + clean prose in the row", async () => {
+  const gib = {
+    ...CALLS,
+    calls: [
+      {
+        ...CALLS.calls[1],
+        request_id: "req-gib",
+        completion_preview: OWNER_GIBBERISH,
+      },
+    ],
+  };
+  stubRoutes((url) =>
+    url.includes("/api/model_io") && !url.includes("/api/model_io/")
+      ? { status: 200, body: gib }
+      : happyHandler(url),
+  );
+  render(<ModelIO />);
+  await waitFor(() =>
+    expect(screen.getAllByTestId("modelio-row")).toHaveLength(1),
+  );
+  expect(screen.getByTestId("thought-chip")).toBeInTheDocument();
+  const preview = screen.getByTestId("row-preview");
+  expect(preview.textContent).toContain("This iteration investigated");
+  expect(preview.textContent).not.toContain("<|channel>");
+  expect(preview.textContent).not.toContain("<channel|>");
+});
+
+it("shows no thought chip on ordinary visible previews", async () => {
+  stubRoutes(happyHandler);
+  render(<ModelIO />);
+  await waitFor(() =>
+    expect(screen.getAllByTestId("modelio-row")).toHaveLength(3),
+  );
+  expect(screen.queryByTestId("thought-chip")).toBeNull();
+  expect(
+    screen
+      .getAllByTestId("row-preview")
+      .some((el) => el.textContent === "The claim fails because"),
+  ).toBe(true);
+});
+
+// ─── pagination (owner 2026-08-18: "show only last 20 interactions") ────
+
+// A list-page URL (limit=20, no before_ts) vs an older-page URL.
+const isListURL = (u: string) =>
+  u.includes("/api/model_io?") && !u.includes("before_ts=");
+
+const OLDER_ROW = {
+  ...CALLS.calls[2],
+  request_id: "req-0",
+  ts: "2026-08-18T00:59:59Z",
+  completion_preview: "an older completion",
+};
+
+it("fetches the newest page with limit=20 by default", async () => {
+  const mock = stubRoutes(happyHandler);
+  render(<ModelIO />);
+  await waitFor(() =>
+    expect(screen.getAllByTestId("modelio-row")).toHaveLength(3),
+  );
+  const listCalls = mock.mock.calls
+    .map((c) => String(c[0]))
+    .filter(isListURL);
+  expect(listCalls.length).toBeGreaterThan(0);
+  expect(listCalls.every((u) => u.includes("limit=20"))).toBe(true);
+});
+
+it("load older appends the next page via before_ts, deduped by request_id", async () => {
+  const older = {
+    ...CALLS,
+    // A duplicate of an already-shown row must NOT render twice, and the
+    // genuinely older row appends at the bottom.
+    calls: [{ ...CALLS.calls[2] }, OLDER_ROW],
+    window_truncated: false,
+  };
+  const mock = stubRoutes((url) =>
+    url.includes("before_ts=")
+      ? { status: 200, body: older }
+      : happyHandler(url),
+  );
+  render(<ModelIO />);
+  await waitFor(() =>
+    expect(screen.getAllByTestId("modelio-row")).toHaveLength(3),
+  );
+  fireEvent.click(screen.getByTestId("load-older"));
+  await waitFor(() =>
+    expect(screen.getAllByTestId("modelio-row")).toHaveLength(4),
+  );
+  // The request paged strictly older than the OLDEST visible row's ts.
+  expect(
+    mock.mock.calls.some((c) =>
+      String(c[0]).includes(
+        "before_ts=" + encodeURIComponent("2026-08-18T01:00:00Z"),
+      ),
+    ),
+  ).toBe(true);
+  // Appended below in order; the dupe rendered once.
+  const rows = screen.getAllByTestId("modelio-row");
+  expect(rows[3].textContent).toContain("an older completion");
+  // 2 rows < PAGE_SIZE and not truncated → the log's beginning was reached.
+  expect(screen.getByTestId("pager-end")).toBeInTheDocument();
+  expect(screen.queryByTestId("load-older")).toBeNull();
+});
+
+it("reports 'older rows beyond scan window' when the byte cap stops paging", async () => {
+  stubRoutes((url) =>
+    url.includes("before_ts=")
+      ? { status: 200, body: { ...CALLS, calls: [], window_truncated: true } }
+      : happyHandler(url),
+  );
+  render(<ModelIO />);
+  await waitFor(() =>
+    expect(screen.getAllByTestId("modelio-row")).toHaveLength(3),
+  );
+  fireEvent.click(screen.getByTestId("load-older"));
+  await waitFor(() =>
+    expect(screen.getByTestId("pager-capped")).toBeInTheDocument(),
+  );
+  expect(screen.getByTestId("pager-capped").textContent).toContain(
+    "older rows beyond scan window",
+  );
+  expect(screen.queryByTestId("load-older")).toBeNull();
+  // The already-loaded rows stay on screen.
+  expect(screen.getAllByTestId("modelio-row")).toHaveLength(3);
+});
+
+it("poll refresh keeps paged-older rows appended without duplicates", async () => {
+  const older = { ...CALLS, calls: [OLDER_ROW], window_truncated: false };
+  const mock = stubRoutes((url) =>
+    url.includes("before_ts=")
+      ? { status: 200, body: older }
+      : happyHandler(url),
+  );
+  render(<ModelIO pollMs={60} />);
+  await waitFor(() =>
+    expect(screen.getAllByTestId("modelio-row")).toHaveLength(3),
+  );
+  fireEvent.click(screen.getByTestId("load-older"));
+  await waitFor(() =>
+    expect(screen.getAllByTestId("modelio-row")).toHaveLength(4),
+  );
+  const listCallsBefore = mock.mock.calls.filter((c) =>
+    isListURL(String(c[0])),
+  ).length;
+  // Wait for at least one more newest-page poll to land…
+  await waitFor(() =>
+    expect(
+      mock.mock.calls.filter((c) => isListURL(String(c[0]))).length,
+    ).toBeGreaterThan(listCallsBefore),
+  );
+  // …still exactly 4 rows: newest page refreshed, older row kept once.
+  expect(screen.getAllByTestId("modelio-row")).toHaveLength(4);
+});
+
+it("a filter change resets the paged-older rows and the pager state", async () => {
+  const older = { ...CALLS, calls: [OLDER_ROW], window_truncated: false };
+  stubRoutes((url) =>
+    url.includes("before_ts=")
+      ? { status: 200, body: older }
+      : happyHandler(url),
+  );
+  render(<ModelIO />);
+  await waitFor(() =>
+    expect(screen.getAllByTestId("modelio-row")).toHaveLength(3),
+  );
+  fireEvent.click(screen.getByTestId("load-older"));
+  await waitFor(() =>
+    expect(screen.getAllByTestId("modelio-row")).toHaveLength(4),
+  );
+  fireEvent.change(screen.getByLabelText("filter by model"), {
+    target: { value: "qwen" },
+  });
+  // Older pages were fetched under the OLD filter — dropped, and the
+  // pager returns to its idle button.
+  await waitFor(() =>
+    expect(screen.getAllByTestId("modelio-row")).toHaveLength(3),
+  );
+  expect(screen.getByTestId("load-older")).toBeInTheDocument();
 });

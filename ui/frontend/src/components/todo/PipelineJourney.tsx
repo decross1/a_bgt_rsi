@@ -95,6 +95,7 @@ import SourceBadge from "../SourceBadge";
 import TopicalityAdvisoryBadge from "../TopicalityAdvisoryBadge";
 import PeekPanel from "../../design/PeekPanel";
 import StatusDot from "../../design/StatusDot";
+import useDocTitles from "../../hooks/useDocTitles";
 import DebateExchange from "./DebateExchange";
 import JourneyStepper from "./JourneyStepper";
 import {
@@ -498,6 +499,11 @@ function ChunksPeek({ neighbors }: { neighbors: unknown[] }) {
     })
     .filter((r) => r.id.length > 0 || r.text.length > 0);
 
+  // Doc-id → title (owner request 2026-08-18): the bare id renders first,
+  // the resolved title fills in as the emphasized line; a failed lookup
+  // leaves the id standing alone — never a spinner, never a fake title.
+  const titles = useDocTitles(rows.map((r) => r.id));
+
   return (
     <div data-testid="peek-chunks">
       {rows.length === 0 ? (
@@ -513,6 +519,7 @@ function ChunksPeek({ neighbors }: { neighbors: unknown[] }) {
               truncated && !expanded
                 ? `${r.text.slice(0, SNIPPET_CHARS)}…`
                 : r.text;
+            const title = r.id.length > 0 ? titles[r.id] : undefined;
             return (
               <li
                 key={i}
@@ -520,7 +527,13 @@ function ChunksPeek({ neighbors }: { neighbors: unknown[] }) {
                 className="rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5"
               >
                 <div className="flex items-baseline gap-2">
-                  <span className="font-mono text-[11px] text-zinc-300">
+                  <span
+                    className={
+                      title
+                        ? "font-mono text-[10px] text-zinc-500"
+                        : "font-mono text-[11px] text-zinc-300"
+                    }
+                  >
                     {r.id || "(unnamed chunk)"}
                   </span>
                   {r.score.length > 0 ? (
@@ -529,6 +542,14 @@ function ChunksPeek({ neighbors }: { neighbors: unknown[] }) {
                     </span>
                   ) : null}
                 </div>
+                {title ? (
+                  <p
+                    data-testid={`chunk-title-${i}`}
+                    className="mt-0.5 text-[12px] font-medium leading-snug text-zinc-200"
+                  >
+                    {title.title}
+                  </p>
+                ) : null}
                 {r.text.length > 0 ? (
                   <>
                     <p className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed text-zinc-400">

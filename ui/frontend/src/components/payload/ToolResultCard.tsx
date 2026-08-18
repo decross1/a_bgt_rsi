@@ -14,6 +14,7 @@ import {
   scalarText,
 } from "./bits";
 import VerdictCard, { detectVerdictFamily } from "./VerdictCard";
+import useDocTitles from "../../hooks/useDocTitles";
 
 // passed = positive tone; every other status warns (the owner's spec — a
 // non-passed envelope always deserves a second look).
@@ -23,7 +24,22 @@ function statusTone(status: string): string {
     : "bg-amber-950 text-amber-300";
 }
 
+// A retrieval neighbor is recognized by its EMIT key (`doc_id` as a
+// non-empty string), never by the list's field name — same detect-by-shape
+// stance as VerdictCard.
+function neighborDocId(it: unknown): string {
+  if (it != null && typeof it === "object" && !Array.isArray(it)) {
+    const d = (it as Record<string, unknown>).doc_id;
+    if (typeof d === "string" && d.trim().length > 0) return d.trim();
+  }
+  return "";
+}
+
 function ListValue({ k, items }: { k: string; items: unknown[] }) {
+  // Doc-id → title fill-in (owner request 2026-08-18): a neighbor row shows
+  // "2604.15267 — <its title>" once resolved; a failed/absent lookup keeps
+  // the bare id, and the full object stays reachable via the {…} toggle.
+  const titles = useDocTitles(items.map(neighborDocId).filter(Boolean));
   return (
     <details data-testid={`envelope-list-${k}`} className="text-[13px]">
       <summary className="cursor-pointer select-none text-zinc-400 hover:text-zinc-200">
@@ -31,6 +47,41 @@ function ListValue({ k, items }: { k: string; items: unknown[] }) {
       </summary>
       <ol className="ml-6 mt-1 flex list-decimal flex-col gap-1 marker:text-zinc-600">
         {items.map((it, i) => {
+          const docId = neighborDocId(it);
+          if (docId.length > 0) {
+            const rec = it as Record<string, unknown>;
+            const score = scalarText(rec.score) ?? scalarText(rec.distance);
+            const title = titles[docId];
+            return (
+              <li key={i} className="text-zinc-300">
+                <span className="flex flex-wrap items-baseline gap-x-2">
+                  <span
+                    className={
+                      title
+                        ? "font-mono text-[11px] text-zinc-500"
+                        : "font-mono text-[13px]"
+                    }
+                  >
+                    {docId}
+                  </span>
+                  {score != null && (
+                    <span className="font-mono text-[11px] text-zinc-500">
+                      {score}
+                    </span>
+                  )}
+                  {title && (
+                    <span
+                      data-testid={`neighbor-title-${i}`}
+                      className="text-[13px] font-medium text-zinc-200"
+                    >
+                      {title.title}
+                    </span>
+                  )}
+                  <JsonDetails label="{…}" value={it} />
+                </span>
+              </li>
+            );
+          }
           const s = scalarText(it);
           return (
             <li key={i} className="text-zinc-300">

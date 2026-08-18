@@ -3579,3 +3579,108 @@ rule chip + dash metrics from a BARE payload, off-topic/low-confidence
 warning tones, 2-signature-key near-miss fall-through in both the envelope
 and bare paths, empty-contextualization both directions) · `tsc --noEmit`
 clean. **No service restarted.**
+
+## §2026-08-18 List-row preview sanitization + last-20 pagination (`ui/` only, sprint-modelio-rows)
+
+Owner feedback on the /model-io LIST rows: "i love the tags at the top" but
+the preview subtext "is basically jibberish" — raw channel markup
+(`thought <|channel>thought <channel|>This iteration investigated…`) leaked
+into `completion_preview`; plus "add some pagination… maybe show only last
+20 interactions". Tag/chip layout untouched.
+
+- **Preview sanitization (client-side, `ModelIO.tsx`)** — new exported
+  `sanitizePreview` runs `completion_preview` (fallback `prompt_preview`)
+  through `payload/parse.ts`'s `splitThought` channel grammar (imported,
+  not duplicated — payload/** stays its own lane): visible text exists →
+  show ONLY that; only thought prose → dim `thought` chip + the cleaned
+  prose; a raw `<|channel>` token never renders. Preview-specific
+  adaptations on top of the grammar: a trailing partial token cut by the
+  200-char truncation is stripped (`/<\|?[a-z]*\|?$/i` — letter-only body,
+  so `x < 5` survives), lone label-word chunks (`thought` alone before the
+  first token) are dropped as markup residue, and a markup-only preview
+  becomes NO preview rather than raw tokens. Display-only; the expanded
+  reader still shows everything.
+
+- **Pagination** — default newest page is 20 rows (was 50; the wire
+  default in `backend/model_io.py` now matches), with a "load older ▾"
+  control that appends the next 20. Backend: `GET /api/model_io` gains
+  `before_ts` — rows STRICTLY older than the boundary, same newest-first
+  order, same bounded backward tail-scan (the lazy scan extends only as
+  deep as the page needs, still capped at 16 MiB with `window_truncated`
+  honesty; unparseable `before_ts` is a 400; a row whose own timestamp
+  does not parse is excluded while paging, never guessed in). Frontend
+  pager states are honest: file start → "beginning of log reached", byte
+  cap → **"older rows beyond scan window"** (never a silent stop), error →
+  button retries. Poll refresh touches ONLY the newest page: paged-older
+  rows stay appended, rows that new arrivals push out of the newest page
+  are retained onto the older list (no gap), everything deduped by
+  `request_id`, never re-sorted; a filter change drops the appended pages
+  (they were fetched under the old filter). The `before_ts` fetch is a
+  local fetcher in the route file (the `getRuntimeActivity` precedent) so
+  the shared `api/modelIO.ts` client is not widened.
+
+Verification: pytest `ui/backend/tests` **733 pass** (+7 in
+`test_model_io.py`: strictly-older boundary, 3-page walk tiles with no
+overlap/no gap + honest final page, before_ts×filter compose, 400 on
+unparseable, unparseable-row exclusion, cap-hit honesty
+(`window_truncated: true` on an empty page), default-limit-20) · vitest
+**1165 pass** (78 files; +13 in `test_model_io.tsx`: the owner's exact
+gibberish string in both newline and space-collapsed forms → thought chip +
+clean prose, visible-beats-thought, partial-token strip incl. the `x < 5`
+non-strip, markup-only → null, row-render with no raw tokens, no chip on
+ordinary previews, default `limit=20` on the wire, append+dedupe via
+`before_ts` of the oldest visible row, cap-hit message replaces the button,
+poll-refresh keeps appended rows without duplicates, filter-change reset) ·
+`tsc --noEmit` clean. **No service restarted.**
+
+## §2026-08-18 Doc-id → paper/book titles on retrieval surfaces (`ui/` + one register line, sprint-doc-titles)
+
+Owner request (looking at iter-2026-08-18-005's retrieval card): put the
+paper TITLE next to each doc id — "2604.15267" should read
+"2604.15267 — <its title>". Every id the retrieval worker emits has a real
+title sitting in Chroma metadata; nothing on any surface showed it.
+
+- **`backend/doc_titles.py`** (NEW, register-fn idiom as served_models;
+  registered in `app.py`) — `GET /api/doc_titles?ids=a,b,c` (≤50 ids,
+  over-cap is an explicit 400) → `{id: {title, kind, detail}}`. Three id
+  families, mapped from REAL retrieval payloads
+  (`run_state/iteration_cache/*/retrieval.json`): bare arXiv →
+  `papers_recent` then `ml_intern_fetched` (kind `paper`, detail = year);
+  `s2:<sha>` → `ml_intern_fetched` (kind `s2`); `<stem>-chunk-N` (incl.
+  `_compress` variants) → the owning foundational collection's own
+  metadata as "<Book label> — <chapter_title> (pp <page_range>)" (kind
+  `book`, detail = section). The chunk stem does NOT equal the collection
+  name (weibull_egt's ids are `evolutionary-game-theory_compress-chunk-N`,
+  kandori's are `learning_mutations_and_long.pdf-chunk-N`, …) so the
+  stem→collection map is DERIVED once by listing collections and peeking
+  one id each — never guessed from the id text. READ-ONLY id-based
+  `collection.get` on the same path `orchestrator/chroma_query.py` uses;
+  `query()`/embedders are NEVER touched (no BGE-M3 load). In-process LRU
+  (2048 ids, confirmed-misses cached too). Unresolved ids are ABSENT from
+  the response. On the thin `ui/.venv` (no chromadb) the endpoint is an
+  honest 503 — verified — so titles only resolve when :8700 is served
+  from `.venv-chroma`; the frontend keeps bare ids on any non-200.
+
+- **`src/hooks/useDocTitles.ts`** (NEW, shared) — batch title resolution
+  with a module-level cache + in-flight dedupe + listener fan-out: bare id
+  renders first, the title fills in when the endpoint answers; one GET per
+  ≤50-id batch across all mounted consumers; transport failures cache
+  nothing (bare ids stay, later mounts may retry — no spinner litter).
+
+- **Dossier `ChunksPeek`** (PipelineJourney.tsx) — each neighbor row now
+  shows the resolved title as the emphasized line (`chunk-title-<i>`);
+  the id stays, dropping to smaller/dimmer mono once a title is present.
+
+- **Model-io tool-result cards** (ToolResultCard.tsx `ListValue`) — items
+  recognized as retrieval neighbors BY SHAPE (`doc_id` string, never by
+  the list's field name) render as id + score + filled-in title
+  (`neighbor-title-<i>`), with the full object still reachable via the
+  `{…}` toggle; non-neighbor items render exactly as before.
+
+Verification: backend pytest (`.venv-chroma`) **733 pass** (12 new in
+`test_doc_titles.py`: all three id families incl. the derived-stem compress
+case, unresolved-absent, mixed batch, 400 over-cap, LRU no-re-query, honest
+503, fake chroma client throughout) · vitest **1153 pass** (78 files; 8 new
+in `test_doc_titles.tsx`: hook batch/cap-split/cache/failure + both surfaces
+title-vs-bare) · `tsc --noEmit` clean · real-store read-only smoke resolved
+all families on live ids. **No service restarted** (integrator reloads).

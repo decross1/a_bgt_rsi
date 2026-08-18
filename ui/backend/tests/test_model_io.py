@@ -211,6 +211,102 @@ def test_model_io_unparseable_since_ts_is_a_400(tmp_path):
     assert "since_ts" in resp.json()["detail"]
 
 
+# ─── /api/model_io?before_ts= — pagination (owner 2026-08-18: "show only
+#     last 20 interactions" + a load-older walk) ────────────────────────
+
+def _pts(i: int) -> str:
+    return f"2026-08-18T01:00:{i:02d}Z"
+
+
+PAGE_ROWS = [_call(_pts(i), f"pg-{i}") for i in range(7)]  # pg-0 oldest
+
+
+def test_model_io_before_ts_strictly_older(tmp_path):
+    client = _client(_setup(tmp_path, PAGE_ROWS))
+    calls = client.get("/api/model_io?before_ts=" + _pts(4)).json()["calls"]
+    # STRICTLY older: the boundary row (pg-4) itself is excluded, so the
+    # client's next page can never duplicate the row it paged from.
+    assert [c["request_id"] for c in calls] == ["pg-3", "pg-2", "pg-1",
+                                                "pg-0"]
+
+
+def test_model_io_paging_walk_tiles_with_no_overlap_no_gap(tmp_path):
+    # The client's walk: newest page, then before_ts = the oldest ts of the
+    # page just shown — pages must tile the log: no dupes, no gaps, and the
+    # final page says the walk ended because the file did (not the cap).
+    client = _client(_setup(tmp_path, PAGE_ROWS))
+    page1 = client.get("/api/model_io?limit=3").json()["calls"]
+    assert [c["request_id"] for c in page1] == ["pg-6", "pg-5", "pg-4"]
+    page2 = client.get(
+        "/api/model_io?limit=3&before_ts=" + page1[-1]["ts"]).json()["calls"]
+    assert [c["request_id"] for c in page2] == ["pg-3", "pg-2", "pg-1"]
+    body3 = client.get(
+        "/api/model_io?limit=3&before_ts=" + page2[-1]["ts"]).json()
+    assert [c["request_id"] for c in body3["calls"]] == ["pg-0"]
+    assert body3["window_truncated"] is False
+    ids = [c["request_id"] for c in page1 + page2 + body3["calls"]]
+    assert len(ids) == len(set(ids)) == 7
+
+
+def test_model_io_before_ts_composes_with_filters(tmp_path):
+    rows = [
+        _call(_pts(0), "old-q", model="qwen3.8-27b", backend="vllm-qwen"),
+        _call(_pts(1), "old-g"),
+        _call(_pts(2), "new-q", model="qwen3.8-27b", backend="vllm-qwen"),
+    ]
+    client = _client(_setup(tmp_path, rows))
+    calls = client.get(
+        "/api/model_io?model=qwen&before_ts=" + _pts(2)).json()["calls"]
+    assert [c["request_id"] for c in calls] == ["old-q"]
+
+
+def test_model_io_unparseable_before_ts_is_a_400(tmp_path):
+    client = _client(_setup(tmp_path))
+    resp = client.get("/api/model_io?before_ts=lastweekish")
+    assert resp.status_code == 400
+    assert "before_ts" in resp.json()["detail"]
+
+
+def test_model_io_before_ts_excludes_unparseable_row_ts(tmp_path):
+    # A row whose own timestamp does not parse cannot PROVE it is older
+    # than the boundary — excluded while paging, never guessed in (the
+    # same stance since_ts already takes).
+    bad = _call(_pts(1), "pg-bad")
+    bad["timestamp"] = "not-a-timestamp"
+    client = _client(_setup(tmp_path, [_call(_pts(0), "pg-ok"), bad]))
+    calls = client.get("/api/model_io?before_ts=" + _pts(5)).json()["calls"]
+    assert [c["request_id"] for c in calls] == ["pg-ok"]
+
+
+def test_model_io_before_ts_cap_hit_is_honest(tmp_path):
+    # Older rows exist BEYOND the byte cap: the page comes back empty with
+    # window_truncated True — the client's button reports "older rows
+    # beyond scan window" off this flag instead of silently stopping.
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    old = json.dumps(_call("2026-08-01T00:00:00Z", "req-old")) + "\n"
+    filler = "".join(
+        json.dumps(_call("2026-08-18T01:00:00Z", f"req-f{i}")) + "\n"
+        for i in range(200))                     # ≫ 16 KiB of newer rows
+    (logs / "calls.jsonl").write_text(old + filler, encoding="utf-8")
+    client = _client(logs, max_scan_bytes=16 * 1024)
+    body = client.get(
+        "/api/model_io?before_ts=2026-08-10T00:00:00Z").json()
+    assert body["calls"] == []
+    assert body["window_truncated"] is True
+
+
+def test_model_io_default_limit_is_20(tmp_path):
+    # Owner request: the page shows the last ~20 interactions by default;
+    # the wire default matches (the frontend also passes limit=20).
+    rows = [_call(f"2026-08-18T01:{i // 60:02d}:{i % 60:02d}Z", f"d-{i}")
+            for i in range(25)]
+    client = _client(_setup(tmp_path, rows))
+    body = client.get("/api/model_io").json()
+    assert len(body["calls"]) == 20
+    assert body["calls"][0]["request_id"] == "d-24"
+
+
 def test_model_io_absent_and_empty_file(tmp_path):
     logs = tmp_path / "logs"
     logs.mkdir()

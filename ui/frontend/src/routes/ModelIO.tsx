@@ -24,7 +24,13 @@
 //    and a version-skew 404 degrades to the quiet EndpointMissingNote;
 //  - the footnote states the ONE log this reads: experiments/bench redirect
 //    their calls to runs/*.calls.jsonl (LOOP_V0_CALLS_LOG) and are NOT here.
-import { useEffect, useState } from "react";
+//
+// Owner feedback 2026-08-18 on the list rows ("love the tags, the preview
+// subtext is basically jibberish" + "show only last 20"): row previews are
+// sanitized through parse.ts's channel grammar (see sanitizePreview), and
+// the table pages — newest 20 live, a "load older ▾" walk via before_ts
+// that reports the byte cap honestly when it stops the scan.
+import { useEffect, useRef, useState } from "react";
 import Card from "../design/Card";
 import EmptyCompletionNote from "../components/payload/EmptyCompletionNote";
 import EndpointMissingNote, {
@@ -44,6 +50,7 @@ import { backendTone, callerTagTone, TONE_QUIET } from "../roles";
 import { fmt } from "../format";
 import MessageBody from "../components/payload/MessageBody";
 import RoleChip from "../components/payload/RoleChip";
+import { splitThought } from "../components/payload/parse";
 import { CHIP_CLS } from "../components/payload/bits";
 
 // Model badge tone — the SAME color families as the health panels (gemma =
@@ -137,6 +144,64 @@ const INPUT_CLS =
   "text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 " +
   "focus:outline-none";
 
+// ─── preview sanitization ───────────────────────────────────────────────
+//
+// Owner feedback 2026-08-18 on the list rows: the tags are right but the
+// preview subtext "is basically jibberish" — raw channel markup
+// (`thought <|channel>thought <channel|>This iteration investigated…`)
+// leaked into completion_preview. parse.ts owns the thought/channel grammar
+// (ported from agent_wrapper/cleanup.py); this helper only adapts it to the
+// backend's 200-char TRUNCATED preview slices. Rules:
+//  - visible (non-thought) text exists → show ONLY that;
+//  - ONLY thought text exists → mark it (dim "thought" chip in the row) and
+//    show the cleaned prose — a raw <|channel> token never renders;
+//  - the truncation can cut a token mid-way → a trailing "<" fragment is
+//    stripped defensively before parsing.
+
+export interface PreviewView {
+  text: string;
+  /** True when the ONLY content is thought-channel prose (the chip case). */
+  thought: boolean;
+}
+
+// A trailing "<" fragment that looks like the START of a channel token cut
+// by the 200-char preview truncation: "<", "<|", "<chan", "<|channel",
+// "<channel|". The letter-only body keeps legit prose like "x < 5" intact
+// (a space or digit after "<" never matches).
+const PARTIAL_TOKEN_RE = /<\|?[a-z]*\|?$/i;
+// parse.ts's channel-token shape (kept private there); used here only to
+// recognize a preview that is NOTHING BUT markup → no preview at all.
+const TOKEN_RE = /<\|?(?:channel|analysis|final|message)\|?>/i;
+// A lone channel-label word is markup residue, not prose. splitThought
+// keeps pre-token prose visible by design (cleanup.py's stance), but a
+// preview whose "visible" part is ONLY the label word (the
+// `thought\n<|channel>…` shape the owner pasted) reads as junk — label-only
+// chunks are dropped from the preview here (display-only; the expanded
+// reader still shows everything).
+const LONE_LABEL_RE = /^(thought|analysis|final|commentary|message)$/i;
+
+export function sanitizePreview(
+  raw: string | null | undefined,
+): PreviewView | null {
+  if (!raw) return null;
+  const cut = raw.replace(PARTIAL_TOKEN_RE, "");
+  const split = splitThought(cut);
+  if (split == null) {
+    // Either no channel markup at all (plain prose passes through), or
+    // nothing but markup remained — which is no preview, not raw tokens.
+    if (TOKEN_RE.test(cut)) return null;
+    const text = cut.trim();
+    return text === "" ? null : { text, thought: false };
+  }
+  const answer = split.answer
+    .split("\n\n")
+    .filter((c) => c.trim() !== "" && !LONE_LABEL_RE.test(c.trim()))
+    .join("\n\n");
+  if (answer !== "") return { text: answer, thought: false };
+  if (split.thought !== "") return { text: split.thought, thought: true };
+  return null;
+}
+
 // ─── runtime activity strip ─────────────────────────────────────────────
 //
 // Local types + fetcher for /api/runtime_activity: this build owns only
@@ -182,6 +247,37 @@ async function getRuntimeActivity(): Promise<RuntimeActivityResponse> {
   if (!resp.ok) throw new Error(`runtime_activity ${resp.status}`);
   return (await resp.json()) as RuntimeActivityResponse;
 }
+
+// ─── pagination (owner 2026-08-18: "show only last 20 interactions" +
+//     a load-older walk) ────────────────────────────────────────────────
+
+const PAGE_SIZE = 20;
+
+// Older pages go through a LOCAL fetcher (the getRuntimeActivity reasoning:
+// this build owns only this route file, so the before_ts param does not
+// widen the shared api/modelIO.ts client).
+async function getOlderModelIO(
+  filters: ModelIOFilters,
+  beforeTs: string,
+): Promise<ModelIOResponse> {
+  const params = new URLSearchParams({
+    limit: String(PAGE_SIZE),
+    before_ts: beforeTs,
+  });
+  if (filters.model) params.set("model", filters.model);
+  if (filters.callerTag) params.set("caller_tag", filters.callerTag);
+  if (filters.runId) params.set("run_id", filters.runId);
+  const resp = await fetch(
+    `${RUNTIME_API_BASE}/api/model_io?${params.toString()}`,
+  );
+  if (!resp.ok) throw new Error(`model_io ${resp.status}`);
+  return (await resp.json()) as ModelIOResponse;
+}
+
+// The load-older control's state machine: idle (button) → loading →
+// idle | end (file start reached) | capped (byte cap stopped the scan —
+// reported honestly, never a silent stop) | error (button retries).
+type PagerState = "idle" | "loading" | "end" | "capped" | "error";
 
 const CHAIN_LINES = 6;
 const PLANE_LABEL_CLS =
@@ -443,17 +539,57 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   const [details, setDetails] = useState<
     Record<string, ModelIOCallDetail | "loading" | "error">
   >({});
+  // Paged-older rows (appended, poll-stable) + the load-older control's
+  // state. hasPagedRef gates the poll's dropped-row retention; newestRef
+  // mirrors the last newest page so the retention never re-sorts.
+  const [older, setOlder] = useState<ModelIOCall[]>([]);
+  const [pager, setPager] = useState<PagerState>("idle");
+  const hasPagedRef = useRef(false);
+  const newestRef = useRef<ModelIOCall[]>([]);
+
+  // A filter change invalidates the appended pages (they were fetched
+  // under the OLD filter); pause/resume deliberately does not.
+  useEffect(() => {
+    setOlder([]);
+    setPager("idle");
+    hasPagedRef.current = false;
+  }, [filters]);
 
   // One effect owns both polls; pausing tears the interval down (the last
   // rows stay on screen, labelled paused). A filter change re-runs the
-  // effect → immediate refetch with the new params.
+  // effect → immediate refetch with the new params. The poll refreshes the
+  // NEWEST page only — paged-older rows stay appended untouched.
   useEffect(() => {
     if (paused) return;
     let on = true;
     const load = () => {
-      getModelIO(filters)
+      getModelIO(filters, PAGE_SIZE)
         .then((r) => {
           if (!on) return;
+          // Once older pages are appended, rows that new arrivals push out
+          // of the newest page are RETAINED by moving them onto the older
+          // list — no gap between the pages, no re-sort (they were already
+          // in newest-first order directly below the fresh page).
+          if (hasPagedRef.current) {
+            const freshIds = new Set(
+              r.calls
+                .map((c) => c.request_id)
+                .filter((id): id is string => id != null),
+            );
+            const dropped = newestRef.current.filter(
+              (c) => c.request_id != null && !freshIds.has(c.request_id),
+            );
+            if (dropped.length > 0) {
+              setOlder((prev) => {
+                const seen = new Set(prev.map((c) => c.request_id));
+                return [
+                  ...dropped.filter((c) => !seen.has(c.request_id)),
+                  ...prev,
+                ];
+              });
+            }
+          }
+          newestRef.current = r.calls;
           setData(r);
           setError(null);
           setStale(false);
@@ -508,9 +644,55 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
     }
   };
 
-  const calls = data?.calls ?? [];
+  // Newest page first, then the appended older pages, deduped by
+  // request_id (newest page wins) — never re-sorted.
+  const newest = data?.calls ?? [];
+  const newestIds = new Set(
+    newest.map((c) => c.request_id).filter((id): id is string => id != null),
+  );
+  const calls = [
+    ...newest,
+    ...older.filter(
+      (c) => c.request_id == null || !newestIds.has(c.request_id),
+    ),
+  ];
   const skew =
     isVersionSkew404(error, "/api/model_io") && calls.length === 0;
+
+  const loadOlder = () => {
+    if (pager === "loading") return;
+    // The boundary is the OLDEST visible row that carries a timestamp —
+    // the backend pages rows strictly older than it.
+    let boundary: string | null = null;
+    for (let i = calls.length - 1; i >= 0; i--) {
+      const ts = calls[i].ts;
+      if (ts) {
+        boundary = ts;
+        break;
+      }
+    }
+    if (boundary == null) return;
+    hasPagedRef.current = true;
+    setPager("loading");
+    getOlderModelIO(filters, boundary)
+      .then((r) => {
+        setOlder((prev) => {
+          const seen = new Set(
+            [...newestRef.current, ...prev]
+              .map((c) => c.request_id)
+              .filter((id): id is string => id != null),
+          );
+          const fresh = r.calls.filter(
+            (c) => c.request_id == null || !seen.has(c.request_id),
+          );
+          return [...prev, ...fresh];
+        });
+        if (r.window_truncated) setPager("capped");
+        else if (r.calls.length < PAGE_SIZE) setPager("end");
+        else setPager("idle");
+      })
+      .catch(() => setPager("error"));
+  };
 
   return (
     <div className="page-full" data-testid="modelio-page">
@@ -612,6 +794,54 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
               </div>
             )}
           </Card>
+
+          {/* Load-older pager: appends the next PAGE_SIZE rows strictly
+              older than the oldest visible row. The end states are
+              HONEST: file start = "beginning of log", byte cap = "older
+              rows beyond scan window" — never a silent stop. */}
+          {calls.length > 0 && (
+            <div
+              className="mt-2 flex flex-wrap items-center gap-2"
+              data-testid="modelio-pager"
+            >
+              {pager === "capped" ? (
+                <span
+                  className="text-xs text-zinc-500"
+                  data-testid="pager-capped"
+                >
+                  older rows beyond scan window — the bounded backward scan
+                  stopped at its byte cap
+                  {data ? ` (${data.max_scan_bytes} bytes)` : ""}.
+                </span>
+              ) : pager === "end" ? (
+                <span
+                  className="text-xs text-zinc-600"
+                  data-testid="pager-end"
+                >
+                  beginning of log reached — no older rows.
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  data-testid="load-older"
+                  disabled={pager === "loading"}
+                  className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
+                  onClick={loadOlder}
+                >
+                  {pager === "loading" ? "loading…" : "load older ▾"}
+                </button>
+              )}
+              {pager === "error" && (
+                <span className="text-xs text-amber-400/80">
+                  older-page fetch failed — the button retries.
+                </span>
+              )}
+              <span className="text-[11px] text-zinc-600">
+                showing {calls.length} rows — newest {PAGE_SIZE} refresh
+                live, paged rows stay appended
+              </span>
+            </div>
+          )}
         </>
       )}
 
@@ -638,6 +868,12 @@ function CallRow({
   detail: ModelIOCallDetail | "loading" | "error" | undefined;
   onToggle: () => void;
 }) {
+  // Sanitized preview: completion first, prompt as the fallback (both run
+  // through the channel-grammar splitter — raw <|channel> tokens never
+  // reach the row). The tag chips above are untouched.
+  const preview =
+    sanitizePreview(call.completion_preview) ??
+    sanitizePreview(call.prompt_preview);
   return (
     <div className="border-b border-zinc-800/60 last:border-0">
       <div
@@ -688,8 +924,21 @@ function CallRow({
             EMPTY
           </span>
         )}
-        <span className="w-full truncate text-zinc-600">
-          {call.completion_preview || call.prompt_preview || ""}
+        <span className="flex w-full min-w-0 items-baseline gap-1.5">
+          {preview?.thought && (
+            <span
+              data-testid="thought-chip"
+              className="shrink-0 rounded bg-zinc-900 px-1 font-mono text-[10px] text-zinc-500"
+            >
+              thought
+            </span>
+          )}
+          <span
+            className="min-w-0 flex-1 truncate text-zinc-600"
+            data-testid="row-preview"
+          >
+            {preview?.text ?? ""}
+          </span>
         </span>
       </div>
       {expanded && <CallExpansion detail={detail ?? "loading"} />}

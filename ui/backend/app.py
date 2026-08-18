@@ -18,6 +18,7 @@ from .attest import register as register_attest
 from .chain import LogStore, build_chain_by_request_id
 from .chat_seam import register as register_chat_seam
 from .coordinator import register as register_coordinator
+from .doc_titles import register as register_doc_titles
 from .experiments import register as register_experiments
 from .finding_detail import register as register_finding_detail
 from .human_todo import register as register_human_todo
@@ -313,6 +314,13 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     # register_activity; the spawn ledger resolves to the primary checkout
     # (UI_SPAWN_LEDGER overrides). Read-only.
     register_model_io(app, logs_dir=logs_dir)
+
+    # Doc-id → title resolution for retrieval surfaces (owner request
+    # 2026-08-18: "2604.15267" should read "2604.15267 — <its title>").
+    # Read-only metadata gets against Chroma; never loads an embedder. On
+    # the thin ui/.venv (no chromadb) the endpoint is an honest 503 and the
+    # frontend keeps bare ids.
+    register_doc_titles(app)
 
     return app
 
