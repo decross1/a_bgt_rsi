@@ -14,10 +14,11 @@
 // The histogram is producer-owned. Only L0..L5 render (the D-059 rungs); any
 // count parked on a rung this build does not know about is SUMMED into a muted
 // "beyond L5" note rather than dropped silently.
-import { useEffect, useState } from "react";
+import { memo } from "react";
 import { Link } from "react-router-dom";
 import RungGlyph from "../design/RungGlyph";
 import { getLadder } from "../api/http";
+import { usePolled } from "../api/pollhub";
 import { isVersionSkew404 } from "./EndpointMissingNote";
 import type { LadderResponse } from "../types/schemas";
 
@@ -36,41 +37,38 @@ export interface LadderMiniFunnelProps {
   pollMs?: number;
 }
 
-export default function LadderMiniFunnel({
+function LadderMiniFunnel({
   initial,
   pollMs = 60000,
 }: LadderMiniFunnelProps) {
-  const [data, setData] = useState<LadderResponse | null>(initial ?? null);
-  const [hidden, setHidden] = useState(initial === null);
-  const [broken, setBroken] = useState(false);
-
-  useEffect(() => {
-    if (initial !== undefined) return;
-    let on = true;
-    const load = () =>
-      getLadder()
-        .then((r) => {
-          if (!on) return;
-          // null = 204: the ledger has never been written. Nothing to show.
-          setHidden(r == null);
-          setData(r);
-          setBroken(false);
-        })
-        .catch((e) => {
-          if (!on) return;
-          if (isVersionSkew404(e, LADDER_ENDPOINT)) {
-            setHidden(true);
-          } else {
-            setBroken(true);
-          }
-        });
-    load();
-    const id = setInterval(load, pollMs);
-    return () => {
-      on = false;
-      clearInterval(id);
-    };
-  }, [initial, pollMs]);
+  // pollhub (perf 2026-08-18): in-flight-guarded (measured 61 s under a
+  // strangled backend — the old bare setInterval would happily stack such
+  // reads), change-detected, SWR. Fixture injection short-circuits the hub.
+  const poll = usePolled<LadderResponse | null>("ladder", getLadder, {
+    intervalMs: pollMs,
+    initialDelayMs: 350,
+    enabled: initial === undefined,
+  });
+  const data: LadderResponse | null =
+    initial !== undefined ? initial : (poll.data ?? null);
+  // null payload = 204: the ledger has never been written. Nothing to show.
+  // A version-skew 404 (binary predates the endpoint) hides likewise. Both
+  // only apply while NO data is held — a transient failure after data has
+  // rendered keeps the funnel (SWR), never blinks it out.
+  const hidden =
+    initial === null ||
+    (initial === undefined &&
+      (poll.data === null ||
+        (poll.data === undefined &&
+          poll.failing &&
+          isVersionSkew404(poll.error, LADDER_ENDPOINT))));
+  // A non-skew failure with nothing ever loaded: the honest "broken" line
+  // (ladder.py raises 500 deliberately on an unreadable ledger).
+  const broken =
+    initial === undefined &&
+    poll.failing &&
+    poll.data === undefined &&
+    !isVersionSkew404(poll.error, LADDER_ENDPOINT);
 
   if (hidden) return null;
 
@@ -175,6 +173,15 @@ export default function LadderMiniFunnel({
         {beyond > 0 && (
           <span data-testid="ladder-funnel-beyond">+{beyond} beyond L5</span>
         )}
+        {initial === undefined && poll.failing && (
+          // SWR honesty: the funnel above is the last good read.
+          <span
+            data-testid="ladder-funnel-stale"
+            style={{ color: "var(--status-warn)" }}
+          >
+            refresh failing — stale
+          </span>
+        )}
         <Link to="/ladder" style={{ marginLeft: "auto", color: "var(--accent)" }}>
           ladder →
         </Link>
@@ -182,3 +189,6 @@ export default function LadderMiniFunnel({
     </div>
   );
 }
+
+// Memoized: mounted on Pulse, which re-renders on clock/telemetry ticks.
+export default memo(LadderMiniFunnel);

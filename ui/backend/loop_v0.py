@@ -185,7 +185,15 @@ def register(
     # records spawns and /iterations still joins their status in.)
 
     @router.get("/iterations")
-    def iterations():
+    def iterations(fields: str | None = None, limit: int | None = None):
+        """All loop_memory rows, newest-first.
+
+        ``fields`` (comma-separated) and ``limit`` are OPTIONAL projections
+        (perf, 2026-08-18): the full payload measured 3.4 MB while Pulse's
+        sparkgrid only needs the timestamp column. No params = the exact
+        historical behavior; a projected row keeps only the requested keys it
+        actually has (absent keys are omitted, never invented as null).
+        """
         _reap_processes()
         rows = _read_jsonl(Path(loop_memory_path))
         rows.sort(key=lambda r: r.get("ended_at") or "", reverse=True)
@@ -210,6 +218,12 @@ def register(
             row["process_pid"] = info["pid"]
             if info.get("exit_code") is not None:
                 row["process_exit_code"] = info["exit_code"]
+        if isinstance(limit, int) and limit > 0:
+            rows = rows[:limit]
+        if fields:
+            keep = {f.strip() for f in fields.split(",") if f.strip()}
+            if keep:
+                rows = [{k: row[k] for k in keep if k in row} for row in rows]
         return {"iterations": rows}
 
     @router.get("/journal/{iteration_id}")

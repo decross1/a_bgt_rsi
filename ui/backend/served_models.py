@@ -20,15 +20,34 @@ The frontend renders "unknown" for a null, which is true, instead of a
 confident lie.
 
 Read-only: this module makes outbound GETs and touches no repo state.
+
+PERF (2026-08-18): the two probes used to run SERIALLY inside every request —
+with the 2 s timeout each, a poll against two down servers blocked a backend
+thread for ~4 s, on every dashboard poll. Probes now run in parallel and the
+composed payload is held in a short TTL cache (default 8 s), so concurrent
+dashboard tabs share one probe round. Honesty is preserved, not approximated:
+every role dict carries ``probed_at`` (the UTC instant its probe actually
+ran), and a cache hit returns the ORIGINAL ``probed_at`` — the reader can
+always compute the true age of the answer. Nothing is ever served from cache
+beyond the TTL.
 """
 from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 from fastapi import APIRouter
+
+# Cache TTL. Small on purpose: the point is collapsing the 2-4 s serial probe
+# cost out of every poll, not making the dashboard stale — a model swap still
+# shows within TTL + one poll period.
+CACHE_TTL_S = 8.0
 
 # Endpoint roles -> base URL. Env-overridable so a window (or a second host)
 # does not need a code change; defaults are the pinned production ports.
@@ -63,14 +82,46 @@ def probe(url: str, *, timeout: float = TIMEOUT_S, opener=urllib.request.urlopen
 
 
 def register(app, *, endpoints: dict[str, str] | None = None,
-             opener=urllib.request.urlopen) -> APIRouter:
-    """Attach the served-models router (register-fn idiom, as loop_alert)."""
+             opener=urllib.request.urlopen,
+             ttl_s: float = CACHE_TTL_S,
+             clock=time.monotonic) -> APIRouter:
+    """Attach the served-models router (register-fn idiom, as loop_alert).
+
+    ``ttl_s``/``clock`` are injectable for the TTL tests; production callers
+    take the defaults.
+    """
     targets = dict(endpoints or DEFAULT_ENDPOINTS)
     router = APIRouter(prefix="/api", tags=["served_models"])
+    cache: dict = {"at": None, "payload": None}
+    lock = threading.Lock()
+
+    def _probe_all() -> dict:
+        """Probe every endpoint IN PARALLEL; each result is stamped with the
+        UTC instant its probe ran (the honest age carrier on cache hits)."""
+        roles = list(targets.items())
+        with ThreadPoolExecutor(max_workers=max(1, len(roles))) as pool:
+            results = list(pool.map(
+                lambda kv: probe(kv[1], opener=opener), roles))
+        stamp = (datetime.now(timezone.utc).isoformat()
+                 .replace("+00:00", "Z"))
+        return {
+            role: {**result, "probed_at": stamp}
+            for (role, _), result in zip(roles, results)
+        }
 
     @router.get("/served_models")
     def served_models():
-        return {role: probe(url, opener=opener) for role, url in targets.items()}
+        now = clock()
+        with lock:
+            fresh = (cache["payload"] is not None and cache["at"] is not None
+                     and now - cache["at"] < ttl_s)
+            if fresh:
+                return cache["payload"]
+        payload = _probe_all()
+        with lock:
+            cache["at"] = clock()
+            cache["payload"] = payload
+        return payload
 
     app.include_router(router)
     return router

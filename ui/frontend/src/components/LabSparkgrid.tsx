@@ -16,7 +16,7 @@
 // nothing. Timestamps are producer-owned: a non-string or unparseable value is
 // DROPPED from the bucket rather than counted as "now", so a malformed row
 // undercounts honestly instead of inventing activity on today's cell.
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 
 const DAY_MS = 86_400_000;
 const DEFAULT_WEEKS = 12;
@@ -124,7 +124,7 @@ export interface LabSparkgridProps {
   weeks?: number;
 }
 
-export default function LabSparkgrid({
+function LabSparkgrid({
   iterationTimes,
   cycleTimes,
   nowMs,
@@ -238,3 +238,8 @@ export default function LabSparkgrid({
     </div>
   );
 }
+
+// Memoized (perf 2026-08-18): Pulse memoizes iterationTimes/cycleTimes and
+// ticks nowMs at 0.2 Hz, so the ~600-cell grid re-renders 12×/min instead of
+// on every page render.
+export default memo(LabSparkgrid);

@@ -6,19 +6,33 @@
 // header accent, the Gemma-only workload-hint pill, and Qwen's tri-state
 // transient-drop banner. Those differences are now props.
 //
-// Body states:
-//   - transientDropBanner=false (Gemma): binary — latest sample carries the
-//     block, or the "unavailable" message.
-//   - transientDropBanner=true (Qwen): tri-state — NO sample ever carried the
-//     block ("endpoint unreachable", expected while a server is unwired),
-//     the LATEST sample lost it (soft amber "dropped on the latest sample" —
-//     the header badge stays deliberately binary hard-red; the body carries
-//     the intermittent-vs-outage nuance), or data.
+// Body states (LAST-GOOD RETENTION, adversarial-review residual fix 5,
+// 2026-08-18 — the badge + body used to key off the LATEST sample alone, so
+// ONE missed /metrics scrape swapped a healthy card to "/metrics
+// unavailable" under a hard-red badge):
+//   - the latest sample carries the block → data, "● up".
+//   - the latest sample lost the block but a sample within the last
+//     STALE_MISS_LIMIT scrapes carried it → the body KEEPS the last-good
+//     data with an explicit staleness note ("stale telemetry — last sample
+//     Xs ago"), and the badge reads amber "● stale": stale telemetry is not
+//     a down server, and the badge now says which is which.
+//   - STALE_MISS_LIMIT consecutive misses → the body degrades:
+//     transientDropBanner=false (Gemma) shows "/metrics unavailable";
+//     transientDropBanner=true (Qwen) shows the amber "/metrics dropped"
+//     banner. Badge "● down".
+//   - NO sample ever carried the block → "unavailable" (binary mode) or
+//     "endpoint unreachable" (tri-state; expected while a server is
+//     unwired). Badge "● down".
+// There is no per-card hard down signal on today's wire (read_errors are
+// sampler-reader-keyed and filtered upstream of this card), so consecutive
+// misses are the sole degrade trigger.
 //
 // The "driving" derivation (roles.drivingTags) is EXACT-match on the served
 // model name — no substring/heuristic matching, absent when none.
-import { useEffect, useState, type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
+import { useNow } from "../time";
 import { getWorkloadHint } from "../api/http";
+import { usePolled } from "../api/pollhub";
 import { fmt, fmtRatioPct } from "../format";
 import { callerTagTone, drivingTags } from "../roles";
 import type { LiveCalls } from "../types/activity";
@@ -32,6 +46,32 @@ import Sparkline from "./Sparkline";
 // why a card title must never be sourced from here.
 export const VLLM_SERVED_MODEL = "gemma-4-26b-a4b";
 export const QWEN_SERVED_MODEL = "qwen3.6-27b-nvfp4-mtp";
+
+// How many CONSECUTIVE trailing samples may miss this card's block before
+// the body stops showing retained last-good data and degrades to its
+// no-data message (residual fix 5; the reviewer's pick of 3). Below the
+// limit the miss renders as "stale telemetry", never as an outage.
+const STALE_MISS_LIMIT = 3;
+
+// "last sample Xs ago" — self-ticking (30 s) so the note cannot freeze
+// under the card's memo between telemetry flushes; the tick re-renders this
+// leaf alone, never the rows/sparklines around it.
+function SampleAge({ iso }: { iso: string | null }) {
+  const now = useNow(30_000);
+  if (typeof iso !== "string") return <>an unknown time</>;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return <>an unknown time</>;
+  const s = Math.max(0, Math.round((now - t) / 1000));
+  const text =
+    s < 120
+      ? `${s}s`
+      : s < 7200
+        ? `${Math.floor(s / 60)}m`
+        : s < 172800
+          ? `${Math.floor(s / 3600)}h`
+          : `${Math.floor(s / 86400)}d`;
+  return <>{text}</>;
+}
 
 // "driving: <tag> ×N" — who is generating this panel's load right now,
 // derived from the live-call groups (2026-06-10 EMIT). Absent (renders null)
@@ -142,7 +182,7 @@ export interface ModelServerCardProps {
   transientDropBanner?: boolean;
 }
 
-export default function ModelServerCard({
+function ModelServerCard({
   title,
   servedModel,
   pick,
@@ -153,39 +193,54 @@ export default function ModelServerCard({
   transientDropBanner = false,
 }: ModelServerCardProps) {
   const latest = samples[samples.length - 1] ?? null;
-  const block = latest ? (pick(latest) ?? null) : null;
-  const anyBlock = samples.some((s) => pick(s) != null);
+  const latestBlock = latest ? (pick(latest) ?? null) : null;
+  // LAST-GOOD RETENTION (residual fix 5): the newest sample that carried
+  // this card's block, scanned from the tail. `missedScrapes` counts the
+  // consecutive trailing samples WITHOUT it — the staleness the body and
+  // badge now key off, instead of the latest sample alone.
+  let lastGoodIdx = -1;
+  for (let i = samples.length - 1; i >= 0; i--) {
+    if (pick(samples[i]) != null) {
+      lastGoodIdx = i;
+      break;
+    }
+  }
+  const lastGood = lastGoodIdx >= 0 ? (pick(samples[lastGoodIdx]) ?? null) : null;
+  const lastGoodAt =
+    lastGoodIdx >= 0 ? (samples[lastGoodIdx]?.timestamp ?? null) : null;
+  const missedScrapes =
+    lastGoodIdx >= 0 ? samples.length - 1 - lastGoodIdx : samples.length;
+  const anyBlock = lastGood != null;
+  const retaining =
+    latestBlock == null && lastGood != null && missedScrapes < STALE_MISS_LIMIT;
+  // What the body renders: the live block, or the retained last-good one
+  // while the miss run is still below the limit.
+  const block = latestBlock ?? (retaining ? lastGood : null);
   const series = (metric: (b: VllmSample) => number | null | undefined) =>
     samples.map((s) => {
       const b = pick(s);
       return b == null ? null : metric(b);
     });
 
-  const [hint, setHint] = useState<WorkloadHint | null>(null);
-  useEffect(() => {
-    if (!workloadHint) return;
-    let active = true;
-    const load = () =>
-      getWorkloadHint()
-        .then((h) => {
-          if (active) setHint(h);
-        })
-        .catch(() => {});
-    load();
-    const id = setInterval(load, 10000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [workloadHint]);
+  // pollhub (perf 2026-08-18): the hint endpoint measured 3.2s under load —
+  // 30s cadence (was a bare 10s setInterval), in-flight-guarded, SWR (a
+  // failed refetch keeps the previous hint rather than flapping the pill).
+  const hint: WorkloadHint | null =
+    usePolled<WorkloadHint>("workload_hint", getWorkloadHint, {
+      intervalMs: 30000,
+      initialDelayMs: 400,
+      enabled: workloadHint,
+    }).data ?? null;
 
   const tone = Object.prototype.hasOwnProperty.call(ACCENT, accent)
     ? ACCENT[accent]
     : ACCENT.zinc;
 
-  // Body state: without the tri-state banner, "no block on the LATEST sample"
-  // is the down message; with it, "never any block" and "lost on the latest
-  // sample" are distinguished honestly.
+  // Body state: `block` already folds in the retention rule, so a null here
+  // means EITHER no sample ever carried the block or the miss run reached
+  // STALE_MISS_LIMIT. Tri-state mode still distinguishes "never any block"
+  // (unreachable — expected while a server is unwired) from "had it, lost
+  // it" (dropped).
   const body =
     block != null
       ? "data"
@@ -194,6 +249,11 @@ export default function ModelServerCard({
           ? "dropped"
           : "unreachable"
         : "unavailable";
+  // Badge (residual fix 5): three states, so stale telemetry no longer
+  // reads as a down server — "● up" (latest sample has data), amber
+  // "● stale" (retaining last-good data through a short miss run), red
+  // "● down" (miss run at the limit, or no data ever).
+  const badge = latestBlock != null ? "up" : retaining ? "stale" : "down";
 
   return (
     <div className={`rounded border ${tone.border} bg-zinc-900/40 p-4`}>
@@ -203,18 +263,21 @@ export default function ModelServerCard({
         >
           {title}
         </h2>
-        {/* Badge is deliberately binary (emerald up / red down), keyed off
-            the LATEST sample alone. In the transient-drop state the header
-            reads hard-red "● down" while the body shows the softer amber
-            banner — intended: the latest sample genuinely has no data, and
-            the body carries the intermittent-vs-outage nuance. */}
+        {/* Badge distinguishes 'down' from 'stale telemetry' (residual
+            fix 5): a short scrape-miss run reads amber "● stale" while the
+            body keeps the last-good data; hard-red "● down" is reserved for
+            a miss run at the limit or a server that never reported. */}
         <span
           className={`ml-auto font-mono text-[11px] ${
-            block ? "text-emerald-400" : "text-red-400"
+            badge === "up"
+              ? "text-emerald-400"
+              : badge === "stale"
+                ? "text-amber-400"
+                : "text-red-400"
           }`}
           data-testid={`${servedModel}-status`}
         >
-          {block ? "● up" : "● down"}
+          {badge === "up" ? "● up" : badge === "stale" ? "● stale" : "● down"}
         </span>
       </div>
       {/* Who is generating this backend's load right now — exact-match
@@ -237,15 +300,28 @@ export default function ModelServerCard({
         </div>
       )}
       {body === "dropped" && (
-        // Sampler had a reading earlier but the latest sample lost it
-        // (transient failure). Softer banner so the panel keeps its space
-        // and the user knows the loss is intermittent.
+        // Sampler had readings earlier but the miss run reached the limit
+        // (residual fix 5: a SINGLE missed scrape no longer lands here — it
+        // renders as retained data + the stale note). Softer banner so the
+        // panel keeps its space and the user knows data existed before.
         <div className="mt-3 text-sm text-amber-400/80">
-          /metrics dropped on the latest sample.
+          /metrics dropped — {missedScrapes} consecutive scrape
+          {missedScrapes === 1 ? "" : "s"} without a reading.
         </div>
       )}
       {body === "data" && block != null && (
         <div className="mt-2">
+          {retaining && (
+            // The explicit staleness note that makes retention honest: the
+            // rows below are the LAST GOOD sample, aged out loud.
+            <div
+              className="mb-1 text-[11px] leading-snug text-amber-400/80"
+              data-testid={`${servedModel}-stale-note`}
+            >
+              stale telemetry — last sample <SampleAge iso={lastGoodAt} /> ago
+              ({missedScrapes} missed scrape{missedScrapes === 1 ? "" : "s"})
+            </div>
+          )}
           {/* Core health — always visible: decode tok/s and KV-cache
               headroom (red over 85%). Everything else is operator-grade
               detail behind the disclosure below. */}
@@ -360,3 +436,8 @@ export default function ModelServerCard({
     </div>
   );
 }
+
+// Memoized: `samples` identity changes only on a telemetry flush (~0.5 Hz)
+// and `pick` is a module-level constant in Pulse — page clock ticks and
+// unrelated polls no longer re-render the card (and its sparklines).
+export default memo(ModelServerCard);

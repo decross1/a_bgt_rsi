@@ -3,9 +3,9 @@
 // demoted mass (legacy no-level findings) stays OFF the queue and surfaces as
 // ONE muted info line pointing at the ladder (revamp R3); rows link into the
 // dossier reader; a 404 is an HONEST "queue UNKNOWN", never a calm empty state.
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import OweStrip from "../src/components/OweStrip";
 import type { HumanTodoItem } from "../src/types/schemas";
 
@@ -150,5 +150,35 @@ describe("OweStrip", () => {
     expect(
       screen.getByText("iter-2026-08-14-001 awaiting verdict"),
     ).toBeInTheDocument();
+  });
+});
+
+// ── Frozen ages (residual fix 4, 2026-08-18) ───────────────────────────────
+// Under pollhub change detection + memo the strip re-renders only when the
+// queue payload CHANGES, so a Date.now()-at-render age chip froze at the
+// last data change. The chip now self-ticks: a 30s useNow scoped to the
+// LiveAge leaf — the row list itself never re-renders for a clock advance.
+describe("OweStrip ages advance without a data change", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("a row's age chip ticks forward while the payload stays identical", async () => {
+    vi.useFakeTimers();
+    const TEN_MIN = 10 * 60_000;
+    renderStrip([
+      {
+        ...GATE,
+        since: new Date(Date.now() - TEN_MIN).toISOString(),
+      },
+    ]);
+    const row = screen.getByTestId("owe-row-0");
+    expect(row).toHaveTextContent("10m");
+    // Two minutes pass with NO refetch (fixture mode): the age must advance
+    // anyway — this read "10m" forever before the fix.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+    });
+    expect(row).toHaveTextContent("12m");
   });
 });

@@ -63,12 +63,43 @@ coerced into a thinner state (rule 4). The UI never writes ``memory/``.
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
 from .coordinator import _read_jsonl
+
+# PERF (2026-08-18): on a backend served from .venv-chroma the live
+# assess_state path holds for a LONG time (BGE-M3 embedder + Chroma query
+# inside the request — measured >120 s under load), and the UI's old bare
+# 30 s poll kept stacking concurrent builds until the whole threadpool was
+# starved. The endpoint now serves STALE-WHILE-REVALIDATE: a cached payload
+# is returned instantly; when it is older than CACHE_FRESH_S ONE background
+# thread rebuilds it (single-flight — never two builds at once). Honesty:
+# the payload's own ``generated_at`` is the build instant, and every response
+# additionally carries ``cache_age_s`` (0.0 on a fresh build) plus
+# ``refresh_error`` naming the last failed rebuild, if any — stale is always
+# legible as stale, never dressed up as live (rule 7: the degraded path is
+# explicit and named).
+#
+# The SAME single-flight invariant covers the COLD path (adversarial review
+# 2026-08-18): before anything is cached, concurrent GETs must not each run
+# their own >120 s build — that is the identical threadpool stampede, just
+# earlier in the process's life. Exactly ONE cold request takes the
+# ``building`` latch and builds synchronously (the honest first-request
+# cost); every concurrent arrival is answered IMMEDIATELY with an honest
+# 503 + ``building: true`` (never blocked behind the build — parking waiter
+# threads for minutes is the starvation this cache exists to prevent; the
+# UI's poll simply retries and gets the cached result). A FAILING cold
+# builder BACKS OFF: its named error is served for COLD_RETRY_S without
+# re-invoking the build, so a broken ledger cannot be hammered into a
+# build-per-poll loop. Both degraded shapes are explicit and named (rule 7).
+CACHE_FRESH_S = 90.0
+COLD_RETRY_S = 15.0
 
 # MIRRORS orchestrator/nara_daemon.py HUMAN_GAP_MARKERS — the two "await human"
 # gap shapes, which are NOT agent-actionable. Pinned against the daemon's own
@@ -114,6 +145,10 @@ def register(
     repo_root: Path,
     run_state_dir: Path,
     memory_dir: Path,
+    fresh_s: float = CACHE_FRESH_S,
+    cold_retry_s: float = COLD_RETRY_S,
+    clock=time.monotonic,
+    builder=None,
 ) -> APIRouter:
     """Attach the lab-todo router. ``repo_root`` is the primary checkout (its
     ``orchestrator/`` + ``workers/`` packages carry every projection used
@@ -122,11 +157,9 @@ def register(
     files (the same split the coordinator + human_todo registrations use)."""
     router = APIRouter(prefix="/api", tags=["lab_todo"])
 
-    @router.get("/lab_todo")
-    def lab_todo():
-        """What the lab owes ITSELF: the agent-actionable gaps, the test each
-        open cluster's rung owes, the queued agenda, and the killed clusters
-        `refine_idea` could still improve."""
+    def _build():
+        """The full (potentially slow) payload build — see module docstring;
+        the route below serves it through the stale-while-revalidate cache."""
         # LAZY import: orchestrator/* and workers/* live in the primary repo,
         # not under ui/. sys.path gains the repo root once (idempotent).
         root = str(Path(repo_root))
@@ -267,6 +300,109 @@ def register(
             .isoformat()
             .replace("+00:00", "Z"),
         }
+
+    build = builder or _build  # test seam: inject a counting/stub builder
+    # Stale-while-revalidate state (module docstring). ``building`` is the
+    # single-flight latch shared by BOTH build paths — the background
+    # rebuild thread (stale) and the synchronous first build (cold).
+    # ``cold_error``/``cold_error_at`` carry the failing-cold-build backoff.
+    state: dict = {"payload": None, "built_at": None, "building": False,
+                   "refresh_error": None, "cold_error": None,
+                   "cold_error_at": None}
+    lock = threading.Lock()
+
+    def _rebuild():
+        """Background single-flight rebuild. A failure keeps the last good
+        payload serving and is NAMED on it via refresh_error (rule 7)."""
+        try:
+            payload = build()
+        except HTTPException as exc:
+            with lock:
+                state["refresh_error"] = str(exc.detail)
+                state["building"] = False
+            return
+        except Exception as exc:  # a crashed rebuild must not kill serving
+            with lock:
+                state["refresh_error"] = f"{type(exc).__name__}: {exc}"
+                state["building"] = False
+            return
+        with lock:
+            state["payload"] = payload
+            state["built_at"] = clock()
+            state["refresh_error"] = None
+            state["building"] = False
+
+    @router.get("/lab_todo")
+    def lab_todo():
+        """What the lab owes ITSELF: the agent-actionable gaps, the test each
+        open cluster's rung owes, the queued agenda, and the killed clusters
+        `refine_idea` could still improve. Served stale-while-revalidate; the
+        response names its own age (cache_age_s) and any failed refresh."""
+        with lock:
+            cached = state["payload"]
+            built_at = state["built_at"]
+            if cached is not None and built_at is not None:
+                age = max(0.0, clock() - built_at)
+                if age >= fresh_s and not state["building"]:
+                    state["building"] = True
+                    threading.Thread(target=_rebuild, daemon=True).start()
+                out = dict(cached)
+                out["cache_age_s"] = round(age, 1)
+                out["refresh_error"] = state["refresh_error"]
+                return out
+            # COLD path: nothing cached yet. Same ``building`` single-flight
+            # latch as the stale path — exactly ONE request builds; a
+            # concurrent arrival is answered immediately and honestly
+            # rather than stacking a second >120 s build (see the invariant
+            # comment at CACHE_FRESH_S).
+            if state["building"]:
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "detail": "lab_todo payload is building — retry "
+                                  "shortly",
+                        "building": True,
+                    },
+                )
+            # Failing-builder backoff: within cold_retry_s of a failed cold
+            # build, serve the SAME named error without re-invoking the
+            # builder — a broken ledger must not be hammered per poll.
+            erred_at = state["cold_error_at"]
+            if erred_at is not None and (clock() - erred_at) < cold_retry_s:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"{state['cold_error']} (cold build backing off; "
+                           f"retries after {cold_retry_s:g}s)",
+                )
+            state["building"] = True
+        # Build OUTSIDE the lock (the whole point — nothing serializes on
+        # the >120 s build); errors surface exactly as they always did,
+        # with the latch released and the backoff window recorded.
+        try:
+            payload = build()
+        except HTTPException as exc:
+            with lock:
+                state["building"] = False
+                state["cold_error"] = str(exc.detail)
+                state["cold_error_at"] = clock()
+            raise
+        except Exception as exc:
+            with lock:
+                state["building"] = False
+                state["cold_error"] = f"{type(exc).__name__}: {exc}"
+                state["cold_error_at"] = clock()
+            raise
+        with lock:
+            state["payload"] = payload
+            state["built_at"] = clock()
+            state["refresh_error"] = None
+            state["building"] = False
+            state["cold_error"] = None
+            state["cold_error_at"] = None
+        out = dict(payload)
+        out["cache_age_s"] = 0.0
+        out["refresh_error"] = None
+        return out
 
     app.include_router(router)
     return router

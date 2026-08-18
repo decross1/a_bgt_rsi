@@ -171,7 +171,8 @@ vi.mock("../src/api/activity", () => ({
   }),
 }));
 
-import Pulse from "../src/routes/Pulse";
+import Pulse, { stripMonitorChurn } from "../src/routes/Pulse";
+import type { MonitorResponse } from "../src/types/activity";
 
 afterEach(() => {
   // Pulse registers palette verbs on mount and withdraws them on unmount —
@@ -418,6 +419,46 @@ describe("Pulse (/)", () => {
     );
     expect(await screen.findByText("qwen3.8-27b-nvfp4-mtp")).toBeInTheDocument();
     expect(screen.queryByText("Qwen3.6-27B · NVFP4-MTP")).toBeNull();
+  });
+
+  it("an IDLE monitor payload reads UNCHANGED once generated_at is stripped (fix 2)", () => {
+    // /api/activity/monitor stamps a fresh top-level generated_at on EVERY
+    // response, which made an idle payload always read "changed" to the
+    // pollhub's JSON change detection — NowBoard + both ModelServerCards
+    // re-rendered per 15 s poll of a quiet lab. Pulse's fetchMonitor strips
+    // it before the hub sees the payload; two idle responses that differ
+    // ONLY in generated_at must therefore stringify identically (stringify
+    // IS the hub's deep-equal).
+    const idle = (iso: string): MonitorResponse => ({
+      available: true,
+      telemetry_available: true,
+      active: [],
+      recent: [],
+      live_calls: {
+        active: false,
+        count: 0,
+        window_s: 60,
+        calls_per_s: null,
+        last_call_at: null,
+        caller_tags: [],
+        model: null,
+      },
+      synthetic_inference: {
+        synthetic: true,
+        source: "fixture",
+        needs: "worker_activity.jsonl",
+        note: "synthetic placeholder",
+        workers: [],
+      },
+      generated_at: iso,
+    });
+    const a = stripMonitorChurn(idle("2026-08-18T10:00:00Z"));
+    const b = stripMonitorChurn(idle("2026-08-18T10:00:15Z"));
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+    expect("generated_at" in a).toBe(false);
+    // Everything the page reads survives the strip.
+    expect(a.live_calls?.count).toBe(0);
+    expect(a.available).toBe(true);
   });
 
   it("an unreachable model server reads UNKNOWN, never a remembered name", async () => {

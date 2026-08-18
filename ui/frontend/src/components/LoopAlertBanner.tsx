@@ -13,15 +13,26 @@
 //   stale      -> amber "no cycle telemetry since <ts>" appended (or alone,
 //                 when the level itself would have hidden the banner).
 //
-// Degradation (house doctrine): a 204 (flag never written), a fetch failure,
-// a version-skew 404, or an unknown level renders NOTHING — this banner may
-// only alarm off a flag a producer actually wrote; it never invents an alert
-// from the absence of one. Reasons are producer-owned: non-string entries are
-// dropped, a non-array reasons renders no list. `initial` bypasses polling
-// (fixture renders stay deterministic — the HumanTodoPanel idiom); `nowMs`
-// pins the staleness clock for tests.
-import { useEffect, useState } from "react";
+// Degradation (house doctrine): a 204 (flag never written), a version-skew
+// 404 before anything loaded, or an unknown level renders NOTHING — this
+// banner may only alarm off a flag a producer actually wrote; it never
+// invents an alert from the absence of one. But the inverse is inviolate
+// too (adversarial-review residual fix 6, 2026-08-18): a FAILED poll never
+// CLEARS an active alert — the old catch -> setAlert(null) made a red
+// "LOOP STALLED" vanish the moment the backend hiccuped, which is exactly
+// when it matters. The banner now rides the shared pollhub (usePolled —
+// App-level mounting is no obstacle: the hub is module-global, same
+// import + subscribe as the Pulse sources), whose SWR keeps the last-known
+// alert across failures; a stale marker names the failing refresh, and only
+// an EXPLICIT payload — ok & fresh, or absent (204 -> null) — clears it.
+// Reasons are producer-owned: non-string entries are dropped, a non-array
+// reasons renders no list. `initial` bypasses polling (fixture renders stay
+// deterministic — the HumanTodoPanel idiom); `nowMs` pins the staleness
+// clock for tests.
 import { getLoopAlert } from "../api/http";
+import { usePolled } from "../api/pollhub";
+import { ageLabel } from "../ladderBar";
+import { useNow } from "../time";
 import type { LoopAlert } from "../types/schemas";
 
 // ~26h: one missed 2x/day cycle plus slack, per the work order.
@@ -61,33 +72,31 @@ interface Props {
 }
 
 export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Props) {
-  const [alert, setAlert] = useState<LoopAlert | null>(initial ?? null);
-
-  useEffect(() => {
-    if (initial !== undefined) return;
-    let active = true;
-    const load = () =>
-      getLoopAlert()
-        .then((a) => {
-          if (active) setAlert(a);
-        })
-        .catch(() => {
-          // Fetch failure / skew 404: hide rather than alarm off nothing.
-          if (active) setAlert(null);
-        });
-    load();
-    const id = setInterval(load, Math.max(5_000, pollMs));
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [initial, pollMs]);
+  // Shared-pollhub subscription (residual fix 6): in-flight guard, change
+  // detection, SWR. `data` undefined = never loaded (render nothing — a
+  // failing-from-birth source, e.g. a version-skew 404, never invents an
+  // alert); null = an explicit 204 "flag absent" payload; an object = the
+  // producer's flag.
+  const poll = usePolled<LoopAlert | null>("loop_alert", getLoopAlert, {
+    intervalMs: Math.max(5_000, pollMs),
+    enabled: initial === undefined,
+  });
+  const alert: LoopAlert | null =
+    initial !== undefined ? (initial ?? null) : (poll.data ?? null);
+  // A failing refresh while a real flag is rendered: keep it, mark it.
+  const refreshFailing =
+    initial === undefined && poll.failing && poll.data != null;
+  // 30 s live clock: under change detection the banner may not re-render
+  // for hours, so a render-time Date.now() would freeze the ~26h staleness
+  // verdict (and the stale-marker age) at mount. The banner is a handful of
+  // DOM nodes — a whole-banner tick is cheap. `nowMs` still pins tests.
+  const liveNow = useNow(30_000);
 
   if (alert === null || typeof alert !== "object" || Array.isArray(alert)) {
     return null;
   }
 
-  const now = nowMs ?? Date.now();
+  const now = nowMs ?? liveNow;
   const level = alert.level === "red" || alert.level === "amber" || alert.level === "ok"
     ? alert.level
     : null;
@@ -136,6 +145,18 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
         <div className="mt-1" data-testid="loop-alert-stale">
           the alert flag carries no readable updated_at — cycle freshness is
           unknown.
+        </div>
+      )}
+      {refreshFailing && (
+        // The failing-refresh marker (residual fix 6): the alert above is
+        // the LAST-KNOWN flag, kept on purpose — it clears only on an
+        // explicit ok/absent payload, never on a failed poll.
+        <div className="mt-1" data-testid="loop-alert-refresh-failing">
+          alert refresh failing — showing the last-known alert
+          {poll.asOf != null
+            ? ` (as of ${ageLabel(new Date(poll.asOf).toISOString(), now)} ago)`
+            : ""}
+          .
         </div>
       )}
     </div>

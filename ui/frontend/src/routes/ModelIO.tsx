@@ -17,6 +17,38 @@
 //    ledger (run_state/spawn.jsonl via /api/dispatch_trace), explicitly
 //    labelled as dev-side, one line per entry, no contract prose.
 //
+// PERF (2026-08-18, owner: the page "is really struggling to load
+// anything"): five build lanes each added their own fetching here and
+// nobody consolidated — measured 40 requests/min at steady state (three
+// endpoints every 5s + frontier every 15s), every keystroke in a filter box
+// refetched ALL THREE page sources (a no-match filter costs the backend a
+// full 16 MiB backward scan, measured 0.85–1.83 s per keystroke), and every
+// poll setState'd fresh identities so the whole table re-rendered ~12–36
+// times/min even when nothing changed. Now every poll runs through the
+// pollhub scheduler (src/api/pollhub.ts): one heartbeat, per-source cadences
+// (table = pollMs, strip 20s, dev trace 60s, frontier 45s), in-flight
+// guards, JSON change detection (fetchers strip the volatile generated_at /
+// scanned_bytes fields so an unchanged payload really is unchanged — zero
+// re-renders on a no-change tick), stale-while-revalidate (rendered rows
+// NEVER blank on a failed refetch), and pause-on-hidden (a background tab
+// polls nothing). Filter input is debounced (350 ms) and only re-keys the
+// TABLE source — the strip/trace/frontier polls never see a keystroke. Rows
+// are identity-stable across polls (immutable log rows, cached by
+// request_id) and memoized, so a changed payload re-renders only the rows
+// that actually changed; expanded rows and their fetched details survive
+// every tick.
+//
+// Adversarial-review pass (2026-08-18): every fetcher carries a 15 s
+// AbortController deadline (api/modelIO.ts fetchWithDeadline) with the
+// pollhub's own deadline race as backstop — a hung request fails its
+// source honestly (rows kept, STALE note, retry next tick) instead of
+// wedging the in-flight guard; the filter-keyed table source is
+// evictOnZero so typed queries never leak hub entries; the four sources'
+// first fetches stagger 0/150/300/450 ms (the Pulse idiom); and a poll
+// that advances the newest page by more than one page while older pages
+// are appended renders an explicit gap marker rather than silently
+// omitting the middle rows.
+//
 // Honesty rules carried from the rest of the dashboard:
 //  - everything is backend-passthrough; a missing field renders as "—",
 //    never a guess (backend is never derived from the model name);
@@ -30,7 +62,15 @@
 // sanitized through parse.ts's channel grammar (see sanitizePreview), and
 // the table pages — newest 20 live, a "load older ▾" walk via before_ts
 // that reports the byte cap honestly when it stops the scan.
-import { useEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Card from "../design/Card";
 import FrontierReviews from "../components/FrontierReviews";
 import EmptyCompletionNote from "../components/payload/EmptyCompletionNote";
@@ -38,6 +78,7 @@ import EndpointMissingNote, {
   isVersionSkew404,
 } from "../components/EndpointMissingNote";
 import {
+  fetchWithDeadline,
   getDispatchTrace,
   getModelIO,
   getModelIODetail,
@@ -47,6 +88,8 @@ import {
   type ModelIOFilters,
   type ModelIOResponse,
 } from "../api/modelIO";
+import { usePolled } from "../api/pollhub";
+import { useNow } from "../time";
 import { backendTone, callerTagTone, TONE_QUIET } from "../roles";
 import { fmt } from "../format";
 import MessageBody from "../components/payload/MessageBody";
@@ -203,11 +246,27 @@ export function sanitizePreview(
   return null;
 }
 
-// ─── runtime activity strip ─────────────────────────────────────────────
+// ─── fetchers (pollhub sources) ─────────────────────────────────────────
 //
-// Local types + fetcher for /api/runtime_activity: this build owns only
-// this route file, so the endpoint's client lives here rather than widening
-// api/modelIO.ts (same API_BASE derivation).
+// Every polled fetcher strips the per-response volatile fields
+// (generated_at always churns; scanned_bytes jitters with the file tail) so
+// the pollhub's JSON change detection compares MEANING, not wall clocks —
+// an unchanged payload notifies nobody and re-renders nothing. The honest
+// data age lives in the hub's `asOf`, not in a field nothing rendered.
+
+function stripVolatile<
+  T extends { generated_at?: unknown; scanned_bytes?: unknown },
+>(resp: T): Omit<T, "generated_at" | "scanned_bytes"> {
+  const { generated_at: _g, scanned_bytes: _s, ...rest } = resp;
+  return rest;
+}
+
+type TableData = Omit<ModelIOResponse, "generated_at" | "scanned_bytes">;
+type TraceData = Omit<DispatchTraceResponse, "generated_at">;
+
+// Local types + fetcher for /api/runtime_activity: this page owns the
+// endpoint's client rather than widening api/modelIO.ts (same API_BASE
+// derivation).
 
 interface ChainTask {
   task_id: string;
@@ -231,23 +290,50 @@ interface SubagentGroup {
   last_ts: string | null;
 }
 
-interface RuntimeActivityResponse {
+interface ActivityData {
   orchestrator_available: boolean;
   calls_available: boolean;
   chain: ChainTask[];
   subagent_groups: SubagentGroup[];
   window_truncated: boolean;
-  generated_at: string;
 }
 
 const RUNTIME_API_PORT = import.meta.env.VITE_API_PORT ?? "8700";
 const RUNTIME_API_BASE = `http://${window.location.hostname}:${RUNTIME_API_PORT}`;
 
-async function getRuntimeActivity(): Promise<RuntimeActivityResponse> {
-  const resp = await fetch(`${RUNTIME_API_BASE}/api/runtime_activity`);
+async function getRuntimeActivity(): Promise<ActivityData> {
+  // fetchWithDeadline: a hung request rejects at 15 s — the pollhub keeps
+  // the rendered strip (SWR, failing=true) and retries on its next tick.
+  const resp = await fetchWithDeadline(
+    `${RUNTIME_API_BASE}/api/runtime_activity`,
+  );
   if (!resp.ok) throw new Error(`runtime_activity ${resp.status}`);
-  return (await resp.json()) as RuntimeActivityResponse;
+  return stripVolatile(
+    (await resp.json()) as ActivityData & {
+      generated_at?: unknown;
+      scanned_bytes?: unknown;
+    },
+  );
 }
+
+const fetchTrace = (): Promise<TraceData> =>
+  getDispatchTrace().then(stripVolatile);
+
+// Per-source cadences. The table is the page's live primary (owner watches
+// calls arrive) — it keeps the fast pollMs. The strip summarizes minutes of
+// activity; the dev spawn ledger changes on the timescale of build sessions.
+const ACTIVITY_POLL_MS = 20_000;
+const TRACE_POLL_MS = 60_000;
+// Mount stagger (the Pulse idiom): the four sources' FIRST fetches land
+// 150 ms apart — table (the live primary) immediately, then strip, trace,
+// frontier — so first paint is not a 4-request thundering herd.
+const ACTIVITY_STAGGER_MS = 150;
+const TRACE_STAGGER_MS = 300;
+const FRONTIER_STAGGER_MS = 450;
+// A keystroke in a filter box must not hit the backend (a no-match filter
+// costs a full 16 MiB scan, measured 0.85–1.83 s); the query re-keys only
+// after typing pauses.
+const FILTER_DEBOUNCE_MS = 350;
 
 // ─── pagination (owner 2026-08-18: "show only last 20 interactions" +
 //     a load-older walk) ────────────────────────────────────────────────
@@ -255,8 +341,8 @@ async function getRuntimeActivity(): Promise<RuntimeActivityResponse> {
 const PAGE_SIZE = 20;
 
 // Older pages go through a LOCAL fetcher (the getRuntimeActivity reasoning:
-// this build owns only this route file, so the before_ts param does not
-// widen the shared api/modelIO.ts client).
+// this page owns the before_ts param rather than widening the shared
+// api/modelIO.ts client). One-shot, not polled — no volatile-strip needed.
 async function getOlderModelIO(
   filters: ModelIOFilters,
   beforeTs: string,
@@ -268,7 +354,7 @@ async function getOlderModelIO(
   if (filters.model) params.set("model", filters.model);
   if (filters.callerTag) params.set("caller_tag", filters.callerTag);
   if (filters.runId) params.set("run_id", filters.runId);
-  const resp = await fetch(
+  const resp = await fetchWithDeadline(
     `${RUNTIME_API_BASE}/api/model_io?${params.toString()}`,
   );
   if (!resp.ok) throw new Error(`model_io ${resp.status}`);
@@ -284,16 +370,22 @@ const CHAIN_LINES = 6;
 const PLANE_LABEL_CLS =
   "text-[10px] uppercase tracking-wide text-zinc-500";
 
-function RuntimeStrip({
+// Memoized: the strip re-renders only when its payload actually changed
+// (pollhub identities are stable on no-change ticks) or on its own 30s age
+// clock — never because the table polled.
+const RuntimeStrip = memo(function RuntimeStrip({
   activity,
   trace,
 }: {
-  activity: RuntimeActivityResponse | null;
-  trace: DispatchTraceResponse | null;
+  activity: ActivityData | null;
+  trace: TraceData | null;
 }) {
   // The dev-side build-agent ledger is a DIFFERENT plane — collapsed by
   // default so the strip reads as runtime-only unless explicitly opened.
   const [devOpen, setDevOpen] = useState(false);
+  // 30s age clock: keeps the "3m" ages honest between payload changes
+  // without re-rendering anything else on the page.
+  const now = useNow(30_000);
   // Defensive: an old backend (version skew) answers with a foreign body;
   // render placeholders rather than crash.
   const chain = Array.isArray(activity?.chain) ? activity.chain : [];
@@ -336,7 +428,7 @@ function RuntimeStrip({
                 >
                   <StatusDot status={t.status} />
                   {t.task_type ?? t.task_id}
-                  <span className="text-zinc-600">{ageOf(t.ts)}</span>
+                  <span className="text-zinc-600">{ageOf(t.ts, now)}</span>
                 </span>
               ))
             )}
@@ -376,7 +468,7 @@ function RuntimeStrip({
                     {g.calls} calls
                   </span>
                   <span className="font-mono text-zinc-600">
-                    {ageOf(g.last_ts)}
+                    {ageOf(g.last_ts, now)}
                   </span>
                 </span>
               ))
@@ -430,7 +522,7 @@ function RuntimeStrip({
                     className="ml-auto font-mono text-zinc-600"
                     title={s.ts ?? ""}
                   >
-                    {ageOf(s.ts)}
+                    {ageOf(s.ts, now)}
                   </span>
                 </div>
               ))}
@@ -439,7 +531,7 @@ function RuntimeStrip({
       </div>
     </Card>
   );
-}
+});
 
 // ─── the expanded full prompt/completion reader ─────────────────────────
 
@@ -526,16 +618,23 @@ function CallExpansion({
 
 // ─── the page ───────────────────────────────────────────────────────────
 
-export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
-  const [data, setData] = useState<ModelIOResponse | null>(null);
-  const [trace, setTrace] = useState<DispatchTraceResponse | null>(null);
-  const [activity, setActivity] = useState<RuntimeActivityResponse | null>(
-    null,
+// Same-set filter equality, so the debounce timer never re-applies an
+// unchanged query (and never re-keys the table source).
+function sameFilters(a: ModelIOFilters, b: ModelIOFilters): boolean {
+  return (
+    (a.model ?? "") === (b.model ?? "") &&
+    (a.callerTag ?? "") === (b.callerTag ?? "") &&
+    (a.runId ?? "") === (b.runId ?? "")
   );
-  const [error, setError] = useState<unknown>(null);
-  const [stale, setStale] = useState(false);
+}
+
+export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   const [paused, setPaused] = useState(false);
-  const [filters, setFilters] = useState<ModelIOFilters>({});
+  // `inputs` follows every keystroke (controlled inputs stay live);
+  // `applied` is what actually queries the backend, applied only after
+  // FILTER_DEBOUNCE_MS of quiet.
+  const [inputs, setInputs] = useState<ModelIOFilters>({});
+  const [applied, setApplied] = useState<ModelIOFilters>({});
   const [expanded, setExpanded] = useState<string | null>(null);
   const [details, setDetails] = useState<
     Record<string, ModelIOCallDetail | "loading" | "error">
@@ -545,95 +644,150 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   // mirrors the last newest page so the retention never re-sorts.
   const [older, setOlder] = useState<ModelIOCall[]>([]);
   const [pager, setPager] = useState<PagerState>("idle");
+  // True when a poll advanced the newest page by MORE than one page while
+  // older pages were appended: the rows between the fresh page and the
+  // retained ones were never fetched, and hiding that hole would silently
+  // misorder history — the gap is marked explicitly instead (minor (b),
+  // adversarial review 2026-08-18).
+  const [pageGap, setPageGap] = useState(false);
   const hasPagedRef = useRef(false);
   const newestRef = useRef<ModelIOCall[]>([]);
+
+  useEffect(() => {
+    const id = setTimeout(
+      () => setApplied((prev) => (sameFilters(prev, inputs) ? prev : inputs)),
+      FILTER_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(id);
+  }, [inputs]);
+
+  // The applied filter IS the table source's identity: a changed query is a
+  // different pollhub key (immediate fetch on re-key), while the strip /
+  // trace / frontier sources never see a filter change at all.
+  const appliedKey = JSON.stringify([
+    applied.model ?? "",
+    applied.callerTag ?? "",
+    applied.runId ?? "",
+  ]);
+
+  const tablePoll = usePolled<TableData>(
+    `modelio:calls:${appliedKey}`,
+    () => getModelIO(applied, PAGE_SIZE).then(stripVolatile),
+    // evictOnZero: the key is parameterized by the filter — every query
+    // ever typed would otherwise leave a hub Entry behind on an always-on
+    // dashboard. The lastTableRef below carries the rendered rows across
+    // the eviction, so a re-key still never blanks.
+    {
+      intervalMs: pollMs,
+      initialDelayMs: 0,
+      evictOnZero: true,
+      enabled: !paused,
+    },
+  );
+  const activityPoll = usePolled<ActivityData>(
+    "modelio:runtime_activity",
+    getRuntimeActivity,
+    {
+      intervalMs: ACTIVITY_POLL_MS,
+      initialDelayMs: ACTIVITY_STAGGER_MS,
+      enabled: !paused,
+    },
+  );
+  const tracePoll = usePolled<TraceData>("modelio:dispatch_trace", fetchTrace, {
+    intervalMs: TRACE_POLL_MS,
+    initialDelayMs: TRACE_STAGGER_MS,
+    enabled: !paused,
+  });
+
+  // Stale-while-revalidate ACROSS re-keys and pause: a filter change or a
+  // pause must never blank rendered content, so the last good payload of
+  // each source is kept and shown until fresher data lands.
+  const lastTableRef = useRef<TableData | null>(null);
+  if (tablePoll.data !== undefined) lastTableRef.current = tablePoll.data;
+  const data = tablePoll.data ?? lastTableRef.current;
+  const lastActivityRef = useRef<ActivityData | null>(null);
+  if (activityPoll.data !== undefined)
+    lastActivityRef.current = activityPoll.data;
+  const activity = activityPoll.data ?? lastActivityRef.current;
+  const lastTraceRef = useRef<TraceData | null>(null);
+  if (tracePoll.data !== undefined) lastTraceRef.current = tracePoll.data;
+  const trace = tracePoll.data ?? lastTraceRef.current;
+
+  const error = tablePoll.error;
+  const stale = tablePoll.failing;
 
   // A filter change invalidates the appended pages (they were fetched
   // under the OLD filter); pause/resume deliberately does not.
   useEffect(() => {
     setOlder([]);
     setPager("idle");
+    setPageGap(false);
     hasPagedRef.current = false;
-  }, [filters]);
+  }, [appliedKey]);
 
-  // One effect owns both polls; pausing tears the interval down (the last
-  // rows stay on screen, labelled paused). A filter change re-runs the
-  // effect → immediate refetch with the new params. The poll refreshes the
-  // NEWEST page only — paged-older rows stay appended untouched.
+  // Newest-page bookkeeping, run only when the payload actually changed
+  // (pollhub identity): once older pages are appended, rows that new
+  // arrivals push out of the newest page are RETAINED by moving them onto
+  // the older list — no gap between the pages, no re-sort (they were
+  // already in newest-first order directly below the fresh page).
   useEffect(() => {
-    if (paused) return;
-    let on = true;
-    const load = () => {
-      getModelIO(filters, PAGE_SIZE)
-        .then((r) => {
-          if (!on) return;
-          // Once older pages are appended, rows that new arrivals push out
-          // of the newest page are RETAINED by moving them onto the older
-          // list — no gap between the pages, no re-sort (they were already
-          // in newest-first order directly below the fresh page).
-          if (hasPagedRef.current) {
-            const freshIds = new Set(
-              r.calls
-                .map((c) => c.request_id)
-                .filter((id): id is string => id != null),
-            );
-            const dropped = newestRef.current.filter(
-              (c) => c.request_id != null && !freshIds.has(c.request_id),
-            );
-            if (dropped.length > 0) {
-              setOlder((prev) => {
-                const seen = new Set(prev.map((c) => c.request_id));
-                return [
-                  ...dropped.filter((c) => !seen.has(c.request_id)),
-                  ...prev,
-                ];
-              });
-            }
-          }
-          newestRef.current = r.calls;
-          setData(r);
-          setError(null);
-          setStale(false);
-        })
-        .catch((e) => {
-          if (!on) return;
-          // Keep the last rows; say they are stale rather than blanking.
-          setError(e);
-          setStale(true);
+    const fresh = tablePoll.data?.calls;
+    if (!Array.isArray(fresh)) return;
+    if (hasPagedRef.current) {
+      const freshIds = new Set(
+        fresh
+          .map((c) => c.request_id)
+          .filter((id): id is string => id != null),
+      );
+      const prev = newestRef.current;
+      const dropped = prev.filter(
+        (c) => c.request_id != null && !freshIds.has(c.request_id),
+      );
+      // GAP DETECTION (count discontinuity): a FULL fresh page sharing no
+      // row with the previous newest page means at least a whole page of
+      // rows arrived in one tick — anything between the fresh page's
+      // oldest row and the retained rows below was never fetched. The
+      // exact count is unknowable client-side (the backend caps at
+      // PAGE_SIZE); the hole itself is what must not be silent.
+      if (
+        prev.length > 0 &&
+        fresh.length >= PAGE_SIZE &&
+        !prev.some(
+          (c) => c.request_id != null && freshIds.has(c.request_id),
+        )
+      ) {
+        setPageGap(true);
+      }
+      if (dropped.length > 0) {
+        setOlder((prev) => {
+          const seen = new Set(prev.map((c) => c.request_id));
+          return [
+            ...dropped.filter((c) => !seen.has(c.request_id)),
+            ...prev,
+          ];
         });
-      getDispatchTrace()
-        .then((r) => {
-          if (on) setTrace(r);
-        })
-        .catch(() => {
-          /* the strip keeps its last state; the table's error line covers
-             the unreachable-backend case */
-        });
-      getRuntimeActivity()
-        .then((r) => {
-          if (on) setActivity(r);
-        })
-        .catch(() => {
-          /* same quiet degradation: the strip keeps its last state (or its
-             honest "not loaded" line) on 404/skew/unreachable */
-        });
-    };
-    load();
-    const id = setInterval(load, pollMs);
-    return () => {
-      on = false;
-      clearInterval(id);
-    };
-  }, [paused, filters, pollMs]);
-
-  const toggleRow = (requestId: string | null) => {
-    if (!requestId) return;
-    if (expanded === requestId) {
-      setExpanded(null);
-      return;
+      }
     }
-    setExpanded(requestId);
-    if (details[requestId] === undefined) {
+    newestRef.current = fresh;
+  }, [tablePoll.data]);
+
+  // Row identity cache: calls.jsonl rows are immutable once written, so a
+  // request_id seen before IS the same row — reusing the first-seen object
+  // keeps row identities stable across polls and lets React.memo skip every
+  // unchanged CallRow when a new arrival re-renders the list. Reset per
+  // filter so the cache stays bounded to one query's session.
+  const rowCacheRef = useRef(new Map<string, ModelIOCall>());
+  useEffect(() => {
+    rowCacheRef.current.clear();
+  }, [appliedKey]);
+
+  // details is read inside the stable toggleRow callback via a ref.
+  const detailsRef = useRef(details);
+  detailsRef.current = details;
+  const toggleRow = useCallback((requestId: string | null) => {
+    if (!requestId) return;
+    setExpanded((prev) => (prev === requestId ? null : requestId));
+    if (detailsRef.current[requestId] === undefined) {
       setDetails((d) => ({ ...d, [requestId]: "loading" }));
       getModelIODetail(requestId)
         .then((r) =>
@@ -643,22 +797,49 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
           setDetails((d) => ({ ...d, [requestId]: "error" })),
         );
     }
-  };
+  }, []);
 
   // Newest page first, then the appended older pages, deduped by
   // request_id (newest page wins) — never re-sorted.
-  const newest = data?.calls ?? [];
-  const newestIds = new Set(
-    newest.map((c) => c.request_id).filter((id): id is string => id != null),
-  );
-  const calls = [
-    ...newest,
-    ...older.filter(
-      (c) => c.request_id == null || !newestIds.has(c.request_id),
-    ),
-  ];
+  const calls = useMemo(() => {
+    const cache = rowCacheRef.current;
+    const stable = (c: ModelIOCall): ModelIOCall => {
+      if (c.request_id == null) return c;
+      const hit = cache.get(c.request_id);
+      if (hit != null) return hit;
+      cache.set(c.request_id, c);
+      return c;
+    };
+    const newest = data?.calls ?? [];
+    const newestIds = new Set(
+      newest
+        .map((c) => c.request_id)
+        .filter((id): id is string => id != null),
+    );
+    return [
+      ...newest.map(stable),
+      ...older
+        .filter((c) => c.request_id == null || !newestIds.has(c.request_id))
+        .map(stable),
+    ];
+  }, [data, older]);
+
   const skew =
     isVersionSkew404(error, "/api/model_io") && calls.length === 0;
+
+  // Where the newest page ends in `calls` — the paging-gap marker (if any)
+  // renders exactly there, between the live page and the retained rows.
+  const newestCount = data?.calls?.length ?? 0;
+
+  // The gap marker's "refresh": drop the paged rows and start over from
+  // the live page — the only honest way to close a hole whose middle rows
+  // were never fetched.
+  const resetPaging = () => {
+    setOlder([]);
+    setPager("idle");
+    setPageGap(false);
+    hasPagedRef.current = false;
+  };
 
   const loadOlder = () => {
     if (pager === "loading") return;
@@ -675,7 +856,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
     if (boundary == null) return;
     hasPagedRef.current = true;
     setPager("loading");
-    getOlderModelIO(filters, boundary)
+    getOlderModelIO(applied, boundary)
       .then((r) => {
         setOlder((prev) => {
           const seen = new Set(
@@ -709,9 +890,9 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
           work, with the dev spawn ledger behind a collapsed toggle. */}
       <RuntimeStrip activity={activity} trace={trace} />
 
-      {/* Frontier tier (D-061), sibling section: owns its own poll and
-          state — see components/FrontierReviews.tsx. */}
-      <FrontierReviews />
+      {/* Frontier tier (D-061), sibling section: its poll rides the same
+          page scheduler — see components/FrontierReviews.tsx. */}
+      <FrontierReviews paused={paused} initialDelayMs={FRONTIER_STAGGER_MS} />
 
       {/* Filters + live-state controls. */}
       <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -719,18 +900,18 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
           className={INPUT_CLS}
           placeholder="model (substring)"
           aria-label="filter by model"
-          value={filters.model ?? ""}
+          value={inputs.model ?? ""}
           onChange={(e) =>
-            setFilters((f) => ({ ...f, model: e.target.value || undefined }))
+            setInputs((f) => ({ ...f, model: e.target.value || undefined }))
           }
         />
         <input
           className={INPUT_CLS}
           placeholder="caller_tag (substring)"
           aria-label="filter by caller tag"
-          value={filters.callerTag ?? ""}
+          value={inputs.callerTag ?? ""}
           onChange={(e) =>
-            setFilters((f) => ({
+            setInputs((f) => ({
               ...f,
               callerTag: e.target.value || undefined,
             }))
@@ -740,9 +921,9 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
           className={INPUT_CLS}
           placeholder="run_id (exact)"
           aria-label="filter by run id"
-          value={filters.runId ?? ""}
+          value={inputs.runId ?? ""}
           onChange={(e) =>
-            setFilters((f) => ({ ...f, runId: e.target.value || undefined }))
+            setInputs((f) => ({ ...f, runId: e.target.value || undefined }))
           }
         />
         <button
@@ -779,22 +960,49 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
           )}
 
           <Card className="mt-3" testId="modelio-table">
-            {calls.length === 0 && data != null ? (
+            {data == null && !stale ? (
+              // First load only — once any payload has rendered, refetches
+              // and re-keys keep the previous rows (SWR), never a blank.
+              <div className="text-xs text-zinc-500" data-testid="table-loading">
+                loading the newest {PAGE_SIZE} calls…
+              </div>
+            ) : calls.length === 0 && data != null ? (
               <div className="text-xs text-zinc-500">
                 no calls match in the log tail.
               </div>
             ) : (
               <div style={{ overflowX: "auto" }}>
                 {calls.map((c, i) => (
-                  <CallRow
-                    key={c.request_id ?? `${c.ts ?? "row"}-${i}`}
-                    call={c}
-                    expanded={expanded != null && expanded === c.request_id}
-                    detail={
-                      c.request_id ? details[c.request_id] : undefined
-                    }
-                    onToggle={() => toggleRow(c.request_id)}
-                  />
+                  <Fragment key={c.request_id ?? `${c.ts ?? "row"}-${i}`}>
+                    {/* Explicit hole between the live page and the rows
+                        retained below it — never a silent misordering. */}
+                    {pageGap && i === newestCount && i > 0 && (
+                      <div
+                        className="flex flex-wrap items-center gap-2 border-y border-amber-900/40 bg-amber-950/20 px-2 py-1 text-xs text-amber-400/90"
+                        data-testid="page-gap"
+                      >
+                        newer rows arrived faster than one page — rows
+                        between the live page above and the older rows below
+                        are NOT shown.
+                        <button
+                          type="button"
+                          data-testid="page-gap-refresh"
+                          className="rounded border border-amber-800/60 px-1.5 py-0.5 text-amber-300 hover:border-amber-600"
+                          onClick={resetPaging}
+                        >
+                          refresh
+                        </button>
+                      </div>
+                    )}
+                    <CallRow
+                      call={c}
+                      expanded={expanded != null && expanded === c.request_id}
+                      detail={
+                        c.request_id ? details[c.request_id] : undefined
+                      }
+                      onToggle={toggleRow}
+                    />
+                  </Fragment>
                 ))}
               </div>
             )}
@@ -862,7 +1070,12 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   );
 }
 
-function CallRow({
+// Memoized row: with identity-stable `call` objects (rowCacheRef), a stable
+// `onToggle` (useCallback) and per-row `detail` values, a poll tick that
+// changes the payload re-renders ONLY the genuinely new/changed rows — an
+// open expansion (full MessageBody parse of a multi-KB record) no longer
+// re-parses on every arrival elsewhere in the table.
+const CallRow = memo(function CallRow({
   call,
   expanded,
   detail,
@@ -871,7 +1084,7 @@ function CallRow({
   call: ModelIOCall;
   expanded: boolean;
   detail: ModelIOCallDetail | "loading" | "error" | undefined;
-  onToggle: () => void;
+  onToggle: (requestId: string | null) => void;
 }) {
   // Sanitized preview: completion first, prompt as the fallback (both run
   // through the channel-grammar splitter — raw <|channel> tokens never
@@ -886,11 +1099,11 @@ function CallRow({
         tabIndex={0}
         data-testid="modelio-row"
         className="flex cursor-pointer flex-wrap items-baseline gap-x-3 gap-y-0.5 py-1.5 text-xs hover:bg-zinc-900/50"
-        onClick={onToggle}
+        onClick={() => onToggle(call.request_id)}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            onToggle();
+            onToggle(call.request_id);
           }
         }}
       >
@@ -949,4 +1162,4 @@ function CallRow({
       {expanded && <CallExpansion detail={detail ?? "loading"} />}
     </div>
   );
-}
+});

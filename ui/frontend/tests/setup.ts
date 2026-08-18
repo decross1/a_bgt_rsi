@@ -1,4 +1,12 @@
 import "@testing-library/jest-dom/vitest";
+import { afterEach } from "vitest";
+import { resetPollHub } from "../src/api/pollhub";
+
+// The pollhub (src/api/pollhub.ts) keeps a module-level source registry so a
+// page's polls share one scheduler. Between tests that registry would leak
+// one test's fetchers/payloads into the next (same key, different mocks), so
+// it is dropped after every test.
+afterEach(() => resetPollHub());
 
 // jsdom has no Element.prototype.scrollIntoView; cmdk (the R0 CommandPalette)
 // calls it on the selected item. Guarded no-op — steps aside if jsdom ships it.

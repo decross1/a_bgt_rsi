@@ -3747,3 +3747,597 @@ ledger, truncated-bound footnote, frontierAge) · `tsc --noEmit` clean ·
 read-only real-ledger smoke: 212 rows in window, both vendors streak 0,
 unknown role `agenda_synthesist` passes through raw. **No service
 restarted** (the endpoint goes live on the next :8700 reload).
+
+## §2026-08-18 Pulse performance — the page stops "refreshing" (`ui/` only, sprint-pulse-perf)
+
+Owner report: Pulse "lags loading… it keeps refreshing." Investigation
+(evidence first, all numbers measured live against :8700 on 2026-08-18):
+
+- **Request inventory**: TEN independent `setInterval` pollers across the
+  page and its children = **49 requests/min** at steady state
+  (instrumented). Payloads: `/api/loop_v0/iterations` **3.4 MB / 2.9 s**
+  every 30 s (Pulse reads only `ended_at` from it);
+  `/api/coordinator/cycles` 186 KB; `/api/human_todo` 25 KB / 1.8 s;
+  `/api/activity/monitor` ~2.0 s every 7 s; `/api/workload_hint` 3.2 s
+  every 10 s; `/api/served_models` probes both vLLM servers **serially**
+  (2 s timeout each) inside every request.
+- **The killer**: `/api/lab_todo` on the live `.venv-chroma` backend runs
+  `assess_state` → BGE-M3 embedder + Chroma query INSIDE the request —
+  measured **>120 s (never returned)**; `/api/ladder` took **61.5 s**
+  queueing behind it. No poller had an in-flight guard, so the 30 s timer
+  stacked concurrent lab_todo builds until the backend threadpool starved —
+  which made every other endpoint slow, which flipped panels (LabTodo,
+  NowBoard swap content for an error line on ANY failed refetch) between
+  content and error: the "keeps refreshing" feeling.
+- **Re-render storm**: page-level `useNow()` (1 Hz) + WS telemetry
+  `setSamples` (1 Hz) + per-poll `setState` with fresh identities and zero
+  memoized children = **196 whole-page commits/min** (React Profiler,
+  instrumented probe; probe deleted after measurement). Bug found on the
+  way: Pulse passes `initial={cycles}` to LastCycleLine, which copied it
+  into `useState` once — the line NEVER updated after first load.
+
+What landed (`ui/frontend` + minimal `ui/backend`, no restarts):
+
+- **`src/api/pollhub.ts`** (NEW) — ONE page-level scheduler: single 1 s
+  heartbeat, per-source `intervalMs` + precise `initialDelayMs` stagger,
+  **in-flight guard** (a slow endpoint can never stack requests), **change
+  detection** (JSON-equal payload notifies nobody → zero re-renders on a
+  no-change tick), **stale-while-revalidate** (failure keeps last good
+  data + flips `failing` once; `asOf` carries the honest age), key-level
+  dedupe (LastCycleLine + Pulse share the `cycles` fetch), pause-on-hidden.
+  `resetPollHub()` wired into tests/setup.ts.
+- Every Pulse-tree poller moved onto the hub with retuned cadences:
+  active_runs 5→10 s, monitor 7→15 s, health 10→15 s, human_todo 10→30 s,
+  workload_hint 10→30 s, served_models 15→30 s, cycles+iterations
+  30→60 s, lab_todo 30→**120 s**, ladder 60 s. SWR everywhere: OweStrip /
+  LabTodo / NowBoard / LadderMiniFunnel / LastCycleLine keep rendering the
+  last good payload through a failed refetch and show a muted, honest
+  "refresh failing — showing … as of Xs ago" note (`owe-stale`,
+  `lab-todo-stale`, `now-board-stale`, `ladder-funnel-stale`); the loud
+  error states are reserved for "nothing ever loaded" (all pinned).
+- **Re-render fixes**: page clock 1 Hz → 5 s (staleness math only — never
+  false-fresh: the lagging clock UNDERSTATES age); WS telemetry frames
+  batched to a 2 s flush (first frame immediate; under HealthVerdict's 5 s
+  stale threshold so batching cannot manufacture staleness); `React.memo`
+  on OweStrip/LabTodo/NowBoard/LadderMiniFunnel/LastCycleLine/HealthStrip/
+  ModelServerCard/LabSparkgrid with memoized inputs (`cleanSamples`,
+  `cycleTimes`, `iterationTimes`, hoisted `pick` fns); NowBoard's own
+  clock is 1 Hz only while a run is live. LastCycleLine now renders from
+  its prop (staleness bug fixed).
+- **`ui/backend` (takes effect on next :8700 reload — no restart
+  performed)**: `served_models.py` probes in PARALLEL + 8 s TTL cache,
+  every role stamped `probed_at` and a cache hit returns the ORIGINAL
+  stamp (age always computable — honest, never fake-fresh);
+  `lab_todo.py` serves stale-while-revalidate (90 s fresh window,
+  single-flight background rebuild; every response carries `cache_age_s`
+  + `refresh_error` naming a failed rebuild — rule 7, the degraded path
+  is explicit); `loop_v0.py /iterations` gained optional
+  `?fields=&limit=` projection (no params = byte-identical historical
+  behavior; older binary ignores the params so the slim frontend call
+  degrades gracefully).
+
+Measured results (same instrumented probe, 60 simulated seconds):
+**49 → 24 fetches/min**, whole-page commits **196 → 62/min**, profiler
+render time **252 → 97 ms/min**; a no-change poll tick now re-renders
+**nothing** (pinned by test). Iterations payload with the projection:
+**3,502,712 B → 13,540 B (−99.6 %)** against the real loop_memory.jsonl.
+Once the backend reloads, lab_todo answers from cache instantly instead
+of >120 s, and its rebuilds can never stack (single-flight).
+
+Verification: vitest **1192 pass** (83 files; 12 new: `test_pollhub.tsx`
+— cadences, in-flight guard incl. the hanging-fetch case, change
+detection, SWR transition-once semantics, stagger precision, key dedupe,
+no-re-render-on-unchanged-poll, fixture mode; `test_pulse_no_blank.tsx`
+— OweStrip/LabTodo/NowBoard keep content through failed refetches, show
++clear the stale note, update in place on change, first-load errors stay
+loud) · backend pytest (`.venv-chroma`) **757 pass** (13 new:
+`test_served_models_cache.py` TTL/parallel/probed_at-passthrough incl.
+cached-failure; `test_lab_todo_cache.py` cold-once/fresh-window/
+stale-serves-instantly + single-flight/failed-rebuild-names-error/
+cold-500; `test_iterations_projection.py` full-default/fields/absent-key
+omission/limit/compose) · `tsc --noEmit` clean · **no service
+restarted** (frontend picks up via Vite; backend caching + projection go
+live on the next :8700 reload).
+
+## §2026-08-18 /model-io performance — the page stops struggling to load (`ui/` only, sprint-modelio-perf)
+
+Owner: /model-io "is really struggling to load anything". Five build lanes
+(io-viewer, runtime-strip, modelio-rows, doc-titles, frontier-reviews) each
+added their own fetching to `routes/ModelIO.tsx` and nobody consolidated.
+
+Measured BEFORE (real :8700 curls + the same instrumented-probe idiom as
+sprint-pulse-perf, 60 simulated seconds):
+
+- **40 requests/min** at steady state: `/api/model_io` (15.7 KB,
+  0.38–1.12 s against the 36 MB calls.jsonl) + `/api/dispatch_trace`
+  (7.9 KB) + `/api/runtime_activity` (1.65 KB, 4 MiB scan) ALL every 5 s,
+  plus `/api/frontier_calls` every 15 s — which the live backend 404s
+  (version skew), polled anyway. ≈ 303 KB/min.
+- **Every keystroke in a filter box refetched all three page sources** (no
+  debounce): typing "qwen" = 12 requests + 12 whole-page commits, and each
+  no-match prefix costs the backend a full 16 MiB backward scan (measured
+  0.85–1.83 s per keystroke).
+- **Zero change detection**: three unconditional `setState`s per 5 s tick
+  (fresh identities — `generated_at` alone defeats equality) → 12
+  whole-page commits/min in the probe (up to 3× that in a real browser
+  where the three `.then`s land at different times), each re-rendering all
+  ~20 rows (regex preview sanitization per row) plus any open expansion's
+  full multi-KB MessageBody parse. A background tab kept paying all of it.
+
+Fixes (same principles as sprint-pulse-perf; no visual redesign):
+
+- **Every poll on the page now rides the pollhub** (`src/api/pollhub.ts`)
+  with per-source cadences: table = `pollMs` (5 s default, the page's live
+  primary), runtime-activity strip 20 s, dispatch trace 60 s, frontier
+  45 s. In-flight guards + heartbeat come with the hub.
+- **pollhub gained pause-on-hidden** (benefits Pulse too): a hidden tab
+  fires ZERO fetches; on `visibilitychange` back to visible every overdue
+  source fires immediately. SWR + `asOf` keep it honest.
+- **Change detection made real**: the fetchers strip the volatile
+  `generated_at`/`scanned_bytes` fields (nothing rendered them), so an
+  unchanged payload notifies nobody — a no-change tick commits ZERO
+  re-renders (pinned). Ages stay honest via 30 s `useNow` clocks scoped
+  inside the memoized strip and the frontier card.
+- **Filter debounce (350 ms) + table-only re-key**: the applied query IS
+  the table source's pollhub key; strip/trace/frontier never see a
+  keystroke. Typing 4 chars now costs exactly ONE `/api/model_io` request
+  (pinned), and the 16 MiB no-match scans per keystroke are gone.
+- **Stale-while-revalidate everywhere**: rendered rows never blank — not
+  on a failed tick (amber STALE note, rows kept), not on a filter re-key,
+  not across pause/resume (last-good refs). Skeleton text only on the
+  very first load. Version-skew 404 keeps its quiet EndpointMissingNote.
+- **Row-level render isolation**: `CallRow` is `React.memo` with
+  identity-stable row objects (immutable log rows cached by `request_id`),
+  a `useCallback` toggle, and per-row detail props — a changed payload
+  re-renders only the genuinely new rows; expanded rows + fetched details
+  survive every tick and are never refetched (keyed `details` cache,
+  pinned). `RuntimeStrip` is memoized; `useDocTitles` keeps its module
+  cache (no-refetch-on-tick now pinned).
+- Backend untouched: `/api/model_io` at limit=20 measures 0.4–1.1 s but a
+  TTL cache can't beat a 5 s single-viewer poll interval honestly, and the
+  request-count reduction above is the real backend relief (trace 12×→1×,
+  activity 12×→3×/min, keystroke scans eliminated). No restarts.
+
+Measured AFTER (same probe): steady state **40 → 17 requests/min**
+(≈ 303 → 201 KB/min; the remaining cost is the table's own 5 s cadence),
+whole-page commits **12 → 3/min** (the 3 are the two scoped 30 s age
+clocks, not table re-renders; the real-browser gap is larger since the
+before-state triple-committed per tick), 4-char filter burst **12 → 1
+request** and **12 whole-page → 7 input-row commits**; hidden tab
+**40 → 0 requests/min**.
+
+Verification: vitest **1192 pass** (82 files; 6 new in
+`test_model_io_perf.tsx`: no-blank-on-failed-tick, expansion+detail
+survive a payload-changing tick with detail fetched once, doc-title cache
+never refetches known ids across re-renders, hidden tab polls
+nothing/visible refetches immediately, unchanged-payload tick commits
+zero re-renders, 4-char filter = one table refetch touching no other
+source) · `tsc --noEmit` clean · backend untouched · **no service
+restarted** (Vite picks the frontend up; the frontier 404 heals whenever
+the :8700 binary next reloads).
+
+## §2026-08-18 "What you owe" legibility — OweCard + owe triage (`ui/` only, sprint-owe-card)
+
+Owner: the owe section is "REALLY verbose … It shows 7 items, but some
+are ~70 days old. Are these really things I need to approve? Make it
+clear what it is I am actually doing, what the approval means, and what
+I might want to vet before approving."
+
+**Provenance audit first (read-only).** All 7 owed items are
+`gate_verdict` rows: `loop_memory.jsonl` `gate_status="pending"`, no
+`loop_feedback.jsonl` row, non-empty `experiment_outcome`. Traced
+against `memory/idea_ledger.jsonl` (event-sourced) + DECISIONS
+D-072/D-075: **4 likely-superseded** (iter-2026-06-05-004/-006,
+iter-2026-06-10-001, iter-2026-06-19-011 — their clusters were killed in
+the 08-15 consolidation on their own redteam `fatal_flaw` verdicts;
+-019-011 is additionally a folded duplicate member of -05-004's cluster)
+and **3 fresh-but-already-consumed** (iter-2026-08-17-008/-009/-011 —
+the PREREG_l2block L2 experiments whose null results the coordinator
+used at 08-17T03:32/03:48 to kill clusters cl-iter-2026-07-13-001 /
+-07-15-001 / -08-15-002; a verdict now ratifies or contests kills
+already taken). LOOP_V1's G3 (iter-2026-06-05-002) is NOT among the 7 —
+its bogus test verdict in loop_feedback excludes it from this queue.
+Caveat carried into the audit report (not the server heuristics): the
+08-15 redteam-kill evidence is the instrument D-075 measured at
+fatal_flaw on 52/52 August runs; its calibration battery is pending.
+Nothing was deleted from any store — the UI presents, the human
+disposes.
+
+**Backend (additive only).** New `backend/owe_triage.py`:
+documented, never-auto-dismissing heuristics off the SAME stores —
+H-KILL (item's ledger cluster has a `cluster_killed` event →
+`triage: likely_superseded`, reason names cluster/code/date and says
+when the kill cites the item's own record) · H-OBS
+(bubble_ack/stale_active_run → `observable`) · else `valid`. Adds
+`action` (verb phrase), `doing`, `approval_means`, `vet` (2-3 bullets
+from the item's own record: redteam verdict, experiment metric,
+evidence level, cluster kill), `triage_reason`, `cluster{...}`.
+`human_todo.py` gains the small additive facts on gate items
+(`redteam_verdict`, `experiment_id`, `metric`, `metric_value`,
+`trials`) + one `enrich_items` call. No existing keys change; the
+never-500 contract holds; one legacy pin
+(`test_undeferred_items_gain_no_new_keys`) re-anchored on the deferral
+fold it was written to protect.
+
+**Frontend.** New `components/OweCard.tsx` replaces OweStrip in Pulse's
+hero (one-line mount edit rebased on the perf-agent's current
+Pulse.tsx). Default: ONE line per item — action phrase, truncated
+topic, `superseded?`/`observable` tag, age chip (amber >14d, rose
+>45d, "—" for unknown age). Expand → WHAT YOU'RE DOING / WHAT APPROVAL
+MEANS / VET FIRST + WHY THE TAG (heuristic evidence verbatim) + resolve
+route (exact CLI command + dossier link). Endpoint-skew fallbacks for
+older backends. All OweStrip R3 pins inherited (below-bar muted line,
+honest 404/stale states, shared testids — the Pulse-level tests pass
+unchanged). OweStrip.tsx itself is untouched.
+
+Verification: backend pytest **765 passed, 1 failed** — the failure is
+`test_live_8700.py::test_ladder_live_or_version_skew` against the LIVE
+:8700 binary (started 04:40, predates this work; `/api/ladder` 500s on
+the live ledger — pre-existing, not this slice; **no restart performed**
+per the work order). New `test_owe_triage.py`: 10 tests (killed-cluster
+→ superseded; folded-duplicate member → superseded; self-consumed
+experiment kill names the citation; fresh → valid; observable kinds;
+vet derivation; garbled ledger tolerated; endpoint additivity). vitest
+**1203 passed, 2 failed** (83 files; 12 new in `test_owe_card.tsx`:
+collapsed/expanded, age-chip bands, tags, inherited pins) — the 2
+failures are in `test_pollhub.tsx` / `test_model_io.tsx`, entirely
+inside the perf sprint's uncommitted files (neither imports this
+slice's code); flagged to the workflow for that agent to reconcile.
+`tsc --noEmit` clean. **No service restarted.**
+
+## §2026-08-18 /model-io adversarial-review fixes — deadlines, cold-latch, eviction (`ui/` only, sprint-modelio-review-fixes)
+
+An adversarial reviewer's verdict on the uncommitted sprint-modelio-perf
+tree, applied in full: three required fixes (each with a regression pin)
+plus all three minors.
+
+- **Fetch deadlines (fix 1)**: every fetcher on the /model-io stack goes
+  through a new `fetchWithDeadline` (api/modelIO.ts, 15 s AbortController
+  timeout) — `getJSON` (table/detail/trace), the bare
+  runtime_activity / load-older / frontier fetches — and the pollhub
+  itself now races EVERY fire against a per-source deadline (default
+  20 s backstop, `deadlineMs` override) so a fetcher without an abort
+  can still never wedge a source. At the deadline the source fails
+  HONESTLY: snapshot kept (SWR), `asOf` frozen at the last real success
+  (the stale note tells the truth), `failing=true` (one notify),
+  `inFlight` cleared so the next due tick retries; a settlement arriving
+  after its own deadline is ignored (out-of-order data would lie about
+  asOf). The old test pinning the 120 s wedge as intended
+  (test_pollhub "hanging fetch never re-fired") now pins the deadline
+  behavior instead: guard holds before the deadline, fail-keep-retry
+  at/after it, late arrivals dropped, plus a 15 s abort pin on `getJSON`.
+- **lab_todo cold-path stampede (fix 2, `ui/backend/lab_todo.py`)**: the
+  payload-None path now takes the SAME `building` single-flight latch as
+  the stale path — exactly one cold request builds (synchronously, the
+  honest first-request cost); a concurrent arrival gets an immediate
+  honest **503 + `building: true`** (never parked behind a >120 s build —
+  waiter threads WERE the starvation), and a failing cold builder backs
+  off (`cold_retry_s`, default 15 s: the named error re-serves without
+  re-invoking the build). Invariant comment at the CACHE_FRESH_S block
+  extended. Pins in test_lab_todo_cache.py: concurrent cold GETs → one
+  build + 503-with-flag for the waiter; failing builder backoff window +
+  single retry after it.
+- **pollhub entry eviction (fix 3)**: `evictOnZero` opt — the
+  filter-keyed table source uses it, so the entry of every query ever
+  typed is deleted on last-unsubscribe (the page's lastTableRef keeps
+  rows across the re-key; unparameterized sources keep the warm-remount
+  entry). Pins: 25 filter keys subscribed+released leave 0 entries;
+  typing a filter leaves the hub at exactly the page's 4 live sources.
+- **Minor (a)**: unchanged-payload settles still advance `asOf` silently
+  for data subscribers (zero re-renders stands) but now notify AGE-ONLY
+  subscribers — new `subscribePollAge` / `usePollAsOf` seam so
+  OweStrip/LabTodo/NowBoard age displays can stay honest without data
+  re-renders (adoption is those components' own lane). Pinned.
+- **Minor (b)**: when >PAGE_SIZE new rows land in one tick after paging
+  began (fresh FULL page shares no request_id with the previous newest
+  page — the count-discontinuity signal), an explicit amber
+  `page-gap` marker renders between the live page and the retained rows
+  ("rows between … are NOT shown", with a refresh control that restarts
+  from the live page) instead of a silent hole. The exact missing count
+  is unknowable client-side (backend caps at PAGE_SIZE), so the marker
+  names the hole, not a number. Pinned end-to-end.
+- **Minor (c)**: mount stagger 0/150/300/450 ms across
+  table/strip/trace/frontier (the Pulse idiom); FrontierReviews gained
+  an `initialDelayMs` prop (default 0 — its own tests unaffected).
+
+Verification: vitest **1210 passed, 0 failed** (83 files — includes the
+2 failures the sprint-owe-card note flagged in test_pollhub/
+test_model_io, now green) · `tsc --noEmit` clean · backend pytest
+**762 passed** excluding `test_live_8700.py` (that module's failures are
+`httpx.ReadTimeout`s against the LIVE :8700 binary — pre-existing, a
+different subset fails per run purely on live-server load; **no restart
+performed** per the work order) · lab_todo-scoped run: **19 passed**
+(`pytest ui/backend/tests/test_lab_todo_cache.py
+ui/backend/tests/test_lab_todo.py`). **No service restarted, nothing
+committed.**
+
+## §2026-08-18 Pulse adversarial-review fixes — churn-strip, cache legibility, live ages, scrape retention, banner SWR (`ui/` only, sprint-pulse-review-fixes)
+
+The reviewer's residual findings on the sprint-pulse-perf work, applied
+as five pinned fixes. Scope: `routes/Pulse.tsx`,
+`components/{LabTodo,OweStrip,ModelServerCard,LoopAlertBanner}.tsx`,
+`App.tsx` (comment at the banner mount only) + their tests. The pollhub /
+api/modelIO / ModelIO / `lab_todo.py` lane belonged to the parallel fix
+agent and was not touched.
+
+- **Monitor churn-strip (fix 2, `Pulse.tsx`)**: `/api/activity/monitor`
+  stamps a fresh top-level `generated_at` on EVERY response, so an idle
+  monitor payload always read "changed" to the hub's JSON change
+  detection — NowBoard + both ModelServerCards re-rendered per 15 s poll
+  of a quiet lab. `fetchMonitor` now strips it (exported
+  `stripMonitorChurn`) BEFORE the payload reaches the hub. It is the only
+  churn-only field on that payload (live_calls / synthetic_inference move
+  only when rows actually move), and nothing on the page displays it, so
+  nothing is kept aside. Pin: two idle payloads differing only in
+  `generated_at` stringify identically post-strip.
+- **Backend cache legibility (fix 3, `LabTodo.tsx`)**: the backend stamps
+  `cache_age_s` + `refresh_error` on every `/api/lab_todo` response
+  ("stale is always legible as stale") — now displayed: a muted
+  "as of Xs ago — served from the backend's cache" when `cache_age_s`
+  exceeds the 90 s fresh window (constant mirrored from lab_todo.py's
+  CACHE_FRESH_S; shown age = server age + time-in-hub via poll.asOf), and
+  an amber "refresh failing on the backend — showing its last good build:
+  <error>" when `refresh_error` is set. Both render WITH the sections —
+  the list is never blanked. Older backends stamping neither render
+  neither. Pins: past-window line, fresh-window absence, missing-fields
+  absence, refresh_error + full list coexisting.
+- **Frozen ages (fix 4, `OweStrip.tsx` + `LabTodo.tsx`)**: Date.now()-at-
+  render ages froze under pollhub change detection + memo (an idle
+  backend left "2m" on screen forever). Ages now render through a
+  self-ticking `LiveAge` leaf (local `useNow(30_000)`, deliberately NOT
+  the hub's asOf notify — decoupled from the parallel pollhub lane); the
+  tick re-renders the leaf alone, so the row lists never re-render for a
+  clock advance (no extra memo() plumbing needed — the setState is scoped
+  to the leaf). Pins: fixture renders advance "10m" → "12m" under fake
+  timers with zero refetches. KNOWN RESIDUAL: `OweCard.tsx` (which
+  replaced OweStrip on Pulse in sprint-owe-card) has the same
+  Date.now()-at-render pattern but was outside this sprint's file
+  allowance — flagged for the next pass.
+- **Scrape-miss retention (fix 5, `ModelServerCard.tsx`)**: badge + body
+  keyed off the LATEST telemetry sample alone — one missed /metrics
+  scrape swapped the body to "/metrics unavailable" under a hard-red
+  badge. Now the newest sample carrying the card's block is retained: up
+  to STALE_MISS_LIMIT−1 (=2) trailing misses keep the last-good rows with
+  an explicit "stale telemetry — last sample Xs ago (N missed scrapes)"
+  note (self-ticking, 30 s), and the badge reads amber "● stale" —
+  distinguishing stale telemetry from a down server. Only 3 consecutive
+  misses degrade the body (tri-state "dropped — N consecutive scrapes";
+  binary "unavailable") with "● down"; "no sample ever" keeps its
+  unreachable/unavailable states. No per-card hard down signal exists on
+  today's wire (read_errors are reader-keyed and filtered upstream), so
+  consecutive misses are the sole degrade trigger. Pins: 1-miss retention
+  + note + amber badge (both modes), 3-miss degrade (both modes),
+  fresh-sample no-note, never-any-data unchanged.
+- **Banner onto the hub + never-clear-on-failure (fix 6,
+  `LoopAlertBanner.tsx`)**: moved onto the shared pollhub via
+  `usePolled("loop_alert", …)` — CHOSEN over the in-flight-guarded-fetch
+  alternative because App-level mounting is no obstacle (the hub is
+  module-global; the mount in App.tsx is unchanged). The old
+  catch → setAlert(null) CLEARED an active alert on any failed poll — a
+  red "LOOP STALLED" vanished exactly when the backend was struggling.
+  Now SWR keeps the last-known alert with an explicit
+  "alert refresh failing — showing the last-known alert (as of X ago)"
+  marker; only an explicit payload (ok & fresh, or 204→null) clears it; a
+  source that never loaded still renders nothing (never alarms off
+  nothing, version-skew 404 included). Also gained a 30 s live clock so
+  the ~26 h staleness verdict can flip while mounted (a change-detected
+  banner may not re-render for hours; `nowMs` still pins tests).
+
+Verification: vitest **1224 passed, 0 failed** (83 files; +15 new pins
+across test_pulse / test_lab_todo / test_owe_strip /
+test_model_server_card / test_loop_alert_banner; the 2 ModelServerCard
+tests pinning the old latest-sample-only behavior were rewritten to pin
+retention) · `tsc --noEmit` clean. **No service restarted, nothing
+committed.**
+
+## §2026-08-18 Pointed owe-card copy — record-joined gate verdicts + LiveAge fix (sprint-owe-pointed)
+
+Owner (live review of the new cards): the three sections are "super
+generic … make it a little more pointed in what exactly the point of
+releasing this would be"; WHAT YOU'RE DOING showed only "iteration …
+finished and awaits a human gate verdict"; VET FIRST showed "no
+record-derived checks — open the dossier" where they wanted "ideas of
+what I should be probing for".
+
+**Backend (`ui/backend/human_todo.py`).** New `_point_gate_verdicts`
+pass runs AFTER `owe_triage.enrich_items` on the endpoint path and
+overrides ONLY `doing`/`approval_means`/`vet` on `gate_verdict` items
+by JOINING each item's `loop_memory.jsonl` row with the idea-ledger
+reduction (`workers.idea_ledger.load_state` — the same lazy repo-root
+import idiom as `/api/ladder`; tolerant raw-scan fallback when the
+reducer rejects the ledger). Every fact is derived from a real record
+or omitted — never fabricated; a failed join leaves the generic
+enrichment standing; frozen item keys untouched; never-500 holds
+(live-checkout tests green).
+
+- **WHAT YOU'RE DOING**: "You are judging whether this finished
+  iteration's record is sound — hypothesis: "<text ≤200ch>". Its
+  experiment <id> measured <metric>=<value> over <n> trials." + the
+  ledger placement (cluster, KILLED date+code, or open status/level).
+- **WHAT APPROVAL MEANS**: consequence-specific, consumers grep-proven
+  against orchestrator/ + workers/. Killed cluster → kill code+date,
+  "settles the historical record and your calibration stats, nothing
+  downstream re-runs", does NOT reopen (names the ledger's
+  `reopening_condition.evidence_kind`); killed BY this row's own null
+  (`experiment_null_effect`/`experiment_invalid` citing it) → "a
+  record-keeping close-out". Open cluster → 'valid' is the only L5
+  lift (evidence_ladder L5 rung), feeding finding_promotion +
+  consolidate_memory derivation; any verdict leaves the coordinator's
+  open threads + conditions the meta_review digest. The mechanical
+  loop_feedback last-row-wins line is now a one-line trailing footnote.
+- **VET FIRST**: pointed probes, values inline, decisiveness-ordered,
+  cap 5, each ≤2 rendered lines: old-redteam caveat (fatal_flaw rows
+  predating the 2026-08-18 R1a battery — 6/7 parsed known-good
+  fixtures condemned, verdict = weak evidence) · debate round+verdict /
+  skeptic verdict / honest "pre-debate-era row: your read is the ONLY
+  adversarial pass" · `relevance.low_confidence` reason ·
+  discrimination check pointing at the row's `results_path` · novelty
+  class+rationale head · ledger siblings named · top-neighbor
+  restatement check.
+
+**Frontend (`OweCard.tsx`).** Renders the pointed server copy through
+the existing three-answer layout (no new fields needed). FIXED the
+flagged frozen-age residual: the three Date.now()-at-render sites now
+use the OweStrip LiveAge leaf pattern, kept local (`LiveAgeChip` for
+the tone+label age chips, `LiveAge` for the stale note; 30 s `useNow`
+scoped to the leaves so row lists stay memo-stable; `nowMs` still pins
+tests).
+
+Verification: backend pytest **781 passed** (`MOCK_LLM=1
+.venv-chroma/bin/python -m pytest ui/backend/tests -q`; +12 new pins in
+`test_owe_pointed.py` — killed-cluster consequence, null-kill
+close-out, open-cluster gating, old-redteam caveat date fence,
+pre-debate/debate/skeptic branches, low-confidence probe, sibling
+naming, 5-probe cap, absent-facts-fabricate-nothing, schema-invalid
+ledger fallback; 1 `test_owe_triage.py` endpoint assertion re-anchored
+on the pointed probe text) · vitest **1228 passed** (83 files; +4 pins
+in `test_owe_card.tsx`: pointed doing/consequence/probes render +
+LiveAge tick) · `tsc --noEmit` clean. Sample card for
+iter-2026-06-05-004 generated read-only against the real `memory/`
+stores. **No service restarted, nothing committed.**
+
+## §2026-08-18 Frontier reviews SUBSTANCE — the panel reads what the tier said (sprint-frontier-substance)
+
+**Owner rejection of the live "Frontier reviews" panel:** it listed CLI
+invocations (vendor/role/exit/latency) with no content — "this is useful
+for tracing i guess … i can't even see what their debating issue was".
+The panel's job is to answer *what has the frontier falsifier tier
+(D-061: claude = methods, codex = novelty; veto/annotate only) actually
+said about the lab's ideas, and did it change anything?* — and the
+substance existed on disk the whole time
+(`run_state/frontier_cluster_screen.jsonl` full per-role reasoning,
+`memory/frontier_agenda.jsonl` proposals, `memory/idea_ledger.jsonl`
+`cluster_refined` events). The panel never read it.
+
+**Backend (`ui/backend/frontier_reviews.py`, NEW; one register line in
+`app.py`).** `GET /api/frontier_reviews` — merged newest-first feed of
+typed events: `screen` (cluster + combined verdict + evidence level +
+BOTH roles' `{verdict, reasoning}` FULL TEXT + the D-061 cross-run
+summary "the vetoing methods reviewer re-ran on codex: <verdict>" + a
+`claim_head` joined from the idea-ledger reduction, ~140 chars, OMITTED
+when absent — never fabricated), `agenda` (topic + rationale +
+proposed_by), `refine` (round + refined-claim head + feedback_digest via
+the same `workers.idea_ledger.load_state` lazy-import path `/api/ladder`
+uses). Plus a per-vendor `health` block off `frontier_calls.jsonl` with
+DECODED failures: 127 → "binary not found (PATH) — fixed 2026-08-18,
+heals next cycle", -1/124 → "timed out", other nonzero → "CLI error
+(exit N)" — the real 2026-08-18T06:00:43Z outage (claude exit 1 + codex
+exit 127) now reads as two legible per-vendor lines instead of two
+mystery rows. Bounded tail reads (reuses `frontier_calls._tail_records`;
+512 KiB screen / 128 KiB agenda / 256 KiB calls, `windows.*.truncated`
+stated on the wire), `?limit` default 20, and a `served_models.py`-style
+TTL cache (5 s, clock-injectable; `limit` slices the cached compose,
+never busts it). Honest degradation: absent files = `available: false` +
+zero events; an unreadable idea ledger is NAMED in `ledger_join` while
+screen/agenda still serve (rule 4 — reported, never coerced).
+
+**Frontend (`FrontierReviews.tsx` rework).** (1) health strip at top —
+one line per vendor, green/amber/red dot off `consecutive_failures`
+(red at the streak threshold 3), decoded error text inline when
+failing; (2) the review feed — typed cards: screen cards show cluster +
+claim head + verdict chip (veto rose / pass emerald / inconclusive
+AMBER in the substance view) + both roles' reasoning behind the payload
+family's `ClampedText` 2-line clamp (full text always in the DOM,
+"show more" expands) + the cross-run summary line; agenda cards topic +
+collapsed rationale; refine cards round + head + collapsed digest;
+(3) the old raw invocation table survives VERBATIM behind a "plumbing"
+`<details>` disclosure, default CLOSED — and its `/api/frontier_calls`
+poll only runs while the disclosure is open. PERF seams from
+sprint-modelio-perf kept: pollhub at 45 s, `fetchWithDeadline`,
+`initialDelayMs` stagger, `paused` prop, generated_at stripped for
+change detection.
+
+Verification: backend pytest **797 passed** (`MOCK_LLM=1
+.venv-chroma/bin/python -m pytest ui/backend/tests -q`; +16 new pins in
+`test_frontier_reviews.py` — three-source merge order, full-reasoning +
+cross-run passthrough, claim-head join + truncation + omission (real
+reducer over schema-valid fixtures), refine/agenda fields, the REAL
+outage decode per vendor, -1/124 timeout decode, no-ok-call health,
+screen tail bound, limit default/cap, TTL cache + limit-never-busts,
+all-absent degradation, unreadable-ledger reported-not-coerced) ·
+vitest **1232 passed** (83 files; `test_frontier_reviews.tsx` reworked
+to 13 pins — decoded outage lines, green/amber/red tones, screen-card
+chips + clamp expand, agenda/refine cards, feed order, plumbing
+closed-by-default with NO calls fetch until opened, unchanged raw rows
+on open, UNKNOWN ≠ idle, empty ≠ outage, join-failure banner,
+frontierAge) · `tsc --noEmit` clean · endpoint smoked read-only against
+the real ledgers (20 events: 10 agenda + 2 refine + 8 screen with
+cross-run summaries; health decoded both real failures). **No service
+restarted, nothing committed.**
+
+## §2026-08-18 Owe-card FIX round — perf blockers + deterministic join + typography (sprint-owe-fixes)
+
+Adversarial reviewer returned FIX-REQUIRED on the pointed owe-card
+work; owner live feedback in parallel: "the text and font is all over
+the place. And it's a little confusing to read" (their pasted card
+showed the full hypothesis + stats blob as the TITLE).
+
+**B1 PERF (was 3.0 s warm per /api/human_todo; profile pinned 2958 ms
+in `workers.idea_ledger.load_state` → `validate_event`, jsonschema
+recompiled per event ~9 ms × 323; the endpoint polls every 30 s).**
+(a) `workers/idea_ledger.py`: the event validator is compiled ONCE at
+module scope (`validators.validator_for` — protocol-matching, honors
+the schema's `$schema` dialect, `check_schema` at compile time);
+validation semantics unchanged, pinned by a behavior-not-timing test in
+`tests/test_idea_ledger.py` (bad events still reject, one validator
+object per process). Speeds EVERY consumer (coordinator, evidence
+ladder, ladder endpoint). (b) `ui/backend/human_todo.py`: mtime-keyed
+module memo `_LEDGER_MEMO` `{path: (mtime_ns, size, result)}` — the
+ledger reduction re-derives only when the file changes; consumers are
+read-only on the cached tuple. **Measured via TestClient against the
+real stores (48 items, 7 gate verdicts): warm request 29 ms (second
+request; range 28–44 ms across runs), cold 122 ms — target <100 ms
+met, down from 3.0 s.**
+
+**B2 NON-DETERMINISTIC JOIN.** `human_todo._ledger_clusters` built
+`member_of` by walking a set union, so a member in 2 clusters mapped
+PYTHONHASHSEED-dependently (live: iter-2026-08-18-001/002/003 each in
+an open surviving cluster AND a killed superseded_duplicate
+self-cluster from the d075_r4_dup_relink events). Fixed with ONE
+deterministic join shared by BOTH modules:
+`owe_triage.membership_from_rows` — last-membership-event-wins in
+ledger FILE ORDER — consumed by `_ledger_index` AND
+`_ledger_clusters`, so the card's cluster block and the pointed copy
+CANNOT disagree. Regression test parametrized across 6 shuffled
+insertions of the dup-relink fixture: the open cluster wins every
+time, and both modules' joins compare equal.
+
+**Nonblockers (all landed).** `owe_triage` docstring corrected (the
+"no reopen event type today" claim was false) + both `_ledger_index`
+and the human_todo raw-scan fallback now clear a kill on
+`cluster_reopened`, with tests · self-citation checks are exact
+':'-segment matches, never substrings ("iter-X" no longer matches
+"cluster:cl-iter-X") in both modules · the "your calibration stats"
+overclaim softened to what is real (cockpit calibration page exists;
+the loop_feedback join is manual today — no automated scorer) · an
+undated fatal_flaw row now falls back to the ledger kill stamp and
+FAILS TOWARD showing the old-redteam caveat · the garbled open-cluster
+approval_means sentence rewritten as plain English naming the real
+consumers (L5 rung `workers/evidence_ladder.py` passes only on
+'valid'; promotion eligibility `orchestrator/finding_promotion.py`;
+`workers/meta_review.py` digest; coordinator open threads) · the
+OweCard header line now names state gates too.
+
+**Typography polish (`OweCard.tsx`).** One type scale: row title
+14px/600 = the SHORT claim head (first sentence of the title, ~120
+chars, CSS 2-line clamp — never a wall in the header; the full text
+stays in WHAT YOU'RE DOING); all five section labels identical 11px
+uppercase letter-spaced muted; body 13px regular; monospace ONLY ids,
+metrics, and the resolve command — which collapses to one line, expands
+on click, and gained a COPY affordance; chips one size and DECLARATIVE
+("LIKELY SUPERSEDED", never a question mark; tone colors kept).
+Reading order: title → chips (triage + age) → WHAT YOU'RE DOING → VET
+FIRST → WHAT APPROVAL MEANS → WHY THE TAG (collapsed by default — the
+triage_reason runs long) → RESOLVE; vertical rhythm on one spacing
+token (--space-3 sections, --space-1 label-to-content).
+
+Verification: backend pytest **811 passed** (`MOCK_LLM=1 … -m pytest
+ui/backend/tests -q`; +9 new pins: dup-relink deterministic join ×6
+seeds, reopen honored in scan + raw fallback, segment-exact
+self-citation both modules, undated-caveat fallback ×3 shapes, memo
+hit/invalidate, softened/rewritten approval_means anchors) ·
+`tests/test_idea_ledger.py` **42 passed** (+1 precompiled-validator
+behavior pin) · vitest **1237 passed** (83 files; `test_owe_card.tsx`
+22 pins — claim-head title, ellipsis cap, declarative tag, WHY-toggle
+collapsed default, section order, resolve collapse + copy) ·
+`tsc --noEmit` clean. **No service restarted, nothing committed.**

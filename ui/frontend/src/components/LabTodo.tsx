@@ -20,12 +20,14 @@
 // A 404 is version skew (the running :8700 binary predates the endpoint) and
 // renders as the quiet EndpointMissingNote; any other failure says so out loud
 // rather than rendering a calm "the lab has nothing queued" off a dead read.
-import { useEffect, useState } from "react";
+import { memo } from "react";
 import { Link } from "react-router-dom";
 import RungGlyph from "../design/RungGlyph";
 import EndpointMissingNote, { isVersionSkew404 } from "./EndpointMissingNote";
 import { getLabTodo } from "../api/http";
+import { usePolled } from "../api/pollhub";
 import { ageLabel } from "../ladderBar";
+import { useNow } from "../time";
 import type {
   LabTodoOwedCluster,
   LabTodoOwedGroup,
@@ -52,6 +54,50 @@ function asArray<T>(v: unknown): T[] {
   return Array.isArray(v) ? (v as T[]) : [];
 }
 
+// MIRRORS ui/backend/lab_todo.py CACHE_FRESH_S (90 s). The backend serves
+// this endpoint stale-while-revalidate and stamps `cache_age_s` +
+// `refresh_error` on EVERY response ("stale is always legible as stale");
+// past this window the payload is legibly a cached read and the panel must
+// say so rather than implying a live one.
+const CACHE_FRESH_S = 90;
+
+// Self-ticking age text (adversarial-review residual fix 4, 2026-08-18):
+// this panel re-renders ONLY when its payload changes (pollhub change
+// detection) — a Date.now()-at-render age therefore froze at whatever
+// instant the last data change happened to paint. The 30 s tick lives in
+// these leaves ALONE (deliberately a local useNow, not the hub's asOf
+// notify — decoupled from the pollhub work happening in parallel), so the
+// owed/agenda/refine lists never re-render for a mere clock advance.
+function LiveAge({ iso }: { iso: unknown }) {
+  const now = useNow(30_000);
+  return <>{ageLabel(iso, now)}</>;
+}
+
+// "as of Xs ago" for the backend's cache age: the server-stamped age at
+// response time PLUS how long the response has sat in the hub since
+// (poll.asOf). Seconds below 2 minutes — the fresh window is 90 s, so the
+// interesting values are second-scale.
+function CacheAge({
+  serverAgeS,
+  fetchedAtMs,
+}: {
+  serverAgeS: number;
+  fetchedAtMs: number | null;
+}) {
+  const now = useNow(30_000);
+  const total =
+    serverAgeS +
+    (fetchedAtMs != null ? Math.max(0, (now - fetchedAtMs) / 1000) : 0);
+  const s = Math.round(total);
+  const text =
+    s < 120
+      ? `${s}s`
+      : s < 7200
+        ? `${Math.floor(s / 60)}m`
+        : `${Math.floor(s / 3600)}h`;
+  return <>{text}</>;
+}
+
 const sectionTitle: React.CSSProperties = {
   margin: 0,
   fontSize: "var(--text-meta)",
@@ -72,30 +118,26 @@ export interface LabTodoProps {
   pollMs?: number;
 }
 
-export default function LabTodo({ initial, pollMs = 30000 }: LabTodoProps) {
-  const [data, setData] = useState<LabTodoResponse | null>(initial ?? null);
-  const [error, setError] = useState<unknown>(null);
-
-  useEffect(() => {
-    if (initial !== undefined) return;
-    let on = true;
-    const load = () =>
-      getLabTodo()
-        .then((r) => {
-          if (!on) return;
-          setData(r);
-          setError(null);
-        })
-        .catch((e) => {
-          if (on) setError(e);
-        });
-    load();
-    const id = setInterval(load, pollMs);
-    return () => {
-      on = false;
-      clearInterval(id);
-    };
-  }, [initial, pollMs]);
+function LabTodo({ initial, pollMs = 120000 }: LabTodoProps) {
+  // pollhub (perf 2026-08-18). /api/lab_todo is THE slow endpoint on the
+  // live backend (assess_state loads the BGE-M3 embedder + queries Chroma
+  // inside the request; measured >120 s under load on 2026-08-18): the old
+  // 30 s bare setInterval kept stacking concurrent requests onto it, which
+  // strangled the whole backend and flipped this panel between content and
+  // error — the "keeps refreshing" feeling. Now: slow cadence, in-flight
+  // guard (never two concurrent reads), and SWR (a failing refetch keeps the
+  // last good queue rendered, with an honest stale note).
+  const poll = usePolled<LabTodoResponse>("lab_todo", getLabTodo, {
+    intervalMs: pollMs,
+    initialDelayMs: 250,
+    enabled: initial === undefined,
+  });
+  const data: LabTodoResponse | null =
+    initial ?? (poll.data === undefined ? null : poll.data);
+  // The loud error states are reserved for "nothing ever loaded" — once the
+  // queue has rendered, a failing refetch degrades to the stale note below.
+  const error = poll.failing && data === null ? poll.error : null;
+  const staleFailing = poll.failing && data !== null;
 
   const owed = asArray<LabTodoOwedGroup>(data?.owed).filter(
     (g) => g != null && typeof g === "object" && !Array.isArray(g),
@@ -117,7 +159,14 @@ export default function LabTodo({ initial, pollMs = 30000 }: LabTodoProps) {
   // silent). An unrecognized value is treated as the live case rather than
   // inventing a fourth state.
   const gapsSource = asText(data?.gaps_source);
-  const nowMs = Date.now();
+  // Backend cache honesty (residual fix 3): lab_todo.py stamps cache_age_s
+  // + refresh_error on every response. Coerced defensively — an older
+  // backend binary omits both, which renders neither note.
+  const cacheAgeS =
+    typeof data?.cache_age_s === "number" && Number.isFinite(data.cache_age_s)
+      ? data.cache_age_s
+      : null;
+  const refreshError = asText(data?.refresh_error);
 
   return (
     <section
@@ -169,7 +218,57 @@ export default function LabTodo({ initial, pollMs = 30000 }: LabTodoProps) {
           </div>
         ))}
 
-      {data !== null && error === null && (
+      {staleFailing && (
+        // Honest staleness (SWR): the sections below are the last good read,
+        // named as such — never blanked by a transient refetch failure.
+        <div
+          data-testid="lab-todo-stale"
+          style={{
+            marginBottom: "var(--space-3)",
+            fontSize: "var(--text-meta)",
+            color: "var(--status-warn)",
+          }}
+        >
+          refresh failing — showing the lab&apos;s queue as of{" "}
+          {poll.asOf != null ? (
+            <>
+              <LiveAge iso={new Date(poll.asOf).toISOString()} /> ago
+            </>
+          ) : (
+            "an unknown age"
+          )}
+        </div>
+      )}
+
+      {/* The backend's OWN staleness signals (residual fix 3): the endpoint
+          serves stale-while-revalidate and stamps every response with its
+          cache age and any failed rebuild. Both render WITH the sections
+          below — a stale or refresh-failing queue is still the queue; the
+          list is never blanked. */}
+      {data !== null && cacheAgeS != null && cacheAgeS > CACHE_FRESH_S && (
+        <div
+          data-testid="lab-todo-cache-age"
+          style={{ marginBottom: "var(--space-3)", ...emptyStyle }}
+        >
+          as of <CacheAge serverAgeS={cacheAgeS} fetchedAtMs={poll.asOf} /> ago
+          — served from the backend&apos;s cache
+        </div>
+      )}
+      {data !== null && refreshError !== null && (
+        <div
+          data-testid="lab-todo-refresh-error"
+          style={{
+            marginBottom: "var(--space-3)",
+            fontSize: "var(--text-meta)",
+            color: "var(--status-warn)",
+          }}
+        >
+          refresh failing on the backend — showing its last good build:{" "}
+          {refreshError}
+        </div>
+      )}
+
+      {data !== null && (
         <div
           style={{ display: "flex", flexDirection: "column", gap: "var(--space-5)" }}
         >
@@ -454,7 +553,7 @@ export default function LabTodo({ initial, pollMs = 30000 }: LabTodoProps) {
                 style={{ marginTop: "var(--space-1)", ...emptyStyle }}
               >
                 as of the coordinator&apos;s last cycle,{" "}
-                {ageLabel(data?.gaps_as_of, nowMs)} ago — not a live read
+                <LiveAge iso={data?.gaps_as_of} /> ago — not a live read
               </div>
             )}
           </div>
@@ -481,3 +580,7 @@ export default function LabTodo({ initial, pollMs = 30000 }: LabTodoProps) {
     </section>
   );
 }
+
+// Memoized: mounted directly on Pulse, which re-renders on clock/telemetry
+// ticks; this panel's props (fixture-injection only) never change on those.
+export default memo(LabTodo);

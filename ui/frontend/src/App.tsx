@@ -128,7 +128,10 @@ export default function App() {
         </header>
         <CommandPalette />
         {/* Page-top loop-alert surface (work order A): red/amber off
-            run_state/loop_alert.json; invisible when ok & fresh. */}
+            run_state/loop_alert.json; invisible when ok & fresh. Polls via
+            the shared pollhub (2026-08-18 fix 6 — the hub is module-global,
+            so the App-level mount subscribes like any Pulse source); a
+            failed poll KEEPS the last-known alert with a stale marker. */}
         <LoopAlertBanner />
         <Routes>
           <Route path="/" element={<Pulse />} />

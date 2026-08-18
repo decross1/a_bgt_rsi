@@ -5,10 +5,17 @@
 // surface exists to catch). Absent flag / unknown level = nothing — the
 // banner never invents an alert. Fixture renders via `initial` + a pinned
 // `nowMs` (no fetch, deterministic staleness clock).
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
-import LoopAlertBanner from "../src/components/LoopAlertBanner";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LoopAlert } from "../src/types/schemas";
+
+// Live-mode tests (residual fix 6): the banner now polls through the shared
+// pollhub, so getLoopAlert is mocked at the module seam. The fixture tests
+// below are untouched by this — `initial` renders never subscribe or fetch.
+const M = vi.hoisted(() => ({ getLoopAlert: vi.fn() }));
+vi.mock("../src/api/http", () => ({ getLoopAlert: M.getLoopAlert }));
+
+import LoopAlertBanner from "../src/components/LoopAlertBanner";
 
 // Pin "now" and derive fresh/stale timestamps from it.
 const NOW = Date.parse("2026-08-15T12:00:00Z");
@@ -143,5 +150,86 @@ describe("LoopAlertBanner", () => {
       />,
     );
     expect(screen.getAllByTestId("loop-alert-banner").length).toBeGreaterThan(0);
+  });
+});
+
+// ── Live mode over the shared pollhub (residual fix 6, 2026-08-18) ─────────
+// The banner used to run a bare setInterval AND cleared an active alert on
+// any failed poll (catch -> setAlert(null)) — a red "LOOP STALLED" vanished
+// exactly when the backend was struggling. Pins: SWR keeps the last-known
+// alert across failures with a stale marker; only an explicit ok/absent
+// payload clears it; a source that never loaded alarms off nothing.
+describe("LoopAlertBanner live polling (pollhub)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  const tickAsync = (ms: number) =>
+    act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+
+  const freshRed = (): LoopAlert => ({
+    level: "red",
+    reasons: ["coordinator stalled"],
+    updated_at: new Date(Date.now() - 60_000).toISOString(),
+  });
+
+  it("a FAILED poll never clears an active alert — kept, with a stale marker", async () => {
+    M.getLoopAlert.mockResolvedValue(freshRed());
+    render(<LoopAlertBanner pollMs={10_000} />);
+    await tickAsync(0);
+    expect(screen.getByTestId("loop-alert-banner")).toHaveAttribute(
+      "data-level",
+      "red",
+    );
+    expect(screen.queryByTestId("loop-alert-refresh-failing")).toBeNull();
+
+    // The next poll FAILS: the alert must stay, marked stale — never vanish.
+    M.getLoopAlert.mockRejectedValue(new Error("backend drowned"));
+    await tickAsync(11_000);
+    expect(screen.getByTestId("loop-alert-banner")).toHaveAttribute(
+      "data-level",
+      "red",
+    );
+    expect(screen.getByText("coordinator stalled")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("loop-alert-refresh-failing").textContent,
+    ).toContain("showing the last-known alert");
+
+    // Only an EXPLICIT ok payload clears it.
+    M.getLoopAlert.mockResolvedValue({
+      level: "ok",
+      reasons: [],
+      updated_at: new Date(Date.now() - 60_000).toISOString(),
+    });
+    await tickAsync(11_000);
+    expect(screen.queryByTestId("loop-alert-banner")).toBeNull();
+  });
+
+  it("an explicit ABSENT payload (204 -> null) also clears the banner", async () => {
+    M.getLoopAlert.mockResolvedValue(freshRed());
+    render(<LoopAlertBanner pollMs={10_000} />);
+    await tickAsync(0);
+    expect(screen.getByTestId("loop-alert-banner")).toBeInTheDocument();
+
+    M.getLoopAlert.mockResolvedValue(null);
+    await tickAsync(11_000);
+    expect(screen.queryByTestId("loop-alert-banner")).toBeNull();
+  });
+
+  it("a source that NEVER loaded renders nothing, even while failing", async () => {
+    // e.g. a version-skew 404: the banner never alarms off nothing.
+    M.getLoopAlert.mockRejectedValue(new Error("404 Not Found"));
+    render(<LoopAlertBanner pollMs={10_000} />);
+    await tickAsync(11_000);
+    expect(screen.queryByTestId("loop-alert-banner")).toBeNull();
+    expect(screen.queryByTestId("loop-alert-refresh-failing")).toBeNull();
   });
 });

@@ -8,7 +8,7 @@
 //  3. the refine section says out loud that refine_idea is a coordinator
 //     action — this surface does not trigger it;
 //  4. a version-skew 404 degrades to the EndpointMissingNote.
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import LabTodo from "../src/components/LabTodo";
@@ -17,6 +17,7 @@ import type { LabTodoResponse } from "../src/types/schemas";
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers(); // the frozen-age tests fake the clock
 });
 
 const PAYLOAD: LabTodoResponse = {
@@ -292,5 +293,81 @@ describe("LabTodo", () => {
     expect(row).toHaveTextContent("ladder position cannot be assessed");
     // RungGlyph is only drawn for the six real rungs.
     expect(row.querySelector('[role="img"]')).toBeNull();
+  });
+});
+
+// ── The backend's OWN staleness stamps (residual fix 3, 2026-08-18) ────────
+// ui/backend/lab_todo.py serves stale-while-revalidate and stamps
+// cache_age_s + refresh_error on EVERY response ("stale is always legible
+// as stale"). The panel must display both — and never blank the list while
+// doing so.
+describe("LabTodo backend cache legibility (cache_age_s / refresh_error)", () => {
+  it("a cache_age_s past the 90s fresh window renders the muted 'as of Xs ago' line", () => {
+    renderPanel({ ...PAYLOAD, cache_age_s: 95, refresh_error: null });
+    const note = screen.getByTestId("lab-todo-cache-age");
+    expect(note).toHaveTextContent("as of 95s ago");
+    expect(note).toHaveTextContent("served from the backend's cache");
+    // The list is NEVER blanked by staleness.
+    expect(screen.getByTestId("lab-todo-owed-L1")).toHaveAttribute(
+      "data-count",
+      "3",
+    );
+  });
+
+  it("a fresh cache_age_s (inside the window) renders NO cache-age line", () => {
+    renderPanel({ ...PAYLOAD, cache_age_s: 5.0, refresh_error: null });
+    expect(screen.queryByTestId("lab-todo-cache-age")).toBeNull();
+  });
+
+  it("an older backend that stamps neither field renders neither note", () => {
+    renderPanel(PAYLOAD); // no cache_age_s / refresh_error keys at all
+    expect(screen.queryByTestId("lab-todo-cache-age")).toBeNull();
+    expect(screen.queryByTestId("lab-todo-refresh-error")).toBeNull();
+  });
+
+  it("a set refresh_error renders the amber 'refresh failing' note WITH the list", () => {
+    renderPanel({
+      ...PAYLOAD,
+      cache_age_s: 200,
+      refresh_error: "ValueError: idea ledger row 41 unparseable",
+    });
+    const note = screen.getByTestId("lab-todo-refresh-error");
+    expect(note).toHaveTextContent("refresh failing");
+    expect(note).toHaveTextContent("ValueError: idea ledger row 41 unparseable");
+    // Both notes can coexist (stale AND failing to rebuild)…
+    expect(screen.getByTestId("lab-todo-cache-age")).toBeInTheDocument();
+    // …and the queue still renders in full: stale ≠ blank.
+    expect(screen.getByTestId("lab-todo-owed-L1")).toHaveAttribute(
+      "data-count",
+      "3",
+    );
+    expect(screen.getByTestId("lab-todo-agenda-0")).toBeInTheDocument();
+  });
+});
+
+// ── Frozen ages (residual fix 4, 2026-08-18) ───────────────────────────────
+// Under pollhub change detection the panel re-renders only when the payload
+// CHANGES, so a Date.now()-at-render age froze at the last data change. The
+// age text now self-ticks (a 30s useNow scoped to the LiveAge leaf).
+describe("LabTodo ages advance without a data change", () => {
+  it("the gaps-as-of age ticks forward while the payload stays identical", async () => {
+    vi.useFakeTimers();
+    const TEN_MIN = 10 * 60_000;
+    renderPanel({
+      ...EMPTY,
+      gaps_source: "last_cycle",
+      gaps_as_of: new Date(Date.now() - TEN_MIN).toISOString(),
+    });
+    expect(screen.getByTestId("lab-todo-gaps-asof")).toHaveTextContent(
+      "10m ago",
+    );
+    // Two minutes pass with NO new payload (fixture mode never refetches):
+    // the age must advance anyway — this froze at "10m" before the fix.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+    });
+    expect(screen.getByTestId("lab-todo-gaps-asof")).toHaveTextContent(
+      "12m ago",
+    );
   });
 });

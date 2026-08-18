@@ -101,8 +101,19 @@ export const getWorkloadHint = () =>
 // retired in UI simplification S3 — the D-047 registry, getActiveRuns below,
 // is the one live-run source.)
 
-export const getIterations = () =>
-  getJSON<IterationsResponse>("/api/loop_v0/iterations");
+// `fields`/`limit` (2026-08-18 perf): the full payload measured 3.4 MB — a
+// caller that only needs timestamps (Pulse's sparkgrid) asks for that column.
+// An older backend binary ignores unknown query params and answers in full,
+// so the slim call degrades gracefully across version skew.
+export const getIterations = (opts?: { fields?: string; limit?: number }) => {
+  const q = new URLSearchParams();
+  if (opts?.fields) q.set("fields", opts.fields);
+  if (opts?.limit != null) q.set("limit", String(opts.limit));
+  const qs = q.toString();
+  return getJSON<IterationsResponse>(
+    `/api/loop_v0/iterations${qs ? `?${qs}` : ""}`,
+  );
+};
 
 // The full pipeline journey for one iteration (PipelineJourney, S2 reframe).
 // Unknown id -> {found:false} at 200, so the journey view degrades in place.

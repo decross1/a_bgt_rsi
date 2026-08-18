@@ -373,8 +373,11 @@ it("keeps the dev spawn ledger behind an explicitly-labelled toggle, collapsed b
   fireEvent.click(toggle);
   expect(toggle).toHaveAttribute("aria-expanded", "true");
   // One-line entries: spawn_id + status chip + age — still no prose body.
-  const rows = screen.getAllByTestId("dev-spawn-row");
-  expect(rows).toHaveLength(1);
+  // (waitFor: the dispatch-trace source is mount-staggered 300 ms behind
+  // the strip, so its payload may land after the chain lines render.)
+  await waitFor(() =>
+    expect(screen.getAllByTestId("dev-spawn-row")).toHaveLength(1),
+  );
   expect(screen.getByText("sprint-build-io-viewer")).toBeInTheDocument();
   expect(screen.getByText("spawned")).toBeInTheDocument();
   expect(
@@ -665,11 +668,15 @@ it("poll refresh keeps paged-older rows appended without duplicates", async () =
   const listCallsBefore = mock.mock.calls.filter((c) =>
     isListURL(String(c[0])),
   ).length;
-  // Wait for at least one more newest-page poll to land…
-  await waitFor(() =>
-    expect(
-      mock.mock.calls.filter((c) => isListURL(String(c[0]))).length,
-    ).toBeGreaterThan(listCallsBefore),
+  // Wait for at least one more newest-page poll to land… (the pollhub
+  // heartbeat paces repolls at 1s granularity, so a tiny pollMs still
+  // waits out one heartbeat — hence the widened timeout).
+  await waitFor(
+    () =>
+      expect(
+        mock.mock.calls.filter((c) => isListURL(String(c[0]))).length,
+      ).toBeGreaterThan(listCallsBefore),
+    { timeout: 3000 },
   );
   // …still exactly 4 rows: newest page refreshed, older row kept once.
   expect(screen.getAllByTestId("modelio-row")).toHaveLength(4);

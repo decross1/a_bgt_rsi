@@ -1,5 +1,6 @@
 // Top strip: 6 GPU/host tiles, colour-coded against the day-1 baselines
 // in ui_plan.md section 5.3.
+import { memo } from "react";
 import { fmt } from "../format";
 import type { TelemetrySample } from "../types/schemas";
 import HostMemoryTile from "./HostMemoryTile";
@@ -31,7 +32,7 @@ function gpuUtilTone(u: number | null | undefined): Tone {
   return u < 1 ? "idle" : "ok"; // gray when no work is running
 }
 
-export default function HealthStrip({ samples }: { samples: TelemetrySample[] }) {
+function HealthStrip({ samples }: { samples: TelemetrySample[] }) {
   // Producer-owned telemetry is forwarded raw (house robustness doctrine): the
   // declared TelemetrySample[] cannot enforce shape at runtime. A null/absent
   // body, a non-array, or a null/non-object trailing sample must all degrade to
@@ -103,3 +104,7 @@ export default function HealthStrip({ samples }: { samples: TelemetrySample[] })
     </div>
   );
 }
+
+// Memoized (perf 2026-08-18): re-renders only when the samples buffer
+// identity changes (a telemetry flush), not on every page render.
+export default memo(HealthStrip);

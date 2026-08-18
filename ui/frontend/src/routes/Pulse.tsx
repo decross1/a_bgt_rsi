@@ -7,7 +7,7 @@
 //   0. Identity bar — hostname · backend sha · the HealthVerdict, now a
 //      compact status LINE rather than a panel. System health is a
 //      precondition, not the headline.
-//   1. HERO — OweStrip: what the human actually owes (gate verdicts + L4/L5
+//   1. HERO — OweCard: what the human actually owes (gate verdicts + L4/L5
 //      findings). Biggest type, highest contrast, first thing read. Everything
 //      below the ladder bar renders inside it as ONE muted line, never a row.
 //   1b. LabTodo — the LAB's queue (what Nara and the PI advance on their own),
@@ -24,7 +24,16 @@
 // This page owns the WS telemetry stream; LoopAlertBanner is global (App).
 // It also owns the ONE /api/coordinator/cycles poll, handing the rows to both
 // LastCycleLine and the sparkgrid instead of letting them each poll.
-import { useEffect, useRef, useState } from "react";
+//
+// PERF (2026-08-18, owner: "it keeps refreshing"): every poll on this page
+// now runs through the pollhub scheduler (src/api/pollhub.ts) — one heartbeat
+// timer, per-source cadences, in-flight guards, change detection (an
+// unchanged payload re-renders nothing), and stale-while-revalidate (a failed
+// refetch never blanks rendered data). The page clock dropped from 1 Hz to
+// 0.2 Hz (it only feeds staleness math and day-bucket boundaries), heavy
+// children are memoized, and the iterations poll asks the backend for
+// timestamps only (the full payload measured 3.4 MB per poll).
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import Card from "../design/Card";
 import { registerPaletteActions } from "../design/CommandPalette";
@@ -42,12 +51,13 @@ import ModelServerCard, {
 } from "../components/ModelServerCard";
 import NaraPromptForm from "../components/NaraPromptForm";
 import NowBoard from "../components/NowBoard";
-import OweStrip from "../components/OweStrip";
+import OweCard from "../components/OweCard";
 import { getActivityMonitor } from "../api/activity";
 import { getCoordinatorCycles, getHealth, getIterations, getServedModels } from "../api/http";
+import { usePolled } from "../api/pollhub";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { useNow } from "../time";
-import type { LiveCalls } from "../types/activity";
+import type { LiveCalls, MonitorResponse } from "../types/activity";
 import type {
   CoordinatorCycle,
   Health,
@@ -71,82 +81,113 @@ function newestIso(candidates: unknown[]): string | null {
   return best?.iso ?? null;
 }
 
+// Stable `pick` identities for the two ModelServerCards — inline arrows would
+// re-create per render and defeat the cards' React.memo.
+const pickGemma = (s: TelemetrySample) => s.vllm;
+const pickQwen = (s: TelemetrySample) => s.vllm_qwen;
+
+// The iterations poll feeds ONLY the sparkgrid + the idle "last finished"
+// clause, so ask the backend for the timestamp column, not the full record
+// (the full payload measured 3.4 MB / 2.9 s per poll on 2026-08-18; an older
+// backend binary ignores the params and still answers with the full rows).
+const fetchIterationTimes = () =>
+  getIterations({ fields: "iteration_id,ended_at", limit: 1000 });
+
+// CHURN-STRIP (adversarial-review residual fix 2, 2026-08-18):
+// /api/activity/monitor stamps a fresh top-level `generated_at` on EVERY
+// response, so an otherwise-idle monitor payload always read as "changed"
+// to the hub's JSON change detection — NowBoard and both ModelServerCards
+// re-rendered on every 15 s poll of a perfectly quiet lab. Strip it BEFORE
+// the payload reaches the hub. It is the only churn-only field on this
+// payload (live_calls / synthetic_inference / active / recent move only
+// when calls or worker rows actually move, and their windows shift only
+// when rows enter/leave them), and nothing on this page displays it
+// (NowBoard and the cards read only live_calls), so no stripped value
+// needs keeping aside. Exported for the test pin in test_pulse.tsx.
+export function stripMonitorChurn(
+  m: MonitorResponse,
+): Omit<MonitorResponse, "generated_at"> {
+  const { ...rest } = m;
+  delete (rest as { generated_at?: unknown }).generated_at;
+  return rest;
+}
+const fetchMonitor = () => getActivityMonitor(1).then(stripMonitorChurn);
+
 export default function Pulse() {
   const { samples, latest, connected } = useTelemetryStream();
-  const [health, setHealth] = useState<Health | null>(null);
+  const [launchOpen, setLaunchOpen] = useState(false);
+  // 0.2 Hz page clock: `now` feeds only telemetry-staleness math and the
+  // sparkgrid's UTC day buckets — nothing on this page renders live seconds.
+  // (NowBoard runs its own 1 Hz clock for elapsed counters, in its own
+  // subtree.) The old 1 Hz clock re-rendered the entire page every second.
+  const now = useNow(5000);
+  const { hash } = useLocation();
+
+  // --- every poll goes through the pollhub: one heartbeat, per-source
+  // cadences, in-flight guards, change detection, stale-while-revalidate.
+  // Initial fetches are lightly staggered so first paint is the cheap
+  // sources, not a 10-request thundering herd on one backend threadpool.
+  const health: Health | null =
+    usePolled("health", getHealth, { intervalMs: 15000 }).data ?? null;
   // Live served-model names — the card titles must not be strings (an A/B
   // window on 2026-08-16 had the dashboard announcing 3.6 while 3.8 served).
-  const [servedModels, setServedModels] = useState<
-    Record<string, { model: string | null; error: string | null }> | null
-  >(null);
+  // Polled, not read once: a model server can be swapped under a running
+  // dashboard. SWR keeps the previous value on a failed read rather than
+  // blanking the card; a reachable endpoint reporting no model renders
+  // "unknown".
+  const servedModels = usePolled("served_models", getServedModels, {
+    intervalMs: 30000,
+  }).data ?? null;
   // The live wrapper-call aggregate — feeds the NowBoard headline strip and
   // both ModelServerCards' "driving" sub-lines. limit=1 keeps the monitor
-  // payload cheap (only its live_calls block is read). Fails quiet.
-  const [liveCalls, setLiveCalls] = useState<LiveCalls | null>(null);
+  // payload cheap (only its live_calls block is read). Fails quiet (SWR).
+  const monitor = usePolled("monitor", fetchMonitor, {
+    intervalMs: 15000,
+    initialDelayMs: 100,
+  }).data;
+  const liveCalls: LiveCalls | null = useMemo(
+    () => monitor?.live_calls ?? null,
+    [monitor],
+  );
   // The two event histories behind the sparkgrid. Both fail quiet: an
   // unreachable endpoint leaves the grid empty (an honest "no evidence of
   // activity"), never a fabricated one.
-  const [cycles, setCycles] = useState<CoordinatorCycle[] | null>(null);
-  const [cyclesLoaded, setCyclesLoaded] = useState(false);
+  const cyclesPoll = usePolled("cycles", getCoordinatorCycles, {
+    intervalMs: 60000,
+    initialDelayMs: 200,
+  });
+  const iterationsPoll = usePolled("iterations", fetchIterationTimes, {
+    intervalMs: 60000,
+    initialDelayMs: 300,
+  });
+  const cycles: CoordinatorCycle[] | null = useMemo(
+    () =>
+      cyclesPoll.data === undefined
+        ? null
+        : Array.isArray(cyclesPoll.data?.cycles)
+          ? cyclesPoll.data.cycles
+          : [],
+    [cyclesPoll.data],
+  );
+  const cyclesLoaded = cycles !== null;
   // Pulse took over LastCycleLine's poll, so it also inherits its duty to be
   // honest about a FAILED read: an unreachable cycles endpoint must say so,
   // not render an empty slot that reads as "the loop has done nothing".
-  const [cyclesFailed, setCyclesFailed] = useState(false);
-  const [iterations, setIterations] = useState<IterationRecord[]>([]);
-  const [launchOpen, setLaunchOpen] = useState(false);
-  const now = useNow();
-  const { hash } = useLocation();
+  // (With SWR, "failed" only blanks the line when NO payload ever landed;
+  // once data exists a failing refetch keeps showing it.)
+  const cyclesFailed = cyclesPoll.failing && !cyclesLoaded;
+  const iterations: IterationRecord[] = useMemo(
+    () =>
+      Array.isArray(iterationsPoll.data?.iterations)
+        ? iterationsPoll.data.iterations
+        : [],
+    [iterationsPoll.data],
+  );
 
   const heroRef = useRef<HTMLDivElement>(null);
   const labQueueRef = useRef<HTMLDivElement>(null);
   const activityRef = useRef<HTMLDivElement>(null);
   const launchRef = useRef<HTMLDetailsElement>(null);
-
-  useEffect(() => {
-    const loadHealth = () => getHealth().then(setHealth).catch(() => {});
-    loadHealth();
-    const id = setInterval(loadHealth, 10000);
-    return () => clearInterval(id);
-  }, []);
-
-  // Polled, not read once: a model server can be swapped under a running
-  // dashboard (that is exactly how the 2026-08-16 mislabel happened). A failed
-  // read leaves the previous value rather than blanking the card; a reachable
-  // endpoint reporting no model renders "unknown".
-  useEffect(() => {
-    const load = () => getServedModels().then(setServedModels).catch(() => {});
-    load();
-    const id = setInterval(load, 15000);
-    return () => clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    const load = () =>
-      getActivityMonitor(1)
-        .then((r) => setLiveCalls(r?.live_calls ?? null))
-        .catch(() => {});
-    load();
-    const id = setInterval(load, 7000);
-    return () => clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    const load = () => {
-      getCoordinatorCycles()
-        .then((r) => {
-          setCycles(Array.isArray(r?.cycles) ? r.cycles : []);
-          setCyclesLoaded(true);
-          setCyclesFailed(false);
-        })
-        .catch(() => setCyclesFailed(true));
-      getIterations()
-        .then((r) => setIterations(Array.isArray(r?.iterations) ? r.iterations : []))
-        .catch(() => {});
-    };
-    load();
-    const id = setInterval(load, 30000);
-    return () => clearInterval(id);
-  }, []);
 
   // Arriving from /ladder's "lab queue →" link (`/#lab-queue`): React Router
   // does not scroll for a hash, so bring the zone into view once.
@@ -202,9 +243,15 @@ export default function Pulse() {
   // dereferences it. Skip the bad rows once here (the backend's own "drop
   // malformed rows" philosophy) and feed the cleaned array to the verdict
   // math AND every panel below, so one garbage frame degrades to a missing
-  // scrape instead of a crashed page.
-  const cleanSamples = samples.filter(
-    (s): s is TelemetrySample => s != null && typeof s === "object",
+  // scrape instead of a crashed page. Memoized so the array identity is
+  // stable across renders that did not change `samples` — the children's
+  // React.memo depends on it.
+  const cleanSamples = useMemo(
+    () =>
+      samples.filter(
+        (s): s is TelemetrySample => s != null && typeof s === "object",
+      ),
+    [samples],
   );
 
   const lastSeen = latest?.timestamp ?? health?.telemetry_last_seen ?? null;
@@ -248,10 +295,20 @@ export default function Pulse() {
         : recent.some((s) => s.vllm != null);
 
   // Sparkgrid inputs: both endpoints sort newest-first, so [0] is the most
-  // recent of each and their newer end is "last finished".
-  const cycleTimes = (cycles ?? []).map((c) => c?.timestamp);
-  const iterationTimes = iterations.map((r) => r?.ended_at);
-  const lastFinishedIso = newestIso([...cycleTimes, ...iterationTimes]);
+  // recent of each and their newer end is "last finished". Memoized for the
+  // same reason as cleanSamples: LabSparkgrid is React.memo'd on these.
+  const cycleTimes = useMemo(
+    () => (cycles ?? []).map((c) => c?.timestamp),
+    [cycles],
+  );
+  const iterationTimes = useMemo(
+    () => iterations.map((r) => r?.ended_at),
+    [iterations],
+  );
+  const lastFinishedIso = useMemo(
+    () => newestIso([...cycleTimes, ...iterationTimes]),
+    [cycleTimes, iterationTimes],
+  );
 
   return (
     <div className="page-full" data-testid="pulse-page">
@@ -284,9 +341,10 @@ export default function Pulse() {
 
       {/* ── 1 · HERO — what you owe ─────────────────────────────────────── */}
       {/* id: LabTodo's blocked-on-you line points back UP at this hero rather
-          than restating the same work as a second list. */}
+          than restating the same work as a second list. OweCard (2026-08-18)
+          keeps OweStrip's pins and adds per-row expand + triage/age chips. */}
       <div id="what-you-owe" ref={heroRef}>
-        <OweStrip />
+        <OweCard />
       </div>
 
       {/* ── 1b · the LAB's queue — secondary to the hero, by design ─────── */}
@@ -384,7 +442,7 @@ export default function Pulse() {
           <ModelServerCard
             title={servedModels?.gemma?.model ?? "unknown"}
             servedModel={servedModels?.gemma?.model ?? VLLM_SERVED_MODEL}
-            pick={(s) => s.vllm}
+            pick={pickGemma}
             samples={cleanSamples}
             liveCalls={liveCalls}
             accent="zinc"
@@ -393,7 +451,7 @@ export default function Pulse() {
           <ModelServerCard
             title={servedModels?.qwen?.model ?? "unknown"}
             servedModel={servedModels?.qwen?.model ?? QWEN_SERVED_MODEL}
-            pick={(s) => s.vllm_qwen}
+            pick={pickQwen}
             samples={cleanSamples}
             liveCalls={liveCalls}
             accent="sky"

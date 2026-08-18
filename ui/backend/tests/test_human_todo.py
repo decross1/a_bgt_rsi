@@ -556,16 +556,21 @@ def test_deferral_for_unknown_ref_id_is_ignored(tmp_path):
     assert "deferred" not in item    # the orphan tags nothing
 
 
-def test_undeferred_items_gain_no_new_keys(tmp_path):
-    """No existing keys change — and items WITHOUT an open deferral keep
-    exactly the pre-fold shape (the additive keys appear only on tagged
-    items)."""
+def test_undeferred_items_gain_no_deferral_keys(tmp_path):
+    """No existing keys change — and items WITHOUT an open deferral gain no
+    DEFERRAL keys (the fold's additive keys appear only on tagged items).
+    2026-08-18: the owe-card triage enrichment adds its own documented
+    additive keys to every item, so the pin is on the deferral fold's
+    contribution, not on exact-set equality (see test_owe_triage.py for the
+    enrichment's own shape pins)."""
     client = _client(tmp_path)
     _pending_gate_rows(tmp_path)
     # An absent dev_session_queue.jsonl is the common live case.
     body = client.get("/api/human_todo").json()
     [item] = body["items"]
-    assert set(item) == _ITEM_KEYS
+    assert _ITEM_KEYS <= set(item)
+    assert "deferred" not in item
+    assert "deferral" not in item
 
 
 def test_malformed_dev_queue_rows_never_500(tmp_path):

@@ -14,9 +14,10 @@
 // EndpointMissingNote, never red. Per-field coercion follows ActiveRunCard:
 // every field is producer-owned, so a malformed scalar drops its cell rather
 // than crashing the board.
-import { useEffect, useState } from "react";
+import { memo } from "react";
 import StatusDot, { type Status as StatusName } from "../design/StatusDot";
 import { getActiveRuns } from "../api/http";
+import { usePolled } from "../api/pollhub";
 import { ageLabel } from "../ladderBar";
 import { elapsed, useNow } from "../time";
 import type { ActiveRun, ActiveRunsResponse, LiveCalls } from "../types/activity";
@@ -31,7 +32,10 @@ import {
 } from "./nowVerdict";
 
 const ACTIVE_RUNS_ENDPOINT = "/api/activity/active_runs";
-const POLL_MS = 5000;
+// 10s (perf 2026-08-18, was 5s): the staleness bar this board judges runs
+// against is 120s, and run elapsed counters tick client-side — halving the
+// request rate loses nothing the board actually shows.
+const POLL_MS = 10000;
 // A registry run whose heartbeat is older than this is rendered stale-amber:
 // the writer refreshes heartbeat_at on every update, so two minutes of
 // silence means a hung/killed driver, not a slow step.
@@ -251,7 +255,7 @@ function stripVerdict(
   return computeActivity({ liveCalls, telemetry }, now);
 }
 
-export default function NowBoard({
+function NowBoard({
   initial,
   live = false,
   nowMs,
@@ -259,54 +263,42 @@ export default function NowBoard({
   telemetry,
   lastFinishedIso,
 }: NowBoardProps) {
-  const tick = useNow();
+  // Several suites module-mock ../api/http with a fixed export list that
+  // predates getActiveRuns. Vitest's mock proxy THROWS on the mere access
+  // of a missing export (even under typeof), so the binding is read inside
+  // a try — under those mocks the board simply never polls and stays
+  // empty, rather than crashing the page.
+  let fetchRuns: typeof getActiveRuns | null = null;
+  try {
+    fetchRuns = typeof getActiveRuns === "function" ? getActiveRuns : null;
+  } catch {
+    fetchRuns = null;
+  }
+  const selfPoll = initial === undefined && live && fetchRuns != null;
+
+  // pollhub (perf 2026-08-18): in-flight-guarded, change-detected, SWR — a
+  // transient failure keeps the last board rendered instead of swapping it
+  // for a red line 5s at a time.
+  const poll = usePolled<ActiveRunsResponse>(
+    "active_runs",
+    fetchRuns ?? (() => Promise.reject(new Error("active_runs unavailable"))),
+    { intervalMs: POLL_MS, enabled: selfPoll },
+  );
+  const data: ActiveRunsResponse | null =
+    initial !== undefined ? initial : (poll.data ?? null);
+  // Skew/error states are for "nothing ever loaded" only (SWR): once the
+  // board has data, a failing refetch degrades to the stale note below.
+  const noData = data == null && selfPoll && poll.failing;
+  const skew = noData && isVersionSkew404(poll.error, ACTIVE_RUNS_ENDPOINT);
+  const error = noData && !skew ? String(poll.error) : null;
+  const staleFailing = selfPoll && poll.failing && data != null;
+
+  // 1 Hz only while a run's elapsed counter is actually ticking; the idle
+  // board re-renders at 0.2 Hz (its ages are minute-grained).
+  const hasRuns =
+    data != null && Array.isArray(data.runs) && data.runs.length > 0;
+  const tick = useNow(hasRuns ? 1000 : 5000);
   const now = nowMs ?? tick;
-  const [data, setData] = useState<ActiveRunsResponse | null>(initial ?? null);
-  const [skew, setSkew] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const selfPoll = initial === undefined && live;
-
-  useEffect(() => {
-    if (!selfPoll) return;
-    // Several suites module-mock ../api/http with a fixed export list that
-    // predates getActiveRuns. Vitest's mock proxy THROWS on the mere access
-    // of a missing export (even under typeof), so the binding is read inside
-    // a try — under those mocks the board simply never polls and stays
-    // empty, rather than crashing the page.
-    let fetchRuns: typeof getActiveRuns;
-    try {
-      fetchRuns = getActiveRuns;
-    } catch {
-      return;
-    }
-    if (typeof fetchRuns !== "function") return;
-    let cancelled = false;
-    const poll = () =>
-      fetchRuns()
-        .then((r) => {
-          if (cancelled) return;
-          setData(r);
-          setSkew(false);
-          setError(null);
-        })
-        .catch((e) => {
-          if (cancelled) return;
-          if (isVersionSkew404(e, ACTIVE_RUNS_ENDPOINT)) {
-            // Older backend binary without the endpoint — quiet note, not red.
-            setSkew(true);
-            setError(null);
-          } else {
-            setError(String(e));
-          }
-        });
-    poll();
-    const id = setInterval(poll, POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [selfPoll]);
 
   if (skew) {
     return <EndpointMissingNote endpoint={ACTIVE_RUNS_ENDPOINT} />;
@@ -456,6 +448,23 @@ export default function NowBoard({
           {verdict.evidence.join(" · ")}
         </div>
       )}
+
+      {staleFailing && (
+        // SWR honesty: the board above is the last good read, aged openly.
+        <div
+          data-testid="now-board-stale"
+          style={{ fontSize: "var(--text-meta)", color: "var(--status-warn)" }}
+        >
+          refresh failing — showing runs as of{" "}
+          {poll.asOf != null
+            ? `${ageLabel(new Date(poll.asOf).toISOString(), now)} ago`
+            : "an unknown age"}
+        </div>
+      )}
     </section>
   );
 }
+
+// Memoized: mounted on Pulse inside a card that re-renders on telemetry
+// ticks; with stable props this board only re-renders on its own clock.
+export default memo(NowBoard);

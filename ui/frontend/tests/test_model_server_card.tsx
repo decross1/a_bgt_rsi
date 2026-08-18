@@ -1,9 +1,15 @@
 // ModelServerCard — the parameterized VllmPanel+QwenPanel merge (UI
 // simplification S1). The meaningful cases from both retired suites, run
 // against BOTH parameterizations: MTP tile coloring, the Gemma-only workload
-// pill, Qwen's tri-state body (unreachable / transient-drop / data — with the
-// deliberately binary hard-red badge), the core/internals partition, and the
+// pill, the body states, the core/internals partition, and the
 // exact-served-model "driving" attribution.
+//
+// LAST-GOOD RETENTION (residual fix 5, 2026-08-18): the badge + body used to
+// key off the LATEST sample alone — one missed scrape swapped the body to
+// "/metrics unavailable" under a hard-red badge. Now: up to 2 trailing
+// misses keep the last-good data with an explicit "last sample Xs ago" note
+// and an amber "● stale" badge; only 3 consecutive misses (or no data ever)
+// degrade the body, with "● down" reserved for those cases.
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LiveCalls } from "../src/types/activity";
@@ -132,14 +138,20 @@ describe("ModelServerCard MTP tile (both parameterizations)", () => {
 });
 
 describe("ModelServerCard body states", () => {
-  it("gemma (binary mode): no block on the latest sample -> unavailable", () => {
+  it("gemma (binary mode): NEVER any block -> unavailable, badge down", () => {
     renderGemma([{ ...gemmaSample(0.8), vllm: null }]);
     expect(screen.getByText(/\/metrics unavailable/)).toBeInTheDocument();
+    const badge = screen.getByTestId(`${VLLM_SERVED_MODEL}-status`);
+    expect(badge.textContent).toBe("● down");
+    expect(badge.className).toContain("text-red-400");
   });
 
   it("qwen (tri-state): every sample missing the block -> unreachable", () => {
     renderQwen([emptySample(), emptySample()]);
     expect(screen.getByText(/endpoint unreachable/)).toBeInTheDocument();
+    expect(
+      screen.getByTestId(`${QWEN_SERVED_MODEL}-status`).textContent,
+    ).toBe("● down");
   });
 
   it("qwen: empty samples array -> unreachable", () => {
@@ -147,21 +159,76 @@ describe("ModelServerCard body states", () => {
     expect(screen.getByText(/endpoint unreachable/)).toBeInTheDocument();
   });
 
-  it("qwen: latest sample lost the block -> soft transient-drop banner", () => {
+  it("ONE missed scrape KEEPS the last-good body with an explicit staleness note (fix 5)", () => {
+    // The reviewer's finding: the body keyed off the latest sample alone,
+    // so one missed scrape swapped a healthy card to its no-data message.
     renderQwen([qwenSample(0.7), emptySample()]);
-    expect(
-      screen.getByText(/dropped on the latest sample/),
-    ).toBeInTheDocument();
+    // The core rows still render — from the retained last-good sample.
+    expect(screen.getByText("Decode tok/s")).toBeInTheDocument();
+    expect(screen.getByText("KV-cache usage")).toBeInTheDocument();
+    // …and the retention is HONEST: an explicit staleness note names the
+    // last sample's age and the miss count.
+    const note = screen.getByTestId(`${QWEN_SERVED_MODEL}-stale-note`);
+    expect(note).toHaveTextContent(/last sample .* ago/);
+    expect(note).toHaveTextContent("1 missed scrape");
+    // No degrade message anywhere.
+    expect(screen.queryByText(/\/metrics dropped/)).toBeNull();
+    expect(screen.queryByText(/endpoint unreachable/)).toBeNull();
   });
 
-  it("pairs the soft amber banner with a hard-red '● down' badge (deliberately binary)", () => {
+  it("the badge distinguishes STALE TELEMETRY from DOWN (fix 5)", () => {
     renderQwen([qwenSample(0.7), emptySample()]);
+    const badge = screen.getByTestId(`${QWEN_SERVED_MODEL}-status`);
+    expect(badge.textContent).toBe("● stale");
+    expect(badge.className).toContain("text-amber-400");
+  });
+
+  it("binary mode retains through a short miss run too (gemma)", () => {
+    renderGemma([gemmaSample(0.8), { ...gemmaSample(0.8), vllm: null }]);
+    expect(screen.getByText("Decode tok/s")).toBeInTheDocument();
+    expect(screen.queryByText(/\/metrics unavailable/)).toBeNull();
     expect(
-      screen.getByText(/dropped on the latest sample/),
+      screen.getByTestId(`${VLLM_SERVED_MODEL}-stale-note`),
+    ).toHaveTextContent(/last sample .* ago/);
+    expect(
+      screen.getByTestId(`${VLLM_SERVED_MODEL}-status`).textContent,
+    ).toBe("● stale");
+  });
+
+  it("3 CONSECUTIVE misses degrade the body honestly: qwen -> dropped, badge down", () => {
+    renderQwen([
+      qwenSample(0.7),
+      emptySample(),
+      emptySample(),
+      emptySample(),
+    ]);
+    expect(
+      screen.getByText(/\/metrics dropped — 3 consecutive scrapes/),
     ).toBeInTheDocument();
+    expect(screen.queryByText("Decode tok/s")).toBeNull();
     const badge = screen.getByTestId(`${QWEN_SERVED_MODEL}-status`);
     expect(badge.textContent).toBe("● down");
     expect(badge.className).toContain("text-red-400");
+  });
+
+  it("3 consecutive misses in binary mode -> unavailable (gemma)", () => {
+    renderGemma([
+      gemmaSample(0.8),
+      { ...gemmaSample(0.8), vllm: null },
+      { ...gemmaSample(0.8), vllm: null },
+      { ...gemmaSample(0.8), vllm: null },
+    ]);
+    expect(screen.getByText(/\/metrics unavailable/)).toBeInTheDocument();
+    expect(
+      screen.getByTestId(`${VLLM_SERVED_MODEL}-status`).textContent,
+    ).toBe("● down");
+  });
+
+  it("a fresh latest sample shows NO staleness note", () => {
+    renderQwen([emptySample(), qwenSample(0.82)]);
+    expect(
+      screen.queryByTestId(`${QWEN_SERVED_MODEL}-stale-note`),
+    ).toBeNull();
   });
 
   it("status badge reads '● up' emerald when the latest sample carries the block", () => {

@@ -5,9 +5,10 @@
 // planned nothing actionable), errored outcomes red, promoted findings
 // emerald. Links into the cycle narrative at /cycles (the S3 rename of the
 // old /coordinator route — the S1 deviation is now resolved).
-import { useEffect, useState } from "react";
+import { memo } from "react";
 import { Link } from "react-router-dom";
 import { getCoordinatorCycles } from "../api/http";
+import { usePolled } from "../api/pollhub";
 import { ageLabel } from "../ladderBar";
 import type { CoordinatorCycle } from "../types/schemas";
 
@@ -26,34 +27,31 @@ interface Props {
   pollMs?: number;
 }
 
-export default function LastCycleLine({ initial, pollMs = 30000 }: Props) {
-  const [cycles, setCycles] = useState<CoordinatorCycle[]>(
-    Array.isArray(initial) ? initial : [],
+function LastCycleLine({ initial, pollMs = 60000 }: Props) {
+  // Controlled mode (Pulse passes its own cycles poll): render straight from
+  // the PROP — the old useState(initial) copy froze this line at its
+  // first-mount payload and it never updated again (perf-audit find,
+  // 2026-08-18). Standalone mounts poll via the hub instead; the "cycles"
+  // key is shared with Pulse's poll, so the two can never double-fetch.
+  const poll = usePolled<{ cycles?: CoordinatorCycle[] }>(
+    "cycles",
+    getCoordinatorCycles,
+    { intervalMs: pollMs, enabled: initial === undefined },
   );
-  const [loaded, setLoaded] = useState(initial !== undefined);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (initial !== undefined) return;
-    let active = true;
-    const load = () =>
-      getCoordinatorCycles()
-        .then((r) => {
-          if (!active) return;
-          setCycles(Array.isArray(r?.cycles) ? r.cycles : []);
-          setLoaded(true);
-          setError(null);
-        })
-        .catch((e) => {
-          if (active) setError(String(e));
-        });
-    load();
-    const id = setInterval(load, pollMs);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [initial, pollMs]);
+  const cycles: CoordinatorCycle[] =
+    initial !== undefined
+      ? Array.isArray(initial)
+        ? initial
+        : []
+      : Array.isArray(poll.data?.cycles)
+        ? poll.data.cycles
+        : [];
+  const loaded = initial !== undefined || poll.data !== undefined;
+  // SWR: a failing refetch keeps the last line; red only before any data.
+  const error =
+    initial === undefined && poll.failing && poll.data === undefined
+      ? String(poll.error)
+      : null;
 
   if (error) {
     return (
@@ -150,3 +148,7 @@ export default function LastCycleLine({ initial, pollMs = 30000 }: Props) {
     </div>
   );
 }
+
+// Memoized: Pulse passes `initial` (a stable identity between cycle polls),
+// so this line skips the page's clock/telemetry re-renders.
+export default memo(LastCycleLine);

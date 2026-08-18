@@ -22,6 +22,7 @@ from .doc_titles import register as register_doc_titles
 from .experiments import register as register_experiments
 from .finding_detail import register as register_finding_detail
 from .frontier_calls import register as register_frontier_calls
+from .frontier_reviews import register as register_frontier_reviews
 from .human_todo import register as register_human_todo
 from .iteration_journey import register as register_iteration_journey
 from .lab_channel_seam import register as register_lab_channel_seam
@@ -330,6 +331,11 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     # resolves to the primary checkout (UI_FRONTIER_LEDGER overrides).
     # Read-only.
     register_frontier_calls(app)
+
+    # The frontier tier's SUBSTANCE (owner rejection 2026-08-18 of the
+    # invocation-only panel): merged screen/agenda/refine feed with full
+    # per-role reasoning + per-vendor decoded health. Read-only.
+    register_frontier_reviews(app)
 
     return app
 

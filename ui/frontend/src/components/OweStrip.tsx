@@ -15,14 +15,16 @@
 //
 // A 404 from the endpoint is an HONEST "queue UNKNOWN" — never a calm empty
 // state off a dead endpoint.
-import { useEffect, useState, type CSSProperties } from "react";
+import { memo, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import RungGlyph from "../design/RungGlyph";
 import StatusDot from "../design/StatusDot";
 import "../design/primitives.css";
 import { getHumanTodo } from "../api/http";
+import { usePolled } from "../api/pollhub";
 import { ageLabel, clearsLadderBar, evidenceLevelOf } from "../ladderBar";
-import type { HumanTodoItem } from "../types/schemas";
+import { useNow } from "../time";
+import type { HumanTodoItem, HumanTodoResponse } from "../types/schemas";
 
 // Coerce a producer-owned display scalar to renderable text (the
 // HumanTodoPanel idiom): object/array drop to null, never a throw.
@@ -50,38 +52,44 @@ function owed(item: HumanTodoItem): boolean {
   return kind === "finding_review" && clearsLadderBar(item);
 }
 
+// Self-ticking age text (adversarial-review residual fix 4, 2026-08-18):
+// under the pollhub's change detection + this strip's memo, the component
+// re-renders ONLY when the queue payload changes — a Date.now()-at-render
+// age therefore froze at the last data change ("2m" forever on an idle
+// backend). The 30 s tick lives in this LEAF alone: a setState here
+// re-renders just the age text, never the row list around it, so the rows
+// stay effectively memoized against clock advances with no extra memo()
+// plumbing. Deliberately a local useNow, not the hub's asOf notify —
+// decoupled from the parallel pollhub work.
+function LiveAge({ iso }: { iso: unknown }) {
+  const now = useNow(30_000);
+  return <>{ageLabel(iso, now)}</>;
+}
+
 interface Props {
   // Fixture injection (tests render synchronously, never fetch).
   initial?: HumanTodoItem[];
   pollMs?: number;
 }
 
-export default function OweStrip({ initial, pollMs = 10000 }: Props) {
-  const [items, setItems] = useState<HumanTodoItem[]>(initial ?? []);
-  const [loaded, setLoaded] = useState(initial !== undefined);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (initial !== undefined) return;
-    let active = true;
-    const load = () =>
-      getHumanTodo()
-        .then((r) => {
-          if (!active) return;
-          setItems(Array.isArray(r?.items) ? r.items : []);
-          setLoaded(true);
-          setError(null);
-        })
-        .catch((e) => {
-          if (active) setError(String(e));
-        });
-    load();
-    const id = setInterval(load, pollMs);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [initial, pollMs]);
+function OweStrip({ initial, pollMs = 30000 }: Props) {
+  // pollhub (perf 2026-08-18): in-flight-guarded, change-detected, SWR — a
+  // transient refetch failure keeps the last good queue rendered (with an
+  // honest stale note below) instead of swapping the hero for an error line.
+  const poll = usePolled<HumanTodoResponse>("human_todo", getHumanTodo, {
+    intervalMs: pollMs,
+    enabled: initial === undefined,
+  });
+  const items: HumanTodoItem[] =
+    initial ?? (Array.isArray(poll.data?.items) ? poll.data.items : []);
+  const loaded = initial !== undefined || poll.data !== undefined;
+  // The red/404 error states are reserved for "no data at all" — once a
+  // queue has rendered, a failing refetch is the muted stale note instead.
+  const error =
+    poll.failing && poll.data === undefined && initial === undefined
+      ? String(poll.error)
+      : null;
+  const staleFailing = poll.failing && poll.data !== undefined;
 
   // Producer-owned rows: drop non-object entries (HumanTodoPanel idiom).
   const rows = (Array.isArray(items) ? items : []).filter(
@@ -97,7 +105,6 @@ export default function OweStrip({ initial, pollMs = 10000 }: Props) {
   ).length;
 
   const endpointMissing = error !== null && /\b404\b/.test(error);
-  const nowMs = Date.now();
 
   return (
     <section
@@ -241,7 +248,7 @@ export default function OweStrip({ initial, pollMs = 10000 }: Props) {
                     color: "var(--fg-muted)",
                   }}
                 >
-                  {ageLabel(item.since, nowMs)}
+                  <LiveAge iso={item.since} />
                 </span>
               </>
             );
@@ -294,6 +301,33 @@ export default function OweStrip({ initial, pollMs = 10000 }: Props) {
           </Link>
         </div>
       )}
+
+      {staleFailing && (
+        // Honest staleness: the queue above is real data from the last good
+        // read; this names its age instead of pretending freshness OR
+        // blanking the hero.
+        <div
+          data-testid="owe-stale"
+          style={{
+            marginTop: "var(--space-3)",
+            fontSize: "var(--text-meta)",
+            color: "var(--status-warn)",
+          }}
+        >
+          refresh failing — showing the queue as of{" "}
+          {poll.asOf != null ? (
+            <>
+              <LiveAge iso={new Date(poll.asOf).toISOString()} /> ago
+            </>
+          ) : (
+            "an unknown age"
+          )}
+        </div>
+      )}
     </section>
   );
 }
+
+// Memoized: Pulse re-renders on its clock and telemetry ticks; this strip's
+// props (fixture-injection only) never change on those.
+export default memo(OweStrip);

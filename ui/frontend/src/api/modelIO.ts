@@ -7,8 +7,34 @@ import { HttpError } from "./http";
 const API_PORT = import.meta.env.VITE_API_PORT ?? "8700";
 const API_BASE = `http://${window.location.hostname}:${API_PORT}`;
 
+// FETCH DEADLINE (adversarial review 2026-08-18): a hung backend request —
+// the >120 s /api/lab_todo shape — must be torn down, not waited out. Every
+// fetcher on the /model-io stack goes through this AbortController timeout;
+// on abort the promise rejects, the pollhub's SWR path keeps the rendered
+// snapshot with `failing` set and `asOf` frozen honestly, and the next tick
+// retries. (The pollhub also runs its own slightly-larger deadline race as
+// a backstop for any fetcher that skips this helper.)
+export const FETCH_DEADLINE_MS = 15_000;
+
+export async function fetchWithDeadline(
+  url: string,
+  deadlineMs: number = FETCH_DEADLINE_MS,
+): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(
+    () =>
+      ctrl.abort(new Error(`fetch deadline ${deadlineMs}ms exceeded: ${url}`)),
+    deadlineMs,
+  );
+  try {
+    return await fetch(url, { signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function getJSON<T>(path: string): Promise<T> {
-  const resp = await fetch(`${API_BASE}${path}`);
+  const resp = await fetchWithDeadline(`${API_BASE}${path}`);
   if (!resp.ok) {
     let detail = resp.statusText;
     try {
