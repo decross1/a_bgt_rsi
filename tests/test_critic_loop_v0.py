@@ -577,7 +577,10 @@ def test_skeptic_not_called_when_env_unset(cache, monkeypatch):
     assert "skeptic_verdict" not in out["result"]
 
 
-def test_skeptic_refuted_overrides_to_undecidable(cache, monkeypatch):
+def test_skeptic_verified_refutation_overrides_to_refuted(cache, monkeypatch):
+    """D-075 R3b(a): a single-shot 'refuted' with a verified citation maps
+    the critique verdict to 'refuted' — information-preserving, harsher.
+    (Pre-D-075 this collapsed to 'undecidable'.)"""
     monkeypatch.setenv("NARA_SKEPTIC", "1")
     captured = {}
     def attack(hypothesis_text, iteration_id=None, backend="ollama-coder"):
@@ -591,13 +594,32 @@ def test_skeptic_refuted_overrides_to_undecidable(cache, monkeypatch):
     out = crit_mod.critic_loop_v0("hyp text", "sk-2")
     assert captured["hyp"] == "hyp text"
     assert captured["iteration_id"] == "sk-2"
-    assert out["result"]["verdict"] == "undecidable"
+    assert out["result"]["verdict"] == "refuted"
     assert out["result"]["verdict_overridden_from"] == "survives"
     assert out["result"]["skeptic_verdict"] == "refuted"
     assert "contradicted by doc-z" in out["result"]["override_reason"]
+    assert "skeptic_infra_error" not in out["result"]
+
+
+def test_skeptic_uncited_refuted_overrides_to_undecidable(cache, monkeypatch):
+    """D-075 R3b(a) defensive edge: 'refuted' WITHOUT a verified citation
+    (the real attack() downgrades these itself; a nonconforming impl might
+    not) does not earn the harsher mapping — pre-D-075 behavior stands."""
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    _install_fake_skeptic(monkeypatch, lambda *a, **k: {
+        "attack_verdict": "refuted", "rationale": "sure of it, no citation",
+        "contradicting_doc_id": None, "backend": "b", "model": "m",
+    })
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "sk-2b", _neighbors("a"))
+    out = crit_mod.critic_loop_v0("h", "sk-2b")
+    assert out["result"]["verdict"] == "undecidable"
+    assert out["result"]["verdict_overridden_from"] == "survives"
 
 
 def test_skeptic_inconclusive_overrides_to_undecidable(cache, monkeypatch):
+    """D-075 R3b(b): a PARSEABLE single-shot 'inconclusive' is legitimate
+    uncertainty — it still overrides survives to 'undecidable'."""
     monkeypatch.setenv("NARA_SKEPTIC", "1")
     _install_fake_skeptic(monkeypatch, lambda *a, **k: {
         "attack_verdict": "inconclusive", "rationale": "could not decide",
@@ -608,6 +630,28 @@ def test_skeptic_inconclusive_overrides_to_undecidable(cache, monkeypatch):
     out = crit_mod.critic_loop_v0("h", "sk-3")
     assert out["result"]["verdict"] == "undecidable"
     assert out["result"]["skeptic_verdict"] == "inconclusive"
+    assert "skeptic_infra_error" not in out["result"]
+
+
+def test_skeptic_unparseable_inconclusive_never_overrides(cache, monkeypatch):
+    """D-075 R3b(c): 'inconclusive' whose recorded rationale carries the
+    '(unparseable or off-enum' prefix is INFRA NOISE — the critic's own
+    verdict stands and the failure is flagged non-gating."""
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    _install_fake_skeptic(monkeypatch, lambda *a, **k: {
+        "attack_verdict": "inconclusive",
+        "rationale": "(unparseable or off-enum skeptic output; defaulting to "
+                     "inconclusive) <garbage>",
+        "contradicting_doc_id": None, "backend": "b", "model": "m",
+    })
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "sk-3b", _neighbors("a"))
+    out = crit_mod.critic_loop_v0("h", "sk-3b")
+    assert out["result"]["verdict"] == "survives"
+    assert out["result"]["skeptic_infra_error"] is True
+    assert out["result"]["skeptic_verdict"] == "inconclusive"  # still recorded
+    assert "verdict_overridden_from" not in out["result"]
+    assert "override_reason" not in out["result"]
 
 
 def test_skeptic_survives_attack_keeps_verdict(cache, monkeypatch):
@@ -846,7 +890,10 @@ def test_debate_armed_replaces_the_single_shot_attack(cache, monkeypatch):
     assert res["skeptic_wall_seconds"] == 3.5
 
 
-def test_debate_refuted_overrides_to_undecidable(cache, monkeypatch):
+def test_debate_defender_concession_overrides_to_refuted(cache, monkeypatch):
+    """D-075 R3b(a): a debate the apparatus's own defender CONCEDED maps
+    the critique verdict to 'refuted' — information-preserving, harsher.
+    (Pre-D-075 this collapsed to 'undecidable'.)"""
     monkeypatch.setenv("NARA_SKEPTIC", "1")
     monkeypatch.setenv("NARA_DEBATE", "1")
     _install_fake_skeptic(monkeypatch, lambda *a, **k: {})
@@ -854,24 +901,75 @@ def test_debate_refuted_overrides_to_undecidable(cache, monkeypatch):
     monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
     _stage(cache, "dbt-3", _neighbors("a"))
     res = crit_mod.critic_loop_v0("h", "dbt-3")["result"]
-    assert res["verdict"] == "undecidable"
+    assert res["verdict"] == "refuted"
     assert res["verdict_overridden_from"] == "survives"
     assert "debate verdict='refuted'" in res["override_reason"]
+    assert res["debate"]["stop_reason"] == "defender_conceded"  # the evidence
+    assert "skeptic_infra_error" not in res
 
 
-def test_debate_inconclusive_overrides_to_undecidable(cache, monkeypatch):
+def test_debate_refuted_without_recorded_concession_is_undecidable(
+        cache, monkeypatch):
+    """D-075 R3b(a) defensive edge: debate() has no route to 'refuted' but
+    defender_conceded; if one ever appears, the harsher mapping is not
+    earned without the recorded concession."""
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_DEBATE", "1")
+    _install_fake_skeptic(monkeypatch, lambda *a, **k: {})
+    _install_fake_debate(
+        monkeypatch,
+        lambda *a, **k: _debate_out("refuted", stop_reason="mystery_stop"))
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "dbt-3b", _neighbors("a"))
+    res = crit_mod.critic_loop_v0("h", "dbt-3b")["result"]
+    assert res["verdict"] == "undecidable"
+
+
+@pytest.mark.parametrize("stop_reason", ["round_cap", "converged"])
+def test_debate_legit_inconclusive_overrides_to_undecidable(
+        cache, monkeypatch, stop_reason):
+    """D-075 R3b(b): 'inconclusive' from LEGITIMATE uncertainty (the
+    recorded stop_reason is round_cap or converged) still overrides
+    survives to 'undecidable'."""
     monkeypatch.setenv("NARA_SKEPTIC", "1")
     monkeypatch.setenv("NARA_DEBATE", "1")
     _install_fake_skeptic(monkeypatch, lambda *a, **k: {})
     _install_fake_debate(
         monkeypatch,
         lambda *a, **k: _debate_out("inconclusive", rounds=4,
-                                    stop_reason="round_cap"))
+                                    stop_reason=stop_reason))
     monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
     _stage(cache, "dbt-4", _neighbors("a"))
     res = crit_mod.critic_loop_v0("h", "dbt-4")["result"]
     assert res["verdict"] == "undecidable"
-    assert res["debate"]["stop_reason"] == "round_cap"
+    assert res["debate"]["stop_reason"] == stop_reason
+    assert "skeptic_infra_error" not in res
+
+
+@pytest.mark.parametrize("stop_reason", ["challenger_error", "defender_error",
+                                         "error"])
+def test_debate_infra_noise_never_overrides(cache, monkeypatch, stop_reason):
+    """D-075 R3b(c): 'inconclusive' from INFRA NOISE (an error stop
+    recorded by the debate engine) NEVER overrides — the critic's own
+    verdict stands and the failure is flagged non-gating. D-075 names
+    challenger_error; defender_error and the pre-turn error stop are the
+    same kind of recorded non-epistemic failure."""
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_DEBATE", "1")
+    _install_fake_skeptic(monkeypatch, lambda *a, **k: {})
+    _install_fake_debate(
+        monkeypatch,
+        lambda *a, **k: _debate_out("inconclusive", rounds=1,
+                                    stop_reason=stop_reason))
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "dbt-4b", _neighbors("a"))
+    res = crit_mod.critic_loop_v0("h", "dbt-4b")["result"]
+    assert res["verdict"] == "survives"
+    assert res["skeptic_infra_error"] is True
+    assert res["skeptic_verdict"] == "inconclusive"      # still recorded
+    assert res["debate"]["stop_reason"] == stop_reason   # evidence auditable
+    assert "verdict_overridden_from" not in res
+    assert "override_reason" not in res
 
 
 def test_debate_transcript_is_capped_in_the_record(cache, monkeypatch):

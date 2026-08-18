@@ -518,3 +518,119 @@ def test_relevance_never_emits_topicality_advisory_any_topicality():
             # The output key set is exactly the frozen+additive contract — the
             # advisory is NOT part of it (it lives one layer up, in nara).
             assert set(out.keys()) == _ALL_KEYS
+
+
+# ── D-075 R2: curated domain-anchor demotion of the R0/R0b LLM kill ─────────
+# August 2026 diagnosis (wf_c806049b): 20/21 off-domain kills were the lab's
+# OWN active topic — the LLM topicality judges kill delegation / liquid-
+# democracy / social-choice hypotheses. Owner-ratified fix: the curated
+# DOMAIN_ANCHOR_PHRASES set makes the active research program in-domain to
+# its own gates BY CONSTRUCTION. These are the regression pins.
+
+# The EXACT failing topic from the D-075 diagnosis (memory/idea_ledger.jsonl,
+# cl-paper-2608.13085).
+_D075_FAILING_TOPIC = (
+    "Representation in Peer Selection: A Liquid Democracy Perspective"
+)
+
+# Neighbors mirroring what the R2 corpus ingest provides: social-choice /
+# delegation abstracts with genuine lexical overlap against the topic.
+_SOCIAL_CHOICE_NEIGHBORS = [
+    {"doc_id": "sc-1", "score": 0.69, "source_layer": "live_arxiv",
+     "title": "Liquid Democracy: A Network Centrality Approach",
+     "chunk_text": "Liquid democracy lets each voter cast a ballot directly "
+                   "or delegate transitively; representation and voting power "
+                   "concentrate along the delegation network."},
+    {"doc_id": "sc-2", "score": 0.66, "source_layer": "live_arxiv",
+     "title": "Proportional Representation in Peer Selection",
+     "chunk_text": "Peer selection mechanisms choose a committee from among "
+                   "the agents themselves; proportional representation axioms "
+                   "constrain which selection rules are acceptable."},
+    {"doc_id": "sc-3", "score": 0.63, "source_layer": "live_arxiv",
+     "title": "Delegation Games and Transitive Proxy Voting",
+     "chunk_text": "In delegation games voters strategically choose a proxy; "
+                   "transitive delegation defines a liquid democracy in which "
+                   "voting power flows to informed representatives."},
+]
+
+# A genuinely off-domain control: no anchor phrase, R0 must keep gating.
+_D075_CONTROL_OFF_HYP = (
+    "Database index tuning reduces query latency by choosing B-tree column "
+    "orderings that match the workload's most frequent predicates."
+)
+
+
+def test_d075_failing_topic_classifies_on_domain_despite_r0_off():
+    """THE D-075 pin: the exact topic the lab killed 20/21 times must come
+    out on-domain even when the LLM judge says 'off' — the matched anchor
+    demotes R0 and the ladder reads the (now in-corpus) retrieval as ok."""
+    out = relevance(_SOCIAL_CHOICE_NEIGHBORS, _D075_FAILING_TOPIC,
+                    topicality="off")
+    assert out["low_confidence"] is False
+    assert out["category"] == "ok"
+    assert out["rule_fired"] is None
+    assert out["domain_anchor_term"] == "liquid democracy"
+
+
+def test_d075_off_independent_is_demoted_too():
+    """R0b (the independent skeptic's kill) is demoted the same way — the
+    program is in-domain to its own gates by construction, whichever judge
+    said 'off'."""
+    out = relevance(_SOCIAL_CHOICE_NEIGHBORS, _D075_FAILING_TOPIC,
+                    topicality="off_independent")
+    assert out["low_confidence"] is False
+    assert out["rule_fired"] is None
+    assert out["domain_anchor_term"] == "liquid democracy"
+
+
+def test_d075_control_database_tuning_stays_off_domain():
+    """The control: a genuinely off-domain claim (no anchor phrase) keeps
+    the R0 kill byte-identically."""
+    out = relevance(_SOCIAL_CHOICE_NEIGHBORS, _D075_CONTROL_OFF_HYP,
+                    topicality="off")
+    assert out["low_confidence"] is True
+    assert out["category"] == "off_domain"
+    assert out["rule_fired"] == "R0"
+    assert "domain_anchor_term" not in out
+
+
+def test_d075_anchor_demotes_llm_kill_but_never_rescues_ladder():
+    """The anchor only demotes R0/R0b — empty retrieval still gates (rule 4:
+    no basis to assert novelty/survival), with the demotion still visible."""
+    out = relevance([], _D075_FAILING_TOPIC, topicality="off")
+    assert out["low_confidence"] is True
+    assert out["category"] == "empty"
+    assert out["domain_anchor_term"] == "liquid democracy"
+
+
+def test_d075_anchor_key_absent_without_llm_off_verdict():
+    """domain_anchor_term appears ONLY on a demotion: with topicality
+    on/unsure/None the output contract is unchanged even for anchor topics."""
+    for t in ("on", "unsure", None):
+        out = relevance(_SOCIAL_CHOICE_NEIGHBORS, _D075_FAILING_TOPIC,
+                        topicality=t)
+        assert "domain_anchor_term" not in out
+        assert set(out.keys()) == _ALL_KEYS
+
+
+def test_d075_anchor_terms_cover_ratified_topics():
+    """Every ratified D-075 topic family matches at least one anchor —
+    delegation, liquid democracy, social choice, sortition, mechanism design."""
+    for hyp in (
+        "Transitive delegation concentrates voting power in a few gurus.",
+        "Liquid democracy outperforms direct voting with informed agents.",
+        "Social choice theory constrains proportional committee selection.",
+        "Sortition yields descriptively representative citizen panels.",
+        "Mechanism design for strategyproof peer selection with effort.",
+    ):
+        assert rr._domain_anchor_hit(hyp) is not None, hyp
+
+
+def test_d075_word_boundary_matching_no_substring_leaks():
+    """Anchors match on word boundaries (plural tolerated); fragments inside
+    unrelated words never match."""
+    assert rr._domain_anchor_hit("Delegation games with proxies.") == "delegation game"
+    assert rr._domain_anchor_hit("A condorcetian paradox") is None
+    assert rr._domain_anchor_hit("the sortitions of fate") == "sortition"
+    assert rr._domain_anchor_hit(None) is None
+    assert rr._domain_anchor_hit("") is None

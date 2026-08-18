@@ -76,17 +76,19 @@ def _run(challenger, defender, **kw):
 # ── the round cap is a bound, not a suggestion ───────────────────────
 
 
-@pytest.mark.parametrize("bad", [5, 0, -1, 99, 2.5, "3", True])
+@pytest.mark.parametrize("bad", [7, 0, -1, 99, 2.5, "3", True])
 def test_max_rounds_out_of_band_raises(bad):
     with pytest.raises(ValueError):
         _run(_endless_challenger(), _endless_defender(), max_rounds=bad)
 
 
-def test_five_rounds_are_impossible():
-    assert dbt.MAX_DEBATE_ROUNDS == 4
+def test_seven_rounds_are_impossible():
+    # D-075 R3a: 4 → 6 (owner reversed the 08-15 "4 is fine" — the 4-round
+    # cap measured as binding mid-argument on 5/6 real exchanges).
+    assert dbt.MAX_DEBATE_ROUNDS == 6
     out = _run(_endless_challenger(), _endless_defender())
-    assert out["rounds"] == 4
-    assert len([t for t in out["transcript"] if t["role"] == "challenger"]) == 4
+    assert out["rounds"] == 6
+    assert len([t for t in out["transcript"] if t["role"] == "challenger"]) == 6
 
 
 def test_round_cap_is_inconclusive_never_survives():
@@ -253,7 +255,7 @@ def test_verdicts_stay_inside_the_enum():
 def test_every_model_turn_carries_backend_and_model():
     out = _run(_endless_challenger(), _endless_defender())
     model_turns = [t for t in out["transcript"] if t["role"] != "system"]
-    assert len(model_turns) == 8
+    assert len(model_turns) == 2 * dbt.MAX_DEBATE_ROUNDS == 12
     for t in model_turns:
         assert t["backend"] and t["model"]
         assert set(t) >= {"round", "role", "backend", "model", "text",
@@ -272,7 +274,8 @@ def test_challenger_and_defender_tags_are_distinguishable():
 
 def test_round_numbers_increment_per_round():
     out = _run(_endless_challenger(), _endless_defender())
-    assert [t["round"] for t in out["transcript"]] == [1, 1, 2, 2, 3, 3, 4, 4]
+    assert [t["round"] for t in out["transcript"]] == [
+        1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6]
 
 
 # ── MOCK_LLM: never spawn a real subagent ────────────────────────────
@@ -485,7 +488,7 @@ def test_end_to_end_with_stubbed_subagent_stays_bounded(live, monkeypatch):
     assert out["verdict"] == "inconclusive"
     assert out["stop_reason"] == "round_cap"
     assert out["rounds"] == dbt.MAX_DEBATE_ROUNDS
-    assert len(out["transcript"]) == 8
+    assert len(out["transcript"]) == 2 * dbt.MAX_DEBATE_ROUNDS
     assert all(t["backend"] and t["model"] for t in out["transcript"])
     assert {t["backend"] for t in out["transcript"]} == {"vllm-qwen", "vllm-gemma"}
 

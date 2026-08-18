@@ -109,7 +109,7 @@
       "properties": {
         "verdict": {
           "type": "string",
-          "enum": ["survives", "falsified", "restated", "malformed", "undecidable"]
+          "enum": ["survives", "falsified", "restated", "malformed", "undecidable", "refuted"]
         },
         "rationale":              {"type": "string"},
         "contradicting_paper_id": {"type": ["string", "null"]},
@@ -193,7 +193,7 @@
       "properties": {
         "verdict": {
           "type": "string",
-          "enum": ["fatal_flaw", "proceed"]
+          "enum": ["fatal_flaw", "proceed", "unscored"]
         },
         "critique":           {"type": "string"},
         "suggested_revision": {"type": ["string", "null"]},

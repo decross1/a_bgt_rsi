@@ -270,3 +270,105 @@ def test_out_of_enum_rung_raises_never_coerced(tmp_path):
                 "reasons": []}
     with pytest.raises(ValueError, match="L9"):
         _run(tmp_path, execute=False, derive=bad_derive)
+
+
+# ── D-075 R4: refills match EXISTING open clusters before minting. ──────────
+# The 2026-08-18 case: a corpus refill re-ran consolidation and rows that
+# near-dup'd ALREADY-MINTED open clusters founded byte-similar duplicate
+# clusters (3 of them; one then got killed while its identical original
+# stayed open). Ratified fix: fresh items go through the SAME prefilter
+# layers against existing not-killed ledger clusters FIRST; a match appends
+# member_added to the EXISTING cluster instead of cluster_created.
+
+def _refill(tmp_path, row):
+    with open(tmp_path / "loop_memory.jsonl", "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row) + "\n")
+
+
+def test_refill_near_dup_member_adds_to_existing_cluster(tmp_path):
+    first = _run(tmp_path, execute=True)
+    assert first["clusters"] == 4 and first["merged_into_existing"] == 0
+    n_before = len(_events(tmp_path))
+    # Refill row: reworded near-dup of open cluster cl-iter-001's members.
+    # No [[k*]] marker -> its stub vector is orthogonal to every other text,
+    # so ONLY the load-bearing lexical layer can catch it against the
+    # existing cluster (exactly the intra-batch pin, now cross-run).
+    _refill(tmp_path, {
+        "iteration_id": "iter-101", "seed": {"topic": ""}, "_lvl": "L0",
+        "hypothesis": {"text": "Cooperation rises alongside memory depth"},
+        "novelty": {"class": "novel"}})
+    # Dry-run plans the merge and writes nothing.
+    dry = _run(tmp_path, execute=False)
+    assert dry["merged_into_existing"] == 1 and dry["clusters"] == 0
+    assert dry["events_planned"] == 1 and dry["events_appended"] == 0
+    assert len(_events(tmp_path)) == n_before
+    # Execute: ONE member_added to the EXISTING cluster; NO cluster_created.
+    second = _run(tmp_path, execute=True)
+    assert second["clusters"] == 0
+    assert second["merged_into_existing"] == 1
+    assert second["events_appended"] == 1
+    new_ev = _events(tmp_path)[n_before:]
+    assert len(new_ev) == 1
+    assert new_ev[0]["event_type"] == "member_added"
+    assert new_ev[0]["cluster_id"] == "cl-iter-001"
+    assert new_ev[0]["member_id"] == "iter-101"
+    assert new_ev[0]["accept_reason"].startswith("lexical_jaccard")
+    assert second["existing_merges"] == [
+        {"cluster_id": "cl-iter-001", "member_id": "iter-101",
+         "layer": "lexical_jaccard", "score": 1.0}]
+    # The near-dup joiner's text is preserved in the archive.
+    rows = [json.loads(l) for l in
+            (tmp_path / "idea_archive.jsonl").read_text().splitlines()]
+    a101 = [r for r in rows if r["member_id"] == "iter-101"]
+    assert len(a101) == 1
+    assert a101[0]["cluster_id"] == "cl-iter-001"
+    assert a101[0]["reason"] == "near_dup_non_elite"
+    # Idempotency survives the merge: a third run appends ZERO events.
+    third = _run(tmp_path, execute=True)
+    assert third["events_appended"] == 0
+    assert third["merged_into_existing"] == 0
+    assert third["skipped_already_processed"] == 8
+
+
+def test_refill_batch_chains_onto_existing_not_each_other(tmp_path):
+    # Two refill near-dups of the same existing cluster: BOTH member_add to
+    # cl-iter-001 — the existing cluster outranks minting a fresh intra-batch
+    # duplicate (the exact 3-duplicate shape of the 08-18 incident).
+    _run(tmp_path, execute=True)
+    _refill(tmp_path, {
+        "iteration_id": "iter-103", "seed": {"topic": ""}, "_lvl": "L0",
+        "hypothesis": {"text": "Cooperation rises alongside memory depth"},
+        "novelty": {"class": "novel"}})
+    _refill(tmp_path, {
+        "iteration_id": "iter-104", "seed": {"topic": ""}, "_lvl": "L0",
+        "hypothesis": {"text": "Cooperation rises steadily alongside memory "
+                               "depth within repeated dilemma simulations"},
+        "novelty": {"class": "novel"}})
+    second = _run(tmp_path, execute=True)
+    assert second["merged_into_existing"] == 2 and second["clusters"] == 0
+    added = {e["member_id"]: e for e in _events(tmp_path)
+             if e["event_type"] == "member_added"}
+    assert added["iter-103"]["cluster_id"] == "cl-iter-001"
+    assert added["iter-104"]["cluster_id"] == "cl-iter-001"
+
+
+def test_refill_dup_of_killed_cluster_founds_its_own(tmp_path):
+    # cl-iter-003 was killed by redteam fatal_flaw in run 1. A refill near-dup
+    # of it must NOT silently member_add into the dead niche (re-entry stays
+    # accept_candidate's evidence-keyed job) — it founds its own cluster.
+    _run(tmp_path, execute=True)
+    _refill(tmp_path, {
+        "iteration_id": "iter-102", "seed": {"topic": ""}, "_lvl": "L0",
+        "hypothesis": {"text": "Auction overbidding stems from loss aversion"},
+        "novelty": {"class": "novel"}})
+    second = _run(tmp_path, execute=True)
+    assert second["merged_into_existing"] == 0
+    assert second["clusters"] == 1
+    created = [e for e in _events(tmp_path) if e["event_type"] == "cluster_created"
+               and e["member_id"] == "iter-102"]
+    assert len(created) == 1 and created[0]["cluster_id"] == "cl-iter-102"
+    killed_adds = [e for e in _events(tmp_path)
+                   if e["event_type"] == "member_added"
+                   and e["cluster_id"] == "cl-iter-003"
+                   and e["member_id"] == "iter-102"]
+    assert killed_adds == []

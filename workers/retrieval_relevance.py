@@ -75,6 +75,22 @@ D-053 (2026-06-15) adds a further-additive, env-gated, NON-GATING field:
                         longer downgraded. With the flag unset the key is
                         absent and R0 gates exactly as before (byte-identical).
                         Mirrors the D-052 relevance.topicality_advisory shape.
+
+D-075 R2 (2026-08-18, owner-ratified) adds a further-additive field:
+  - `domain_anchor_term` — str; present ONLY when the LLM topicality judge
+                        said "off"/"off_independent" AND the hypothesis
+                        matches a curated DOMAIN_ANCHOR_PHRASES entry (the
+                        program's owner-ratified extension into delegation /
+                        liquid democracy / social choice / sortition /
+                        mechanism design). The LLM kill is then DEMOTED —
+                        the active research program is in-domain to its own
+                        gates BY CONSTRUCTION — and the lexical/cosine
+                        ladder owns the gate (same recursion shape as
+                        r0_advisory). The anchor only demotes the LLM kill;
+                        it NEVER rescues from the ladder itself (empty/thin/
+                        R1..R5 still gate). Diagnosis: 20/21 August
+                        off-domain kills were the lab's OWN active topic
+                        (wf_c806049b).
 """
 from __future__ import annotations
 
@@ -134,6 +150,67 @@ SPREAD_COSINE_CEIL = 0.66  # R5 also requires max cosine below this ceiling
 
 # How many top neighbors feed the spread diagnostic.
 TOP_N_FOR_SPREAD = 10
+
+# ---- D-075 R2: curated in-domain anchor phrases (2026-08-18) ---------------
+#
+# The August diagnosis (wf_c806049b): 20/21 off-domain kills were the lab's
+# OWN active topic — the R0/R0b LLM topicality judges kill delegation /
+# liquid-democracy / social-choice hypotheses because their domain framing
+# predates the program's owner-ratified extension into computational social
+# choice. These phrases are the curated extension of the research program's
+# domain: a hypothesis matching one is in-domain BY CONSTRUCTION (D-075 R2:
+# "the active research program must be in-domain to its own gates by
+# construction"), so an LLM "off"/"off_independent" verdict is DEMOTED — the
+# lexical/cosine ladder owns the gate — instead of condemning outright.
+#
+# ADDITIVE ONLY. The condemn-side rules (R1..R5, empty) are untouched: the
+# anchor demotes the LLM kill, it never rescues a hypothesis from the ladder.
+# Matching is word-boundary, case-insensitive, with an optional plural "s" on
+# the final word — multi-word phrases and unambiguous domain terms only, to
+# keep the set hard to vocabulary-game (the D-045 lesson).
+DOMAIN_ANCHOR_PHRASES = (
+    "liquid democracy",
+    "delegative democracy",
+    "delegative voting",
+    "delegated voting",
+    "proxy voting",
+    "vote delegation",
+    "voting delegation",
+    "transitive delegation",
+    "delegation game",
+    "delegation graph",
+    "delegation network",
+    "sortition",
+    "social choice",
+    "voting power",
+    "power index",
+    "voting rule",
+    "mechanism design",
+    "peer selection",
+    "committee selection",
+    "multiwinner voting",
+    "participatory budgeting",
+    "preference aggregation",
+    "condorcet",
+    "borda count",
+)
+
+_DOMAIN_ANCHOR_RES = tuple(
+    re.compile(r"\b" + re.escape(p) + r"s?\b") for p in DOMAIN_ANCHOR_PHRASES
+)
+
+
+def _domain_anchor_hit(text: Any) -> str | None:
+    """First DOMAIN_ANCHOR_PHRASES entry present in `text` (word-boundary,
+    case-insensitive, optional trailing plural), else None. Non-str -> None."""
+    if not isinstance(text, str) or not text:
+        return None
+    low = text.lower()
+    for phrase, rx in zip(DOMAIN_ANCHOR_PHRASES, _DOMAIN_ANCHOR_RES):
+        if rx.search(low):
+            return phrase
+    return None
+
 
 # Token cleaning. Domain-agnostic English stopwords plus a few game-theory
 # words that recur in nearly every foundational neighbor regardless of the
@@ -293,6 +370,12 @@ def relevance(
     The legacy cosine-only fallback (no text signal, weak max cosine) keeps
     category "thin" with rule_fired None — it predates the ladder.
 
+    D-075 R2: R0/R0b are DEMOTED (never fire) when the hypothesis matches a
+    curated DOMAIN_ANCHOR_PHRASES entry — the program's ratified extension
+    into delegation / liquid democracy / social choice / sortition /
+    mechanism design. The matched phrase rides as `domain_anchor_term`; the
+    ladder (empty/R1..R5) still gates normally.
+
     topicality is an explicit LLM domain judgment computed by the caller
     (orchestrator/topicality.py): "on" | "off" | "unsure" | None. Added
     2026-06-09 after BOTH corpus-derived anchor variants were falsified as
@@ -327,6 +410,25 @@ def relevance(
         )
         out["r0_advisory"] = "off"
         return out
+
+    # --- D-075 R2: curated domain-anchor demotion (ALWAYS ON, additive) -----
+    # An LLM "off"/"off_independent" verdict on a hypothesis that matches the
+    # curated program-domain anchors (DOMAIN_ANCHOR_PHRASES) is demoted, not
+    # obeyed: the active research program is in-domain to its own gates by
+    # construction. Same recursion shape as the r0_advisory demotion — the
+    # lexical/cosine ladder owns the gate (empty/R1..R5 still condemn), and
+    # the matched phrase rides as the additive `domain_anchor_term` key so
+    # the demotion is visible downstream. Non-anchor hypotheses fall through
+    # to the R0/R0b block byte-identically.
+    if topicality in ("off", "off_independent"):
+        _anchor_term = _domain_anchor_hit(hypothesis_text)
+        if _anchor_term is not None:
+            out = relevance(
+                neighbors, hypothesis_text,
+                anchor_cosine=anchor_cosine, topicality=None,
+            )
+            out["domain_anchor_term"] = _anchor_term
+            return out
 
     # --- R0/R0b: explicit LLM topicality judgment (condemn-only, like the
     # anchor). "off" = the primary judge; "off_independent" = the primary

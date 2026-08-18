@@ -11,10 +11,14 @@ so the unit is self-contained and the integrator wires it as a cheap
 pre-flight gate ahead of the experiment step.
 
 Like `critic_loop_v0` it dispatches a bounded sub-agent via
-`orchestrator.subagent.run_subagent` and mirrors that worker's status
-fallback ladder: a critic failure (timeout / schema_mismatch) does NOT block
-the chain — it defaults to verdict "proceed". Absence of a found flaw is a
-"proceed", not a "fatal_flaw".
+`orchestrator.subagent.run_subagent`. Failure polarity (D-075 R1b): a
+critic failure (schema_mismatch / timeout / sub-agent error) yields verdict
+"unscored" — it does NOT block the chain, but it is never fail-opened into
+a "proceed" either. Downstream, "unscored" behaves exactly like an ABSENT
+redteam signal: acceptable at L1 in the evidence ladder, blocks L4 (which
+requires verdict == "proceed"), and never kills (which requires
+"fatal_flaw"). Only the sub-agent itself can award "proceed" or
+"fatal_flaw".
 
 Output shape (worker contract) carries the standard sub-agent observability
 fields under `result`:
@@ -36,7 +40,13 @@ from orchestrator.subagent import (
 )
 
 
+# What the SUB-AGENT may emit. The worker synthesizes a third verdict,
+# UNSCORED_VERDICT, on every sub-agent failure path (D-075 R1b). It is
+# deliberately NOT part of the sub-agent's output schema — a parse
+# accident can never mint it, and a parse accident can never mint
+# "proceed" any more either.
 ALLOWED_VERDICTS = ("fatal_flaw", "proceed")
+UNSCORED_VERDICT = "unscored"
 
 
 REDTEAM_AGENT_SYSTEM_PROMPT = (
@@ -124,11 +134,14 @@ def _post_validate(payload: dict) -> tuple[dict, list[str]]:
     )
 
 
-def _proceed_fallback(reason: str, observability: dict) -> dict:
-    """Default verdict when the sub-agent fails — a critic failure does
-    NOT block the chain. Absence of a found flaw = proceed."""
+def _unscored_fallback(reason: str, observability: dict) -> dict:
+    """Verdict when the sub-agent fails (D-075 R1b). A critic failure does
+    NOT block the chain, but it never counts as a real "proceed" either:
+    "unscored" behaves as an ABSENT redteam signal downstream — L1-eligible
+    in the evidence ladder, never L4 (requires "proceed"), never a kill
+    (requires "fatal_flaw")."""
     return {
-        "verdict": "proceed",
+        "verdict": UNSCORED_VERDICT,
         "critique": reason,
         "suggested_revision": None,
         "confidence": 0.0,
@@ -151,9 +164,11 @@ def redteam_critic(
     Returns:
     ```
     {
-        "status": "passed" | "error",
+        "status": "passed" | "error",   # "error" = invalid inputs only;
+                                        # every sub-agent failure path
+                                        # returns "passed" + "unscored"
         "result": {
-            "verdict": "fatal_flaw" | "proceed",
+            "verdict": "fatal_flaw" | "proceed" | "unscored",
             "critique": str,
             "suggested_revision": str | None,
             "confidence": float,
@@ -228,40 +243,52 @@ def redteam_critic(
 
     if sa_result.status == "schema_mismatch":
         raw = sa_result.result if isinstance(sa_result.result, dict) else None
-        fallback = _proceed_fallback(
-            "(sub-agent emitted schema-mismatched output; defaulting to proceed) "
+        fallback = _unscored_fallback(
+            "(sub-agent emitted schema-mismatched output; verdict unscored) "
             + str(raw)[:500],
             observability,
         )
         return {
             "status": "passed",
             "result": fallback,
-            "errors": ["sub-agent schema mismatch; verdict defaulted to 'proceed'"]
+            "errors": ["sub-agent schema mismatch; verdict 'unscored' "
+                       "(D-075 R1b: never fail-open to 'proceed')"]
                        + sa_result.errors,
             "wrapper_request_id": last_rid,
             "parent_request_id": parent_request_id,
         }
 
     if sa_result.status == "timeout":
-        fallback = _proceed_fallback(
+        fallback = _unscored_fallback(
             f"(sub-agent budget exceeded after {sa_result.turns_used} turns; "
-            "defaulting to proceed)",
+            "verdict unscored)",
             observability,
         )
         return {
             "status": "passed",
             "result": fallback,
-            "errors": ["sub-agent timeout; verdict defaulted to 'proceed'"]
+            "errors": ["sub-agent timeout; verdict 'unscored' "
+                       "(D-075 R1b: never fail-open to 'proceed')"]
                        + sa_result.errors,
             "wrapper_request_id": last_rid,
             "parent_request_id": parent_request_id,
         }
 
-    # sa_result.status == "error"
+    # sa_result.status == "error" — the dispatch itself failed (backend
+    # down, transport error). Same polarity as the other failure paths
+    # (D-075 R1b): the chain proceeds on "unscored"; the honest detail
+    # rides in subagent_status == "error" plus the errors list.
+    fallback = _unscored_fallback(
+        "(sub-agent dispatch error; verdict unscored) "
+        + "; ".join(sa_result.errors)[:500],
+        observability,
+    )
     return {
-        "status": "error",
-        "result": None,
-        "errors": sa_result.errors,
+        "status": "passed",
+        "result": fallback,
+        "errors": ["sub-agent error; verdict 'unscored' "
+                   "(D-075 R1b: never fail-open to 'proceed')"]
+                   + sa_result.errors,
         "wrapper_request_id": last_rid,
         "parent_request_id": parent_request_id,
     }

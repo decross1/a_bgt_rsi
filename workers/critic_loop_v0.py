@@ -41,7 +41,22 @@ from orchestrator.subagent import (
 )
 
 
+# The critic sub-agent's OWN verdict enum. "refuted" is deliberately NOT
+# here — it enters the critique verdict only via the D-075 R3b skeptic
+# override (a defender concession / verified single-shot refutation),
+# never from the critic model itself.
 ALLOWED_VERDICTS = ("survives", "falsified", "restated", "malformed", "undecidable")
+
+# D-075 R3b: the noise-vs-legit split for a skeptic "inconclusive" comes
+# from RECORDED evidence only — the debate's stop_reason, or the
+# single-shot rationale prefix stamped by novelty_skeptic.attack() when
+# the model output was unparseable/off-enum. Never inferred.
+# `defender_error` and the pre-turn `error` stop are included alongside
+# the D-075-named `challenger_error`: all three are error stops recorded
+# by the debate engine, not epistemic outcomes (reported at build time —
+# D-075 names only challenger_error explicitly).
+DEBATE_INFRA_STOP_REASONS = ("challenger_error", "defender_error", "error")
+SINGLE_SHOT_INFRA_RATIONALE_PREFIX = "(unparseable or off-enum"
 
 # Caps on the debate transcript copied into the iteration record (D-065).
 # The full transcript stays in workers.debate's return value; the record
@@ -238,20 +253,30 @@ def _configured_skeptic_backend() -> str:
 
 def _run_single_attack(
     result: dict, hypothesis_text: str, iteration_id: str | None
-) -> tuple[bool, str | None]:
+) -> tuple[bool, str | None, str | None]:
     """The single-shot skeptic exchange (D-041/D-044 attack()).
 
-    Returns (ran, override_reason). ran=False means the seam was a no-op
-    (module absent / no attack()) and the caller must not act. Mutates
-    `result` in place with the verdict AND the skeptic's own provenance.
+    Returns (ran, override_reason, disposition). ran=False means the seam
+    was a no-op (module absent / no attack()) and the caller must not act.
+    Mutates `result` in place with the verdict AND the skeptic's own
+    provenance.
+
+    `disposition` is the D-075 R3b mapping instruction, classified HERE,
+    next to the recorded evidence (the attack's rationale prefix):
+      "refuted"     — attack said 'refuted' with a verified citation;
+      "undecidable" — legitimate uncertainty (a parseable 'inconclusive',
+                      or a defensive 'refuted' that arrived uncited);
+      "infra"       — the '(unparseable or off-enum' rationale prefix:
+                      infra noise, never a downgrade;
+      None          — nothing to act on (survives_attack / crash).
     """
     try:
         from orchestrator import novelty_skeptic  # lazy: module may not exist yet
     except ImportError:
-        return (False, None)
+        return (False, None, None)
     attack = getattr(novelty_skeptic, "attack", None)
     if not callable(attack):
-        return (False, None)
+        return (False, None, None)
     t0 = time.perf_counter()
     try:
         out = attack(hypothesis_text, iteration_id=iteration_id) or {}
@@ -260,7 +285,7 @@ def _run_single_attack(
         result["skeptic_backend"] = _configured_skeptic_backend()
         result["skeptic_model"] = None
         result["skeptic_wall_seconds"] = round(time.perf_counter() - t0, 3)
-        return (True, None)
+        return (True, None, None)
     attack_verdict = out.get("attack_verdict")
     result["skeptic_verdict"] = attack_verdict
     # D-065: the SKEPTIC's own provenance. `subagent_backend`/`_model`
@@ -274,29 +299,57 @@ def _run_single_attack(
     # Measured HERE, not returned by attack(): the single-shot attack has
     # no turn/wall accounting of its own (one call_sync).
     result["skeptic_wall_seconds"] = round(time.perf_counter() - t0, 3)
+
+    # D-075 R3b classification, from the attack's own recorded evidence.
+    rationale = out.get("rationale") if isinstance(out.get("rationale"), str) else ""
+    cited = out.get("contradicting_doc_id")
+    if attack_verdict == "refuted" and isinstance(cited, str) and cited.strip():
+        # attack() only ever returns 'refuted' with a doc_id it verified
+        # against its own retrieval — information-preserving, harsher.
+        disposition = "refuted"
+    elif attack_verdict == "refuted":
+        # Defensive: an uncited 'refuted' (a nonconforming attack impl —
+        # the real attack() downgrades these itself). No verified citation
+        # means the harsher mapping is not earned; pre-D-075 behavior.
+        disposition = "undecidable"
+    elif attack_verdict == "inconclusive":
+        disposition = (
+            "infra"
+            if rationale.startswith(SINGLE_SHOT_INFRA_RATIONALE_PREFIX)
+            else "undecidable"  # legitimate, parseable uncertainty
+        )
+    else:
+        disposition = None  # survives_attack / off-enum: caller acts on nothing
     return (
         True,
-        f"skeptic attack_verdict={attack_verdict!r}: "
-        + (out.get("rationale") or "")[:300],
+        f"skeptic attack_verdict={attack_verdict!r}: " + rationale[:300],
+        disposition,
     )
 
 
 def _run_debate_exchange(
     result: dict, hypothesis_text: str, iteration_id: str | None
-) -> tuple[bool, str | None]:
+) -> tuple[bool, str | None, str | None]:
     """The NARA_DEBATE=1 variant of the skeptic exchange (D-065).
 
     Replaces the single-shot attack with workers.debate's bounded
     multi-turn exchange (challenger on the independent backend, defender
     on the apparatus's own). The terminal verdict keeps riding on
     `skeptic_verdict` for backward compatibility; the model-tagged
-    transcript lands additively under `debate`. Same (ran, reason)
-    contract as _run_single_attack.
+    transcript lands additively under `debate`. Same (ran, reason,
+    disposition) contract as _run_single_attack; here the D-075 R3b
+    classification reads the debate's recorded stop_reason:
+      "refuted"     — stop_reason 'defender_conceded': the apparatus's
+                      own model conceded the claim;
+      "undecidable" — legitimate uncertainty ('round_cap'/'converged');
+      "infra"       — an error stop (DEBATE_INFRA_STOP_REASONS): noise,
+                      never a downgrade;
+      None          — nothing to act on (challenger conceded / crash).
     """
     try:
         from workers import debate as debate_mod  # lazy: dark by default
     except ImportError:
-        return (False, None)
+        return (False, None, None)
     try:
         out = debate_mod.debate(
             hypothesis_text, None, iteration_id=iteration_id
@@ -305,7 +358,7 @@ def _run_debate_exchange(
         result["skeptic_verdict"] = f"error: {type(exc).__name__}: {exc}"[:200]
         result["skeptic_backend"] = _configured_skeptic_backend()
         result["skeptic_model"] = None
-        return (True, None)
+        return (True, None, None)
 
     transcript = [
         {**t, "text": str(t.get("text") or "")[:DEBATE_TURN_TEXT_CHARS]}
@@ -337,11 +390,29 @@ def _run_debate_exchange(
         "stop_reason": out.get("stop_reason"),
         "transcript":  transcript,
     }
+
+    # D-075 R3b classification, from the debate's own recorded stop_reason
+    # (which the record block above carries — the evidence stays auditable).
+    stop_reason = out.get("stop_reason")
+    if verdict == "refuted" and stop_reason == "defender_conceded":
+        disposition = "refuted"
+    elif verdict == "refuted":
+        # Defensive: debate() has no other route to 'refuted'. Without the
+        # recorded concession the harsher mapping is not earned.
+        disposition = "undecidable"
+    elif verdict == "inconclusive":
+        disposition = (
+            "infra" if stop_reason in DEBATE_INFRA_STOP_REASONS
+            else "undecidable"  # round_cap / converged: legitimate uncertainty
+        )
+    else:
+        disposition = None  # survives_debate / off-enum: caller acts on nothing
     return (
         True,
         f"debate verdict={verdict!r} after {out.get('rounds')} round(s) "
-        f"(stop_reason={out.get('stop_reason')!r}): "
+        f"(stop_reason={stop_reason!r}): "
         + (transcript[-1].get("text") if transcript else "")[:300],
+        disposition,
     )
 
 
@@ -361,23 +432,38 @@ def _maybe_run_skeptic(
     single-shot attack for the bounded multi-turn debate (D-065). Unset —
     the default — the exchange is byte-identical to the pre-D-065 path
     apart from the additive skeptic_* provenance tags.
+
+    D-075 R3b verdict mapping (was: refuted AND inconclusive both →
+    'undecidable'; infra noise also downgraded):
+      (a) a refutation the exchange can attest (defender conceded / a
+          verified single-shot citation) → critique verdict 'refuted' —
+          information-preserving, harsher;
+      (b) legitimate uncertainty → 'undecidable', as before;
+      (c) infra noise (recorded stop_reason / rationale prefix) NEVER
+          overrides — the critic's own verdict stands and the failure is
+          recorded in the non-gating `skeptic_infra_error` flag.
     """
     if os.environ.get("NARA_SKEPTIC", "0") != "1":
         return
     if os.environ.get("NARA_DEBATE", "0") == "1":
-        ran, override_reason = _run_debate_exchange(
+        ran, override_reason, disposition = _run_debate_exchange(
             result, hypothesis_text, iteration_id
         )
     else:
-        ran, override_reason = _run_single_attack(
+        ran, override_reason, disposition = _run_single_attack(
             result, hypothesis_text, iteration_id
         )
     if not ran:
         return
-    if result.get("skeptic_verdict") in ("refuted", "inconclusive") and override_reason:
+    if disposition == "infra":
+        # D-075 R3b(c): logged, not scored. Non-gating by construction —
+        # nothing downstream reads this flag as a verdict.
+        result["skeptic_infra_error"] = True
+        return
+    if disposition in ("refuted", "undecidable") and override_reason:
         result["verdict_overridden_from"] = result.get("verdict")
         result["override_reason"] = override_reason
-        result["verdict"] = "undecidable"
+        result["verdict"] = disposition
 
 
 def _maybe_run_restate_skeptic(
@@ -462,7 +548,9 @@ def critic_loop_v0(
         "status": "passed" | "error",
         "result": {
             "verdict": "survives" | "falsified" | "restated" | "malformed"
-                       | "undecidable",
+                       | "undecidable"
+                       | "refuted",  # D-075 R3b: skeptic-override only —
+                                     # never emitted by the critic itself
             "rationale": str,
             "contradicting_paper_id": str | None,
             "subagent_turns_used": int,
@@ -473,6 +561,10 @@ def critic_loop_v0(
             # restatement-skeptic flip):
             "verdict_overridden_from": str,
             "override_reason": str,
+            # only when the skeptic exchange failed on INFRA NOISE (D-075
+            # R3b(c): debate error stop / unparseable single-shot output) —
+            # non-gating; the critic's own verdict stands:
+            "skeptic_infra_error": True,
             # only when the skeptic seam ran (env NARA_SKEPTIC=1). The
             # backend/model are the SKEPTIC's own (D-065) — distinct from
             # subagent_backend/_model, which describe the critic:

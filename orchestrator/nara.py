@@ -933,7 +933,8 @@ def _run_iteration_impl(
                 # re-call hypothesize with the critique appended, overwrite
                 # the cached hypothesis, and increment. Cap at 2 retries.
                 # A critic failure never blocks: redteam_critic returns
-                # verdict "proceed" with status "passed" in that case.
+                # verdict "unscored" with status "passed" in that case
+                # (D-075 R1b — absent-semantics, never a fake "proceed").
                 if name == "hypothesize" and "hypothesis" in captured:
                     _steps_mark(runtime, active, iteration_id, "redteam",
                                 "running", insert_after="hypothesize")

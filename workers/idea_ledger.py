@@ -18,7 +18,7 @@ shipped default until judge calibration passes — LOOP_V1 P3 bars), the
 prefilter alone decides.
 
 Kill reasons are PROGRAMMATIC — a closed `code` enum built only by the
-`kill_reason_from_*` builders from structured signals (Honest Lying 0/121:
+`kill_reason_*` builders from structured signals (Honest Lying 0/121:
 never LLM prose). A builder given a non-condemning signal RAISES (a survivor
 is never coerced into a kill). Reopening is evidence-keyed: a `cluster_killed`
 event carries `reopening_condition = {"requires": "new_evidence",
@@ -48,12 +48,17 @@ DEFAULT_LEDGER = REPO_ROOT / "memory" / "idea_ledger.jsonl"
 SCHEMA_PATH = REPO_ROOT / "schema" / "idea_ledger.schema.json"
 
 # Closed kill-code enum — MUST mirror schema/idea_ledger.schema.json.
+# superseded_duplicate / non_research_artifact added by D-075 R4 (ledger
+# hygiene: the 08-18 refill minted duplicate clusters; smoke-test clusters
+# had no honest retirement code).
 KILL_CODES = (
     "redteam_fatal_flaw",
     "adversarial_refuted",
     "experiment_invalid",
     "experiment_null_effect",
     "paper_prior_exists",
+    "superseded_duplicate",
+    "non_research_artifact",
 )
 
 # Evidence-ladder rungs at/above the surfacing bar (D-059: only L4+ surfaces).
@@ -309,6 +314,43 @@ def kill_reason_from_experiment(outcome: dict) -> dict[str, str]:
         "kill_reason_from_experiment: outcome neither INVALID nor "
         "effect_confirmed=False — refusing to build a kill"
     )
+
+
+def kill_reason_duplicate(original_cluster_id: str) -> dict[str, str]:
+    """Build the kill_reason for a cluster superseded by an earlier duplicate
+    (D-075 R4: the 08-18 refill minted byte-similar clusters next to their
+    open originals). The duplicate_of linkage travels in evidence_key —
+    'cluster:<original>' points at the SURVIVING cluster. RAISES on an
+    empty/blank id: a duplicate kill without its original is unlinkable."""
+    if not (isinstance(original_cluster_id, str) and original_cluster_id.strip()):
+        raise ValueError(
+            "kill_reason_duplicate: original_cluster_id must be a non-empty str "
+            "— refusing an unlinkable duplicate kill"
+        )
+    cid = original_cluster_id.strip()
+    return {
+        "code": "superseded_duplicate",
+        "evidence_key": f"cluster:{cid}",
+        "detail": f"superseded duplicate of cluster {cid}",
+    }
+
+
+def kill_reason_non_research(reason_text: str) -> dict[str, str]:
+    """Build the kill_reason for a non-research artifact (smoke-test residue,
+    infra debris — D-075 R4). `reason_text` is the operator's structured
+    statement of what the artifact is (bounded at 240 chars in the detail);
+    an empty/blank reason RAISES — a kill always states its evidence (rule 4),
+    and this code is for artifacts, never a lazy catch-all for real ideas."""
+    if not (isinstance(reason_text, str) and reason_text.strip()):
+        raise ValueError(
+            "kill_reason_non_research: reason_text must be a non-empty str "
+            "— refusing an unevidenced kill"
+        )
+    return {
+        "code": "non_research_artifact",
+        "evidence_key": "manual:non_research_artifact",
+        "detail": f"non-research artifact: {reason_text.strip()[:240]}",
+    }
 
 
 def reopening_condition(evidence_kind: str) -> dict[str, str]:

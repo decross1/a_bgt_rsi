@@ -294,6 +294,79 @@ def test_reopening_condition_builder():
         idea_ledger.reopening_condition("")
 
 
+# ── D-075 R4: ledger-hygiene kill codes ──────────────────────────────────────
+
+def test_kill_codes_mirror_schema_enum():
+    # The enum is closed and KILL_CODES MUST mirror it — including the two
+    # D-075 R4 codes (integrator landed the schema side in 34ee6d0).
+    assert "superseded_duplicate" in idea_ledger.KILL_CODES
+    assert "non_research_artifact" in idea_ledger.KILL_CODES
+    schema_codes = json.loads(SCHEMA_PATH.read_text())[
+        "$defs"]["kill_reason"]["properties"]["code"]["enum"]
+    assert set(schema_codes) == set(idea_ledger.KILL_CODES)
+
+
+def test_kill_reason_duplicate():
+    kr = idea_ledger.kill_reason_duplicate("cl-iter-001")
+    assert kr == {"code": "superseded_duplicate",
+                  "evidence_key": "cluster:cl-iter-001",
+                  "detail": "superseded duplicate of cluster cl-iter-001"}
+    assert kr["code"] in idea_ledger.KILL_CODES
+    for bad in ("", "   ", None, 7):
+        with pytest.raises(ValueError, match="refusing"):
+            idea_ledger.kill_reason_duplicate(bad)
+
+
+def test_kill_reason_non_research():
+    kr = idea_ledger.kill_reason_non_research("smoke-test cluster from the daemon check")
+    assert kr["code"] == "non_research_artifact"
+    assert kr["evidence_key"] == "manual:non_research_artifact"
+    assert kr["detail"] == ("non-research artifact: smoke-test cluster "
+                            "from the daemon check")
+    assert kr["code"] in idea_ledger.KILL_CODES
+    # detail is bounded (240-char cap on the operator text)
+    long = idea_ledger.kill_reason_non_research("x" * 1000)
+    assert long["detail"] == "non-research artifact: " + "x" * 240
+    for bad in ("", "  ", None):
+        with pytest.raises(ValueError, match="refusing"):
+            idea_ledger.kill_reason_non_research(bad)
+
+
+def test_new_kill_codes_reduce_with_identical_kill_semantics():
+    # D-075 R4 pins: the reducer is UNCHANGED — the new codes kill, block
+    # mismatched reopens, and reopen on matching evidence exactly like the
+    # original five.
+    for kr in (idea_ledger.kill_reason_duplicate("cl-orig"),
+               idea_ledger.kill_reason_non_research("smoke-test artifact")):
+        kill = {"event_type": "cluster_killed", "ts": TS, "cluster_id": "cl-001",
+                "kill_reason": kr,
+                "reopening_condition": idea_ledger.reopening_condition(
+                    "articulated_delta")}
+        state = idea_ledger.reduce_events([_created(), kill])
+        c = state["cl-001"]
+        assert c["status"] == "killed" and c["kill_reason"] == kr
+        with pytest.raises(ValueError, match="does not match"):
+            idea_ledger.reduce_events([_created(), kill,
+                {"event_type": "cluster_reopened", "ts": TS, "cluster_id": "cl-001",
+                 "evidence": {"evidence_kind": "replication"}}])
+        reopened = idea_ledger.reduce_events([_created(), kill,
+            {"event_type": "cluster_reopened", "ts": TS, "cluster_id": "cl-001",
+             "evidence": {"evidence_kind": "articulated_delta"}}])
+        assert reopened["cl-001"]["status"] == "open"
+
+
+def test_new_kill_codes_are_schema_valid_events():
+    # Real write path: builders' output validates against the REAL schema
+    # (no patching — the D-075 enum addition is live).
+    for kr in (idea_ledger.kill_reason_duplicate("cl-iter-001"),
+               idea_ledger.kill_reason_non_research("smoke-test cluster")):
+        idea_ledger.validate_event({
+            "event_type": "cluster_killed", "ts": TS, "cluster_id": "cl-001",
+            "kill_reason": kr,
+            "reopening_condition": idea_ledger.reopening_condition(
+                "articulated_delta")})
+
+
 # ── MAP-Elites accept_candidate ──────────────────────────────────────────────
 
 def _cluster_with_elite(status="open"):

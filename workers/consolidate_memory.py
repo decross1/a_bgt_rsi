@@ -22,6 +22,13 @@ Discipline:
   * Idempotent: member ids already present in the ledger's
     cluster_created/member_added events are skipped, so a second `--execute`
     appends ZERO events (test-pinned).
+  * D-075 R4 (owner-ratified): fresh items are matched against EXISTING
+    open (not-killed) ledger clusters — same prefilter layers, same
+    thresholds as intra-batch — BEFORE any new cluster is minted; a refill
+    near-dup member_adds to the original instead of founding a duplicate
+    (the 08-18 case: 3 duplicate clusters minted next to their open
+    originals). Killed clusters are never matched — re-entry into a killed
+    niche stays accept_candidate's evidence-keyed job.
   * Missing input files RAISE (rule 7 — a missing corpus is not a silent
     empty migration); an out-of-enum rung from derive_level RAISES (rule 4).
 """
@@ -35,7 +42,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from orchestrator import runtime
-from workers.idea_ledger import kill_reason_from_redteam, reopening_condition
+from workers.idea_ledger import (
+    kill_reason_from_redteam,
+    reduce_events,
+    reopening_condition,
+)
 from workers.mine_paper_gap import (
     JACCARD_DUP,
     TAU_DUP,
@@ -174,14 +185,46 @@ def _match_cluster(item: dict, clusters: list[dict]) -> tuple[dict | None, dict 
     return None, None
 
 
-def _cluster_items(items: list[dict]) -> list[dict]:
-    """Greedy clustering in corpus order. A surfaced finding attaches to its
-    source iteration's cluster directly (same evidence, not a near-dup);
-    everything else goes through the dedup layers."""
-    for item, vec in zip(items, _embed_texts([i["text"] for i in items])):
+def _existing_open_clusters(ledger_events: list[dict],
+                            all_items: list[dict]) -> list[dict]:
+    """The D-075 R4 matching pool: EXISTING not-killed clusters reduced from
+    the ledger, carrying every member text recoverable from the corpora
+    (ledger events do not store texts; the source corpora do, and every
+    ledger member id is by definition an already-processed corpus id).
+    Killed clusters are EXCLUDED — a fresh dup of a killed cluster founds
+    its own cluster and faces its own signals; silent member_added into a
+    dead niche would bypass evidence-keyed reopening (rule 4)."""
+    if not ledger_events:
+        return []
+    text_by_id = {i["id"]: i["text"] for i in all_items}
+    pool: list[dict] = []
+    for cid, c in reduce_events(ledger_events).items():
+        if c["status"] == "killed":
+            continue
+        members = [{"text": text_by_id[m]} for m in c["members"] if m in text_by_id]
+        if members:
+            pool.append({"cluster_id": cid, "existing": True, "members": members})
+    return pool
+
+
+def _cluster_items(items: list[dict], existing: list[dict] | None = None) -> list[dict]:
+    """Greedy clustering in corpus order. EXISTING open ledger clusters (when
+    supplied) sit FIRST in the match order — D-075 R4: a fresh near-dup of an
+    already-minted cluster joins it instead of founding a duplicate, through
+    the SAME layers at the SAME thresholds as intra-batch. A surfaced finding
+    attaches to its source iteration's cluster directly (same evidence, not a
+    near-dup); everything else goes through the dedup layers. Returns the
+    existing clusters (with any fresh joiners appended) plus the new ones."""
+    existing = existing or []
+    ex_members = [m for cl in existing for m in cl["members"]]
+    # One embed batch for fresh + existing texts: same vector space per call.
+    vecs = _embed_texts([i["text"] for i in items] + [m["text"] for m in ex_members])
+    for item, vec in zip(items, vecs[:len(items)]):
         item["vector"] = vec
         item["tokens"] = _tokenize(item["text"])
-    clusters: list[dict] = []
+    for m, vec in zip(ex_members, vecs[len(items):]):
+        m["vector"] = vec
+    clusters: list[dict] = list(existing)
     member_cluster: dict[str, dict] = {}
     for item in items:
         target, how = None, None
@@ -223,6 +266,39 @@ def _derive_member_level(item: dict, feedback_by_iter: dict, cluster: dict,
     return derived
 
 
+def _accept_reason(via: dict) -> str:
+    return via["layer"] + (f":{via['score']:.3f}"
+                           if isinstance(via.get("score"), float) else "")
+
+
+def _plan_existing_merges(clusters: list[dict], ts: str) -> tuple[list[dict], list[dict], list[dict]]:
+    """member_added events + archive rows for fresh items that matched an
+    EXISTING open ledger cluster (D-075 R4). NEVER a cluster_created, and no
+    kill / elite / rung re-derivation — the cluster's standing state is the
+    ledger's; this only records the new member. Near-dup joiners archive with
+    the same reason as intra-batch near-dups (their text lives in the archive,
+    not the ledger); source-attached surfaced members do not archive."""
+    events: list[dict] = []
+    archive: list[dict] = []
+    merges: list[dict] = []
+    for cl in clusters:
+        for m in cl["members"]:
+            if "id" not in m:
+                continue  # pre-existing ledger member (text/vector only)
+            via = m["joined_via"]
+            events.append({"event_type": "member_added", "ts": ts,
+                           "cluster_id": cl["cluster_id"], "member_id": m["id"],
+                           "accept_reason": _accept_reason(via)})
+            if via["layer"] in _NEAR_DUP_LAYERS:
+                archive.append({"archived_at": ts, "cluster_id": cl["cluster_id"],
+                                "member_id": m["id"], "kind": m["kind"],
+                                "text": m["text"], "joined_via": via,
+                                "reason": "near_dup_non_elite"})
+            merges.append({"cluster_id": cl["cluster_id"], "member_id": m["id"],
+                           "layer": via["layer"], "score": via.get("score")})
+    return events, archive, merges
+
+
 def _cluster_verdicts(elite_row: dict) -> tuple[str | None, str | None]:
     rt = elite_row.get("redteam") if isinstance(elite_row.get("redteam"), dict) else {}
     nv = elite_row.get("novelty") if isinstance(elite_row.get("novelty"), dict) else {}
@@ -252,13 +328,10 @@ def _plan_cluster(cluster: dict, feedback_by_iter: dict, derive_level_fn: Callab
                **({"iteration_id": founder["id"]} if founder["kind"] == "loop" else {})}]
     archive: list[dict] = []
     for m in rest:
-        via = m["joined_via"]
         events.append({"event_type": "member_added", "ts": ts, "cluster_id": cid,
                        "member_id": m["id"],
                        **({"as_elite": True} if m is elite else {}),
-                       "accept_reason": f"{via['layer']}"
-                                        + (f":{via['score']:.3f}" if isinstance(
-                                            via.get("score"), float) else "")})
+                       "accept_reason": _accept_reason(m["joined_via"])})
     for m in cluster["members"]:
         if m is not elite and m["joined_via"]["layer"] in _NEAR_DUP_LAYERS:
             archive.append({"archived_at": ts, "cluster_id": cid,
@@ -307,6 +380,7 @@ def _print_summary(report: dict) -> None:
         f"surfaced={report['surfaced_rows']} "
         f"already_processed={report['skipped_already_processed']}",
         f"  clusters            {report['clusters']}",
+        f"  merged into existing {report['merged_into_existing']}",
         f"  rungs               {rungs}",
         f"  killed (fatal_flaw) {report['killed']}",
         f"  paper niches        {report['paper_niches']}",
@@ -356,20 +430,32 @@ def consolidate(
                         if isinstance(r.get("iteration_id"), str)}
 
     items, repaired = _build_items(loop_rows, surfaced_rows, extract_claim_fn)
-    processed = {e.get("member_id") for e in _read_jsonl(ledger_path)
+    ledger_events = _read_jsonl(ledger_path)
+    processed = {e.get("member_id") for e in ledger_events
                  if e.get("event_type") in _MEMBER_EVENTS}
     fresh = [i for i in items if i["id"] not in processed]
     skipped = len(items) - len(fresh)
 
+    # D-075 R4: existing open clusters are matched BEFORE any minting.
+    pool = _existing_open_clusters(ledger_events, items) if fresh else []
+
     ts = _utcnow()
-    events: list[dict] = []
+    new_events: list[dict] = []
     archive: list[dict] = []
     facts: list[dict] = []
-    for cluster in _cluster_items(fresh):
+    existing_hit: list[dict] = []
+    for cluster in _cluster_items(fresh, existing=pool):
+        if cluster.get("existing"):
+            if any("id" in m for m in cluster["members"]):
+                existing_hit.append(cluster)
+            continue
         ev, ar, fact = _plan_cluster(cluster, feedback_by_iter, derive_level_fn, ts)
-        events.extend(ev)
+        new_events.extend(ev)
         archive.extend(ar)
         facts.append(fact)
+    merge_events, merge_archive, merges = _plan_existing_merges(existing_hit, ts)
+    events = merge_events + new_events
+    archive = merge_archive + archive
 
     appended = 0
     if execute:
@@ -388,6 +474,8 @@ def consolidate(
         "surfaced_rows": len(surfaced_rows),
         "skipped_already_processed": skipped,
         "clusters": len(facts),
+        "merged_into_existing": len(merges),
+        "existing_merges": merges,
         "rungs": rungs,
         "killed": sum(1 for f in facts if f["status"] == "killed"),
         "paper_niches": sum(1 for f in facts if f["niche"]),
@@ -404,7 +492,9 @@ def consolidate(
         "task_id": "consolidate_memory",
         "status": "passed",
         "observable_actual": f"mode={'execute' if execute else 'dry_run'} "
-                             f"clusters={report['clusters']} killed={report['killed']} "
+                             f"clusters={report['clusters']} "
+                             f"merged={report['merged_into_existing']} "
+                             f"killed={report['killed']} "
                              f"events_appended={appended} skipped={skipped}",
         "observable_expected": "idempotent append-only migration; dry-run writes nothing",
         "duration_ms": round((time.perf_counter() - t0) * 1000.0, 3),

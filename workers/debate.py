@@ -61,7 +61,11 @@ from workers.retrieval_relevance import _tokenize
 
 # Hard cap. `max_rounds` above this raises — the bound is not negotiable
 # from the call site (that is what makes it a bound).
-MAX_DEBATE_ROUNDS = 4
+# 4 → 6 per D-075 R3a (owner reverses their 2026-08-15 "4 is fine",
+# D065_debate_params_ratified): measured on the wf_c806049b diagnosis,
+# the 4-round cap was BINDING mid-argument on 5/6 real exchanges — the
+# bound was deciding debates, not bounding them.
+MAX_DEBATE_ROUNDS = 6
 
 # The debate's own retrieval depth when the caller passes evidence=None.
 # Same figure as the D-044 attack().
