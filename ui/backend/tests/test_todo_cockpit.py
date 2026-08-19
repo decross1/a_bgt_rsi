@@ -31,6 +31,7 @@ What is pinned:
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,8 @@ from fastapi.testclient import TestClient
 
 from backend.todo_cockpit import (
     ALLOWED_ACTION_ENDPOINTS,
+    CLOSE_OUT_OUTCOMES,
+    CLOSE_OUT_WRITER,
     IDENTITY,
     SPAWN_TOPIC_KINDS,
     register,
@@ -57,23 +60,57 @@ _LIVE_LEDGERS = (
 )
 
 
-def _ledger_sizes() -> dict[str, int | None]:
-    sizes: dict[str, int | None] = {}
+# The lab is ALWAYS-ON (D-063: hourly cron + daemon), so these ledgers grow
+# under the test session no matter what the tests do — a coordinator cycle or
+# a running battery appends while pytest is mid-file. A line COUNT therefore
+# cannot tell "this test wrote" from "the apparatus wrote", and the guard
+# false-failed on a different arbitrary test each run (observed 2026-08-19
+# with a re-adjudication battery live). Attribute instead of count: rows the
+# apparatus authors are identified by their own `agent`, and anything else
+# added during a test is still a hard failure.
+_APPARATUS_AGENTS = ("nara", "coordinator", "nara_daemon")
+
+
+def _is_apparatus_row(line: str) -> bool:
+    try:
+        agent = json.loads(line).get("agent")
+    except (ValueError, AttributeError):
+        return False
+    return isinstance(agent, str) and (
+        agent in _APPARATUS_AGENTS or agent.startswith("workflow:"))
+
+
+def _ledger_rows() -> dict[str, list[str] | None]:
+    rows: dict[str, list[str] | None] = {}
     for rel in _LIVE_LEDGERS:
         path = _PRIMARY_REPO / rel
-        sizes[rel] = (len(path.read_text(encoding="utf-8").splitlines())
-                      if path.exists() else None)
-    return sizes
+        rows[rel] = (path.read_text(encoding="utf-8").splitlines()
+                     if path.exists() else None)
+    return rows
 
 
 @pytest.fixture(autouse=True)
 def no_live_ledger_writes():
-    """Snapshot check: zero rows added to any live ledger during a test."""
-    before = _ledger_sizes()
+    """Zero TEST-AUTHORED rows added to any live ledger during a test.
+
+    Concurrent apparatus writes are excluded by author, not waved through by
+    threshold — a row this test wrote still fails, which is the whole point."""
+    before = _ledger_rows()
     yield
-    after = _ledger_sizes()
-    assert after == before, (
-        f"live ledgers changed during a cockpit test: {before} -> {after}")
+    after = _ledger_rows()
+    offending: dict[str, list[str]] = {}
+    for rel, now_rows in after.items():
+        was = before.get(rel)
+        if was is None or now_rows is None:
+            if was != now_rows:
+                offending[rel] = ["file appeared/disappeared"]
+            continue
+        added = now_rows[len(was):]
+        rogue = [r for r in added if not _is_apparatus_row(r)]
+        if rogue:
+            offending[rel] = rogue[:3]
+    assert not offending, (
+        f"a cockpit test wrote to live ledger(s): {offending}")
 
 
 class _StubRunner:
@@ -437,9 +474,114 @@ def test_spawn_topic_422(repo, payload):
 
 
 def test_spawn_topic_kinds_enum_still_exposed():
-    # SPAWN_TOPIC_KINDS stays a module constant (the session names the follow-up
-    # kind), even though the session-exit endpoint no longer validates it.
+    # SPAWN_TOPIC_KINDS stays a module constant (the session names the
+    # follow-up kind) AND is now enforced when the caller sends one.
     assert SPAWN_TOPIC_KINDS == ("finding", "step")
+
+
+@pytest.mark.parametrize("kind", SPAWN_TOPIC_KINDS)
+def test_spawn_topic_echoes_a_valid_kind(repo, kind):
+    body = _client(repo).post("/api/todo/spawn_topic", json={
+        "finding_id": "sf-1", "kind": kind, "topic": "t"}).json()
+    assert body["kind"] == kind
+    assert body["status"] == "session_exit"
+
+
+@pytest.mark.parametrize("kind", ["idea", "", "FINDING", 1, ["finding"]])
+def test_spawn_topic_out_of_enum_kind_is_422_never_dropped(repo, kind):
+    """`kind` is optional, but a caller's out-of-enum kind is REJECTED, not
+    silently ignored (inviolate rule 4)."""
+    assert _client(repo).post("/api/todo/spawn_topic", json={
+        "finding_id": "sf-1", "kind": kind, "topic": "t"}).status_code == 422
+
+
+# ─── THE CROSS-WIRE PIN: the frontend client's body vs this router ──────
+# `ui/frontend/src/api/todo.ts` posted {ref_id, kind, topic} while this router
+# read `finding_id` — every spawn_topic call 422'd on the wire from the day it
+# shipped, and NOTHING caught it because every frontend test mocked
+# `postSpawnTopic` instead of the request. A mock of the caller can never
+# falsify the caller's own body shape, so the pin has to read the REAL client
+# source and post what it actually builds.
+
+_TODO_CLIENT_TS = (
+    _PRIMARY_REPO / "ui" / "frontend" / "src" / "api" / "todo.ts")
+
+# Values good enough to pass this router's validators, keyed by the client's
+# field names. A key the client sends that is absent here fails LOUDLY below
+# (a new field is a wire change and must be looked at), never skipped.
+_SPAWN_TOPIC_VALUES = {
+    "finding_id": "sf-001",
+    "kind": "finding",
+    "topic": "does this hold under the 03 anchor?",
+}
+
+
+def _client_body_keys(source: str, fn: str) -> list[str]:
+    """The parameter keys of `export const <fn> = (body: { ... })` in the
+    real client module — the literal object the frontend POSTs."""
+    head = source.index(f"export const {fn} = (body: {{")
+    block = source[head:source.index("})", head)]
+    return re.findall(r"^\s{2}(\w+)\??:", block, flags=re.MULTILINE)
+
+
+def test_frontend_spawn_topic_body_is_accepted_by_this_router(repo):
+    keys = _client_body_keys(
+        _TODO_CLIENT_TS.read_text(encoding="utf-8"), "postSpawnTopic")
+    assert keys, "postSpawnTopic body type not found in the client"
+    missing = [k for k in keys if k not in _SPAWN_TOPIC_VALUES]
+    assert not missing, (
+        f"the client now sends unknown field(s) {missing} to "
+        f"/api/todo/spawn_topic — the wire changed; check the router")
+
+    stub = _StubRunner()
+    resp = _client(repo, stub).post(
+        "/api/todo/spawn_topic",
+        json={k: _SPAWN_TOPIC_VALUES[k] for k in keys})
+    assert resp.status_code == 200, (
+        f"the frontend's own body shape {keys} is REJECTED by this router: "
+        f"{resp.json()}")
+    assert resp.json()["status"] == "session_exit"
+    assert stub.calls == []          # a session exit execs nothing
+
+
+# Generalization of the pin above over EVERY cockpit client (integration gate,
+# 2026-08-19). The spawn_topic pin caught its own bug but was one-of-five, and
+# `postAbstain` carried the IDENTICAL ref_id/finding_id defect unpinned and
+# unnoticed at HEAD. A per-endpoint pin cannot catch a class; this one does.
+# Each entry: client fn -> (endpoint, field values good enough to validate,
+# accepted status codes). A key the client sends that is absent from the values
+# map fails LOUDLY — a new field is a wire change and must be looked at.
+_CLIENT_WIRE_CASES = {
+    "postSpawnTopic": ("/api/todo/spawn_topic", _SPAWN_TOPIC_VALUES, (200,)),
+    "postAbstain": ("/api/todo/abstain", {
+        "finding_id": "sf-001", "note": "re-look after the 03 anchor"}, (200,)),
+}
+
+
+@pytest.mark.parametrize("fn", sorted(_CLIENT_WIRE_CASES))
+def test_every_cockpit_client_body_is_accepted_by_its_router(repo, fn):
+    endpoint, values, ok_codes = _CLIENT_WIRE_CASES[fn]
+    keys = _client_body_keys(
+        _TODO_CLIENT_TS.read_text(encoding="utf-8"), fn)
+    assert keys, f"{fn} body type not found in the client"
+    missing = [k for k in keys if k not in values]
+    assert not missing, (
+        f"{fn} now sends unknown field(s) {missing} to {endpoint} — "
+        "the wire changed; check the router")
+    resp = _client(repo, _StubRunner()).post(
+        endpoint, json={k: values[k] for k in keys})
+    assert resp.status_code in ok_codes, (
+        f"{fn}'s own body shape {keys} is REJECTED by {endpoint}: "
+        f"{resp.status_code} {resp.json()}")
+
+
+def test_the_id_key_has_exactly_ONE_name_here(repo):
+    """`ref_id` is NOT an accepted alias. Two names for one field is what
+    produced the 422; the alias would have hidden it."""
+    resp = _client(repo).post("/api/todo/spawn_topic", json={
+        "ref_id": "sf-001", "kind": "finding", "topic": "t"})
+    assert resp.status_code == 422
+    assert "finding_id" in resp.json()["detail"]
 
 
 @pytest.mark.parametrize("payload", [
@@ -507,3 +649,91 @@ def test_concurrency_malformed_file_fails_safe_to_inactive(repo):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not json", encoding="utf-8")
     assert _client(repo).get("/api/todo/concurrency").json() == {"active": False}
+
+
+# ─── GET /api/todo/close_out — the session CLOSE-OUT surface (GAP 2) ────
+# The owner test-driving the cockpit could not find how a session outcome
+# becomes work for Nara. The strip's copy comes from HERE, so these pins
+# hold the backend's answer to "how do we get the outcome of this to yield
+# a follow up for nara?" — spawn_topic -> finding_followups -> daemon ->
+# coordinator topic. Read-only: execs nothing, writes nothing (the autouse
+# live-ledger fixture proves the second half).
+
+def test_close_out_names_the_four_real_outcomes(repo):
+    runner = _StubRunner()
+    body = _client(repo, runner).get("/api/todo/close_out").json()
+    assert [o["outcome"] for o in body["outcomes"]] == [
+        "validated", "rejected", "spawn_topic", "refine"]
+    assert body["available"] is True
+    assert body["writer"] == CLOSE_OUT_WRITER
+    assert body["followups_queue"] == "memory/finding_followups.jsonl"
+    assert runner.calls == []            # a descriptor read execs NOTHING
+
+
+def test_close_out_spawn_topic_names_the_nara_follow_up_chain(repo):
+    body = _client(repo).get("/api/todo/close_out").json()
+    spawn = next(o for o in body["outcomes"] if o["outcome"] == "spawn_topic")
+    assert spawn["endpoint"] == "/api/todo/spawn_topic"
+    assert spawn["session_exit"] is True
+    assert "finding_followups.jsonl" in spawn["writes"]
+    # the three links of the chain, named on the wire
+    assert "daemon" in spawn["downstream"]
+    assert "coordinator" in spawn["downstream"]
+    assert "TOPIC" in spawn["downstream"]
+
+
+def test_close_out_never_credits_an_endpoint_with_a_write_it_does_not_do(repo):
+    """`writes` is the NAMED ENDPOINT's own effect. /api/todo/spawn_topic is a
+    session-exit indicator: it validates and returns, writing nothing. The row
+    used to read "memory/finding_followups.jsonl (one queue row)", advertising
+    a write that endpoint has never performed — the queue row is end_session's.
+    Proven against the endpoint itself: posting it adds ZERO ledger rows (the
+    autouse live-ledger fixture) and execs nothing."""
+    client = _client(repo, _StubRunner())
+    spawn_row = next(o for o in client.get("/api/todo/close_out").json()["outcomes"]
+                     if o["outcome"] == "spawn_topic")
+    assert "NOTHING at this endpoint" in spawn_row["writes"]
+    assert "end_session" in spawn_row["writes"]
+    # the payload hint names the id key the endpoint really requires
+    assert "finding_id" in spawn_row["payload_hint"]
+
+    stub = _StubRunner()
+    resp = _client(repo, stub).post("/api/todo/spawn_topic", json={
+        "finding_id": "sf-001", "kind": "finding", "topic": "t"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "session_exit"
+    assert "finding_followups" not in json.dumps(resp.json())
+    assert stub.calls == []
+
+
+def test_close_out_routes_each_verdict_to_the_EXISTING_seam(repo):
+    """No re-implementation: validate/reject/refine are the attest
+    finding_review statuses the cockpit already ships."""
+    body = _client(repo).get("/api/todo/close_out").json()
+    by_outcome = {o["outcome"]: o for o in body["outcomes"]}
+    for outcome, status in (("validated", "validated"), ("rejected", "rejected"),
+                            ("refine", "in_review")):
+        assert by_outcome[outcome]["endpoint"] == "/api/attest/finding_review"
+        assert by_outcome[outcome]["payload_hint"]["status"] == status
+        assert by_outcome[outcome]["session_exit"] is False
+    # refine parks the finding — it must NOT claim a verdict ledger row.
+    assert "NO verdict" in by_outcome["refine"]["writes"]
+    assert "loop_feedback" in by_outcome["validated"]["writes"]
+
+
+def test_close_out_available_false_without_the_writer(tmp_path):
+    """A checkout without finding_session.py reports available:false — the
+    strip degrades to informational, never a button that would 502."""
+    body = _client(tmp_path).get("/api/todo/close_out").json()
+    assert body["available"] is False
+    assert [o["outcome"] for o in body["outcomes"]] == [
+        "validated", "rejected", "spawn_topic", "refine"]
+
+
+def test_close_out_payload_is_a_copy_not_the_module_constant(repo):
+    """Mutating a response row must not poison the next reader."""
+    body = _client(repo).get("/api/todo/close_out").json()
+    body["outcomes"][0]["writes"] = "tampered"
+    fresh = _client(repo).get("/api/todo/close_out").json()
+    assert fresh["outcomes"][0]["writes"] != "tampered"
+    assert CLOSE_OUT_OUTCOMES[0]["writes"] != "tampered"

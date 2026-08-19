@@ -148,16 +148,27 @@ describe("todo api helpers build the right URLs + bodies", () => {
   it("the NEW-outcome POSTs hit their stub paths with the BACKEND-shaped bodies", async () => {
     stubFetch(ok({ stub: true }));
     // bodies reconciled TO ui/backend/todo_cockpit.py: authorize_fix carries
-    // the required `task`; spawn_topic is {ref_id, kind, topic}; abstain is
-    // {ref_id, note}; calibration is FLAT {ref_id, prediction, confidence}.
+    // the required `task`; spawn_topic is {finding_id, kind, topic}; abstain
+    // is {finding_id, note}; calibration is FLAT {ref_id, prediction, confidence}.
+    //
+    // "BACKEND-shaped" is asserted faithfully below — but a body pin is only
+    // as good as the contract it is written against, and spawn_topic's said
+    // `ref_id` while the backend has always read `finding_id`, so it 422'd on
+    // every real call while staying green here. A frontend-only pin cannot
+    // catch that; the authoritative cross-wire pin is
+    // ui/backend/tests/test_todo_cockpit.py, which posts THIS client's own
+    // field names at the real router.
+    // postAbstain carried the IDENTICAL defect and is now FIXED (2026-08-19,
+    // integration gate): it sends `finding_id`. The cross-wire pin is
+    // parametrized over both clients, so this class fails loudly next time.
     await postAuthorizeFix({ ref_id: "sf-001", task: "re-run novelty on 02", note: "fix the citation wiring" });
     await postDirectiveSignoff({
       finding_id: "sf-001",
       note: "looks right",
       directive: "proceed to experiment",
     });
-    await postSpawnTopic({ ref_id: "sf-001", kind: "finding", topic: "shading under VCG" });
-    await postAbstain({ ref_id: "sf-001", note: "re-look later" });
+    await postSpawnTopic({ finding_id: "sf-001", kind: "finding", topic: "shading under VCG" });
+    await postAbstain({ finding_id: "sf-001", note: "re-look later" });
     await postCalibration({ ref_id: "sf-001", prediction: "survives", confidence: 0.7 });
 
     expect(calls.map((c) => c.url.replace(/^https?:\/\/[^/]+/, ""))).toEqual([
@@ -178,8 +189,8 @@ describe("todo api helpers build the right URLs + bodies", () => {
       note: "looks right",
       directive: "proceed to experiment",
     });
-    expect(calls[2].body).toEqual({ ref_id: "sf-001", kind: "finding", topic: "shading under VCG" });
-    expect(calls[3].body).toEqual({ ref_id: "sf-001", note: "re-look later" });
+    expect(calls[2].body).toEqual({ finding_id: "sf-001", kind: "finding", topic: "shading under VCG" });
+    expect(calls[3].body).toEqual({ finding_id: "sf-001", note: "re-look later" });
     // calibration is FLAT — confidence is a top-level number, not nested.
     expect(calls[4].body).toEqual({ ref_id: "sf-001", prediction: "survives", confidence: 0.7 });
   });
@@ -191,7 +202,7 @@ describe("todo api helpers build the right URLs + bodies", () => {
       statusText: "Bad Gateway",
       json: () => Promise.resolve({ rc: 2, stderr: "argparse: invalid choice" }),
     }));
-    await expect(postAbstain({ ref_id: "sf-001", note: "x" })).rejects.toMatchObject({
+    await expect(postAbstain({ finding_id: "sf-001", note: "x" })).rejects.toMatchObject({
       name: "TodoError",
       status: 502,
       rc: 2,
@@ -204,7 +215,7 @@ describe("todo api helpers build the right URLs + bodies", () => {
       statusText: "Bad Gateway",
       json: () => Promise.resolve({ rc: 2, stderr: "argparse: invalid choice" }),
     }));
-    const err = await postAbstain({ ref_id: "sf-001", note: "x" }).catch((e) => e);
+    const err = await postAbstain({ finding_id: "sf-001", note: "x" }).catch((e) => e);
     expect(err).toBeInstanceOf(TodoError);
   });
 });

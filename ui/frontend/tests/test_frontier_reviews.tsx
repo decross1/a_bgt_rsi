@@ -427,3 +427,281 @@ it("frontierAge renders compact ages and honest dashes", () => {
   expect(frontierAge(null, now)).toBe("—");
   expect(frontierAge("junk", now)).toBe("—");
 });
+
+// ─── the HUMAN acceptance step on agenda cards (GAP 1) ──────────────────
+// Ten proposals sat at `proposed` because nothing consumed them: the missing
+// piece was the human decision. These pins hold the decision surface —
+// accept appends the ledger agenda item the coordinator really consumes,
+// dismiss records the refusal WITH its reason, and neither ever fabricates
+// an outcome the backend did not return.
+
+const AGENDA_EVENT = {
+  type: "agenda",
+  ts: minsAgo(9),
+  proposal_id: "fa-4b8a1c85",
+  proposed_by: "frontier:claude",
+  topic: "Run the two L1 synthetic experiments as a paired batch",
+  rationale: "The only two ideas that survived the gates.",
+  status: "proposed",
+  effective_status: "proposed",
+};
+
+function agendaFeed(event: unknown, canRule = true) {
+  return {
+    ...REVIEWS,
+    events: [event],
+    events_in_window: 1,
+    agenda_write: {
+      available: canRule,
+      verbs: ["accept", "dismiss"],
+      writer: "orchestrator.agenda_cli",
+    },
+  };
+}
+
+/** GET the feed; POST the ruling with a caller-supplied response. */
+function stubRuling(
+  feed: unknown,
+  post: { ok: boolean; status?: number; body: unknown },
+) {
+  const mock = vi.fn(async (url: unknown, init?: unknown) => {
+    const u = String(url);
+    if (u.includes("/api/frontier_agenda/")) {
+      const opts = init as { method?: string; body?: string } | undefined;
+      expect(opts?.method).toBe("POST");
+      return {
+        ok: post.ok,
+        status: post.status ?? (post.ok ? 200 : 502),
+        statusText: "x",
+        json: async () => post.body,
+      } as Response;
+    }
+    const body = u.includes("/api/frontier_reviews") ? feed : CALLS;
+    return { ok: true, status: 200, statusText: "200", json: async () => body } as Response;
+  });
+  vi.stubGlobal("fetch", mock);
+  return mock;
+}
+
+it("an unruled proposal offers accept + dismiss and shows its proposed status", async () => {
+  stubBoth(agendaFeed(AGENDA_EVENT));
+  render(<FrontierReviews pollMs={600_000} />);
+  await waitFor(() =>
+    expect(screen.getByTestId("agenda-card")).toBeInTheDocument(),
+  );
+  expect(screen.getByTestId("agenda-status-chip").textContent).toBe("proposed");
+  expect(screen.getByTestId("agenda-accept")).toBeInTheDocument();
+  expect(screen.getByTestId("agenda-dismiss")).toBeInTheDocument();
+  // No form until a decision is opened; the note is required by design.
+  expect(screen.queryByTestId("agenda-submit")).toBeNull();
+});
+
+it("accept posts the proposal id, the note and the topic override, then says what happens next", async () => {
+  const mock = stubRuling(agendaFeed(AGENDA_EVENT), {
+    ok: true,
+    body: { proposal_id: "fa-4b8a1c85", status: "accepted",
+            cluster_id: "cl-fa-4b8a1c85", topic: "narrower topic" },
+  });
+  render(<FrontierReviews pollMs={600_000} />);
+  await waitFor(() =>
+    expect(screen.getByTestId("agenda-accept")).toBeInTheDocument(),
+  );
+  fireEvent.click(screen.getByTestId("agenda-accept"));
+  // The note gates the submit — the note IS the audit value.
+  expect(screen.getByTestId("agenda-submit")).toBeDisabled();
+  fireEvent.change(screen.getByLabelText(/accept note/i), {
+    target: { value: "the only live experiments" },
+  });
+  fireEvent.change(screen.getByLabelText(/topic override/i), {
+    target: { value: "narrower topic" },
+  });
+  fireEvent.click(screen.getByTestId("agenda-submit"));
+
+  await waitFor(() =>
+    expect(screen.getByTestId("agenda-accepted-note")).toBeInTheDocument(),
+  );
+  const call = mock.mock.calls.find((c) =>
+    String(c[0]).includes("/api/frontier_agenda/accept"),
+  );
+  expect(call).toBeDefined();
+  expect(JSON.parse(String((call?.[1] as { body: string }).body))).toEqual({
+    proposal_id: "fa-4b8a1c85",
+    note: "the only live experiments",
+    topic_override: "narrower topic",
+  });
+  // The card now states the consequence, not just "ok".
+  const acceptedNote = screen.getByTestId("agenda-accepted-note").textContent ?? "";
+  expect(acceptedNote).toContain("coordinator will consume");
+  expect(acceptedNote).toContain("cl-fa-4b8a1c85");
+  // ...and states the LIMITS of that promise. orchestrator/coordinator.py
+  // slices `agenda_topics(state)[:3]` and idea_projection sorts on
+  // (cluster_id, topic), so the queue is capped at three and ordered by
+  // cluster id, not by acceptance time. An unqualified "coordinator will
+  // consume" would promise a 4th accepted item a cycle it does not get.
+  expect(acceptedNote).toContain("first 3 open agenda items");
+  expect(acceptedNote).toContain("(cluster_id, topic)");
+  expect(acceptedNote).toContain("not by when you accepted");
+  expect(acceptedNote).toMatch(/4th item waits/);
+  expect(screen.getByTestId("agenda-status-chip").textContent).toBe("accepted");
+});
+
+it("accept omits topic_override when the human leaves it blank", async () => {
+  const mock = stubRuling(agendaFeed(AGENDA_EVENT), {
+    ok: true, body: { status: "accepted" },
+  });
+  render(<FrontierReviews pollMs={600_000} />);
+  await waitFor(() =>
+    expect(screen.getByTestId("agenda-accept")).toBeInTheDocument(),
+  );
+  fireEvent.click(screen.getByTestId("agenda-accept"));
+  fireEvent.change(screen.getByLabelText(/accept note/i), {
+    target: { value: "keep the vendor topic" },
+  });
+  fireEvent.click(screen.getByTestId("agenda-submit"));
+  await waitFor(() =>
+    expect(screen.getByTestId("agenda-accepted-note")).toBeInTheDocument(),
+  );
+  const call = mock.mock.calls.find((c) =>
+    String(c[0]).includes("/api/frontier_agenda/accept"),
+  );
+  expect(JSON.parse(String((call?.[1] as { body: string }).body))).toEqual({
+    proposal_id: "fa-4b8a1c85",
+    note: "keep the vendor topic",
+  });
+});
+
+it("dismiss posts the reason and the card renders muted WITH the note", async () => {
+  const mock = stubRuling(agendaFeed(AGENDA_EVENT), {
+    ok: true, body: { status: "dismissed" },
+  });
+  render(<FrontierReviews pollMs={600_000} />);
+  await waitFor(() =>
+    expect(screen.getByTestId("agenda-dismiss")).toBeInTheDocument(),
+  );
+  fireEvent.click(screen.getByTestId("agenda-dismiss"));
+  // Dismiss carries no topic override — there is no topic to override.
+  expect(screen.queryByLabelText(/topic override/i)).toBeNull();
+  fireEvent.change(screen.getByLabelText(/dismiss note/i), {
+    target: { value: "graveyard analysis, not a research topic" },
+  });
+  fireEvent.click(screen.getByTestId("agenda-submit"));
+
+  await waitFor(() =>
+    expect(screen.getByTestId("agenda-status-chip").textContent).toBe("dismissed"),
+  );
+  const call = mock.mock.calls.find((c) =>
+    String(c[0]).includes("/api/frontier_agenda/dismiss"),
+  );
+  expect(JSON.parse(String((call?.[1] as { body: string }).body))).toEqual({
+    proposal_id: "fa-4b8a1c85",
+    note: "graveyard analysis, not a research topic",
+  });
+  expect(screen.getByTestId("agenda-card").className).toContain("opacity-50");
+  expect(screen.getByTestId("agenda-ruling-note").textContent).toContain(
+    "graveyard analysis",
+  );
+  // A dismissal never claims the ledger got anything.
+  expect(screen.queryByTestId("agenda-accepted-note")).toBeNull();
+});
+
+it("a ruling already on the wire renders without any buttons", async () => {
+  stubBoth(
+    agendaFeed({
+      ...AGENDA_EVENT,
+      effective_status: "dismissed",
+      ruling: { note: "not research", ts: minsAgo(1), agent_id: "human:ui" },
+    }),
+  );
+  render(<FrontierReviews pollMs={600_000} />);
+  await waitFor(() =>
+    expect(screen.getByTestId("agenda-card")).toBeInTheDocument(),
+  );
+  expect(screen.getByTestId("agenda-status-chip").textContent).toBe("dismissed");
+  expect(screen.getByTestId("agenda-ruling-note").textContent).toContain(
+    "not research",
+  );
+  expect(screen.queryByTestId("agenda-accept")).toBeNull();
+  expect(screen.queryByTestId("agenda-dismiss")).toBeNull();
+});
+
+it("a refused ruling shows the CLI stderr VERBATIM and changes nothing", async () => {
+  stubRuling(agendaFeed(AGENDA_EVENT), {
+    ok: false,
+    status: 502,
+    body: { rc: 1, stderr: "rejected: proposal fa-4b8a1c85 is already accepted" },
+  });
+  render(<FrontierReviews pollMs={600_000} />);
+  await waitFor(() =>
+    expect(screen.getByTestId("agenda-accept")).toBeInTheDocument(),
+  );
+  fireEvent.click(screen.getByTestId("agenda-accept"));
+  fireEvent.change(screen.getByLabelText(/accept note/i), {
+    target: { value: "again" },
+  });
+  fireEvent.click(screen.getByTestId("agenda-submit"));
+
+  await waitFor(() =>
+    expect(screen.getByTestId("agenda-error")).toBeInTheDocument(),
+  );
+  expect(screen.getByTestId("agenda-error").textContent).toBe(
+    "rejected: proposal fa-4b8a1c85 is already accepted",
+  );
+  // The card did NOT flip to accepted on a failure (no fabricated outcome).
+  expect(screen.getByTestId("agenda-status-chip").textContent).toBe("proposed");
+  expect(screen.queryByTestId("agenda-accepted-note")).toBeNull();
+});
+
+it("without the blessed writer there are no buttons, and the reason is stated", async () => {
+  stubBoth(agendaFeed(AGENDA_EVENT, false));
+  render(<FrontierReviews pollMs={600_000} />);
+  await waitFor(() =>
+    expect(screen.getByTestId("agenda-card")).toBeInTheDocument(),
+  );
+  expect(screen.queryByTestId("agenda-accept")).toBeNull();
+  expect(screen.getByTestId("agenda-write-off").textContent).toContain(
+    "orchestrator.agenda_cli",
+  );
+});
+
+it("a backend with no agenda_write block offers no buttons (version skew)", async () => {
+  stubBoth({ ...REVIEWS, events: [AGENDA_EVENT], events_in_window: 1 });
+  render(<FrontierReviews pollMs={600_000} />);
+  await waitFor(() =>
+    expect(screen.getByTestId("agenda-card")).toBeInTheDocument(),
+  );
+  expect(screen.queryByTestId("agenda-accept")).toBeNull();
+});
+
+it("every proposed_by family gets the same flow", async () => {
+  for (const proposed_by of ["frontier:claude", "frontier:codex", "distilled:gemma"]) {
+    stubBoth(agendaFeed({ ...AGENDA_EVENT, proposed_by }));
+    const { unmount } = render(<FrontierReviews pollMs={600_000} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("agenda-accept")).toBeInTheDocument(),
+    );
+    unmount();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("a superseded proposal renders ONE card, the newest occurrence", async () => {
+  // The legacy frontier_agenda.accept_proposal path appends a superseding row
+  // with the SAME proposal_id — two rows, one decision, one card.
+  stubBoth({
+    ...REVIEWS,
+    events: [
+      { ...AGENDA_EVENT, ts: minsAgo(1), topic: "the superseding topic" },
+      { ...AGENDA_EVENT, ts: minsAgo(9), topic: "the original topic" },
+    ],
+    events_in_window: 2,
+    agenda_write: { available: true, verbs: ["accept", "dismiss"],
+                    writer: "orchestrator.agenda_cli" },
+  });
+  render(<FrontierReviews pollMs={600_000} />);
+  await waitFor(() =>
+    expect(screen.getAllByTestId("agenda-card")).toHaveLength(1),
+  );
+  expect(screen.getByTestId("agenda-card").textContent).toContain(
+    "the superseding topic",
+  );
+});

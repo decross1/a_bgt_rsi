@@ -212,18 +212,28 @@ export const postDirectiveSignoff = (body: {
   directive: string;
 }) => postTodo("/api/todo/directive_signoff", body);
 
-// Outcome 5 — spawn topic → finding_followups queue (cockpit-driven argv).
-// `kind` selects the followup taxonomy ("finding" | "step"); `topic` is the
-// follow-up text.
+// Outcome 5 — spawn a follow-up topic. A SESSION-EXIT: the endpoint validates
+// and returns the indicator; end_session is the writer of record for the
+// finding_followups row. `kind` selects the followup taxonomy
+// ("finding" | "step"); `topic` is the follow-up text.
+//
+// THE ID KEY IS `finding_id`. This posted `ref_id` until 2026-08-19 and 422'd
+// on EVERY call ("finding_id is required") — the backend has always read
+// `finding_id`, the same key /api/attest/finding_review, /directive_signoff
+// and /abstain use for a finding-scoped id. Nothing caught it because every
+// test mocked this function instead of the wire; the body-shape pins in
+// tests/test_close_out_strip.tsx (real fetch, asserted body) and
+// ui/backend/tests/test_todo_cockpit.py (this literal type, posted at the
+// real router) are the ones that would.
 export const postSpawnTopic = (body: {
-  ref_id: string;
+  finding_id: string;
   kind: "finding" | "step";
   topic: string;
 }) => postTodo("/api/todo/spawn_topic", body);
 
 // Outcome 6 — abstain: no verdict; honest exit; re-look later.
 export const postAbstain = (body: {
-  ref_id: string;
+  finding_id: string;
   note: string;
 }) => postTodo("/api/todo/abstain", body);
 

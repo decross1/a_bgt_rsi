@@ -190,7 +190,10 @@ describe("SpawnTopicForm (outcome 5)", () => {
     expect(argv).toHaveTextContent(/--kind finding/);
   });
 
-  it("posts to /api/todo/spawn_topic with ref_id + kind + topic and renders the stub response", async () => {
+  // The id key is `finding_id` — the key POST /api/todo/spawn_topic has
+  // always read. This pin said `ref_id` until 2026-08-19 and so BAKED IN the
+  // 422: it asserted the body faithfully, against the wrong contract.
+  it("posts to /api/todo/spawn_topic with finding_id + kind + topic and renders the stub response", async () => {
     const calls = stubFetch((u) =>
       u.endsWith("/api/todo/spawn_topic") ? jsonResponse(200, stubEnvelope("argv")) : undefined,
     );
@@ -202,10 +205,11 @@ describe("SpawnTopicForm (outcome 5)", () => {
     const post = calls.find((c) => c.url.endsWith("/api/todo/spawn_topic"));
     expect(post?.method).toBe("POST");
     expect(post?.body).toMatchObject({
-      ref_id: "finding-001",
+      finding_id: "finding-001",
       kind: "step",
       topic: "anchor coverage",
     });
+    expect(Object.keys(post?.body ?? {})).not.toContain("ref_id");
   });
 });
 
@@ -241,7 +245,7 @@ describe("AbstainForm (outcome 6)", () => {
     await waitFor(() => expect(screen.getByTestId("abstain-result")).toBeInTheDocument());
     expect(screen.getByTestId("abstain-result")).toHaveTextContent(/stub response/i);
     const post = calls.find((c) => c.url.endsWith("/api/todo/abstain"));
-    expect(post?.body).toMatchObject({ ref_id: "finding-001", note: "revisit later" });
+    expect(post?.body).toMatchObject({ finding_id: "finding-001", note: "revisit later" });
   });
 });
 

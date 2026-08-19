@@ -178,7 +178,7 @@ describe("postTodo error envelope + success body harden", () => {
       statusText: "Bad Gateway",
       json: () => Promise.resolve({ rc: 2, stderr: "argparse: invalid choice 'abstain'" }),
     }));
-    const err = await postAbstain({ ref_id: "sf-001", note: "x" }).catch((e) => e);
+    const err = await postAbstain({ finding_id: "sf-001", note: "x" }).catch((e) => e);
     expect(err).toBeInstanceOf(TodoError);
     expect(err).toMatchObject({
       status: 502,
@@ -194,7 +194,7 @@ describe("postTodo error envelope + success body harden", () => {
       statusText: "Bad Gateway",
       json: () => Promise.reject(new SyntaxError("no body")),
     }));
-    const err = await postAbstain({ ref_id: "sf-001", note: "x" }).catch((e) => e);
+    const err = await postAbstain({ finding_id: "sf-001", note: "x" }).catch((e) => e);
     expect(err).toBeInstanceOf(TodoError);
     expect(err.rc).toBeNull();
     expect(err.stderr).toBeNull();
@@ -208,7 +208,7 @@ describe("postTodo error envelope + success body harden", () => {
       statusText: "Unprocessable Entity",
       json: () => Promise.resolve(["task is required"]),
     }));
-    const err = await postAbstain({ ref_id: "sf-001", note: "x" }).catch((e) => e);
+    const err = await postAbstain({ finding_id: "sf-001", note: "x" }).catch((e) => e);
     expect(err).toBeInstanceOf(TodoError);
     expect(err.rc).toBeNull();
     expect(err.stderr).toBeNull();
@@ -222,7 +222,7 @@ describe("postTodo error envelope + success body harden", () => {
       statusText: "Bad Gateway",
       json: () => Promise.resolve({ rc: "2", stderr: 500, detail: "boom" }),
     }));
-    const err = await postAbstain({ ref_id: "sf-001", note: "x" }).catch((e) => e);
+    const err = await postAbstain({ finding_id: "sf-001", note: "x" }).catch((e) => e);
     expect(err.rc).toBeNull();
     expect(err.stderr).toBeNull();
     expect(err.detail).toBe("boom");
@@ -230,14 +230,14 @@ describe("postTodo error envelope + success body harden", () => {
 
   it("a non-JSON SUCCESS (200) body degrades to an empty stub {} — never throws", async () => {
     stubFetch(() => ok200(() => Promise.reject(new SyntaxError("empty body"))));
-    const res = await postAbstain({ ref_id: "sf-001", note: "x" });
+    const res = await postAbstain({ finding_id: "sf-001", note: "x" });
     expect(res).toEqual({});
   });
 
   it("a non-object SUCCESS body (bare array / scalar / null) degrades to {} (no fake row)", async () => {
     for (const bad of [["would", "run"], 0, null, "ok"]) {
       stubFetch(() => ok200(() => Promise.resolve(bad)));
-      const res = await postAbstain({ ref_id: "sf-001", note: "x" });
+      const res = await postAbstain({ finding_id: "sf-001", note: "x" });
       expect(res).toEqual({});
     }
   });
@@ -245,7 +245,7 @@ describe("postTodo error envelope + success body harden", () => {
   it("a well-formed stub SUCCESS body is forwarded raw (valid behavior unchanged)", async () => {
     const stub = { stub: true, lights_up_when: "seam lands", would_run: ["todo_cli", "abstain"] };
     stubFetch(() => ok200(() => Promise.resolve(stub)));
-    const res = await postAbstain({ ref_id: "sf-001", note: "x" });
+    const res = await postAbstain({ finding_id: "sf-001", note: "x" });
     expect(res).toEqual(stub);
   });
 
@@ -262,7 +262,7 @@ describe("postTodo error envelope + success body harden", () => {
       statusText: "Bad Gateway",
       json: () => Promise.resolve({ detail: "", rc: 2, stderr: "argparse: invalid choice" }),
     }));
-    const err = await postAbstain({ ref_id: "sf-001", note: "x" }).catch((e) => e);
+    const err = await postAbstain({ finding_id: "sf-001", note: "x" }).catch((e) => e);
     expect(err).toBeInstanceOf(TodoError);
     // falls through to the verbatim stderr, NOT the empty detail.
     expect(err.detail).toBe("argparse: invalid choice");
@@ -276,7 +276,7 @@ describe("postTodo error envelope + success body harden", () => {
       statusText: "Bad Gateway",
       json: () => Promise.resolve({ detail: "" }),
     }));
-    const err = await postAbstain({ ref_id: "sf-001", note: "x" }).catch((e) => e);
+    const err = await postAbstain({ finding_id: "sf-001", note: "x" }).catch((e) => e);
     expect(err).toBeInstanceOf(TodoError);
     expect(err.detail).toBe("502 Bad Gateway");
     expect(err.stderr).toBeNull();
@@ -295,7 +295,7 @@ describe("postTodo error envelope + success body harden", () => {
           detail: [{ loc: ["body", "task"], msg: "field required", type: "value_error.missing" }],
         }),
     }));
-    const err = await postAbstain({ ref_id: "sf-001", note: "x" }).catch((e) => e);
+    const err = await postAbstain({ finding_id: "sf-001", note: "x" }).catch((e) => e);
     expect(err).toBeInstanceOf(TodoError);
     expect(err.detail).toBe("422 Unprocessable Entity");
     expect(err.rc).toBeNull();
@@ -307,7 +307,7 @@ describe("postTodo error envelope + success body harden", () => {
   // and still yield a clean TodoError rather than crashing the caller.
   it("an error response missing json() entirely still yields a clean TodoError", async () => {
     stubFetch(() => ({ ok: false, status: 502, statusText: "Bad Gateway" }));
-    const err = await postAbstain({ ref_id: "sf-001", note: "x" }).catch((e) => e);
+    const err = await postAbstain({ finding_id: "sf-001", note: "x" }).catch((e) => e);
     expect(err).toBeInstanceOf(TodoError);
     expect(err.status).toBe(502);
     expect(err.rc).toBeNull();
@@ -318,7 +318,7 @@ describe("postTodo error envelope + success body harden", () => {
   // distinct from null; must still hit the non-object branch and degrade to {}.
   it("a SUCCESS body resolving to undefined (not null) degrades to {}", async () => {
     stubFetch(() => ok200(() => Promise.resolve(undefined)));
-    const res = await postAbstain({ ref_id: "sf-001", note: "x" });
+    const res = await postAbstain({ finding_id: "sf-001", note: "x" });
     expect(res).toEqual({});
   });
 });

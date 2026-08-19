@@ -295,6 +295,40 @@ _APPARATUS_PRIMER = (
     "boundaries accurately; do not overstate what the verdicts establish."
 )
 
+# Single-voice guard, folded into BOTH interrogation stances (2026-08-19).
+#
+# In session fs-6eddb609a03a the human asked the two voices for a one-word
+# verdict. The gemma defender answered: "Since I am playing two roles—the
+# **Defending Iteration** (trying to survive) and the **Internal Critic**
+# (trying to maintain rigor)—here is how we would answer", then emitted a
+# REFRAME and a KILL as two personas. Both names came straight out of its
+# own seed: "You are defending a research iteration" became the first, and
+# the seed's honest-defense clause read against the primer's talk of the
+# loop's OWN critics became the second. The generator resolved the felt
+# advocate-vs-rigor tension by SPLITTING instead of by answering.
+#
+# The repair is to say where the honesty lives (inside the one voice) and
+# to forbid the meta-commentary the split arrived as. It deliberately does
+# NOT tell the defender to always defend — that would trade a degenerate
+# turn for a dishonest one, and the honest-concession posture is the point
+# of the seam (D-044). The RULE STRING below deliberately forbids the move
+# without quoting the phrases the model split on — a forbidden phrase quoted
+# to forbid it is still that phrase in the context window, and the seed-text
+# test greps the built seed for exactly those strings.
+_ONE_VOICE_RULE = (
+    "ONE VOICE — you are a single speaker, never a panel. Do not announce "
+    "or imply that you are playing more than one role. Do not split an "
+    "answer into named personas, and do not label any part of it as a "
+    "separate critic, judge, or character: the loop's own critics named "
+    "below are OTHER components of the apparatus whose verdicts you reason "
+    "about, not voices of yours to speak as.\n"
+    "NO META-COMMENTARY — do not narrate your role, your instructions, this "
+    "prompt, or any tension you feel among them, and do not preface an "
+    "answer by describing what you are about to do. Answer the human's "
+    "question directly and in the form they asked for: a request for one "
+    "word gets one word."
+)
+
 
 def _build_seed(finding: dict[str, Any], record: dict[str, Any],
                 journal_text: str, refutations: list[str]) -> str:
@@ -336,17 +370,22 @@ def _build_seed(finding: dict[str, Any], record: dict[str, Any],
     p = _posture(finding, refutations)
 
     return (
-        f"You are defending a {p['noun']} under human interrogation in the "
-        "a_bgt_rsi apparatus.\n"
+        f"You are the ADVOCATE for a {p['noun']}, under human interrogation "
+        "in the a_bgt_rsi apparatus. You are ONE voice, and you speak only "
+        "as yourself.\n"
         "\n"
         f"{p['status']} The human is now pushing on it harder, to see whether "
         "it holds up or rubberbands back under pressure.\n"
         "\n"
-        "Your job is to defend it HONESTLY. Concede where the evidence is "
-        "thin. Cite the specific metric, value, and trial-count when you make "
-        "a claim of strength. Do NOT overclaim, do NOT invent evidence that is "
-        "not in the record below, and do NOT restate the claim more strongly "
-        "than the evidence supports.\n"
+        "Your job is to defend it HONESTLY, in that single voice. Concede "
+        "where the evidence is thin — a weakness you name yourself is part of "
+        "your defense, not the arrival of a second speaker. Cite the specific "
+        "metric, value, and trial-count when you make a claim of strength. Do "
+        "NOT overclaim, do NOT invent evidence that is not in the record "
+        "below, and do NOT restate the claim more strongly than the evidence "
+        "supports.\n"
+        "\n"
+        f"{_ONE_VOICE_RULE}\n"
         "\n"
         f"THE CLAIM:\n  {claim}\n"
         "\n"
@@ -425,6 +464,8 @@ def _build_skeptic_seed(finding: dict[str, Any], record: dict[str, Any],
         "ground an attack, say the evidence does not let you decide rather "
         "than conceding the point. A weak attack you cannot support is not an "
         "endorsement.\n"
+        "\n"
+        f"{_ONE_VOICE_RULE}\n"
         "\n"
         f"THE CLAIM (attack this):\n  {claim}\n"
         "\n"

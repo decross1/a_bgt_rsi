@@ -508,3 +508,81 @@ def test_cli_set_status_directive_superset(env, monkeypatch, capsys):
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert "directive" not in out["status_audit_row"]
+
+
+# --------------------------------------------------------------------------- #
+# single-voice seed pins (2026-08-19 defender role-confusion fix)              #
+# --------------------------------------------------------------------------- #
+# In session fs-6eddb609a03a the gemma defender answered a one-word question
+# with "Since I am playing two roles—the **Defending Iteration** (trying to
+# survive) and the **Internal Critic** (trying to maintain rigor)—here is how
+# we would answer", then emitted REFRAME and KILL as two personas (137 tokens
+# of meta-commentary, no defense). Both persona names came out of its own
+# seed. These are SEED-TEXT pins — properties of the prompt we control — not
+# pins on what a model does with it; a generator's output is not a test
+# fixture, and pinning it would be pinning the wrong thing.
+
+_META_INVITING_STRINGS = (
+    "two roles",
+    "internal critic",
+    "playing two",
+    "defending iteration",
+    "both roles",
+    "each role",
+)
+
+
+@pytest.mark.parametrize("builder", ["_build_seed", "_build_skeptic_seed"])
+def test_interrogation_seeds_declare_a_single_voice(builder):
+    seed = getattr(fs, builder)({}, {}, "", [])
+    assert "ONE VOICE" in seed
+    assert "single speaker" in seed
+    assert "never a panel" in seed
+    # The forbidden move is named explicitly, not merely implied.
+    assert "more than one role" in seed
+    assert "named personas" in seed
+    # ...and so is the shape the defect arrived in.
+    assert "NO META-COMMENTARY" in seed
+    assert "do not narrate your role" in seed
+    assert "in the form they asked for" in seed
+
+
+@pytest.mark.parametrize("builder", ["_build_seed", "_build_skeptic_seed"])
+def test_interrogation_seeds_carry_no_two_role_language(builder):
+    """The seed must not hand the generator the very framing it split on —
+    including in the negative: a forbidden phrase quoted to forbid it is
+    still the phrase in the context window."""
+    low = getattr(fs, builder)({}, {}, "", []).lower()
+    for bad in _META_INVITING_STRINGS:
+        assert bad not in low, f"{builder} seed contains {bad!r}"
+
+
+def test_defender_seed_is_one_advocate_not_an_object_to_defend():
+    """"You are defending a research iteration" is what became "the Defending
+    Iteration". The seed now names the SPEAKER (an advocate), not the thing."""
+    seed = fs._build_seed({}, {}, "", [])
+    assert "You are the ADVOCATE" in seed
+    assert "You are ONE voice" in seed
+    assert "speak only as yourself" in seed
+
+
+def test_defender_seed_keeps_the_honesty_posture_in_its_own_voice():
+    """The fix must not buy single-voice-ness with dishonesty: the defender
+    is still told to concede, and is NEVER told to always defend (D-044)."""
+    seed = fs._build_seed({}, {}, "", [])
+    assert "defend it HONESTLY, in that single voice" in seed
+    assert "Concede where the evidence is thin" in seed
+    assert "not the arrival of a second speaker" in seed
+    assert "do NOT invent evidence" in seed
+    low = seed.lower()
+    assert "always defend" not in low
+    assert "never concede" not in low
+
+
+def test_attacker_seed_keeps_its_honest_skeptic_posture():
+    """The same guard on the attacker must not soften the attack seam."""
+    seed = fs._build_skeptic_seed({}, {}, "", [])
+    assert "INDEPENDENT SKEPTIC" in seed
+    assert "strongest HONEST attack" in seed
+    assert "NEVER fabricate a concession" in seed
+    assert "ONE VOICE" in seed

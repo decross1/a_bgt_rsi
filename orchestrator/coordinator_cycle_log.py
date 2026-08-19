@@ -18,7 +18,11 @@ artifacts the UI reads:
     "generated but emitted empty content". Both are derived from evidence the
     cycle already produced (the run log's `loop_v0_ml_intern` result event; the
     calls log's empty-completion Qwen rows for the dispatched iteration) — this
-    module adds NO new model calls.
+    module adds NO new model calls. Cycle-scoped detectors ride here too:
+    loop_stalled (free to act, did nothing) and — since 2026-08-19 — the
+    distinct loop_gated:<reason> (held by the budget gate or the pause file;
+    deliberately idle — and, once the gate has held for hours without ever
+    clearing, escalated by AGE so a stuck loop cannot hide in a fresh "ok").
 
 Discipline (mirrors orchestrator/coordinator.py readers + active_run writes):
   - Every function is BEST-EFFORT and NEVER raises: a missing/partial source
@@ -374,6 +378,7 @@ def emit_health_signals(
     calls_log_path: str | os.PathLike | None = None,
     frontier_calls_path: str | os.PathLike | None = None,
     alert_flag_path: str | os.PathLike | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """Derive + append degraded health signals for this cycle's dispatched
     iteration. Returns the list of signals written ([] if none / on failure).
@@ -383,7 +388,9 @@ def emit_health_signals(
     empty-completion Qwen rows. Both are scoped to the dispatched iteration_id
     so the calls-log scan is cheap and the signals attribute to a concrete run.
     A signal carries a timestamp so the UI can show the most-recent one.
-    None paths resolve to the module defaults at call time (patchable)."""
+    None paths resolve to the module defaults at call time (patchable).
+    `now` pins the clock (the gate-age escalation and the row timestamps); it
+    defaults to wall time."""
     if health_path is None:
         health_path = DEFAULT_HEALTH_PATH
     if run_log_path is None:
@@ -392,6 +399,10 @@ def emit_health_signals(
         calls_log_path = DEFAULT_CALLS_LOG
     if frontier_calls_path is None:
         frontier_calls_path = DEFAULT_FRONTIER_CALLS
+    now_dt = now if now is not None else datetime.now(timezone.utc)
+    if now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=timezone.utc)
+    ts = now_dt.isoformat().replace("+00:00", "Z")
     signals: list[dict[str, Any]] = []
     try:
         executed = report.get("executed") or []
@@ -405,7 +416,7 @@ def emit_health_signals(
             for sig in (mi, qw):
                 if sig is None:
                     continue
-                sig = {"timestamp": _utcnow_iso(),
+                sig = {"timestamp": ts,
                        "run_id": report.get("run_id"), **sig}
                 _append_jsonl(health_path, sig)
                 signals.append(sig)
@@ -420,23 +431,68 @@ def emit_health_signals(
         # detector, for the same reason: the failure is silent by nature.
         for sig in loop_health.detect_frontier_vendor_down(
                 _read_jsonl(frontier_calls_path)):
-            sig = {"timestamp": _utcnow_iso(),
+            sig = {"timestamp": ts,
                    "run_id": report.get("run_id"), **sig}
+            _append_jsonl(health_path, sig)
+            signals.append(sig)
+        # GATED before STALLED (2026-08-19): a cycle a gate held — budget-
+        # paced/exhausted, or halted by the pause file — was never free to
+        # act, so its empty action list is the gate's signature and not the
+        # loop's silence. detect_stall itself
+        # returns None for such a report; this emits the distinct
+        # loop_gated:<reason> signal in its place, so the flag can read
+        # "idle: <reason>" instead of the RED "LOOP STALLED" the owner saw
+        # at 03:32 while the loop was iterating hourly.
+        gated = loop_health.detect_gated(report)
+        if gated is not None:
+            sig = {"timestamp": ts,
+                   "run_id": report.get("run_id"), **gated}
             _append_jsonl(health_path, sig)
             signals.append(sig)
         stall = loop_health.detect_stall(report, 0)
         if stall is not None:
-            sig = {"timestamp": _utcnow_iso(),
+            sig = {"timestamp": ts,
                    "run_id": report.get("run_id"), **stall}
             _append_jsonl(health_path, sig)
             signals.append(sig)
-        level = "red" if stall is not None else (
-            "amber" if signals else "ok")
         # Flag defaults to a SIBLING of health_path (run_state/loop_alert.json
         # in production; tmp_path in tests) — hermetic by construction.
         flag = alert_flag_path or Path(health_path).with_name("loop_alert.json")
+        # A gate that NEVER CLEARS is the loop not moving (2026-08-19 review,
+        # B1). Every refusal used to rewrite a fresh "ok" with a fresh
+        # updated_at, so a day of nothing-but-budget-refusals rendered as
+        # perfect health AND defeated the banner's 26h staleness backstop.
+        # gate_continuity carries the gate's age forward across wakes off the
+        # PREVIOUS flag and escalates ok -> amber -> red on that age; an
+        # executed cycle writes no gate block, which resets the clock.
+        gate_block: dict[str, Any] | None = None
+        gate_level = "ok"
+        extra_reasons: list[str] = []
+        if gated is not None:
+            gate_block = loop_health.gate_continuity(
+                loop_health.read_alert_flag(flag), gated, now_dt)
+            gate_level = gate_block.pop("level")
+            escalation = loop_health.gate_escalation_reason(gate_block)
+            if escalation is not None:
+                extra_reasons.append(escalation)
+        # A REAL degraded signal (ml-intern blind, Qwen empty, a dead
+        # frontier vendor) still wins amber over a FRESH gate's own level —
+        # being held does not make a broken component healthy. And an AGED
+        # gate wins over that in turn: worst-of, never a downgrade.
+        other = [s for s in signals if s.get("severity") not in
+                 ("gated", "stalled")]
+        if stall is not None:
+            level = "red"
+        elif other:
+            level = "amber"
+        else:
+            level = "ok"
+        if gated is not None:
+            level = loop_health.worse(level, gate_level)
         loop_health.write_alert_flag(
-            flag, level, [s.get("signal", "unknown") for s in signals],
+            flag, level,
+            [s.get("signal", "unknown") for s in signals] + extra_reasons,
+            gate=gate_block, now=now_dt,
         )
     except Exception:
         return signals

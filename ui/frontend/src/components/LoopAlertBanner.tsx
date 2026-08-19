@@ -12,6 +12,17 @@
 //   ok & fresh -> nothing (the calm state is invisible; no reassurance chrome).
 //   stale      -> amber "no cycle telemetry since <ts>" appended (or alone,
 //                 when the level itself would have hidden the banner).
+//   gated      -> the flag's additive `gate` block (a cycle a coordinator gate
+//                 HELD rather than ran). It never forces the banner open on its
+//                 own: a FRESH gate arrives at level "ok" and stays invisible,
+//                 exactly like any other calm state. The producer escalates it
+//                 by AGE (loop_health.gate_continuity: ok -> amber at 3h -> red
+//                 at 12h continuously held), and only then does this render —
+//                 as "idle: <reason> for <age>" with the gate's own detail, and
+//                 with the headline reading LOOP IDLE instead of LOOP STALLED.
+//                 That distinction is the point: a red the owner cannot explain
+//                 was the original complaint, and "stalled" would be a LIE for a
+//                 loop that is being deliberately held.
 //
 // Degradation (house doctrine): a 204 (flag never written), a version-skew
 // 404 before anything loaded, or an unknown level renders NOTHING — this
@@ -53,6 +64,31 @@ function staleSince(alert: LoopAlert, nowMs: number): string | null {
   const t = Date.parse(raw);
   if (Number.isNaN(t)) return null;
   return nowMs - t > STALE_AFTER_MS ? raw : null;
+}
+
+// The additive `gate` block, coerced. Producer-owned like `reasons`: a reason
+// that is not a non-empty string means there is no gate to name, so we render
+// none rather than an empty "idle:" line.
+interface GateView {
+  reason: string;
+  detail: string | null;
+  firstGatedAt: string | null;
+}
+
+function gateOf(alert: LoopAlert): GateView | null {
+  const g = alert.gate;
+  if (typeof g !== "object" || g === null || Array.isArray(g)) return null;
+  const raw = g as Record<string, unknown>;
+  const reason = raw.reason;
+  if (typeof reason !== "string" || reason.length === 0) return null;
+  return {
+    reason,
+    detail: typeof raw.detail === "string" && raw.detail.length > 0 ? raw.detail : null,
+    firstGatedAt:
+      typeof raw.first_gated_at === "string" && raw.first_gated_at.length > 0
+        ? raw.first_gated_at
+        : null,
+  };
 }
 
 function hasParseableTs(alert: LoopAlert): boolean {
@@ -110,9 +146,13 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
   if (!showRed && !showAmber) return null; // ok & fresh, or unknown & fresh
 
   const reasons = level === "ok" ? [] : reasonsOf(alert);
+  const gate = gateOf(alert);
   const tone = showRed
     ? "border-red-800 bg-red-950/60 text-red-200"
     : "border-amber-800 bg-amber-950/50 text-amber-200";
+  // A held loop is IDLE, not stalled. Saying "LOOP STALLED" over a gate the
+  // producer named would be the same unexplained red the owner objected to.
+  const headline = gate ? `LOOP IDLE — ${gate.reason}` : showRed ? "LOOP STALLED" : "loop degraded";
 
   return (
     <div
@@ -122,13 +162,18 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
       className={`border-b px-6 py-2 text-xs ${tone}`}
     >
       <div className="flex flex-wrap items-baseline gap-2">
-        <span className="font-semibold uppercase tracking-wide">
-          {showRed ? "LOOP STALLED" : "loop degraded"}
-        </span>
+        <span className="font-semibold uppercase tracking-wide">{headline}</span>
         <span className={showRed ? "text-red-400/70" : "text-amber-400/70"}>
           run_state/loop_alert.json
         </span>
       </div>
+      {gate !== null && (
+        <div className="mt-1" data-testid="loop-alert-gate">
+          idle: {gate.reason}
+          {gate.firstGatedAt !== null ? ` for ${ageLabel(gate.firstGatedAt, now)}` : ""}
+          {gate.detail !== null ? ` — ${gate.detail}` : ""}
+        </div>
+      )}
       {reasons.length > 0 && (
         <ul className="mt-1 list-disc space-y-0.5 pl-5" data-testid="loop-alert-reasons">
           {reasons.map((r, i) => (

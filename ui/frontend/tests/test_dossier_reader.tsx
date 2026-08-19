@@ -362,11 +362,43 @@ describe("DossierReader — the chat NEVER exposes a disposition (the fence)", (
     ]) {
       expect(within(aux).queryByRole("button", { name: re })).toBeNull();
     }
-    // The panes' only buttons are the send + addressee controls.
-    const buttons = within(aux).getAllByRole("button").map((b) => b.textContent);
-    for (const label of buttons) {
-      expect(label).toMatch(/^(send|send turn|defender|attacker|both)$/);
+    // The pane whitelists are PER PANE, not aux-wide. `aux` holds BOTH panes,
+    // so widening it there would admit the close-out names in the tutor pane
+    // too — a fence must not be loosened further than the feature needs.
+    // The close-out strip renders ONLY in the two-voice pane (ChatPane gates
+    // it on `twoVoice`), so only that pane's whitelist gains the two names.
+    const PANE_CONTROLS = /^(send|send turn|defender|attacker|both)$/;
+    // The tutor pane: UNCHANGED — send only, no close-out control at all.
+    const tutor = within(aux).getByTestId("tutor-chat-pane");
+    for (const label of within(tutor).getAllByRole("button").map((b) => b.textContent)) {
+      expect(label).toMatch(PANE_CONTROLS);
     }
+    expect(within(tutor).queryByTestId("close-out-strip")).toBeNull();
+
+    // The two-voice pane: the send + addressee controls PLUS the close-out
+    // strip's two session-exit controls (GAP 2, 2026-08-19), admitted
+    // DELIBERATELY and narrowly. "spawn follow-up topic" posts
+    // /api/todo/spawn_topic, which WRITES NOTHING (the writer of record is
+    // end_session — a session exit, not a disposition); the reset button only
+    // re-seeds a text field. The real fence is the verdict-NAME check above,
+    // which still holds over all of `aux`.
+    const twoVoice = within(aux).getByTestId("two-voice-chat-pane");
+    for (const label of within(twoVoice).getAllByRole("button").map((b) => b.textContent)) {
+      expect(label).toMatch(
+        /^(send|send turn|defender|attacker|both|spawn follow-up topic|reset to attacker's suggestion)$/,
+      );
+    }
+    // Every button in aux belongs to one of the two panes (no third surface
+    // slipped a control in between them).
+    expect(within(aux).getAllByRole("button").length).toBe(
+      within(tutor).getAllByRole("button").length +
+        within(twoVoice).getAllByRole("button").length,
+    );
+    // The strip is PRESENT (that is the point of GAP 2) and names its own
+    // fence: the dispositions live in the footer, never here.
+    expect(within(twoVoice).getByTestId("close-out-fence")).toHaveTextContent(
+      /disposition footer/i,
+    );
     // The tutor pane cites the tutor fence; the two-voice pane cites D-044.
     expect(within(aux).getByTestId("tutor-chat-fence-note")).toHaveTextContent(
       /D-053/,

@@ -21,7 +21,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend.model_io import register
+from backend.model_io import _session_id, register
 
 
 # ─── fixtures ─────────────────────────────────────────────────────────
@@ -610,3 +610,603 @@ def test_runtime_activity_absent_files_degrade_honestly(tmp_path):
     assert body["chain"] == []
     assert body["subagent_groups"] == []
     assert body["window_truncated"] is False
+
+
+# ─── session threads (owner 2026-08-19: "I posed 3 questions … but it shows
+#     up as 6 cards instead of maybe 1 or 2 (since it goes to 2 models)") ──
+#
+# The finding-session engine is a STATELESS REPLAY (orchestrator/
+# finding_session.py): every turn re-sends the whole message stack, so a
+# 3-question two-voice interrogation is 6 wrapper calls each carrying the
+# entire growing prompt. The pins below are: those rows group into ONE
+# thread, the per-turn payload is the NEW question only (the prefix is a
+# COUNT), non-session rows are untouched, detection never guesses, and a
+# thread costs ONE row of the page's limit.
+
+GEMMA = "gemma-4-26b-a4b"
+QWEN38 = "qwen3.8-27b-nvfp4-mtp"
+
+QUESTIONS = [
+    "what is the reason we should kill this idea",
+    "what would you do if you thought the idea was good, but we are just "
+    "lacking validation on the expiermentation front?",
+    "So if you both could give just 1 word, kill or reframe what would it be?",
+]
+
+
+def _session_call(ts: str, req: str, *, session: str = "fs-6eddb609a03a",
+                  stance: str | None = "defender", model: str = GEMMA,
+                  backend: str = "vllm-gemma", prior=(), question: str = "q",
+                  completion: str = "an answer") -> dict:
+    """One finding-session wrapper call, REPLAY AND ALL.
+
+    `prior` is the [(question, answer), ...] already exchanged with THIS
+    voice — the engine re-sends them ahead of the new question every turn,
+    which is exactly what the thread grouping has to collapse."""
+    messages = [{"role": "system", "content": "You are the " + str(stance)}]
+    for q, a in prior:
+        messages.append({"role": "user", "content": q})
+        messages.append({"role": "assistant", "content": a})
+    messages.append({"role": "user", "content": question})
+    tag = "finding_session" if stance is None else f"finding_session_{stance}"
+    return {
+        "timestamp": ts, "request_id": req, "parent_request_id": None,
+        "model": model, "backend": backend, "caller_tag": tag,
+        "run_id": f"finding_session_{session}",
+        "prompt_messages": messages, "completion": completion,
+        "usage": {"input_tokens": 2695, "output_tokens": 709},
+        "latency_ms": 27457.8,
+    }
+
+
+def _two_voice_rows(session: str = "fs-6eddb609a03a", questions=None,
+                    start: int = 0) -> list[dict]:
+    """The owner's real shape: N questions, each asked of BOTH voices —
+    defender on gemma, attacker on qwen — in chronological file order."""
+    questions = QUESTIONS if questions is None else questions
+    voices = (("defender", GEMMA, "vllm-gemma"),
+              ("attacker", QWEN38, "vllm-qwen"))
+    prior: dict[str, list] = {"defender": [], "attacker": []}
+    rows: list[dict] = []
+    clock = start
+    for i, question in enumerate(questions):
+        for stance, model, backend in voices:
+            answer = f"{stance} answer to q{i}"
+            rows.append(_session_call(
+                _pts(clock), f"{stance[:3]}-{i}", session=session,
+                stance=stance, model=model, backend=backend,
+                prior=list(prior[stance]), question=question,
+                completion=answer))
+            prior[stance].append((question, answer))
+            clock += 1
+    return rows
+
+
+def test_three_questions_two_models_is_ONE_thread(tmp_path):
+    # The owner's exact complaint: 6 wrapper calls, 1 card, 3 questions x 2
+    # answers — and not one of them left in the per-call list.
+    client = _client(_setup(tmp_path, _two_voice_rows()))
+    body = client.get("/api/model_io").json()
+    assert body["calls"] == []
+    assert len(body["threads"]) == 1
+    thread = body["threads"][0]
+    assert thread["kind"] == "session_thread"
+    assert thread["session_id"] == "fs-6eddb609a03a"
+    assert thread["run_id"] == "finding_session_fs-6eddb609a03a"
+    assert thread["turn_count"] == 6
+    # NO question_count on the wire (dropped 2026-08-19): a card can be
+    # assembled from several page slices, so the only correct count is the
+    # one the card derives from the turns it holds. The evidence that count
+    # is built from is here — the per-turn user_delta sequence.
+    assert "question_count" not in thread
+    assert [t["user_delta"] for t in thread["turns"]] == [
+        QUESTIONS[0], QUESTIONS[0], QUESTIONS[1], QUESTIONS[1],
+        QUESTIONS[2], QUESTIONS[2]]
+    assert thread["stances"] == ["attacker", "defender"]
+    assert thread["models"] == [GEMMA, QWEN38]
+    assert thread["caller_tags"] == ["finding_session_attacker",
+                                     "finding_session_defender"]
+    # Whole session in hand (every voice's opening [system, user] call).
+    assert thread["turns_complete"] is True
+    # Chronological, and the two voices interleave per question.
+    assert [t["stance"] for t in thread["turns"]] == [
+        "defender", "attacker"] * 3
+    assert thread["started"] == _pts(0)
+    assert thread["ended"] == _pts(5)
+    assert thread["wall_ms"] == 5000.0
+
+
+def test_turn_carries_the_NEW_question_and_a_prefix_COUNT(tmp_path):
+    # The replayed stack is never repeated per turn: each turn ships the last
+    # USER message (the new ask) plus the number of messages ahead of it.
+    client = _client(_setup(tmp_path, _two_voice_rows()))
+    turns = client.get("/api/model_io").json()["threads"][0]["turns"]
+    assert [t["user_delta"] for t in turns] == [
+        QUESTIONS[0], QUESTIONS[0], QUESTIONS[1], QUESTIONS[1],
+        QUESTIONS[2], QUESTIONS[2]]
+    # [system,user] -> 1; then +2 replayed messages per prior exchange.
+    assert [t["prefix_message_count"] for t in turns] == [1, 1, 3, 3, 5, 5]
+    # No turn carries the replayed prose itself.
+    for turn in turns:
+        assert QUESTIONS[0] not in turn["completion"]
+    first = turns[0]
+    assert first["stance"] == "defender"
+    assert first["model"] == GEMMA
+    assert first["backend"] == "vllm-gemma"
+    assert first["tokens_in"] == 2695 and first["tokens_out"] == 709
+    assert first["latency_ms"] == 27457.8
+    assert first["request_id"] == "def-0"
+    assert first["empty"] is False
+
+
+def test_turn_order_preserves_the_ask_sequence_for_the_card(tmp_path):
+    # The card collapses CONSECUTIVE identical asks into one question block
+    # (a "both" turn fans one question to two voices) and honestly treats a
+    # repeat asked later as a second question. That derivation lives in
+    # SessionThreadCard.questionGroups — the backend's job is to hand over
+    # the ask sequence in chronological order, unscrambled.
+    rows = _two_voice_rows(questions=["same", "other", "same"])
+    thread = _client(_setup(tmp_path, rows)).get(
+        "/api/model_io").json()["threads"][0]
+    assert thread["turn_count"] == 6
+    assert [t["user_delta"] for t in thread["turns"]] == [
+        "same", "same", "other", "other", "same", "same"]
+
+
+def test_non_session_calls_keep_their_per_call_rows(tmp_path):
+    # Iteration chains / batteries / promotion panels are untouched: they
+    # stay in `calls` with the same summary shape as before the grouping.
+    rows = [_call(_pts(0), "iter-1"),
+            *_two_voice_rows(start=1),
+            _call(_pts(7), "iter-2", tag="subagent.finding_skeptic_1",
+                  run_id="promote_findings_abc")]
+    body = _client(_setup(tmp_path, rows)).get("/api/model_io").json()
+    assert [c["request_id"] for c in body["calls"]] == ["iter-2", "iter-1"]
+    assert body["calls"][0]["completion_preview"] == "a completion"
+    assert len(body["threads"]) == 1
+    assert body["threads"][0]["turn_count"] == 6
+
+
+def test_session_detection_is_conservative(tmp_path):
+    # BOTH signals are required. A session-shaped run_id under a foreign
+    # caller_tag, or a session caller_tag with no session run_id, is NOT
+    # grouped — the grouping never guesses a session into existence.
+    tag_only = _session_call(_pts(0), "tag-only")
+    tag_only["run_id"] = None
+    run_only = _call(_pts(1), "run-only", tag="nara.run_iteration",
+                     run_id="finding_session_fs-deadbeef")
+    look_alike = _call(_pts(2), "look-alike", tag="finding_promotion.synthesize",
+                       run_id="promote_findings_abc")
+    body = _client(_setup(tmp_path, [tag_only, run_only, look_alike])) \
+        .get("/api/model_io").json()
+    assert body["threads"] == []
+    assert [c["request_id"] for c in body["calls"]] == ["look-alike",
+                                                        "run-only", "tag-only"]
+
+
+def test_single_voice_session_has_no_invented_stance(tmp_path):
+    # The bare "finding_session" tag (chat seam) and the tutor still thread —
+    # the bare one simply has no stance, rather than being assigned one.
+    rows = [_session_call(_pts(0), "chat-1", stance=None, question="hi"),
+            _session_call(_pts(1), "tut-1", session="fs-tutor",
+                          stance="tutor", model=QWEN38, backend="vllm-qwen",
+                          question="teach me")]
+    threads = _client(_setup(tmp_path, rows)).get(
+        "/api/model_io").json()["threads"]
+    by_id = {t["session_id"]: t for t in threads}
+    assert by_id["fs-6eddb609a03a"]["stances"] == []
+    assert by_id["fs-6eddb609a03a"]["turns"][0]["stance"] is None
+    assert by_id["fs-tutor"]["stances"] == ["tutor"]
+
+
+def test_thread_counts_as_ONE_row_of_the_page_limit(tmp_path):
+    # Pagination unit = a row AS THE UI SEES IT. Over 3 plain calls sitting
+    # on top of a 6-call session: limit=3 is the three calls and nothing
+    # else; limit=4 adds the whole session as the FOURTH row (not 6 rows,
+    # and not a stump).
+    rows = [*_two_voice_rows(),
+            _call(_pts(6), "c-1"), _call(_pts(7), "c-2"),
+            _call(_pts(8), "c-3")]
+    client = _client(_setup(tmp_path, rows))
+    body3 = client.get("/api/model_io?limit=3").json()
+    assert [c["request_id"] for c in body3["calls"]] == ["c-3", "c-2", "c-1"]
+    assert body3["threads"] == []
+    body4 = client.get("/api/model_io?limit=4").json()
+    assert [c["request_id"] for c in body4["calls"]] == ["c-3", "c-2", "c-1"]
+    assert len(body4["threads"]) == 1
+    # The thread opened at the limit boundary is still COMPLETE: the bounded
+    # backfill walks its remaining turns rather than showing a stump.
+    assert body4["threads"][0]["turn_count"] == 6
+    assert body4["threads"][0]["turns_complete"] is True
+
+
+def test_default_limit_counts_threads_as_rows(tmp_path):
+    # 20 plain calls + a 6-call session = 21 rows; the default page shows 20
+    # of them, and the newest 20 rows here are the calls (the session is
+    # oldest), so it drops out entirely rather than eating 6 slots.
+    rows = [*_two_voice_rows(), *[_call(_pts(6 + i), f"c-{i}")
+                                  for i in range(20)]]
+    body = _client(_setup(tmp_path, rows)).get("/api/model_io").json()
+    assert len(body["calls"]) == 20
+    assert body["threads"] == []
+
+
+# ─── paging coverage: page1 ∪ page2 = the span, exactly once ───────────
+#
+# THE BUG THESE REPLACE (2026-08-19). The two green tests here built
+# CONTIGUOUS sessions — no plain rows inside the thread's span — which is the
+# ONLY shape where "page from the thread's `started`" looks right. Real logs
+# interleave: the coordinator, the daemon and the batteries all write to
+# calls.jsonl while a chat session is open. The page's guaranteed coverage
+# ends at its FILL POINT, but THREAD_BACKFILL_ROWS lets the scan walk up to
+# 60 rows PAST that point to finish an open thread, and every non-session row
+# it walked was DROPPED. The client then paged from the thread's `started` —
+# older than the fill point — so those dropped rows appeared on NEITHER page
+# and the UI went on to announce "beginning of log reached".
+#
+# The fix is a wire contract, not a smarter client guess: the scan reports
+# its own fill point as `next_before_ts`, and returns every row it walked.
+# The tests below drive the pager the way the UI does — page 1, then
+# before_ts = THE SERVER'S next_before_ts — and assert set equality against
+# the fixture, which is what "no gap AND no duplicate" actually means.
+
+
+def _interleaved_session_rows(questions: int = 2) -> list[dict]:
+    """A two-voice session with PLAIN calls BETWEEN its turns.
+
+    Chronological: plain, def-0, plain, att-0, plain, def-1, plain, att-1,
+    plain — i.e. every session turn has unrelated traffic on both sides,
+    which is the shape the old paging rule silently lost rows in."""
+    voices = (("defender", GEMMA, "vllm-gemma"),
+              ("attacker", QWEN38, "vllm-qwen"))
+    prior: dict[str, list] = {"defender": [], "attacker": []}
+    rows = [_call(_pts(0), "plain-0")]
+    clock = 1
+    for i in range(questions):
+        for stance, model, backend in voices:
+            answer = f"{stance} answer to q{i}"
+            rows.append(_session_call(
+                _pts(clock), f"{stance[:3]}-{i}", stance=stance, model=model,
+                backend=backend, prior=list(prior[stance]),
+                question=QUESTIONS[i], completion=answer))
+            prior[stance].append((QUESTIONS[i], answer))
+            clock += 1
+            rows.append(_call(_pts(clock), f"plain-{clock}"))
+            clock += 1
+    return rows
+
+
+def _delivered(body: dict) -> list[str]:
+    """Every LOG ROW a page actually delivered — plain calls AND the turns
+    inside its threads. Coverage is measured in rows, not in UI cards."""
+    ids = [c["request_id"] for c in body["calls"]]
+    for thread in body["threads"]:
+        ids.extend(t["request_id"] for t in thread["turns"])
+    return ids
+
+
+def _walk_pages(client, limit: int, query: str = "") -> list[dict]:
+    """Drive the pager exactly as the UI does: page 1, then before_ts = the
+    SERVER's next_before_ts, until the server says end_of_log. Never infers
+    a boundary from the rendered items — that inference is the bug."""
+    pages: list[dict] = []
+    before: str | None = None
+    for _ in range(30):                      # loop guard, never a stop rule
+        url = f"/api/model_io?limit={limit}{query}"
+        if before is not None:
+            url += "&before_ts=" + before
+        body = client.get(url).json()
+        pages.append(body)
+        if body["end_of_log"] or body["next_before_ts"] is None:
+            break
+        before = body["next_before_ts"]
+    assert pages[-1]["end_of_log"] or pages[-1]["next_before_ts"] is None
+    return pages
+
+
+def test_pages_tile_a_log_that_INTERLEAVES_plain_calls_with_a_session(
+        tmp_path):
+    # THE B1 REGRESSION PIN. 9 rows: 5 plain calls interleaved with a
+    # 4-turn session. limit=3 fills the page mid-session, so the backfill
+    # walk crosses three plain rows on its way to the session's openers.
+    rows = _interleaved_session_rows()
+    client = _client(_setup(tmp_path, rows))
+    pages = _walk_pages(client, limit=3)
+    delivered = [rid for page in pages for rid in _delivered(page)]
+    expected = [r["request_id"] for r in rows]
+    # No gap: every row in the fixture came back. No duplicate: exactly once.
+    assert sorted(delivered) == sorted(expected)
+    assert len(delivered) == len(set(delivered)) == len(rows)
+    # The session is ONE thread across the walk (its turns may split across
+    # pages; the client folds the slices by session_id).
+    sessions = {t["session_id"] for p in pages for t in p["threads"]}
+    assert sessions == {"fs-6eddb609a03a"}
+
+
+def test_page_one_covers_down_to_ITS_OWN_fill_point_not_the_thread_start(
+        tmp_path):
+    # The precise shape of the old defect: the thread's `started` sits
+    # OLDER than / at the fill point while plain rows walked during the
+    # backfill sat in between. Page 1 must DELIVER those rows — paging from
+    # `started` while dropping them is what lost them.
+    rows = _interleaved_session_rows()
+    client = _client(_setup(tmp_path, rows))
+    page1 = client.get("/api/model_io?limit=3").json()
+    boundary = page1["next_before_ts"]
+    assert boundary is not None and page1["end_of_log"] is False
+    # The backfill really did run past the row budget (3 rows budgeted,
+    # more than 3 rows delivered) — the ingredients of the bug are present.
+    assert len(_delivered(page1)) > 3
+    thread = page1["threads"][0]
+    assert thread["started"] is not None
+    # Every fixture row at or newer than the stated boundary is on page 1 …
+    in_span = {r["request_id"] for r in rows if r["timestamp"] >= boundary}
+    assert set(_delivered(page1)) == in_span
+    # … including the plain rows that sit INSIDE the thread's own span,
+    # which is where the old rule lost them: page 1 dropped them (they were
+    # walked during the backfill) and a page keyed on the thread's `started`
+    # is strictly older, so it never hands them back either.
+    inside = [r["request_id"] for r in rows
+              if _session_id(r) is None
+              and thread["started"] <= r["timestamp"] <= thread["ended"]]
+    assert inside                          # the fixture really interleaves
+    assert set(inside) <= set(_delivered(page1))
+    old_rule_page2 = client.get(
+        "/api/model_io?before_ts=" + thread["started"]).json()
+    assert set(inside) & set(_delivered(old_rule_page2)) == set()
+    # … and page 2, keyed on the STATED boundary, tiles exactly, no overlap.
+    page2 = client.get("/api/model_io?before_ts=" + boundary).json()
+    assert set(_delivered(page1)) & set(_delivered(page2)) == set()
+    assert set(_delivered(page1)) | set(_delivered(page2)) == {
+        r["request_id"] for r in rows}
+
+
+def test_pages_tile_when_a_thread_sits_at_EVERY_page_boundary(tmp_path):
+    # Same interleaved log, every page size from 1 to 8: whichever row the
+    # budget lands on — plain call, first turn, middle turn — the walk still
+    # covers every row exactly once. A page size is not a special case.
+    rows = _interleaved_session_rows(questions=3)
+    client = _client(_setup(tmp_path, rows))
+    expected = sorted(r["request_id"] for r in rows)
+    for limit in range(1, 9):
+        delivered = [rid for page in _walk_pages(client, limit=limit)
+                     for rid in _delivered(page)]
+        assert sorted(delivered) == expected, f"limit={limit}"
+        assert len(delivered) == len(set(delivered)), f"limit={limit}"
+
+
+def test_pages_tile_when_the_filter_thins_the_thread(tmp_path):
+    # The coverage contract is over MATCHING rows: a model filter that
+    # keeps only one voice still tiles, with no gap and no repeat.
+    rows = _interleaved_session_rows(questions=3)
+    client = _client(_setup(tmp_path, rows))
+    pages = _walk_pages(client, limit=2, query="&model=gemma")
+    delivered = [rid for page in pages for rid in _delivered(page)]
+    expected = sorted(r["request_id"] for r in rows
+                      if "gemma" in r["model"].lower())
+    assert sorted(delivered) == expected
+    assert len(delivered) == len(set(delivered))
+
+
+def test_a_page_never_stops_MID_TIMESTAMP(tmp_path):
+    # before_ts is STRICTLY older, so a page that stops on one of two rows
+    # sharing an instant would leave the other on neither page. Rows tying
+    # the boundary ride this page instead.
+    rows = [_call(_pts(0), "tie-old"),
+            _call(_pts(1), "tie-a"), _call(_pts(1), "tie-b"),
+            _call(_pts(2), "tie-new")]
+    client = _client(_setup(tmp_path, rows))
+    delivered = [rid for page in _walk_pages(client, limit=1)
+                 for rid in _delivered(page)]
+    assert sorted(delivered) == ["tie-a", "tie-b", "tie-new", "tie-old"]
+    assert len(delivered) == 4
+
+
+def test_end_of_log_and_next_before_ts_are_STATED_not_inferred(tmp_path):
+    # The client no longer guesses "beginning of log" from a short page —
+    # a short page can also mean "the byte cap stopped me". The two answers
+    # are separate wire fields.
+    client = _client(_setup(tmp_path, PAGE_ROWS))
+    page1 = client.get("/api/model_io?limit=3").json()
+    assert page1["end_of_log"] is False
+    assert page1["next_before_ts"] == page1["calls"][-1]["ts"]
+    last = client.get(
+        "/api/model_io?limit=3&before_ts=" + _pts(1)).json()
+    assert last["end_of_log"] is True
+    assert last["next_before_ts"] is None
+    # Byte cap: the walk stopped for a DIFFERENT reason, and says so.
+    logs = tmp_path / "capped"
+    logs.mkdir()
+    filler = "".join(json.dumps(_call(_pts(3), f"f-{i}")) + "\n"
+                     for i in range(200))
+    (logs / "calls.jsonl").write_text(
+        json.dumps(_call(_pts(0), "way-old")) + "\n" + filler,
+        encoding="utf-8")
+    capped_body = _client(logs, max_scan_bytes=16 * 1024).get(
+        "/api/model_io?before_ts=" + _pts(2)).json()
+    assert capped_body["calls"] == []
+    assert capped_body["window_truncated"] is True
+    assert capped_body["end_of_log"] is False
+
+
+def test_an_older_page_may_OPEN_a_thread_and_say_it_is_incomplete(tmp_path):
+    # The thread does not start on the live page: page 2's own fill point is
+    # where the session first appears, and its opening turns sit beyond the
+    # scan's byte cap. The page says turns_complete False rather than
+    # implying the card is the whole conversation — and the two pages still
+    # tile the span they cover, with no row on neither page.
+    # Chronological AND file order (the scan reads file order backward):
+    # the two openers, 30 unrelated calls, the session's later turns, then
+    # two fresh calls on top.
+    rows = [
+        _session_call(_pts(0), "def-0", stance="defender",
+                      question=QUESTIONS[0], completion="d0"),
+        _session_call(_pts(1), "att-0", stance="attacker", model=QWEN38,
+                      backend="vllm-qwen", question=QUESTIONS[0],
+                      completion="a0"),
+        *[_call(_pts(2 + i), f"f-{i}") for i in range(30)],
+        _session_call(_pts(32), "def-1", stance="defender",
+                      prior=[(QUESTIONS[0], "d0")], question=QUESTIONS[1],
+                      completion="d1"),
+        _session_call(_pts(33), "att-1", stance="attacker", model=QWEN38,
+                      backend="vllm-qwen", prior=[(QUESTIONS[0], "a0")],
+                      question=QUESTIONS[1], completion="a1"),
+        _call(_pts(34), "n-0"), _call(_pts(35), "n-1"),
+    ]
+    client = _client(_setup(tmp_path, rows), max_scan_bytes=6 * 1024)
+
+    page1 = client.get("/api/model_io?limit=2").json()
+    assert [c["request_id"] for c in page1["calls"]] == ["n-1", "n-0"]
+    assert page1["threads"] == []                # the session is older
+    boundary = page1["next_before_ts"]
+    assert boundary is not None
+
+    page2 = client.get(
+        "/api/model_io?limit=2&before_ts=" + boundary).json()
+    thread = page2["threads"][0]
+    assert thread["session_id"] == "fs-6eddb609a03a"
+    # The thread OPENED at page 2's own fill point and its opening turns are
+    # outside the scanned window — it says so instead of implying the card
+    # is the whole conversation.
+    assert thread["turns_complete"] is False
+    assert min(t["prefix_message_count"] for t in thread["turns"]) > 1
+    assert {t["request_id"] for t in thread["turns"]} == {"def-1", "att-1"}
+    # No overlap between the pages, and nothing in the span they cover is
+    # missing from their union.
+    assert set(_delivered(page1)) & set(_delivered(page2)) == set()
+    covered_from = page2["next_before_ts"]
+    assert covered_from is not None and page2["end_of_log"] is False
+    span = {r["request_id"] for r in rows
+            if r["timestamp"] >= covered_from}
+    assert set(_delivered(page1)) | set(_delivered(page2)) == span
+
+
+def test_a_page_bounds_the_turns_of_ONE_thread_and_says_so(tmp_path):
+    # Turns do NOT consume the page's row budget (a session is one row), so
+    # before the page fills a huge session could append without limit and
+    # blow the polled response. THREAD_MAX_TURNS bounds it — by STOPPING the
+    # page (never by dropping a row): the boundary freezes at the last turn
+    # returned and the next page continues the session.
+    from backend.model_io import THREAD_MAX_TURNS
+    n = THREAD_MAX_TURNS + 5
+    rows = [_session_call(_pts(i), f"t-{i}", stance="tutor",
+                          prior=[("q", "a")] * i, question=f"q{i}")
+            for i in range(n)]
+    client = _client(_setup(tmp_path, rows))
+    page1 = client.get("/api/model_io?limit=20").json()
+    thread = page1["threads"][0]
+    assert thread["turn_count"] == THREAD_MAX_TURNS
+    assert thread["turns_truncated"] is True
+    assert thread["turns_complete"] is False
+    assert page1["end_of_log"] is False
+    # Bounded, not lossy: the walk resumes exactly where it stopped.
+    delivered = [rid for page in _walk_pages(client, limit=20)
+                 for rid in _delivered(page)]
+    assert sorted(delivered) == sorted(r["request_id"] for r in rows)
+    assert len(delivered) == n
+
+
+def test_turns_truncated_is_false_on_an_ordinary_thread(tmp_path):
+    thread = _client(_setup(tmp_path, _two_voice_rows())).get(
+        "/api/model_io").json()["threads"][0]
+    assert thread["turns_truncated"] is False
+
+
+def test_filters_apply_to_rows_and_thin_the_thread_honestly(tmp_path):
+    # A model filter over a two-voice session yields a ONE-stance thread —
+    # the qwen turns are not smuggled in behind the matching gemma ones.
+    client = _client(_setup(tmp_path, _two_voice_rows()))
+    thread = client.get("/api/model_io?model=gemma").json()["threads"][0]
+    assert thread["stances"] == ["defender"]
+    assert thread["turn_count"] == 3
+    assert [t["stance"] for t in thread["turns"]] == ["defender"] * 3
+    assert client.get("/api/model_io?model=gemma").json()["calls"] == []
+
+
+def test_thread_turns_complete_is_false_when_the_first_turn_is_out_of_window(
+        tmp_path):
+    # Honest bounded window: when the byte cap stops the scan before the
+    # session's opening calls, the thread says so instead of implying the
+    # card is the whole conversation.
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    rows = _two_voice_rows()
+    head = "".join(json.dumps(r) + "\n" for r in rows[:2])   # the two openers
+    tail = "".join(json.dumps(r) + "\n" for r in rows[2:])
+    filler = "".join(json.dumps(_call(_pts(0), f"f-{i}")) + "\n"
+                     for i in range(20))
+    (logs / "calls.jsonl").write_text(head + filler + tail, encoding="utf-8")
+    body = _client(logs, max_scan_bytes=8 * 1024).get(
+        "/api/model_io?limit=2").json()
+    thread = body["threads"][0]
+    assert thread["turns_complete"] is False
+    assert min(t["prefix_message_count"] for t in thread["turns"]) > 1
+
+
+def test_a_malformed_row_cannot_FORGE_thread_completeness(tmp_path):
+    # prefix_message_count 0 is real evidence ("the stack IS the opening
+    # question"), so a row with NO legible prompt_messages must not report 0
+    # — it would forge that proof and make a truncated thread claim it was
+    # the whole conversation. It reports null: no evidence, proves nothing.
+    rows = [_session_call(_pts(0), "broken-1", stance="tutor")]
+    rows[0]["prompt_messages"] = []
+    thread = _client(_setup(tmp_path, rows)).get(
+        "/api/model_io").json()["threads"][0]
+    assert thread["turns"][0]["prefix_message_count"] is None
+    assert thread["turns"][0]["user_delta"] is None
+    assert thread["turns_complete"] is False
+
+
+def test_a_genuine_zero_prefix_still_proves_the_opening_turn(tmp_path):
+    # The other side of the same coin: a prompt that really is just the
+    # question (no system message) has prefix 0 and IS the opening turn.
+    rows = [_session_call(_pts(0), "bare-1", stance="tutor")]
+    rows[0]["prompt_messages"] = [{"role": "user", "content": "first ask"}]
+    thread = _client(_setup(tmp_path, rows)).get(
+        "/api/model_io").json()["threads"][0]
+    assert thread["turns"][0]["prefix_message_count"] == 0
+    assert thread["turns_complete"] is True
+
+
+def test_a_voice_whose_only_evidence_is_malformed_blocks_completeness(
+        tmp_path):
+    # Two voices; the defender's only turn is malformed. The attacker's
+    # opener proves nothing about the defender, so the thread is NOT whole.
+    rows = _two_voice_rows(questions=["only question"])
+    rows[0]["prompt_messages"] = None                  # the defender turn
+    thread = _client(_setup(tmp_path, rows)).get(
+        "/api/model_io").json()["threads"][0]
+    by_stance = {t["stance"]: t for t in thread["turns"]}
+    assert by_stance["defender"]["prefix_message_count"] is None
+    assert by_stance["attacker"]["prefix_message_count"] == 1
+    assert thread["turns_complete"] is False
+
+
+def test_thread_clips_a_runaway_completion_and_says_so(tmp_path):
+    rows = [_session_call(_pts(0), "big-1", completion="x" * 9000,
+                          question="y" * 3000)]
+    turn = _client(_setup(tmp_path, rows)).get(
+        "/api/model_io").json()["threads"][0]["turns"][0]
+    assert turn["completion"] == "x" * 6000
+    assert turn["completion_truncated"] is True
+    assert turn["user_delta"] == "y" * 2000
+    assert turn["user_delta_truncated"] is True
+
+
+def test_thread_flags_an_empty_completion(tmp_path):
+    rows = _two_voice_rows()
+    rows[1]["completion"] = "  \n"
+    thread = _client(_setup(tmp_path, rows)).get(
+        "/api/model_io").json()["threads"][0]
+    assert [t["empty"] for t in thread["turns"]] == [False, True, False,
+                                                     False, False, False]
+
+
+def test_threads_key_is_always_present(tmp_path):
+    # Absent / empty log: the key exists and is empty — a consumer never has
+    # to distinguish "no threads" from "old backend".
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    assert _client(logs).get("/api/model_io").json()["threads"] == []
+    (logs / "calls.jsonl").write_text("", encoding="utf-8")
+    assert _client(logs).get("/api/model_io").json()["threads"] == []

@@ -996,10 +996,19 @@ def coordinator_cycle(
     if PAUSE_PATH.exists():
         report = {
             "run_id": run_id, "status": "paused",
+            # gate_reason (2026-08-19): names the gate that HELD the cycle so
+            # loop_health never re-reads an empty `executed` as a stall.
+            "gate_reason": "paused",
             "errors": [f"pause file present: {PAUSE_PATH}"],
             "plan": [], "executed": [], "bubble_up": [], "attempts": [],
         }
         coordinator_cycle_log.write_coordinator_cycle(report)
+        # 2026-08-19 review (B2): the gate_reason above was DEAD without this
+        # line — the branch returned before the emit layer, so "paused" could
+        # never reach a reader and its tests were pinning fiction. Same shape
+        # as the budget refusal below: a refusal is not a cycle, but the ALERT
+        # must not freeze while refusals continue. Costs no model calls.
+        coordinator_cycle_log.emit_health_signals(report)
         return report
     # (2) Daily executed-cycle budget: an EXECUTE cycle refuses when today's
     # ledger total PLUS this cycle's potential budget would exceed the cap
@@ -1020,7 +1029,8 @@ def coordinator_cycle(
                               f"{DAILY_BUDGET_CAP}")
                       + " (run_state/coordinator_budget.jsonl)")
             report = {
-                "run_id": run_id, "status": status, "errors": [detail],
+                "run_id": run_id, "status": status, "gate_reason": "budget",
+                "errors": [detail],
                 "plan": [], "executed": [], "bubble_up": [], "attempts": [],
             }
             # A refusal is NOT a cycle: writing it to coordinator_cycles.jsonl

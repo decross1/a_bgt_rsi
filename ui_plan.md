@@ -4341,3 +4341,301 @@ behavior pin) · vitest **1237 passed** (83 files; `test_owe_card.tsx`
 22 pins — claim-head title, ellipsis cap, declarative tag, WHY-toggle
 collapsed default, section order, resolve collapse + copy) ·
 `tsc --noEmit` clean. **No service restarted, nothing committed.**
+
+## §2026-08-19 One session = one card on /model-io (`ui/` only, sprint-session-threads)
+
+Owner feedback on the Model I/O page: *"I posed 3 questions for
+iter-2026-06-05-006 but it shows up as 6 cards instead of maybe 1 or 2
+(since it goes to 2 models)."* Root cause is not the UI's rendering but
+what the log actually holds: the finding-session engine
+(`orchestrator/finding_session.py`) is a **stateless replay** — every turn
+re-sends the whole message stack — so a 3-question two-voice interrogation
+lands as 6 wrapper calls, and each call carries the ENTIRE growing prompt.
+Per-call rendering therefore showed six near-identical walls of text. Real
+example on disk: session `fs-6eddb609a03a`, 8 calls 03:27–03:41Z on 08-19
+(4 gemma defender + 4 qwen attacker), prompt stacks of 2 → 4 → 6 → 8
+messages.
+
+- **Backend grouping (`backend/model_io.py`).** `GET /api/model_io` gains
+  a `threads` array beside `calls`. A thread is
+  `{session_id, run_id, started, ended, wall_ms, models, stances,
+  caller_tags, turn_count,  turns_complete, turns[]}`; a
+  turn is `{ts, request_id, caller_tag, stance, model, backend,
+  user_delta, prefix_message_count, completion, empty, tokens_in,
+  tokens_out, latency_ms}` + the two truncation flags. **`user_delta` is
+  the LAST USER message** (the new ask); the replayed prefix is NEVER
+  repeated per turn — it ships as `prefix_message_count`, and the full
+  stack stays one click away on `/api/model_io/{request_id}`.
+  **Detection is conservative and evidence-based**: BOTH a
+  `finding_session_*` run_id (all three session modes stamp
+  `run_id = f"finding_session_{session_id}"`) AND a caller_tag in the
+  `finding_session` family (bare seam / `_tutor` / `_<stance>`) are
+  required, so iteration chains, batteries, promotion panels and
+  `lab_channel:*` are never guess-grouped and keep their per-call rows
+  byte-identically. Questions collapse only CONSECUTIVE identical
+  `user_delta`s (a "both" turn fans ONE question to two voices; the same
+  question asked again later is honestly a second question) — that
+  derivation lives in the CARD, see the `question_count` note below.
+- **A thread costs ONE row of the page's 20**, stamped with its latest
+  turn — the limit BUDGETS rows AS THE UI SEES THEM. Because a session's
+  older turns sit further back in the log, the scan may walk a **bounded**
+  60 extra rows after the page fills, for already-open threads only, and
+  stops early the moment every open thread is provably whole. Whole is not
+  a guess: `turns_complete` is True only when every voice's opening call
+  (a `[system, user]` prompt, i.e. `prefix_message_count <= 1`) is in hand
+  — otherwise the card says older turns may sit outside the window.
+  Filters apply to ROWS, so `model=gemma` over a two-voice session yields
+  an honest one-stance thread instead of smuggling the qwen turns in.
+  Per-turn payload is bounded (6000-char completion, 2000-char ask) with
+  explicit `*_truncated` flags. Measured on the real 38 MB log: 20 ms,
+  786 KB scanned, 43 KB response for 19 calls + the 8-turn thread.
+- **`SessionThreadCard.tsx` (new).** Header: session id, one chip per
+  VOICE (stance accent + the model that actually answered + backend tone),
+  question count, turn count, total wall. Body: the questions in order,
+  each printed ONCE as a shared header with BOTH voices' answers under it;
+  answers go through the existing payload family (`MessageBody` →
+  `ThoughtBlock`/raw fallback, `EmptyCompletionNote` for a genuinely empty
+  turn), so qwen's `<|channel>` think markup folds exactly as in the
+  expanded reader. Per-turn footer: tokens, latency, clock, and a
+  **"context: N prior messages"** chip that opens the full replayed stack
+  through the page's existing expanded-call affordance (one expansion at a
+  time, page-wide — the table's rule). Header chips are derived from the
+  turns the card HOLDS, not from the thread's summary arrays, so a paged
+  merge stays consistent.
+- **`ModelIO.tsx` is now a FEED** of two item kinds (`toFeed`/`mergeFeed`,
+  both exported and pinned). All the hard-won paging machinery carries
+  over on a `key` instead of `request_id`: row-identity caching stays
+  CALLS-only (log rows are immutable; a live thread grows, so caching it
+  would freeze the conversation mid-session), retention/gap-detection/
+  dedupe unchanged in behavior. When an older page returns the same
+  session, its turns MERGE into the one card (a second card is the
+  duplication this work removes, and dropping it would lose turns).
+  `threads` is optional on the wire: an older backend degrades to plain
+  call rows, never a blank page. **The paging boundary was originally
+  taken from the thread's `started`; that was wrong and is corrected in
+  the follow-up subsection below.**
+
+Verification: pytest `ui/backend/tests` **849 pass** (+14 in
+`test_model_io.py`: the owner's 3×2 shape → one thread, delta+prefix-count
+extraction, consecutive-only dedupe, non-session rows untouched,
+conservative detection ×3 negatives, no invented stance on the bare seam,
+thread-as-one-row at limit 3 vs 4, default-limit row counting, paging from
+`started` tiles, filter thins a thread honestly, `turns_complete` False
+past the byte cap, clip flags, empty-turn flag, `threads` key always
+present) · vitest **1270 pass** (85 files — other lanes were live in the
+same checkout; +12 of them in the new
+`test_session_thread.tsx`: 3-questions×2-answers as ONE card with each
+question rendered once, context-as-a-count with no replayed prose,
+expansion lands under its own turn only, incomplete-window note, empty +
+clipped flags, feed integration (1 thread + 1 call = 2 rows, plain rows
+unchanged), context chip fetches the full stack, page-from-`started` +
+older-half merge, no-`threads`-key degradation, `questionGroups`/
+`formatWall`/`stanceAccent` units) · `tsc --noEmit` clean. **No service
+restarted, nothing committed** — the running :8700 backend needs a restart
+to serve `threads`; until then the page renders exactly as today.
+
+### Follow-up 2026-08-19 — the paging seam was silently losing rows
+
+Review of the (still uncommitted) session-threading work cleared the
+grouping core — all 4014 live rows classified, exactly 25 session rows by
+both signals, zero orphans, iteration chains uninfected, the real 8-call
+session → one card with four question groups — and rejected the **paging
+seam**. Three defects, all downstream of one mistake: *the client inferred
+a page boundary the client cannot know.*
+
+**B1 — the pagination gap.** A page's guaranteed coverage ends at its
+**fill point**: the oldest row that incremented the row budget. But
+`THREAD_BACKFILL_ROWS` deliberately walks up to 60 rows PAST that point to
+finish an open session, and the old loop **dropped** every non-session row
+it walked there, while the client paged from the thread's `started` —
+which can sit far older than the fill point. Every plain row in between
+was on **neither page**, after which the pager announced *"beginning of
+log reached"*. Reproduced A/B against the real backend on a real log with
+the session's turns interleaved by real neighbouring rows: **6 of 622 rows
+silently lost**; the contiguous-session shape both green tests used is the
+only shape in which the rule looks right.
+
+The fix is a **wire contract, not a smarter guess**: the scan states its
+own fill point. `next_before_ts` is the exclusive OLDER edge of the ONE
+CONTIGUOUS SPAN a response covers, and the response returns **every**
+matching row inside it — a walked-and-dropped row is a silent gap, a
+walked-and-returned row is only a slightly longer page, so `limit` now
+budgets rows rather than capping them. `end_of_log` answers "the walk
+reached the start of the file" separately from `window_truncated` ("the
+byte cap stopped it"), replacing the client's *short page must mean the
+log ended* inference. The walk also never stops **mid-timestamp**: rows
+tying the boundary instant ride the current page, or the strictly-older
+next page would skip them. Client-side, `pageBoundary()` uses the stated
+field, and **refuses to page at all** when a response states none and the
+page carries threads (version skew) — the only inference kept is the
+provably safe one, a thread-free page whose oldest call IS its fill point.
+
+**B2 — older-page thread slices were discarded.** In `loadOlder` the
+`appended.has(key)` dedupe ran BEFORE the thread exemption, so a session
+already in the older list lost its whole next slice — every turn in it.
+`mergeFeed` had the mirror hole: `byKey` was built from the NEWEST page
+only, so two slices that both lived in `older` never met and rendered as
+two cards for one session, the exact duplication this feature removes.
+A **third** instance of the same defect turned up in the poll-retention
+path: rows the live page no longer holds move onto the older list, and the
+thread item was dropped there too when a paged slice of the same session
+had already been appended — losing the session's NEWEST turns on a tick.
+Now threads merge by session key across the **whole** feed (live + every
+older page + retained rows), turns dedupe by `request_id` when folding,
+and nothing is dropped. `turns_complete` is **recomputed over the merged
+turns**
+(`threadComplete`, mirroring the backend rule) instead of copied from one
+slice — a slice holding the attacker's opener says nothing about a
+defender it never carried.
+
+**B3 — both green tests pinned the buggy rule.** Rewritten, not
+supplemented: `test_thread_pages_from_its_EARLIEST_turn` and the frontend
+paging test both built CONTIGUOUS sessions. The replacements interleave
+plain calls between session turns and assert **set equality** — page1 ∪
+page2 ∪ … = every row of the span, each exactly once — driving the walk
+off the server's own `next_before_ts`, at every page size 1–8, with and
+without a filter, plus the tie-at-the-boundary case and a thread that
+OPENS at an older page's fill point with `turns_complete` false and is
+completed by the page after it.
+
+Also in this pass: **(a)** pre-fill turn collection was unbounded (turns
+never increment the row budget, so a huge session could blow a polled
+response) — `THREAD_MAX_TURNS = 60` now **stops the page** rather than
+dropping a row, freezing the coverage boundary at the last turn returned
+and flagging `turns_truncated` so the card says so and "load older"
+continues the same session into it. **(b)** `question_count` was a dead
+wire field the card ignored — **dropped**, not rendered: a card can be
+folded from several page slices, so the only correct count is the one
+derived from the turns the card HOLDS (`questionGroups`), and a per-slice
+scalar would contradict the rendered number the moment a merge happens.
+**(c)** `_thread_complete` read `prefix_message_count == 0` as proof of an
+opening turn, but `_user_delta` also returned 0 for a row with no legible
+`prompt_messages` — a malformed row could forge completeness. `_user_delta`
+now returns **null** for "no evidence" and keeps 0 for the real case (a
+stack that IS just the question); null proves nothing on either side of
+the wire. **(d)** `voices()` took each voice's backend from its FIRST turn
+while accumulating all its models — a chip contradicting itself if a voice
+was re-served mid-session; both accumulate now.
+
+Verification: pytest `ui/backend/tests` **870 pass** (+21 net in
+`test_model_io.py`) · vitest **1288 pass, 85 files** (+10 net in the
+rewritten `test_session_thread.tsx`) · `tsc --noEmit` clean · each fix
+reverted in place to confirm its tests actually FAIL without it (B1
+backend → 5 fail, B1 client → 2 fail, B2 loadOlder → 1 fail, B2 mergeFeed
+→ 2 fail, B2 retention → 1 fail) · coverage proven end-to-end against the
+REAL backend over a
+6.3 MB snapshot of the real `logs/calls.jsonl` (615 rows incl. the owner's
+session): **615/615 rows delivered, 0 missing, 0 duplicated at limits 5 /
+20 / 50**, boundaries strictly decreasing. **No service restarted, nothing
+committed.**
+
+## §2026-08-19 The two cockpit dead-ends: agenda acceptance + session close-out (sprint-agenda-closeout)
+
+Two gaps the owner hit while test-driving the cockpit. Both were the same
+shape: **the machinery existed and the surface did not name it.**
+
+### GAP 1 — 10 frontier proposals with no consumer (the missing HUMAN step)
+
+`orchestrator/frontier_agenda.py` appends vendor proposals to
+`memory/frontier_agenda.jsonl` at `status: "proposed"` and stops — the
+annotate-only firewall (D-061) forbids it from writing the idea ledger.
+`schema/idea_ledger.schema.json` names the missing half in the
+`agenda_item_added.source` comment: *"frontier items land status: proposed
+upstream; only accepted ones reach this ledger."* Nothing performed that
+acceptance, so 10 proposals sat inert while the coordinator — which
+consumes ledger agenda items FIRST — never saw one.
+
+**NEW `orchestrator/agenda_cli.py`** (the blessed writer; `gate_cli` idiom
+— argv array, no shell, frozen verbs, validate-then-append):
+
+- `accept --proposal-id <id> [--topic-override <text>] --note <why>`
+  appends the schema-validated `agenda_item_added`
+  (`source: "frontier_proposed"`) via `workers.idea_ledger.append_event`,
+  on the proposal's `cluster_id` when it carries one, else on a fresh
+  `cl-<proposal_id>` cluster — which is OPENED first with a
+  `cluster_created` (origin `manual`, member `<proposal_id>`), because the
+  reducer RAISES on an agenda item for an unknown cluster and the bare item
+  would corrupt the ledger for every reader (the rule
+  `lab_channel.delegate` already honors). A proposal NAMING a cluster that
+  does not exist is refused, never auto-created.
+- both verbs append a status-audit row to **NEW
+  `memory/frontier_agenda.status.jsonl`** `{proposal_id, status, ts, note,
+  agent_id}`. The proposals file is **never edited in place**; effective
+  status is the LAST audit row (the append-only, last-row-wins convention).
+- `dismiss` writes the audit row ONLY — a dismissal never touches the
+  ledger.
+- every refusal writes NOTHING and exits nonzero: unknown proposal id,
+  blank note, blank topic, a second accept (a duplicate agenda item would
+  make the coordinator run the topic twice), a broken ledger, a bad verb
+  (argparse exit 2). Events are validated BEFORE the first byte is written.
+
+**Backend (`ui/backend/frontier_reviews.py`).** Agenda events gain
+`effective_status` — the join of the proposals tail against the status-audit
+tail (64 KiB window, `_tail_records` reused) — plus a `ruling` block
+(note/ts/agent_id/cluster_id) present ONLY when a ruling exists. An
+out-of-enum audit status is not believed (rule 4). `POST
+/api/frontier_agenda/accept` and `/dismiss` exec the blessed CLI as an argv
+ARRAY through `attest._exec_blessed` (no shell, `cwd` = primary checkout,
+`--by human:ui`); a hostile `proposal_id` (spaces, `;`, a leading `-`,
+traversal) and a blank note/override 422 BEFORE any spawn; a nonzero exit
+is a 502 carrying stderr verbatim. A successful ruling DROPS the TTL cache
+so the next poll shows it (a stale `proposed` card after clicking accept was
+the bug worth avoiding). A read-only `agenda_write` capability block
+(interpreter + `orchestrator/agenda_cli.py` existence-checked, execs
+nothing) gates the buttons.
+
+**Frontend (`FrontierReviews.tsx`).** Agenda cards carry an
+effective-status chip (`proposed` AMBER — work waiting on the human, not
+noise), Accept / Dismiss buttons while unruled, a one-line **required** note
+(+ optional topic override on accept), dismissed cards muted with their
+reason, and accepted cards stating the consequence: **"on the ledger agenda
+→ coordinator will consume"** with the cluster id. Any `proposed_by`
+(`frontier:claude`, `frontier:codex`, `distilled:*`) gets the same flow. A
+refused ruling shows the CLI's stderr verbatim and the card does NOT flip.
+
+### GAP 2 — the session close-out was invisible
+
+`finding_session.end_session` has always routed the four real outcomes
+(validated/rejected → the gate-feedback edge; `spawn_topic` →
+`memory/finding_followups.jsonl`, which the daemon watches and the
+coordinator consumes as topics; `refine` → `in_review`). The owner, in the
+two-voice pane, asked *"how do we get the outcome of this to yield a follow
+up for nara?"* and nothing on screen answered.
+
+**Backend: read-only `GET /api/todo/close_out`** (`todo_cockpit.py`) — the
+four outcomes, each with the EXISTING endpoint that records it, what it
+WRITES, and what consumes it downstream. Execs nothing, writes nothing. The
+strip's copy is the backend's truth so it cannot drift from the writers.
+
+**Frontend: NEW `components/todo/CloseOutStrip.tsx`**, mounted PERSISTENTLY
+in `ChatPane` mode=`two_voice` (the pane the owner used) — visible from
+first render, not only after a turn. It names the four outcomes and their
+downstream, and carries the one interactive path: **spawn follow-up topic**,
+prefilled from the session's last ATTACKER (Qwen) turn when one exists (the
+source is shown read-only; the human's edit always wins; a reset button
+returns to the suggestion; no attacker turn → it says so rather than
+inventing a topic), posting the EXISTING `/api/todo/spawn_topic` seam —
+nothing re-implemented.
+
+**The fence still holds by construction (D-053/D-054, rule 4):** the strip
+takes no verdict prop and records no verdict — validate/reject/refine are
+NAMED there and RECORDED in the disposition footer, and the strip says so.
+Its only POST is the session-exit indicator, which writes nothing. The
+`test_dossier_reader.tsx` fence pin was updated deliberately and narrowly:
+the verdict-NAME check is unchanged; the button whitelist admits the two
+session-exit controls with the reason recorded inline, and now also asserts
+the strip's own fence line is present.
+
+Verification: root pytest **2266 passed** (`MOCK_LLM=1 .venv-chroma/bin/python
+-m pytest tests -q`; +17 new pins in `tests/test_agenda_cli.py`) · ui backend
+pytest **849 passed** (+24 new pins across `test_frontier_reviews.py` /
+`test_todo_cockpit.py`) · vitest **1271 passed, 85 files** (+10 agenda-ruling
+pins in `test_frontier_reviews.tsx`, +12 in NEW `test_close_out_strip.tsx`) ·
+`tsc --noEmit` clean · the CLI smoked end-to-end against COPIES of the real
+agenda + idea ledger: accept → `agenda_topics()` returns the accepted topic
+with its cluster_id, i.e. the coordinator's agenda-first selection really
+does pick it up. One pre-existing unrelated failure:
+`tests/test_redteam_cal.py::test_resolution_reproducibility_determinism`
+(the always-on lab minted new iterations, so `loop_memory` drifted from that
+benchmark's prereg manifest pin — no file in this sprint is involved).
+**No service restarted, nothing committed.**

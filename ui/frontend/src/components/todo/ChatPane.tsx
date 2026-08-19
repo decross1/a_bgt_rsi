@@ -22,6 +22,16 @@
 // verdict-fenced (only start/turn; no disposition verb), so a chat turn can
 // never close a disposition. useChatSession is untouched by this merge.
 //
+// CLOSE-OUT (GAP 2, 2026-08-19): the two_voice pane carries a persistent
+// CloseOutStrip naming what ending the session DOES (validate / reject /
+// spawn follow-up topic / refine — sourced from GET /api/todo/close_out, the
+// backend's own truth) because the owner test-driving the cockpit could not
+// find the answer to "how do we get the outcome of this to yield a follow up
+// for nara?". The strip is fence-preserving too: it records no verdict (the
+// disposition footer does) and its one interactive path — spawn_topic — is a
+// SESSION-EXIT that writes nothing. It is handed the attacker's last turn as
+// the read-only prefill source, never a setter.
+//
 // AVAILABILITY: `available` (the cockpit chat-capability flag) gates the live
 // path. available!==true means the chat exec is not enabled in this
 // environment — the pane sits disabled (send disabled, a capability-off
@@ -30,6 +40,7 @@
 // defensively coerced before render.
 import { useState } from "react";
 import { useChatSession } from "./useChatSession";
+import CloseOutStrip from "./CloseOutStrip";
 import type { ChatMode } from "../../types/todo";
 
 type Addressee = "defender" | "attacker" | "both";
@@ -129,6 +140,14 @@ export default function ChatPane({
   // empty turn. `available` is coerced strictly so a truthy non-true value
   // never silently enables a model call.
   const sendDisabled = !isLive || sending || draft.trim().length === 0;
+
+  // The attacker's (Qwen's) LAST reply — the close-out strip's read-only
+  // prefill source. Derived, never stored: the transcript is not mutated. A
+  // producer-owned non-string reply degrades to "" (asText), which the strip
+  // reads as "no suggestion" rather than seeding a garbage topic.
+  const lastAttackerReply =
+    [...turns].reverse().find((turn) => turn.stance === "attacker")?.reply ??
+    null;
 
   const onSend = () => {
     if (sendDisabled) return;
@@ -367,6 +386,18 @@ export default function ChatPane({
           </div>
         )}
       </div>
+
+      {/* The PERSISTENT close-out strip (GAP 2) — visible from the first
+          render, not only after a turn: the point is that the human can see
+          what ending the session does BEFORE they decide. Fence-preserving:
+          the strip gets the attacker's last reply as a read-only prefill
+          source and no verdict/setter of any kind. */}
+      {twoVoice && (
+        <CloseOutStrip
+          findingId={safeFindingId}
+          attackerSuggestion={lastAttackerReply}
+        />
+      )}
     </div>
   );
 }

@@ -89,6 +89,82 @@ _SESSION_EXIT_VIA = "finding_session interrogation session (end_session)"
 # routes are named differently (authorize_fix, not refine_authorize_fix;
 # directive_signoff, a variant of sign_off). This documents the map (per
 # docs/cockpit_seam_wiring.md) so the UI lights up the right form per action.
+# ── the session CLOSE-OUT surface (GAP 2) ───────────────────────────────────
+# ``finding_session.end_session`` has always routed the four real close-outs
+# (validated/rejected -> gate feedback; spawn_topic -> the finding_followups
+# queue; refine -> in_review). The owner test-driving the cockpit could not
+# FIND that: the two-voice pane ends and nothing says what a session outcome
+# does. "How do we get the outcome of this to yield a follow up for nara?"
+# has an answer — spawn_topic — and this read-only descriptor is where the UI
+# reads it, so the strip's copy is the backend's truth rather than frontend
+# prose that can drift from the writers.
+#
+# Each row names: the end_session outcome, the endpoint the UI posts to, what
+# THAT ENDPOINT actually writes, and what consumes it downstream. Nothing here
+# execs or writes; the endpoints named are the existing seams (attest / this
+# module), NOT re-implementations. `writes` is the endpoint's OWN effect — for
+# the session-exit row that effect is nothing, and the row says so rather than
+# crediting the endpoint with end_session's queue append.
+CLOSE_OUT_WRITER = "orchestrator.finding_session (end_session)"
+FOLLOWUPS_QUEUE = "memory/finding_followups.jsonl"
+
+CLOSE_OUT_OUTCOMES = (
+    {
+        "outcome": "validated",
+        "label": "validate",
+        "endpoint": "/api/attest/finding_review",
+        "payload_hint": {"status": "validated"},
+        "writes": "memory/loop_feedback.jsonl (verdict `valid`) + a "
+                  "status-audit row",
+        "downstream": "the Step-8 human-gate edge — the finding is signed off "
+                      "and stops asking for a verdict",
+        "session_exit": False,
+    },
+    {
+        "outcome": "rejected",
+        "label": "reject",
+        "endpoint": "/api/attest/finding_review",
+        "payload_hint": {"status": "rejected"},
+        "writes": "memory/loop_feedback.jsonl (verdict `invalid`) + a "
+                  "status-audit row",
+        "downstream": "the human-gate edge — the generator steers away from "
+                      "the refuted claim",
+        "session_exit": False,
+    },
+    {
+        "outcome": "spawn_topic",
+        "label": "spawn follow-up topic",
+        "endpoint": "/api/todo/spawn_topic",
+        "payload_hint": {"finding_id": "<finding_id>", "kind": "finding",
+                         "topic": "<what to chase next>"},
+        # HONEST (2026-08-19): the endpoint above writes NOTHING. It is a
+        # session-exit indicator — it validates the body and returns
+        # {status:"session_exit"}. The queue row is written by end_session,
+        # the writer of record, when the session actually exits. Saying
+        # "writes finding_followups.jsonl" here advertised a write the named
+        # endpoint does not perform.
+        "writes": "NOTHING at this endpoint — it validates and returns the "
+                  "session-exit indicator; end_session (the writer of record) "
+                  f"appends the queue row to {FOLLOWUPS_QUEUE} (one row; NO "
+                  "verdict) when the session exits with this outcome",
+        "downstream": "the nara daemon watches the queue and the coordinator "
+                      "consumes the row as a TOPIC for a following cycle — "
+                      "this is how a session yields a follow-up for Nara",
+        "session_exit": True,
+    },
+    {
+        "outcome": "refine",
+        "label": "refine",
+        "endpoint": "/api/attest/finding_review",
+        "payload_hint": {"status": "in_review"},
+        "writes": "a status-audit row only (status `in_review`; the refined "
+                  "claim rides in the reason) — NO verdict ledger row",
+        "downstream": "the finding parks in_review for another pass; nothing "
+                      "is recorded as decided",
+        "session_exit": False,
+    },
+)
+
 ALLOWED_ACTION_ENDPOINTS = {
     # sign_off covers BOTH bare sign-off (attest /finding_review validated) and
     # directive sign-off (this module's /directive_signoff with a --directive).
@@ -220,6 +296,25 @@ def register(
             "allowed_action_endpoints": ALLOWED_ACTION_ENDPOINTS,
         }
 
+    @router.get("/close_out")
+    def close_out():
+        """The session CLOSE-OUT descriptor (GAP 2) — read-only, execs and
+        writes NOTHING. Names the four real ``end_session`` outcomes, the
+        EXISTING endpoint that records each, what each writes, and what
+        consumes it downstream (spawn_topic -> the followups queue -> the
+        daemon -> the coordinator's topic list). ``available`` mirrors the
+        two_voice_chat gate: the close-out writer is finding_session, so an
+        absent module means the strip renders informational-only."""
+        writer_present = (
+            (root / _PYTHON_REL).exists()
+            and (root / Path("orchestrator") / "finding_session.py").exists())
+        return {
+            "available": writer_present,
+            "writer": CLOSE_OUT_WRITER,
+            "followups_queue": FOLLOWUPS_QUEUE,
+            "outcomes": [dict(o) for o in CLOSE_OUT_OUTCOMES],
+        }
+
     @router.post("/authorize_fix")
     def authorize_fix(payload: dict = Body(...)):
         """Outcome 4 — authorize an autonomous fix (gated). Execs the blessed
@@ -268,16 +363,32 @@ def register(
         D-046). So this endpoint WRITES NOTHING and execs NOTHING — it validates
         the id + topic (422 on bad, never coerced) and returns an honest
         session-exit indicator the UI renders as "exit the session into
-        spawn_topic", not a button."""
+        spawn_topic", not a button.
+
+        The id key is ``finding_id`` — ONE name, the same one
+        ``/api/attest/finding_review``, ``/directive_signoff`` and ``/abstain``
+        use for a finding-scoped id (the session this exits is finding-scoped).
+        It is deliberately NOT aliased to ``ref_id``: two names for one field
+        is what let the frontend post ``ref_id`` and 422 on every call until
+        2026-08-19, and an alias would have hidden that instead of surfacing
+        it. ``kind`` is OPTIONAL (the exit is meaningful without a taxonomy)
+        but, when present, must be in the frozen ``SPAWN_TOPIC_KINDS`` —
+        a caller's out-of-enum kind is rejected, never silently dropped."""
         finding_id = _require_id(payload.get("finding_id"), "finding_id")
         topic = _require_text(payload.get("topic"), "topic")
-        return {
+        kind = payload.get("kind")
+        if kind is not None:
+            kind = _require_enum(kind, SPAWN_TOPIC_KINDS, "kind")
+        out = {
             "status": "session_exit",
             "outcome": _SESSION_EXIT_OUTCOMES["spawn_topic"],
             "finding_id": finding_id,
             "topic": topic,
             "via": _SESSION_EXIT_VIA,
         }
+        if kind is not None:
+            out["kind"] = kind
+        return out
 
     @router.post("/abstain")
     def abstain(payload: dict = Body(...)):

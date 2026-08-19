@@ -25,6 +25,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOOP_MEMORY = REPO_ROOT / "memory" / "loop_memory.jsonl"
 DEFAULT_FEEDBACK = REPO_ROOT / "memory" / "loop_feedback.jsonl"
 DEFAULT_IDEA_LEDGER = REPO_ROOT / "memory" / "idea_ledger.jsonl"
+DEFAULT_DESIGN_CONSTRAINTS = REPO_ROOT / "memory" / "design_constraints.jsonl"
+
+# DARK gate for the design-constraint conditioning seam (below). Unset —
+# the default — means OFF; the gate state is logged on EVERY run either way.
+CONSTRAINT_GATE_ENV = "NARA_CONSTRAINT_CONDITION"
+CONSTRAINT_BULLET_CAP = 3
+BULLET_CAP_WITH_CONSTRAINTS = 11   # 5 model + 3 idea-ledger + 3 constraints
 
 CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 
@@ -160,8 +167,10 @@ def meta_review(
     {
         "status": "passed" | "error",
         "result": {
-            "conditioning_bullets": [str, ...],   # 3..5
+            "conditioning_bullets": [str, ...],   # 3..5 (+ idea-ledger /
+                                                  # design-constraint lines)
             "rows_considered": int,
+            "constraint_conditioning": "on" | "off",   # DARK gate state
         } | None,
         "errors": [str, ...],
         "wrapper_request_id": str | None,
@@ -256,11 +265,39 @@ def meta_review(
         print(f"[meta_review] idea-ledger conditioning skipped: {exc}",
               file=sys.stderr)
 
+    # DESIGN-CONSTRAINT CONDITIONING — DARK by default (NARA_CONSTRAINT_CONDITION).
+    # The falsifier tiers (frontier screen + local redteam) name the controls a
+    # claim is missing; workers.constraint_distill turns that text into
+    # provenance-tagged constraints deterministically (no LLM, D-061: the
+    # frontier annotates, it never generates). Feeding those back into the
+    # generator's conditioning is the ONE step that could shape generation, so
+    # it does not arm itself — the owner sets the env var after a risk/reward
+    # ask. The gate state is logged on every run, armed or not.
+    raw_gate = os.environ.get(CONSTRAINT_GATE_ENV, "")
+    armed = raw_gate.strip().lower() not in ("", "0", "false", "no", "off")
+    if not armed:
+        print(f"[meta_review] design-constraint conditioning: OFF "
+              f"({CONSTRAINT_GATE_ENV}={raw_gate!r})", file=sys.stderr)
+    else:
+        try:
+            from workers.constraint_distill import conditioning_bullets
+            topic = str((rows[-1].get("seed") or {}).get("topic") or "")
+            extra = conditioning_bullets(topic, DEFAULT_DESIGN_CONSTRAINTS,
+                                         cap=CONSTRAINT_BULLET_CAP)
+            bullets = (bullets + extra)[:BULLET_CAP_WITH_CONSTRAINTS]
+            print(f"[meta_review] design-constraint conditioning: ON "
+                  f"({CONSTRAINT_GATE_ENV}={raw_gate!r}) — {len(extra)} "
+                  f"bullet(s) matched topic {topic[:60]!r}", file=sys.stderr)
+        except Exception as exc:  # logged fail-open — never silent (rule 7)
+            print(f"[meta_review] design-constraint conditioning skipped: {exc}",
+                  file=sys.stderr)
+
     return {
         "status": "passed",
         "result": {
             "conditioning_bullets": bullets,
             "rows_considered": len(rows),
+            "constraint_conditioning": "on" if armed else "off",
         },
         "errors": [],
         "wrapper_request_id": wrapper_rid,

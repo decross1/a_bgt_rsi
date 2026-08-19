@@ -144,7 +144,9 @@ describe("SpawnTopicForm hardening — malformed findingId", () => {
     );
   });
 
-  it("POSTs ref_id as a clean string (\"\"), never [object Object], for an object findingId", async () => {
+  // `finding_id` is the key the backend reads (this pin said `ref_id` until
+  // 2026-08-19, faithfully asserting the body against the wrong contract).
+  it("POSTs finding_id as a clean string (\"\"), never [object Object], for an object findingId", async () => {
     const calls = stubFetch((u) =>
       u.endsWith("/api/todo/spawn_topic")
         ? jsonResponse(200, { stub: true, status: "stub", would_run: ["argv"] })
@@ -164,8 +166,9 @@ describe("SpawnTopicForm hardening — malformed findingId", () => {
       expect(screen.getByTestId("spawn-topic-result")).toBeInTheDocument(),
     );
     const post = calls.find((c) => c.url.endsWith("/api/todo/spawn_topic"));
-    expect(post?.body).toMatchObject({ ref_id: "", kind: "finding", topic: "anchor coverage" });
-    expect(post?.body?.ref_id).toBe(""); // not "[object Object]", not the object
+    expect(post?.body).toMatchObject({ finding_id: "", kind: "finding", topic: "anchor coverage" });
+    expect(post?.body?.finding_id).toBe(""); // not "[object Object]", not the object
+    expect(Object.keys(post?.body ?? {})).not.toContain("ref_id");
   });
 });
 

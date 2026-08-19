@@ -19,7 +19,10 @@ Section semantics (per the A4 contract):
                   are deliberately NOT re-listed here — they live in
                   surfaced_findings; the projection does not duplicate them.)
   ## Graveyard  — status=="killed": kill_reason code + reopening condition.
-  ## Agenda     — open agenda items with provenance (source + cluster).
+  ## Agenda     — open agenda items with provenance (source + cluster). A
+                  KILLED cluster's agenda is NOT listed: it lives in the
+                  Graveyard, and re-entry is the evidence-keyed
+                  `cluster_reopened` event, never an agenda item.
 
 Agenda convention (tolerant, documented — reconciled with idea_ledger at
 integration): a cluster entry carries agenda items under its "agenda" key,
@@ -121,9 +124,21 @@ def _sorted_clusters(state: dict) -> list[tuple[str, dict]]:
 
 def agenda_topics(state: dict) -> list[dict]:
     """Open agenda items as [{topic, source, cluster_id}], sorted on
-    (cluster_id, topic). See module docstring for the carrier convention."""
+    (cluster_id, topic). See module docstring for the carrier convention.
+
+    A KILLED cluster contributes NOTHING (defense in depth, layer 2). This is
+    the projection the coordinator's agenda-first topic selection reads
+    (`orchestrator/coordinator.py` puts these at the HEAD of its topic list),
+    so an agenda item left on a cluster that was later killed would put the
+    graveyard direction back in the loop with no `cluster_reopened` event —
+    exactly what `idea_ledger`'s evidence-keyed reopen gate exists to stop.
+    `agenda_cli.accept` refuses a killed cluster up front, but the ordering
+    "accepted while OPEN, killed afterwards" is reachable and only this layer
+    covers it. A reopen (which clears kill_reason) restores the items."""
     out: list[dict] = []
     for cid, cluster in _sorted_clusters(state):
+        if cluster.get("status") == "killed":
+            continue
         raw = cluster.get("agenda")
         items = raw if isinstance(raw, list) else [raw] if isinstance(raw, dict) else []
         for item in items:

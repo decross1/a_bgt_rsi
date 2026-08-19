@@ -57,10 +57,26 @@ interface ReviewEvent {
   proposed_by?: string | null;
   topic?: string | null;
   rationale?: string | null;
+  status?: string | null;
+  /** The JOIN of the proposals file against the status-audit file — what a
+   *  reader should believe. "proposed" until a human rules on it. */
+  effective_status?: string | null;
+  /** Present ONLY when a ruling exists (the backend omits it otherwise). */
+  ruling?: AgendaRuling | null;
   // refine
   round?: number | null;
   refined_claim_head?: string | null;
   feedback_digest?: string | null;
+}
+
+// One human ruling on a proposal (memory/frontier_agenda.status.jsonl, joined
+// server-side). Every field is producer-owned — render defensively.
+interface AgendaRuling {
+  note?: string | null;
+  ts?: string | null;
+  agent_id?: string | null;
+  cluster_id?: string | null;
+  topic?: string | null;
 }
 
 interface VendorHealth {
@@ -71,12 +87,19 @@ interface VendorHealth {
   last_error: { ts?: string | null; exit_code: number; decoded: string } | null;
 }
 
+interface AgendaWrite {
+  available: boolean;
+  verbs?: string[];
+  writer?: string;
+}
+
 interface FrontierReviewsResponse {
   available: { screen: boolean; agenda: boolean; calls: boolean };
   events: ReviewEvent[];
   events_in_window: number;
   health: Record<string, VendorHealth>;
   ledger_join: { ok: boolean; error: string | null };
+  agenda_write?: AgendaWrite;
   windows: Record<string, { bytes: number; truncated: boolean }>;
   generated_at: string;
 }
@@ -131,6 +154,58 @@ async function getFrontierReviews(limit = 20): Promise<ReviewsData> {
   const { generated_at: _g, ...rest } =
     (await resp.json()) as FrontierReviewsResponse;
   return rest;
+}
+
+// The HUMAN acceptance step (GAP 1). The backend execs the blessed
+// `orchestrator.agenda_cli` as an argv array — this client only carries the
+// fields. A nonzero CLI exit arrives as a 502 {rc, stderr}; the stderr is the
+// legible truth (D-046) and is surfaced VERBATIM, never summarized.
+export interface RulingOutcome {
+  status?: string;
+  cluster_id?: string;
+  topic?: string;
+  [key: string]: unknown;
+}
+
+export class AgendaRulingError extends Error {
+  readonly detail: string;
+  constructor(detail: string) {
+    super(detail);
+    this.name = "AgendaRulingError";
+    this.detail = detail;
+  }
+}
+
+export async function postAgendaRuling(
+  verb: "accept" | "dismiss",
+  body: { proposal_id: string; note: string; topic_override?: string },
+): Promise<RulingOutcome> {
+  const resp = await fetch(`${API_BASE}/api/frontier_agenda/${verb}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let payload: Record<string, unknown> | null = null;
+  try {
+    const parsed: unknown = await resp.json();
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      payload = parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* producer-owned body: empty / non-JSON is possible */
+  }
+  if (!resp.ok) {
+    const stderr =
+      typeof payload?.stderr === "string" && payload.stderr !== ""
+        ? payload.stderr
+        : null;
+    const detail =
+      typeof payload?.detail === "string" && payload.detail !== ""
+        ? payload.detail
+        : (stderr ?? `${resp.status} ${resp.statusText}`);
+    throw new AgendaRulingError(detail);
+  }
+  return payload ?? {};
 }
 
 async function getFrontierCalls(limit = 30): Promise<FrontierData> {
@@ -358,13 +433,118 @@ function ScreenCard({ ev, nowMs }: { ev: ReviewEvent; nowMs: number }) {
   );
 }
 
-function AgendaCard({ ev, nowMs }: { ev: ReviewEvent; nowMs: number }) {
+// Effective-status tones. `proposed` is deliberately NOT quiet — an unruled
+// proposal is work waiting on the human, not background noise.
+const AGENDA_STATUS_TONE: Record<string, string> = {
+  proposed: "bg-amber-950 text-amber-300",
+  accepted: "bg-emerald-950 text-emerald-300",
+  dismissed: "bg-zinc-900 text-zinc-600",
+};
+
+// How many open agenda items one coordinator cycle takes. Mirrors the slice in
+// orchestrator/coordinator.py `_topic_suggestions`
+// (`agenda_topics(load_state(...))[:3]`). Stated on the accept card so the
+// human is not promised a cycle the 4th accepted item will not get.
+const AGENDA_CYCLE_CAP = 3;
+
+const INPUT_CLS =
+  "w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono " +
+  "text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 " +
+  "focus:outline-none";
+
+// A producer-owned string that must survive as a scalar (never "[object
+// Object]" / "undefined" in the surface, never a non-string into the body).
+const asStr = (v: unknown): string => (typeof v === "string" ? v : "");
+
+// AGENDA CARD — a proposal PLUS the human acceptance step (GAP 1). Ten
+// proposals sat at `proposed` because nothing consumed them: the missing
+// piece was this decision. Accept appends the schema-validated
+// `agenda_item_added` (source frontier_proposed) that the coordinator's
+// agenda-first topic selection really does consume; dismiss records the
+// refusal WITH its reason and never touches the ledger. Neither ever edits
+// the proposals file — effective status is the last audit row, joined
+// server-side.
+function AgendaCard({
+  ev,
+  nowMs,
+  canRule,
+}: {
+  ev: ReviewEvent;
+  nowMs: number;
+  /** agenda_write.available from the backend handshake — false means the
+   *  blessed writer is absent in this checkout (no button that would 502). */
+  canRule: boolean;
+}) {
+  const [form, setForm] = useState<null | "accept" | "dismiss">(null);
+  const [note, setNote] = useState("");
+  const [topicOverride, setTopicOverride] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // The ruling this card just recorded. The 45s poll confirms it from the
+  // audit file; until then the card shows what the CLI actually returned —
+  // never a fabricated success (a failure sets `error` and changes nothing).
+  const [local, setLocal] = useState<AgendaRuling & { status: string } | null>(
+    null,
+  );
+
+  const pid = asStr(ev.proposal_id);
+  const wireStatus =
+    asStr(ev.effective_status) || asStr(ev.status) || "proposed";
+  const status = local?.status ?? wireStatus;
+  const ruled = status === "accepted" || status === "dismissed";
+  const dismissed = status === "dismissed";
+  const ruling: AgendaRuling | null =
+    local ??
+    (ev.ruling !== null && typeof ev.ruling === "object" ? ev.ruling : null);
+  const rulingNote = asStr(ruling?.note);
+  const clusterId = asStr(ruling?.cluster_id);
+
+  const submit = async () => {
+    if (form === null || note.trim() === "" || pid === "") return;
+    setBusy(true);
+    setError(null);
+    try {
+      const override = form === "accept" ? topicOverride.trim() : "";
+      const out = await postAgendaRuling(form, {
+        proposal_id: pid,
+        note: note.trim(),
+        ...(override !== "" ? { topic_override: override } : {}),
+      });
+      setLocal({
+        status: asStr(out.status) || (form === "accept" ? "accepted" : "dismissed"),
+        note: note.trim(),
+        cluster_id: asStr(out.cluster_id) || undefined,
+        topic: asStr(out.topic) || undefined,
+      });
+      setForm(null);
+      setNote("");
+      setTopicOverride("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <div className={CARD_CLS} data-testid="agenda-card">
+    <div
+      className={`${CARD_CLS} ${dismissed ? "opacity-50" : ""}`}
+      data-testid="agenda-card"
+      data-status={status}
+    >
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <span className={TYPE_CHIP_CLS}>agenda</span>
         <span className="font-mono text-[10px] text-zinc-500">
           {ev.proposed_by ?? "—"}
+        </span>
+        <span
+          className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${toneOf(
+            AGENDA_STATUS_TONE,
+            status,
+          )}`}
+          data-testid="agenda-status-chip"
+        >
+          {status}
         </span>
         <span
           className="ml-auto font-mono text-[10px] text-zinc-600"
@@ -373,9 +553,152 @@ function AgendaCard({ ev, nowMs }: { ev: ReviewEvent; nowMs: number }) {
           {frontierAge(ev.ts, nowMs)}
         </span>
       </div>
-      <div className="mt-1 text-zinc-200">{ev.topic ?? "—"}</div>
+      <div className="mt-1 text-zinc-200">
+        {asStr(local?.topic) || ev.topic || "—"}
+      </div>
       {typeof ev.rationale === "string" && ev.rationale.trim() !== "" && (
         <ClampedText text={ev.rationale} />
+      )}
+
+      {/* ACCEPTED — say exactly what happens next, INCLUDING the limits.
+          orchestrator/coordinator.py takes `agenda_topics(state)[:3]`, and
+          workers/idea_projection.agenda_topics sorts on (cluster_id, topic).
+          So the queue is capped at three and ordered by cluster id — NOT by
+          acceptance time. An unqualified "coordinator will consume" would
+          promise a 4th accepted item a cycle it does not get. */}
+      {status === "accepted" && (
+        <div
+          className="mt-1.5 text-[11px] text-emerald-300"
+          data-testid="agenda-accepted-note"
+        >
+          on the ledger agenda → coordinator will consume
+          {clusterId !== "" && (
+            <span className="ml-1 font-mono text-[10px] text-zinc-500">
+              {clusterId}
+            </span>
+          )}
+          <div className="mt-0.5 text-[10px] text-zinc-500">
+            a cycle takes the first {AGENDA_CYCLE_CAP} open agenda items,
+            ordered by (cluster_id, topic) — not by when you accepted. A{" "}
+            {AGENDA_CYCLE_CAP + 1}th item waits for one ahead of it to be
+            consumed, and a cluster that gets killed drops off the agenda
+            entirely (re-entry is the evidence-keyed reopen, not an accept).
+          </div>
+        </div>
+      )}
+      {ruled && rulingNote !== "" && (
+        <div
+          className="mt-0.5 text-[11px] text-zinc-500"
+          data-testid="agenda-ruling-note"
+        >
+          “{rulingNote}”
+        </div>
+      )}
+
+      {/* The decision. Buttons only while the proposal is UNRULED and the
+          blessed writer exists. */}
+      {!ruled && canRule && pid !== "" && form === null && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setForm("accept")}
+            data-testid="agenda-accept"
+            title="append an agenda_item_added (source frontier_proposed) the coordinator consumes"
+            className="rounded border border-emerald-800 bg-emerald-950 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-emerald-300 hover:bg-emerald-900"
+          >
+            accept
+          </button>
+          <button
+            type="button"
+            onClick={() => setForm("dismiss")}
+            data-testid="agenda-dismiss"
+            title="record the refusal + its reason; the idea ledger is not touched"
+            className="rounded border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-zinc-400 hover:bg-zinc-800"
+          >
+            dismiss
+          </button>
+        </div>
+      )}
+      {!ruled && !canRule && (
+        <div
+          className="mt-1.5 text-[10px] text-zinc-600"
+          data-testid="agenda-write-off"
+        >
+          acceptance writer not present in this checkout — proposals stay
+          inert until a session runs{" "}
+          <span className="font-mono">orchestrator.agenda_cli</span>.
+        </div>
+      )}
+
+      {form !== null && (
+        <div className="mt-1.5 border-t border-zinc-800/60 pt-1.5">
+          <div className="text-[10px] uppercase tracking-wide text-zinc-600">
+            {form === "accept"
+              ? "accept · why this belongs on the agenda (required)"
+              : "dismiss · why not (required)"}
+          </div>
+          <input
+            type="text"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            aria-label={
+              form === "accept" ? "accept note (required)" : "dismiss note (required)"
+            }
+            placeholder="one line — the note is the audit value"
+            className={`mt-1 ${INPUT_CLS}`}
+          />
+          {form === "accept" && (
+            <input
+              type="text"
+              value={topicOverride}
+              onChange={(e) => setTopicOverride(e.target.value)}
+              aria-label="topic override (optional)"
+              placeholder="topic override (optional — blank keeps the vendor's topic)"
+              className={`mt-1 ${INPUT_CLS}`}
+            />
+          )}
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              disabled={busy || note.trim() === ""}
+              onClick={() => void submit()}
+              data-testid="agenda-submit"
+              className={
+                "rounded border border-zinc-600 bg-zinc-900 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-zinc-300 hover:bg-zinc-800 " +
+                "disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900 disabled:text-zinc-600"
+              }
+            >
+              {form === "accept" ? "confirm accept" : "confirm dismiss"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setForm(null);
+                setError(null);
+              }}
+              data-testid="agenda-cancel"
+              className="rounded border border-zinc-800 bg-zinc-950 px-2 py-0.5 text-[11px] uppercase tracking-wide text-zinc-500 hover:text-zinc-300"
+            >
+              cancel
+            </button>
+            {busy && (
+              <span className="text-[11px] text-zinc-500" data-testid="agenda-busy">
+                writing…
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* A refused ruling degrades in place — the CLI's stderr verbatim
+          (D-046), never a faked acceptance. */}
+      {error !== null && (
+        <div
+          data-testid="agenda-error"
+          className="mt-1 overflow-x-auto whitespace-pre-wrap rounded border border-red-900 bg-red-950/40 p-2 font-mono text-[11px] text-red-400"
+        >
+          {error}
+        </div>
       )}
     </div>
   );
@@ -410,9 +733,18 @@ function RefineCard({ ev, nowMs }: { ev: ReviewEvent; nowMs: number }) {
   );
 }
 
-function EventCard({ ev, nowMs }: { ev: ReviewEvent; nowMs: number }) {
+function EventCard({
+  ev,
+  nowMs,
+  canRule,
+}: {
+  ev: ReviewEvent;
+  nowMs: number;
+  canRule: boolean;
+}) {
   if (ev.type === "screen") return <ScreenCard ev={ev} nowMs={nowMs} />;
-  if (ev.type === "agenda") return <AgendaCard ev={ev} nowMs={nowMs} />;
+  if (ev.type === "agenda")
+    return <AgendaCard ev={ev} nowMs={nowMs} canRule={canRule} />;
   if (ev.type === "refine") return <RefineCard ev={ev} nowMs={nowMs} />;
   // A type this build does not know is still shown, honestly raw.
   return (
@@ -696,6 +1028,22 @@ export default function FrontierReviews({
       ? reviews.health
       : {};
   const join = reviews?.ledger_join;
+  // The acceptance-step capability. Coerced === true (a truthy non-boolean
+  // must never light up a button whose backend writer is absent).
+  const canRule = reviews?.agenda_write?.available === true;
+
+  // ONE card per proposal. A proposal can appear on the agenda file more than
+  // once (the legacy frontier_agenda.accept_proposal path appends a
+  // superseding row), which would render two cards for one decision AND
+  // collide the per-proposal React key the ruling state is keyed on. The feed
+  // is newest-first, so the FIRST occurrence is the current one.
+  const seenProposals = new Set<string>();
+  const feed = events.filter((ev) => {
+    if (ev.type !== "agenda" || typeof ev.proposal_id !== "string") return true;
+    if (seenProposals.has(ev.proposal_id)) return false;
+    seenProposals.add(ev.proposal_id);
+    return true;
+  });
 
   return (
     <Card className="mt-3" title="Frontier reviews" testId="frontier-reviews">
@@ -730,7 +1078,7 @@ export default function FrontierReviews({
             </div>
           )}
 
-          {events.length === 0 ? (
+          {feed.length === 0 ? (
             <div
               className="mt-2 text-xs text-zinc-500"
               data-testid="reviews-empty"
@@ -742,15 +1090,24 @@ export default function FrontierReviews({
             </div>
           ) : (
             <div className="mt-2 flex flex-col gap-1.5">
-              {events.map((ev, i) => (
-                <EventCard key={`${ev.ts ?? "ev"}-${i}`} ev={ev} nowMs={now} />
+              {feed.map((ev, i) => (
+                <EventCard
+                  key={
+                    ev.type === "agenda" && typeof ev.proposal_id === "string"
+                      ? `agenda-${ev.proposal_id}`
+                      : `${ev.ts ?? "ev"}-${i}`
+                  }
+                  ev={ev}
+                  nowMs={now}
+                  canRule={canRule}
+                />
               ))}
             </div>
           )}
 
-          {reviews.events_in_window > events.length && (
+          {reviews.events_in_window > feed.length && (
             <div className="mt-1.5 text-[11px] text-zinc-600">
-              newest {events.length} of {reviews.events_in_window} events in
+              newest {feed.length} of {reviews.events_in_window} events in
               the tail windows.
             </div>
           )}

@@ -62,6 +62,32 @@
 // sanitized through parse.ts's channel grammar (see sanitizePreview), and
 // the table pages — newest 20 live, a "load older ▾" walk via before_ts
 // that reports the byte cap honestly when it stops the scan.
+//
+// Owner feedback 2026-08-19 ("I posed 3 questions … but it shows up as 6
+// cards instead of maybe 1 or 2 (since it goes to 2 models)"): chat-session
+// rows no longer render one card per wrapper call. The backend groups them
+// into `threads` (see backend/model_io.py) and the page renders each thread
+// as ONE SessionThreadCard — questions printed once, both voices' answers
+// under them, the replayed prefix reduced to a "context: N prior messages"
+// chip that opens the same expanded-call reader. The list is therefore a
+// FEED of two item kinds; a thread costs ONE of the 20 rows (stamped with
+// its latest turn), and every non-session call keeps its CallRow exactly as
+// before — nothing about iteration chains / batteries / subagents changed.
+//
+// PAGING IS A CONTRACT, NOT AN INFERENCE (fix 2026-08-19). "load older" used
+// to take its boundary from the oldest rendered item — a thread's `started`.
+// A page's guaranteed coverage ends at its FILL POINT, and the backend's
+// thread backfill walks up to 60 rows past that point to finish an open
+// session, so `started` could sit far older than the fill point and every
+// plain row in between landed on NEITHER page — after which this page said
+// "beginning of log reached". No arrangement of rendered rows can recover a
+// fill point, so the scan states it: `next_before_ts` (the exclusive older
+// edge of the span the response covers) and `end_of_log` (the walk reached
+// the start of the file), read here verbatim. When a response states no
+// boundary and carries threads, the pager stops and SAYS so rather than
+// guessing one. Threads then merge by session key across the WHOLE feed —
+// live page and every appended older page — folding turns by request_id, so
+// one session is one card and no slice is ever dropped.
 import {
   Fragment,
   memo,
@@ -96,6 +122,11 @@ import MessageBody from "../components/payload/MessageBody";
 import RoleChip from "../components/payload/RoleChip";
 import { splitThought } from "../components/payload/parse";
 import { CHIP_CLS } from "../components/payload/bits";
+import SessionThreadCard, {
+  threadComplete,
+  type SessionThread,
+  type SessionTurn,
+} from "../components/SessionThreadCard";
 
 // Model badge tone — the SAME color families as the health panels (gemma =
 // emerald, qwen = sky, per roles.ts BACKEND_TONE / ModelServerCard accents).
@@ -261,8 +292,191 @@ function stripVolatile<
   return rest;
 }
 
-type TableData = Omit<ModelIOResponse, "generated_at" | "scanned_bytes">;
+type TableData = Omit<ModelIOResponse, "generated_at" | "scanned_bytes"> & {
+  /** Session threads (added 2026-08-19). OPTIONAL on purpose: a backend
+   * that predates the grouping answers without the key and the page still
+   * renders its calls — version skew degrades, never crashes. */
+  threads?: SessionThread[];
+  /** THE PAGING BOUNDARY, stated by the scan that produced the page: the
+   * exclusive older edge of the contiguous span this response covers. Feed
+   * it straight back as before_ts. Optional for the same version-skew
+   * reason — see pageBoundary(), which refuses to guess when a guess could
+   * skip rows. */
+  next_before_ts?: string | null;
+  /** True only when the scan reached the START OF THE FILE. Replaces the
+   * client's old "short page must mean the log ended" inference. */
+  end_of_log?: boolean;
+};
 type TraceData = Omit<DispatchTraceResponse, "generated_at">;
+
+// ─── the feed: calls and session threads in one newest-first list ───────
+//
+// A thread is ONE row of the page's 20 (the backend budgets it that way
+// too), stamped with its LATEST turn for ordering.
+//
+// A feed item carries NO paging boundary of its own any more (fix
+// 2026-08-19). It used to: a thread's boundary was its `started`, and
+// "load older" took the oldest boundary on screen. But a page's guaranteed
+// coverage ends at its FILL POINT, and the backend's thread backfill walks
+// up to 60 rows PAST that point to finish an open session — so `started`
+// could sit far older than the fill point and every plain row in between
+// landed on NEITHER page, after which this page announced "beginning of log
+// reached". No arrangement of rendered timestamps can recover a fill point;
+// only the scan knows it, so the scan states it (`next_before_ts`).
+
+type FeedItem =
+  | {
+      kind: "call";
+      /** Dedupe/retention identity; null when the row carries no
+       * request_id (the pre-existing tolerance — such rows never dedupe). */
+      key: string | null;
+      ts: string | null;
+      call: ModelIOCall;
+    }
+  | {
+      kind: "thread";
+      key: string;
+      ts: string | null;
+      thread: SessionThread;
+    };
+
+const tsMs = (ts: string | null): number => {
+  const t = ts ? Date.parse(ts) : NaN;
+  // Unparseable/absent cannot claim a position — it sinks, never floats to
+  // the top of a newest-first list.
+  return Number.isNaN(t) ? -Infinity : t;
+};
+
+/** One payload → one newest-first feed. Both source lists arrive newest-first
+ * already, so this is a stable merge (Array.sort is stable), not a re-sort. */
+export function toFeed(data: TableData | null | undefined): FeedItem[] {
+  const calls = Array.isArray(data?.calls) ? data!.calls : [];
+  const threads = Array.isArray(data?.threads) ? data!.threads : [];
+  const items: FeedItem[] = [
+    ...calls.map(
+      (c): FeedItem => ({
+        kind: "call",
+        key: c.request_id,
+        ts: c.ts,
+        call: c,
+      }),
+    ),
+    ...threads.map(
+      (t): FeedItem => ({
+        kind: "thread",
+        key: `thread:${t.session_id}`,
+        ts: t.ended,
+        thread: t,
+      }),
+    ),
+  ];
+  return items.sort((a, b) => tsMs(b.ts) - tsMs(a.ts));
+}
+
+const turnsOf = (t: SessionThread): SessionTurn[] =>
+  Array.isArray(t.turns) ? t.turns : [];
+
+/** min / max of two ISO stamps, "unparseable or absent loses" (tsMs). */
+const olderTs = (a: string | null, b: string | null): string | null =>
+  a == null ? b : b == null ? a : tsMs(b) < tsMs(a) ? b : a;
+const newerTs = (a: string | null, b: string | null): string | null =>
+  a == null ? b : b == null ? a : tsMs(b) > tsMs(a) ? b : a;
+
+/** Fold one more slice of a session into the thread already held.
+ *
+ * The feed is newest-first and folded left to right, so `next` is always
+ * the OLDER slice and its turns PREPEND. Turns dedupe by request_id — an
+ * overlapping page must never double a turn — and NOTHING is dropped: two
+ * cards for one session is the duplication this grouping exists to remove,
+ * and dropping a slice loses every turn in it. (Both were live bugs before
+ * 2026-08-19: loadOlder dropped a whole slice whose session was already in
+ * the older list, and mergeFeed only ever compared older slices against the
+ * NEWEST page, so two older slices of one session never met.) */
+export function foldThread(
+  held: SessionThread,
+  next: SessionThread,
+): SessionThread {
+  const heldTurns = turnsOf(held);
+  const seen = new Set(
+    heldTurns
+      .map((t) => t.request_id)
+      .filter((id): id is string => id != null),
+  );
+  const extra = turnsOf(next).filter(
+    (t) => t.request_id == null || !seen.has(t.request_id),
+  );
+  const turns = extra.length === 0 ? heldTurns : [...extra, ...heldTurns];
+  return {
+    ...held,
+    turns,
+    turn_count: turns.length,
+    started: olderTs(held.started, next.started),
+    ended: newerTs(held.ended, next.ended),
+    // A card folded from N slices is bounded by whichever slice was still
+    // bounded — but only while its older turns are genuinely missing.
+    turns_truncated: Boolean(held.turns_truncated || next.turns_truncated),
+    // Completeness is a property of the MERGED turns, never of one slice:
+    // a slice holding the attacker's opener says nothing about a defender
+    // it never carried. (The old code took the older slice's flag whole.)
+    turns_complete: threadComplete(turns),
+  };
+}
+
+/** The WHOLE feed — the live page followed by every appended older page —
+ * folded into one newest-first list.
+ *
+ * Session threads merge by session key ACROSS THE WHOLE FEED, not just
+ * against the newest page: two slices that both live in the older list must
+ * still land in one card. Plain calls dedupe by request_id, the first
+ * (newest) occurrence winning — log rows are immutable, so they are the
+ * same row. Every item keeps the position of its first occurrence, so the
+ * newest-first ordering of the concatenation is preserved. */
+export function mergeFeed(newest: FeedItem[], older: FeedItem[]): FeedItem[] {
+  const out: FeedItem[] = [];
+  const slot = new Map<string, number>();
+  for (const item of [...newest, ...older]) {
+    if (item.key == null) {
+      out.push(item); // no identity: never deduped, never merged
+      continue;
+    }
+    const at = slot.get(item.key);
+    if (at === undefined) {
+      slot.set(item.key, out.length);
+      out.push(item);
+      continue;
+    }
+    const held = out[at];
+    if (held.kind === "thread" && item.kind === "thread") {
+      out[at] = { ...held, thread: foldThread(held.thread, item.thread) };
+    }
+  }
+  return out;
+}
+
+/** The next page's `before_ts`, taken from the BACKEND's stated fill point.
+ *
+ * `supported` is false when this page cannot honestly name a boundary —
+ * then the pager reports itself blocked rather than paging from a guess.
+ * The one guess allowed is the version-skew case where it is provably safe:
+ * a payload with NO threads had no backfill walk, so its oldest call IS its
+ * fill point. With threads present, that inference is exactly the bug. */
+export function pageBoundary(page: TableData | null | undefined): {
+  ts: string | null;
+  supported: boolean;
+} {
+  if (page == null) return { ts: null, supported: false };
+  if (page.next_before_ts !== undefined) {
+    return { ts: page.next_before_ts, supported: true };
+  }
+  const threads = Array.isArray(page.threads) ? page.threads : [];
+  if (threads.length > 0) return { ts: null, supported: false };
+  const calls = Array.isArray(page.calls) ? page.calls : [];
+  let oldest: string | null = null;
+  for (const c of calls) {
+    if (c.ts && (oldest == null || tsMs(c.ts) < tsMs(oldest))) oldest = c.ts;
+  }
+  return { ts: oldest, supported: true };
+}
 
 // Local types + fetcher for /api/runtime_activity: this page owns the
 // endpoint's client rather than widening api/modelIO.ts (same API_BASE
@@ -363,8 +577,17 @@ async function getOlderModelIO(
 
 // The load-older control's state machine: idle (button) → loading →
 // idle | end (file start reached) | capped (byte cap stopped the scan —
-// reported honestly, never a silent stop) | error (button retries).
-type PagerState = "idle" | "loading" | "end" | "capped" | "error";
+// reported honestly, never a silent stop) | blocked (the page states no
+// usable boundary, so walking further would have to GUESS one) | error
+// (button retries). `end` and `capped` are now the BACKEND's own answers
+// (end_of_log / window_truncated), not a short-page inference.
+type PagerState =
+  | "idle"
+  | "loading"
+  | "end"
+  | "capped"
+  | "blocked"
+  | "error";
 
 const CHAIN_LINES = 6;
 const PLANE_LABEL_CLS =
@@ -642,8 +865,15 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   // Paged-older rows (appended, poll-stable) + the load-older control's
   // state. hasPagedRef gates the poll's dropped-row retention; newestRef
   // mirrors the last newest page so the retention never re-sorts.
-  const [older, setOlder] = useState<ModelIOCall[]>([]);
+  const [older, setOlder] = useState<FeedItem[]>([]);
   const [pager, setPager] = useState<PagerState>("idle");
+  // The boundary for the NEXT older page, as STATED by the oldest page
+  // loaded so far. null = no older page fetched yet, so the live page owns
+  // it (its own next_before_ts). Never derived from rendered rows.
+  const [nextBoundary, setNextBoundary] = useState<{
+    ts: string | null;
+    supported: boolean;
+  } | null>(null);
   // True when a poll advanced the newest page by MORE than one page while
   // older pages were appended: the rows between the fresh page and the
   // retained ones were never fetched, and hiding that hole would silently
@@ -651,7 +881,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   // adversarial review 2026-08-18).
   const [pageGap, setPageGap] = useState(false);
   const hasPagedRef = useRef(false);
-  const newestRef = useRef<ModelIOCall[]>([]);
+  const newestRef = useRef<FeedItem[]>([]);
 
   useEffect(() => {
     const id = setTimeout(
@@ -721,6 +951,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   useEffect(() => {
     setOlder([]);
     setPager("idle");
+    setNextBoundary(null);
     setPageGap(false);
     hasPagedRef.current = false;
   }, [appliedKey]);
@@ -731,17 +962,16 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   // the older list — no gap between the pages, no re-sort (they were
   // already in newest-first order directly below the fresh page).
   useEffect(() => {
-    const fresh = tablePoll.data?.calls;
-    if (!Array.isArray(fresh)) return;
+    const payload = tablePoll.data;
+    if (payload === undefined || !Array.isArray(payload.calls)) return;
+    const fresh = toFeed(payload);
     if (hasPagedRef.current) {
       const freshIds = new Set(
-        fresh
-          .map((c) => c.request_id)
-          .filter((id): id is string => id != null),
+        fresh.map((i) => i.key).filter((id): id is string => id != null),
       );
       const prev = newestRef.current;
       const dropped = prev.filter(
-        (c) => c.request_id != null && !freshIds.has(c.request_id),
+        (i) => i.key != null && !freshIds.has(i.key),
       );
       // GAP DETECTION (count discontinuity): a FULL fresh page sharing no
       // row with the previous newest page means at least a whole page of
@@ -752,17 +982,23 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
       if (
         prev.length > 0 &&
         fresh.length >= PAGE_SIZE &&
-        !prev.some(
-          (c) => c.request_id != null && freshIds.has(c.request_id),
-        )
+        !prev.some((i) => i.key != null && freshIds.has(i.key))
       ) {
         setPageGap(true);
       }
       if (dropped.length > 0) {
         setOlder((prev) => {
-          const seen = new Set(prev.map((c) => c.request_id));
+          // Same rule as loadOlder's append: a CALL already held is the
+          // same immutable row and drops, but a THREAD is never dropped —
+          // this slice's turns are the session's newest half and mergeFeed
+          // folds them into the one card. (Dropping it here would lose the
+          // live turns the moment a paged slice of the same session was
+          // already appended.)
+          const seen = new Set(
+            prev.filter((i) => i.kind === "call").map((i) => i.key),
+          );
           return [
-            ...dropped.filter((c) => !seen.has(c.request_id)),
+            ...dropped.filter((i) => i.kind === "thread" || !seen.has(i.key)),
             ...prev,
           ];
         });
@@ -799,37 +1035,34 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
     }
   }, []);
 
-  // Newest page first, then the appended older pages, deduped by
-  // request_id (newest page wins) — never re-sorted.
-  const calls = useMemo(() => {
+  // Newest page first, then the appended older pages (duplicate calls drop,
+  // duplicate threads merge) — never re-sorted across pages.
+  const { feed, newestCount } = useMemo(() => {
     const cache = rowCacheRef.current;
-    const stable = (c: ModelIOCall): ModelIOCall => {
-      if (c.request_id == null) return c;
-      const hit = cache.get(c.request_id);
-      if (hit != null) return hit;
-      cache.set(c.request_id, c);
-      return c;
+    // calls.jsonl ROWS are immutable once written, so a request_id seen
+    // before IS the same row — reuse it and React.memo skips the CallRow.
+    // THREADS are deliberately NOT cached: a live session grows a turn at a
+    // time, so a cached thread would freeze mid-conversation.
+    const stable = (item: FeedItem): FeedItem => {
+      if (item.kind !== "call" || item.key == null) return item;
+      const hit = cache.get(item.key);
+      if (hit != null) return hit === item.call ? item : { ...item, call: hit };
+      cache.set(item.key, item.call);
+      return item;
     };
-    const newest = data?.calls ?? [];
-    const newestIds = new Set(
-      newest
-        .map((c) => c.request_id)
-        .filter((id): id is string => id != null),
-    );
-    return [
-      ...newest.map(stable),
-      ...older
-        .filter((c) => c.request_id == null || !newestIds.has(c.request_id))
-        .map(stable),
-    ];
+    const newest = toFeed(data).map(stable);
+    return { feed: mergeFeed(newest, older), newestCount: newest.length };
   }, [data, older]);
 
-  const skew =
-    isVersionSkew404(error, "/api/model_io") && calls.length === 0;
+  const skew = isVersionSkew404(error, "/api/model_io") && feed.length === 0;
 
-  // Where the newest page ends in `calls` — the paging-gap marker (if any)
-  // renders exactly there, between the live page and the retained rows.
-  const newestCount = data?.calls?.length ?? 0;
+  // The expanded full-record reader, rendered wherever the open turn lives:
+  // inline under its CallRow, or inside the session card that owns it (one
+  // expansion at a time, page-wide — the table's existing rule).
+  const expansionNode =
+    expanded != null ? (
+      <CallExpansion detail={details[expanded] ?? "loading"} />
+    ) : null;
 
   // The gap marker's "refresh": drop the paged rows and start over from
   // the live page — the only honest way to close a hole whose middle rows
@@ -837,41 +1070,75 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   const resetPaging = () => {
     setOlder([]);
     setPager("idle");
+    setNextBoundary(null);
     setPageGap(false);
     hasPagedRef.current = false;
   };
 
+  // The boundary for the next click: the oldest fetched page's stated fill
+  // point, else the live page's. NEVER the oldest rendered timestamp.
+  const boundary = nextBoundary ?? pageBoundary(data);
+  const canPage = boundary.supported && boundary.ts != null;
+  // What the pager control actually shows. A settled ("idle") pager still
+  // has to answer the live page honestly: it may already say the scan
+  // reached the file start, or name no boundary at all.
+  const pagerState: PagerState =
+    pager !== "idle"
+      ? pager
+      : data == null
+        ? "idle"
+        : data.end_of_log === true && nextBoundary == null
+          ? "end"
+          : canPage
+            ? "idle"
+            : "blocked";
+
   const loadOlder = () => {
-    if (pager === "loading") return;
-    // The boundary is the OLDEST visible row that carries a timestamp —
-    // the backend pages rows strictly older than it.
-    let boundary: string | null = null;
-    for (let i = calls.length - 1; i >= 0; i--) {
-      const ts = calls[i].ts;
-      if (ts) {
-        boundary = ts;
-        break;
-      }
-    }
-    if (boundary == null) return;
+    if (pager === "loading" || !canPage || boundary.ts == null) return;
     hasPagedRef.current = true;
     setPager("loading");
-    getOlderModelIO(applied, boundary)
+    getOlderModelIO(applied, boundary.ts)
       .then((r) => {
+        const body = r as TableData;
+        const page = toFeed(body);
         setOlder((prev) => {
-          const seen = new Set(
-            [...newestRef.current, ...prev]
-              .map((c) => c.request_id)
-              .filter((id): id is string => id != null),
+          const appended = new Set(
+            prev
+              .filter((i) => i.kind === "call")
+              .map((i) => i.key)
+              .filter((k): k is string => k != null),
           );
-          const fresh = r.calls.filter(
-            (c) => c.request_id == null || !seen.has(c.request_id),
+          const live = new Set(
+            newestRef.current
+              .filter((i) => i.kind === "call")
+              .map((i) => i.key)
+              .filter((k): k is string => k != null),
           );
+          const fresh = page.filter((i) => {
+            // A THREAD slice is NEVER dropped, wherever its session already
+            // sits: these are that session's older turns and mergeFeed
+            // folds them into the one card. The old dedupe ran BEFORE this
+            // exemption, so a session already in the older list lost the
+            // whole slice — every turn in it.
+            if (i.kind === "thread") return true;
+            if (i.key == null) return true; // no identity: never deduped
+            return !appended.has(i.key) && !live.has(i.key);
+          });
           return [...prev, ...fresh];
         });
-        if (r.window_truncated) setPager("capped");
-        else if (r.calls.length < PAGE_SIZE) setPager("end");
-        else setPager("idle");
+        const next = pageBoundary(body);
+        setNextBoundary(next);
+        // The BACKEND's own answers, in order of finality. A short page is
+        // no longer read as "the log ended" — it can equally mean the byte
+        // cap stopped the scan, which is a different sentence to the owner.
+        if (body.end_of_log === true) setPager("end");
+        else if (body.window_truncated) setPager("capped");
+        else if (body.end_of_log === false)
+          setPager(next.supported && next.ts != null ? "idle" : "blocked");
+        // Version skew only (no coverage contract on the wire): fall back
+        // to the old short-page inference.
+        else if (page.length < PAGE_SIZE) setPager("end");
+        else setPager(next.supported && next.ts != null ? "idle" : "blocked");
       })
       .catch(() => setPager("error"));
   };
@@ -966,14 +1233,14 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
               <div className="text-xs text-zinc-500" data-testid="table-loading">
                 loading the newest {PAGE_SIZE} calls…
               </div>
-            ) : calls.length === 0 && data != null ? (
+            ) : feed.length === 0 && data != null ? (
               <div className="text-xs text-zinc-500">
                 no calls match in the log tail.
               </div>
             ) : (
               <div style={{ overflowX: "auto" }}>
-                {calls.map((c, i) => (
-                  <Fragment key={c.request_id ?? `${c.ts ?? "row"}-${i}`}>
+                {feed.map((item, i) => (
+                  <Fragment key={item.key ?? `${item.ts ?? "row"}-${i}`}>
                     {/* Explicit hole between the live page and the rows
                         retained below it — never a silent misordering. */}
                     {pageGap && i === newestCount && i > 0 && (
@@ -994,14 +1261,29 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
                         </button>
                       </div>
                     )}
-                    <CallRow
-                      call={c}
-                      expanded={expanded != null && expanded === c.request_id}
-                      detail={
-                        c.request_id ? details[c.request_id] : undefined
-                      }
-                      onToggle={toggleRow}
-                    />
+                    {item.kind === "thread" ? (
+                      // ONE card for the whole session (owner 2026-08-19):
+                      // questions once, both voices' answers under them.
+                      <SessionThreadCard
+                        thread={item.thread}
+                        expandedRequestId={expanded}
+                        expansion={expansionNode}
+                        onToggleContext={toggleRow}
+                      />
+                    ) : (
+                      <CallRow
+                        call={item.call}
+                        expanded={
+                          expanded != null && expanded === item.call.request_id
+                        }
+                        detail={
+                          item.call.request_id
+                            ? details[item.call.request_id]
+                            : undefined
+                        }
+                        onToggle={toggleRow}
+                      />
+                    )}
                   </Fragment>
                 ))}
               </div>
@@ -1012,12 +1294,12 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
               older than the oldest visible row. The end states are
               HONEST: file start = "beginning of log", byte cap = "older
               rows beyond scan window" — never a silent stop. */}
-          {calls.length > 0 && (
+          {feed.length > 0 && (
             <div
               className="mt-2 flex flex-wrap items-center gap-2"
               data-testid="modelio-pager"
             >
-              {pager === "capped" ? (
+              {pagerState === "capped" ? (
                 <span
                   className="text-xs text-zinc-500"
                   data-testid="pager-capped"
@@ -1026,31 +1308,42 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
                   stopped at its byte cap
                   {data ? ` (${data.max_scan_bytes} bytes)` : ""}.
                 </span>
-              ) : pager === "end" ? (
+              ) : pagerState === "end" ? (
                 <span
                   className="text-xs text-zinc-600"
                   data-testid="pager-end"
                 >
                   beginning of log reached — no older rows.
                 </span>
+              ) : pagerState === "blocked" ? (
+                // The page states no usable boundary. Walking on would mean
+                // GUESSING one from the rendered rows — the guess that
+                // silently lost rows before 2026-08-19. Stop and say so.
+                <span
+                  className="text-xs text-amber-400/80"
+                  data-testid="pager-blocked"
+                >
+                  paging stopped — this response states no page boundary, and
+                  guessing one from the rows on screen can skip rows silently.
+                </span>
               ) : (
                 <button
                   type="button"
                   data-testid="load-older"
-                  disabled={pager === "loading"}
+                  disabled={pagerState === "loading"}
                   className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
                   onClick={loadOlder}
                 >
-                  {pager === "loading" ? "loading…" : "load older ▾"}
+                  {pagerState === "loading" ? "loading…" : "load older ▾"}
                 </button>
               )}
-              {pager === "error" && (
+              {pagerState === "error" && (
                 <span className="text-xs text-amber-400/80">
                   older-page fetch failed — the button retries.
                 </span>
               )}
               <span className="text-[11px] text-zinc-600">
-                showing {calls.length} rows — newest {PAGE_SIZE} refresh
+                showing {feed.length} rows — newest {PAGE_SIZE} refresh
                 live, paged rows stay appended
               </span>
             </div>

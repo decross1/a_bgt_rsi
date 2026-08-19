@@ -78,7 +78,7 @@ export default function AbstainForm({ findingId, available, onSubmitted }: Props
     setSubmitting(true);
     setError(null);
     try {
-      const res = await postAbstain({ ref_id: safeFindingId, note: note.trim() });
+      const res = await postAbstain({ finding_id: safeFindingId, note: note.trim() });
       setResult(res);
       onSubmitted?.();
     } catch (e) {

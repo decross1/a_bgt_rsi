@@ -12,6 +12,14 @@ chain and the spawn ledger's agent contracts.
   since_ts, and pageable with ``before_ts`` (rows STRICTLY older than the
   boundary, same newest-first order — the UI's "load older" seam; owner
   request 2026-08-18: show only the last ~20 interactions and page back).
+  Rows belonging to a CHAT SESSION are additionally grouped into ``threads``
+  (owner feedback 2026-08-19: "I posed 3 questions but it shows up as 6
+  cards" — see the session-thread section below); every other row keeps its
+  per-call summary in ``calls`` exactly as before.
+  PAGING IS A COVERAGE CONTRACT, not a client-side inference (fix
+  2026-08-19, see the ``next_before_ts`` section below): the response states
+  the exclusive older edge of the contiguous log span it covers, so
+  ``before_ts=next_before_ts`` tiles the next span exactly.
   NOTE: experiments and bench redirect their calls to their own
   ``runs/*.calls.jsonl`` via ``LOOP_V0_CALLS_LOG`` — this slice reads the
   main log only (the frontend states that as a footnote; a log picker is
@@ -74,6 +82,60 @@ _BLOCK_BYTES = 256 * 1024
 
 # Previews are for the table row; the detail endpoint carries the full text.
 PREVIEW_CHARS = 200
+
+# ─── session threads ─────────────────────────────────────────────────────
+#
+# Owner feedback 2026-08-19: "I posed 3 questions for iter-2026-06-05-006 but
+# it shows up as 6 cards" — the finding-session engine is a STATELESS REPLAY
+# (orchestrator/finding_session.py `_replay_messages`): every turn re-sends
+# the whole message stack, so a 3-question interrogation answered by two
+# voices lands as 6 wrapper calls, each carrying the entire growing prompt.
+# Per-call rendering therefore shows 6 cards that mostly repeat each other.
+#
+# These rows group back into ONE thread per session. Detection is
+# CONSERVATIVE — both of two evidence conditions must hold, so an iteration
+# chain / battery / promotion panel is NEVER guess-grouped:
+#   1. run_id starts with "finding_session_" — all three session modes stamp
+#      run_id = f"finding_session_{session_id}" (finding_session.py lines
+#      719 / 841 / 1030), session_id being "fs-<12 hex>";
+#   2. caller_tag is in the finding_session family — "finding_session" (the
+#      single-voice chat seam), "finding_session_tutor" (D-054 tutor), or
+#      "finding_session_<stance>" (the two-voice attacker/defender).
+# A lab_channel:* / nara.* / subagent.* row fails (1) and stays a plain call.
+SESSION_RUN_PREFIX = "finding_session_"
+SESSION_TAG = "finding_session"
+
+# Per-turn payload bounds: a thread ships the FULL answer text (that is the
+# point of the card), but a runaway completion cannot be allowed to blow up a
+# polled list response — it clips with an explicit flag, and the untouched
+# record stays one click away on /api/model_io/{request_id}.
+THREAD_COMPLETION_CHARS = 6000
+THREAD_DELTA_CHARS = 2000
+
+# After the page's row budget is full, the scan may walk this many EXTRA rows
+# to finish threads it already opened (a session's older turns sit further
+# back in the log). Bounded on purpose: calls.jsonl rows average ~10 KiB, so
+# this is worth a few hundred KiB of extra tail, not megabytes. The walk also
+# stops early the moment every open thread is provably whole.
+#
+# EVERY row walked in this zone is RETURNED (a plain call lands in `calls`,
+# a turn on its thread) — the budget `limit` therefore bounds what the page
+# BUDGETS, not what it carries. That is the 2026-08-19 gap fix: the previous
+# code walked past non-session rows in this zone and DROPPED them, while the
+# client paged from the thread's `started` (far older than the true fill
+# point), so every dropped row landed on neither page and the UI then said
+# "beginning of log reached". A walked-and-dropped row is a silent gap; a
+# walked-and-returned row is only a slightly longer page.
+THREAD_BACKFILL_ROWS = 60
+
+# Per-page turn cap for ANY ONE thread. Turns do not consume the page's row
+# budget (a whole session is one row), so without this a 5 000-turn session
+# would ship 5 000 × THREAD_COMPLETION_CHARS in one polled response. At 60 the
+# worst case is ~0.5 MiB. Hitting it STOPS THE PAGE (it never drops the row):
+# the coverage boundary freezes at the last turn actually returned, so the
+# client's next page picks the session up where this one stopped and the two
+# slices fold into one card. The thread says `turns_truncated: true`.
+THREAD_MAX_TURNS = 60
 
 # orchestrator.jsonl rows are tiny (~350 B); 512 KiB of tail is >1000 rows,
 # far more than the 100-task cap below ever needs. spawn.jsonl rows are
@@ -362,6 +424,173 @@ def _summary(rec: dict) -> dict:
     }
 
 
+def _session_id(rec: dict) -> str | None:
+    """The chat-session id this row belongs to, or None when the row is NOT
+    session traffic. Both evidence conditions must hold (see the
+    session-thread note above) — nothing is inferred from one of them alone,
+    so iteration/battery/subagent rows can never be guess-grouped."""
+    tag = rec.get("caller_tag")
+    run_id = rec.get("run_id")
+    if not isinstance(tag, str) or not isinstance(run_id, str):
+        return None
+    if tag != SESSION_TAG and not tag.startswith(SESSION_TAG + "_"):
+        return None
+    if not run_id.startswith(SESSION_RUN_PREFIX):
+        return None
+    return run_id[len(SESSION_RUN_PREFIX):] or None
+
+
+def _stance(tag: str) -> str | None:
+    """'finding_session_attacker' -> 'attacker'. The bare 'finding_session'
+    tag (single-voice chat seam) has no stance — None, never invented."""
+    if tag.startswith(SESSION_TAG + "_"):
+        return tag[len(SESSION_TAG) + 1:] or None
+    return None
+
+
+def _user_delta(rec: dict) -> tuple[str | None, int | None]:
+    """``(last user message, number of messages before it)``.
+
+    The last user message is the NEW question this call asked; everything
+    before it is the replayed prefix the engine re-sends every turn. The
+    prefix is returned as a COUNT — a thread never repeats it per turn (the
+    whole point of the grouping) and the full stack stays available on
+    /api/model_io/{request_id}.
+
+    Falls back to the last message of any role when no user message exists;
+    ``(None, None)`` when the row has no legible prompt_messages at all.
+
+    The count is None — NOT 0 — for that no-legible-stack case on purpose
+    (fix 2026-08-19). A prefix of 0 is real evidence: it means the stack IS
+    the opening question and nothing precedes it, which is exactly what
+    `_thread_complete` reads as "this voice's first turn is in hand". A
+    malformed row returning 0 would forge that proof and make a truncated
+    thread claim it was whole. None says "no evidence", and proves nothing."""
+    messages = rec.get("prompt_messages")
+    if not isinstance(messages, list) or not messages:
+        return None, None
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if isinstance(msg, dict) and msg.get("role") == "user" \
+                and isinstance(msg.get("content"), str):
+            return msg["content"], i
+    last = messages[-1]
+    content = last.get("content") if isinstance(last, dict) else None
+    return (content if isinstance(content, str) else None), len(messages) - 1
+
+
+def _clip(text: str, limit: int) -> tuple[str, bool]:
+    """``(text, was_clipped)`` — a bound that ANNOUNCES itself."""
+    return (text[:limit], True) if len(text) > limit else (text, False)
+
+
+def _turn(rec: dict) -> dict:
+    """One session turn: the NEW question, the answer, and the scalars.
+    Pure passthrough like _summary — a missing field is null, never derived
+    (`stance` is read off the caller_tag suffix, not off the model name)."""
+    usage = rec.get("usage") if isinstance(rec.get("usage"), dict) else {}
+    tag = rec.get("caller_tag")
+    delta, prefix = _user_delta(rec)
+    completion = rec.get("completion")
+    completion_str = completion if isinstance(completion, str) else ""
+    body, body_clipped = _clip(completion_str, THREAD_COMPLETION_CHARS)
+    ask, ask_clipped = _clip(delta, THREAD_DELTA_CHARS) \
+        if delta is not None else (None, False)
+    return {
+        "ts": _passthrough_str(rec.get("timestamp")),
+        "request_id": _passthrough_str(rec.get("request_id")),
+        "caller_tag": _passthrough_str(tag),
+        "stance": _stance(tag) if isinstance(tag, str) else None,
+        "model": _passthrough_str(rec.get("model")),
+        "backend": _passthrough_str(rec.get("backend")),
+        "user_delta": ask,
+        "user_delta_truncated": ask_clipped,
+        # Messages replayed AHEAD of this turn's question — the "context: N
+        # prior messages" disclosure, not the text itself.
+        "prefix_message_count": prefix,
+        "completion": body,
+        "completion_truncated": body_clipped,
+        "empty": completion_str.strip() == "",
+        "tokens_in": usage.get("input_tokens")
+        if isinstance(usage.get("input_tokens"), int) else None,
+        "tokens_out": usage.get("output_tokens")
+        if isinstance(usage.get("output_tokens"), int) else None,
+        "latency_ms": rec.get("latency_ms")
+        if isinstance(rec.get("latency_ms"), (int, float)) else None,
+    }
+
+
+def _thread_complete(turns: list[dict]) -> bool:
+    """True when every voice in the thread has its FIRST call in hand.
+
+    The evidence is the replay stack itself: a call whose prompt is just
+    [system, user] (prefix_message_count <= 1) IS that voice's opening turn,
+    so nothing older can belong to it. Used both to answer the UI honestly
+    ("this card is the whole session") and to stop the backfill walk early.
+
+    A None prefix (the row had no legible prompt_messages — see _user_delta)
+    is NOT evidence of anything: a voice whose only turns are None-prefixed
+    cannot prove its opener is here, so the thread is not complete."""
+    earliest: dict[str, int | None] = {}
+    for turn in turns:
+        key = turn["stance"] or ""
+        prefix = turn["prefix_message_count"]
+        if key not in earliest:
+            earliest[key] = prefix
+        elif prefix is not None and (earliest[key] is None
+                                     or prefix < earliest[key]):
+            earliest[key] = prefix
+    return bool(earliest) and all(p is not None and p <= 1
+                                  for p in earliest.values())
+
+
+def _finalize_thread(session_id: str, collected: list[dict],
+                     turns_truncated: bool = False) -> dict:
+    """One thread object out of the turns collected newest-first.
+
+    Turn order is the LOG's own order, reversed — chronological passthrough,
+    never a re-sort (a sort would scramble rows whose timestamp is
+    unparseable). started/ended take the min/max of the PARSEABLE timestamps
+    so one malformed row cannot claim either end; wall_ms is the span
+    between them (None when it cannot be computed, never 0-as-unknown)."""
+    turns = list(reversed(collected))
+    stamped = [(_parse_ts(t["ts"]), t["ts"]) for t in turns if t["ts"]]
+    stamped = [p for p in stamped if p[0] != _UNPARSEABLE]
+    started = min(stamped)[1] if stamped else None
+    ended = max(stamped)[1] if stamped else None
+    wall_ms = ((max(stamped)[0] - min(stamped)[0]).total_seconds() * 1000
+               if stamped else None)
+    return {
+        "kind": "session_thread",
+        "session_id": session_id,
+        "run_id": SESSION_RUN_PREFIX + session_id,
+        "started": started,
+        "ended": ended,
+        "wall_ms": wall_ms,
+        "models": sorted({t["model"] for t in turns if t["model"]}),
+        "stances": sorted({t["stance"] for t in turns if t["stance"]}),
+        "caller_tags": sorted({t["caller_tag"] for t in turns
+                               if t["caller_tag"]}),
+        "turn_count": len(turns),
+        # NOTE (2026-08-19): there is deliberately NO `question_count` here.
+        # A card can be assembled from SEVERAL pages of the same session
+        # (the client folds the slices), so the only correct question count
+        # is the one derived from the turns the card actually holds —
+        # SessionThreadCard.questionGroups(). A per-slice scalar on the wire
+        # would be a second source of truth that contradicts the rendered
+        # number the moment a merge happens, so it was dropped rather than
+        # rendered. `turn_count` stays: it is this slice's own statement.
+        # True when THIS PAGE stopped at THREAD_MAX_TURNS for this session:
+        # older turns exist and the page's coverage boundary was frozen at
+        # the last turn returned, so the next page continues the session.
+        "turns_truncated": turns_truncated,
+        # True only when the replay stacks PROVE every voice's first turn is
+        # here; False means older turns may sit outside the scanned window.
+        "turns_complete": _thread_complete(turns),
+        "turns": turns,
+    }
+
+
 def _matches(rec: dict, *, model: str | None, caller_tag: str | None,
              run_id: str | None, since: datetime | None,
              before: datetime | None = None) -> bool:
@@ -420,38 +649,142 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
     def model_io(limit: int = 20, model: str | None = None,
                  caller_tag: str | None = None, run_id: str | None = None,
                  since_ts: str | None = None, before_ts: str | None = None):
-        """Newest-first call summaries from the tail of the MAIN call log.
+        """Newest-first call summaries from the tail of the MAIN call log,
+        with chat-session rows grouped into ``threads``.
 
-        ``before_ts`` pages OLDER rows: strictly older than the boundary,
-        same newest-first order, same bounded backward scan. The scan
-        generator is lazy, so the window extends only as deep as the page
-        actually needs — newer-than-boundary rows are skipped, the walk
-        still stops at the first of (limit filled | file start |
-        ``max_scan_bytes``), and ``window_truncated`` keeps its honesty:
-        True means the byte cap stopped the scan with the page unfilled,
-        i.e. older rows may exist that were never examined (the UI's
-        "load older" button reports that instead of silently stopping)."""
+        ``limit`` BUDGETS rows as the UI sees them: a plain call is one row
+        and a whole session thread is ALSO one row (stamped with its latest
+        turn), so a 3-question two-voice interrogation costs the page one
+        slot instead of six. Session detection is the conservative
+        ``_session_id`` test — everything else stays in ``calls``, rendered
+        exactly as before.
+
+        THE COVERAGE CONTRACT (fix 2026-08-19). The response covers ONE
+        CONTIGUOUS SPAN of the log and returns EVERY matching row inside it.
+        ``next_before_ts`` is that span's exclusive OLDER edge — the page's
+        TRUE FILL POINT, i.e. the oldest timestamp the response carries,
+        which after a thread backfill is NOT the oldest row's own stamp and
+        is NOT a thread's ``started``. Feed it back as ``before_ts`` and the
+        next page covers the adjoining older span, so page1 ∪ page2 is the
+        whole span with every row exactly once (``before_ts`` is strictly
+        older, and the walk never stops mid-timestamp — rows tying the
+        boundary instant ride this page, or the strictly-older next page
+        would skip them). ``end_of_log`` is True only when the walk reached
+        the START OF THE FILE; the client reports "beginning of log" off
+        that flag rather than inferring it from a short page.
+
+        The client used to INFER the boundary from the oldest rendered item,
+        which is exactly what broke: the backfill walk (THREAD_BACKFILL_ROWS)
+        legitimately walks past non-session rows to finish an open thread,
+        so a thread's ``started`` could sit ~60 rows older than the fill
+        point, and every plain row in between was on neither page — after
+        which the UI announced "beginning of log reached". Inference cannot
+        see a fill point; only the scan that produced it can, so the scan
+        states it.
+
+        Finishing an open thread can therefore carry a BOUNDED OVERFLOW past
+        the budget: those rows are returned, never dropped.
+
+        ``window_truncated`` keeps its honesty: True means the byte cap
+        stopped the scan with the page unfilled, i.e. older rows may exist
+        that were never examined.
+
+        Filters apply to ROWS, and a thread carries only the turns that
+        matched — a ``model=gemma`` query over a two-voice session honestly
+        yields a one-stance thread rather than smuggling the qwen turns in.
+        """
         capped = min(max(limit, 1), 200)
         since = _filter_instant(since_ts, "since_ts") if since_ts else None
         before = _filter_instant(before_ts, "before_ts") if before_ts \
             else None
         records, state = _scan_backward(calls_path, max_scan_bytes)
         calls: list[dict] = []
+        collected: dict[str, list[dict]] = {}
+        truncated: set[str] = set()
+        rows = 0            # rows AS THE UI SEES THEM (a thread counts once)
+        backfill = 0
+        # Coverage bookkeeping: the oldest PARSEABLE instant this response
+        # actually carries, and whether the walk ran off the start of the
+        # file (as opposed to hitting a budget/bound).
+        boundary: datetime | None = None
+        boundary_ts: str | None = None
+        reached_start = True
+
+        def at_boundary(rec: dict) -> bool:
+            """True when `rec` ties the current coverage boundary instant.
+            Stopping ON such a row would drop it — the next page is STRICTLY
+            older than the boundary and would never hand it back."""
+            return boundary is not None \
+                and _parse_ts(rec.get("timestamp")) == boundary
+
         for rec in records:
+            filled = rows >= capped
+            if filled:
+                # The page's budget is spent. A thread already on it may
+                # still have older turns further back, so keep walking a
+                # BOUNDED extra number of rows — stopping the moment every
+                # open thread's replay stack proves it is whole.
+                spent = (not collected
+                         or all(_thread_complete(t)
+                                for t in collected.values())
+                         or backfill >= THREAD_BACKFILL_ROWS)
+                if spent and not at_boundary(rec):
+                    reached_start = False
+                    break
+                backfill += 1
             if not _matches(rec, model=model or None,
                             caller_tag=caller_tag or None,
                             run_id=run_id or None, since=since,
                             before=before):
                 continue
-            calls.append(_summary(rec))
-            if len(calls) >= capped:
-                break
+            session_id = _session_id(rec)
+            if session_id is None:
+                # Returned even in the backfill zone: a walked-and-dropped
+                # row is the silent gap this endpoint used to have.
+                calls.append(_summary(rec))
+                if not filled:
+                    rows += 1
+            else:
+                turns = collected.get(session_id)
+                if turns is None:
+                    collected[session_id] = [_turn(rec)]
+                    if not filled:
+                        rows += 1
+                elif len(turns) >= THREAD_MAX_TURNS and not at_boundary(rec):
+                    # Per-page turn cap: STOP the page here rather than drop
+                    # the row. The boundary stays at the last turn returned,
+                    # so the next page continues this session.
+                    truncated.add(session_id)
+                    reached_start = False
+                    break
+                else:
+                    turns.append(_turn(rec))
+            instant = _parse_ts(rec.get("timestamp"))
+            if instant != _UNPARSEABLE and (boundary is None
+                                            or instant < boundary):
+                boundary = instant
+                boundary_ts = _passthrough_str(rec.get("timestamp"))
+        threads = [_finalize_thread(sid, turns, sid in truncated)
+                   for sid, turns in collected.items()]
+        threads.sort(key=lambda t: _parse_ts(t["ended"]), reverse=True)
+        # The walk ran off the start of the file only if nothing stopped it
+        # AND the byte bound was not what ended the scan.
+        end_of_log = reached_start and not state["hit_bound"]
         return {
             "calls": calls,
+            "threads": threads,
             "source": "logs/calls.jsonl",
+            # The exclusive OLDER edge of the span this page covers — pass
+            # it straight back as before_ts. None when there is nothing left
+            # to ask for (end_of_log), or when no row this page carried had
+            # a parseable timestamp to page from (the client says so rather
+            # than guessing a boundary).
+            "next_before_ts": None if end_of_log else boundary_ts,
+            # True only when the scan reached the START OF THE FILE.
+            "end_of_log": end_of_log,
             # True iff the byte bound stopped the scan while the limit was
             # still unfilled — older matching rows may exist unexamined.
-            "window_truncated": state["hit_bound"] and len(calls) < capped,
+            "window_truncated": state["hit_bound"] and rows < capped,
             "scanned_bytes": state["scanned_bytes"],
             "max_scan_bytes": max_scan_bytes,
             "generated_at": _utcnow_iso(),

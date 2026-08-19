@@ -5,6 +5,11 @@ no files, no network, no model. The golden test pins the exact rendered bytes
 with the LOCAL next-test-owed map forced (via monkeypatching the guarded
 `_next_test_owed` seam to None), so the golden stays stable whether or not
 the sibling `workers.evidence_ladder` module has landed.
+
+Also pinned here: `agenda_topics` drops a KILLED cluster's agenda (defense in
+depth, layer 2 of the evidence-keyed reopen gate — layer 1 is
+`orchestrator/agenda_cli.py`'s accept refusal). This projection is what
+`orchestrator/coordinator.py` puts at the HEAD of its topic list.
 """
 from __future__ import annotations
 
@@ -173,6 +178,78 @@ def test_agenda_topics_shape_and_consumed_skip():
          "source": "meta_review", "cluster_id": "cl-surfaced"},
     ]
     assert all(set(t) == {"topic", "source", "cluster_id"} for t in topics)
+
+
+# ─── a KILLED cluster contributes no agenda topic (the reopen gate) ──────
+# `agenda_topics` is what orchestrator/coordinator.py puts at the HEAD of its
+# topic list. A killed cluster's agenda leaking through would re-enter the
+# graveyard direction into the loop with NO `cluster_reopened` event — the
+# one mechanism (workers/idea_ledger.py) built to keep that evidence-keyed.
+# `agenda_cli.accept` refuses a killed cluster up front (layer 1); THIS is
+# layer 2, and it is the only one that covers the ordering below.
+
+def _killed_with_agenda() -> dict:
+    """A cluster carrying a pending agenda item AND a kill."""
+    state = _state()
+    state["cl-killed-a"]["agenda"] = [
+        {"topic": "resurrect the reserve-tuning direction",
+         "source": "frontier_proposed", "status": "open"},
+    ]
+    return state
+
+
+def test_killed_cluster_agenda_never_surfaces_as_a_topic():
+    topics = ip.agenda_topics(_killed_with_agenda())
+    assert [t["cluster_id"] for t in topics] == ["cl-open-a", "cl-surfaced"]
+    assert all("resurrect" not in t["topic"] for t in topics)
+
+
+def test_accepted_while_OPEN_then_killed_stops_surfacing():
+    """The ordering layer 1 cannot cover: the item was accepted legitimately
+    onto a LIVE cluster, and the cluster was killed afterwards. The topic must
+    stop surfacing at the kill — a kill is not advisory."""
+    state = _state()
+    state["cl-open-a"]["agenda"] = {"topic": "Cournot capacity commitment with noisy signals",
+                                    "source": "frontier_proposed", "status": "open"}
+    before = ip.agenda_topics(state)
+    assert [t["cluster_id"] for t in before] == ["cl-open-a", "cl-surfaced"]
+
+    # ... then the cluster is killed (the reduced shape a cluster_killed
+    # event produces: kill_reason set, derived status "killed").
+    state["cl-open-a"]["status"] = "killed"
+    state["cl-open-a"]["kill_reason"] = {"code": "redteam_fatal_flaw"}
+    state["cl-open-a"]["reopening_condition"] = {
+        "requires": "new_evidence", "evidence_kind": "articulated_delta"}
+
+    after = ip.agenda_topics(state)
+    assert [t["cluster_id"] for t in after] == ["cl-surfaced"]
+
+
+def test_a_reopen_restores_the_agenda_topic():
+    """The filter keys on the CURRENT status, not on a scar: a reopen (which
+    clears kill_reason -> derived status open) brings the item back. The gate
+    routes the direction through the reopen event; it does not delete it."""
+    state = _killed_with_agenda()
+    state["cl-killed-a"]["status"] = "open"
+    state["cl-killed-a"]["kill_reason"] = None
+    state["cl-killed-a"]["reopening_condition"] = None
+    assert [t["cluster_id"] for t in ip.agenda_topics(state)] == [
+        "cl-killed-a", "cl-open-a", "cl-surfaced"]
+
+
+def test_killed_agenda_is_absent_from_ideas_md_and_conditioning():
+    """The two projections built on agenda_topics inherit the filter: the
+    Agenda section and the prompt-conditioning AGENDA lines. The cluster is
+    still in the Graveyard with its reopening condition — dropped from the
+    agenda, never hidden."""
+    state = _killed_with_agenda()
+    text = ip.render_ideas_md(state)
+    assert "resurrect the reserve-tuning direction" not in text
+    assert "First-price reserve tuning beats VCG revenue · killed:" in text
+
+    lines = ip.conditioning_lines(state, "first-price reserve tuning")
+    assert not any(l.startswith("AGENDA [cl-killed-a]") for l in lines)
+    assert any(l.startswith("KILLED prior [cl-killed-a]") for l in lines)
 
 
 def test_agenda_topic_and_source_fallbacks():

@@ -29,6 +29,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -125,13 +126,41 @@ def _write(path: Path, rows: list[dict]) -> None:
                     encoding="utf-8")
 
 
+class _StubRunner:
+    """Injected in place of ``subprocess.run`` (test_todo_cockpit.py's stub,
+    verbatim idiom): records every blessed-exec argv and returns a canned
+    result. NEVER spawns a process — no real CLI, no real ledger write."""
+
+    def __init__(self, stdout: str = '{"ok": true}', returncode: int = 0,
+                 stderr: str = ""):
+        self.calls: list[dict] = []
+        self._stdout = stdout
+        self._returncode = returncode
+        self._stderr = stderr
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append({"argv": list(argv), "kwargs": kwargs})
+
+        class _Proc:
+            returncode = self._returncode
+            stdout = self._stdout
+            stderr = self._stderr
+        return _Proc()
+
+    @property
+    def last_argv(self) -> list[str]:
+        assert self.calls, "no blessed exec was attempted"
+        return self.calls[-1]["argv"]
+
+
 def _client(tmp_path, *, screen=None, agenda=None, calls=None, ledger=None,
-            **kwargs) -> TestClient:
+            status=None, **kwargs) -> TestClient:
     """App with every source pinned under tmp_path; sources given as row
     lists are written, None leaves the file ABSENT."""
     paths = {}
     for name, rows in (("screen", screen), ("agenda", agenda),
-                       ("calls", calls), ("ledger", ledger)):
+                       ("calls", calls), ("ledger", ledger),
+                       ("status", status)):
         paths[name] = tmp_path / f"{name}.jsonl"
         if rows is not None:
             _write(paths[name], rows)
@@ -139,9 +168,10 @@ def _client(tmp_path, *, screen=None, agenda=None, calls=None, ledger=None,
     # loop_memory pinned under tmp (ABSENT unless a test writes it) so the
     # founding-hypothesis fallback can never leak into the real checkout.
     kwargs.setdefault("loop_memory_path", tmp_path / "loop_memory.jsonl")
+    kwargs.setdefault("repo_root", REPO_ROOT)
     register(app, screen_path=paths["screen"], agenda_path=paths["agenda"],
-             calls_path=paths["calls"], idea_ledger_path=paths["ledger"],
-             repo_root=REPO_ROOT, **kwargs)
+             agenda_status_path=paths["status"], calls_path=paths["calls"],
+             idea_ledger_path=paths["ledger"], **kwargs)
     return TestClient(app)
 
 
@@ -263,10 +293,187 @@ def test_agenda_event_fields(tmp_path):
     client = _client(tmp_path, screen=None, agenda=[_agenda_row(_iso(1), 7)],
                      calls=None, ledger=None)
     [event] = client.get("/api/frontier_reviews").json()["events"]
+    # An UNRULED proposal: effective_status falls back to the row's own
+    # status and NO ruling block is fabricated.
     assert event == {"type": "agenda", "ts": event["ts"],
                      "proposal_id": "fa-00000007",
                      "proposed_by": "frontier:claude", "topic": "topic 7",
-                     "rationale": "rationale 7", "status": "proposed"}
+                     "rationale": "rationale 7", "status": "proposed",
+                     "effective_status": "proposed"}
+
+
+# ─── the acceptance step: status join + accept/dismiss exec ───────────
+
+def _status_row(n: int, status: str, note: str = "why", **extra) -> dict:
+    return {"proposal_id": f"fa-{n:08d}", "status": status, "ts": _iso(0),
+            "note": note, "agent_id": "human:ui", **extra}
+
+
+def test_effective_status_joins_the_audit_file_last_row_wins(tmp_path):
+    client = _client(
+        tmp_path, screen=None, calls=None, ledger=None,
+        agenda=[_agenda_row(_iso(3), 1), _agenda_row(_iso(2), 2),
+                _agenda_row(_iso(1), 3)],
+        status=[_status_row(1, "dismissed", "graveyard analysis"),
+                _status_row(1, "accepted", "changed my mind",
+                            cluster_id="cl-fa-00000001"),
+                _status_row(2, "dismissed", "not research")])
+    events = {e["proposal_id"]: e
+              for e in client.get("/api/frontier_reviews").json()["events"]}
+    # last row wins for fa-1; fa-2 dismissed; fa-3 never ruled on.
+    assert events["fa-00000001"]["effective_status"] == "accepted"
+    assert events["fa-00000001"]["ruling"]["note"] == "changed my mind"
+    assert events["fa-00000001"]["ruling"]["cluster_id"] == "cl-fa-00000001"
+    assert events["fa-00000002"]["effective_status"] == "dismissed"
+    assert events["fa-00000002"]["ruling"]["note"] == "not research"
+    assert events["fa-00000003"]["effective_status"] == "proposed"
+    assert "ruling" not in events["fa-00000003"]
+    # The proposals file itself is untouched — its own status still reads
+    # "proposed" alongside the joined effective status (never rewritten).
+    assert events["fa-00000001"]["status"] == "proposed"
+
+
+def test_out_of_enum_audit_status_is_not_believed(tmp_path):
+    client = _client(tmp_path, screen=None, calls=None, ledger=None,
+                     agenda=[_agenda_row(_iso(1), 1)],
+                     status=[_status_row(1, "accepted"),
+                             _status_row(1, "sortof")])
+    [event] = client.get("/api/frontier_reviews").json()["events"]
+    assert event["effective_status"] == "accepted"
+
+
+def test_absent_status_file_leaves_every_proposal_proposed(tmp_path):
+    client = _client(tmp_path, screen=None, calls=None, ledger=None,
+                     agenda=[_agenda_row(_iso(1), 1)], status=None)
+    [event] = client.get("/api/frontier_reviews").json()["events"]
+    assert event["effective_status"] == "proposed"
+    assert "ruling" not in event
+
+
+def test_agenda_write_capability_reports_the_real_writer(tmp_path):
+    # repo_root is the REAL checkout: agenda_cli.py + the interpreter exist.
+    body = _client(tmp_path).get("/api/frontier_reviews").json()
+    assert body["agenda_write"] == {
+        "available": True, "verbs": ["accept", "dismiss"],
+        "writer": "orchestrator.agenda_cli"}
+    # A checkout WITHOUT the writer reports available:false — never a button
+    # that would 502 (the handshake execs nothing to find out).
+    bare = _client(tmp_path, repo_root=tmp_path / "bare")
+    assert bare.get("/api/frontier_reviews").json()[
+        "agenda_write"]["available"] is False
+
+
+def test_accept_execs_the_blessed_cli_as_an_argv_array(tmp_path):
+    runner = _StubRunner('{"proposal_id": "fa-00000001", "status": "accepted"}')
+    client = _client(tmp_path, screen=None, calls=None, ledger=None,
+                     agenda=[_agenda_row(_iso(1), 1)], runner=runner)
+    resp = client.post("/api/frontier_agenda/accept",
+                       json={"proposal_id": "fa-00000001",
+                             "note": "the only live experiments",
+                             "topic_override": "narrower topic"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "accepted"
+    argv = runner.last_argv
+    assert isinstance(argv, list)                      # ARRAY, never a string
+    assert argv[1] == "-m" and argv[2] == "orchestrator.agenda_cli"
+    assert argv[3:] == ["accept", "--proposal-id", "fa-00000001",
+                        "--note", "the only live experiments",
+                        "--by", "human:ui",
+                        "--topic-override", "narrower topic"]
+    assert runner.calls[-1]["kwargs"].get("shell") in (None, False)
+
+
+def test_dismiss_execs_the_dismiss_verb_and_omits_topic_override(tmp_path):
+    runner = _StubRunner('{"proposal_id": "fa-00000001", "status": "dismissed"}')
+    client = _client(tmp_path, screen=None, calls=None, ledger=None,
+                     agenda=[_agenda_row(_iso(1), 1)], runner=runner)
+    resp = client.post("/api/frontier_agenda/dismiss",
+                       json={"proposal_id": "fa-00000001", "note": "no",
+                             "topic_override": "ignored"})
+    assert resp.status_code == 200
+    assert runner.last_argv[3:] == ["dismiss", "--proposal-id", "fa-00000001",
+                                    "--note", "no", "--by", "human:ui"]
+
+
+@pytest.mark.parametrize("proposal_id", [
+    "fa-00000001; rm -rf /",      # shell metacharacters
+    "fa 00000001",                # a space
+    "--proposal-id",              # argv-flag confusion
+    "fa/../../etc/passwd",        # traversal
+    "", None, 17,
+])
+def test_hostile_proposal_id_422s_with_no_exec(tmp_path, proposal_id):
+    runner = _StubRunner()
+    client = _client(tmp_path, screen=None, calls=None, ledger=None,
+                     agenda=[_agenda_row(_iso(1), 1)], runner=runner)
+    resp = client.post("/api/frontier_agenda/accept",
+                       json={"proposal_id": proposal_id, "note": "n"})
+    assert resp.status_code == 422
+    assert runner.calls == []                          # nothing ever spawned
+
+
+@pytest.mark.parametrize("verb", ["accept", "dismiss"])
+def test_blank_note_422s_with_no_exec(tmp_path, verb):
+    runner = _StubRunner()
+    client = _client(tmp_path, screen=None, calls=None, ledger=None,
+                     agenda=[_agenda_row(_iso(1), 1)], runner=runner)
+    resp = client.post(f"/api/frontier_agenda/{verb}",
+                       json={"proposal_id": "fa-00000001", "note": "  "})
+    assert resp.status_code == 422
+    assert runner.calls == []
+
+
+def test_blank_topic_override_422s_with_no_exec(tmp_path):
+    runner = _StubRunner()
+    client = _client(tmp_path, screen=None, calls=None, ledger=None,
+                     agenda=[_agenda_row(_iso(1), 1)], runner=runner)
+    resp = client.post("/api/frontier_agenda/accept",
+                       json={"proposal_id": "fa-00000001", "note": "n",
+                             "topic_override": "   "})
+    assert resp.status_code == 422
+    assert runner.calls == []
+
+
+def test_nonzero_cli_exit_surfaces_stderr_verbatim(tmp_path):
+    runner = _StubRunner("", returncode=1,
+                         stderr="rejected: proposal fa-1 is already accepted")
+    client = _client(tmp_path, screen=None, calls=None, ledger=None,
+                     agenda=[_agenda_row(_iso(1), 1)], runner=runner)
+    resp = client.post("/api/frontier_agenda/accept",
+                       json={"proposal_id": "fa-00000001", "note": "n"})
+    assert resp.status_code == 502
+    assert resp.json() == {"rc": 1,
+                           "stderr": "rejected: proposal fa-1 is already accepted"}
+
+
+def test_successful_ruling_drops_the_ttl_cache(tmp_path):
+    """A ruling must show up on the NEXT poll, not after the TTL — the owner
+    clicking accept and seeing a stale `proposed` card is the bug."""
+    fake = {"now": 100.0}
+    runner = _StubRunner('{"status": "dismissed"}')
+    client = _client(tmp_path, screen=None, calls=None, ledger=None,
+                     agenda=[_agenda_row(_iso(1), 1)], runner=runner,
+                     ttl_s=600.0, clock=lambda: fake["now"])
+    first = client.get("/api/frontier_reviews").json()["events"][0]
+    assert first["effective_status"] == "proposed"
+    _write(tmp_path / "status.jsonl", [_status_row(1, "dismissed")])
+    client.post("/api/frontier_agenda/dismiss",
+                json={"proposal_id": "fa-00000001", "note": "no"})
+    again = client.get("/api/frontier_reviews").json()["events"][0]
+    assert again["effective_status"] == "dismissed"
+
+
+def test_failed_ruling_keeps_the_cache(tmp_path):
+    fake = {"now": 100.0}
+    runner = _StubRunner("", returncode=1, stderr="rejected: nope")
+    client = _client(tmp_path, screen=None, calls=None, ledger=None,
+                     agenda=[_agenda_row(_iso(1), 1)], runner=runner,
+                     ttl_s=600.0, clock=lambda: fake["now"])
+    first = client.get("/api/frontier_reviews").json()
+    client.post("/api/frontier_agenda/accept",
+                json={"proposal_id": "fa-00000001", "note": "n"})
+    assert client.get("/api/frontier_reviews").json()["generated_at"] == (
+        first["generated_at"])
 
 
 # ─── health: the decoded outage (the REAL 2026-08-18T06:00:43Z rows) ──

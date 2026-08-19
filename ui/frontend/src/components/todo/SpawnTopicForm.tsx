@@ -25,7 +25,9 @@ interface Props {
 // partial row could carry a non-string, null, or absent id. Coerce to a clean
 // string (only a real string survives — number/object/array/null/NaN-source all
 // degrade to ""), so the argv's `|| "<finding_id>"` placeholder and the POST
-// `ref_id` never leak "[object Object]" / "undefined" into the page or the body.
+// `finding_id` never leak "[object Object]" / "undefined" into the page or the
+// body. (That POST key was `ref_id` until 2026-08-19 and 422'd every call —
+// the backend has always read `finding_id`.)
 const asId = (v: unknown): string => (typeof v === "string" ? v : "");
 
 // `would_run` is producer-owned (the stub envelope's argv array). Render only
@@ -69,7 +71,7 @@ export default function SpawnTopicForm({ findingId, available, onSubmitted }: Pr
     setError(null);
     try {
       const res = await postSpawnTopic({
-        ref_id: safeId,
+        finding_id: safeId,
         kind,
         topic: topic.trim(),
       });

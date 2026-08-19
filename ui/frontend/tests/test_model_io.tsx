@@ -567,6 +567,15 @@ it("shows no thought chip on ordinary visible previews", async () => {
 
 // ─── pagination (owner 2026-08-18: "show only last 20 interactions") ────
 
+// NOTE (2026-08-19): these fixtures deliberately carry NO `next_before_ts`
+// / `end_of_log` — they pin the VERSION-SKEW path, where a backend predating
+// the paging coverage contract answers without them. That path is allowed to
+// infer a boundary only because these payloads have no `threads`: with no
+// thread there was no backfill walk, so the oldest call provably IS the
+// page's fill point. The production contract path (stated boundary,
+// interleaved rows, set-equality coverage) is pinned in
+// tests/test_session_thread.tsx.
+
 // A list-page URL (limit=20, no before_ts) vs an older-page URL.
 const isListURL = (u: string) =>
   u.includes("/api/model_io?") && !u.includes("before_ts=");
