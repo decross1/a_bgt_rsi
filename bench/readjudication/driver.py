@@ -450,10 +450,22 @@ def _overlap(ci_a, ci_b) -> bool:
 def evaluate_pair(old_artifact: dict, new_artifact: dict) -> dict:
     """phi, the 2x2, kappa_old, McNemar, the R partition and the pre-stated
     reading gates. Pure — takes two run artifacts, makes no calls."""
-    old_rows = {r["row_id"]: r for r in old_artifact["rows"]}
-    new_rows = {r["row_id"]: r for r in new_artifact["rows"]}
-    ids = sorted(rid for rid, r in new_rows.items() if r["kind"] == "target")
+    # Key on (row_id, kind), NOT row_id alone. The Q3 replicate rows reuse
+    # their target's row_id, so a row_id-keyed dict let each replicate
+    # OVERWRITE its target: 20 of 88 targets silently vanished from phi, the
+    # 2x2 and R (reported N=68, A=48 where the truth is N=88, A=66). A silent
+    # drop inside a locked measurement is exactly what this repo refuses —
+    # found by recomputing the 2x2 by hand against the raw rows.
+    def _by_kind(artifact, kind):
+        return {r["row_id"]: r for r in artifact["rows"] if r["kind"] == kind}
+
+    old_rows = _by_kind(old_artifact, "target")
+    new_rows = _by_kind(new_artifact, "target")
+    ids = sorted(new_rows)
     N = len(ids)
+    _n_target_rows = sum(1 for r in new_artifact["rows"] if r["kind"] == "target")
+    assert N == _n_target_rows, (
+        f"target rows lost while indexing: {N} != {_n_target_rows}")
 
     v_new = {rid: new_rows[rid]["verdict"] for rid in ids}
     v_old = {rid: old_rows[rid]["verdict"] for rid in ids if rid in old_rows}
@@ -783,12 +795,21 @@ def run_arm(arm: str, out_path: Path, limit: int | None = None) -> int:
             artifact["evaluation"] = evaluate_arm(out_rows, arm)
         if note:
             artifact["note"] = note
+        # Re-create the parent immediately before the write. It IS created
+        # at run_arm entry, but on 2026-08-19 the OLD arm still died here
+        # with FileNotFoundError after spending all 112 calls: a concurrent
+        # agent's git stash/restore cycle swept the (then-empty, untracked)
+        # runs/ directory out from under a 15-minute run. An artifact write
+        # that can lose a spent battery to someone else's housekeeping is
+        # not defensive enough at the top of the function alone.
+        out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(artifact, indent=2) + "\n")
         return artifact
 
     def _dump_calls():
         try:
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            out_path.parent.mkdir(parents=True, exist_ok=True)  # same reason
             path = out_path.parent / f"calls_{arm}_{stamp}.jsonl"
             with path.open("w") as fh:
                 for rec in wrapper_mod.MEMORY_LOG:

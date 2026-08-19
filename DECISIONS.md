@@ -3786,3 +3786,69 @@ relative `--out` broke `relative_to(REPO_ROOT)`); qwen38 was killed
 Re-runs are pure repeats: temp 0.0 greedy on pinned weights (D-074
 byte-determinism). First-attempt calls dumps retained beside the
 artifacts.
+
+## D-077 — Graveyard re-adjudication RESULT: the redteam graveyard is a PROMPT artifact, not a reliability artifact (disposition pending owner)
+
+**Date:** 2026-08-19. **Status:** measurement complete and valid; **no
+disposition executed** — reopening remains the owner's ratified step per
+`experiments/PREREG_readjudication_2026-08-19.md` §9.
+
+**Run validity FIRST (hard bars, evaluated before any flip rate was
+computed).** NEW arm: caught 9/12 known-bad controls, condemned 1/12
+parsed known-good, 0 unscored on 88 targets and 0 on 24 controls, and
+replicated its R1a behaviour at 23/24. OLD arm: condemned 8/9 parsed
+known-good — the D-076 condemner finding REPLICATED at run time, which
+is what licenses the attribution. No bar was re-thresholded.
+
+**Result (N=88 targets):**
+
+| statistic | value |
+| --- | --- |
+| φ (NEW proceeds / targets) | **69/88 = 0.784**, CP95 [0.684, 0.865] |
+| A — old fatal → new proceed | **66** |
+| B — old proceed → new proceed | **0** |
+| C — old fatal → new fatal | 17 |
+| D — old proceed → new fatal | 0 |
+| U — either arm unscored | 5 (3 of them NEW-proceed) |
+| κ_old (old arm reproduces its own historical kill) | **83/88 = 0.943** |
+| McNemar exact, A vs D | p ≈ 0 (66 vs 0) |
+| same-run NEW proceed on known-BAD controls | 0.25 |
+| same-run NEW proceed on known-GOOD controls | 0.917 |
+
+**Reading, per the prereg's pre-stated interpretation table (§7.6): φ high
++ κ_old high = PROMPT ARTIFACT.** B=0 is the load-bearing cell — re-run on
+identical text the old instrument NEVER reversed itself into `proceed`, so
+the kills were reproducible and this is not stochasticity. The graveyard
+proceeds at 0.784 against 0.25 on claims we labelled bad and 0.917 on
+claims we labelled good: the buried ideas behave like the known-GOOD
+fixtures, not the known-bad ones.
+
+**What this does NOT establish.** A `proceed` is not evidence an idea is
+good — it returns the cluster to the queue and nothing more. The NEW
+prompt is more permissive by construction; the n=12/class control bound
+from R1a is inherited in full and cannot be reduced here. κ_old is biased
+UPWARD (every target carries `retries_used=2`, i.e. the old instrument
+condemned it three times running). And since the swap the NEW instrument
+has killed nothing in live production (6/6 proceed), which is a real
+over-permissiveness question this battery does not answer.
+
+**Two integrity defects found and fixed DURING the run, both logged:**
+1. The OLD arm spent all 112 calls and died on its artifact write —
+   `runs/` was created at startup and then removed mid-run by a concurrent
+   agent's git housekeeping. Both writes now re-create the parent.
+2. `evaluate_pair` indexed rows by `row_id` alone, and the Q3 replicate
+   rows REUSE their target's `row_id`, so 20 of 88 targets were silently
+   dropped (first pair run reported N=68, A=48, φ=0.75). Found by
+   recomputing the 2×2 by hand against the raw rows; fixed, pinned by
+   `test_evaluate_pair_does_not_lose_targets_to_replicate_row_ids`, and
+   the corrected figures are the ones tabled above.
+
+**Owner's decision (pre-stated options, none auto-executes):** (i) reopen
+all of R (66 A-cell + 3 U-cell = 69) via the evidence-keyed
+`redteam_proceed_on_revision` reopen event; (ii) a bounded top-N (default
+12) under the pre-stated ordering — cell B first, which is EMPTY here, so
+ordering falls to cell A by descending cluster member count; (iii) reopen
+none and keep the finding on the record; (iv) an owner-argued alternative.
+Note the flood risk in (i): 20 clusters are open today and 13 of them are
+already blocked at L1 on the critic, so 69 reopens would land on a gate
+that cannot currently pass anything.

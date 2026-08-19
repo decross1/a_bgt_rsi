@@ -644,3 +644,44 @@ def test_mock_llm_refusal_is_exit_2_in_a_real_subprocess(tmp_path):
     assert res.returncode == 2
     assert "REFUSING (exit 2)" in res.stderr
     assert not (tmp_path / "old.json").exists()
+
+
+def test_evaluate_pair_does_not_lose_targets_to_replicate_row_ids():
+    """Q3 replicate rows REUSE their target's row_id. A row_id-keyed index
+    let each replicate overwrite its target, silently dropping 20 of 88
+    targets from phi, the 2x2 and R (the first live pair run reported N=68,
+    A=48 where the truth is N=88, A=66). Found by recomputing the 2x2 by
+    hand against the raw rows; a silent drop inside a LOCKED measurement is
+    the failure class this repo refuses."""
+    from bench.readjudication import driver as drv
+
+    def _row(rid, kind, verdict):
+        return {"row_id": rid, "kind": kind, "verdict": verdict,
+                "cluster_id": rid, "era": "2026-08", "historical_confidence": 0.9,
+                "cluster_member_count": 1, "provenance_class": "real-historical",
+                "label": None, "subagent_status": "passed"}
+
+    old = {"rows": [_row("t1", "target", "fatal_flaw"),
+                    _row("t2", "target", "fatal_flaw")]}
+    def _ctl(rid, label, verdict):
+        r = _row(rid, "control", verdict)
+        r["label"] = label
+        return r
+
+    # Controls are REQUIRED: evaluate_pair refuses without same-run control
+    # rates, because phi has no pre-stated comparator without them.
+    controls = [_ctl("g1", "known_good", "proceed"),
+                _ctl("b1", "known_bad", "fatal_flaw")]
+    old["rows"] += controls
+    new = {"rows": [_row("t1", "target", "proceed"),
+                    _row("t2", "target", "proceed"),
+                    # the replicate that used to eat t1
+                    _row("t1", "replicate", "fatal_flaw")] + controls,
+           "evaluation": {"same_run_proceed_rates": {
+               "known_bad_controls": drv._rate_block(0, 1),
+               "known_good_controls": drv._rate_block(1, 1),
+               "known_bad_controls_parsed": drv._rate_block(0, 1)}}}
+    out = drv.evaluate_pair(old, new)
+    assert out["N_targets"] == 2, "a replicate row displaced a target"
+    assert out["two_by_two"]["A_old_fatal_new_proceed"] == 2
+    assert out["phi"]["numerator"] == 2 and out["phi"]["denominator"] == 2

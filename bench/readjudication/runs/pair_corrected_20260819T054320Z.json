@@ -1,0 +1,293 @@
+{
+  "prereg": "experiments/PREREG_readjudication_2026-08-19.md",
+  "N_targets": 88,
+  "phi": {
+    "numerator": 69,
+    "denominator": 88,
+    "point": 0.7840909090909091,
+    "interval_bound": [
+      0.7840909090909091,
+      0.7840909090909091
+    ],
+    "ci95": [
+      0.6835465307009512,
+      0.8647182275024583
+    ],
+    "unscored_on_targets": 0,
+    "point_estimate_quotable_alone": true,
+    "reporting_rule": "With more than 4 unscored target rows the point estimate MAY NOT be quoted alone \u2014 report [proceeds/N, (proceeds+unscored)/N]. Pre-committed.",
+    "denominator_note": "phi is over the 88 TARGET rows = the re-adjudicable redteam-code kills. The report prints all three denominators once (prereg \u00a77.1) so the number cannot travel with the largest.",
+    "phi_parsed_SECONDARY_upper_bound": {
+      "x": 69,
+      "n": 88,
+      "rate": 0.7840909090909091,
+      "ci95": [
+        0.6835465307009512,
+        0.8647182275024583
+      ]
+    }
+  },
+  "two_by_two": {
+    "A_old_fatal_new_proceed": 66,
+    "B_old_proceed_new_proceed": 0,
+    "C_old_fatal_new_fatal": 17,
+    "D_old_proceed_new_fatal": 0,
+    "U_either_arm_unscored": 5,
+    "U_by_new_verdict": {
+      "proceed": 3,
+      "fatal_flaw": 2,
+      "unscored": 0
+    },
+    "U_old_unscored_and_new_proceed": 3,
+    "identity_holds": true
+  },
+  "kappa_old": {
+    "primary_all_rows": {
+      "x": 83,
+      "n": 88,
+      "rate": 0.9431818181818182,
+      "ci95": [
+        0.8723675987309667,
+        0.9812961365169659
+      ]
+    },
+    "secondary_parsed_only_UPPER_BOUND": {
+      "x": 83,
+      "n": 83,
+      "rate": 1.0,
+      "ci95": [
+        0.9565288478335583,
+        1.0
+      ]
+    },
+    "unscored_on_targets": 5,
+    "polarity_note": "Primary counts OLD-unscored as NON-reproduction. Historically a sub-agent schema_mismatch FAIL-OPENED to 'proceed' (the pre-R1b worker; 6ddcce5 remapped it to 'unscored' on 2026-08-18T05:28Z, AFTER the last target), so an OLD-arm unscored today IS the event that then meant 'no kill'.",
+    "selection_note": "kappa_old is a retest CONDITIONED ON THE SELECTING DRAW: every target carries retries_used=2, i.e. the old instrument parsed AND condemned three times running (a parse failure at T0/T1 would have fail-opened to proceed and SPARED the cluster). It is therefore biased UPWARD, toward the prompt-attribution reading."
+  },
+  "mcnemar_exact_two_sided": {
+    "A": 66,
+    "D": 0,
+    "p": 0.0,
+    "A_over_A_plus_D": {
+      "x": 66,
+      "n": 66,
+      "rate": 1.0,
+      "ci95": [
+        0.945641152829878,
+        1.0
+      ]
+    },
+    "note": "Real teeth only when the discordance is lopsided: A=20,D=2 -> p=1.2e-4; A=10,D=3 -> p=0.09. Stated in advance so a null is not spun."
+  },
+  "phi_comparators": {
+    "new_proceed_known_bad_controls": {
+      "x": 3,
+      "n": 12,
+      "rate": 0.25,
+      "ci95": [
+        0.05486064452799272,
+        0.5718584618781892
+      ]
+    },
+    "new_proceed_known_good_controls": {
+      "x": 11,
+      "n": 12,
+      "rate": 0.9166666666666666,
+      "ci95": [
+        0.6152038348490558,
+        0.9978924067681398
+      ]
+    },
+    "phi_minus_known_bad_proceed": 0.5340909090909091,
+    "phi_minus_known_good_proceed": -0.13257575757575757,
+    "prompt_attribution_reading_available": true,
+    "gate": "The 'the graveyard was a prompt artifact' reading is UNAVAILABLE when phi's CP95 overlaps the same-run NEW-arm proceed rate on KNOWN-BAD controls: the instrument would be proceeding on the graveyard at a rate indistinguishable from its rate on claims we labelled bad. Pre-stated.",
+    "post_swap_production_kills": {
+      "iterations_since_swap_at_lock": 6,
+      "kills_since_swap_at_lock": 0,
+      "note": "REQUIRED context alongside phi (prereg \u00a77.1): since the 2026-08-18T06:45Z swap the NEW instrument has proceeded on 6/6 production iterations with retries_used=0 \u2014 it has not killed anything in live production. Re-measure at report time and print the current figure."
+    }
+  },
+  "R_partition": {
+    "A_prompt_attributable_flip": [
+      "cl-iter-2026-06-05-004",
+      "cl-iter-2026-06-06-001",
+      "cl-iter-2026-06-09-001",
+      "cl-iter-2026-06-09-002",
+      "cl-iter-2026-06-09-003",
+      "cl-iter-2026-06-09-007",
+      "cl-iter-2026-06-10-001",
+      "cl-iter-2026-06-10-002",
+      "cl-iter-2026-06-10-003",
+      "cl-iter-2026-06-13-001",
+      "cl-iter-2026-06-19-002",
+      "cl-iter-2026-06-19-003",
+      "cl-iter-2026-06-19-006",
+      "cl-iter-2026-07-04-001",
+      "cl-iter-2026-07-04-002",
+      "cl-iter-2026-07-06-002",
+      "cl-iter-2026-07-09-001",
+      "cl-iter-2026-07-10-001",
+      "cl-iter-2026-07-10-002",
+      "cl-iter-2026-07-12-001",
+      "cl-iter-2026-07-12-002",
+      "cl-iter-2026-07-14-001",
+      "cl-iter-2026-07-14-002",
+      "cl-iter-2026-07-22-001",
+      "cl-iter-2026-07-22-002",
+      "cl-iter-2026-07-23-001",
+      "cl-iter-2026-07-23-002",
+      "cl-iter-2026-07-24-001",
+      "cl-iter-2026-07-31-001",
+      "cl-iter-2026-08-01-001",
+      "cl-iter-2026-08-01-002",
+      "cl-iter-2026-08-02-001",
+      "cl-iter-2026-08-03-001",
+      "cl-iter-2026-08-03-002",
+      "cl-iter-2026-08-15-001",
+      "cl-iter-2026-08-15-003",
+      "cl-iter-2026-08-15-005",
+      "cl-iter-2026-08-15-006",
+      "cl-iter-2026-08-15-007",
+      "cl-iter-2026-08-15-008",
+      "cl-iter-2026-08-16-001",
+      "cl-iter-2026-08-16-002",
+      "cl-iter-2026-08-16-004",
+      "cl-iter-2026-08-16-005",
+      "cl-iter-2026-08-16-006",
+      "cl-iter-2026-08-16-007",
+      "cl-iter-2026-08-16-008",
+      "cl-iter-2026-08-16-010",
+      "cl-iter-2026-08-16-011",
+      "cl-iter-2026-08-16-012",
+      "cl-iter-2026-08-16-013",
+      "cl-iter-2026-08-16-014",
+      "cl-iter-2026-08-16-015",
+      "cl-iter-2026-08-16-019",
+      "cl-iter-2026-08-17-003",
+      "cl-iter-2026-08-17-004",
+      "cl-iter-2026-08-17-005",
+      "cl-iter-2026-08-17-006",
+      "cl-iter-2026-08-17-007",
+      "cl-iter-2026-08-17-010",
+      "cl-iter-2026-08-17-016",
+      "cl-iter-2026-08-17-019",
+      "cl-iter-2026-08-18-007",
+      "cl-iter-2026-08-18-008",
+      "cl-iter-2026-08-18-009",
+      "cl-iter-2026-08-18-010"
+    ],
+    "B_kill_not_reproducible_by_own_instrument": [],
+    "U_and_R_old_arm_unscored": [
+      "cl-iter-2026-07-30-001",
+      "cl-iter-2026-08-17-018",
+      "cl-iter-2026-08-18-011"
+    ],
+    "sizes": {
+      "A": 66,
+      "B": 0,
+      "U_and_R": 3
+    },
+    "identity_holds": true
+  },
+  "splits_DESCRIPTIVE_no_multiplicity_correction": {
+    "by_era": {
+      "2026-06": {
+        "n": 17,
+        "proceed": 13,
+        "rate": 0.7647058823529411,
+        "ci95": [
+          0.5010067267954199,
+          0.9318922595626433
+        ]
+      },
+      "2026-07": {
+        "n": 23,
+        "proceed": 17,
+        "rate": 0.7391304347826086,
+        "ci95": [
+          0.5159480295975618,
+          0.8977138660846415
+        ]
+      },
+      "2026-08": {
+        "n": 48,
+        "proceed": 39,
+        "rate": 0.8125,
+        "ci95": [
+          0.6737069760432866,
+          0.9105016181506271
+        ]
+      }
+    },
+    "by_historical_confidence": {
+      "0.85": {
+        "n": 41,
+        "proceed": 35,
+        "rate": 0.8536585365853658,
+        "ci95": [
+          0.708269511982506,
+          0.9443426362875633
+        ]
+      },
+      "0.92": {
+        "n": 3,
+        "proceed": 3,
+        "rate": 1.0,
+        "ci95": [
+          0.2924017738212866,
+          1.0
+        ]
+      },
+      "0.95": {
+        "n": 41,
+        "proceed": 31,
+        "rate": 0.7560975609756098,
+        "ci95": [
+          0.5969537633763495,
+          0.8763675116041558
+        ]
+      },
+      "1.0": {
+        "n": 3,
+        "proceed": 0,
+        "rate": 0.0,
+        "ci95": [
+          0.0,
+          0.7075982261787135
+        ]
+      }
+    },
+    "by_cluster_member_count": {
+      "1": {
+        "n": 71,
+        "proceed": 57,
+        "rate": 0.8028169014084507,
+        "ci95": [
+          0.6913500428435166,
+          0.8877921791544383
+        ]
+      },
+      "2": {
+        "n": 16,
+        "proceed": 11,
+        "rate": 0.6875,
+        "ci95": [
+          0.41337936354864124,
+          0.8898300452828825
+        ]
+      },
+      "4": {
+        "n": 1,
+        "proceed": 1,
+        "rate": 1.0,
+        "ci95": [
+          0.025,
+          1.0
+        ]
+      }
+    }
+  },
+  "multi_member_caveat": "For multi-member clusters the evidence covers ONLY the founding member's text \u2014 a single re-adjudicated claim, not the cluster.",
+  "statistics_caveat": "At n=12/class a zero-discrimination coin passes R1a's bars 2 AND 3 with ~1.4% probability and a weak 60/40 instrument with ~10%. This battery inherits that bound in full and CANNOT reduce it: every claim it makes is relative to an instrument whose quality is bounded at n=12/class. Nothing here is evidence about the NEW instrument's accuracy."
+}
