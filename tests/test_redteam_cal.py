@@ -160,6 +160,11 @@ def test_banned_provenance_exclusions(manifest):
 
 def test_resolution_reproducibility_determinism(manifest):
     # Fresh resolution from the source stores == the frozen file, twice.
+    # Era-bound since 2026-08-19: after the D-076 swap the newly-permissive
+    # production redteam began minting proceeds (6 in day one vs 3 in the
+    # prior three months) and this refused — it could not tell "manifest
+    # drifted" from "the world moved on". If it fails again, the manifest
+    # HAS drifted; do not widen the bound to make it pass.
     fresh_a = bf.build_manifest()
     fresh_b = bf.build_manifest()
     assert fresh_a == fresh_b == manifest
@@ -371,3 +376,30 @@ def test_driver_refuses_when_mock_llm_set(tmp_path):
     assert proc.returncode == 2
     assert "MOCK_LLM" in proc.stderr
     assert not (tmp_path / "out.json").exists()
+
+
+def test_proceed_rule_era_bound_excludes_post_swap_rows():
+    """The bound must actually bind: a post-swap proceed row is excluded
+    (otherwise the pin above passes for the wrong reason)."""
+    from bench.redteam_cal import build_fixtures as bf
+    lm = {
+        "iter-2026-06-09-005": {"ended_at": "2026-06-09T10:00:00Z",
+                                "redteam": {"verdict": "proceed",
+                                            "subagent_status": "passed"},
+                                "hypothesis": {"text": "kept"}},
+        "iter-2026-06-09-006": {"ended_at": "2026-06-09T11:00:00Z",
+                                "redteam": {"verdict": "proceed",
+                                            "subagent_status": "passed"},
+                                "hypothesis": {"text": "near-dup, dropped"}},
+        "iter-2026-06-19-012": {"ended_at": "2026-06-19T10:00:00Z",
+                                "redteam": {"verdict": "proceed",
+                                            "subagent_status": "passed"},
+                                "hypothesis": {"text": "kept too"}},
+        # Post-swap proceed — must NOT enter the historical set.
+        "iter-2026-08-19-002": {"ended_at": "2026-08-19T03:00:50Z",
+                                "redteam": {"verdict": "proceed",
+                                            "subagent_status": "passed"},
+                                "hypothesis": {"text": "post-swap"}},
+    }
+    out = bf._resolve_historical_proceeds(lm)
+    assert set(out) == {"iter-2026-06-09-005", "iter-2026-06-19-012"}

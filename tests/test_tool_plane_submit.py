@@ -154,7 +154,11 @@ def test_submit_returns_immediately_and_registers_ad_hoc_run(seam):
     registry = json.loads(active_run._run_path(run_id).read_text())
     assert registry["kind"] == "ad_hoc"
     assert registry["run_id"] == run_id
-    assert active_run.ACTIVE_RUN_PATH.exists()
+    # The mirror is written a beat AFTER the per-run registry file, so this
+    # must WAIT like every other mirror assertion in this file — a bare
+    # exists() here failed roughly 1 run in 5 under parallel load (flake
+    # diagnosed 2026-08-19; the race was in the test, not the writer).
+    assert _wait_for(lambda: active_run.ACTIVE_RUN_PATH.exists(), timeout=2.0)
     gate.set()
     _join_executor()
     ticket = submitted_run.read_ticket(run_id)

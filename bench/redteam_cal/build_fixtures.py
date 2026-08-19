@@ -69,6 +69,19 @@ LABEL_GOOD = "known_good"
 LABEL_BAD = "known_bad"
 
 # Prereg-pinned resolution expectations.
+#
+# ERA BOUND (2026-08-19): the manifest is a FROZEN HISTORICAL artifact —
+# its known-good rows were drawn from the pre-D-076 record, when the
+# production redteam almost never said "proceed" under the strict rule.
+# After the 2026-08-18 prompt swap the loop began producing proceeds at a
+# much higher rate (6 in the first day vs 3 in the prior three months), so
+# an unbounded rule re-resolves to a growing set and the builder refused —
+# correctly, because it cannot tell "the manifest drifted" from "the world
+# moved on". Bounding the rule to the pre-swap era restores reproducibility
+# WITHOUT touching the manifest: test_resolution_rebuilds_frozen_manifest
+# asserts the rebuild is byte-identical to the locked fixtures.jsonl, which
+# is what makes this a scoping fix and not a coercion (inviolate rule 4).
+PROCEED_RULE_ERA_END = "2026-08-18T06:45:00Z"  # the D-076 adoption swap
 PROCEED_RULE_EXPECTED = {
     "iter-2026-06-09-005",
     "iter-2026-06-09-006",
@@ -146,17 +159,20 @@ def _recover_embedded_chosen(raw: str, iteration_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _resolve_historical_proceeds(lm: dict[str, dict]) -> dict[str, str]:
-    """Apply the verbatim rule and pin-check the hit set, then drop -006."""
+    """Apply the verbatim rule (bounded to the pre-D-076 era) and pin-check
+    the hit set, then drop -006."""
     hits = {
         rid
         for rid, rec in lm.items()
         if (rec.get("redteam") or {}).get("verdict") == "proceed"
         and (rec.get("redteam") or {}).get("subagent_status") == "passed"
+        and str(rec.get("ended_at") or "") < PROCEED_RULE_ERA_END
     }
     if hits != PROCEED_RULE_EXPECTED:
         raise ResolutionError(
             "historical-proceed rule (redteam.verdict=='proceed' AND "
-            "subagent_status=='passed') resolved to "
+            f"subagent_status=='passed', ended_at < {PROCEED_RULE_ERA_END}) "
+            "resolved to "
             f"{sorted(hits)}, expected {sorted(PROCEED_RULE_EXPECTED)} — "
             "loop_memory has drifted from the prereg pin; REFUSING. "
             "A disputed manifest is fixed before lock, never coerced."
