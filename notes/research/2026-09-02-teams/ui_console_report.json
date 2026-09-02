@@ -1,0 +1,57 @@
+{
+  "pulse": {
+    "url": "http://localhost:5173/",
+    "errors": []
+  },
+  "ladder": {
+    "url": "http://localhost:5173/ladder",
+    "errors": []
+  },
+  "dossier-index": {
+    "url": "http://localhost:5173/dossier",
+    "errors": []
+  },
+  "dossier-gate": {
+    "url": "http://localhost:5173/dossier/iter-2026-06-05-006",
+    "errors": []
+  },
+  "dossier-finding": {
+    "url": "http://localhost:5173/dossier/sf-iter-2026-05-26-008",
+    "errors": []
+  },
+  "dossier-bubble": {
+    "url": "http://localhost:5173/dossier/coordinator_bcb87b43",
+    "errors": []
+  },
+  "channel": {
+    "url": "http://localhost:5173/channel",
+    "errors": []
+  },
+  "cycles": {
+    "url": "http://localhost:5173/cycles",
+    "errors": []
+  },
+  "graph": {
+    "url": "http://localhost:5173/graph",
+    "errors": []
+  },
+  "experiments": {
+    "url": "http://localhost:5173/experiments",
+    "errors": []
+  },
+  "experiment-detail": {
+    "url": "http://localhost:5173/experiments/exp001_repeated_pd",
+    "errors": []
+  },
+  "model-io": {
+    "url": "http://localhost:5173/model-io",
+    "errors": []
+  },
+  "inspector": {
+    "url": "http://localhost:5173/chain/req/5e7654fe-7f6e-4f24-8c88-36023edc7576",
+    "errors": [
+      "Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "Failed to load resource: the server responded with a status of 404 (Not Found)"
+    ]
+  }
+}
