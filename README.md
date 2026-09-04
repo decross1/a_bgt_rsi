@@ -29,7 +29,7 @@ Full canonical version-pin table in
 | Where | Audience | Use it for |
 | --- | --- | --- |
 | [`START_HERE.md`](START_HERE.md) | Everyone | Orientation, current state, document map |
-| [`LOOP_V0.md`](LOOP_V0.md) | Everyone | The active build slice |
+| [`LOOP_V1.md`](LOOP_V1.md) | Everyone | The active build slice |
 | [`GLOSSARY.md`](GLOSSARY.md) | Everyone | Stable terminology |
 | [`CLAUDE.md`](CLAUDE.md) | Claude Code | Operating contract for sessions |
 | [`agent/prompts/main.md`](agent/prompts/main.md) | Claude Code | Primary-session prompt |
@@ -61,7 +61,8 @@ env -u MOCK_LLM claude --worktree ui-session
 ```
 
 The primary session reads [`CLAUDE.md`](CLAUDE.md) →
-[`START_HERE.md`](START_HERE.md) → [`LOOP_V0.md`](LOOP_V0.md) → the
+[`START_HERE.md`](START_HERE.md) →
+[`research program`](docs/sources/research_program_v2.md) → [`LOOP_V1.md`](LOOP_V1.md) → the
 most recent `human/sessions/YYYY-MM-DD.md`. The UI session reads
 [`agent/prompts/ui_session.md`](agent/prompts/ui_session.md) and
 writes only to `ui/` + `ui_plan.md`.
@@ -71,7 +72,7 @@ writes only to `ui/` + `ui_plan.md`.
 ```
 START_HERE.md              # orientation + document map — read this first
 CLAUDE.md                  # operating contract for Claude Code
-LOOP_V0.md                 # active build slice
+LOOP_V1.md                 # active build slice
 GLOSSARY.md                # terminology reference
 PROJECT_CONTEXT.md         # long-form background
 ARCHITECTURE.md            # technical architecture walkthrough

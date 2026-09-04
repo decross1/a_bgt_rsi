@@ -28,10 +28,10 @@ prover.
 
 ## 2. Where the project stands
 
-For the current state across all workstreams (lit-pipe / UI / autonomy
-/ applied), see [`LOOP_V0.md`](LOOP_V0.md) §"Current state (2026-06-14)".
-For today's focus and the prior-session handoff, read the most recent
-note in [`human/sessions/`](human/sessions/) (indexed in
+For the current build plan and executable sequencing, see
+[`LOOP_V1.md`](LOOP_V1.md). For today's state across workstreams and the
+prior-session handoff, read the most recent note in
+[`human/sessions/`](human/sessions/) (indexed in
 [`human/sessions/INDEX.md`](human/sessions/INDEX.md)).
 
 The operating model: one primary session at a time, plus at most one
@@ -81,7 +81,8 @@ The full text is in [`CLAUDE.md`](CLAUDE.md). The rules that never bend:
 env -u MOCK_LLM claude
 ```
 
-Then read in order: [`CLAUDE.md`](CLAUDE.md) → [`LOOP_V0.md`](LOOP_V0.md) →
+Then read in order: [`CLAUDE.md`](CLAUDE.md) →
+[`research program`](docs/sources/research_program_v2.md) → [`LOOP_V1.md`](LOOP_V1.md) →
 the most recent `human/sessions/YYYY-MM-DD.md`. If no session note
 exists for today, the first job is to agree on one with the human and
 write it.
@@ -101,9 +102,11 @@ done.
 ## 6. Out of scope
 
 - Polymarket live trading (design-only until CFTC compliance work).
-- Continuous-running orchestrator (LOOP_V0 is single-shot, human-triggered).
+- Ungated continuous operation. D-063 permits the bounded hourly coordinator
+  and event-driven daemon only behind the full gate ladder and human kill switch.
 - Fine-tuning / training runs.
-- Second model — excluded (D-033). The apparatus is single-model on
-  Gemma 4 26B-A4B-NVFP4.
+- Additional generator models. Gemma 4 26B-A4B-NVFP4 is the sole generator/PI;
+  Qwen (`vllm-qwen`) is the standing independent skeptic, and frontier CLIs are
+  falsifiers only.
 - The retired track/tier framework — references are in `archive/`,
   but the active model is one primary + one UI session.

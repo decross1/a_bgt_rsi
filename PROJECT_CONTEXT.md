@@ -7,7 +7,7 @@
 > for the project's intellectual frame (the WHY), then this file for
 > background, then [`ARCHITECTURE.md`](ARCHITECTURE.md) for technical
 > detail, then [`DECISIONS.md`](DECISIONS.md) for rationale, and
-> [`LOOP_V0.md`](LOOP_V0.md) for the active build slice. The technical
+> [`LOOP_V1.md`](LOOP_V1.md) for the active build slice. The technical
 > companion document (`research_apparatus_technical_plan_v1.md`) is
 > still pending commit under `docs/sources/`.
 >
@@ -151,15 +151,14 @@ agent-executable, 12 agent-assisted, 11 human-assisted. 12 hard
 checkpoints. Days 1, 5, 6 carried try-then-fallback branches. The
 operating contract for the executing agent is in
 [`CLAUDE.md`](CLAUDE.md); the active build slice is in
-[`LOOP_V0.md`](LOOP_V0.md).
+[`LOOP_V1.md`](LOOP_V1.md).
 
 **Five validation-pass adjustments baked into Week 1.** Each is logged in
 `DECISIONS.md` with the rationale.
 1. BGE-M3 as embedding model (not ChromaDB default `all-MiniLM-L6-v2`).
-2. Exclude Qwen 3.6 entirely (D-033). The apparatus is single-model
-   on Gemma 4 26B-A4B-NVFP4. D-012's "no dual-model routing" stance
-   remains; D-033 extends that to "no second model at all" for the
-   current scope.
+2. Historically, D-033 excluded Qwen and extended D-012's routing ban.
+   D-035 superseded that policy; D-044 established the Qwen skeptic and
+   D-061 added frontier falsifiers. Gemma remains the sole generator/PI.
 3. OpenSpiel + Game Reasoning Arena for the synthetic tier (not a custom
    env; saves 1–2 weeks).
 4. Pin CUDA 13.0, disable auto-update (CUDA 13.2 produces gibberish on
@@ -335,8 +334,8 @@ Selected:
 |---|---|
 | The technical architecture | [`ARCHITECTURE.md`](ARCHITECTURE.md) + `docs/diagrams/` |
 | Why a decision was made | [`DECISIONS.md`](DECISIONS.md) |
-| What to execute today | [`LOOP_V0.md`](LOOP_V0.md) + most recent [`human/sessions/`](human/sessions/) note |
+| What to execute today | [`LOOP_V1.md`](LOOP_V1.md) + most recent [`human/sessions/`](human/sessions/) note |
 | The intellectual program behind the apparatus | [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md) |
 | The technical companion | `docs/sources/research_apparatus_technical_plan_v1.md` (pending) |
 | Retired track/tier framework (reference only) | [`archive/`](archive/) |
-| The visualizations from design sessions | `docs/diagrams/architecture_v4.svg`, `docs/diagrams/intelligence_loop_v4.svg` |
+| The current system diagrams | `docs/diagrams/architecture_v5.svg`, `docs/diagrams/intelligence_loop_v5.svg` |

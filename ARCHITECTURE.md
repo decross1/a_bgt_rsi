@@ -1,12 +1,12 @@
 # Architecture — a_bgt_rsi research apparatus
 
 > **What this document is.** The canonical written walkthrough of the
-> apparatus. Read alongside `docs/diagrams/architecture_v4.svg` (static
-> structure) and `docs/diagrams/intelligence_loop_v4.svg` (the eight-step
+> apparatus. Read alongside `docs/diagrams/architecture_v5.svg` (static
+> structure) and `docs/diagrams/intelligence_loop_v5.svg` (the eight-step
 > loop). For the intellectual program behind these choices, see
 > [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md).
 > For the rationale of each major decision, see [`DECISIONS.md`](DECISIONS.md).
-> For what to execute today, see [`LOOP_V0.md`](LOOP_V0.md).
+> For what to execute today, see [`LOOP_V1.md`](LOOP_V1.md).
 >
 > This document supersedes
 > `docs/sources/research_apparatus_technical_plan_v1.md` only where the two
@@ -76,13 +76,10 @@ accuracy trade-off in NVIDIA's modelopt toolkit; full uniform FP4 quants
 attention too, at a small accuracy cost. The NVIDIA checkpoint is the
 correct production choice here.
 
-Qwen 3.6 27B Dense was previously documented as a manual-swap alternative
-if coding quality proved insufficient for autoresearch modifications.
-**Excluded as of 2026-05-26 (D-033).** The apparatus runs single-model on
-Gemma 4. If a specific bottleneck emerges later, the swap pattern remains
-viable but starts from a fresh evaluation, not from this deferred plan.
-See `DECISIONS.md` "Dual model routing excluded" (D-012) and "Qwen 3.6
-excluded" (D-033).
+Qwen 3.6 was initially excluded on 2026-05-26 (D-033); D-035 superseded that policy.
+Current roles (D-044/D-061): Gemma 4 26B-A4B-NVFP4 is the sole generator/PI;
+Qwen (`vllm-qwen`) is the standing independent skeptic. Frontier CLIs are
+falsifiers only and never generate or write loop memory.
 
 ### 2.3 Serving: vLLM
 
@@ -359,6 +356,13 @@ validation step.
 
 ### 5.5 Multi-agent coordination
 
+Current development uses bounded Dynamic Workflows: spawn contracts, disjoint
+files, a serial spine, and primary-only commits ([`CLAUDE.md`](CLAUDE.md)).
+Task packets add isolated worktrees, acceptance/premerge checks, and ledger
+verdicts; the dispatcher never merges ([`docs/packet_sdlc.md`](docs/packet_sdlc.md)).
+
+#### Historical track/zone design — retired 2026-05-26 (D-030)
+
 As of the Week 2 deliverable, the apparatus supports more than the four
 named tracks (A/B/C/D) launching simultaneously. The orchestrator may
 dispatch additional Claude Code sessions on demand via
@@ -368,21 +372,21 @@ dispatched session:
 - Runs in its own git worktree (extending the existing `claude
   --worktree` pattern).
 - Receives a scoped prompt assembled from
-  [`agent/prompts/dispatched_task.md`](agent/prompts/dispatched_task.md)
+  [`archive/agent_prompts/dispatched_task.md`](archive/agent_prompts/dispatched_task.md)
   plus a task spec describing the target zone, allowed paths, and
   success criteria.
 - Obeys the **claim/lock protocol** documented in
-  [`agent/collision_protocol.md`](agent/collision_protocol.md): scan
+  [`archive/agent/collision_protocol.md`](archive/agent/collision_protocol.md): scan
   `run_state/claims.jsonl` for non-expired claims on the target paths;
   if clean, append a claim with 2-hour expiry; release on commit.
 - May write only to **dispatchable** zones in
-  [`agent/ownership.yaml`](agent/ownership.yaml). Track A's primary
+  [`archive/agent/ownership.yaml`](archive/agent/ownership.yaml). Track A's primary
   zones (`orchestrator`, `state-file`, `bench-and-logs`, `chroma-store`)
   are reserved.
 
 The concurrency cap rises with phase boundary, governed by the same
 alignment evidence as the autonomy-tier unlock (see
-[`agent/autonomy.md`](agent/autonomy.md) §4): Week-1 baseline = 4
+[`archive/agent/autonomy.md`](archive/agent/autonomy.md) §4): Week-1 baseline = 4
 concurrent (human launches each); Week-2 unlock = orchestrator
 dispatches 1/day; Weeks-3-4 unlock = up to 3 concurrent dispatches;
 Phase-2 entry = autonomous dispatches with weekly human attestation.
@@ -390,7 +394,7 @@ The Phase-2 aspirational target is ~80% of new code shipped via
 dispatched agents.
 
 The dispatch pattern does NOT introduce autonomy beyond what
-`agent/autonomy.md` already permits — a dispatched agent inherits its
+`archive/agent/autonomy.md` already permits — a dispatched agent inherits its
 task's tier (`autonomous`, `soft_gate`, or `hard_gate`) and its
 SLA-and-attestation behavior. The dispatcher merely launches; Track A
 still merges, after validation.
@@ -409,11 +413,12 @@ across this document:
 | Active vs passive read from Layer 3 | §4.4 | Day 40+ (depends on meta-review) |
 | Per-hypothesis GPU-time budget | §5.1 (compute budgeting) | Phase 2 milestone |
 | Polymarket live trading | §3.3 (gated on CFTC compliance) | Phase 3 entry (Day ~270) |
-| ~~Second model (Qwen 3.6)~~ | excluded 2026-05-26 (D-033) | n/a |
-| Dispatched coding agents (§5.5) | §5.5 above | Day 39 plumbing; Phase-2+ scale |
+| Independent skeptic (Qwen via `vllm-qwen`) | §2.2, D-035/D-041/D-044 | Operational; generator role remains Gemma-only |
+| Dynamic Workflows + packet dispatcher (§5.5) | §5.5 above | Operational; primary retains merge authority |
 
-For the executable sequencing of these deltas, see
-[`PHASE_1_ROADMAP.md`](PHASE_1_ROADMAP.md).
+For current executable sequencing, see [`LOOP_V1.md`](LOOP_V1.md). The retired
+phase roadmap remains available as
+[`archive/roadmap/PHASE_1_ROADMAP.md`](archive/roadmap/PHASE_1_ROADMAP.md).
 
 ---
 
@@ -517,15 +522,10 @@ plans for Phase 1 implementation:
      when the automated call is "novel" — sample rate logged per
      assessment).
 
-   - **(Phase 2, scope reduced 2026-05-26)** Originally Phase 2 was
-     to introduce a second model so the *novelty scorer* and the
-     *generator* could be different (D-006: Qwen 3.6 in Week 2-3).
-     That plan was abandoned (D-033) — the apparatus stays
-     single-model on Gemma 4. The Elo-circularity risk (the model
-     surfaces similar results from its own embedding/output space)
-     remains real; the Phase-1 mitigation (logged human-sample rate
-     on automated novelty calls) is now the *durable* mitigation,
-     not a temporary one until a second model lands.
+   - **Independent novelty skeptic (D-044).** Qwen (`vllm-qwen`) checks
+     Gemma's novelty claims. D-035 superseded D-033's single-model policy;
+     D-061 adds frontier falsifiers. Independent review complements human
+     evaluation; it does not establish novelty by itself.
 
    - **(Phase 2)** Alongside semantic retrieval, run a *structured-claim
      search*: extract from the candidate finding the claim of form
@@ -671,16 +671,11 @@ Carried forward from Research Program v2 and `research_apparatus_technical_plan_
 - **Sakana-style auto-paper generation.** Excluded; see `DECISIONS.md`.
 - **Google SCORE tree search.** Excluded in Phase 1; possible Phase 2+
   upgrade if the bandit keep/discard proves limiting.
-- **Dual-model routing layer.** Excluded as premature optimization.
+- **Additional generators.** Gemma remains the sole PI; Qwen/frontier roles are critics.
 - **Full autonomy on day one.** Excluded by the graduated-autonomy
   architecture.
-- **Same-model novelty grading in Phase 2+.** Once a second model lands
-  (Week 2–3 per D-006), the novelty *scorer* must be a different model
-  from the *generator*. Phase 1 mitigates the single-model configuration
-  with logged human sampling on automated novelty calls (see §6 step 6).
-  This is the project's response to the co-scientist's Elo circularity
-  (the same model that *generates* also *ranks*, producing a
-  self-confirming improvement curve).
+- **Sole reliance on same-model novelty grading.** The independent Qwen
+  skeptic is operational (D-044); see §6 step 6 for the review roles.
 - **Auto-publish of experiment outcomes back into the generator without
   the human gate.** Phase 2 adds an experiment → generator feedback edge
   (§6 step 8), but it is gated by Step 8 — experiment outcomes enter

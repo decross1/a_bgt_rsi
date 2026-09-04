@@ -73,12 +73,12 @@ embedder and the iteration is meaningless.
 
 ## 3. Single-shot guardrail (inviolate)
 
-CLAUDE.md forbids a continuous-running orchestrator: LOOP_V0 is single-shot,
-human-triggered iterations. **One invocation = one experiment → one bridged
-iteration, then exit.** The driver does not loop, schedule, poll, or
-"keep iterating." There is no daemon and no watch mode. To run another
-experiment, a human issues another command. Any auto-looping behavior would
-violate the out-of-scope guardrails and must not be added here.
+This driver remains single-shot: **one invocation = one experiment → one
+bridged iteration, then exit.** It does not loop, schedule, poll, or expose a
+watch mode. Separately, D-063 permits the bounded hourly coordinator and an
+event-driven daemon behind the full gate ladder (including the pause-file kill
+switch). That permission does not turn this experiment driver into a daemon;
+another autoresearch experiment still requires another invocation.
 
 ## 4. No new UI-facing data shape
 

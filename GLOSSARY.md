@@ -32,7 +32,7 @@ day-by-day to the repo; summarized in
 **Phase 1** — The 90-day alignment phase. Days 1–90 of the multi-year
 program. Goal: apparatus v0 + first synthetic-tier experiments +
 public preprint by Day 90. Detailed in
-[`PHASE_1_ROADMAP.md`](PHASE_1_ROADMAP.md).
+[`archive/roadmap/PHASE_1_ROADMAP.md`](archive/roadmap/PHASE_1_ROADMAP.md).
 
 **Phase 2** — Months 4–9. Loop v1 with autoresearch across synthetic
 and semi-synthetic tiers. Adds Meta-review synthesis, Critic /
@@ -70,7 +70,7 @@ and HALTS. See [`CLAUDE.md`](CLAUDE.md) inviolate rule 1.
 
 **Block 2** — Daily 10:30–12:30. Agent-executable: today's apparatus
 build tasks. Block 2 is **not blocked** on Block 1 (decoupled per
-[`agent/autonomy.md`](agent/autonomy.md) §7). The human reads in
+[`archive/agent/autonomy.md`](archive/agent/autonomy.md) §7). The human reads in
 parallel and catches up via the UI.
 
 **Block 3** — Daily 13:30–14:30. Mixed: reading + journal post. The
@@ -88,7 +88,7 @@ pre-stages tomorrow.
 **Track A — Main** — Critical-path Block 2 for the current day. Owns
 `run_state/`, `logs/`, `bench/`, `chroma_db/`, `agent_wrapper/`, and
 end-of-day commits. The only writer for state files. See
-[`agent/orchestration.md`](agent/orchestration.md).
+[`archive/agent/orchestration.md`](archive/agent/orchestration.md).
 
 **Track B — Tests & schemas** — Drafts next-day(s) test scaffolds
 and JSON schemas. Owns `tests/`, `schema/`. Dispatchable.
@@ -106,7 +106,7 @@ Owns `ui/` and `ui_plan.md`. Dispatchable. See
 orchestrator (not the human) via `dispatch_coding_agent.py` (Week 2
 deliverable). Runs in its own worktree under the same claim protocol
 as named tracks. See
-[`agent/collision_protocol.md`](agent/collision_protocol.md) §5.
+[`archive/agent/collision_protocol.md`](archive/agent/collision_protocol.md) §5.
 
 ---
 
@@ -123,7 +123,7 @@ tier values that determine its halt behavior:
 - **`hard_gate`** — Halt at entry; record in `human_gates_pending`;
   wait for explicit attestation.
 
-See [`agent/autonomy.md`](agent/autonomy.md) §1.
+See [`archive/agent/autonomy.md`](archive/agent/autonomy.md) §1.
 
 **hard checkpoint** — A task that, on validation failure, writes
 `day_aborted` to the run log and halts the day. The next day is
@@ -132,7 +132,7 @@ gated on the prior day's success. Plan.yaml field:
 fail-mode semantics. See [`CLAUDE.md`](CLAUDE.md) inviolate rule 6.
 
 **`[GATE]`** — Human-readable shorthand in
-[`human/daily_plan.md`](human/daily_plan.md) for points where the
+[`archive/roadmap/daily_plan.md`](archive/roadmap/daily_plan.md) for points where the
 agent halts for human action. Corresponds to `hard_gate` tasks in
 `plan.yaml`.
 
@@ -144,13 +144,13 @@ auto-publish.
 **SLA** — Per-tier time budget after which a gate auto-clears
 (soft) or escalates (hard). Soft: 4h auto-clear with
 `no_objection`. Hard: 48h escalate, stay halted. Block 1: no SLA.
-See [`agent/autonomy.md`](agent/autonomy.md) §2.
+See [`archive/agent/autonomy.md`](archive/agent/autonomy.md) §2.
 
 **alignment evidence** — The retrospective-attested check that
 gates phase-boundary advances. Decision parity ≤ 1 disagreement/wk,
 no metric drift > 5%, run-log integrity 100%, claim-protocol clean.
 Two consecutive weekly attestations required to advance. See
-[`agent/autonomy.md`](agent/autonomy.md) §4.
+[`archive/agent/autonomy.md`](archive/agent/autonomy.md) §4.
 
 **phase boundary** — A point at which task tier classifications
 shift (e.g., Week-2 unlock moves determinism check from
@@ -162,7 +162,7 @@ calendar.
 ## Concurrent agent coordination
 
 **zone** — A named bundle of file globs owned by a primary track.
-Defined in [`agent/ownership.yaml`](agent/ownership.yaml). Every file
+Defined in [`archive/agent/ownership.yaml`](archive/agent/ownership.yaml). Every file
 in the repo maps to exactly one zone.
 
 **dispatchable zone** — A zone whose `dispatchable: true` flag allows
@@ -172,7 +172,7 @@ are reserved for Track A.
 
 **claim** — An append-only entry in `run_state/claims.jsonl`
 declaring an agent's intent to write to a set of paths, with an
-expiry. See [`agent/collision_protocol.md`](agent/collision_protocol.md) §1.
+expiry. See [`archive/agent/collision_protocol.md`](archive/agent/collision_protocol.md) §1.
 
 **release** — An append-only entry in `run_state/claims.jsonl`
 declaring a previous claim closed. Mandatory on commit.
@@ -184,7 +184,8 @@ declaring a previous claim closed. Mandatory on commit.
 **slip** — A day that bled into the next. Tracked in the state file
 as `current_subday` (e.g., `31.2` = second slip on day 31). Triggered
 by hard-gate failure, hard-gate SLA expiry, same-day rework, or
-human declaration. See [`PHASE_1_ROADMAP.md`](PHASE_1_ROADMAP.md) §2.1.
+human declaration. See
+[`archive/roadmap/PHASE_1_ROADMAP.md`](archive/roadmap/PHASE_1_ROADMAP.md) §2.1.
 
 **week-N unlock** — A phase-boundary advance unlocking a set of
 tier shifts. Named for the week in which alignment evidence

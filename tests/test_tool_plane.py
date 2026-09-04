@@ -435,23 +435,7 @@ def test_mcp_unknown_tool_and_method_yield_jsonrpc_errors():
     assert out2["error"]["code"] == -32601
 
 
-# ── D-043 run-log attribution (2026-06-10 closeout) ─────────────────────────
-# orchestrator/tool_plane.py is SPINE: the fix is drafted as
-# ui_overhaul_gallery/spine_drafts/tool_plane_nemoclaw.diff, not made here.
-# xfail(strict=False) so the suite is green both before and after the
-# integrator applies it; the xpass is the landing signal.
-
-
-@pytest.mark.xfail(
-    reason=(
-        "pending spine diff application — "
-        "ui_overhaul_gallery/spine_drafts/tool_plane_nemoclaw.diff wraps the "
-        "run_loop_iteration handler in set_current_agent('nemoclaw_agent') "
-        "try/finally, so sandbox-agent-driven iterations stop logging as "
-        "'nara' (D-043). Flips to xpass the moment the integrator applies it."
-    ),
-    strict=False,
-)
+# ── D-043 run-log attribution regression (landed 2026-06-10) ────────────────
 def test_run_tool_attributes_run_log_rows_to_nemoclaw_agent():
     # POST-diff behavior: while the handler runs run_iteration, the runtime's
     # ContextVar identity is "nemoclaw_agent", so every log_event the

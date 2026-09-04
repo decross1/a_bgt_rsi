@@ -20,5 +20,5 @@ not yet committed):
 - `research_apparatus_technical_plan_v1.md` — the technical companion to
   the program.
 
-The active build slice is governed by [`LOOP_V0.md`](../../LOOP_V0.md), not
+The active build slice is governed by [`LOOP_V1.md`](../../LOOP_V1.md), not
 by a separate source plan; `plan.yaml` was retired on 2026-05-26 (D-030).

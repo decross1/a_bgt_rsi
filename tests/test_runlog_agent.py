@@ -239,22 +239,9 @@ def test_real_log_event_threads_agent_when_applied(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 3. D-043 closeout probe: loop_v0_fallback rows name their skill. xfail until
-#    the integrator applies spine_drafts/nara_fallback_skill.diff (rule 6 names
-#    fallback as the canonical skill_used; orchestrator/nara.py is SPINE, so
-#    the edit is drafted, not made here).
+# 3. D-043 regression: loop_v0_fallback rows name their canonical skill.
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(
-    reason=(
-        "pending spine diff application — "
-        "ui_overhaul_gallery/spine_drafts/nara_fallback_skill.diff adds "
-        "skill_used='fallback' to the three loop_v0_fallback log_event "
-        "payloads in orchestrator/nara.py (D-043). Flips to xpass the moment "
-        "the integrator applies it — that xpass is the landing signal."
-    ),
-    strict=False,
-)
 def test_loop_v0_fallback_rows_carry_skill_used(monkeypatch):
     # Reuses the loop-v1 integration fakes (sibling-module import, same
     # pattern as _orchestrator_contract.py consumers) to drive the REAL
