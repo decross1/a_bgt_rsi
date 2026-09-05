@@ -47,3 +47,21 @@ contracts and closures remain in `run_state/spawn.jsonl`.
 
 No metered Claude workflow was restarted. The mockups are review artifacts,
 not changes to `ui/`.
+
+## Completion — 2026-09-04
+
+Team 2's audit and preserved worktree cleanup are reconciled. The primary
+fixed the independent review findings and integrated `2ad38c5`: ten files,
+180 changed lines, no production deletion. All four teams now have their
+documented results; the Team 3 coverage limit and Team 4 missing token lens
+above remain explicit.
+
+- [Project health report](../../../docs/project_health_2026-09.md)
+- [Team 2 verification](team2_validation.md)
+- [Full-suite failure comparison](team2_test_comparison.json)
+- [Final session handoff](../../../human/sessions/2026-09-04.md)
+
+Targeted checks: 43 passed. Full suite: 2,489 passed, the same seven baseline
+failures, one skipped. The former builder's missing completion report was
+recorded honestly as interrupted; primary recovery and integration are separate
+successful tasks. Neither paid Claude workflow was restarted.

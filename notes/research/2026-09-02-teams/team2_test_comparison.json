@@ -1,0 +1,22 @@
+{
+  "base": "f0c7ea1",
+  "candidate": "2ad38c5",
+  "same_failure_error_skip_ids": true,
+  "base_summary": "7 failed, 2487 passed, 1 skipped, 2 xpassed, 68 subtests passed in 37.04s",
+  "candidate_summary": "7 failed, 2489 passed, 1 skipped, 68 subtests passed in 33.85s",
+  "failure": [
+    "tests/test_critic_cal.py::test_cluster_reconstruction_has_no_ordering_ambiguity",
+    "tests/test_critic_cal.py::test_pinned_reference_rates_match_the_live_record",
+    "tests/test_critic_cal.py::test_undecidable_census_splits_native_by_pack_state",
+    "tests/test_critic_cal.py::test_unusable_rows_are_excluded_by_name_not_by_silence",
+    "tests/test_readjudication.py::test_manifest_has_no_hash_seed_dependence[0]",
+    "tests/test_readjudication.py::test_manifest_has_no_hash_seed_dependence[12345]",
+    "tests/test_readjudication.py::test_manifest_has_no_hash_seed_dependence[1]"
+  ],
+  "error": [],
+  "skipped": [
+    "tests/test_dispatch_coding_agent.py"
+  ],
+  "command": "MOCK_LLM=1 PYTHONDONTWRITEBYTECODE=1 .venv-chroma/bin/python -m pytest tests/ -q -p no:cacheprovider",
+  "interpretation": "No regression. Two former XPASS tests now count as ordinary passes; seven baseline failures remain failures."
+}
