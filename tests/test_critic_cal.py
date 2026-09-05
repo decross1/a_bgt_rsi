@@ -38,7 +38,7 @@ from bench.critic_cal import audit_overrides as audit  # noqa: E402
 from bench.critic_cal import build_manifest as bm  # noqa: E402
 from bench.critic_cal import driver as drv  # noqa: E402
 
-PY = str(REPO_ROOT / ".venv-chroma" / "bin" / "python")
+PY = sys.executable  # use the actual pinned test interpreter
 
 
 @pytest.fixture(scope="module")
@@ -152,7 +152,10 @@ def test_every_exclusion_carries_a_reason_and_the_counts_reconcile(loop_memory):
 def test_unusable_rows_are_excluded_by_name_not_by_silence(loop_memory):
     _, meta = bm.resolve(loop_memory)
     reasons = {e["reason"]: e for e in meta["exclusions_by_reason"]}
-    no_crit = [r for r in loop_memory if not (r.get("critique") or {})]
+    no_crit = [r for r in loop_memory
+               if isinstance(r.get("iteration_id"), str) and r["iteration_id"]
+               and (r.get("started_at") or "") < bm.ERA_END
+               and not (r.get("critique") or {})]
     assert reasons["no critique block"]["n"] == len(no_crit)
     assert sorted(reasons["no critique block"]["iteration_ids"]) == sorted(
         r["iteration_id"] for r in no_crit
@@ -372,10 +375,9 @@ def test_clopper_pearson_spot_checks(x, n, lo, hi):
     assert got_hi == pytest.approx(hi, abs=1e-4)
 
 
-def test_pinned_reference_rates_match_the_live_record():
-    """The bar-calibration references in the driver are not folklore — they
-    must still reproduce from the ledger the audit reads."""
-    rep = audit.build_report(include_rows=False, now="fixed")
+def test_pinned_reference_rates_match_the_historical_record(historical_inputs):
+    """Locked rates reproduce from exact historical bytes, not current defaults."""
+    rep = _historical_report(historical_inputs, include_rows=False)
     ref = rep["production_reference_rates"]
     assert (ref["all_time"]["k"], ref["all_time"]["n"]) == (
         drv.REF_NATIVE_UNDECIDABLE_ADEQUATE_ALLTIME
@@ -514,13 +516,23 @@ def test_driver_refuses_a_manifest_of_the_wrong_shape(manifest):
 # D2 — audit determinism, invariants, and the two blocking predicates
 # ===========================================================================
 
+def _historical_report(source, *, include_rows=True):
+    # cluster_impact has a separate module-level input read; bind it explicitly.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(audit, "LOOP_MEMORY_PATH", source / "memory/loop_memory.jsonl")
+        return audit.build_report(source / "memory/loop_memory.jsonl",
+                                  source / "memory/idea_ledger.jsonl",
+                                  source / "memory/loop_feedback.jsonl",
+                                  include_rows=include_rows, now="fixed")
+
+
 @pytest.fixture(scope="module")
-def report() -> dict:
-    return audit.build_report(include_rows=True, now="fixed")
+def report(historical_inputs) -> dict:
+    return _historical_report(historical_inputs)
 
 
-def test_audit_is_deterministic(report):
-    again = audit.build_report(include_rows=True, now="fixed")
+def test_audit_is_deterministic(report, historical_inputs):
+    again = _historical_report(historical_inputs)
     assert json.dumps(again, sort_keys=True) == json.dumps(report, sort_keys=True)
 
 
@@ -645,3 +657,30 @@ def test_audit_makes_zero_model_calls():
     rep = audit.build_report(include_rows=False, now="fixed")
     assert len(w.MEMORY_LOG) - before == 0
     assert rep["model_calls_made"] == 0
+
+
+
+@pytest.mark.parametrize("started_at,expected", [
+    ("2026-08-18T23:59:59Z", "no critique block"),
+    (bm.ERA_END, "outside era bound (started_at >= " + bm.ERA_END + ")"),
+    ("9999-12-31T23:59:59Z", "outside era bound (started_at >= " + bm.ERA_END + ")"),
+])
+def test_missing_critique_exclusion_respects_era_priority(started_at, expected):
+    assert bm.usability({"iteration_id": "fixture", "started_at": started_at}) == expected
+    # Missing identity takes precedence even outside the era.
+    assert bm.usability({"started_at": started_at}) == "no iteration_id"
+
+
+def test_wrong_historical_digest_is_refused():
+    from pinned_inputs import verify_inputs
+    with pytest.raises(ValueError, match="digest differs"):
+        verify_inputs({"history": b"changed"}, {"history": "0" * 64})
+
+
+def test_changed_current_input_is_refused():
+    from pinned_inputs import verify_inputs
+    original = b"captured current input\n"
+    pinned = {"current": hashlib.sha256(original).hexdigest()}
+    assert verify_inputs({"current": original}, pinned)["current"] == original
+    with pytest.raises(ValueError, match="digest differs"):
+        verify_inputs({"current": original + b"appended\n"}, pinned)

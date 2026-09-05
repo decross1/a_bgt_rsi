@@ -122,19 +122,54 @@ def test_manifest_is_byte_identical_under_shuffled_ledger_blocks(tmp_path):
            [json.dumps(r, sort_keys=True) for r in rows_b]
 
 
-@pytest.mark.parametrize("hashseed", ["0", "1", "12345"])
-def test_manifest_has_no_hash_seed_dependence(tmp_path, hashseed):
-    """A real subprocess per seed — PYTHONHASHSEED only takes effect at
-    interpreter start, so an in-process check would prove nothing."""
-    out = tmp_path / f"m{hashseed}.jsonl"
+SEED_BUILD = """
+import json, sys
+from pathlib import Path
+from bench.readjudication import build_manifest as bm
+from pinned_inputs import verify_inputs
+source, output, expected = Path(sys.argv[1]), Path(sys.argv[2]), json.loads(sys.argv[3])
+verify_inputs({name: (source / name).read_bytes() for name in expected}, expected)
+bm.REPO_ROOT = source
+meta, rows = bm.build(source / 'memory/idea_ledger.jsonl',
+                      source / 'memory/loop_memory.jsonl',
+                      source / 'bench/redteam_cal/fixtures.jsonl')
+bm.write_manifest(meta, rows, output)
+"""
+
+
+def _seed_manifest(source, output, hashseed, expected):
     env = dict(os.environ, PYTHONHASHSEED=hashseed, MOCK_LLM="1")
-    res = subprocess.run(
-        [sys.executable, "-m", "bench.readjudication.build_manifest",
-         "--out", str(out)],
-        cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=300,
-    )
-    assert res.returncode == 0, res.stderr
-    assert out.read_bytes() == MANIFEST_PATH.read_bytes()
+    env["PYTHONPATH"] = str(REPO_ROOT / "tests") + os.pathsep + env.get("PYTHONPATH", "")
+    result = subprocess.run([sys.executable, "-c", SEED_BUILD, str(source),
+                             str(output), json.dumps(expected, sort_keys=True)],
+                            cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    return output.read_bytes()
+
+
+@pytest.mark.parametrize("hashseed", ["0", "1", "12345"])
+def test_historical_manifest_replays_under_each_hashseed(tmp_path, hashseed, historical_inputs):
+    """Three real seed interpreters; exact historical replay uses locked inputs."""
+    metadata, _ = bm.load_manifest(MANIFEST_PATH)
+    expected = {"memory/idea_ledger.jsonl": metadata["ledger_sha256"],
+                "memory/loop_memory.jsonl": metadata["loop_memory_sha256"],
+                "bench/redteam_cal/fixtures.jsonl": metadata["fixtures_sha256"]}
+    raw = _seed_manifest(historical_inputs, tmp_path / "historical.jsonl", hashseed, expected)
+    assert raw == MANIFEST_PATH.read_bytes()
+
+
+@pytest.mark.parametrize("hashseed", ["0", "1", "12345"])
+def test_current_manifest_is_deterministic_with_pinned_inputs(tmp_path, hashseed, current_inputs, monkeypatch):
+    """Current captured inputs compare to themselves, never to a historical lock."""
+    expected = json.loads((current_inputs / "input_manifest.json").read_text())
+    monkeypatch.setattr(bm, "REPO_ROOT", current_inputs)
+    meta, rows = bm.build(current_inputs / "memory/idea_ledger.jsonl",
+                          current_inputs / "memory/loop_memory.jsonl",
+                          current_inputs / "bench/redteam_cal/fixtures.jsonl")
+    reference = (json.dumps(meta, sort_keys=True) + "\n" +
+                 "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)).encode()
+    raw = _seed_manifest(current_inputs, tmp_path / "current.jsonl", hashseed, expected)
+    assert raw == reference
 
 
 def test_order_key_is_sha256_of_utf8_row_id():

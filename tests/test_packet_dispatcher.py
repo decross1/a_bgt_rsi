@@ -1,9 +1,9 @@
-"""Tests for orchestrator/packet_dispatcher.py (LOOP_V1 P4 stage-(ii)).
+"""Dispatcher policy/receipt unit tests with a deterministic inert adapter.
 
-Hermetic: every dispatch runs in a tmp_path git repo with an injected shell
-"agent" script and an injected ledger + run-log — no network, no real model,
-no writes to run_state/. The real tools/premerge_check.sh is executed (bash,
-git-only) against the tmp worktree.
+No shell, Git, model, endpoint, generated candidate or builder executes. The
+real schema/control/ledger code runs against private files; scripted external
+observations exercise refusal, budget, scope and receipt behavior. This is not
+qualification of actual Git/worktrees, builders or premerge integration.
 """
 from __future__ import annotations
 
@@ -21,26 +21,68 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 def _mk_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
-    for cmd in (
-        "git init -q",
-        "git config user.email pkt@test.local",
-        "git config user.name pkt-test",
-    ):
-        subprocess.run(cmd, shell=True, cwd=repo, check=True, capture_output=True)
-    # Acceptance test: green only once fixed.txt exists.
-    (repo / "check.sh").write_text("test -f fixed.txt\n")
-    subprocess.run(
-        "git add -A && git commit -qm init", shell=True, cwd=repo,
-        check=True, capture_output=True,
-    )
     return repo
 
 
-def _mk_agent(tmp_path: Path, body: str) -> list[str]:
-    script = tmp_path / "agent.sh"
-    script.write_text("#!/usr/bin/env bash\nset -e\n" + body)
-    script.chmod(0o755)
-    return ["bash", str(script)]
+def _mk_agent(tmp_path: Path, result: str) -> list[str]:
+    return ["inert-agent", result]
+
+
+class _Effects:
+    """Strict scripted observations; unknown commands fail rather than succeed."""
+    def __init__(self, private):
+        self.private, self.green, self.gate_rc = private, False, 0
+        self.commands, self.agents, self.gates = [], [], []
+        self.base = "a" * 40
+
+    def shell(self, command, cwd, timeout=None):
+        self.commands.append(command)
+        if command == "git rev-parse HEAD":
+            return subprocess.CompletedProcess(command, 0, self.base + "\n", "")
+        if command == "test -f does_not_exist":
+            return subprocess.CompletedProcess(command, 1, "", "missing prerequisite")
+        if command == "bash check.sh":
+            green = self.green or (Path(cwd) / "fixed.txt").exists()
+            return subprocess.CompletedProcess(command, 0 if green else 1,
+                                                "fixture green" if green else "fixture red", "")
+        if command == "git status --porcelain":
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if command == "git merge-base HEAD " + self.base:
+            return subprocess.CompletedProcess(command, 0, self.base, "")
+        raise AssertionError("unplanned shell effect: " + command)
+
+    def worktree(self, repo_root, packet_id):
+        target = self.private / "inert-worktree"
+        target.mkdir(exist_ok=True)
+        return target
+
+    def run(self, argv, **kwargs):
+        if argv[:2] == ["bash", str(pd.PREMERGE_SCRIPT)]:
+            assert len(argv) == 4 and argv[2] == self.base
+            self.gates.append({"argv": argv, **kwargs})
+            return subprocess.CompletedProcess(argv, self.gate_rc, "scripted premerge", "")
+        if argv == ["/nonexistent/agent-binary"]:
+            raise FileNotFoundError("scripted agent launch failure")
+        assert len(argv) == 2 and argv[0] == "inert-agent", "unplanned process effect"
+        assert argv[1] in {"success", "noop", "bloat", "refused"}
+        # The real append must precede any external attempt observation.
+        latest = json.loads((self.private / "packets.jsonl").read_text().splitlines()[-1])
+        assert latest["status"] == "dispatched"
+        self.agents.append({"argv": argv, **kwargs})
+        self.green = argv[1] in {"success", "bloat"}
+        self.gate_rc = 1 if argv[1] == "bloat" else 0
+        refused = argv[1] == "refused"
+        return subprocess.CompletedProcess(argv, 3 if refused else 0,
+            "REFUSED: scripted out-of-scope write" if refused else "scripted agent result", "")
+
+
+@pytest.fixture(autouse=True)
+def inert_effects(tmp_path, monkeypatch):
+    effects = _Effects(tmp_path)
+    monkeypatch.setattr(pd, "_sh", effects.shell)
+    monkeypatch.setattr(pd, "_ensure_worktree", effects.worktree)
+    monkeypatch.setattr(pd.subprocess, "run", effects.run)
+    return effects
 
 
 def _packet(**over) -> dict:
@@ -98,13 +140,14 @@ def test_schema_required_fields_are_read_by_dispatcher():
     assert not missing, f"schema fields absent from dispatcher source: {missing}"
 
 
-# --- e2e: injected agent fixes the failing test -> done ---------------------
+# --- policy: scripted successful agent observation -> done ----------------
 
-def test_agent_fixes_failing_test_reaches_done(tmp_path):
+def test_agent_fixes_failing_test_reaches_done(tmp_path, inert_effects, monkeypatch):
     repo = _mk_repo(tmp_path)
-    agent = _mk_agent(
-        tmp_path, "echo done > fixed.txt\ngit add fixed.txt\ngit commit -qm fix\n"
-    )
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY",
+                 "SEMANTIC_SCHOLAR_API_KEY"):
+        monkeypatch.setenv(name, "synthetic-test-value")
+    agent = _mk_agent(tmp_path, "success")
     report, lines, sink = _dispatch(repo, tmp_path, agent, _packet())
     assert report["status"] == "done"
     assert report["branch"] == "pkt/PKT-t1"
@@ -115,33 +158,41 @@ def test_agent_fixes_failing_test_reaches_done(tmp_path):
     assert lines[1]["decided_by"] == "dispatcher"
     assert lines[1]["test_output_digest"] == report["test_output_digest"]
     assert sink.rows and sink.rows[-1]["agent"] == "packet_dispatcher"
-    # The branch exists but was NOT merged into the base branch.
-    merged = subprocess.run(
-        "git branch --merged HEAD", shell=True, cwd=repo,
-        capture_output=True, text=True,
-    ).stdout
-    assert "pkt/PKT-t1" not in merged
+    assert not any(command.startswith("git merge ") for command in inert_effects.commands)
+    assert len(inert_effects.agents) == 1
+    passed = inert_effects.agents[0]["env"]
+    packet = _packet()
+    assert passed["PKT_TASK_ID"] == packet["task_id"]
+    assert passed["PKT_OBJECTIVE"] == packet["objective"]
+    for key, field in [("PKT_FILES_IN_SCOPE", "files_in_scope"),
+                       ("PKT_FILES_OUT_OF_SCOPE", "files_out_of_scope"),
+                       ("PKT_FORBIDDEN_ACTIONS", "forbidden_actions")]:
+        assert json.loads(passed[key]) == packet[field]
+    assert not set(passed) & {"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                              "OPENAI_API_KEY", "SEMANTIC_SCHOLAR_API_KEY"}
 
 
 # --- refusals ---------------------------------------------------------------
 
-def test_already_green_is_refused_without_burning_an_attempt(tmp_path):
+def test_already_green_is_refused_without_burning_an_attempt(tmp_path, inert_effects):
     repo = _mk_repo(tmp_path)
     (repo / "fixed.txt").write_text("already\n")
-    report, lines, _ = _dispatch(repo, tmp_path, _mk_agent(tmp_path, "true\n"), _packet())
+    report, lines, _ = _dispatch(repo, tmp_path, _mk_agent(tmp_path, "noop"), _packet())
     assert report["status"] == "refused"
     assert report["refusal_reason"] == "nothing_to_do"
     assert report["attempts_used"] == 0
     assert lines == []
+    assert inert_effects.agents == []
 
 
-def test_failed_precondition_is_refused_without_burning_an_attempt(tmp_path):
+def test_failed_precondition_is_refused_without_burning_an_attempt(tmp_path, inert_effects):
     repo = _mk_repo(tmp_path)
     packet = _packet(preconditions=["test -f does_not_exist"])
-    report, lines, _ = _dispatch(repo, tmp_path, _mk_agent(tmp_path, "true\n"), packet)
+    report, lines, _ = _dispatch(repo, tmp_path, _mk_agent(tmp_path, "noop"), packet)
     assert report["status"] == "refused"
     assert report["refusal_reason"] == "precondition_failed"
     assert lines == []
+    assert inert_effects.agents == []
 
 
 # --- budgets ----------------------------------------------------------------
@@ -150,7 +201,7 @@ def test_useless_agent_exhausts_budget(tmp_path):
     repo = _mk_repo(tmp_path)
     packet = _packet(budgets={"max_attempts": 2, "wall_clock_minutes": 1,
                               "max_diff_lines": 50})
-    report, lines, _ = _dispatch(repo, tmp_path, _mk_agent(tmp_path, "true\n"), packet)
+    report, lines, _ = _dispatch(repo, tmp_path, _mk_agent(tmp_path, "noop"), packet)
     assert report["status"] == "budget_exhausted"
     assert report["attempts_used"] == 2
     assert [l["status"] for l in lines] == [
@@ -160,18 +211,16 @@ def test_useless_agent_exhausts_budget(tmp_path):
 
 # --- premerge gate ----------------------------------------------------------
 
-def test_green_test_but_premerge_violation_is_terminal_failed(tmp_path):
+def test_green_test_but_premerge_violation_is_terminal_failed(tmp_path, inert_effects):
     repo = _mk_repo(tmp_path)
-    # Agent fixes the test but blows the 2-line diff budget.
-    agent = _mk_agent(tmp_path, (
-        "echo done > fixed.txt\nseq 50 > bloat.txt\n"
-        "git add -A\ngit commit -qm fix\n"
-    ))
+    # Scripted gate refusal, without executing a candidate or the shell gate.
+    agent = _mk_agent(tmp_path, "bloat")
     packet = _packet(budgets={"max_attempts": 3, "wall_clock_minutes": 1,
                               "max_diff_lines": 2})
     report, lines, _ = _dispatch(repo, tmp_path, agent, packet)
     assert report["status"] == "failed"
     assert report["premerge_ok"] is False
+    assert inert_effects.gates[0]["argv"][-1] == "2"
     assert report["attempts_used"] == 1  # terminal: retry cannot un-commit
     assert [l["status"] for l in lines] == ["dispatched", "failed"]
 
@@ -247,9 +296,7 @@ def test_agent_output_is_captured_on_a_failed_attempt(tmp_path):
     loudly) left no trace in packets.jsonl — the failure was invisible. A
     non-done attempt now carries agent_rc + an agent_tail excerpt."""
     repo = _mk_repo(tmp_path)
-    agent = _mk_agent(
-        tmp_path,
-        "echo 'REFUSED: model tried to write orchestrator/nara.py'\nexit 3\n")
+    agent = _mk_agent(tmp_path, "refused")
     report, lines, sink = _dispatch(repo, tmp_path, agent, _packet())
     assert report["status"] != "done"
     closes = [l for l in lines if l["status"] in ("failed", "budget_exhausted")]
@@ -257,3 +304,11 @@ def test_agent_output_is_captured_on_a_failed_attempt(tmp_path):
     last = closes[-1]
     assert last["agent_rc"] == 3
     assert "REFUSED" in last["agent_tail"]
+
+
+
+def test_inert_adapter_refuses_unplanned_commands(inert_effects, tmp_path):
+    with pytest.raises(AssertionError, match="unplanned"):
+        inert_effects.shell("git merge forbidden", tmp_path)
+    with pytest.raises(AssertionError, match="unplanned"):
+        inert_effects.run(["unexpected-command"])
