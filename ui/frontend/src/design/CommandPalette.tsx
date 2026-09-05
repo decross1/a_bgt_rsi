@@ -45,6 +45,7 @@ const ROUTES: { id: string; label: string; to: string; keywords: string[] }[] = 
   { id: "nav-ladder", label: "ladder", to: "/ladder", keywords: ["ideas", "evidence", "rungs"] },
   { id: "nav-dossier", label: "dossiers", to: "/dossier", keywords: ["reader", "findings", "todo"] },
   { id: "nav-channel", label: "channel", to: "/channel", keywords: ["chat", "nara", "lab"] },
+  { id: "nav-development", label: "development", to: "/development", keywords: ["codex", "engineering", "readiness", "overnight"] },
   { id: "nav-cycles", label: "cycles", to: "/cycles", keywords: ["coordinator", "engine"] },
   { id: "nav-experiments", label: "experiments", to: "/experiments", keywords: ["runs", "engine"] },
   { id: "nav-graph", label: "graph", to: "/graph", keywords: ["chains", "engine", "flow"] },

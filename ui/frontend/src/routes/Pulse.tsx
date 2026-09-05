@@ -113,6 +113,8 @@ export function stripMonitorChurn(
 }
 const fetchMonitor = () => getActivityMonitor(1).then(stripMonitorChurn);
 
+import DevelopmentNotice from "../components/DevelopmentNotice";
+
 export default function Pulse() {
   const { samples, latest, connected } = useTelemetryStream();
   const [launchOpen, setLaunchOpen] = useState(false);
@@ -312,6 +314,7 @@ export default function Pulse() {
 
   return (
     <div className="page-full" data-testid="pulse-page">
+      <DevelopmentNotice />
       {/* ── 0 · identity bar ────────────────────────────────────────────── */}
       <div
         style={{

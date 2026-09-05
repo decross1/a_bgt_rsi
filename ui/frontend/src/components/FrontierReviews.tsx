@@ -1047,6 +1047,12 @@ export default function FrontierReviews({
 
   return (
     <Card className="mt-3" title="Frontier reviews" testId="frontier-reviews">
+      <p className="mb-3 text-sm text-zinc-400">
+        These suggestions and reviews come from the research ledgers, not Codex
+        engineering handoffs. Older proposed items remain unresolved until a
+        human rules; acceptance does not mean an experiment is complete.
+        {" "}<a href="/development" className="text-[var(--accent)]">Development and readiness →</a>
+      </p>
       <div className="mb-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
         <span className="text-[11px] text-zinc-500">
           what the frontier falsifier tier (D-061: claude = methods, codex =
