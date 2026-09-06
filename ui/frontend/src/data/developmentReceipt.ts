@@ -23,3 +23,20 @@ export const developmentReceipt = {
     exposure: "9e38f1640b9f6d4269bc90fd369b5a55b5a309ba13369054559e199adea34a3d",
   },
 } as const;
+
+// Separate from PR #3: this receipt concerns the UI delivered by PR #5.
+// The observation is fixed in source; a later page load does not refresh it.
+export const uiDeliveryReceipt = {
+  recordedAt: "2026-09-06T21:43:39.147162+00:00",
+  mergedAt: "2026-09-06T01:32:01Z",
+  merge: "858cfb10656cc370e3fdf0018a6e45fd5d05e997",
+  pr: "https://github.com/decross1/a_bgt_rsi/pull/5",
+  title: "UI delivered: clearer provenance and stable thread history",
+  changes: [
+    "Development separates Codex delivery, Nara's channel and scientific evidence.",
+    "Unverified ruling history stays view-only; unframed messages cannot become trusted actor rows.",
+    "Model I/O retains loaded thread turns during polls and keeps different filters separate.",
+  ],
+  verification: "PR #5 received independent review; 1,338 frontend tests, 118 applicable backend tests, typecheck and build passed in its release checks. These are dated checks of that UI release, not the held core package.",
+  observation: "The existing frontend served the merged UI source, and Development, Pulse and Model I/O rendered in a LAN browser check. No backend restart or imported-backend verification was performed.",
+} as const;
