@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
 import LabTodo from "../src/components/LabTodo";
+import DevelopmentNotice from "../src/components/DevelopmentNotice";
 import { developmentReceipt } from "../src/data/developmentReceipt";
 
 const clusters = [
@@ -269,5 +270,54 @@ describe("development route separates delivery, runtime and scientific records",
     expect(screen.queryByText("Unresolved suggestion 0")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /accept|dismiss/i })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /human ruling controls/ })).toHaveAttribute("href", "/model-io");
+  });
+});
+
+
+describe("LAB017 visible delivery and loaded-source distinctions", () => {
+  it("shows merged UI delivery separately from the older held package on the actual route", async () => {
+    render(<App />);
+    await ready();
+    const engineering = within(screen.getByTestId("development-engineering"));
+    expect(engineering.getByText("UI delivered: clearer provenance and stable thread history")).toBeInTheDocument();
+    expect(engineering.getByRole("link", { name: /Merged UI work — PR #5/ })).toHaveAttribute("href", "https://github.com/decross1/a_bgt_rsi/pull/5");
+    expect(engineering.getByText(/UI source merge:/)).toHaveTextContent("858cfb10656cc370e3fdf0018a6e45fd5d05e997");
+    expect(engineering.getByText(/Dated UI observation:/)).toHaveTextContent("not live deployment status");
+    expect(engineering.getByText(/Earlier core package — PR #3 remains separate/)).toBeInTheDocument();
+    expect(engineering.getByRole("link", { name: /PR #3 package status/ })).toHaveAttribute("href", developmentReceipt.pr);
+    expect(engineering.getByText(/Qwen worker remains held/)).toBeInTheDocument();
+    expect(engineering.queryByRole("link", { name: /current delivery status/ })).not.toBeInTheDocument();
+  });
+
+  it("gives Pulse a dated UI outcome while keeping the separate core hold visible", () => {
+    render(<DevelopmentNotice />);
+    expect(screen.getByRole("link", { name: /UI delivered: clearer provenance and stable thread history/ })).toHaveAttribute("href", "/development");
+    expect(screen.getByText(/PR #5 merged; PR #3 core work remains separate and held/)).toBeInTheDocument();
+    expect(screen.getByText(/not live merge or deployment status/)).toBeInTheDocument();
+    expect(calls).toEqual([]);
+  });
+
+  it("describes loaded legacy proposals as unverified rather than unavailable", async () => {
+    overrides["/api/frontier_reviews"] = { available: { agenda: true }, events: proposals };
+    render(<App />);
+    await ready();
+    const science = within(screen.getByTestId("development-science"));
+    expect(science.getByText(/23 proposal records in this observation; current rulings unverified/)).toBeInTheDocument();
+    expect(science.queryByText(/Proposal source unavailable/)).not.toBeInTheDocument();
+    expect(science.queryByText(/23 unresolved/)).not.toBeInTheDocument();
+    expect(science.getByText("Unresolved suggestion 22")).toBeInTheDocument();
+    expect(calls.some((url) => /lab_todo|accept|dismiss/.test(url))).toBe(false);
+  });
+
+  it("retains the distinction after a failed refresh instead of claiming new source evidence", async () => {
+    render(<App />);
+    await ready();
+    failReads = true;
+    fireEvent.click(screen.getByRole("button", { name: "Read latest snapshots" }));
+    await ready();
+    const science = within(screen.getByTestId("development-science"));
+    expect(science.getByText(/23 proposal records in this observation; current rulings unverified/)).toBeInTheDocument();
+    expect(science.getAllByText(/Showing the previous observation; current state is unknown/)).toHaveLength(2);
+    expect(science.queryByText(/23 unresolved/)).not.toBeInTheDocument();
   });
 });

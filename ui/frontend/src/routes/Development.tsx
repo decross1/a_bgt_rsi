@@ -1,7 +1,7 @@
 import { useDevelopmentSources, type Source } from "../api/development";
 import Card from "../design/Card";
 import { useNow } from "../time";
-import { developmentReceipt as receipt } from "../data/developmentReceipt";
+import { developmentReceipt as receipt, uiDeliveryReceipt as uiReceipt } from "../data/developmentReceipt";
 
 type RecordValue = Record<string, unknown>;
 const isRecord = (v: unknown): v is RecordValue => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -76,13 +76,27 @@ export default function Development() {
     </header>
     <div className="grid gap-4 lg:grid-cols-3">
       <Card title="Codex engineering / delivery" testId="development-engineering">
-        <p className="font-medium">{receipt.title}</p>
-        <p className="mt-2 text-xs text-[var(--fg-muted)]">Static receipt recorded {receipt.recordedAt}; not live GitHub status.</p>
-        <ul className="my-3 list-disc space-y-2 pl-5 text-sm">{receipt.changes.map((change) => <li key={change}>{change}</li>)}</ul>
-        <a href={receipt.pr} target="_blank" rel="noreferrer" className="text-[var(--accent)]">Open PR #3 for current delivery status ↗</a>
-        <p className="mt-2 break-all text-xs">Published source at receipt: {receipt.head}</p>
-        <p className="mt-3 text-sm">{receipt.checks}</p>
-        <p className="mt-3 text-sm"><strong>Next evidence:</strong> {receipt.next}</p>
+        <p className="font-medium">{uiReceipt.title}</p>
+        <ul className="my-3 list-disc space-y-2 pl-5 text-sm">{uiReceipt.changes.map((change) => <li key={change}>{change}</li>)}</ul>
+        <a href={uiReceipt.pr} target="_blank" rel="noreferrer" className="text-[var(--accent)]">Merged UI work — PR #5 ↗</a>
+        <p className="mt-2 text-xs text-[var(--fg-muted)]">Dated UI observation: {uiReceipt.recordedAt}; not live deployment status.</p>
+        <details className="mt-3 text-sm"><summary className="cursor-pointer">UI delivery evidence and limits</summary>
+          <p className="mt-2">Merged {uiReceipt.mergedAt}. {uiReceipt.observation}</p>
+          <p className="mt-2 break-all text-xs">UI source merge: {uiReceipt.merge}</p>
+          <p className="mt-2">{uiReceipt.verification}</p>
+        </details>
+        <hr className="my-4 border-[var(--border-1)]" />
+        <p className="text-sm font-medium">Earlier core package — PR #3 remains separate and held</p>
+        <p className="mt-2 text-sm">The UI delivery does not merge the claim/attempt and execution components or clear their integration checks.</p>
+        <details className="mt-3 text-sm"><summary className="cursor-pointer">Earlier package receipt and next evidence</summary>
+          <p className="mt-2">{receipt.title}</p>
+          <p className="mt-2 text-xs text-[var(--fg-muted)]">Static receipt recorded {receipt.recordedAt}; not live GitHub status.</p>
+          <ul className="my-3 list-disc space-y-2 pl-5">{receipt.changes.map((change) => <li key={change}>{change}</li>)}</ul>
+          <a href={receipt.pr} target="_blank" rel="noreferrer" className="text-[var(--accent)]">PR #3 package status ↗</a>
+          <p className="mt-2 break-all text-xs">Published source at receipt: {receipt.head}</p>
+          <p className="mt-3">{receipt.checks}</p>
+          <p className="mt-3"><strong>Next evidence:</strong> {receipt.next}</p>
+        </details>
         <p className="mt-3 text-sm"><strong>Held worker:</strong> {receipt.worker}</p>
         <details className="mt-4 text-sm"><summary className="cursor-pointer">Historical binding audit — separate from current counts</summary>
           <p className="mt-2">Recorded {receipt.audit.recordedAt}: {receipt.audit.iterations} historical iterations; {receipt.audit.bound} bound, {receipt.audit.mismatch} mismatch, {receipt.audit.unverifiable} unverifiable under the repaired envelope rule.</p>
@@ -108,13 +122,13 @@ export default function Development() {
         <p className="text-sm">Ladder positions are recorded classifications, not revalidated experiment eligibility. Engineering commits do not promote research.</p>
         {sources.ladder.data ? <>
           <p className="my-3 text-lg font-semibold">{clusters.length} recorded clusters</p>
-          <table className="w-full text-left text-sm"><caption className="mb-2 text-left text-xs">Positions in the loaded ledger projection</caption>
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm [&_th]:py-1 [&_th]:pr-3 [&_th]:align-top [&_td]:py-1 [&_td]:pr-3 [&_td]:align-top"><caption className="mb-2 text-left text-xs">Positions in the loaded ledger projection</caption>
             <thead><tr><th>Rung</th><th>Open</th><th>Surfaced</th><th>Killed</th><th>Recorded next test</th></tr></thead>
             <tbody>{["L0", "L1", "L2", "L3", "L4", "L5"].map((level) => <tr key={level}>
               <th>{level}</th>{["open", "surfaced", "killed"].map((status) => <td key={status}>{clusters.filter((c) => c.status === status && c.evidence_level === level).length}</td>)}
               <td className="text-xs">{isRecord(sources.ladder.data?.next_owed) ? text(sources.ladder.data.next_owed[level]) : "not reported"}</td>
             </tr>)}</tbody>
-          </table>
+          </table></div>
           <p className="mt-2 text-xs">Other / unclassified: {clusters.filter((c) => !["open", "surfaced", "killed"].includes(text(c.status)) || !["L0", "L1", "L2", "L3", "L4", "L5"].includes(text(c.evidence_level))).length}</p>
           <SourceTime label="Latest recorded cluster event (not confirmation)" value={latest(clusters.map((c) => c.last_event_ts))} />
           <p className="text-xs text-[var(--fg-muted)]">Source: idea-ledger projection. Source file hash and cache age are not reported by this endpoint.</p>
@@ -132,7 +146,11 @@ export default function Development() {
           </details>
         </> : <>
           <p className="my-2 text-sm text-[var(--status-warn)]">Agenda status is uncertain: complete ruling history and readable proposal-source metadata have not been established. No current unresolved, accepted or dismissed count is inferred.</p>
-          <p className="text-sm">Proposal source unavailable or not reported — unresolved suggestions are not cleared.</p>
+          <p className="text-sm">{proposals.length > 0
+            ? `${proposals.length} proposal records in this observation; current rulings unverified.`
+            : sources.frontier.data
+              ? "No proposal records in this loaded window; source completeness and current rulings unverified — unresolved suggestions are not cleared."
+              : "Proposal source unavailable or not reported — unresolved suggestions are not cleared."}</p>
           <details className="my-3 text-sm"><summary className="cursor-pointer">Suggestions with uncertain status ({proposals.length})</summary>
             <ul className="mt-2 list-disc space-y-2 pl-5">{proposals.map((p) => <li key={String(p.proposal_id)}>{text(p.topic)} <span className="text-xs text-[var(--fg-muted)]">— {text(p.ts)}; {isRecord(p.ruling) ? `last observed ruling: ${text(p.ruling.status)}` : `proposal record: ${text(p.status)}`}; current status unverified</span></li>)}</ul>
           </details>
