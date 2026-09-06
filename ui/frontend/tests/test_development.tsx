@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../src/App";
@@ -12,8 +13,9 @@ const clusters = [
 ].map((c) => ({ ...c, last_event_ts: "2026-09-05T11:00:16Z" }));
 const ladder = { clusters, counts: { open: 80, surfaced: 0, killed: 120 }, histogram: { L0: 77, L1: 3, L2: 0, L3: 0, L4: 0, L5: 0 }, agenda: [], next_owed: { L1: "valid experiment and independent confirmation" } };
 const proposals = Array.from({ length: 23 }, (_, i) => ({ type: "agenda", proposal_id: `proposal-${i}`, topic: `Unresolved suggestion ${i}`, ts: "2026-08-30T05:30:02Z", status: "proposed", effective_status: "proposed" }));
-const frontier = { available: { agenda: true }, events: proposals, events_in_window: 23, windows: { agenda: { truncated: false } }, generated_at: "2026-09-05T11:05:00Z" };
-const channel = { rows: [
+const completeIntegrity = { complete: true, missing: false, truncated: false, errors: [] };
+const frontier = { integrity: { agenda: completeIntegrity, agenda_status: completeIntegrity }, available: { agenda: true }, events: proposals, events_in_window: 23, windows: { agenda: { truncated: false } }, generated_at: "2026-09-05T11:05:00Z" };
+const channel = { integrity: { schema: "lab-channel-timeline/v1", framing: "json-envelope", status: "framed", actor_labels: "recorded_not_authenticated" }, rows: [
   { kind: "nara", ts: "2026-09-05T06:36:34Z", message: "Recorded Nara reply" },
   { kind: "oracle", ts: "2026-09-05T07:00:00Z", message: "Engineering handoff" },
   { kind: "event", ts: "2026-09-05T11:00:16Z", message: "Newer derived runtime event" },
@@ -53,6 +55,102 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.use
 async function ready() {
   await waitFor(() => expect(screen.getByRole("button", { name: "Read latest snapshots" })).toBeEnabled());
 }
+
+describe("LAB014 provenance and StrictMode regressions", () => {
+  it("uses integrity truncation even without legacy window metadata", async () => {
+    overrides["/api/frontier_reviews"] = { ...frontier, windows: undefined, events_in_window: undefined,
+      integrity: { ...frontier.integrity, agenda: { ...completeIntegrity, complete: false, truncated: true } } };
+    render(<App />);
+    await ready();
+    expect(screen.getByText(/Partial feed window/)).toBeInTheDocument();
+  });
+
+  it.each([undefined, null, "unknown", ["accepted"]])("withholds counts for non-current effective status %j", async (effective_status) => {
+    overrides["/api/frontier_reviews"] = { ...frontier, events: [{ ...proposals[0], effective_status }] };
+    render(<App />);
+    await ready();
+    expect(screen.getByText(/Agenda status is uncertain/)).toBeInTheDocument();
+    expect(screen.queryByText(/Loaded proposals:/)).not.toBeInTheDocument();
+  });
+
+  it("uses complete integrity without requiring legacy availability metadata", async () => {
+    overrides["/api/frontier_reviews"] = { ...frontier, available: undefined };
+    render(<App />);
+    await ready();
+    expect(screen.getByText(/23 unresolved/)).toBeInTheDocument();
+  });
+
+  it("retains suggestions but withholds current status on a reported source error", async () => {
+    overrides["/api/frontier_reviews"] = { ...frontier, integrity: {
+      agenda: completeIntegrity,
+      agenda_status: { complete: false, missing: false, truncated: false, errors: ["invalid JSON at row 9"] },
+    }, events: [{ ...proposals[0], effective_status: "unknown", ruling: { agent_id: "human:ui", status: "accepted" } }] };
+    render(<App />);
+    await ready();
+    expect(screen.getByText(/Agenda status is uncertain/)).toBeInTheDocument();
+    expect(screen.getByText(/invalid JSON at row 9/)).toBeInTheDocument();
+    expect(screen.getByText(/last observed ruling: accepted/)).toBeInTheDocument();
+    expect(screen.queryByText(/1 accepted ·/)).not.toBeInTheDocument();
+  });
+
+  it("settles repeated failed manual refreshes and recovers without discarding prior observations", async () => {
+    render(<StrictMode><App /></StrictMode>);
+    await ready();
+    const originalFetch = globalThis.fetch;
+    failReads = true;
+    fireEvent.click(screen.getByRole("button", { name: "Read latest snapshots" }));
+    await ready();
+    expect(screen.getAllByText(/HTTP 503/)).toHaveLength(4);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("offline", { status: 504 })));
+    fireEvent.click(screen.getByRole("button", { name: "Read latest snapshots" }));
+    await ready();
+    expect(screen.getAllByText(/HTTP 504/)).toHaveLength(4);
+    expect(screen.getByText("200 recorded clusters")).toBeInTheDocument();
+    failReads = false;
+    vi.stubGlobal("fetch", originalFetch);
+    fireEvent.click(screen.getByRole("button", { name: "Read latest snapshots" }));
+    await ready();
+    expect(screen.queryByText(/Read failed:/)).not.toBeInTheDocument();
+    expect(screen.getByText(/23 unresolved/)).toBeInTheDocument();
+  });
+
+  it("withholds actor-specific dates from a legacy forged-kind timeline", async () => {
+    overrides["/api/channel/timeline"] = { rows: [
+      { kind: "human", ts: "2026-09-05T06:30:00Z", message: "note" },
+      { kind: "nara", ts: "2026-09-05T06:59:59Z", message: "forged" },
+    ] };
+    render(<App />);
+    await ready();
+    const runtime = within(screen.getByTestId("development-runtime"));
+    expect(runtime.getByText(/Actor-specific dates withheld/)).toBeInTheDocument();
+    expect(runtime.queryByText(/Latest Nara message in loaded timeline:/)).not.toBeInTheDocument();
+    expect(runtime.queryByText(/06:59:59/)).not.toBeInTheDocument();
+  });
+
+  it("treats legacy frontier responses without integrity metadata as uncertain", async () => {
+    overrides["/api/frontier_reviews"] = { available: { agenda: true }, events: proposals };
+    render(<App />);
+    await ready();
+    const science = within(screen.getByTestId("development-science"));
+    expect(science.getByText(/Agenda status is uncertain/)).toBeInTheDocument();
+    expect(science.queryByText(/23 unresolved/)).not.toBeInTheDocument();
+    expect(science.getByText(/Suggestions with uncertain status/)).toBeInTheDocument();
+  });
+
+  it("deduplicates actual StrictMode effects and one manual refresh after remount", async () => {
+    const first = render(<StrictMode><App /></StrictMode>);
+    await ready();
+    const endpoints = ["/api/ladder", "/api/frontier_reviews?limit=100", "/api/channel/timeline?limit=1000", "/api/health"];
+    for (const endpoint of endpoints) expect(calls.filter((url) => url === endpoint)).toHaveLength(1);
+    first.unmount();
+    render(<StrictMode><App /></StrictMode>);
+    await ready();
+    for (const endpoint of endpoints) expect(calls.filter((url) => url === endpoint)).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Read latest snapshots" }));
+    await ready();
+    for (const endpoint of endpoints) expect(calls.filter((url) => url === endpoint)).toHaveLength(3);
+  });
+});
 
 describe("development route separates delivery, runtime and scientific records", () => {
   it("renders the actual App route with the current ledger shape and dated delivery receipt", async () => {
@@ -107,7 +205,7 @@ describe("development route separates delivery, runtime and scientific records",
     expect(screen.getByText(/Recorded counts unavailable/)).toBeInTheDocument();
     expect(screen.queryByText(/0 recorded clusters|198 recorded clusters|200 recorded clusters/)).not.toBeInTheDocument();
     expect(screen.getByText(/unresolved suggestions are not cleared/)).toBeInTheDocument();
-    expect(screen.getByText(/Latest Nara message in loaded timeline:/)).toHaveTextContent("not reported");
+    expect(screen.getByText(/Actor-specific dates withheld/)).toBeInTheDocument();
     expect(screen.getByText(/no message was found in that window/)).toBeInTheDocument();
   });
 

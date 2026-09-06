@@ -291,7 +291,7 @@ def test_refine_event_fields(tmp_path):
 
 def test_agenda_event_fields(tmp_path):
     client = _client(tmp_path, screen=None, agenda=[_agenda_row(_iso(1), 7)],
-                     calls=None, ledger=None)
+                     calls=None, ledger=None, status=[])
     [event] = client.get("/api/frontier_reviews").json()["events"]
     # An UNRULED proposal: effective_status falls back to the row's own
     # status and NO ruling block is fabricated.
@@ -333,21 +333,71 @@ def test_effective_status_joins_the_audit_file_last_row_wins(tmp_path):
     assert events["fa-00000001"]["status"] == "proposed"
 
 
-def test_out_of_enum_audit_status_is_not_believed(tmp_path):
+def test_human_ruling_older_than_64k_status_tail_is_preserved(tmp_path):
+    """Status is an audit history, not a recent-activity feed: an old human
+    ruling must survive however much unrelated status traffic follows it."""
+    old_ruling = _status_row(1, "accepted", "the human ruled earlier",
+                             cluster_id="cl-fa-00000001")
+    padding = [
+        _status_row(n, "dismissed", "x" * 300)
+        for n in range(2, 260)
+    ]
+    assert len("\n".join(json.dumps(row) for row in padding)) > 64 * 1024
+
+    client = _client(
+        tmp_path, screen=None, calls=None, ledger=None,
+        agenda=[_agenda_row(_iso(1), 1)], status=[old_ruling, *padding],
+        status_tail_bytes=64 * 1024)
+    body = client.get("/api/frontier_reviews").json()
+    [event] = body["events"]
+
+    assert event["effective_status"] == "accepted"
+    assert event["ruling"]["note"] == "the human ruled earlier"
+    assert body["integrity"]["agenda_status"] == {
+        "complete": True, "missing": False, "truncated": False, "errors": []}
+
+
+def test_out_of_enum_status_makes_history_incomplete_and_keeps_prior_ruling(
+        tmp_path):
     client = _client(tmp_path, screen=None, calls=None, ledger=None,
                      agenda=[_agenda_row(_iso(1), 1)],
                      status=[_status_row(1, "accepted"),
                              _status_row(1, "sortof")])
-    [event] = client.get("/api/frontier_reviews").json()["events"]
-    assert event["effective_status"] == "accepted"
+    body = client.get("/api/frontier_reviews").json()
+    [event] = body["events"]
+    assert event["effective_status"] == "unknown"
+    assert event["ruling"]["status"] == "accepted"
+    integrity = body["integrity"]["agenda_status"]
+    assert integrity["complete"] is False
+    assert integrity["errors"] and "unrecognized status" in integrity["errors"][0]
 
 
-def test_absent_status_file_leaves_every_proposal_proposed(tmp_path):
+def test_unhashable_status_proposal_id_is_reported_without_a_500(tmp_path):
+    malformed = _status_row(1, "dismissed")
+    malformed["proposal_id"] = {"not": "an id"}
+    client = _client(tmp_path, screen=None, calls=None, ledger=None,
+                     agenda=[_agenda_row(_iso(1), 1)], status=[malformed])
+
+    resp = client.get("/api/frontier_reviews")
+    assert resp.status_code == 200
+    body = resp.json()
+    [event] = body["events"]
+    assert event["effective_status"] == "unknown"
+    assert "ruling" not in event
+    integrity = body["integrity"]["agenda_status"]
+    assert integrity["complete"] is False
+    assert integrity["errors"] and "invalid proposal_id" in integrity["errors"][0]
+
+
+def test_absent_status_file_never_turns_unknown_history_into_proposed(tmp_path):
     client = _client(tmp_path, screen=None, calls=None, ledger=None,
                      agenda=[_agenda_row(_iso(1), 1)], status=None)
-    [event] = client.get("/api/frontier_reviews").json()["events"]
-    assert event["effective_status"] == "proposed"
+    body = client.get("/api/frontier_reviews").json()
+    [event] = body["events"]
+    assert event["effective_status"] == "unknown"
     assert "ruling" not in event
+    assert body["integrity"]["agenda_status"] == {
+        "complete": False, "missing": True, "truncated": False, "errors": []}
 
 
 def test_agenda_write_capability_reports_the_real_writer(tmp_path):
@@ -452,7 +502,7 @@ def test_successful_ruling_drops_the_ttl_cache(tmp_path):
     fake = {"now": 100.0}
     runner = _StubRunner('{"status": "dismissed"}')
     client = _client(tmp_path, screen=None, calls=None, ledger=None,
-                     agenda=[_agenda_row(_iso(1), 1)], runner=runner,
+                     agenda=[_agenda_row(_iso(1), 1)], status=[], runner=runner,
                      ttl_s=600.0, clock=lambda: fake["now"])
     first = client.get("/api/frontier_reviews").json()["events"][0]
     assert first["effective_status"] == "proposed"
@@ -533,6 +583,8 @@ def test_screen_tail_bound_drops_old_rows_and_says_so(tmp_path):
     assert ids == ["cl-new"]
     assert body["windows"]["screen"]["truncated"] is True
     assert body["windows"]["screen"]["bytes"] == bound
+    assert body["integrity"]["screen"]["complete"] is False
+    assert body["integrity"]["screen"]["truncated"] is True
 
 
 # ─── limit + TTL cache ────────────────────────────────────────────────
@@ -589,6 +641,81 @@ def test_all_sources_absent_degrades_honestly(tmp_path):
     assert body["events"] == []
     assert body["health"] == {}
     assert body["ledger_join"]["ok"] is True  # absent ledger = cold checkout
+    assert body["integrity"]["agenda"] == {
+        "complete": False, "missing": True, "truncated": False, "errors": []}
+
+
+def test_malformed_agenda_row_is_reported_while_valid_rows_still_serve(tmp_path):
+    _write(tmp_path / "agenda.jsonl", [_agenda_row(_iso(1), 1)])
+    with (tmp_path / "agenda.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write("{not json\n")
+
+    body = _client(tmp_path, status=[]).get("/api/frontier_reviews").json()
+
+    assert [event["proposal_id"] for event in body["events"]] == [
+        "fa-00000001"]
+    # Legacy clients only understand `available`; it must not bless a partial
+    # parse as trustworthy even though valid rows still remain usable.
+    assert body["available"]["agenda"] is False
+    integrity = body["integrity"]["agenda"]
+    assert integrity["complete"] is False
+    assert integrity["missing"] is False
+    assert integrity["truncated"] is False
+    assert integrity["errors"] and "malformed JSON" in integrity["errors"][0]
+
+
+def test_unreadable_agenda_source_is_unavailable_and_reported(tmp_path):
+    # A directory stats successfully but cannot be read as the JSONL source;
+    # this deterministically exercises the read-failure path even as root.
+    (tmp_path / "agenda.jsonl").mkdir()
+
+    body = _client(tmp_path, status=[]).get("/api/frontier_reviews").json()
+
+    assert body["available"]["agenda"] is False
+    assert body["events"] == []
+    integrity = body["integrity"]["agenda"]
+    assert integrity["complete"] is False
+    assert integrity["missing"] is False
+    assert integrity["truncated"] is False
+    assert integrity["errors"] and "read failed" in integrity["errors"][0]
+
+
+def test_malformed_status_makes_effective_status_unknown_but_keeps_ruling(
+        tmp_path):
+    _write(tmp_path / "status.jsonl", [
+        _status_row(1, "accepted", "observed valid ruling")])
+    with (tmp_path / "status.jsonl").open("a", encoding="utf-8") as fh:
+        fh.write("{not json\n")
+
+    body = _client(
+        tmp_path, agenda=[_agenda_row(_iso(1), 1)]
+    ).get("/api/frontier_reviews").json()
+    [event] = body["events"]
+
+    assert event["effective_status"] == "unknown"
+    assert event["ruling"]["note"] == "observed valid ruling"
+    assert event["ruling"]["status"] == "accepted"
+    integrity = body["integrity"]["agenda_status"]
+    assert integrity["complete"] is False
+    assert integrity["missing"] is False
+    assert integrity["errors"] and "malformed JSON" in integrity["errors"][0]
+
+
+def test_unreadable_status_never_turns_unknown_history_into_proposed(tmp_path):
+    (tmp_path / "status.jsonl").mkdir()
+
+    body = _client(
+        tmp_path, agenda=[_agenda_row(_iso(1), 1)]
+    ).get("/api/frontier_reviews").json()
+    [event] = body["events"]
+
+    assert event["effective_status"] == "unknown"
+    assert "ruling" not in event
+    integrity = body["integrity"]["agenda_status"]
+    assert integrity["complete"] is False
+    assert integrity["missing"] is False
+    assert integrity["truncated"] is False
+    assert integrity["errors"] and "read failed" in integrity["errors"][0]
 
 
 def test_unreadable_idea_ledger_is_reported_not_coerced(tmp_path):
