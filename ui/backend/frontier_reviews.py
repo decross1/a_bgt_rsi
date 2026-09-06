@@ -38,15 +38,16 @@ other nonzero → "CLI error (exit N)") — the 2026-08-18T06:00:43Z outage
 (claude exit 1 + codex exit 127) must read as one legible outage line in
 the strip, not two mystery rows in a table.
 
-Bounded tail reads (frontier_calls.py's `_tail_records`, reused), a short
-TTL cache (served_models.py's pattern — the compose walks three ledgers +
-one full reduction), and honest degradation: an absent file is
-``available: false`` with zero events from it; an unreadable idea ledger
-is REPORTED in ``ledger_join`` (rule 4 — never silently coerced) while
-the screen/agenda feed still serves. Read-only: writes nothing.
+Bounded screen/agenda/calls tails, a complete streaming status-audit scan,
+a short TTL cache (served_models.py's pattern), and honest degradation:
+missing/unreadable/malformed/truncated sources are explicit in ``integrity``;
+an unreadable idea ledger is separately REPORTED in ``ledger_join`` (rule 4
+— never silently coerced) while the screen/agenda feed still serves.
+Read-only: writes nothing.
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -64,7 +65,6 @@ from .frontier_calls import (
     _env_path,
     _exit_streaks,
     _parse_ts,
-    _tail_records,
     _utcnow_iso,
 )
 from datetime import datetime, timedelta, timezone
@@ -101,9 +101,14 @@ _MAX_ID_LEN = 200
 # frontier traffic either way (the tier fires on promotion candidates only).
 SCREEN_TAIL_BYTES = 512 * 1024
 AGENDA_TAIL_BYTES = 128 * 1024
-# Audit rows are ~0.3 KB; 64 KiB ≈ 200 rulings — far more than the agenda
-# window can show. A tail bound (not a full read) keeps the compose bounded.
+# Kept as a register() compatibility default for callers/tests that supplied
+# the old knob. Status is no longer tail-read: human rulings are streamed from
+# the beginning of the audit file so older decisions cannot disappear.
 STATUS_TAIL_BYTES = 64 * 1024
+
+# Source errors are counted by scanning the complete selected input, while the
+# wire detail stays bounded. The final entry says how many details were elided.
+MAX_SOURCE_ERROR_DETAILS = 20
 
 # Claim heads are context, not the document — ~140 chars, marked truncation.
 CLAIM_HEAD_CHARS = 140
@@ -284,28 +289,21 @@ def _require_text(value, field: str) -> str:
     return value
 
 
-def _status_index(rows: list[dict]) -> dict:
-    """{proposal_id: latest audit row} from the status-audit tail
-    (oldest-first input; LAST row wins — the append-only convention
-    ``agenda_cli.load_status`` writes and ``loop_feedback`` established).
-    An out-of-enum status is NOT believed (rule 4: a ruling this build does
-    not recognise never overrides the proposal's own status)."""
-    index: dict[str, dict] = {}
-    for row in rows:
-        pid = row.get("proposal_id")
-        if isinstance(pid, str) and row.get("status") in AGENDA_STATUSES:
-            index[pid] = row
-    return index
-
-
-def _agenda_event(row: dict, status_index: dict) -> dict:
+def _agenda_event(row: dict, status_index: dict, *, status_complete: bool) -> dict:
     """One proposals-file row → one agenda feed event, joined to its ruling.
-    ``effective_status`` is the audit row's when one exists, else the
-    proposal's own (``proposed``). The ruling's note/ts/agent ship only when
-    a ruling exists — absent → omitted, never fabricated."""
+    ``effective_status`` is authoritative only after the entire status audit
+    was read without error. Incomplete/missing history becomes ``unknown`` —
+    never a fabricated fresh proposal. A valid observed ruling still ships in
+    ``ruling`` so a separate malformed row cannot erase human evidence."""
     pid = row.get("proposal_id")
     ruling = status_index.get(pid) if isinstance(pid, str) else None
     own = row.get("status")
+    if not status_complete:
+        effective_status = "unknown"
+    elif isinstance(ruling, dict):
+        effective_status = ruling["status"]
+    else:
+        effective_status = own if isinstance(own, str) and own else "proposed"
     event = {
         "type": "agenda",
         "ts": row.get("ts"),
@@ -314,12 +312,11 @@ def _agenda_event(row: dict, status_index: dict) -> dict:
         "topic": row.get("topic"),
         "rationale": row.get("rationale"),
         "status": own,
-        "effective_status": (ruling["status"] if isinstance(ruling, dict)
-                             else (own if isinstance(own, str) and own
-                                   else "proposed")),
+        "effective_status": effective_status,
     }
     if isinstance(ruling, dict):
         event["ruling"] = {
+            "status": ruling.get("status"),
             "note": ruling.get("note"),
             "ts": ruling.get("ts"),
             "agent_id": ruling.get("agent_id"),
@@ -404,11 +401,163 @@ def register(app, *,
     cache: dict = {"at": None, "payload": None}
     lock = threading.Lock()
 
-    def _size_of(path: Path) -> int:
+    def _bounded_errors(details: list[str], total: int) -> list[str]:
+        """Return bounded error detail without hiding the number omitted."""
+        if total <= MAX_SOURCE_ERROR_DETAILS:
+            return details
+        return [*details,
+                f"{total - MAX_SOURCE_ERROR_DETAILS} additional error(s) omitted"]
+
+    def _tail_source(path: Path, window_bytes: int) -> tuple[
+            list[dict], int, bool, dict]:
+        """Read a JSONL tail plus explicit integrity.
+
+        ``available`` means the source could actually be opened and read; a
+        successful stat alone is insufficient. Malformed/non-object rows are
+        omitted from data but named in bounded ``errors``. ``complete`` means
+        the whole file was in-window and every nonblank row was a JSON object.
+        """
         try:
-            return path.stat().st_size
-        except OSError:
-            return -1  # absent/unreadable — distinct from an empty file (0)
+            size = path.stat().st_size
+        except FileNotFoundError:
+            return [], -1, False, {
+                "complete": False, "missing": True,
+                "truncated": False, "errors": []}
+        except OSError as exc:
+            return [], -1, False, {
+                "complete": False, "missing": False,
+                "truncated": False,
+                "errors": [f"stat failed: {type(exc).__name__}: {exc}"]}
+
+        window = min(size, window_bytes)
+        truncated = size > window_bytes
+        try:
+            with path.open("rb") as fh:
+                fh.seek(size - window)
+                data = fh.read()
+        except OSError as exc:
+            return [], size, False, {
+                "complete": False, "missing": False,
+                "truncated": truncated,
+                "errors": [f"read failed: {type(exc).__name__}: {exc}"]}
+
+        details: list[str] = []
+        error_count = 0
+
+        def note_error(message: str) -> None:
+            nonlocal error_count
+            error_count += 1
+            if len(details) < MAX_SOURCE_ERROR_DETAILS:
+                details.append(message)
+
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            note_error(f"invalid UTF-8: {exc}")
+            text = data.decode("utf-8", errors="replace")
+        lines = text.splitlines()
+        if truncated and lines:
+            # The seek normally lands inside a row. That incomplete boundary
+            # row is accounted for by truncated=true rather than a parse error.
+            lines = lines[1:]
+
+        rows: list[dict] = []
+        for line_no, line in enumerate(lines, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                note_error(f"window line {line_no}: malformed JSON ({exc.msg})")
+                continue
+            if not isinstance(row, dict):
+                note_error(f"window line {line_no}: expected JSON object")
+                continue
+            rows.append(row)
+
+        return rows, size, error_count == 0, {
+            "complete": not truncated and error_count == 0,
+            "missing": False,
+            "truncated": truncated,
+            "errors": _bounded_errors(details, error_count),
+        }
+
+    def _status_source(proposal_ids: set[str]) -> tuple[dict, bool, dict]:
+        """Stream the complete human audit, retaining only visible rulings.
+
+        This keeps row storage bounded by the agenda window while examining
+        every status row from the beginning, so a ruling cannot age out. The
+        last valid in-enum row still wins for each visible proposal.
+        """
+        try:
+            agenda_status_path.stat()
+        except FileNotFoundError:
+            return {}, False, {
+                "complete": False, "missing": True,
+                "truncated": False, "errors": []}
+        except OSError as exc:
+            return {}, False, {
+                "complete": False, "missing": False,
+                "truncated": False,
+                "errors": [f"stat failed: {type(exc).__name__}: {exc}"]}
+
+        index: dict[str, dict] = {}
+        details: list[str] = []
+        error_count = 0
+
+        def note_error(message: str) -> None:
+            nonlocal error_count
+            error_count += 1
+            if len(details) < MAX_SOURCE_ERROR_DETAILS:
+                details.append(message)
+
+        try:
+            with agenda_status_path.open("rb") as fh:
+                for line_no, raw_line in enumerate(fh, start=1):
+                    raw_line = raw_line.strip()
+                    if not raw_line:
+                        continue
+                    try:
+                        line = raw_line.decode("utf-8")
+                    except UnicodeDecodeError as exc:
+                        note_error(f"line {line_no}: invalid UTF-8 ({exc})")
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        note_error(
+                            f"line {line_no}: malformed JSON ({exc.msg})")
+                        continue
+                    if not isinstance(row, dict):
+                        note_error(f"line {line_no}: expected JSON object")
+                        continue
+                    pid = row.get("proposal_id")
+                    status = row.get("status")
+                    if not isinstance(pid, str) or not pid:
+                        note_error(f"line {line_no}: invalid proposal_id")
+                        continue
+                    if status not in AGENDA_STATUSES:
+                        note_error(f"line {line_no}: unrecognized status")
+                        continue
+                    if pid in proposal_ids:
+                        index[pid] = row
+        except OSError as exc:
+            # Preserve any valid human rulings observed before a mid-stream
+            # failure, while withholding an authoritative effective status.
+            note_error(f"read failed: {type(exc).__name__}: {exc}")
+            return index, False, {
+                "complete": False, "missing": False,
+                "truncated": False,
+                "errors": _bounded_errors(details, error_count)}
+
+        integrity = {
+            "complete": error_count == 0,
+            "missing": False,
+            "truncated": False,
+            "errors": _bounded_errors(details, error_count),
+        }
+        return index, True, integrity
 
     def _load_idea_state() -> tuple[dict, dict]:
         """Reduced idea-ledger state via the SAME reducer /api/ladder uses.
@@ -434,15 +583,24 @@ def register(app, *,
         return state, {"ok": True, "clusters": len(state), "error": None}
 
     def _compose() -> dict:
-        screen_size = _size_of(screen_path)
-        agenda_size = _size_of(agenda_path)
-        calls_size = _size_of(calls_path)
+        screen_rows, _screen_size, screen_available, screen_integrity = (
+            _tail_source(screen_path, screen_tail_bytes))
+        agenda_rows, _agenda_size, agenda_available, agenda_integrity = (
+            _tail_source(agenda_path, agenda_tail_bytes))
+        calls_rows, _calls_size, calls_available, calls_integrity = (
+            _tail_source(calls_path, calls_tail_bytes))
+        proposal_ids = {
+            row["proposal_id"] for row in agenda_rows
+            if isinstance(row.get("proposal_id"), str)
+        }
+        status_index, _status_available, status_integrity = _status_source(
+            proposal_ids)
 
         idea_state, ledger_join = _load_idea_state()
 
         events: list[dict] = []
         hypo_heads: dict | None = None  # lazy — only read on first miss
-        for row in _tail_records(screen_path, screen_tail_bytes):
+        for row in screen_rows:
             event = _screen_event(row)
             cid = event.get("cluster_id")
             cluster = idea_state.get(cid) if isinstance(cid, str) else None
@@ -465,10 +623,10 @@ def register(app, *,
                         event["claim_head_source"] = "founding_hypothesis"
             events.append(event)
 
-        status_index = _status_index(
-            _tail_records(agenda_status_path, status_tail_bytes))
-        for row in _tail_records(agenda_path, agenda_tail_bytes):
-            events.append(_agenda_event(row, status_index))
+        for row in agenda_rows:
+            events.append(_agenda_event(
+                row, status_index,
+                status_complete=status_integrity["complete"]))
 
         for cid, cluster in idea_state.items():
             for rev in cluster.get("refine_history") or []:
@@ -486,12 +644,17 @@ def register(app, *,
         # Newest-first merge; unparseable ts sorts oldest (never fakes recency).
         events.sort(key=lambda e: _parse_ts(e.get("ts")), reverse=True)
 
-        calls_rows = _tail_records(calls_path, calls_tail_bytes)
         return {
             "available": {
-                "screen": screen_size >= 0,
-                "agenda": agenda_size >= 0,
-                "calls": calls_size >= 0,
+                "screen": screen_available,
+                "agenda": agenda_available,
+                "calls": calls_available,
+            },
+            "integrity": {
+                "screen": screen_integrity,
+                "agenda": agenda_integrity,
+                "agenda_status": status_integrity,
+                "calls": calls_integrity,
             },
             "events": events,
             "events_in_window": len(events),
@@ -508,11 +671,11 @@ def register(app, *,
             },
             "windows": {
                 "screen": {"bytes": screen_tail_bytes,
-                           "truncated": screen_size > screen_tail_bytes},
+                           "truncated": screen_integrity["truncated"]},
                 "agenda": {"bytes": agenda_tail_bytes,
-                           "truncated": agenda_size > agenda_tail_bytes},
+                           "truncated": agenda_integrity["truncated"]},
                 "calls": {"bytes": calls_tail_bytes,
-                          "truncated": calls_size > calls_tail_bytes},
+                          "truncated": calls_integrity["truncated"]},
             },
             "generated_at": _utcnow_iso(),
         }

@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getPollSnapshot,
   pollHubEntryCount,
+  refreshPoll,
   resetPollHub,
   subscribePoll,
   subscribePollAge,
@@ -37,6 +38,41 @@ const tickAsync = (ms: number) =>
   });
 
 describe("pollhub scheduler", () => {
+  it("immediately refetches on remount after a pending manual source settled while unmounted", async () => {
+    let resolve!: (value: unknown) => void;
+    const fetcher = vi.fn(() => new Promise((done) => { resolve = done; }));
+    const unmount = subscribePoll("pending-remount", fetcher, { intervalMs: Infinity }, () => {});
+    unmount();
+    resolve({ observed: 1 });
+    await tickAsync(0);
+    const remount = subscribePoll("pending-remount", fetcher, { intervalMs: Infinity }, () => {});
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    resolve({ observed: 2 });
+    await tickAsync(0);
+    remount();
+  });
+
+  it("manual snapshot reads share the in-flight guard and stop requesting after unmount", async () => {
+    let resolve!: (value: unknown) => void;
+    const fetcher = vi.fn(() => new Promise((done) => { resolve = done; }));
+    const unmount = subscribePoll("manual", fetcher, { intervalMs: Infinity }, () => {});
+    refreshPoll("manual");
+    refreshPoll("manual");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    resolve({ observed: 1 });
+    await tickAsync(0);
+    await tickAsync(120_000);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    refreshPoll("manual");
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    unmount();
+    resolve({ observed: 2 });
+    await tickAsync(0);
+    refreshPoll("manual");
+    await tickAsync(120_000);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("paces each source at its own interval off the one heartbeat", async () => {
     const fast = vi.fn().mockResolvedValue({ v: 1 });
     const slow = vi.fn().mockResolvedValue({ v: 2 });

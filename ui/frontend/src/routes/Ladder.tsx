@@ -206,9 +206,8 @@ export default function Ladder({ initial, initialIdeas, pollMs = 30_000 }: Props
             color: "var(--fg-muted)",
           }}
         >
-          Every idea the lab is carrying, by how much evidence stands behind
-          it. Only L4+ surfaces to you (D-059); the rest is the machine&apos;s
-          to advance or kill.
+          Recorded evidence levels, not revalidated experiment eligibility.
+          Engineering delivery does not change these classifications.
         </p>
         {/* The lab's QUEUE (what these clusters owe next, plus the agenda and
             the refine candidates) lives in Pulse's secondary zone — this board

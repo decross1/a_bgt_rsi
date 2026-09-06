@@ -1,13 +1,12 @@
 """Lab-channel exec seam — the always-on human ⇄ Nara ⇄ PI conversation (S4).
 
-The Channel page talks to ONE blessed CLI: ``orchestrator.lab_channel``
-(LOOP_V1 spawn loop10h-lab-channel-core), whose surface is exactly
-``{timeline, turn, delegate}`` — no disposition verb exists on it, and none
-is reachable here (the verdict fence: dispositions live in the dossier
-reader's forms, never in a chat surface). Like ``chat_seam``, this module
-NEVER writes a ledger — it execs the CLI as an **argv array** (no shell, no
-string interpolation), ``cwd`` = the primary repo root, interpreter
-``.venv-chroma/bin/python``. The CLI owns the transcript
+The Channel page uses ``orchestrator.lab_channel`` (LOOP_V1 spawn
+loop10h-lab-channel-core), whose action surface is exactly ``{timeline, turn,
+delegate}`` — no disposition verb exists on it, and none is reachable here
+(the verdict fence: dispositions live in the dossier reader's forms, never in
+a chat surface). Like ``chat_seam``, this module NEVER writes a ledger. It
+execs argv arrays (no shell, no string interpolation), ``cwd`` = the primary
+repo root, interpreter ``.venv-chroma/bin/python``. The CLI owns the transcript
 (``memory/lab_channel.jsonl``) and every ledger write.
 
 Environment: the runner inherits the SERVER's env verbatim (chat_seam
@@ -21,12 +20,11 @@ Endpoints, wired by ``register`` into the existing FastAPI app:
   existence-check the CLI module + interpreter; never execs). A frontend
   seeing ``available: false`` — or a 404 from an older backend — renders
   the composers preview-only.
-- ``GET  /api/channel/timeline?since=&limit=`` — execs ``timeline``
-  (pure read, SHORT 30s cap) and returns its printed rows parsed back to
-  ``{rows: [{ts, kind, message}]}``. The CLI prints one
-  ``"<ts>  [<kind>]  <message>"`` line per row; a multi-line message
-  continues its row verbatim (un-matching continuation lines are appended,
-  never dropped mid-row).
+- ``GET  /api/channel/timeline?since=&limit=`` — execs a UI-owned structured
+  reader (pure read, SHORT 30s cap) around the existing pure
+  ``orchestrator.lab_channel.timeline`` function. It returns a versioned JSON
+  envelope, preserving multiline messages without interpreting their text as
+  row framing. Actor labels are recorded, not authenticated.
 - ``POST /api/channel/turn`` — ``{role: nara|pi, message}``. Capability-
   gated: when the probe fails it returns a preview that WRITES NOTHING and
   execs nothing (the cockpit's preview idiom). Live: execs ``turn`` under
@@ -45,6 +43,7 @@ the CLI re-validates authoritatively (inviolate rule 4).
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -59,6 +58,8 @@ from fastapi.responses import JSONResponse
 from .attest import _PRIMARY_REPO, _exec_blessed
 
 _CHANNEL_MODULE = "orchestrator.lab_channel"
+_TIMELINE_READER_MODULE = "ui.backend.channel_timeline_reader"
+_TIMELINE_SCHEMA = "lab-channel-timeline/v1"
 _PYTHON_REL = Path(".venv-chroma") / "bin" / "python"
 _MODULE_REL = Path("orchestrator") / "lab_channel.py"
 
@@ -87,42 +88,70 @@ _SINCE_RE = re.compile(r"^\d[0-9T:.+Z-]*$")
 _MAX_SINCE_LEN = 64
 _MAX_LIMIT = 1000
 
-# One printed timeline row: "<ts>  [<kind>]  <message>" (lab_channel.main).
-# ts is the first token (no spaces in ISO UTC); kind rides in brackets.
-_ROW_RE = re.compile(r"^(\S+)  \[([^\]]*)\]  (.*)$")
-
-
 def _parse_timeline(stdout: str) -> list[dict]:
-    """Parse the CLI's printed timeline back into rows.
+    """Validate and unwrap the timeline reader's versioned JSON envelope."""
+    if not stdout.strip():
+        raise ValueError("timeline reader returned empty output")
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"timeline reader returned malformed JSON: {exc.msg}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ValueError("timeline envelope must be an object")
+    if payload.get("schema") != _TIMELINE_SCHEMA:
+        raise ValueError(
+            f"timeline envelope schema must be {_TIMELINE_SCHEMA!r}"
+        )
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        raise ValueError("timeline envelope rows must be a list")
 
-    A line matching the row shape starts a new row; any other line is a
-    CONTINUATION of the previous row's message (turn replies are model text
-    and legitimately span lines) and is appended verbatim. A leading
-    un-matching line has no row to belong to and is skipped — the same
-    tolerant read-only posture the CLI itself takes on its ledgers.
-    """
-    rows: list[dict] = []
-    for line in stdout.splitlines():
-        m = _ROW_RE.match(line)
-        if m:
-            rows.append({"ts": m.group(1), "kind": m.group(2),
-                         "message": m.group(3)})
-        elif rows:
-            rows[-1]["message"] += "\n" + line
-    return rows
+    framed: list[dict[str, str]] = []
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"timeline row {index} must be an object")
+        ts = row.get("ts")
+        kind = row.get("kind")
+        message = row.get("message")
+        if not isinstance(ts, str) or not ts:
+            raise ValueError(f"timeline row {index} has invalid ts")
+        if not isinstance(kind, str) or not kind:
+            raise ValueError(f"timeline row {index} has invalid kind")
+        if not isinstance(message, str):
+            raise ValueError(f"timeline row {index} has invalid message")
+        framed.append({"ts": ts, "kind": kind, "message": message})
+    return framed
 
 
-def _exec_raw(runner, repo_root: Path, args: list[str], *, timeout: int):
-    """Exec the blessed channel CLI, returning ``(stdout, error_response)``.
+def _timeline_integrity(*, status: str = "framed") -> dict[str, str]:
+    """Transport metadata; deliberately no source/authentication claim."""
+    return {
+        "schema": _TIMELINE_SCHEMA,
+        "framing": "json-envelope",
+        "status": status,
+        "actor_labels": "recorded_not_authenticated",
+    }
+
+
+def _exec_raw(
+    runner,
+    repo_root: Path,
+    args: list[str],
+    *,
+    timeout: int,
+    module: str = _CHANNEL_MODULE,
+):
+    """Exec a channel read/action module, returning stdout + any error.
 
     Same discipline + failure surface as ``attest._exec_blessed`` (argv ARRAY,
     ``cwd`` = primary repo root, rc!=0 / spawn failure -> a 502 ``{rc,
-    stderr}`` JSONResponse with stderr verbatim) — but stdout is returned RAW:
-    ``timeline`` prints formatted lines and ``turn`` prints the bare reply
-    text, so no JSON parse belongs here.
+    stderr}`` JSONResponse with stderr verbatim). Stdout remains raw here: the
+    caller validates timeline framing or returns turn reply text as applicable.
     """
     python_bin = repo_root / _PYTHON_REL
-    argv = [str(python_bin), "-m", _CHANNEL_MODULE, *args]
+    argv = [str(python_bin), "-m", module, *args]
     try:
         proc = runner(argv, cwd=str(repo_root), capture_output=True,
                       text=True, timeout=timeout)
@@ -200,11 +229,12 @@ def register(
     @router.get("/timeline")
     def timeline(since: str | None = Query(default=None),
                  limit: int | None = Query(default=None)):
-        """Merged transcript + derived apparatus events, via the CLI's
-        ``timeline`` (pure read — derived events are re-derived by the CLI on
-        every call, never stored). Returns ``{rows: [{ts, kind, message}]}``
-        parsed from the printed lines."""
-        args = ["timeline"]
+        """Merged transcript + derived events via the structured read helper.
+
+        The helper calls the existing pure orchestrator timeline on every
+        request; derived events remain read-time only and are never stored.
+        """
+        args = []
         if since is not None:
             if len(since) > _MAX_SINCE_LEN or not _SINCE_RE.match(since):
                 raise HTTPException(
@@ -218,10 +248,24 @@ def register(
                     status_code=422,
                     detail=f"limit must be in [1, {_MAX_LIMIT}]")
             args += ["--limit", str(limit)]
-        stdout, err = _exec_raw(run, root, args, timeout=_TIMELINE_TIMEOUT_S)
+        stdout, err = _exec_raw(
+            run,
+            root,
+            args,
+            timeout=_TIMELINE_TIMEOUT_S,
+            module=_TIMELINE_READER_MODULE,
+        )
         if err is not None:
             return err
-        return {"rows": _parse_timeline(stdout)}
+        try:
+            rows = _parse_timeline(stdout)
+        except ValueError as exc:
+            return JSONResponse(status_code=502, content={
+                "error": "timeline_integrity_error",
+                "detail": str(exc),
+                "integrity": _timeline_integrity(status="invalid"),
+            })
+        return {"rows": rows, "integrity": _timeline_integrity()}
 
     @router.post("/turn")
     def turn(payload: dict = Body(...)):

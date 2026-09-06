@@ -32,7 +32,9 @@
 // The fixtures below are interleaved on purpose, and the assertions are set
 // equalities over the whole walk: page1 ∪ page2 ∪ … = every row of the log,
 // each exactly once, taking the boundary from the SERVER's next_before_ts.
+import { Profiler } from "react";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -55,7 +57,7 @@ import ModelIO, {
   pageBoundary,
   toFeed,
 } from "../src/routes/ModelIO";
-import { resetPollHub } from "../src/api/pollhub";
+import { refreshPoll, resetPollHub } from "../src/api/pollhub";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -781,7 +783,12 @@ it("a poll that pushes the session off the live page keeps its turns", async () 
     } as Response;
   });
   vi.stubGlobal("fetch", mock);
-  render(<ModelIO pollMs={60} />);
+  const committedTurnCounts: number[] = [];
+  render(<Profiler id="retention-diagnostic" onRender={() => {
+    if (screen.queryAllByTestId("modelio-row").length === 3) {
+      committedTurnCounts.push(screen.queryAllByTestId("thread-turn").length);
+    }
+  }}><ModelIO pollMs={60} /></Profiler>);
   await waitFor(() =>
     expect(screen.getByTestId("session-thread")).toBeInTheDocument(),
   );
@@ -805,6 +812,9 @@ it("a poll that pushes the session off the live page keeps its turns", async () 
   );
   // … and the session is still ONE card holding ALL FOUR of its turns: the
   // two the live page had just handed back are retained, not dropped.
+  expect(committedTurnCounts).not.toContain(2);
+  expect(committedTurnCounts.length).toBeGreaterThan(0);
+  expect(committedTurnCounts.every(count => count === 4)).toBe(true);
   expect(screen.getAllByTestId("session-thread")).toHaveLength(1);
   expect(screen.getAllByTestId("thread-turn")).toHaveLength(4);
   expect(screen.getByTestId("thread-turns").textContent).toBe("4 turns");
@@ -842,4 +852,146 @@ it("degrades to plain call rows when the backend sends no threads key", async ()
   );
   expect(screen.queryByTestId("session-thread")).toBeNull();
   expect(screen.getByTestId("load-older")).toBeInTheDocument();
+});
+
+
+// Controlled query responses exercise commits, never physical browser paints.
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+function transitionFeed() {
+  const state: { live: unknown; older: unknown; filtered: unknown } = {
+    live: { ...BASE, calls: [plain(38)], threads: [thread([DEF1, ATT1])], next_before_ts: AT(35), end_of_log: false },
+    older: { ...BASE, calls: [plain(34)], threads: [thread([DEF0, ATT0, ATT1])], next_before_ts: AT(30), end_of_log: false },
+    filtered: { ...BASE, calls: [plain(39)], threads: [], next_before_ts: AT(38), end_of_log: false },
+  };
+  const mock = vi.fn(async (url: unknown) => {
+    const u = new URL(String(url));
+    const body = u.pathname.startsWith("/api/model_io/") ? DETAIL
+      : u.pathname === "/api/model_io" ? await (
+        u.searchParams.has("before_ts") ? state.older
+          : u.searchParams.has("model") ? state.filtered : state.live)
+        : u.pathname === "/api/runtime_activity" ? EMPTY_STRIP
+          : { orchestrator_available: true, spawn_available: true, tasks: [], spawns: [] };
+    return { ok: true, status: 200, json: async () => body } as Response;
+  });
+  vi.stubGlobal("fetch", mock);
+  return { state, mock };
+}
+
+it("polling a same-key thread slice retains identified turns once in every commit", async () => {
+  const { state } = transitionFeed();
+  const counts: number[] = [];
+  let observing = false;
+  render(<Profiler id="same-key-retention" onRender={() => {
+    if (observing) counts.push(screen.queryAllByTestId("thread-turn").length);
+  }}><ModelIO pollMs={600_000} /></Profiler>);
+  await screen.findByTestId("session-thread");
+  fireEvent.click(screen.getByTestId("load-older"));
+  await waitFor(() => expect(screen.getAllByTestId("thread-turn")).toHaveLength(4));
+  fireEvent.click(screen.getAllByTestId("thread-context-chip")[2]);
+  await screen.findByTestId("call-expansion");
+  observing = true;
+  state.live = { ...BASE, calls: [plain(39)], threads: [thread([ATT1])], next_before_ts: AT(38), end_of_log: false };
+  await act(async () => { refreshPoll('modelio:calls:["","",""]'); });
+  await waitFor(() => expect(screen.getAllByTestId("modelio-row")).toHaveLength(3));
+  expect(counts.length).toBeGreaterThan(0);
+  expect(counts.every(n => n === 4)).toBe(true);
+  expect(screen.getAllByTestId("session-thread")).toHaveLength(1);
+  expect(screen.getAllByTestId("thread-turn").map(n => n.getAttribute("data-stance"))).toEqual(["defender", "attacker", "defender", "attacker"]);
+  for (const id of ["sess-31", "sess-33", "sess-35", "sess-37"])
+    expect(screen.getAllByTestId(`thread-answer-${id}`)).toHaveLength(1);
+  expect(screen.getByTestId("thread-turns")).toHaveTextContent("4 turns");
+  expect(screen.getByTestId("call-expansion")).toBeInTheDocument();
+});
+
+it("pending new filters cannot use the old paging boundary or retain old thread slices", async () => {
+  const { state, mock } = transitionFeed();
+  const next = deferred<unknown>();
+  state.filtered = next.promise;
+  render(<ModelIO pollMs={600_000} />);
+  await screen.findByTestId("session-thread");
+  fireEvent.click(screen.getByTestId("load-older"));
+  await waitFor(() => expect(screen.getAllByTestId("thread-turn")).toHaveLength(4));
+  fireEvent.change(screen.getByLabelText("filter by model"), { target: { value: "qwen" } });
+  await waitFor(() => expect(mock.mock.calls.some(c => String(c[0]).includes("model=qwen"))).toBe(true));
+  expect(screen.getByTestId("load-older")).toBeDisabled();
+  fireEvent.click(screen.getByTestId("load-older"));
+  expect(mock.mock.calls.some(c => String(c[0]).includes("model=qwen") && String(c[0]).includes("before_ts="))).toBe(false);
+  await act(async () => next.resolve({ ...BASE, calls: [plain(39)], threads: [thread([ATT1])], next_before_ts: AT(38), end_of_log: false }));
+  await waitFor(() => expect(screen.getAllByTestId("thread-turn")).toHaveLength(1));
+  expect(screen.getAllByTestId("modelio-row")).toHaveLength(1);
+  expect(screen.getByTestId("load-older")).not.toBeDisabled();
+});
+
+it.each(["success", "failure"])("a late old-filter page %s cannot mutate the new feed or pager", async outcome => {
+  const { state, mock } = transitionFeed();
+  const old = deferred<unknown>();
+  const oldPage = state.older;
+  state.older = old.promise;
+  render(<ModelIO pollMs={600_000} />);
+  await screen.findByTestId("session-thread");
+  fireEvent.click(screen.getByTestId("load-older"));
+  fireEvent.change(screen.getByLabelText("filter by model"), { target: { value: "qwen" } });
+  await waitFor(() => expect(mock.mock.calls.some(c => String(c[0]).includes("model=qwen"))).toBe(true));
+  await waitFor(() => expect(screen.queryByTestId("session-thread")).toBeNull());
+  await act(async () => {
+    if (outcome === "success") old.resolve(oldPage);
+    else old.reject(new Error("old query refused"));
+  });
+  expect(screen.queryByTestId("session-thread")).toBeNull();
+  expect(screen.getAllByTestId("modelio-row")).toHaveLength(1);
+  expect(screen.queryByText(/older-page fetch failed/)).toBeNull();
+  expect(screen.getByTestId("load-older")).not.toBeDisabled();
+});
+
+
+it("pause/resume and a failed current poll keep the loaded thread and boundary", async () => {
+  const { state } = transitionFeed();
+  render(<ModelIO pollMs={600_000} />);
+  await screen.findByTestId("session-thread");
+  fireEvent.click(screen.getByTestId("load-older"));
+  await waitFor(() => expect(screen.getAllByTestId("thread-turn")).toHaveLength(4));
+  fireEvent.click(screen.getByRole("button", { name: "pause" }));
+  expect(screen.getAllByTestId("thread-turn")).toHaveLength(4);
+  expect(screen.getByTestId("load-older")).not.toBeDisabled();
+  // Settle the resumed request before constructing the next failed response;
+  // a coalesced refresh otherwise leaves that fixture promise unconsumed.
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "resume" })));
+  const failed = deferred<unknown>();
+  state.live = failed.promise;
+  await act(async () => { refreshPoll('modelio:calls:["","",""]'); });
+  await act(async () => failed.reject(new Error("current poll refused")));
+  await screen.findByText(/model_io unreachable/);
+  expect(screen.getAllByTestId("thread-turn")).toHaveLength(4);
+  expect(screen.getByTestId("load-older")).not.toBeDisabled();
+});
+
+it.each(["success", "failure"])("paging reset ignores a deferred same-query page %s", async outcome => {
+  const { state } = transitionFeed();
+  const old = deferred<unknown>();
+  const oldPage = state.older;
+  state.older = old.promise;
+  render(<ModelIO pollMs={600_000} />);
+  await screen.findByTestId("session-thread");
+  fireEvent.click(screen.getByTestId("load-older"));
+  state.live = { ...BASE, calls: Array.from({ length: 20 }, (_, i) => plain(59 - i)),
+    threads: [], next_before_ts: AT(40), end_of_log: false };
+  await act(async () => { refreshPoll('modelio:calls:["","",""]'); });
+  fireEvent.click(await screen.findByTestId("page-gap-refresh"));
+  expect(screen.getAllByTestId("modelio-row")).toHaveLength(20);
+  expect(screen.queryByTestId("session-thread")).toBeNull();
+  await act(async () => {
+    if (outcome === "success") old.resolve(oldPage);
+    else old.reject(new Error("reset query refused"));
+  });
+  expect(screen.getAllByTestId("modelio-row")).toHaveLength(20);
+  expect(screen.queryByTestId("session-thread")).toBeNull();
+  expect(screen.queryByTestId("page-gap")).toBeNull();
+  expect(screen.queryByText(/older-page fetch failed/)).toBeNull();
+  expect(screen.getByTestId("load-older")).not.toBeDisabled();
 });

@@ -13,6 +13,7 @@ import Inspector from "./routes/Inspector";
 import Ladder from "./routes/Ladder";
 import ModelIO from "./routes/ModelIO";
 import Pulse from "./routes/Pulse";
+import Development from "./routes/Development";
 
 // The final UI-simplification shell (docs/ui_simplification_plan_2026-08-15.md,
 // S3): the nav is the three owner surfaces — pulse (healthy + do I owe
@@ -26,6 +27,7 @@ const NAV = [
   { to: "/dossier", label: "dossiers", end: false },
   // S4: the lab channel — the always-on human ⇄ Nara ⇄ PI conversation.
   { to: "/channel", label: "channel", end: false },
+  { to: "/development", label: "development", end: false },
 ];
 
 // Engine-internal destinations, collapsed. A plain <details> disclosure (no
@@ -135,6 +137,7 @@ export default function App() {
         <LoopAlertBanner />
         <Routes>
           <Route path="/" element={<Pulse />} />
+          <Route path="/development" element={<Development />} />
           <Route path="/ladder" element={<Ladder />} />
           {/* /ideas folded into /ladder (its ideas.md render is the ladder
               page's fallback body). */}

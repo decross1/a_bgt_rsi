@@ -307,6 +307,8 @@ type TableData = Omit<ModelIOResponse, "generated_at" | "scanned_bytes"> & {
    * client's old "short page must mean the log ended" inference. */
   end_of_log?: boolean;
 };
+// Local source identity; never inferred from the current render key.
+type QueryTableData = TableData & { queryKey: string };
 type TraceData = Omit<DispatchTraceResponse, "generated_at">;
 
 // ─── the feed: calls and session threads in one newest-first list ───────
@@ -451,6 +453,30 @@ export function mergeFeed(newest: FeedItem[], older: FeedItem[]): FeedItem[] {
     }
   }
   return out;
+}
+
+/** Retain the preceding live slices before committing a replacement page.
+ * The same transition is used by rendering and passive persistence. Keep the
+ * existing gap heuristic and merge identities; no boundary is inferred here. */
+function retainPage(fresh: FeedItem[], previous: FeedItem[], older: FeedItem[]) {
+  const current = new Map(fresh.map(item => [item.key, item]));
+  const dropped = previous.filter(item => {
+    if (item.key == null) return false; // unchanged anonymous-call policy
+    const next = current.get(item.key);
+    if (next === undefined) return true;
+    if (item.kind !== "thread" || next.kind !== "thread") return false;
+    // A still-visible session may now carry a shorter slice. Preserve its
+    // known missing turns too; foldThread retains the established identity
+    // rule (request_id, with anonymous turns never deduplicated).
+    const ids = new Set(turnsOf(next.thread).map(turn => turn.request_id));
+    return turnsOf(item.thread).some(turn =>
+      turn.request_id != null && !ids.has(turn.request_id));
+  });
+  return {
+    older: dropped.length === 0 ? older : mergeFeed(dropped, older),
+    gap: previous.length > 0 && fresh.length >= PAGE_SIZE &&
+      !previous.some(item => item.key != null && current.has(item.key)),
+  };
 }
 
 /** The next page's `before_ts`, taken from the BACKEND's stated fill point.
@@ -882,6 +908,8 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   const [pageGap, setPageGap] = useState(false);
   const hasPagedRef = useRef(false);
   const newestRef = useRef<FeedItem[]>([]);
+  const newestPayloadRef = useRef<QueryTableData | undefined>(undefined);
+  const pagingGenerationRef = useRef(0);
 
   useEffect(() => {
     const id = setTimeout(
@@ -900,9 +928,13 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
     applied.runId ?? "",
   ]);
 
-  const tablePoll = usePolled<TableData>(
+  const retentionKeyRef = useRef(appliedKey);
+
+  const tablePoll = usePolled<QueryTableData>(
     `modelio:calls:${appliedKey}`,
-    () => getModelIO(applied, PAGE_SIZE).then(stripVolatile),
+    () => getModelIO(applied, PAGE_SIZE).then(response => ({
+      ...stripVolatile(response), queryKey: appliedKey,
+    })),
     // evictOnZero: the key is parameterized by the filter — every query
     // ever typed would otherwise leave a hub Entry behind on an always-on
     // dashboard. The lastTableRef below carries the rendered rows across
@@ -932,9 +964,21 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   // Stale-while-revalidate ACROSS re-keys and pause: a filter change or a
   // pause must never blank rendered content, so the last good payload of
   // each source is kept and shown until fresher data lands.
-  const lastTableRef = useRef<TableData | null>(null);
-  if (tablePoll.data !== undefined) lastTableRef.current = tablePoll.data;
-  const data = tablePoll.data ?? lastTableRef.current;
+  // usePolled can return the prior key's snapshot during its rekey commit.
+  // The result's originating key prevents relabeling that old page as new.
+  const payload = tablePoll.data?.queryKey === appliedKey ? tablePoll.data : undefined;
+  const lastTableRef = useRef<QueryTableData | null>(null);
+  if (payload !== undefined) lastTableRef.current = payload;
+  const data = payload ?? lastTableRef.current;
+  const pagingReady = data?.queryKey === appliedKey;
+  const sameRetentionKey = retentionKeyRef.current === appliedKey;
+  const pendingRetention = useMemo(() => {
+    if (!sameRetentionKey) return { older: [], gap: false };
+    if (!hasPagedRef.current || payload === undefined || payload === newestPayloadRef.current)
+      return { older, gap: false };
+    return retainPage(toFeed(payload), newestRef.current, older);
+  }, [payload, older, appliedKey, sameRetentionKey]);
+  const visibleGap = sameRetentionKey && (pageGap || pendingRetention.gap);
   const lastActivityRef = useRef<ActivityData | null>(null);
   if (activityPoll.data !== undefined)
     lastActivityRef.current = activityPoll.data;
@@ -949,6 +993,10 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   // A filter change invalidates the appended pages (they were fetched
   // under the OLD filter); pause/resume deliberately does not.
   useEffect(() => {
+    retentionKeyRef.current = appliedKey;
+    pagingGenerationRef.current += 1;
+    newestRef.current = [];
+    newestPayloadRef.current = undefined;
     setOlder([]);
     setPager("idle");
     setNextBoundary(null);
@@ -956,56 +1004,19 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
     hasPagedRef.current = false;
   }, [appliedKey]);
 
-  // Newest-page bookkeeping, run only when the payload actually changed
-  // (pollhub identity): once older pages are appended, rows that new
-  // arrivals push out of the newest page are RETAINED by moving them onto
-  // the older list — no gap between the pages, no re-sort (they were
-  // already in newest-first order directly below the fresh page).
+  // Persist the already-visible coherent transition. Rendering does not wait
+  // for this effect, so no committed frame loses previously loaded slices.
   useEffect(() => {
-    const payload = tablePoll.data;
     if (payload === undefined || !Array.isArray(payload.calls)) return;
     const fresh = toFeed(payload);
     if (hasPagedRef.current) {
-      const freshIds = new Set(
-        fresh.map((i) => i.key).filter((id): id is string => id != null),
-      );
-      const prev = newestRef.current;
-      const dropped = prev.filter(
-        (i) => i.key != null && !freshIds.has(i.key),
-      );
-      // GAP DETECTION (count discontinuity): a FULL fresh page sharing no
-      // row with the previous newest page means at least a whole page of
-      // rows arrived in one tick — anything between the fresh page's
-      // oldest row and the retained rows below was never fetched. The
-      // exact count is unknowable client-side (the backend caps at
-      // PAGE_SIZE); the hole itself is what must not be silent.
-      if (
-        prev.length > 0 &&
-        fresh.length >= PAGE_SIZE &&
-        !prev.some((i) => i.key != null && freshIds.has(i.key))
-      ) {
-        setPageGap(true);
-      }
-      if (dropped.length > 0) {
-        setOlder((prev) => {
-          // Same rule as loadOlder's append: a CALL already held is the
-          // same immutable row and drops, but a THREAD is never dropped —
-          // this slice's turns are the session's newest half and mergeFeed
-          // folds them into the one card. (Dropping it here would lose the
-          // live turns the moment a paged slice of the same session was
-          // already appended.)
-          const seen = new Set(
-            prev.filter((i) => i.kind === "call").map((i) => i.key),
-          );
-          return [
-            ...dropped.filter((i) => i.kind === "thread" || !seen.has(i.key)),
-            ...prev,
-          ];
-        });
-      }
+      const previous = newestRef.current;
+      if (retainPage(fresh, previous, []).gap) setPageGap(true);
+      setOlder(held => retainPage(fresh, previous, held).older);
     }
     newestRef.current = fresh;
-  }, [tablePoll.data]);
+    newestPayloadRef.current = payload;
+  }, [payload, appliedKey]);
 
   // Row identity cache: calls.jsonl rows are immutable once written, so a
   // request_id seen before IS the same row — reusing the first-seen object
@@ -1051,8 +1062,8 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
       return item;
     };
     const newest = toFeed(data).map(stable);
-    return { feed: mergeFeed(newest, older), newestCount: newest.length };
-  }, [data, older]);
+    return { feed: mergeFeed(newest, pendingRetention.older), newestCount: newest.length };
+  }, [data, pendingRetention.older]);
 
   const skew = isVersionSkew404(error, "/api/model_io") && feed.length === 0;
 
@@ -1068,6 +1079,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   // the live page — the only honest way to close a hole whose middle rows
   // were never fetched.
   const resetPaging = () => {
+    pagingGenerationRef.current += 1;
     setOlder([]);
     setPager("idle");
     setNextBoundary(null);
@@ -1077,13 +1089,13 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
 
   // The boundary for the next click: the oldest fetched page's stated fill
   // point, else the live page's. NEVER the oldest rendered timestamp.
-  const boundary = nextBoundary ?? pageBoundary(data);
-  const canPage = boundary.supported && boundary.ts != null;
+  const boundary = (sameRetentionKey ? nextBoundary : null) ?? pageBoundary(data);
+  const canPage = pagingReady && boundary.supported && boundary.ts != null;
   // What the pager control actually shows. A settled ("idle") pager still
   // has to answer the live page honestly: it may already say the scan
   // reached the file start, or name no boundary at all.
   const pagerState: PagerState =
-    pager !== "idle"
+    !pagingReady ? "idle" : pager !== "idle"
       ? pager
       : data == null
         ? "idle"
@@ -1095,10 +1107,14 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
 
   const loadOlder = () => {
     if (pager === "loading" || !canPage || boundary.ts == null) return;
+    const generation = pagingGenerationRef.current;
+    const currentRequest = () => retentionKeyRef.current === appliedKey &&
+      pagingGenerationRef.current === generation;
     hasPagedRef.current = true;
     setPager("loading");
     getOlderModelIO(applied, boundary.ts)
       .then((r) => {
+        if (!currentRequest()) return;
         const body = r as TableData;
         const page = toFeed(body);
         setOlder((prev) => {
@@ -1140,7 +1156,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
         else if (page.length < PAGE_SIZE) setPager("end");
         else setPager(next.supported && next.ts != null ? "idle" : "blocked");
       })
-      .catch(() => setPager("error"));
+      .catch(() => { if (currentRequest()) setPager("error"); });
   };
 
   return (
@@ -1243,7 +1259,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
                   <Fragment key={item.key ?? `${item.ts ?? "row"}-${i}`}>
                     {/* Explicit hole between the live page and the rows
                         retained below it — never a silent misordering. */}
-                    {pageGap && i === newestCount && i > 0 && (
+                    {visibleGap && i === newestCount && i > 0 && (
                       <div
                         className="flex flex-wrap items-center gap-2 border-y border-amber-900/40 bg-amber-950/20 px-2 py-1 text-xs text-amber-400/90"
                         data-testid="page-gap"
@@ -1330,11 +1346,11 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
                 <button
                   type="button"
                   data-testid="load-older"
-                  disabled={pagerState === "loading"}
+                  disabled={!pagingReady || pagerState === "loading"}
                   className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500 disabled:opacity-50"
                   onClick={loadOlder}
                 >
-                  {pagerState === "loading" ? "loading…" : "load older ▾"}
+                  {!pagingReady ? "waiting for current filter…" : pagerState === "loading" ? "loading…" : "load older ▾"}
                 </button>
               )}
               {pagerState === "error" && (
