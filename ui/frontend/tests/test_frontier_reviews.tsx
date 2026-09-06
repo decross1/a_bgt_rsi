@@ -14,8 +14,9 @@
 //     DEFAULT CLOSED (its poll doesn't even run until opened), and opens to
 //     the unchanged rows;
 //  4. empty / degraded states stay honest (UNKNOWN ≠ idle; empty ≠ outage).
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { refreshPoll } from "../src/api/pollhub";
 import FrontierReviews, {
   frontierAge,
 } from "../src/components/FrontierReviews";
@@ -35,7 +36,9 @@ const METHODS_REASONING =
   "requires an ablation that varies history length while holding context " +
   "size fixed; none of these are present in the record.";
 
+const COMPLETE = { complete: true, missing: false, truncated: false, errors: [] };
 const REVIEWS = {
+  integrity: { agenda: COMPLETE, agenda_status: COMPLETE },
   available: { screen: true, agenda: true, calls: true },
   events: [
     {
@@ -79,6 +82,7 @@ const REVIEWS = {
         "These are the only two ideas that survived the gates yet both sat " +
         "at 'next: synthetic experiment' for days while the loop mints L0s.",
       status: "proposed",
+      effective_status: "proposed",
     },
     {
       type: "screen",
@@ -704,4 +708,50 @@ it("a superseded proposal renders ONE card, the newest occurrence", async () => 
   expect(screen.getByTestId("agenda-card").textContent).toContain(
     "the superseding topic",
   );
+});
+
+it("HQ unknown ruling history must not enable or submit a replacement decision", async () => {
+ const mock = stubRuling(agendaFeed({ ...AGENDA_EVENT, effective_status: "unknown", ruling: { status: "accepted", note: "previous observed human decision" } }), { ok: true, body: { status: "dismissed" } });
+ render(<FrontierReviews pollMs={600_000} />); await screen.findByTestId("agenda-card");
+ const dismiss = screen.queryByTestId("agenda-dismiss");
+ if(dismiss) { fireEvent.click(dismiss); fireEvent.change(screen.getByLabelText("dismiss note (required)"), {target:{value:"counterexample"}}); fireEvent.click(screen.getByTestId("agenda-submit")); await waitFor(()=>expect(screen.getByTestId("agenda-status-chip").textContent).toBe("dismissed")); }
+ expect(mock.mock.calls.filter(c=>String(c[0]).includes("/api/frontier_agenda/"))).toHaveLength(0);
+ expect(dismiss).toBeNull(); expect(screen.getByTestId("agenda-historical-ruling")).toHaveTextContent("accepted"); expect(screen.getByTestId("agenda-historical-ruling")).toHaveTextContent("previous observed human decision");
+});
+it.each(["invalid", undefined, ["proposed"]])("invalid ruling %j is view-only", async effective_status => {
+ stubRuling(agendaFeed({...AGENDA_EVENT,effective_status}),{ok:true,body:{}}); render(<FrontierReviews pollMs={600_000}/>); await screen.findByTestId("agenda-card"); expect(screen.getByTestId("agenda-status-chip")).toHaveTextContent("unknown"); expect(screen.queryByTestId("agenda-accept")).toBeNull();
+});
+it.each([undefined, {}, {agenda:COMPLETE,agenda_status:{...COMPLETE,errors:["unreadable"]}}, {agenda:COMPLETE,agenda_status:{...COMPLETE,complete:"true"}}])("uncertified history revokes an open form: %j", async integrity => {
+ const feed: Record<string,unknown> = agendaFeed(AGENDA_EVENT); const mock=stubRuling(feed,{ok:true,body:{}}); render(<FrontierReviews pollMs={600_000}/>);
+ fireEvent.click(await screen.findByTestId("agenda-dismiss")); fireEvent.change(screen.getByLabelText("dismiss note (required)"),{target:{value:"draft decision"}}); feed.integrity=integrity;
+ await act(async()=>{refreshPoll("modelio:frontier_reviews");}); await waitFor(()=>expect(screen.getByTestId("agenda-submit")).toBeDisabled()); fireEvent.click(screen.getByTestId("agenda-submit")); expect(screen.getByTestId("agenda-status-chip")).toHaveTextContent("unknown"); expect(mock.mock.calls.filter(c=>String(c[0]).includes("/api/frontier_agenda/"))).toHaveLength(0);
+});
+
+it("an already open form refuses a newly unknown ruling", async () => {
+ const event = { ...AGENDA_EVENT }; const feed = agendaFeed(event); const mock = stubRuling(feed, {ok:true,body:{}});
+ render(<FrontierReviews pollMs={600_000}/>);
+ fireEvent.click(await screen.findByTestId("agenda-accept"));
+ fireEvent.change(screen.getByLabelText("accept note (required)"),{target:{value:"draft"}});
+ event.effective_status = "unknown";
+ await act(async()=>{refreshPoll("modelio:frontier_reviews");});
+ await waitFor(()=>expect(screen.getByTestId("agenda-submit")).toBeDisabled());
+ fireEvent.click(screen.getByTestId("agenda-submit"));
+ expect(mock.mock.calls.filter(c=>String(c[0]).includes("/api/frontier_agenda/"))).toHaveLength(0);
+});
+it.each([undefined, {}, {agenda:COMPLETE,agenda_status:{...COMPLETE,missing:true}}])("initial uncertified metadata %j never offers decisions", async integrity => {
+ stubRuling({...agendaFeed(AGENDA_EVENT),integrity},{ok:true,body:{}});
+ render(<FrontierReviews pollMs={600_000}/>);await screen.findByTestId("agenda-card");
+ expect(screen.queryByTestId("agenda-accept")).toBeNull();expect(screen.queryByTestId("agenda-dismiss")).toBeNull();
+ expect(screen.getByTestId("agenda-view-only")).toBeInTheDocument();
+});
+
+it("a legacy accepted label is preserved only as historical evidence", async () => {
+  stubRuling({ ...agendaFeed({ ...AGENDA_EVENT, effective_status: "accepted",
+    ruling: { note: "legacy observed note" } }), integrity: undefined }, { ok: true, body: {} });
+  render(<FrontierReviews pollMs={600_000} />);
+  expect(await screen.findByTestId("agenda-historical-ruling")).toHaveTextContent("accepted");
+  expect(screen.getByTestId("agenda-historical-ruling")).toHaveTextContent("legacy observed note");
+  expect(screen.getByTestId("agenda-status-chip")).toHaveTextContent("unknown");
+  expect(screen.queryByTestId("agenda-accepted-note")).toBeNull();
+  expect(screen.queryByTestId("agenda-accept")).toBeNull();
 });

@@ -59,7 +59,7 @@ interface ReviewEvent {
   rationale?: string | null;
   status?: string | null;
   /** The JOIN of the proposals file against the status-audit file — what a
-   *  reader should believe. "proposed" until a human rules on it. */
+   *  reader may use only with complete integrity metadata. */
   effective_status?: string | null;
   /** Present ONLY when a ruling exists (the backend omits it otherwise). */
   ruling?: AgendaRuling | null;
@@ -72,6 +72,7 @@ interface ReviewEvent {
 // One human ruling on a proposal (memory/frontier_agenda.status.jsonl, joined
 // server-side). Every field is producer-owned — render defensively.
 interface AgendaRuling {
+  status?: string | null;
   note?: string | null;
   ts?: string | null;
   agent_id?: string | null;
@@ -100,8 +101,17 @@ interface FrontierReviewsResponse {
   health: Record<string, VendorHealth>;
   ledger_join: { ok: boolean; error: string | null };
   agenda_write?: AgendaWrite;
+  integrity?: { agenda?: unknown; agenda_status?: unknown };
   windows: Record<string, { bytes: number; truncated: boolean }>;
   generated_at: string;
+}
+
+// Certification requires explicit complete read metadata, never availability alone.
+function completeSource(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  const v = raw as Record<string, unknown>;
+  return v.complete === true && v.missing === false && v.truncated === false &&
+    Array.isArray(v.errors) && v.errors.length === 0;
 }
 
 // Plumbing wire types (the raw invocation table, unchanged).
@@ -468,12 +478,14 @@ function AgendaCard({
   ev,
   nowMs,
   canRule,
+  statusCertified,
 }: {
   ev: ReviewEvent;
   nowMs: number;
   /** agenda_write.available from the backend handshake — false means the
    *  blessed writer is absent in this checkout (no button that would 502). */
   canRule: boolean;
+  statusCertified: boolean;
 }) {
   const [form, setForm] = useState<null | "accept" | "dismiss">(null);
   const [note, setNote] = useState("");
@@ -488,9 +500,12 @@ function AgendaCard({
   );
 
   const pid = asStr(ev.proposal_id);
-  const wireStatus =
-    asStr(ev.effective_status) || asStr(ev.status) || "proposed";
-  const status = local?.status ?? wireStatus;
+  const wireStatus = asStr(ev.effective_status);
+  const supported = ["proposed", "accepted", "dismissed"].includes(wireStatus);
+  const status = statusCertified && supported
+    ? (wireStatus === "proposed" ? (local?.status ?? wireStatus) : wireStatus)
+    : "unknown";
+  const decisionAllowed = canRule && status === "proposed" && pid !== "";
   const ruled = status === "accepted" || status === "dismissed";
   const dismissed = status === "dismissed";
   const ruling: AgendaRuling | null =
@@ -500,7 +515,7 @@ function AgendaCard({
   const clusterId = asStr(ruling?.cluster_id);
 
   const submit = async () => {
-    if (form === null || note.trim() === "" || pid === "") return;
+    if (!decisionAllowed || busy || form === null || note.trim() === "") return;
     setBusy(true);
     setError(null);
     try {
@@ -586,6 +601,17 @@ function AgendaCard({
           </div>
         </div>
       )}
+      {status === "unknown" && (
+        <div data-testid="agenda-view-only" className="mt-1 text-xs text-amber-300">
+          View only — current ruling history is not certified.
+        </div>
+      )}
+      {status === "unknown" && ruling && (
+        <div data-testid="agenda-historical-ruling" className="mt-1 text-xs text-zinc-400">
+          Historical observed ruling: {asStr(ruling.status) || (["accepted", "dismissed"].includes(wireStatus) ? wireStatus : "status unavailable")}
+          {rulingNote !== "" && <> · “{rulingNote}”</>}
+        </div>
+      )}
       {ruled && rulingNote !== "" && (
         <div
           className="mt-0.5 text-[11px] text-zinc-500"
@@ -597,7 +623,7 @@ function AgendaCard({
 
       {/* The decision. Buttons only while the proposal is UNRULED and the
           blessed writer exists. */}
-      {!ruled && canRule && pid !== "" && form === null && (
+      {decisionAllowed && form === null && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <button
             type="button"
@@ -660,7 +686,7 @@ function AgendaCard({
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             <button
               type="button"
-              disabled={busy || note.trim() === ""}
+              disabled={!decisionAllowed || busy || note.trim() === ""}
               onClick={() => void submit()}
               data-testid="agenda-submit"
               className={
@@ -737,14 +763,16 @@ function EventCard({
   ev,
   nowMs,
   canRule,
+  statusCertified,
 }: {
   ev: ReviewEvent;
   nowMs: number;
   canRule: boolean;
+  statusCertified: boolean;
 }) {
   if (ev.type === "screen") return <ScreenCard ev={ev} nowMs={nowMs} />;
   if (ev.type === "agenda")
-    return <AgendaCard ev={ev} nowMs={nowMs} canRule={canRule} />;
+    return <AgendaCard ev={ev} nowMs={nowMs} canRule={canRule} statusCertified={statusCertified} />;
   if (ev.type === "refine") return <RefineCard ev={ev} nowMs={nowMs} />;
   // A type this build does not know is still shown, honestly raw.
   return (
@@ -1031,6 +1059,8 @@ export default function FrontierReviews({
   // The acceptance-step capability. Coerced === true (a truthy non-boolean
   // must never light up a button whose backend writer is absent).
   const canRule = reviews?.agenda_write?.available === true;
+  const statusCertified = !stale && !paused &&
+    completeSource(reviews?.integrity?.agenda) && completeSource(reviews?.integrity?.agenda_status);
 
   // ONE card per proposal. A proposal can appear on the agenda file more than
   // once (the legacy frontier_agenda.accept_proposal path appends a
@@ -1106,6 +1136,7 @@ export default function FrontierReviews({
                   ev={ev}
                   nowMs={now}
                   canRule={canRule}
+                  statusCertified={statusCertified}
                 />
               ))}
             </div>

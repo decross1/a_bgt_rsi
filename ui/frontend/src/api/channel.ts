@@ -16,10 +16,13 @@ export interface ChannelRow {
   ts: string;
   kind: string; // "human" | "nara" | "pi" | "event" (open set — never assume)
   message: string;
+  /** Read framing only; this never authenticates an actor. */
+  recordedLabel?: boolean;
 }
 
 export interface ChannelTimeline {
   rows: ChannelRow[];
+  integrity?: unknown;
 }
 
 export interface ChannelAvailability {
@@ -120,6 +123,21 @@ function asRows(body: unknown): ChannelRow[] {
   return out;
 }
 
+/** Preserve string bytes; only the exact structured envelope certifies framing. */
+export function channelRows(body: unknown): ChannelRow[] {
+  const b = body && typeof body === "object" && !Array.isArray(body)
+    ? body as Record<string, unknown> : {};
+  const m = b.integrity && typeof b.integrity === "object" && !Array.isArray(b.integrity)
+    ? b.integrity as Record<string, unknown> : {};
+  const recordedLabel = m.schema === "lab-channel-timeline/v1" &&
+    m.framing === "json-envelope" && m.status === "framed" &&
+    m.actor_labels === "recorded_not_authenticated" && Array.isArray(b.rows) &&
+    b.rows.every(r => r && typeof r === "object" && !Array.isArray(r) &&
+      typeof r.ts === "string" && r.ts !== "" && typeof r.kind === "string" &&
+      r.kind !== "" && typeof r.message === "string");
+  return asRows(body).map(r => ({ ...r, recordedLabel }));
+}
+
 export async function getChannelTimeline(
   since?: string,
   limit?: number,
@@ -147,7 +165,11 @@ export async function getChannelTimeline(
     // isVersionSkew404 path (duck-typed, module-mock safe).
     throw new ChannelError(resp.status, detail, rc, stderr);
   }
-  return { rows: asRows(await parseJsonSafe(resp)) };
+  const body = await parseJsonSafe(resp);
+  const rows = channelRows(body);
+  // Do not retain a valid-looking tuple after malformed rows were coerced.
+  const valid = rows.length > 0 && rows.every(r => r.recordedLabel);
+  return { rows, integrity: valid ? (body as { integrity: unknown }).integrity : undefined };
 }
 
 async function postChannel(
