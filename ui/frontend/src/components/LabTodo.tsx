@@ -163,7 +163,7 @@ function LabTodo({ initial, pollMs = 120000 }: LabTodoProps) {
   // + refresh_error on every response. Coerced defensively — an older
   // backend binary omits both, which renders neither note.
   const cacheAgeS =
-    typeof data?.cache_age_s === "number" && Number.isFinite(data.cache_age_s)
+    typeof data?.cache_age_s === "number" && Number.isFinite(data.cache_age_s) && data.cache_age_s >= 0
       ? data.cache_age_s
       : null;
   const refreshError = asText(data?.refresh_error);
@@ -204,6 +204,17 @@ function LabTodo({ initial, pollMs = 120000 }: LabTodoProps) {
           what Nara and the PI advance on their own — not your queue
         </span>
       </header>
+      <p className="mb-3 text-sm text-[var(--fg-muted)]">
+        This queue is a runtime projection, not a record of code shipped.
+        {" "}<a href="/development" className="text-[var(--accent)]">See engineering, Nara and research readiness →</a>
+      </p>
+      {data !== null && <div data-testid="lab-todo-source-state" className="mb-3 text-xs text-[var(--fg-muted)]">
+        <p>Queue payload generated: {typeof data.generated_at === "string" ? data.generated_at : "not reported"}</p>
+        <p>Gap source timestamp: {typeof data.gaps_as_of === "string" ? data.gaps_as_of : "not reported"} · source: {gapsSource ?? "unknown"}</p>
+        <p>Backend cache age at last read: {cacheAgeS === null ? "not reported" : `${cacheAgeS} seconds`}</p>
+        <p>Backend rebuild in progress: {typeof data.building === "boolean" ? (data.building ? "yes" : "no") : "not reported by this endpoint"}</p>
+        <p>Last backend rebuild error: {refreshError ?? (Object.prototype.hasOwnProperty.call(data, "refresh_error") ? "none reported" : "not reported by this endpoint")}</p>
+      </div>}
 
       {error !== null &&
         (isVersionSkew404(error, LAB_TODO_ENDPOINT) ? (

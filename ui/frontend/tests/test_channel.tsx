@@ -31,6 +31,8 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelRow } from "../src/api/channel";
 
+const FRAMING = {schema:"lab-channel-timeline/v1",framing:"json-envelope",status:"framed",actor_labels:"recorded_not_authenticated"};
+
 const mocks = vi.hoisted(() => ({
   getChannelAvailability: vi.fn(),
   getChannelTimeline: vi.fn(),
@@ -40,7 +42,8 @@ const mocks = vi.hoisted(() => ({
   getFindingDetail: vi.fn(),
   getIterationJourney: vi.fn(),
 }));
-vi.mock("../src/api/channel", () => ({
+vi.mock("../src/api/channel", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/api/channel")>(),
   getChannelAvailability: mocks.getChannelAvailability,
   getChannelTimeline: mocks.getChannelTimeline,
   postChannelTurn: mocks.postChannelTurn,
@@ -105,7 +108,7 @@ beforeEach(() => {
 
 describe("/channel feed", () => {
   it("renders voice bubbles and event lines with kind chips", () => {
-    render(<Channel initial={ROWS} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={ROWS} initialAvailable={true} />);
 
     // Voice bubbles carry ChatPane's visual language: uppercase voice labels.
     expect(screen.getByTestId("channel-turn-human")).toHaveTextContent(
@@ -127,14 +130,14 @@ describe("/channel feed", () => {
   });
 
   it("renders the honest empty state when there are no rows", () => {
-    render(<Channel initial={[]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
     expect(screen.getByTestId("channel-empty")).toHaveTextContent(
       "no channel activity yet",
     );
   });
 
   it("renders the one-model honesty note beside the role selector", () => {
-    render(<Channel initial={[]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
     const note = screen.getByTestId("channel-honesty-note");
     expect(note).toHaveTextContent("SAME local model");
     expect(note).toHaveTextContent("never treat one as independent confirmation");
@@ -151,7 +154,7 @@ describe("/channel feed", () => {
       actions: { timeline: false, turn: false, delegate: false },
       skew: true,
     });
-    render(<Channel />);
+    render(<Channel initialIntegrity={FRAMING} />);
     await waitFor(() =>
       expect(screen.getByTestId("endpoint-missing-note")).toBeInTheDocument(),
     );
@@ -169,7 +172,7 @@ describe("/channel feed", () => {
       available: true,
       actions: { timeline: true, turn: true, delegate: true },
     });
-    render(<Channel />);
+    render(<Channel initialIntegrity={FRAMING} />);
     await waitFor(() =>
       expect(screen.getByTestId("channel-error")).toHaveTextContent(
         "exec failed",
@@ -201,7 +204,7 @@ describe("/channel chat layout + paging (loop3h-ui-hotfix)", () => {
   it("first live load requests only the NEWEST 40 rows (no 400-row wall)", async () => {
     mocks.getChannelAvailability.mockResolvedValue(LIVE_CAP);
     mocks.getChannelTimeline.mockResolvedValue({ rows: [] });
-    render(<Channel />);
+    render(<Channel initialIntegrity={FRAMING} />);
     await waitFor(() =>
       expect(mocks.getChannelTimeline).toHaveBeenCalledWith(undefined, 40),
     );
@@ -210,7 +213,7 @@ describe("/channel chat layout + paging (loop3h-ui-hotfix)", () => {
   it("renders chronological with the newest at the bottom (fixture order sorted)", () => {
     // Deliberately shuffled: pi (10:07), cycle event (10:00), human (10:05).
     render(
-      <Channel
+      <Channel initialIntegrity={FRAMING}
         initial={[ROWS[6], ROWS[0], ROWS[4]]}
         initialAvailable={true}
       />,
@@ -228,7 +231,7 @@ describe("/channel chat layout + paging (loop3h-ui-hotfix)", () => {
   });
 
   it("the feed scrolls in its own container with the composer docked below", () => {
-    render(<Channel initial={ROWS} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={ROWS} initialAvailable={true} />);
     const feed = screen.getByTestId("channel-feed");
     expect(feed.className).toContain("overflow-y-auto");
     expect(screen.getByTestId("channel-page").className).toContain("flex-col");
@@ -246,9 +249,9 @@ describe("/channel chat layout + paging (loop3h-ui-hotfix)", () => {
     mocks.getChannelAvailability.mockResolvedValue(LIVE_CAP);
     mocks.getChannelTimeline
       .mockResolvedValue({ rows: [] }) // any later poll: quiet
-      .mockResolvedValueOnce({ rows: newest40 })
-      .mockResolvedValueOnce({ rows: [...older, ...newest40] });
-    render(<Channel />);
+      .mockResolvedValueOnce({ rows: newest40, integrity: FRAMING })
+      .mockResolvedValueOnce({ rows: [...older, ...newest40], integrity: FRAMING });
+    render(<Channel initialIntegrity={FRAMING} />);
 
     // A full first-load window ⇒ older rows may exist ⇒ the button shows.
     await waitFor(() =>
@@ -274,7 +277,7 @@ describe("/channel chat layout + paging (loop3h-ui-hotfix)", () => {
   });
 
   it("fixture mode never shows 'load older' (it belongs to the live window)", () => {
-    render(<Channel initial={makeRows(60)} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={makeRows(60)} initialAvailable={true} />);
     expect(screen.queryByTestId("channel-load-older")).toBeNull();
   });
 
@@ -288,7 +291,7 @@ describe("/channel chat layout + paging (loop3h-ui-hotfix)", () => {
       },
       { ts: "2026-08-15T10:02:00Z", kind: "pi", message: "- item one\n- item two" },
     ];
-    render(<Channel initial={rows} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={rows} initialAvailable={true} />);
     const nara = screen.getByTestId("channel-turn-nara");
     expect(within(nara).getByTestId("mini-markdown")).toBeInTheDocument();
     expect(within(nara).getByText("bold").tagName).toBe("STRONG");
@@ -309,7 +312,7 @@ describe("/channel chat layout + paging (loop3h-ui-hotfix)", () => {
     }));
     // cycle event (10:00) + human (10:05) sit outside the 4-kill run.
     render(
-      <Channel initial={[ROWS[0], ROWS[4], ...kills]} initialAvailable={true} />,
+      <Channel initialIntegrity={FRAMING} initial={[ROWS[0], ROWS[4], ...kills]} initialAvailable={true} />,
     );
 
     const wall = screen.getByTestId("channel-event-wall");
@@ -329,7 +332,7 @@ describe("/channel chat layout + paging (loop3h-ui-hotfix)", () => {
       kind: "event",
       message: `cluster killed: cl-${n}`,
     }));
-    render(<Channel initial={twoKills} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={twoKills} initialAvailable={true} />);
     expect(screen.queryByTestId("channel-event-wall")).toBeNull();
     expect(screen.getAllByTestId("channel-event-row")).toHaveLength(2);
   });
@@ -343,7 +346,7 @@ describe("/channel turn composer", () => {
       reply: "a reply",
     });
     mocks.getChannelTimeline.mockResolvedValue({ rows: [] });
-    render(<Channel initial={[]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
 
     fireEvent.click(screen.getByTestId("channel-role-pi"));
     fireEvent.change(screen.getByLabelText("channel turn input"), {
@@ -364,7 +367,7 @@ describe("/channel turn composer", () => {
   it("defaults to the nara voice", async () => {
     mocks.postChannelTurn.mockResolvedValue({ status: "passed" });
     mocks.getChannelTimeline.mockResolvedValue({ rows: [] });
-    render(<Channel initial={[]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
     fireEvent.change(screen.getByLabelText("channel turn input"), {
       target: { value: "status?" },
     });
@@ -378,7 +381,7 @@ describe("/channel turn composer", () => {
   });
 
   it("capability off: send disabled, banner shown, nothing ever posted", () => {
-    render(<Channel initial={[]} initialAvailable={false} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={false} />);
     expect(screen.getByTestId("channel-capability-off")).toHaveTextContent(
       "your message is not sent",
     );
@@ -397,7 +400,7 @@ describe("/channel turn composer", () => {
         stderr: "rejected: message must be non-empty\n",
       }),
     );
-    render(<Channel initial={[]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
     fireEvent.change(screen.getByLabelText("channel turn input"), {
       target: { value: "x" },
     });
@@ -412,7 +415,7 @@ describe("/channel turn composer", () => {
 
 describe("/channel delegate confirm-card flow", () => {
   it("review renders the confirm card naming the exact write targets — WITHOUT posting", () => {
-    render(<Channel initial={[]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
     fireEvent.change(screen.getByTestId("channel-delegate-text"), {
       target: { value: "probe the eviction schedule" },
     });
@@ -430,7 +433,7 @@ describe("/channel delegate confirm-card flow", () => {
   });
 
   it("the improvement card names the authorize_fix packet queue", () => {
-    render(<Channel initial={[]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
     fireEvent.click(screen.getByTestId("channel-delegate-kind-improvement"));
     fireEvent.change(screen.getByTestId("channel-delegate-text"), {
       target: { value: "fix the tailer attach" },
@@ -449,7 +452,7 @@ describe("/channel delegate confirm-card flow", () => {
       rows: [],
     });
     mocks.getChannelTimeline.mockResolvedValue({ rows: [] });
-    render(<Channel initial={[]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
 
     fireEvent.change(screen.getByTestId("channel-delegate-text"), {
       target: { value: "probe eviction" },
@@ -477,7 +480,7 @@ describe("/channel delegate confirm-card flow", () => {
   });
 
   it("cancel dismisses the card and posts nothing", () => {
-    render(<Channel initial={[]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
     fireEvent.change(screen.getByTestId("channel-delegate-text"), {
       target: { value: "an idea" },
     });
@@ -488,7 +491,7 @@ describe("/channel delegate confirm-card flow", () => {
   });
 
   it("editing the text invalidates a pending confirm card", () => {
-    render(<Channel initial={[]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
     fireEvent.change(screen.getByTestId("channel-delegate-text"), {
       target: { value: "v1" },
     });
@@ -508,7 +511,7 @@ describe("/channel delegate confirm-card flow", () => {
         stderr: "rejected: cluster 'cl-nope' not found in the idea ledger\n",
       }),
     );
-    render(<Channel initial={[]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
     fireEvent.change(screen.getByTestId("channel-delegate-text"), {
       target: { value: "t" },
     });
@@ -524,11 +527,11 @@ describe("/channel delegate confirm-card flow", () => {
 
 describe("/channel voice blocks (R4)", () => {
   it("a turn is a document-style block: avatar mark · name · time · body", () => {
-    render(<Channel initial={[ROWS[4], ROWS[5]]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[ROWS[4], ROWS[5]]} initialAvailable={true} />);
     const human = screen.getByTestId("channel-turn-human");
     expect(within(human).getByTestId("channel-voice-avatar")).toBeInTheDocument();
     expect(within(human).getByTestId("channel-voice-name")).toHaveTextContent(
-      "you",
+      "human",
     );
     // The day lives on the divider, so a turn carries only its time — and it
     // carries the full ts machine-readably.
@@ -542,7 +545,7 @@ describe("/channel voice blocks (R4)", () => {
 
   it("each voice carries its own accent; only the human's turn is tinted", () => {
     render(
-      <Channel initial={[ROWS[4], ROWS[5], ROWS[6]]} initialAvailable={true} />,
+      <Channel initialIntegrity={FRAMING} initial={[ROWS[4], ROWS[5], ROWS[6]]} initialAvailable={true} />,
     );
     const human = screen.getByTestId("channel-turn-human");
     const nara = screen.getByTestId("channel-turn-nara");
@@ -568,7 +571,7 @@ describe("/channel voice blocks (R4)", () => {
       { ts: "2026-08-16T01:27:06Z", kind: "oracle", message: "steward asks" },
       { ts: "2026-08-16T01:30:00Z", kind: "nara", message: "nara answers" },
     ];
-    render(<Channel initial={rows} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={rows} initialAvailable={true} />);
     const oracle = screen.getByTestId("channel-turn-oracle");
     expect(within(oracle).getByTestId("channel-voice-name")).toHaveTextContent(
       "oracle · mission steward",
@@ -589,7 +592,7 @@ describe("/channel voice blocks (R4)", () => {
       { ts: "2026-08-15T10:00:00Z", kind: "toString", message: "hostile kind" },
       { ts: "2026-08-15T10:01:00Z", kind: "future_voice", message: "new voice" },
     ];
-    render(<Channel initial={rows} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={rows} initialAvailable={true} />);
     const hostile = screen.getByTestId("channel-turn-toString");
     expect(within(hostile).getByTestId("channel-voice-name")).toHaveTextContent(
       "voice",
@@ -611,7 +614,7 @@ describe("/channel voice blocks (R4)", () => {
         message: "DELEGATED[research]: probe the eviction schedule",
       },
     ];
-    render(<Channel initial={rows} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={rows} initialAvailable={true} />);
     expect(screen.getByTestId("channel-activity-chip")).toHaveTextContent(
       "delegated · research",
     );
@@ -621,14 +624,14 @@ describe("/channel voice blocks (R4)", () => {
   });
 
   it("an ordinary turn gets NO activity chip (no tool-use field exists to invent one from)", () => {
-    render(<Channel initial={[ROWS[5]]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[ROWS[5]]} initialAvailable={true} />);
     expect(screen.queryByTestId("channel-activity-chip")).toBeNull();
   });
 });
 
 describe("/channel system events (R4)", () => {
   it("an event is a compact single-line row (glyph · label · text · time), not a voice block", () => {
-    render(<Channel initial={[ROWS[1]]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[ROWS[1]]} initialAvailable={true} />);
     const row = screen.getByTestId("channel-event-row");
     expect(row).toHaveClass("chn-event");
     expect(row).not.toHaveClass("chn-turn");
@@ -645,7 +648,7 @@ describe("/channel system events (R4)", () => {
       kind: "event",
       message: `cluster killed: cl-${n} — reason ${n}`,
     }));
-    render(<Channel initial={kills} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={kills} initialAvailable={true} />);
     const wall = screen.getByTestId("channel-event-wall");
     expect(wall).toHaveClass("chn-event");
     expect(wall.querySelector(".chn-event-glyph")).not.toBeNull();
@@ -660,7 +663,7 @@ describe("/channel system events (R4)", () => {
 
 describe("/channel filter chips (R4)", () => {
   it("conversation hides events; events hides speech; all restores both", () => {
-    render(<Channel initial={ROWS} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={ROWS} initialAvailable={true} />);
     expect(screen.getAllByTestId("channel-event-row")).toHaveLength(4);
     expect(screen.getAllByTestId(/^channel-turn-/)).toHaveLength(3);
 
@@ -685,7 +688,7 @@ describe("/channel filter chips (R4)", () => {
       { ts: "2026-08-16T01:27:07Z", kind: "nara", message: "reply to steward" },
       { ts: "2026-08-16T01:30:00Z", kind: "event", message: "cycle: c1 — ok" },
     ];
-    render(<Channel initial={rows} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={rows} initialAvailable={true} />);
     fireEvent.click(screen.getByTestId("channel-filter-steward"));
     const turns = screen.getAllByTestId(/^channel-turn-/);
     expect(turns).toHaveLength(2);
@@ -697,7 +700,7 @@ describe("/channel filter chips (R4)", () => {
   });
 
   it("the active filter is aria-pressed (all by default)", () => {
-    render(<Channel initial={ROWS} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={ROWS} initialAvailable={true} />);
     expect(screen.getByTestId("channel-filter-all")).toHaveAttribute(
       "aria-pressed",
       "true",
@@ -714,7 +717,7 @@ describe("/channel filter chips (R4)", () => {
   });
 
   it("a filter that empties the feed says the rows are HIDDEN, not absent", () => {
-    render(<Channel initial={[ROWS[4]]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[ROWS[4]]} initialAvailable={true} />);
     fireEvent.click(screen.getByTestId("channel-filter-events"));
     expect(screen.getByTestId("channel-filter-empty")).toHaveTextContent(
       "the filter is hiding them",
@@ -731,7 +734,7 @@ describe("/channel day dividers (R4)", () => {
       { ts: "2026-08-15T00:10:00Z", kind: "nara", message: "early" },
       { ts: "2026-08-15T09:00:00Z", kind: "human", message: "later" },
     ];
-    render(<Channel initial={rows} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={rows} initialAvailable={true} />);
     const dividers = screen.getAllByTestId("channel-day-divider");
     expect(dividers).toHaveLength(2);
     expect(dividers[0]).toHaveTextContent("Aug 14, 2026 · UTC");
@@ -742,7 +745,7 @@ describe("/channel day dividers (R4)", () => {
     const rows: ChannelRow[] = [
       { ts: "", kind: "human", message: "no timestamp survived the seam" },
     ];
-    render(<Channel initial={rows} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={rows} initialAvailable={true} />);
     expect(screen.getByTestId("channel-day-divider")).toHaveTextContent(
       "undated",
     );
@@ -760,7 +763,7 @@ describe("/channel day dividers (R4)", () => {
       kind: "event",
       message: `cluster killed: cl-${i} — reason`,
     }));
-    render(<Channel initial={kills} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={kills} initialAvailable={true} />);
     expect(screen.queryByTestId("channel-event-wall")).toBeNull();
     expect(screen.getAllByTestId("channel-event-row")).toHaveLength(4);
     expect(screen.getAllByTestId("channel-day-divider")).toHaveLength(2);
@@ -797,7 +800,7 @@ describe("/channel reference chips → peek (R4)", () => {
         message: "did cl-x die before iter-2026-08-15-001, or after sf-009?",
       },
     ];
-    inRouter(<Channel initial={rows} initialAvailable={true} />);
+    inRouter(<Channel initialIntegrity={FRAMING} initial={rows} initialAvailable={true} />);
     const chips = screen.getAllByTestId("channel-ref-chip");
     expect(chips.map((c) => c.textContent)).toEqual([
       "cl-x",
@@ -821,7 +824,7 @@ describe("/channel reference chips → peek (R4)", () => {
 
   it("a cluster chip peeks the ladder row — and never inlines it into the thread", async () => {
     mocks.getLadder.mockResolvedValue(LADDER_PAYLOAD);
-    inRouter(<Channel initial={[ROWS[1]]} initialAvailable={true} />);
+    inRouter(<Channel initialIntegrity={FRAMING} initial={[ROWS[1]]} initialAvailable={true} />);
 
     fireEvent.click(screen.getByTestId("channel-ref-chip"));
     await waitFor(() =>
@@ -854,7 +857,7 @@ describe("/channel reference chips → peek (R4)", () => {
       novelty_class: "novel",
       source_iteration_id: "iter-2026-08-15-001",
     });
-    inRouter(<Channel initial={[ROWS[2]]} initialAvailable={true} />);
+    inRouter(<Channel initialIntegrity={FRAMING} initial={[ROWS[2]]} initialAvailable={true} />);
 
     fireEvent.click(screen.getByTestId("channel-ref-chip"));
     await waitFor(() =>
@@ -892,7 +895,7 @@ describe("/channel reference chips → peek (R4)", () => {
         message: "what came out of iter-2026-08-15-001?",
       },
     ];
-    inRouter(<Channel initial={rows} initialAvailable={true} />);
+    inRouter(<Channel initialIntegrity={FRAMING} initial={rows} initialAvailable={true} />);
 
     fireEvent.click(screen.getByTestId("channel-ref-chip"));
     await waitFor(() =>
@@ -917,7 +920,7 @@ describe("/channel reference chips → peek (R4)", () => {
       found: false,
       finding_id: "sf-009",
     });
-    inRouter(<Channel initial={[ROWS[2]]} initialAvailable={true} />);
+    inRouter(<Channel initialIntegrity={FRAMING} initial={[ROWS[2]]} initialAvailable={true} />);
 
     fireEvent.click(screen.getByTestId("channel-ref-chip"));
     await waitFor(() =>
@@ -931,7 +934,7 @@ describe("/channel reference chips → peek (R4)", () => {
 
   it("a cluster id absent from the ledger reads as absent, not as an empty cluster", async () => {
     mocks.getLadder.mockResolvedValue({ ...LADDER_PAYLOAD, clusters: [] });
-    inRouter(<Channel initial={[ROWS[1]]} initialAvailable={true} />);
+    inRouter(<Channel initialIntegrity={FRAMING} initial={[ROWS[1]]} initialAvailable={true} />);
     fireEvent.click(screen.getByTestId("channel-ref-chip"));
     await waitFor(() =>
       expect(screen.getByTestId("channel-peek-missing")).toHaveTextContent(
@@ -944,7 +947,7 @@ describe("/channel reference chips → peek (R4)", () => {
     mocks.getLadder.mockRejectedValue(
       Object.assign(new Error("404 Not Found"), { status: 404 }),
     );
-    inRouter(<Channel initial={[ROWS[1]]} initialAvailable={true} />);
+    inRouter(<Channel initialIntegrity={FRAMING} initial={[ROWS[1]]} initialAvailable={true} />);
     fireEvent.click(screen.getByTestId("channel-ref-chip"));
     await waitFor(() =>
       expect(screen.getByTestId("channel-peek-missing")).toHaveTextContent(
@@ -962,7 +965,7 @@ describe("/channel reference chips → peek (R4)", () => {
         message: "**cl-x** died; see sf-009 and cl-x again",
       },
     ];
-    inRouter(<Channel initial={rows} initialAvailable={true} />);
+    inRouter(<Channel initialIntegrity={FRAMING} initial={rows} initialAvailable={true} />);
     const nara = screen.getByTestId("channel-turn-nara");
     expect(within(nara).getByTestId("mini-markdown")).toBeInTheDocument();
     const refRow = within(nara).getByTestId("channel-voice-refs");
@@ -976,7 +979,7 @@ describe("/channel reference chips → peek (R4)", () => {
 
   it("Esc closes the peek (the R0 panel behavior is really wired)", async () => {
     mocks.getLadder.mockResolvedValue(LADDER_PAYLOAD);
-    inRouter(<Channel initial={[ROWS[1]]} initialAvailable={true} />);
+    inRouter(<Channel initialIntegrity={FRAMING} initial={[ROWS[1]]} initialAvailable={true} />);
     fireEvent.click(screen.getByTestId("channel-ref-chip"));
     await waitFor(() =>
       expect(screen.getByTestId("peek-panel")).toBeInTheDocument(),
@@ -995,7 +998,7 @@ describe("/channel pending turn + jump to present (R4)", () => {
       }),
     );
     mocks.getChannelTimeline.mockResolvedValue({ rows: [] });
-    render(<Channel initial={[]} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
 
     fireEvent.change(screen.getByLabelText("channel turn input"), {
       target: { value: "what is alive?" },
@@ -1021,7 +1024,7 @@ describe("/channel pending turn + jump to present (R4)", () => {
   });
 
   it("scrolling up reveals 'jump to present'; clicking it returns to the newest row", () => {
-    render(<Channel initial={ROWS} initialAvailable={true} />);
+    render(<Channel initialIntegrity={FRAMING} initial={ROWS} initialAvailable={true} />);
     const feed = screen.getByTestId("channel-feed");
     // jsdom reports every height as 0 — give the scroller a real geometry.
     Object.defineProperty(feed, "scrollHeight", { value: 1000, configurable: true });
@@ -1041,7 +1044,7 @@ describe("/channel pending turn + jump to present (R4)", () => {
 describe("/channel fence — no disposition surface anywhere", () => {
   it("renders no verdict/disposition control on the whole page", () => {
     const { container } = render(
-      <Channel initial={ROWS} initialAvailable={true} />,
+      <Channel initialIntegrity={FRAMING} initial={ROWS} initialAvailable={true} />,
     );
     // No testid on the page carries a disposition name.
     for (const fragment of ["verdict", "disposition", "sign-off", "signoff",
@@ -1070,7 +1073,7 @@ describe("/channel fence — no disposition surface anywhere", () => {
       status: "promoted",
       novelty_class: "novel",
     });
-    inRouter(<Channel initial={[ROWS[2]]} initialAvailable={true} />);
+    inRouter(<Channel initialIntegrity={FRAMING} initial={[ROWS[2]]} initialAvailable={true} />);
     fireEvent.click(screen.getByTestId("channel-ref-chip"));
     await waitFor(() =>
       expect(screen.getByTestId("channel-peek-body")).toBeInTheDocument(),

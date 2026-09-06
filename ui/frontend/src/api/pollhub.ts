@@ -167,9 +167,38 @@ export function subscribePollAge(key: string, cb: () => void): () => void {
   };
 }
 
+// Activity notifications are separate from payload notifications: consumers
+// that show read progress may observe every attempt without defeating the
+// existing unchanged-payload suppression for other panels.
+const activitySubs = new Map<string, Set<() => void>>();
+function notifyActivity(key: string): void {
+  for (const cb of [...(activitySubs.get(key) ?? [])]) cb();
+}
+
+/** Request an immediate refresh through the existing in-flight guard. */
+export function refreshPoll(key: string): void {
+  const entry = entries.get(key);
+  if (entry && entry.subs.size > 0) fire(entry);
+}
+
+/** Observe starts and settlements, including repeated failures. */
+export function usePollActivity(key: string): boolean {
+  const [, update] = useState(0);
+  useEffect(() => {
+    let subs = activitySubs.get(key);
+    if (!subs) { subs = new Set(); activitySubs.set(key, subs); }
+    const listener = () => update((n) => n + 1);
+    subs.add(listener);
+    listener();
+    return () => { subs.delete(listener); if (!subs.size) activitySubs.delete(key); };
+  }, [key]);
+  return entries.get(key)?.inFlight ?? false;
+}
+
 function fire(entry: Entry): void {
   if (entry.inFlight) return;
   entry.inFlight = true;
+  notifyActivity(entry.key);
   // The deadline race — see DEFAULT_DEADLINE_MS. `settled` makes deadline
   // vs settlement first-wins: whichever loses becomes a no-op.
   let settled = false;
@@ -177,7 +206,7 @@ function fire(entry: Entry): void {
     if (settled) return;
     settled = true;
     entry.inFlight = false; // the next due tick retries
-    entry.nextDueAt = Date.now() + entry.intervalMs;
+    entry.nextDueAt = entry.subs.size === 0 ? Date.now() : Date.now() + entry.intervalMs;
     const wasFailing = entry.snapshot.failing;
     // SWR: data and asOf survive — asOf stays frozen at the last real
     // success, so the rendered age is honest about the hang.
@@ -189,6 +218,7 @@ function fire(entry: Entry): void {
       failing: true,
     };
     if (!wasFailing) notify(entry);
+    notifyActivity(entry.key);
   }, entry.deadlineMs);
   entry.fetcher().then(
     (result) => {
@@ -196,7 +226,7 @@ function fire(entry: Entry): void {
       settled = true;
       clearTimeout(deadline);
       entry.inFlight = false;
-      entry.nextDueAt = Date.now() + entry.intervalMs;
+      entry.nextDueAt = entry.subs.size === 0 ? Date.now() : Date.now() + entry.intervalMs;
       // JSON.stringify as deep-equality: every payload here is response JSON
       // (no functions/undefined members), so equal strings = equal payloads.
       let json: string | null = null;
@@ -223,17 +253,19 @@ function fire(entry: Entry): void {
       }
       // …but age-only subscribers hear EVERY successful settle.
       notifyAge(entry.key);
+      notifyActivity(entry.key);
     },
     (err) => {
       if (settled) return; // past-deadline rejection: already reported
       settled = true;
       clearTimeout(deadline);
       entry.inFlight = false;
-      entry.nextDueAt = Date.now() + entry.intervalMs;
+      entry.nextDueAt = entry.subs.size === 0 ? Date.now() : Date.now() + entry.intervalMs;
       const wasFailing = entry.snapshot.failing;
       // SWR: data and asOf survive; only the error state changes.
       entry.snapshot = { ...entry.snapshot, error: err, failing: true };
       if (!wasFailing) notify(entry);
+    notifyActivity(entry.key);
     },
   );
 }
@@ -328,7 +360,9 @@ export function subscribePoll(
         entries.delete(key);
       } else {
         // Next subscriber refetches immediately rather than waiting a
-        // period.
+        // period. Settlements with zero subscribers preserve this rule.
+        // An existing bounded request may finish after unmount; it must
+        // not defer reactivation to a non-finite snapshot-only cadence.
         entry.nextDueAt = Date.now();
       }
       stopHeartbeatIfIdle();
@@ -352,6 +386,7 @@ export function resetPollHub(): void {
   }
   entries.clear();
   ageSubs.clear();
+  activitySubs.clear();
   if (heartbeat != null) {
     clearInterval(heartbeat);
     heartbeat = null;

@@ -39,6 +39,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import {
+  channelRows,
   getChannelAvailability,
   getChannelTimeline,
   postChannelDelegate,
@@ -155,6 +156,7 @@ interface Props {
   /** Fixture rows for tests (undefined = fetch live). Fixture mode never
    *  shows "load older" — that button belongs to the live limit-window. */
   initial?: ChannelRow[];
+  initialIntegrity?: unknown;
   /** Capability override for tests (undefined = probe live). */
   initialAvailable?: boolean;
   pollMs?: number;
@@ -162,11 +164,12 @@ interface Props {
 
 export default function Channel({
   initial,
+  initialIntegrity,
   initialAvailable,
   pollMs = 10_000,
 }: Props) {
   const [rows, setRows] = useState<ChannelRow[]>(() =>
-    sortRows(initial ?? []),
+    sortRows(channelRows({ rows: initial ?? [], integrity: initialIntegrity })),
   );
   const [loaded, setLoaded] = useState(initial !== undefined);
   const [skew, setSkew] = useState(false);
@@ -229,7 +232,7 @@ export default function Channel({
         since === null
           ? await getChannelTimeline(undefined, limitRef.current)
           : await getChannelTimeline(since);
-      merge(resp.rows);
+      merge(channelRows(resp));
       if (since === null) {
         // A full window that came back full probably truncated older rows.
         setMayHaveOlder(
@@ -267,7 +270,7 @@ export default function Channel({
       // Full refetch with a wider newest-N window — the already-seen newest
       // rows dedupe away; only the older tail lands (prepended by the sort).
       const resp = await getChannelTimeline(undefined, next);
-      const freshCount = merge(resp.rows);
+      const freshCount = merge(channelRows(resp));
       if (freshCount === 0) anchorRef.current = null;
       setMayHaveOlder(
         resp.rows.length >= next && next < MAX_TIMELINE_LIMIT,
@@ -432,25 +435,27 @@ export default function Channel({
     </button>
   );
 
-  const feedItems = groupFeed(rows, expandedWalls, filter);
+  // Unframed rows stay raw, including event-like text. A later response cannot
+  // retroactively certify an older row: provenance travels with each record.
+  const feedItems = groupFeed(rows.map(r => r.recordedLabel ? r : { ...r, kind: `unverified:${r.kind}` }), expandedWalls, filter);
   const openPeek = (r: ChannelRef) => setPeek(r);
 
   // ── one turn: a document-style voice block ────────────────────────────
   const renderTurn = (item: Extract<FeedItem, { type: "single" }>) => {
     const r = item.row;
-    const voice = voiceOf(r.kind);
+    const voice = r.recordedLabel ? voiceOf(r.kind) : { ...VOICE_FALLBACK, label: "unverified text" };
     // Model voices reply in markdown — render it, and collect the ids it
     // mentions into a chip row (MiniMarkdown is shared with the journal /
     // experiment readers; R4 does not fork it to inline chips). The human's
     // own turns (and unknown kinds) stay verbatim text with INLINE chips.
-    const isModelVoice = r.kind === "nara" || r.kind === "pi";
-    const activity = activityOf(r.message);
+    const isModelVoice = r.recordedLabel && (r.kind === "nara" || r.kind === "pi");
+    const activity = r.recordedLabel ? activityOf(r.message) : null;
     const body = activity !== null ? activity.body : r.message;
     return (
       <article
         key={item.key}
-        data-testid={`channel-turn-${r.kind}`}
-        data-voice={r.kind}
+        data-testid={`channel-turn-${r.recordedLabel ? r.kind : "unverified"}`}
+        data-voice={r.recordedLabel ? r.kind : "unverified"}
         className={`chn-turn${voice.own ? " chn-turn--own" : ""}`}
         style={{ "--voice-accent": voice.accent } as CSSProperties}
       >
@@ -463,7 +468,10 @@ export default function Channel({
             {voice.mark}
           </span>
           <span className="chn-name" data-testid="channel-voice-name">
-            {voice.label}
+            {r.kind === "human" ? "human" : voice.label}
+          </span>
+          <span className="text-xs text-zinc-500" data-testid="channel-label-provenance">
+            {r.recordedLabel ? "recorded label · not authenticated" : "unverified actor label"}
           </span>
           {activity !== null && (
             <span
@@ -492,7 +500,7 @@ export default function Channel({
             className="chn-body chn-body--raw"
             data-testid="channel-voice-body"
           >
-            <RefText text={body} onOpen={openPeek} />
+            {r.recordedLabel ? <RefText text={body} onOpen={openPeek} /> : body}
           </div>
         )}
       </article>
