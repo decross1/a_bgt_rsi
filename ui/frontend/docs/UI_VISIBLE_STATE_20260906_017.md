@@ -27,3 +27,17 @@ Verify served bytes and actual browser rendering; HTTP 200 alone is insufficient
 Recovery: retain the candidate and evidence if blocked. Any later rollback
 reverts only this reviewed UI delta; no reset, private-history publication,
 backend restart, cache reset, model invocation or ledger change.
+
+## Candidate validation
+
+Four new regression cases failed on the prior presentation while19 existing
+cases passed. After the repair,27 focused cases passed; the full frontend
+suite passed1,342 tests across87 files with no failures or skips. Typecheck
+and build passed; the existing bundle-size warning remains. Backend source
+and decision controls are unchanged; no fresh backend-validation claim.
+
+The UI receipt pins PR5's public merge and a dated observation. Earlier PR3
+checks remain separately labeled. LAN browser inspection blocked the heavy
+lab-queue request and all write requests in the inspecting browser; its queue
+error is a test intervention, not evidence of a backend outage. No service
+change is needed for the existing Vite source reload after reviewed adoption.
