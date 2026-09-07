@@ -7,6 +7,7 @@ import { getIterations, getLadder } from "../src/api/http";
 import { refreshPoll } from "../src/api/pollhub";
 import { TOPIC_FIELDS } from "../src/api/ladder";
 import type { LadderCluster, LadderResponse } from "../src/types/schemas";
+import ThesisFamilies from "../src/components/ladder/ThesisFamilies";
 
 vi.mock("../src/api/http", () => ({
   getLadder: vi.fn(), getIterations: vi.fn(), getIdeas: vi.fn(),
@@ -36,6 +37,113 @@ const fixture: LadderResponse & { clusters: LadderCluster[]; histogram: Record<s
 function page(data = fixture, iterations: unknown[] = rows) {
   return <MemoryRouter><Ladder initial={data} initialIterations={iterations} /></MemoryRouter>;
 }
+
+describe("collection classification bars", () => {
+  it("keeps all-record denominators while status and search filters change matches", () => {
+    const data = structuredClone(fixture);
+    data.clusters[0].evidence_level = "L0";
+    data.clusters[2].evidence_level = "L2";
+    data.clusters[2].status = "killed";
+    const before = JSON.stringify(data);
+    render(page(data));
+    const family = screen.getByTestId("thesis-family-collection:liquid-democracy");
+    const stages = within(family).getByRole("img", { name: /^Recorded stages for all 3 records:/ });
+    const statuses = within(family).getByRole("img", { name: /^Recorded statuses for all 3 records:/ });
+    expect(stages).toHaveAccessibleName(/L0 1 of 3; L1 1 of 3; L2 1 of 3/);
+    expect(statuses).toHaveAccessibleName(/open 2 of 3; surfaced 0 of 3; killed 1 of 3/);
+    expect(stages.closest("button")).toBeNull();
+    expect(within(family).getByRole("button", { name: "Expand curated association: Liquid democracy" }))
+      .toHaveAccessibleDescription(/All 3 records.*Recorded stages for all 3 records:.*Recorded statuses for all 3 records:/);
+    expect(within(family).queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(within(family).getByText("All 3 records")).toBeVisible();
+    expect(within(family).getByText("2 of 3 records")).toBeVisible();
+    const originalLabels = [stages.getAttribute("aria-label"), statuses.getAttribute("aria-label")];
+    const widths = Array.from(stages.querySelectorAll<HTMLElement>("[data-classification]"))
+      .map((segment) => Number.parseFloat(segment.style.width));
+    expect(widths).toHaveLength(3);
+    expect(widths.reduce((a, b) => a + b, 0)).toBeCloseTo(100);
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "clustering question" } });
+    expect(within(family).getByText("1 of 3 records")).toBeVisible();
+    expect([stages.getAttribute("aria-label"), statuses.getAttribute("aria-label")]).toEqual(originalLabels);
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(within(family).getByText("3 records")).toBeVisible();
+    expect([stages.getAttribute("aria-label"), statuses.getAttribute("aria-label")]).toEqual(originalLabels);
+    expect(JSON.stringify(data)).toBe(before);
+  });
+
+  it("keeps missing and unrecognized classifications visible with exact non-color counts", () => {
+    const data = structuredClone(fixture);
+    data.clusters[0].evidence_level = null as unknown as string;
+    data.clusters[1].evidence_level = "L7";
+    data.clusters[1].status = "paused";
+    data.clusters[2].status = null as unknown as string;
+    render(page(data));
+    const family = screen.getByTestId("thesis-family-collection:liquid-democracy");
+    const stages = within(family).getByRole("img", { name: /^Recorded stages for all 3 records:/ });
+    const statuses = within(family).getByRole("img", { name: /^Recorded statuses for all 3 records:/ });
+    expect(stages).toHaveAccessibleName(/unknown 2 of 3/);
+    expect(statuses).toHaveAccessibleName(/paused \(unrecognized\) 1 of 3/);
+    expect(statuses).toHaveAccessibleName(/unknown 1 of 3/);
+    expect(within(stages).getByText("unknown 2")).toBeVisible();
+    expect(within(statuses).getByText("paused (unrecognized) 1")).toBeVisible();
+    expect(within(statuses).getByText("unknown 1")).toBeVisible();
+    expect(within(stages).getByText("L1 1")).toBeVisible();
+  });
+
+  it("reports zero categories explicitly without drawing positive-width zero segments", () => {
+    render(page());
+    const family = screen.getByTestId("thesis-family-collection:liquid-democracy");
+    const stages = within(family).getByRole("img", { name: /^Recorded stages for all 3 records:/ });
+    expect(stages).toHaveAccessibleName(/L0 0 of 3; L1 3 of 3; L2 0 of 3; L3 0 of 3; L4 0 of 3; L5 0 of 3; unknown 0 of 3/);
+    const segments = stages.querySelectorAll<HTMLElement>("[data-classification]");
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toHaveAttribute("data-classification", "L1");
+    expect(segments[0]).toHaveStyle({ width: "100%" });
+    expect(within(stages).getByText("L1 3")).toBeVisible();
+  });
+
+  it("shows an empty-record state instead of a fabricated zero-denominator distribution", () => {
+    render(<MemoryRouter><ThesisFamilies model={{ records: [], families: [], issues: [] }} nextOwed={{}} onPick={vi.fn()} nowMs={0} /></MemoryRouter>);
+    expect(screen.getByRole("status")).toHaveTextContent("No records match the current filters.");
+    expect(screen.getByText(/0 of 0 records/)).toBeVisible();
+    expect(screen.queryByRole("img", { name: /^Recorded (stages|statuses) for all/ })).not.toBeInTheDocument();
+    expect(document.body.innerHTML).not.toMatch(/NaN|Infinity/);
+  });
+
+  it("retains an exact rare-class count without rounding it to zero or changing its denominator", () => {
+    const clusters = Array.from({ length: 101 }, (_, i) => ({ ...fixture.clusters[0],
+      cluster_id: `cl-rare-${i}`, evidence_level: i === 100 ? "L2" : "L0",
+    }));
+    render(page({ ...fixture, clusters }));
+    const family = screen.getByTestId("thesis-family-collection:liquid-democracy");
+    const stages = within(family).getByRole("img", { name: /^Recorded stages for all 101 records:/ });
+    expect(stages).toHaveAccessibleName(/L0 100 of 101; L1 0 of 101; L2 1 of 101/);
+    expect(within(stages).getByText("L2 1")).toBeVisible();
+    const rare = stages.querySelector<HTMLElement>('[data-classification="L2"]');
+    expect(rare).not.toBeNull();
+    expect(Number.parseFloat(rare!.style.width)).toBeCloseTo(100 / 101);
+    expect(rare!.style.minWidth).toBe("");
+  });
+
+  it("retains a killed record's recorded L4 stage on a separate axis with a singular denominator", () => {
+    render(page({ ...fixture, clusters: [{ ...fixture.clusters[0], status: "killed", evidence_level: "L4" }] }));
+    fireEvent.change(screen.getByLabelText("Record status"), { target: { value: "all" } });
+    const family = screen.getByTestId("thesis-family-collection:liquid-democracy");
+    expect(within(family).getByText("All 1 record")).toBeVisible();
+    expect(within(family).getByRole("img", { name: /^Recorded stages for all 1 record:/ })).toHaveAccessibleName(/L4 1 of 1/);
+    expect(within(family).getByRole("img", { name: /^Recorded statuses for all 1 record:/ })).toHaveAccessibleName(/killed 1 of 1/);
+  });
+
+  it("keeps exact-topic headings once while preserving expansion and distinct claims", () => {
+    const sameTopicRows = rows.map((row) => ({ ...row, seed: { topic: "One exact topic" } }));
+    render(page(fixture, sameTopicRows));
+    const control = screen.getByRole("button", { name: "Expand exact topic collection: One exact topic" });
+    fireEvent.click(control);
+    expect(screen.getAllByText("One exact topic")).toHaveLength(1);
+    for (const row of rows) expect(screen.getByText(row.hypothesis.text)).toBeVisible();
+    expect(control).toHaveAttribute("aria-expanded", "true");
+  });
+});
 
 describe("Ladder topic collections", () => {
   it("starts with one labeled collection, two recorded topics and three distinct L1 records", () => {
