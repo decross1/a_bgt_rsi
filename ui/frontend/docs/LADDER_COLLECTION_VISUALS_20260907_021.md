@@ -30,6 +30,31 @@ PR/merge, then actual served-source and Firefox workflow verification. Preserve 
 failed checks and historical timing dispositions. Source work is bounded to one
 initial wave plus at most two corrections; no automatic extension or follow-on.
 
-## Status
+## Implemented behavior
 
-Plan committed before implementation. Validation and live adoption are pending.
+Each collection now has two compact classification bars outside its disclosure
+button. Their visible caption says “All N records”; the header's “shown of total”
+count remains the filter result. Text legends preserve each nonzero count without
+requiring color. Accessible image descriptions include every known category and
+its exact numerator/denominator, including zero categories; the disclosure also
+references the summary. The hover title repeats these values. These are discrete
+stage/status partitions, not cumulative stage achievement or progress indicators.
+
+Segment widths use unrounded count/total ratios, with no minimum width assigned
+to rare categories. Empty models retain the explicit no-matching-records state.
+Missing/invalid stages remain unknown. The existing status display preserves
+unknown values and explicitly labelled unrecognized producer values; this change
+does not normalize or discard those existing count categories. Expanded records
+retain their original producer labels and negative evidence.
+
+Curated collections show their number of topics; the full topic names and claims
+remain under expansion. A single exact-topic heading is not repeated inside the
+same expanded collection. Disclosure names, identities, grouping, filters,
+selection and dossier actions keep their existing semantics.
+
+The source regression set covers filtered/all-record denominators, discrete
+stages, missing/unrecognized values, zero categories, empty models, thirds,
+100:1 proportions, a killed L4 record, accessible description and same-title
+disclosures. Browser checks distinguish a private candidate preview from actual
+served-source adoption. Exact validation/review/delivery receipts belong to the
+owner's dated report; this portable note is not a live deployment status feed.

@@ -146,6 +146,58 @@ function Distribution({
   );
 }
 
+// This is a partition of current recorded classifications, not a progress bar.
+// All-record counts stay fixed when a filter changes which cards are shown.
+function ClassificationBar({
+  kind,
+  values,
+  total,
+  descriptionId,
+}: {
+  kind: "stages" | "statuses";
+  values: Array<[string, number]>;
+  total: number;
+  descriptionId: string;
+}) {
+  const categories = kind === "stages" ? [...LEVELS, "unknown"] : [...KNOWN_STATUSES, "unknown"];
+  const counts = new Map(values);
+  const exactValues = [...categories, ...values.map(([value]) => value).filter((value) => !categories.includes(value))]
+    .map((value) => `${value} ${counts.get(value) ?? 0} of ${total}`);
+  const description = `Recorded ${kind} for all ${countLabel(total, total)}: ${exactValues.join("; ")}`;
+  const colors: Record<string, string> = kind === "stages"
+    ? { L0: "var(--neutral-500)", L1: "var(--status-info)", L2: "var(--status-warn)",
+      L3: "var(--neutral-300)", L4: "var(--neutral-700)", L5: "var(--neutral-100)" }
+    : { open: "var(--status-info)", surfaced: "var(--status-warn)", killed: "var(--status-idle)" };
+
+  if (total === 0) return <span style={META}>No recorded {kind}.</span>;
+  return (
+    <span
+      role="img"
+      aria-label={description}
+      title={description}
+      className="flex min-w-0 flex-wrap items-center"
+      style={{ gap: "var(--space-1) var(--space-2)", fontSize: "var(--text-meta)", color: "var(--fg-muted)" }}
+    >
+      <span id={descriptionId} className="sr-only">{description}</span>
+      <span aria-hidden="true">{kind === "stages" ? "Stages" : "Status"}</span>
+      <span aria-hidden="true" style={{ display: "flex", width: 72, height: 6, flexShrink: 0,
+        overflow: "hidden", borderRadius: "var(--radius-pill)", background: "var(--surface-3)" }}>
+        {values.filter(([, count]) => count > 0).map(([value, count]) => (
+          <span key={value} data-classification={value} style={{ width: `${count / total * 100}%`,
+            background: colors[value] ?? "var(--neutral-400)", boxShadow: "inset 1px 0 var(--surface-1)" }} />
+        ))}
+      </span>
+      <span aria-hidden="true" className="flex min-w-0 flex-wrap" style={{ gap: "var(--space-1) var(--space-2)" }}>
+        {values.map(([value, count]) => (
+          <span key={value} className="tnum" style={{ color: "var(--fg)", overflowWrap: "anywhere" }}>
+            {value} {count}
+          </span>
+        ))}
+      </span>
+    </span>
+  );
+}
+
 interface TopicGroup {
   key: string;
   topics: string[];
@@ -518,6 +570,7 @@ function FamilyCard({
         aria-label={`${expanded ? "Collapse" : "Expand"} ${presentationKind}: ${family.title}${disclosureContext}`}
         aria-expanded={expanded}
         aria-controls={regionId}
+        aria-describedby={`${regionId}-total ${regionId}-stages ${regionId}-statuses`}
         onClick={onToggle}
         className="w-full text-left"
         style={{
@@ -548,6 +601,7 @@ function FamilyCard({
             </span>
             <span style={{ ...META, display: "block", marginTop: "var(--space-1)" }}>
               {family.basis === "exact iteration seed.topic" ? "Same recorded topic — association only" : family.basis}
+              {presentationKind === "curated association" && ` · ${family.topicLabels.length} topics`}
             </span>
           </span>
           <span className="tnum" style={{ color: "var(--fg-muted)", fontSize: "var(--text-meta)" }}>
@@ -555,24 +609,17 @@ function FamilyCard({
           </span>
         </span>
 
-        <span
-          className="flex min-w-0 flex-wrap"
-          style={{ gap: "var(--space-2) var(--space-4)", marginTop: "var(--space-2)", color: "var(--fg-muted)", fontSize: "var(--text-meta)" }}
-        >
-          <Distribution label="stages" values={stageCounts} />
-          <Distribution label="statuses" values={statusCounts} />
-        </span>
-
-        {!expanded && family.topicLabels.some((topic) => topic !== family.title) && (
-          <span className="flex min-w-0 flex-col" style={{ gap: "var(--space-1)", marginTop: "var(--space-2)" }}>
-            {family.topicLabels.filter((topic) => topic !== family.title).map((topic) => (
-              <span key={topic} style={{ color: "var(--fg)", fontSize: "var(--text-ui)", overflowWrap: "anywhere" }}>
-                {topic}
-              </span>
-            ))}
-          </span>
-        )}
       </button>
+
+      <div id={`${regionId}-classifications`} data-testid="family-classification-summary" className="flex min-w-0 flex-wrap items-center"
+        style={{ gap: "var(--space-1) var(--space-4)", padding: "0 var(--space-4) var(--space-3)" }}>
+        <span id={`${regionId}-total`} className="tnum" style={META}
+          title="Classification bars include all records in this collection, including filtered-out and killed records.">
+          All {countLabel(family.records.length, family.records.length)}
+        </span>
+        <ClassificationBar kind="stages" values={stageCounts} total={family.records.length} descriptionId={`${regionId}-stages`} />
+        <ClassificationBar kind="statuses" values={statusCounts} total={family.records.length} descriptionId={`${regionId}-statuses`} />
+      </div>
 
       {expanded && (
         <div
@@ -585,12 +632,14 @@ function FamilyCard({
         >
           {groups.map((group) => (
             <section key={group.key} style={{ minWidth: 0, marginTop: "var(--space-3)" }}>
+              {!(groups.length === 1 && group.topics.length === 1 && group.topics[0] === family.title && individual === undefined) && (
               <div className="flex min-w-0 flex-wrap items-start" style={{ gap: "var(--space-2)" }}>
                 <div style={{ minWidth: 0, flex: "1 1 280px" }}><TopicHeading group={group} /></div>
                 <span className="tnum" style={META}>
                   {countLabel(group.shownRecords.length, group.allRecords.length)}
                 </span>
               </div>
+              )}
               {group.shownRecords.length > 0 ? (
                 <div className="grid min-w-0 grid-cols-1 lg:grid-cols-2" style={{ gap: "var(--space-2)", marginTop: "var(--space-2)" }}>
                   {[...group.shownRecords].sort(compareRecords).map((record) => (
