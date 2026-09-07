@@ -493,6 +493,11 @@ function FamilyCard({
   const statusCounts = countsBy(family.records, (record) => statusLabel(record.cluster), KNOWN_STATUSES);
   const stageCounts = countsBy(family.records, (record) => recordStage(record.cluster), [...LEVELS, "unknown"]);
   const groups = groupRecords(family, shownRecords);
+  const individual = family.records.length === 1 && family.records[0].association === "individual"
+    ? family.records[0] : undefined;
+  const disclosureContext = individual === undefined ? "" : individual.hasUniqueSourceId
+    ? (individual.id === family.title ? "" : ` — record ${individual.id}`)
+    : ` — unverified snapshot ${individual.unverifiedSnapshotNumber}`;
 
   return (
     <section
@@ -507,7 +512,7 @@ function FamilyCard({
     >
       <button
         type="button"
-        aria-label={`${expanded ? "Collapse" : "Expand"} ${family.title}`}
+        aria-label={`${expanded ? "Collapse" : "Expand"} ${family.title}${disclosureContext}`}
         aria-expanded={expanded}
         aria-controls={regionId}
         onClick={onToggle}

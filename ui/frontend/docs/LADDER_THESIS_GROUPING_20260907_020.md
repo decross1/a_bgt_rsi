@@ -42,7 +42,8 @@ the original board and table remain available for record-level inspection.
 8. `ui/frontend/tests/test_thesis_model.ts`
 9. `ui/frontend/tests/test_thesis_families.tsx`
 10. `ui/frontend/tests/test_ladder_page.tsx`
-11. `ui/frontend/tests/test_validate_routes_console.tsx` — only affected route fixture wiring
+11. `ui/frontend/src/components/ladder/LadderBoard.tsx`
+12. `ui/frontend/src/components/ladder/LadderTable.tsx`
 
 No backend, raw ledger, runtime, policy, model, dependency or action-writer
 change is included. Any needed scope amendment is recorded before editing.
@@ -122,3 +123,14 @@ identity. Detail panels withhold ID-keyed agenda attribution when it is absent
 or ambiguous; a unique ID retains its agenda even when topic association is
 uncertain. Ambiguous Inspect controls include a presentation-only snapshot
 number, never a new research ID. Raw records, rulings and ledgers are unchanged.
+
+
+## Final review boundary corrections
+
+Individual-family disclosure controls include source-ID context when unique,
+or the presentation-only snapshot number when ambiguous, so same-title
+collapsed records remain distinguishable before Inspect is reachable. A
+previously received no-ledger response remains visible alongside a later
+refresh error, including a later 404; an initial failed fetch does not become
+a confirmed empty source. The exact-path list above is the final twelve-path
+range; the originally contemplated console-route test required no change.

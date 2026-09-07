@@ -204,16 +204,16 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
         </div>
       </header>
 
-      {error != null && !skew && (
+      {error != null && (!skew || loaded) && (
         <div
           data-testid="ladder-error"
           style={{ fontSize: "var(--text-ui)", color: "var(--status-bad)" }}
         >
-          Refresh failed: {String(error)}. {data != null && "Showing last received records."}
+          Refresh failed: {String(error)}. {loaded && (data === null ? "Last received source contained no ledger." : "Showing last received records.")}
         </div>
       )}
 
-      {skew && data == null && (
+      {skew && data == null && !loaded && (
         <>
           <EndpointMissingNote endpoint={LADDER_ENDPOINT} />
           <IdeasFallback initial={initialIdeas} />
@@ -222,7 +222,7 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
 
       {!skew && error == null && !loaded && <SkeletonCard lines={4} />}
 
-      {!skew && error == null && loaded && data === null && (
+      {loaded && data === null && (
         <>
           <div
             data-testid="ladder-empty"

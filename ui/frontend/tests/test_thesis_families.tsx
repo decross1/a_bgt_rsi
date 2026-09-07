@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import Ladder from "../src/routes/Ladder";
 import { getIterations, getLadder } from "../src/api/http";
+import { refreshPoll } from "../src/api/pollhub";
 import { TOPIC_FIELDS } from "../src/api/ladder";
 import type { LadderCluster, LadderResponse } from "../src/types/schemas";
 
@@ -261,4 +262,48 @@ describe("whole-route ambiguous snapshot boundaries", () => {
       errors.mockRestore();
     });
   }
+});
+
+describe("final review disclosure and last-good empty boundaries", () => {
+  for (const identity of ["duplicate", "missing"]) {
+    it(`distinguishes collapsed ${identity}-ID snapshots with the same title`, () => {
+      const clusters = fixture.clusters.slice(0, 2).map((c) => ({ ...c,
+        cluster_id: identity === "duplicate" ? "cl-shared" : undefined, stem: "Same displayed title",
+      })) as LadderCluster[];
+      render(page({ ...fixture, clusters }));
+      const controls = screen.getAllByRole("button", { name: /^Expand Same displayed title/ });
+      expect(controls).toHaveLength(2);
+      expect(new Set(controls.map((control) => control.getAttribute("aria-label"))).size).toBe(2);
+      for (const control of controls) {
+        expect(control).toHaveAccessibleName(/unverified snapshot \d+/);
+        fireEvent.click(control);
+      }
+      expect(screen.getAllByTestId(/^thesis-record-/)).toHaveLength(2);
+    });
+  }
+  for (const status of [500, 404]) {
+    it(`retains a confirmed 204 empty source and fallback after a later ${status}`, async () => {
+      vi.mocked(getLadder).mockResolvedValueOnce(null);
+      vi.mocked(getIterations).mockResolvedValue({ iterations: [] });
+      render(<MemoryRouter><Ladder initialIdeas="# Last received ideas" /></MemoryRouter>);
+      expect(await screen.findByTestId("ladder-empty")).toBeVisible();
+      vi.mocked(getLadder).mockRejectedValueOnce(Object.assign(new Error(`${status} refresh failed`), { status }));
+      await act(async () => { refreshPoll("ladder:records"); });
+      expect(await screen.findByTestId("ladder-error")).toHaveTextContent(`${status} refresh failed`);
+      expect(screen.getByTestId("ladder-empty")).toBeVisible();
+      expect(screen.getAllByTestId("ladder-ideas-fallback")).toHaveLength(1);
+      expect(screen.getByTestId("ladder-ideas-fallback")).toHaveTextContent("Last received ideas");
+    });
+  }
+  it("does not hide a later 404 behind a last-good populated source", async () => {
+    vi.mocked(getLadder).mockResolvedValueOnce(fixture);
+    vi.mocked(getIterations).mockResolvedValue({ iterations: [] });
+    render(<MemoryRouter><Ladder /></MemoryRouter>);
+    expect(await screen.findByTestId("ladder-counts-header")).toHaveTextContent("3 recorded clusters");
+    vi.mocked(getLadder).mockRejectedValueOnce(Object.assign(new Error("404 refresh failed"), { status: 404 }));
+    await act(async () => { refreshPoll("ladder:records"); });
+    expect(await screen.findByTestId("ladder-error")).toHaveTextContent("Showing last received records");
+    expect(screen.getByTestId("ladder-counts-header")).toHaveTextContent("3 recorded clusters");
+    expect(screen.queryByTestId("ladder-empty")).not.toBeInTheDocument();
+  });
 });
