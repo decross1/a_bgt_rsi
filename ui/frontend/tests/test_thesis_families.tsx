@@ -40,7 +40,7 @@ function page(data = fixture, iterations: unknown[] = rows) {
 describe("Ladder topic collections", () => {
   it("starts with one labeled collection, two recorded topics and three distinct L1 records", () => {
     render(page());
-    const expand = screen.getByRole("button", { name: "Expand Liquid democracy" });
+    const expand = screen.getByRole("button", { name: "Expand curated association: Liquid democracy" });
     fireEvent.click(expand);
     const family = screen.getByTestId("thesis-family-collection:liquid-democracy");
     expect(within(family).getByText(/association only/i)).toBeVisible();
@@ -56,7 +56,7 @@ describe("Ladder topic collections", () => {
   it("searches member hypotheses while retaining the collection and matching denominator", () => {
     render(page());
     fireEvent.change(screen.getByRole("searchbox", { name: /search topics, claims or record ids/i }), { target: { value: "clustering question" } });
-    fireEvent.click(screen.getByRole("button", { name: "Expand Liquid democracy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand curated association: Liquid democracy" }));
     const family = screen.getByTestId("thesis-family-collection:liquid-democracy");
     expect(within(family).getByText(/1 of 3 records/i)).toBeVisible();
     expect(within(family).getByText(rows[1].hypothesis.text)).toBeVisible();
@@ -65,9 +65,9 @@ describe("Ladder topic collections", () => {
 
   it("retains expanded identity after a reordered source refresh", () => {
     const { rerender } = render(page());
-    fireEvent.click(screen.getByRole("button", { name: "Expand Liquid democracy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand curated association: Liquid democracy" }));
     rerender(page({ ...fixture, clusters: [...fixture.clusters].reverse() }, [...rows].reverse()));
-    expect(screen.getByRole("button", { name: "Collapse Liquid democracy" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Collapse curated association: Liquid democracy" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText(rows[2].hypothesis.text)).toBeVisible();
   });
 
@@ -80,7 +80,7 @@ describe("Ladder topic collections", () => {
     data.histogram.L1 = 2;
     render(page(data));
     fireEvent.change(screen.getByLabelText("Record status"), { target: { value: "all" } });
-    fireEvent.click(screen.getByRole("button", { name: "Expand Liquid democracy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand curated association: Liquid democracy" }));
     const killed = screen.getByTestId(`thesis-record-cl-${rows[2].iteration_id}`);
     expect(within(killed).getByText("L2")).toBeVisible();
     expect(within(killed).getByText(/killed/i)).toBeVisible();
@@ -90,7 +90,7 @@ describe("Ladder topic collections", () => {
 
   it("keeps records inspectable when topic provenance is unavailable", () => {
     render(<StrictMode>{page(fixture, [])}</StrictMode>);
-    expect(screen.queryByRole("button", { name: "Expand Liquid democracy" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Expand curated association: Liquid democracy" })).not.toBeInTheDocument();
     expect(screen.getAllByTestId(/^thesis-family-/)).toHaveLength(3);
     expect(screen.getByText(/source relationships are not verified/i)).toBeVisible();
   });
@@ -100,12 +100,12 @@ describe("Ladder topic collections", () => {
 describe("Ladder collection flow and source lifecycle", () => {
   it("keeps expansion and filters while inspecting the board, then shows the current picked record", () => {
     const { rerender } = render(page());
-    fireEvent.click(screen.getByRole("button", { name: "Expand Liquid democracy" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand curated association: Liquid democracy" }));
     fireEvent.change(screen.getByLabelText("Recorded stage"), { target: { value: "L1" } });
     fireEvent.click(screen.getByTestId("ladder-view-board"));
     expect(screen.getByTestId("ladder-board")).toBeVisible();
     fireEvent.click(screen.getByTestId("ladder-view-collections"));
-    expect(screen.getByRole("button", { name: "Collapse Liquid democracy" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Collapse curated association: Liquid democracy" })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByLabelText("Recorded stage")).toHaveValue("L1");
     const record = screen.getByTestId(`thesis-record-cl-${rows[0].iteration_id}`);
     fireEvent.click(within(record).getByRole("button"));
@@ -126,7 +126,7 @@ describe("Ladder collection flow and source lifecycle", () => {
     duplicate.kill_reason = { code: "duplicate_of_existing", detail: `Recorded duplicate of ${fixture.clusters[0].cluster_id}` };
     render(page({ ...fixture, clusters: [...fixture.clusters, duplicate] }));
     fireEvent.change(screen.getByLabelText("Record status"), { target: { value: "all" } });
-    const button = screen.getByRole("button", { name: "Expand Liquid democracy" });
+    const button = screen.getByRole("button", { name: "Expand curated association: Liquid democracy" });
     button.focus();
     expect(button).toHaveFocus();
     expect(button.tagName).toBe("BUTTON");
@@ -144,7 +144,7 @@ describe("Ladder collection flow and source lifecycle", () => {
     vi.mocked(getLadder).mockResolvedValue(fixture);
     vi.mocked(getIterations).mockResolvedValue({ iterations: rows.map((row) => ({ ...row, started_at: "2026-01-01T00:00:00Z", ended_at: "2026-01-01T00:01:00Z", journal_entry_path: "" })) });
     const { unmount } = render(<StrictMode><MemoryRouter><Ladder /></MemoryRouter></StrictMode>);
-    const expand = await screen.findByRole("button", { name: "Expand Liquid democracy" });
+    const expand = await screen.findByRole("button", { name: "Expand curated association: Liquid democracy" });
     expect(getLadder).toHaveBeenCalledTimes(1);
     expect(getIterations).toHaveBeenCalledTimes(1);
     expect(getIterations).toHaveBeenCalledWith({ fields: TOPIC_FIELDS });
@@ -158,7 +158,7 @@ describe("Ladder collection flow and source lifecycle", () => {
     expect(await screen.findByText(/Topic refresh failed: Error: offline topics/)).toBeVisible();
     expect(screen.getByTestId("ladder-error")).toHaveTextContent("Showing last received records");
     expect(screen.getByText(rows[0].hypothesis.text)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Collapse Liquid democracy" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Collapse curated association: Liquid democracy" })).toBeVisible();
     expect(screen.getByTestId("ladder-source-times")).toHaveTextContent("2026-01-03T00:00:00Z");
     expect(screen.getByTestId("ladder-source-times")).not.toHaveTextContent("not fetched in this view");
     expect(getLadder).toHaveBeenCalledTimes(2);
@@ -175,7 +175,7 @@ describe("Ladder collection flow and source lifecycle", () => {
     render(<MemoryRouter><Ladder /></MemoryRouter>);
     await waitFor(() => expect(screen.getAllByTestId(/^thesis-family-/)).toHaveLength(3));
     expect(await screen.findByText(/Topic refresh failed: Error: Iteration topic source is missing or malformed/)).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Expand Liquid democracy" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Expand curated association: Liquid democracy" })).not.toBeInTheDocument();
     expect(screen.getByText(/source relationships are not verified/i)).toBeVisible();
   });
 });
@@ -271,7 +271,7 @@ describe("final review disclosure and last-good empty boundaries", () => {
         cluster_id: identity === "duplicate" ? "cl-shared" : undefined, stem: "Same displayed title",
       })) as LadderCluster[];
       render(page({ ...fixture, clusters }));
-      const controls = screen.getAllByRole("button", { name: /^Expand Same displayed title/ });
+      const controls = screen.getAllByRole("button", { name: /^Expand record: Same displayed title/ });
       expect(controls).toHaveLength(2);
       expect(new Set(controls.map((control) => control.getAttribute("aria-label"))).size).toBe(2);
       for (const control of controls) {
@@ -305,5 +305,50 @@ describe("final review disclosure and last-good empty boundaries", () => {
     expect(await screen.findByTestId("ladder-error")).toHaveTextContent("Showing last received records");
     expect(screen.getByTestId("ladder-counts-header")).toHaveTextContent("3 recorded clusters");
     expect(screen.queryByTestId("ladder-empty")).not.toBeInTheDocument();
+  });
+});
+
+describe("explicit disclosure presentation kind", () => {
+  it("distinguishes the original same-title record and exact collection, plus curated association", () => {
+    const data = { ...fixture, clusters: [
+      { ...fixture.clusters[0], cluster_id: "Shared title", stem: "Shared title", members: ["paper-unsupported"] },
+      { ...fixture.clusters[1], cluster_id: "cl-grouped", stem: "Grouped record", members: ["iter-grouped"] },
+      fixture.clusters[2],
+    ] };
+    const before = JSON.stringify(data);
+    render(page(data, [...rows, {
+      iteration_id: "iter-grouped", seed: { topic: "Shared title" },
+      hypothesis: { text: "A separate grouped claim" },
+    }]));
+    const record = screen.getByRole("button", { name: "Expand record: Shared title — source ID Shared title" });
+    const exact = screen.getByRole("button", { name: "Expand exact topic collection: Shared title" });
+    const curated = screen.getByRole("button", { name: "Expand curated association: Liquid democracy" });
+    expect(new Set([record, exact, curated].map((control) => control.getAttribute("aria-label"))).size).toBe(3);
+    expect(new Set([record, exact, curated].map((control) => control.getAttribute("aria-controls"))).size).toBe(3);
+    record.focus(); expect(record).toHaveFocus();
+    fireEvent.click(record);
+    expect(record).toHaveAccessibleName("Collapse record: Shared title — source ID Shared title");
+    expect(exact).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByTestId("thesis-record-Shared title")).toHaveTextContent("Shared title");
+    fireEvent.click(exact);
+    expect(exact).toHaveAccessibleName("Collapse exact topic collection: Shared title");
+    expect(screen.getByTestId("thesis-record-cl-grouped")).toHaveTextContent("A separate grouped claim");
+    fireEvent.click(curated);
+    expect(curated).toHaveAccessibleName("Collapse curated association: Liquid democracy");
+    expect(screen.getAllByTestId(/^thesis-record-/)).toHaveLength(3);
+    expect(JSON.stringify(data)).toBe(before);
+  });
+
+  it("retains source-ID context for same-title unique sibling records", () => {
+    const clusters = fixture.clusters.slice(0, 2).map((c, i) => ({ ...c,
+      cluster_id: `cl-unique-${i}`, stem: "Shared title", members: ["paper-unsupported"],
+    }));
+    render(page({ ...fixture, clusters }));
+    for (const [i, cluster] of clusters.entries()) {
+      const button = screen.getByRole("button", { name: `Expand record: Shared title — source ID cl-unique-${i}` });
+      fireEvent.click(button);
+      expect(screen.getByTestId(`thesis-record-${cluster.cluster_id}`)).toHaveTextContent(cluster.cluster_id);
+    }
+    expect(screen.getAllByTestId(/^thesis-record-/)).toHaveLength(2);
   });
 });
