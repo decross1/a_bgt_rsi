@@ -23,6 +23,7 @@ import type { LadderResponse } from "../src/types/schemas";
 const mocks = vi.hoisted(() => ({
   getLadder: vi.fn(),
   getIdeas: vi.fn(),
+  getIterations: vi.fn().mockResolvedValue({ iterations: [] }),
   getHealth: vi.fn().mockResolvedValue({
     ok: true,
     hostname: "spark",
@@ -33,6 +34,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../src/api/http", () => ({
   getLadder: mocks.getLadder,
   getIdeas: mocks.getIdeas,
+  getIterations: mocks.getIterations,
   getHealth: mocks.getHealth,
 }));
 
@@ -147,11 +149,14 @@ const FIXTURE: LadderResponse = {
 };
 
 function renderLadder(props: Parameters<typeof Ladder>[0] = {}) {
-  return render(
+  const result = render(
     <MemoryRouter>
       <Ladder {...props} />
     </MemoryRouter>,
   );
+  // These inherited tests exercise the retained board/table, now explicitly selected.
+  fireEvent.click(screen.getByTestId("ladder-view-board"));
+  return result;
 }
 
 describe("/ladder funnel strip", () => {
@@ -412,6 +417,7 @@ describe("/ladder command palette verbs", () => {
         <Ladder initial={FIXTURE} />
       </MemoryRouter>,
     );
+    fireEvent.click(screen.getByTestId("ladder-view-board"));
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     const palette = screen.getByTestId("command-palette");
     expect(within(palette).getByText("toggle graveyard")).toBeInTheDocument();

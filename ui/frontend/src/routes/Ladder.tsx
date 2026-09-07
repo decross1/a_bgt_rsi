@@ -1,23 +1,5 @@
-// Ladder (/ladder) — the lab's visual centerpiece (revamp R1). The reduced
-// idea-ledger state off GET /api/ladder (ui/backend/ladder.py runs the REAL
-// reducer, workers/idea_ledger.py), rebuilt from a text table into a picture:
-//
-//   header  — the aggregate FUNNEL strip (hand-rolled SVG): L0→L5 narrowing
-//             by how many clusters reached each rung, with gray kill-ribbons
-//             dropping into a graveyard node; beside it the one chart, the
-//             kills-per-rung bar ("where do ideas die?").
-//   body    — a KANBAN board, one column per rung plus a collapsed Graveyard
-//             grouped by kill code. Cards carry four things; everything else
-//             is one click away in a PeekPanel, which is also the single path
-//             onward to a member's dossier.
-//   toggle  — board | table over the SAME data (the table is the board's
-//             scannable, WCAG-clean twin).
-//
-// /ideas folds in here: the ideas.md markdown render (GET /api/ideas) is this
-// page's FALLBACK body — shown when the backend predates /api/ladder (404 =
-// version skew → EndpointMissingNote) or the ledger has never been written
-// (204 → honest "no idea ledger yet"). Read-only throughout.
-import { useEffect, useState } from "react";
+// Existing Ladder: topic collections over unchanged individual research records.
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import EndpointMissingNote, {
@@ -30,11 +12,14 @@ import LadderBoard from "../components/ladder/LadderBoard";
 import LadderFunnel from "../components/ladder/LadderFunnel";
 import LadderTable from "../components/ladder/LadderTable";
 import { buildLadderModel, stemOf } from "../components/ladder/ladderModel";
+import { buildThesisFamilies } from "../components/ladder/thesisModel";
+import ThesisFamilies from "../components/ladder/ThesisFamilies";
+import { useLadderSources } from "../api/ladder";
 import Card from "../design/Card";
 import PeekPanel from "../design/PeekPanel";
 import { SkeletonCard } from "../design/Skeleton";
 import { registerPaletteActions } from "../design/CommandPalette";
-import { getIdeas, getLadder } from "../api/http";
+import { getIdeas } from "../api/http";
 import type { LadderCluster, LadderResponse } from "../types/schemas";
 
 const LADDER_ENDPOINT = "/api/ladder";
@@ -88,48 +73,35 @@ interface Props {
   // the fallback body the same way (null = absent ideas.md).
   initial?: LadderResponse | null;
   initialIdeas?: string | null;
+  initialIterations?: unknown[];
   pollMs?: number;
 }
 
-export default function Ladder({ initial, initialIdeas, pollMs = 30_000 }: Props) {
-  const [data, setData] = useState<LadderResponse | null>(initial ?? null);
-  const [loaded, setLoaded] = useState(initial !== undefined);
-  const [skew, setSkew] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<"board" | "table">("board");
-  const [graveyardOpen, setGraveyardOpen] = useState(false);
-  const [picked, setPicked] = useState<LadderCluster | null>(null);
+type View = "collections" | "board" | "table";
 
-  useEffect(() => {
-    if (initial !== undefined) return;
-    let active = true;
-    const load = () =>
-      getLadder()
-        .then((resp) => {
-          if (!active) return;
-          setData(resp);
-          setLoaded(true);
-          setSkew(false);
-          setError(null);
-        })
-        .catch((e) => {
-          if (!active) return;
-          if (isVersionSkew404(e, LADDER_ENDPOINT)) {
-            // Older backend binary without the endpoint — quiet note + the
-            // ideas.md fallback body, never red.
-            setSkew(true);
-            setError(null);
-          } else {
-            setError(String(e));
-          }
-        });
-    load();
-    const id = setInterval(load, Math.max(5_000, pollMs));
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
-  }, [initial, pollMs]);
+function receivedAt(at: number | null) {
+  return at === null ? "not fetched in this view" : new Date(at).toISOString();
+}
+
+export default function Ladder({ initial, initialIdeas, initialIterations, pollMs = 30_000 }: Props) {
+  const source = useLadderSources({ initial, initialIterations, pollMs });
+  const { data, loaded, error } = source;
+  const skew = isVersionSkew404(error, LADDER_ENDPOINT);
+  const [view, setView] = useState<View>("collections");
+  const [graveyardOpen, setGraveyardOpen] = useState(false);
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const model = useMemo(() => buildLadderModel(data ?? null), [data]);
+  const thesis = useMemo(() => buildThesisFamilies(model.clusters, source.iterations), [model.clusters, source.iterations]);
+  // Resolve against current data on every refresh; do not retain an old object
+  // as if it were the record's latest disposition.
+  const pickedRecord = thesis.records.find((record) => record.id === pickedId);
+  const picked = pickedRecord?.cluster ?? null;
+  const pick = (cluster: LadderCluster) => {
+    setPickedId(thesis.records.find((record) => record.cluster === cluster)?.id ?? null);
+  };
+  const sourceTimes = model.clusters.map((cluster) => cluster.last_event_ts)
+    .filter((value): value is string => typeof value === "string" && Number.isFinite(Date.parse(value)));
+  const latestEvent = sourceTimes.sort((a, b) => Date.parse(b) - Date.parse(a))[0];
 
   // The page's two verbs in the ⌘K palette. Navigation to /ladder is already
   // a built-in palette route entry, so registering it again here would only
@@ -149,7 +121,7 @@ export default function Ladder({ initial, initialIdeas, pollMs = 30_000 }: Props
           id: "ladder-switch-view",
           label: "switch ladder view",
           group: "Ladder",
-          keywords: ["board", "table", "kanban"],
+          keywords: ["collections", "board", "table", "kanban"],
           perform: () => setView((v) => (v === "board" ? "table" : "board")),
         },
       ]),
@@ -157,10 +129,9 @@ export default function Ladder({ initial, initialIdeas, pollMs = 30_000 }: Props
   );
 
   const nowMs = Date.now();
-  const model = buildLadderModel(data);
   const agendaOpen = model.agenda.length;
 
-  const viewBtn = (v: "board" | "table") => (
+  const viewBtn = (v: View) => (
     <button
       key={v}
       type="button"
@@ -221,30 +192,31 @@ export default function Ladder({ initial, initialIdeas, pollMs = 30_000 }: Props
           lab queue →
         </Link>
         <div className="flex" style={{ gap: "var(--space-1)" }}>
+          {viewBtn("collections")}
           {viewBtn("board")}
           {viewBtn("table")}
         </div>
       </header>
 
-      {error !== null && (
+      {error != null && !skew && (
         <div
           data-testid="ladder-error"
           style={{ fontSize: "var(--text-ui)", color: "var(--status-bad)" }}
         >
-          {error}
+          Refresh failed: {String(error)}. {data != null && "Showing last received records."}
         </div>
       )}
 
-      {skew && (
+      {skew && data == null && (
         <>
           <EndpointMissingNote endpoint={LADDER_ENDPOINT} />
           <IdeasFallback initial={initialIdeas} />
         </>
       )}
 
-      {!skew && error === null && !loaded && <SkeletonCard lines={4} />}
+      {!skew && error == null && !loaded && <SkeletonCard lines={4} />}
 
-      {!skew && error === null && loaded && data === null && (
+      {!skew && error == null && loaded && data === null && (
         <>
           <div
             data-testid="ladder-empty"
@@ -257,62 +229,58 @@ export default function Ladder({ initial, initialIdeas, pollMs = 30_000 }: Props
         </>
       )}
 
-      {!skew && error === null && data !== null && (
+      {data != null && (
         <>
-          {/* The strip: funnel + the one chart, side by side. */}
-          <div
-            className="flex flex-wrap items-start"
-            style={{ gap: "var(--space-4)", marginBottom: "var(--space-4)" }}
-          >
-            <Card className="flex-1" testId="ladder-funnel-panel">
-              <div
-                className="flex flex-wrap items-baseline"
-                style={{
-                  gap: "var(--space-4)",
-                  marginBottom: "var(--space-2)",
-                  fontSize: "var(--text-meta)",
-                  color: "var(--fg-muted)",
-                }}
-                data-testid="ladder-counts-header"
-              >
-                <span className="tnum">{model.counts.open} open</span>
-                <span className="tnum" style={{ color: "var(--status-ok)" }}>
-                  {model.counts.surfaced} surfaced
-                </span>
-                <span className="tnum" style={{ color: "var(--status-bad)" }}>
-                  {model.counts.killed} killed
-                </span>
-                <span className="tnum">{agendaOpen} open agenda</span>
-              </div>
-              <LadderFunnel
-                reached={model.reached}
-                killsByRung={model.killsByRung}
-                killedTotal={model.killed.length}
-              />
-            </Card>
-            <Card testId="ladder-kills-panel">
-              <KillsByRung
-                killsByRung={model.killsByRung}
-                killsUnrung={model.killsUnrung}
-              />
-            </Card>
-          </div>
+          <Card className="mb-4" testId="ladder-source-state">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="ladder-counts-header">
+              <strong>{model.clusters.length} recorded clusters</strong>
+              <span>{model.counts.open} open</span>
+              <span>{model.counts.killed} killed</span>
+              <span>{model.counts.surfaced} surfaced</span>
+              <span>{agendaOpen} open agenda</span>
+              {initial === undefined && <button type="button" onClick={source.refresh}
+                disabled={source.refreshing} className="text-[var(--accent)]">
+                {source.refreshing ? "Refreshing sources…" : "Refresh sources"}
+              </button>}
+            </div>
+            <details className="mt-2 text-xs text-[var(--fg-muted)]">
+              <summary className="cursor-pointer">Source timestamps · latest recorded event: {latestEvent ?? "unknown"}</summary>
+              <p className="mt-2" data-testid="ladder-source-times">
+                Records received: {receivedAt(source.recordsAsOf)}. Topics received: {receivedAt(source.topicsAsOf)}.
+                {" "}Latest recorded cluster event: {latestEvent ?? "unknown"}.
+                {" "}These are separate snapshots; topic association does not validate claim or evidence binding.
+              </p>
+            </details>
+            {source.topicsError !== null && <p role="status" className="mt-2 text-sm text-[var(--status-warn)]">
+              Topic refresh failed: {source.topicsError}. {source.iterations !== undefined
+                ? "Showing last received associations; their source time is above."
+                : "Records remain individual until topic evidence is available."}
+            </p>}
+            {skew && <p role="status">The record endpoint is now unavailable. Showing last received records.</p>}
+          </Card>
 
-          {view === "board" ? (
-            <LadderBoard
-              model={model}
-              nowMs={nowMs}
-              graveyardOpen={graveyardOpen}
-              onToggleGraveyard={() => setGraveyardOpen((v) => !v)}
-              onPick={setPicked}
-            />
-          ) : (
-            <LadderTable
-              clusters={model.clusters}
-              nowMs={nowMs}
-              onPick={setPicked}
-            />
-          )}
+          <details className="mb-4" open={view !== "collections"}>
+            <summary className="cursor-pointer text-sm text-[var(--fg-muted)]">Recorded stage overview — includes killed history</summary>
+            <div className="grid gap-4 pt-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <Card className="min-w-0" testId="ladder-funnel-panel">
+                <LadderFunnel reached={model.reached} killsByRung={model.killsByRung} killedTotal={model.killed.length} />
+              </Card>
+              <Card testId="ladder-kills-panel">
+                <KillsByRung killsByRung={model.killsByRung} killsUnrung={model.killsUnrung} />
+              </Card>
+            </div>
+          </details>
+
+          {/* Keep this component mounted when switching views, preserving its
+              collection expansion and member filters without a new controller. */}
+          <div hidden={view !== "collections"}>
+            <ThesisFamilies model={thesis} nextOwed={model.nextOwed} onPick={pick} nowMs={nowMs} />
+          </div>
+          {view === "board" && <LadderBoard model={model} nowMs={nowMs}
+            graveyardOpen={graveyardOpen} onToggleGraveyard={() => setGraveyardOpen((v) => !v)} onPick={pick} />}
+          {view === "table" && <div className="max-w-full overflow-x-auto">
+            <LadderTable clusters={model.clusters} nowMs={nowMs} onPick={pick} />
+          </div>}
 
           {/* A live cluster the producer gave no L0..L5 rung has no column —
               an unknown rung is never shown as a fake L0. Say so out loud;
@@ -334,12 +302,13 @@ export default function Ladder({ initial, initialIdeas, pollMs = 30_000 }: Props
 
           <PeekPanel
             open={picked !== null}
-            onClose={() => setPicked(null)}
+            onClose={() => setPickedId(null)}
             title={picked === null ? undefined : stemOf(picked)}
           >
             {picked !== null && (
               <ClusterPeek
                 cluster={picked}
+                record={pickedRecord}
                 agenda={model.agenda}
                 nextOwed={model.nextOwed}
                 nowMs={nowMs}

@@ -6,6 +6,7 @@
 // reader.
 import { Link } from "react-router-dom";
 
+import type { FamilyRecord } from "./thesisModel";
 import RungGlyph from "../../design/RungGlyph";
 import { ageLabel } from "../../ladderBar";
 import { asText, dossierIdOf, isKilled, membersOf } from "./ladderModel";
@@ -39,11 +40,13 @@ const META: React.CSSProperties = {
 
 export default function ClusterPeek({
   cluster,
+  record,
   agenda,
   nextOwed,
   nowMs,
 }: {
   cluster: LadderCluster;
+  record?: FamilyRecord;
   /** The whole page agenda; this component takes its own cluster's slice. */
   agenda: LadderAgendaItem[];
   /** next_owed keyed by rung (the backend's per-rung "test owed" wording). */
@@ -75,6 +78,7 @@ export default function ClusterPeek({
       <div
         style={{
           display: "flex",
+          flexWrap: "wrap",
           alignItems: "center",
           gap: "var(--space-2)",
           fontSize: "var(--text-meta)",
@@ -100,6 +104,19 @@ export default function ClusterPeek({
       >
         {cid}
       </p>
+
+      {record !== undefined && <Section label="recorded questions">
+        <p style={{ ...META, color: "var(--fg-muted)" }}>{record.reason}</p>
+        {record.iterations.map((iteration) => <div key={iteration.id} style={{ marginTop: "var(--space-2)", overflowWrap: "anywhere" }}>
+          <p style={{ ...META, fontWeight: "var(--weight-medium)" }}>{iteration.topic}</p>
+          <p style={META}>{iteration.hypothesis ?? "No hypothesis text in the received source."}</p>
+          <p style={{ ...META, fontSize: "var(--text-meta)", color: "var(--fg-muted)" }}>{iteration.id}</p>
+        </div>)}
+        {record.missingMembers.length > 0 && <p style={META}>Topic source missing or unsupported for: {record.missingMembers.join(", ")}</p>}
+        <p style={{ ...META, marginTop: "var(--space-2)", color: "var(--fg-muted)" }}>
+          Recorded text is not revalidated claim binding. Full papers, pipeline evidence and decisions remain in each member dossier.
+        </p>
+      </Section>}
 
       {killed ? (
         <Section label="killed">

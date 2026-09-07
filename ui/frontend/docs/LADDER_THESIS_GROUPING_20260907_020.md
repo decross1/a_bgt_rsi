@@ -67,3 +67,26 @@ Source freeze target: 2026-09-07 08:00 UTC. First visible delivery target:
 08:30 UTC, retaining at least 30 minutes for validation/recovery. Stop a bounded
 slice on ownership/integrity conflict or repeated unexplained failure. Recovery
 preserves the unmerged candidate and evidence; no reset, clean or force push.
+
+## Implemented reader flow
+
+The existing `/ladder` route starts with collections. Search a recorded topic,
+hypothesis or ID, narrow by recorded stage/status, expand a collection, then
+open a member's existing dossier. Liquid democracy is explicitly curated from
+the two exact public topic labels; equal topics are associations, not proof that
+claims are equivalent. Killed records remain available through the status filter
+and in each collection's all-record distribution. The board and table are still
+available and do not lose collection filters or expansion when switching views.
+
+Only the slim iteration fields used for the join are polled. A failed refresh
+retains the last received payload with its error. Record/topic receipt times and
+the latest cluster event time are separate; the two APIs are not an atomic
+snapshot. Unsupported, mixed and missing joins stay separate. The supplied
+Ladder projection carries the current disposition and latest negative, not a
+complete raw-event archive. The dossier remains the path to available papers,
+pipeline evidence and human decisions. None of this revalidates claim binding,
+scientific eligibility or a historical finding.
+
+Browser-only fixture previews are development evidence, not shared deployment.
+The existing Vite process can adopt reviewed frontend source without a backend
+restart. Delivery requires a separate served-source and real-browser check.
