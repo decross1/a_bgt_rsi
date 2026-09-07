@@ -879,6 +879,7 @@ function sameFilters(a: ModelIOFilters, b: ModelIOFilters): boolean {
 
 export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   const [paused, setPaused] = useState(false);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(() => window.location.hash === "#research-suggestions");
   // `inputs` follows every keystroke (controlled inputs stay live);
   // `applied` is what actually queries the backend, applied only after
   // FILTER_DEBOUNCE_MS of quiet.
@@ -1161,21 +1162,28 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
 
   return (
     <div className="page-full" data-testid="modelio-page">
-      <div className="mb-3 flex flex-wrap items-baseline gap-3">
-        <h2 className="text-sm font-medium text-zinc-200">Model I/O</h2>
-        <span className="text-xs text-zinc-500">
-          what is actually passing through gemma & qwen — live off{" "}
-          <span className="font-mono">logs/calls.jsonl</span>
-        </span>
-      </div>
+      <header className="mb-5">
+        <p className="mb-1 text-xs font-medium uppercase tracking-widest text-[var(--fg-muted)]">Operations</p>
+        <h1 className="text-3xl font-semibold tracking-tight text-[var(--fg)]">Model I/O</h1>
+        <p className="mt-2 text-sm text-[var(--fg-muted)]">Inspect recorded inputs, outputs and attempts. A successful call is not a scientific result.</p>
+      </header>
 
       {/* Top strip: ONE runtime-activity card — nara chain + subagent
           work, with the dev spawn ledger behind a collapsed toggle. */}
-      <RuntimeStrip activity={activity} trace={trace} />
+      <details className="mb-3 rounded-lg border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
+        <summary className="cursor-pointer text-sm font-medium text-[var(--fg)]">Runtime activity and developer traces</summary>
+        <RuntimeStrip activity={activity} trace={trace} />
+      </details>
 
       {/* Frontier tier (D-061), sibling section: its poll rides the same
           page scheduler — see components/FrontierReviews.tsx. */}
-      <FrontierReviews paused={paused} initialDelayMs={FRONTIER_STAGGER_MS} />
+      <details id="research-suggestions" open={suggestionsOpen}
+        onToggle={(event) => setSuggestionsOpen(event.currentTarget.open)}
+        className="mb-3 rounded-lg border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
+        <summary className="cursor-pointer text-sm font-medium text-[var(--fg)]">Research suggestions and ruling history</summary>
+        <p className="my-2 text-sm text-[var(--fg-muted)]">Suggestions remain separate from accepted agenda and completed experiments. Unknown ruling history stays view-only.</p>
+        <FrontierReviews paused={paused} initialDelayMs={FRONTIER_STAGGER_MS} />
+      </details>
 
       {/* Filters + live-state controls. */}
       <div className="mt-4 flex flex-wrap items-center gap-2">

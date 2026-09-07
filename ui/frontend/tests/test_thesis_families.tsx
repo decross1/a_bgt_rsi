@@ -206,6 +206,24 @@ describe("Ladder topic collections", () => {
 
 
 describe("Ladder collection flow and source lifecycle", () => {
+  it("keeps the selected collection inspector while filters and workspace views change", () => {
+    render(page());
+    fireEvent.click(screen.getByRole("button", { name: "Inspect curated association: Liquid democracy" }));
+    const inspector = screen.getByTestId("research-inspector");
+    fireEvent.click(within(inspector).getByRole("button", { name: "Show 3 recorded entries" }));
+    for (const row of rows) {
+      fireEvent.click(within(inspector).getByRole("button", {
+        name: `Inspect recorded entry record cl-${row.iteration_id}, iteration ${row.iteration_id}: cl-${row.iteration_id}`,
+      }));
+      expect(inspector).toHaveTextContent(row.hypothesis.text);
+    }
+
+    fireEvent.change(screen.getByLabelText("Recorded stage"), { target: { value: "L2" } });
+    expect(screen.getByTestId("research-inspector")).toBe(inspector);
+    fireEvent.click(screen.getByTestId("ladder-view-board"));
+    expect(screen.getByTestId("research-inspector")).toBe(inspector);
+  });
+
   it("keeps expansion and filters while inspecting the board, then shows the current picked record", () => {
     const { rerender } = render(page());
     fireEvent.click(screen.getByRole("button", { name: "Expand curated association: Liquid democracy" }));

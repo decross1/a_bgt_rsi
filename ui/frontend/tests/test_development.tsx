@@ -321,3 +321,15 @@ describe("LAB017 visible delivery and loaded-source distinctions", () => {
     expect(science.queryByText(/23 unresolved/)).not.toBeInTheDocument();
   });
 });
+
+
+it("offers separate engineering, runtime and research next steps without creating a new scientific result", async () => {
+  render(<App />);
+  await ready();
+  const summary = screen.getByRole("region", { name: "Readiness at a glance" });
+  expect(within(summary).getByRole("link", { name: "Changed / held / next evidence" })).toHaveAttribute("href", "#delivery-evidence");
+  expect(within(summary).getByRole("link", { name: "Inspect actual call records" })).toHaveAttribute("href", "/model-io");
+  expect(within(summary).getByRole("link", { name: "Open claims and evidence" })).toHaveAttribute("href", "/ladder");
+  expect(summary).toHaveTextContent(/do not establish new evidence or market fit/);
+  expect(calls.some((path) => path.startsWith("/api/lab_todo"))).toBe(false);
+});

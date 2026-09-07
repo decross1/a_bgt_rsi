@@ -716,3 +716,29 @@ it("a filter change resets the paged-older rows and the pager state", async () =
   );
   expect(screen.getByTestId("load-older")).toBeInTheDocument();
 });
+
+
+it("keeps the call feed primary with history in explicitly labeled disclosures", async () => {
+  stubRoutes(happyHandler);
+  render(<ModelIO />);
+  await screen.findByTestId("modelio-table");
+  expect(screen.getByRole("heading", { name: "Model I/O", level: 1 })).toBeInTheDocument();
+  const runtime = screen.getByText("Runtime activity and developer traces").closest("details");
+  const suggestions = screen.getByText("Research suggestions and ruling history").closest("details");
+  expect(runtime).not.toHaveAttribute("open");
+  expect(suggestions).not.toHaveAttribute("open");
+  fireEvent.click(screen.getByText("Research suggestions and ruling history"));
+  expect(suggestions).toHaveAttribute("open");
+  expect(screen.getByText(/Unknown ruling history stays view-only/)).toBeVisible();
+});
+
+it("opens the retained suggestion history from its exact deep link", async () => {
+  window.history.replaceState({}, "", "/model-io#research-suggestions");
+  try {
+    stubRoutes(happyHandler);
+    render(<ModelIO />);
+    expect(screen.getByText("Research suggestions and ruling history").closest("details")).toHaveAttribute("open");
+  } finally {
+    window.history.replaceState({}, "", "/");
+  }
+});
