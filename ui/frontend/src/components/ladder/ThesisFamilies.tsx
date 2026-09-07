@@ -495,8 +495,11 @@ function FamilyCard({
   const groups = groupRecords(family, shownRecords);
   const individual = family.records.length === 1 && family.records[0].association === "individual"
     ? family.records[0] : undefined;
+  const presentationKind = individual !== undefined ? "record"
+    : family.records[0]?.association === "curated-topic-collection"
+      ? "curated association" : "exact topic collection";
   const disclosureContext = individual === undefined ? "" : individual.hasUniqueSourceId
-    ? (individual.id === family.title ? "" : ` — record ${individual.id}`)
+    ? ` — source ID ${individual.id}`
     : ` — unverified snapshot ${individual.unverifiedSnapshotNumber}`;
 
   return (
@@ -512,7 +515,7 @@ function FamilyCard({
     >
       <button
         type="button"
-        aria-label={`${expanded ? "Collapse" : "Expand"} ${family.title}${disclosureContext}`}
+        aria-label={`${expanded ? "Collapse" : "Expand"} ${presentationKind}: ${family.title}${disclosureContext}`}
         aria-expanded={expanded}
         aria-controls={regionId}
         onClick={onToggle}
