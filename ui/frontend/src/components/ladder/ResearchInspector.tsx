@@ -428,7 +428,8 @@ function FamilyContextBrowser({
   exactLiquidSet: boolean;
   nextOwed: Record<string, string>;
 }) {
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selectedExactKey, setSelectedExactKey] = useState<string | null>(null);
+  const [selectedHistoryKey, setSelectedHistoryKey] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [page, setPage] = useState(0);
   const exactEntries = useMemo(() => exactLiquidSet
@@ -443,11 +444,15 @@ function FamilyContextBrowser({
     ? otherEntries.slice(currentPage * pageSize, (currentPage + 1) * pageSize)
       .map((entry) => researchContextForEntry(entry, nextOwed)) : [],
     [historyOpen, otherEntries, currentPage, nextOwed]);
-  const selectedEntry = entries.find((entry) => entry.key === selectedKey);
-  const selected = useMemo(() => selectedEntry === undefined ? undefined
-    : researchContextForEntry(selectedEntry, nextOwed), [selectedEntry, nextOwed]);
-  const toggle = (key: string) => setSelectedKey((current) => current === key ? null : key);
-  const changePage = (value: number) => { setPage(value); setSelectedKey(null); };
+  const selectedExactEntry = exactEntries.find((entry) => entry.key === selectedExactKey);
+  const selectedExact = useMemo(() => selectedExactEntry === undefined ? undefined
+    : researchContextForEntry(selectedExactEntry, nextOwed), [selectedExactEntry, nextOwed]);
+  const selectedHistoryEntry = otherEntries.find((entry) => entry.key === selectedHistoryKey);
+  const selectedHistory = useMemo(() => selectedHistoryEntry === undefined ? undefined
+    : researchContextForEntry(selectedHistoryEntry, nextOwed), [selectedHistoryEntry, nextOwed]);
+  const toggleExact = (key: string) => setSelectedExactKey((current) => current === key ? null : key);
+  const toggleHistory = (key: string) => setSelectedHistoryKey((current) => current === key ? null : key);
+  const changePage = (value: number) => { setPage(value); setSelectedHistoryKey(null); };
 
   return (
     <>
@@ -461,21 +466,21 @@ function FamilyContextBrowser({
             <ContextSummaryButton
               key={context.key}
               context={context}
-              expanded={selectedKey === context.key}
-              onToggle={() => toggle(context.key)}
+              expanded={selectedExactKey === context.key}
+              onToggle={() => toggleExact(context.key)}
               kind="exact"
             />
           ))}
         </div>
       )}
 
-      {selected !== undefined && exactLiquidSet && selected.isPinnedExactClaim && (
+      {selectedExact !== undefined && exactLiquidSet && selectedExact.isPinnedExactClaim && (
         <div
-          id={`research-detail-${selected.key.replace(/[^A-Za-z0-9_.:-]+/g, "-")}`}
+          id={`research-detail-${selectedExact.key.replace(/[^A-Za-z0-9_.:-]+/g, "-")}`}
           data-testid="research-selected-detail"
           style={{ marginTop: "var(--space-3)" }}
         >
-          <ClaimCard context={selected} legacyOwedTestId={false} />
+          <ClaimCard context={selectedExact} legacyOwedTestId={false} />
         </div>
       )}
 
@@ -518,8 +523,8 @@ function FamilyContextBrowser({
                   <ContextSummaryButton
                     key={context.key}
                     context={context}
-                    expanded={selectedKey === context.key}
-                    onToggle={() => toggle(context.key)}
+                    expanded={selectedHistoryKey === context.key}
+                    onToggle={() => toggleHistory(context.key)}
                     kind={exactLiquidSet ? "history" : "generic"}
                   />
                 ))}
@@ -533,13 +538,13 @@ function FamilyContextBrowser({
               </nav>
             </div>
           )}
-          {historyOpen && selected !== undefined && (!exactLiquidSet || !selected.isPinnedExactClaim) && (
+          {historyOpen && selectedHistory !== undefined && (
                 <div
-                  id={`research-detail-${selected.key.replace(/[^A-Za-z0-9_.:-]+/g, "-")}`}
+                  id={`research-detail-${selectedHistory.key.replace(/[^A-Za-z0-9_.:-]+/g, "-")}`}
                   data-testid="research-selected-history-detail"
                   style={{ marginTop: "var(--space-3)" }}
                 >
-                  <ClaimCard context={selected} legacyOwedTestId={false} />
+                  <ClaimCard context={selectedHistory} legacyOwedTestId={false} />
                 </div>
           )}
         </section>

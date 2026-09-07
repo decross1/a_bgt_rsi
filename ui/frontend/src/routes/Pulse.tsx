@@ -86,6 +86,86 @@ function newestIso(candidates: unknown[]): string | null {
 const pickGemma = (s: TelemetrySample) => s.vllm;
 const pickQwen = (s: TelemetrySample) => s.vllm_qwen;
 
+// A telemetry row is evidence for model health only when it carries the
+// producer's minimum model fields. The websocket boundary is unvalidated, so
+// arrays and object-shaped garbage must not become an observed failed scrape.
+function isTelemetrySample(value: unknown): value is TelemetrySample {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const row = value as Record<string, unknown>;
+  if (typeof row.timestamp !== "string" || !("vllm" in row)) return false;
+  const validBlock = (block: unknown) =>
+    block == null || (typeof block === "object" && !Array.isArray(block));
+  return validBlock(row.vllm) && validBlock(row.vllm_qwen);
+}
+
+const CURRENT_TELEMETRY_MAX_AGE_MS = 5000;
+
+type ModelEvidenceMode =
+  | "awaiting"
+  | "disconnected-unobserved"
+  | "historical-disconnected"
+  | "historical-stale"
+  | "time-unknown";
+
+// ModelServerCard intentionally owns only supplied current-sample semantics.
+// Pulse owns connection and time context, so it substitutes this neutral card
+// whenever the retained rows cannot establish current model health.
+function ModelEvidenceCard({
+  title,
+  servedModel,
+  metricsObserved,
+  mode,
+  accent = "zinc",
+}: {
+  title: string;
+  servedModel: string;
+  metricsObserved: boolean;
+  mode: ModelEvidenceMode;
+  accent?: "zinc" | "sky";
+}) {
+  const historical =
+    mode === "historical-disconnected" || mode === "historical-stale";
+  const explanation =
+    mode === "awaiting"
+      ? "Awaiting first telemetry sample — current model health not observed."
+      : mode === "disconnected-unobserved"
+        ? "Telemetry disconnected — model health not observed."
+        : mode === "time-unknown"
+          ? "Telemetry sample time is invalid or ahead of this clock — current model health is unknown."
+          : `Historical telemetry — retained samples ${
+              metricsObserved ? "contained" : "did not contain"
+            } metrics. Current model health is unknown because telemetry is ${
+              mode === "historical-stale" ? "stale" : "disconnected"
+            }.`;
+
+  return (
+    <div
+      className={`rounded border ${
+        accent === "sky" ? "border-sky-900/60" : "border-zinc-800"
+      } bg-zinc-900/40 p-4`}
+    >
+      <div className="flex items-baseline gap-2">
+        <h2
+          className={`text-xs font-medium uppercase tracking-wide ${
+            accent === "sky" ? "text-sky-400" : "text-[var(--fg-muted)]"
+          }`}
+        >
+          {title}
+        </h2>
+        <span
+          className="ml-auto font-mono text-[11px] text-[var(--fg-muted)]"
+          data-testid={`${servedModel}-status`}
+        >
+          {historical ? "● historical" : "● unknown"}
+        </span>
+      </div>
+      <p className="mt-3 text-sm text-[var(--fg-muted)]">{explanation}</p>
+    </div>
+  );
+}
+
 // The iterations poll feeds ONLY the sparkgrid + the idle "last finished"
 // clause, so ask the backend for the timestamp column, not the full record
 // (the full payload measured 3.4 MB / 2.9 s per poll on 2026-08-18; an older
@@ -116,7 +196,7 @@ const fetchMonitor = () => getActivityMonitor(1).then(stripMonitorChurn);
 import DevelopmentNotice from "../components/DevelopmentNotice";
 
 export default function Pulse() {
-  const { samples, latest, connected } = useTelemetryStream();
+  const { samples, connected } = useTelemetryStream();
   const [launchOpen, setLaunchOpen] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [queueRequested, setQueueRequested] = useState(false);
@@ -257,22 +337,24 @@ export default function Pulse() {
   // stable across renders that did not change `samples` — the children's
   // React.memo depends on it.
   const cleanSamples = useMemo(
-    () =>
-      samples.filter(
-        (s): s is TelemetrySample => s != null && typeof s === "object",
-      ),
+    () => samples.filter(isTelemetrySample),
     [samples],
   );
 
-  const lastSeen = latest?.timestamp ?? health?.telemetry_last_seen ?? null;
-  // Guard against a malformed/absent timestamp: Date.parse -> NaN, which
-  // would otherwise slip past the `ageMs > threshold` staleness check
-  // (NaN comparisons are always false) and paint a false-healthy hero.
-  // Coerce non-finite ages to null so the verdict treats freshness as
-  // unknown rather than fresh.
-  const parsedAge = lastSeen ? now - Date.parse(lastSeen) : null;
+  const latestSample = cleanSamples[cleanSamples.length - 1] ?? null;
+  // Only the sample whose model blocks we render can establish their age.
+  // A backend health timestamp cannot make an absent, malformed or retained
+  // websocket row current. Invalid and future times remain unknown.
+  // The coarse heartbeat triggers age rechecks, but can precede a new frame.
+  // Compare with the render-time clock so a just-arrived frame is not future.
+  const parsedAge = latestSample ? Date.now() - Date.parse(latestSample.timestamp) : null;
   const ageMs =
-    parsedAge != null && Number.isFinite(parsedAge) ? parsedAge : null;
+    parsedAge != null && Number.isFinite(parsedAge) && parsedAge >= 0
+      ? parsedAge
+      : null;
+  const telemetryTimeUnknown = latestSample != null && ageMs == null;
+  const telemetryStale =
+    ageMs != null && ageMs > CURRENT_TELEMETRY_MAX_AGE_MS;
   // Qwen is excluded from the verdict (staged/unwired today): a failing-but-
   // enabled Qwen reader emits a "vllm-qwen-metrics" read error, which must
   // not drag the whole system to degraded. Drop Qwen-owned keys here.
@@ -282,7 +364,7 @@ export default function Pulse() {
   // value for index keys ("0","1",…) and paint a FALSE degraded with numeric
   // "read errors". Only treat a plain object as a real error map; any other
   // shape is "no legible read errors", not a fault.
-  const rawReadErrors = latest?.read_errors;
+  const rawReadErrors = latestSample?.read_errors;
   const readErrorKeys =
     rawReadErrors != null &&
     typeof rawReadErrors === "object" &&
@@ -306,6 +388,18 @@ export default function Pulse() {
       : recent.length < GEMMA_DOWN_WINDOW
         ? recent[recent.length - 1]?.vllm != null
         : recent.some((s) => s.vllm != null);
+  const modelEvidenceMode: ModelEvidenceMode | "current" =
+    cleanSamples.length === 0
+      ? connected
+        ? "awaiting"
+        : "disconnected-unobserved"
+      : !connected
+        ? "historical-disconnected"
+        : telemetryTimeUnknown
+          ? "time-unknown"
+          : telemetryStale
+            ? "historical-stale"
+            : "current";
 
   // Sparkgrid inputs: both endpoints sort newest-first, so [0] is the most
   // recent of each and their newer end is "last finished". Memoized for the
@@ -353,15 +447,23 @@ export default function Pulse() {
         </span>
         <span>backend-reported revision {health?.version ?? "unknown"}</span>
         <span style={{ marginLeft: "auto" }}>
-          {gemmaUp === null || !connected ? (
+          {gemmaUp === null || !connected || telemetryTimeUnknown || telemetryStale ? (
             <div data-testid="health-verdict" data-level="unknown"
               className="flex flex-wrap items-center gap-2 text-[var(--fg-muted)]">
               <span className="font-semibold">UNKNOWN</span>
-              <span>{connected ? "Awaiting telemetry" : "Telemetry disconnected"}</span>
+              <span>{!connected
+                ? "Telemetry disconnected"
+                : telemetryStale
+                  ? "Telemetry stale"
+                  : telemetryTimeUnknown
+                    ? "Telemetry time unknown"
+                    : "Awaiting telemetry"}</span>
               <span>{gemmaUp === null ? "Model health not observed" : gemmaUp
                 ? "Last samples: Gemma metrics present"
                 : "Last samples: Gemma metrics unavailable"}</span>
-              {readErrors.length > 0 && <span>Last read errors: {readErrors.join(", ")}</span>}
+              {readErrors.length > 0 && <span>
+                {modelEvidenceMode === "current" ? "Read errors" : "Last read errors"}: {readErrors.join(", ")}
+              </span>}
             </div>
           ) : (
             <HealthVerdict
@@ -491,24 +593,40 @@ export default function Pulse() {
             gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
           }}
         >
-          <ModelServerCard
-            title={servedModels?.gemma?.model ?? "unknown"}
-            servedModel={servedModels?.gemma?.model ?? VLLM_SERVED_MODEL}
-            pick={pickGemma}
-            samples={cleanSamples}
-            liveCalls={liveCalls}
-            accent="zinc"
-            workloadHint
-          />
-          <ModelServerCard
-            title={servedModels?.qwen?.model ?? "unknown"}
-            servedModel={servedModels?.qwen?.model ?? QWEN_SERVED_MODEL}
-            pick={pickQwen}
-            samples={cleanSamples}
-            liveCalls={liveCalls}
-            accent="sky"
-            transientDropBanner
-          />
+          {modelEvidenceMode === "current" ? <>
+            <ModelServerCard
+              title={servedModels?.gemma?.model ?? "unknown"}
+              servedModel={servedModels?.gemma?.model ?? VLLM_SERVED_MODEL}
+              pick={pickGemma}
+              samples={cleanSamples}
+              liveCalls={liveCalls}
+              accent="zinc"
+              workloadHint
+            />
+            <ModelServerCard
+              title={servedModels?.qwen?.model ?? "unknown"}
+              servedModel={servedModels?.qwen?.model ?? QWEN_SERVED_MODEL}
+              pick={pickQwen}
+              samples={cleanSamples}
+              liveCalls={liveCalls}
+              accent="sky"
+              transientDropBanner
+            />
+          </> : <>
+            <ModelEvidenceCard
+              title={servedModels?.gemma?.model ?? "unknown"}
+              servedModel={servedModels?.gemma?.model ?? VLLM_SERVED_MODEL}
+              metricsObserved={cleanSamples.some((sample) => pickGemma(sample) != null)}
+              mode={modelEvidenceMode}
+            />
+            <ModelEvidenceCard
+              title={servedModels?.qwen?.model ?? "unknown"}
+              servedModel={servedModels?.qwen?.model ?? QWEN_SERVED_MODEL}
+              metricsObserved={cleanSamples.some((sample) => pickQwen(sample) != null)}
+              mode={modelEvidenceMode}
+              accent="sky"
+            />
+          </>}
         </div>
 
         {/* Launching an iteration is deliberate, not ambient — disclosed.

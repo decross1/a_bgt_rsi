@@ -179,7 +179,10 @@ import type { MonitorResponse } from "../src/types/activity";
 const baselineTelemetry = D.samples;
 
 afterEach(() => {
-  D.samples = baselineTelemetry;
+  D.samples = baselineTelemetry.map((sample) => ({
+    ...sample,
+    timestamp: new Date().toISOString(),
+  }));
   D.connected = true;
   // Pulse registers palette verbs on mount and withdraws them on unmount —
   // an un-cleaned render would leak them into the next test's registry.
@@ -517,36 +520,107 @@ describe("Pulse telemetry evidence boundary", () => {
     D.samples = [];
     D.connected = connected;
     render(<MemoryRouter><Pulse /></MemoryRouter>);
+    const page = screen.getByTestId("pulse-page");
     const verdict = screen.getByTestId("health-verdict");
     expect(verdict).toHaveAttribute("data-level", "unknown");
     expect(verdict).toHaveTextContent("UNKNOWN");
     expect(verdict).toHaveTextContent(connected ? "Awaiting telemetry" : "Telemetry disconnected");
     expect(verdict).not.toHaveTextContent(/DOWN|unreachable|all systems nominal/);
+    expect(screen.getByTestId("gemma-4-26b-a4b-status")).toHaveTextContent("unknown");
+    expect(screen.getByTestId("qwen3.6-27b-nvfp4-mtp-status")).toHaveTextContent("unknown");
+    expect(page).toHaveTextContent(
+      connected
+        ? "Awaiting first telemetry sample — current model health not observed."
+        : "Telemetry disconnected — model health not observed.",
+    );
+    expect(page).not.toHaveTextContent(
+      /● (?:up|down)|\/metrics unavailable|endpoint unreachable|server may be down/i,
+    );
   });
 
-  it("a buffer containing only unsupported scalar/null entries is still unobserved", () => {
-    D.samples = [null, 17, "bad"] as unknown as TelemetrySample[];
+  it("a buffer containing only unsupported scalar/null/object entries is still unobserved", () => {
+    D.samples = [null, 17, "bad", {}, []] as unknown as TelemetrySample[];
     render(<MemoryRouter><Pulse /></MemoryRouter>);
     expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "unknown");
     expect(screen.getByTestId("health-verdict")).not.toHaveTextContent(/DOWN|unreachable/);
+    expect(screen.getByTestId("gemma-4-26b-a4b-status")).toHaveTextContent("unknown");
+    expect(screen.getByTestId("pulse-page")).not.toHaveTextContent(
+      /● (?:up|down)|\/metrics unavailable|endpoint unreachable|server may be down/i,
+    );
   });
 
   it.each([true, false])("disconnection labels retained metrics-present=%s evidence as historical", (present) => {
     D.samples = baselineTelemetry.map((sample) => ({ ...sample, vllm: present ? sample.vllm : null }));
     D.connected = false;
     render(<MemoryRouter><Pulse /></MemoryRouter>);
+    const page = screen.getByTestId("pulse-page");
     const verdict = screen.getByTestId("health-verdict");
     expect(verdict).toHaveAttribute("data-level", "unknown");
     expect(verdict).toHaveTextContent("Telemetry disconnected");
     expect(verdict).toHaveTextContent(present ? "Last samples: Gemma metrics present" : "Last samples: Gemma metrics unavailable");
     expect(verdict).not.toHaveTextContent(/DOWN|Gemma model server unreachable/);
+    expect(screen.getByTestId("gemma-4-26b-a4b-status")).toHaveTextContent("historical");
+    expect(screen.getByTestId("qwen3.6-27b-nvfp4-mtp-status")).toHaveTextContent("historical");
+    expect(page).toHaveTextContent(
+      present
+        ? "Historical telemetry — retained samples contained metrics."
+        : "Historical telemetry — retained samples did not contain metrics.",
+    );
+    expect(page).not.toHaveTextContent(
+      /● (?:up|down)|\/metrics unavailable|endpoint unreachable|server may be down/i,
+    );
   });
+
+  it("keeps a connected trailing scrape miss stale instead of inventing an outage", () => {
+    D.samples = [
+      baselineTelemetry[0],
+      { ...baselineTelemetry[1], timestamp: new Date().toISOString(), vllm: null },
+    ];
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    expect(screen.getByTestId("gemma-4-26b-a4b-status")).toHaveTextContent("stale");
+    expect(screen.getByTestId("gemma-4-26b-a4b-stale-note")).toHaveTextContent(
+      "stale telemetry",
+    );
+  });
+
+  it("labels connected retained samples as historical once their timestamp is stale", () => {
+    D.samples = baselineTelemetry.map((sample) => ({
+      ...sample,
+      timestamp: new Date(Date.now() - 30_000).toISOString(),
+    }));
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    const page = screen.getByTestId("pulse-page");
+    expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "unknown");
+    expect(screen.getByTestId("health-verdict")).toHaveTextContent("Telemetry stale");
+    expect(screen.getByTestId("gemma-4-26b-a4b-status")).toHaveTextContent("historical");
+    expect(screen.getByTestId("qwen3.6-27b-nvfp4-mtp-status")).toHaveTextContent("historical");
+    expect(page).not.toHaveTextContent(
+      /● (?:up|down)|\/metrics unavailable|endpoint unreachable|server may be down/i,
+    );
+  });
+
+  it.each(["not-a-timestamp", new Date(Date.now() + 60_000).toISOString()])(
+    "does not present timestamp %s as fresh current model evidence",
+    (timestamp) => {
+      D.samples = baselineTelemetry.map((sample) => ({ ...sample, timestamp }));
+      render(<MemoryRouter><Pulse /></MemoryRouter>);
+      const page = screen.getByTestId("pulse-page");
+      expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "unknown");
+      expect(screen.getByTestId("health-verdict")).toHaveTextContent("Telemetry time unknown");
+      expect(screen.getByTestId("gemma-4-26b-a4b-status")).toHaveTextContent("unknown");
+      expect(page).not.toHaveTextContent(
+        /● (?:up|down)|\/metrics unavailable|endpoint unreachable|server may be down/i,
+      );
+    },
+  );
 
   it("preserves connected supplied missing-metrics failures", () => {
     D.samples = baselineTelemetry.map((sample) => ({ ...sample, timestamp: new Date().toISOString(), vllm: null }));
     render(<MemoryRouter><Pulse /></MemoryRouter>);
     expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "down");
     expect(screen.getByTestId("health-verdict")).toHaveTextContent("Gemma model server unreachable");
+    expect(screen.getByTestId("gemma-4-26b-a4b-status")).toHaveTextContent("down");
+    expect(screen.getByText(/\/metrics unavailable/)).toBeInTheDocument();
   });
 
   it("preserves connected supplied read errors and retains them historically on disconnection", () => {
@@ -558,6 +632,22 @@ describe("Pulse telemetry evidence boundary", () => {
     view.rerender(<MemoryRouter><Pulse /></MemoryRouter>);
     expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "unknown");
     expect(screen.getByTestId("health-verdict")).toHaveTextContent("Last read errors: psutil");
+  });
+
+  it("accepts a fresh frame arriving between coarse page-clock ticks", () => {
+    const first = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(first);
+    try {
+      D.samples = baselineTelemetry.map((sample) => ({ ...sample, timestamp: new Date(first).toISOString() }));
+      const view = render(<MemoryRouter><Pulse /></MemoryRouter>);
+      expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "healthy");
+      // No interval advances: useNow still holds first, while a new frame arrives.
+      clock.mockReturnValue(first + 1000);
+      D.samples = baselineTelemetry.map((sample) => ({ ...sample, timestamp: new Date(first + 1000).toISOString(), vllm: null }));
+      view.rerender(<MemoryRouter><Pulse /></MemoryRouter>);
+      expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "down");
+      expect(screen.getByTestId("gemma-4-26b-a4b-status")).toHaveTextContent("down");
+    } finally { clock.mockRestore(); }
   });
 
   it("updates healthy to unobserved and then to a supplied failure without retaining a false status", () => {

@@ -217,13 +217,28 @@ describe("ResearchInspector", () => {
     expect(screen.queryByTestId("research-other-histories")).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Open full dossier for iter-other/ })).not.toBeInTheDocument();
 
+    const pinnedSummary = screen.getByRole("button", {
+      name: "Inspect exact claim record cl-iter-2026-08-16-003, iteration iter-2026-08-16-003: Spectral gap → transient Gini variance",
+    });
+    fireEvent.click(pinnedSummary);
+    expect(pinnedSummary).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("research-selected-detail")).toHaveTextContent(claims[0].claim);
+
     const historyDisclosure = screen.getByRole("button", { name: "Show 77 other recorded histories" });
     expect(historyDisclosure).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(historyDisclosure);
     expect(historyDisclosure).toHaveAttribute("aria-expanded", "true");
     const historyBrowser = screen.getByTestId("research-other-histories");
     expect(within(historyBrowser).getAllByRole("button", { name: /Inspect other history/ })).toHaveLength(10);
-    for (let page = 1; page < 8; page++) fireEvent.click(screen.getByRole("button", { name: "Next histories" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next histories" }));
+    expect(pinnedSummary).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("research-selected-detail")).toHaveTextContent(claims[0].claim);
+    fireEvent.click(screen.getByRole("button", { name: "Previous histories" }));
+    expect(pinnedSummary).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("research-selected-detail")).toHaveTextContent(claims[0].claim);
+    fireEvent.click(screen.getByRole("button", { name: "Last histories" }));
+    expect(pinnedSummary).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("research-selected-detail")).toHaveTextContent(claims[0].claim);
     expect(within(historyBrowser).queryByTestId("research-selected-history-detail")).not.toBeInTheDocument();
 
     fireEvent.click(within(historyBrowser).getByRole("button", {
@@ -232,6 +247,8 @@ describe("ResearchInspector", () => {
     const selectedHistory = screen.getByTestId("research-selected-history-detail");
     expect(selectedHistory).toHaveTextContent("Pinned synthetic negative history");
     expect(within(selectedHistory).getByRole("link", { name: "Open full dossier for iter-other-077" })).toBeVisible();
+    expect(pinnedSummary).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByTestId("research-selected-detail")).toHaveTextContent(claims[0].claim);
 
     fireEvent.click(historyDisclosure);
     expect(screen.queryByTestId("research-other-histories")).not.toBeInTheDocument();

@@ -222,6 +222,16 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
           style={{ fontSize: "var(--text-ui)", color: "var(--status-bad)" }}
         >
           Refresh failed: {String(error)}. {loaded && (data === null ? "Last received source contained no ledger." : "Showing last received records.")}
+          {initial === undefined && data == null && (
+            <button
+              type="button"
+              onClick={source.refresh}
+              disabled={source.refreshing}
+              style={{ marginLeft: "var(--space-2)", color: "var(--accent)" }}
+            >
+              {source.refreshing ? "Retrying sources…" : "Retry sources"}
+            </button>
+          )}
         </div>
       )}
 

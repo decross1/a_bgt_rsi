@@ -39,6 +39,7 @@ vi.mock("../src/api/http", () => ({
 }));
 
 import CommandPalette from "../src/design/CommandPalette";
+import { resetPollHub } from "../src/api/pollhub";
 import Ladder from "../src/routes/Ladder";
 
 // Six clusters exercising every bucket: one surfaced L4, one open L1 with an
@@ -428,6 +429,53 @@ describe("/ladder command palette verbs", () => {
 });
 
 describe("/ladder honest degraded states", () => {
+  it("distinguishes the 204 sentinel from malformed 200 bodies at the real Ladder wire seam", async () => {
+    const { getLadder: getLadderFromWire } = await vi.importActual<
+      typeof import("../src/api/http")
+    >("../src/api/http");
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response("null", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response('{"clusters":null,"agenda":null}', {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response('{"clusters":[],"agenda":[]}', {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        clusters: [{
+          cluster_id: "cl-future",
+          status: "future-status",
+          evidence_level: "L9",
+          extension: { raw: true },
+        }],
+        agenda: [],
+        legacy_extension: "retained",
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+
+    try {
+      await expect(getLadderFromWire()).resolves.toBeNull();
+      await expect(getLadderFromWire()).rejects.toThrow("Ladder response integrity error");
+      await expect(getLadderFromWire()).rejects.toThrow("clusters must be an array");
+      await expect(getLadderFromWire()).resolves.toEqual({ clusters: [], agenda: [] });
+      await expect(getLadderFromWire()).resolves.toMatchObject({
+        clusters: [{ status: "future-status", evidence_level: "L9" }],
+        legacy_extension: "retained",
+      });
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it("204 (no ledger yet) renders the honest empty note + the ideas.md fallback", () => {
     renderLadder({
       initial: null,
@@ -466,6 +514,8 @@ describe("/ladder honest degraded states", () => {
   });
 
   it("a non-404 failure renders the honest red error", async () => {
+    resetPollHub();
+    mocks.getLadder.mockReset();
     mocks.getLadder.mockRejectedValue(
       Object.assign(new Error("500 idea_ledger unreadable: boom"), {
         status: 500,
@@ -478,6 +528,113 @@ describe("/ladder honest degraded states", () => {
       ),
     );
     expect(screen.queryByTestId("ladder-funnel")).toBeNull();
+  });
+
+  it("rejects a malformed successful first response instead of presenting an empty inventory", async () => {
+    resetPollHub();
+    mocks.getLadder.mockReset();
+    mocks.getLadder
+      .mockRejectedValueOnce(new Error("Ladder response integrity error: clusters must be an array"))
+      .mockResolvedValueOnce(FIXTURE);
+
+    renderLadder();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("ladder-error")).toHaveTextContent(
+        "Ladder response integrity error",
+      ),
+    );
+    expect(screen.queryByTestId("ladder-empty")).not.toBeInTheDocument();
+    expect(screen.queryByText("0 recorded clusters")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry sources" }));
+    await waitFor(() => expect(screen.getByText("6 recorded clusters")).toBeVisible());
+    expect(screen.queryByTestId("ladder-error")).not.toBeInTheDocument();
+  });
+
+  it("keeps 204 last-good records across HTTP and malformed failures, then admits valid empty and recovery", async () => {
+    resetPollHub();
+    mocks.getLadder.mockReset();
+    const records204: LadderResponse = {
+      clusters: Array.from({ length: 204 }, (_, index) => ({
+        cluster_id: `cl-retained-${index}`,
+        stem: `Retained claim ${index}`,
+        status: "open",
+        evidence_level: "L0",
+      })),
+      histogram: { L0: 204, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0 },
+      counts: { open: 204, surfaced: 0, killed: 0 },
+      agenda: [],
+      next_owed: {},
+    };
+    const validEmpty: LadderResponse = {
+      clusters: [],
+      histogram: { L0: 0, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0 },
+      counts: { open: 0, surfaced: 0, killed: 0 },
+      agenda: [],
+      next_owed: {},
+    };
+    mocks.getLadder
+      .mockResolvedValueOnce(records204)
+      .mockRejectedValueOnce(new Error("503 source unavailable"))
+      .mockResolvedValueOnce(records204)
+      .mockRejectedValueOnce(new Error("Ladder response integrity error: clusters must be an array"))
+      .mockResolvedValueOnce(validEmpty)
+      .mockResolvedValueOnce(FIXTURE);
+
+    renderLadder();
+    await waitFor(() => expect(screen.getByText("204 recorded clusters")).toBeVisible());
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh sources" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("ladder-error")).toHaveTextContent("503 source unavailable"),
+    );
+    expect(screen.getByText("204 recorded clusters")).toBeVisible();
+    expect(screen.getByTestId("ladder-error")).not.toHaveTextContent("integrity error");
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh sources" }));
+    await waitFor(() => expect(screen.queryByTestId("ladder-error")).not.toBeInTheDocument());
+    expect(screen.getByText("204 recorded clusters")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh sources" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("ladder-error")).toHaveTextContent(
+        "Ladder response integrity error",
+      ),
+    );
+    expect(screen.getByText("204 recorded clusters")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh sources" }));
+    await waitFor(() => expect(screen.getByText("0 recorded clusters")).toBeVisible());
+    expect(screen.queryByTestId("ladder-error")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh sources" }));
+    await waitFor(() => expect(screen.getByText("6 recorded clusters")).toBeVisible());
+    expect(screen.queryByTestId("ladder-error")).not.toBeInTheDocument();
+  });
+
+  it("accepts a legacy minimal response while retaining unknown producer categories", async () => {
+    resetPollHub();
+    mocks.getLadder.mockReset();
+    mocks.getLadder.mockResolvedValueOnce({
+      clusters: [{
+        cluster_id: "cl-future",
+        stem: "Future producer category",
+        status: "deferred-by-future-producer",
+        evidence_level: "L9",
+        producer_extension: { raw: true },
+      }],
+      agenda: [],
+      legacy_extension: "retained",
+    });
+
+    renderLadder();
+
+    await waitFor(() => expect(screen.getByText("1 recorded clusters")).toBeVisible());
+    expect(screen.getByTestId("ladder-unrung-note")).toHaveTextContent(
+      "1 cluster carry no evidence level",
+    );
+    expect(screen.queryByTestId("ladder-error")).not.toBeInTheDocument();
   });
 
   it("an empty ledger still draws the funnel — at zero, with no fake bars", () => {
