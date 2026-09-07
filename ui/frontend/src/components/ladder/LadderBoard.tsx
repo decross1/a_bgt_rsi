@@ -97,12 +97,14 @@ export default function LadderBoard({
   nowMs,
   graveyardOpen,
   onToggleGraveyard,
+  recordKey,
   onPick,
 }: {
   model: LadderModel;
   nowMs: number;
   graveyardOpen: boolean;
   onToggleGraveyard: () => void;
+  recordKey: (c: LadderCluster) => string;
   onPick: (c: LadderCluster) => void;
 }) {
   return (
@@ -144,9 +146,9 @@ export default function LadderBoard({
               </span>
             </header>
             <div className="flex flex-col" style={{ gap: "var(--space-2)" }}>
-              {cs.map((c, i) => (
+              {cs.map((c) => (
                 <ClusterCard
-                  key={asText(c.cluster_id) ?? `idx-${i}`}
+                  key={recordKey(c)}
                   c={c}
                   nowMs={nowMs}
                   onPick={onPick}
@@ -229,9 +231,9 @@ export default function LadderBoard({
                   className="flex flex-col"
                   style={{ gap: "var(--space-2)" }}
                 >
-                  {g.clusters.map((c, i) => (
+                  {g.clusters.map((c) => (
                     <ClusterCard
-                      key={asText(c.cluster_id) ?? `idx-${i}`}
+                      key={recordKey(c)}
                       c={c}
                       nowMs={nowMs}
                       onPick={onPick}

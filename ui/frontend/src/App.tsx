@@ -77,11 +77,11 @@ export default function App() {
       <div className="min-h-screen bg-[var(--bg)] text-[var(--fg)]">
         {/* R0 shell: sticky glass header — with the palette scrim, the only
             two allowed translucent/blurred surfaces (design/primitives.css). */}
-        <header className="dsn-header flex items-center gap-5 px-6 py-3">
+        <header className="dsn-header flex flex-wrap items-center gap-x-5 gap-y-3 px-4 py-3 sm:px-6">
           <span className="font-mono text-xs uppercase tracking-wide text-[var(--fg-muted)]">
             apparatus observability
           </span>
-          <nav className="flex items-center gap-4">
+          <nav className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
             {NAV.map((item) => (
               <NavTab key={item.to} {...item} />
             ))}
@@ -124,7 +124,7 @@ export default function App() {
               brain<span aria-hidden="true" className="ml-0.5">↗</span>
             </a>
           </nav>
-          <span className="ml-auto text-xs text-[var(--fg-muted)]">
+          <span className="ml-auto hidden text-xs text-[var(--fg-muted)] xl:block">
             ⌘K to jump · call-chain inspector at /chain/req/&lt;request_id&gt;
           </span>
         </header>
