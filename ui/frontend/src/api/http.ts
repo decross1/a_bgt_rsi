@@ -174,35 +174,41 @@ function admitLadderResponse(value: unknown): LadderResponse {
   if (!Array.isArray(value.clusters)) ladderIntegrityError("clusters must be an array");
   if (!value.clusters.every(isLadderRecord)) ladderIntegrityError("every cluster must be an object");
 
-  // Older response shapes may omit later maps. Preserve those shapes and all
-  // unknown producer categories, but reject a present field whose minimum
-  // consumed structure would otherwise be coerced into fabricated zeroes.
+  // Aggregate displays require a complete producer-owned observation. Keep
+  // unknown producer categories intact, but never let an absent, partial, or
+  // fractional aggregate map be coerced into fabricated integer zeroes.
   if ("agenda" in value) {
     if (!Array.isArray(value.agenda)) ladderIntegrityError("agenda must be an array when present");
     if (!value.agenda.every(isLadderRecord)) ladderIntegrityError("every agenda item must be an object");
   }
-  for (const field of ["histogram", "counts", "next_owed"] as const) {
-    if (field in value && !isLadderRecord(value[field])) {
-      ladderIntegrityError(`${field} must be an object when present`);
+  if (!isLadderRecord(value.histogram)) {
+    ladderIntegrityError("histogram must be an object");
+  }
+  // The mini-funnel also consumes future keys. Reserve one contribution per
+  // record for the full funnel's killed-at-rung overlay before summing. This
+  // conservative bound prevents precision loss without inferring record status.
+  let histogramTotal = value.clusters.length;
+  for (const level of new Set([...LADDER_LEVELS, ...Object.keys(value.histogram)])) {
+    const count = value.histogram[level];
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+      ladderIntegrityError(`histogram.${level} must be a non-negative safe integer`);
+    }
+    histogramTotal += count;
+    if (!Number.isSafeInteger(histogramTotal)) {
+      ladderIntegrityError("histogram total with record contributions must be a safe integer");
     }
   }
-  if (isLadderRecord(value.histogram)) {
-    for (const level of LADDER_LEVELS) {
-      const count = value.histogram[level];
-      if (count !== undefined &&
-          (typeof count !== "number" || !Number.isFinite(count) || count < 0)) {
-        ladderIntegrityError(`histogram.${level} must be a non-negative finite number when present`);
-      }
+  if (!isLadderRecord(value.counts)) {
+    ladderIntegrityError("counts must be an object");
+  }
+  for (const category of new Set(["open", "surfaced", "killed", ...Object.keys(value.counts)])) {
+    const count = value.counts[category];
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+      ladderIntegrityError(`counts.${category} must be a non-negative safe integer`);
     }
   }
-  if (isLadderRecord(value.counts)) {
-    for (const category of ["open", "surfaced", "killed"] as const) {
-      const count = value.counts[category];
-      if (count !== undefined &&
-          (typeof count !== "number" || !Number.isFinite(count) || count < 0)) {
-        ladderIntegrityError(`counts.${category} must be a non-negative finite number when present`);
-      }
-    }
+  if ("next_owed" in value && !isLadderRecord(value.next_owed)) {
+    ladderIntegrityError("next_owed must be an object when present");
   }
   if (isLadderRecord(value.next_owed)) {
     for (const level of LADDER_LEVELS) {
