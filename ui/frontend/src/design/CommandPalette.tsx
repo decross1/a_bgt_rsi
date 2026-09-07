@@ -39,17 +39,26 @@ function getSnapshot(): PaletteAction[] {
   return registered;
 }
 
-// Every route in App.tsx, owner surfaces first, then engine internals.
-const ROUTES: { id: string; label: string; to: string; keywords: string[] }[] = [
-  { id: "nav-pulse", label: "pulse", to: "/", keywords: ["home", "health", "owe"] },
-  { id: "nav-ladder", label: "ladder", to: "/ladder", keywords: ["ideas", "evidence", "rungs"] },
-  { id: "nav-dossier", label: "dossiers", to: "/dossier", keywords: ["reader", "findings", "todo"] },
-  { id: "nav-channel", label: "channel", to: "/channel", keywords: ["chat", "nara", "lab"] },
-  { id: "nav-development", label: "development", to: "/development", keywords: ["codex", "engineering", "readiness", "overnight"] },
-  { id: "nav-cycles", label: "cycles", to: "/cycles", keywords: ["coordinator", "engine"] },
-  { id: "nav-experiments", label: "experiments", to: "/experiments", keywords: ["runs", "engine"] },
-  { id: "nav-graph", label: "graph", to: "/graph", keywords: ["chains", "engine", "flow"] },
+// Reachable route surfaces in the same three groups as the Atlas sidebar.
+const ROUTES: {
+  id: string;
+  label: string;
+  to: string;
+  keywords: string[];
+  group: "Now" | "Research" | "Operations";
+}[] = [
+  { id: "nav-pulse", label: "pulse", to: "/", keywords: ["home", "health", "owe"], group: "Now" },
+  { id: "nav-ladder", label: "ladder", to: "/ladder", keywords: ["ideas", "evidence", "rungs"], group: "Research" },
+  { id: "nav-dossier", label: "dossiers", to: "/dossier", keywords: ["reader", "findings", "todo"], group: "Research" },
+  { id: "nav-experiments", label: "experiments", to: "/experiments", keywords: ["runs", "engine"], group: "Research" },
+  { id: "nav-development", label: "development", to: "/development", keywords: ["codex", "engineering", "readiness", "overnight"], group: "Operations" },
+  { id: "nav-channel", label: "channel", to: "/channel", keywords: ["chat", "nara", "lab"], group: "Operations" },
+  { id: "nav-model-io", label: "model i/o", to: "/model-io", keywords: ["calls", "dispatch", "wrapper"], group: "Operations" },
+  { id: "nav-cycles", label: "cycles", to: "/cycles", keywords: ["coordinator", "engine"], group: "Operations" },
+  { id: "nav-graph", label: "graph", to: "/graph", keywords: ["chains", "engine", "flow"], group: "Operations" },
 ];
+
+const ROUTE_GROUPS = ["Now", "Research", "Operations"] as const;
 
 export default function CommandPalette() {
   const [open, setOpen] = useState(false);
@@ -87,25 +96,34 @@ export default function CommandPalette() {
       <div
         className="dsn-palette-scrim"
         data-testid="palette-scrim"
+        aria-hidden="true"
         onClick={() => setOpen(false)}
       />
-      <div className="dsn-palette" data-testid="command-palette">
+      <div
+        aria-label="Command palette"
+        aria-modal="true"
+        className="dsn-palette"
+        data-testid="command-palette"
+        role="dialog"
+      >
         <Command label="Command palette">
           <Command.Input autoFocus placeholder="Go to…" />
           <Command.List>
             <Command.Empty>No matches.</Command.Empty>
-            <Command.Group heading="Go to">
-              {ROUTES.map((r) => (
-                <Command.Item
-                  key={r.id}
-                  value={`${r.label} ${r.keywords.join(" ")}`}
-                  onSelect={() => run(() => navigate(r.to))}
-                >
-                  {r.label}
-                  <span className="dsn-palette-hint">{r.to}</span>
-                </Command.Item>
-              ))}
-            </Command.Group>
+            {ROUTE_GROUPS.map((heading) => (
+              <Command.Group heading={heading} key={heading}>
+                {ROUTES.filter((route) => route.group === heading).map((route) => (
+                  <Command.Item
+                    key={route.id}
+                    value={`${route.label} ${route.keywords.join(" ")}`}
+                    onSelect={() => run(() => navigate(route.to))}
+                  >
+                    {route.label}
+                    <span className="dsn-palette-hint">{route.to}</span>
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            ))}
             {[...groups.entries()].map(([heading, items]) => (
               <Command.Group key={heading} heading={heading}>
                 {items.map((a) => (

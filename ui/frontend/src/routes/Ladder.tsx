@@ -6,11 +6,11 @@ import EndpointMissingNote, {
   isVersionSkew404,
 } from "../components/EndpointMissingNote";
 import MiniMarkdown from "../components/MiniMarkdown";
-import ClusterPeek from "../components/ladder/ClusterPeek";
 import KillsByRung from "../components/ladder/KillsByRung";
 import LadderBoard from "../components/ladder/LadderBoard";
 import LadderFunnel from "../components/ladder/LadderFunnel";
 import LadderTable from "../components/ladder/LadderTable";
+import ResearchInspector from "../components/ladder/ResearchInspector";
 import { buildLadderModel, stemOf } from "../components/ladder/ladderModel";
 import { buildThesisFamilies } from "../components/ladder/thesisModel";
 import ThesisFamilies from "../components/ladder/ThesisFamilies";
@@ -90,6 +90,7 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
   const [view, setView] = useState<View>("collections");
   const [graveyardOpen, setGraveyardOpen] = useState(false);
   const [pickedKey, setPickedKey] = useState<string | null>(null);
+  const [pickedFamilyId, setPickedFamilyId] = useState<string | null>(null);
   const model = useMemo(() => buildLadderModel(data ?? null), [data]);
   const thesis = useMemo(() => buildThesisFamilies(model.clusters, source.iterations), [model.clusters, source.iterations]);
   const recordKeys = useMemo(() => new Map(thesis.records.map((record) => [record.cluster, record.key])), [thesis]);
@@ -99,8 +100,14 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
   // as if it were the record's latest disposition.
   const pickedRecord = thesis.records.find((record) => record.key === pickedKey);
   const picked = pickedRecord?.cluster ?? null;
+  const pickedFamily = thesis.families.find((family) => family.id === pickedFamilyId) ?? null;
   const pick = (cluster: LadderCluster) => {
+    setPickedFamilyId(null);
     setPickedKey(thesis.records.find((record) => record.cluster === cluster)?.key ?? null);
+  };
+  const inspectFamily = (familyId: string) => {
+    setPickedKey(null);
+    setPickedFamilyId(familyId);
   };
   const sourceTimes = model.clusters.map((cluster) => cluster.last_event_ts)
     .filter((value): value is string => typeof value === "string" && Number.isFinite(Date.parse(value)));
@@ -155,36 +162,38 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
         cursor: "pointer",
       }}
     >
-      {v}
+      {v === "collections" ? "Collections" : v === "board" ? "Board" : "Table"}
     </button>
   );
 
   return (
     <div className="page-full" data-testid="ladder-page">
-      <header
-        className="flex flex-wrap items-baseline"
-        style={{ gap: "var(--space-3)", marginBottom: "var(--space-3)" }}
-      >
-        <h1
-          style={{
-            margin: 0,
-            fontSize: "var(--text-title-lg)",
-            fontWeight: "var(--weight-semibold)",
-          }}
-        >
-          Ladder
-        </h1>
+      <header className="flex min-w-0 flex-wrap items-end" style={{ gap: "var(--space-3)", marginBottom: "var(--space-4)" }}>
+        <div style={{ minWidth: 0, flex: "1 1 380px" }}>
+          <p style={{ margin: "0 0 var(--space-1)", color: "var(--accent)", fontSize: "var(--text-meta)", fontWeight: "var(--weight-medium)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            Lab · Research
+          </p>
+          <h1
+            style={{
+              margin: 0,
+              fontSize: "var(--text-title-lg)",
+              fontWeight: "var(--weight-semibold)",
+            }}
+          >
+            Research atlas
+          </h1>
+        </div>
         <p
           style={{
             margin: 0,
-            flex: 1,
+            flex: "2 1 420px",
             minWidth: 260,
             fontSize: "var(--text-meta)",
             color: "var(--fg-muted)",
           }}
         >
-          Recorded evidence levels, not revalidated experiment eligibility.
-          Engineering delivery does not change these classifications.
+          Explore recorded thesis collections, then inspect exact claims, evidence gaps and the next useful decision.
+          Recorded levels are not revalidated experiment eligibility.
         </p>
         {/* The lab's QUEUE (what these clusters owe next, plus the agenda and
             the refine candidates) lives in Pulse's secondary zone — this board
@@ -202,6 +211,9 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
           {viewBtn("board")}
           {viewBtn("table")}
         </div>
+        <span style={{ padding: "var(--space-1) var(--space-2)", border: "1px solid var(--border-1)", borderRadius: "var(--radius-pill)", color: "var(--fg-muted)", fontSize: "var(--text-meta)" }}>
+          Mechanism first · application not assumed
+        </span>
       </header>
 
       {error != null && (!skew || loaded) && (
@@ -280,7 +292,13 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
           {/* Keep this component mounted when switching views, preserving its
               collection expansion and member filters without a new controller. */}
           <div hidden={view !== "collections"}>
-            <ThesisFamilies model={thesis} nextOwed={model.nextOwed} onPick={pick} nowMs={nowMs} />
+            <ThesisFamilies
+              model={thesis}
+              nextOwed={model.nextOwed}
+              onPick={pick}
+              onInspect={(family) => inspectFamily(family.id)}
+              nowMs={nowMs}
+            />
           </div>
           {view === "board" && <LadderBoard model={model} recordKey={recordKey} nowMs={nowMs}
             graveyardOpen={graveyardOpen} onToggleGraveyard={() => setGraveyardOpen((v) => !v)} onPick={pick} />}
@@ -307,14 +325,27 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
           )}
 
           <PeekPanel
-            open={picked !== null}
-            onClose={() => setPickedKey(null)}
-            title={picked === null ? undefined : stemOf(picked)}
+            open={picked !== null || pickedFamily !== null}
+            onClose={() => {
+              setPickedKey(null);
+              setPickedFamilyId(null);
+            }}
+            title={pickedFamily !== null
+              ? `${pickedFamily.title} · research context`
+              : picked === null ? undefined : stemOf(picked)}
+            width={520}
           >
             {picked !== null && (
-              <ClusterPeek
-                cluster={picked}
+              <ResearchInspector
                 record={pickedRecord}
+                agenda={model.agenda}
+                nextOwed={model.nextOwed}
+                nowMs={nowMs}
+              />
+            )}
+            {pickedFamily !== null && (
+              <ResearchInspector
+                family={pickedFamily}
                 agenda={model.agenda}
                 nextOwed={model.nextOwed}
                 nowMs={nowMs}

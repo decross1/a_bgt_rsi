@@ -1,6 +1,6 @@
 // test_design_command_palette — the global Cmd+K palette (R0 design system).
 // Pins: closed by default; ⌘K and Ctrl+K toggle it; Esc and scrim-click close;
-// it lists a "Go to" entry for every route in App.tsx; selecting one navigates
+// it lists the reachable route surfaces in Atlas groups; selecting one navigates
 // and closes; registerPaletteActions adds entries and its unsubscribe removes
 // them (the registry survives for R1-R4 verbs — routes only ship here).
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -73,12 +73,17 @@ describe("CommandPalette — navigation entries", () => {
       "pulse",
       "ladder",
       "dossiers",
+      "development",
       "channel",
+      "model i/o",
       "cycles",
       "experiments",
       "graph",
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    for (const group of ["Now", "Research", "Operations"]) {
+      expect(screen.getByText(group)).toBeInTheDocument();
     }
   });
 

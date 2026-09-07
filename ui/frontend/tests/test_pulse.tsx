@@ -172,6 +172,7 @@ vi.mock("../src/api/activity", () => ({
 }));
 
 import Pulse, { stripMonitorChurn } from "../src/routes/Pulse";
+import { getLabTodo } from "../src/api/http";
 import type { MonitorResponse } from "../src/types/activity";
 
 afterEach(() => {
@@ -205,6 +206,7 @@ describe("Pulse (/)", () => {
     );
     expect(screen.getByTestId("now-board-empty")).toBeInTheDocument();
 
+    fireEvent.click(screen.getByText("Recorded human requests"));
     // 2 — do I owe anything? The gate item shows; the below-bar legacy
     // finding stays off the strip (it is dossier-index material).
     await waitFor(() =>
@@ -228,6 +230,8 @@ describe("Pulse (/)", () => {
     );
     expect(screen.getByTestId("owe-count")).toHaveTextContent("1");
 
+    expect(getLabTodo).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Load lab queue" }));
     // 2b — and what is the LAB carrying? The lab's queue sits directly below
     // the hero, in DOM order (the hierarchy is the point: the human's queue
     // is the hero, the lab's is the secondary zone).
@@ -384,7 +388,8 @@ describe("Pulse (/)", () => {
     );
     await waitFor(() => expect(scrollSpy).toHaveBeenCalled());
     const scrolled = scrollSpy.mock.instances[0] as Element;
-    expect(scrolled.querySelector("[data-testid='lab-todo']")).not.toBeNull();
+    expect(scrolled.querySelector("[data-testid='pulse-queue-not-read']")).not.toBeNull();
+    expect(getLabTodo).not.toHaveBeenCalled();
   });
 
   it("retired mirror endpoints are NOT polled (registered derives from the registry)", async () => {
@@ -474,5 +479,29 @@ describe("Pulse (/)", () => {
       </MemoryRouter>,
     );
     expect(await screen.findAllByText("unknown")).toHaveLength(2);
+  });
+});
+
+
+describe("Atlas Now intent boundary", () => {
+  it("does not mount the potentially expensive queue on arrival, including a queue deep link", async () => {
+    render(<MemoryRouter initialEntries={["/#lab-queue"]}><Pulse /></MemoryRouter>);
+    await screen.findByTestId("now-board");
+    expect(screen.getByRole("heading", { name: "Now", level: 1 })).toBeInTheDocument();
+    expect(getLabTodo).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("lab-todo")).not.toBeInTheDocument();
+    expect(screen.getByTestId("pulse-queue-not-read")).toHaveTextContent(/not been loaded/i);
+    fireEvent.click(screen.getByRole("button", { name: "Load lab queue" }));
+    await screen.findByTestId("lab-todo");
+    await waitFor(() => expect(getLabTodo).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps research, engineering and human requests accessible as distinct choices", () => {
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    expect(screen.getByRole("link", { name: "Explore research" })).toHaveAttribute("href", "/ladder");
+    expect(screen.getByRole("link", { name: "Review delivery and readiness" })).toHaveAttribute("href", "/development");
+    expect(screen.getByTestId("pulse-human-requests")).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Recorded human requests"));
+    expect(screen.getByTestId("pulse-human-requests")).toHaveAttribute("open");
   });
 });

@@ -118,6 +118,8 @@ import DevelopmentNotice from "../components/DevelopmentNotice";
 export default function Pulse() {
   const { samples, latest, connected } = useTelemetryStream();
   const [launchOpen, setLaunchOpen] = useState(false);
+  const [requestsOpen, setRequestsOpen] = useState(false);
+  const [queueRequested, setQueueRequested] = useState(false);
   // 0.2 Hz page clock: `now` feeds only telemetry-staleness math and the
   // sparkgrid's UTC day buckets — nothing on this page renders live seconds.
   // (NowBoard runs its own 1 Hz clock for elapsed counters, in its own
@@ -194,8 +196,11 @@ export default function Pulse() {
   // Arriving from /ladder's "lab queue →" link (`/#lab-queue`): React Router
   // does not scroll for a hash, so bring the zone into view once.
   useEffect(() => {
-    if (hash !== "#lab-queue") return;
-    labQueueRef.current?.scrollIntoView?.({ block: "start" });
+    if (hash === "#what-you-owe") {
+      setRequestsOpen(true);
+      heroRef.current?.scrollIntoView?.({ block: "start" });
+    }
+    if (hash === "#lab-queue") labQueueRef.current?.scrollIntoView?.({ block: "start" });
   }, [hash]);
 
   // Pulse's verbs in the ⌘K palette (the R0 registerPaletteActions seam).
@@ -208,7 +213,10 @@ export default function Pulse() {
         label: "review what you owe",
         group: "Pulse",
         keywords: ["todo", "queue", "gate", "verdict", "finding"],
-        perform: () => scrollTo(heroRef.current),
+        perform: () => {
+          setRequestsOpen(true);
+          scrollTo(heroRef.current);
+        },
       },
       {
         id: "pulse-lab-queue",
@@ -314,7 +322,17 @@ export default function Pulse() {
 
   return (
     <div className="page-full" data-testid="pulse-page">
-      <DevelopmentNotice />
+      <header className="mb-5 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="mb-1 text-xs font-medium uppercase tracking-widest text-[var(--fg-muted)]">Lab workspace</p>
+          <h1 className="text-3xl font-semibold tracking-tight">Now</h1>
+          <p className="mt-2 text-sm text-[var(--fg-muted)]">Find the next useful decision. Keep research evidence and runtime activity separate.</p>
+        </div>
+        <div className="flex flex-wrap gap-3 text-sm">
+          <Link to="/ladder" className="rounded-md border border-[var(--border-2)] bg-[var(--surface-1)] px-4 py-2 text-[var(--accent)]">Explore research</Link>
+          <Link to="/development" className="rounded-md border border-[var(--border-2)] bg-[var(--surface-1)] px-4 py-2 text-[var(--accent)]">Review delivery and readiness</Link>
+        </div>
+      </header>
       {/* ── 0 · identity bar ────────────────────────────────────────────── */}
       <div
         style={{
@@ -330,7 +348,7 @@ export default function Pulse() {
         <span style={{ fontFamily: "var(--font-mono)", color: "var(--fg)" }}>
           {health?.hostname ?? "spark"}
         </span>
-        <span>backend {health?.version ?? "?"}</span>
+        <span>backend-reported revision {health?.version ?? "unknown"}</span>
         <span style={{ marginLeft: "auto" }}>
           <HealthVerdict
             connected={connected}
@@ -346,15 +364,31 @@ export default function Pulse() {
       {/* id: LabTodo's blocked-on-you line points back UP at this hero rather
           than restating the same work as a second list. OweCard (2026-08-18)
           keeps OweStrip's pins and adds per-row expand + triage/age chips. */}
-      <div id="what-you-owe" ref={heroRef}>
-        <OweCard />
+      <DevelopmentNotice />
+      <div id="what-you-owe" ref={heroRef} className="mt-4">
+        <details data-testid="pulse-human-requests" open={requestsOpen}
+          onToggle={(event) => setRequestsOpen(event.currentTarget.open)}
+          className="rounded-lg border border-[var(--border-1)] bg-[var(--surface-1)] p-4">
+          <summary className="cursor-pointer text-base font-medium">Recorded human requests</summary>
+          <p className="my-3 text-sm text-[var(--fg-muted)]">Review each request and its date before acting. Older requests remain in the record; this view does not clear them.</p>
+          <OweCard />
+        </details>
       </div>
 
       {/* ── 1b · the LAB's queue — secondary to the hero, by design ─────── */}
       {/* The human's queue is the hero; what Nara and the PI advance on their
           own sits directly under it, quieter. */}
-      <div ref={labQueueRef} style={{ marginTop: "var(--space-4)" }}>
-        <LabTodo />
+      <div id="lab-queue" ref={labQueueRef} style={{ marginTop: "var(--space-4)" }}>
+        {queueRequested ? <LabTodo /> : <Card testId="pulse-queue-not-read">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 className="text-base font-medium">Lab queue</h2>
+              <p className="mt-1 text-sm text-[var(--fg-muted)]">The queue has not been loaded in this view. Its contents and freshness are unknown.</p>
+              <p className="mt-1 text-xs text-[var(--fg-muted)]">Loading may run a topic and embedding assessment. Existing cache behavior is retained.</p>
+            </div>
+            <button type="button" onClick={() => setQueueRequested(true)}
+              className="rounded-md border border-[var(--border-2)] px-4 py-2 text-sm text-[var(--accent)]">Load lab queue</button>
+          </div>
+        </Card>}
       </div>
 
       {/* ── 2 · the loop's state ────────────────────────────────────────── */}
