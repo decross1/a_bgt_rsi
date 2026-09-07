@@ -105,3 +105,20 @@ metadata, preserving interleaved source-finding chronology. The command palette
 cycles Collections, Board and Table; invoking the graveyard from another view
 opens its visible board target. Regression tests preserve the original review
 counterexamples rather than relying only on current backend uniqueness.
+
+
+## Second review disposition and exact scope amendment
+
+The whole-range review at `7673921` found the remaining ambiguous-ID agenda,
+Board/Table row-key and Inspect-name seams. The current captured 202 rows have
+unique source IDs and no agenda, but malformed-input safety is also required.
+The repair adds only existing `LadderBoard.tsx` and `LadderTable.tsx` to the
+previous ten-path range. Both receive the same internal snapshot key used by
+Collections and selection. Displayed source IDs remain unchanged.
+
+The model exposes whether a nonblank source ID occurs exactly once in the
+received payload. This is local uniqueness, not authenticated scientific
+identity. Detail panels withhold ID-keyed agenda attribution when it is absent
+or ambiguous; a unique ID retains its agenda even when topic association is
+uncertain. Ambiguous Inspect controls include a presentation-only snapshot
+number, never a new research ID. Raw records, rulings and ledgers are unchanged.

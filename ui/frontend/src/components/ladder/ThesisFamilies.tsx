@@ -293,7 +293,7 @@ function RecordCard({
         </span>
         <button
           type="button"
-          aria-label={`Open details for ${record.id}`}
+          aria-label={`Open details for ${record.id}${record.hasUniqueSourceId ? "" : ` — unverified snapshot ${record.unverifiedSnapshotNumber}`}`}
           onClick={() => onPick(record.cluster)}
           style={{
             border: "1px solid var(--border-2)",

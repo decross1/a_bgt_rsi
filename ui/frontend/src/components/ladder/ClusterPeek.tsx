@@ -47,7 +47,7 @@ export default function ClusterPeek({
 }: {
   cluster: LadderCluster;
   record?: FamilyRecord;
-  /** The whole page agenda; this component takes its own cluster's slice. */
+  /** Attribute ID-keyed agenda only when the current payload has a unique ID. */
   agenda: LadderAgendaItem[];
   /** next_owed keyed by rung (the backend's per-rung "test owed" wording). */
   nextOwed: Record<string, string>;
@@ -68,7 +68,8 @@ export default function ClusterPeek({
     !Array.isArray(cluster.reopening_condition)
       ? cluster.reopening_condition
       : null;
-  const mine = agenda.filter((a) => asText(a.cluster_id) === cid);
+  const canAttributeAgenda = record?.hasUniqueSourceId === true;
+  const mine = canAttributeAgenda ? agenda.filter((a) => asText(a.cluster_id) === cid) : [];
   const members = membersOf(cluster);
   const owed = level !== null ? nextOwed[level] : undefined;
 
@@ -163,7 +164,12 @@ export default function ClusterPeek({
       )}
 
       <Section label="agenda">
-        {mine.length === 0 ? (
+        {!canAttributeAgenda ? (
+          <p style={{ ...META, color: "var(--fg-muted)" }}>
+            Agenda attribution withheld: this snapshot has no unique source ID in the received records.
+            ID-keyed suggestions cannot be assigned to this specific snapshot.
+          </p>
+        ) : mine.length === 0 ? (
           <p style={{ ...META, color: "var(--fg-muted)" }}>
             no open agenda items.
           </p>

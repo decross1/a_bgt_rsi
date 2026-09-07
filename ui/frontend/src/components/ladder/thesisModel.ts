@@ -36,6 +36,10 @@ export interface FamilyRecord {
   id: string;
   /** Presentation/selection identity, distinct from an ambiguous source ID. */
   key: string;
+  /** Nonblank ID occurs once in this received payload; not authenticated identity. */
+  hasUniqueSourceId: boolean;
+  /** Accessible presentation label only; never a scientific/source ID. */
+  unverifiedSnapshotNumber?: number;
   title: string;
   topics: string[];
   iterations: RecordedIteration[];
@@ -301,6 +305,7 @@ function buildFamilyRecord(
       cluster,
       id,
       key: id,
+      hasUniqueSourceId: false,
       title,
       topics: [],
       iterations: [],
@@ -314,6 +319,7 @@ function buildFamilyRecord(
       cluster,
       id,
       key: id,
+      hasUniqueSourceId: false,
       title,
       topics: [],
       iterations: [],
@@ -410,6 +416,7 @@ function buildFamilyRecord(
       cluster,
       id,
       key: id,
+      hasUniqueSourceId: false,
       title,
       topics,
       iterations,
@@ -425,6 +432,7 @@ function buildFamilyRecord(
     cluster,
     id,
     key: id,
+      hasUniqueSourceId: false,
     title,
     topics,
     iterations,
@@ -471,9 +479,12 @@ export function buildThesisFamilies(
     if (id !== undefined) idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
   }
   const usedKeys = new Set(idCounts.keys());
+  let unverifiedSnapshotNumber = 0;
   for (const record of records) {
     const sourceId = isRecord(record.cluster) ? nonBlankText(record.cluster.cluster_id) : undefined;
-    if (sourceId !== undefined && idCounts.get(sourceId) === 1) continue;
+    record.hasUniqueSourceId = sourceId !== undefined && idCounts.get(sourceId) === 1;
+    if (record.hasUniqueSourceId) continue;
+    record.unverifiedSnapshotNumber = ++unverifiedSnapshotNumber;
     const reason = sourceId === undefined
       ? "Missing or malformed cluster ID; this row has no verified source identity."
       : `Duplicate cluster ID "${sourceId}"; these rows have ambiguous source identity.`;

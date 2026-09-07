@@ -92,6 +92,9 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
   const [pickedKey, setPickedKey] = useState<string | null>(null);
   const model = useMemo(() => buildLadderModel(data ?? null), [data]);
   const thesis = useMemo(() => buildThesisFamilies(model.clusters, source.iterations), [model.clusters, source.iterations]);
+  const recordKeys = useMemo(() => new Map(thesis.records.map((record) => [record.cluster, record.key])), [thesis]);
+  // Every Board/Table row comes from the same model input, preserving its raw reference.
+  const recordKey = (cluster: LadderCluster): string => recordKeys.get(cluster)!;
   // Resolve against current data on every refresh; do not retain an old object
   // as if it were the record's latest disposition.
   const pickedRecord = thesis.records.find((record) => record.key === pickedKey);
@@ -279,10 +282,10 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
           <div hidden={view !== "collections"}>
             <ThesisFamilies model={thesis} nextOwed={model.nextOwed} onPick={pick} nowMs={nowMs} />
           </div>
-          {view === "board" && <LadderBoard model={model} nowMs={nowMs}
+          {view === "board" && <LadderBoard model={model} recordKey={recordKey} nowMs={nowMs}
             graveyardOpen={graveyardOpen} onToggleGraveyard={() => setGraveyardOpen((v) => !v)} onPick={pick} />}
           {view === "table" && <div className="max-w-full overflow-x-auto">
-            <LadderTable clusters={model.clusters} nowMs={nowMs} onPick={pick} />
+            <LadderTable clusters={model.clusters} recordKey={recordKey} nowMs={nowMs} onPick={pick} />
           </div>}
 
           {/* A live cluster the producer gave no L0..L5 rung has no column —

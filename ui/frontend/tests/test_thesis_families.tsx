@@ -209,3 +209,56 @@ describe("review counterexamples", () => {
     expect(within(card).getAllByRole("link").map((link) => link.textContent)).toEqual(members);
   });
 });
+
+// The source ID scopes agenda, while an internal key scopes a rendered snapshot.
+// Faulty source IDs must not be certified by a readable topic or a click.
+describe("whole-route ambiguous snapshot boundaries", () => {
+  it("withholds duplicate-ID agenda attribution and distinguishes Inspect names", () => {
+    const clusters = fixture.clusters.slice(0, 2).map((c, i) => ({ ...c, cluster_id: "cl-shared", stem: `Snapshot ${i}` }));
+    render(page({ ...fixture, clusters, agenda: [{ cluster_id: "cl-shared", topic: "Ambiguous next-work marker", source: "human" }] }));
+    for (const button of screen.getAllByRole("button", { name: /^Expand / })) fireEvent.click(button);
+    const cards = screen.getAllByTestId(/^thesis-record-/);
+    const names = cards.map((card) => within(card).getByRole("button").getAttribute("aria-label"));
+    expect(new Set(names).size).toBe(2);
+    for (const card of cards) {
+      expect(card).toHaveTextContent("cl-shared");
+      fireEvent.click(within(card).getByRole("button"));
+      const peek = screen.getByTestId("ladder-peek-body");
+      expect(peek).not.toHaveTextContent("Ambiguous next-work marker");
+      expect(peek).toHaveTextContent(/agenda attribution withheld/i);
+      expect(peek).not.toHaveTextContent("no open agenda items");
+      fireEvent.keyDown(document, { key: "Escape" });
+    }
+  });
+
+  it("preserves unique-ID agenda even if the topic source is unsupported", () => {
+    const cluster = { ...fixture.clusters[0], members: ["paper-unresolved"] };
+    render(page({ ...fixture, clusters: [cluster], agenda: [{ cluster_id: cluster.cluster_id, topic: "Unique source agenda", source: "human" }] }));
+    fireEvent.click(screen.getByRole("button", { name: /^Expand / }));
+    fireEvent.click(within(screen.getByTestId(/^thesis-record-/)).getByRole("button"));
+    expect(screen.getByTestId("ladder-peek-agenda")).toHaveTextContent("Unique source agenda");
+  });
+
+  for (const view of ["board", "table"]) for (const identity of ["duplicate", "missing"]) {
+    it(`preserves ${identity} snapshot DOM and focus when ${view} rows reorder`, () => {
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      const clusters = fixture.clusters.slice(0, 2).map((c, i) => ({ ...c,
+        cluster_id: identity === "duplicate" ? "cl-shared" : undefined, stem: `Snapshot ${i}`,
+      })) as LadderCluster[];
+      const { rerender } = render(page({ ...fixture, clusters }));
+      fireEvent.click(screen.getByTestId(`ladder-view-${view}`));
+      const prefix = view === "board" ? "ladder-card-" : "ladder-row-";
+      const rowFor = (stem: string) => screen.getAllByTestId(new RegExp(`^${prefix}`)).find((row) => row.textContent?.includes(stem))!;
+      const first = rowFor("Snapshot 0");
+      first.focus();
+      expect(first).toHaveFocus();
+      rerender(page({ ...fixture, clusters: structuredClone([...clusters].reverse()) }));
+      expect(rowFor("Snapshot 0")).toBe(first);
+      expect(first).toHaveFocus();
+      fireEvent.click(first);
+      expect(screen.getByTestId("ladder-peek-body")).toHaveTextContent(rows[0].hypothesis.text);
+      expect(errors.mock.calls.filter((args) => args.some((value) => String(value).includes("same key")))).toEqual([]);
+      errors.mockRestore();
+    });
+  }
+});
