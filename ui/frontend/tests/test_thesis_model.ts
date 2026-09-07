@@ -318,3 +318,37 @@ describe("matchesFamilyRecord", () => {
     expect(matchesFamilyRecord(record, "not present")).toBe(false);
   });
 });
+
+
+describe("source cluster identity faults", () => {
+  it("isolates duplicate and missing IDs with stable unique presentation keys, preserving every raw row", () => {
+    const open = cluster("cl-same", ["iter-open"]);
+    const killed = cluster("cl-same", ["iter-killed"], { status: "killed", kill_reason: { code: "negative", detail: "Keep this negative" } });
+    const noId = { ...cluster("cl-temp", ["iter-open"]), cluster_id: undefined } as unknown as LadderCluster;
+    const input = [open, killed, noId, { ...noId }];
+    const rows = [iteration("iter-open", "Shared"), iteration("iter-killed", "Shared")];
+    const result = buildThesisFamilies(input, rows);
+    expect(result.records).toHaveLength(4);
+    expect(new Set(result.records.map((r) => r.key)).size).toBe(4);
+    expect(new Set(result.families.map((f) => f.id)).size).toBe(4);
+    expect(result.records.every((r) => r.association === "individual")).toBe(true);
+    expect(result.issues.join(" ")).toMatch(/duplicate.*cluster|cluster.*duplicate/i);
+    expect(result.issues.join(" ")).toMatch(/missing.*cluster|cluster.*missing/i);
+    for (const raw of input) expect(result.records.filter((r) => r.cluster === raw)).toHaveLength(1);
+    const reverse = buildThesisFamilies([...input].reverse(), [...rows].reverse());
+    expect(result.records.map((r) => r.key).sort()).toEqual(reverse.records.map((r) => r.key).sort());
+    expect(result.records.filter((r) => r.cluster.cluster_id === "cl-same").every((r) => r.id === "cl-same")).toBe(true);
+  });
+});
+
+
+it("does not transfer identity between idless local fixture rows after reordering", () => {
+  const a = { ...cluster("unused", ["iter-a"]), cluster_id: undefined, stem: "Same display stem" } as unknown as LadderCluster;
+  const b = { ...cluster("unused", ["iter-b"]), cluster_id: undefined, stem: "Same display stem" } as unknown as LadderCluster;
+  const rows = [iteration("iter-a", "A", "Claim A"), iteration("iter-b", "B", "Claim B")];
+  const before = buildThesisFamilies([a, b], rows);
+  const after = buildThesisFamilies([b, a], rows);
+  for (const record of before.records) {
+    expect(after.records.find((next) => next.key === record.key)?.cluster).toBe(record.cluster);
+  }
+});

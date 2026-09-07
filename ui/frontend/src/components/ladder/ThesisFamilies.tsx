@@ -161,14 +161,14 @@ function topicKey(record: FamilyRecord): { key: string; topics: string[] } {
 }
 
 function groupRecords(family: ThesisFamily, shownRecords: FamilyRecord[]): TopicGroup[] {
-  const shownIds = new Set(shownRecords.map((record) => record.id));
+  const shownIds = new Set(shownRecords.map((record) => record.key));
   const groups = new Map<string, TopicGroup>();
 
   for (const record of family.records) {
     const { key, topics } = topicKey(record);
     const group = groups.get(key) ?? { key, topics, allRecords: [], shownRecords: [] };
     group.allRecords.push(record);
-    if (shownIds.has(record.id)) group.shownRecords.push(record);
+    if (shownIds.has(record.key)) group.shownRecords.push(record);
     groups.set(key, group);
   }
 
@@ -201,10 +201,11 @@ function dossierMemberIds(record: FamilyRecord): string[] {
     seen.add(value);
     ids.push(value);
   };
-  for (const iteration of record.iterations) add(iteration.id);
+  // Ledger member traversal is chronology; attach metadata without reordering.
   if (Array.isArray(record.cluster.members)) {
     for (const member of record.cluster.members) add(member);
   }
+  for (const iteration of record.iterations) add(iteration.id);
   return ids;
 }
 
@@ -259,7 +260,7 @@ function RecordCard({
 
   return (
     <article
-      data-testid={`thesis-record-${record.id}`}
+      data-testid={`thesis-record-${record.key}`}
       style={{
         minWidth: 0,
         padding: "var(--space-3)",
@@ -586,7 +587,7 @@ function FamilyCard({
                 <div className="grid min-w-0 grid-cols-1 lg:grid-cols-2" style={{ gap: "var(--space-2)", marginTop: "var(--space-2)" }}>
                   {[...group.shownRecords].sort(compareRecords).map((record) => (
                     <RecordCard
-                      key={record.id}
+                      key={record.key}
                       record={record}
                       nextOwed={nextOwed}
                       onPick={onPick}

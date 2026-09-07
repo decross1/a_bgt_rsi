@@ -34,6 +34,8 @@ export interface FamilyRecord {
   /** The exact Ladder object supplied by the caller. */
   cluster: LadderCluster;
   id: string;
+  /** Presentation/selection identity, distinct from an ambiguous source ID. */
+  key: string;
   title: string;
   topics: string[];
   iterations: RecordedIteration[];
@@ -88,6 +90,9 @@ function appendDistinctText(target: string[], value: unknown): void {
 /** Stable JSON comparison for deciding whether duplicate rows are identical. */
 function canonicalJson(value: unknown, seen = new Set<object>()): string | null {
   if (value === null) return "null";
+  // Local/legacy fixtures can carry an explicit undefined optional field.
+  // Keep it distinct from a string and from an absent key when fingerprinting.
+  if (value === undefined) return "undefined";
   if (typeof value === "string" || typeof value === "boolean") {
     const encoded = JSON.stringify(value);
     return typeof encoded === "string" ? encoded : null;
@@ -276,19 +281,10 @@ function buildIterationIndex(
   return index;
 }
 
-function stableHash(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
 function clusterIdentity(cluster: LadderCluster): { id: string; title: string } {
   const raw: Record<string, unknown> = isRecord(cluster) ? cluster : {};
   const clusterId = nonBlankText(raw.cluster_id);
-  const id = clusterId ?? `invalid-cluster-${stableHash(canonicalJson(raw) ?? "invalid")}`;
+  const id = clusterId ?? "(ID unavailable)";
   const title = nonBlankText(raw.stem) ?? clusterId ?? "(unnamed cluster)";
   return { id, title };
 }
@@ -304,6 +300,7 @@ function buildFamilyRecord(
     return {
       cluster,
       id,
+      key: id,
       title,
       topics: [],
       iterations: [],
@@ -316,6 +313,7 @@ function buildFamilyRecord(
     return {
       cluster,
       id,
+      key: id,
       title,
       topics: [],
       iterations: [],
@@ -350,7 +348,7 @@ function buildFamilyRecord(
     );
   }
 
-  for (const member of [...memberIds].sort(compareText)) {
+  for (const member of memberIds) {
     if (!ITERATION_ID.test(member)) {
       unsupported.push(member);
       unresolved.add(member);
@@ -394,7 +392,6 @@ function buildFamilyRecord(
   }
   for (const reason of invalid) reasons.push(`${reason}.`);
 
-  iterations.sort((a, b) => compareText(a.id, b.id));
   const topics = [...new Set(iterations.map((iteration) => iteration.topic))].sort(
     compareText,
   );
@@ -412,6 +409,7 @@ function buildFamilyRecord(
     return {
       cluster,
       id,
+      key: id,
       title,
       topics,
       iterations,
@@ -426,6 +424,7 @@ function buildFamilyRecord(
   return {
     cluster,
     id,
+    key: id,
     title,
     topics,
     iterations,
@@ -463,12 +462,40 @@ export function buildThesisFamilies(
     .map((cluster) => buildFamilyRecord(cluster, iterationIndex))
     .sort(compareFamilyRecords);
 
+  // The backend normally supplies unique IDs. Faulty or legacy payloads must
+  // still preserve separate rows without minting a source identity. These
+  // snapshot keys are internal: the original ID remains the displayed id.
+  const idCounts = new Map<string, number>();
+  for (const record of records) {
+    const id = isRecord(record.cluster) ? nonBlankText(record.cluster.cluster_id) : undefined;
+    if (id !== undefined) idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
+  }
+  const usedKeys = new Set(idCounts.keys());
+  for (const record of records) {
+    const sourceId = isRecord(record.cluster) ? nonBlankText(record.cluster.cluster_id) : undefined;
+    if (sourceId !== undefined && idCounts.get(sourceId) === 1) continue;
+    const reason = sourceId === undefined
+      ? "Missing or malformed cluster ID; this row has no verified source identity."
+      : `Duplicate cluster ID "${sourceId}"; these rows have ambiguous source identity.`;
+    issues.add(reason);
+    record.association = "individual";
+    record.reason = `${reason} ${record.reason}`;
+    // Canonical bytes avoid hash collisions. A suffix distinguishes identical
+    // copies without pretending that they carry different scientific IDs.
+    const snapshot = canonicalJson(record.cluster) ?? "unserializable input";
+    let ordinal = 0;
+    let key = `unverified:${snapshot}:${ordinal}`;
+    while (usedKeys.has(key)) key = `unverified:${snapshot}:${++ordinal}`;
+    usedKeys.add(key);
+    record.key = key;
+  }
+
   const grouped = new Map<string, ThesisFamily>();
   const individual: ThesisFamily[] = [];
   for (const record of records) {
     if (record.association === "individual") {
       individual.push({
-        id: `record:${record.id}`,
+        id: `record:${record.key}`,
         title: record.title,
         basis: record.reason,
         topicLabels: [...record.topics],

@@ -90,3 +90,18 @@ scientific eligibility or a historical finding.
 Browser-only fixture previews are development evidence, not shared deployment.
 The existing Vite process can adopt reviewed frontend source without a backend
 restart. Delivery requires a separate served-source and real-browser check.
+
+## Adversarial review repairs
+
+Duplicate or missing cluster IDs stay individual and visibly unverified. The
+original source ID is displayed separately from an internal snapshot key used
+for filtering, rendering and selection. Canonical source content plus a
+collision-checked ordinal distinguishes ambiguous copies without inventing
+scientific identities. A changed ambiguous snapshot may close its detail panel;
+unique valid source IDs keep their usual continuity across refreshes.
+
+Compact records traverse the raw member list before attaching iteration
+metadata, preserving interleaved source-finding chronology. The command palette
+cycles Collections, Board and Table; invoking the graveyard from another view
+opens its visible board target. Regression tests preserve the original review
+counterexamples rather than relying only on current backend uniqueness.

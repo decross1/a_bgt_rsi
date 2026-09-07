@@ -178,3 +178,34 @@ describe("Ladder collection flow and source lifecycle", () => {
     expect(screen.getByText(/source relationships are not verified/i)).toBeVisible();
   });
 });
+
+
+describe("review counterexamples", () => {
+  it("does not leak a killed duplicate ID into the open filter or select another row's details", () => {
+    const open = { ...fixture.clusters[0], cluster_id: "cl-duplicate", stem: "Open snapshot" };
+    const killed = { ...fixture.clusters[1], cluster_id: "cl-duplicate", stem: "Killed snapshot", status: "killed", kill_reason: { code: "recorded_negative", detail: "This negative belongs only to killed snapshot" } };
+    render(page({ ...fixture, clusters: [open, killed] }));
+    for (const button of screen.getAllByRole("button", { name: /^Expand / })) fireEvent.click(button);
+    expect(screen.getAllByTestId(/^thesis-record-/)).toHaveLength(1);
+    expect(screen.queryByText("This negative belongs only to killed snapshot")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Record status"), { target: { value: "all" } });
+    for (const button of screen.queryAllByRole("button", { name: /^Expand / })) fireEvent.click(button);
+    expect(screen.getAllByTestId(/^thesis-record-/)).toHaveLength(2);
+    for (const card of screen.getAllByTestId(/^thesis-record-/)) {
+      const isKilled = within(card).queryByText("This negative belongs only to killed snapshot") !== null;
+      fireEvent.click(within(card).getByRole("button"));
+      const peek = screen.getByTestId("ladder-peek-body");
+      if (isKilled) expect(peek).toHaveTextContent("This negative belongs only to killed snapshot");
+      else expect(peek).not.toHaveTextContent("This negative belongs only to killed snapshot");
+      fireEvent.keyDown(document, { key: "Escape" });
+    }
+  });
+
+  it("keeps raw member chronology when source findings sit between old and new iterations", () => {
+    const members = [rows[0].iteration_id, `sf-${rows[0].iteration_id}`, rows[1].iteration_id];
+    render(page({ ...fixture, clusters: [{ ...fixture.clusters[0], members }] }));
+    fireEvent.click(screen.getByRole("button", { name: /^Expand / }));
+    const card = screen.getByTestId(`thesis-record-cl-${rows[0].iteration_id}`);
+    expect(within(card).getAllByRole("link").map((link) => link.textContent)).toEqual(members);
+  });
+});

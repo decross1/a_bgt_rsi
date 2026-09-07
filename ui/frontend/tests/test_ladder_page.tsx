@@ -497,3 +497,25 @@ describe("/ladder honest degraded states", () => {
     expect(screen.getByTestId("ladder-table-empty")).toBeInTheDocument();
   });
 });
+
+
+describe("collection-first command palette", () => {
+  function invoke(label: string) {
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.click(within(screen.getByTestId("command-palette")).getByText(label));
+  }
+  it("cycles collections, board, table, collections from the actual default", () => {
+    render(<MemoryRouter><CommandPalette /><Ladder initial={FIXTURE} /></MemoryRouter>);
+    expect(screen.getByTestId("ladder-view-collections")).toHaveAttribute("aria-pressed", "true");
+    for (const view of ["board", "table", "collections"]) {
+      invoke("switch ladder view");
+      expect(screen.getByTestId(`ladder-view-${view}`)).toHaveAttribute("aria-pressed", "true");
+    }
+  });
+  it("makes the graveyard visible when invoked from collections", () => {
+    render(<MemoryRouter><CommandPalette /><Ladder initial={FIXTURE} /></MemoryRouter>);
+    invoke("toggle graveyard");
+    expect(screen.getByTestId("ladder-view-board")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("ladder-card-cl-b")).toBeVisible();
+  });
+});

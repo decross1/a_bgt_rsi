@@ -89,24 +89,24 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
   const skew = isVersionSkew404(error, LADDER_ENDPOINT);
   const [view, setView] = useState<View>("collections");
   const [graveyardOpen, setGraveyardOpen] = useState(false);
-  const [pickedId, setPickedId] = useState<string | null>(null);
+  const [pickedKey, setPickedKey] = useState<string | null>(null);
   const model = useMemo(() => buildLadderModel(data ?? null), [data]);
   const thesis = useMemo(() => buildThesisFamilies(model.clusters, source.iterations), [model.clusters, source.iterations]);
   // Resolve against current data on every refresh; do not retain an old object
   // as if it were the record's latest disposition.
-  const pickedRecord = thesis.records.find((record) => record.id === pickedId);
+  const pickedRecord = thesis.records.find((record) => record.key === pickedKey);
   const picked = pickedRecord?.cluster ?? null;
   const pick = (cluster: LadderCluster) => {
-    setPickedId(thesis.records.find((record) => record.cluster === cluster)?.id ?? null);
+    setPickedKey(thesis.records.find((record) => record.cluster === cluster)?.key ?? null);
   };
   const sourceTimes = model.clusters.map((cluster) => cluster.last_event_ts)
     .filter((value): value is string => typeof value === "string" && Number.isFinite(Date.parse(value)));
   const latestEvent = sourceTimes.sort((a, b) => Date.parse(b) - Date.parse(a))[0];
 
-  // The page's two verbs in the ⌘K palette. Navigation to /ladder is already
+  // The page's view and graveyard verbs in the ⌘K palette. Navigation to /ladder is already
   // a built-in palette route entry, so registering it again here would only
-  // duplicate the row. Both callbacks are functional setState — stable, so
-  // this registers exactly once.
+  // duplicate the row. Re-register on view changes so the graveyard action
+  // locates its target even when invoked from a different view.
   useEffect(
     () =>
       registerPaletteActions([
@@ -115,17 +115,20 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
           label: "toggle graveyard",
           group: "Ladder",
           keywords: ["killed", "dead", "tombstone"],
-          perform: () => setGraveyardOpen((v) => !v),
+          perform: () => {
+            setView("board");
+            setGraveyardOpen((open) => view === "board" ? !open : true);
+          },
         },
         {
           id: "ladder-switch-view",
           label: "switch ladder view",
           group: "Ladder",
           keywords: ["collections", "board", "table", "kanban"],
-          perform: () => setView((v) => (v === "board" ? "table" : "board")),
+          perform: () => setView((v) => v === "collections" ? "board" : v === "board" ? "table" : "collections"),
         },
       ]),
-    [],
+    [view],
   );
 
   const nowMs = Date.now();
@@ -302,7 +305,7 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
 
           <PeekPanel
             open={picked !== null}
-            onClose={() => setPickedId(null)}
+            onClose={() => setPickedKey(null)}
             title={picked === null ? undefined : stemOf(picked)}
           >
             {picked !== null && (
