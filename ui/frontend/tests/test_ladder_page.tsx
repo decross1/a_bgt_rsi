@@ -576,6 +576,22 @@ describe("/ladder honest degraded states", () => {
     }
   });
 
+  it("rejects complete maps without an agenda instead of inventing zero open agenda", async () => {
+    const { getLadder: getLadderFromWire } = await vi.importActual<
+      typeof import("../src/api/http")
+    >("../src/api/http");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
+      clusters: [{ cluster_id: "cl-open", status: "open", evidence_level: "L1" }],
+      histogram: { L0: 0, L1: 1, L2: 0, L3: 0, L4: 0, L5: 0 },
+      counts: { open: 1, surfaced: 0, killed: 0 },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    try {
+      await expect(getLadderFromWire()).rejects.toThrow("agenda must be an array");
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it.each([
     ["future fractional rung", { L6: 1.5 }, {}, []],
     ["future negative rung", { L6: -1 }, {}, []],

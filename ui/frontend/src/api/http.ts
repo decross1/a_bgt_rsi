@@ -177,10 +177,8 @@ function admitLadderResponse(value: unknown): LadderResponse {
   // Aggregate displays require a complete producer-owned observation. Keep
   // unknown producer categories intact, but never let an absent, partial, or
   // fractional aggregate map be coerced into fabricated integer zeroes.
-  if ("agenda" in value) {
-    if (!Array.isArray(value.agenda)) ladderIntegrityError("agenda must be an array when present");
-    if (!value.agenda.every(isLadderRecord)) ladderIntegrityError("every agenda item must be an object");
-  }
+  if (!Array.isArray(value.agenda)) ladderIntegrityError("agenda must be an array");
+  if (!value.agenda.every(isLadderRecord)) ladderIntegrityError("every agenda item must be an object");
   if (!isLadderRecord(value.histogram)) {
     ladderIntegrityError("histogram must be an object");
   }
