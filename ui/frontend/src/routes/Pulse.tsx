@@ -294,12 +294,15 @@ export default function Pulse() {
   // a single transient scrape miss (server fine, one failed /metrics poll)
   // should not flip the hero to DOWN. We require the vllm block to be
   // absent across the most recent GEMMA_DOWN_WINDOW samples before calling
-  // it down. With fewer samples than the window, fall back to the latest.
+  // it down. With fewer observed samples than the window, use the latest.
+  // No samples means unobserved, not an observed failed scrape. A disconnected
+  // stream also cannot establish current model health; retain its last evidence
+  // with a historical label instead of composing a current outage verdict.
   const GEMMA_DOWN_WINDOW = 2;
   const recent = cleanSamples.slice(-GEMMA_DOWN_WINDOW);
   const gemmaUp =
     recent.length === 0
-      ? false
+      ? null
       : recent.length < GEMMA_DOWN_WINDOW
         ? recent[recent.length - 1]?.vllm != null
         : recent.some((s) => s.vllm != null);
@@ -350,13 +353,25 @@ export default function Pulse() {
         </span>
         <span>backend-reported revision {health?.version ?? "unknown"}</span>
         <span style={{ marginLeft: "auto" }}>
-          <HealthVerdict
-            connected={connected}
-            hasTelemetry={cleanSamples.length > 0}
-            ageMs={ageMs}
-            readErrors={readErrors}
-            gemmaUp={gemmaUp}
-          />
+          {gemmaUp === null || !connected ? (
+            <div data-testid="health-verdict" data-level="unknown"
+              className="flex flex-wrap items-center gap-2 text-[var(--fg-muted)]">
+              <span className="font-semibold">UNKNOWN</span>
+              <span>{connected ? "Awaiting telemetry" : "Telemetry disconnected"}</span>
+              <span>{gemmaUp === null ? "Model health not observed" : gemmaUp
+                ? "Last samples: Gemma metrics present"
+                : "Last samples: Gemma metrics unavailable"}</span>
+              {readErrors.length > 0 && <span>Last read errors: {readErrors.join(", ")}</span>}
+            </div>
+          ) : (
+            <HealthVerdict
+              connected={connected}
+              hasTelemetry={cleanSamples.length > 0}
+              ageMs={ageMs}
+              readErrors={readErrors}
+              gemmaUp={gemmaUp}
+            />
+          )}
         </span>
       </div>
 
