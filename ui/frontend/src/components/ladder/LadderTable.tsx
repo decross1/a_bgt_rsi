@@ -50,10 +50,12 @@ function compare(a: LadderCluster, b: LadderCluster, key: SortKey): number {
 
 export default function LadderTable({
   clusters,
+  recordKey,
   nowMs,
   onPick,
 }: {
   clusters: LadderCluster[];
+  recordKey: (c: LadderCluster) => string;
   nowMs: number;
   onPick: (c: LadderCluster) => void;
 }) {
@@ -111,11 +113,11 @@ export default function LadderTable({
           </button>
         ))}
       </div>
-      {rows.map((c, i) => {
+      {rows.map((c) => {
         const killed = isKilled(c);
         return (
           <ListRow
-            key={asText(c.cluster_id) ?? `idx-${i}`}
+            key={recordKey(c)}
             testId={`ladder-row-${asText(c.cluster_id) ?? "unknown"}`}
             onClick={() => onPick(c)}
           >

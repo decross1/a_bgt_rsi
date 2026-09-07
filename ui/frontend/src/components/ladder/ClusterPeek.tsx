@@ -6,6 +6,7 @@
 // reader.
 import { Link } from "react-router-dom";
 
+import type { FamilyRecord } from "./thesisModel";
 import RungGlyph from "../../design/RungGlyph";
 import { ageLabel } from "../../ladderBar";
 import { asText, dossierIdOf, isKilled, membersOf } from "./ladderModel";
@@ -39,12 +40,14 @@ const META: React.CSSProperties = {
 
 export default function ClusterPeek({
   cluster,
+  record,
   agenda,
   nextOwed,
   nowMs,
 }: {
   cluster: LadderCluster;
-  /** The whole page agenda; this component takes its own cluster's slice. */
+  record?: FamilyRecord;
+  /** Attribute ID-keyed agenda only when the current payload has a unique ID. */
   agenda: LadderAgendaItem[];
   /** next_owed keyed by rung (the backend's per-rung "test owed" wording). */
   nextOwed: Record<string, string>;
@@ -65,7 +68,8 @@ export default function ClusterPeek({
     !Array.isArray(cluster.reopening_condition)
       ? cluster.reopening_condition
       : null;
-  const mine = agenda.filter((a) => asText(a.cluster_id) === cid);
+  const canAttributeAgenda = record?.hasUniqueSourceId === true;
+  const mine = canAttributeAgenda ? agenda.filter((a) => asText(a.cluster_id) === cid) : [];
   const members = membersOf(cluster);
   const owed = level !== null ? nextOwed[level] : undefined;
 
@@ -75,6 +79,7 @@ export default function ClusterPeek({
       <div
         style={{
           display: "flex",
+          flexWrap: "wrap",
           alignItems: "center",
           gap: "var(--space-2)",
           fontSize: "var(--text-meta)",
@@ -100,6 +105,19 @@ export default function ClusterPeek({
       >
         {cid}
       </p>
+
+      {record !== undefined && <Section label="recorded questions">
+        <p style={{ ...META, color: "var(--fg-muted)" }}>{record.reason}</p>
+        {record.iterations.map((iteration) => <div key={iteration.id} style={{ marginTop: "var(--space-2)", overflowWrap: "anywhere" }}>
+          <p style={{ ...META, fontWeight: "var(--weight-medium)" }}>{iteration.topic}</p>
+          <p style={META}>{iteration.hypothesis ?? "No hypothesis text in the received source."}</p>
+          <p style={{ ...META, fontSize: "var(--text-meta)", color: "var(--fg-muted)" }}>{iteration.id}</p>
+        </div>)}
+        {record.missingMembers.length > 0 && <p style={META}>Topic source missing or unsupported for: {record.missingMembers.join(", ")}</p>}
+        <p style={{ ...META, marginTop: "var(--space-2)", color: "var(--fg-muted)" }}>
+          Recorded text is not revalidated claim binding. Full papers, pipeline evidence and decisions remain in each member dossier.
+        </p>
+      </Section>}
 
       {killed ? (
         <Section label="killed">
@@ -146,7 +164,12 @@ export default function ClusterPeek({
       )}
 
       <Section label="agenda">
-        {mine.length === 0 ? (
+        {!canAttributeAgenda ? (
+          <p style={{ ...META, color: "var(--fg-muted)" }}>
+            Agenda attribution withheld: this snapshot has no unique source ID in the received records.
+            ID-keyed suggestions cannot be assigned to this specific snapshot.
+          </p>
+        ) : mine.length === 0 ? (
           <p style={{ ...META, color: "var(--fg-muted)" }}>
             no open agenda items.
           </p>
