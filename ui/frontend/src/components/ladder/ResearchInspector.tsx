@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import RungGlyph from "../../design/RungGlyph";
@@ -6,11 +6,13 @@ import { ageLabel } from "../../ladderBar";
 import type { LadderAgendaItem } from "../../types/schemas";
 import { asText, dossierIdOf, isKilled, membersOf } from "./ladderModel";
 import {
-  researchContextsForFamily,
-  researchContextsForRecord,
+  researchEntriesForFamily,
+  researchEntriesForRecord,
+  researchContextForEntry,
 } from "./researchContext";
 import type {
   ResearchClaimContext,
+  ResearchClaimEntry,
   ResearchEvidenceLine,
 } from "./researchContext";
 import type { FamilyRecord, ThesisFamily } from "./thesisModel";
@@ -185,6 +187,10 @@ function ClaimCard({
           Recorded evidence and source qualification
         </summary>
         <div style={{ marginTop: "var(--space-3)" }}>
+          <div data-testid="raw-provenance-fields" style={{ overflowWrap: "anywhere" }}>
+            <h4 style={META}>Supplied provenance fields · raw values, not validated</h4>
+            <EvidenceList empty="No provenance fields supplied in this projection." lines={context.provenanceFields} />
+          </div>
           <h4 style={{ ...META, fontWeight: "var(--weight-medium)" }}>Recorded producer review · direction not inferred</h4>
           <p style={{ ...META, marginTop: "var(--space-1)" }}>
             Retrieval, novelty and critic fields can support, contradict or reject a claim. They explain the historical record but do not establish experimental validity.
@@ -414,22 +420,34 @@ function ContextSummaryButton({
 }
 
 function FamilyContextBrowser({
-  contexts,
+  entries,
   exactLiquidSet,
+  nextOwed,
 }: {
-  contexts: ResearchClaimContext[];
+  entries: ResearchClaimEntry[];
   exactLiquidSet: boolean;
+  nextOwed: Record<string, string>;
 }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const exactContexts = exactLiquidSet
-    ? contexts.filter((context) => context.isPinnedExactClaim)
-    : [];
-  const otherContexts = exactLiquidSet
-    ? contexts.filter((context) => !context.isPinnedExactClaim)
-    : contexts;
-  const selected = contexts.find((context) => context.key === selectedKey);
+  const [page, setPage] = useState(0);
+  const exactEntries = useMemo(() => exactLiquidSet
+    ? entries.filter((entry) => entry.isPinnedExactClaim) : [], [entries, exactLiquidSet]);
+  const otherEntries = useMemo(() => exactLiquidSet
+    ? entries.filter((entry) => !entry.isPinnedExactClaim) : entries, [entries, exactLiquidSet]);
+  const pageSize = 10;
+  const lastPage = Math.max(0, Math.ceil(otherEntries.length / pageSize) - 1);
+  const currentPage = Math.min(page, lastPage);
+  const exactContexts = useMemo(() => exactEntries.map((entry) => researchContextForEntry(entry, nextOwed)), [exactEntries, nextOwed]);
+  const visibleContexts = useMemo(() => historyOpen
+    ? otherEntries.slice(currentPage * pageSize, (currentPage + 1) * pageSize)
+      .map((entry) => researchContextForEntry(entry, nextOwed)) : [],
+    [historyOpen, otherEntries, currentPage, nextOwed]);
+  const selectedEntry = entries.find((entry) => entry.key === selectedKey);
+  const selected = useMemo(() => selectedEntry === undefined ? undefined
+    : researchContextForEntry(selectedEntry, nextOwed), [selectedEntry, nextOwed]);
   const toggle = (key: string) => setSelectedKey((current) => current === key ? null : key);
+  const changePage = (value: number) => { setPage(value); setSelectedKey(null); };
 
   return (
     <>
@@ -461,7 +479,7 @@ function FamilyContextBrowser({
         </div>
       )}
 
-      {otherContexts.length > 0 && (
+      {otherEntries.length > 0 && (
         <section style={{ marginTop: "var(--space-3)" }}>
           <button
             type="button"
@@ -480,7 +498,7 @@ function FamilyContextBrowser({
               textAlign: "left",
             }}
           >
-            {historyOpen ? "Hide" : "Show"} {otherContexts.length} {exactLiquidSet ? "other recorded histories" : "recorded entries"}
+            {historyOpen ? "Hide" : "Show"} {otherEntries.length} {exactLiquidSet ? "other recorded histories" : "recorded entries"}
           </button>
           {historyOpen && (
             <div
@@ -496,7 +514,7 @@ function FamilyContextBrowser({
               }}
             >
               <div className="flex min-w-0 flex-col" style={{ gap: "var(--space-2)" }}>
-                {otherContexts.map((context) => (
+                {visibleContexts.map((context) => (
                   <ContextSummaryButton
                     key={context.key}
                     context={context}
@@ -506,7 +524,16 @@ function FamilyContextBrowser({
                   />
                 ))}
               </div>
-              {selected !== undefined && otherContexts.includes(selected) && (
+              <nav aria-label="History pages" className="flex flex-wrap items-center gap-2" style={{ marginTop: "var(--space-3)" }}>
+                <button type="button" aria-label="First histories" disabled={currentPage === 0} onClick={() => changePage(0)}>First</button>
+                <button type="button" aria-label="Previous histories" disabled={currentPage === 0} onClick={() => changePage(currentPage - 1)}>Previous</button>
+                <span role="status" style={META}>Entries {currentPage * pageSize + 1}–{Math.min((currentPage + 1) * pageSize, otherEntries.length)} of {otherEntries.length}</span>
+                <button type="button" aria-label="Next histories" disabled={currentPage === lastPage} onClick={() => changePage(currentPage + 1)}>Next</button>
+                <button type="button" aria-label="Last histories" disabled={currentPage === lastPage} onClick={() => changePage(lastPage)}>Last</button>
+              </nav>
+            </div>
+          )}
+          {historyOpen && selected !== undefined && (!exactLiquidSet || !selected.isPinnedExactClaim) && (
                 <div
                   id={`research-detail-${selected.key.replace(/[^A-Za-z0-9_.:-]+/g, "-")}`}
                   data-testid="research-selected-history-detail"
@@ -514,8 +541,6 @@ function FamilyContextBrowser({
                 >
                   <ClaimCard context={selected} legacyOwedTestId={false} />
                 </div>
-              )}
-            </div>
           )}
         </section>
       )}
@@ -536,15 +561,14 @@ export default function ResearchInspector({
   nextOwed: Record<string, string>;
   nowMs: number;
 }) {
-  const contexts = family !== undefined
-    ? researchContextsForFamily(family, nextOwed)
-    : record === undefined
-      ? []
-      : researchContextsForRecord(record, nextOwed);
-  const exactLiquidContexts = contexts.filter((context) => context.isPinnedExactClaim);
+  const entries = useMemo(() => family !== undefined
+    ? researchEntriesForFamily(family)
+    : record === undefined ? [] : researchEntriesForRecord(record), [family, record]);
+  const exactLiquidEntries = entries.filter((entry) => entry.isPinnedExactClaim);
   const exactLiquidSet = family?.id === "collection:liquid-democracy"
-    && exactLiquidContexts.length === 3
-    && new Set(exactLiquidContexts.map((context) => context.iterationId)).size === 3;
+    && exactLiquidEntries.length === 3
+    && new Set(exactLiquidEntries.map((entry) => entry.iteration?.id)).size === 3;
+
   const body = (
     <div data-testid="research-inspector">
       {record !== undefined && <RecordHistory record={record} agenda={agenda} nowMs={nowMs} />}
@@ -567,7 +591,7 @@ export default function ResearchInspector({
 
       <section
         data-testid="research-claim-overview"
-        data-claim-count={contexts.length}
+        data-claim-count={entries.length}
         data-family-record-count={family?.records.length}
         data-featured-claim-count={exactLiquidSet ? 3 : 0}
         style={{ marginTop: record === undefined ? "var(--space-3)" : "var(--space-4)" }}
@@ -576,24 +600,24 @@ export default function ResearchInspector({
           <h2 style={{ margin: 0, color: "var(--fg)", fontSize: "var(--text-title)", fontWeight: "var(--weight-semibold)" }}>
             {exactLiquidSet
               ? "Three distinct recorded claims"
-              : `${contexts.length} recorded claim ${contexts.length === 1 ? "entry" : "entries"}`}
+              : `${entries.length} recorded claim ${entries.length === 1 ? "entry" : "entries"}`}
           </h2>
           <span style={META}>contextual inspector</span>
         </div>
         {exactLiquidSet && (
           <p style={{ ...META, marginTop: "var(--space-1)" }}>
-            {family?.records.length} family records · {contexts.length} received claim entries · 3 pinned claim summaries · {contexts.length - 3} other histories
+            {family?.records.length} family records · {entries.length} received claim entries · 3 pinned claim summaries · {entries.length - 3} other histories
           </p>
         )}
-        {family !== undefined ? (
-          <FamilyContextBrowser contexts={contexts} exactLiquidSet={exactLiquidSet} />
+        {family !== undefined || entries.length > 1 ? (
+          <FamilyContextBrowser key={family?.id ?? record?.key} entries={entries} exactLiquidSet={exactLiquidSet} nextOwed={nextOwed} />
         ) : (
           <div className="flex min-w-0 flex-col" style={{ gap: "var(--space-3)", marginTop: "var(--space-3)" }}>
-            {contexts.map((context) => (
+            {entries.map((entry) => researchContextForEntry(entry, nextOwed)).map((context) => (
               <ClaimCard
                 key={context.key}
                 context={context}
-                legacyOwedTestId={record !== undefined && contexts.length === 1}
+                legacyOwedTestId={record !== undefined && entries.length === 1}
               />
             ))}
           </div>

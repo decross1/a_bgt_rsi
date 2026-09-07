@@ -47,6 +47,7 @@ export interface ResearchClaimContext {
   evidenceValidity: string;
   executionMode: string;
   evidenceDelta: string;
+  provenanceFields: ResearchEvidenceLine[];
   supportingEvidence: ResearchEvidenceLine[];
   limitingEvidence: ResearchEvidenceLine[];
   rawOutcome: ResearchEvidenceLine[];
@@ -256,11 +257,8 @@ function contextFor(
   const status = asText(record.cluster.status) ?? "unknown status";
   const stage = asText(record.cluster.evidence_level) ?? "unknown stage";
   const gate = asText(source.gate_status);
-  const outcomePresent = asRecord(source.experiment_outcome) !== null;
   const application = explicitApplication(source);
   const execution = explicitExecutionMode(source);
-  const binding = asRecord(source.claim_experiment_binding);
-  const comparison = asRecord(source.evidence_comparison);
   const sourceEndedAt = asText(source.ended_at) ?? "unknown";
   const recordedEventAt = asText(record.cluster.last_event_ts) ?? exact?.recordedLevelAt ?? "unknown";
   const iterationId = iteration?.id ?? "iteration unavailable";
@@ -268,14 +266,25 @@ function contextFor(
   const topic = iteration?.topic ?? (record.topics.join("; ") || "Recorded topic unavailable");
   const stageRequirement = nextOwed[stage];
 
-  let evidenceDelta: string;
-  if (!outcomePresent) {
-    evidenceDelta = "Not established — an outcome, compatible comparison, and exact claim/spec/result binding are not supplied in the received projection.";
-  } else if (binding === null || comparison === null) {
-    evidenceDelta = "Not established — a raw outcome is supplied, while a compatible comparison and exact claim/spec/result binding are not supplied in the received projection.";
-  } else {
-    evidenceDelta = "Not established in this view — binding and comparison metadata are recorded, but their validity has not been independently qualified here.";
-  }
+  const provenanceFields = [
+    ["experiment_outcome", "Outcome"],
+    ["claim_experiment_binding", "Claim/spec/result binding"],
+    ["evidence_comparison", "Comparison"],
+  ].map(([field, label]) => {
+    if (!Object.prototype.hasOwnProperty.call(source, field)) {
+      return { label, text: "not supplied in the received projection", raw: null };
+    }
+    const value = source[field];
+    return {
+      label,
+      text: value === null ? "explicit null — no object supplied"
+        : asRecord(value) === null ? "present with unsupported shape"
+          : "object supplied — validity unverified",
+      raw: JSON.stringify(value) ?? String(value),
+    };
+  });
+  const evidenceDelta = "Not established — evidence validity is not established in this view. "
+    + provenanceFields.map(({ label, text }) => `${label}: ${text}.`).join(" ");
 
   return {
     key: `${record.key}:${iterationId}:${index}`,
@@ -302,6 +311,7 @@ function contextFor(
       ? "Unknown — an execution-mode field is not supplied in the received projection."
       : `Recorded source: ${execution}`,
     evidenceDelta,
+    provenanceFields: provenanceFields.filter((field) => field.raw !== null).map(({ label, raw }) => ({ label, text: raw! })),
     supportingEvidence: evidence.supporting,
     limitingEvidence: evidence.limiting,
     rawOutcome: evidence.outcome,
@@ -326,4 +336,30 @@ export function researchContextsForFamily(
   nextOwed: Record<string, string>,
 ): ResearchClaimContext[] {
   return family.records.flatMap((record) => researchContextsForRecord(record, nextOwed));
+}
+
+
+export interface ResearchClaimEntry {
+  key: string;
+  record: FamilyRecord;
+  iteration: RecordedIteration | undefined;
+  index: number;
+  isPinnedExactClaim: boolean;
+}
+
+export function researchEntriesForRecord(record: FamilyRecord): ResearchClaimEntry[] {
+  const iterations = record.iterations.length === 0 ? [undefined] : record.iterations;
+  return iterations.map((iteration, index) => ({
+    key: `${record.key}:${iteration?.id ?? "iteration unavailable"}:${index}`,
+    record, iteration, index,
+    isPinnedExactClaim: exactClaimFor(record, iteration) !== undefined,
+  }));
+}
+
+export function researchEntriesForFamily(family: ThesisFamily): ResearchClaimEntry[] {
+  return family.records.flatMap(researchEntriesForRecord);
+}
+
+export function researchContextForEntry(entry: ResearchClaimEntry, nextOwed: Record<string, string>): ResearchClaimContext {
+  return contextFor(entry.record, entry.iteration, entry.index, nextOwed);
 }

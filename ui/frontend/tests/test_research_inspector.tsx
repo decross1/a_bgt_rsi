@@ -222,13 +222,14 @@ describe("ResearchInspector", () => {
     fireEvent.click(historyDisclosure);
     expect(historyDisclosure).toHaveAttribute("aria-expanded", "true");
     const historyBrowser = screen.getByTestId("research-other-histories");
-    expect(within(historyBrowser).getAllByRole("button", { name: /Inspect other history/ })).toHaveLength(77);
+    expect(within(historyBrowser).getAllByRole("button", { name: /Inspect other history/ })).toHaveLength(10);
+    for (let page = 1; page < 8; page++) fireEvent.click(screen.getByRole("button", { name: "Next histories" }));
     expect(within(historyBrowser).queryByTestId("research-selected-history-detail")).not.toBeInTheDocument();
 
     fireEvent.click(within(historyBrowser).getByRole("button", {
       name: "Inspect other history record cl-iter-other-077, iteration iter-other-077: Other Liquid Democracy history 77",
     }));
-    const selectedHistory = within(historyBrowser).getByTestId("research-selected-history-detail");
+    const selectedHistory = screen.getByTestId("research-selected-history-detail");
     expect(selectedHistory).toHaveTextContent("Pinned synthetic negative history");
     expect(within(selectedHistory).getByRole("link", { name: "Open full dossier for iter-other-077" })).toBeVisible();
 
@@ -351,5 +352,54 @@ describe("ResearchInspector", () => {
     expect(screen.getByTestId("evidence-delta")).toHaveTextContent("Not established");
     expect(screen.getByTestId("evidence-delta")).toHaveTextContent("not supplied in the received projection");
     expect(screen.getByTestId("axis-application-fit")).toHaveTextContent("Unmapped");
+  });
+});
+
+
+describe("independent source presence and bounded history work", () => {
+  const fields = ["experiment_outcome", "claim_experiment_binding", "evidence_comparison"] as const;
+  const labels = ["Outcome", "Claim/spec/result binding", "Comparison"];
+  it.each(Array.from({ length: 8 }, (_, mask) => mask))("reports each field independently for presence mask %i", (mask) => {
+    const base = liquidFamily().records[0];
+    const source = Object.fromEntries(fields.flatMap((field, i) => (mask & (1 << i)) ? [[field, { marker: field }]] : []));
+    const record = { ...base, iterations: [{ ...base.iterations[0], source }] };
+    render(<MemoryRouter><ResearchInspector record={record} agenda={[]} nextOwed={{}} nowMs={0} /></MemoryRouter>);
+    const delta = screen.getByTestId("evidence-delta");
+    labels.forEach((label, i) => expect(delta).toHaveTextContent(`${label}: ${(mask & (1 << i)) ? "object supplied" : "not supplied in the received projection"}`));
+    expect(delta).toHaveTextContent("validity is not established");
+  });
+  it.each([null, [], "malformed", 42, false])("retains present unsupported metadata %j without calling it absent", (value) => {
+    const base = liquidFamily().records[0];
+    const source = Object.fromEntries(fields.map((field) => [field, value]));
+    const record = { ...base, iterations: [{ ...base.iterations[0], source }] };
+    render(<MemoryRouter><ResearchInspector record={record} agenda={[]} nextOwed={{}} nowMs={0} /></MemoryRouter>);
+    const delta = screen.getByTestId("evidence-delta");
+    labels.forEach((label) => expect(delta).toHaveTextContent(`${label}: ${value === null ? "explicit null" : "present with unsupported shape"}`));
+    expect(delta).not.toHaveTextContent("not supplied");
+    expect(screen.getByTestId("raw-provenance-fields")).toHaveTextContent(JSON.stringify(value));
+    expect(screen.getByTestId("axis-evidence-validity")).toHaveTextContent("Unknown");
+  });
+  it("derives only a finite visible window from 10,000 histories and retains the last entry", () => {
+    const base = liquidFamily().records[0];
+    let sourceReads = 0;
+    const records = Array.from({ length: 10000 }, (_, i) => ({
+      ...base, key: `record-${i}`, id: `record-${i}`, title: `History ${i}`,
+      cluster: { ...base.cluster, cluster_id: `record-${i}` },
+      iterations: [{ ...base.iterations[0], id: `iteration-${i}`, hypothesis: `History ${i}`, source: {
+        get experiment_outcome() { sourceReads++; return null; },
+      } }],
+    }));
+    const family = { ...liquidFamily(), id: "topic:large", records };
+    render(<MemoryRouter><ResearchInspector family={family} agenda={[]} nextOwed={{}} nowMs={0} /></MemoryRouter>);
+    expect(sourceReads).toBe(0);
+    fireEvent.click(screen.getByRole("button", { name: "Show 10000 recorded entries" }));
+    expect(screen.getAllByRole("button", { name: /Inspect recorded entry/ })).toHaveLength(10);
+    expect(sourceReads).toBeGreaterThan(0);
+    expect(sourceReads).toBeLessThanOrEqual(60);
+    fireEvent.click(screen.getByRole("button", { name: "Last histories" }));
+    expect(screen.getByRole("button", { name: /iteration-9999: History 9999/ })).toBeVisible();
+    expect(screen.getAllByRole("button", { name: /Inspect recorded entry/ })).toHaveLength(10);
+    fireEvent.click(screen.getByRole("button", { name: /iteration-9999: History 9999/ }));
+    expect(screen.getByTestId("research-selected-history-detail")).toHaveTextContent("History 9999");
   });
 });

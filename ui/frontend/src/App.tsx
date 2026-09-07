@@ -29,6 +29,20 @@ type NavGroupId = "now" | "research" | "operations";
 
 const THEME_STORAGE_KEY = "oracle-lab-theme";
 const NARROW_NAV_QUERY = "(max-width: 760px)";
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+function focusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (element) => !element.closest('[aria-hidden="true"]'),
+  );
+}
 
 const NAV_GROUPS: {
   id: NavGroupId;
@@ -170,7 +184,24 @@ function AtlasApp() {
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [isNarrow, setIsNarrow] = useState(isNarrowViewport);
   const [navOpen, setNavOpen] = useState(() => !isNarrowViewport());
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const navToggleRef = useRef<HTMLButtonElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const sidebarCloseRef = useRef<HTMLButtonElement>(null);
+  const drawerOpenerRef = useRef<HTMLElement | null>(null);
+  const restoreDrawerFocusRef = useRef(false);
+
+  const closeNarrowNav = (restoreFocus = true) => {
+    if (!isNarrow) return;
+    restoreDrawerFocusRef.current = restoreFocus;
+    setNavOpen(false);
+  };
+
+  const openNarrowNav = () => {
+    drawerOpenerRef.current = navToggleRef.current;
+    restoreDrawerFocusRef.current = false;
+    setNavOpen(true);
+  };
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -196,18 +227,52 @@ function AtlasApp() {
 
   useEffect(() => {
     if (!isNarrow || !navOpen) return;
+    sidebarCloseRef.current?.focus();
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setNavOpen(false);
-        navToggleRef.current?.focus();
+        event.preventDefault();
+        closeNarrowNav();
+        return;
+      }
+
+      if (event.key !== "Tab" || !sidebarRef.current) return;
+      const focusable = focusableElements(sidebarRef.current);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!sidebarRef.current.contains(active)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isNarrow, navOpen]);
 
-  const closeNarrowNav = () => {
-    if (isNarrow) setNavOpen(false);
+  useEffect(() => {
+    if (navOpen || !restoreDrawerFocusRef.current) return;
+    restoreDrawerFocusRef.current = false;
+    const opener = drawerOpenerRef.current;
+    const target =
+      opener?.isConnected && !opener.closest("[inert]") ? opener : navToggleRef.current;
+    target?.focus();
+  }, [navOpen]);
+
+  const handlePaletteOpenChange = (open: boolean) => {
+    setPaletteOpen(open);
+    if (open && isNarrow && navOpen) closeNarrowNav(false);
   };
 
   return (
@@ -216,19 +281,32 @@ function AtlasApp() {
         <button
           aria-label="Close navigation"
           className="atlas-sidebar-backdrop"
-          onClick={() => setNavOpen(false)}
+          data-testid="atlas-sidebar-backdrop"
+          onClick={() => closeNarrowNav()}
+          tabIndex={-1}
           type="button"
         />
       )}
 
       <aside
-        aria-hidden={isNarrow && !navOpen ? true : undefined}
+        aria-hidden={paletteOpen || (isNarrow && !navOpen) ? true : undefined}
         aria-label="Oracle Lab navigation"
         className={`atlas-sidebar${navOpen ? " atlas-sidebar--open" : ""}`}
         data-testid="atlas-sidebar"
         id="atlas-sidebar"
-        inert={isNarrow && !navOpen ? true : undefined}
+        inert={paletteOpen || (isNarrow && !navOpen) ? true : undefined}
+        ref={sidebarRef}
+        tabIndex={-1}
       >
+        <button
+          aria-label="Close menu"
+          className="atlas-sidebar-close"
+          onClick={() => closeNarrowNav()}
+          ref={sidebarCloseRef}
+          type="button"
+        >
+          Close
+        </button>
         <div className="atlas-brand">
           <span className="atlas-brand-name">Oracle Lab</span>
           <span className="atlas-brand-kicker">research workspace</span>
@@ -253,13 +331,18 @@ function AtlasApp() {
         </div>
       </aside>
 
-      <div className="atlas-workspace">
+      <div
+        aria-hidden={paletteOpen || (isNarrow && navOpen) ? true : undefined}
+        className="atlas-workspace"
+        data-testid="atlas-workspace"
+        inert={paletteOpen || (isNarrow && navOpen) ? true : undefined}
+      >
         <header className="atlas-mobile-header">
           <button
             aria-controls="atlas-sidebar"
             aria-expanded={navOpen}
             className="atlas-nav-toggle"
-            onClick={() => setNavOpen((value) => !value)}
+            onClick={() => (navOpen ? closeNarrowNav() : openNarrowNav())}
             ref={navToggleRef}
             type="button"
           >
@@ -290,7 +373,10 @@ function AtlasApp() {
         </main>
       </div>
 
-      <CommandPalette />
+      <CommandPalette
+        fallbackFocusRef={isNarrow ? navToggleRef : sidebarRef}
+        onOpenChange={handlePaletteOpenChange}
+      />
     </div>
   );
 }

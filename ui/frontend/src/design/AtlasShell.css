@@ -133,6 +133,7 @@
 .atlas-nav-link:focus-visible,
 .atlas-theme-toggle:focus-visible,
 .atlas-external-link:focus-visible,
+.atlas-sidebar-close:focus-visible,
 .atlas-nav-toggle:focus-visible {
   outline-color: var(--nav-focus);
 }
@@ -178,6 +179,24 @@
   background: var(--nav-surface);
 }
 
+.atlas-sidebar-close {
+  display: none;
+  box-sizing: border-box;
+  min-height: 36px;
+  padding: var(--space-2) var(--space-3);
+  color: var(--nav-fg);
+  font: inherit;
+  font-size: var(--text-ui);
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--nav-border);
+  border-radius: var(--radius-control);
+}
+
+.atlas-sidebar-close:hover {
+  background: var(--nav-surface);
+}
+
 .atlas-palette-hint {
   color: var(--nav-muted);
   font-size: var(--text-meta);
@@ -210,6 +229,133 @@
   --voice-pi: oklch(0.48 0.12 330);
   --voice-oracle: var(--neutral-700);
   --voice-other: var(--fg-muted);
+}
+
+/* These empty-state and provenance notes convey why Channel has no result.
+   Channel's local zinc classes are too dim on the retained dark surfaces. */
+[data-theme="dark"] .atlas-main .chn :where(
+  [data-testid="channel-empty"],
+  [data-testid="channel-filter-empty"],
+  [data-testid="channel-honesty-note"],
+  [data-testid="channel-capability-off"]
+) {
+  color: var(--fg-muted);
+}
+
+/* Existing research graphics use literal SVG presentation attributes. Map
+   those exact marks on the light canvas so their role survives the theme. */
+:root:not([data-theme="dark"]) .atlas-main [fill="#a1a1aa"] {
+  fill: var(--fg-muted) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main :where(
+  [stroke="#3f3f46"],
+  [stroke="#52525b"],
+  [stroke="#71717a"]
+) {
+  stroke: var(--fg-muted) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main [stroke="#27272a"] {
+  stroke: var(--border-1) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main [fill="#27272a"] {
+  fill: var(--border-2) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main [stroke="#34d399"] {
+  stroke: var(--status-ok) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main [fill="#34d399"] {
+  fill: var(--status-ok) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main [stroke="#fbbf24"] {
+  stroke: var(--status-warn) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main [fill="#fbbf24"] {
+  fill: var(--status-warn) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main [stroke="#f87171"] {
+  stroke: var(--status-bad) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main [fill="#f87171"] {
+  fill: var(--status-bad) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main [stroke="#38bdf8"] {
+  stroke: var(--status-info) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main [fill="#38bdf8"] {
+  fill: var(--status-info) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main :where(
+  [fill="#34d39955"],
+  [fill="#34d39922"]
+) {
+  fill: color-mix(in oklab, var(--status-ok) 85%, var(--surface-1)) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main :where(
+  [fill="#f8717155"],
+  [fill="#f8717122"]
+) {
+  fill: color-mix(in oklab, var(--status-bad) 85%, var(--surface-1)) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main :where(
+  [class~="bg-emerald-500/70"]
+) {
+  background-color: var(--status-ok);
+}
+
+:root:not([data-theme="dark"]) .atlas-main :where([class~="bg-red-500/70"]) {
+  background-color: var(--status-bad);
+}
+
+:root:not([data-theme="dark"]) .atlas-main :where(.bg-sky-400) {
+  background-color: var(--status-info);
+}
+
+:root:not([data-theme="dark"]) .atlas-main :where(.bg-zinc-500, .bg-zinc-700) {
+  background-color: var(--fg-muted);
+}
+
+:root:not([data-theme="dark"]) .atlas-main [data-testid="activity-graph"] .react-flow.dark {
+  --xy-background-color: var(--surface-2);
+  --xy-background-pattern-dots-color-default: var(--border-2);
+  --xy-edge-stroke-default: var(--fg-muted);
+  --xy-edge-stroke-selected-default: var(--fg);
+  --xy-node-color-default: var(--fg);
+  --xy-node-background-color-default: var(--surface-1);
+  --xy-controls-button-background-color-default: var(--surface-1);
+  --xy-controls-button-background-color-hover-default: var(--surface-2);
+  --xy-controls-button-color-default: var(--fg);
+  --xy-controls-button-color-hover-default: var(--fg);
+  --xy-controls-button-border-color-default: var(--border-1);
+}
+
+:root:not([data-theme="dark"]) .atlas-main [data-testid="activity-graph"] .react-flow__background {
+  --xy-background-color-props: var(--surface-2) !important;
+  --xy-background-pattern-color-props: var(--border-2) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main [data-testid="activity-graph"] .react-flow__edge-path {
+  stroke: var(--fg-muted) !important;
+}
+
+:root:not([data-theme="dark"]) .atlas-main .recharts-default-tooltip :where(
+  .recharts-tooltip-label,
+  .recharts-tooltip-item
+) {
+  color: var(--nav-fg) !important;
 }
 
 .atlas-mobile-header,
@@ -588,6 +734,17 @@
     transform: translateX(0);
   }
 
+  .atlas-sidebar-close {
+    position: absolute;
+    top: var(--space-4);
+    right: var(--space-4);
+    display: block;
+  }
+
+  .atlas-brand {
+    padding-right: calc(var(--space-10) + var(--space-4));
+  }
+
   .atlas-sidebar-backdrop {
     position: fixed;
     inset: 0;
@@ -628,6 +785,10 @@
 
   .atlas-nav-toggle:hover {
     background: var(--surface-2);
+  }
+
+  .atlas-nav-toggle:focus-visible {
+    outline-color: var(--focus-ring);
   }
 
   .atlas-main {

@@ -199,7 +199,7 @@ describe("Atlas theme and narrow navigation", () => {
     await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", "dark"));
   });
 
-  it("opens, closes, and restores focus for the narrow sidebar", async () => {
+  it("moves focus into the narrow drawer, inerts work, and wraps Tab", async () => {
     useViewport(true);
     window.history.replaceState({}, "", "/ladder");
     render(<App />);
@@ -212,14 +212,55 @@ describe("Atlas theme and narrow navigation", () => {
     fireEvent.click(toggle);
     expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(sidebar).not.toHaveAttribute("aria-hidden");
+    const close = screen.getByRole("button", { name: "Close menu" });
+    const theme = screen.getByRole("button", { name: "Switch to dark theme" });
+    await waitFor(() => expect(close).toHaveFocus());
+    expect(screen.getByTestId("atlas-workspace")).toHaveAttribute("inert");
+
+    theme.focus();
+    expect(fireEvent.keyDown(theme, { key: "Tab" })).toBe(false);
+    expect(close).toHaveFocus();
+    expect(fireEvent.keyDown(close, { key: "Tab", shiftKey: true })).toBe(false);
+    expect(theme).toHaveFocus();
 
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(toggle).toHaveAttribute("aria-expanded", "false"));
     expect(toggle).toHaveFocus();
+    expect(screen.getByTestId("atlas-workspace")).not.toHaveAttribute("inert");
+  });
+
+  it("restores the Menu opener after scrim and navigation close", async () => {
+    useViewport(true);
+    window.history.replaceState({}, "", "/ladder");
+    render(<App />);
+
+    const toggle = screen.getByRole("button", { name: "Menu" });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Close menu" })).toHaveFocus());
+    fireEvent.click(screen.getByTestId("atlas-sidebar-backdrop"));
+    await waitFor(() => expect(toggle).toHaveFocus());
 
     fireEvent.click(toggle);
     fireEvent.click(screen.getByRole("link", { name: "ladder" }));
     await waitFor(() => expect(toggle).toHaveAttribute("aria-expanded", "false"));
+    expect(toggle).toHaveFocus();
+  });
+
+  it("hands a narrow drawer shortcut to one palette focus owner", async () => {
+    useViewport(true);
+    render(<App />);
+    const toggle = screen.getByRole("button", { name: "Menu" });
+    fireEvent.click(toggle);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Close menu" })).toHaveFocus());
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await waitFor(() => expect(screen.getByTestId("command-palette")).toBeInTheDocument());
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByPlaceholderText("Go to…")).toHaveFocus();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByTestId("command-palette")).not.toBeInTheDocument());
+    expect(toggle).toHaveFocus();
   });
 });
 
@@ -253,6 +294,54 @@ describe("Atlas light-theme source compatibility", () => {
     ];
     for (const voice of voices) {
       expect(contrast(voice, surface)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("scopes readable dark informative Channel text to the Channel surface", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const shell = readFileSync(resolve(here, "../src/design/AtlasShell.css"), "utf8");
+    const tokens = readFileSync(resolve(here, "../src/design/tokens.css"), "utf8");
+    const dark = tokens.match(/\[data-theme="dark"\] \{([\s\S]*?)\n\}/)?.[1] ?? "";
+    const rule = shell.match(
+      /\[data-theme="dark"\] \.atlas-main \.chn :where\(([\s\S]*?)\) \{\s*color: var\(--fg-muted\);\s*\}/,
+    )?.[1] ?? "";
+
+    for (const testId of [
+      "channel-empty",
+      "channel-filter-empty",
+      "channel-honesty-note",
+      "channel-capability-off",
+    ]) {
+      expect(rule).toContain(`[data-testid="${testId}"]`);
+    }
+    const text = readOklch(dark, "fg-muted");
+    expect(contrast(text, readOklch(dark, "bg"))).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(text, readOklch(dark, "surface-1"))).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("maps retained light SVG text and meaningful marks to qualified tokens", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const shell = readFileSync(resolve(here, "../src/design/AtlasShell.css"), "utf8");
+    const tokens = readFileSync(resolve(here, "../src/design/tokens.css"), "utf8");
+    const surface = readOklch(tokens, "surface-1");
+
+    expect(shell).toContain('[fill="#a1a1aa"]');
+    expect(shell).toContain('[stroke="#34d399"]');
+    expect(shell).toContain('[stroke="#fbbf24"]');
+    expect(shell).toContain('[stroke="#f87171"]');
+    expect(shell).toContain('[stroke="#38bdf8"]');
+    expect(shell).toContain('[stroke="#52525b"]');
+    expect(shell).toContain('[stroke="#71717a"]');
+    expect(shell).toContain(".react-flow__edge-path");
+    expect(shell).toContain('[data-testid="activity-graph"] .react-flow.dark');
+    expect(shell).toContain("--xy-background-color: var(--surface-2)");
+    expect(shell).toContain("--xy-background-pattern-color-props: var(--border-2)");
+    expect(shell).toContain('[class~="bg-emerald-500/70"]');
+    expect(shell).toContain('[class~="bg-red-500/70"]');
+
+    expect(contrast(readOklch(tokens, "fg-muted"), surface)).toBeGreaterThanOrEqual(4.5);
+    for (const token of ["status-ok", "status-warn", "status-bad", "status-info"]) {
+      expect(contrast(readOklch(tokens, token), surface)).toBeGreaterThanOrEqual(3);
     }
   });
 });

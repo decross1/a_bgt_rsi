@@ -3,7 +3,7 @@
 // it lists the reachable route surfaces in Atlas groups; selecting one navigates
 // and closes; registerPaletteActions adds entries and its unsubscribe removes
 // them (the registry survives for R1-R4 verbs — routes only ship here).
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import CommandPalette, {
@@ -22,6 +22,7 @@ function LocationProbe() {
 function mount() {
   render(
     <MemoryRouter initialEntries={["/"]}>
+      <button type="button" data-testid="palette-opener">Open commands</button>
       <CommandPalette />
       <LocationProbe />
     </MemoryRouter>,
@@ -62,6 +63,46 @@ describe("CommandPalette — open/close", () => {
     openPalette();
     fireEvent.click(screen.getByTestId("palette-scrim"));
     expect(screen.queryByTestId("command-palette")).not.toBeInTheDocument();
+  });
+
+  it("autofocuses the palette and restores its opener on close", async () => {
+    mount();
+    const opener = screen.getByTestId("palette-opener");
+    opener.focus();
+    openPalette();
+    expect(screen.getByPlaceholderText("Go to…")).toHaveFocus();
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(opener).toHaveFocus());
+
+    openPalette();
+    fireEvent.click(screen.getByTestId("palette-scrim"));
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
+  it("contains forward and reverse Tab when only the search field is tabbable", () => {
+    mount();
+    openPalette();
+    const input = screen.getByPlaceholderText("Go to…");
+    expect(input).toHaveFocus();
+    expect(fireEvent.keyDown(input, { key: "Tab" })).toBe(false);
+    expect(input).toHaveFocus();
+    expect(fireEvent.keyDown(input, { key: "Tab", shiftKey: true })).toBe(false);
+    expect(input).toHaveFocus();
+  });
+
+  it("leaves Cmd+K with an existing modal focus owner", () => {
+    mount();
+    const modal = document.createElement("div");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("role", "dialog");
+    modal.tabIndex = -1;
+    document.body.append(modal);
+    modal.focus();
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    expect(screen.queryByTestId("command-palette")).not.toBeInTheDocument();
+    expect(modal).toHaveFocus();
+    modal.remove();
   });
 });
 
