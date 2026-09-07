@@ -4,7 +4,13 @@
 // registerPaletteActions (module-level registry, unsubscribe on unmount).
 // The scrim is one of the two allowed glass surfaces (with the app header).
 import { Command } from "cmdk";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import {
+  type RefObject,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import "./primitives.css";
 
@@ -39,41 +45,122 @@ function getSnapshot(): PaletteAction[] {
   return registered;
 }
 
-// Every route in App.tsx, owner surfaces first, then engine internals.
-const ROUTES: { id: string; label: string; to: string; keywords: string[] }[] = [
-  { id: "nav-pulse", label: "pulse", to: "/", keywords: ["home", "health", "owe"] },
-  { id: "nav-ladder", label: "ladder", to: "/ladder", keywords: ["ideas", "evidence", "rungs"] },
-  { id: "nav-dossier", label: "dossiers", to: "/dossier", keywords: ["reader", "findings", "todo"] },
-  { id: "nav-channel", label: "channel", to: "/channel", keywords: ["chat", "nara", "lab"] },
-  { id: "nav-development", label: "development", to: "/development", keywords: ["codex", "engineering", "readiness", "overnight"] },
-  { id: "nav-cycles", label: "cycles", to: "/cycles", keywords: ["coordinator", "engine"] },
-  { id: "nav-experiments", label: "experiments", to: "/experiments", keywords: ["runs", "engine"] },
-  { id: "nav-graph", label: "graph", to: "/graph", keywords: ["chains", "engine", "flow"] },
+// Reachable route surfaces in the same three groups as the Atlas sidebar.
+const ROUTES: {
+  id: string;
+  label: string;
+  to: string;
+  keywords: string[];
+  group: "Now" | "Research" | "Operations";
+}[] = [
+  { id: "nav-pulse", label: "pulse", to: "/", keywords: ["home", "health", "owe"], group: "Now" },
+  { id: "nav-ladder", label: "ladder", to: "/ladder", keywords: ["ideas", "evidence", "rungs"], group: "Research" },
+  { id: "nav-dossier", label: "dossiers", to: "/dossier", keywords: ["reader", "findings", "todo"], group: "Research" },
+  { id: "nav-experiments", label: "experiments", to: "/experiments", keywords: ["runs", "engine"], group: "Research" },
+  { id: "nav-development", label: "development", to: "/development", keywords: ["codex", "engineering", "readiness", "overnight"], group: "Operations" },
+  { id: "nav-channel", label: "channel", to: "/channel", keywords: ["chat", "nara", "lab"], group: "Operations" },
+  { id: "nav-model-io", label: "model i/o", to: "/model-io", keywords: ["calls", "dispatch", "wrapper"], group: "Operations" },
+  { id: "nav-cycles", label: "cycles", to: "/cycles", keywords: ["coordinator", "engine"], group: "Operations" },
+  { id: "nav-graph", label: "graph", to: "/graph", keywords: ["chains", "engine", "flow"], group: "Operations" },
 ];
 
-export default function CommandPalette() {
+const ROUTE_GROUPS = ["Now", "Research", "Operations"] as const;
+
+type CommandPaletteProps = {
+  fallbackFocusRef?: RefObject<HTMLElement | null>;
+  onOpenChange?: (open: boolean) => void;
+};
+
+const PALETTE_FOCUSABLE = [
+  "button:not([disabled])",
+  "input:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
+export default function CommandPalette({
+  fallbackFocusRef,
+  onOpenChange,
+}: CommandPaletteProps = {}) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const actions = useSyncExternalStore(subscribe, getSnapshot);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
+
+  const changeOpen = (next: boolean) => {
+    if (next && !open) {
+      openerRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+    setOpen(next);
+    onOpenChange?.(next);
+  };
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        // Let an existing modal keep ownership of focus. The narrow Atlas drawer
+        // is coordinated through onOpenChange and is the only modal handed off.
+        if (!open && document.querySelector('[aria-modal="true"]')) return;
         e.preventDefault();
-        setOpen((v) => !v);
-      } else if (e.key === "Escape") {
-        setOpen(false);
+        changeOpen(!open);
+      } else if (e.key === "Escape" && open) {
+        e.preventDefault();
+        changeOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [open, onOpenChange]);
+
+  useEffect(() => {
+    if (open) {
+      wasOpenRef.current = true;
+      return;
+    }
+    if (!wasOpenRef.current) return;
+    wasOpenRef.current = false;
+    const opener = openerRef.current;
+    const fallback = fallbackFocusRef?.current;
+    const target =
+      opener?.isConnected && !opener.closest("[inert]")
+        ? opener
+        : fallback?.isConnected && !fallback.closest("[inert]")
+          ? fallback
+          : undefined;
+    target?.focus();
+  }, [fallbackFocusRef, open]);
 
   if (!open) return null;
 
   const run = (perform: () => void) => {
-    setOpen(false);
+    changeOpen(false);
     perform();
+  };
+
+  const containFocus = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Tab" || !dialogRef.current) return;
+    const focusable = Array.from(
+      dialogRef.current.querySelectorAll<HTMLElement>(PALETTE_FOCUSABLE),
+    );
+    if (focusable.length === 0) {
+      event.preventDefault();
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (!dialogRef.current.contains(active)) {
+      event.preventDefault();
+      first.focus();
+    } else if (focusable.length === 1 || (event.shiftKey && active === first)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
   };
 
   const groups = new Map<string, PaletteAction[]>();
@@ -87,25 +174,36 @@ export default function CommandPalette() {
       <div
         className="dsn-palette-scrim"
         data-testid="palette-scrim"
-        onClick={() => setOpen(false)}
+        aria-hidden="true"
+        onClick={() => changeOpen(false)}
       />
-      <div className="dsn-palette" data-testid="command-palette">
+      <div
+        aria-label="Command palette"
+        aria-modal="true"
+        className="dsn-palette"
+        data-testid="command-palette"
+        onKeyDown={containFocus}
+        ref={dialogRef}
+        role="dialog"
+      >
         <Command label="Command palette">
           <Command.Input autoFocus placeholder="Go to…" />
           <Command.List>
             <Command.Empty>No matches.</Command.Empty>
-            <Command.Group heading="Go to">
-              {ROUTES.map((r) => (
-                <Command.Item
-                  key={r.id}
-                  value={`${r.label} ${r.keywords.join(" ")}`}
-                  onSelect={() => run(() => navigate(r.to))}
-                >
-                  {r.label}
-                  <span className="dsn-palette-hint">{r.to}</span>
-                </Command.Item>
-              ))}
-            </Command.Group>
+            {ROUTE_GROUPS.map((heading) => (
+              <Command.Group heading={heading} key={heading}>
+                {ROUTES.filter((route) => route.group === heading).map((route) => (
+                  <Command.Item
+                    key={route.id}
+                    value={`${route.label} ${route.keywords.join(" ")}`}
+                    onSelect={() => run(() => navigate(route.to))}
+                  >
+                    {route.label}
+                    <span className="dsn-palette-hint">{route.to}</span>
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            ))}
             {[...groups.entries()].map(([heading, items]) => (
               <Command.Group key={heading} heading={heading}>
                 {items.map((a) => (

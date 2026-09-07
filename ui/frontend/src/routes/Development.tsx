@@ -69,12 +69,18 @@ export default function Development() {
 
   return <div className="page-full" data-testid="development-page">
     <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
-      <div><h1 className="text-xl font-semibold">Development and research readiness</h1>
-        <p className="mt-1 text-sm text-[var(--fg-muted)]">Three lanes, with different sources and different meanings of progress.</p></div>
+      <div><p className="mb-1 text-xs font-medium uppercase tracking-widest text-[var(--fg-muted)]">Operations</p>
+        <h1 className="text-3xl font-semibold tracking-tight">Delivery and readiness</h1>
+        <p className="mt-2 text-sm text-[var(--fg-muted)]">What changed, what remains held, and which evidence is needed next.</p></div>
       <button type="button" onClick={refreshSources} disabled={Object.values(sources).some((source) => source.loading)}
         className="rounded border border-[var(--border-1)] px-3 py-2 text-sm disabled:opacity-50">Read latest snapshots</button>
     </header>
-    <div className="grid gap-4 lg:grid-cols-3">
+    <section aria-label="Readiness at a glance" className="mb-5 grid gap-4 rounded-lg border border-[var(--border-1)] bg-[var(--surface-1)] p-4 lg:grid-cols-3">
+      <div><h2 className="text-sm font-semibold">Engineering</h2><p className="mt-1 text-sm">Dated delivery receipts below. The core package and worker have separate holds.</p><a href="#delivery-evidence" className="mt-2 inline-block text-sm text-[var(--accent)]">Changed / held / next evidence</a></div>
+      <div><h2 className="text-sm font-semibold">Nara runtime</h2><p className="mt-1 text-sm">A channel message is runtime history. Engineering does not create a new Nara turn.</p><a href="/model-io" className="mt-2 inline-block text-sm text-[var(--accent)]">Inspect actual call records</a></div>
+      <div><h2 className="text-sm font-semibold">Research</h2><p className="mt-1 text-sm">Recorded stages describe the ledger. They do not establish new evidence or market fit.</p><a href="/ladder" className="mt-2 inline-block text-sm text-[var(--accent)]">Open claims and evidence</a></div>
+    </section>
+    <div id="delivery-evidence" className="grid gap-4 lg:grid-cols-3">
       <Card title="Codex engineering / delivery" testId="development-engineering">
         <p className="font-medium">{uiReceipt.title}</p>
         <ul className="my-3 list-disc space-y-2 pl-5 text-sm">{uiReceipt.changes.map((change) => <li key={change}>{change}</li>)}</ul>

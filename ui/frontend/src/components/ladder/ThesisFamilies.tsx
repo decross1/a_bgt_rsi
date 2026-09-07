@@ -460,12 +460,12 @@ function RecordCard({
           </p>
         </section>
       ) : (
-        <section aria-label="Next test owed" style={{ marginTop: "var(--space-3)" }}>
+        <section aria-label="Generic stage requirement" style={{ marginTop: "var(--space-3)" }}>
           <h5 style={{ ...META, fontWeight: "var(--weight-medium)", textTransform: "uppercase" }}>
-            Next test owed
+            Stage requirement · generic, not a claim-specific accepted test
           </h5>
           <p style={{ margin: "var(--space-1) 0 0", color: "var(--fg)" }}>
-            {owed ?? "No test is recorded for this stage."}
+            {owed ?? "No requirement is recorded for this stage."}
           </p>
         </section>
       )}
@@ -528,6 +528,7 @@ function FamilyCard({
   onToggle,
   nextOwed,
   onPick,
+  onInspect,
   nowMs,
   query,
 }: {
@@ -537,6 +538,7 @@ function FamilyCard({
   onToggle: () => void;
   nextOwed: Record<string, string>;
   onPick: (cluster: LadderCluster) => void;
+  onInspect?: (family: ThesisFamily) => void;
   nowMs: number;
   query: string;
 }) {
@@ -619,6 +621,26 @@ function FamilyCard({
         </span>
         <ClassificationBar kind="stages" values={stageCounts} total={family.records.length} descriptionId={`${regionId}-stages`} />
         <ClassificationBar kind="statuses" values={statusCounts} total={family.records.length} descriptionId={`${regionId}-statuses`} />
+        {onInspect !== undefined && (
+          <button
+            type="button"
+            aria-label={`Inspect ${presentationKind}: ${family.title}${disclosureContext}`}
+            onClick={() => onInspect(family)}
+            style={{
+              marginLeft: "auto",
+              padding: "var(--space-1) var(--space-2)",
+              border: "1px solid var(--border-2)",
+              borderRadius: "var(--radius-control)",
+              background: "var(--accent-muted)",
+              color: "var(--accent)",
+              cursor: "pointer",
+              font: "inherit",
+              fontSize: "var(--text-meta)",
+            }}
+          >
+            Inspect context
+          </button>
+        )}
       </div>
 
       {expanded && (
@@ -668,11 +690,13 @@ export default function ThesisFamilies({
   model,
   nextOwed,
   onPick,
+  onInspect,
   nowMs,
 }: {
   model: ThesisModel;
   nextOwed: Record<string, string>;
   onPick: (cluster: LadderCluster) => void;
+  onInspect?: (family: ThesisFamily) => void;
   nowMs: number;
 }) {
   const [query, setQuery] = useState("");
@@ -820,6 +844,7 @@ export default function ThesisFamilies({
             onToggle={() => toggleFamily(family.id)}
             nextOwed={nextOwed}
             onPick={onPick}
+            onInspect={onInspect}
             nowMs={nowMs}
             query={query}
           />

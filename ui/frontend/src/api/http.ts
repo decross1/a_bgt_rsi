@@ -159,13 +159,73 @@ export async function getLoopAlert(): Promise<LoopAlert | null> {
 // written on this checkout -> null (mirrors getIdeas). A 404 means the
 // RUNNING BINARY predates the endpoint — version skew, which the HttpError
 // status lets the /ladder page render as a quiet EndpointMissingNote.
+const LADDER_LEVELS = ["L0", "L1", "L2", "L3", "L4", "L5"] as const;
+
+function isLadderRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function ladderIntegrityError(detail: string): never {
+  throw new Error(`Ladder response integrity error: ${detail}`);
+}
+
+function admitLadderResponse(value: unknown): LadderResponse {
+  if (!isLadderRecord(value)) ladderIntegrityError("200 response must be an object");
+  if (!Array.isArray(value.clusters)) ladderIntegrityError("clusters must be an array");
+  if (!value.clusters.every(isLadderRecord)) ladderIntegrityError("every cluster must be an object");
+
+  // Aggregate displays require a complete producer-owned observation. Keep
+  // unknown producer categories intact, but never let an absent, partial, or
+  // fractional aggregate map be coerced into fabricated integer zeroes.
+  if (!Array.isArray(value.agenda)) ladderIntegrityError("agenda must be an array");
+  if (!value.agenda.every(isLadderRecord)) ladderIntegrityError("every agenda item must be an object");
+  if (!isLadderRecord(value.histogram)) {
+    ladderIntegrityError("histogram must be an object");
+  }
+  // The mini-funnel also consumes future keys. Reserve one contribution per
+  // record for the full funnel's killed-at-rung overlay before summing. This
+  // conservative bound prevents precision loss without inferring record status.
+  let histogramTotal = value.clusters.length;
+  for (const level of new Set([...LADDER_LEVELS, ...Object.keys(value.histogram)])) {
+    const count = value.histogram[level];
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+      ladderIntegrityError(`histogram.${level} must be a non-negative safe integer`);
+    }
+    histogramTotal += count;
+    if (!Number.isSafeInteger(histogramTotal)) {
+      ladderIntegrityError("histogram total with record contributions must be a safe integer");
+    }
+  }
+  if (!isLadderRecord(value.counts)) {
+    ladderIntegrityError("counts must be an object");
+  }
+  for (const category of new Set(["open", "surfaced", "killed", ...Object.keys(value.counts)])) {
+    const count = value.counts[category];
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) {
+      ladderIntegrityError(`counts.${category} must be a non-negative safe integer`);
+    }
+  }
+  if ("next_owed" in value && !isLadderRecord(value.next_owed)) {
+    ladderIntegrityError("next_owed must be an object when present");
+  }
+  if (isLadderRecord(value.next_owed)) {
+    for (const level of LADDER_LEVELS) {
+      const owed = value.next_owed[level];
+      if (owed !== undefined && typeof owed !== "string") {
+        ladderIntegrityError(`next_owed.${level} must be a string when present`);
+      }
+    }
+  }
+  return value as LadderResponse;
+}
+
 export async function getLadder(): Promise<LadderResponse | null> {
   const resp = await fetch(`${API_BASE}/api/ladder`);
   if (resp.status === 204) return null;
   if (!resp.ok) {
     throw await errorFromResponse(resp);
   }
-  return (await resp.json()) as LadderResponse;
+  return admitLadderResponse(await resp.json());
 }
 
 // --- LAB TODO (ui/backend/lab_todo.py) ---

@@ -1,7 +1,16 @@
-import { BrowserRouter, Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import {
+  BrowserRouter,
+  Navigate,
+  NavLink,
+  Route,
+  Routes,
+  useLocation,
+} from "react-router-dom";
 import LoopAlertBanner from "./components/LoopAlertBanner";
 import CommandPalette from "./design/CommandPalette";
 import "./design/primitives.css";
+import "./design/AtlasShell.css";
 import Channel from "./routes/Channel";
 import Cycles from "./routes/Cycles";
 import DossierIndex from "./routes/DossierIndex";
@@ -15,155 +24,367 @@ import ModelIO from "./routes/ModelIO";
 import Pulse from "./routes/Pulse";
 import Development from "./routes/Development";
 
-// The final UI-simplification shell (docs/ui_simplification_plan_2026-08-15.md,
-// S3): the nav is the three owner surfaces — pulse (healthy + do I owe
-// anything), ladder (what's cooking), dossiers (the reader — the product) —
-// with the uniquely-useful engine internals collapsed behind "engine ▾"
-// (cycles, experiments, graph). The old Dashboard/Activity/Todo/Ideas
-// surfaces are gone; /todo, /ideas and /coordinator redirect.
-const NAV = [
-  { to: "/", label: "pulse", end: true },
-  { to: "/ladder", label: "ladder", end: false },
-  { to: "/dossier", label: "dossiers", end: false },
-  // S4: the lab channel — the always-on human ⇄ Nara ⇄ PI conversation.
-  { to: "/channel", label: "channel", end: false },
-  { to: "/development", label: "development", end: false },
-];
+type Theme = "light" | "dark";
+type NavGroupId = "now" | "research" | "operations";
 
-// Engine-internal destinations, collapsed. A plain <details> disclosure (no
-// new deps): the panel overlays absolutely so opening it never reflows the
-// page body.
-const ENGINE_NAV = [
-  { to: "/cycles", label: "cycles" },
-  { to: "/experiments", label: "experiments" },
-  { to: "/graph", label: "graph" },
-  // Model I/O (owner request 2026-08-18): what actually passes through
-  // gemma/qwen + the dispatch trace. Also reachable from Pulse's model
-  // server cards ("what's passing through →").
-  { to: "/model-io", label: "model i/o" },
-];
+const THEME_STORAGE_KEY = "oracle-lab-theme";
+const NARROW_NAV_QUERY = "(max-width: 760px)";
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
 
-function NavTab({
-  to,
-  label,
-  end,
-}: {
-  to: string;
+function focusableElements(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    (element) => !element.closest('[aria-hidden="true"]'),
+  );
+}
+
+const NAV_GROUPS: {
+  id: NavGroupId;
   label: string;
-  end: boolean;
+  links: { to: string; label: string; end?: boolean; primary?: boolean }[];
+}[] = [
+  {
+    id: "now",
+    label: "Now",
+    links: [{ to: "/", label: "pulse", end: true, primary: true }],
+  },
+  {
+    id: "research",
+    label: "Research",
+    links: [
+      { to: "/ladder", label: "ladder", primary: true },
+      { to: "/dossier", label: "dossiers" },
+      { to: "/experiments", label: "experiments" },
+    ],
+  },
+  {
+    id: "operations",
+    label: "Operations",
+    links: [
+      { to: "/development", label: "development", primary: true },
+      { to: "/channel", label: "channel" },
+      { to: "/model-io", label: "model i/o" },
+      { to: "/cycles", label: "cycles" },
+      { to: "/graph", label: "graph" },
+    ],
+  },
+];
+
+function readTheme(): Theme {
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === "dark"
+      ? "dark"
+      : "light";
+  } catch {
+    return "light";
+  }
+}
+
+function isNarrowViewport(): boolean {
+  return typeof window.matchMedia === "function"
+    ? window.matchMedia(NARROW_NAV_QUERY).matches
+    : false;
+}
+
+function groupForPath(pathname: string): NavGroupId | null {
+  if (pathname === "/") return "now";
+  if (
+    pathname === "/ideas" ||
+    pathname === "/todo" ||
+    pathname.startsWith("/ladder") ||
+    pathname.startsWith("/dossier") ||
+    pathname.startsWith("/experiments")
+  ) {
+    return "research";
+  }
+  if (
+    pathname === "/coordinator" ||
+    pathname.startsWith("/development") ||
+    pathname.startsWith("/channel") ||
+    pathname.startsWith("/model-io") ||
+    pathname.startsWith("/cycles") ||
+    pathname.startsWith("/graph") ||
+    pathname.startsWith("/chain/req/")
+  ) {
+    return "operations";
+  }
+  return null;
+}
+
+function AtlasNavigation({
+  selected,
+  onNavigate,
+}: {
+  selected: NavGroupId | null;
+  onNavigate: () => void;
 }) {
   return (
-    <NavLink
-      to={to}
-      end={end}
-      className={({ isActive }) =>
-        // R0 shell: the active nav item is the ONE accent usage in the nav
-        // (design/tokens.css — accent is links/primary-action/focus/active-nav).
-        `border-b-2 pb-1 text-[13px] font-[550] transition-colors ${
-          isActive
-            ? "border-[var(--accent)] text-[var(--accent)]"
-            : "border-transparent text-[var(--fg-muted)] hover:text-[var(--fg)]"
-        }`
-      }
+    <nav className="atlas-nav" aria-label="Lab workspace">
+      {NAV_GROUPS.map((group) => (
+        <section
+          className="atlas-nav-group"
+          data-group={group.id}
+          data-selected={selected === group.id ? "true" : "false"}
+          data-testid={`nav-group-${group.id}`}
+          key={group.id}
+          aria-labelledby={`nav-group-label-${group.id}`}
+        >
+          <h2 className="atlas-nav-group-label" id={`nav-group-label-${group.id}`}>
+            {group.label}
+          </h2>
+          <div className="atlas-nav-links">
+            {group.links.map((link) => (
+              <NavLink
+                className={({ isActive }) =>
+                  [
+                    "atlas-nav-link",
+                    link.primary ? "atlas-nav-link--primary" : "atlas-nav-link--context",
+                    isActive ? "atlas-nav-link--active" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")
+                }
+                end={link.end ?? false}
+                key={link.to}
+                onClick={onNavigate}
+                to={link.to}
+              >
+                {link.label}
+              </NavLink>
+            ))}
+          </div>
+        </section>
+      ))}
+    </nav>
+  );
+}
+
+function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
+  const next = theme === "light" ? "dark" : "light";
+  return (
+    <button
+      className="atlas-theme-toggle"
+      type="button"
+      aria-label={`Switch to ${next} theme`}
+      onClick={onToggle}
     >
-      {label}
-    </NavLink>
+      Theme: {theme}
+    </button>
+  );
+}
+
+function AtlasApp() {
+  const { pathname } = useLocation();
+  const [theme, setTheme] = useState<Theme>(readTheme);
+  const [isNarrow, setIsNarrow] = useState(isNarrowViewport);
+  const [navOpen, setNavOpen] = useState(() => !isNarrowViewport());
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const navToggleRef = useRef<HTMLButtonElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const sidebarCloseRef = useRef<HTMLButtonElement>(null);
+  const drawerOpenerRef = useRef<HTMLElement | null>(null);
+  const restoreDrawerFocusRef = useRef(false);
+
+  const closeNarrowNav = (restoreFocus = true) => {
+    if (!isNarrow) return;
+    restoreDrawerFocusRef.current = restoreFocus;
+    setNavOpen(false);
+  };
+
+  const openNarrowNav = () => {
+    drawerOpenerRef.current = navToggleRef.current;
+    restoreDrawerFocusRef.current = false;
+    setNavOpen(true);
+  };
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Theme remains usable in-memory when storage is blocked or unavailable.
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia(NARROW_NAV_QUERY);
+    const sync = (matches: boolean) => {
+      setIsNarrow(matches);
+      setNavOpen(!matches);
+    };
+    const onChange = (event: MediaQueryListEvent) => sync(event.matches);
+    sync(media.matches);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (!isNarrow || !navOpen) return;
+    sidebarCloseRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeNarrowNav();
+        return;
+      }
+
+      if (event.key !== "Tab" || !sidebarRef.current) return;
+      const focusable = focusableElements(sidebarRef.current);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!sidebarRef.current.contains(active)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isNarrow, navOpen]);
+
+  useEffect(() => {
+    if (navOpen || !restoreDrawerFocusRef.current) return;
+    restoreDrawerFocusRef.current = false;
+    const opener = drawerOpenerRef.current;
+    const target =
+      opener?.isConnected && !opener.closest("[inert]") ? opener : navToggleRef.current;
+    target?.focus();
+  }, [navOpen]);
+
+  const handlePaletteOpenChange = (open: boolean) => {
+    setPaletteOpen(open);
+    if (open && isNarrow && navOpen) closeNarrowNav(false);
+  };
+
+  return (
+    <div className="atlas-shell">
+      {isNarrow && navOpen && (
+        <button
+          aria-label="Close navigation"
+          className="atlas-sidebar-backdrop"
+          data-testid="atlas-sidebar-backdrop"
+          onClick={() => closeNarrowNav()}
+          tabIndex={-1}
+          type="button"
+        />
+      )}
+
+      <aside
+        aria-hidden={paletteOpen || (isNarrow && !navOpen) ? true : undefined}
+        aria-label="Oracle Lab navigation"
+        className={`atlas-sidebar${navOpen ? " atlas-sidebar--open" : ""}`}
+        data-testid="atlas-sidebar"
+        id="atlas-sidebar"
+        inert={paletteOpen || (isNarrow && !navOpen) ? true : undefined}
+        ref={sidebarRef}
+        tabIndex={-1}
+      >
+        <button
+          aria-label="Close menu"
+          className="atlas-sidebar-close"
+          onClick={() => closeNarrowNav()}
+          ref={sidebarCloseRef}
+          type="button"
+        >
+          Close
+        </button>
+        <div className="atlas-brand">
+          <span className="atlas-brand-name">Oracle Lab</span>
+          <span className="atlas-brand-kicker">research workspace</span>
+        </div>
+
+        <AtlasNavigation selected={groupForPath(pathname)} onNavigate={closeNarrowNav} />
+
+        <div className="atlas-sidebar-footer">
+          <a
+            className="atlas-external-link"
+            href={`http://${window.location.hostname}:5180/dashboard.html`}
+            rel="noreferrer"
+            target="_blank"
+          >
+            brain <span aria-hidden="true">↗</span>
+          </a>
+          <ThemeToggle
+            theme={theme}
+            onToggle={() => setTheme((value) => (value === "light" ? "dark" : "light"))}
+          />
+          <span className="atlas-palette-hint">⌘K / Ctrl K to jump</span>
+        </div>
+      </aside>
+
+      <div
+        aria-hidden={paletteOpen || (isNarrow && navOpen) ? true : undefined}
+        className="atlas-workspace"
+        data-testid="atlas-workspace"
+        inert={paletteOpen || (isNarrow && navOpen) ? true : undefined}
+      >
+        <header className="atlas-mobile-header">
+          <button
+            aria-controls="atlas-sidebar"
+            aria-expanded={navOpen}
+            className="atlas-nav-toggle"
+            onClick={() => (navOpen ? closeNarrowNav() : openNarrowNav())}
+            ref={navToggleRef}
+            type="button"
+          >
+            Menu
+          </button>
+          <span>Oracle Lab</span>
+        </header>
+
+        <main className="atlas-main" data-testid="atlas-main">
+          <LoopAlertBanner />
+          <Routes>
+            <Route path="/" element={<Pulse />} />
+            <Route path="/development" element={<Development />} />
+            <Route path="/ladder" element={<Ladder />} />
+            <Route path="/ideas" element={<Navigate to="/ladder" replace />} />
+            <Route path="/dossier" element={<DossierIndex />} />
+            <Route path="/dossier/:id" element={<DossierReader />} />
+            <Route path="/todo" element={<Navigate to="/dossier" replace />} />
+            <Route path="/channel" element={<Channel />} />
+            <Route path="/cycles" element={<Cycles />} />
+            <Route path="/coordinator" element={<Navigate to="/cycles" replace />} />
+            <Route path="/graph" element={<Graph />} />
+            <Route path="/experiments" element={<Experiments />} />
+            <Route path="/experiments/:expId" element={<ExperimentDetail />} />
+            <Route path="/model-io" element={<ModelIO />} />
+            <Route path="/chain/req/:requestId" element={<Inspector />} />
+          </Routes>
+        </main>
+      </div>
+
+      <CommandPalette
+        fallbackFocusRef={isNarrow ? navToggleRef : sidebarRef}
+        onOpenChange={handlePaletteOpenChange}
+      />
+    </div>
   );
 }
 
 export default function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen bg-[var(--bg)] text-[var(--fg)]">
-        {/* R0 shell: sticky glass header — with the palette scrim, the only
-            two allowed translucent/blurred surfaces (design/primitives.css). */}
-        <header className="dsn-header flex flex-wrap items-center gap-x-5 gap-y-3 px-4 py-3 sm:px-6">
-          <span className="font-mono text-xs uppercase tracking-wide text-[var(--fg-muted)]">
-            apparatus observability
-          </span>
-          <nav className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2">
-            {NAV.map((item) => (
-              <NavTab key={item.to} {...item} />
-            ))}
-            <details className="group relative" data-testid="engine-nav">
-              <summary className="cursor-pointer list-none border-b-2 border-transparent pb-1 text-[13px] font-[550] text-[var(--fg-muted)] transition-colors hover:text-[var(--fg)]">
-                engine ▾
-              </summary>
-              {/* Menus elevate by surface step + 1px border — never shadow. */}
-              <div className="absolute left-0 top-full z-20 mt-1 flex min-w-36 flex-col gap-1 rounded-[6px] border border-[var(--border-1)] bg-[var(--surface-3)] px-3 py-2">
-                {ENGINE_NAV.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    className={({ isActive }) =>
-                      `text-[13px] font-[550] transition-colors ${
-                        isActive
-                          ? "text-[var(--accent)]"
-                          : "text-[var(--fg-muted)] hover:text-[var(--fg)]"
-                      }`
-                    }
-                  >
-                    {item.label}
-                  </NavLink>
-                ))}
-              </div>
-            </details>
-            {/* Cross-nav to the agent-system brain governance dashboard —
-                served by the framework's brain_server.py on :5180 (bound to
-                0.0.0.0; /dashboard.html verified serving HTML 2026-08-15).
-                The old :5174 http.server no longer listens — that link was a
-                dead tab (loop3h-ui-hotfix). Built from the page hostname —
-                not localhost — so the link works over the LAN exactly like
-                API_BASE does. */}
-            <a
-              href={`http://${window.location.hostname}:5180/dashboard.html`}
-              target="_blank"
-              rel="noreferrer"
-              className="border-b-2 border-transparent pb-1 text-[13px] font-[550] text-[var(--fg-muted)] transition-colors hover:text-[var(--fg)]"
-            >
-              brain<span aria-hidden="true" className="ml-0.5">↗</span>
-            </a>
-          </nav>
-          <span className="ml-auto hidden text-xs text-[var(--fg-muted)] xl:block">
-            ⌘K to jump · call-chain inspector at /chain/req/&lt;request_id&gt;
-          </span>
-        </header>
-        <CommandPalette />
-        {/* Page-top loop-alert surface (work order A): red/amber off
-            run_state/loop_alert.json; invisible when ok & fresh. Polls via
-            the shared pollhub (2026-08-18 fix 6 — the hub is module-global,
-            so the App-level mount subscribes like any Pulse source); a
-            failed poll KEEPS the last-known alert with a stale marker. */}
-        <LoopAlertBanner />
-        <Routes>
-          <Route path="/" element={<Pulse />} />
-          <Route path="/development" element={<Development />} />
-          <Route path="/ladder" element={<Ladder />} />
-          {/* /ideas folded into /ladder (its ideas.md render is the ladder
-              page's fallback body). */}
-          <Route path="/ideas" element={<Navigate to="/ladder" replace />} />
-          {/* the dossier surfaces (S2): index picker + per-id reader. The old
-              /todo cockpit is retired — its bookmark redirects. */}
-          <Route path="/dossier" element={<DossierIndex />} />
-          <Route path="/dossier/:id" element={<DossierReader />} />
-          <Route path="/todo" element={<Navigate to="/dossier" replace />} />
-          {/* S4: the lab channel (timeline + turn + delegate; no
-              disposition surface — the fence). */}
-          <Route path="/channel" element={<Channel />} />
-          {/* Engine internals. /coordinator bookmarks redirect to the
-              renamed /cycles; /dashboard + /activity are gone (S3). */}
-          <Route path="/cycles" element={<Cycles />} />
-          <Route path="/coordinator" element={<Navigate to="/cycles" replace />} />
-          <Route path="/graph" element={<Graph />} />
-          <Route path="/experiments" element={<Experiments />} />
-          <Route path="/experiments/:expId" element={<ExperimentDetail />} />
-          {/* Model I/O viewer: live wrapper-call table (logs/calls.jsonl)
-              + dispatch trace (orchestrator.jsonl / spawn ledger). */}
-          <Route path="/model-io" element={<ModelIO />} />
-          {/* Wrapper-rooted tool-call chains (logs/calls.jsonl). */}
-          <Route path="/chain/req/:requestId" element={<Inspector />} />
-        </Routes>
-      </div>
+      <AtlasApp />
     </BrowserRouter>
   );
 }

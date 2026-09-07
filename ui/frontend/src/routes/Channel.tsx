@@ -589,14 +589,13 @@ export default function Channel({
       data-testid="channel-page"
     >
       <header className="mb-2 shrink-0">
-        <h1 className="text-sm font-semibold uppercase tracking-wide text-zinc-300">
-          /channel · lab channel
+        <p className="mb-1 text-xs font-medium uppercase tracking-widest text-[var(--fg-muted)]">Operations</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-[var(--fg)]">
+          Nara channel
         </h1>
-        <p className="mt-0.5 text-[11px] text-zinc-500">
-          The always-on conversation with the apparatus: your turns, the two
-          voices, and the loop&apos;s own events (cycles · kills · promotions
-          · alerts) in one feed. Nothing here disposes of anything — verdicts
-          live in the dossier reader.
+        <p className="mt-2 text-sm text-[var(--fg-muted)]">
+          Conversation and recorded runtime events. Engineering work does not create a Nara reply.
+          Scientific verdicts remain in the claim dossier.
         </p>
         <div
           className="mt-2 flex flex-wrap items-center gap-1.5"
