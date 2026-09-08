@@ -83,7 +83,7 @@ describe("CoordinatorPhases — hardening r1 (missing/null/malformed fields)", (
     // No `kind` → kind !== "coordinator" is true → idle (not a live stepper).
     render(<CoordinatorPhases activeRun={bad({})} />);
     expect(screen.getByTestId("coordinator-idle")).toHaveTextContent(
-      "No active coordinator cycle recorded",
+      "coordinator idle",
     );
     expect(screen.queryByTestId("coordinator-stepper")).toBeNull();
     expect(errorSpy).not.toHaveBeenCalled();

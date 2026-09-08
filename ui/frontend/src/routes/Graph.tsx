@@ -1,55 +1,48 @@
+// PAGE /graph — thin page for the recent-history react-flow graph (UI
+// simplification S3: ActivityGraph survives the /activity deletion as its own
+// engine-nav destination). The data fetch is ported from the old Activity
+// page: poll getActivityGraph(detail) at 5 s with change-detection so
+// react-flow only relayouts when the graph actually changed.
 import { useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
 import ActivityGraph from "../components/ActivityGraph";
 import { getActivityGraph } from "../api/activity";
 import type { ActivityGraphResponse } from "../types/activity";
-import "./traces.css";
 
 type Detail = "overview" | "full";
+
 const GRAPH_POLL_MS = 5000;
 
 interface GraphProps {
+  // Tests inject the graph so the page renders synchronously with no poll.
   initialGraph?: ActivityGraphResponse;
 }
 
-function isGraphObject(value: unknown): value is ActivityGraphResponse {
-  return value !== null && typeof value === "object";
-}
-
 export default function Graph({ initialGraph }: GraphProps) {
-  const [params, setParams] = useSearchParams();
-  const detail: Detail = params.get("view") === "full" ? "full" : "overview";
-  const [graph, setGraph] = useState<ActivityGraphResponse | null>(initialGraph ?? null);
+  const [graph, setGraph] = useState<ActivityGraphResponse | null>(
+    initialGraph ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
-  const graphSignature = useRef("");
+  const [detail, setDetail] = useState<Detail>("overview");
+  // Last graph content signature — skip setGraph (and the react-flow
+  // relayout it triggers) when nothing structural changed between polls.
+  const graphSig = useRef<string>("");
   const live = initialGraph === undefined;
 
   useEffect(() => {
     if (!live) return;
     let cancelled = false;
-    graphSignature.current = "";
+    graphSig.current = ""; // detail changed — force the next graph to apply
     const poll = () => {
       getActivityGraph(detail)
-        .then((next) => {
+        .then((g) => {
           if (cancelled) return;
-          if (!isGraphObject(next)) throw new Error("Graph response must be an object");
-          const signature = JSON.stringify({
-            available: next.available,
-            detail: next.detail,
-            nodes: next.nodes,
-            edges: next.edges,
-            generated_at: next.generated_at,
-            truncated: next.truncated,
-          });
-          if (signature !== graphSignature.current) {
-            graphSignature.current = signature;
-            setGraph(next);
+          const sig = JSON.stringify({ d: g.detail, n: g.nodes, e: g.edges });
+          if (sig !== graphSig.current) {
+            graphSig.current = sig;
+            setGraph(g);
           }
-          setError(null);
         })
-        .catch((reason) => {
-          if (!cancelled) setError(String(reason));
-        });
+        .catch((e) => !cancelled && setError(String(e)));
     };
     poll();
     const id = setInterval(poll, GRAPH_POLL_MS);
@@ -57,109 +50,66 @@ export default function Graph({ initialGraph }: GraphProps) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [detail, live]);
-
-  const setDetail = (value: Detail) => {
-    const next = new URLSearchParams(params);
-    if (value === "overview") next.delete("view");
-    else next.set("view", value);
-    next.delete("node");
-    setParams(next);
-  };
+  }, [live, detail]);
 
   return (
-    <main className="trace-page" data-testid="graph-page">
-      <header className="trace-page-header">
-        <div>
-          <p className="trace-kicker">Operations · recorded execution</p>
-          <h1>Recorded trace map</h1>
-          <p>Inspect supplied execution relationships. Layout is for navigation, not a causal claim.</p>
-        </div>
-        <nav className="trace-view-switch" aria-label="Trace view">
-          <Link to="/cycles">List</Link>
-          <span aria-current="page">Map</span>
-        </nav>
-      </header>
-
-      <section className="trace-map-surface" aria-labelledby="map-results-heading">
-        <div className="trace-map-toolbar">
-          <div>
-            <h2 id="map-results-heading">Recent recorded tasks</h2>
-            <p>Overview keeps one supplied task node. Full asks for recorded descendants.</p>
-          </div>
+    <div className="mx-auto w-full max-w-[1800px] px-6 py-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <h1 className="font-mono text-sm text-zinc-200">graph</h1>
+        <div className="flex items-baseline gap-3">
+          <span className="text-xs text-zinc-600">recent task history · 5 s</span>
           <DetailToggle value={detail} onChange={setDetail} />
         </div>
-
-        <div className="trace-filters trace-map-filters" role="search">
-          <label className="trace-search">
-            <span>Search map records</span>
-            <input
-              type="search"
-              value={params.get("q") ?? ""}
-              onChange={(event) => {
-                const next = new URLSearchParams(params);
-                if (event.target.value) next.set("q", event.target.value);
-                else next.delete("q");
-                next.delete("node");
-                setParams(next);
-              }}
-              placeholder="Label, kind, task or request ID"
-            />
-          </label>
-          <label>
-            <span>Status</span>
-            <select
-              aria-label="map status filter"
-              value={params.get("status") ?? "all"}
-              onChange={(event) => {
-                const next = new URLSearchParams(params);
-                if (event.target.value === "all") next.delete("status");
-                else next.set("status", event.target.value);
-                next.delete("node");
-                setParams(next);
-              }}
-            >
-              <option value="all">All recorded</option>
-              <option value="active">Active</option>
-              <option value="ok">OK</option>
-              <option value="error">Error</option>
-              <option value="unknown">Unknown</option>
-            </select>
-          </label>
+      </div>
+      {error && (
+        <div className="mt-2 text-xs text-red-400" data-testid="graph-error">
+          {error}
         </div>
-
-        {error && (
-          <div className="trace-notice" data-tone="error" data-testid="graph-error">
-            <strong>{graph ? "Map refresh failed" : "Recorded map unavailable"}</strong>
-            {graph && <span>Showing the last loaded snapshot.</span>}
-            <details>
-              <summary>Read diagnostic</summary>
-              <code>{error}</code>
-            </details>
+      )}
+      <div className="mt-3">
+        {graph ? (
+          <ActivityGraph data={graph} />
+        ) : (
+          <div className="rounded border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-500">
+            Loading activity graph…
           </div>
         )}
-
-        <div className="trace-map-results">
-          {graph ? (
-            <ActivityGraph data={graph} />
-          ) : !error ? (
-            <div className="trace-empty" data-testid="activity-graph-loading">Loading the recorded map…</div>
-          ) : null}
-        </div>
-      </section>
-    </main>
+      </div>
+    </div>
   );
 }
 
-function DetailToggle({ value, onChange }: { value: Detail; onChange: (detail: Detail) => void }) {
+function DetailToggle({
+  value,
+  onChange,
+}: {
+  value: Detail;
+  onChange: (d: Detail) => void;
+}) {
+  const opts: { key: Detail; label: string; title: string }[] = [
+    { key: "overview", label: "overview", title: "one node per task" },
+    { key: "full", label: "full chain", title: "expand each task's calls" },
+  ];
   return (
-    <div className="trace-detail-toggle" data-testid="detail-toggle" aria-label="Map detail">
-      <button type="button" aria-pressed={value === "overview"} onClick={() => onChange("overview")}>
-        Overview
-      </button>
-      <button type="button" aria-pressed={value === "full"} onClick={() => onChange("full")}>
-        Full
-      </button>
+    <div
+      className="flex overflow-hidden rounded border border-zinc-800"
+      data-testid="detail-toggle"
+    >
+      {opts.map((o) => (
+        <button
+          key={o.key}
+          type="button"
+          title={o.title}
+          onClick={() => onChange(o.key)}
+          className={`px-2 py-0.5 font-mono text-xs ${
+            value === o.key
+              ? "bg-zinc-800 text-zinc-100"
+              : "text-zinc-500 hover:text-zinc-300"
+          }`}
+        >
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -96,7 +96,7 @@ describe("CoordinatorPhases — validated against live registry shapes", () => {
     // Absence is legible: the idle state renders, not a blank gap.
     expect(screen.getByTestId("coordinator-phases")).toBeInTheDocument();
     expect(screen.getByTestId("coordinator-idle")).toHaveTextContent(
-      /coordinator idle/i,
+      "coordinator idle",
     );
     // No stepper / phase chips / narration in the idle state.
     expect(screen.queryByTestId("coordinator-stepper")).toBeNull();

@@ -1,167 +1,187 @@
-import { useId, useState } from "react";
+// Collapsible call-chain tree. See ui_plan.md section 5.3 (inspector).
+// Each node expands to a generic dump of its underlying log record, so a
+// future day-2 schema addition needs no code change here.
+import { useState } from "react";
 import type { ChainNode, RetrievalDoc } from "../types/schemas";
 
-function text(value: unknown, fallback: string): string {
-  if (typeof value === "string" && value) return value;
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return fallback;
+function shortId(id: string | null | undefined): string {
+  if (!id) return "—";
+  return id.length > 10 ? `${id.slice(0, 8)}…` : id;
 }
 
-function shortId(value: unknown): string {
-  if (typeof value !== "string" || !value) return "ID not supplied";
-  return value.length > 18 ? `${value.slice(0, 8)}…${value.slice(-6)}` : value;
-}
-
-function childrenOf(node: ChainNode): ChainNode[] {
-  return Array.isArray(node.children)
-    ? node.children.filter((child): child is ChainNode => child !== null && typeof child === "object")
-    : [];
-}
-
-function recordOf(node: ChainNode): Record<string, unknown> {
-  return node.raw !== null && typeof node.raw === "object" && !Array.isArray(node.raw)
-    ? node.raw
-    : {};
-}
-
-function nodeLabel(node: ChainNode): string {
-  if (node.kind === "dispatch") return `dispatch · ${text(node.task_type, "task")}`;
-  if (node.kind === "tool") return `tool · ${text(node.caller_tag, "tool")}`;
-  return text(node.caller_tag, "call");
-}
-
-function latencyLabel(value: unknown): string {
-  return typeof value === "number" && Number.isFinite(value)
-    ? `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)} ms`
-    : "Latency not reported";
-}
-
-function statusClass(status: unknown): string {
-  if (status === "passed") return "text-emerald-700 dark:text-emerald-300";
-  if (status === "failed" || status === "aborted") return "text-red-700 dark:text-red-300";
-  if (status === "started") return "text-amber-700 dark:text-amber-300";
-  return "text-[var(--fg-muted)]";
+function statusClass(status: string | null | undefined): string {
+  switch (status) {
+    case "passed":
+      return "text-emerald-400";
+    case "failed":
+    case "aborted":
+      return "text-red-400";
+    case "started":
+      return "text-amber-400";
+    default:
+      return "text-zinc-400";
+  }
 }
 
 function Scalar({ value }: { value: unknown }) {
-  if (value === null || value === undefined) return <span className="trace-null">null</span>;
-  if (typeof value === "object") {
-    let serialized = "Unreadable object";
-    try {
-      serialized = JSON.stringify(value, null, 2);
-    } catch {
-      serialized = "Value could not be serialized";
-    }
-    return <pre className="trace-node-json">{serialized}</pre>;
+  if (value === null || value === undefined) {
+    return <span className="text-zinc-600">null</span>;
   }
-  return <span className="trace-scalar">{String(value)}</span>;
+  if (typeof value === "object") {
+    return (
+      <pre className="mt-1 overflow-x-auto rounded bg-zinc-950 p-2 text-xs text-zinc-300">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    );
+  }
+  return <span className="text-zinc-200">{String(value)}</span>;
 }
 
+// Day-3.5: retrieval_context lands as a list of {doc_id, content_hash,
+// chunk_offset, chunk_length}. Render as a small table rather than a generic
+// JSON dump so the inspector reads cleanly at a glance.
 function RetrievalContext({ docs }: { docs: RetrievalDoc[] }) {
-  const admitted = docs.filter((doc): doc is RetrievalDoc => doc !== null && typeof doc === "object");
+  const [open, setOpen] = useState(false);
   return (
-    <details className="trace-retrieval">
-      <summary>Retrieval context · {admitted.length} recorded chunk{admitted.length === 1 ? "" : "s"}</summary>
-      <div className="trace-table-wrap">
-        <table>
-          <thead>
-            <tr><th>Document</th><th>Content hash</th><th>Offset</th><th>Length</th></tr>
-          </thead>
-          <tbody>
-            {admitted.map((doc, index) => (
-              <tr key={`${text(doc.doc_id, "doc")}-${index}`}>
-                <td>{text(doc.doc_id, "Not reported")}</td>
-                <td title={typeof doc.content_hash === "string" ? doc.content_hash : undefined}>{shortId(doc.content_hash)}</td>
-                <td>{text(doc.chunk_offset, "Not reported")}</td>
-                <td>{text(doc.chunk_length, "Not reported")}</td>
+    <div className="mt-2 rounded border border-zinc-800 bg-zinc-950/60 p-2">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 text-left text-xs text-zinc-400 hover:text-zinc-200"
+      >
+        <span className="w-3">{open ? "▾" : "▸"}</span>
+        <span className="font-mono uppercase tracking-wide">retrieval_context</span>
+        <span className="text-zinc-600">({docs.length})</span>
+      </button>
+      {open && (
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead className="text-zinc-500">
+              <tr>
+                <th className="px-2 py-1 text-left font-normal">doc_id</th>
+                <th className="px-2 py-1 text-left font-normal">content_hash</th>
+                <th className="px-2 py-1 text-right font-normal">offset</th>
+                <th className="px-2 py-1 text-right font-normal">length</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </details>
+            </thead>
+            <tbody className="font-mono text-zinc-300">
+              {docs.map((doc, i) => (
+                <tr key={i} className="border-t border-zinc-800/60">
+                  <td className="px-2 py-1">{doc.doc_id ?? "—"}</td>
+                  <td className="px-2 py-1 text-zinc-500">
+                    {typeof doc.content_hash === "string"
+                      ? doc.content_hash.slice(0, 12) +
+                        (doc.content_hash.length > 12 ? "…" : "")
+                      : "—"}
+                  </td>
+                  <td className="px-2 py-1 text-right">{doc.chunk_offset ?? "—"}</td>
+                  <td className="px-2 py-1 text-right">{doc.chunk_length ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
-function NodeDetails({ node, id }: { node: ChainNode; id: string }) {
-  const raw = recordOf(node);
-  const entries = Object.entries(raw).filter(([key]) => key !== "retrieval_context");
-  const docs = Array.isArray(node.retrieval_context) ? node.retrieval_context : [];
+function NodeDetails({ node }: { node: ChainNode }) {
+  // Hide retrieval_context from the raw dump — we render it as its own
+  // collapsible table above. Avoids duplicating the same data in two places.
+  const entries = Object.entries(node.raw).filter(([k]) => k !== "retrieval_context");
   return (
-    <div className="trace-node-details" id={id}>
-      {docs.length > 0 && <RetrievalContext docs={docs} />}
-      {entries.length === 0 && <p>No additional record fields.</p>}
+    <div className="mt-1 mb-1 ml-6 rounded border border-zinc-800 bg-zinc-900/60 p-3 text-sm">
+      {node.retrieval_context && node.retrieval_context.length > 0 && (
+        <RetrievalContext docs={node.retrieval_context} />
+      )}
+      {entries.length === 0 && <div className="text-zinc-500">no record fields</div>}
       {entries.map(([key, value]) => (
-        <div className="trace-record-field" key={key}>
-          <dt>{key}</dt>
-          <dd><Scalar value={value} /></dd>
+        <div key={key} className="mb-1.5">
+          <span className="font-mono text-xs text-zinc-500">{key}</span>
+          <div className="ml-2">
+            <Scalar value={value} />
+          </div>
         </div>
       ))}
     </div>
   );
 }
 
-function TreeNode({ node, depth, path }: { node: ChainNode; depth: number; path: string }) {
-  const [childrenOpen, setChildrenOpen] = useState(true);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const detailsId = useId();
-  const children = childrenOf(node);
-  const label = nodeLabel(node);
-  const indent = Math.min(depth, 6) * 12 + 8;
-  const exactId = typeof node.request_id === "string" ? node.request_id : undefined;
+function TreeNode({ node }: { node: ChainNode }) {
+  const [open, setOpen] = useState(true);
+  const [details, setDetails] = useState(false);
+  const hasChildren = node.children.length > 0;
+  const label =
+    node.kind === "dispatch"
+      ? `dispatch · ${node.task_type ?? "task"}`
+      : node.kind === "tool"
+        ? `tool · ${node.caller_tag ?? "tool"}`
+        : node.caller_tag ?? "call";
 
   return (
-    <li className="trace-chain-node" data-testid="chain-node" role="treeitem" aria-expanded={children.length > 0 ? childrenOpen : undefined}>
-      <div className="trace-chain-row" style={{ paddingInlineStart: indent }}>
-        {children.length > 0 ? (
+    <div data-testid="chain-node">
+      <div className="flex items-center gap-2 py-0.5">
+        {hasChildren ? (
           <button
-            type="button"
-            className="trace-chain-toggle"
-            aria-label={`${childrenOpen ? "Collapse" : "Expand"} children for ${label}`}
-            onClick={() => setChildrenOpen((value) => !value)}
+            onClick={() => setOpen((v) => !v)}
+            className="w-4 text-zinc-500 hover:text-zinc-200"
+            aria-label={open ? "collapse" : "expand"}
           >
-            {childrenOpen ? "Hide" : "Show"}
+            {open ? "▾" : "▸"}
           </button>
         ) : (
-          <span className="trace-chain-leaf">Leaf</span>
+          <span className="w-4 text-center text-zinc-700">·</span>
         )}
         <button
-          type="button"
-          className="trace-chain-record"
-          aria-expanded={detailsOpen}
-          aria-controls={detailsId}
-          onClick={() => setDetailsOpen((value) => !value)}
+          onClick={() => setDetails((v) => !v)}
+          className="flex flex-1 items-center gap-3 rounded px-2 py-1 text-left hover:bg-zinc-800/60"
         >
-          <span className="trace-chain-label">{label}</span>
-          {typeof node.status === "string" && node.status && (
-            <span className={statusClass(node.status)}>{node.status}</span>
+          <span className="font-medium text-zinc-100">{label}</span>
+          {node.kind === "dispatch" && node.status && (
+            <span className={`text-xs ${statusClass(node.status)}`}>{node.status}</span>
           )}
-          {node.parse_error && <span className="trace-warning-chip">parse error</span>}
-          {node.tool_calls_malformed && <span className="trace-warning-chip">malformed tool_calls</span>}
-          {Array.isArray(node.retrieval_context) && node.retrieval_context.length > 0 && (
-            <span className="trace-neutral-chip">context {node.retrieval_context.length}</span>
+          {node.parse_error && (
+            <span className="rounded bg-red-950 px-1.5 py-0.5 text-xs text-red-300">
+              parse error
+            </span>
           )}
-          {node.kind === "tool" && node.embedded && <span className="trace-neutral-chip">embedded</span>}
-          <span className="trace-chain-latency">{latencyLabel(node.latency_ms)}</span>
-          <span className="trace-chain-id" title={exactId}>{shortId(node.request_id)}</span>
+          {node.tool_calls_malformed && (
+            <span className="rounded bg-red-950 px-1.5 py-0.5 text-xs text-red-300">
+              malformed tool_calls
+            </span>
+          )}
+          {node.retrieval_context && node.retrieval_context.length > 0 && (
+            <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
+              ctx {node.retrieval_context.length}
+            </span>
+          )}
+          {node.kind === "tool" && node.embedded && (
+            <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
+              embedded
+            </span>
+          )}
+          <span className="ml-auto font-mono text-xs text-zinc-500">
+            {node.latency_ms != null ? `${node.latency_ms} ms` : ""}
+          </span>
+          <span className="font-mono text-xs text-zinc-600">{shortId(node.request_id)}</span>
         </button>
       </div>
-      {detailsOpen && <NodeDetails node={node} id={detailsId} />}
-      {children.length > 0 && childrenOpen && (
-        <ul className="trace-chain-children" role="group">
-          {children.map((child, index) => (
-            <TreeNode key={`${path}.${index}.${shortId(child.request_id)}`} node={child} depth={depth + 1} path={`${path}.${index}`} />
+      {details && <NodeDetails node={node} />}
+      {hasChildren && open && (
+        <div className="ml-3 border-l border-zinc-800 pl-3">
+          {node.children.map((child, i) => (
+            <TreeNode key={child.request_id ?? `n${i}`} node={child} />
           ))}
-        </ul>
+        </div>
       )}
-    </li>
+    </div>
   );
 }
 
 export default function ChainTree({ root }: { root: ChainNode }) {
   return (
-    <ul className="trace-chain-tree" role="tree" aria-label="Recorded request chain">
-      <TreeNode node={root} depth={0} path="root" />
-    </ul>
+    <div className="text-sm">
+      <TreeNode node={root} />
+    </div>
   );
 }

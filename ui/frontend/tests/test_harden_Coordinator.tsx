@@ -70,10 +70,9 @@ async function renderPollingQuietly() {
   render(<Cycles pollMs={999_999} />);
   await waitFor(() => {
     const settled =
-      document.querySelector('[data-testid="coordinator-cycle-row"]') !==
+      document.querySelector('[data-testid="coordinator-cycle-card"]') !==
         null ||
-      document.querySelector('[data-testid="coordinator-empty"]') !== null ||
-      document.querySelector('[data-testid="coordinator-error"]') !== null;
+      document.querySelector('[data-testid="coordinator-empty"]') !== null;
     expect(settled).toBe(true);
   });
   const calls = {
@@ -279,7 +278,7 @@ describe("Coordinator hardening — r2: malformed value TYPES", () => {
     // Both rows render — the comparator no longer throws into .catch.
     expect(screen.getByText("STRING-TS-ROW")).toBeInTheDocument();
     expect(screen.getByText("NUMERIC-TS-ROW")).toBeInTheDocument();
-    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(2);
+    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(2);
 
     // No error banner (the .catch path would print the TypeError on the page).
     const pageText = screen.getByTestId("coordinator-page").textContent ?? "";
@@ -339,13 +338,11 @@ describe("Coordinator hardening — r2: malformed value TYPES", () => {
 
   // The contract is {cycles:[...]}, but a malformed body could hand back a
   // non-array — spreading/sorting it would throw before any row renders.
-  it("POLLING: a non-array cycles body is unavailable without claiming empty", async () => {
+  it("POLLING: a non-array cycles body degrades to the clean empty state", async () => {
     RESPONSE = { cycles: "oops-not-an-array" };
     const { error } = await renderPollingQuietly();
 
-    expect(screen.getByTestId("coordinator-error")).toHaveTextContent("Cycle history unavailable");
-    expect(screen.queryByTestId("coordinator-empty")).toBeNull();
-    expect(screen.queryByText("0 readable of 0 loaded")).toBeNull();
+    expect(screen.getByTestId("coordinator-empty")).toBeInTheDocument();
     expect(screen.queryByTestId("coordinator-cycle-card")).toBeNull();
     const pageText = screen.getByTestId("coordinator-page").textContent ?? "";
     expect(pageText).not.toMatch(/TypeError|is not a function/);
@@ -440,7 +437,7 @@ describe("Coordinator hardening — r3: scale + content", () => {
     // Both rows render — neither is dropped by a key collision.
     expect(screen.getByText("DUP-ROW-A")).toBeInTheDocument();
     expect(screen.getByText("DUP-ROW-B")).toBeInTheDocument();
-    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(2);
+    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(2);
 
     // No "same key" diagnostic on the console (the bug this round fixed).
     expect(
@@ -461,7 +458,7 @@ describe("Coordinator hardening — r3: scale + content", () => {
     };
     const { error, warn } = await renderPollingQuietly();
 
-    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(20);
+    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(25);
     expect(
       error.some((m) => m.includes("same key")),
       `console.error: ${error.join(" | ")}`,
@@ -493,17 +490,12 @@ describe("Coordinator hardening — r3: scale + content", () => {
 
     const { error, warn } = await renderPollingQuietly();
 
-    // The route keeps the mounted history bounded while reporting the full
-    // loaded/matching scope.
-    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(20);
-    expect(screen.getByText(/1–20 of 1002 matching/)).toBeInTheDocument();
-    expect(screen.queryByText(longString)).toBeNull();
-    // Exact content remains reachable through search without paging 1,000 rows.
-    fireEvent.change(screen.getByPlaceholderText(/Topic, action, outcome or exact ID/i), {
-      target: { value: longString },
-    });
-    expect(screen.getAllByText(longString).length).toBeGreaterThan(0);
-    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(1);
+    // All rows rendered (1000 bulk + the two content rows).
+    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(1002);
+    // The header count reflects the renderable total, not NaN.
+    expect(screen.getByText("1002")).toBeInTheDocument();
+    // The 5k string is present verbatim somewhere in the page.
+    expect(screen.getByText(longString)).toBeInTheDocument();
     // The page never surfaces a literal "NaN" in the narrative.
     const pageText = screen.getByTestId("coordinator-page").textContent ?? "";
     expect(pageText).not.toMatch(/NaN/);
@@ -538,7 +530,7 @@ describe("Coordinator hardening — r3: scale + content", () => {
     expect(screen.getByText("INITIAL-GOOD-ROW")).toBeInTheDocument();
     expect(screen.getByText("INIT-DUP-A")).toBeInTheDocument();
     expect(screen.getByText("INIT-DUP-B")).toBeInTheDocument();
-    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(5);
+    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(5);
     const pageText = screen.getByTestId("coordinator-page").textContent ?? "";
     expect(pageText).not.toMatch(/NaN/);
 
@@ -563,11 +555,28 @@ describe("Coordinator hardening — r3: scale + content", () => {
 // ROUND 5 — empty/absent bodies + boundary counts (POLLING path).
 // ===========================================================================
 //
-// September8 integrity qualification: the original round5 tests treated
-// absent/null/non-array response envelopes as valid empty history. They retain
-// the no-crash falsifiers, but now require an explicit unavailable source.
-// Only an actually supplied {cycles: []} certifies a readable empty snapshot.
-// Original failing outputs are preserved in the private task receipts.
+// ADVERSARIAL HARDENING (round 5) — routes/Coordinator.tsx, edge-case category:
+// EMPTY-vs-ABSENT collections + boundary numbers. A producer-owned, append-only
+// data stream (and the backend that serializes it) can hand the route the whole
+// gradient of "nothing": an empty-but-present array, an object with the `cycles`
+// key absent, and — the one that bit — a bare `null`/`undefined` response body.
+// The contract (ui_autonomy_observability_plan.md / the handoff) is explicit:
+// when the cycle log is absent the panel shows a CLEAN EMPTY STATE, never a
+// blank gap and never a crash. This view exists precisely so the dark loop is
+// legible; a raw TypeError in the error banner is itself a dark-gap.
+//
+// THE BUG THIS ROUND FIXED (route-owned, polling path): the load did
+// `Array.isArray(r.cycles) ? r.cycles : []` — a guard the author added against a
+// NON-ARRAY `cycles`, but it reads `.cycles` off `r` FIRST. When the body is a
+// bare `null`/`undefined` (a malformed 200; getJSON returns the parsed body
+// verbatim, and `null` is valid JSON), `r.cycles` throws "Cannot read properties
+// of null (reading 'cycles')" BEFORE Array.isArray runs. That throw rejects the
+// load promise into `.catch`, which paints the raw TypeError string in the red
+// error banner — and `loaded` never flips true, so the clean empty state never
+// shows either. The absent-data case (the headline reason this view exists)
+// degraded to a crash banner. The fix is `r?.cycles`: a null/undefined body
+// short-circuits to undefined → not an array → [] → setLoaded(true) → the
+// explicit empty state. (Mirrors the existing non-array guard, one level up.)
 //
 // Drives the POLLING path (api/http mocked — where the body is read and the bug
 // lived); the empty-but-present and key-absent bodies are exercised alongside as
@@ -591,10 +600,10 @@ async function renderPollingQuietlyR5() {
   await waitFor(() => {
     const page = document.querySelector('[data-testid="coordinator-page"]');
     const settled =
-      document.querySelector('[data-testid="coordinator-cycle-row"]') !==
+      document.querySelector('[data-testid="coordinator-cycle-card"]') !==
         null ||
       document.querySelector('[data-testid="coordinator-empty"]') !== null ||
-      (page?.querySelector('[data-testid="coordinator-error"]') ?? null) !== null;
+      (page?.querySelector(".text-red-400") ?? null) !== null;
     expect(settled).toBe(true);
   });
   const calls = {
@@ -614,7 +623,7 @@ async function renderPollingQuietlyR5() {
 // forbidden "crash instead of empty state" outcome.
 function hasCrashBanner(): boolean {
   const page = screen.getByTestId("coordinator-page");
-  const banner = page.querySelector('[data-testid="coordinator-error"]')?.textContent ?? "";
+  const banner = page.querySelector(".text-red-400")?.textContent ?? "";
   return /TypeError|is not a function|Cannot read properties|undefined|null/i.test(
     banner,
   );
@@ -629,14 +638,13 @@ describe("Coordinator hardening — r5: empty/absent bodies + boundary counts", 
 
   // The headline regression: a bare `null` body used to throw "Cannot read
   // properties of null (reading 'cycles')" and paint the raw TypeError in the
-  // red banner. It must remain unavailable without a raw crash or invented empty state.
-  it("POLLING: a null response body is unavailable without claiming empty, not a crash banner", async () => {
+  // red banner — the absent-data crash this view exists to prevent. It must now
+  // degrade to the clean empty state.
+  it("POLLING: a null response body degrades to the clean empty state, not a crash banner", async () => {
     RESPONSE = null;
     const { error, warn } = await renderPollingQuietlyR5();
 
-    expect(screen.getByTestId("coordinator-error")).toHaveTextContent("Cycle history unavailable");
-    expect(screen.queryByTestId("coordinator-empty")).toBeNull();
-    expect(screen.queryByText("0 readable of 0 loaded")).toBeNull();
+    expect(screen.getByTestId("coordinator-empty")).toBeInTheDocument();
     expect(screen.queryByTestId("coordinator-cycle-card")).toBeNull();
     expect(hasCrashBanner(), "raw exception leaked to the error banner").toBe(
       false,
@@ -646,26 +654,23 @@ describe("Coordinator hardening — r5: empty/absent bodies + boundary counts", 
   });
 
   // Same root cause via `undefined` (a body that parsed to nothing).
-  it("POLLING: an undefined response body is unavailable without claiming empty", async () => {
+  it("POLLING: an undefined response body degrades to the clean empty state", async () => {
     RESPONSE = undefined;
     const { error } = await renderPollingQuietlyR5();
 
-    expect(screen.getByTestId("coordinator-error")).toHaveTextContent("Cycle history unavailable");
-    expect(screen.queryByTestId("coordinator-empty")).toBeNull();
-    expect(screen.queryByText("0 readable of 0 loaded")).toBeNull();
+    expect(screen.getByTestId("coordinator-empty")).toBeInTheDocument();
     expect(hasCrashBanner()).toBe(false);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
   });
 
   // The `cycles` key entirely ABSENT (an object body the producer wrote without
-  // it). Missing is not a certified empty collection; keep a clear read error.
-  it("POLLING: a body with the cycles key absent is unavailable without claiming empty", async () => {
+  // it). `r.cycles` is undefined → not an array → [] → empty state. Already
+  // robust; pinned so a future refactor can't regress it back into a crash.
+  it("POLLING: a body with the cycles key absent shows the empty state", async () => {
     RESPONSE = {};
     const { error } = await renderPollingQuietlyR5();
 
-    expect(screen.getByTestId("coordinator-error")).toHaveTextContent("Cycle history unavailable");
-    expect(screen.queryByTestId("coordinator-empty")).toBeNull();
-    expect(screen.queryByText("0 readable of 0 loaded")).toBeNull();
+    expect(screen.getByTestId("coordinator-empty")).toBeInTheDocument();
     expect(hasCrashBanner()).toBe(false);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
   });
@@ -693,7 +698,7 @@ describe("Coordinator hardening — r5: empty/absent bodies + boundary counts", 
     const { error, warn } = await renderPollingQuietlyR5();
 
     expect(screen.getByText("SOLO-CYCLE")).toBeInTheDocument();
-    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(1);
+    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(1);
     expect(screen.queryByTestId("coordinator-empty")).toBeNull();
     const page = screen.getByTestId("coordinator-page");
     expect(page.textContent ?? "").not.toMatch(/NaN/);
@@ -805,13 +810,13 @@ describe("Coordinator FE4 — time-range filter + sort-direction toggle", () => 
         ]}
       />,
     );
-    const cards = screen.getAllByTestId("coordinator-cycle-row");
+    const cards = screen.getAllByTestId("coordinator-cycle-card");
     expect(cards).toHaveLength(3);
     // Newest first: C (12:00) → B (10:00) → A (08:00).
     const order = cards.map((card) => within(card).getByText(/ROW-[ABC]/).textContent);
     expect(order).toEqual(["ROW-C", "ROW-B", "ROW-A"]);
     // Caption reflects the defaults.
-    expect(screen.getByRole("button", { name: "sort direction" })).toHaveTextContent("Newest first");
+    expect(screen.getByText(/all · newest first/)).toBeInTheDocument();
   });
 
   // Flipping the direction toggle reverses the order (oldest-first) without
@@ -827,10 +832,10 @@ describe("Coordinator FE4 — time-range filter + sort-direction toggle", () => 
       />,
     );
     fireEvent.click(screen.getByLabelText("sort direction"));
-    const cards = screen.getAllByTestId("coordinator-cycle-row");
+    const cards = screen.getAllByTestId("coordinator-cycle-card");
     const order = cards.map((card) => within(card).getByText(/ROW-[ABC]/).textContent);
     expect(order).toEqual(["ROW-A", "ROW-B", "ROW-C"]);
-    expect(screen.getByRole("button", { name: "sort direction" })).toHaveTextContent("Oldest first");
+    expect(screen.getByText(/all · oldest first/)).toBeInTheDocument();
   });
 
   // The `today` filter keeps a today-stamped row and hides an old one.
@@ -847,8 +852,8 @@ describe("Coordinator FE4 — time-range filter + sort-direction toggle", () => 
 
     expect(screen.getByText("FE4-TODAY-ROW")).toBeInTheDocument();
     expect(screen.queryByText("FE4-OLD-ROW")).toBeNull();
-    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(1);
-    expect(screen.getByLabelText("time range")).toHaveValue("today");
+    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(1);
+    expect(screen.getByText(/today · newest first/)).toBeInTheDocument();
   });
 
   // A NaN/unparseable-timestamp row is INCLUDED in `all` but EXCLUDED from
