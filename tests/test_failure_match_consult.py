@@ -63,7 +63,7 @@ def test_no_ledger_is_none():
     assert rt.dispatched == []
 
 
-def test_match_with_successful_retry_adopts():
+def test_match_with_successful_retry_adopts(cache):
     _seed_killed_cluster(HYP)
     revised = {"status": "passed",
                "result": {"text": "A materially different mechanism: reputation "

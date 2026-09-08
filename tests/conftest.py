@@ -13,6 +13,10 @@
 """
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 import pytest
 
 from agent_wrapper import worker_activity
@@ -60,6 +64,8 @@ def _no_live_artifacts(tmp_path, monkeypatch):
                         tmp_path / "worker_activity.jsonl")
     monkeypatch.setattr(coordinator_cycle_log, "DEFAULT_CYCLES_PATH",
                         tmp_path / "coordinator_cycles.jsonl")
+    monkeypatch.setattr(coordinator_cycle_log, "DEFAULT_FRONTIER_CALLS",
+                        tmp_path / "frontier_calls.jsonl")
     monkeypatch.setattr(coordinator_cycle_log, "DEFAULT_HEALTH_PATH",
                         tmp_path / "health_signals.jsonl")
     monkeypatch.setattr(coordinator, "DEFAULT_COORDINATOR_BUBBLES",
@@ -119,3 +125,33 @@ def _no_live_artifacts(tmp_path, monkeypatch):
     # D-048 zero-live-rows invariant for skill_signals.jsonl too.
     monkeypatch.setattr(skill_signals, "SKILL_SIGNALS_PATH",
                         tmp_path / "skill_signals.jsonl")
+
+
+@pytest.fixture(scope="session")
+def historical_inputs():
+    """Private externally recovered bytes; absence/mismatch is a failure, never skip.
+
+    Supply LAB_HISTORICAL_INPUT_ROOT locally or as a private CI artifact. No
+    private source content is required in the public Git range.
+    """
+    from pinned_inputs import verify_inputs
+    source = Path(os.environ["LAB_HISTORICAL_INPUT_ROOT"])
+    repo = Path(__file__).resolve().parent.parent
+    reference = json.loads((repo / "bench/critic_cal/runs/override_audit_2026-08-19.json").read_text())
+    metadata = json.loads((repo / "bench/readjudication/manifest.jsonl").read_text().splitlines()[0])
+    expected = {entry["path"]: entry["sha256"] for entry in reference["inputs"].values()}
+    expected[metadata["fixtures_path"]] = metadata["fixtures_sha256"]
+    assert expected[metadata["ledger_path"]] == metadata["ledger_sha256"]
+    assert expected["memory/loop_memory.jsonl"] == metadata["loop_memory_sha256"]
+    verify_inputs({name: (source / name).read_bytes() for name in expected}, expected)
+    return source
+
+
+@pytest.fixture(scope="session")
+def current_inputs():
+    """One captured current source set, independently pinned before this run."""
+    from pinned_inputs import verify_inputs
+    source = Path(os.environ["LAB_CURRENT_INPUT_ROOT"])
+    expected = json.loads((source / "input_manifest.json").read_text())
+    verify_inputs({name: (source / name).read_bytes() for name in expected}, expected)
+    return source
