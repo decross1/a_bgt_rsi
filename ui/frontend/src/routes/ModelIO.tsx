@@ -7,7 +7,7 @@
 // restores focus to the opener. The exact endpoint payload remains available
 // behind a native Raw record disclosure.
 //
-// Calls owns one filter-keyed pollhub source. Runtime and dispatch history live
+// Calls owns one filter-keyed pollhub source. Runtime and dispatch source links live
 // on /cycles; human review controls live on /development. Filter input is
 // debounced (350 ms), the superseded source key is evicted, and unchanged
 // payloads do not trigger rerenders. Stale-while-revalidate keeps loaded calls
@@ -463,7 +463,7 @@ type PagerState =
 
 // ─── the expanded full prompt/completion reader ─────────────────────────
 
-function RawRecord({ detail }: { detail: ModelIOCallDetail }) {
+function RawRecord({ detail }: { detail: unknown }) {
   const [open, setOpen] = useState(false);
   return (
     <details
@@ -485,19 +485,43 @@ function RawRecord({ detail }: { detail: ModelIOCallDetail }) {
   );
 }
 
+type DetailState = "loading" | "error" | { kind: "ready"; value: ModelIOCallDetail } | { kind: "unverified"; raw: unknown };
+const detailObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+function admitDetail(raw: unknown, requestId: string): DetailState {
+  const invalid: DetailState = { kind: "unverified", raw };
+  if (!detailObject(raw) || raw.found !== true || !detailObject(raw.call)) return invalid;
+  const c = raw.call;
+  if (c.request_id !== requestId) return invalid;
+  for (const field of ["timestamp", "model", "backend", "caller_tag", "run_id", "parent_request_id", "completion"]) {
+    if (c[field] != null && typeof c[field] !== "string") return invalid;
+  }
+  for (const field of ["latency_ms", "temperature", "seed"]) {
+    if (c[field] != null && (typeof c[field] !== "number" || !Number.isFinite(c[field]))) return invalid;
+  }
+  if (c.usage != null) {
+    if (!detailObject(c.usage)) return invalid;
+    for (const field of ["input_tokens", "output_tokens"]) {
+      const value = c.usage[field];
+      if (value != null && (typeof value !== "number" || !Number.isFinite(value))) return invalid;
+    }
+  }
+  if (c.prompt_messages != null && (!Array.isArray(c.prompt_messages) || c.prompt_messages.some(m => !detailObject(m) || typeof m.role !== "string" || typeof m.content !== "string"))) return invalid;
+  return { kind: "ready", value: c as ModelIOCallDetail };
+}
+
 function CallExpansion({
-  detail,
+  detail: state,
 }: {
-  detail: ModelIOCallDetail | "loading" | "error";
+  detail: DetailState;
 }) {
-  if (detail === "loading") {
+  if (state === "loading") {
     return (
       <div className="modelio-context-state" data-testid="detail-loading">
         Loading the exact recorded input and output…
       </div>
     );
   }
-  if (detail === "error") {
+  if (state === "error") {
     return (
       <div className="modelio-context-state modelio-context-state--warning">
         full record unavailable — it may have aged out of the
@@ -506,6 +530,11 @@ function CallExpansion({
       </div>
     );
   }
+  if (state.kind === "unverified") return <div className="modelio-context-state">
+    <p>Exact record is unverified: the response is missing, malformed or does not bind to this request. Its content is withheld from this call.</p>
+    <RawRecord detail={state.raw} />
+  </div>;
+  const detail = state.value;
   const messages = Array.isArray(detail.prompt_messages)
     ? detail.prompt_messages
     : [];
@@ -549,6 +578,8 @@ function CallExpansion({
               content={detail.completion}
               testId="completion-body"
             />
+          ) : typeof detail.completion !== "string" ? (
+            <p>Completion text was not supplied; this is not a recorded empty completion.</p>
           ) : (
             <EmptyCompletionNote messages={detail.prompt_messages} />
           )}
@@ -662,7 +693,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   const [selectedSummary, setSelectedSummary] =
     useState<SelectedCallSummary | null>(null);
   const [details, setDetails] = useState<
-    Record<string, ModelIOCallDetail | "loading" | "error">
+    Record<string, DetailState>
   >({});
   const expandedRef = useRef<string | null>(null);
   const summaryMapRef = useRef(new Map<string, SelectedCallSummary>());
@@ -816,7 +847,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
         setDetails((d) => ({ ...d, [requestId]: "loading" }));
         getModelIODetail(requestId)
           .then((r) =>
-            setDetails((d) => ({ ...d, [requestId]: r.call ?? "error" })),
+            setDetails((d) => ({ ...d, [requestId]: admitDetail(r, requestId) })),
           )
           .catch(() =>
             setDetails((d) => ({ ...d, [requestId]: "error" })),
@@ -871,8 +902,8 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   const loadedSelectedDetail =
     selectedDetail != null &&
     selectedDetail !== "loading" &&
-    selectedDetail !== "error"
-      ? selectedDetail
+    selectedDetail !== "error" && selectedDetail.kind === "ready"
+      ? selectedDetail.value
       : null;
   const expansionNode =
     expanded != null ? (
@@ -1011,7 +1042,8 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
           </span>
         </div>
         <div className="modelio-related" aria-label="Related Operations views">
-          <a href="/cycles">Trace history</a>
+          <a href="/cycles">Coordinator history</a>
+          <a href="/development#runtime-evidence">Runtime and dispatch sources</a>
           <a href="/development">Operations status</a>
           <span id="research-suggestions">
             Research suggestions and ruling history:{" "}

@@ -217,3 +217,29 @@ it("does not let a late detail response replace a newer selection", async () => 
   await waitFor(() => expect(screen.queryByTestId("modelio-context")).toBeNull());
   await waitFor(() => expect(document.activeElement).toBe(betaOpener));
 });
+
+
+it.each([
+  { found: true, call: { request_id: "wrong-id", completion: "WRONG SECRET" } },
+  { found: false, call: { request_id: "req-alpha", completion: "WRONG SECRET" } },
+  { found: true, call: [] },
+  { found: true, call: { request_id: "req-alpha", prompt_messages: [null], completion: "WRONG SECRET" } },
+])("withholds malformed or unbound exact detail without attributing its content: %j", async (body) => {
+  vi.stubGlobal("fetch", vi.fn(async (input: unknown) => response(String(input).includes("/api/model_io/req-alpha") ? body : page([ALPHA]))));
+  render(<ModelIO pollMs={600_000} />);
+  fireEvent.click(await screen.findByRole("button", { name: /Open record req-alpha/ }));
+  expect(await screen.findByText(/Exact record is unverified/)).toBeInTheDocument();
+  expect(screen.queryByText("WRONG SECRET")).toBeNull();
+  expect(screen.queryByTestId("call-expansion")).toBeNull();
+  fireEvent.click(screen.getByText("Raw record"));
+  expect(await screen.findByTestId("raw-record-content")).toHaveTextContent(JSON.stringify(body, null, 2).replace(/\s+/g, " "));
+});
+
+it("does not turn an omitted completion into a recorded empty output", async () => {
+  const body = detail(ALPHA, "unused");
+  delete (body.call as Partial<typeof body.call>).completion;
+  vi.stubGlobal("fetch", vi.fn(async (input: unknown) => response(String(input).includes("/api/model_io/req-alpha") ? body : page([ALPHA]))));
+  render(<ModelIO pollMs={600_000} />);
+  fireEvent.click(await screen.findByRole("button", { name: /Open record req-alpha/ }));
+  expect(await screen.findByText("Completion text was not supplied; this is not a recorded empty completion.")).toBeInTheDocument();
+});

@@ -871,7 +871,7 @@ function transitionFeed() {
   };
   const mock = vi.fn(async (url: unknown) => {
     const u = new URL(String(url));
-    const body = u.pathname.startsWith("/api/model_io/") ? DETAIL
+    const body = u.pathname.startsWith("/api/model_io/") ? { ...DETAIL, call: { ...DETAIL.call, request_id: decodeURIComponent(u.pathname.split("/").pop()!) } }
       : u.pathname === "/api/model_io" ? await (
         u.searchParams.has("before_ts") ? state.older
           : u.searchParams.has("model") ? state.filtered : state.live)

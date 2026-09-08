@@ -246,7 +246,7 @@ it("links to trace history without mounting runtime or dispatch sources", async 
   await waitFor(() =>
     expect(screen.getAllByTestId("modelio-row")).toHaveLength(3),
   );
-  expect(screen.getByRole("link", { name: "Trace history" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "Coordinator history" })).toHaveAttribute(
     "href",
     "/cycles",
   );
@@ -574,7 +574,7 @@ it("keeps call diagnostics separate from the single human-review destination", a
   render(<ModelIO />);
   await screen.findByTestId("modelio-table");
   expect(screen.getByRole("heading", { name: "Model I/O", level: 1 })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "Trace history" })).toHaveAttribute("href", "/cycles");
+  expect(screen.getByRole("link", { name: "Coordinator history" })).toHaveAttribute("href", "/cycles");
   expect(screen.getByRole("link", { name: "Open existing human review controls" })).toHaveAttribute("href", "/development#frontier-reviews");
   expect(screen.queryByTestId("agenda-accept")).not.toBeInTheDocument();
 });
