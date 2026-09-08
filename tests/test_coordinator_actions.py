@@ -67,6 +67,96 @@ def test_optional_arg_omitted_is_valid():
     assert res["ok"] is True, res["errors"]
 
 
+def test_bubble_up_admission_rejects_captured_invalid_kind_and_action():
+    """LAB030's original plan is invalid in both escalation namespaces."""
+    plan = [{
+        "action": "bubble_up",
+        "args": {
+            "finding_ids": ["iter-2026-09-07-001"],
+            "question": "Please review these pending iterations.",
+            "kind": "finding_review",
+            "allowed_actions": ["promote_findings"],
+        },
+    }]
+    res = validate_plan(plan, budget=6)
+    assert res["ok"] is False
+    assert res["normalized"] == []
+    assert any("finding_review" in error for error in res["errors"])
+    assert any("promote_findings" in error for error in res["errors"])
+
+
+def test_bubble_up_admission_kind_only_edit_still_rejects_action():
+    plan = [{
+        "action": "bubble_up",
+        "args": {
+            "question": "Please review these pending iterations.",
+            "kind": "A",
+            "allowed_actions": ["promote_findings"],
+        },
+    }]
+    res = validate_plan(plan, budget=6)
+    assert res["ok"] is False
+    assert any("promote_findings" in error for error in res["errors"])
+
+
+def test_bubble_up_admission_rejects_later_finding_id_kind():
+    plan = [{
+        "action": "bubble_up",
+        "args": {
+            "finding_ids": ["iter-2026-09-07-002"],
+            "question": "Please review this later pending iteration.",
+            "kind": "finding_id",
+            "allowed_actions": ["reject"],
+        },
+    }]
+    res = validate_plan(plan, budget=6)
+    assert res["ok"] is False
+    assert any("finding_id" in error for error in res["errors"])
+
+
+def test_bubble_up_admission_accepts_all_existing_kinds_and_resolutions():
+    resolutions = [
+        "sign_off", "reject", "refine_defer", "refine_authorize_fix",
+        "spawn_topic", "abstain",
+    ]
+    for kind in ("A", "B", "C"):
+        plan = [{
+            "action": "bubble_up",
+            "args": {
+                "question": f"Resolve escalation {kind}?",
+                "kind": kind,
+                "allowed_actions": resolutions,
+            },
+        }]
+        res = validate_plan(plan, budget=1)
+        assert res["ok"] is True, res["errors"]
+        assert res["normalized"][0]["args"] == plan[0]["args"]
+
+
+def test_bubble_up_admission_preserves_legacy_and_generic_omission():
+    valid_args = (
+        {"finding_ids": ["sf-legacy"], "note": "ack"},
+        {"question": "A generic question without optional taxonomy fields?"},
+        {"finding_ids": ["sf-legacy"], "question": "   "},
+        {"finding_ids": [], "question": "An explicitly generic question?"},
+    )
+    for args in valid_args:
+        res = validate_plan(
+            [{"action": "bubble_up", "args": args}], budget=1,
+        )
+        assert res["ok"] is True, res["errors"]
+        assert res["normalized"][0]["args"] == args
+
+
+def test_bubble_up_admission_rejects_supplied_empty_question_with_legacy_ids():
+    args = {"finding_ids": ["sf-legacy"], "question": ""}
+    res = validate_plan([{"action": "bubble_up", "args": args}], budget=1)
+    assert res["ok"] is False
+    assert res["normalized"] == []
+    assert any("question" in error and "non-empty" in error
+               for error in res["errors"])
+
+
 def test_off_menu_action_rejected():
     plan = [{"action": "launch_live_trade", "args": {"size": 100}}]
     res = validate_plan(plan, budget=10)

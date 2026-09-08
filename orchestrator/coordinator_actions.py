@@ -29,6 +29,56 @@ from jsonschema import Draft7Validator
 # even reach the budget check.
 MAX_ACTIONS = 6
 
+# Generic escalation admissibility. These literals also appear in the
+# persisted escalation schema; keeping the runtime definition in this pure
+# module lets planner admission and the defensive handler share one contract.
+ESCALATION_KINDS = ("A", "B", "C")
+ALLOWED_ESCALATION_ACTIONS = (
+    "sign_off", "reject", "refine_defer",
+    "refine_authorize_fix", "spawn_topic", "abstain",
+)
+
+
+def validate_bubble_up_args(
+    *,
+    finding_ids: Any = None,
+    question: Any = None,
+    kind: Any = None,
+    allowed_actions: Any = None,
+) -> None:
+    """Reject inadmissible bubble-up arguments.
+
+    A nonempty finding-id collection or a non-whitespace question supplies the
+    payload. ``finding_ids`` may be explicitly empty when a substantive
+    question supplies it; a supplied empty question is an invalid wire
+    component, while omission remains valid. The optional taxonomy fields
+    retain their literal existing enums.
+    """
+    if question == "":
+        raise ValueError(
+            "bubble_up question must be non-empty when supplied"
+        )
+    if not finding_ids and not (
+        isinstance(question, str) and question.strip()
+    ):
+        raise ValueError(
+            "bubble_up requires finding_ids or a non-empty question"
+        )
+    if kind is not None and kind not in ESCALATION_KINDS:
+        raise ValueError(
+            f"bubble_up kind {kind!r} not in {ESCALATION_KINDS}"
+        )
+    if allowed_actions is not None:
+        bad = [
+            action for action in allowed_actions
+            if action not in ALLOWED_ESCALATION_ACTIONS
+        ]
+        if bad:
+            raise ValueError(
+                f"bubble_up allowed_actions {bad!r} not in "
+                f"{ALLOWED_ESCALATION_ACTIONS}"
+            )
+
 
 def _obj_schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
     """A closed object schema: only the declared properties, no extras."""
@@ -78,35 +128,49 @@ ACTIONS: dict[str, dict[str, Any]] = {
             "Escalate to the human. Two forms (seam 2): the LEGACY finding-id "
             "bubble (surface specific finding ids with an optional note), OR a "
             "GENERIC escalation {question, context, kind, allowed_actions} that "
-            "raises ANY uncertain step, not just findings. The kind/allowed_"
-            "actions ENUMs are enforced fail-closed by handle_bubble_up (the "
-            "single source of truth); this schema only gates the shape."
+            "raises ANY uncertain step, not just findings. Planner admission "
+            "and handle_bubble_up share the literal kind/allowed_actions ENUMs "
+            "and require a nonempty finding_ids collection or question."
         ),
         "cost": 1,
-        # anyOf finding_ids|question: either form is valid, neither-present is
-        # rejected. additionalProperties stays closed (no unknown keys). The
-        # kind/allowed_actions enums are NOT duplicated here — the handler is
-        # authoritative (avoids drift); this is the shape gate only.
+        # finding_ids may be explicitly empty when question is substantive;
+        # a supplied question retains the persisted wire's minLength rule.
+        # additionalProperties stays closed (no unknown keys).
         "arg_schema": {
             "type": "object",
             "properties": {
                 "finding_ids": {
                     "type": "array",
                     "items": {"type": "string", "minLength": 1},
-                    "minItems": 1,
                 },
                 "note": {"type": "string"},
                 "question": {"type": "string", "minLength": 1},
                 "context": {"type": "string"},
-                "kind": {"type": "string", "minLength": 1},
+                "kind": {
+                    "type": "string",
+                    "enum": list(ESCALATION_KINDS),
+                    "description": (
+                        "Escalation taxonomy: A = judgment; B = blocking-halt; "
+                        "C = read-receipt."
+                    ),
+                },
                 "allowed_actions": {
                     "type": "array",
-                    "items": {"type": "string", "minLength": 1},
+                    "items": {
+                        "type": "string",
+                        "enum": list(ALLOWED_ESCALATION_ACTIONS),
+                    },
                 },
             },
             "anyOf": [
-                {"required": ["finding_ids"]},
-                {"required": ["question"]},
+                {
+                    "required": ["finding_ids"],
+                    "properties": {"finding_ids": {"minItems": 1}},
+                },
+                {
+                    "required": ["question"],
+                    "properties": {"question": {"pattern": r"\S"}},
+                },
             ],
             "additionalProperties": False,
         },
@@ -302,10 +366,25 @@ def validate_plan(plan: Any, *, budget: int) -> dict[str, Any]:
 
         validator = Draft7Validator(spec["arg_schema"])
         schema_errs = sorted(validator.iter_errors(args), key=lambda e: list(e.path))
-        if schema_errs:
+        admission_error: ValueError | TypeError | None = None
+        if name == "bubble_up":
+            try:
+                validate_bubble_up_args(
+                    finding_ids=args.get("finding_ids"),
+                    question=args.get("question"),
+                    kind=args.get("kind"),
+                    allowed_actions=args.get("allowed_actions"),
+                )
+            except (ValueError, TypeError) as exc:
+                admission_error = exc
+        if schema_errs or admission_error is not None:
             for e in schema_errs:
                 loc = "/".join(str(p) for p in e.path) or "(root)"
                 errors.append(f"action[{idx}] ('{name}'): args {loc}: {e.message}")
+            if admission_error is not None:
+                errors.append(
+                    f"action[{idx}] ('{name}'): args: {admission_error}"
+                )
             continue
 
         total_cost += spec["cost"]

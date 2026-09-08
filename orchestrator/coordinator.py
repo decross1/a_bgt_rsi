@@ -40,7 +40,13 @@ from typing import Any, Callable
 
 from agent_wrapper.wrapper import call_sync, set_run_id
 from orchestrator import active_run, coordinator_cycle_log, tier_registry
-from orchestrator.coordinator_actions import known_actions, validate_plan
+from orchestrator.coordinator_actions import (
+    ALLOWED_ESCALATION_ACTIONS,
+    ESCALATION_KINDS,
+    known_actions,
+    validate_bubble_up_args,
+    validate_plan,
+)
 from orchestrator.morning_topic import pick_morning_topic
 from orchestrator.runtime import append_run_log, set_current_agent
 
@@ -143,14 +149,9 @@ _MAX_REPLANS = 2
 # Legacy finding-id bubbles are read-receipts (C). The COUNT CONTRACT the
 # dashboard idle-hero renders against: actionable escalations = kind A or B
 # ONLY, never C (a read-receipt is not unresolved work) — see
-# count_actionable_escalations. Schema: schema/escalation.schema.json.
-ESCALATION_KINDS = ("A", "B", "C")
+# count_actionable_escalations. Admissibility lives in coordinator_actions;
+# persisted shape: schema/escalation.schema.json.
 ACTIONABLE_ESCALATION_KINDS = ("A", "B")
-# The 6 resolution outcomes a generic escalation may permit (seam 3).
-ALLOWED_ESCALATION_ACTIONS = (
-    "sign_off", "reject", "refine_defer",
-    "refine_authorize_fix", "spawn_topic", "abstain",
-)
 
 
 def _utcnow_iso() -> str:
@@ -772,21 +773,12 @@ def handle_bubble_up(
     report entry (persistence is _persist_bubble_up's job, execute-only).
     Referenced by coordinator_actions handler_ref."""
     fids = list(finding_ids) if finding_ids else []
-    if not fids and not (isinstance(question, str) and question.strip()):
-        raise ValueError(
-            "bubble_up requires finding_ids or a non-empty question"
-        )
-    if kind is not None and kind not in ESCALATION_KINDS:
-        raise ValueError(
-            f"bubble_up kind {kind!r} not in {ESCALATION_KINDS}"
-        )
-    if allowed_actions is not None:
-        bad = [a for a in allowed_actions if a not in ALLOWED_ESCALATION_ACTIONS]
-        if bad:
-            raise ValueError(
-                f"bubble_up allowed_actions {bad!r} not in "
-                f"{ALLOWED_ESCALATION_ACTIONS}"
-            )
+    validate_bubble_up_args(
+        finding_ids=fids,
+        question=question,
+        kind=kind,
+        allowed_actions=allowed_actions,
+    )
     return {
         "status": "passed",
         "result": {
