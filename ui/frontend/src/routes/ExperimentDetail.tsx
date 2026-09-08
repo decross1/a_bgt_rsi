@@ -393,7 +393,15 @@ function UnknownAxes() {
   );
 }
 
+function authoredSummaryExcerpt(source: string): string {
+  const blocks = source
+    .split(/\r?\n[\t ]*\r?\n/)
+    .filter((block) => block.trim().length > 0);
+  return blocks.slice(0, 2).join("\n\n");
+}
+
 function AuthoredSummary({ source }: { source: string }) {
+  const excerpt = authoredSummaryExcerpt(source);
   return (
     <section
       className="experiment-detail-card experiment-authored-summary"
@@ -407,17 +415,31 @@ function AuthoredSummary({ source }: { source: string }) {
         <span>summary.md</span>
       </div>
       <p className="experiment-scope-note">
-        Rendered safely as authored. This text is not promoted here to an
-        independently validated scientific verdict.
+        Exact source excerpt. This authored conclusion is separate from the
+        opponent diagnostic and is not independently validated here.
       </p>
       {source.length === 0 ? (
         <p className="experiment-scope-note" data-testid="markdown-summary-empty">
           summary.md is reported present and empty. No conclusion is inferred.
         </p>
       ) : (
-        <div className="experiment-markdown">
-          <MiniMarkdown source={source} />
-        </div>
+        <>
+          <div
+            className="experiment-markdown experiment-markdown--excerpt"
+            data-testid="authored-summary-excerpt"
+          >
+            <MiniMarkdown source={excerpt} />
+          </div>
+          <details
+            className="experiment-authored-summary__full"
+            data-testid="authored-summary-full"
+          >
+            <summary>Read full summary.md source</summary>
+            <div className="experiment-markdown">
+              <MiniMarkdown source={source} />
+            </div>
+          </details>
+        </>
       )}
     </section>
   );
@@ -956,7 +978,6 @@ export default function ExperimentDetail({ initial, expIdOverride }: Props) {
                   hasJson={summary !== null}
                 />
               )}
-              {authoredSummary !== null && <AuthoredSummary source={authoredSummary} />}
               {focusedOpponent && comparisonRows.length > 0 && (
                 <OpponentComparison
                   rows={comparisonRows}
@@ -981,6 +1002,7 @@ export default function ExperimentDetail({ initial, expIdOverride }: Props) {
             </main>
 
             <aside className="experiment-evidence-panel" aria-label="Experiment evidence context">
+              {authoredSummary !== null && <AuthoredSummary source={authoredSummary} />}
               <SourceInventory data={record} />
 
               {(summaryJsonError || summaryMarkdownError) && (
