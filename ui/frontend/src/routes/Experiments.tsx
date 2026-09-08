@@ -1,60 +1,73 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+// Research index — experiments GROUPED BY SANDBOX TIER. One section per tier
+// (synthetic -> semi_synthetic -> applied), each header carrying a human label
+// + one-line description. Each experiment is a vettable card: id + title, a
+// verdict chip (YES/ok=emerald, NO/bad=red, warn=amber, none=zinc), and BRIDGE
+// badges naming the loop iteration(s) it bridged into. Nothing is fabricated:
+// an absent verdict reads "no verdict"; an applied design-only entry reads
+// "design-only — not run"; an empty bridge reads "not yet bridged into the
+// loop". An untiered section appears only when an on-disk dir is unmapped.
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import CoordinatorCycleCard from "../components/CoordinatorCycleCard";
 import { getResearch } from "../api/experiments";
+import { getCoordinatorCycles } from "../api/http";
+import { fmt } from "../format";
 import type {
   ResearchBridge,
   ResearchExperiment,
   ResearchResponse,
+  ResearchTier,
   ResearchVerdict,
 } from "../types/experiments";
-import "./experiments.css";
+import type { CoordinatorCycle } from "../types/schemas";
 
 interface Props {
   initial?: ResearchResponse | null;
-  /** Retained for fixture compatibility. Operational cycles are intentionally ignored. */
-  initialCoordinatorCycles?: unknown[];
+  // Coordinator cycles rendered as auditable units (plan → outcome → evidence).
+  // Injected for tests; otherwise fetched alongside the research index. Gated on
+  // the research `initial` so a static render stays network-free.
+  initialCoordinatorCycles?: CoordinatorCycle[];
 }
 
-type RecordValue = Record<string, unknown>;
+const CARD =
+  "block rounded border border-zinc-800 bg-zinc-900/40 p-4 hover:border-zinc-700";
 
-interface CatalogEntry {
-  key: string;
-  id: string;
-  title: string;
-  tierId: string;
-  tierLabel: string;
-  mapped: boolean;
-  experiment: ResearchExperiment;
-}
-
-interface NormalizedCatalog {
-  entries: CatalogEntry[];
-  malformedRows: number;
-  malformedTopLevel: boolean;
-}
-
-function isRecord(value: unknown): value is RecordValue {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
+// The /api/research payload is producer-owned (backend walks experiments/*/
+// results/ heterogeneously; a legacy/partial/malformed row — or a future EMIT
+// shape — can hand us the WRONG TYPE in a field: a tiers/experiments that is a
+// string or object instead of an array, an id/label/value that is an object
+// where a scalar is expected, a NaN/Infinity number. These two coercions mirror
+// CoordinatorCycleCard's asArray/asText so one bad row degrades to "empty"
+// instead of throwing "x.map is not a function" / "Objects are not valid as a
+// React child" and blanking the whole page.
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 
+// A producer-owned scalar rendered as a React child (or used in a key/testid/
+// URL) must be a string; an object/array there throws and unwinds the page.
+// Returns the string (incl. empty) or null when it is not a renderable scalar,
+// so the caller can omit/fallback. Finite numbers are stringified (a numeric id
+// stays legible); NaN/Infinity collapse to null rather than print "NaN".
 function asText(value: unknown): string | null {
   if (typeof value === "string") return value;
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return null;
 }
 
-function asFiniteNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
+// `encodeURIComponent` THROWS `URIError: URI malformed` on a lone UTF-16
+// surrogate (e.g. a producer string truncated mid-codepoint, or a model that
+// emitted a malformed surrogate in an experiment id). The id is interpolated
+// into the card's `<Link to>` URL, and a throw there unwinds the whole grid —
+// one corrupt id blanks the entire Research page. Encode defensively: on a
+// malformed id, strip the unpaired surrogate(s) so the link still routes to a
+// legible (if lossily-encoded) path rather than crashing the page.
 function safeEncodePath(id: string): string {
   try {
     return encodeURIComponent(id);
   } catch {
+    // Drop lone surrogates (a high surrogate not followed by a low one, or a
+    // stray low surrogate) and retry; the remaining valid codepoints encode.
     const stripped = id.replace(
       /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
       "",
@@ -67,515 +80,358 @@ function safeEncodePath(id: string): string {
   }
 }
 
-function normalizeCatalog(data: ResearchResponse | null): NormalizedCatalog {
-  if (!data || !isRecord(data)) {
-    return { entries: [], malformedRows: 0, malformedTopLevel: false };
-  }
-
-  const tiersValue = data.tiers as unknown;
-  const untieredValue = data.untiered as unknown;
-  const malformedTopLevel =
-    data.available === true &&
-    (!Array.isArray(tiersValue) || !Array.isArray(untieredValue));
-  const entries: CatalogEntry[] = [];
-  let malformedRows = 0;
-  let order = 0;
-
-  for (const tierValue of asArray<unknown>(tiersValue)) {
-    if (!isRecord(tierValue)) {
-      malformedRows += 1;
-      continue;
-    }
-    const tierId = asText(tierValue.tier) ?? "unknown-tier";
-    const tierLabel = asText(tierValue.label) ?? "Unknown grouping";
-    const experimentsValue = tierValue.experiments;
-    if (!Array.isArray(experimentsValue)) malformedRows += 1;
-    for (const experimentValue of asArray<unknown>(experimentsValue)) {
-      if (!isRecord(experimentValue)) {
-        malformedRows += 1;
-        continue;
-      }
-      const experiment = experimentValue as unknown as ResearchExperiment;
-      const id = asText(experimentValue.id) ?? "";
-      const title = asText(experimentValue.title) ?? (id || "Unnamed source entry");
-      if (!id) malformedRows += 1;
-      entries.push({
-        key: `mapped-${order++}-${id}`,
-        id,
-        title,
-        tierId,
-        tierLabel,
-        mapped: true,
-        experiment,
-      });
-    }
-  }
-
-  for (const experimentValue of asArray<unknown>(untieredValue)) {
-    if (!isRecord(experimentValue)) {
-      malformedRows += 1;
-      continue;
-    }
-    const experiment = experimentValue as unknown as ResearchExperiment;
-    const id = asText(experimentValue.id) ?? "";
-    const title = asText(experimentValue.title) ?? (id || "Unnamed source entry");
-    if (!id) malformedRows += 1;
-    entries.push({
-      key: `unmapped-${order++}-${id}`,
-      id,
-      title,
-      tierId: "unmapped",
-      tierLabel: "Unmapped source",
-      mapped: false,
-      experiment,
-    });
-  }
-
-  return { entries, malformedRows, malformedTopLevel };
-}
-
-function validVerdict(value: unknown): ResearchVerdict | null {
-  if (!isRecord(value)) return null;
-  const text = asText(value.text);
-  if (text === null) return null;
-  return value as unknown as ResearchVerdict;
-}
-
-function verdictTone(verdict: ResearchVerdict | null): string {
-  if (!verdict || typeof verdict.tone !== "string") return "unknown";
-  return ["ok", "warn", "bad"].includes(verdict.tone)
-    ? verdict.tone
-    : "unknown";
-}
-
-function validBridges(value: unknown): ResearchBridge[] {
-  return asArray<unknown>(value).filter(
-    (bridge): bridge is ResearchBridge => isRecord(bridge),
-  );
-}
-
-function bridgeLabel(bridge: ResearchBridge): string {
-  const iteration = asText(bridge.iteration_id) ?? "Unnamed iteration";
-  const metric = asText(bridge.metric) ?? "Metric not reported";
-  const value =
-    typeof bridge.value === "string" ||
-    (typeof bridge.value === "number" && Number.isFinite(bridge.value))
-      ? ` = ${bridge.value}`
-      : "";
-  return `${iteration} · ${metric}${value}`;
-}
-
-function evidenceLabel(experiment: ResearchExperiment): string {
-  const record = experiment as unknown as RecordValue;
-  const resultsDirectory = record.has_results_dir;
-  const files = asFiniteNumber(record.n_results_files);
-  const artifacts = [
-    record.has_summary_json === true ? "JSON summary" : null,
-    record.has_summary_md === true ? "authored summary" : null,
-    record.has_per_round === true ? "round data" : null,
-    record.has_trials === true ? "trial sample" : null,
-  ].filter((value): value is string => value !== null);
-
-  if (resultsDirectory === false) return "Results directory reported absent";
-  if (resultsDirectory === true && files === 0)
-    return "Results directory reported empty";
-  if (artifacts.length > 0) {
-    const count =
-      files === null
-        ? "Result files reported"
-        : `${files} result file${files === 1 ? "" : "s"}`;
-    return `${count} · ${artifacts.join(" · ")}`;
-  }
-  if (resultsDirectory === true)
-    return "Results directory present; readable evidence not reported";
-  return "Evidence inventory unknown";
-}
-
-function searchableText(entry: CatalogEntry): string {
-  const verdict = validVerdict(
-    (entry.experiment as unknown as RecordValue).verdict,
-  );
-  const bridges = validBridges(
-    (entry.experiment as unknown as RecordValue).bridge,
-  );
-  return [
-    entry.id,
-    entry.title,
-    entry.tierId,
-    entry.tierLabel,
-    asText(verdict?.text) ?? "",
-    ...bridges.map(bridgeLabel),
-  ]
-    .join(" ")
-    .toLocaleLowerCase();
-}
-
-function SourceEntry({
-  entry,
-  returnTo,
-  linkRef,
+// Verdict chip. YES/ok -> emerald, NO/bad -> red, warn -> amber, none -> zinc.
+// We never guess a green/red outcome; a null verdict reads a muted "no verdict".
+function VerdictChip({
+  verdict,
+  testid,
 }: {
-  entry: CatalogEntry;
-  returnTo: string;
-  linkRef: (node: HTMLAnchorElement | null) => void;
+  verdict: ResearchVerdict | null;
+  testid: string;
 }) {
-  const record = entry.experiment as unknown as RecordValue;
-  const verdict = validVerdict(record.verdict);
-  const verdictText = asText(verdict?.text);
-  const bridges = validBridges(record.bridge);
-  const evidence = evidenceLabel(entry.experiment);
-  const href = entry.id ? `/experiments/${safeEncodePath(entry.id)}` : null;
-
+  // `tone` is producer-owned; a malformed/legacy row OR a future EMIT shape
+  // could carry a tone outside the {ok,warn,bad} palette (a garbage string, a
+  // number, a never-seen enum). Treat any unrecognized tone as "no verdict"
+  // (muted zinc) rather than splicing `undefined`/garbage into the className.
+  // Look up OWN keys only: a bare `toneCls[tone]` reads off the prototype chain,
+  // so a producer tone that collides with an inherited Object.prototype member
+  // name ("toString", "constructor", "valueOf", "hasOwnProperty", "__proto__",
+  // …) resolves to a FUNCTION/object instead of undefined and gets interpolated
+  // into the class as "function toString() { [native code] }" / "[object
+  // Object]" (the sibling SourceBadge/AgentBadge are guarded the same way).
+  // `text` is coerced so an object there reads a fallback instead of throwing
+  // "Objects are not valid as a React child".
+  const toneCls: Record<string, string> = {
+    ok: "border-emerald-700/50 bg-emerald-900/20 text-emerald-300",
+    warn: "border-amber-700/50 bg-amber-900/20 text-amber-300",
+    bad: "border-red-700/50 bg-red-900/20 text-red-300",
+  };
+  const cls =
+    verdict &&
+    typeof verdict.tone === "string" &&
+    Object.prototype.hasOwnProperty.call(toneCls, verdict.tone)
+      ? toneCls[verdict.tone]
+      : undefined;
+  const text = asText(verdict?.text);
+  if (!verdict || !cls) {
+    return (
+      <span
+        data-testid={testid}
+        className="rounded border border-zinc-700 bg-zinc-800/40 px-1.5 py-0.5 text-[10px] text-zinc-400"
+      >
+        {text ?? "no verdict"}
+      </span>
+    );
+  }
   return (
-    <article
-      className="experiment-source-entry"
-      data-testid={`research-card-${entry.id}`}
+    <span
+      data-testid={testid}
+      className={`rounded border px-1.5 py-0.5 text-[10px] ${cls}`}
+      title={text ?? undefined}
     >
-      <div className="experiment-source-entry__heading">
-        <div className="experiment-source-entry__identity">
-          {href ? (
-            <Link
-              ref={linkRef}
-              to={href}
-              state={{
-                experimentsReturnTo: returnTo,
-                focusExperimentId: entry.id,
-              }}
-              className="experiment-source-entry__link"
-            >
-              <span>{entry.title}</span>
-              <span aria-hidden="true">→</span>
-            </Link>
-          ) : (
-            <span className="experiment-source-entry__unavailable-link">
-              {entry.title}
-            </span>
-          )}
-          <span className="experiment-source-entry__id">
-            {entry.id || "Source id unavailable"}
-          </span>
-        </div>
-        <span className="experiment-tier-label">
-          {entry.mapped ? entry.tierLabel : "Unmapped source"}
-        </span>
-      </div>
-
-      <div className="experiment-source-entry__result">
-        <span className="experiment-field-label">Reported label</span>
-        <span
-          className="experiment-result-label"
-          data-tone={verdictTone(verdict)}
-          data-testid={`verdict-${entry.id}`}
-        >
-          {verdictText ?? "No result label reported"}
-        </span>
-        <span className="experiment-result-qualifier">
-          Claim binding and independent validity are not reported.
-        </span>
-      </div>
-
-      <dl className="experiment-source-entry__facts">
-        <div>
-          <dt>Evidence</dt>
-          <dd>{evidence}</dd>
-        </div>
-        <div>
-          <dt>Evaluation mode</dt>
-          <dd>Not reported</dd>
-        </div>
-      </dl>
-
-      <details className="experiment-source-entry__evidence">
-        <summary>
-          Source evidence
-          {bridges.length > 0
-            ? ` · ${bridges.length} bridge record${bridges.length === 1 ? "" : "s"}`
-            : ""}
-        </summary>
-        <p>{evidence}.</p>
-        {bridges.length === 0 ? (
-          <p data-testid={`bridge-${entry.id}`}>
-            No bridge records are present in this response.
-          </p>
-        ) : (
-          <ul data-testid={`bridge-${entry.id}`}>
-            {bridges.map((bridge, index) => (
-              <li key={index}>{bridgeLabel(bridge)}</li>
-            ))}
-          </ul>
-        )}
-      </details>
-    </article>
+      {text ?? asText(verdict.tone) ?? "verdict"}
+    </span>
   );
 }
 
-export default function Experiments({ initial }: Props) {
+// A bridge badge: "-> iter-... . metric=value". Pure pass-through of the
+// producer's experiment_outcome — we render the value only when it is a scalar.
+function bridgeLabel(b: ResearchBridge): string {
+  // `iteration_id` / `metric` are producer scalars; coerce so an object/array
+  // there reads a fallback label instead of "[object Object]" (or a crash if
+  // ever rendered as a child). A non-finite number (NaN/Infinity) is NOT a
+  // legible metric value — render the metric name alone rather than print "NaN".
+  const it = asText(b.iteration_id) ?? "iter (unnamed)";
+  const metric = asText(b.metric) ?? "metric";
+  const renderableValue =
+    typeof b.value === "string" ||
+    (typeof b.value === "number" && Number.isFinite(b.value));
+  const scalar = renderableValue ? `${metric}=${b.value}` : (asText(b.metric) ?? "outcome");
+  return `→ ${it} · ${scalar}`;
+}
+
+function BridgeRow({ exp }: { exp: ResearchExperiment }) {
+  // `bridge` is producer-owned (built from a loop_memory.jsonl row's
+  // experiment_outcome block); a legacy/partial experiment row may omit it OR
+  // (malformed) carry a non-array there — `asArray` coerces both to [] so a bad
+  // value reads "not yet bridged" instead of throwing ".map is not a function".
+  // A non-object bridge element is dropped so it can't crash bridgeLabel.
+  const bridge = asArray<unknown>(exp.bridge).filter(
+    (b): b is ResearchBridge => typeof b === "object" && b !== null,
+  );
+  const id = asText(exp.id) ?? "";
+  if (bridge.length === 0) {
+    return (
+      <div
+        data-testid={`bridge-${id}`}
+        className="mt-2 text-[11px] text-zinc-500"
+      >
+        not yet bridged into the loop
+      </div>
+    );
+  }
+  return (
+    <div data-testid={`bridge-${id}`} className="mt-2 flex flex-wrap gap-1.5">
+      {bridge.map((b, i) => (
+        <span
+          key={`${b.iteration_id ?? "it"}-${i}`}
+          className="rounded border border-sky-700/50 bg-sky-900/20 px-1.5 py-0.5 font-mono text-[10px] text-sky-300"
+        >
+          {bridgeLabel(b)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ResearchCard({
+  exp,
+  tier,
+}: {
+  exp: ResearchExperiment;
+  tier?: string;
+}) {
+  // Not-run: nothing was produced — no readable summary, no derived verdict,
+  // and no bridge. This covers both an ABSENT results dir and a PRESENT-but-
+  // empty one (e.g. applied/exp007's .gitkeep-only dir), without ever guessing
+  // a result that isn't there. The applied tier is CFTC-gated design-only, so
+  // its copy says so; other no-result dirs just haven't run yet.
+  const notRun =
+    !exp.verdict &&
+    asArray(exp.bridge).length === 0 &&
+    !exp.has_summary_json &&
+    !exp.has_summary_md;
+  const notRunCopy =
+    tier === "applied" ? "design-only — not run" : "no results yet — not run";
+  // `id`/`title` are producer scalars but a malformed row could carry an object
+  // there; rendered as a React child that throws "Objects are not valid as a
+  // React child" and unwinds the whole grid. Coerce to a string (empty string
+  // when absent — the id still anchors the link/testid without crashing).
+  const id = asText(exp.id) ?? "";
+  const title = asText(exp.title);
+  return (
+    <Link
+      to={`/experiments/${safeEncodePath(id)}`}
+      data-testid={`research-card-${id}`}
+      className={CARD}
+    >
+      <div className="flex items-baseline gap-2">
+        <span className="font-mono text-sm text-zinc-200">{id}</span>
+        <span className="text-xs text-zinc-500">{title}</span>
+        <span className="ml-auto">
+          <VerdictChip verdict={exp.verdict} testid={`verdict-${id}`} />
+        </span>
+      </div>
+
+      {notRun && (
+        <div className="mt-2 text-xs text-amber-400/90">{notRunCopy}</div>
+      )}
+
+      <BridgeRow exp={exp} />
+    </Link>
+  );
+}
+
+function TierSection({ tier }: { tier: ResearchTier }) {
+  // A legacy/truncated tier row may carry no `experiments` array OR a non-array
+  // there; `asArray` coerces both so the section renders its "no experiments"
+  // state rather than crashing on `.length`/`.map`. A non-object experiment
+  // element is dropped (it carries no card to render). `tier`/`label`/
+  // `description` are coerced for rendering as React children: an object there
+  // throws "Objects are not valid as a React child". The tier id also anchors
+  // the testid/key, so an absent/object id falls back to "untiered".
+  const experiments = asArray<unknown>(tier.experiments).filter(
+    (e): e is ResearchExperiment => typeof e === "object" && e !== null,
+  );
+  const tierId = asText(tier.tier) ?? "untiered";
+  const label = asText(tier.label);
+  const description = asText(tier.description);
+  return (
+    <section data-testid={`tier-section-${tierId}`} className="mt-6 first:mt-4">
+      <div className="flex items-baseline gap-2">
+        <h2 className="text-sm font-semibold text-zinc-100">{label}</h2>
+        <span className="font-mono text-[10px] text-zinc-600">{tierId}</span>
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">{description}</p>
+
+      {experiments.length === 0 ? (
+        <div className="mt-3 text-xs text-zinc-600">
+          No experiments in this tier.
+        </div>
+      ) : (
+        <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {experiments.map((exp, i) => (
+            <ResearchCard
+              key={asText(exp.id) ?? `exp-${i}`}
+              exp={exp}
+              tier={tierId}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+export default function Experiments({ initial, initialCoordinatorCycles }: Props) {
   const [data, setData] = useState<ResearchResponse | null>(initial ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [requestVersion, setRequestVersion] = useState(0);
-  const [searchParams, setSearchParams] = useSearchParams();
-  const location = useLocation();
-  const linkRefs = useRef(new Map<string, HTMLAnchorElement>());
-  const queryFromUrl = searchParams.get("q") ?? "";
-  const [query, setQuery] = useState(queryFromUrl);
+  const [cycles, setCycles] = useState<CoordinatorCycle[]>(
+    initialCoordinatorCycles ?? [],
+  );
 
   useEffect(() => {
     if (initial !== undefined) return;
     let active = true;
-    setError(null);
-    setData(null);
     getResearch()
-      .then((response) => {
-        if (active) setData(response);
+      .then((d) => active && setData(d))
+      .catch((e) => active && setError(String(e)));
+    return () => {
+      active = false;
+    };
+  }, [initial]);
+
+  useEffect(() => {
+    // Static-render gate: when the research index is injected (test mode), do
+    // not self-fetch the coordinator cycles either — use whatever was injected.
+    if (initial !== undefined) return;
+    let active = true;
+    getCoordinatorCycles()
+      .then((r) => {
+        if (!active) return;
+        const sorted = [...r.cycles].sort((a, b) =>
+          (b.timestamp ?? "").localeCompare(a.timestamp ?? ""),
+        );
+        setCycles(sorted);
       })
-      .catch((reason) => {
-        if (active) setError(String(reason));
+      .catch(() => {
+        /* coordinator cycles are optional context here; never block the index */
       });
     return () => {
       active = false;
     };
-  }, [initial, requestVersion]);
+  }, [initial]);
 
-  const catalog = useMemo(() => normalizeCatalog(data), [data]);
-  const tierOptions = useMemo(() => {
-    const options = new Map<string, string>();
-    for (const entry of catalog.entries)
-      options.set(entry.tierId, entry.tierLabel);
-    return [...options.entries()];
-  }, [catalog.entries]);
-  const requestedTier = searchParams.get("tier") ?? "all";
-  const tier =
-    requestedTier === "all" ||
-    tierOptions.some(([value]) => value === requestedTier)
-      ? requestedTier
-      : "all";
-  const filteredEntries = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    return catalog.entries.filter(
-      (entry) =>
-        (tier === "all" || entry.tierId === tier) &&
-        (!needle || searchableText(entry).includes(needle)),
-    );
-  }, [catalog.entries, query, tier]);
-
-  useEffect(() => {
-    const state = isRecord(location.state) ? location.state : null;
-    const focusId = asText(state?.focusExperimentId);
-    if (focusId) linkRefs.current.get(focusId)?.focus();
-  }, [location.key, filteredEntries]);
-
-  useEffect(() => {
-    setQuery(queryFromUrl);
-  }, [queryFromUrl]);
-
-  const setParam = (name: "q" | "tier", value: string) => {
-    const next = new URLSearchParams(searchParams);
-    if (name === "tier") {
-      if (query) next.set("q", query);
-      else next.delete("q");
-    }
-    if (!value || value === "all") next.delete(name);
-    else next.set(name, value);
-    setSearchParams(next, { replace: true });
-  };
-
-  useEffect(() => {
-    if (query === queryFromUrl) return;
-    const timeout = window.setTimeout(() => setParam("q", query), 180);
-    return () => window.clearTimeout(timeout);
-  }, [query, queryFromUrl]);
-
-  const returnParams = new URLSearchParams(searchParams);
-  if (query) returnParams.set("q", query);
-  else returnParams.delete("q");
-  const returnSearch = returnParams.toString();
-  const returnTo = `${location.pathname}${returnSearch ? `?${returnSearch}` : ""}`;
-  const mappedCount = catalog.entries.filter((entry) => entry.mapped).length;
-  const evidenceCount = catalog.entries.filter((entry) => {
-    const record = entry.experiment as unknown as RecordValue;
-    return (
-      record.has_results_dir === true &&
-      (asFiniteNumber(record.n_results_files) ?? 0) > 0
-    );
-  }).length;
-  const available = data?.available === true;
-  const unavailable = data?.available === false;
+  // `tiers` / `untiered` / per-tier `experiments` are producer-owned (the
+  // backend computes /api/research, but a legacy/partial/truncated payload —
+  // or a future EMIT shape change — may drop an array OR put the WRONG TYPE
+  // there: a string/object where an array is expected). `asArray` coerces every
+  // reduce/length/map target so a non-array field reads "empty" instead of
+  // crashing the page on `.reduce`/`.map`. Non-object tier/exp elements are
+  // dropped (a null/number in the array carries no section/card).
+  const tiers = asArray<ResearchTier>(data?.tiers).filter(
+    (t): t is ResearchTier => typeof t === "object" && t !== null,
+  );
+  const untiered = asArray<ResearchExperiment>(data?.untiered).filter(
+    (e): e is ResearchExperiment => typeof e === "object" && e !== null,
+  );
+  const nExperiments =
+    tiers.reduce((acc, t) => acc + asArray(t?.experiments).length, 0) +
+    untiered.length;
+  // `cycles` is React state (CoordinatorCycle[]); the live fetch path is
+  // .catch-guarded, but an injected `initialCoordinatorCycles` could be a
+  // non-array or carry a null/non-object element. Coerce to an array and drop
+  // non-object rows so the key access (`cycle.run_id`) and CoordinatorCycleCard
+  // never receive a null/scalar that would crash this list.
+  const cycleList = asArray<CoordinatorCycle>(cycles).filter(
+    (c): c is CoordinatorCycle => typeof c === "object" && c !== null,
+  );
 
   return (
-    <div className="page-full experiments-page" data-testid="experiments-page">
-      <header className="experiments-page__header">
-        <div>
-          <p className="experiments-eyebrow">Research</p>
-          <h1>Experiments</h1>
-          <p>
-            Find a recorded test source, then inspect the evidence and the scope
-            of its reported result.
-          </p>
-        </div>
-        <Link to="/cycles" className="experiments-trace-link">
-          View trace history
-        </Link>
-      </header>
+    <div className="mx-auto max-w-7xl p-5" data-testid="experiments-page">
+      <div className="flex items-baseline gap-3">
+        <h1 className="text-base font-semibold text-zinc-100">Research</h1>
+        <span className="text-[10px] text-zinc-600">/api/research</span>
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">
+        Experiments grouped by sandbox tier, each with its outcome verdict and
+        the loop iteration(s) it bridged into.
+      </p>
 
-      {error && (
+      {error && <div className="mt-3 text-sm text-red-400">{error}</div>}
+
+      {data && !data.available && (
         <div
-          className="experiments-state experiments-state--error"
-          role="alert"
-        >
-          <strong>Experiment catalog read failed.</strong>
-          <span>{error}. No empty catalog is inferred.</span>
-          <button
-            type="button"
-            onClick={() => setRequestVersion((value) => value + 1)}
-          >
-            Retry read
-          </button>
-        </div>
-      )}
-
-      {!data && !error && (
-        <div className="experiments-state" role="status">
-          Reading experiment sources…
-        </div>
-      )}
-
-      {unavailable && (
-        <div
-          className="experiments-state experiments-state--warning"
+          className="mt-4 rounded border border-amber-800/50 bg-amber-900/10 p-4 text-sm text-amber-300"
           data-testid="experiments-unavailable"
         >
-          <strong>Experiment sources are unavailable.</strong>
-          <span>
-            {asText((data as unknown as RecordValue).reason) ??
-              "The source did not report a reason."}
-          </span>
+          Experiments directory is not available
+          {data.reason ? ` (${data.reason})` : ""}.
         </div>
       )}
 
-      {available && (
+      {data && data.available && (
         <>
-          <section
-            className="experiments-catalog-summary"
-            aria-label="Catalog scope"
-          >
-            <div>
-              <strong>{catalog.entries.length}</strong>
-              <span>source entries</span>
-            </div>
-            <div>
-              <strong>{mappedCount}</strong>
-              <span>mapped to a supplied tier</span>
-            </div>
-            <div>
-              <strong>{evidenceCount}</strong>
-              <span>report result files</span>
-            </div>
-          </section>
+          {tiers.map((tier, i) => (
+            <TierSection key={asText(tier.tier) ?? `tier-${i}`} tier={tier} />
+          ))}
 
-          <section
-            className="experiments-catalog"
-            aria-labelledby="experiment-catalog-title"
-          >
-            <div className="experiments-catalog__heading">
-              <div>
-                <h2 id="experiment-catalog-title">Source catalog</h2>
-                <p>
-                  Tier is a source attribute. Reported labels are not a shared
-                  verdict scale or a readiness ranking.
-                </p>
+          {untiered.length > 0 && (
+            <section data-testid="tier-section-untiered" className="mt-6">
+              <div className="flex items-baseline gap-2">
+                <h2 className="text-sm font-semibold text-zinc-100">Untiered</h2>
               </div>
-              <details>
-                <summary>How to read these entries</summary>
-                <p>
-                  Each row preserves the producer label, evidence inventory and
-                  exact detail link. Claim binding, validity, mode and
-                  application fit remain unknown unless the selected source
-                  reports them.
-                </p>
-              </details>
-            </div>
-
-            <div className="experiments-toolbar">
-              <label>
-                <span>Search source entries</span>
-                <input
-                  type="search"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Title, source id, result label or bridge"
-                />
-              </label>
-              <label>
-                <span>Source tier</span>
-                <select
-                  value={tier}
-                  onChange={(event) => setParam("tier", event.target.value)}
-                >
-                  <option value="all">All source tiers</option>
-                  {tierOptions.map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p aria-live="polite">
-                Showing {filteredEntries.length} of {catalog.entries.length}
+              <p className="mt-1 text-xs text-zinc-500">
+                On-disk experiment dirs not mapped to a sandbox tier.
               </p>
-            </div>
-
-            {(catalog.malformedTopLevel || catalog.malformedRows > 0) && (
-              <div
-                className="experiments-inline-warning"
-                data-testid="catalog-malformed"
-                role="status"
-              >
-                The response contains malformed catalog fields
-                {catalog.malformedRows > 0
-                  ? ` or ${catalog.malformedRows} malformed source row${catalog.malformedRows === 1 ? "" : "s"}`
-                  : ""}
-                . Readable entries remain available; counts exclude unreadable
-                rows.
-              </div>
-            )}
-
-            {catalog.entries.length === 0 ? (
-              <div className="experiments-state" data-testid="catalog-empty">
-                No source entries were reported in the readable catalog arrays.
-              </div>
-            ) : filteredEntries.length === 0 ? (
-              <div
-                className="experiments-state"
-                data-testid="catalog-filtered-empty"
-              >
-                No source entries match this search and tier filter.
-              </div>
-            ) : (
-              <div
-                className="experiment-source-list"
-                data-testid="source-entry-list"
-              >
-                {filteredEntries.map((entry) => (
-                  <SourceEntry
-                    key={entry.key}
-                    entry={entry}
-                    returnTo={returnTo}
-                    linkRef={(node) => {
-                      if (node) linkRefs.current.set(entry.id, node);
-                      else linkRefs.current.delete(entry.id);
-                    }}
-                  />
+              <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
+                {untiered.map((exp, i) => (
+                  <ResearchCard key={asText(exp.id) ?? `exp-${i}`} exp={exp} />
                 ))}
               </div>
-            )}
-          </section>
+            </section>
+          )}
         </>
       )}
 
-      <p className="experiments-page__boundary">
-        This catalog reads existing sources only. It does not load coordinator
-        cycles, run an experiment, select a market or make a scientific ruling.
-      </p>
+      {!data && !error && (
+        <div className="mt-4 text-sm text-zinc-500">Loading…</div>
+      )}
+
+      {/* Coordinator cycles as auditable units. Each card carries the verdict's
+          plan → outcome → evidence chain (incl. an errored dispatch as an
+          explicit row), so a coordinator-driven result can be trusted or
+          doubted alongside the hand-run experiments above. */}
+      <section className="mt-8" data-testid="coordinator-cycles-section">
+        <div className="flex items-baseline gap-2">
+          <h2 className="text-sm font-semibold text-zinc-100">
+            Coordinator cycles
+          </h2>
+          <span className="font-mono text-[10px] text-zinc-600">
+            /api/coordinator/cycles
+          </span>
+          <span className="ml-auto text-[11px] text-zinc-500">
+            {cycleList.length}
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-zinc-500">
+          Autonomous cycles as auditable units: the plan, each action's outcome,
+          the linked iteration, and the findings/bubbles it produced.
+        </p>
+        {cycleList.length === 0 ? (
+          <div
+            className="mt-3 text-xs text-zinc-600"
+            data-testid="coordinator-cycles-empty"
+          >
+            No coordinator cycles yet.
+          </div>
+        ) : (
+          <div className="mt-3 space-y-4">
+            {cycleList.map((cycle, i) => (
+              // `run_id` is the producer's join key; fall back to the index so a
+              // legacy row missing it doesn't collide into a duplicate-key warn.
+              <CoordinatorCycleCard
+                key={cycle.run_id ?? `cycle-${i}`}
+                cycle={cycle}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <div className="mt-6 text-[11px] text-zinc-600">
+        {fmt(nExperiments)} experiment(s) across {fmt(tiers.length)} tier(s).
+      </div>
     </div>
   );
 }
