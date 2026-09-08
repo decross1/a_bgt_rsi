@@ -120,6 +120,18 @@ function shortTime(value: unknown): string {
   }).format(parsed);
 }
 
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalValue(nested)]),
+    );
+  }
+  return value;
+}
+
 function exactNoopSignature(cycle: CoordinatorCycle): string | null {
   const clean =
     cycle.plan.length === 1 &&
@@ -132,14 +144,12 @@ function exactNoopSignature(cycle: CoordinatorCycle): string | null {
     (!Array.isArray(cycle.promoted_finding_ids) || cycle.promoted_finding_ids.length === 0) &&
     (!Array.isArray(cycle.bubble_run_ids) || cycle.bubble_run_ids.length === 0);
   if (!clean) return null;
-  return [
-    text(cycle.agent),
-    text(cycle.topic_source),
-    text(cycle.topic),
-    text(cycle.status),
-    "noop",
-    "passed",
-  ].join("\u001f");
+  const comparable: Record<string, unknown> = {
+    ...(cycle as unknown as Record<string, unknown>),
+  };
+  delete comparable.timestamp;
+  delete comparable.run_id;
+  return `noop:${JSON.stringify(canonicalValue(comparable))}`;
 }
 
 interface PageGroup {
