@@ -108,7 +108,7 @@ describe("perf-scale audit — large producer-owned lists render bounded & quiet
     expect(screen.queryAllByTestId("coordinator-cycle-card")).toHaveLength(0);
     const firstPage = rows.map(row => row.textContent);
     expect(pageText).toContain("2000 readable of 2000 loaded");
-    fireEvent.click(screen.getByRole("button", { name: "Next", exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: /^Next$/ }));
     expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(20);
     expect(screen.getAllByTestId("coordinator-cycle-row").map(row => row.textContent)).not.toEqual(firstPage);
     expect(screen.getByText("Page 2 of 100")).toBeInTheDocument();
