@@ -39,6 +39,8 @@ The cycle row's `status` per action is NORMALIZED to the UI contract enum
 """
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -114,6 +116,122 @@ def _normalize_status(status: Any) -> str:
     rather than silently coerced to a pass (inviolate rule 4)."""
     s = str(status or "").strip()
     return "errored" if s == "error" else s
+
+
+def _request_digest(request: dict[str, Any]) -> str | None:
+    try:
+        payload = json.dumps(
+            request, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _plan_request(step: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "action": step.get("name"),
+        "args": copy.deepcopy(step.get("args", {})),
+    }
+
+
+def _handler_passed(outcome: dict[str, Any]) -> bool:
+    envelope = outcome.get("result")
+    return isinstance(envelope, dict) and envelope.get("status") == "passed"
+
+
+def _bubble_matches_request(
+    bubble: dict[str, Any], request: dict[str, Any],
+) -> bool:
+    if (not isinstance(request, dict)
+            or set(request) != {"action", "args"}
+            or request.get("action") != "bubble_up"
+            or not isinstance(request.get("args"), dict)):
+        return False
+    args = request["args"]
+    expected = {
+        "finding_ids": args.get("finding_ids", []),
+        "note": args.get("note"),
+        "question": args.get("question"),
+        "context": args.get("context"),
+        "kind": args.get("kind"),
+        "allowed_actions": args.get("allowed_actions"),
+    }
+    return all(bubble.get(key) == value for key, value in expected.items())
+
+
+def _qualified_bubble_run_ids(report: dict[str, Any]) -> list[str]:
+    """Return IDs backed by one exact current-run persisted receipt each."""
+    if report.get("dry_run") is not False or report.get("status") != "executed":
+        return []
+    plan = report.get("plan")
+    executed = report.get("executed")
+    bubbles = report.get("bubble_up")
+    receipts = report.get("bubble_receipts")
+    if not all(isinstance(rows, list) for rows in (plan, executed, bubbles, receipts)):
+        return []
+
+    qualified: list[str] = []
+    for receipt in receipts:
+        if not isinstance(receipt, dict) or receipt.get("status") != "persisted":
+            continue
+        step_id = receipt.get("step_id")
+        digest = receipt.get("request_digest")
+        request = receipt.get("request")
+        bubble_run_id = receipt.get("bubble_run_id")
+        if (not isinstance(step_id, str) or not step_id
+                or not isinstance(digest, str)
+                or not isinstance(request, dict)
+                or not isinstance(bubble_run_id, str) or not bubble_run_id
+                or bubble_run_id != report.get("run_id")
+                or _request_digest(request) != digest):
+            continue
+
+        # Multiplicity is ambiguity. In particular, a persisted receipt plus
+        # a conflicting error for the same step cannot be upgraded to success.
+        receipt_matches = [
+            row for row in receipts
+            if isinstance(row, dict) and row.get("step_id") == step_id
+        ]
+        plan_matches = [
+            row for row in plan
+            if isinstance(row, dict) and row.get("step_id") == step_id
+        ]
+        outcome_matches = [
+            row for row in executed
+            if isinstance(row, dict) and row.get("step_id") == step_id
+        ]
+        bubble_matches = [
+            row for row in bubbles
+            if isinstance(row, dict) and row.get("step_id") == step_id
+        ]
+        if not all(len(rows) == 1 for rows in (
+            receipt_matches, plan_matches, outcome_matches, bubble_matches,
+        )):
+            continue
+
+        step = plan_matches[0]
+        outcome = outcome_matches[0]
+        bubble = bubble_matches[0]
+        plan_request = _plan_request(step)
+        if (step.get("name") != "bubble_up"
+                or step.get("request_digest") != digest
+                or _request_digest(plan_request) != digest
+                or plan_request != request
+                or outcome.get("action") != "bubble_up"
+                or outcome.get("status") != "passed"
+                or outcome.get("request_digest") != digest
+                or outcome.get("request") != request
+                or _request_digest(outcome.get("request")) != digest
+                or not _handler_passed(outcome)
+                or bubble.get("request_digest") != digest
+                or bubble.get("request") != request
+                or _request_digest(bubble.get("request")) != digest
+                or not _bubble_matches_request(bubble, request)):
+            continue
+        if bubble_run_id not in qualified:
+            qualified.append(bubble_run_id)
+    return qualified
 
 
 def _dispatched_iteration_id(executed: list[dict[str, Any]]) -> str | None:
@@ -194,10 +312,17 @@ def cycle_row_from_report(
                 topic = arg_topic
             break
 
-    plan_rows = [
-        {"action": s.get("name"), "args": s.get("args", {})}
-        for s in plan if isinstance(s, dict)
-    ]
+    plan_rows: list[dict[str, Any]] = []
+    for step in plan:
+        if not isinstance(step, dict):
+            continue
+        plan_row: dict[str, Any] = {
+            "action": step.get("name"), "args": step.get("args", {}),
+        }
+        for key in ("step_id", "request_digest", "request"):
+            if key in step:
+                plan_row[key] = copy.deepcopy(step[key])
+        plan_rows.append(plan_row)
 
     outcomes: list[dict[str, Any]] = []
     for ex in executed:
@@ -211,16 +336,17 @@ def cycle_row_from_report(
         # render the explicit error string (failed dispatch is NEVER silent).
         if row["status"] in ("errored", "skipped") and ex.get("reason"):
             row["error"] = ex["reason"]
+        for key in ("step_id", "request_digest", "request"):
+            if key in ex:
+                row[key] = copy.deepcopy(ex[key])
         outcomes.append(row)
 
     dispatched = _dispatched_iteration_id(executed)
     promoted = _promoted_finding_ids(executed)
 
-    # bubble_run_ids: a bubble is persisted under the cycle's own run_id (see
-    # coordinator._persist_bubble_up), so a non-empty bubble_up means this
-    # run_id appears in coordinator_bubbles.jsonl. Empty list when no bubble.
-    bubbles = report.get("bubble_up") or []
-    bubble_run_ids = [report.get("run_id")] if bubbles and report.get("run_id") else []
+    # A summary is handler evidence, not an append receipt. Historical reports
+    # have no receipt association and therefore remain unknown (empty IDs).
+    bubble_run_ids = _qualified_bubble_run_ids(report)
 
     out: dict[str, Any] = {
         "timestamp": timestamp or _utcnow_iso(),
@@ -247,6 +373,10 @@ def cycle_row_from_report(
     }
     if dispatched is not None:
         out["dispatched_iteration_id"] = dispatched
+    if "bubble_receipts" in report:
+        # Keep raw failures/unknown outcomes available through the pass-through
+        # API even when none can qualify a durable bubble_run_id.
+        out["bubble_receipts"] = copy.deepcopy(report.get("bubble_receipts"))
     return out
 
 

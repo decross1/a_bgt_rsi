@@ -14,6 +14,8 @@ run_state/ are never touched (active_run stubbed).
 """
 from __future__ import annotations
 
+import builtins
+import hashlib
 import json
 from pathlib import Path
 
@@ -45,6 +47,38 @@ def _stub_active_run(monkeypatch):
 
 def _read_rows(path) -> list[dict]:
     return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+
+
+def _request_digest(request: dict) -> str:
+    payload = json.dumps(
+        request, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _evidenced_bubble(
+    step_id: str, *, question: str = "Should the owner review this?",
+) -> tuple[dict, dict]:
+    args = {
+        "finding_ids": ["sf-exact"],
+        "question": question,
+        "kind": "A",
+        "allowed_actions": ["sign_off", "reject"],
+    }
+    request = {"action": "bubble_up", "args": args}
+    digest = _request_digest(request)
+    step = {
+        "name": "bubble_up", "args": args, "cost": 1,
+        "handler_ref": "orchestrator.coordinator:handle_bubble_up",
+        "step_id": step_id, "request_digest": digest,
+    }
+    outcome = {
+        "action": "bubble_up", "status": "passed",
+        "step_id": step_id, "request_digest": digest,
+        "request": json.loads(json.dumps(request)),
+        "result": {"status": "passed", "result": dict(args)},
+    }
+    return step, outcome
 
 
 # ── handler: legacy form back-compat ──────────────────────────────────────
@@ -328,6 +362,209 @@ def test_validator_accepts_generic_bubble_args():
     # an empty bubble (neither finding_ids nor question) is still rejected
     empty_plan = [{"action": "bubble_up", "args": {"note": "no payload"}}]
     assert validate_plan(empty_plan, budget=6)["ok"] is False
+
+
+# ── T05: exact-step collection + truthful append receipts ────────────────
+
+
+@pytest.mark.parametrize("failed_index", [0, 1])
+def test_t05_duplicate_bubbles_bind_only_the_exact_passed_step(
+    monkeypatch, tmp_path, failed_index,
+):
+    """Falsifier 1: equal requests cannot borrow a sibling step's success."""
+    raw_step = {
+        "action": "bubble_up",
+        "args": {
+            "finding_ids": ["sf-duplicate"],
+            "question": "Review the duplicate request?",
+            "kind": "A",
+            "allowed_actions": ["sign_off", "reject"],
+        },
+    }
+    monkeypatch.setattr(coord, "assess_state", lambda **_kwargs: {
+        "topic_suggestions": [], "recent_findings": [],
+    })
+    monkeypatch.setattr(coord, "plan", lambda *_args, **_kwargs: [
+        json.loads(json.dumps(raw_step)), json.loads(json.dumps(raw_step)),
+    ])
+    monkeypatch.setattr(coord, "_daily_spent_by_class", lambda **_kwargs: {})
+    monkeypatch.setattr(coord, "_charge_daily_ledger", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(coord.coordinator_cycle_log, "write_coordinator_cycle",
+                        lambda report: report)
+    monkeypatch.setattr(coord.coordinator_cycle_log, "emit_health_signals",
+                        lambda report: [])
+    bubbles_path = tmp_path / "coordinator_bubbles.jsonl"
+    monkeypatch.setattr(coord, "DEFAULT_COORDINATOR_BUBBLES", bubbles_path)
+
+    calls = 0
+
+    def _handler(**kwargs):
+        nonlocal calls
+        index = calls
+        calls += 1
+        if index == failed_index:
+            raise RuntimeError("scripted handler failure")
+        return coord.handle_bubble_up(**kwargs)
+
+    report = coord._coordinator_cycle(
+        run_id="coordinator_exact_pair",
+        budget=6,
+        dry_run=False,
+        execute_handlers={"bubble_up": _handler},
+        backend=None,
+        model=None,
+        loop_memory_path="unused-loop-memory",
+        surfaced_path="unused-surfaced",
+        feedback_path="unused-feedback",
+        active_run_path="unused-active-run",
+    )
+
+    assert report["status"] == "executed"  # attempted lifecycle is unchanged
+    assert [row["status"] for row in report["executed"]] == (
+        ["error", "passed"] if failed_index == 0 else ["passed", "error"]
+    )
+    step_ids = [step["step_id"] for step in report["plan"]]
+    assert step_ids == [
+        "coordinator_exact_pair:step:0", "coordinator_exact_pair:step:1",
+    ]
+    assert len(set(step_ids)) == 2
+    # Identical requests have the same content digest; occurrence identity is
+    # carried separately by step_id.
+    assert report["plan"][0]["request_digest"] == report["plan"][1][
+        "request_digest"
+    ]
+    assert [row["step_id"] for row in report["executed"]] == step_ids
+    passed_step_id = step_ids[1 - failed_index]
+    assert [bubble["step_id"] for bubble in report["bubble_up"]] == [
+        passed_step_id
+    ]
+    assert [receipt["step_id"] for receipt in report["bubble_receipts"]] == [
+        passed_step_id
+    ]
+    assert report["bubble_receipts"][0]["status"] == "persisted"
+    rows = _read_rows(bubbles_path)
+    assert len(rows) == 1
+    assert rows[0]["step_id"] == passed_step_id
+
+
+@pytest.mark.parametrize(
+    ("outer_status", "handler_status"),
+    [
+        ("error", None),
+        ("skipped", None),
+        ("passed", "error"),
+        ("passed", "failed"),
+        ("passed", "skipped"),
+    ],
+)
+def test_t05_failed_skipped_or_failed_envelope_persists_no_row(
+    tmp_path, outer_status, handler_status,
+):
+    """Falsifier 2: only an exact, affirmatively passed handler qualifies."""
+    step, outcome = _evidenced_bubble("coordinator_failed:step:0")
+    outcome["status"] = outer_status
+    if outer_status != "passed":
+        outcome.pop("result")
+        outcome["reason"] = "scripted non-success"
+    else:
+        outcome["result"]["status"] = handler_status
+
+    bubbles = coord._collect_bubble_up([step], executed=[outcome])
+    assert bubbles == []
+    path = tmp_path / "coordinator_bubbles.jsonl"
+    assert coord._persist_bubble_up(
+        bubbles, run_id="coordinator_failed", path=path,
+    ) == []
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("failure", ["short_write", "flush", "fsync", "close"])
+def test_t05_append_boundary_failure_is_explicit_and_has_no_durable_id(
+    monkeypatch, tmp_path, failure,
+):
+    """Falsifier 3: partial/flush/fsync/close uncertainty never mints an ID."""
+    step, outcome = _evidenced_bubble("coordinator_append_fail:step:0")
+    bubbles = coord._collect_bubble_up([step], executed=[outcome])
+    assert len(bubbles) == 1
+
+    class BoundaryFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            if exc_type is not None:
+                return False
+            self.close()
+            return False
+
+        def write(self, payload):
+            if failure == "short_write":
+                return len(payload) - 1
+            return len(payload)
+
+        def flush(self):
+            if failure == "flush":
+                raise OSError("scripted flush failure")
+
+        def fileno(self):
+            return 71
+
+        def close(self):
+            if failure == "close":
+                raise OSError("scripted close failure")
+
+    monkeypatch.setattr(builtins, "open", lambda *_args, **_kwargs: BoundaryFile())
+
+    def _fsync(_fd):
+        if failure == "fsync":
+            raise OSError("scripted fsync failure")
+
+    monkeypatch.setattr(coord.os, "fsync", _fsync)
+    receipts = coord._persist_bubble_up(
+        bubbles,
+        run_id="coordinator_append_fail",
+        path=tmp_path / "coordinator_bubbles.jsonl",
+    )
+    assert len(receipts) == 1
+    assert receipts[0]["status"] == "error"
+    assert receipts[0]["durability"] == "unknown"
+    assert "bubble_run_id" not in receipts[0]
+    assert receipts[0]["step_id"] == "coordinator_append_fail:step:0"
+
+
+def test_t05_success_receipt_and_row_bind_the_exact_request(tmp_path):
+    """Falsifier 5: append success is exact, schema-valid, and mismatch-closed."""
+    step, outcome = _evidenced_bubble("coordinator_exact:step:0")
+    bubbles = coord._collect_bubble_up([step], executed=[outcome])
+    path = tmp_path / "coordinator_bubbles.jsonl"
+    receipts = coord._persist_bubble_up(
+        bubbles, run_id="coordinator_exact", path=path,
+    )
+    assert receipts == [{
+        "status": "persisted",
+        "step_id": "coordinator_exact:step:0",
+        "request_digest": step["request_digest"],
+        "request": outcome["request"],
+        "bubble_run_id": "coordinator_exact",
+    }]
+    row = _read_rows(path)[0]
+    assert row["step_id"] == receipts[0]["step_id"]
+    assert row["request_digest"] == receipts[0]["request_digest"]
+    assert row["request"] == outcome["request"]
+    assert row["question"] == outcome["request"]["args"]["question"]
+    assert {"run_id", "timestamp", "finding_ids", "note"} <= row.keys()
+    Draft7Validator(ESCALATION_SCHEMA).validate(row)
+
+    # Top-level metadata is never allowed to describe a different request.
+    mismatched = json.loads(json.dumps(bubbles[0]))
+    mismatched["question"] = "different payload"
+    mismatch_receipts = coord._persist_bubble_up(
+        [mismatched], run_id="coordinator_exact", path=path,
+    )
+    assert mismatch_receipts[0]["status"] == "error"
+    assert mismatch_receipts[0]["durability"] == "not_persisted"
+    assert "bubble_run_id" not in mismatch_receipts[0]
+    assert len(_read_rows(path)) == 1
 
 
 def test_invalid_escalation_exhausts_replans_without_dispatch_charge_or_persist(

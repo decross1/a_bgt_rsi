@@ -1,13 +1,82 @@
-# Exact-step and append-receipt truth — T05
+# Coordinator step and append receipt truth
 
-Purpose: bind execution and persistence to each exact planned step; a handler return is not an append receipt. Keep attempted lifecycle and the existing escalation authority unchanged.
+A coordinator cycle marked `executed` means execution was attempted. It does not
+mean every handler passed or every escalation was written. T05 separates those
+facts without changing the escalation kinds, resolution menu, or human authority.
 
-Exact paths: orchestrator/coordinator.py, orchestrator/coordinator_cycle_log.py, tests/test_coordinator_escalation.py, tests/test_coordinator_cycle_log.py, and this document. Base 28ed6b88bc29c1e05fbc920e7c4677b92402fe65. No schema, UI, writer-policy or business-ledger edits; private ancestry never published.
+## Prospective evidence
 
-Design: stamp stable per-run step identities prospectively on the validated plan and every outcome; preserve a pre-dispatch request snapshot so mutation or equal action names cannot reassign evidence. Carry additive identity/request evidence into new bubble rows and append receipts. The unchanged escalation schema explicitly allows additional properties; current readers retain run_id/timestamp/finding_ids/note. Existing reports without identity or persistence evidence remain unknown; never infer historical association or durability from a nonempty summary. Do not backfill history.
+After admission, each normalized plan step receives a deterministic
+`<run_id>:step:<zero-based-index>` identity and a pre-dispatch request snapshot.
+`request_digest` is `sha256:` plus the SHA256 of the UTF-8 JSON representation of
+`{action, args}`, with sorted keys, compact separators and `ensure_ascii=False`.
+The digest identifies request content; the step identity distinguishes repeated,
+identical requests. The handler receives a separate deep copy of the arguments.
+These fields are consistency evidence, not authenticated actor identity.
 
-Collection must select only the exact successful bubble step; failed/skipped/ambiguous steps cannot borrow success. Dry-run output is preview, never an append receipt. Persistence reports explicit per-request success or failure only after the append boundary completes; partial writes/flush or close errors must not imply absence or durable success. Preserve successful earlier rows and avoid blind retries after uncertainty. Cycle presentation derives bubble IDs from qualified receipts, never planned summaries. Underlying action semantics and executed-as-attempted lifecycle stay unchanged. Choose the exact additive fields before source edits after current consumer/schema inspection; a required extra schema path is a scope finding, not an implicit sixth file.
+Execution collection requires a unique matching plan and outcome, exact request
+and digest, and affirmative outer and handler success. Failed, skipped, ambiguous,
+or mismatched steps remain in the execution outcomes and produce no bubble row.
+There is no action-name or positional fallback. Dry-run bubbles remain previews;
+they do not trigger persistence or qualify a durable bubble ID.
 
-Validation: six required falsifiers cover duplicate actions mixed outcomes in both orders; failed/skipped no-persist; append failure/no durable ID; dry-run preview; successful exact request and unchanged schema/reader compatibility; legacy unknown/history/unrelated-action compatibility. Run frozen RED against the baseline before implementation, focused then all proportionate coordinator suites with sealed private bytes, scripted handlers/transports and the qualified effect boundary. Never invoke real models, pipelines or endpoints. Preserve all failures.
+New appended rows retain the existing `run_id`, timestamp, finding IDs, note and
+optional generic escalation fields, with additive request/step metadata. Legacy
+helper inputs without association retain their old row shape; no historical
+association is synthesized. The unchanged escalation schema allows these fields.
+Existing acknowledgement readers continue to use `run_id`.
 
-Governance: actual acceptance 2026-09-08T07:45:53.235888+00:00, source 2026-09-08T09:15:53.235888+00:00, terminal 2026-09-08T10:15:53.235888+00:00. One initial implementation plus one corrective integration. Parent integrates and validates, distinct final whole-range source/effect review precedes native source-only PR/merge and qualified adoption. Current cron/persistent-import effects must be requalified; one nonblocking existing cycle-lock attempt, HOLD on busy/missing/conflict, no retries/restarts. Historical purpose distinctions and HQ science are inert context, not runtime/scientific adoption or this task's scope.
+## Append receipts
+
+`bubble_receipts` carries ordered persistence observations. `persisted` means the
+complete encoded row was written, explicitly flushed, file-fsynced and closed
+successfully. Only that receipt includes `bubble_run_id`. An append-boundary
+failure records `error`, its message and `durability: unknown`; a pre-write
+metadata rejection can report `not_persisted`. A failed write may have left bytes
+behind. The batch stops after uncertainty, marking later entries `not_attempted`
+without retrying. Earlier confirmed receipts remain evidence of their own rows.
+
+This is not an atomic batch, an exactly-once guarantee, directory-entry durability,
+or proof against every power-loss mode. No live ledger is backfilled or repaired.
+
+The cycle projection preserves receipt errors. Its existing `bubble_run_ids`
+contains only IDs supported by a unique exact current-run plan/outcome/receipt
+association. Nonempty summaries alone are insufficient. Missing legacy receipt
+metadata remains unknown; it is not proof that no historical row exists. The
+cycle lifecycle remains `executed` even when an individual action or append fails.
+
+The existing cycles API passes additive fields through. The current frontend
+ignores detailed receipt errors; this change does not claim new UI visibility.
+The independent cycle-log writer's own append policy is unchanged.
+
+## Validation and delivery boundary
+
+The fixed regression contract covers duplicate equal actions with mixed outcomes
+in both orders, failed/skipped handlers, append failures, dry-run, exact successful
+rows under the unchanged schema, and legacy/unrelated-action compatibility.
+Private injected tests use copied source and synthetic data, never live models,
+endpoints or a live cycle. The proportionate suite is:
+
+- `tests/test_coordinator_actions.py`
+- `tests/test_coordinator_escalation.py`
+- `tests/test_coordinator.py`
+- `tests/test_coordinator_beta_bounds.py`
+- `tests/test_coordinator_cycle_log.py`
+- `tests/test_emit_join_contract.py`
+
+At the initial source freeze, all 130 tests in the six modules passed. Sixteen
+additional parent-owned private checks passed, including conflicting receipts,
+partial-batch close uncertainty and nested argument mutation. Baseline failures
+were retained; these are offline component checks, not a live runtime smoke test.
+
+T05 starts from public `28ed6b88bc29c1e05fbc920e7c4677b92402fe65`. Its only source
+paths are the coordinator, cycle-log serializer, their two specified regression
+modules, and this document. It admits one implementation and one correction;
+actual acceptance was 2026-09-08 07:45:53 UTC, source stop 09:15:53 and terminal
+stop 10:15:53. Distinct source/effect review precedes native code-only delivery.
+
+Canonical source adoption requires current effect/process checks and one
+nonblocking attempt at the existing cycle lock. A busy/missing/incompatible lock
+holds adoption without retry. New cron interpreters may later load disk source;
+a resident daemon is not reloaded by a merge. No service, model, experiment,
+scientific status, budget or action-policy change is part of this repair.

@@ -30,6 +30,8 @@ Reuses, never reinvents:
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
 import json
 import os
 import sys
@@ -156,6 +158,35 @@ ACTIONABLE_ESCALATION_KINDS = ("A", "B")
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _request_digest(request: dict[str, Any]) -> str:
+    """Stable content identity for one validated pre-dispatch request."""
+    payload = json.dumps(
+        request, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(payload).hexdigest()
+
+
+def _request_from_step(step: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "action": step.get("name"),
+        "args": copy.deepcopy(step.get("args", {})),
+    }
+
+
+def _stamp_plan_steps(
+    validated: list[dict[str, Any]], *, run_id: str,
+) -> list[dict[str, Any]]:
+    """Copy and prospectively identify each occurrence in a validated plan."""
+    stamped: list[dict[str, Any]] = []
+    for index, source in enumerate(validated):
+        step = copy.deepcopy(source)
+        request = _request_from_step(step)
+        step["step_id"] = f"{run_id}:step:{index}"
+        step["request_digest"] = _request_digest(request)
+        stamped.append(step)
+    return stamped
 
 
 def _budget_allowance(now: "datetime | None" = None,
@@ -1138,6 +1169,11 @@ def _coordinator_cycle(
         coordinator_cycle_log.write_coordinator_cycle(report)
         return report
 
+    # Identity belongs to the accepted occurrence, not to an action name or
+    # request body (two equal requests in one plan are still different steps).
+    # Stamp only the final validated plan; rejected attempts remain verbatim.
+    validated = _stamp_plan_steps(validated, run_id=run_id)
+
     # Dry-run: return the validated plan WITHOUT executing.
     if dry_run:
         report = {
@@ -1172,7 +1208,13 @@ def _coordinator_cycle(
     cycle_by_class: dict[str, int] = {}
     for step in validated:
         name = step["name"]
-        args = step.get("args", {})
+        request = _request_from_step(step)
+        args = request["args"]
+        evidence = {
+            "step_id": step["step_id"],
+            "request_digest": step["request_digest"],
+            "request": request,
+        }
         cost = int(step.get("cost", 0))
         cls = activity_class(name)
         if cost and cls != "free":
@@ -1183,12 +1225,14 @@ def _coordinator_cycle(
                     "reason": (f"activity share spent: {cls} used {used} + "
                                f"{cost} > today's {cls} share {allow} "
                                f"(cap {DAILY_BUDGET_CAP})"),
+                    **evidence,
                 })
                 continue
         if spent + cost > budget:
             executed.append({
                 "action": name, "status": "skipped",
                 "reason": f"budget exhausted (spent={spent}, cost={cost}, budget={budget})",
+                **evidence,
             })
             continue
         handler = handlers.get(name)
@@ -1196,12 +1240,17 @@ def _coordinator_cycle(
             executed.append({
                 "action": name, "status": "error",
                 "reason": f"no handler registered for action {name!r}",
+                **evidence,
             })
             continue
         try:
-            result = handler(**args)
+            # The stored request is immutable evidence. A handler receives a
+            # different deep copy so nested list/dict mutation cannot rewrite
+            # the plan, digest input, or later persistence payload.
+            result = handler(**copy.deepcopy(args))
             executed.append({
                 "action": name, "status": "passed", "result": result,
+                **evidence,
             })
             spent += cost
             if cost and cls != "free":
@@ -1213,11 +1262,12 @@ def _coordinator_cycle(
             executed.append({
                 "action": name, "status": "error",
                 "reason": f"{type(exc).__name__}: {exc}",
+                **evidence,
             })
 
     _charge_daily_ledger(run_id, spent, by_class=cycle_by_class)
     bubbles = _collect_bubble_up(validated, executed=executed)
-    _persist_bubble_up(bubbles, run_id=run_id)
+    bubble_receipts = _persist_bubble_up(bubbles, run_id=run_id)
     report = {
         "run_id": run_id,
         "status": "executed",
@@ -1227,6 +1277,7 @@ def _coordinator_cycle(
         "state": state,
         "executed": executed,
         "bubble_up": bubbles,
+        "bubble_receipts": bubble_receipts,
         "errors": [],
     }
     coordinator_cycle_log.write_coordinator_cycle(report)
@@ -1237,65 +1288,243 @@ def _coordinator_cycle(
 def _collect_bubble_up(
     validated: list[dict[str, Any]], *, executed: list[dict[str, Any]] | None
 ) -> list[dict[str, Any]]:
-    """Summarize every bubble_up action in the plan for the human-facing report.
+    """Build previews, or select only exact successfully handled bubbles.
 
-    Carries both the legacy finding-id fields and the generic-escalation fields
-    (question/context/kind/allowed_actions) so the report and the persist see
-    the full additive shape (schema/escalation.schema.json)."""
+    ``executed is None`` is the historical dry-run preview behavior. Execute
+    collection has no name/position fallback: plan and outcome evidence must
+    be unique, identical, and internally digest-valid.
+    """
     out: list[dict[str, Any]] = []
     for step in validated:
         if step.get("name") != "bubble_up":
             continue
-        args = step.get("args", {})
-        out.append({
-            "finding_ids": args.get("finding_ids", []),
-            "note": args.get("note"),
-            "question": args.get("question"),
-            "context": args.get("context"),
-            "kind": args.get("kind"),
-            "allowed_actions": args.get("allowed_actions"),
+        request = _request_from_step(step)
+        try:
+            payload = _bubble_payload_from_request(request)
+        except (TypeError, ValueError):
+            continue
+
+        step_id = step.get("step_id")
+        digest = step.get("request_digest")
+        if executed is None:
+            # Legacy direct helper calls remain useful previews. Prospective
+            # evidence is copied only when it is complete and self-consistent.
+            bubble = payload
+            if (isinstance(step_id, str) and step_id
+                    and isinstance(digest, str)
+                    and digest == _request_digest(request)):
+                bubble.update({
+                    "step_id": step_id,
+                    "request_digest": digest,
+                    "request": request,
+                })
+            out.append(bubble)
+            continue
+
+        if not (isinstance(step_id, str) and step_id
+                and isinstance(digest, str)
+                and digest == _request_digest(request)):
+            continue
+        # A repeated/conflicting identity is ambiguous even if one candidate
+        # happens to be passed. Equal request digests across distinct step IDs
+        # are valid and intentionally remain distinguishable.
+        plan_matches = [
+            candidate for candidate in validated
+            if isinstance(candidate, dict) and candidate.get("step_id") == step_id
+        ]
+        outcome_matches = [
+            candidate for candidate in executed
+            if isinstance(candidate, dict) and candidate.get("step_id") == step_id
+        ]
+        if len(plan_matches) != 1 or len(outcome_matches) != 1:
+            continue
+        outcome = outcome_matches[0]
+        if (outcome.get("action") != "bubble_up"
+                or outcome.get("status") != "passed"
+                or outcome.get("request_digest") != digest
+                or outcome.get("request") != request):
+            continue
+        try:
+            if _request_digest(outcome["request"]) != digest:
+                continue
+        except (KeyError, TypeError, ValueError):
+            continue
+        # A non-raising handler can still return an explicit failure envelope.
+        # Keep the outer attempted lifecycle, but do not qualify persistence.
+        handler_result = outcome.get("result")
+        if not isinstance(handler_result, dict) or handler_result.get("status") != "passed":
+            continue
+        payload.update({
+            "step_id": step_id,
+            "request_digest": digest,
+            "request": request,
         })
+        out.append(payload)
     return out
+
+
+_BUBBLE_FIELDS = (
+    "finding_ids", "note", "question", "context", "kind", "allowed_actions",
+)
+
+
+def _bubble_payload_from_request(request: dict[str, Any]) -> dict[str, Any]:
+    if (not isinstance(request, dict)
+            or set(request) != {"action", "args"}
+            or request.get("action") != "bubble_up"
+            or not isinstance(request.get("args"), dict)):
+        raise ValueError("request must be exactly a bubble_up action and args")
+    args = request["args"]
+    validate_bubble_up_args(
+        finding_ids=args.get("finding_ids"),
+        question=args.get("question"),
+        kind=args.get("kind"),
+        allowed_actions=args.get("allowed_actions"),
+    )
+    for key in ("note", "context"):
+        if args.get(key) is not None and not isinstance(args.get(key), str):
+            raise TypeError(f"{key} must be a string or null")
+    return {
+        "finding_ids": copy.deepcopy(args.get("finding_ids", [])),
+        "note": args.get("note"),
+        "question": args.get("question"),
+        "context": args.get("context"),
+        "kind": args.get("kind"),
+        "allowed_actions": copy.deepcopy(args.get("allowed_actions")),
+    }
+
+
+def _receipt_evidence(bubble: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: copy.deepcopy(bubble[key])
+        for key in ("step_id", "request_digest", "request")
+        if key in bubble
+    }
+
+
+def _prepare_bubble_append(
+    bubble: dict[str, Any], *, run_id: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    evidence = _receipt_evidence(bubble)
+    evidence_present = any(
+        key in bubble for key in ("step_id", "request_digest", "request")
+    )
+    if evidence_present:
+        step_id = bubble.get("step_id")
+        digest = bubble.get("request_digest")
+        request = bubble.get("request")
+        if not isinstance(step_id, str) or not step_id:
+            raise ValueError("metadata-bearing bubble has no valid step_id")
+        if not isinstance(digest, str):
+            raise ValueError("metadata-bearing bubble has no request_digest")
+        payload = _bubble_payload_from_request(request)
+        if _request_digest(request) != digest:
+            raise ValueError("request_digest does not match request")
+        for key in _BUBBLE_FIELDS:
+            if bubble.get(key) != payload[key]:
+                raise ValueError(f"bubble metadata disagrees with request field {key}")
+    else:
+        # Direct legacy callers retain their old append shape. Absence of
+        # prospective evidence is never upgraded into a fabricated binding.
+        payload = {
+            "finding_ids": copy.deepcopy(bubble.get("finding_ids", [])),
+            "note": bubble.get("note"),
+            "question": bubble.get("question"),
+            "context": bubble.get("context"),
+            "kind": bubble.get("kind"),
+            "allowed_actions": copy.deepcopy(bubble.get("allowed_actions")),
+        }
+
+    row: dict[str, Any] = {
+        "timestamp": _utcnow_iso(),
+        "run_id": run_id,
+        "finding_ids": payload["finding_ids"],
+        "note": payload["note"],
+    }
+    for key in ("question", "context", "kind", "allowed_actions"):
+        if payload[key] is not None:
+            row[key] = payload[key]
+    row.update(evidence)
+    return row, evidence
 
 
 def _persist_bubble_up(
     bubbles: list[dict[str, Any]], *, run_id: str,
     path: str | os.PathLike | None = None,
-) -> None:
+) -> list[dict[str, Any]]:
     """Append each bubble_up entry to memory/coordinator_bubbles.jsonl so a
     coordinator surfacing OUTLIVES the run — today bubble_up is report-only
     (returned + printed, then lost). Execute-only by design: a bubble is an
     actual surfacing (handle_bubble_up ran), not a dry-run proposal, so a
     planned-but-not-executed bubble is never recorded as a real one (rule 4).
     One row per bubble; append-only (matches the JSONL convention); never raises.
+    Returns an ordered receipt per attempted append. ``persisted`` is emitted
+    only after a full write, flush, fsync, and successful close. An uncertain
+    append stops the batch; prior completed rows keep their receipts and later
+    entries are explicitly ``not_attempted``. This is not an atomic-batch or
+    exactly-once claim.
     path=None resolves to DEFAULT_COORDINATOR_BUBBLES at call time (patchable)."""
     if not bubbles:
-        return
+        return []
     if path is None:
         path = DEFAULT_COORDINATOR_BUBBLES
-    try:
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with open(p, "a") as fh:
-            for bu in bubbles:
-                # Legacy fields stay byte-shape identical (run_id/timestamp/
-                # finding_ids/note) so the existing UI reader
-                # (human_todo._bubble_ack_items) never breaks. The generic
-                # escalation fields are ADDITIVE — written only when present
-                # so a legacy finding-id bubble carries no empty generic keys.
-                row: dict[str, Any] = {
-                    "timestamp": _utcnow_iso(),
-                    "run_id": run_id,
-                    "finding_ids": bu.get("finding_ids", []),
-                    "note": bu.get("note"),
-                }
-                for key in ("question", "context", "kind", "allowed_actions"):
-                    val = bu.get(key)
-                    if val is not None:
-                        row[key] = val
-                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    except Exception:
-        return
+    p = Path(path)
+    receipts: list[dict[str, Any]] = []
+    for index, bubble in enumerate(bubbles):
+        raw_evidence = _receipt_evidence(bubble)
+        try:
+            row, evidence = _prepare_bubble_append(bubble, run_id=run_id)
+            line = json.dumps(row, ensure_ascii=False) + "\n"
+        except Exception as exc:
+            receipts.append({
+                "status": "error",
+                **raw_evidence,
+                "durability": "not_persisted",
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+            # Validation/serialization happened before opening the file, so it
+            # is safe to consider later independent requests.
+            continue
+
+        fh = None
+        close_attempted = False
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            fh = open(p, "a", encoding="utf-8")
+            written = fh.write(line)
+            if written != len(line):
+                raise OSError(f"short append: wrote {written} of {len(line)} characters")
+            fh.flush()
+            os.fsync(fh.fileno())
+            close_attempted = True
+            fh.close()
+        except Exception as exc:
+            # Cleanup may itself flush/close a partial write. Either way the
+            # durable outcome is unknown, so never issue an ID or retry.
+            if fh is not None and not close_attempted:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+            receipts.append({
+                "status": "error",
+                **evidence,
+                "durability": "unknown",
+                "error": f"{type(exc).__name__}: {exc}",
+            })
+            for remaining in bubbles[index + 1:]:
+                receipts.append({
+                    "status": "not_attempted",
+                    **_receipt_evidence(remaining),
+                    "reason": "append batch stopped after uncertain prior write",
+                })
+            break
+        receipts.append({
+            "status": "persisted",
+            **evidence,
+            "bubble_run_id": run_id,
+        })
+    return receipts
 
 
 def count_actionable_escalations(

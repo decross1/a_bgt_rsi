@@ -13,6 +13,7 @@ The load-bearing proofs:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -42,6 +43,53 @@ def _report(*, status="executed", run_id="coordinator_abc12345",
             {"action": "noop", "status": "passed", "result": {"reason": "ok"}},
         ],
         "bubble_up": bubble_up if bubble_up is not None else [],
+        "errors": [],
+    }
+
+
+def _t05_receipt_report(*, dry_run=False):
+    args = {
+        "finding_ids": ["sf-exact"],
+        "question": "Review this exact request?",
+        "kind": "A",
+        "allowed_actions": ["sign_off", "reject"],
+    }
+    request = {"action": "bubble_up", "args": args}
+    payload = json.dumps(
+        request, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")
+    digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+    step_id = "coordinator_receipt:step:0"
+    bubble = {
+        **args,
+        "note": None,
+        "context": None,
+        "step_id": step_id,
+        "request_digest": digest,
+        "request": request,
+    }
+    return {
+        "run_id": "coordinator_receipt",
+        "status": "planned" if dry_run else "executed",
+        "dry_run": dry_run,
+        "plan": [{
+            "name": "bubble_up", "cost": 1,
+            "handler_ref": "orchestrator.coordinator:handle_bubble_up",
+            "args": args, "step_id": step_id, "request_digest": digest,
+        }],
+        "state": {"topic_suggestions": []},
+        "executed": [{
+            "action": "bubble_up", "status": "passed",
+            "step_id": step_id, "request_digest": digest,
+            "request": request,
+            "result": {"status": "passed", "result": args},
+        }],
+        "bubble_up": [bubble],
+        "bubble_receipts": [{
+            "status": "persisted", "step_id": step_id,
+            "request_digest": digest, "request": request,
+            "bubble_run_id": "coordinator_receipt",
+        }],
         "errors": [],
     }
 
@@ -118,10 +166,82 @@ def test_promoted_finding_ids_collected_from_promote_action():
     assert "dispatched_iteration_id" not in row
 
 
-def test_bubble_run_ids_present_only_when_a_bubble_was_raised():
+def test_legacy_nonempty_bubble_without_receipt_has_unknown_durability():
     rep = _report(bubble_up=[{"finding_ids": ["sf-x"], "note": "look at this"}])
     row = ccl.cycle_row_from_report(rep)
-    assert row["bubble_run_ids"] == ["coordinator_abc12345"]
+    assert row["bubble_run_ids"] == []
+
+
+def test_t05_dry_run_preview_never_has_a_durable_receipt_id():
+    """Falsifier 4: dry_run vetoes even an internally inconsistent receipt."""
+    report = _t05_receipt_report(dry_run=True)
+    row = ccl.cycle_row_from_report(report)
+    assert row["bubble_run_ids"] == []
+    # Raw receipt evidence is retained for diagnosis, never rewritten into a
+    # stronger claim by the cycle projection.
+    assert row["bubble_receipts"] == report["bubble_receipts"]
+
+
+def test_t05_cycle_ids_require_a_unique_current_run_exact_receipt():
+    """Only one exact plan/outcome/request receipt can create the cycle join."""
+    report = _t05_receipt_report()
+    assert ccl.cycle_row_from_report(report)["bubble_run_ids"] == [
+        "coordinator_receipt"
+    ]
+
+    wrong_run = json.loads(json.dumps(report))
+    wrong_run["bubble_receipts"][0]["bubble_run_id"] = "coordinator_other"
+    assert ccl.cycle_row_from_report(wrong_run)["bubble_run_ids"] == []
+
+    duplicate_plan = json.loads(json.dumps(report))
+    duplicate_plan["plan"].append(json.loads(json.dumps(duplicate_plan["plan"][0])))
+    assert ccl.cycle_row_from_report(duplicate_plan)["bubble_run_ids"] == []
+
+    duplicate_outcome = json.loads(json.dumps(report))
+    duplicate_outcome["executed"].append(
+        json.loads(json.dumps(duplicate_outcome["executed"][0]))
+    )
+    assert ccl.cycle_row_from_report(duplicate_outcome)["bubble_run_ids"] == []
+
+    mismatched_request = json.loads(json.dumps(report))
+    mismatched_request["executed"][0]["request"]["args"]["question"] = "other"
+    assert ccl.cycle_row_from_report(mismatched_request)["bubble_run_ids"] == []
+
+    append_error = json.loads(json.dumps(report))
+    append_error["bubble_receipts"] = [{
+        "status": "error",
+        "step_id": report["plan"][0]["step_id"],
+        "request_digest": report["plan"][0]["request_digest"],
+        "durability": "unknown",
+        "error": "OSError: scripted close failure",
+    }]
+    error_row = ccl.cycle_row_from_report(append_error)
+    assert error_row["bubble_run_ids"] == []
+    assert error_row["bubble_receipts"] == append_error["bubble_receipts"]
+
+
+def test_t05_legacy_shapes_and_attempted_lifecycle_remain_compatible():
+    """Falsifier 6: missing association stays unknown; outcomes stay honest."""
+    report = _report(
+        status="executed",
+        executed=[
+            {"action": "bubble_up", "status": "error", "reason": "boom"},
+            {"action": "noop", "status": "passed", "result": {"reason": "ok"}},
+        ],
+        bubble_up=[{"finding_ids": ["sf-legacy"], "note": "old summary"}],
+    )
+    row = ccl.cycle_row_from_report(report)
+    assert row["status"] == "executed"
+    assert row["plan"][0] == {
+        "action": "run_loop_iteration",
+        "args": {"topic": report["state"]["topic_suggestions"][0]["topic"]},
+    }
+    assert row["outcomes"] == [
+        {"action": "bubble_up", "status": "errored", "error": "boom"},
+        {"action": "noop", "status": "passed"},
+    ]
+    assert row["bubble_run_ids"] == []
+    assert "bubble_receipts" not in row
 
 
 def test_no_valid_plan_report_degrades_to_a_row_with_no_outcomes():
