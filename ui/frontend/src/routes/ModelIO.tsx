@@ -1,58 +1,22 @@
-// PAGE /model-io — the Model I/O viewer (owner request 2026-08-18).
+// PAGE /model-io — the searchable record of calls in logs/calls.jsonl.
 //
-// The health panels show THAT gemma/qwen are alive (KV usage, MTP, decode
-// tok/s) but nothing of what actually passes THROUGH them. This page is the
-// missing half: ONE compact runtime-activity strip up top, and below it a
-// live, filterable table of wrapper calls out of the MAIN call log —
-// model, caller, latency, tokens in/out, an EMPTY flag when a completion
-// came back blank, and a click-to-expand full prompt/completion reader.
+// The scan layer stays compact: recorded time, exact model/backend and caller,
+// neutral Recorded/EMPTY state, cost, a short summary, and an explicit native
+// button to open the record. One selected call owns the context pane. At narrow
+// widths that pane replaces the feed and provides Back to calls; closing it
+// restores focus to the opener. The exact endpoint payload remains available
+// behind a native Raw record disclosure.
 //
-// The strip (owner feedback 2026-08-18: "is that ACTUALLY spawned agents?")
-// separates the two planes the old top cards conflated:
-//  - RUNTIME plane (primary): Nara's latest chain tasks (orchestrator.jsonl
-//    triples) + recent SUBAGENT WORK grouped by caller_tag family out of
-//    calls.jsonl (/api/runtime_activity — grouping is caller_tag /
-//    parent_request_id / run_id evidence, never invented);
-//  - DEV plane (collapsed by default): the Claude-Code build-agent spawn
-//    ledger (run_state/spawn.jsonl via /api/dispatch_trace), explicitly
-//    labelled as dev-side, one line per entry, no contract prose.
-//
-// PERF (2026-08-18, owner: the page "is really struggling to load
-// anything"): five build lanes each added their own fetching here and
-// nobody consolidated — measured 40 requests/min at steady state (three
-// endpoints every 5s + frontier every 15s), every keystroke in a filter box
-// refetched ALL THREE page sources (a no-match filter costs the backend a
-// full 16 MiB backward scan, measured 0.85–1.83 s per keystroke), and every
-// poll setState'd fresh identities so the whole table re-rendered ~12–36
-// times/min even when nothing changed. Now every poll runs through the
-// pollhub scheduler (src/api/pollhub.ts): one heartbeat, per-source cadences
-// (table = pollMs, strip 20s, dev trace 60s, frontier 45s), in-flight
-// guards, JSON change detection (fetchers strip the volatile generated_at /
-// scanned_bytes fields so an unchanged payload really is unchanged — zero
-// re-renders on a no-change tick), stale-while-revalidate (rendered rows
-// NEVER blank on a failed refetch), and pause-on-hidden (a background tab
-// polls nothing). Filter input is debounced (350 ms) and only re-keys the
-// TABLE source — the strip/trace/frontier polls never see a keystroke. Rows
-// are identity-stable across polls (immutable log rows, cached by
-// request_id) and memoized, so a changed payload re-renders only the rows
-// that actually changed; expanded rows and their fetched details survive
-// every tick.
-//
-// Adversarial-review pass (2026-08-18): every fetcher carries a 15 s
-// AbortController deadline (api/modelIO.ts fetchWithDeadline) with the
-// pollhub's own deadline race as backstop — a hung request fails its
-// source honestly (rows kept, STALE note, retry next tick) instead of
-// wedging the in-flight guard; the filter-keyed table source is
-// evictOnZero so typed queries never leak hub entries; the four sources'
-// first fetches stagger 0/150/300/450 ms (the Pulse idiom); and a poll
-// that advances the newest page by more than one page while older pages
-// are appended renders an explicit gap marker rather than silently
-// omitting the middle rows.
+// Calls owns one filter-keyed pollhub source. Runtime and dispatch history live
+// on /cycles; human review controls live on /development. Filter input is
+// debounced (350 ms), the superseded source key is evicted, and unchanged
+// payloads do not trigger rerenders. Stale-while-revalidate keeps loaded calls
+// and the selected exact record through refresh, pause, failure, and re-key.
 //
 // Honesty rules carried from the rest of the dashboard:
 //  - everything is backend-passthrough; a missing field renders as "—",
 //    never a guess (backend is never derived from the model name);
-//  - a failed poll says the table is STALE/UNKNOWN, keeping the last rows,
+//  - a failed poll says the table is UNKNOWN, keeping the last rows,
 //    and a version-skew 404 degrades to the quiet EndpointMissingNote;
 //  - the footnote states the ONE log this reads: experiments/bench redirect
 //    their calls to runs/*.calls.jsonl (LOOP_V0_CALLS_LOG) and are NOT here.
@@ -69,7 +33,7 @@
 // into `threads` (see backend/model_io.py) and the page renders each thread
 // as ONE SessionThreadCard — questions printed once, both voices' answers
 // under them, the replayed prefix reduced to a "context: N prior messages"
-// chip that opens the same expanded-call reader. The list is therefore a
+// chip that opens the same selected-call context. The list is therefore a
 // FEED of two item kinds; a thread costs ONE of the 20 rows (stamped with
 // its latest turn), and every non-session call keeps its CallRow exactly as
 // before — nothing about iteration chains / batteries / subagents changed.
@@ -104,17 +68,14 @@ import EndpointMissingNote, {
 } from "../components/EndpointMissingNote";
 import {
   fetchWithDeadline,
-  getDispatchTrace,
   getModelIO,
   getModelIODetail,
-  type DispatchTraceResponse,
   type ModelIOCall,
   type ModelIOCallDetail,
   type ModelIOFilters,
   type ModelIOResponse,
 } from "../api/modelIO";
 import { usePolled } from "../api/pollhub";
-import { useNow } from "../time";
 import { backendTone, callerTagTone, TONE_QUIET } from "../roles";
 import { fmt } from "../format";
 import MessageBody from "../components/payload/MessageBody";
@@ -126,6 +87,7 @@ import SessionThreadCard, {
   type SessionThread,
   type SessionTurn,
 } from "../components/SessionThreadCard";
+import "./modelIO.css";
 
 // Model badge tone — the SAME color families as the health panels (gemma =
 // emerald, qwen = sky, per roles.ts BACKEND_TONE / ModelServerCard accents).
@@ -137,56 +99,6 @@ export function modelTone(model: string | null): string {
   if (m.includes("gemma")) return "bg-emerald-950 text-emerald-300";
   if (m.includes("qwen")) return "bg-sky-950 text-sky-300";
   return TONE_QUIET;
-}
-
-// Status tone for trace/spawn chips: done green, broken rose, in-flight sky.
-function statusTone(status: string | null): string {
-  switch (status) {
-    case "passed":
-    case "completed":
-      return "text-emerald-400";
-    case "failed":
-    case "error":
-    case "rejected":
-    case "escalated":
-      return "text-rose-400";
-    case "dispatched":
-    case "running":
-    case "spawned":
-      return "text-sky-300";
-    default:
-      return "text-zinc-500";
-  }
-}
-
-// The same status families as dots (the chain lines carry a dot, not a
-// status word — one-line density; the word rides the title attribute).
-function statusDotTone(status: string | null): string {
-  switch (status) {
-    case "passed":
-    case "completed":
-      return "bg-emerald-400";
-    case "failed":
-    case "error":
-    case "rejected":
-    case "escalated":
-      return "bg-rose-400";
-    case "dispatched":
-    case "running":
-    case "spawned":
-      return "bg-sky-300";
-    default:
-      return "bg-zinc-600";
-  }
-}
-
-function StatusDot({ status }: { status: string | null }) {
-  return (
-    <span
-      aria-hidden
-      className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${statusDotTone(status)}`}
-    />
-  );
 }
 
 // Compact age ("3m") from an ISO timestamp. Exported for unit tests; the
@@ -308,7 +220,6 @@ type TableData = Omit<ModelIOResponse, "generated_at" | "scanned_bytes"> & {
 };
 // Local source identity; never inferred from the current render key.
 type QueryTableData = TableData & { queryKey: string };
-type TraceData = Omit<DispatchTraceResponse, "generated_at">;
 
 // ─── the feed: calls and session threads in one newest-first list ───────
 //
@@ -503,71 +414,8 @@ export function pageBoundary(page: TableData | null | undefined): {
   return { ts: oldest, supported: true };
 }
 
-// Local types + fetcher for /api/runtime_activity: this page owns the
-// endpoint's client rather than widening api/modelIO.ts (same API_BASE
-// derivation).
-
-interface ChainTask {
-  task_id: string;
-  task_type: string | null;
-  status: string | null;
-  stage: string | null;
-  duration_ms: number | null;
-  ts: string | null;
-  run_id: string | null;
-}
-
-interface SubagentGroup {
-  family: string;
-  label: string;
-  group_key: string | null;
-  key_source: string | null;
-  calls: number;
-  models: string[];
-  caller_tags: string[];
-  first_ts: string | null;
-  last_ts: string | null;
-}
-
-interface ActivityData {
-  orchestrator_available: boolean;
-  calls_available: boolean;
-  chain: ChainTask[];
-  subagent_groups: SubagentGroup[];
-  window_truncated: boolean;
-}
-
 const RUNTIME_API_PORT = import.meta.env.VITE_API_PORT ?? "8700";
 const RUNTIME_API_BASE = `http://${window.location.hostname}:${RUNTIME_API_PORT}`;
-
-async function getRuntimeActivity(): Promise<ActivityData> {
-  // fetchWithDeadline: a hung request rejects at 15 s — the pollhub keeps
-  // the rendered strip (SWR, failing=true) and retries on its next tick.
-  const resp = await fetchWithDeadline(
-    `${RUNTIME_API_BASE}/api/runtime_activity`,
-  );
-  if (!resp.ok) throw new Error(`runtime_activity ${resp.status}`);
-  return stripVolatile(
-    (await resp.json()) as ActivityData & {
-      generated_at?: unknown;
-      scanned_bytes?: unknown;
-    },
-  );
-}
-
-const fetchTrace = (): Promise<TraceData> =>
-  getDispatchTrace().then(stripVolatile);
-
-// Per-source cadences. The table is the page's live primary (owner watches
-// calls arrive) — it keeps the fast pollMs. The strip summarizes minutes of
-// activity; the dev spawn ledger changes on the timescale of build sessions.
-const ACTIVITY_POLL_MS = 20_000;
-const TRACE_POLL_MS = 60_000;
-// Mount stagger (the Pulse idiom): the four sources' FIRST fetches land
-// 150 ms apart — table (the live primary) immediately, then strip, trace,
-// frontier — so first paint is not a 4-request thundering herd.
-const ACTIVITY_STAGGER_MS = 150;
-const TRACE_STAGGER_MS = 300;
 // A keystroke in a filter box must not hit the backend (a no-match filter
 // costs a full 16 MiB scan, measured 0.85–1.83 s); the query re-keys only
 // after typing pauses.
@@ -613,174 +461,29 @@ type PagerState =
   | "blocked"
   | "error";
 
-const CHAIN_LINES = 6;
-const PLANE_LABEL_CLS =
-  "text-[10px] uppercase tracking-wide text-zinc-500";
-
-// Memoized: the strip re-renders only when its payload actually changed
-// (pollhub identities are stable on no-change ticks) or on its own 30s age
-// clock — never because the table polled.
-const RuntimeStrip = memo(function RuntimeStrip({
-  activity,
-  trace,
-}: {
-  activity: ActivityData | null;
-  trace: TraceData | null;
-}) {
-  // The dev-side build-agent ledger is a DIFFERENT plane — collapsed by
-  // default so the strip reads as runtime-only unless explicitly opened.
-  const [devOpen, setDevOpen] = useState(false);
-  // 30s age clock: keeps the "3m" ages honest between payload changes
-  // without re-rendering anything else on the page.
-  const now = useNow(30_000);
-  // Defensive: an old backend (version skew) answers with a foreign body;
-  // render placeholders rather than crash.
-  const chain = Array.isArray(activity?.chain) ? activity.chain : [];
-  const groups = Array.isArray(activity?.subagent_groups)
-    ? activity.subagent_groups
-    : [];
-  const spawns = trace?.spawns ?? [];
-  return (
-    <Card title="Runtime activity" testId="modelio-runtime-strip">
-      {activity == null ? (
-        <div className="text-xs text-zinc-500">
-          /api/runtime_activity not loaded — runtime state UNKNOWN, not idle.
-        </div>
-      ) : (
-        <>
-          {/* (a) Nara's chain: latest orchestrator tasks, one line each —
-              status dot + station name + age. */}
-          <div
-            className="flex flex-wrap items-center gap-x-4 gap-y-1"
-            data-testid="runtime-chain"
-          >
-            <span className={PLANE_LABEL_CLS}>nara chain</span>
-            {!activity.orchestrator_available ? (
-              <span className="text-xs text-zinc-600">
-                orchestrator.jsonl absent
-              </span>
-            ) : chain.length === 0 ? (
-              <span className="text-xs text-zinc-600">
-                no recent dispatches in the log tail
-              </span>
-            ) : (
-              chain.slice(0, CHAIN_LINES).map((t) => (
-                <span
-                  key={t.task_id}
-                  data-testid="chain-line"
-                  className="flex items-center gap-1.5 font-mono text-xs text-zinc-300"
-                  title={`${t.task_id} — ${t.status ?? "?"}${
-                    t.stage ? ` (${t.stage})` : ""
-                  }`}
-                >
-                  <StatusDot status={t.status} />
-                  {t.task_type ?? t.task_id}
-                  <span className="text-zinc-600">{ageOf(t.ts, now)}</span>
-                </span>
-              ))
-            )}
-          </div>
-
-          {/* (b) Subagent work: one compact card per caller_tag-family
-              group — label + model badge(s) + call count + age. */}
-          <div
-            className="mt-2 flex flex-wrap items-center gap-2"
-            data-testid="runtime-subagents"
-          >
-            <span className={PLANE_LABEL_CLS}>subagent work</span>
-            {groups.length === 0 ? (
-              <span className="text-xs text-zinc-600">
-                no subagent work in the recent log tail
-              </span>
-            ) : (
-              groups.map((g) => (
-                <span
-                  key={`${g.family}-${g.group_key ?? "?"}`}
-                  data-testid="subagent-group"
-                  className="flex items-center gap-1.5 rounded border border-zinc-800 bg-zinc-900/50 px-2 py-0.5 text-xs"
-                  title={`${(g.caller_tags ?? []).join(", ")}${
-                    g.group_key ? ` — ${g.group_key}` : ""
-                  }`}
-                >
-                  <span className="text-zinc-200">{g.label}</span>
-                  {(g.models ?? []).map((m) => (
-                    <span
-                      key={m}
-                      className={`rounded px-1 font-mono text-[10px] ${modelTone(m)}`}
-                    >
-                      {m}
-                    </span>
-                  ))}
-                  <span className="font-mono text-zinc-500">
-                    {g.calls} calls
-                  </span>
-                  <span className="font-mono text-zinc-600">
-                    {ageOf(g.last_ts, now)}
-                  </span>
-                </span>
-              ))
-            )}
-          </div>
-        </>
-      )}
-
-      {/* DEV plane: the Claude-Code build-agent spawn ledger, explicitly
-          labelled and collapsed by default. One line per entry; the
-          contract statement rides the title attribute only — no prose. */}
-      <div className="mt-2 border-t border-zinc-800/60 pt-1.5">
-        <button
-          type="button"
-          data-testid="dev-spawn-toggle"
-          aria-expanded={devOpen}
-          className="text-[11px] text-zinc-500 hover:text-zinc-300"
-          onClick={() => setDevOpen((o) => !o)}
-        >
-          {devOpen ? "▾" : "▸"} build agents (dev — Claude Code workflow
-          ledger)
-        </button>
-        {devOpen &&
-          (trace == null || !trace.spawn_available ? (
-            <div className="mt-1 text-xs text-zinc-600">
-              spawn ledger unavailable.
-            </div>
-          ) : spawns.length === 0 ? (
-            <div className="mt-1 text-xs text-zinc-600">
-              spawn ledger is empty.
-            </div>
-          ) : (
-            <div className="mt-1">
-              {spawns.map((s, i) => (
-                <div
-                  key={`${s.spawn_id ?? "?"}-${s.status ?? "?"}-${i}`}
-                  data-testid="dev-spawn-row"
-                  className="flex items-baseline gap-2 py-0.5 text-xs"
-                  title={s.task_statement ?? undefined}
-                >
-                  <span
-                    className="truncate font-mono text-zinc-400"
-                    style={{ maxWidth: "18rem" }}
-                  >
-                    {s.spawn_id ?? "—"}
-                  </span>
-                  <span className={`font-mono ${statusTone(s.status)}`}>
-                    {s.status ?? "—"}
-                  </span>
-                  <span
-                    className="ml-auto font-mono text-zinc-600"
-                    title={s.ts ?? ""}
-                  >
-                    {ageOf(s.ts, now)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ))}
-      </div>
-    </Card>
-  );
-});
-
 // ─── the expanded full prompt/completion reader ─────────────────────────
+
+function RawRecord({ detail }: { detail: ModelIOCallDetail }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="modelio-raw-record"
+      data-testid="raw-record"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>Raw record</summary>
+      {open && (
+        <div data-testid="raw-record-content">
+          <p>
+            Untouched fields returned by the exact-record endpoint. This is a
+            recorded call payload, not a runtime or scientific verdict.
+          </p>
+          <pre>{JSON.stringify(detail, null, 2)}</pre>
+        </div>
+      )}
+    </details>
+  );
+}
 
 function CallExpansion({
   detail,
@@ -788,13 +491,18 @@ function CallExpansion({
   detail: ModelIOCallDetail | "loading" | "error";
 }) {
   if (detail === "loading") {
-    return <div className="py-2 text-xs text-zinc-500">loading full record…</div>;
+    return (
+      <div className="modelio-context-state" data-testid="detail-loading">
+        Loading the exact recorded input and output…
+      </div>
+    );
   }
   if (detail === "error") {
     return (
-      <div className="py-2 text-xs text-amber-400/80">
-        full record unavailable — it may have aged out of the bounded scan
-        window, or the backend is unreachable.
+      <div className="modelio-context-state modelio-context-state--warning">
+        full record unavailable — it may have aged out of the
+        bounded scan window, or the calls source may be unreachable. The row
+        in the loaded feed is retained.
       </div>
     );
   }
@@ -802,68 +510,136 @@ function CallExpansion({
     ? detail.prompt_messages
     : [];
   return (
-    <div className="flex flex-col gap-1.5 py-2" data-testid="call-expansion">
-      {messages.map((m, i) => (
-        <div
-          key={i}
-          className="rounded border border-zinc-800/60 bg-zinc-950/40 p-1.5"
-        >
-          <div className="mb-1">
-            <RoleChip role={m.role} />
-          </div>
-          <MessageBody
-            role={m.role}
-            content={m.content}
-            toolCalls={(m as { tool_calls?: unknown }).tool_calls}
-            testId={`message-${m.role}-${i}`}
-          />
-        </div>
-      ))}
-      <div className="rounded border border-zinc-800/60 bg-zinc-950/40 p-1.5">
-        <div className="mb-1">
-          <RoleChip role="completion" />
-        </div>
-        {typeof detail.completion === "string" &&
-        detail.completion.trim() !== "" ? (
-          <MessageBody
-            role="assistant"
-            content={detail.completion}
-            testId="completion-body"
-          />
+    <div className="modelio-call-context" data-testid="call-expansion">
+      <section className="modelio-context-section" aria-labelledby="modelio-input-heading">
+        <h3 id="modelio-input-heading">Recorded input</h3>
+        {messages.length === 0 ? (
+          <p className="modelio-context-empty">
+            No legible prompt-message array was supplied for this record.
+          </p>
         ) : (
-          <EmptyCompletionNote messages={detail.prompt_messages} />
+          <div className="modelio-message-stack">
+            {messages.map((m, i) => (
+              <article key={i} className="modelio-message">
+                <div className="modelio-message-role">
+                  <RoleChip role={m.role} />
+                </div>
+                <MessageBody
+                  role={m.role}
+                  content={m.content}
+                  toolCalls={(m as { tool_calls?: unknown }).tool_calls}
+                  testId={`message-${m.role}-${i}`}
+                />
+              </article>
+            ))}
+          </div>
         )}
-      </div>
-      {/* Metadata as ONE compact chip row (density pass) — only fields the
-          backend actually handed over ever render. */}
-      <div className="flex flex-wrap items-center gap-1.5" data-testid="meta-chips">
-        {detail.latency_ms != null && (
-          <span className={CHIP_CLS}>lat {fmt(detail.latency_ms, 0)}ms</span>
-        )}
-        {detail.usage?.input_tokens != null && (
-          <span className={CHIP_CLS}>in {detail.usage.input_tokens} tok</span>
-        )}
-        {detail.usage?.output_tokens != null && (
-          <span className={CHIP_CLS}>out {detail.usage.output_tokens} tok</span>
-        )}
-        {detail.temperature != null && (
-          <span className={CHIP_CLS}>temp {detail.temperature}</span>
-        )}
-        {detail.seed != null && (
-          <span className={CHIP_CLS}>seed {String(detail.seed)}</span>
-        )}
-        {detail.request_id && (
-          <span className={CHIP_CLS}>req {detail.request_id}</span>
-        )}
-        {detail.parent_request_id && (
-          <span className={CHIP_CLS}>parent {detail.parent_request_id}</span>
-        )}
-      </div>
+      </section>
+
+      <section className="modelio-context-section" aria-labelledby="modelio-output-heading">
+        <h3 id="modelio-output-heading">Recorded output</h3>
+        <article className="modelio-message">
+          <div className="modelio-message-role">
+            <RoleChip role="completion" />
+          </div>
+          {typeof detail.completion === "string" &&
+          detail.completion.trim() !== "" ? (
+            <MessageBody
+              role="assistant"
+              content={detail.completion}
+              testId="completion-body"
+            />
+          ) : (
+            <EmptyCompletionNote messages={detail.prompt_messages} />
+          )}
+        </article>
+      </section>
+
+      <section className="modelio-context-section" aria-labelledby="modelio-metadata-heading">
+        <h3 id="modelio-metadata-heading">Exact call metadata</h3>
+        <div className="flex flex-wrap items-center gap-1.5" data-testid="meta-chips">
+          {detail.latency_ms != null && (
+            <span className={CHIP_CLS}>lat {fmt(detail.latency_ms, 0)}ms</span>
+          )}
+          {detail.usage?.input_tokens != null && (
+            <span className={CHIP_CLS}>in {detail.usage.input_tokens} tok</span>
+          )}
+          {detail.usage?.output_tokens != null && (
+            <span className={CHIP_CLS}>out {detail.usage.output_tokens} tok</span>
+          )}
+          {detail.temperature != null && (
+            <span className={CHIP_CLS}>temp {detail.temperature}</span>
+          )}
+          {detail.seed != null && (
+            <span className={CHIP_CLS}>seed {String(detail.seed)}</span>
+          )}
+          {detail.request_id && (
+            <span className={CHIP_CLS}>req {detail.request_id}</span>
+          )}
+          {detail.parent_request_id && (
+            <span className={CHIP_CLS}>parent {detail.parent_request_id}</span>
+          )}
+        </div>
+      </section>
+
+      <RawRecord detail={detail} />
     </div>
   );
 }
 
 // ─── the page ───────────────────────────────────────────────────────────
+
+interface SelectedCallSummary {
+  requestId: string;
+  ts: string | null;
+  model: string | null;
+  backend: string | null;
+  callerTag: string | null;
+  runId: string | null;
+  condition: "Recorded" | "EMPTY";
+  context: "call" | "session turn";
+}
+
+function summariesByRequest(feed: FeedItem[]): Map<string, SelectedCallSummary> {
+  const out = new Map<string, SelectedCallSummary>();
+  for (const item of feed) {
+    if (item.kind === "call") {
+      const requestId = item.call.request_id;
+      if (!requestId) continue;
+      out.set(requestId, {
+        requestId,
+        ts: item.call.ts,
+        model: item.call.model,
+        backend: item.call.backend,
+        callerTag: item.call.caller_tag,
+        runId: item.call.run_id,
+        condition: item.call.empty ? "EMPTY" : "Recorded",
+        context: "call",
+      });
+      continue;
+    }
+    for (const turn of turnsOf(item.thread)) {
+      const requestId = turn.request_id;
+      if (!requestId) continue;
+      out.set(requestId, {
+        requestId,
+        ts: turn.ts,
+        model: turn.model,
+        backend: turn.backend,
+        callerTag: turn.caller_tag,
+        runId: item.thread.run_id,
+        condition: turn.empty ? "EMPTY" : "Recorded",
+        context: "session turn",
+      });
+    }
+  }
+  return out;
+}
+
+function exactUtcTime(ms: number | null): string | null {
+  if (ms == null || !Number.isFinite(ms)) return null;
+  return `${new Date(ms).toISOString().slice(11, 19)} UTC`;
+}
 
 // Same-set filter equality, so the debounce timer never re-applies an
 // unchanged query (and never re-keys the table source).
@@ -883,9 +659,15 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   const [inputs, setInputs] = useState<ModelIOFilters>({});
   const [applied, setApplied] = useState<ModelIOFilters>({});
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [selectedSummary, setSelectedSummary] =
+    useState<SelectedCallSummary | null>(null);
   const [details, setDetails] = useState<
     Record<string, ModelIOCallDetail | "loading" | "error">
   >({});
+  const expandedRef = useRef<string | null>(null);
+  const summaryMapRef = useRef(new Map<string, SelectedCallSummary>());
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const contextCloseRef = useRef<HTMLButtonElement | null>(null);
   // Paged-older rows (appended, poll-stable) + the load-older control's
   // state. hasPagedRef gates the poll's dropped-row retention; newestRef
   // mirrors the last newest page so the retention never re-sorts.
@@ -917,9 +699,8 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
     return () => clearTimeout(id);
   }, [inputs]);
 
-  // The applied filter IS the table source's identity: a changed query is a
-  // different pollhub key (immediate fetch on re-key), while the strip /
-  // trace / frontier sources never see a filter change at all.
+  // The applied filter IS the Calls source's identity: a changed query is a
+  // different pollhub key and fetches immediately after the debounce.
   const appliedKey = JSON.stringify([
     applied.model ?? "",
     applied.callerTag ?? "",
@@ -944,20 +725,6 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
       enabled: !paused,
     },
   );
-  const activityPoll = usePolled<ActivityData>(
-    "modelio:runtime_activity",
-    getRuntimeActivity,
-    {
-      intervalMs: ACTIVITY_POLL_MS,
-      initialDelayMs: ACTIVITY_STAGGER_MS,
-      enabled: !paused,
-    },
-  );
-  const tracePoll = usePolled<TraceData>("modelio:dispatch_trace", fetchTrace, {
-    intervalMs: TRACE_POLL_MS,
-    initialDelayMs: TRACE_STAGGER_MS,
-    enabled: !paused,
-  });
 
   // Stale-while-revalidate ACROSS re-keys and pause: a filter change or a
   // pause must never blank rendered content, so the last good payload of
@@ -977,13 +744,6 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
     return retainPage(toFeed(payload), newestRef.current, older);
   }, [payload, older, appliedKey, sameRetentionKey]);
   const visibleGap = sameRetentionKey && (pageGap || pendingRetention.gap);
-  const lastActivityRef = useRef<ActivityData | null>(null);
-  if (activityPoll.data !== undefined)
-    lastActivityRef.current = activityPoll.data;
-  const activity = activityPoll.data ?? lastActivityRef.current;
-  const lastTraceRef = useRef<TraceData | null>(null);
-  if (tracePoll.data !== undefined) lastTraceRef.current = tracePoll.data;
-  const trace = tracePoll.data ?? lastTraceRef.current;
 
   const error = tablePoll.error;
   const stale = tablePoll.failing;
@@ -1026,23 +786,60 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
     rowCacheRef.current.clear();
   }, [appliedKey]);
 
-  // details is read inside the stable toggleRow callback via a ref.
+  // Details and summaries are read inside the stable toggleRow callback via
+  // refs. This keeps CallRow identities stable while preserving the exact
+  // selected request across refreshes, filter transitions and late replies.
   const detailsRef = useRef(details);
   detailsRef.current = details;
-  const toggleRow = useCallback((requestId: string | null) => {
-    if (!requestId) return;
-    setExpanded((prev) => (prev === requestId ? null : requestId));
-    if (detailsRef.current[requestId] === undefined) {
-      setDetails((d) => ({ ...d, [requestId]: "loading" }));
-      getModelIODetail(requestId)
-        .then((r) =>
-          setDetails((d) => ({ ...d, [requestId]: r.call ?? "error" })),
-        )
-        .catch(() =>
-          setDetails((d) => ({ ...d, [requestId]: "error" })),
-        );
-    }
+  expandedRef.current = expanded;
+
+  const closeContext = useCallback(() => {
+    expandedRef.current = null;
+    setExpanded(null);
+    const opener = returnFocusRef.current;
+    window.setTimeout(() => opener?.focus(), 0);
   }, []);
+
+  const toggleRow = useCallback(
+    (requestId: string | null) => {
+      if (!requestId) return;
+      if (expandedRef.current === requestId) {
+        closeContext();
+        return;
+      }
+      const active = document.activeElement;
+      if (active instanceof HTMLElement) returnFocusRef.current = active;
+      setSelectedSummary(summaryMapRef.current.get(requestId) ?? null);
+      expandedRef.current = requestId;
+      setExpanded(requestId);
+      if (detailsRef.current[requestId] === undefined) {
+        setDetails((d) => ({ ...d, [requestId]: "loading" }));
+        getModelIODetail(requestId)
+          .then((r) =>
+            setDetails((d) => ({ ...d, [requestId]: r.call ?? "error" })),
+          )
+          .catch(() =>
+            setDetails((d) => ({ ...d, [requestId]: "error" })),
+          );
+      }
+    },
+    [closeContext],
+  );
+
+  useEffect(() => {
+    if (expanded == null) return;
+    const id = window.setTimeout(() => contextCloseRef.current?.focus(), 0);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeContext();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.clearTimeout(id);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [expanded, closeContext]);
 
   // Newest page first, then the appended older pages (duplicate calls drop,
   // duplicate threads merge) — never re-sorted across pages.
@@ -1062,16 +859,36 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
     const newest = toFeed(data).map(stable);
     return { feed: mergeFeed(newest, pendingRetention.older), newestCount: newest.length };
   }, [data, pendingRetention.older]);
+  summaryMapRef.current = summariesByRequest(feed);
 
   const skew = isVersionSkew404(error, "/api/model_io") && feed.length === 0;
 
-  // The expanded full-record reader, rendered wherever the open turn lives:
-  // inline under its CallRow, or inside the session card that owns it (one
-  // expansion at a time, page-wide — the table's existing rule).
+  // One exact request owns the context surface. Detail replies remain keyed
+  // by request id, so a late response for a previously selected row cannot
+  // replace the current record.
+  const selectedDetail =
+    expanded != null ? (details[expanded] ?? "loading") : null;
+  const loadedSelectedDetail =
+    selectedDetail != null &&
+    selectedDetail !== "loading" &&
+    selectedDetail !== "error"
+      ? selectedDetail
+      : null;
   const expansionNode =
     expanded != null ? (
-      <CallExpansion detail={details[expanded] ?? "loading"} />
+      <CallExpansion detail={selectedDetail ?? "loading"} />
     ) : null;
+  const selectedModel =
+    loadedSelectedDetail?.model ?? selectedSummary?.model ?? null;
+  const selectedBackend =
+    loadedSelectedDetail?.backend ?? selectedSummary?.backend ?? null;
+  const selectedCaller =
+    loadedSelectedDetail?.caller_tag ?? selectedSummary?.callerTag ?? null;
+  const selectedRun =
+    loadedSelectedDetail?.run_id ?? selectedSummary?.runId ?? null;
+  const selectedTimestamp =
+    loadedSelectedDetail?.timestamp ?? selectedSummary?.ts ?? null;
+  const refreshedAt = exactUtcTime(tablePoll.asOf);
 
   // The gap marker's "refresh": drop the paged rows and start over from
   // the live page — the only honest way to close a hole whose middle rows
@@ -1159,68 +976,131 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
 
   return (
     <div className="page-full" data-testid="modelio-page">
-      <header className="mb-5">
-        <p className="mb-1 text-xs font-medium uppercase tracking-widest text-[var(--fg-muted)]">Operations</p>
-        <h1 className="text-3xl font-semibold tracking-tight text-[var(--fg)]">Model I/O</h1>
-        <p className="mt-2 text-sm text-[var(--fg-muted)]">Inspect recorded inputs, outputs and attempts. A successful call is not a scientific result.</p>
+      <header className="modelio-page-header">
+        <p>Operations</p>
+        <h1>Model I/O</h1>
+        <div>
+          Find and inspect recorded model call attempts. A recorded call is
+          not a scientific result.
+        </div>
       </header>
 
-      {/* Top strip: ONE runtime-activity card — nara chain + subagent
-          work, with the dev spawn ledger behind a collapsed toggle. */}
-      <details className="mb-3 rounded-lg border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
-        <summary className="cursor-pointer text-sm font-medium text-[var(--fg)]">Runtime activity and developer traces</summary>
-        <RuntimeStrip activity={activity} trace={trace} />
-      </details>
-
-      <p id="research-suggestions" className="my-3 text-sm text-[var(--fg-muted)]">
-        Research suggestions and ruling history are in Operations.{' '}
-        <a href={`/development${window.location.search}#frontier-reviews`} className="text-[var(--accent)]">
-          Open existing human review controls
-        </a>
-      </p>
+      <section className="modelio-scope" aria-label="Calls source and related views">
+        <div className="modelio-scope-main">
+          <div>
+            <h2>Main calls log</h2>
+            <code>{data?.source ?? "logs/calls.jsonl"}</code>
+          </div>
+          <span data-testid="modelio-result-count" aria-live="polite">
+            {data == null
+              ? "Count unavailable"
+              : `${feed.length} visible ${feed.length === 1 ? "record" : "records"}`}
+          </span>
+          <span data-testid="modelio-freshness">
+            {paused
+              ? refreshedAt
+                ? `Updates paused · as of ${refreshedAt}`
+                : "Updates paused · no snapshot received"
+              : stale
+                ? refreshedAt
+                  ? `Refresh failed · last received ${refreshedAt}`
+                  : "Refresh failed · no snapshot received"
+                : refreshedAt
+                  ? `Updated ${refreshedAt}`
+                  : "Awaiting first read"}
+          </span>
+        </div>
+        <div className="modelio-related" aria-label="Related Operations views">
+          <a href="/cycles">Trace history</a>
+          <a href="/development">Operations status</a>
+          <span id="research-suggestions">
+            Research suggestions and ruling history:{" "}
+            <a
+              aria-label="Open existing human review controls"
+              href={`/development${window.location.search}#frontier-reviews`}
+            >
+              Human reviews
+            </a>
+          </span>
+        </div>
+        <details className="modelio-source-disclosure" data-testid="modelio-footnote">
+          <summary>Source scope</summary>
+          <p>
+            This view reads the main log <code>logs/calls.jsonl</code> only.
+            Experiment and benchmark runs redirect calls to their own{" "}
+            <code>runs/*.calls.jsonl</code> through LOOP_V0_CALLS_LOG and are
+            not represented by an empty result here.
+          </p>
+        </details>
+      </section>
 
       {/* Filters + live-state controls. */}
-      <div className="mt-4 flex flex-wrap items-center gap-2">
-        <input
-          className={INPUT_CLS}
-          placeholder="model (substring)"
-          aria-label="filter by model"
-          value={inputs.model ?? ""}
-          onChange={(e) =>
-            setInputs((f) => ({ ...f, model: e.target.value || undefined }))
-          }
-        />
-        <input
-          className={INPUT_CLS}
-          placeholder="caller_tag (substring)"
-          aria-label="filter by caller tag"
-          value={inputs.callerTag ?? ""}
-          onChange={(e) =>
-            setInputs((f) => ({
-              ...f,
-              callerTag: e.target.value || undefined,
-            }))
-          }
-        />
-        <input
-          className={INPUT_CLS}
-          placeholder="run_id (exact)"
-          aria-label="filter by run id"
-          value={inputs.runId ?? ""}
-          onChange={(e) =>
-            setInputs((f) => ({ ...f, runId: e.target.value || undefined }))
-          }
-        />
+      <div className="modelio-controls">
+        <div className="modelio-filters" aria-label="Filter recorded calls">
+          <label>
+            <span>Model contains</span>
+            <input
+              className={INPUT_CLS}
+              aria-label="filter by model"
+              value={inputs.model ?? ""}
+              onChange={(e) =>
+                setInputs((f) => ({
+                  ...f,
+                  model: e.target.value || undefined,
+                }))
+              }
+            />
+          </label>
+          <label>
+            <span>Caller tag contains</span>
+            <input
+              className={INPUT_CLS}
+              aria-label="filter by caller tag"
+              value={inputs.callerTag ?? ""}
+              onChange={(e) =>
+                setInputs((f) => ({
+                  ...f,
+                  callerTag: e.target.value || undefined,
+                }))
+              }
+            />
+          </label>
+          <label>
+            <span>Run ID equals</span>
+            <input
+              className={INPUT_CLS}
+              aria-label="filter by run id"
+              value={inputs.runId ?? ""}
+              onChange={(e) =>
+                setInputs((f) => ({
+                  ...f,
+                  runId: e.target.value || undefined,
+                }))
+              }
+            />
+          </label>
+          {(inputs.model || inputs.callerTag || inputs.runId) && (
+            <button
+              type="button"
+              className="modelio-clear-filters"
+              onClick={() => setInputs({})}
+            >
+              Clear filters
+            </button>
+          )}
+        </div>
         <button
           type="button"
-          className="ml-auto rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500"
+          className="modelio-pause"
           aria-pressed={paused}
           onClick={() => setPaused((p) => !p)}
         >
-          {paused ? "resume" : "pause"}
+          {paused ? "Resume updates" : "Pause updates"}
         </button>
-        <span className="text-[11px] text-zinc-600">
-          {paused ? "paused" : `polling every ${Math.round(pollMs / 1000)}s`}
+        <span className="modelio-poll-scope">
+          {paused
+            ? "Only this page is paused"
+            : `This page refreshes every ${Math.round(pollMs / 1000)}s`}
         </span>
       </div>
 
@@ -1244,7 +1124,12 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
             </div>
           )}
 
-          <Card className="mt-3" testId="modelio-table">
+          <div
+            className="modelio-workspace"
+            data-context-open={expanded != null ? "true" : "false"}
+          >
+            <div className="modelio-feed-pane">
+          <Card className="modelio-feed-card" testId="modelio-table">
             {data == null && !stale ? (
               // First load only — once any payload has rendered, refetches
               // and re-keys keep the previous rows (SWR), never a blank.
@@ -1256,7 +1141,16 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
                 no calls match in the log tail.
               </div>
             ) : (
-              <div style={{ overflowX: "auto" }}>
+              <div className="modelio-feed">
+                <div className="modelio-feed-header" aria-hidden="true">
+                  <span>Time</span>
+                  <span>Model / backend</span>
+                  <span>Caller / run</span>
+                  <span>Recorded</span>
+                  <span>Latency / tokens</span>
+                  <span>Summary</span>
+                  <span>Record</span>
+                </div>
                 {feed.map((item, i) => (
                   <Fragment key={item.key ?? `${item.ts ?? "row"}-${i}`}>
                     {/* Explicit hole between the live page and the rows
@@ -1282,22 +1176,18 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
                     {item.kind === "thread" ? (
                       // ONE card for the whole session (owner 2026-08-19):
                       // questions once, both voices' answers under them.
-                      <SessionThreadCard
-                        thread={item.thread}
-                        expandedRequestId={expanded}
-                        expansion={expansionNode}
-                        onToggleContext={toggleRow}
-                      />
+                      <div className="modelio-session-record">
+                        <SessionThreadCard
+                          thread={item.thread}
+                          expandedRequestId={expanded}
+                          onToggleContext={toggleRow}
+                        />
+                      </div>
                     ) : (
                       <CallRow
                         call={item.call}
                         expanded={
                           expanded != null && expanded === item.call.request_id
-                        }
-                        detail={
-                          item.call.request_id
-                            ? details[item.call.request_id]
-                            : undefined
                         }
                         onToggle={toggleRow}
                       />
@@ -1366,17 +1256,84 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
               </span>
             </div>
           )}
+            </div>
+
+            {expanded != null && (
+              <aside
+                id="modelio-selected-context"
+                className="modelio-context-pane"
+                data-testid="modelio-context"
+                aria-labelledby="modelio-context-title"
+              >
+                <header className="modelio-context-header">
+                  <button
+                    ref={contextCloseRef}
+                    type="button"
+                    className="modelio-context-close"
+                    onClick={closeContext}
+                  >
+                    <span className="modelio-context-back-label">
+                      Back to calls
+                    </span>
+                    <span className="modelio-context-close-label">
+                      Close record
+                    </span>
+                  </button>
+                  <p>
+                    Selected {selectedSummary?.context ?? "recorded call"}
+                  </p>
+                  <h2 id="modelio-context-title">
+                    {selectedCaller ?? "Recorded call"}
+                  </h2>
+                  <code>{expanded}</code>
+                </header>
+
+                {!summaryMapRef.current.has(expanded) && (
+                  <p
+                    className="modelio-selection-retained"
+                    data-testid="selection-retained"
+                  >
+                    This exact record remains selected while the current feed
+                    query shows a different set.
+                  </p>
+                )}
+
+                <dl className="modelio-context-summary">
+                  <div>
+                    <dt>Recorded time</dt>
+                    <dd>
+                      {selectedTimestamp ? (
+                        <time dateTime={selectedTimestamp}>
+                          {selectedTimestamp}
+                        </time>
+                      ) : (
+                        "Not supplied"
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Model / backend</dt>
+                    <dd>
+                      {selectedModel ?? "Not supplied"}
+                      {selectedBackend ? ` / ${selectedBackend}` : ""}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Run ID</dt>
+                    <dd>{selectedRun ?? "Not supplied"}</dd>
+                  </div>
+                  <div>
+                    <dt>Recorded condition</dt>
+                    <dd>{selectedSummary?.condition ?? "Unknown field"}</dd>
+                  </div>
+                </dl>
+
+                <div className="modelio-context-body">{expansionNode}</div>
+              </aside>
+            )}
+          </div>
         </>
       )}
-
-      {/* The one-log footnote — this slice reads the MAIN log only. */}
-      <div className="mt-3 text-[11px] text-zinc-600" data-testid="modelio-footnote">
-        reads the main log <span className="font-mono">logs/calls.jsonl</span>{" "}
-        only — experiment/bench runs redirect their calls to their own{" "}
-        <span className="font-mono">runs/*.calls.jsonl</span> (via
-        LOOP_V0_CALLS_LOG) and are not shown here; a log picker is future
-        work.
-      </div>
     </div>
   );
 }
@@ -1384,17 +1341,15 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
 // Memoized row: with identity-stable `call` objects (rowCacheRef), a stable
 // `onToggle` (useCallback) and per-row `detail` values, a poll tick that
 // changes the payload re-renders ONLY the genuinely new/changed rows — an
-// open expansion (full MessageBody parse of a multi-KB record) no longer
+// open exact context (full MessageBody parse of a multi-KB record) no longer
 // re-parses on every arrival elsewhere in the table.
 const CallRow = memo(function CallRow({
   call,
   expanded,
-  detail,
   onToggle,
 }: {
   call: ModelIOCall;
   expanded: boolean;
-  detail: ModelIOCallDetail | "loading" | "error" | undefined;
   onToggle: (requestId: string | null) => void;
 }) {
   // Sanitized preview: completion first, prompt as the fallback (both run
@@ -1403,74 +1358,101 @@ const CallRow = memo(function CallRow({
   const preview =
     sanitizePreview(call.completion_preview) ??
     sanitizePreview(call.prompt_preview);
+  const structuredPreview =
+    preview != null &&
+    /^(?:\s*[\[{]|\s*```json|\s*<\|?tool_call)/i.test(preview.text);
+  const summary = structuredPreview
+    ? "Structured payload recorded"
+    : preview?.text || "No summary supplied";
+  const canOpen = call.request_id != null && call.request_id !== "";
   return (
-    <div className="border-b border-zinc-800/60 last:border-0">
-      <div
-        role="button"
-        tabIndex={0}
+      <button
+        type="button"
         data-testid="modelio-row"
-        className="flex cursor-pointer flex-wrap items-baseline gap-x-3 gap-y-0.5 py-1.5 text-xs hover:bg-zinc-900/50"
+        data-selected={expanded ? "true" : "false"}
+        className="modelio-row"
+        aria-label={
+          canOpen
+            ? `Open record ${call.request_id}, ${call.caller_tag ?? "caller not supplied"}, ${clockTime(call.ts)} UTC`
+            : `Recorded call from ${call.caller_tag ?? "unknown caller"}; exact request ID unavailable`
+        }
+        aria-expanded={canOpen ? expanded : undefined}
+        aria-controls={canOpen ? "modelio-selected-context" : undefined}
+        disabled={!canOpen}
         onClick={() => onToggle(call.request_id)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onToggle(call.request_id);
-          }
-        }}
       >
-        <span className="font-mono text-zinc-500" title={call.ts ?? ""}>
-          {clockTime(call.ts)}
+        <span className="modelio-row-cell modelio-row-time">
+          <span className="modelio-field-label">Time</span>
+          <time className="font-mono" dateTime={call.ts ?? undefined}>
+            {clockTime(call.ts)}
+          </time>
         </span>
-        <span
-          className={`rounded px-1.5 py-0.5 font-mono text-[11px] ${modelTone(call.model)}`}
-        >
-          {call.model ?? "—"}
-        </span>
-        {call.backend && (
-          <span
-            className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${backendTone(call.backend)}`}
-          >
-            {call.backend}
+        <span className="modelio-row-cell modelio-row-model">
+          <span className="modelio-field-label">Model / backend</span>
+          <span className="modelio-inline-values">
+            <span
+              className={`rounded px-1.5 py-0.5 font-mono text-[11px] ${modelTone(call.model)}`}
+            >
+              {call.model ?? "—"}
+            </span>
+            {call.backend && (
+              <span
+                className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${backendTone(call.backend)}`}
+              >
+                {call.backend}
+              </span>
+            )}
           </span>
-        )}
-        <span className={`font-mono ${callerTagTone(call.caller_tag)}`}>
-          {call.caller_tag ?? "—"}
         </span>
-        {call.run_id && (
-          <span className="font-mono text-zinc-600">{call.run_id}</span>
-        )}
-        <span className="ml-auto font-mono tabular-nums text-zinc-400">
-          {call.latency_ms != null ? `${fmt(call.latency_ms, 0)}ms` : "—"}
-        </span>
-        <span className="font-mono tabular-nums text-zinc-500">
-          {call.input_tokens ?? "—"}→{call.output_tokens ?? "—"} tok
-        </span>
-        {call.empty && (
-          <span
-            className="rounded bg-rose-950 px-1.5 py-0.5 font-mono text-[10px] text-rose-300"
-            data-testid="empty-flag"
-          >
-            EMPTY
+        <span className="modelio-row-cell modelio-row-caller">
+          <span className="modelio-field-label">Caller / run</span>
+          <span className={`font-mono ${callerTagTone(call.caller_tag)}`}>
+            {call.caller_tag ?? "—"}
           </span>
-        )}
-        <span className="flex w-full min-w-0 items-baseline gap-1.5">
-          {preview?.thought && (
+          <span className="modelio-run-id font-mono">
+            {call.run_id ?? "Run not supplied"}
+          </span>
+        </span>
+        <span className="modelio-row-cell modelio-row-condition">
+          <span className="modelio-field-label">Recorded</span>
+          {call.empty ? (
+            <span className="modelio-condition modelio-condition--empty" data-testid="empty-flag">
+              EMPTY
+            </span>
+          ) : (
+            <span className="modelio-condition">Recorded</span>
+          )}
+        </span>
+        <span className="modelio-row-cell modelio-row-cost">
+          <span className="modelio-field-label">Latency / tokens</span>
+          <span className="font-mono tabular-nums">
+            {call.latency_ms != null ? `${fmt(call.latency_ms, 0)}ms` : "—"}
+          </span>
+          <span className="font-mono tabular-nums">
+            {call.input_tokens ?? "—"}→{call.output_tokens ?? "—"} tok
+          </span>
+        </span>
+        <span className="modelio-row-cell modelio-row-summary">
+          <span className="modelio-field-label">Summary</span>
+          <span className="modelio-summary-line">
+          {preview?.thought && !structuredPreview && (
             <span
               data-testid="thought-chip"
-              className="shrink-0 rounded bg-zinc-900 px-1 font-mono text-[10px] text-zinc-500"
+              className="modelio-thought-chip"
             >
               thought
             </span>
           )}
           <span
-            className="min-w-0 flex-1 truncate text-zinc-600"
             data-testid="row-preview"
           >
-            {preview?.text ?? ""}
+            {summary}
+          </span>
           </span>
         </span>
-      </div>
-      {expanded && <CallExpansion detail={detail ?? "loading"} />}
-    </div>
+        <span className="modelio-row-cell modelio-row-open">
+          <span>{canOpen ? (expanded ? "Selected" : "Open record") : "ID unavailable"}</span>
+        </span>
+      </button>
   );
 });

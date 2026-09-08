@@ -956,12 +956,14 @@ it("pause/resume and a failed current poll keep the loaded thread and boundary",
   await screen.findByTestId("session-thread");
   fireEvent.click(screen.getByTestId("load-older"));
   await waitFor(() => expect(screen.getAllByTestId("thread-turn")).toHaveLength(4));
-  fireEvent.click(screen.getByRole("button", { name: "pause" }));
+  fireEvent.click(screen.getByRole("button", { name: "Pause updates" }));
   expect(screen.getAllByTestId("thread-turn")).toHaveLength(4);
   expect(screen.getByTestId("load-older")).not.toBeDisabled();
   // Settle the resumed request before constructing the next failed response;
   // a coalesced refresh otherwise leaves that fixture promise unconsumed.
-  await act(async () => fireEvent.click(screen.getByRole("button", { name: "resume" })));
+  await act(async () =>
+    fireEvent.click(screen.getByRole("button", { name: "Resume updates" })),
+  );
   const failed = deferred<unknown>();
   state.live = failed.promise;
   await act(async () => { refreshPoll('modelio:calls:["","",""]'); });
