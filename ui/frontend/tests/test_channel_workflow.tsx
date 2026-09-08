@@ -34,7 +34,7 @@ vi.mock("../src/api/http", () => ({
 import Channel from "../src/routes/Channel";
 
 beforeEach(() => vi.clearAllMocks());
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("Channel integrity-led workflow", () => {
   it("keeps raw event-like prose neutral, ungrouped, and byte-exact in context", () => {
@@ -135,6 +135,14 @@ describe("Channel capability and narrow context boundaries", () => {
   });
 
   it("opens delegation without posting and restores focus when the narrow sheet closes", async () => {
+    // Firefox refuses focus while an ancestor is inert; jsdom does not.
+    // Model that observed platform boundary instead of weakening focus checks.
+    const nativeFocus = HTMLElement.prototype.focus;
+    const blockedFocus: HTMLElement[] = [];
+    vi.spyOn(HTMLElement.prototype, "focus").mockImplementation(function (this: HTMLElement, options?: FocusOptions) {
+      if (this.closest("[inert]")) { blockedFocus.push(this); return; }
+      nativeFocus.call(this, options);
+    });
     vi.stubGlobal("matchMedia", vi.fn(() => ({
       matches: true,
       media: "(max-width: 899px)",
@@ -158,6 +166,7 @@ describe("Channel capability and narrow context boundaries", () => {
     act(() => fireEvent.keyDown(document, { key: "Escape" }));
     await waitFor(() => expect(opener).toHaveFocus());
     expect(sheet).toHaveAttribute("data-open", "false");
+    expect(blockedFocus).toEqual([]);
     expect(mocks.postChannelDelegate).not.toHaveBeenCalled();
   });
 });

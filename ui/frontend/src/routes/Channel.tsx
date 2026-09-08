@@ -282,6 +282,7 @@ export default function Channel({
   const anchorRef = useRef<number | null>(null);
   const contextRef = useRef<HTMLElement | null>(null);
   const contextOpenerRef = useRef<HTMLElement | null>(null);
+  const restoreContextFocusRef = useRef(false);
 
   const merge = useCallback((incoming: ChannelRow[]): number => {
     const fresh = incoming.filter((r) => !seenRef.current.has(rowKey(r)));
@@ -444,14 +445,27 @@ export default function Channel({
     return () => query.removeEventListener?.("change", sync);
   }, []);
 
+  const closeContext = useCallback(() => {
+    restoreContextFocusRef.current = true;
+    setContextOpen(false);
+  }, []);
+
+  useEffect(() => {
+    // Restore only after React removes the main surface's inert attribute.
+    // Focusing in the close event is refused by real browsers.
+    if (!contextOpen && restoreContextFocusRef.current) {
+      restoreContextFocusRef.current = false;
+      contextOpenerRef.current?.focus();
+    }
+  }, [contextOpen]);
+
   useEffect(() => {
     if (!narrow || !contextOpen) return;
     contextRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        setContextOpen(false);
-        contextOpenerRef.current?.focus();
+        closeContext();
         return;
       }
       if (event.key !== "Tab" || contextRef.current === null) return;
@@ -476,12 +490,7 @@ export default function Channel({
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [contextOpen, narrow]);
-
-  const closeContext = () => {
-    setContextOpen(false);
-    contextOpenerRef.current?.focus();
-  };
+  }, [contextOpen, narrow, closeContext]);
 
   const openContext = (view: ContextView) => {
     contextOpenerRef.current =
