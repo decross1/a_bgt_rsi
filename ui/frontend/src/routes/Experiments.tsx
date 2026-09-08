@@ -316,6 +316,8 @@ export default function Experiments({ initial }: Props) {
   const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const linkRefs = useRef(new Map<string, HTMLAnchorElement>());
+  const queryFromUrl = searchParams.get("q") ?? "";
+  const [query, setQuery] = useState(queryFromUrl);
 
   useEffect(() => {
     if (initial !== undefined) return;
@@ -341,7 +343,6 @@ export default function Experiments({ initial }: Props) {
       options.set(entry.tierId, entry.tierLabel);
     return [...options.entries()];
   }, [catalog.entries]);
-  const query = searchParams.get("q") ?? "";
   const requestedTier = searchParams.get("tier") ?? "all";
   const tier =
     requestedTier === "all" ||
@@ -363,14 +364,32 @@ export default function Experiments({ initial }: Props) {
     if (focusId) linkRefs.current.get(focusId)?.focus();
   }, [location.key, filteredEntries]);
 
+  useEffect(() => {
+    setQuery(queryFromUrl);
+  }, [queryFromUrl]);
+
   const setParam = (name: "q" | "tier", value: string) => {
     const next = new URLSearchParams(searchParams);
+    if (name === "tier") {
+      if (query) next.set("q", query);
+      else next.delete("q");
+    }
     if (!value || value === "all") next.delete(name);
     else next.set(name, value);
     setSearchParams(next, { replace: true });
   };
 
-  const returnTo = `${location.pathname}${location.search}`;
+  useEffect(() => {
+    if (query === queryFromUrl) return;
+    const timeout = window.setTimeout(() => setParam("q", query), 180);
+    return () => window.clearTimeout(timeout);
+  }, [query, queryFromUrl]);
+
+  const returnParams = new URLSearchParams(searchParams);
+  if (query) returnParams.set("q", query);
+  else returnParams.delete("q");
+  const returnSearch = returnParams.toString();
+  const returnTo = `${location.pathname}${returnSearch ? `?${returnSearch}` : ""}`;
   const mappedCount = catalog.entries.filter((entry) => entry.mapped).length;
   const evidenceCount = catalog.entries.filter((entry) => {
     const record = entry.experiment as unknown as RecordValue;
@@ -482,7 +501,7 @@ export default function Experiments({ initial }: Props) {
                 <input
                   type="search"
                   value={query}
-                  onChange={(event) => setParam("q", event.target.value)}
+                  onChange={(event) => setQuery(event.target.value)}
                   placeholder="Title, source id, result label or bridge"
                 />
               </label>

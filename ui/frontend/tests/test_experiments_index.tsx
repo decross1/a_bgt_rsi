@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { MemoryRouter, useLocation } from "react-router-dom";
+import { describe, expect, it, vi } from "vitest";
 import Experiments from "../src/routes/Experiments";
 import {
   RESEARCH_FIXTURE,
@@ -17,6 +17,11 @@ function renderPage(
       <Experiments initial={initial} />
     </MemoryRouter>,
   );
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="catalog-location">{location.search}</output>;
 }
 
 describe("Experiments source catalog", () => {
@@ -73,6 +78,32 @@ describe("Experiments source catalog", () => {
     expect(screen.getByTestId("research-card-exp003_vickrey_rediscovery"))
       .toBeInTheDocument();
     expect(screen.queryByTestId("research-card-exp001_repeated_pd")).toBeNull();
+  });
+
+  it("filters immediately and syncs the completed search to the URL", () => {
+    vi.useFakeTimers();
+    try {
+      render(
+        <MemoryRouter initialEntries={["/experiments"]}>
+          <Experiments initial={RESEARCH_FIXTURE} />
+          <LocationProbe />
+        </MemoryRouter>,
+      );
+      const search = screen.getByRole("searchbox", {
+        name: /Search source entries/i,
+      });
+      fireEvent.change(search, { target: { value: "all_d" } });
+
+      expect(screen.getByText(/Showing 1 of 5/)).toBeInTheDocument();
+      expect(screen.getByTestId("catalog-location")).toHaveTextContent(/^$/);
+
+      act(() => vi.advanceTimersByTime(180));
+      expect(screen.getByTestId("catalog-location")).toHaveTextContent(
+        "?q=all_d",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("retains query search and filters by the supplied tier", () => {
