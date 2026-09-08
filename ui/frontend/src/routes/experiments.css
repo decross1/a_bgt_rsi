@@ -529,7 +529,7 @@
 
 .experiment-result-facts {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-3);
   margin: var(--space-4) 0 0;
   padding-top: var(--space-3);
@@ -555,6 +555,33 @@
   border-top: 1px solid var(--border-1);
 }
 
+.experiment-markdown--excerpt {
+  margin-top: var(--space-3);
+}
+
+.experiment-authored-summary__full {
+  margin-top: var(--space-3);
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+  line-height: 1.5;
+}
+
+.experiment-authored-summary__full > summary {
+  color: var(--fg);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+
+.experiment-authored-summary__full[open] > summary {
+  margin-bottom: var(--space-3);
+}
+
+.experiment-authored-summary__full .experiment-markdown {
+  max-height: 520px;
+  margin-top: 0;
+  overflow: auto;
+}
+
 .experiment-markdown :where(.text-zinc-100, .text-zinc-200, .text-zinc-300) {
   color: var(--fg);
 }
@@ -565,14 +592,14 @@
 
 .experiment-opponent-selector {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: var(--space-2);
 }
 
 .experiment-opponent-selector button {
   display: flex;
   min-width: 0;
-  min-height: 64px;
+  min-height: 58px;
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-3);
@@ -864,10 +891,20 @@
     border-top: 1px solid var(--border-1);
   }
 
-  .experiment-opponent-selector,
   .experiment-mechanism-list,
   .experiment-evidence-panel {
     grid-template-columns: 1fr;
+  }
+
+  .experiment-opponent-selector {
+    display: flex;
+    max-width: 100%;
+    padding-bottom: var(--space-1);
+    overflow-x: auto;
+  }
+
+  .experiment-opponent-selector button {
+    flex: 0 0 min(220px, calc(100% - var(--space-4)));
   }
 
   .experiment-selected-opponent dl {

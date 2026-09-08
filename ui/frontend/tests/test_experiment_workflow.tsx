@@ -66,6 +66,10 @@ describe("experiment catalog to evidence workflow", () => {
       "href",
       "/experiments?q=all_d&tier=synthetic",
     );
+    expect(screen.getByTestId("cumulative-chart")).toHaveTextContent(
+      /against all_d/i,
+    );
+    expect(screen.queryByTestId("markdown-summary")).toBeNull();
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     const calls = fetchMock.mock.calls.map(([input, init]) => ({

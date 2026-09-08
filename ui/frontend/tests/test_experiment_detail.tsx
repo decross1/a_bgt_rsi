@@ -63,7 +63,9 @@ describe("ExperimentDetail evidence workspace", () => {
       ...DETAIL_JSON_FIXTURE,
       has_summary_md: true,
       summary_md:
-        "# Authored experiment conclusion\n\n**Verdict=NO** — author supplied conclusion.",
+        "# Authored experiment conclusion\n\n" +
+        "**Verdict=NO** — author supplied conclusion.\n\n" +
+        "## Headline metrics\n\n- cooperation delta: 0.008",
     };
     renderDetail(conflict);
 
@@ -71,9 +73,24 @@ describe("ExperimentDetail evidence workspace", () => {
     expect(diagnostic).toHaveTextContent(/EXPLOITED by all_d/);
     expect(diagnostic).not.toHaveTextContent(/Verdict=NO/);
     const authored = screen.getByTestId("markdown-summary");
-    expect(authored).toHaveTextContent(/Verdict=NO/);
-    expect(authored).toHaveTextContent(/not promoted here/i);
-    expect(authored).toHaveTextContent(/independently validated scientific verdict/i);
+    const excerpt = screen.getByTestId("authored-summary-excerpt");
+    expect(excerpt).toHaveTextContent(/Authored experiment conclusion/);
+    expect(excerpt).toHaveTextContent(/Verdict=NO — author supplied conclusion/);
+    expect(excerpt).not.toHaveTextContent(/Headline metrics|cooperation delta/);
+    expect(authored).toHaveTextContent(/separate from the opponent diagnostic/i);
+    expect(authored).toHaveTextContent(/not independently validated here/i);
+
+    const fullSource = screen.getByTestId("authored-summary-full");
+    expect(fullSource).not.toHaveAttribute("open");
+    expect(fullSource).toHaveTextContent(/Headline metrics/);
+    expect(fullSource).toHaveTextContent(/cooperation delta: 0\.008/);
+    fireEvent.click(within(fullSource).getByText(/Read full summary\.md source/));
+    expect(fullSource).toHaveAttribute("open");
+
+    expect(
+      screen.getByTestId("cumulative-chart").compareDocumentPosition(authored) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("supports pointer and keyboard selection with a single source-bound comparison", () => {
