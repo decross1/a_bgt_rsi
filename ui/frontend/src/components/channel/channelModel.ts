@@ -25,9 +25,19 @@ export const FILTERS: ReadonlyArray<readonly [ChannelFilter, string]> = [
 ];
 
 export function matchesFilter(row: ChannelRow, filter: ChannelFilter): boolean {
-  if (filter === "conversation") return row.kind !== "event";
-  if (filter === "events") return row.kind === "event";
-  if (filter === "steward") return row.kind === STEWARD_KIND;
+  // Semantic filters are meaningful only for records whose envelope supplied
+  // the exact framing tuple. Callers disable these filters for a raw/mixed
+  // window as a whole; this row-local guard prevents a future caller from
+  // accidentally classifying unframed `kind` fields anyway.
+  if (filter === "conversation") {
+    return row.recordedLabel === true && row.kind !== "event";
+  }
+  if (filter === "events") {
+    return row.recordedLabel === true && row.kind === "event";
+  }
+  if (filter === "steward") {
+    return row.recordedLabel === true && row.kind === STEWARD_KIND;
+  }
   return true;
 }
 
@@ -43,10 +53,14 @@ export function keepFiltered(
     return rows.filter((r) => matchesFilter(r, filter));
   }
   return rows.filter((r, i) => {
-    if (r.kind === STEWARD_KIND) return true;
+    if (r.recordedLabel === true && r.kind === STEWARD_KIND) return true;
     const prev = rows[i - 1];
     return (
-      !!prev && prev.kind === STEWARD_KIND && r.kind !== "event"
+      !!prev &&
+      prev.recordedLabel === true &&
+      prev.kind === STEWARD_KIND &&
+      r.recordedLabel === true &&
+      r.kind !== "event"
     );
   });
 }
@@ -243,7 +257,7 @@ export function groupFeed(
   let i = 0;
   while (i < kept.length) {
     const r = kept[i];
-    if (r.kind !== "event") {
+    if (r.recordedLabel !== true || r.kind !== "event") {
       openDay(r.ts);
       items.push({ type: "single", row: r, key: `${rowKey(r)}-${i}` });
       i++;
@@ -256,6 +270,7 @@ export function groupFeed(
     // inside the collapsed line, which is a lie about when things happened.
     while (
       j < kept.length &&
+      kept[j].recordedLabel === true &&
       kept[j].kind === "event" &&
       eventChip(kept[j].message).label === chip.label &&
       dayKeyOf(kept[j].ts) === runDay
