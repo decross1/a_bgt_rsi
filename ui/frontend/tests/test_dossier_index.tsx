@@ -4,7 +4,7 @@
 //      (gate_verdict + state_gate families); section (2) ONLY the findings
 //      that clear the L4/L5 ladder bar; section (3) everything else —
 //      below-bar/legacy findings, bubbles, stale runs, resolved iterations.
-//   2. HONEST empty states: "Nothing cleared L4 this week." when no finding
+//   2. HONEST empty states: "No L4/L5 findings are listed in the loaded queue source." when no finding
 //      clears the bar; a 404 todo feed reads "queue UNKNOWN", never calm.
 //   3. STEM CLUSTERING (ported verbatim from ResolveRail): near-dup titles
 //      sharing a 6-word prefix collapse to one ×N cluster; expanding lists
@@ -146,10 +146,10 @@ describe("DossierIndex — owe-first sectioning", () => {
 });
 
 describe("DossierIndex — honest empty states", () => {
-  it("no cleared-bar findings → 'Nothing cleared L4 this week.'", () => {
+  it("no cleared-bar findings → 'No L4/L5 findings are listed in the loaded queue source.'", () => {
     renderIndex([GATE, LEGACY_FINDING_A]);
     expect(screen.getByTestId("dossier-cleared-empty")).toHaveTextContent(
-      "Nothing cleared L4 this week.",
+      "No L4/L5 findings are listed in the loaded queue source.",
     );
   });
 
@@ -266,11 +266,16 @@ describe("DossierIndex — search (section 3)", () => {
     );
   });
 
-  it("search does NOT hide the owe or cleared sections (only section 3 is searchable)", () => {
+  it("search keeps source sections and restores every request when cleared", () => {
     renderIndex([GATE, L4_FINDING, BUBBLE]);
     fireEvent.change(screen.getByTestId("dossier-search"), {
       target: { value: "zzz-no-match" },
     });
+    expect(screen.getByTestId("dossier-owe")).toBeInTheDocument();
+    expect(screen.getByTestId("dossier-cleared")).toBeInTheDocument();
+    expect(screen.queryByTestId("dossier-row-iter-2026-06-14-002")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dossier-row-sf-l4-001")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("dossier-search"), { target: { value: "" } });
     expect(screen.getByTestId("dossier-row-iter-2026-06-14-002")).toBeInTheDocument();
     expect(screen.getByTestId("dossier-row-sf-l4-001")).toBeInTheDocument();
   });
@@ -304,13 +309,13 @@ describe("DossierIndex — hostile rows degrade", () => {
 });
 
 describe("DossierIndex — compact record library", () => {
-  it("leads with live decisions and one latest context while history is collapsed", () => {
+  it("leads with recorded requests and one latest context while history is collapsed", () => {
     renderIndex([GATE, BUBBLE], [ITER_ROW]);
     expect(screen.getByRole("heading", { name: "Dossiers" })).toBeInTheDocument();
     expect(screen.getByTestId("dossier-source-state")).toHaveTextContent(
       /queue source loaded/i,
     );
-    expect(screen.getByTestId("dossier-owe")).toHaveTextContent(/live queue/i);
+    expect(screen.getByTestId("dossier-owe")).toHaveTextContent(/recorded requests/i);
     expect(
       screen.getByTestId("dossier-latest-iter-iter-2026-06-10-001"),
     ).toHaveTextContent("resolved history row");
@@ -358,4 +363,29 @@ describe("DossierIndex — compact record library", () => {
       "No iteration has a usable recorded end time.",
     );
   });
+});
+
+
+it("withholds inventory totals while sources are loading or malformed", () => {
+  vi.stubGlobal("fetch", () => new Promise<Response>(() => {}));
+  const pending = render(<MemoryRouter><DossierIndex /></MemoryRouter>);
+  expect(screen.getByTestId("dossier-owe-count")).not.toHaveTextContent(/^0$/);
+  expect(screen.getByTestId("dossier-latest-count")).not.toHaveTextContent(/^0$/);
+  expect(screen.getByTestId("dossier-history-browser")).not.toHaveTextContent("Browse history · 0 recorded items");
+  pending.unmount();
+  renderIndex(null as unknown as HumanTodoItem[], null as unknown as IterationRecord[]);
+  expect(screen.getByTestId("dossier-owe-count")).toHaveTextContent("unknown");
+  expect(screen.queryByTestId("dossier-else-empty")).not.toBeInTheDocument();
+});
+
+it("searches recorded requests as well as history without claiming current eligibility", () => {
+  renderIndex([GATE, STATE_GATE], [ITER_ROW]);
+  expect(screen.queryByText(/Live decisions stay visible/)).not.toBeInTheDocument();
+  fireEvent.change(screen.getByTestId("dossier-search"), { target: { value: ITER_ROW.iteration_id } });
+  expect(within(screen.getByTestId("dossier-owe")).queryByRole("link")).not.toBeInTheDocument();
+  expect(screen.getByTestId(`dossier-iter-${ITER_ROW.iteration_id}`)).toBeVisible();
+  fireEvent.change(screen.getByTestId("dossier-search"), { target: { value: GATE.id } });
+  expect(within(screen.getByTestId("dossier-owe")).getAllByRole("link")).toHaveLength(1);
+  fireEvent.change(screen.getByTestId("dossier-search"), { target: { value: "" } });
+  expect(within(screen.getByTestId("dossier-owe")).getAllByRole("link")).toHaveLength(2);
 });

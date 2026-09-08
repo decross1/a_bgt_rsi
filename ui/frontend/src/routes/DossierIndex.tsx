@@ -328,7 +328,7 @@ function SectionHeader({
 }: {
   title: string;
   hint: string;
-  count: number;
+  count: number | string;
   testid: string;
 }) {
   return (
@@ -467,6 +467,14 @@ export default function DossierIndex({
   // topic OR id over the resolved iterations. Search BEFORE clustering, so a
   // hit inside a cluster surfaces its member as a singleton (ResolveRail rule).
   const q = query.trim().toLowerCase();
+  const matchesItem = (item: HumanTodoItem) => q === "" ||
+    titleText(item.title).toLowerCase().includes(q) || item.id.toLowerCase().includes(q);
+  const visibleOwe = owe.filter(matchesItem);
+  const visibleCleared = clearedBar.filter(matchesItem);
+  const queueComplete = todoLoaded && !todoError && !todoPartial;
+  const historyComplete = iterLoaded && !iterError && !iterPartial;
+  const countText = (count: number, complete: boolean) => complete ? count
+    : count > 0 ? `${count} received · total unknown` : "unknown";
   const visibleElse = useMemo(
     () =>
       everythingElseItems.filter((it) => {
@@ -595,14 +603,14 @@ export default function DossierIndex({
           onChange={(event) => updateQuery(event.target.value)}
           className="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
         />
-        <span>Live decisions stay visible; matching history opens below.</span>
+        <span>Search recorded requests and history. A listed request does not establish current eligibility.</span>
       </div>
 
       <section data-testid="dossier-owe" className="dossier-surface p-4">
         <SectionHeader
-          title="Needs a decision"
-          hint="live queue · producer order"
-          count={owe.length}
+          title="Recorded requests"
+          hint={q ? "matching requests · source order" : "source order · inspect date and authority"}
+          count={countText(visibleOwe.length, queueComplete)}
           testid="dossier-owe-count"
         />
         {todoLoaded && !todoError && !todoPartial && owe.length === 0 && (
@@ -611,28 +619,28 @@ export default function DossierIndex({
             establish overall loop or research status.
           </div>
         )}
-        {owe.length > 0 && (
+        {visibleOwe.length > 0 && (
           <ul className="mt-2 space-y-1.5">
-            {owe.map((it) => (
+            {visibleOwe.map((it) => (
               <ItemRow
                 key={it.id}
                 item={it}
                 nowMs={nowMs}
-                sourceLabel="live queue"
+                sourceLabel="recorded request"
               />
             ))}
           </ul>
         )}
       </section>
 
-      <section
+      {q === "" && <section
         data-testid="dossier-latest"
         className="dossier-surface mt-3 p-4"
       >
         <SectionHeader
           title="Latest recorded context"
           hint="iteration history · not a live eligibility signal"
-          count={latestIteration === null ? 0 : 1}
+          count={countText(latestIteration === null ? 0 : 1, historyComplete)}
           testid="dossier-latest-count"
         />
         {!iterLoaded && (
@@ -672,7 +680,7 @@ export default function DossierIndex({
             History refresh failed; showing the last recorded response.
           </div>
         )}
-      </section>
+      </section>}
 
       <details
         data-testid="dossier-history-browser"
@@ -680,24 +688,24 @@ export default function DossierIndex({
         open={q !== "" || undefined}
       >
         <summary>
-          Browse history · {everythingElseItems.length + clearedBar.length + iterRows.length} recorded items
+          Browse history · {countText(everythingElseItems.length + clearedBar.length + iterRows.length, queueComplete && historyComplete)} recorded items
         </summary>
         <div className="dossier-history-body">
           <section data-testid="dossier-cleared" className="mt-4">
             <SectionHeader
-              title="Cleared the bar"
+              title="Recorded L4/L5 findings"
               hint="recorded findings at L4/L5 (D-059)"
-              count={clearedBar.length}
+              count={countText(visibleCleared.length, queueComplete)}
               testid="dossier-cleared-count"
             />
             {todoLoaded && !todoError && !todoPartial && clearedBar.length === 0 && (
               <div className="mt-2 text-sm text-zinc-500" data-testid="dossier-cleared-empty">
-                Nothing cleared L4 this week.
+                No L4/L5 findings are listed in the loaded queue source.
               </div>
             )}
-            {clearedBar.length > 0 && (
+            {visibleCleared.length > 0 && (
               <ul className="mt-2 space-y-1.5">
-                {clearedBar.map((it) => (
+                {visibleCleared.map((it) => (
                   <ItemRow key={it.id} item={it} nowMs={nowMs} sourceLabel="recorded finding" />
                 ))}
               </ul>
@@ -708,10 +716,10 @@ export default function DossierIndex({
             <SectionHeader
               title="All other records"
               hint="below-bar findings · bubbles · stale runs · iterations"
-              count={visibleElse.length + visibleIters.length}
+              count={countText(visibleElse.length + visibleIters.length, queueComplete && historyComplete)}
               testid="dossier-else-count"
             />
-            {visibleElse.length === 0 && visibleIters.length === 0 ? (
+            {visibleElse.length === 0 && visibleIters.length === 0 && queueComplete && historyComplete ? (
               <div className="mt-2 text-[11px] text-zinc-500" data-testid="dossier-else-empty">
                 {q !== ""
                   ? "no dossiers match — adjust the search."
