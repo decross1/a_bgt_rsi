@@ -72,7 +72,8 @@ async function renderPollingQuietly() {
     const settled =
       document.querySelector('[data-testid="coordinator-cycle-row"]') !==
         null ||
-      document.querySelector('[data-testid="coordinator-empty"]') !== null;
+      document.querySelector('[data-testid="coordinator-empty"]') !== null ||
+      document.querySelector('[data-testid="coordinator-error"]') !== null;
     expect(settled).toBe(true);
   });
   const calls = {
@@ -338,11 +339,13 @@ describe("Coordinator hardening — r2: malformed value TYPES", () => {
 
   // The contract is {cycles:[...]}, but a malformed body could hand back a
   // non-array — spreading/sorting it would throw before any row renders.
-  it("POLLING: a non-array cycles body degrades to the clean empty state", async () => {
+  it("POLLING: a non-array cycles body is unavailable without claiming empty", async () => {
     RESPONSE = { cycles: "oops-not-an-array" };
     const { error } = await renderPollingQuietly();
 
-    expect(screen.getByTestId("coordinator-empty")).toBeInTheDocument();
+    expect(screen.getByTestId("coordinator-error")).toHaveTextContent("Cycle history unavailable");
+    expect(screen.queryByTestId("coordinator-empty")).toBeNull();
+    expect(screen.queryByText("0 readable of 0 loaded")).toBeNull();
     expect(screen.queryByTestId("coordinator-cycle-card")).toBeNull();
     const pageText = screen.getByTestId("coordinator-page").textContent ?? "";
     expect(pageText).not.toMatch(/TypeError|is not a function/);
@@ -560,28 +563,11 @@ describe("Coordinator hardening — r3: scale + content", () => {
 // ROUND 5 — empty/absent bodies + boundary counts (POLLING path).
 // ===========================================================================
 //
-// ADVERSARIAL HARDENING (round 5) — routes/Coordinator.tsx, edge-case category:
-// EMPTY-vs-ABSENT collections + boundary numbers. A producer-owned, append-only
-// data stream (and the backend that serializes it) can hand the route the whole
-// gradient of "nothing": an empty-but-present array, an object with the `cycles`
-// key absent, and — the one that bit — a bare `null`/`undefined` response body.
-// The contract (ui_autonomy_observability_plan.md / the handoff) is explicit:
-// when the cycle log is absent the panel shows a CLEAN EMPTY STATE, never a
-// blank gap and never a crash. This view exists precisely so the dark loop is
-// legible; a raw TypeError in the error banner is itself a dark-gap.
-//
-// THE BUG THIS ROUND FIXED (route-owned, polling path): the load did
-// `Array.isArray(r.cycles) ? r.cycles : []` — a guard the author added against a
-// NON-ARRAY `cycles`, but it reads `.cycles` off `r` FIRST. When the body is a
-// bare `null`/`undefined` (a malformed 200; getJSON returns the parsed body
-// verbatim, and `null` is valid JSON), `r.cycles` throws "Cannot read properties
-// of null (reading 'cycles')" BEFORE Array.isArray runs. That throw rejects the
-// load promise into `.catch`, which paints the raw TypeError string in the red
-// error banner — and `loaded` never flips true, so the clean empty state never
-// shows either. The absent-data case (the headline reason this view exists)
-// degraded to a crash banner. The fix is `r?.cycles`: a null/undefined body
-// short-circuits to undefined → not an array → [] → setLoaded(true) → the
-// explicit empty state. (Mirrors the existing non-array guard, one level up.)
+// September8 integrity qualification: the original round5 tests treated
+// absent/null/non-array response envelopes as valid empty history. They retain
+// the no-crash falsifiers, but now require an explicit unavailable source.
+// Only an actually supplied {cycles: []} certifies a readable empty snapshot.
+// Original failing outputs are preserved in the private task receipts.
 //
 // Drives the POLLING path (api/http mocked — where the body is read and the bug
 // lived); the empty-but-present and key-absent bodies are exercised alongside as
@@ -608,7 +594,7 @@ async function renderPollingQuietlyR5() {
       document.querySelector('[data-testid="coordinator-cycle-row"]') !==
         null ||
       document.querySelector('[data-testid="coordinator-empty"]') !== null ||
-      (page?.querySelector(".text-red-400") ?? null) !== null;
+      (page?.querySelector('[data-testid="coordinator-error"]') ?? null) !== null;
     expect(settled).toBe(true);
   });
   const calls = {
@@ -628,7 +614,7 @@ async function renderPollingQuietlyR5() {
 // forbidden "crash instead of empty state" outcome.
 function hasCrashBanner(): boolean {
   const page = screen.getByTestId("coordinator-page");
-  const banner = page.querySelector(".text-red-400")?.textContent ?? "";
+  const banner = page.querySelector('[data-testid="coordinator-error"]')?.textContent ?? "";
   return /TypeError|is not a function|Cannot read properties|undefined|null/i.test(
     banner,
   );
@@ -643,13 +629,14 @@ describe("Coordinator hardening — r5: empty/absent bodies + boundary counts", 
 
   // The headline regression: a bare `null` body used to throw "Cannot read
   // properties of null (reading 'cycles')" and paint the raw TypeError in the
-  // red banner — the absent-data crash this view exists to prevent. It must now
-  // degrade to the clean empty state.
-  it("POLLING: a null response body degrades to the clean empty state, not a crash banner", async () => {
+  // red banner. It must remain unavailable without a raw crash or invented empty state.
+  it("POLLING: a null response body is unavailable without claiming empty, not a crash banner", async () => {
     RESPONSE = null;
     const { error, warn } = await renderPollingQuietlyR5();
 
-    expect(screen.getByTestId("coordinator-empty")).toBeInTheDocument();
+    expect(screen.getByTestId("coordinator-error")).toHaveTextContent("Cycle history unavailable");
+    expect(screen.queryByTestId("coordinator-empty")).toBeNull();
+    expect(screen.queryByText("0 readable of 0 loaded")).toBeNull();
     expect(screen.queryByTestId("coordinator-cycle-card")).toBeNull();
     expect(hasCrashBanner(), "raw exception leaked to the error banner").toBe(
       false,
@@ -659,23 +646,26 @@ describe("Coordinator hardening — r5: empty/absent bodies + boundary counts", 
   });
 
   // Same root cause via `undefined` (a body that parsed to nothing).
-  it("POLLING: an undefined response body degrades to the clean empty state", async () => {
+  it("POLLING: an undefined response body is unavailable without claiming empty", async () => {
     RESPONSE = undefined;
     const { error } = await renderPollingQuietlyR5();
 
-    expect(screen.getByTestId("coordinator-empty")).toBeInTheDocument();
+    expect(screen.getByTestId("coordinator-error")).toHaveTextContent("Cycle history unavailable");
+    expect(screen.queryByTestId("coordinator-empty")).toBeNull();
+    expect(screen.queryByText("0 readable of 0 loaded")).toBeNull();
     expect(hasCrashBanner()).toBe(false);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
   });
 
   // The `cycles` key entirely ABSENT (an object body the producer wrote without
-  // it). `r.cycles` is undefined → not an array → [] → empty state. Already
-  // robust; pinned so a future refactor can't regress it back into a crash.
-  it("POLLING: a body with the cycles key absent shows the empty state", async () => {
+  // it). Missing is not a certified empty collection; keep a clear read error.
+  it("POLLING: a body with the cycles key absent is unavailable without claiming empty", async () => {
     RESPONSE = {};
     const { error } = await renderPollingQuietlyR5();
 
-    expect(screen.getByTestId("coordinator-empty")).toBeInTheDocument();
+    expect(screen.getByTestId("coordinator-error")).toHaveTextContent("Cycle history unavailable");
+    expect(screen.queryByTestId("coordinator-empty")).toBeNull();
+    expect(screen.queryByText("0 readable of 0 loaded")).toBeNull();
     expect(hasCrashBanner()).toBe(false);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
   });

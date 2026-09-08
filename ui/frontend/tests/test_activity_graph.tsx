@@ -112,3 +112,22 @@ describe("ActivityGraph", () => {
     expect(screen.queryByTestId("activity-graph")).toBeNull();
   });
 });
+
+
+it("keeps malformed optional node identifiers readable as rejected raw evidence", () => {
+  const bad = { ...GRAPH_FIXTURE.nodes[0], id: "bad-id", task_id: { hostile: "object identity" } };
+  expect(() => renderWithRouter(<ActivityGraph data={{ ...GRAPH_FIXTURE, edges: [], nodes: [bad, GRAPH_FIXTURE.nodes[1]] as never }} />)).not.toThrow();
+  expect(screen.getByTestId("activity-graph-excluded")).toHaveTextContent("1");
+  expect(screen.getAllByTestId(/^node-/)).toHaveLength(1);
+  expect(screen.getByText(/Unreadable or ambiguous source items/)).toBeInTheDocument();
+});
+
+it("does not call duplicate-identity records an empty map or select one arbitrarily", () => {
+  const a = { ...GRAPH_FIXTURE.nodes[0], id: "duplicate", label: "first source record" };
+  const b = { ...a, label: "second source record" };
+  renderWithRouter(<ActivityGraph data={{ ...GRAPH_FIXTURE, edges: [], nodes: [a,b] }} />);
+  expect(screen.queryByTestId("activity-graph-empty")).toBeNull();
+  expect(screen.queryByRole("link", { name: "Look up indexed call" })).toBeNull();
+  expect(screen.queryAllByTestId(/^node-/)).toHaveLength(0);
+  expect(screen.getByTestId("activity-graph-excluded")).toHaveTextContent("2");
+});

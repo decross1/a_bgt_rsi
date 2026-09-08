@@ -60,6 +60,11 @@ function finiteNumber(value: unknown): number | null {
 
 export default function Inspector() {
   const { requestId } = useParams<{ requestId: string }>();
+  return <InspectorRecord key={requestId ?? ""} />;
+}
+
+function InspectorRecord() {
+  const { requestId } = useParams<{ requestId: string }>();
   const rootedAt = requestId ?? "";
   const location = useLocation();
   const navigate = useNavigate();
@@ -153,6 +158,7 @@ export default function Inspector() {
   }
 
   const info = error ? errorInfo(error) : null;
+  const malformedResult = data !== null && (data.root_request_id !== rootedAt || (data.found && (!data.root || typeof data.root !== "object" || Array.isArray(data.root) || data.root.request_id !== rootedAt)));
   const noIndexedRecord = info?.status === 404 || data?.found === false;
 
   if (loading) {
@@ -162,6 +168,17 @@ export default function Inspector() {
         <section className="trace-inspector-surface trace-inspector-state" data-testid="inspector-loading"><h2>Looking up indexed call…</h2><p>The selected ID is being checked once against the existing read-only endpoint.</p></section>
       </main>
     );
+  }
+
+  if (malformedResult) {
+    return <main className="trace-page" data-testid="inspector-page">
+      <header className="trace-page-header"><div><p className="trace-kicker">Operations · exact request</p><h1>Request record</h1></div></header>
+      <section className="trace-inspector-surface trace-inspector-state" data-state="malformed" data-testid="inspector-malformed-response">
+        <h2>Indexed response has no readable chain for this request</h2>
+        <p>The response identity or root shape does not match the requested source. It is not presented as an empty chain.</p>
+        {toolbar}
+      </section>
+    </main>;
   }
 
   if (noIndexedRecord) {

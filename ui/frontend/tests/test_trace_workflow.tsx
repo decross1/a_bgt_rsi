@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { Profiler } from "react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import Inspector from "../src/routes/Inspector";
 import type { ChainNode, ChainResponse } from "../src/types/schemas";
@@ -141,4 +142,42 @@ describe("trace map to exact request workflow", () => {
     await waitFor(() => expect(screen.getAllByTestId("chain-node")).toHaveLength(20));
     expect(mocks.getChainByRequest).toHaveBeenCalledTimes(2);
   });
+});
+
+
+it("refuses a found chain response for another exact request", async () => {
+  mocks.getChainByRequest.mockResolvedValue(SYNTHETIC_DEEP_20_CHAIN);
+  renderInspector("different-request");
+  expect(await screen.findByTestId("inspector-malformed-response")).toHaveTextContent(/identity|request|source/i);
+  expect(screen.queryAllByTestId("chain-node")).toHaveLength(0);
+});
+
+it("does not certify an array as a readable root object", async () => {
+  mocks.getChainByRequest.mockResolvedValue({ found: true, root_request_id: "array-root", root: [] });
+  renderInspector("array-root");
+  expect(await screen.findByTestId("inspector-malformed-response")).toBeInTheDocument();
+  expect(screen.queryAllByTestId("chain-node")).toHaveLength(0);
+});
+
+
+it("never commits the previous request evidence under a successor route", async () => {
+  mocks.getChainByRequest.mockReset();
+  let finishSecond!: (value: ChainResponse) => void;
+  const first = { ...SYNTHETIC_DEEP_20_CHAIN, root_request_id: "first", root: { ...SYNTHETIC_DEEP_20_CHAIN.root!, request_id: "first", task_type: "UNIQUE FIRST EVIDENCE" } };
+  const second = { ...first, root_request_id: "second", root: { ...first.root, request_id: "second", task_type: "UNIQUE SECOND EVIDENCE" } };
+  mocks.getChainByRequest.mockResolvedValueOnce(first).mockImplementationOnce(() => new Promise<ChainResponse>(resolve => { finishSecond = resolve; }));
+  const commits: { path: string; text: string }[] = [];
+  function RequestFrame() {
+    const location = useLocation();
+    return <Profiler id="request-frame" onRender={() => commits.push({ path: location.pathname, text: screen.queryByTestId("inspector-page")?.textContent ?? "" })}><output data-testid="current-request-path">{location.pathname}</output><Link to="/chain/req/second">Switch exact request</Link><Inspector /></Profiler>;
+  }
+  render(<MemoryRouter initialEntries={["/chain/req/first"]}><Routes><Route path="/chain/req/:requestId" element={<RequestFrame />} /></Routes></MemoryRouter>);
+  await waitFor(() => expect(screen.getByTestId("inspector-page")).toHaveTextContent("UNIQUE FIRST EVIDENCE"));
+  await act(async () => { fireEvent.click(screen.getByRole("link", { name: "Switch exact request" })); });
+  expect(commits.some(commit => commit.path.endsWith("/second")), JSON.stringify({ commits, actualPath: screen.queryByTestId("current-request-path")?.textContent, calls: mocks.getChainByRequest.mock.calls })).toBe(true);
+  expect(commits.filter(commit => commit.path.endsWith("/second")).every(commit => !commit.text.includes("UNIQUE FIRST EVIDENCE"))).toBe(true);
+  expect(screen.getByTestId("inspector-loading")).toBeInTheDocument();
+  await act(async () => finishSecond(second));
+  expect(screen.getByTestId("inspector-page")).toHaveTextContent("UNIQUE SECOND EVIDENCE");
+  expect(mocks.getChainByRequest.mock.calls.map(call => call[0])).toEqual(["first", "second"]);
 });

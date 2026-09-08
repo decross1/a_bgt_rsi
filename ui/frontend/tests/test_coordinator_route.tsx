@@ -6,9 +6,11 @@
 // action is an explicit row, never a silent gap. An empty cycle log renders a
 // clean empty state. `initialPhasesRun` is injected (null = idle) so the page
 // never polls the D-047 registry in tests.
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import Cycles from "../src/routes/Cycles";
+import * as http from "../src/api/http";
+afterEach(() => vi.restoreAllMocks());
 import {
   ACTIVE_RUN_FIXTURE,
   COORDINATOR_CYCLES_FIXTURE,
@@ -115,5 +117,46 @@ describe("Cycles route", () => {
     expect(screen.getByTestId("coordinator-narration")).toHaveTextContent(
       /Truthfulness of VCG/,
     );
+  });
+});
+
+
+describe("trace response integrity and exact row selection", () => {
+  it("keeps unreadable history and active envelopes unknown instead of empty or idle", async () => {
+    vi.spyOn(http, "getCoordinatorCycles").mockResolvedValue({} as never);
+    vi.spyOn(http, "getActiveRuns").mockResolvedValue({} as never);
+    render(<Cycles />);
+    expect(screen.queryByTestId("coordinator-idle")).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("coordinator-error")).toHaveTextContent("unavailable"));
+    expect(screen.getByTestId("coordinator-phases")).toHaveTextContent("unavailable");
+    expect(screen.queryByTestId("coordinator-empty")).toBeNull();
+    expect(screen.queryByText(/0 readable of 0 loaded/)).toBeNull();
+  });
+
+  it("retains exact last-good history after a malformed refresh", async () => {
+    vi.spyOn(http, "getCoordinatorCycles")
+      .mockResolvedValueOnce({ cycles: COORDINATOR_CYCLES_FIXTURE } as never)
+      .mockResolvedValue({ cycles: null } as never);
+    render(<Cycles pollMs={20} initialPhasesRun={null} />);
+    await screen.findAllByTestId("coordinator-cycle-row");
+    await waitFor(() => expect(screen.getByTestId("coordinator-error")).toHaveTextContent("History refresh failed"));
+    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(COORDINATOR_CYCLES_FIXTURE.length);
+    expect(screen.queryByTestId("coordinator-empty")).toBeNull();
+  });
+
+  it("selects the clicked evidence when displayed identity fields collide", () => {
+    const first = { ...COORDINATOR_CYCLES_FIXTURE[0], outcomes: [{ action: "noop", status: "passed" }] } as CoordinatorCycle;
+    const second = { ...first, outcomes: [{ action: "noop", status: "errored", error: "second exact row failure" }] } as CoordinatorCycle;
+    render(<Cycles initial={[first, second]} initialPhasesRun={null} />);
+    fireEvent.click(screen.getAllByTestId("coordinator-cycle-row")[1]);
+    fireEvent.click(screen.getByRole("button", { name: "Complete recorded cycle evidence" }));
+    expect(screen.getByTestId("coordinator-cycle-card")).toHaveTextContent("second exact row failure");
+    expect(screen.getAllByTestId("coordinator-cycle-row")[1]).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("does not label mixed passed and unknown outcomes as a passed cycle", () => {
+    const mixed = { ...COORDINATOR_CYCLES_FIXTURE[0], outcomes: [{action: "one", status: "passed"}, {action: "two", status: "unreported"}] } as CoordinatorCycle;
+    render(<Cycles initial={[mixed]} initialPhasesRun={null} />);
+    expect(screen.getByTestId("coordinator-cycle-row")).not.toHaveAttribute("data-outcome", "passed");
   });
 });

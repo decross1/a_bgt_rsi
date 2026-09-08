@@ -38,7 +38,9 @@ function isNode(value: unknown): value is ActivityNode {
     typeof node.id === "string" &&
     node.id.length > 0 &&
     typeof node.label === "string" &&
-    ["dispatch", "call", "tool"].includes(String(node.kind))
+    ["dispatch", "call", "tool"].includes(String(node.kind)) &&
+    (node.task_id == null || typeof node.task_id === "string") &&
+    (node.request_id == null || typeof node.request_id === "string")
   );
 }
 
@@ -174,9 +176,18 @@ export default function ActivityGraph({ data }: { data: ActivityGraphResponse })
   const malformedResponse = !Array.isArray(data?.nodes) || !Array.isArray(data?.edges);
   const rawNodes: unknown[] = Array.isArray(data?.nodes) ? data.nodes : [];
   const rawEdges: unknown[] = Array.isArray(data?.edges) ? data.edges : [];
-  const nodes = rawNodes.filter(isNode);
+  const candidateNodes = rawNodes.filter(isNode);
+  const candidateEdges = rawEdges.filter(isEdge);
+  const counts = (items: { id: string }[]) => {
+    const result = new Map<string, number>();
+    for (const item of items) result.set(item.id, (result.get(item.id) ?? 0) + 1);
+    return result;
+  };
+  const nodeCounts = counts(candidateNodes);
+  const edgeCounts = counts(candidateEdges);
+  const nodes = candidateNodes.filter((node) => nodeCounts.get(node.id) === 1);
   const nodeIds = new Set(nodes.map((node) => node.id));
-  const edges = rawEdges.filter(isEdge).filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
+  const edges = candidateEdges.filter((edge) => edgeCounts.get(edge.id) === 1 && nodeIds.has(edge.source) && nodeIds.has(edge.target));
   const excludedCount = rawNodes.length - nodes.length + rawEdges.length - edges.length;
   const filteredNodes = nodes.filter((node) => nodeMatches(node, query, statusFilter));
   const filteredIds = new Set(filteredNodes.map((node) => node.id));
@@ -234,6 +245,18 @@ export default function ActivityGraph({ data }: { data: ActivityGraphResponse })
     );
   }
 
+  const rejectedEvidence = excludedCount > 0 ? <div className="trace-notice" data-tone="warning" data-testid="activity-graph-excluded">
+    <p>{excludedCount} malformed, ambiguous or dangling map item{excludedCount === 1 ? " was" : "s were"} excluded from selectable relationships.</p>
+    <details><summary>Unreadable or ambiguous source items</summary><pre className="trace-node-json">{JSON.stringify({
+      nodes: rawNodes.filter((node) => !nodes.includes(node as ActivityNode)),
+      edges: rawEdges.filter((edge) => !edges.includes(edge as ActivityEdge)),
+    }, null, 2)}</pre></details>
+  </div> : null;
+
+  if (nodes.length === 0 && excludedCount > 0) {
+    return <div><p className="trace-empty">No unambiguous readable map records were established. This is not a certified empty map.</p>{rejectedEvidence}</div>;
+  }
+
   if (nodes.length === 0) {
     return <div className="trace-empty" data-testid="activity-graph-empty">No recorded task nodes in this loaded map.</div>;
   }
@@ -251,15 +274,11 @@ export default function ActivityGraph({ data }: { data: ActivityGraphResponse })
         <span>Generated {generatedAt}</span>
       </div>
 
-      {excludedCount > 0 && (
-        <div className="trace-notice" data-tone="warning" data-testid="activity-graph-excluded">
-          {excludedCount} malformed or dangling map item{excludedCount === 1 ? " was" : "s were"} excluded.
-        </div>
-      )}
+      {rejectedEvidence}
 
       {data.truncated && (
         <div className="trace-notice" data-tone="warning" data-testid="activity-graph-truncated">
-          This snapshot was capped at {data.node_limit ?? nodes.length} nodes. The map is incomplete.
+          This snapshot was capped at {typeof data.node_limit === "number" && Number.isFinite(data.node_limit) ? data.node_limit : "an unspecified number of"} nodes. The map is incomplete.
         </div>
       )}
 
@@ -280,8 +299,8 @@ export default function ActivityGraph({ data }: { data: ActivityGraphResponse })
               <section className="trace-zero-edge" data-testid="activity-graph-zero-edge" aria-labelledby="zero-edge-heading">
                 <div className="trace-section-heading">
                   <div>
-                    <h2 id="zero-edge-heading">No recorded relationships</h2>
-                    <p>These records have no supplied edges, so they are shown as a readable list.</p>
+                    <h2 id="zero-edge-heading">{rawEdges.length === 0 ? "No recorded relationships" : "No readable relationships in this view"}</h2>
+                    <p>These displayed records have no admitted connecting edges in this view, so they are shown as a readable list.</p>
                   </div>
                 </div>
                 <GraphList nodes={filteredNodes} selectedId={selectedId} onSelect={selectNode} setNodeRef={setNodeRef} />

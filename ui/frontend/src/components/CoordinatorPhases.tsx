@@ -26,17 +26,21 @@ function phaseState(phase: string, currentStep: unknown): PhaseState {
 export default function CoordinatorPhases({
   activeRun,
   sourceError = null,
+  sourcePending = false,
 }: {
   activeRun: CoordinatorActiveRun | null;
   sourceError?: string | null;
+  sourcePending?: boolean;
 }) {
   const now = useNow();
+
+  if (sourcePending) return <section className="trace-observation" data-state="loading" data-testid="coordinator-phases"><div><h2 className="trace-kicker">Current coordinator observation</h2><strong>Active-cycle observation loading</strong><p>Running or idle state is not established yet.</p></div></section>;
 
   if (sourceError) {
     return (
       <section className="trace-observation" data-state="unavailable" data-testid="coordinator-phases">
         <div>
-          <p className="trace-kicker">Current coordinator observation</p>
+          <h2 className="trace-kicker">Current coordinator observation</h2>
           <strong>Active-cycle feed unavailable</strong>
           <p>No idle or running claim can be made from this read.</p>
         </div>
@@ -52,7 +56,7 @@ export default function CoordinatorPhases({
     return (
       <section className="trace-observation" data-state="idle" data-testid="coordinator-phases">
         <div>
-          <p className="trace-kicker">Current coordinator observation</p>
+          <h2 className="trace-kicker">Current coordinator observation</h2>
           <strong data-testid="coordinator-idle">Coordinator idle · No active coordinator cycle recorded</strong>
           <p>The active-runs source returned no coordinator entry. Recorded history remains below.</p>
         </div>
@@ -74,7 +78,7 @@ export default function CoordinatorPhases({
     <section className="trace-observation" data-state={possiblyStale ? "stale" : "active"} data-testid="coordinator-phases">
       <div className="trace-observation-heading">
         <div>
-          <p className="trace-kicker">Current coordinator observation</p>
+          <h2 className="trace-kicker">Current coordinator observation</h2>
           <strong>{possiblyStale ? "Recorded active cycle may be stale" : "Coordinator cycle recorded as active"}</strong>
         </div>
         {typeof activeRun.run_id === "string" && activeRun.run_id && (

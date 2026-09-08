@@ -14,7 +14,7 @@
 // CoordinatorCycleCard region+heading+labelled-list fix (the one component this
 // audit owns). The assertions below pin BOTH the pre-existing good behavior and
 // that fix, so a regression in either is caught.
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import CoordinatorCycleCard from "../src/components/CoordinatorCycleCard";
 import CoordinatorPhases from "../src/components/CoordinatorPhases";
@@ -112,13 +112,14 @@ describe("a11y audit — CoordinatorPhases stepper", () => {
     expect(current[0]).toHaveAttribute("data-testid", "phase-dispatch");
   });
 
-  it("hides the decorative arrow connectors from assistive tech (aria-hidden)", () => {
+  it("preserves the named ordered phases without exposed decorative arrows", () => {
     render(<CoordinatorPhases activeRun={ACTIVE_RUN_FIXTURE} />);
     const stepper = screen.getByTestId("coordinator-stepper");
-    // The "→" glyphs are purely decorative; they must be aria-hidden so a
-    // screen reader doesn't read "right-arrow" between every phase.
-    const hidden = stepper.querySelectorAll('[aria-hidden="true"]');
-    expect(hidden.length).toBe(3); // one connector between each of 4 phases
+    expect(within(stepper).getAllByRole("listitem")).toHaveLength(4);
+    expect(stepper).not.toHaveTextContent("→");
+    for (const name of ["assess", "plan", "validate", "dispatch"]) {
+      expect(within(stepper).getByText(name)).toBeInTheDocument();
+    }
   });
 
   it("has a heading in both the active and idle states", () => {
@@ -126,36 +127,35 @@ describe("a11y audit — CoordinatorPhases stepper", () => {
       <CoordinatorPhases activeRun={ACTIVE_RUN_FIXTURE} />,
     );
     expect(
-      screen.getByRole("heading", { name: /coordinator phases/i }),
+      screen.getByRole("heading", { name: /Current coordinator observation/i }),
     ).toBeInTheDocument();
     unmount();
     // Idle state (no live cycle) still labels itself with the same heading —
     // absence is legible AND navigable.
     render(<CoordinatorPhases activeRun={null} />);
     expect(
-      screen.getByRole("heading", { name: /coordinator phases/i }),
+      screen.getByRole("heading", { name: /Current coordinator observation/i }),
     ).toBeInTheDocument();
   });
 });
 
 describe("a11y audit — /cycles route over LIVE-shaped rows", () => {
-  it("renders every cycle as a named article landmark, including the errored one", () => {
-    render(
-      <Cycles initial={COORDINATOR_CYCLES_FIXTURE} initialPhasesRun={null} />,
-    );
-    // The page heading.
-    expect(
-      screen.getByRole("heading", { name: /cycles/i, level: 1 }),
-    ).toBeInTheDocument();
-    // Each cycle is an <article> landmark. getAllByRole("article") is the
-    // assistive-tech view of the list; it must find one per renderable cycle.
-    const articles = screen.getAllByRole("article");
-    expect(articles.length).toBe(COORDINATOR_CYCLES_FIXTURE.length);
-    // The errored cycle's article is named by its (off-domain) topic — an
-    // auditor scanning landmarks reads WHAT failed, not an anonymous card.
-    const erroredArticle = articles.find((a) =>
-      a.getAttribute("aria-labelledby"),
-    );
-    expect(erroredArticle).toBeTruthy();
+  it("keeps every bounded cycle selectable by name and exposes its named evidence article", () => {
+    render(<Cycles initial={COORDINATOR_CYCLES_FIXTURE} initialPhasesRun={null} />);
+    expect(screen.getByRole("heading", { name: "Trace history", level: 1 })).toBeInTheDocument();
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+    for (const cycle of COORDINATOR_CYCLES_FIXTURE) {
+      const row = screen.getAllByTestId("coordinator-cycle-row").find(el => el.textContent?.includes(cycle.topic));
+      expect(row).toBeDefined();
+      expect(row).toHaveAccessibleName(new RegExp(cycle.topic.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+      fireEvent.click(row!);
+      fireEvent.click(screen.getByRole("button", { name: "Complete recorded cycle evidence" }));
+      const article = screen.getByRole("article");
+      expect(article).toHaveAccessibleName(cycle.topic);
+      for (const outcome of cycle.outcomes) {
+        expect(article).toHaveTextContent(outcome.status);
+        if (outcome.error) expect(article).toHaveTextContent(outcome.error);
+      }
+    }
   });
 });

@@ -58,8 +58,8 @@ function outcomeFor(cycle: CoordinatorCycle): OutcomeFilter {
     .map((item) => text(item?.status).toLowerCase())
     .filter(Boolean);
   if (statuses.includes("errored")) return "errored";
-  if (statuses.includes("passed")) return "passed";
-  if (statuses.includes("skipped")) return "skipped";
+  if (statuses.length === cycle.outcomes.length && statuses.length > 0 && statuses.every((status) => status === "passed")) return "passed";
+  if (statuses.length === cycle.outcomes.length && statuses.length > 0 && statuses.every((status) => status === "skipped")) return "skipped";
   if (statuses.length === 0 && cycle.plan.length > 0) return "pending";
   return "other";
 }
@@ -77,7 +77,7 @@ function actionLabel(cycle: CoordinatorCycle): string {
 }
 
 function cycleIdentity(cycle: CoordinatorCycle): string {
-  return [text(cycle.run_id), timestampKey(cycle), text(cycle.topic), text(cycle.agent)].join("\u001f");
+  return JSON.stringify(canonicalValue(cycle));
 }
 
 function cycleSearchText(cycle: CoordinatorCycle): string {
@@ -215,6 +215,7 @@ export default function Cycles({
   const [loaded, setLoaded] = useState(initial !== undefined);
   const [phasesRun, setPhasesRun] = useState<CoordinatorActiveRun | null>(initialPhasesRun ?? null);
   const [phasesError, setPhasesError] = useState<string | null>(initialPhasesError ?? null);
+  const [phasesLoaded, setPhasesLoaded] = useState(initialPhasesRun !== undefined || initialPhasesError !== undefined);
   const [range, setRange] = useState<Range>("all");
   const [direction, setDirection] = useState<Direction>("newest");
   const [outcome, setOutcome] = useState<OutcomeFilter>("all");
@@ -231,7 +232,8 @@ export default function Cycles({
       getCoordinatorCycles()
         .then((response) => {
           if (!active) return;
-          const rows = Array.isArray(response?.cycles) ? response.cycles : [];
+          if (!Array.isArray(response?.cycles)) throw new Error("Cycle history response has no readable cycles array.");
+          const rows = response.cycles;
           setCycles([...rows].sort((a, b) => timestampKey(b).localeCompare(timestampKey(a))));
           setLoaded(true);
           setHistoryError(null);
@@ -254,13 +256,17 @@ export default function Cycles({
       getActiveRuns()
         .then((response) => {
           if (!active) return;
-          const runs = Array.isArray(response?.runs) ? response.runs : [];
+          if (!Array.isArray(response?.runs) || response.runs.some((run) => run === null || typeof run !== "object" || Array.isArray(run) || typeof run.kind !== "string")) {
+            throw new Error("Active-runs response has no complete readable runs array.");
+          }
+          const runs = response.runs;
           const live = runs.find((run) => run != null && run.kind === "coordinator");
           setPhasesRun((live as CoordinatorActiveRun | undefined) ?? null);
           setPhasesError(null);
+          setPhasesLoaded(true);
         })
         .catch((error) => {
-          if (active) setPhasesError(String(error));
+          if (active) { setPhasesError(String(error)); setPhasesLoaded(true); }
         });
     load();
     const id = setInterval(load, pollMs);
@@ -290,15 +296,14 @@ export default function Cycles({
   const safePage = Math.min(page, pageCount);
   const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
   const pageGroups = groupPage(pageRows);
-  const selected =
-    filtered.find((cycle) => cycleIdentity(cycle) === selectedKey) ??
-    filtered.find(isMeaningful) ??
-    filtered[0] ??
-    null;
+  const selected = selectedKey !== null
+    ? filtered.find((cycle) => cycleIdentity(cycle) === selectedKey) ?? null
+    : filtered.find(isMeaningful) ?? filtered[0] ?? null;
 
   useEffect(() => {
     setPage(1);
     setRecordOpen(false);
+    setSelectedKey(null);
   }, [direction, normalizedQuery, outcome, range]);
 
   const selectCycle = (cycle: CoordinatorCycle) => {
@@ -323,14 +328,14 @@ export default function Cycles({
         </nav>
       </header>
 
-      <CoordinatorPhases activeRun={phasesRun} sourceError={phasesError} />
+      <CoordinatorPhases activeRun={phasesRun} sourceError={phasesError} sourcePending={!phasesLoaded} />
 
       <section className="trace-history" aria-labelledby="trace-history-heading">
         <div className="trace-section-heading">
           <div>
             <h2 id="trace-history-heading">Recorded cycles</h2>
             <p>
-              {admitted.length} readable of {cycles.length} loaded
+              {loaded ? `${admitted.length} readable of ${cycles.length} loaded` : "History count not established"}
               {excludedCount > 0 ? ` · ${excludedCount} malformed excluded` : ""}
             </p>
           </div>
@@ -455,6 +460,7 @@ export default function Cycles({
         )}
       </section>
 
+      {selectedKey !== null && !selected && <p role="status" className="trace-notice">The selected source record is no longer present in these results. Select a record to inspect its evidence.</p>}
       {selected && (
         <section className="trace-selected" aria-labelledby="selected-cycle-heading">
           <div className="trace-section-heading">
