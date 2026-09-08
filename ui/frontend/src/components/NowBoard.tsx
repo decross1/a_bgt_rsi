@@ -229,46 +229,6 @@ export interface NowBoardProps {
   // running, and here is when something last did" — never to imply a run is
   // live. Absent/unparseable simply drops the clause.
   lastFinishedIso?: string | null;
-  // Pulse needs a visible first-viewport source state while the registry is
-  // pending or unavailable. Other historical mounts retain their quiet-null
-  // loading behavior.
-  orientation?: boolean;
-}
-
-function RunSourceUnknown({
-  children,
-  detail,
-}: {
-  children: string;
-  detail?: string;
-}) {
-  return (
-    <section
-      data-testid="now-board"
-      data-source-state="unknown"
-      style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}
-    >
-      <div
-        data-testid="now-board-unknown"
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--space-2)",
-          color: "var(--fg)",
-          fontSize: "var(--text-prose-lg)",
-          fontWeight: "var(--weight-medium)",
-        }}
-      >
-        <StatusDot status="warn" label="run source unknown" />
-        {children}
-      </div>
-      {detail && (
-        <div style={{ color: "var(--fg-muted)", fontSize: "var(--text-meta)" }}>
-          {detail}
-        </div>
-      )}
-    </section>
-  );
 }
 
 // The one-line verdict for the strip. Registered wins (a registry run IS
@@ -302,7 +262,6 @@ function NowBoard({
   liveCalls,
   telemetry,
   lastFinishedIso,
-  orientation = false,
 }: NowBoardProps) {
   // Several suites module-mock ../api/http with a fixed export list that
   // predates getActiveRuns. Vitest's mock proxy THROWS on the mere access
@@ -342,23 +301,9 @@ function NowBoard({
   const now = nowMs ?? tick;
 
   if (skew) {
-    if (orientation) {
-      return (
-        <RunSourceUnknown detail="The active-runs endpoint is not present in this backend build.">
-          Current running state is unknown.
-        </RunSourceUnknown>
-      );
-    }
     return <EndpointMissingNote endpoint={ACTIVE_RUNS_ENDPOINT} />;
   }
   if (error) {
-    if (orientation) {
-      return (
-        <RunSourceUnknown detail={error}>
-          Run registry unavailable — current running state is unknown.
-        </RunSourceUnknown>
-      );
-    }
     return (
       <div className="text-xs text-red-400" data-testid="now-board-error">
         {error}
@@ -368,41 +313,24 @@ function NowBoard({
   // No payload yet (first poll pending, or a static render with nothing
   // injected): render nothing — the board must never claim idle OR busy
   // without data.
-  if (data == null) {
-    return orientation ? (
-      <RunSourceUnknown>Reading run registry — current state pending.</RunSourceUnknown>
-    ) : null;
-  }
+  if (data == null) return null;
 
   // runs is producer-owned: drop non-object entries instead of crashing.
-  const runsShapeValid = Array.isArray(data.runs);
-  const runs = runsShapeValid
+  const runs = Array.isArray(data.runs)
     ? data.runs.filter(
         (r): r is ActiveRun =>
           r != null && typeof r === "object" && !Array.isArray(r),
       )
     : [];
-  const malformedRuns = runsShapeValid ? data.runs.length - runs.length : null;
   const skipped =
     typeof data.skipped === "number" && Number.isFinite(data.skipped)
       ? data.skipped
       : 0;
-  const skippedMalformed =
-    data.skipped !== undefined &&
-    !(typeof data.skipped === "number" && Number.isFinite(data.skipped));
-  // A malformed or stale source cannot certify an idle/running-now verdict.
-  // Keep readable last-good rows visible, but label their currency honestly.
-  const currentStateUnknown =
-    staleFailing ||
-    !runsShapeValid ||
-    (malformedRuns != null && malformedRuns > 0) ||
-    skipped > 0 ||
-    skippedMalformed;
 
   // The strip only renders when a feed prop was provided at all — an old
   // mount (no feeds) must not claim IDLE without data.
   const stripLive = liveCalls !== undefined || telemetry !== undefined;
-  const verdict = stripLive && !currentStateUnknown
+  const verdict = stripLive
     ? stripVerdict(runs, liveCalls, telemetry, now)
     : null;
   // R3: the verdict was a full-width banner competing with the owed hero. It
@@ -418,7 +346,6 @@ function NowBoard({
   return (
     <section
       data-testid="now-board"
-      data-source-state={currentStateUnknown ? "unknown" : "current"}
       style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}
     >
       <div
@@ -429,22 +356,18 @@ function NowBoard({
           gap: "var(--space-2)",
         }}
       >
-        {!orientation && (
-          <h3
-            style={{
-              margin: 0,
-              fontSize: "var(--text-title)",
-              fontWeight: "var(--weight-medium)",
-              color: "var(--fg)",
-            }}
-          >
-            Running now
-          </h3>
-        )}
+        <h3
+          style={{
+            margin: 0,
+            fontSize: "var(--text-title)",
+            fontWeight: "var(--weight-medium)",
+            color: "var(--fg)",
+          }}
+        >
+          Running now
+        </h3>
         <span style={{ fontSize: "var(--text-meta)", color: "var(--fg-muted)" }}>
-          {!runsShapeValid || currentStateUnknown
-            ? "registered-run count unknown"
-            : `${runs.length} registered run${runs.length === 1 ? "" : "s"}`}
+          {runs.length} registered run{runs.length === 1 ? "" : "s"}
         </span>
         {verdict && (
           <span
@@ -469,28 +392,6 @@ function NowBoard({
         )}
       </div>
 
-      {currentStateUnknown && (
-        <div
-          data-testid="now-board-unknown"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--space-2)",
-            color: "var(--status-warn)",
-            fontSize: "var(--text-ui)",
-          }}
-        >
-          <StatusDot status="warn" label="run source unknown" />
-          {staleFailing
-            ? "Run registry refresh is failing; current running state is unknown."
-            : !runsShapeValid
-              ? "Run registry response is malformed; current running state is unknown."
-              : malformedRuns != null && malformedRuns > 0
-                ? "Unreadable run records prevent a current running-state verdict."
-                : "Skipped-file metadata prevents a complete current running-state verdict."}
-        </div>
-      )}
-
       {skipped > 0 && (
         <div
           data-testid="now-board-skipped"
@@ -500,25 +401,7 @@ function NowBoard({
         </div>
       )}
 
-      {malformedRuns != null && malformedRuns > 0 && (
-        <div
-          data-testid="now-board-malformed"
-          style={{ fontSize: "var(--text-meta)", color: "var(--status-warn)" }}
-        >
-          {malformedRuns} unreadable run record{malformedRuns === 1 ? "" : "s"} omitted
-        </div>
-      )}
-
-      {skippedMalformed && (
-        <div
-          data-testid="now-board-skipped-unknown"
-          style={{ fontSize: "var(--text-meta)", color: "var(--status-warn)" }}
-        >
-          unreadable skipped-file count
-        </div>
-      )}
-
-      {runs.length === 0 && !currentStateUnknown ? (
+      {runs.length === 0 ? (
         <div
           data-testid="now-board-empty"
           style={{
@@ -538,7 +421,7 @@ function NowBoard({
           no registered runs
           {lastFinishedIso && <span>· last finished {lastFinished} ago</span>}
         </div>
-      ) : runs.length > 0 ? (
+      ) : (
         <div
           style={{
             display: "grid",
@@ -550,7 +433,7 @@ function NowBoard({
             <RunCard key={asText(run.run_id) || `idx-${i}`} run={run} now={now} />
           ))}
         </div>
-      ) : null}
+      )}
 
       {verdict && verdict.evidence.length > 0 && (
         <div

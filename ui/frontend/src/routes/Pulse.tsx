@@ -1,19 +1,42 @@
-// Pulse (/) — a compact source-aware orientation surface. The first view keeps
-// three meanings separate: recorded human-request metadata, the current run
-// registry, and recorded research history. Full activity, runtime telemetry,
-// dated delivery notes, and launch controls remain available in disclosures.
-// The lab queue stays opt-in because loading it may trigger topic/embedding
-// assessment; hash and command-palette navigation reveal it without loading.
+// Pulse (/) — the designed dashboard (revamp R3, on the R0 token system).
 //
-// This page owns the WS telemetry stream and the single coordinator-cycle
-// poll. All polls use pollhub's in-flight guard, change detection, and
-// stale-while-revalidate behavior. The page clock is coarse because it feeds
-// only source-age and history-bucket labels; run timers tick inside NowBoard.
+// The page is THREE ZONES, read top-down in the F-pattern, with deliberately
+// UNEQUAL emphasis (the R3 brief's anti-pattern list: no KPI-tile carpet, no
+// uniform emphasis, no fake activity):
+//
+//   0. Identity bar — hostname · backend sha · the HealthVerdict, now a
+//      compact status LINE rather than a panel. System health is a
+//      precondition, not the headline.
+//   1. HERO — OweCard: what the human actually owes (gate verdicts + L4/L5
+//      findings). Biggest type, highest contrast, first thing read. Everything
+//      below the ladder bar renders inside it as ONE muted line, never a row.
+//   1b. LabTodo — the LAB's queue (what Nara and the PI advance on their own),
+//      directly under the hero and deliberately quieter. The two queues are
+//      adjacent so the ownership line is obvious, and the panel points back up
+//      at the hero rather than restating the human's work.
+//   2. The loop's state — "Running now" (the D-047 registry as Vercel-style
+//      deployment cards), then the lab-activity sparkgrid + the L0->L5 ladder
+//      mini-funnel side by side.
+//   3. Secondary, dense — last cycle, host/GPU strip, the two model servers,
+//      and the launch disclosure. Marked data-density="dense" so shared rows
+//      tighten to 28px without per-component props.
+//
+// This page owns the WS telemetry stream; LoopAlertBanner is global (App).
+// It also owns the ONE /api/coordinator/cycles poll, handing the rows to both
+// LastCycleLine and the sparkgrid instead of letting them each poll.
+//
+// PERF (2026-08-18, owner: "it keeps refreshing"): every poll on this page
+// now runs through the pollhub scheduler (src/api/pollhub.ts) — one heartbeat
+// timer, per-source cadences, in-flight guards, change detection (an
+// unchanged payload re-renders nothing), and stale-while-revalidate (a failed
+// refetch never blanks rendered data). The page clock dropped from 1 Hz to
+// 0.2 Hz (it only feeds staleness math and day-bucket boundaries), heavy
+// children are memoized, and the iterations poll asks the backend for
+// timestamps only (the full payload measured 3.4 MB per poll).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import Card from "../design/Card";
 import { registerPaletteActions } from "../design/CommandPalette";
-import DevelopmentNotice from "../components/DevelopmentNotice";
 import HealthStrip from "../components/HealthStrip";
 import HealthVerdict, {
   excludeQwenReadErrors,
@@ -33,7 +56,6 @@ import { getActivityMonitor } from "../api/activity";
 import { getCoordinatorCycles, getHealth, getIterations, getServedModels } from "../api/http";
 import { usePolled } from "../api/pollhub";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
-import { ageLabel } from "../ladderBar";
 import { useNow } from "../time";
 import type { LiveCalls, MonitorResponse } from "../types/activity";
 import type {
@@ -42,7 +64,6 @@ import type {
   IterationRecord,
   TelemetrySample,
 } from "../types/schemas";
-import "./now.css";
 
 // Newest parseable ISO instant among candidates, or null. Used for the honest
 // idle line ("last finished Xh ago") — an unparseable timestamp contributes
@@ -121,21 +142,26 @@ function ModelEvidenceCard({
 
   return (
     <div
-      className="now-model-evidence"
-      data-accent={accent}
+      className={`rounded border ${
+        accent === "sky" ? "border-sky-900/60" : "border-zinc-800"
+      } bg-zinc-900/40 p-4`}
     >
-      <div className="now-model-evidence__header">
-        <h2>
+      <div className="flex items-baseline gap-2">
+        <h2
+          className={`text-xs font-medium uppercase tracking-wide ${
+            accent === "sky" ? "text-sky-400" : "text-[var(--fg-muted)]"
+          }`}
+        >
           {title}
         </h2>
         <span
-          className="now-model-evidence__status"
+          className="ml-auto font-mono text-[11px] text-[var(--fg-muted)]"
           data-testid={`${servedModel}-status`}
         >
           {historical ? "● historical" : "● unknown"}
         </span>
       </div>
-      <p>{explanation}</p>
+      <p className="mt-3 text-sm text-[var(--fg-muted)]">{explanation}</p>
     </div>
   );
 }
@@ -167,13 +193,13 @@ export function stripMonitorChurn(
 }
 const fetchMonitor = () => getActivityMonitor(1).then(stripMonitorChurn);
 
+import DevelopmentNotice from "../components/DevelopmentNotice";
+
 export default function Pulse() {
   const { samples, connected } = useTelemetryStream();
   const [launchOpen, setLaunchOpen] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(false);
   const [queueRequested, setQueueRequested] = useState(false);
-  const [queueOpen, setQueueOpen] = useState(false);
-  const [activityOpen, setActivityOpen] = useState(false);
   // 0.2 Hz page clock: `now` feeds only telemetry-staleness math and the
   // sparkgrid's UTC day buckets — nothing on this page renders live seconds.
   // (NowBoard runs its own 1 Hz clock for elapsed counters, in its own
@@ -218,63 +244,33 @@ export default function Pulse() {
     intervalMs: 60000,
     initialDelayMs: 300,
   });
-  const rawCycles: unknown = cyclesPoll.data?.cycles;
-  const cyclesShapeValid =
-    cyclesPoll.data !== undefined && Array.isArray(rawCycles);
   const cycles: CoordinatorCycle[] | null = useMemo(
     () =>
-      Array.isArray(cyclesPoll.data?.cycles)
-        ? cyclesPoll.data.cycles.filter(
-            (cycle): cycle is CoordinatorCycle =>
-              cycle != null &&
-              typeof cycle === "object" &&
-              !Array.isArray(cycle),
-          )
-        : null,
+      cyclesPoll.data === undefined
+        ? null
+        : Array.isArray(cyclesPoll.data?.cycles)
+          ? cyclesPoll.data.cycles
+          : [],
     [cyclesPoll.data],
   );
-  const cyclesMalformedRows =
-    Array.isArray(rawCycles) ? rawCycles.length - (cycles?.length ?? 0) : 0;
-  const cyclesMalformed =
-    cyclesPoll.data !== undefined &&
-    (!cyclesShapeValid || cyclesMalformedRows > 0);
-  const cyclesLoaded = cyclesShapeValid;
+  const cyclesLoaded = cycles !== null;
   // Pulse took over LastCycleLine's poll, so it also inherits its duty to be
   // honest about a FAILED read: an unreachable cycles endpoint must say so,
   // not render an empty slot that reads as "the loop has done nothing".
   // (With SWR, "failed" only blanks the line when NO payload ever landed;
   // once data exists a failing refetch keeps showing it.)
   const cyclesFailed = cyclesPoll.failing && !cyclesLoaded;
-  const cyclesStale = cyclesPoll.failing && cyclesLoaded;
-  const rawIterations: unknown = iterationsPoll.data?.iterations;
-  const iterationsShapeValid =
-    iterationsPoll.data !== undefined && Array.isArray(rawIterations);
   const iterations: IterationRecord[] = useMemo(
     () =>
       Array.isArray(iterationsPoll.data?.iterations)
-        ? iterationsPoll.data.iterations.filter(
-            (iteration): iteration is IterationRecord =>
-              iteration != null &&
-              typeof iteration === "object" &&
-              !Array.isArray(iteration),
-          )
+        ? iterationsPoll.data.iterations
         : [],
     [iterationsPoll.data],
   );
-  const iterationsMalformedRows = Array.isArray(rawIterations)
-    ? rawIterations.length - iterations.length
-    : 0;
-  const iterationsMalformed =
-    iterationsPoll.data !== undefined &&
-    (!iterationsShapeValid || iterationsMalformedRows > 0);
-  const iterationsFailed =
-    iterationsPoll.failing && !iterationsShapeValid;
-  const iterationsStale =
-    iterationsPoll.failing && iterationsShapeValid;
 
   const heroRef = useRef<HTMLDivElement>(null);
-  const labQueueRef = useRef<HTMLDetailsElement>(null);
-  const activityRef = useRef<HTMLDetailsElement>(null);
+  const labQueueRef = useRef<HTMLDivElement>(null);
+  const activityRef = useRef<HTMLDivElement>(null);
   const launchRef = useRef<HTMLDetailsElement>(null);
 
   // Arriving from /ladder's "lab queue →" link (`/#lab-queue`): React Router
@@ -284,10 +280,7 @@ export default function Pulse() {
       setRequestsOpen(true);
       heroRef.current?.scrollIntoView?.({ block: "start" });
     }
-    if (hash === "#lab-queue") {
-      setQueueOpen(true);
-      labQueueRef.current?.scrollIntoView?.({ block: "start" });
-    }
+    if (hash === "#lab-queue") labQueueRef.current?.scrollIntoView?.({ block: "start" });
   }, [hash]);
 
   // Pulse's verbs in the ⌘K palette (the R0 registerPaletteActions seam).
@@ -310,20 +303,14 @@ export default function Pulse() {
         label: "lab queue",
         group: "Pulse",
         keywords: ["nara", "pi", "todo", "owed", "agenda", "refine", "cluster"],
-        perform: () => {
-          setQueueOpen(true);
-          scrollTo(labQueueRef.current);
-        },
+        perform: () => scrollTo(labQueueRef.current),
       },
       {
         id: "pulse-activity",
         label: "show lab activity",
         group: "Pulse",
         keywords: ["sparkgrid", "heatmap", "alive", "ladder"],
-        perform: () => {
-          setActivityOpen(true);
-          scrollTo(activityRef.current);
-        },
+        perform: () => scrollTo(activityRef.current),
       },
       {
         id: "pulse-launch",
@@ -429,389 +416,242 @@ export default function Pulse() {
     () => newestIso([...cycleTimes, ...iterationTimes]),
     [cycleTimes, iterationTimes],
   );
-  const historyPending =
-    !cyclesShapeValid &&
-    !iterationsShapeValid &&
-    !cyclesFailed &&
-    !iterationsFailed &&
-    !cyclesMalformed &&
-    !iterationsMalformed;
-  const historyIncomplete =
-    cyclesFailed ||
-    iterationsFailed ||
-    cyclesStale ||
-    iterationsStale ||
-    cyclesMalformed ||
-    iterationsMalformed;
-  const historyHeadline =
-    cyclesMalformed || iterationsMalformed
-      ? "Recorded history is incomplete because a source response was malformed."
-      : cyclesFailed || iterationsFailed
-        ? "A recorded-history source is unavailable; the latest change is unknown."
-        : cyclesStale || iterationsStale
-          ? lastFinishedIso
-            ? `Latest timestamp in the retained history read ended ${ageLabel(lastFinishedIso, now)} ago; a refresh is failing.`
-            : "History refresh is failing; the latest recorded change is unknown."
-          : lastFinishedIso
-            ? `Latest timestamped cycle or iteration ended ${ageLabel(lastFinishedIso, now)} ago.`
-            : historyPending
-              ? "Reading recorded cycle and iteration sources…"
-              : "No timestamped cycle or iteration appears in the loaded history window.";
 
   return (
-    <div className="page-full now-page" data-testid="pulse-page">
-      <header className="now-page__header">
+    <div className="page-full" data-testid="pulse-page">
+      <header className="mb-5 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="now-page__eyebrow">Lab workspace</p>
-          <h1 className="now-page__title">Now</h1>
-          <p className="now-page__dek">
-            Find the next justified inspection. Recorded requests, running work,
-            and research history keep their own source and meaning.
-          </p>
+          <p className="mb-1 text-xs font-medium uppercase tracking-widest text-[var(--fg-muted)]">Lab workspace</p>
+          <h1 className="text-3xl font-semibold tracking-tight">Now</h1>
+          <p className="mt-2 text-sm text-[var(--fg-muted)]">Find the next useful decision. Keep research evidence and runtime activity separate.</p>
         </div>
-        <div className="now-page__routes" aria-label="Related workspaces">
-          <Link to="/ladder">Explore research</Link>
-          <Link to="/development">Review delivery and readiness</Link>
+        <div className="flex flex-wrap gap-3 text-sm">
+          <Link to="/ladder" className="rounded-md border border-[var(--border-2)] bg-[var(--surface-1)] px-4 py-2 text-[var(--accent)]">Explore research</Link>
+          <Link to="/development" className="rounded-md border border-[var(--border-2)] bg-[var(--surface-1)] px-4 py-2 text-[var(--accent)]">Review delivery and readiness</Link>
         </div>
       </header>
-
-      <div className="now-page__source" data-testid="pulse-source-line">
-        <code>
-          {health?.hostname ?? "host unknown"}
-        </code>
+      {/* ── 0 · identity bar ────────────────────────────────────────────── */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: "var(--space-4)",
+          marginBottom: "var(--space-4)",
+          fontSize: "var(--text-meta)",
+          color: "var(--fg-muted)",
+        }}
+      >
+        <span style={{ fontFamily: "var(--font-mono)", color: "var(--fg)" }}>
+          {health?.hostname ?? "spark"}
+        </span>
         <span>backend-reported revision {health?.version ?? "unknown"}</span>
+        <span style={{ marginLeft: "auto" }}>
+          {gemmaUp === null || !connected || telemetryTimeUnknown || telemetryStale ? (
+            <div data-testid="health-verdict" data-level="unknown"
+              className="flex flex-wrap items-center gap-2 text-[var(--fg-muted)]">
+              <span className="font-semibold">UNKNOWN</span>
+              <span>{!connected
+                ? "Telemetry disconnected"
+                : telemetryStale
+                  ? "Telemetry stale"
+                  : telemetryTimeUnknown
+                    ? "Telemetry time unknown"
+                    : "Awaiting telemetry"}</span>
+              <span>{gemmaUp === null ? "Model health not observed" : gemmaUp
+                ? "Last samples: Gemma metrics present"
+                : "Last samples: Gemma metrics unavailable"}</span>
+              {readErrors.length > 0 && <span>
+                {modelEvidenceMode === "current" ? "Read errors" : "Last read errors"}: {readErrors.join(", ")}
+              </span>}
+            </div>
+          ) : (
+            <HealthVerdict
+              connected={connected}
+              hasTelemetry={cleanSamples.length > 0}
+              ageMs={ageMs}
+              readErrors={readErrors}
+              gemmaUp={gemmaUp}
+            />
+          )}
+        </span>
       </div>
 
-      <section
-        className="now-orientation"
-        aria-labelledby="now-orientation-heading"
-        data-testid="now-orientation"
-      >
-        <header className="now-orientation__header">
-          <p className="now-orientation__eyebrow">Attention and source state</p>
-          <h2 id="now-orientation-heading">What deserves inspection</h2>
-          <p>
-            Each row answers a different question. A recorded request is not a
-            verified current obligation, an idle registry is not research
-            progress, and history does not establish eligibility.
-          </p>
-        </header>
+      {/* ── 1 · HERO — what you owe ─────────────────────────────────────── */}
+      {/* id: LabTodo's blocked-on-you line points back UP at this hero rather
+          than restating the same work as a second list. OweCard (2026-08-18)
+          keeps OweStrip's pins and adds per-row expand + triage/age chips. */}
+      <DevelopmentNotice />
+      <div id="what-you-owe" ref={heroRef} className="mt-4">
+        <details data-testid="pulse-human-requests" open={requestsOpen}
+          onToggle={(event) => setRequestsOpen(event.currentTarget.open)}
+          className="rounded-lg border border-[var(--border-1)] bg-[var(--surface-1)] p-4">
+          <summary className="cursor-pointer text-base font-medium">Recorded human requests</summary>
+          <p className="my-3 text-sm text-[var(--fg-muted)]">Review each request and its date before acting. Older requests remain in the record; this view does not clear them.</p>
+          <OweCard />
+        </details>
+      </div>
 
-        <div id="what-you-owe" ref={heroRef} className="now-anchor">
-          <OweCard
-            expanded={requestsOpen}
-            onExpandedChange={setRequestsOpen}
+      {/* ── 1b · the LAB's queue — secondary to the hero, by design ─────── */}
+      {/* The human's queue is the hero; what Nara and the PI advance on their
+          own sits directly under it, quieter. */}
+      <div id="lab-queue" ref={labQueueRef} style={{ marginTop: "var(--space-4)" }}>
+        {queueRequested ? <LabTodo /> : <Card testId="pulse-queue-not-read">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div><h2 className="text-base font-medium">Lab queue</h2>
+              <p className="mt-1 text-sm text-[var(--fg-muted)]">The queue has not been loaded in this view. Its contents and freshness are unknown.</p>
+              <p className="mt-1 text-xs text-[var(--fg-muted)]">Loading may run a topic and embedding assessment. Existing cache behavior is retained.</p>
+            </div>
+            <button type="button" onClick={() => setQueueRequested(true)}
+              className="rounded-md border border-[var(--border-2)] px-4 py-2 text-sm text-[var(--accent)]">Load lab queue</button>
+          </div>
+        </Card>}
+      </div>
+
+      {/* ── 2 · the loop's state ────────────────────────────────────────── */}
+      <div style={{ marginTop: "var(--space-5)" }}>
+        <Card testId="pulse-running-now">
+          <NowBoard
+            live
+            liveCalls={liveCalls}
+            telemetry={cleanSamples[cleanSamples.length - 1] ?? null}
+            lastFinishedIso={lastFinishedIso}
           />
-        </div>
+        </Card>
+      </div>
 
-        <section className="now-lane" data-testid="pulse-running-now">
-          <header className="now-lane__label">
-            <p className="now-lane__eyebrow">Runtime now</p>
-            <h3>Running work</h3>
-            <span className="now-lane__source">/api/activity/active_runs</span>
-          </header>
-          <div className="now-lane__body">
-            <div className="now-runtime-board">
-              <NowBoard
-                live
-                orientation
-                liveCalls={liveCalls}
-                telemetry={cleanSamples[cleanSamples.length - 1] ?? null}
-                lastFinishedIso={lastFinishedIso}
-              />
-            </div>
-            <div className="now-runtime-context">
-              {gemmaUp === null ||
-              !connected ||
-              telemetryTimeUnknown ||
-              telemetryStale ? (
-                <div
-                  data-testid="health-verdict"
-                  data-level="unknown"
-                  className="flex flex-wrap items-center text-[var(--fg-muted)]"
-                >
-                  <span className="font-semibold">UNKNOWN</span>
-                  <span>
-                    {!connected
-                      ? "Telemetry disconnected"
-                      : telemetryStale
-                        ? "Telemetry stale"
-                        : telemetryTimeUnknown
-                          ? "Telemetry time unknown"
-                          : "Awaiting telemetry"}
-                  </span>
-                  <span>
-                    {gemmaUp === null
-                      ? "Model health not observed"
-                      : gemmaUp
-                        ? "Last samples: Gemma metrics present"
-                        : "Last samples: Gemma metrics unavailable"}
-                  </span>
-                  {readErrors.length > 0 && (
-                    <span>
-                      {modelEvidenceMode === "current"
-                        ? "Read errors"
-                        : "Last read errors"}
-                      : {readErrors.join(", ")}
-                    </span>
-                  )}
-                </div>
-              ) : (
-                <HealthVerdict
-                  connected={connected}
-                  hasTelemetry={cleanSamples.length > 0}
-                  ageMs={ageMs}
-                  readErrors={readErrors}
-                  gemmaUp={gemmaUp}
-                />
-              )}
-            </div>
-          </div>
-        </section>
+      <div
+        ref={activityRef}
+        style={{
+          marginTop: "var(--space-4)",
+          display: "grid",
+          gap: "var(--space-4)",
+          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+        }}
+      >
+        <Card title="Lab activity" testId="pulse-lab-activity">
+          <LabSparkgrid
+            iterationTimes={iterationTimes}
+            cycleTimes={cycleTimes}
+            nowMs={now}
+          />
+        </Card>
+        {/* Hides itself entirely when the ledger has never been written (204)
+            or the running binary predates /api/ladder (404) — no error noise. */}
+        <LadderMiniFunnel />
+      </div>
 
-        <section className="now-lane" data-testid="pulse-recorded-research">
-          <header className="now-lane__label">
-            <p className="now-lane__eyebrow">Recorded research</p>
-            <h3>Latest history</h3>
-            <span className="now-lane__source">cycles + iterations</span>
-          </header>
-          <div className="now-lane__body">
-            <p
-              className={`now-lane__headline${historyIncomplete ? " now-read-warning" : ""}`}
-              data-testid="pulse-history-summary"
-            >
-              {historyHeadline}
-            </p>
-            <p className="now-lane__qualifier">
-              This is recorded execution history. It is not a scientific
-              result, current eligibility, or a progress score.
-            </p>
-            <div className="now-lane__meta">
-              <Link className="now-inline-link" to="/cycles">
-                Inspect trace history
-              </Link>
-              <Link className="now-inline-link" to="/ladder">
-                Inspect research claims
-              </Link>
-            </div>
-          </div>
-        </section>
-      </section>
-
-      <section
-        className="now-support"
+      {/* ── 3 · secondary, dense ────────────────────────────────────────── */}
+      <div
         data-density="dense"
         data-testid="pulse-secondary"
+        style={{
+          marginTop: "var(--space-6)",
+          paddingTop: "var(--space-4)",
+          borderTop: "1px solid var(--border-1)",
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--space-4)",
+        }}
       >
-        <h2 className="now-support__heading">Evidence and controls</h2>
+        {cyclesLoaded ? (
+          <LastCycleLine initial={cycles} />
+        ) : cyclesFailed ? (
+          <div
+            data-testid="pulse-cycles-unavailable"
+            style={{ fontSize: "var(--text-meta)", color: "var(--status-warn)" }}
+          >
+            /api/coordinator/cycles unreachable — the loop's last cycle is
+            UNKNOWN, not absent.
+          </div>
+        ) : null}
 
-        <details
-          id="lab-queue"
-          ref={labQueueRef}
-          className="now-disclosure"
-          open={queueOpen}
-          onToggle={(event) => setQueueOpen(event.currentTarget.open)}
-          data-testid="pulse-lab-queue"
+        <HealthStrip samples={cleanSamples} />
+
+        {/* Entry point to the Model I/O viewer (owner request 2026-08-18):
+            the cards below say the servers are healthy; this link answers
+            what is actually passing through them. */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            fontSize: "var(--text-meta)",
+          }}
         >
-          <summary>
-            <span className="now-disclosure__title">Lab queue</span>
-            <span className="now-disclosure__state">
-              {queueRequested
-                ? "Loaded on request · source details shown below"
-                : "Not loaded · freshness unknown · expensive source remains opt-in"}
-            </span>
-          </summary>
-          <div className="now-disclosure__body">
-            {queueRequested ? (
-              <LabTodo />
-            ) : (
-              <div className="now-queue-intro" data-testid="pulse-queue-not-read">
-                <div>
-                  <p>
-                    The lab queue has not been loaded in this view, so its
-                    contents and freshness are unknown.
-                  </p>
-                  <p>
-                    Loading may run topic and embedding assessment. Existing
-                    cache behavior and request shape are retained.
-                  </p>
-                </div>
-                <button type="button" onClick={() => setQueueRequested(true)}>
-                  Load lab queue
-                </button>
-              </div>
-            )}
-          </div>
-        </details>
-
-        <details
-          ref={activityRef}
-          className="now-disclosure"
-          open={activityOpen}
-          onToggle={(event) => setActivityOpen(event.currentTarget.open)}
-          data-testid="pulse-recorded-evidence"
+          <Link
+            to="/model-io"
+            data-testid="pulse-model-io-link"
+            className="text-[var(--fg-muted)] transition-colors hover:text-[var(--fg)]"
+          >
+            what&apos;s passing through →
+          </Link>
+        </div>
+        <div
+          style={{
+            display: "grid",
+            gap: "var(--space-4)",
+            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+          }}
         >
-          <summary>
-            <span className="now-disclosure__title">
-              Recorded activity and research distribution
-            </span>
-            <span className="now-disclosure__state">
-              History, last cycle, and ladder counts · recorded evidence
-            </span>
-          </summary>
-          <div className="now-disclosure__body now-evidence-stack">
-            {cyclesMalformed && (cycles?.length ?? 0) === 0 ? (
-              <div data-testid="pulse-cycles-malformed" className="now-read-warning">
-                /api/coordinator/cycles returned malformed history; the last
-                recorded cycle is unknown.
-              </div>
-            ) : cyclesLoaded ? (
-              <LastCycleLine initial={cycles} />
-            ) : cyclesFailed ? (
-              <div data-testid="pulse-cycles-unavailable" className="now-read-warning">
-                /api/coordinator/cycles unreachable — the last recorded cycle
-                is UNKNOWN, not absent.
-              </div>
-            ) : (
-              <div className="now-muted-read">Reading recorded cycle history…</div>
-            )}
-            {cyclesMalformed && (cycles?.length ?? 0) > 0 && (
-              <div data-testid="pulse-cycles-malformed" className="now-read-warning">
-                {cyclesMalformedRows} unreadable cycle-history record
-                {cyclesMalformedRows === 1 ? "" : "s"} omitted; the displayed
-                history is incomplete.
-              </div>
-            )}
-            {cyclesStale && (
-              <div data-testid="pulse-cycles-stale" className="now-read-warning">
-                Cycle-history refresh is failing; displayed rows are a retained
-                read.
-              </div>
-            )}
-            {iterationsFailed ? (
-              <div data-testid="pulse-iterations-unavailable" className="now-read-warning">
-                Iteration history is unavailable; activity distribution is
-                incomplete.
-              </div>
-            ) : iterationsMalformed ? (
-              <div data-testid="pulse-iterations-malformed" className="now-read-warning">
-                Iteration history is malformed; activity distribution is
-                incomplete.
-              </div>
-            ) : iterationsStale ? (
-              <div data-testid="pulse-iterations-stale" className="now-read-warning">
-                Iteration-history refresh is failing; displayed timestamps are
-                a retained read.
-              </div>
-            ) : null}
-            <div className="now-evidence-grid">
-              <Card title="Lab activity" testId="pulse-lab-activity">
-                <LabSparkgrid
-                  iterationTimes={iterationTimes}
-                  cycleTimes={cycleTimes}
-                  nowMs={now}
-                />
-              </Card>
-              <LadderMiniFunnel />
-            </div>
-          </div>
-        </details>
+          {modelEvidenceMode === "current" ? <>
+            <ModelServerCard
+              title={servedModels?.gemma?.model ?? "unknown"}
+              servedModel={servedModels?.gemma?.model ?? VLLM_SERVED_MODEL}
+              pick={pickGemma}
+              samples={cleanSamples}
+              liveCalls={liveCalls}
+              accent="zinc"
+              workloadHint
+            />
+            <ModelServerCard
+              title={servedModels?.qwen?.model ?? "unknown"}
+              servedModel={servedModels?.qwen?.model ?? QWEN_SERVED_MODEL}
+              pick={pickQwen}
+              samples={cleanSamples}
+              liveCalls={liveCalls}
+              accent="sky"
+              transientDropBanner
+            />
+          </> : <>
+            <ModelEvidenceCard
+              title={servedModels?.gemma?.model ?? "unknown"}
+              servedModel={servedModels?.gemma?.model ?? VLLM_SERVED_MODEL}
+              metricsObserved={cleanSamples.some((sample) => pickGemma(sample) != null)}
+              mode={modelEvidenceMode}
+            />
+            <ModelEvidenceCard
+              title={servedModels?.qwen?.model ?? "unknown"}
+              servedModel={servedModels?.qwen?.model ?? QWEN_SERVED_MODEL}
+              metricsObserved={cleanSamples.some((sample) => pickQwen(sample) != null)}
+              mode={modelEvidenceMode}
+              accent="sky"
+            />
+          </>}
+        </div>
 
-        <details className="now-disclosure" data-testid="pulse-runtime-evidence">
-          <summary>
-            <span className="now-disclosure__title">Runtime evidence</span>
-            <span className="now-disclosure__state">
-              Host and model telemetry · full metrics and raw-source links
-            </span>
-          </summary>
-          <div className="now-disclosure__body now-evidence-stack">
-            <HealthStrip samples={cleanSamples} />
-            <div className="now-source-link-row">
-              <Link
-                to="/model-io"
-                data-testid="pulse-model-io-link"
-                className="now-inline-link"
-              >
-                Inspect model input and output
-              </Link>
-            </div>
-            <div className="now-evidence-grid now-model-grid">
-              {modelEvidenceMode === "current" ? (
-                <>
-                  <ModelServerCard
-                    title={servedModels?.gemma?.model ?? "unknown"}
-                    servedModel={servedModels?.gemma?.model ?? VLLM_SERVED_MODEL}
-                    pick={pickGemma}
-                    samples={cleanSamples}
-                    liveCalls={liveCalls}
-                    accent="zinc"
-                    workloadHint
-                  />
-                  <ModelServerCard
-                    title={servedModels?.qwen?.model ?? "unknown"}
-                    servedModel={servedModels?.qwen?.model ?? QWEN_SERVED_MODEL}
-                    pick={pickQwen}
-                    samples={cleanSamples}
-                    liveCalls={liveCalls}
-                    accent="sky"
-                    transientDropBanner
-                  />
-                </>
-              ) : (
-                <>
-                  <ModelEvidenceCard
-                    title={servedModels?.gemma?.model ?? "unknown"}
-                    servedModel={servedModels?.gemma?.model ?? VLLM_SERVED_MODEL}
-                    metricsObserved={cleanSamples.some(
-                      (sample) => pickGemma(sample) != null,
-                    )}
-                    mode={modelEvidenceMode}
-                  />
-                  <ModelEvidenceCard
-                    title={servedModels?.qwen?.model ?? "unknown"}
-                    servedModel={servedModels?.qwen?.model ?? QWEN_SERVED_MODEL}
-                    metricsObserved={cleanSamples.some(
-                      (sample) => pickQwen(sample) != null,
-                    )}
-                    mode={modelEvidenceMode}
-                    accent="sky"
-                  />
-                </>
-              )}
-            </div>
-          </div>
-        </details>
-
-        <details className="now-disclosure" data-testid="pulse-delivery-history">
-          <summary>
-            <span className="now-disclosure__title">Delivery history</span>
-            <span className="now-disclosure__state">
-              Dated engineering record · not current release or deployment state
-            </span>
-          </summary>
-          <div className="now-disclosure__body">
-            <DevelopmentNotice />
-          </div>
-        </details>
-
+        {/* Launching an iteration is deliberate, not ambient — disclosed.
+            Controlled so the ⌘K "launch an iteration" verb can open it. */}
         <details
           ref={launchRef}
-          className="now-disclosure"
           open={launchOpen}
-          onToggle={(event) => setLaunchOpen(event.currentTarget.open)}
+          onToggle={(e) => setLaunchOpen((e.target as HTMLDetailsElement).open)}
           data-testid="pulse-launch-disclosure"
         >
-          <summary>
-            <span className="now-disclosure__title">Launch an iteration</span>
-            <span className="now-disclosure__state">
-              Governed manual control · collapsed by default
-            </span>
+          <summary
+            style={{
+              cursor: "pointer",
+              listStyle: "none",
+              fontSize: "var(--text-meta)",
+              color: "var(--fg-muted)",
+            }}
+          >
+            {launchOpen ? "▾" : "▸"} launch an iteration
           </summary>
-          <div className="now-disclosure__body">
+          <div style={{ marginTop: "var(--space-2)" }}>
             <NaraPromptForm />
           </div>
         </details>
-      </section>
+      </div>
     </div>
   );
 }

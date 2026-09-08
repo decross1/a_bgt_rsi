@@ -3,14 +3,7 @@
 // two ModelServerCards + the launch disclosure. Route-level smoke against
 // mocked feeds: every surface mounts, the owed row links into the dossier
 // reader, and the render stays console-clean (the route-sweep bar).
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import CommandPalette from "../src/design/CommandPalette";
@@ -221,7 +214,7 @@ describe("Pulse (/)", () => {
     );
     expect(screen.getByTestId("now-board-empty")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("Review recorded requests"));
+    fireEvent.click(screen.getByText("Recorded human requests"));
     // 2 — do I owe anything? The gate item shows; the below-bar legacy
     // finding stays off the strip (it is dossier-index material).
     await waitFor(() =>
@@ -246,11 +239,7 @@ describe("Pulse (/)", () => {
     expect(screen.getByTestId("owe-count")).toHaveTextContent("1");
 
     expect(getLabTodo).not.toHaveBeenCalled();
-    const labQueue = screen.getByTestId("pulse-lab-queue");
-    fireEvent.click(within(labQueue).getByText("Lab queue"));
-    fireEvent.click(
-      within(labQueue).getByRole("button", { name: "Load lab queue" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Load lab queue" }));
     // 2b — and what is the LAB carrying? The lab's queue sits directly below
     // the hero, in DOM order (the hierarchy is the point: the human's queue
     // is the hero, the lab's is the secondary zone).
@@ -393,36 +382,6 @@ describe("Pulse (/)", () => {
     expect(screen.queryByTestId("last-cycle-line")).toBeNull();
   });
 
-  it("malformed history rows stay incomplete instead of becoming an empty history claim", async () => {
-    const http = await import("../src/api/http");
-    vi.mocked(http.getCoordinatorCycles).mockResolvedValueOnce({
-      cycles: [null] as never,
-    });
-    vi.mocked(http.getIterations).mockResolvedValueOnce({
-      iterations: [42] as never,
-    });
-    render(
-      <MemoryRouter>
-        <Pulse />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() =>
-      expect(screen.getByTestId("pulse-cycles-malformed")).toHaveTextContent(
-        /last recorded cycle is unknown/i,
-      ),
-    );
-    await waitFor(() =>
-      expect(screen.getByTestId("pulse-iterations-malformed")).toHaveTextContent(
-        /distribution is incomplete/i,
-      ),
-    );
-    expect(screen.getByTestId("pulse-history-summary")).toHaveTextContent(
-      /recorded history is incomplete/i,
-    );
-    expect(screen.queryByTestId("last-cycle-empty")).toBeNull();
-  });
-
   it("arriving at /#lab-queue scrolls the lab's queue into view", async () => {
     // /ladder's "lab queue →" link navigates here with a hash; React Router
     // does not scroll for one, so Pulse does it. Without this the link would
@@ -527,14 +486,7 @@ describe("Pulse (/)", () => {
         <Pulse />
       </MemoryRouter>,
     );
-    await waitFor(() =>
-      expect(
-        within(screen.getByTestId("pulse-runtime-evidence")).getAllByText(
-          "unknown",
-          { selector: "h2" },
-        ),
-      ).toHaveLength(2),
-    );
+    expect(await screen.findAllByText("unknown")).toHaveLength(2);
   });
 });
 
@@ -557,7 +509,7 @@ describe("Atlas Now intent boundary", () => {
     expect(screen.getByRole("link", { name: "Explore research" })).toHaveAttribute("href", "/ladder");
     expect(screen.getByRole("link", { name: "Review delivery and readiness" })).toHaveAttribute("href", "/development");
     expect(screen.getByTestId("pulse-human-requests")).not.toHaveAttribute("open");
-    fireEvent.click(screen.getByText("Review recorded requests"));
+    fireEvent.click(screen.getByText("Recorded human requests"));
     expect(screen.getByTestId("pulse-human-requests")).toHaveAttribute("open");
   });
 });
