@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { API_BASE } from "../api/http";
 import FrontierReviews from "../components/FrontierReviews";
 import "./development.css";
 import { useDevelopmentSources, type Source } from "../api/development";
@@ -19,7 +20,7 @@ function SourceState({ source }: { source: Source }) {
   return <div className="mt-2 text-xs text-[var(--fg-muted)]">
     <p>Last successful read: {source.receivedAt ?? "not yet available"}</p>
     <p>Browser read in progress: {source.loading ? "yes" : "no"}</p>
-    {source.error && <p role="status" className="text-[var(--status-warn)]">
+    {source.error && <p role="status" className="text-[var(--fg)]">
       Read failed: {source.error}. {source.data ? "Showing the previous observation; current state is unknown." : "State is unknown, not empty."}
     </p>}
   </div>;
@@ -148,10 +149,15 @@ export default function Development() {
         {framedChannel ? <div className="my-3 space-y-2">
           <SourceTime label="Latest Nara message in loaded timeline" value={latest(channel.filter((r) => r.kind === "nara").map((r) => r.ts))} />
           <SourceTime label="Latest channel turn in loaded timeline" value={latest(channel.filter((r) => r.kind !== "event").map((r) => r.ts))} />
-        </div> : <p className="my-3 text-sm text-[var(--status-warn)]">Actor-specific dates withheld: this backend has not provided verified structured framing. Legacy formatted text can contain actor-shaped message lines.</p>}
+        </div> : <p className="my-3 text-sm text-[var(--fg)]">Actor-specific dates withheld: this backend has not provided verified structured framing. Legacy formatted text can contain actor-shaped message lines.</p>}
         <details className="my-3 text-sm"><summary className="cursor-pointer">Message provenance and observation limits</summary>
         <p className="mt-2 text-xs text-[var(--fg-muted)]">Actor labels are recorded, not cryptographically authenticated. Structured framing preserves message boundaries; it does not attest ledger completeness.</p>
         <p className="text-sm">An old message date is not a liveness verdict. This read shows up to 1,000 timeline rows; an absent Nara row means no message was found in that window.</p>
+        </details>
+        <details className="my-3 text-sm"><summary>Additional runtime source snapshots</summary>
+          <p className="my-2 text-[var(--fg-muted)]">Separate raw GET observations, loaded only when opened. Runtime activity and dispatch records are not coordinator history, completed calls or scientific progress. Each response retains its own source and availability fields.</p>
+          <a className="block" href={`${API_BASE}/api/runtime_activity`}>Runtime activity · raw JSON snapshot</a>
+          <a className="block" href={`${API_BASE}/api/dispatch_trace?limit=30`}>Dispatch records · raw JSON snapshot</a>
         </details>
         <SourceState source={sources.channel} />
         <a href="/channel" className="mt-3 block text-[var(--accent)]">Read Nara&apos;s channel →</a>
@@ -186,12 +192,12 @@ export default function Development() {
         {agendaStatusKnown ? <>
           <p className="my-2 text-sm">Loaded proposals: {unresolved.length} unresolved · {proposals.filter((p) => p.effective_status === "accepted").length} accepted · {proposals.filter((p) => p.effective_status === "dismissed").length} dismissed</p>
           <SourceTime label="Latest proposal in loaded feed" value={latest(proposals.map((p) => p.ts))} />
-          {truncated && <p className="text-sm text-[var(--status-warn)]">Partial feed window — counts are not the complete agenda history.</p>}
+          {truncated && <p className="text-sm text-[var(--fg)]">Partial feed window — counts are not the complete agenda history.</p>}
           <details className="my-3 text-sm"><summary className="cursor-pointer">Older unresolved suggestions ({unresolved.length})</summary>
             <ul className="mt-2 list-disc space-y-2 pl-5">{unresolved.map((p) => <li key={String(p.proposal_id)}>{text(p.topic)} <span className="text-xs text-[var(--fg-muted)]">— {text(p.ts)}; {text(p.effective_status)}</span></li>)}</ul>
           </details>
         </> : <>
-          <p className="my-2 text-sm text-[var(--status-warn)]">Agenda status is uncertain: complete ruling history and readable proposal-source metadata have not been established. No current unresolved, accepted or dismissed count is inferred.</p>
+          <p className="my-2 text-sm text-[var(--fg)]">Agenda status is uncertain: complete ruling history and readable proposal-source metadata have not been established. No current unresolved, accepted or dismissed count is inferred.</p>
           <p className="text-sm">{proposals.length > 0
             ? `${proposals.length} proposal records in this observation; current rulings unverified.`
             : sources.frontier.data
@@ -201,7 +207,7 @@ export default function Development() {
             <ul className="mt-2 list-disc space-y-2 pl-5">{proposals.map((p) => <li key={String(p.proposal_id)}>{text(p.topic)} <span className="text-xs text-[var(--fg-muted)]">— {text(p.ts)}; {isRecord(p.ruling) ? `last observed ruling: ${text(p.ruling.status)}` : `proposal record: ${text(p.status)}`}; current status unverified</span></li>)}</ul>
           </details>
         </>}
-        {integrityErrors.length > 0 && <p role="status" className="text-sm text-[var(--status-warn)]">Source integrity errors: {integrityErrors.join("; ")}</p>}
+        {integrityErrors.length > 0 && <p role="status" className="text-sm text-[var(--fg)]">Source integrity errors: {integrityErrors.join("; ")}</p>}
         <SourceTime label="Frontier projection generated" value={sources.frontier.data?.generated_at} />
         <p className="text-xs text-[var(--fg-muted)]">Backend refresh in progress: not reported. The projection timestamp is separate from this browser read and any read error.</p>
         <SourceState source={sources.frontier} />

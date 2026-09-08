@@ -769,7 +769,7 @@
     color: var(--fg);
     font-size: var(--text-prose);
     font-weight: var(--weight-medium);
-    background: var(--surface-glass);
+    background: var(--surface-1);
     border-bottom: 1px solid var(--border-1);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);

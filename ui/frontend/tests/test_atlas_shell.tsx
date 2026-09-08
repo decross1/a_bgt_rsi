@@ -348,3 +348,17 @@ describe("Atlas light-theme source compatibility", () => {
     }
   });
 });
+
+
+it("offers safe inline recovery for an unknown route without losing shell", () => {
+  window.history.replaceState({}, "", "/retired-or-malformed");
+  render(<App />);
+  expect(screen.getByRole("heading", { name: "Page not found" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Return to Now" })).toHaveAttribute("href", "/");
+});
+it("uses an opaque narrow header so scrolled page text cannot paint through", () => {
+  const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../src/design/AtlasShell.css"), "utf8");
+  const rule = source.match(/\.atlas-mobile-header\s*\{[^}]*position: sticky[^}]*\}/s)?.[0];
+  expect(rule).toContain("background: var(--surface-1)");
+  expect(rule).not.toContain("background: var(--surface-glass)");
+});

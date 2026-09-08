@@ -373,6 +373,7 @@ function AtlasApp() {
             <Route path="/experiments/:expId" element={<ExperimentDetail />} />
             <Route path="/model-io" element={<ModelIO />} />
             <Route path="/chain/req/:requestId" element={<Inspector />} />
+            <Route path="*" element={<section aria-labelledby="missing-route-heading"><h1 id="missing-route-heading">Page not found</h1><p>This address is unrecognized or retired. Use the navigation or command palette to find an existing record.</p><a href="/">Return to Now</a></section>} />
           </Routes>
         </main>
       </div>

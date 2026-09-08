@@ -358,3 +358,14 @@ it("opens the existing guarded review only on its explicit deep link and allows 
   expect(screen.getByRole("button", { name: "Resume review updates" })).toHaveAttribute("aria-pressed", "true");
   expect(calls.some((path) => /accept|dismiss/.test(path))).toBe(false);
 });
+
+
+it("makes separate runtime and dispatch raw sources available without eager requests", async () => {
+  window.history.replaceState({}, "", "/development#runtime-evidence");
+  render(<App />); await ready();
+  const disclosure = screen.getByText("Additional runtime source snapshots");
+  fireEvent.click(disclosure);
+  expect(screen.getByRole("link", { name: "Runtime activity · raw JSON snapshot" })).toHaveAttribute("href", "http://localhost:8700/api/runtime_activity");
+  expect(screen.getByRole("link", { name: "Dispatch records · raw JSON snapshot" })).toHaveAttribute("href", "http://localhost:8700/api/dispatch_trace?limit=30");
+  expect(calls.some(p => p.startsWith("/api/runtime_activity") || p.startsWith("/api/dispatch_trace"))).toBe(false);
+});
