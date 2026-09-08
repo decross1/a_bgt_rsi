@@ -1,119 +1,145 @@
-// Research index tests. Render the tier-grouped view from fixtures (network
-// bypassed via `initial`) and assert the honest per-tier states: the three
-// tier sections render in spectrum order; a YES verdict chip is emerald and a
-// NO is red; a bridge badge names its iteration_id + metric; the applied
-// design-only entry shows its "not run" state; an empty bridge reads "not yet
-// bridged".
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
+import { describe, expect, it } from "vitest";
 import Experiments from "../src/routes/Experiments";
 import {
   RESEARCH_FIXTURE,
   RESEARCH_UNAVAILABLE,
 } from "../src/fixtures/experiments";
-import { COORDINATOR_CYCLES_FIXTURE } from "../src/fixtures/coordinator";
-import type { CoordinatorCycle } from "../src/types/schemas";
-import { describe, expect, it } from "vitest";
+import type { ResearchResponse } from "../src/types/experiments";
 
 function renderPage(
-  initial: typeof RESEARCH_FIXTURE,
-  coordinatorCycles: CoordinatorCycle[] = [],
+  initial: ResearchResponse = RESEARCH_FIXTURE,
+  entry = "/experiments",
 ) {
   return render(
-    <MemoryRouter>
-      <Experiments
-        initial={initial}
-        initialCoordinatorCycles={coordinatorCycles}
-      />
+    <MemoryRouter initialEntries={[entry]}>
+      <Experiments initial={initial} />
     </MemoryRouter>,
   );
 }
 
-describe("Research index (tier-grouped)", () => {
-  it("renders the three tier sections in spectrum order", () => {
-    const { container } = renderPage(RESEARCH_FIXTURE);
-    const sections = Array.from(
-      container.querySelectorAll('[data-testid^="tier-section-"]'),
-    ).map((el) => el.getAttribute("data-testid"));
-    // Untiered may trail; the first three are the spectrum tiers in order.
-    expect(sections.slice(0, 3)).toEqual([
-      "tier-section-synthetic",
-      "tier-section-semi_synthetic",
-      "tier-section-applied",
-    ]);
+describe("Experiments source catalog", () => {
+  it("renders one calm source list with mapped and unmapped entries", () => {
+    renderPage();
+    const list = screen.getByTestId("source-entry-list");
+    expect(within(list).getAllByRole("article")).toHaveLength(5);
+    expect(screen.getByTestId("research-card-exp003_vickrey_rediscovery"))
+      .toHaveTextContent(/Synthetic/);
+    expect(screen.getByTestId("research-card-exp002_loop_v0_robustness"))
+      .toHaveTextContent(/Unmapped source/);
+    expect(screen.queryByTestId("tier-section-synthetic")).toBeNull();
   });
 
-  it("colors a YES verdict emerald and a NO verdict red", () => {
-    renderPage(RESEARCH_FIXTURE);
-    const yes = screen.getByTestId("verdict-exp003_vickrey_rediscovery");
-    expect(yes.className).toContain("emerald");
-    const no = screen.getByTestId("verdict-exp001_repeated_pd");
-    expect(no.className).toContain("red");
+  it("keeps adverse producer text while labeling it as a scoped report", () => {
+    renderPage();
+    const card = screen.getByTestId("research-card-exp001_repeated_pd");
+    expect(card).toHaveTextContent(/Reported label/);
+    expect(card).toHaveTextContent(/EXPLOITED by all_d/);
+    expect(card).toHaveTextContent(
+      /Claim binding and independent validity are not reported/,
+    );
+    expect(screen.getByTestId("verdict-exp001_repeated_pd"))
+      .toHaveAttribute("data-tone", "bad");
   });
 
-  it("renders a bridge badge with its iteration_id + metric", () => {
-    renderPage(RESEARCH_FIXTURE);
+  it("preserves exact bridge identities and values in source evidence", () => {
+    renderPage();
     const bridge = screen.getByTestId("bridge-exp003_vickrey_rediscovery");
     expect(bridge).toHaveTextContent("iter-2026-05-27-028");
-    expect(bridge).toHaveTextContent("truthful_bid_fraction=1");
+    expect(bridge).toHaveTextContent("truthful_bid_fraction = 1");
   });
 
-  it("attaches the exp006 semi_synthetic bridge", () => {
-    renderPage(RESEARCH_FIXTURE);
-    const bridge = screen.getByTestId("bridge-exp006_mechanism_design");
-    expect(bridge).toHaveTextContent("iter-2026-06-05-006");
-    expect(bridge).toHaveTextContent("designer_mean_efficiency");
-  });
-
-  it("shows the applied design-only entry's not-run state + no verdict", () => {
-    renderPage(RESEARCH_FIXTURE);
-    const card = screen.getByTestId("research-card-exp007_polymarket");
-    expect(card).toHaveTextContent("design-only — not run");
-    expect(
-      within(card).getByTestId("verdict-exp007_polymarket"),
-    ).toHaveTextContent("no verdict");
-  });
-
-  it("reads 'not yet bridged' for an experiment with an empty bridge", () => {
-    renderPage(RESEARCH_FIXTURE);
-    const bridge = screen.getByTestId("bridge-exp001_repeated_pd");
-    expect(bridge).toHaveTextContent("not yet bridged into the loop");
-  });
-
-  it("renders an untiered section for an unmapped on-disk dir", () => {
-    renderPage(RESEARCH_FIXTURE);
-    expect(screen.getByTestId("tier-section-untiered")).toBeInTheDocument();
-    expect(
-      screen.getByTestId("research-card-exp002_loop_v0_robustness"),
-    ).toBeInTheDocument();
-  });
-
-  it("degrades to an unavailable notice when the dir is absent", () => {
-    renderPage(RESEARCH_UNAVAILABLE);
-    expect(screen.getByTestId("experiments-unavailable")).toBeInTheDocument();
-    expect(
-      screen.getByTestId("experiments-unavailable"),
-    ).toHaveTextContent(/not available/);
-  });
-
-  it("renders coordinator cycles as auditable units (incl. the errored one)", () => {
-    renderPage(RESEARCH_FIXTURE, COORDINATOR_CYCLES_FIXTURE);
-    const section = within(screen.getByTestId("coordinator-cycles-section"));
-    // One card per cycle.
-    expect(section.getAllByTestId("coordinator-cycle-card")).toHaveLength(
-      COORDINATOR_CYCLES_FIXTURE.length,
+  it("does not infer not-run from absent bridge or verdict fields", () => {
+    renderPage();
+    expect(screen.getByTestId("bridge-exp001_repeated_pd"))
+      .toHaveTextContent(/No bridge records are present in this response/);
+    expect(screen.getByTestId("research-card-exp002_loop_v0_robustness"))
+      .toHaveTextContent(/Results directory reported absent/);
+    expect(screen.getByTestId("research-card-exp007_polymarket"))
+      .toHaveTextContent(/Results directory reported empty/);
+    expect(screen.getByTestId("experiments-page")).not.toHaveTextContent(
+      /design-only — not run|no results yet — not run/i,
     );
-    // The failed dispatch's plan→outcome chain is visible (the errored action
-    // with its error string), so a coordinator verdict can be doubted here.
-    expect(
-      section.getByTestId("coordinator-action-error-run_loop_iteration"),
-    ).toHaveTextContent(/not a valid SeedSource/i);
   });
 
-  it("shows an empty coordinator-cycles state when there are none", () => {
-    renderPage(RESEARCH_FIXTURE);
+  it("searches title, id, reported label and bridge text", () => {
+    renderPage();
+    const search = screen.getByRole("searchbox", {
+      name: /Search source entries/i,
+    });
+    fireEvent.change(search, { target: { value: "truthful_bid_fraction" } });
+    expect(screen.getByText(/Showing 1 of 5/)).toBeInTheDocument();
+    expect(screen.getByTestId("research-card-exp003_vickrey_rediscovery"))
+      .toBeInTheDocument();
+    expect(screen.queryByTestId("research-card-exp001_repeated_pd")).toBeNull();
+  });
+
+  it("retains query search and filters by the supplied tier", () => {
+    renderPage(RESEARCH_FIXTURE, "/experiments?q=exp&tier=semi_synthetic");
+    expect(screen.getByRole("searchbox")).toHaveValue("exp");
+    expect(screen.getByRole("combobox", { name: /Source tier/i }))
+      .toHaveValue("semi_synthetic");
+    expect(screen.getByText(/Showing 1 of 5/)).toBeInTheDocument();
+    expect(screen.getByTestId("research-card-exp006_mechanism_design"))
+      .toBeInTheDocument();
+  });
+
+  it("preserves exact detail and trace-history links", () => {
+    renderPage();
     expect(
-      screen.getByTestId("coordinator-cycles-empty"),
-    ).toHaveTextContent(/No coordinator cycles yet/i);
+      within(screen.getByTestId("research-card-exp001_repeated_pd")).getByRole(
+        "link",
+        { name: /exp001 repeated pd/i },
+      ),
+    ).toHaveAttribute("href", "/experiments/exp001_repeated_pd");
+    expect(screen.getByRole("link", { name: /View trace history/i }))
+      .toHaveAttribute("href", "/cycles");
+  });
+
+  it("distinguishes unavailable, empty and filtered-empty catalog states", () => {
+    const unavailable = renderPage(RESEARCH_UNAVAILABLE);
+    expect(screen.getByTestId("experiments-unavailable")).toHaveTextContent(
+      /unavailable/i,
+    );
+    unavailable.unmount();
+
+    const empty: ResearchResponse = {
+      available: true,
+      tiers: [],
+      untiered: [],
+    };
+    const emptyView = renderPage(empty);
+    expect(screen.getByTestId("catalog-empty")).toBeInTheDocument();
+    emptyView.unmount();
+
+    renderPage(RESEARCH_FIXTURE, "/experiments?q=does-not-exist");
+    expect(screen.getByTestId("catalog-filtered-empty")).toBeInTheDocument();
+  });
+
+  it("removes the coordinator-cycle tail even when old fixture data is passed", () => {
+    render(
+      <MemoryRouter>
+        <Experiments
+          initial={RESEARCH_FIXTURE}
+          initialCoordinatorCycles={[{ run_id: "old-cycle" }]}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId("coordinator-cycles-section")).toBeNull();
+    expect(screen.queryByTestId("coordinator-cycle-card")).toBeNull();
+    expect(screen.getByText(/does not load coordinator cycles/i))
+      .toBeInTheDocument();
+  });
+
+  it("labels malformed catalog arrays without converting them to empty success", () => {
+    const malformed = {
+      available: true,
+      tiers: "wrong shape",
+      untiered: [],
+    } as unknown as ResearchResponse;
+    renderPage(malformed);
+    expect(screen.getByTestId("catalog-malformed")).toBeInTheDocument();
+    expect(screen.getByTestId("catalog-empty")).toBeInTheDocument();
   });
 });
