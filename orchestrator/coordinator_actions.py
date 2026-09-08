@@ -46,12 +46,18 @@ def validate_bubble_up_args(
     kind: Any = None,
     allowed_actions: Any = None,
 ) -> None:
-    """Raise ``ValueError`` when bubble-up arguments are not admissible.
+    """Reject inadmissible bubble-up arguments.
 
     A nonempty finding-id collection or a non-whitespace question supplies the
-    payload. Either may be explicitly empty when the other supplies it. The
-    optional taxonomy fields retain their literal existing enums.
+    payload. ``finding_ids`` may be explicitly empty when a substantive
+    question supplies it; a supplied empty question is an invalid wire
+    component, while omission remains valid. The optional taxonomy fields
+    retain their literal existing enums.
     """
+    if question == "":
+        raise ValueError(
+            "bubble_up question must be non-empty when supplied"
+        )
     if not finding_ids and not (
         isinstance(question, str) and question.strip()
     ):
@@ -127,8 +133,8 @@ ACTIONS: dict[str, dict[str, Any]] = {
             "and require a nonempty finding_ids collection or question."
         ),
         "cost": 1,
-        # Either payload may be explicitly empty when the other is nonempty,
-        # matching the handler's additive legacy/generic calling convention.
+        # finding_ids may be explicitly empty when question is substantive;
+        # a supplied question retains the persisted wire's minLength rule.
         # additionalProperties stays closed (no unknown keys).
         "arg_schema": {
             "type": "object",
@@ -138,11 +144,15 @@ ACTIONS: dict[str, dict[str, Any]] = {
                     "items": {"type": "string", "minLength": 1},
                 },
                 "note": {"type": "string"},
-                "question": {"type": "string"},
+                "question": {"type": "string", "minLength": 1},
                 "context": {"type": "string"},
                 "kind": {
                     "type": "string",
                     "enum": list(ESCALATION_KINDS),
+                    "description": (
+                        "Escalation taxonomy: A = judgment; B = blocking-halt; "
+                        "C = read-receipt."
+                    ),
                 },
                 "allowed_actions": {
                     "type": "array",

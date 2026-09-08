@@ -137,7 +137,6 @@ def test_bubble_up_admission_preserves_legacy_and_generic_omission():
     valid_args = (
         {"finding_ids": ["sf-legacy"], "note": "ack"},
         {"question": "A generic question without optional taxonomy fields?"},
-        {"finding_ids": ["sf-legacy"], "question": ""},
         {"finding_ids": ["sf-legacy"], "question": "   "},
         {"finding_ids": [], "question": "An explicitly generic question?"},
     )
@@ -147,6 +146,15 @@ def test_bubble_up_admission_preserves_legacy_and_generic_omission():
         )
         assert res["ok"] is True, res["errors"]
         assert res["normalized"][0]["args"] == args
+
+
+def test_bubble_up_admission_rejects_supplied_empty_question_with_legacy_ids():
+    args = {"finding_ids": ["sf-legacy"], "question": ""}
+    res = validate_plan([{"action": "bubble_up", "args": args}], budget=1)
+    assert res["ok"] is False
+    assert res["normalized"] == []
+    assert any("question" in error and "non-empty" in error
+               for error in res["errors"])
 
 
 def test_off_menu_action_rejected():

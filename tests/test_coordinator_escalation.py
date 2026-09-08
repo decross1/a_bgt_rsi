@@ -101,6 +101,22 @@ def test_handle_bubble_up_empty_is_rejected():
         coord.handle_bubble_up()
     with pytest.raises(ValueError):
         coord.handle_bubble_up(question="   ")  # whitespace-only is empty
+    with pytest.raises(ValueError, match="question must be non-empty"):
+        coord.handle_bubble_up(finding_ids=["sf-legacy"], question="")
+
+
+def test_handle_bubble_up_preserves_valid_payload_coexistence():
+    legacy = coord.handle_bubble_up(
+        finding_ids=["sf-legacy"], question="   ",
+    )
+    assert legacy["result"]["finding_ids"] == ["sf-legacy"]
+    assert legacy["result"]["question"] == "   "
+
+    generic = coord.handle_bubble_up(
+        finding_ids=[], question="A substantive generic question?",
+    )
+    assert generic["result"]["finding_ids"] == []
+    assert generic["result"]["question"] == "A substantive generic question?"
 
 
 # ── handler: fail-closed validation (rule 4) ──────────────────────────────
@@ -126,6 +142,9 @@ def test_planner_menu_handler_and_persisted_schema_share_literal_enums():
     )
 
     bubble_schema = ACTIONS["bubble_up"]["arg_schema"]["properties"]
+    assert bubble_schema["question"]["minLength"] == (
+        ESCALATION_SCHEMA["properties"]["question"]["minLength"]
+    ) == 1
     assert bubble_schema["kind"]["enum"] == list(ESCALATION_KINDS)
     assert bubble_schema["allowed_actions"]["items"]["enum"] == list(
         ALLOWED_ESCALATION_ACTIONS
@@ -138,6 +157,9 @@ def test_planner_menu_handler_and_persisted_schema_share_literal_enums():
     ] == list(ALLOWED_ESCALATION_ACTIONS)
     assert coord.ESCALATION_KINDS is ESCALATION_KINDS
     assert coord.ALLOWED_ESCALATION_ACTIONS is ALLOWED_ESCALATION_ACTIONS
+    assert "A = judgment" in bubble_schema["kind"]["description"]
+    assert "B = blocking-halt" in bubble_schema["kind"]["description"]
+    assert "C = read-receipt" in bubble_schema["kind"]["description"]
 
 
 def test_planner_and_handler_both_reject_whitespace_only_generic_payload():
