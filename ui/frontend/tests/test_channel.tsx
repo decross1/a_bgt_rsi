@@ -132,10 +132,7 @@ describe("/channel feed", () => {
   it("renders the honest empty state when there are no rows", () => {
     render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
     expect(screen.getByTestId("channel-empty")).toHaveTextContent(
-      "No recorded channel activity in this framed read",
-    );
-    expect(screen.getByTestId("channel-empty")).toHaveTextContent(
-      "does not establish full-ledger completeness",
+      "no channel activity yet",
     );
   });
 
@@ -419,7 +416,6 @@ describe("/channel turn composer", () => {
 describe("/channel delegate confirm-card flow", () => {
   it("review renders the confirm card naming the exact write targets — WITHOUT posting", () => {
     render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
-    fireEvent.click(screen.getByTestId("channel-open-delegate"));
     fireEvent.change(screen.getByTestId("channel-delegate-text"), {
       target: { value: "probe the eviction schedule" },
     });
@@ -438,7 +434,6 @@ describe("/channel delegate confirm-card flow", () => {
 
   it("the improvement card names the authorize_fix packet queue", () => {
     render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
-    fireEvent.click(screen.getByTestId("channel-open-delegate"));
     fireEvent.click(screen.getByTestId("channel-delegate-kind-improvement"));
     fireEvent.change(screen.getByTestId("channel-delegate-text"), {
       target: { value: "fix the tailer attach" },
@@ -458,7 +453,6 @@ describe("/channel delegate confirm-card flow", () => {
     });
     mocks.getChannelTimeline.mockResolvedValue({ rows: [] });
     render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
-    fireEvent.click(screen.getByTestId("channel-open-delegate"));
 
     fireEvent.change(screen.getByTestId("channel-delegate-text"), {
       target: { value: "probe eviction" },
@@ -487,7 +481,6 @@ describe("/channel delegate confirm-card flow", () => {
 
   it("cancel dismisses the card and posts nothing", () => {
     render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
-    fireEvent.click(screen.getByTestId("channel-open-delegate"));
     fireEvent.change(screen.getByTestId("channel-delegate-text"), {
       target: { value: "an idea" },
     });
@@ -499,7 +492,6 @@ describe("/channel delegate confirm-card flow", () => {
 
   it("editing the text invalidates a pending confirm card", () => {
     render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
-    fireEvent.click(screen.getByTestId("channel-open-delegate"));
     fireEvent.change(screen.getByTestId("channel-delegate-text"), {
       target: { value: "v1" },
     });
@@ -520,7 +512,6 @@ describe("/channel delegate confirm-card flow", () => {
       }),
     );
     render(<Channel initialIntegrity={FRAMING} initial={[]} initialAvailable={true} />);
-    fireEvent.click(screen.getByTestId("channel-open-delegate"));
     fireEvent.change(screen.getByTestId("channel-delegate-text"), {
       target: { value: "t" },
     });
@@ -729,7 +720,7 @@ describe("/channel filter chips (R4)", () => {
     render(<Channel initialIntegrity={FRAMING} initial={[ROWS[4]]} initialAvailable={true} />);
     fireEvent.click(screen.getByTestId("channel-filter-events"));
     expect(screen.getByTestId("channel-filter-empty")).toHaveTextContent(
-      "hidden by this filter",
+      "the filter is hiding them",
     );
     // The honest "nothing ever happened" state is a DIFFERENT state.
     expect(screen.queryByTestId("channel-empty")).toBeNull();

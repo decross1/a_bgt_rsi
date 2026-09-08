@@ -45,7 +45,7 @@ import {
   postChannelDelegate,
   postChannelTurn,
 } from "../api/channel";
-import type { ChannelRow, ChannelTimeline } from "../api/channel";
+import type { ChannelRow } from "../api/channel";
 import EndpointMissingNote, {
   isVersionSkew404,
 } from "../components/EndpointMissingNote";
@@ -83,36 +83,6 @@ const MAX_TIMELINE_LIMIT = 1000;
 
 type Role = "nara" | "pi";
 type DelegateKind = "research" | "improvement";
-type ContextView = "guide" | "record" | "delegate";
-type ReadState = NonNullable<ChannelTimeline["readState"]>;
-
-interface ActionCapabilities {
-  turn: boolean;
-  delegate: boolean;
-}
-
-const NO_ACTIONS: ActionCapabilities = { turn: false, delegate: false };
-const CONTEXT_FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-function isFramedIntegrity(value: unknown): boolean {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return false;
-  }
-  const integrity = value as Record<string, unknown>;
-  return (
-    integrity.schema === "lab-channel-timeline/v1" &&
-    integrity.framing === "json-envelope" &&
-    integrity.status === "framed" &&
-    integrity.actor_labels === "recorded_not_authenticated"
-  );
-}
-
-function shortUtc(value: string | null): string {
-  if (value === null || value === "") return "not available";
-  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(value);
-  return match ? `${match[1]} · ${match[2]} UTC` : value;
-}
 
 // ── voices ──────────────────────────────────────────────────────────────
 // `accent` is a channel-local voice hue (see channel.css for why R0 has no
@@ -187,55 +157,25 @@ interface Props {
    *  shows "load older" — that button belongs to the live limit-window. */
   initial?: ChannelRow[];
   initialIntegrity?: unknown;
-  /** Explicit read-shape fixture. Live reads receive this from the API seam. */
-  initialReadState?: ReadState;
   /** Capability override for tests (undefined = probe live). */
   initialAvailable?: boolean;
-  /** Exact action capabilities for partial-capability fixtures. */
-  initialCapabilities?: Partial<ActionCapabilities>;
   pollMs?: number;
 }
 
 export default function Channel({
   initial,
   initialIntegrity,
-  initialReadState,
   initialAvailable,
-  initialCapabilities,
   pollMs = 10_000,
 }: Props) {
   const [rows, setRows] = useState<ChannelRow[]>(() =>
     sortRows(channelRows({ rows: initial ?? [], integrity: initialIntegrity })),
   );
   const [loaded, setLoaded] = useState(initial !== undefined);
-  const [readState, setReadState] = useState<ReadState | null>(() =>
-    initial === undefined
-      ? null
-      : (initialReadState ??
-        (isFramedIntegrity(initialIntegrity) ? "framed" : "unframed")),
-  );
-  const [invalidRowCount, setInvalidRowCount] = useState(0);
   const [skew, setSkew] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [checkedAt, setCheckedAt] = useState<string | null>(
-    initial === undefined ? null : new Date().toISOString(),
-  );
-  const [lastSuccessAt, setLastSuccessAt] = useState<string | null>(
-    initial === undefined ? null : new Date().toISOString(),
-  );
-  const [actionCapabilities, setActionCapabilities] =
-    useState<ActionCapabilities>(() =>
-      initialCapabilities !== undefined
-        ? {
-            turn: initialCapabilities.turn === true,
-            delegate: initialCapabilities.delegate === true,
-          }
-        : initialAvailable === true
-          ? { turn: true, delegate: true }
-          : NO_ACTIONS,
-    );
-  const [capabilitiesKnown, setCapabilitiesKnown] = useState(
-    initialAvailable !== undefined || initialCapabilities !== undefined,
+  const [available, setAvailable] = useState<boolean>(
+    initialAvailable === true,
   );
   const [mayHaveOlder, setMayHaveOlder] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -244,10 +184,6 @@ export default function Channel({
   );
   const [filter, setFilter] = useState<ChannelFilter>("all");
   const [peek, setPeek] = useState<ChannelRef | null>(null);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [contextView, setContextView] = useState<ContextView>("guide");
-  const [contextOpen, setContextOpen] = useState(false);
-  const [narrow, setNarrow] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
 
   // turn composer
@@ -280,9 +216,6 @@ export default function Channel({
   const feedRef = useRef<HTMLDivElement | null>(null);
   const pinnedRef = useRef(true);
   const anchorRef = useRef<number | null>(null);
-  const contextRef = useRef<HTMLElement | null>(null);
-  const contextOpenerRef = useRef<HTMLElement | null>(null);
-  const restoreContextFocusRef = useRef(false);
 
   const merge = useCallback((incoming: ChannelRow[]): number => {
     const fresh = incoming.filter((r) => !seenRef.current.has(rowKey(r)));
@@ -293,7 +226,6 @@ export default function Channel({
   }, []);
 
   const load = useCallback(async () => {
-    const attemptedAt = new Date().toISOString();
     try {
       const since = sinceRef.current;
       const resp =
@@ -301,11 +233,6 @@ export default function Channel({
           ? await getChannelTimeline(undefined, limitRef.current)
           : await getChannelTimeline(since);
       merge(channelRows(resp));
-      setReadState(
-        resp.readState ??
-          (isFramedIntegrity(resp.integrity) ? "framed" : "unframed"),
-      );
-      setInvalidRowCount(resp.invalidRowCount ?? 0);
       if (since === null) {
         // A full window that came back full probably truncated older rows.
         setMayHaveOlder(
@@ -321,8 +248,6 @@ export default function Channel({
       setLoaded(true);
       setSkew(false);
       setError(null);
-      setCheckedAt(attemptedAt);
-      setLastSuccessAt(attemptedAt);
     } catch (e) {
       if (isVersionSkew404(e, TIMELINE_ENDPOINT)) {
         setSkew(true);
@@ -331,7 +256,6 @@ export default function Channel({
         setError(String(e));
       }
       setLoaded(true);
-      setCheckedAt(attemptedAt);
     }
   }, [merge]);
 
@@ -342,30 +266,19 @@ export default function Channel({
     anchorRef.current = el ? el.scrollHeight - el.scrollTop : null;
     const next = Math.min(limitRef.current + OLDER_PAGE, MAX_TIMELINE_LIMIT);
     limitRef.current = next;
-    const attemptedAt = new Date().toISOString();
     try {
       // Full refetch with a wider newest-N window — the already-seen newest
       // rows dedupe away; only the older tail lands (prepended by the sort).
       const resp = await getChannelTimeline(undefined, next);
       const freshCount = merge(channelRows(resp));
-      setReadState(
-        resp.readState ??
-          (isFramedIntegrity(resp.integrity) ? "framed" : "unframed"),
-      );
-      setInvalidRowCount(resp.invalidRowCount ?? 0);
       if (freshCount === 0) anchorRef.current = null;
       setMayHaveOlder(
         resp.rows.length >= next && next < MAX_TIMELINE_LIMIT,
       );
-      setSkew(false);
-      setError(null);
-      setCheckedAt(attemptedAt);
-      setLastSuccessAt(attemptedAt);
     } catch (e) {
       anchorRef.current = null;
       if (isVersionSkew404(e, TIMELINE_ENDPOINT)) setSkew(true);
       else setError(String(e));
-      setCheckedAt(attemptedAt);
     } finally {
       setLoadingOlder(false);
     }
@@ -415,94 +328,21 @@ export default function Channel({
   }, [initial, pollMs, load]);
 
   useEffect(() => {
-    if (initialAvailable !== undefined || initialCapabilities !== undefined) {
-      return;
-    }
+    if (initialAvailable !== undefined) return;
     let active = true;
     getChannelAvailability()
       .then((cap) => {
-        if (!active) return;
-        setActionCapabilities({
-          turn: cap.available === true && cap.actions.turn === true,
-          delegate: cap.available === true && cap.actions.delegate === true,
-        });
-        setCapabilitiesKnown(true);
+        if (active) setAvailable(cap.available === true);
       })
       .catch(() => {
-        if (active) setCapabilitiesKnown(true);
+        /* probe unreachable — composers stay preview-only (available false) */
       });
     return () => {
       active = false;
     };
-  }, [initialAvailable, initialCapabilities]);
+  }, [initialAvailable]);
 
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(max-width: 899px)");
-    const sync = () => setNarrow(query.matches);
-    sync();
-    query.addEventListener?.("change", sync);
-    return () => query.removeEventListener?.("change", sync);
-  }, []);
-
-  const closeContext = useCallback(() => {
-    restoreContextFocusRef.current = true;
-    setContextOpen(false);
-  }, []);
-
-  useEffect(() => {
-    // Restore only after React removes the main surface's inert attribute.
-    // Focusing in the close event is refused by real browsers.
-    if (!contextOpen && restoreContextFocusRef.current) {
-      restoreContextFocusRef.current = false;
-      contextOpenerRef.current?.focus();
-    }
-  }, [contextOpen]);
-
-  useEffect(() => {
-    if (!narrow || !contextOpen) return;
-    contextRef.current?.focus();
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeContext();
-        return;
-      }
-      if (event.key !== "Tab" || contextRef.current === null) return;
-      const focusable = Array.from(
-        contextRef.current.querySelectorAll<HTMLElement>(CONTEXT_FOCUSABLE),
-      );
-      if (focusable.length === 0) {
-        event.preventDefault();
-        contextRef.current.focus();
-        return;
-      }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey &&
-          (document.activeElement === first || document.activeElement === contextRef.current)) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [contextOpen, narrow, closeContext]);
-
-  const openContext = (view: ContextView) => {
-    contextOpenerRef.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    setContextView(view);
-    setContextOpen(true);
-  };
-
-  const sendDisabled =
-    !actionCapabilities.turn || sending || draft.trim().length === 0;
+  const sendDisabled = !available || sending || draft.trim().length === 0;
 
   const onSend = async () => {
     if (sendDisabled) return;
@@ -531,13 +371,12 @@ export default function Channel({
     }
   };
 
-  const reviewDisabled =
-    !actionCapabilities.delegate || delegating || dText.trim().length === 0;
+  const reviewDisabled = !available || delegating || dText.trim().length === 0;
 
   // The ONLY code path that posts a delegation — reached exclusively from the
   // confirm card's confirm button.
   const onConfirmDelegate = async () => {
-    if (!confirming || delegating || !actionCapabilities.delegate) return;
+    if (!confirming || delegating) return;
     setDelegating(true);
     setDelegateError(null);
     setDelegateDone(null);
@@ -596,124 +435,27 @@ export default function Channel({
     </button>
   );
 
-  const framedCount = rows.filter((row) => row.recordedLabel === true).length;
-  const rawCount = rows.length - framedCount;
-  const integrityMode =
-    rows.length === 0
-      ? readState === "framed"
-        ? "framed-empty"
-        : readState === "malformed"
-          ? "malformed"
-          : "unframed-empty"
-      : framedCount === rows.length
-        ? "framed"
-        : framedCount === 0
-          ? readState === "malformed"
-            ? "malformed"
-            : "raw"
-          : "mixed";
-  const semanticFiltersAvailable = rows.length > 0 && rawCount === 0;
-  const activeFilter = semanticFiltersAvailable ? filter : "all";
-  const feedItems = groupFeed(rows, expandedWalls, activeFilter);
-  const selectedRow =
-    selectedKey === null
-      ? null
-      : (rows.find((row) => rowKey(row) === selectedKey) ?? null);
-  const loadedThrough =
-    [...rows].reverse().find((row) => row.ts !== "")?.ts ?? null;
-
-  const integrityCopy = (() => {
-    if (integrityMode === "framed") {
-      return {
-        label: "Framed records",
-        detail: "Conversation and event kinds are recorded labels, not authenticated identities.",
-        tone: "framed",
-      };
-    }
-    if (integrityMode === "framed-empty") {
-      return {
-        label: "Framed empty window",
-        detail: "The source returned no records in this read. Full-ledger completeness is not asserted.",
-        tone: "framed",
-      };
-    }
-    if (integrityMode === "mixed") {
-      return {
-        label: "Mixed integrity",
-        detail: `${rawCount} record${rawCount === 1 ? " has" : "s have"} no trusted actor or type framing. Inspect each record.`,
-        tone: "raw",
-      };
-    }
-    if (integrityMode === "malformed") {
-      return {
-        label: "Malformed timeline",
-        detail: "No actor or type is trusted; an empty-history conclusion cannot be made.",
-        tone: "error",
-      };
-    }
-    return {
-      label: rows.length > 0 ? "Raw records" : "Unframed empty read",
-      detail: rows.length > 0
-        ? "Actor and type are unavailable. Text stays byte-for-byte and is not grouped by prose."
-        : "No framed records were returned, so missing history and an empty history remain distinct.",
-      tone: "raw",
-    };
-  })();
-
+  // Unframed rows stay raw, including event-like text. A later response cannot
+  // retroactively certify an older row: provenance travels with each record.
+  const feedItems = groupFeed(rows.map(r => r.recordedLabel ? r : { ...r, kind: `unverified:${r.kind}` }), expandedWalls, filter);
   const openPeek = (r: ChannelRef) => setPeek(r);
-  const inspectRow = (row: ChannelRow) => {
-    setSelectedKey(rowKey(row));
-    openContext("record");
-  };
-
-  // Unframed records use one neutral rail. Their producer-supplied `kind`
-  // field is available only in the exact context view; it never selects a
-  // voice, color, event chip, Markdown renderer, or grouping behavior.
-  const renderRawRecord = (item: Extract<FeedItem, { type: "single" }>) => {
-    const row = item.row;
-    return (
-      <article
-        key={item.key}
-        data-testid="channel-turn-unverified"
-        data-voice="unverified"
-        className="chn-raw-record"
-      >
-        <button
-          type="button"
-          className="chn-raw-select"
-          data-testid="channel-inspect-record"
-          onClick={() => inspectRow(row)}
-          aria-label={`inspect raw record at ${row.ts || "an unavailable time"}`}
-        >
-          <span className="chn-raw-meta">
-            <span>raw record</span>
-            <time dateTime={row.ts}>{hhmm(row.ts)}</time>
-          </span>
-          <span className="chn-raw-preview" data-testid="channel-voice-body">
-            {row.message}
-          </span>
-          <span className="chn-inspect-label">inspect record</span>
-        </button>
-      </article>
-    );
-  };
 
   // ── one turn: a document-style voice block ────────────────────────────
   const renderTurn = (item: Extract<FeedItem, { type: "single" }>) => {
     const r = item.row;
-    const voice = voiceOf(r.kind);
+    const voice = r.recordedLabel ? voiceOf(r.kind) : { ...VOICE_FALLBACK, label: "unverified text" };
     // Model voices reply in markdown — render it, and collect the ids it
     // mentions into a chip row (MiniMarkdown is shared with the journal /
     // experiment readers; R4 does not fork it to inline chips). The human's
     // own turns (and unknown kinds) stay verbatim text with INLINE chips.
-    const isModelVoice = r.kind === "nara" || r.kind === "pi";
-    const activity = activityOf(r.message);
+    const isModelVoice = r.recordedLabel && (r.kind === "nara" || r.kind === "pi");
+    const activity = r.recordedLabel ? activityOf(r.message) : null;
     const body = activity !== null ? activity.body : r.message;
     return (
       <article
         key={item.key}
-        data-testid={`channel-turn-${r.kind}`}
-        data-voice={r.kind}
+        data-testid={`channel-turn-${r.recordedLabel ? r.kind : "unverified"}`}
+        data-voice={r.recordedLabel ? r.kind : "unverified"}
         className={`chn-turn${voice.own ? " chn-turn--own" : ""}`}
         style={{ "--voice-accent": voice.accent } as CSSProperties}
       >
@@ -729,7 +471,7 @@ export default function Channel({
             {r.kind === "human" ? "human" : voice.label}
           </span>
           <span className="text-xs text-zinc-500" data-testid="channel-label-provenance">
-            recorded label · not authenticated
+            {r.recordedLabel ? "recorded label · not authenticated" : "unverified actor label"}
           </span>
           {activity !== null && (
             <span
@@ -747,15 +489,6 @@ export default function Channel({
           >
             {hhmm(r.ts)}
           </time>
-          <button
-            type="button"
-            className="chn-inspect"
-            data-testid="channel-inspect-record"
-            onClick={() => inspectRow(r)}
-            aria-label={`inspect ${r.kind} record at ${r.ts}`}
-          >
-            inspect
-          </button>
         </div>
         {isModelVoice ? (
           <div className="chn-body" data-testid="channel-voice-body">
@@ -767,7 +500,7 @@ export default function Channel({
             className="chn-body chn-body--raw"
             data-testid="channel-voice-body"
           >
-            <RefText text={body} onOpen={openPeek} />
+            {r.recordedLabel ? <RefText text={body} onOpen={openPeek} /> : body}
           </div>
         )}
       </article>
@@ -799,25 +532,12 @@ export default function Channel({
         <time className="chn-event-time" dateTime={r.ts}>
           {hhmm(r.ts)}
         </time>
-        <button
-          type="button"
-          className="chn-inspect"
-          data-testid="channel-inspect-record"
-          onClick={() => inspectRow(r)}
-          aria-label={`inspect event record at ${r.ts}`}
-        >
-          inspect
-        </button>
       </div>
     );
   };
 
   const renderRow = (item: Extract<FeedItem, { type: "single" }>) =>
-    item.row.recordedLabel !== true
-      ? renderRawRecord(item)
-      : item.row.kind === "event"
-        ? renderEvent(item)
-        : renderTurn(item);
+    item.row.kind === "event" ? renderEvent(item) : renderTurn(item);
 
   // The timeline collapse affordance: same row grammar as an event line, the
   // count is the button ("N cluster kills — expand").
@@ -858,506 +578,352 @@ export default function Channel({
   };
 
   return (
+    // Viewport-bounded chat column (56px ≈ the app header; the ActivityGraph
+    // viewport-calc idiom): feed scrolls in its own overflow container, the
+    // composer dock stays visible at the bottom of the page area. max-w-3xl
+    // = 768px — the top of the ~720-768px reading band (R0's .page-prose is
+    // not adopted here: it brings its own margins/padding, which fight the
+    // full-height flex column this page needs).
     <div
-      className="chn flex h-[calc(100dvh-3.5rem)] flex-col"
+      className="chn mx-auto flex h-[calc(100dvh-3.5rem)] max-w-3xl flex-col p-5 pb-3"
       data-testid="channel-page"
     >
-      <header className="chn-page-head">
-        <div>
-          <p className="chn-eyebrow">Operations</p>
-          <h1>Channel</h1>
-          <p className="chn-intro">
-            Inspect recorded exchanges and their provenance, then choose a
-            deliberate conversation or handoff. Scientific rulings stay in
-            Dossier.
-          </p>
-        </div>
-        <button
-          type="button"
-          className="chn-context-trigger"
-          data-testid="channel-open-context"
-          onClick={() => openContext(selectedRow === null ? "guide" : "record")}
+      <header className="mb-2 shrink-0">
+        <p className="mb-1 text-xs font-medium uppercase tracking-widest text-[var(--fg-muted)]">Operations</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-[var(--fg)]">
+          Nara channel
+        </h1>
+        <p className="mt-2 text-sm text-[var(--fg-muted)]">
+          Conversation and recorded runtime events. Engineering work does not create a Nara reply.
+          Scientific verdicts remain in the claim dossier.
+        </p>
+        <div
+          className="mt-2 flex flex-wrap items-center gap-1.5"
+          data-testid="channel-filters"
         >
-          Context &amp; handoff
-        </button>
+          {FILTERS.map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className="chn-chip"
+              data-testid={`channel-filter-${value}`}
+              aria-pressed={filter === value}
+              onClick={() => setFilter(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </header>
 
-      <div className="chn-canvas">
-        <main
-          className="chn-main"
-          inert={narrow && contextOpen ? true : undefined}
-        >
-          <section
-            className="chn-integrity"
-            data-tone={integrityCopy.tone}
-            data-testid="channel-integrity"
+      {error !== null && (
+        <div className="text-xs text-red-400" data-testid="channel-error">
+          {error}
+        </div>
+      )}
+
+      {skew && <EndpointMissingNote endpoint={TIMELINE_ENDPOINT} />}
+
+      {/* ── the feed — its own scroll container, newest at the bottom ── */}
+      {!skew && error === null && (
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            ref={feedRef}
+            onScroll={onFeedScroll}
+            className="min-h-0 flex-1 space-y-1 overflow-y-auto pr-1"
+            data-testid="channel-feed"
           >
-            <div className="chn-integrity-copy">
-              <span className="chn-integrity-label">{integrityCopy.label}</span>
-              <span>{integrityCopy.detail}</span>
-            </div>
-            <dl className="chn-freshness">
-              <div>
-                <dt>loaded through</dt>
-                <dd>{shortUtc(loadedThrough)}</dd>
-              </div>
-              <div>
-                <dt>last checked</dt>
-                <dd>{shortUtc(checkedAt)}</dd>
-              </div>
-            </dl>
-          </section>
-
-          <fieldset
-            className="chn-filter-group"
-            data-testid="channel-filters"
-            aria-describedby={!semanticFiltersAvailable ? "channel-filter-note" : undefined}
-          >
-            <legend>Show recorded timeline rows</legend>
-            {FILTERS.map(([value, label]) => {
-              const semantic = value !== "all";
-              const disabled = semantic && !semanticFiltersAvailable;
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  className="chn-chip"
-                  data-testid={`channel-filter-${value}`}
-                  aria-pressed={activeFilter === value}
-                  disabled={disabled}
-                  onClick={() => setFilter(value)}
-                >
-                  {value === "all"
-                    ? "all records"
-                    : value === "events"
-                      ? "apparatus events"
-                      : label}
-                </button>
-              );
-            })}
-            {!semanticFiltersAvailable && (
-              <span id="channel-filter-note" data-testid="channel-filter-unavailable">
-                semantic filters unavailable for this integrity state
-              </span>
-            )}
-          </fieldset>
-
-          {error !== null && rows.length === 0 && (
-            <div className="chn-error" data-testid="channel-error">
-              <strong>Channel history could not be read.</strong>
-              <pre>{error}</pre>
-            </div>
-          )}
-          {error !== null && rows.length > 0 && (
-            <div className="chn-refresh-warning" data-testid="channel-refresh-warning">
-              <div>
-                <strong>Refresh failed at {shortUtc(checkedAt)}.</strong>{" "}
-                History last loaded successfully at {shortUtc(lastSuccessAt)}
-                remains visible.
-              </div>
-              <details>
-                <summary>Exact refresh error</summary>
-                <pre>{error}</pre>
-              </details>
-            </div>
-          )}
-
-          {skew && <EndpointMissingNote endpoint={TIMELINE_ENDPOINT} />}
-
-          <div className="chn-feed-wrap relative flex min-h-0 flex-1 flex-col">
-            <div
-              ref={feedRef}
-              onScroll={onFeedScroll}
-              className="chn-feed min-h-0 flex-1 overflow-y-auto"
-              data-testid="channel-feed"
-            >
-              {mayHaveOlder && (
-                <button
-                  type="button"
-                  disabled={loadingOlder}
-                  onClick={() => void loadOlder()}
-                  data-testid="channel-load-older"
-                  className="chn-load-older"
-                >
-                  {loadingOlder ? "loading older…" : "load older records"}
-                </button>
-              )}
-              {!loaded && (
-                <div className="chn-empty" data-testid="channel-loading">
-                  Reading the newest recorded window…
-                </div>
-              )}
-              {loaded && rows.length === 0 && error === null && !skew && (
-                <div
-                  className="chn-empty"
-                  data-testid="channel-empty"
-                  data-state={integrityMode}
-                >
-                  {readState === "framed" ? (
-                    <>
-                      <strong>No recorded channel activity in this framed read.</strong>
-                      <span>This read does not establish full-ledger completeness.</span>
-                    </>
-                  ) : readState === "malformed" ? (
-                    <>
-                      <strong>The timeline response was malformed.</strong>
-                      <span>
-                        {invalidRowCount > 0
-                          ? `${invalidRowCount} invalid row${invalidRowCount === 1 ? " was" : "s were"} excluded. `
-                          : ""}
-                        No empty-history or actor/type claim is shown.
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <strong>No framed channel records were returned.</strong>
-                      <span>Empty history and unavailable history are not conflated.</span>
-                    </>
-                  )}
-                </div>
-              )}
-              {rows.length > 0 && feedItems.length === 0 && (
-                <div className="chn-empty" data-testid="channel-filter-empty">
-                  No {filter} rows in the loaded window. Other records remain
-                  loaded and are hidden by this filter.
-                </div>
-              )}
-              {feedItems.map(renderItem)}
-              {pending !== null && activeFilter !== "events" && (
-                <div
-                  data-testid="channel-pending-turn"
-                  className="chn-pending"
-                  style={{ "--voice-accent": voiceOf(pending.role).accent } as CSSProperties}
-                >
-                  <StatusDot status="info" pulse label={`${pending.role} is composing`} />
-                  <span>
-                    {pending.role} is composing. A live turn can take minutes;
-                    this seam has no stop action and the reply still lands in
-                    the transcript.
-                  </span>
-                </div>
-              )}
-            </div>
-            {!atBottom && (
+            {mayHaveOlder && (
               <button
                 type="button"
-                className="chn-jump"
-                data-testid="channel-jump-present"
-                onClick={jumpToPresent}
+                disabled={loadingOlder}
+                onClick={() => void loadOlder()}
+                data-testid="channel-load-older"
+                className="mx-auto block rounded border border-zinc-700 px-2 py-0.5 text-[10px] uppercase tracking-wide text-zinc-400 hover:text-zinc-200 disabled:cursor-not-allowed disabled:text-zinc-600"
               >
-                jump to present ↓
+                {loadingOlder ? "loading older…" : "load older"}
               </button>
             )}
-          </div>
-
-          <div className="chn-composer" data-testid="channel-composer">
-            <fieldset className="chn-role-group">
-              <legend>Perspective · same model</legend>
-              {roleChip("nara", "nara · operations")}
-              {roleChip("pi", "pi · research")}
-            </fieldset>
-            <div className="chn-compose-row">
-              <textarea
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                aria-label="channel turn input"
-                placeholder={
-                  actionCapabilities.turn
-                    ? `Ask the ${role === "nara" ? "operations" : "research"} perspective`
-                    : "Turn capability unavailable — not sent"
+            {loaded && rows.length === 0 && (
+              <div className="text-xs text-zinc-600" data-testid="channel-empty">
+                no channel activity yet — memory/lab_channel.jsonl has no turns
+                and no events derive from the ledgers. Ask a voice below.
+              </div>
+            )}
+            {rows.length > 0 && feedItems.length === 0 && (
+              <div
+                className="text-xs text-zinc-600"
+                data-testid="channel-filter-empty"
+              >
+                no {filter} rows in the loaded window — the other rows are
+                still there, the filter is hiding them.
+              </div>
+            )}
+            {feedItems.map(renderItem)}
+            {pending !== null && filter !== "events" && (
+              <div
+                data-testid="channel-pending-turn"
+                className="chn-pending"
+                style={
+                  {
+                    "--voice-accent": voiceOf(pending.role).accent,
+                  } as CSSProperties
                 }
-                rows={1}
-              />
-              <button
-                type="button"
-                disabled={sendDisabled}
-                onClick={() => void onSend()}
-                data-testid="channel-send"
-                className="chn-primary-action"
               >
-                send to {role}
-              </button>
-            </div>
-            <div className="chn-composer-meta">
-              <span data-testid="channel-honesty-note">
-                Nara and PI are perspectives of the SAME local model (Gemma),
-                so never treat one as independent confirmation of the other.
-                The independent skeptic is in the dossier reader.
-              </span>
-              <button
-                type="button"
-                className="chn-text-action"
-                data-testid="channel-open-delegate"
-                onClick={() => openContext("delegate")}
-              >
-                review a delegation
-              </button>
-            </div>
-            {capabilitiesKnown && !actionCapabilities.turn && (
-              <div className="chn-capability-note" data-testid="channel-capability-off">
-                Turn capability unavailable. No model call happens here; your
-                message is not sent. Delegation availability is checked separately.
+                <StatusDot status="info" pulse label={`${pending.role} is composing`} />
+                <span>
+                  {pending.role} is composing a reply — a live turn can take
+                  minutes. The seam has no abort verb, so it cannot be stopped
+                  from here; the reply lands in the transcript either way.
+                </span>
               </div>
             )}
-            {sending && (
-              <span data-testid="channel-sending" className="chn-working">
-                asking {role}… a live turn can take minutes
-              </span>
-            )}
-            {sendError !== null && (
-              <pre className="chn-inline-error" data-testid="channel-send-error">
-                {sendError}
-              </pre>
-            )}
           </div>
-        </main>
-
-        <button
-          type="button"
-          className="chn-context-backdrop"
-          data-open={contextOpen}
-          aria-label="close context sheet"
-          onClick={closeContext}
-        />
-
-        <aside
-          ref={contextRef}
-          className="chn-context"
-          data-open={contextOpen}
-          data-testid="channel-context"
-          role={narrow && contextOpen ? "dialog" : "complementary"}
-          aria-modal={narrow && contextOpen ? true : undefined}
-          aria-label="Channel context and handoff"
-          tabIndex={narrow && contextOpen ? -1 : undefined}
-        >
-          <header className="chn-context-head">
-            <div>
-              <span className="chn-eyebrow">Context</span>
-              <h2>
-                {contextView === "record"
-                  ? "Recorded source"
-                  : contextView === "delegate"
-                    ? "Review delegation"
-                    : "Choose the next place"}
-              </h2>
-            </div>
+          {!atBottom && (
             <button
               type="button"
-              className="chn-context-close"
-              data-testid="channel-close-context"
-              onClick={closeContext}
+              className="chn-jump"
+              data-testid="channel-jump-present"
+              onClick={jumpToPresent}
             >
-              Close
+              jump to present ↓
             </button>
-          </header>
-
-          {contextView === "record" && selectedRow !== null && (
-            <section className="chn-context-section" data-testid="channel-selected-record">
-              <div className="chn-source-state">
-                {selectedRow.recordedLabel
-                  ? "Recorded kind and actor label · identity not authenticated"
-                  : "Raw record · actor and type unavailable"}
-              </div>
-              <dl className="chn-record-meta">
-                <div>
-                  <dt>timestamp field</dt>
-                  <dd>{selectedRow.ts || "unavailable"}</dd>
-                </div>
-                <div>
-                  <dt>{selectedRow.recordedLabel ? "recorded kind" : "reported kind field · unverified"}</dt>
-                  <dd>{selectedRow.kind || "unavailable"}</dd>
-                </div>
-                <div>
-                  <dt>source</dt>
-                  <dd>channel timeline record</dd>
-                </div>
-              </dl>
-              <h3>Exact recorded text</h3>
-              <pre className="chn-record-raw" data-testid="channel-selected-raw">
-                {selectedRow.message}
-              </pre>
-              {selectedRow.recordedLabel && (
-                <RefChipRow refs={refsIn(selectedRow.message)} onOpen={openPeek} />
-              )}
-              <button type="button" className="chn-secondary-action" onClick={() => setContextView("guide")}>
-                Choose a handoff
-              </button>
-            </section>
           )}
+        </div>
+      )}
 
-          {contextView === "record" && selectedRow === null && (
-            <section className="chn-context-section">
-              <p>The selected record is no longer in the loaded window.</p>
-              <button type="button" className="chn-secondary-action" onClick={() => setContextView("guide")}>
-                Choose a handoff
-              </button>
-            </section>
-          )}
+      {/* ── composer dock — always visible below the feed ── */}
+      <div className="shrink-0">
+        {/* turn composer */}
+        <div
+          className="mt-3 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5"
+          data-testid="channel-composer"
+        >
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-wide text-zinc-600">
+              ask
+            </span>
+            {roleChip("nara", "nara · operations")}
+            {roleChip("pi", "pi · research")}
+          </div>
+          {/* ONE-MODEL HONESTY — rendered next to the selector, always. */}
+          <div
+            className="mt-1 text-[10px] text-zinc-500"
+            data-testid="channel-honesty-note"
+          >
+            honesty: nara and pi are perspectives of the SAME local model
+            (Gemma) — never treat one as independent confirmation of the other.
+            The independent adversarial skeptic (Qwen) lives in the dossier
+            reader&apos;s two-voice chat, not in this channel.
+          </div>
 
-          {contextView === "guide" && (
-            <div className="chn-context-section" data-testid="channel-handoff">
-              <p>
-                Select a timeline row to inspect its exact source fields, or
-                continue to the workspace that owns the next decision.
-              </p>
-              <section className="chn-destination">
-                <span className="chn-destination-kicker">Human scientific ruling</span>
-                <h3>Dossier</h3>
-                <p>Inspect evidence and use the existing governed decision boundary.</p>
-                <a href="/dossier" data-testid="channel-dossier-link">Open Dossier →</a>
-              </section>
-              <section className="chn-destination">
-                <span className="chn-destination-kicker">Engineering history</span>
-                <h3>Development</h3>
-                <p>Review delivery evidence and impediments without creating a reply.</p>
-                <a href="/development" data-testid="channel-development-link">Open Development →</a>
-              </section>
-              <button
-                type="button"
-                className="chn-primary-action chn-full-action"
-                data-testid="channel-context-delegate"
-                onClick={() => setContextView("delegate")}
-              >
-                Review a delegation
-              </button>
+          {!available && (
+            <div
+              className="mt-1 text-[10px] text-zinc-500"
+              data-testid="channel-capability-off"
+            >
+              capability disabled — the lab-channel exec is not enabled on this
+              backend. No model calls happen here; your message is not sent.
             </div>
           )}
 
-          {contextView === "delegate" && (
-            <section className="chn-context-section" data-testid="channel-delegate">
-              <p>
-                Research adds an agenda event; improvement enqueues an
-                authorize_fix packet. Opening and reviewing do not write.
-              </p>
-              {!actionCapabilities.delegate && capabilitiesKnown && (
-                <div className="chn-capability-note" data-testid="channel-delegate-capability-off">
-                  Delegation capability unavailable. No ledger or queue write can
-                  be confirmed. Turn availability is checked separately.
-                </div>
-              )}
-              <fieldset className="chn-delegate-kind">
-                <legend>Delegation kind</legend>
-                {(["research", "improvement"] as const).map((kind) => (
-                  <button
-                    key={kind}
-                    type="button"
-                    data-testid={`channel-delegate-kind-${kind}`}
-                    aria-pressed={dKind === kind}
-                    onClick={() => {
-                      setDKind(kind);
-                      setConfirming(false);
-                    }}
-                    className="chn-chip"
-                  >
-                    {kind}
-                  </button>
-                ))}
-              </fieldset>
-              <label className="chn-field">
-                <span>{dKind === "research" ? "Research question or agenda topic" : "Improvement task statement"}</span>
-                <textarea
-                  value={dText}
-                  onChange={(event) => {
-                    setDText(event.target.value);
-                    setConfirming(false);
-                  }}
-                  aria-label="delegation text"
-                  data-testid="channel-delegate-text"
-                  rows={3}
-                />
-              </label>
-              {dKind === "research" && (
-                <label className="chn-field">
-                  <span>Target cluster ID · optional</span>
-                  <input
-                    value={dClusterId}
-                    onChange={(event) => {
-                      setDClusterId(event.target.value);
-                      setConfirming(false);
-                    }}
-                    aria-label="target cluster id (optional)"
-                    data-testid="channel-delegate-cluster"
-                    placeholder="defaults to cl-human-delegations"
-                  />
-                </label>
-              )}
-              {dKind === "improvement" && (
-                <label className="chn-field">
-                  <span>Objective · optional</span>
-                  <input
-                    value={dObjective}
-                    onChange={(event) => {
-                      setDObjective(event.target.value);
-                      setConfirming(false);
-                    }}
-                    aria-label="objective (optional)"
-                    data-testid="channel-delegate-objective"
-                    placeholder="defaults to the task statement"
-                  />
-                </label>
-              )}
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            aria-label="channel turn input"
+            placeholder={
+              available
+                ? `ask the ${role === "nara" ? "operations" : "research"} voice`
+                : "channel disabled — not sent"
+            }
+            rows={2}
+            className="mt-1.5 w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+          />
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              disabled={sendDisabled}
+              onClick={() => void onSend()}
+              data-testid="channel-send"
+              className="rounded border border-zinc-600 bg-zinc-900 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900 disabled:text-zinc-600"
+            >
+              send to {role}
+            </button>
+            {sending && (
+              <span data-testid="channel-sending" className="text-[11px] text-zinc-500">
+                asking {role}… (a live turn can take minutes)
+              </span>
+            )}
+          </div>
+          {sendError !== null && (
+            <div
+              data-testid="channel-send-error"
+              className="mt-1 overflow-x-auto whitespace-pre-wrap rounded border border-red-900 bg-red-950/40 p-2 font-mono text-[11px] text-red-400"
+            >
+              {sendError}
+            </div>
+          )}
+        </div>
 
-              {!confirming && (
+        {/* ── delegate composer — a disclosure so the dock stays compact
+            (everything inside is unchanged; the confirm card remains the
+            ONLY path that posts) ── */}
+        <details
+          className="mt-2 rounded border border-sky-900/50 bg-sky-950/10 px-2 py-1.5"
+          data-testid="channel-delegate"
+        >
+          <summary className="cursor-pointer list-none text-[10px] uppercase tracking-wide text-sky-400">
+            delegate to the apparatus{" "}
+            <span aria-hidden="true" className="text-zinc-600">
+              ▾
+            </span>
+          </summary>
+          <div className="mt-0.5 text-[10px] text-zinc-500">
+            &quot;put it on your todo list&quot; — research goes on the idea
+            ledger&apos;s agenda; improvement enqueues an authorize_fix packet.
+            Nothing is written until you confirm the card.
+          </div>
+
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {(["research", "improvement"] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                data-testid={`channel-delegate-kind-${k}`}
+                aria-pressed={dKind === k}
+                onClick={() => {
+                  setDKind(k);
+                  setConfirming(false); // an edit invalidates a pending confirm
+                }}
+                className={`rounded border px-2 py-0.5 text-[10px] uppercase tracking-wide ${
+                  dKind === k
+                    ? "border-sky-700 bg-sky-950/40 text-sky-300"
+                    : "border-zinc-700 text-zinc-400 hover:text-zinc-200"
+                }`}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
+
+          <textarea
+            value={dText}
+            onChange={(e) => {
+              setDText(e.target.value);
+              setConfirming(false); // an edit invalidates a pending confirm
+            }}
+            aria-label="delegation text"
+            data-testid="channel-delegate-text"
+            placeholder={
+              dKind === "research"
+                ? "the research question / agenda topic"
+                : "the improvement to authorize (spawn-contract task statement)"
+            }
+            rows={2}
+            className="mt-1.5 w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+          />
+          {dKind === "research" && (
+            <input
+              value={dClusterId}
+              onChange={(e) => {
+                setDClusterId(e.target.value);
+                setConfirming(false);
+              }}
+              aria-label="target cluster id (optional)"
+              data-testid="channel-delegate-cluster"
+              placeholder="cluster id (optional — defaults to cl-human-delegations)"
+              className="mt-1 w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-[10px] text-zinc-300 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+            />
+          )}
+          {dKind === "improvement" && (
+            <input
+              value={dObjective}
+              onChange={(e) => {
+                setDObjective(e.target.value);
+                setConfirming(false);
+              }}
+              aria-label="objective (optional)"
+              data-testid="channel-delegate-objective"
+              placeholder="objective (optional — defaults to the text above)"
+              className="mt-1 w-full rounded border border-zinc-800 bg-zinc-950 px-2 py-1 font-mono text-[10px] text-zinc-300 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+            />
+          )}
+
+          {!confirming && (
+            <button
+              type="button"
+              disabled={reviewDisabled}
+              onClick={() => setConfirming(true)}
+              data-testid="channel-delegate-review"
+              className="mt-1.5 rounded border border-sky-800 bg-sky-950/40 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-sky-300 hover:bg-sky-900/40 disabled:cursor-not-allowed disabled:border-zinc-800 disabled:bg-zinc-900 disabled:text-zinc-600"
+            >
+              review delegation…
+            </button>
+          )}
+
+          {/* CONFIRM CARD — shows exactly what will be written where; the
+              confirm button below is the ONLY path that posts. */}
+          {confirming && (
+            <div
+              className="mt-1.5 rounded border border-sky-800 bg-sky-950/30 px-2 py-1.5"
+              data-testid="delegate-confirm-card"
+            >
+              <div className="text-[10px] uppercase tracking-wide text-sky-300">
+                confirm delegation · {dKind}
+              </div>
+              <div className="mt-1 whitespace-pre-wrap font-mono text-[11px] text-zinc-200">
+                {dText.trim()}
+              </div>
+              <div className="mt-1.5 text-[10px] text-zinc-400">
+                confirming writes exactly:
+              </div>
+              <ul className="mt-0.5 list-disc space-y-0.5 pl-4 text-[10px] text-zinc-400">
+                {delegateTargets(dKind, dClusterId).map((t) => (
+                  <li key={t}>{t}</li>
+                ))}
+              </ul>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                 <button
                   type="button"
-                  disabled={reviewDisabled}
-                  onClick={() => setConfirming(true)}
-                  data-testid="channel-delegate-review"
-                  className="chn-primary-action"
+                  disabled={delegating}
+                  onClick={() => void onConfirmDelegate()}
+                  data-testid="delegate-confirm"
+                  className="rounded border border-sky-600 bg-sky-900/60 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-sky-200 hover:bg-sky-800/60 disabled:cursor-not-allowed disabled:text-zinc-600"
                 >
-                  review delegation…
+                  confirm — write it
                 </button>
-              )}
-
-              {confirming && (
-                <div className="chn-confirm-card" data-testid="delegate-confirm-card">
-                  <span className="chn-destination-kicker">confirm delegation · {dKind}</span>
-                  <pre>{dText.trim()}</pre>
-                  <strong>Confirming writes exactly:</strong>
-                  <ul>
-                    {delegateTargets(dKind, dClusterId).map((target) => (
-                      <li key={target}>{target}</li>
-                    ))}
-                  </ul>
-                  <div className="chn-confirm-actions">
-                    <button
-                      type="button"
-                      disabled={delegating || !actionCapabilities.delegate}
-                      onClick={() => void onConfirmDelegate()}
-                      data-testid="delegate-confirm"
-                      className="chn-primary-action"
-                    >
-                      confirm — write it
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirming(false)}
-                      data-testid="delegate-cancel"
-                      className="chn-secondary-action"
-                    >
-                      cancel
-                    </button>
-                    {delegating && <span className="chn-working">writing…</span>}
-                  </div>
-                </div>
-              )}
-
-              {delegateDone !== null && (
-                <div data-testid="channel-delegate-result" className="chn-success">
-                  {delegateDone}
-                </div>
-              )}
-              {delegateError !== null && (
-                <pre data-testid="channel-delegate-error" className="chn-inline-error">
-                  {delegateError}
-                </pre>
-              )}
-              <button type="button" className="chn-text-action" onClick={() => setContextView("guide")}>
-                Back to handoff choices
-              </button>
-            </section>
+                <button
+                  type="button"
+                  onClick={() => setConfirming(false)}
+                  data-testid="delegate-cancel"
+                  className="rounded border border-zinc-700 px-2 py-0.5 text-[11px] uppercase tracking-wide text-zinc-400 hover:text-zinc-200"
+                >
+                  cancel
+                </button>
+                {delegating && (
+                  <span className="text-[11px] text-zinc-500">writing…</span>
+                )}
+              </div>
+            </div>
           )}
-        </aside>
+
+          {delegateDone !== null && (
+            <div
+              data-testid="channel-delegate-result"
+              className="mt-1 text-[11px] text-emerald-400"
+            >
+              {delegateDone}
+            </div>
+          )}
+          {delegateError !== null && (
+            <div
+              data-testid="channel-delegate-error"
+              className="mt-1 overflow-x-auto whitespace-pre-wrap rounded border border-red-900 bg-red-950/40 p-2 font-mono text-[11px] text-red-400"
+            >
+              {delegateError}
+            </div>
+          )}
+        </details>
       </div>
 
       {/* Reference peek — read-only summary + the one link onward. The object
