@@ -53,15 +53,15 @@ const ROUTES: {
   keywords: string[];
   group: "Now" | "Research" | "Operations";
 }[] = [
-  { id: "nav-pulse", label: "pulse", to: "/", keywords: ["home", "health", "owe"], group: "Now" },
-  { id: "nav-ladder", label: "ladder", to: "/ladder", keywords: ["ideas", "evidence", "rungs"], group: "Research" },
-  { id: "nav-dossier", label: "dossiers", to: "/dossier", keywords: ["reader", "findings", "todo"], group: "Research" },
-  { id: "nav-experiments", label: "experiments", to: "/experiments", keywords: ["runs", "engine"], group: "Research" },
-  { id: "nav-development", label: "development", to: "/development", keywords: ["codex", "engineering", "readiness", "overnight"], group: "Operations" },
-  { id: "nav-channel", label: "channel", to: "/channel", keywords: ["chat", "nara", "lab"], group: "Operations" },
-  { id: "nav-model-io", label: "model i/o", to: "/model-io", keywords: ["calls", "dispatch", "wrapper"], group: "Operations" },
-  { id: "nav-cycles", label: "cycles", to: "/cycles", keywords: ["coordinator", "engine"], group: "Operations" },
-  { id: "nav-graph", label: "graph", to: "/graph", keywords: ["chains", "engine", "flow"], group: "Operations" },
+  { id: "nav-pulse", label: "Now overview", to: "/", keywords: ["pulse", "home", "health", "owe"], group: "Now" },
+  { id: "nav-ladder", label: "Research workspace", to: "/ladder", keywords: ["ladder", "ideas", "evidence", "rungs"], group: "Research" },
+  { id: "nav-dossier", label: "Record library", to: "/dossier", keywords: ["dossier", "reader", "findings", "todo"], group: "Research" },
+  { id: "nav-experiments", label: "Evaluations", to: "/experiments", keywords: ["experiments", "runs", "engine"], group: "Research" },
+  { id: "nav-development", label: "Operations delivery", to: "/development", keywords: ["development", "codex", "engineering", "readiness", "overnight"], group: "Operations" },
+  { id: "nav-channel", label: "Conversation", to: "/channel", keywords: ["channel", "chat", "nara", "lab"], group: "Operations" },
+  { id: "nav-model-io", label: "Calls", to: "/model-io", keywords: ["model i/o", "calls", "dispatch", "wrapper"], group: "Operations" },
+  { id: "nav-cycles", label: "Trace history", to: "/cycles", keywords: ["cycles", "coordinator", "engine"], group: "Operations" },
+  { id: "nav-graph", label: "Recorded trace map", to: "/graph", keywords: ["graph", "chains", "engine", "flow"], group: "Operations" },
 ];
 
 const ROUTE_GROUPS = ["Now", "Research", "Operations"] as const;
@@ -186,7 +186,12 @@ export default function CommandPalette({
         ref={dialogRef}
         role="dialog"
       >
-        <Command label="Command palette">
+        <Command label="Command palette" filter={(value, search) => {
+          const query = search.trim().toLocaleLowerCase();
+          // Match names and retained aliases directly. Fuzzy subsequences can
+          // put "Research workspace" ahead of an exact "channel" alias.
+          return value.toLocaleLowerCase().includes(query) ? 1 : 0;
+        }}>
           <Command.Input autoFocus placeholder="Go to…" />
           <Command.List>
             <Command.Empty>No matches.</Command.Empty>

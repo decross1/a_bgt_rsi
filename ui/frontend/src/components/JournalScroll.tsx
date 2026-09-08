@@ -56,6 +56,42 @@ function renderMarkdown(md: string): React.ReactNode[] {
       i++;
       continue;
     }
+    // The journal writer emits a small, literal disclosure block. Parse only
+    // this exact safe shape into native <details>; every other HTML-looking
+    // token remains ordinary escaped text. No raw HTML is ever executed.
+    const compactDetails = line.trim().match(
+      /^<details>\s*<summary>(.*?)<\/summary>\s*$/i,
+    );
+    const splitDetails = line.trim().toLowerCase() === "<details>";
+    if (compactDetails || splitDetails) {
+      let summary = compactDetails?.[1] ?? "Recorded detail";
+      let contentStart = i + 1;
+      if (splitDetails && contentStart < lines.length) {
+        const summaryLine = lines[contentStart]
+          .trim()
+          .match(/^<summary>(.*?)<\/summary>$/i);
+        if (summaryLine) {
+          summary = summaryLine[1];
+          contentStart++;
+        }
+      }
+      const closing = lines.findIndex(
+        (candidate, index) =>
+          index >= contentStart && candidate.trim().toLowerCase() === "</details>",
+      );
+      if (closing >= contentStart) {
+        blocks.push(
+          <details key={key++} className="dossier-journal-native">
+            <summary>{renderInline(summary)}</summary>
+            <div className="mt-2">
+              {renderMarkdown(lines.slice(contentStart, closing).join("\n"))}
+            </div>
+          </details>,
+        );
+        i = closing + 1;
+        continue;
+      }
+    }
     if (line.startsWith("```")) {
       const code: string[] = [];
       i++;
@@ -131,6 +167,7 @@ function renderMarkdown(md: string): React.ReactNode[] {
 export default function JournalScroll({ iterationId, initial }: Props) {
   const [data, setData] = useState<JournalResponse | null>(initial ?? null);
   const [error, setError] = useState<string | null>(null);
+  const [rawOpen, setRawOpen] = useState(false);
 
   useEffect(() => {
     if (initial !== undefined) return;
@@ -184,9 +221,30 @@ export default function JournalScroll({ iterationId, initial }: Props) {
       )}
 
       {data && (
-        <div className="mt-2 max-h-[60vh] overflow-y-auto">
-          {renderMarkdown(data.content)}
-        </div>
+        <>
+          <div className="mt-2 max-h-[60vh] overflow-y-auto">
+            {renderMarkdown(data.content)}
+          </div>
+          <details
+            className="mt-3"
+            data-testid="journal-raw-source"
+            onToggle={(event) =>
+              setRawOpen((event.currentTarget as HTMLDetailsElement).open)
+            }
+          >
+            <summary
+              className="cursor-pointer text-[11px] text-zinc-500"
+              onClick={() => setRawOpen(true)}
+            >
+              Raw journal source
+            </summary>
+            {rawOpen && (
+              <pre className="mt-2 max-h-[40vh] overflow-auto whitespace-pre-wrap rounded border border-zinc-800 bg-zinc-950 p-2 text-[11px] text-zinc-300">
+                {data.content}
+              </pre>
+            )}
+          </details>
+        </>
       )}
     </div>
   );

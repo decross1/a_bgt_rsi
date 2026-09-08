@@ -111,15 +111,15 @@ describe("CommandPalette — navigation entries", () => {
     mount();
     openPalette();
     for (const label of [
-      "pulse",
-      "ladder",
-      "dossiers",
-      "development",
-      "channel",
-      "model i/o",
-      "cycles",
-      "experiments",
-      "graph",
+      "Now overview",
+      "Research workspace",
+      "Record library",
+      "Operations delivery",
+      "Conversation",
+      "Calls",
+      "Trace history",
+      "Evaluations",
+      "Recorded trace map",
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
@@ -131,7 +131,7 @@ describe("CommandPalette — navigation entries", () => {
   it("clicking an entry navigates there and closes the palette", () => {
     mount();
     openPalette();
-    fireEvent.click(screen.getByText("ladder"));
+    fireEvent.click(screen.getByText("Research workspace"));
     expect(screen.getByTestId("location")).toHaveTextContent("/ladder");
     expect(screen.queryByTestId("command-palette")).not.toBeInTheDocument();
   });
@@ -141,7 +141,7 @@ describe("CommandPalette — navigation entries", () => {
     openPalette();
     const input = screen.getByPlaceholderText("Go to…");
     fireEvent.change(input, { target: { value: "chan" } });
-    expect(screen.queryByText("experiments")).not.toBeInTheDocument();
+    expect(screen.queryByText("Evaluations")).not.toBeInTheDocument();
     fireEvent.keyDown(input, { key: "Enter" });
     expect(screen.getByTestId("location")).toHaveTextContent("/channel");
   });

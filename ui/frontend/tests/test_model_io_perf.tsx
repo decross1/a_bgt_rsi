@@ -216,7 +216,7 @@ it("keeps rendered rows and says STALE when a poll tick fails — never blanks",
   // Rows kept, stale note shown — the failed refetch blanked nothing.
   expect(screen.getAllByTestId("modelio-row")).toHaveLength(3);
   expect(
-    screen.getByText(/unreachable — showing the last loaded rows/),
+    screen.getByText(/unreachable or unreadable — showing the last loaded rows/),
   ).toBeInTheDocument();
 });
 
@@ -304,7 +304,7 @@ it("a hidden tab polls NOTHING; returning to visibility refetches immediately", 
   });
   document.dispatchEvent(new Event("visibilitychange"));
   const atHide = { ...counts };
-  await settle(30_000); // six table periods + one strip period pass hidden
+  await settle(30_000); // six table periods pass while hidden
   expect(counts).toEqual(atHide); // zero fetches while hidden
 
   hidden = false;
@@ -357,9 +357,9 @@ it("typing a 4-char filter costs ONE table refetch and never touches the other s
     .filter((u) => u.includes("model="));
   expect(tableUrls).toHaveLength(1);
   expect(tableUrls[0]).toContain("model=qwen");
-  // Review fix 3: the superseded filter key's entry was EVICTED — the hub
-  // holds exactly the page's four live sources, not one per query typed.
-  expect(pollHubEntryCount()).toBe(4);
+  // The superseded filter key is evicted. Calls now owns one route source;
+  // runtime, dispatch and human-review histories live at their destinations.
+  expect(pollHubEntryCount()).toBe(1);
 });
 
 it("aborts a hung getJSON fetch at the 15s deadline (AbortController, review fix 1)", async () => {

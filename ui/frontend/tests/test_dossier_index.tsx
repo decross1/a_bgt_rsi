@@ -4,7 +4,7 @@
 //      (gate_verdict + state_gate families); section (2) ONLY the findings
 //      that clear the L4/L5 ladder bar; section (3) everything else —
 //      below-bar/legacy findings, bubbles, stale runs, resolved iterations.
-//   2. HONEST empty states: "Nothing cleared L4 this week." when no finding
+//   2. HONEST empty states: "No L4/L5 findings are listed in the loaded queue source." when no finding
 //      clears the bar; a 404 todo feed reads "queue UNKNOWN", never calm.
 //   3. STEM CLUSTERING (ported verbatim from ResolveRail): near-dup titles
 //      sharing a 6-word prefix collapse to one ×N cluster; expanding lists
@@ -12,6 +12,9 @@
 //   4. Rows are LINKS into /dossier/:id — the picker exposes NO disposition
 //      affordance (the verdict fence).
 //   5. The deferred sky chip ports from the retired HumanTodoPanel.
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -90,6 +93,37 @@ function renderIndex(items: HumanTodoItem[], iterations: IterationRecord[] = [])
   );
 }
 
+type Oklch = [number, number, number];
+
+function readOklch(source: string, property: string): Oklch {
+  const match = source.match(
+    new RegExp(`--${property}:\\s*oklch\\(([0-9.]+)\\s+([0-9.]+)\\s+([0-9.]+)`),
+  );
+  if (!match) throw new Error(`Missing OKLCH property: ${property}`);
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function relativeLuminance([lightness, chroma, hue]: Oklch): number {
+  const radians = (hue * Math.PI) / 180;
+  const a = chroma * Math.cos(radians);
+  const b = chroma * Math.sin(radians);
+  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  const linear = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ].map((channel) => Math.max(0, Math.min(1, channel)));
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+function contrast(first: Oklch, second: Oklch): number {
+  const a = relativeLuminance(first);
+  const b = relativeLuminance(second);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
 describe("DossierIndex — owe-first sectioning", () => {
   it("routes each item to its section: blocking → owe, L4 finding → cleared, rest → else", () => {
     renderIndex(
@@ -146,20 +180,23 @@ describe("DossierIndex — owe-first sectioning", () => {
 });
 
 describe("DossierIndex — honest empty states", () => {
-  it("no cleared-bar findings → 'Nothing cleared L4 this week.'", () => {
+  it("no cleared-bar findings → 'No L4/L5 findings are listed in the loaded queue source.'", () => {
     renderIndex([GATE, LEGACY_FINDING_A]);
     expect(screen.getByTestId("dossier-cleared-empty")).toHaveTextContent(
-      "Nothing cleared L4 this week.",
+      "No L4/L5 findings are listed in the loaded queue source.",
     );
   });
 
-  it("nothing owed → the unblocked line; empty else → its own quiet line", () => {
+  it("nothing listed stays source-scoped; empty history has its own quiet line", () => {
     renderIndex([]);
     expect(screen.getByTestId("dossier-owe-empty")).toHaveTextContent(
-      /You owe nothing/,
+      /current queue source/,
+    );
+    expect(screen.getByTestId("dossier-owe-empty")).not.toHaveTextContent(
+      /loop is unblocked/i,
     );
     expect(screen.getByTestId("dossier-else-empty")).toHaveTextContent(
-      /nothing else pending/,
+      /no other recorded dossiers/i,
     );
   });
 
@@ -233,9 +270,13 @@ describe("DossierIndex — stem clustering (ported verbatim from ResolveRail)", 
 describe("DossierIndex — search (section 3)", () => {
   it("search hits one cluster member → it surfaces as a singleton (re-cluster on the narrowed set)", () => {
     renderIndex([LEGACY_FINDING_A, LEGACY_FINDING_B]);
+    expect(screen.getByLabelText("Find a dossier")).toBeInTheDocument();
     fireEvent.change(screen.getByTestId("dossier-search"), {
       target: { value: "sf-legacy-002" },
     });
+    expect(screen.getByTestId("dossier-history-browser")).toHaveAttribute(
+      "open",
+    );
     expect(screen.getByTestId("dossier-row-sf-legacy-002")).toBeInTheDocument();
     expect(screen.queryByTestId("dossier-cluster-sf-legacy-001")).toBeNull();
     expect(screen.queryByTestId("dossier-row-sf-legacy-001")).toBeNull();
@@ -259,11 +300,16 @@ describe("DossierIndex — search (section 3)", () => {
     );
   });
 
-  it("search does NOT hide the owe or cleared sections (only section 3 is searchable)", () => {
+  it("search keeps source sections and restores every request when cleared", () => {
     renderIndex([GATE, L4_FINDING, BUBBLE]);
     fireEvent.change(screen.getByTestId("dossier-search"), {
       target: { value: "zzz-no-match" },
     });
+    expect(screen.getByTestId("dossier-owe")).toBeInTheDocument();
+    expect(screen.getByTestId("dossier-cleared")).toBeInTheDocument();
+    expect(screen.queryByTestId("dossier-row-iter-2026-06-14-002")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("dossier-row-sf-l4-001")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByTestId("dossier-search"), { target: { value: "" } });
     expect(screen.getByTestId("dossier-row-iter-2026-06-14-002")).toBeInTheDocument();
     expect(screen.getByTestId("dossier-row-sf-l4-001")).toBeInTheDocument();
   });
@@ -286,8 +332,148 @@ describe("DossierIndex — hostile rows degrade", () => {
     ] as unknown as IterationRecord[];
     const { container } = renderIndex(hostileItems, hostileIters);
     expect(screen.getByTestId("dossier-row-iter-2026-06-14-002")).toBeInTheDocument();
+    expect(screen.getByTestId("dossier-partial")).toHaveTextContent(
+      /displayed counts are partial/i,
+    );
+    expect(screen.getByTestId("dossier-history-partial")).toBeInTheDocument();
     expect(container.innerHTML).not.toMatch(/object Object/);
     expect(errSpy).not.toHaveBeenCalled();
     errSpy.mockRestore();
   });
+});
+
+describe("DossierIndex — compact record library", () => {
+  it("leads with recorded requests and one latest context while history is collapsed", () => {
+    renderIndex([GATE, BUBBLE], [ITER_ROW]);
+    expect(screen.getByRole("heading", { name: "Dossiers" })).toBeInTheDocument();
+    expect(screen.getByTestId("dossier-source-state")).toHaveTextContent(
+      /queue source loaded/i,
+    );
+    expect(screen.getByTestId("dossier-owe")).toHaveTextContent(/recorded requests/i);
+    expect(
+      screen.getByTestId("dossier-latest-iter-iter-2026-06-10-001"),
+    ).toHaveTextContent("resolved history row");
+    expect(screen.getByTestId("dossier-history-browser")).not.toHaveAttribute(
+      "open",
+    );
+  });
+
+  it("keeps exact ids visible in compact decision rows", () => {
+    renderIndex([GATE]);
+    const row = screen.getByTestId(`dossier-row-${GATE.id}`);
+    expect(within(row).getByText(GATE.id)).toBeInTheDocument();
+    expect(within(row).getByText("Open dossier")).toBeInTheDocument();
+  });
+
+  it("bounds large iteration history and appends pages without losing button focus", () => {
+    const rows = Array.from({ length: 121 }, (_, index) => ({
+      ...ITER_ROW,
+      iteration_id: `iter-2026-06-${String(index + 1).padStart(3, "0")}`,
+      ended_at: new Date(Date.UTC(2026, 5, 1, 0, index)).toISOString(),
+    })) as IterationRecord[];
+    renderIndex([], rows);
+
+    expect(screen.getByTestId("dossier-history-progress")).toHaveTextContent(
+      "Showing 50 of 121 matching records",
+    );
+    const more = screen.getByTestId("dossier-history-more");
+    more.focus();
+    fireEvent.click(more);
+    expect(more).toHaveFocus();
+    expect(screen.getByTestId("dossier-history-progress")).toHaveTextContent(
+      "Showing 100 of 121 matching records",
+    );
+    fireEvent.click(more);
+    expect(more).toBeDisabled();
+    expect(more).toHaveFocus();
+    expect(screen.getByTestId("dossier-history-progress")).toHaveTextContent(
+      "Showing 121 of 121 matching records",
+    );
+  });
+
+  it("bounds a 577-row non-iteration archive and keeps an exact source-order match reachable", () => {
+    const rows = Array.from({ length: 577 }, (_, index) => ({
+      kind: "bubble_ack",
+      id: `bubble-archive-${String(index).padStart(3, "0")}`,
+      title: `Archived record number ${String(index).padStart(3, "0")}`,
+    })) as HumanTodoItem[];
+    renderIndex(rows);
+
+    const archive = screen.getByTestId("dossier-else");
+    expect(within(archive).getAllByRole("link")).toHaveLength(50);
+    expect(screen.getByTestId("dossier-history-progress")).toHaveTextContent(
+      "Showing 50 of 577 matching records",
+    );
+    const more = screen.getByTestId("dossier-history-more");
+    more.focus();
+    fireEvent.click(more);
+    expect(more).toHaveFocus();
+    expect(within(archive).getAllByRole("link")).toHaveLength(100);
+
+    fireEvent.change(screen.getByTestId("dossier-search"), {
+      target: { value: "bubble-archive-576" },
+    });
+    expect(within(archive).getAllByRole("link")).toHaveLength(1);
+    expect(screen.getByTestId("dossier-row-bubble-archive-576")).toBeVisible();
+  });
+
+  it("uses a light-theme normal-text warning token for source-integrity prose", () => {
+    renderIndex(
+      [GATE, null as unknown as HumanTodoItem],
+      [ITER_ROW, null as unknown as IterationRecord],
+    );
+    for (const testId of ["dossier-partial", "dossier-history-partial"]) {
+      const message = screen.getByTestId(testId);
+      expect(message).toHaveClass("dossier-integrity-message");
+      expect(message).not.toHaveClass("text-amber-600");
+    }
+
+    const here = dirname(fileURLToPath(import.meta.url));
+    const styles = readFileSync(resolve(here, "../src/routes/dossiers.css"), "utf8");
+    const tokens = readFileSync(resolve(here, "../src/design/tokens.css"), "utf8");
+    const integrityRule = styles.match(
+      /\.dossier-integrity-message\s*\{([^}]+)\}/,
+    )?.[1];
+    expect(integrityRule).toContain("color: var(--status-warn)");
+    for (const background of ["bg", "surface-1"]) {
+      expect(
+        contrast(
+          readOklch(tokens, "status-warn"),
+          readOklch(tokens, background),
+        ),
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("does not call an undated iteration the latest recorded context", () => {
+    renderIndex([], [{ ...ITER_ROW, ended_at: "not-a-date" }]);
+    expect(screen.getByTestId("dossier-latest-empty")).toHaveTextContent(
+      "No iteration has a usable recorded end time.",
+    );
+  });
+});
+
+
+it("withholds inventory totals while sources are loading or malformed", () => {
+  vi.stubGlobal("fetch", () => new Promise<Response>(() => {}));
+  const pending = render(<MemoryRouter><DossierIndex /></MemoryRouter>);
+  expect(screen.getByTestId("dossier-owe-count")).not.toHaveTextContent(/^0$/);
+  expect(screen.getByTestId("dossier-latest-count")).not.toHaveTextContent(/^0$/);
+  expect(screen.getByTestId("dossier-history-browser")).not.toHaveTextContent("Browse history · 0 recorded items");
+  pending.unmount();
+  renderIndex(null as unknown as HumanTodoItem[], null as unknown as IterationRecord[]);
+  expect(screen.getByTestId("dossier-owe-count")).toHaveTextContent("unknown");
+  expect(screen.queryByTestId("dossier-else-empty")).not.toBeInTheDocument();
+});
+
+it("searches recorded requests as well as history without claiming current eligibility", () => {
+  renderIndex([GATE, STATE_GATE], [ITER_ROW]);
+  expect(screen.queryByText(/Live decisions stay visible/)).not.toBeInTheDocument();
+  fireEvent.change(screen.getByTestId("dossier-search"), { target: { value: ITER_ROW.iteration_id } });
+  expect(within(screen.getByTestId("dossier-owe")).queryByRole("link")).not.toBeInTheDocument();
+  expect(screen.getByTestId(`dossier-iter-${ITER_ROW.iteration_id}`)).toBeVisible();
+  fireEvent.change(screen.getByTestId("dossier-search"), { target: { value: GATE.id } });
+  expect(within(screen.getByTestId("dossier-owe")).getAllByRole("link")).toHaveLength(1);
+  fireEvent.change(screen.getByTestId("dossier-search"), { target: { value: "" } });
+  expect(within(screen.getByTestId("dossier-owe")).getAllByRole("link")).toHaveLength(2);
 });

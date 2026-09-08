@@ -148,27 +148,30 @@ describe("Atlas navigation grouping", () => {
     }
   });
 
-  it("keeps the three primary routes and every context destination visible", () => {
+  it("leads with three primary destinations and reveals context only for the current journey", () => {
     render(<App />);
     const nav = screen.getByRole("navigation", { name: "Lab workspace" });
-    const destinations = [
-      ["pulse", "/"],
-      ["ladder", "/ladder"],
-      ["dossiers", "/dossier"],
-      ["experiments", "/experiments"],
-      ["development", "/development"],
-      ["channel", "/channel"],
-      ["model i/o", "/model-io"],
-      ["cycles", "/cycles"],
-      ["graph", "/graph"],
-    ];
-    for (const [name, href] of destinations) {
+    for (const [name, href] of [["Now", "/"], ["Research", "/ladder"], ["Operations", "/development"]]) {
       expect(within(nav).getByRole("link", { name })).toHaveAttribute("href", href);
     }
-    expect(screen.getByRole("link", { name: /brain/ })).toHaveAttribute(
-      "href",
-      `http://${window.location.hostname}:5180/dashboard.html`,
-    );
+    expect(within(nav).getAllByRole("link")).toHaveLength(3);
+    fireEvent.click(within(nav).getByRole("link", { name: "Research" }));
+    expect(within(nav).getByRole("link", { name: "Record library" })).toHaveAttribute("href", "/dossier");
+    expect(within(nav).getByRole("link", { name: "Evaluations" })).toHaveAttribute("href", "/experiments");
+    expect(within(nav).queryByRole("link", { name: "Calls" })).not.toBeInTheDocument();
+    fireEvent.click(within(nav).getByRole("link", { name: "Operations" }));
+    for (const [name, href] of [["Conversation", "/channel"], ["Calls", "/model-io"], ["Trace history", "/cycles"]]) {
+      expect(within(nav).getByRole("link", { name })).toHaveAttribute("href", href);
+    }
+    expect(screen.getByRole("link", { name: /brain/ })).toHaveAttribute("href", `http://${window.location.hostname}:5180/dashboard.html`);
+  });
+
+  it.each([["/ideas", "/ladder"], ["/todo", "/dossier"], ["/coordinator", "/cycles"]])("preserves query and hash across legacy %s", async (from, to) => {
+    window.history.replaceState({}, "", `${from}?selection=exact%2Fid#evidence`);
+    render(<App />);
+    await waitFor(() => expect(window.location.pathname).toBe(to));
+    expect(window.location.search).toBe("?selection=exact%2Fid");
+    expect(window.location.hash).toBe("#evidence");
   });
 });
 
@@ -241,7 +244,7 @@ describe("Atlas theme and narrow navigation", () => {
     await waitFor(() => expect(toggle).toHaveFocus());
 
     fireEvent.click(toggle);
-    fireEvent.click(screen.getByRole("link", { name: "ladder" }));
+    fireEvent.click(screen.getByRole("link", { name: "Research" }));
     await waitFor(() => expect(toggle).toHaveAttribute("aria-expanded", "false"));
     expect(toggle).toHaveFocus();
   });
@@ -344,4 +347,18 @@ describe("Atlas light-theme source compatibility", () => {
       expect(contrast(readOklch(tokens, token), surface)).toBeGreaterThanOrEqual(3);
     }
   });
+});
+
+
+it("offers safe inline recovery for an unknown route without losing shell", () => {
+  window.history.replaceState({}, "", "/retired-or-malformed");
+  render(<App />);
+  expect(screen.getByRole("heading", { name: "Page not found" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Return to Now" })).toHaveAttribute("href", "/");
+});
+it("uses an opaque narrow header so scrolled page text cannot paint through", () => {
+  const source = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../src/design/AtlasShell.css"), "utf8");
+  const rule = source.match(/\.atlas-mobile-header\s*\{[^}]*position: sticky[^}]*\}/s)?.[0];
+  expect(rule).toContain("background: var(--surface-1)");
+  expect(rule).not.toContain("background: var(--surface-glass)");
 });

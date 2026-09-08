@@ -23,6 +23,9 @@ export interface ChannelRow {
 export interface ChannelTimeline {
   rows: ChannelRow[];
   integrity?: unknown;
+  /** Read shape/framing only; never ledger completeness or actor authentication. */
+  readState?: "framed" | "unframed" | "malformed";
+  invalidRowCount?: number;
 }
 
 export interface ChannelAvailability {
@@ -123,18 +126,28 @@ function asRows(body: unknown): ChannelRow[] {
   return out;
 }
 
-/** Preserve string bytes; only the exact structured envelope certifies framing. */
-export function channelRows(body: unknown): ChannelRow[] {
+function timelineShape(body: unknown) {
   const b = body && typeof body === "object" && !Array.isArray(body)
     ? body as Record<string, unknown> : {};
   const m = b.integrity && typeof b.integrity === "object" && !Array.isArray(b.integrity)
     ? b.integrity as Record<string, unknown> : {};
+  const validRow = (r: unknown): boolean => {
+    if (!r || typeof r !== "object" || Array.isArray(r)) return false;
+    const row = r as Record<string, unknown>;
+    return typeof row.ts === "string" && row.ts !== "" &&
+      typeof row.kind === "string" && row.kind !== "" && typeof row.message === "string";
+  };
+  const invalidRowCount = Array.isArray(b.rows) ? b.rows.filter(r => !validRow(r)).length : 0;
+  const wellFormed = Array.isArray(b.rows) && invalidRowCount === 0;
   const recordedLabel = m.schema === "lab-channel-timeline/v1" &&
     m.framing === "json-envelope" && m.status === "framed" &&
-    m.actor_labels === "recorded_not_authenticated" && Array.isArray(b.rows) &&
-    b.rows.every(r => r && typeof r === "object" && !Array.isArray(r) &&
-      typeof r.ts === "string" && r.ts !== "" && typeof r.kind === "string" &&
-      r.kind !== "" && typeof r.message === "string");
+    m.actor_labels === "recorded_not_authenticated" && wellFormed;
+  return { recordedLabel, wellFormed, invalidRowCount, integrity: b.integrity };
+}
+
+/** Preserve string bytes; only the exact structured envelope certifies framing. */
+export function channelRows(body: unknown): ChannelRow[] {
+  const { recordedLabel } = timelineShape(body);
   return asRows(body).map(r => ({ ...r, recordedLabel }));
 }
 
@@ -167,9 +180,13 @@ export async function getChannelTimeline(
   }
   const body = await parseJsonSafe(resp);
   const rows = channelRows(body);
-  // Do not retain a valid-looking tuple after malformed rows were coerced.
-  const valid = rows.length > 0 && rows.every(r => r.recordedLabel);
-  return { rows, integrity: valid ? (body as { integrity: unknown }).integrity : undefined };
+  const shape = timelineShape(body);
+  return {
+    rows,
+    integrity: shape.recordedLabel ? shape.integrity : undefined,
+    readState: !shape.wellFormed ? "malformed" : shape.recordedLabel ? "framed" : "unframed",
+    invalidRowCount: shape.invalidRowCount,
+  };
 }
 
 async function postChannel(

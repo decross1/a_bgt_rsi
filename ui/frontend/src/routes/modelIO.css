@@ -1,0 +1,720 @@
+.modelio-page-header {
+  margin-bottom: var(--space-5);
+}
+
+.modelio-page-header > p {
+  margin: 0 0 var(--space-1);
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.modelio-page-header h1 {
+  margin: 0;
+  color: var(--fg);
+  font-size: 32px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+.modelio-page-header > div {
+  max-width: 680px;
+  margin-top: var(--space-2);
+  color: var(--fg-muted);
+  font-size: var(--text-prose);
+  line-height: 1.55;
+}
+
+.modelio-scope {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-card);
+}
+
+.modelio-scope-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+}
+
+.modelio-scope-main > div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.modelio-scope-main h2 {
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--text-title);
+  font-weight: var(--weight-medium);
+}
+
+.modelio-scope-main code,
+.modelio-scope-main > span {
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+}
+
+.modelio-scope-main > span:last-child {
+  margin-left: auto;
+}
+
+.modelio-related {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  font-size: var(--text-ui);
+}
+
+.modelio-related a {
+  color: var(--accent);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+}
+
+.modelio-related a:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.modelio-related a:focus-visible,
+.modelio-source-disclosure summary:focus-visible,
+.modelio-clear-filters:focus-visible,
+.modelio-pause:focus-visible,
+.modelio-context-close:focus-visible,
+.modelio-raw-record summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.modelio-source-disclosure {
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+}
+
+.modelio-source-disclosure summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: var(--weight-medium);
+}
+
+.modelio-source-disclosure p {
+  max-width: 760px;
+  margin: var(--space-2) 0 0;
+  line-height: 1.5;
+}
+
+.modelio-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.modelio-filters {
+  display: grid;
+  flex: 1 1 620px;
+  grid-template-columns: repeat(3, minmax(140px, 1fr)) auto;
+  align-items: end;
+  gap: var(--space-2);
+}
+
+.modelio-filters label {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-1);
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+}
+
+.modelio-filters input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 34px;
+  color: var(--fg);
+  background: var(--surface-1);
+  border-color: var(--border-1);
+}
+
+.modelio-clear-filters,
+.modelio-pause,
+.modelio-context-close {
+  min-height: 34px;
+  padding: var(--space-2) var(--space-3);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-ui);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  background: var(--surface-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-control);
+}
+
+.modelio-clear-filters:hover,
+.modelio-pause:hover,
+.modelio-context-close:hover {
+  background: var(--surface-2);
+}
+
+.modelio-pause[aria-pressed="true"] {
+  color: var(--accent-hover);
+  background: var(--accent-muted);
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--border-1));
+}
+
+.modelio-poll-scope {
+  align-self: center;
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+}
+
+.modelio-workspace {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  align-items: start;
+}
+
+.modelio-workspace[data-context-open="true"] {
+  grid-template-columns: minmax(560px, 1.45fr) minmax(360px, 0.85fr);
+}
+
+.modelio-feed-pane,
+.modelio-feed,
+.modelio-feed-card {
+  min-width: 0;
+}
+
+.modelio-feed-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+.modelio-feed-card > [data-testid="table-loading"],
+.modelio-feed-card > .text-xs {
+  padding: var(--space-4);
+}
+
+.modelio-feed-header,
+.modelio-row {
+  display: grid;
+  grid-template-columns:
+    minmax(62px, 0.58fr)
+    minmax(128px, 1.18fr)
+    minmax(138px, 1.28fr)
+    minmax(72px, 0.68fr)
+    minmax(108px, 0.96fr)
+    minmax(150px, 1.8fr)
+    minmax(76px, 0.72fr);
+  gap: var(--space-2);
+}
+
+/* A selected record leaves a compact switching list beside the reader,
+   rather than squeezing seven diagnostic columns into a half-width pane. */
+.modelio-workspace[data-context-open="true"] .modelio-feed-header,
+.modelio-workspace[data-context-open="true"] .modelio-row {
+  grid-template-columns: minmax(54px, .5fr) minmax(124px, 1.1fr) minmax(90px, 1fr) minmax(76px, .65fr);
+}
+.modelio-workspace[data-context-open="true"] .modelio-feed-header > :nth-child(2),
+.modelio-workspace[data-context-open="true"] .modelio-feed-header > :nth-child(4),
+.modelio-workspace[data-context-open="true"] .modelio-feed-header > :nth-child(5),
+.modelio-workspace[data-context-open="true"] .modelio-row-model,
+.modelio-workspace[data-context-open="true"] .modelio-row-condition,
+.modelio-workspace[data-context-open="true"] .modelio-row-cost {
+  display: none;
+}
+
+.modelio-feed-header {
+  align-items: end;
+  padding: 9px var(--space-3);
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.modelio-row {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 64px;
+  padding: 10px var(--space-3);
+  align-items: center;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border-1);
+  transition: background-color var(--motion-hover) ease-out;
+}
+
+.modelio-row:last-child {
+  border-bottom: 0;
+}
+
+.modelio-row:hover {
+  background: var(--surface-2);
+}
+
+.modelio-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+.modelio-row[data-selected="true"] {
+  background: var(--accent-muted);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.modelio-row:disabled {
+  cursor: default;
+  opacity: 0.78;
+}
+
+.modelio-row:disabled:hover {
+  background: transparent;
+}
+
+.modelio-row-cell {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+}
+
+.modelio-row-time time,
+.modelio-row-model,
+.modelio-row-caller > span:first-of-type {
+  color: var(--fg);
+}
+
+.modelio-inline-values,
+.modelio-row-cost,
+.modelio-summary-line {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.modelio-row-caller,
+.modelio-row-cost {
+  display: grid;
+  gap: 2px;
+}
+
+.modelio-run-id {
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelio-condition {
+  display: inline-flex;
+  width: fit-content;
+  padding: 2px 7px;
+  color: var(--status-idle);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: var(--status-idle-bg);
+  border-radius: var(--radius-pill);
+}
+
+.modelio-condition--empty {
+  color: var(--status-bad);
+  background: var(--status-bad-bg);
+}
+
+.modelio-summary-line {
+  flex-wrap: nowrap;
+}
+
+.modelio-summary-line [data-testid="row-preview"] {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelio-thought-chip {
+  flex: none;
+  padding: 1px 5px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  background: var(--surface-3);
+  border-radius: var(--radius-control);
+}
+
+.modelio-row-open {
+  justify-self: end;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+.modelio-row[data-selected="true"] .modelio-row-open {
+  color: var(--accent-hover);
+}
+
+.modelio-field-label {
+  display: none;
+}
+
+.modelio-session-record {
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.modelio-context-pane {
+  position: sticky;
+  top: var(--space-4);
+  box-sizing: border-box;
+  max-height: calc(100vh - (2 * var(--space-4)));
+  overflow: auto;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-card);
+}
+
+.modelio-context-header {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.modelio-context-header p {
+  margin: var(--space-2) 0 0;
+  color: var(--fg-muted);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.modelio-context-header h2 {
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--text-title-lg);
+  font-weight: var(--weight-semibold);
+  overflow-wrap: anywhere;
+}
+
+.modelio-context-header code {
+  color: var(--fg-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.modelio-context-close {
+  justify-self: end;
+}
+
+.modelio-context-back-label {
+  display: none;
+}
+
+.modelio-selection-retained {
+  margin: var(--space-3) var(--space-4) 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--status-warn);
+  font-size: var(--text-meta);
+  line-height: 1.45;
+  background: var(--status-warn-bg);
+  border-radius: var(--radius-control);
+}
+
+.modelio-context-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--border-1);
+}
+
+.modelio-context-summary div {
+  min-width: 0;
+}
+
+.modelio-context-summary dt {
+  margin-bottom: 2px;
+  color: var(--fg-muted);
+  font-size: 10px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.modelio-context-summary dd {
+  margin: 0;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.modelio-context-body {
+  padding: var(--space-4);
+}
+
+.modelio-call-context {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.modelio-context-section {
+  min-width: 0;
+}
+
+.modelio-context-section h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--fg);
+  font-size: var(--text-ui);
+  font-weight: var(--weight-semibold);
+}
+
+.modelio-message-stack {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.modelio-message {
+  min-width: 0;
+  padding: var(--space-3);
+  background: var(--bg);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-control);
+}
+
+.modelio-message-role {
+  margin-bottom: var(--space-2);
+}
+
+.modelio-message pre,
+.modelio-raw-record pre {
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.modelio-context-empty,
+.modelio-context-state {
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--fg-muted);
+  font-size: var(--text-ui);
+  line-height: 1.5;
+  background: var(--surface-2);
+  border-radius: var(--radius-control);
+}
+
+.modelio-context-state--warning {
+  color: var(--status-warn);
+  background: var(--status-warn-bg);
+}
+
+.modelio-raw-record {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-1);
+}
+
+.modelio-raw-record summary {
+  width: fit-content;
+  color: var(--fg);
+  font-size: var(--text-ui);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+}
+
+.modelio-raw-record p {
+  margin: var(--space-2) 0;
+  color: var(--fg-muted);
+  font-size: var(--text-meta);
+  line-height: 1.45;
+}
+
+.modelio-raw-record pre {
+  max-height: 420px;
+  margin: 0;
+  padding: var(--space-3);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  background: var(--bg);
+  border: 1px solid var(--border-1);
+  border-radius: var(--radius-control);
+}
+
+@media (max-width: 1180px) {
+  .modelio-workspace[data-context-open="true"] {
+    grid-template-columns: minmax(0, 1fr) minmax(340px, 0.9fr);
+  }
+
+  .modelio-feed-header,
+  .modelio-row {
+    grid-template-columns:
+      minmax(58px, 0.55fr)
+      minmax(110px, 1fr)
+      minmax(118px, 1.1fr)
+      minmax(68px, 0.65fr)
+      minmax(96px, 0.85fr)
+      minmax(120px, 1.35fr)
+      minmax(70px, 0.65fr);
+  }
+}
+
+@media (max-width: 1050px) {
+  /* The selected record becomes the reading pane. Back restores the same
+     source links and filter inputs; pause/resume remains available here. */
+  .modelio-page[data-context-open="true"] .modelio-scope,
+  .modelio-page[data-context-open="true"] .modelio-filters {
+    display: none;
+  }
+
+  .modelio-workspace[data-context-open="true"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .modelio-workspace[data-context-open="true"] .modelio-feed-pane {
+    display: none;
+  }
+
+  .modelio-context-pane {
+    position: static;
+    max-height: none;
+  }
+
+  .modelio-context-back-label {
+    display: inline;
+  }
+
+  .modelio-context-close-label {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .modelio-page-header h1 {
+    font-size: 30px;
+  }
+
+  .modelio-scope-main {
+    align-items: start;
+  }
+
+  .modelio-scope-main > div {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .modelio-scope-main > span:last-child {
+    margin-left: 0;
+  }
+
+  .modelio-filters {
+    flex-basis: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .modelio-clear-filters {
+    width: fit-content;
+  }
+
+  .modelio-feed-header {
+    display: none;
+  }
+
+  .modelio-row {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "time condition"
+      "model model"
+      "caller caller"
+      "cost open"
+      "summary summary";
+    gap: var(--space-3) var(--space-2);
+    padding: var(--space-3);
+  }
+
+  .modelio-row-time {
+    grid-area: time;
+  }
+
+  .modelio-row-model {
+    grid-area: model;
+  }
+
+  .modelio-row-caller {
+    grid-area: caller;
+  }
+
+  .modelio-row-condition {
+    grid-area: condition;
+    justify-self: end;
+  }
+
+  .modelio-row-cost {
+    grid-area: cost;
+  }
+
+  .modelio-row-summary {
+    grid-area: summary;
+  }
+
+  .modelio-row-open {
+    grid-area: open;
+    align-self: end;
+  }
+
+  .modelio-field-label {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--fg-muted);
+    font-size: 9px;
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.055em;
+    text-transform: uppercase;
+  }
+
+  .modelio-context-summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 430px) {
+  .modelio-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
