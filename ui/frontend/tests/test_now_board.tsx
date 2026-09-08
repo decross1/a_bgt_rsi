@@ -230,6 +230,50 @@ describe("NowBoard cards", () => {
     );
     expect(document.querySelectorAll('[data-testid^="now-run-"]')).toHaveLength(1);
   });
+
+  it("malformed-only registry rows are unknown, never zero or idle", () => {
+    render(
+      <NowBoard
+        orientation
+        nowMs={NOW}
+        initial={{
+          runs: [null, "not-a-run"] as unknown as ActiveRun[],
+          skipped: 0,
+        }}
+      />,
+    );
+    expect(screen.getByTestId("now-board")).toHaveAttribute(
+      "data-source-state",
+      "unknown",
+    );
+    expect(screen.getByTestId("now-board-unknown")).toHaveTextContent(
+      /prevent a current running-state verdict/i,
+    );
+    expect(screen.getByTestId("now-board")).toHaveTextContent(
+      /registered-run count unknown/i,
+    );
+    expect(screen.queryByTestId("now-board-empty")).toBeNull();
+    expect(screen.queryByTestId("now-verdict")).toBeNull();
+  });
+
+  it("a malformed runs field exposes an unknown count instead of zero", () => {
+    render(
+      <NowBoard
+        orientation
+        nowMs={NOW}
+        initial={
+          { runs: "malformed", skipped: 0 } as unknown as {
+            runs: ActiveRun[];
+            skipped: number;
+          }
+        }
+      />,
+    );
+    expect(screen.getByTestId("now-board")).toHaveTextContent(
+      "registered-run count unknown",
+    );
+    expect(screen.queryByTestId("now-board-empty")).toBeNull();
+  });
 });
 
 describe("NowBoard version skew / errors (self-poll, stubbed fetch)", () => {
