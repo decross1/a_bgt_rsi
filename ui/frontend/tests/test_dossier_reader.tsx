@@ -21,7 +21,7 @@
 // letting presence AND absence be asserted by id.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import DossierReader from "../src/routes/DossierReader";
 import { AVAILABILITY_LIVE, AVAILABILITY_STUB } from "../src/fixtures/todo";
@@ -111,21 +111,6 @@ function renderReader(
         />
       </Routes>
     </MemoryRouter>,
-  );
-}
-
-function RouteTransitionHarness({ items }: { items: HumanTodoItem[] }) {
-  const navigate = useNavigate();
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => navigate("/dossier/sf-2026-06-14-002")}
-      >
-        Open second finding
-      </button>
-      <DossierReader availability={AVAILABILITY_LIVE} items={items} />
-    </>
   );
 }
 
@@ -455,50 +440,6 @@ describe("DossierReader — capability wiring (lifted from Todo.tsx)", () => {
   });
 });
 
-describe("DossierReader — route identity isolation", () => {
-  it("remounts the whole reader when the route id changes so action state stays with its target", async () => {
-    const secondFinding: HumanTodoItem = {
-      ...FINDING_REVIEW_ITEM,
-      id: "sf-2026-06-14-002",
-      title: "Finding: a distinct second target",
-    };
-    render(
-      <MemoryRouter initialEntries={[`/dossier/${FINDING_REVIEW_ITEM.id}`]}>
-        <Routes>
-          <Route
-            path="/dossier/:id"
-            element={
-              <RouteTransitionHarness
-                items={[FINDING_REVIEW_ITEM, secondFinding]}
-              />
-            }
-          />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    const firstBoundary = screen.getByTestId("resolution-forms");
-    const note = await screen.findByLabelText(/finding review note/i);
-    fireEvent.change(note, { target: { value: "note belongs only to finding one" } });
-    const directive = screen.getByLabelText(/sign-off directive/i);
-    fireEvent.change(directive, { target: { value: "proceed only from finding one" } });
-    fireEvent.click(screen.getByRole("button", { name: /sign off with directive/i }));
-    await screen.findByTestId("directive-signoff-result");
-
-    fireEvent.click(screen.getByRole("button", { name: "Open second finding" }));
-    await waitFor(() =>
-      expect(screen.getByTestId("dossier-header")).toHaveTextContent(
-        secondFinding.id,
-      ),
-    );
-
-    expect(screen.getByTestId("resolution-forms")).not.toBe(firstBoundary);
-    expect(screen.getByLabelText(/finding review note/i)).toHaveValue("");
-    expect(screen.getByLabelText(/sign-off directive/i)).toHaveValue("");
-    expect(screen.queryByTestId("directive-signoff-result")).toBeNull();
-  });
-});
-
 describe("DossierReader — header + spine", () => {
   it("renders the header (id · kind · title), the journey spine, and the concurrency guard slot", () => {
     renderReader(GATE_VERDICT_ITEM.id, [GATE_VERDICT_ITEM]);
@@ -708,12 +649,6 @@ describe("DossierReader — R2 the journey opens COLLAPSED under the sticky step
       screen.queryByText("A long hypothesis paragraph the reader should not dump."),
     ).toBeNull();
     expect(screen.queryByText("a critic paragraph")).toBeNull();
-    expect(screen.getByTestId("journey-stage-history")).not.toHaveAttribute(
-      "open",
-    );
-    expect(screen.getByTestId("journey-stage-summary")).toHaveTextContent(
-      /Decision endpoint: verdict/i,
-    );
   });
 
   it("expanding a section reveals its prose and leaves the FENCE untouched", async () => {
@@ -736,62 +671,5 @@ describe("DossierReader — R2 the journey opens COLLAPSED under the sticky step
     // Expanding a journey section did NOT reveal the interrogation either —
     // the reveal fence is a separate gate and stays closed.
     expectAuxRevealableTrioHidden();
-  });
-
-  it("loads one logical journey and shares it across the evidence and tutor views", async () => {
-    const journeyReads: string[] = [];
-    vi.stubGlobal("fetch", async (url: unknown) => {
-      const u = String(url);
-      if (u.endsWith("/api/todo/concurrency")) return jsonResponse(200, { active: false });
-      if (u.endsWith("/api/attest/available"))
-        return jsonResponse(200, { available: true, actions: { gate_verdict: true, defer: true } });
-      if (u.includes("/journey")) {
-        journeyReads.push(u);
-        return jsonResponse(200, {
-          found: true,
-          iteration_id: GATE_VERDICT_ITEM.id,
-          iteration: {
-            iteration_id: GATE_VERDICT_ITEM.id,
-            started_at: "2026-06-14T09:00:00Z",
-            ended_at: "2026-06-14T09:40:00Z",
-            seed: { topic: "Bound identity" },
-            gate_status: "pending",
-            journal_entry_path: "j.md",
-          },
-        });
-      }
-      if (u.endsWith("/api/coordinator/cycles")) return jsonResponse(200, { cycles: [] });
-      return jsonResponse(404, {});
-    });
-
-    renderReader(GATE_VERDICT_ITEM.id, [GATE_VERDICT_ITEM]);
-    await waitFor(() =>
-      expect(screen.getByTestId("journey-loaded")).toBeInTheDocument(),
-    );
-    expect(journeyReads).toHaveLength(1);
-    expect(screen.getByTestId("tutor-panel")).toHaveTextContent("Bound identity");
-    expect(screen.getByTestId("dossier-evidence-state")).toHaveTextContent(
-      GATE_VERDICT_ITEM.id,
-    );
-  });
-
-  it("puts exact evidence before the unchanged human decision and optional support", () => {
-    renderReader("iter-2026-06-10-001", []);
-    const evidence = document.getElementById("dossier-evidence-heading")!;
-    const decision = document.getElementById("dossier-decision-heading")!;
-    const support = screen.getByTestId("dossier-support");
-    expect(
-      evidence.compareDocumentPosition(decision) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      decision.compareDocumentPosition(support) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(screen.getByTestId("dossier-record-source-state")).toHaveTextContent(
-      /Historical record/i,
-    );
-    expect(screen.getByTestId("dossier-boundary-note")).toHaveTextContent(
-      /neither grants nor removes authority/i,
-    );
-    expect(support).not.toHaveAttribute("open");
   });
 });

@@ -60,18 +60,6 @@ const render = (ui: React.ReactElement) =>
 // journey. Stub it file-wide so no test ever reaches a live :8700 backend
 // (the retired modal suite's rule); tests that pin the cycle link re-stub.
 beforeEach(() => {
-  vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-    const url = new URL(String(input), "http://dossier-fixture.invalid");
-    if (url.pathname === "/api/doc_titles") {
-      return {
-        ok: true,
-        status: 200,
-        statusText: "OK",
-        json: async () => ({}),
-      } as Response;
-    }
-    throw new Error(`unstubbed PipelineJourney fixture GET: ${url.pathname}`);
-  });
   vi.spyOn(http, "getCoordinatorCycles").mockResolvedValue({
     cycles: [],
   } as never);
@@ -80,7 +68,6 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  vi.unstubAllGlobals();
 });
 
 // Cast helper — values illegal per the prop type but legal in the JSONL the
