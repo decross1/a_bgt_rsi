@@ -14,6 +14,7 @@ import ResearchInspector from "../components/ladder/ResearchInspector";
 import { buildLadderModel, stemOf } from "../components/ladder/ladderModel";
 import { buildThesisFamilies } from "../components/ladder/thesisModel";
 import ThesisFamilies from "../components/ladder/ThesisFamilies";
+import ResearchCanvas from "../components/ladder/ResearchCanvas";
 import { useLadderSources } from "../api/ladder";
 import Card from "../design/Card";
 import PeekPanel from "../design/PeekPanel";
@@ -88,6 +89,7 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
   const { data, loaded, error } = source;
   const skew = isVersionSkew404(error, LADDER_ENDPOINT);
   const [view, setView] = useState<View>("collections");
+  const [recordsOpen, setRecordsOpen] = useState(false);
   const [graveyardOpen, setGraveyardOpen] = useState(false);
   const [pickedKey, setPickedKey] = useState<string | null>(null);
   const [pickedFamilyId, setPickedFamilyId] = useState<string | null>(null);
@@ -126,6 +128,7 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
           group: "Ladder",
           keywords: ["killed", "dead", "tombstone"],
           perform: () => {
+            setRecordsOpen(true);
             setView("board");
             setGraveyardOpen((open) => view === "board" ? !open : true);
           },
@@ -135,7 +138,10 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
           label: "switch ladder view",
           group: "Ladder",
           keywords: ["collections", "board", "table", "kanban"],
-          perform: () => setView((v) => v === "collections" ? "board" : v === "board" ? "table" : "collections"),
+          perform: () => {
+            setRecordsOpen(true);
+            setView((v) => v === "collections" ? "board" : v === "board" ? "table" : "collections");
+          },
         },
       ]),
     [view],
@@ -168,52 +174,9 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
 
   return (
     <div className="page-full" data-testid="ladder-page">
-      <header className="flex min-w-0 flex-wrap items-end" style={{ gap: "var(--space-3)", marginBottom: "var(--space-4)" }}>
-        <div style={{ minWidth: 0, flex: "1 1 380px" }}>
-          <p style={{ margin: "0 0 var(--space-1)", color: "var(--accent)", fontSize: "var(--text-meta)", fontWeight: "var(--weight-medium)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
-            Lab · Research
-          </p>
-          <h1
-            style={{
-              margin: 0,
-              fontSize: "var(--text-title-lg)",
-              fontWeight: "var(--weight-semibold)",
-            }}
-          >
-            Research atlas
-          </h1>
-        </div>
-        <p
-          style={{
-            margin: 0,
-            flex: "2 1 420px",
-            minWidth: 260,
-            fontSize: "var(--text-meta)",
-            color: "var(--fg-muted)",
-          }}
-        >
-          Explore recorded thesis collections, then inspect exact claims, evidence gaps and the next useful decision.
-          Recorded levels are not revalidated experiment eligibility.
-        </p>
-        {/* The lab's QUEUE (what these clusters owe next, plus the agenda and
-            the refine candidates) lives in Pulse's secondary zone — this board
-            is the state, that panel is the to-do. Pulse scrolls to the anchor
-            on arrival. */}
-        <Link
-          to="/#lab-queue"
-          data-testid="ladder-lab-queue-link"
-          style={{ fontSize: "var(--text-meta)", color: "var(--accent)" }}
-        >
-          lab queue →
-        </Link>
-        <div className="flex" style={{ gap: "var(--space-1)" }}>
-          {viewBtn("collections")}
-          {viewBtn("board")}
-          {viewBtn("table")}
-        </div>
-        <span style={{ padding: "var(--space-1) var(--space-2)", border: "1px solid var(--border-1)", borderRadius: "var(--radius-pill)", color: "var(--fg-muted)", fontSize: "var(--text-meta)" }}>
-          Mechanism first · application not assumed
-        </span>
+      <header className="flex min-w-0 items-center justify-between gap-3 mb-5">
+        <h1 style={{ margin: 0, fontSize: "var(--text-title-lg)", fontWeight: "var(--weight-semibold)" }}>Research</h1>
+        <Link to="/#lab-queue" data-testid="ladder-lab-queue-link" className="text-sm text-[var(--accent)]">Lab queue →</Link>
       </header>
 
       {error != null && (!skew || loaded) && (
@@ -259,6 +222,22 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
 
       {data != null && (
         <>
+          {source.topicsError !== null && <p role="status" className="mb-3 text-sm text-[var(--status-warn)]">
+            Topic refresh failed: {source.topicsError}. {source.iterations !== undefined
+              ? "Showing last received associations; source times are in Records and sources."
+              : "Records remain individual until topic evidence is available."}
+          </p>}
+          {skew && <p role="status">The record endpoint is now unavailable. Showing last received records.</p>}
+          <div hidden={recordsOpen}><ResearchCanvas model={thesis} nextOwed={model.nextOwed} /></div>
+
+          <details data-testid="research-records-disclosure" className="mt-6 border-t border-[var(--border-1)] pt-3"
+            open={recordsOpen}>
+            <summary className="cursor-pointer text-sm text-[var(--fg-muted)]" onClick={(event) => { event.preventDefault(); setRecordsOpen((open) => !open); }}>Records and sources</summary>
+            <div hidden={!recordsOpen}>
+            <p className="mt-3 mb-3 text-sm text-[var(--fg-muted)]">Recorded levels are not revalidated experiment eligibility. Collections associate records; they do not establish equivalent claims or evidence.</p>
+            <div className="flex flex-wrap gap-2 mb-3" aria-label="Recorded research views">
+              {viewBtn("collections")}{viewBtn("board")}{viewBtn("table")}
+            </div>
           <Card className="mb-4" testId="ladder-source-state">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2" data-testid="ladder-counts-header">
               <strong>{model.clusters.length} recorded clusters</strong>
@@ -279,12 +258,7 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
                 {" "}These are separate snapshots; topic association does not validate claim or evidence binding.
               </p>
             </details>
-            {source.topicsError !== null && <p role="status" className="mt-2 text-sm text-[var(--status-warn)]">
-              Topic refresh failed: {source.topicsError}. {source.iterations !== undefined
-                ? "Showing last received associations; their source time is above."
-                : "Records remain individual until topic evidence is available."}
-            </p>}
-            {skew && <p role="status">The record endpoint is now unavailable. Showing last received records.</p>}
+
           </Card>
 
           <details className="mb-4" open={view !== "collections"}>
@@ -333,6 +307,9 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
               not on the board or in the funnel; see the table view.
             </p>
           )}
+
+            </div>
+          </details>
 
           <PeekPanel
             open={picked !== null || pickedFamily !== null}
