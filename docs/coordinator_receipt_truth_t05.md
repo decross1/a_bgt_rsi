@@ -36,8 +36,16 @@ metadata rejection can report `not_persisted`. A failed write may have left byte
 behind. The batch stops after uncertainty, marking later entries `not_attempted`
 without retrying. Earlier confirmed receipts remain evidence of their own rows.
 
-This is not an atomic batch, an exactly-once guarantee, directory-entry durability,
-or proof against every power-loss mode. No live ledger is backfilled or repaired.
+Before writing, the same binary append/read handle checks the final byte of a
+nonempty file. An existing tail without a newline refuses the batch with
+`not_persisted`; later entries are `not_attempted`. The old bytes remain intact,
+and no separator or other ledger repair is invented. This requires read as well
+as append access; an unavailable preflight refuses instead of guessing.
+
+The tail check assumes serialized writers, including the known cycle-lock paths;
+it does not add a lock against independent concurrent writers. This is not an
+atomic batch, an exactly-once guarantee, directory-entry durability, or proof
+against every power-loss mode. No live ledger is backfilled or repaired.
 
 The cycle projection preserves receipt errors. Its existing `bubble_run_ids`
 contains only IDs supported by a unique exact current-run plan/outcome/receipt
@@ -67,7 +75,11 @@ endpoints or a live cycle. The proportionate suite is:
 At the initial source freeze, all 130 tests in the six modules passed. Sixteen
 additional parent-owned private checks passed, including conflicting receipts,
 partial-batch close uncertainty and nested argument mutation. Baseline failures
-were retained; these are offline component checks, not a live runtime smoke test.
+were retained. Distinct review then reproduced an unterminated-tail defect and
+held that candidate. The sole correction adds pre-write tail refusal, preserving
+that failure and the original checks. These are offline component checks, not a
+live runtime smoke test. The corrected candidate passed all 133 tests in the six
+modules plus 18 private checks, including both retained tail counterexamples.
 
 T05 starts from public `28ed6b88bc29c1e05fbc920e7c4677b92402fe65`. Its only source
 paths are the coordinator, cycle-log serializer, their two specified regression

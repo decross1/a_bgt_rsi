@@ -488,6 +488,15 @@ def test_t05_append_boundary_failure_is_explicit_and_has_no_durable_id(
     assert len(bubbles) == 1
 
     class BoundaryFile:
+        def seek(self, _offset, _whence=0):
+            return 0
+
+        def tell(self):
+            return 0  # private empty-file preflight; fault belongs to append
+
+        def read(self, _size=-1):
+            return b""
+
         def __enter__(self):
             return self
 
@@ -530,6 +539,11 @@ def test_t05_append_boundary_failure_is_explicit_and_has_no_durable_id(
     assert receipts[0]["durability"] == "unknown"
     assert "bubble_run_id" not in receipts[0]
     assert receipts[0]["step_id"] == "coordinator_append_fail:step:0"
+    expected_error = {
+        "short_write": "short append", "flush": "scripted flush failure",
+        "fsync": "scripted fsync failure", "close": "scripted close failure",
+    }[failure]
+    assert expected_error in receipts[0]["error"]
 
 
 def test_t05_success_receipt_and_row_bind_the_exact_request(tmp_path):
@@ -624,3 +638,42 @@ def test_invalid_escalation_exhausts_replans_without_dispatch_charge_or_persist(
     assert plan_calls[0] is None
     assert all("finding_review" in guidance for guidance in plan_calls[1:])
     assert cycle_rows == [report]
+
+
+@pytest.mark.parametrize("old_tail", [
+    b'{"run_id":"legacy","timestamp":"2026-01-01T00:00:00Z"}',
+    b'{"run_id":"partial',
+])
+def test_t05_unterminated_tail_refuses_append_and_preserves_history(tmp_path, old_tail):
+    """A completed or partial old tail must not swallow the next JSON row."""
+    pairs = [_evidenced_bubble(f"coordinator_tail:step:{i}") for i in range(2)]
+    bubbles = coord._collect_bubble_up(
+        [pair[0] for pair in pairs], executed=[pair[1] for pair in pairs],
+    )
+    path = tmp_path / "coordinator_bubbles.jsonl"
+    path.write_bytes(old_tail)
+    receipts = coord._persist_bubble_up(bubbles, run_id="coordinator_tail", path=path)
+    assert [receipt["status"] for receipt in receipts] == ["error", "not_attempted"]
+    assert receipts[0]["durability"] == "not_persisted"
+    assert "unterminated final line" in receipts[0]["error"]
+    assert all("bubble_run_id" not in receipt for receipt in receipts)
+    assert path.read_bytes() == old_tail
+    assert not any(row.get("run_id") == "coordinator_tail" for row in coord._read_jsonl(path))
+
+
+def test_t05_newline_history_and_unicode_append_remain_reader_compatible(tmp_path):
+    step, outcome = _evidenced_bubble(
+        "coordinator_unicode:step:0", question="Review λ and 🙂?",
+    )
+    bubbles = coord._collect_bubble_up([step], executed=[outcome])
+    path = tmp_path / "coordinator_bubbles.jsonl"
+    prefix = b'{"run_id":"legacy","timestamp":"2026-01-01T00:00:00Z"}\n'
+    path.write_bytes(prefix)
+    receipts = coord._persist_bubble_up(bubbles, run_id="coordinator_unicode", path=path)
+    assert receipts[0]["status"] == "persisted"
+    assert path.read_bytes().startswith(prefix)
+    rows = coord._read_jsonl(path)
+    assert len(rows) == 2
+    assert rows[1]["question"] == "Review λ and 🙂?"
+    assert rows[1]["request_digest"] == step["request_digest"]
+    Draft7Validator(ESCALATION_SCHEMA).validate(rows[1])

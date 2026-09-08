@@ -1452,17 +1452,17 @@ def _persist_bubble_up(
     bubbles: list[dict[str, Any]], *, run_id: str,
     path: str | os.PathLike | None = None,
 ) -> list[dict[str, Any]]:
-    """Append each bubble_up entry to memory/coordinator_bubbles.jsonl so a
-    coordinator surfacing OUTLIVES the run — today bubble_up is report-only
-    (returned + printed, then lost). Execute-only by design: a bubble is an
-    actual surfacing (handle_bubble_up ran), not a dry-run proposal, so a
-    planned-but-not-executed bubble is never recorded as a real one (rule 4).
+    """Append selected bubbles and report the observed persistence boundary.
+
+    The coordinator calls this only after exact successful execution; legacy
+    direct callers remain responsible for their metadata-free input.
     One row per bubble; append-only (matches the JSONL convention); never raises.
-    Returns an ordered receipt per attempted append. ``persisted`` is emitted
+    Returns an ordered receipt per selected bubble. ``persisted`` is emitted
     only after a full write, flush, fsync, and successful close. An uncertain
     append stops the batch; prior completed rows keep their receipts and later
     entries are explicitly ``not_attempted``. This is not an atomic-batch or
-    exactly-once claim.
+    exactly-once claim. A non-newline existing tail refuses the batch before
+    writing: it must not swallow the new row, and this helper never repairs it.
     path=None resolves to DEFAULT_COORDINATOR_BUBBLES at call time (patchable)."""
     if not bubbles:
         return []
@@ -1474,7 +1474,7 @@ def _persist_bubble_up(
         raw_evidence = _receipt_evidence(bubble)
         try:
             row, evidence = _prepare_bubble_append(bubble, run_id=run_id)
-            line = json.dumps(row, ensure_ascii=False) + "\n"
+            line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
         except Exception as exc:
             receipts.append({
                 "status": "error",
@@ -1488,12 +1488,24 @@ def _persist_bubble_up(
 
         fh = None
         close_attempted = False
+        write_started = False
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
-            fh = open(p, "a", encoding="utf-8")
+            # Inspect the same file handle we append through. An existing
+            # complete or partial unterminated tail would concatenate with the
+            # new JSON object and make a successful byte append unreadable.
+            # Refuse without modifying old bytes; do not repair the ledger.
+            # This relies on serialized writers, not a new concurrency lock.
+            fh = open(p, "a+b")
+            fh.seek(0, os.SEEK_END)
+            if fh.tell():
+                fh.seek(-1, os.SEEK_END)
+                if fh.read(1) != b"\n":
+                    raise ValueError("existing bubble log has an unterminated final line; append refused")
+            write_started = True
             written = fh.write(line)
             if written != len(line):
-                raise OSError(f"short append: wrote {written} of {len(line)} characters")
+                raise OSError(f"short append: wrote {written} of {len(line)} bytes")
             fh.flush()
             os.fsync(fh.fileno())
             close_attempted = True
@@ -1509,14 +1521,14 @@ def _persist_bubble_up(
             receipts.append({
                 "status": "error",
                 **evidence,
-                "durability": "unknown",
+                "durability": "unknown" if write_started else "not_persisted",
                 "error": f"{type(exc).__name__}: {exc}",
             })
             for remaining in bubbles[index + 1:]:
                 receipts.append({
                     "status": "not_attempted",
                     **_receipt_evidence(remaining),
-                    "reason": "append batch stopped after uncertain prior write",
+                    "reason": "append batch stopped after prior append boundary failure",
                 })
             break
         receipts.append({
