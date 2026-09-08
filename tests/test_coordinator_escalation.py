@@ -75,6 +75,26 @@ def test_handle_bubble_up_generic_escalation_passes():
     assert r["finding_ids"] == []  # no finding ids on a pure generic escalation
 
 
+def test_handle_bubble_up_preserves_all_existing_kinds_and_resolutions():
+    resolutions = [
+        "sign_off", "reject", "refine_defer", "refine_authorize_fix",
+        "spawn_topic", "abstain",
+    ]
+    for kind in ("A", "B", "C"):
+        args = {
+            "question": f"Resolve escalation {kind}?",
+            "kind": kind,
+            "allowed_actions": list(resolutions),
+        }
+        original = json.loads(json.dumps(args))
+        out = coord.handle_bubble_up(**args)
+        assert out["status"] == "passed"
+        assert out["result"]["question"] == args["question"]
+        assert out["result"]["kind"] == kind
+        assert out["result"]["allowed_actions"] == resolutions
+        assert args == original
+
+
 def test_handle_bubble_up_empty_is_rejected():
     """rule 4 — never fabricate a surfacing: no finding_ids AND no question."""
     with pytest.raises(ValueError):
@@ -96,6 +116,39 @@ def test_handle_bubble_up_offenum_allowed_action_raises():
         coord.handle_bubble_up(
             question="q", kind="A", allowed_actions=["sign_off", "delete_repo"],
         )
+
+
+def test_planner_menu_handler_and_persisted_schema_share_literal_enums():
+    from orchestrator.coordinator_actions import (
+        ACTIONS,
+        ALLOWED_ESCALATION_ACTIONS,
+        ESCALATION_KINDS,
+    )
+
+    bubble_schema = ACTIONS["bubble_up"]["arg_schema"]["properties"]
+    assert bubble_schema["kind"]["enum"] == list(ESCALATION_KINDS)
+    assert bubble_schema["allowed_actions"]["items"]["enum"] == list(
+        ALLOWED_ESCALATION_ACTIONS
+    )
+    assert ESCALATION_SCHEMA["properties"]["kind"]["enum"] == list(
+        ESCALATION_KINDS
+    )
+    assert ESCALATION_SCHEMA["properties"]["allowed_actions"]["items"][
+        "enum"
+    ] == list(ALLOWED_ESCALATION_ACTIONS)
+    assert coord.ESCALATION_KINDS is ESCALATION_KINDS
+    assert coord.ALLOWED_ESCALATION_ACTIONS is ALLOWED_ESCALATION_ACTIONS
+
+
+def test_planner_and_handler_both_reject_whitespace_only_generic_payload():
+    from orchestrator.coordinator_actions import validate_plan
+
+    args = {"question": "   ", "kind": "A", "allowed_actions": ["reject"]}
+    verdict = validate_plan([{"action": "bubble_up", "args": args}], budget=1)
+    assert verdict["ok"] is False
+    assert any("non-empty" in error for error in verdict["errors"])
+    with pytest.raises(ValueError, match="non-empty question"):
+        coord.handle_bubble_up(**args)
 
 
 # ── persistence: legacy + generic, back-compat on-disk shape ──────────────
@@ -236,10 +289,9 @@ def test_collect_carries_generic_fields_then_persists_and_counts(tmp_path):
 def test_validator_accepts_generic_bubble_args():
     """Seam 2 closed end-to-end (2026-06-15): the planner CAN emit a generic
     {question, context, kind, allowed_actions} bubble_up. coordinator_actions
-    .bubble_up now accepts the legacy finding-id form OR the generic escalation
-    form (anyOf finding_ids|question); the kind/allowed_actions ENUMs stay
-    enforced fail-closed by handle_bubble_up (single source of truth), so this
-    planner gate only checks the shape. (Was the DISCREPANCY pin.)"""
+    .bubble_up accepts the legacy finding-id form OR the generic escalation
+    form (anyOf finding_ids|question), and admission shares the handler's
+    literal kind/allowed_actions contract. (Was the DISCREPANCY pin.)"""
     from orchestrator.coordinator_actions import validate_plan
     # a well-formed generic escalation validates at the planner gate
     generic_plan = [{
@@ -254,3 +306,62 @@ def test_validator_accepts_generic_bubble_args():
     # an empty bubble (neither finding_ids nor question) is still rejected
     empty_plan = [{"action": "bubble_up", "args": {"note": "no payload"}}]
     assert validate_plan(empty_plan, budget=6)["ok"] is False
+
+
+def test_invalid_escalation_exhausts_replans_without_dispatch_charge_or_persist(
+    monkeypatch,
+):
+    """A rejected escalation stays wholly above the execution/persistence seam."""
+    invalid_plan = [{
+        "action": "bubble_up",
+        "args": {
+            "finding_ids": ["iter-2026-09-07-001"],
+            "question": "Please review these pending iterations.",
+            "kind": "finding_review",
+            "allowed_actions": ["promote_findings"],
+        },
+    }]
+    plan_calls: list[str | None] = []
+
+    def _plan(*_args, extra_guidance=None, **_kwargs):
+        plan_calls.append(extra_guidance)
+        return invalid_plan
+
+    def _forbidden(*_args, **_kwargs):
+        raise AssertionError("invalid plan crossed the admission boundary")
+
+    cycle_rows: list[dict] = []
+    monkeypatch.setattr(coord, "assess_state", lambda **_kwargs: {
+        "topic_suggestions": [], "recent_findings": [],
+    })
+    monkeypatch.setattr(coord, "plan", _plan)
+    monkeypatch.setattr(coord, "_charge_daily_ledger", _forbidden)
+    monkeypatch.setattr(coord, "_persist_bubble_up", _forbidden)
+    monkeypatch.setattr(
+        coord.coordinator_cycle_log,
+        "write_coordinator_cycle",
+        lambda report: cycle_rows.append(report),
+    )
+
+    report = coord._coordinator_cycle(
+        run_id="coordinator_invalid_escalation",
+        budget=6,
+        dry_run=False,
+        execute_handlers={"bubble_up": _forbidden},
+        backend=None,
+        model=None,
+        loop_memory_path="unused-loop-memory",
+        surfaced_path="unused-surfaced",
+        feedback_path="unused-feedback",
+        active_run_path="unused-active-run",
+    )
+
+    assert report["status"] == "no_valid_plan"
+    assert report["plan"] == []
+    assert report["executed"] == []
+    assert report["bubble_up"] == []
+    assert len(plan_calls) == coord._MAX_REPLANS + 1
+    assert len(report["attempts"]) == coord._MAX_REPLANS + 1
+    assert plan_calls[0] is None
+    assert all("finding_review" in guidance for guidance in plan_calls[1:])
+    assert cycle_rows == [report]
