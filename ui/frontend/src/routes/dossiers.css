@@ -63,6 +63,10 @@
   border-color: color-mix(in oklch, var(--status-bad) 35%, var(--border-1));
 }
 
+.dossier-integrity-message {
+  color: var(--status-warn);
+}
+
 .dossier-surface {
   background: var(--surface-1);
   border: 1px solid var(--border-1);

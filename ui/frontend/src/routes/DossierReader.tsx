@@ -172,9 +172,17 @@ interface RecordRead {
   sourceIterationId: string;
 }
 
-export default function DossierReader({ availability, items }: Props) {
+export default function DossierReader(props: Props) {
   const params = useParams<{ id: string }>();
   const dossierId = asText(params.id);
+  return <DossierReaderRecord key={dossierId} {...props} dossierId={dossierId} />;
+}
+
+function DossierReaderRecord({
+  availability,
+  items,
+  dossierId,
+}: Props & { dossierId: string }) {
 
   // One capability fetch feeds every form's `available` prop (lifted VERBATIM
   // from Todo.tsx). The override wins (tests inject it); otherwise fetch once
@@ -255,9 +263,9 @@ export default function DossierReader({ availability, items }: Props) {
   const journeyItem: HumanTodoItem =
     item ?? ({ id: dossierId, kind: resolvedKind ?? "unknown" } as HumanTodoItem);
 
-  // Calibration + reveal are PER-ID Sets (flag-2, lifted from Todo.tsx): a
-  // recorded calibration is never re-prompted and a reveal sticks, even as
-  // the reader navigates between dossiers without unmounting.
+  // Calibration + reveal are target-local. DossierReader keys this complete
+  // reader boundary by dossierId, so no reader or action state survives a
+  // same-route identity transition.
   const [calibratedIds, setCalibratedIds] = useState<Set<string>>(new Set());
   const calibrated = dossierId.length > 0 && calibratedIds.has(dossierId);
   const [revealedIds, setRevealedIds] = useState<Set<string>>(new Set());

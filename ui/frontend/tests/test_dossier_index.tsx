@@ -12,6 +12,9 @@
 //   4. Rows are LINKS into /dossier/:id — the picker exposes NO disposition
 //      affordance (the verdict fence).
 //   5. The deferred sky chip ports from the retired HumanTodoPanel.
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -88,6 +91,37 @@ function renderIndex(items: HumanTodoItem[], iterations: IterationRecord[] = [])
       <DossierIndex items={items} iterations={iterations} />
     </MemoryRouter>,
   );
+}
+
+type Oklch = [number, number, number];
+
+function readOklch(source: string, property: string): Oklch {
+  const match = source.match(
+    new RegExp(`--${property}:\\s*oklch\\(([0-9.]+)\\s+([0-9.]+)\\s+([0-9.]+)`),
+  );
+  if (!match) throw new Error(`Missing OKLCH property: ${property}`);
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function relativeLuminance([lightness, chroma, hue]: Oklch): number {
+  const radians = (hue * Math.PI) / 180;
+  const a = chroma * Math.cos(radians);
+  const b = chroma * Math.sin(radians);
+  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  const linear = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ].map((channel) => Math.max(0, Math.min(1, channel)));
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+function contrast(first: Oklch, second: Oklch): number {
+  const a = relativeLuminance(first);
+  const b = relativeLuminance(second);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
 describe("DossierIndex — owe-first sectioning", () => {
@@ -340,21 +374,75 @@ describe("DossierIndex — compact record library", () => {
     renderIndex([], rows);
 
     expect(screen.getByTestId("dossier-history-progress")).toHaveTextContent(
-      "Showing 50 of 121 matching iterations",
+      "Showing 50 of 121 matching records",
     );
     const more = screen.getByTestId("dossier-history-more");
     more.focus();
     fireEvent.click(more);
     expect(more).toHaveFocus();
     expect(screen.getByTestId("dossier-history-progress")).toHaveTextContent(
-      "Showing 100 of 121 matching iterations",
+      "Showing 100 of 121 matching records",
     );
     fireEvent.click(more);
     expect(more).toBeDisabled();
     expect(more).toHaveFocus();
     expect(screen.getByTestId("dossier-history-progress")).toHaveTextContent(
-      "Showing 121 of 121 matching iterations",
+      "Showing 121 of 121 matching records",
     );
+  });
+
+  it("bounds a 577-row non-iteration archive and keeps an exact source-order match reachable", () => {
+    const rows = Array.from({ length: 577 }, (_, index) => ({
+      kind: "bubble_ack",
+      id: `bubble-archive-${String(index).padStart(3, "0")}`,
+      title: `Archived record number ${String(index).padStart(3, "0")}`,
+    })) as HumanTodoItem[];
+    renderIndex(rows);
+
+    const archive = screen.getByTestId("dossier-else");
+    expect(within(archive).getAllByRole("link")).toHaveLength(50);
+    expect(screen.getByTestId("dossier-history-progress")).toHaveTextContent(
+      "Showing 50 of 577 matching records",
+    );
+    const more = screen.getByTestId("dossier-history-more");
+    more.focus();
+    fireEvent.click(more);
+    expect(more).toHaveFocus();
+    expect(within(archive).getAllByRole("link")).toHaveLength(100);
+
+    fireEvent.change(screen.getByTestId("dossier-search"), {
+      target: { value: "bubble-archive-576" },
+    });
+    expect(within(archive).getAllByRole("link")).toHaveLength(1);
+    expect(screen.getByTestId("dossier-row-bubble-archive-576")).toBeVisible();
+  });
+
+  it("uses a light-theme normal-text warning token for source-integrity prose", () => {
+    renderIndex(
+      [GATE, null as unknown as HumanTodoItem],
+      [ITER_ROW, null as unknown as IterationRecord],
+    );
+    for (const testId of ["dossier-partial", "dossier-history-partial"]) {
+      const message = screen.getByTestId(testId);
+      expect(message).toHaveClass("dossier-integrity-message");
+      expect(message).not.toHaveClass("text-amber-600");
+    }
+
+    const here = dirname(fileURLToPath(import.meta.url));
+    const styles = readFileSync(resolve(here, "../src/routes/dossiers.css"), "utf8");
+    const tokens = readFileSync(resolve(here, "../src/design/tokens.css"), "utf8");
+    const integrityRule = styles.match(
+      /\.dossier-integrity-message\s*\{([^}]+)\}/,
+    )?.[1];
+    expect(integrityRule).toContain("color: var(--status-warn)");
+    for (const background of ["bg", "surface-1"]) {
+      expect(
+        contrast(
+          readOklch(tokens, "status-warn"),
+          readOklch(tokens, background),
+        ),
+      ).toBeGreaterThanOrEqual(4.5);
+    }
   });
 
   it("does not call an undated iteration the latest recorded context", () => {
