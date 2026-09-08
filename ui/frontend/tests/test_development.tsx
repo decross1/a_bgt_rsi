@@ -157,13 +157,15 @@ describe("development route separates delivery, runtime and scientific records",
   it("renders the actual App route with the current ledger shape and dated delivery receipt", async () => {
     render(<App />);
     await ready();
-    expect(screen.getByRole("link", { name: "development" })).toHaveAttribute("href", "/development");
+    expect(screen.getByRole("link", { name: "Operations" })).toHaveAttribute("href", "/development");
     expect(screen.getByText("Codex engineering / delivery")).toBeInTheDocument();
     expect(screen.getByText("Nara runtime / channel")).toBeInTheDocument();
     expect(screen.getByText("Scientific evidence / agenda")).toBeInTheDocument();
     const science = within(screen.getByTestId("development-science"));
     expect(science.getByText("200 recorded clusters")).toBeInTheDocument();
     expect(science.getByText(/23 unresolved · 0 accepted · 0 dismissed/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Research review/ }));
+    fireEvent.click(screen.getByText("Recorded classifications and next tests"));
     const l0 = science.getByRole("row", { name: /L0 77 0 119/ });
     expect(l0).toBeInTheDocument();
     expect(science.getByRole("row", { name: /L1 3 0 0 valid experiment and independent confirmation/ })).toBeInTheDocument();
@@ -223,7 +225,7 @@ describe("development route separates delivery, runtime and scientific records",
     await ready();
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     const palette = within(screen.getByTestId("command-palette"));
-    fireEvent.click(palette.getByText("development"));
+    fireEvent.click(palette.getByText("Operations delivery"));
     expect(window.location.pathname).toBe("/development");
     expect(screen.queryByTestId("command-palette")).not.toBeInTheDocument();
     expect(screen.getByTestId("development-page")).toBeInTheDocument();
@@ -269,7 +271,8 @@ describe("development route separates delivery, runtime and scientific records",
     expect(screen.getByText("Unresolved suggestion 22")).toBeInTheDocument();
     expect(screen.queryByText("Unresolved suggestion 0")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /accept|dismiss/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /human ruling controls/ })).toHaveAttribute("href", "/model-io");
+    fireEvent.click(screen.getByRole("button", { name: /Research review/ }));
+    expect(screen.getByRole("link", { name: /Review suggestions and human ruling controls/ })).toHaveAttribute("href", "#frontier-reviews");
   });
 });
 
@@ -280,10 +283,12 @@ describe("LAB017 visible delivery and loaded-source distinctions", () => {
     await ready();
     const engineering = within(screen.getByTestId("development-engineering"));
     expect(engineering.getByText("UI delivered: clearer provenance and stable thread history")).toBeInTheDocument();
+    fireEvent.click(engineering.getByText("Historical UI delivery receipt"));
     expect(engineering.getByRole("link", { name: /Merged UI work — PR #5/ })).toHaveAttribute("href", "https://github.com/decross1/a_bgt_rsi/pull/5");
     expect(engineering.getByText(/UI source merge:/)).toHaveTextContent("858cfb10656cc370e3fdf0018a6e45fd5d05e997");
     expect(engineering.getByText(/Dated UI observation:/)).toHaveTextContent("not live deployment status");
     expect(engineering.getByText(/Earlier core package — PR #3 remains separate/)).toBeInTheDocument();
+    fireEvent.click(engineering.getByText("Earlier package receipt and next evidence"));
     expect(engineering.getByRole("link", { name: /PR #3 package status/ })).toHaveAttribute("href", developmentReceipt.pr);
     expect(engineering.getByText(/Qwen worker remains held/)).toBeInTheDocument();
     expect(engineering.queryByRole("link", { name: /current delivery status/ })).not.toBeInTheDocument();
@@ -323,13 +328,31 @@ describe("LAB017 visible delivery and loaded-source distinctions", () => {
 });
 
 
-it("offers separate engineering, runtime and research next steps without creating a new scientific result", async () => {
+it("replaces the three report columns with one selected context and keeps evidence discoverable", async () => {
   render(<App />);
   await ready();
-  const summary = screen.getByRole("region", { name: "Readiness at a glance" });
-  expect(within(summary).getByRole("link", { name: "Changed / held / next evidence" })).toHaveAttribute("href", "#delivery-evidence");
-  expect(within(summary).getByRole("link", { name: "Inspect actual call records" })).toHaveAttribute("href", "/model-io");
-  expect(within(summary).getByRole("link", { name: "Open claims and evidence" })).toHaveAttribute("href", "/ladder");
-  expect(summary).toHaveTextContent(/do not establish new evidence or market fit/);
+  expect(screen.getByTestId("development-engineering")).toBeVisible();
+  expect(screen.getByTestId("development-runtime")).not.toBeVisible();
+  expect(screen.getByTestId("development-science")).not.toBeVisible();
+  expect(screen.queryByRole("region", { name: "Readiness at a glance" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Runtime observations/ }));
+  expect(screen.getByTestId("development-runtime")).toBeVisible();
+  expect(screen.getByTestId("development-engineering")).not.toBeVisible();
+  expect(window.location.hash).toBe("#runtime-evidence");
+  fireEvent.click(screen.getByRole("button", { name: /Research review/ }));
+  expect(screen.getByTestId("development-science")).toBeVisible();
+  expect(screen.getByRole("link", { name: /Inspect the ladder/ })).toHaveAttribute("href", "/ladder");
   expect(calls.some((path) => path.startsWith("/api/lab_todo"))).toBe(false);
+});
+
+it("opens the existing guarded review only on its explicit deep link and allows pausing updates", async () => {
+  render(<App />);
+  await ready();
+  expect(screen.queryByRole("button", { name: "Pause review updates" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("link", { name: "Open human review controls" }));
+  expect(window.location.hash).toBe("#frontier-reviews");
+  expect(screen.getByRole("region", { name: "Human review controls" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Pause review updates" }));
+  expect(screen.getByRole("button", { name: "Resume review updates" })).toHaveAttribute("aria-pressed", "true");
+  expect(calls.some((path) => /accept|dismiss/.test(path))).toBe(false);
 });

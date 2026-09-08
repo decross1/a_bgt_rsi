@@ -98,7 +98,6 @@ import {
   useState,
 } from "react";
 import Card from "../design/Card";
-import FrontierReviews from "../components/FrontierReviews";
 import EmptyCompletionNote from "../components/payload/EmptyCompletionNote";
 import EndpointMissingNote, {
   isVersionSkew404,
@@ -569,7 +568,6 @@ const TRACE_POLL_MS = 60_000;
 // frontier — so first paint is not a 4-request thundering herd.
 const ACTIVITY_STAGGER_MS = 150;
 const TRACE_STAGGER_MS = 300;
-const FRONTIER_STAGGER_MS = 450;
 // A keystroke in a filter box must not hit the backend (a no-match filter
 // costs a full 16 MiB scan, measured 0.85–1.83 s); the query re-keys only
 // after typing pauses.
@@ -879,7 +877,6 @@ function sameFilters(a: ModelIOFilters, b: ModelIOFilters): boolean {
 
 export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   const [paused, setPaused] = useState(false);
-  const [suggestionsOpen, setSuggestionsOpen] = useState(() => window.location.hash === "#research-suggestions");
   // `inputs` follows every keystroke (controlled inputs stay live);
   // `applied` is what actually queries the backend, applied only after
   // FILTER_DEBOUNCE_MS of quiet.
@@ -1175,15 +1172,12 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
         <RuntimeStrip activity={activity} trace={trace} />
       </details>
 
-      {/* Frontier tier (D-061), sibling section: its poll rides the same
-          page scheduler — see components/FrontierReviews.tsx. */}
-      <details id="research-suggestions" open={suggestionsOpen}
-        onToggle={(event) => setSuggestionsOpen(event.currentTarget.open)}
-        className="mb-3 rounded-lg border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
-        <summary className="cursor-pointer text-sm font-medium text-[var(--fg)]">Research suggestions and ruling history</summary>
-        <p className="my-2 text-sm text-[var(--fg-muted)]">Suggestions remain separate from accepted agenda and completed experiments. Unknown ruling history stays view-only.</p>
-        <FrontierReviews paused={paused} initialDelayMs={FRONTIER_STAGGER_MS} />
-      </details>
+      <p id="research-suggestions" className="my-3 text-sm text-[var(--fg-muted)]">
+        Research suggestions and ruling history are in Operations.{' '}
+        <a href={`/development${window.location.search}#frontier-reviews`} className="text-[var(--accent)]">
+          Open existing human review controls
+        </a>
+      </p>
 
       {/* Filters + live-state controls. */}
       <div className="mt-4 flex flex-wrap items-center gap-2">

@@ -52,26 +52,25 @@ const NAV_GROUPS: {
   {
     id: "now",
     label: "Now",
-    links: [{ to: "/", label: "pulse", end: true, primary: true }],
+    links: [{ to: "/", label: "Now", end: true, primary: true }],
   },
   {
     id: "research",
     label: "Research",
     links: [
-      { to: "/ladder", label: "ladder", primary: true },
-      { to: "/dossier", label: "dossiers" },
-      { to: "/experiments", label: "experiments" },
+      { to: "/ladder", label: "Research", primary: true },
+      { to: "/dossier", label: "Record library" },
+      { to: "/experiments", label: "Evaluations" },
     ],
   },
   {
     id: "operations",
     label: "Operations",
     links: [
-      { to: "/development", label: "development", primary: true },
-      { to: "/channel", label: "channel" },
-      { to: "/model-io", label: "model i/o" },
-      { to: "/cycles", label: "cycles" },
-      { to: "/graph", label: "graph" },
+      { to: "/development", label: "Operations", primary: true },
+      { to: "/channel", label: "Conversation" },
+      { to: "/model-io", label: "Calls" },
+      { to: "/cycles", label: "Trace history" },
     ],
   },
 ];
@@ -135,11 +134,11 @@ function AtlasNavigation({
           key={group.id}
           aria-labelledby={`nav-group-label-${group.id}`}
         >
-          <h2 className="atlas-nav-group-label" id={`nav-group-label-${group.id}`}>
+          <h2 className="sr-only" id={`nav-group-label-${group.id}`}>
             {group.label}
           </h2>
           <div className="atlas-nav-links">
-            {group.links.map((link) => (
+            {group.links.filter((link) => link.primary || selected === group.id).map((link) => (
               <NavLink
                 className={({ isActive }) =>
                   [
@@ -163,6 +162,11 @@ function AtlasNavigation({
       ))}
     </nav>
   );
+}
+
+function LegacyRedirect({ to }: { to: string }) {
+  const { search, hash } = useLocation();
+  return <Navigate to={`${to}${search}${hash}`} replace />;
 }
 
 function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
@@ -357,13 +361,13 @@ function AtlasApp() {
             <Route path="/" element={<Pulse />} />
             <Route path="/development" element={<Development />} />
             <Route path="/ladder" element={<Ladder />} />
-            <Route path="/ideas" element={<Navigate to="/ladder" replace />} />
+            <Route path="/ideas" element={<LegacyRedirect to="/ladder" />} />
             <Route path="/dossier" element={<DossierIndex />} />
             <Route path="/dossier/:id" element={<DossierReader />} />
-            <Route path="/todo" element={<Navigate to="/dossier" replace />} />
+            <Route path="/todo" element={<LegacyRedirect to="/dossier" />} />
             <Route path="/channel" element={<Channel />} />
             <Route path="/cycles" element={<Cycles />} />
-            <Route path="/coordinator" element={<Navigate to="/cycles" replace />} />
+            <Route path="/coordinator" element={<LegacyRedirect to="/cycles" />} />
             <Route path="/graph" element={<Graph />} />
             <Route path="/experiments" element={<Experiments />} />
             <Route path="/experiments/:expId" element={<ExperimentDetail />} />

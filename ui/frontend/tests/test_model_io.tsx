@@ -718,26 +718,24 @@ it("a filter change resets the paged-older rows and the pager state", async () =
 });
 
 
-it("keeps the call feed primary with history in explicitly labeled disclosures", async () => {
+it("keeps call diagnostics separate from the single human-review destination", async () => {
   stubRoutes(happyHandler);
   render(<ModelIO />);
   await screen.findByTestId("modelio-table");
   expect(screen.getByRole("heading", { name: "Model I/O", level: 1 })).toBeInTheDocument();
-  const runtime = screen.getByText("Runtime activity and developer traces").closest("details");
-  const suggestions = screen.getByText("Research suggestions and ruling history").closest("details");
-  expect(runtime).not.toHaveAttribute("open");
-  expect(suggestions).not.toHaveAttribute("open");
-  fireEvent.click(screen.getByText("Research suggestions and ruling history"));
-  expect(suggestions).toHaveAttribute("open");
-  expect(screen.getByText(/Unknown ruling history stays view-only/)).toBeVisible();
+  expect(screen.getByText("Runtime activity and developer traces").closest("details")).not.toHaveAttribute("open");
+  expect(screen.getByRole("link", { name: "Open existing human review controls" })).toHaveAttribute("href", "/development#frontier-reviews");
+  expect(screen.queryByTestId("agenda-accept")).not.toBeInTheDocument();
 });
 
-it("opens the retained suggestion history from its exact deep link", async () => {
-  window.history.replaceState({}, "", "/model-io#research-suggestions");
+it("keeps the legacy suggestions anchor and query context as an explicit review handoff", async () => {
+  window.history.replaceState({}, "", "/model-io?run_id=exact%2Fid#research-suggestions");
   try {
     stubRoutes(happyHandler);
     render(<ModelIO />);
-    expect(screen.getByText("Research suggestions and ruling history").closest("details")).toHaveAttribute("open");
+    expect(document.getElementById("research-suggestions")).toHaveTextContent("Research suggestions and ruling history are in Operations");
+    expect(screen.getByRole("link", { name: "Open existing human review controls" })).toHaveAttribute("href", "/development?run_id=exact%2Fid#frontier-reviews");
+    expect(screen.queryByTestId("agenda-accept")).not.toBeInTheDocument();
   } finally {
     window.history.replaceState({}, "", "/");
   }

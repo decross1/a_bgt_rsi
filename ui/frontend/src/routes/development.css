@@ -1,0 +1,14 @@
+.operations-workspace { display:grid; grid-template-columns:minmax(210px, .72fr) minmax(0, 1.65fr); gap:32px; align-items:start; }
+.operations-worklist { display:flex; flex-direction:column; gap:8px; min-width:0; }
+.operations-list-label { margin:0 0 8px; font-size:12px; color:var(--fg-muted); text-transform:uppercase; letter-spacing:.08em; }
+.operations-worklist button { text-align:left; padding:16px; border:1px solid transparent; border-radius:8px; background:transparent; color:var(--fg); }
+.operations-worklist button[aria-pressed="true"] { background:var(--surface-1); border-color:var(--border-1); box-shadow:inset 3px 0 var(--accent); }
+.operations-worklist button strong { display:block; font-size:15px; font-weight:600; }
+.operations-worklist button span { display:block; margin-top:6px; font-size:13px; line-height:1.5; color:var(--fg-muted); }
+.operations-worklist a { margin:14px 16px 0; color:var(--accent); font-size:14px; }
+.operations-list-note { margin:16px; font-size:13px; line-height:1.6; color:var(--fg-muted); }
+.operations-context { min-width:0; }
+.operations-context .dsn-card { padding:24px; }
+.operations-context details summary { line-height:1.6; }
+.operations-context details[open] > summary { margin-bottom:12px; }
+@media (max-width: 900px) { .operations-workspace { grid-template-columns:1fr; gap:20px; } .operations-worklist { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px; } .operations-list-label { grid-column:1/-1; } .operations-worklist button { padding:12px 8px; } .operations-worklist button span { font-size:12px; } .operations-worklist a { grid-column:1/-1; margin:8px; } .operations-list-note { grid-column:1/-1; margin:4px 8px; } .operations-context .dsn-card { padding:18px; } }

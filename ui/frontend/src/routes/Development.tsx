@@ -1,3 +1,7 @@
+import { useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import FrontierReviews from "../components/FrontierReviews";
+import "./development.css";
 import { useDevelopmentSources, type Source } from "../api/development";
 import Card from "../design/Card";
 import { useNow } from "../time";
@@ -29,6 +33,12 @@ function SourceTime({ label, value }: { label: string; value: unknown }) {
 
 export default function Development() {
   useNow(30_000);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [reviewPaused, setReviewPaused] = useState(false);
+  const selected = location.hash === "#runtime-evidence" ? "runtime"
+    : ["#research-evidence", "#frontier-reviews"].includes(location.hash) ? "science" : "engineering";
+  const select = (hash: string) => navigate({ pathname: location.pathname, search: location.search, hash });
   const { sources, refreshSources } = useDevelopmentSources();
 
   const clusters = rows(sources.ladder.data?.clusters);
@@ -75,14 +85,27 @@ export default function Development() {
       <button type="button" onClick={refreshSources} disabled={Object.values(sources).some((source) => source.loading)}
         className="rounded border border-[var(--border-1)] px-3 py-2 text-sm disabled:opacity-50">Read latest snapshots</button>
     </header>
-    <section aria-label="Readiness at a glance" className="mb-5 grid gap-4 rounded-lg border border-[var(--border-1)] bg-[var(--surface-1)] p-4 lg:grid-cols-3">
-      <div><h2 className="text-sm font-semibold">Engineering</h2><p className="mt-1 text-sm">Dated delivery receipts below. The core package and worker have separate holds.</p><a href="#delivery-evidence" className="mt-2 inline-block text-sm text-[var(--accent)]">Changed / held / next evidence</a></div>
-      <div><h2 className="text-sm font-semibold">Nara runtime</h2><p className="mt-1 text-sm">A channel message is runtime history. Engineering does not create a new Nara turn.</p><a href="/model-io" className="mt-2 inline-block text-sm text-[var(--accent)]">Inspect actual call records</a></div>
-      <div><h2 className="text-sm font-semibold">Research</h2><p className="mt-1 text-sm">Recorded stages describe the ledger. They do not establish new evidence or market fit.</p><a href="/ladder" className="mt-2 inline-block text-sm text-[var(--accent)]">Open claims and evidence</a></div>
-    </section>
-    <div id="delivery-evidence" className="grid gap-4 lg:grid-cols-3">
+    <div className="operations-workspace" id="delivery-evidence">
+      <nav className="operations-worklist" aria-label="Operations evidence">
+        <p className="operations-list-label">Inspect a source</p>
+        <button type="button" aria-pressed={selected === "engineering"} aria-controls="engineering-evidence" onClick={() => select("#delivery-evidence")}>
+          <strong>Engineering delivery</strong><span>Dated receipts · current sign-off not reported</span>
+        </button>
+        <button type="button" aria-pressed={selected === "runtime"} aria-controls="runtime-evidence" onClick={() => select("#runtime-evidence")}>
+          <strong>Runtime observations</strong><span>{sources.channel.error || sources.health.error ? "Read failed · previous observation only" : "Recorded messages and loaded backend"}</span>
+        </button>
+        <button type="button" aria-pressed={selected === "science"} aria-controls="research-evidence" onClick={() => select("#research-evidence")}>
+          <strong>Research review</strong><span>{agendaStatusKnown ? "Loaded ruling history · inspect its scope" : "Current ruling status uncertain"}</span>
+        </button>
+        <a href="#frontier-reviews" onClick={(event) => { event.preventDefault(); select("#frontier-reviews"); }}>Open human review controls</a>
+        <p className="operations-list-note">A delivery receipt, recorded call and scientific result are separate evidence.</p>
+      </nav>
+      <div className="operations-context">
+      <div id="engineering-evidence" hidden={selected !== "engineering"}>
       <Card title="Codex engineering / delivery" testId="development-engineering">
-        <p className="font-medium">{uiReceipt.title}</p>
+        <p className="text-sm text-[var(--fg-muted)]">Historical delivery records. These sources do not report current GitHub or frontend adoption status.</p>
+        <details className="my-4 text-sm"><summary className="cursor-pointer font-medium">Historical UI delivery receipt</summary>
+        <p className="mt-3 font-medium">{uiReceipt.title}</p>
         <ul className="my-3 list-disc space-y-2 pl-5 text-sm">{uiReceipt.changes.map((change) => <li key={change}>{change}</li>)}</ul>
         <a href={uiReceipt.pr} target="_blank" rel="noreferrer" className="text-[var(--accent)]">Merged UI work — PR #5 ↗</a>
         <p className="mt-2 text-xs text-[var(--fg-muted)]">Dated UI observation: {uiReceipt.recordedAt}; not live deployment status.</p>
@@ -91,8 +114,9 @@ export default function Development() {
           <p className="mt-2 break-all text-xs">UI source merge: {uiReceipt.merge}</p>
           <p className="mt-2">{uiReceipt.verification}</p>
         </details>
-        <hr className="my-4 border-[var(--border-1)]" />
-        <p className="text-sm font-medium">Earlier core package — PR #3 remains separate and held</p>
+        </details>
+        <p className="text-xs text-[var(--fg-muted)]">As recorded {receipt.recordedAt}</p>
+        <p className="mt-2 text-sm font-medium">Earlier core package — PR #3 remains separate and held</p>
         <p className="mt-2 text-sm">The UI delivery does not merge the claim/attempt and execution components or clear their integration checks.</p>
         <details className="mt-3 text-sm"><summary className="cursor-pointer">Earlier package receipt and next evidence</summary>
           <p className="mt-2">{receipt.title}</p>
@@ -103,31 +127,41 @@ export default function Development() {
           <p className="mt-3">{receipt.checks}</p>
           <p className="mt-3"><strong>Next evidence:</strong> {receipt.next}</p>
         </details>
-        <p className="mt-3 text-sm"><strong>Held worker:</strong> {receipt.worker}</p>
+        <p className="my-3 text-sm"><strong>Next inspection:</strong> full validation and integration evidence for this package.</p>
+        <details className="mt-3 text-sm"><summary className="cursor-pointer">Worker API failure in the recorded receipt</summary>
+          <p className="mt-2"><strong>Held worker:</strong> {receipt.worker}</p>
+        </details>
         <details className="mt-4 text-sm"><summary className="cursor-pointer">Historical binding audit — separate from current counts</summary>
           <p className="mt-2">Recorded {receipt.audit.recordedAt}: {receipt.audit.iterations} historical iterations; {receipt.audit.bound} bound, {receipt.audit.mismatch} mismatch, {receipt.audit.unverifiable} unverifiable under the repaired envelope rule.</p>
           <p>This describes claim/evidence association. It does not mean the hypotheses are false or show today&apos;s ledger totals.</p>
           <p className="mt-2 break-all text-xs">Source-bound exposure SHA256: {receipt.audit.exposure}</p>
         </details>
       </Card>
+      </div>
+      <div id="runtime-evidence" hidden={selected !== "runtime"}>
       <Card title="Nara runtime / channel" testId="development-runtime">
         <p className="text-sm">Nara is the separate Gemma runtime agent. Codex engineering does not automatically post a Nara reply or dispatch a Qwen task.</p>
         {framedChannel ? <div className="my-3 space-y-2">
           <SourceTime label="Latest Nara message in loaded timeline" value={latest(channel.filter((r) => r.kind === "nara").map((r) => r.ts))} />
           <SourceTime label="Latest channel turn in loaded timeline" value={latest(channel.filter((r) => r.kind !== "event").map((r) => r.ts))} />
         </div> : <p className="my-3 text-sm text-[var(--status-warn)]">Actor-specific dates withheld: this backend has not provided verified structured framing. Legacy formatted text can contain actor-shaped message lines.</p>}
-        <p className="text-xs text-[var(--fg-muted)]">Actor labels are recorded, not cryptographically authenticated. Structured framing preserves message boundaries; it does not attest ledger completeness.</p>
+        <details className="my-3 text-sm"><summary className="cursor-pointer">Message provenance and observation limits</summary>
+        <p className="mt-2 text-xs text-[var(--fg-muted)]">Actor labels are recorded, not cryptographically authenticated. Structured framing preserves message boundaries; it does not attest ledger completeness.</p>
         <p className="text-sm">An old message date is not a liveness verdict. This read shows up to 1,000 timeline rows; an absent Nara row means no message was found in that window.</p>
+        </details>
         <SourceState source={sources.channel} />
         <a href="/channel" className="mt-3 block text-[var(--accent)]">Read Nara&apos;s channel →</a>
         <p className="mt-4 text-sm"><strong>Running backend revision:</strong> {text(sources.health.data?.version)}</p>
         <p className="text-xs text-[var(--fg-muted)]">Backend-reported revision captured at process import; not the source branch or proof of clean deployed bytes. Deployed frontend commit is not reported by this backend.</p>
         <SourceState source={sources.health} />
       </Card>
+      </div>
+      <div id="research-evidence" hidden={selected !== "science"}>
       <Card title="Scientific evidence / agenda" testId="development-science">
         <p className="text-sm">Ladder positions are recorded classifications, not revalidated experiment eligibility. Engineering commits do not promote research.</p>
         {sources.ladder.data ? <>
           <p className="my-3 text-lg font-semibold">{clusters.length} recorded clusters</p>
+          <details className="my-3"><summary className="cursor-pointer text-sm">Recorded classifications and next tests</summary>
           <div className="overflow-x-auto"><table className="w-full text-left text-sm [&_th]:py-1 [&_th]:pr-3 [&_th]:align-top [&_td]:py-1 [&_td]:pr-3 [&_td]:align-top"><caption className="mb-2 text-left text-xs">Positions in the loaded ledger projection</caption>
             <thead><tr><th>Rung</th><th>Open</th><th>Surfaced</th><th>Killed</th><th>Recorded next test</th></tr></thead>
             <tbody>{["L0", "L1", "L2", "L3", "L4", "L5"].map((level) => <tr key={level}>
@@ -135,6 +169,7 @@ export default function Development() {
               <td className="text-xs">{isRecord(sources.ladder.data?.next_owed) ? text(sources.ladder.data.next_owed[level]) : "not reported"}</td>
             </tr>)}</tbody>
           </table></div>
+          </details>
           <p className="mt-2 text-xs">Other / unclassified: {clusters.filter((c) => !["open", "surfaced", "killed"].includes(text(c.status)) || !["L0", "L1", "L2", "L3", "L4", "L5"].includes(text(c.evidence_level))).length}</p>
           <SourceTime label="Latest recorded cluster event (not confirmation)" value={latest(clusters.map((c) => c.last_event_ts))} />
           <p className="text-xs text-[var(--fg-muted)]">Source: idea-ledger projection. Source file hash and cache age are not reported by this endpoint.</p>
@@ -166,8 +201,21 @@ export default function Development() {
         <p className="text-xs text-[var(--fg-muted)]">Backend refresh in progress: not reported. The projection timestamp is separate from this browser read and any read error.</p>
         <SourceState source={sources.frontier} />
         <p className="mt-3 text-sm">The frontier feed reads review and proposal ledgers, not Codex handoffs. No new entry is fabricated when engineering ships.</p>
-        <a href="/model-io" className="mt-3 block text-[var(--accent)]">Review suggestions and human ruling controls →</a>
+        <a href="#frontier-reviews" className="mt-3 block text-[var(--accent)]" onClick={(event) => { event.preventDefault(); select("#frontier-reviews"); }}>Review suggestions and human ruling controls →</a>
       </Card>
+      <section id="frontier-reviews" aria-label="Human review controls" className="mt-4">
+        {location.hash === "#frontier-reviews" && <>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <h2 className="text-lg font-semibold">Human review controls</h2>
+            <button type="button" aria-pressed={reviewPaused} onClick={() => setReviewPaused((value) => !value)} className="rounded border border-[var(--border-1)] px-3 py-2 text-sm">
+              {reviewPaused ? "Resume review updates" : "Pause review updates"}
+            </button>
+          </div>
+          <FrontierReviews paused={reviewPaused} initialDelayMs={0} />
+        </>}
+      </section>
+      </div>
+      </div>
     </div>
     <p className="mt-4 text-xs text-[var(--fg-muted)]">This page reads existing snapshots on arrival or request. It does not call the heavy lab-queue refresh, run a model, accept a proposal or change a research result.</p>
   </div>;
