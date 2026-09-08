@@ -17,11 +17,10 @@ describe("CoordinatorPhases", () => {
       expect(screen.getByTestId(`phase-${phase}`)).toHaveTextContent(phase);
     }
 
-    // dispatch is current → active + emerald; the three before it are done.
+    // dispatch is current; the three before it are recorded as done.
     const dispatch = screen.getByTestId("phase-dispatch");
     expect(dispatch).toHaveAttribute("data-state", "active");
     expect(dispatch).toHaveAttribute("aria-current", "step");
-    expect(dispatch.className).toContain("emerald");
     for (const prior of ["assess", "plan", "validate"]) {
       expect(screen.getByTestId(`phase-${prior}`)).toHaveAttribute(
         "data-state",
@@ -65,7 +64,7 @@ describe("CoordinatorPhases", () => {
     render(<CoordinatorPhases activeRun={null} />);
     expect(screen.getByTestId("coordinator-phases")).toBeInTheDocument();
     expect(screen.getByTestId("coordinator-idle")).toHaveTextContent(
-      "coordinator idle",
+      "No active coordinator cycle recorded",
     );
     // No stepper / no phase chips in the idle state.
     expect(screen.queryByTestId("coordinator-stepper")).toBeNull();
@@ -80,5 +79,12 @@ describe("CoordinatorPhases", () => {
     render(<CoordinatorPhases activeRun={adHoc} />);
     expect(screen.getByTestId("coordinator-idle")).toBeInTheDocument();
     expect(screen.queryByTestId("coordinator-stepper")).toBeNull();
+  });
+
+  it("does not report idle when the active-run source failed", () => {
+    render(<CoordinatorPhases activeRun={null} sourceError="503 registry unavailable" />);
+    expect(screen.getByText("Active-cycle feed unavailable")).toBeInTheDocument();
+    expect(screen.getByText(/No idle or running claim can be made/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("coordinator-idle")).toBeNull();
   });
 });

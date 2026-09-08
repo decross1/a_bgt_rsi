@@ -70,7 +70,7 @@ async function renderPollingQuietly() {
   render(<Cycles pollMs={999_999} />);
   await waitFor(() => {
     const settled =
-      document.querySelector('[data-testid="coordinator-cycle-card"]') !==
+      document.querySelector('[data-testid="coordinator-cycle-row"]') !==
         null ||
       document.querySelector('[data-testid="coordinator-empty"]') !== null;
     expect(settled).toBe(true);
@@ -278,7 +278,7 @@ describe("Coordinator hardening — r2: malformed value TYPES", () => {
     // Both rows render — the comparator no longer throws into .catch.
     expect(screen.getByText("STRING-TS-ROW")).toBeInTheDocument();
     expect(screen.getByText("NUMERIC-TS-ROW")).toBeInTheDocument();
-    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(2);
+    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(2);
 
     // No error banner (the .catch path would print the TypeError on the page).
     const pageText = screen.getByTestId("coordinator-page").textContent ?? "";
@@ -437,7 +437,7 @@ describe("Coordinator hardening — r3: scale + content", () => {
     // Both rows render — neither is dropped by a key collision.
     expect(screen.getByText("DUP-ROW-A")).toBeInTheDocument();
     expect(screen.getByText("DUP-ROW-B")).toBeInTheDocument();
-    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(2);
+    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(2);
 
     // No "same key" diagnostic on the console (the bug this round fixed).
     expect(
@@ -458,7 +458,7 @@ describe("Coordinator hardening — r3: scale + content", () => {
     };
     const { error, warn } = await renderPollingQuietly();
 
-    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(25);
+    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(20);
     expect(
       error.some((m) => m.includes("same key")),
       `console.error: ${error.join(" | ")}`,
@@ -490,12 +490,17 @@ describe("Coordinator hardening — r3: scale + content", () => {
 
     const { error, warn } = await renderPollingQuietly();
 
-    // All rows rendered (1000 bulk + the two content rows).
-    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(1002);
-    // The header count reflects the renderable total, not NaN.
-    expect(screen.getByText("1002")).toBeInTheDocument();
-    // The 5k string is present verbatim somewhere in the page.
-    expect(screen.getByText(longString)).toBeInTheDocument();
+    // The route keeps the mounted history bounded while reporting the full
+    // loaded/matching scope.
+    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(20);
+    expect(screen.getByText(/1–20 of 1002 matching/)).toBeInTheDocument();
+    expect(screen.queryByText(longString)).toBeNull();
+    // Exact content remains reachable through search without paging 1,000 rows.
+    fireEvent.change(screen.getByPlaceholderText(/Topic, action, outcome or exact ID/i), {
+      target: { value: longString },
+    });
+    expect(screen.getAllByText(longString).length).toBeGreaterThan(0);
+    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(1);
     // The page never surfaces a literal "NaN" in the narrative.
     const pageText = screen.getByTestId("coordinator-page").textContent ?? "";
     expect(pageText).not.toMatch(/NaN/);
@@ -530,7 +535,7 @@ describe("Coordinator hardening — r3: scale + content", () => {
     expect(screen.getByText("INITIAL-GOOD-ROW")).toBeInTheDocument();
     expect(screen.getByText("INIT-DUP-A")).toBeInTheDocument();
     expect(screen.getByText("INIT-DUP-B")).toBeInTheDocument();
-    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(5);
+    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(5);
     const pageText = screen.getByTestId("coordinator-page").textContent ?? "";
     expect(pageText).not.toMatch(/NaN/);
 
@@ -600,7 +605,7 @@ async function renderPollingQuietlyR5() {
   await waitFor(() => {
     const page = document.querySelector('[data-testid="coordinator-page"]');
     const settled =
-      document.querySelector('[data-testid="coordinator-cycle-card"]') !==
+      document.querySelector('[data-testid="coordinator-cycle-row"]') !==
         null ||
       document.querySelector('[data-testid="coordinator-empty"]') !== null ||
       (page?.querySelector(".text-red-400") ?? null) !== null;
@@ -698,7 +703,7 @@ describe("Coordinator hardening — r5: empty/absent bodies + boundary counts", 
     const { error, warn } = await renderPollingQuietlyR5();
 
     expect(screen.getByText("SOLO-CYCLE")).toBeInTheDocument();
-    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(1);
+    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(1);
     expect(screen.queryByTestId("coordinator-empty")).toBeNull();
     const page = screen.getByTestId("coordinator-page");
     expect(page.textContent ?? "").not.toMatch(/NaN/);
@@ -810,13 +815,13 @@ describe("Coordinator FE4 — time-range filter + sort-direction toggle", () => 
         ]}
       />,
     );
-    const cards = screen.getAllByTestId("coordinator-cycle-card");
+    const cards = screen.getAllByTestId("coordinator-cycle-row");
     expect(cards).toHaveLength(3);
     // Newest first: C (12:00) → B (10:00) → A (08:00).
     const order = cards.map((card) => within(card).getByText(/ROW-[ABC]/).textContent);
     expect(order).toEqual(["ROW-C", "ROW-B", "ROW-A"]);
     // Caption reflects the defaults.
-    expect(screen.getByText(/all · newest first/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "sort direction" })).toHaveTextContent("Newest first");
   });
 
   // Flipping the direction toggle reverses the order (oldest-first) without
@@ -832,10 +837,10 @@ describe("Coordinator FE4 — time-range filter + sort-direction toggle", () => 
       />,
     );
     fireEvent.click(screen.getByLabelText("sort direction"));
-    const cards = screen.getAllByTestId("coordinator-cycle-card");
+    const cards = screen.getAllByTestId("coordinator-cycle-row");
     const order = cards.map((card) => within(card).getByText(/ROW-[ABC]/).textContent);
     expect(order).toEqual(["ROW-A", "ROW-B", "ROW-C"]);
-    expect(screen.getByText(/all · oldest first/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "sort direction" })).toHaveTextContent("Oldest first");
   });
 
   // The `today` filter keeps a today-stamped row and hides an old one.
@@ -852,8 +857,8 @@ describe("Coordinator FE4 — time-range filter + sort-direction toggle", () => 
 
     expect(screen.getByText("FE4-TODAY-ROW")).toBeInTheDocument();
     expect(screen.queryByText("FE4-OLD-ROW")).toBeNull();
-    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(1);
-    expect(screen.getByText(/today · newest first/)).toBeInTheDocument();
+    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(1);
+    expect(screen.getByLabelText("time range")).toHaveValue("today");
   });
 
   // A NaN/unparseable-timestamp row is INCLUDED in `all` but EXCLUDED from

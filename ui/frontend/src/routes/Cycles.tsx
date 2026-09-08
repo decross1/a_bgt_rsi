@@ -1,47 +1,50 @@
-// PAGE /cycles (Coordinator renamed, UI simplification S3) — the cycle
-// narrative. The autonomous coordinator loop ran "dark" (an unlabeled ad_hoc
-// blip on the old activity panel); this page is where a human auditor reads
-// the whole arc of each cycle. CoordinatorPhases at the top shows the LIVE
-// cycle's assess → plan → validate → dispatch stepper (fed from the D-047
-// multi-run registry — the /api/coordinator/active mirror retired in S3);
-// below it, one <CoordinatorCycleCard> per row of
-// run_state/coordinator_cycles.jsonl, newest-first: the auto-chosen topic
-// (+ its source) → the plan as per-action status chips
-// (executed/skipped/errored+error) → the linked iteration → promoted
-// findings → bubbles. See ui_plan.md §AUTONOMY OBSERVABILITY.
-//
-// Poll discipline mirrors ResolvedIterationsList's (its historical source):
-// an `initial` prop bypasses polling (tests render synchronously from the
-// fixture); otherwise it polls getCoordinatorCycles() at ~0.2 Hz, cleans up
-// on unmount, and surfaces an error string rather than throwing. The data
-// file is gitignored and may be absent → backend returns {cycles:[]} → a
-// clean empty state, never a blank gap.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import CoordinatorCycleCard from "../components/CoordinatorCycleCard";
 import CoordinatorPhases from "../components/CoordinatorPhases";
 import { getActiveRuns, getCoordinatorCycles } from "../api/http";
 import { useNow } from "../time";
 import type { CoordinatorActiveRun, CoordinatorCycle } from "../types/schemas";
+import "./traces.css";
 
-// The two render-boundary filter axes. Defaults are range="all" +
-// direction="newest" so the unfiltered view (every renderable row, newest
-// first) matches the polled-sort contract and the existing hardening tests.
 type Range = "all" | "today" | "week";
 type Direction = "newest" | "oldest";
+type OutcomeFilter = "all" | "passed" | "errored" | "skipped" | "pending" | "other";
 
-// True when `cycle`'s timestamp falls inside the selected window. "all" keeps
-// everything (incl. NaN/unparseable timestamps); "today"/"week" key off the
-// parsed ISO date and EXCLUDE a row whose timestamp won't parse — a coordinate
-// with no legible date can't claim to be "today". `nowMs` is the live clock
-// (useNow), never a module-top Date.now(), so the bucket boundary tracks the
-// current render instead of import time.
+const PAGE_SIZE = 20;
+
+interface Props {
+  initial?: CoordinatorCycle[];
+  pollMs?: number;
+  initialPhasesRun?: CoordinatorActiveRun | null;
+  initialPhasesError?: string | null;
+}
+
+function text(value: unknown, fallback = ""): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return fallback;
+}
+
+function timestampKey(cycle: CoordinatorCycle | null | undefined): string {
+  return typeof cycle?.timestamp === "string"
+    ? cycle.timestamp
+    : String(cycle?.timestamp ?? "");
+}
+
+function isRenderableCycle(cycle: CoordinatorCycle | null | undefined): cycle is CoordinatorCycle {
+  return (
+    !!cycle &&
+    Array.isArray((cycle as { plan?: unknown }).plan) &&
+    Array.isArray((cycle as { outcomes?: unknown }).outcomes)
+  );
+}
+
 function inRange(cycle: CoordinatorCycle, range: Range, nowMs: number): boolean {
   if (range === "all") return true;
-  const t = Date.parse(timestampKey(cycle));
-  if (Number.isNaN(t)) return false;
-  if (range === "week") return nowMs - t <= 7 * 24 * 60 * 60 * 1000;
-  // "today" = same calendar day in local time (matches the human's wall clock).
-  const a = new Date(t);
+  const parsed = Date.parse(timestampKey(cycle));
+  if (!Number.isFinite(parsed)) return false;
+  if (range === "week") return nowMs - parsed <= 7 * 24 * 60 * 60 * 1000;
+  const a = new Date(parsed);
   const b = new Date(nowMs);
   return (
     a.getFullYear() === b.getFullYear() &&
@@ -50,120 +53,181 @@ function inRange(cycle: CoordinatorCycle, range: Range, nowMs: number): boolean 
   );
 }
 
-interface Props {
-  initial?: CoordinatorCycle[];
-  pollMs?: number;
-  // The live coordinator run for the phases stepper. Injected (even as null)
-  // by tests to bypass the registry poll; otherwise the page polls the D-047
-  // registry (getActiveRuns) and picks the kind==="coordinator" doc.
-  initialPhasesRun?: CoordinatorActiveRun | null;
+function outcomeFor(cycle: CoordinatorCycle): OutcomeFilter {
+  const statuses = cycle.outcomes
+    .map((item) => text(item?.status).toLowerCase())
+    .filter(Boolean);
+  if (statuses.includes("errored")) return "errored";
+  if (statuses.includes("passed")) return "passed";
+  if (statuses.includes("skipped")) return "skipped";
+  if (statuses.length === 0 && cycle.plan.length > 0) return "pending";
+  return "other";
 }
 
-// run_state/coordinator_cycles.jsonl is producer-owned and append-only — a
-// partial/legacy row could omit `plan`/`outcomes` (or write them as null).
-// CoordinatorCycleCard reads `cycle.outcomes.length` / `cycle.plan.map(...)`
-// unguarded, so one such row throws during render and — there is no error
-// boundary — takes the WHOLE page down (a blank surface: the dark-loop failure
-// this view exists to fix). Drop a structurally-unrenderable row rather than
-// crash the list; a card needs both arrays present.
-function isRenderableCycle(cycle: CoordinatorCycle | null | undefined): boolean {
+function actionLabel(cycle: CoordinatorCycle): string {
+  const source = cycle.outcomes.length > 0 ? cycle.outcomes : cycle.plan;
+  const actions = source
+    .map((item) => text(item?.action))
+    .filter(Boolean)
+    .filter((action, index, all) => all.indexOf(action) === index);
+  if (actions.length === 0) return "No action recorded";
+  return actions.length > 2
+    ? `${actions.slice(0, 2).join(", ")} +${actions.length - 2}`
+    : actions.join(", ");
+}
+
+function cycleIdentity(cycle: CoordinatorCycle): string {
+  return [text(cycle.run_id), timestampKey(cycle), text(cycle.topic), text(cycle.agent)].join("\u001f");
+}
+
+function cycleSearchText(cycle: CoordinatorCycle): string {
+  const fields: string[] = [
+    text(cycle.run_id),
+    timestampKey(cycle),
+    text(cycle.agent),
+    text(cycle.topic),
+    text(cycle.topic_source),
+    text(cycle.status),
+    text(cycle.dispatched_iteration_id),
+  ];
+  for (const step of cycle.plan) fields.push(text(step?.action));
+  for (const item of cycle.outcomes) {
+    fields.push(text(item?.action), text(item?.status), text(item?.error));
+  }
+  return fields.join(" ").toLocaleLowerCase();
+}
+
+function isMeaningful(cycle: CoordinatorCycle): boolean {
   return (
-    !!cycle &&
-    Array.isArray((cycle as { plan?: unknown }).plan) &&
-    Array.isArray((cycle as { outcomes?: unknown }).outcomes)
+    outcomeFor(cycle) === "errored" ||
+    cycle.plan.some((item) => text(item?.action) !== "noop") ||
+    cycle.outcomes.some((item) => text(item?.action) !== "noop") ||
+    Boolean(text(cycle.dispatched_iteration_id)) ||
+    (Array.isArray(cycle.promoted_finding_ids) && cycle.promoted_finding_ids.length > 0) ||
+    (Array.isArray(cycle.bubble_run_ids) && cycle.bubble_run_ids.length > 0)
   );
 }
 
-// `timestamp` is producer-owned and TYPED `string`, but the on-disk JSONL is
-// untyped: a legacy/serialization slip can write it as a NUMBER (a Unix epoch),
-// null, or even an object. The newest-first sort compares timestamps with
-// String.prototype.localeCompare, and calling it on a non-string RECEIVER throws
-// "(...).localeCompare is not a function" — that rejects the load promise into
-// the catch and blanks EVERY card (incl. the healthy rows) behind an error
-// banner, so ONE bad-typed timestamp takes the whole narrative down (the
-// dark-loop failure this view exists to fix). Coerce to a string so a malformed
-// timestamp sorts by its stringified form instead of crashing the comparator (a
-// numeric epoch still orders sanely; null/undefined → "").
-//
-// The comparator runs over the RAW rows BEFORE `isRenderableCycle` filters them
-// (sort precedes the render-time filter), so the `cycle` arg itself can be a
-// null/undefined element — a producer appending a blank/JSON-null line. Reading
-// `cycle.timestamp` off that throws "Cannot read properties of null (reading
-// 'timestamp')", crashing the comparator into the same catch-and-blank failure.
-// Optional-chain `cycle?.timestamp` so a null/non-object row sorts as "" instead
-// of taking the whole narrative down; it is dropped later by isRenderableCycle.
-function timestampKey(cycle: CoordinatorCycle | null | undefined): string {
-  return typeof cycle?.timestamp === "string"
-    ? cycle.timestamp
-    : String(cycle?.timestamp ?? "");
+function shortTime(value: unknown): string {
+  if (typeof value !== "string" || !value) return "Time not reported";
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(parsed);
+}
+
+function exactNoopSignature(cycle: CoordinatorCycle): string | null {
+  const clean =
+    cycle.plan.length === 1 &&
+    text(cycle.plan[0]?.action) === "noop" &&
+    cycle.outcomes.length === 1 &&
+    text(cycle.outcomes[0]?.action) === "noop" &&
+    text(cycle.outcomes[0]?.status) === "passed" &&
+    !text(cycle.outcomes[0]?.error) &&
+    !text(cycle.dispatched_iteration_id) &&
+    (!Array.isArray(cycle.promoted_finding_ids) || cycle.promoted_finding_ids.length === 0) &&
+    (!Array.isArray(cycle.bubble_run_ids) || cycle.bubble_run_ids.length === 0);
+  if (!clean) return null;
+  return [
+    text(cycle.agent),
+    text(cycle.topic_source),
+    text(cycle.topic),
+    text(cycle.status),
+    "noop",
+    "passed",
+  ].join("\u001f");
+}
+
+interface PageGroup {
+  signature: string | null;
+  cycles: CoordinatorCycle[];
+}
+
+function groupPage(cycles: CoordinatorCycle[]): PageGroup[] {
+  const groups: PageGroup[] = [];
+  for (const cycle of cycles) {
+    const signature = exactNoopSignature(cycle);
+    const previous = groups[groups.length - 1];
+    if (signature && previous?.signature === signature) previous.cycles.push(cycle);
+    else groups.push({ signature, cycles: [cycle] });
+  }
+  return groups;
+}
+
+function CycleRow({
+  cycle,
+  selected,
+  onSelect,
+}: {
+  cycle: CoordinatorCycle;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const outcome = outcomeFor(cycle);
+  const topic = text(cycle.topic, "Untitled recorded cycle");
+  const exactTime = timestampKey(cycle);
+  return (
+    <button
+      type="button"
+      className="trace-cycle-row"
+      data-testid="coordinator-cycle-row"
+      data-selected={selected ? "true" : "false"}
+      data-outcome={outcome}
+      aria-pressed={selected}
+      onClick={onSelect}
+    >
+      <span className="trace-cycle-time" title={exactTime || undefined}>
+        {shortTime(cycle.timestamp)}
+      </span>
+      <span className="trace-cycle-main">
+        <strong>{topic}</strong>
+        <span>{actionLabel(cycle)}</span>
+      </span>
+      <span className="trace-outcome" data-tone={outcome}>
+        {outcome === "other" ? text(cycle.status, "outcome unknown") : outcome}
+      </span>
+    </button>
+  );
 }
 
 export default function Cycles({
   initial,
   pollMs = 5000,
   initialPhasesRun,
+  initialPhasesError,
 }: Props) {
   const [cycles, setCycles] = useState<CoordinatorCycle[]>(initial ?? []);
-  const [error, setError] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(initial !== undefined);
-  // The live coordinator run (phases stepper). null = idle; fed from the
-  // D-047 registry below unless a test injected it.
-  const [phasesRun, setPhasesRun] = useState<CoordinatorActiveRun | null>(
-    initialPhasesRun ?? null,
-  );
-  // Defaults keep the unfiltered, newest-first view (the polled-sort contract).
+  const [phasesRun, setPhasesRun] = useState<CoordinatorActiveRun | null>(initialPhasesRun ?? null);
+  const [phasesError, setPhasesError] = useState<string | null>(initialPhasesError ?? null);
   const [range, setRange] = useState<Range>("all");
   const [direction, setDirection] = useState<Direction>("newest");
-  // Live clock for the date buckets; only consulted when range !== "all", so the
-  // default view never depends on the tick.
+  const [outcome, setOutcome] = useState<OutcomeFilter>("all");
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [recordOpen, setRecordOpen] = useState(false);
   const now = useNow(60_000);
-
-  // Filter at the render boundary so BOTH the `initial` (test) path and the
-  // polled path get the same guard: a malformed row never reaches a card. Then
-  // apply the time-range bucket and the sort direction — both composed HERE
-  // rather than in the poll effect, so flipping a control re-derives the view
-  // without re-fetching and the polled sort stays the single source of order.
-  const renderable = cycles
-    .filter(isRenderableCycle)
-    .filter((c) => inRange(c, range, now))
-    .sort((a, b) => {
-      const cmp = timestampKey(b).localeCompare(timestampKey(a));
-      return direction === "newest" ? cmp : -cmp;
-    });
-
-  const rangeCaption =
-    range === "today" ? "today" : range === "week" ? "this week" : "all";
-  const dirCaption = direction === "newest" ? "newest first" : "oldest first";
 
   useEffect(() => {
     if (initial !== undefined) return;
     let active = true;
     const load = () =>
       getCoordinatorCycles()
-        .then((r) => {
+        .then((response) => {
           if (!active) return;
-          // Backend returns newest-first per the contract; sort defensively by
-          // timestamp descending so a producer appending out-of-order can't
-          // scramble the narrative order. `timestampKey` coerces a non-string
-          // timestamp so the comparator never throws on a malformed value.
-          // Guard the body too: the response is contractually {cycles:[...]},
-          // but a malformed 200 could hand back `null`/`undefined` (a bare-null
-          // body — getJSON returns it verbatim) or a non-array `cycles`. Reading
-          // `r.cycles` off a null/undefined `r` throws "Cannot read properties
-          // of null (reading 'cycles')", which rejects into .catch and paints a
-          // raw TypeError in the red banner instead of the clean empty state
-          // (the blank-gap-on-absent-data failure this view exists to fix).
-          // `r?.cycles` short-circuits to undefined → not an array → [].
-          const rows = Array.isArray(r?.cycles) ? r.cycles : [];
-          const sorted = [...rows].sort((a, b) =>
-            timestampKey(b).localeCompare(timestampKey(a)),
-          );
-          setCycles(sorted);
+          const rows = Array.isArray(response?.cycles) ? response.cycles : [];
+          setCycles([...rows].sort((a, b) => timestampKey(b).localeCompare(timestampKey(a))));
           setLoaded(true);
-          setError(null);
+          setHistoryError(null);
         })
-        .catch((e) => {
-          if (active) setError(String(e));
+        .catch((error) => {
+          if (active) setHistoryError(String(error));
         });
     load();
     const id = setInterval(load, pollMs);
@@ -173,107 +237,231 @@ export default function Cycles({
     };
   }, [initial, pollMs]);
 
-  // The phases stepper's feed: the D-047 multi-run registry (the ONE live-run
-  // source post-S3; the /api/coordinator/active mirror is retired). Quiet-fail
-  // like the old Dashboard mirror feeds — a dead registry endpoint leaves the
-  // stepper idle, it never blanks the narrative below.
   useEffect(() => {
-    if (initialPhasesRun !== undefined) return;
+    if (initialPhasesRun !== undefined || initialPhasesError !== undefined) return;
     let active = true;
     const load = () =>
       getActiveRuns()
-        .then((r) => {
+        .then((response) => {
           if (!active) return;
-          const runs = Array.isArray(r?.runs) ? r.runs : [];
-          const live = runs.find(
-            (run) => run != null && run.kind === "coordinator",
-          );
+          const runs = Array.isArray(response?.runs) ? response.runs : [];
+          const live = runs.find((run) => run != null && run.kind === "coordinator");
           setPhasesRun((live as CoordinatorActiveRun | undefined) ?? null);
+          setPhasesError(null);
         })
-        .catch(() => {});
+        .catch((error) => {
+          if (active) setPhasesError(String(error));
+        });
     load();
     const id = setInterval(load, pollMs);
     return () => {
       active = false;
       clearInterval(id);
     };
-  }, [initialPhasesRun, pollMs]);
+  }, [initialPhasesError, initialPhasesRun, pollMs]);
+
+  const admitted = useMemo(() => cycles.filter(isRenderableCycle), [cycles]);
+  const excludedCount = cycles.length - admitted.length;
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const filtered = useMemo(
+    () =>
+      admitted
+        .filter((cycle) => inRange(cycle, range, now))
+        .filter((cycle) => outcome === "all" || outcomeFor(cycle) === outcome)
+        .filter((cycle) => !normalizedQuery || cycleSearchText(cycle).includes(normalizedQuery))
+        .sort((a, b) => {
+          const comparison = timestampKey(b).localeCompare(timestampKey(a));
+          return direction === "newest" ? comparison : -comparison;
+        }),
+    [admitted, direction, normalizedQuery, now, outcome, range],
+  );
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount);
+  const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+  const pageGroups = groupPage(pageRows);
+  const selected =
+    filtered.find((cycle) => cycleIdentity(cycle) === selectedKey) ??
+    filtered.find(isMeaningful) ??
+    filtered[0] ??
+    null;
+
+  useEffect(() => {
+    setPage(1);
+    setRecordOpen(false);
+  }, [direction, normalizedQuery, outcome, range]);
+
+  const selectCycle = (cycle: CoordinatorCycle) => {
+    setSelectedKey(cycleIdentity(cycle));
+    setRecordOpen(false);
+  };
+
+  const firstShown = filtered.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
+  const lastShown = Math.min(safePage * PAGE_SIZE, filtered.length);
 
   return (
-    <div className="mx-auto max-w-7xl p-5" data-testid="coordinator-page">
-      {/* The LIVE cycle first (moved here from the deleted /activity page):
-          what stage the loop is in right now and why — or a quiet idle. */}
-      <div className="mb-4">
-        <CoordinatorPhases activeRun={phasesRun} />
-      </div>
-      <div className="flex items-baseline gap-3">
-        <h1 className="text-base font-semibold text-zinc-100">Cycles</h1>
-        <span className="text-[10px] text-zinc-600">
-          /api/coordinator/cycles · {rangeCaption} · {dirCaption}
-        </span>
-        <div className="ml-auto flex items-baseline gap-2">
-          <select
-            aria-label="time range"
-            value={range}
-            onChange={(e) => setRange(e.target.value as Range)}
-            className="rounded border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-[11px] text-zinc-300 focus:border-zinc-600 focus:outline-none"
-          >
-            <option value="all">all time</option>
-            <option value="today">today</option>
-            <option value="week">this week</option>
-          </select>
-          <button
-            type="button"
-            aria-label="sort direction"
-            title="toggle newest/oldest first"
-            onClick={() =>
-              setDirection((d) => (d === "newest" ? "oldest" : "newest"))
-            }
-            className="rounded border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-[11px] text-zinc-400 hover:text-zinc-200 focus:border-zinc-600 focus:outline-none"
-          >
-            {direction === "newest" ? "newest first" : "oldest first"}
-          </button>
-          <span className="text-[11px] text-zinc-500">{renderable.length}</span>
+    <main className="trace-page" data-testid="coordinator-page">
+      <header className="trace-page-header">
+        <div>
+          <p className="trace-kicker">Operations · recorded execution</p>
+          <h1>Trace history</h1>
+          <p>Find what the coordinator attempted, then open the exact recorded evidence.</p>
         </div>
-      </div>
-      <p className="mt-1 text-xs text-zinc-500">
-        One cycle = one narrative: the auto-chosen topic, the plan and each
-        action's outcome (a failed dispatch is an explicit red row), the linked
-        iteration, promoted findings, and bubbles raised.
-      </p>
+        <nav className="trace-view-switch" aria-label="Trace view">
+          <span aria-current="page">List</span>
+          <a href="/graph">Map</a>
+        </nav>
+      </header>
 
-      {error && <div className="mt-3 text-sm text-red-400">{error}</div>}
+      <CoordinatorPhases activeRun={phasesRun} sourceError={phasesError} />
 
-      {loaded && renderable.length === 0 && !error && (
-        <div
-          className="mt-4 rounded border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-500"
-          data-testid="coordinator-empty"
-        >
-          No coordinator cycles yet. The loop has not run — or its cycle log is
-          not present.
+      <section className="trace-history" aria-labelledby="trace-history-heading">
+        <div className="trace-section-heading">
+          <div>
+            <h2 id="trace-history-heading">Recorded cycles</h2>
+            <p>
+              {admitted.length} readable of {cycles.length} loaded
+              {excludedCount > 0 ? ` · ${excludedCount} malformed excluded` : ""}
+            </p>
+          </div>
         </div>
-      )}
 
-      {renderable.length > 0 && (
-        <div className="mt-4 space-y-4">
-          {renderable.map((cycle, i) => (
-            // Key must be unique. `run_id` is producer-owned in an append-only
-            // JSONL, so it is NOT guaranteed unique across rows — a retry/re-emit
-            // or a legacy collision can write the SAME run_id twice, and at scale
-            // (1000+ rows) that grows likely. `run_id ?? cycle-${i}` only covers
-            // a MISSING id; two rows sharing the same non-null run_id still
-            // collide → React logs "Encountered two children with the same key"
-            // (a console.error). Suffix the index so the key is unique regardless
-            // (a missing/non-string id degrades to a bare index). Identity across
-            // index shifts isn't a concern here: the list is re-sorted and
-            // replaced wholesale each poll, never mutated in place.
-            <CoordinatorCycleCard
-              key={`${cycle.run_id ?? "cycle"}-${i}`}
-              cycle={cycle}
+        <div className="trace-filters" role="search">
+          <label className="trace-search">
+            <span>Search records</span>
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Topic, action, outcome or exact ID"
             />
-          ))}
+          </label>
+          <label>
+            <span>Range</span>
+            <select aria-label="time range" value={range} onChange={(event) => setRange(event.target.value as Range)}>
+              <option value="all">All recorded</option>
+              <option value="today">Today</option>
+              <option value="week">This week</option>
+            </select>
+          </label>
+          <label>
+            <span>Outcome</span>
+            <select aria-label="outcome filter" value={outcome} onChange={(event) => setOutcome(event.target.value as OutcomeFilter)}>
+              <option value="all">All outcomes</option>
+              <option value="errored">Errored</option>
+              <option value="passed">Passed</option>
+              <option value="skipped">Skipped</option>
+              <option value="pending">Pending</option>
+              <option value="other">Other / unknown</option>
+            </select>
+          </label>
+          <button type="button" aria-label="sort direction" onClick={() => setDirection((value) => (value === "newest" ? "oldest" : "newest"))}>
+            {direction === "newest" ? "Newest first" : "Oldest first"}
+          </button>
         </div>
+
+        {historyError && (
+          <div className="trace-notice" data-tone="error" data-testid="coordinator-error">
+            <strong>{loaded ? "History refresh failed" : "Cycle history unavailable"}</strong>
+            {loaded && admitted.length > 0 && <span>Showing the last loaded records.</span>}
+            <details>
+              <summary>Read diagnostic</summary>
+              <code>{historyError}</code>
+            </details>
+          </div>
+        )}
+
+        {excludedCount > 0 && (
+          <div className="trace-notice" data-tone="warning" data-testid="coordinator-excluded">
+            {excludedCount} malformed record{excludedCount === 1 ? " was" : "s were"} excluded from this view.
+          </div>
+        )}
+
+        {!loaded && !historyError && <div className="trace-empty" data-testid="coordinator-loading">Loading recorded cycles…</div>}
+
+        {loaded && cycles.length === 0 && !historyError && (
+          <div className="trace-empty" data-testid="coordinator-empty">No coordinator cycles are recorded in the loaded source.</div>
+        )}
+
+        {loaded && cycles.length > 0 && admitted.length === 0 && (
+          <div className="trace-empty" data-testid="coordinator-empty">
+            No readable cycle records. {excludedCount} malformed record{excludedCount === 1 ? " was" : "s were"} excluded.
+          </div>
+        )}
+
+        {admitted.length > 0 && filtered.length === 0 && (
+          <div className="trace-empty" data-testid="coordinator-filtered-empty">
+            No loaded cycle matches these filters. Clear a filter to return to the recorded history.
+          </div>
+        )}
+
+        {pageRows.length > 0 && (
+          <div className="trace-cycle-list" aria-label="Cycle history results">
+            {pageGroups.map((group, groupIndex) => {
+              if (group.signature && group.cycles.length > 1) {
+                const newest = group.cycles[0];
+                const oldest = group.cycles[group.cycles.length - 1];
+                return (
+                  <details className="trace-noop-group" key={`${group.signature}-${groupIndex}`}>
+                    <summary>
+                      <span>{group.cycles.length} equivalent recorded no-ops · {text(newest.topic, "Untitled cycle")}</span>
+                      <small>{shortTime(oldest.timestamp)} – {shortTime(newest.timestamp)}</small>
+                    </summary>
+                    <div>
+                      {group.cycles.map((cycle, index) => (
+                        <CycleRow
+                          key={`${cycleIdentity(cycle)}-${index}`}
+                          cycle={cycle}
+                          selected={selected === cycle}
+                          onSelect={() => selectCycle(cycle)}
+                        />
+                      ))}
+                    </div>
+                  </details>
+                );
+              }
+              const cycle = group.cycles[0];
+              return (
+                <CycleRow
+                  key={`${cycleIdentity(cycle)}-${groupIndex}`}
+                  cycle={cycle}
+                  selected={selected === cycle}
+                  onSelect={() => selectCycle(cycle)}
+                />
+              );
+            })}
+          </div>
+        )}
+
+        {filtered.length > 0 && (
+          <div className="trace-pagination" aria-label="Cycle history pages">
+            <span>{firstShown}–{lastShown} of {filtered.length} matching · {admitted.length} readable loaded</span>
+            <div>
+              <button type="button" disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</button>
+              <span>Page {safePage} of {pageCount}</span>
+              <button type="button" disabled={safePage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Next</button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {selected && (
+        <section className="trace-selected" aria-labelledby="selected-cycle-heading">
+          <div className="trace-section-heading">
+            <div>
+              <p className="trace-kicker">Selected recorded cycle</p>
+              <h2 id="selected-cycle-heading">Cycle evidence</h2>
+              <p>{text(selected.run_id, "Run ID not reported")} · {actionLabel(selected)} · {outcomeFor(selected)} · exact time {timestampKey(selected) || "not reported"}</p>
+            </div>
+          </div>
+          <div className="trace-evidence-disclosure">
+            <button type="button" className="trace-disclosure-toggle" aria-expanded={recordOpen} onClick={() => setRecordOpen((value) => !value)}>
+              Complete recorded cycle evidence
+            </button>
+            {recordOpen && <CoordinatorCycleCard cycle={selected} />}
+          </div>
+        </section>
       )}
-    </div>
+    </main>
   );
 }

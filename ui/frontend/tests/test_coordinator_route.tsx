@@ -6,7 +6,7 @@
 // action is an explicit row, never a silent gap. An empty cycle log renders a
 // clean empty state. `initialPhasesRun` is injected (null = idle) so the page
 // never polls the D-047 registry in tests.
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import Cycles from "../src/routes/Cycles";
 import {
@@ -15,16 +15,16 @@ import {
 } from "../src/fixtures/coordinator";
 
 describe("Cycles route", () => {
-  it("renders a card per cycle, including the errored one", () => {
+  it("renders a compact row per cycle and discloses the frozen full record", () => {
     render(
       <Cycles initial={COORDINATOR_CYCLES_FIXTURE} initialPhasesRun={null} />,
     );
 
     expect(screen.getByTestId("coordinator-page")).toBeInTheDocument();
 
-    // One card per fixture cycle (the clean dispatch + the failed dispatch).
-    const cards = screen.getAllByTestId("coordinator-cycle-card");
-    expect(cards).toHaveLength(COORDINATOR_CYCLES_FIXTURE.length);
+    const rows = screen.getAllByTestId("coordinator-cycle-row");
+    expect(rows).toHaveLength(COORDINATOR_CYCLES_FIXTURE.length);
+    expect(screen.queryByTestId("coordinator-cycle-card")).toBeNull();
 
     // Both topics are on screen.
     for (const cycle of COORDINATOR_CYCLES_FIXTURE) {
@@ -33,9 +33,11 @@ describe("Cycles route", () => {
 
     // The failed dispatch is a visible row carrying its error inline — the
     // headline "make absence legible" case.
-    const errored = screen.getByTestId(
-      "coordinator-action-error-run_loop_iteration",
-    );
+    const erroredRow = rows.find((row) => row.getAttribute("data-outcome") === "errored");
+    expect(erroredRow).toBeDefined();
+    fireEvent.click(erroredRow!);
+    fireEvent.click(screen.getByText("Complete recorded cycle evidence"));
+    const errored = screen.getByTestId("coordinator-action-error-run_loop_iteration");
     expect(errored).toHaveTextContent(/not a valid SeedSource/i);
     expect(errored.className).toContain("red");
   });
@@ -44,7 +46,7 @@ describe("Cycles route", () => {
     render(
       <Cycles initial={COORDINATOR_CYCLES_FIXTURE} initialPhasesRun={null} />,
     );
-    const cards = screen.getAllByTestId("coordinator-cycle-card");
+    const cards = screen.getAllByTestId("coordinator-cycle-row");
     // Fixture[0] (11:30, the errored arxiv_pick cycle) is newer than
     // fixture[1] (10:00); the route sorts/renders newest-first, so the first
     // card carries the newer cycle's topic.
@@ -54,7 +56,7 @@ describe("Cycles route", () => {
   it("shows a clean empty state when there are no cycles", () => {
     render(<Cycles initial={[]} initialPhasesRun={null} />);
     expect(screen.getByTestId("coordinator-empty")).toHaveTextContent(
-      /No coordinator cycles yet/i,
+      /No coordinator cycles are recorded/i,
     );
     expect(screen.queryByTestId("coordinator-cycle-card")).toBeNull();
   });
