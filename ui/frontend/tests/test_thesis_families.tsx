@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render as renderPage, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import Ladder from "../src/routes/Ladder";
@@ -33,6 +33,20 @@ const fixture: LadderResponse & { clusters: LadderCluster[]; histogram: Record<s
   histogram: { L0: 0, L1: 3, L2: 0, L3: 0, L4: 0, L5: 0 },
   agenda: [], next_owed: { L1: "A discriminating experiment" },
 };
+
+// These are retained record-browser tests. Use the real disclosure before its
+// controls; focused-workspace defaults have their own route/canvas coverage.
+function openRecords() {
+  const disclosure = screen.queryByTestId("research-records-disclosure");
+  if (disclosure && !disclosure.hasAttribute("open")) {
+    fireEvent.click(within(disclosure).getByText("Records and sources"));
+  }
+}
+function render(...args: Parameters<typeof renderPage>) {
+  const result = renderPage(...args);
+  openRecords();
+  return result;
+}
 
 function page(data = fixture, iterations: unknown[] = rows) {
   return <MemoryRouter><Ladder initial={data} initialIterations={iterations} /></MemoryRouter>;
@@ -139,8 +153,8 @@ describe("collection classification bars", () => {
     render(page(fixture, sameTopicRows));
     const control = screen.getByRole("button", { name: "Expand exact topic collection: One exact topic" });
     fireEvent.click(control);
-    expect(screen.getAllByText("One exact topic")).toHaveLength(1);
-    for (const row of rows) expect(screen.getByText(row.hypothesis.text)).toBeVisible();
+    expect(within(screen.getByTestId("thesis-families")).getAllByText("One exact topic")).toHaveLength(1);
+    for (const row of rows) expect(within(screen.getByTestId("thesis-families")).getByText(row.hypothesis.text)).toBeVisible();
     expect(control).toHaveAttribute("aria-expanded", "true");
   });
 });
@@ -176,7 +190,7 @@ describe("Ladder topic collections", () => {
     fireEvent.click(screen.getByRole("button", { name: "Expand curated association: Liquid democracy" }));
     rerender(page({ ...fixture, clusters: [...fixture.clusters].reverse() }, [...rows].reverse()));
     expect(screen.getByRole("button", { name: "Collapse curated association: Liquid democracy" })).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText(rows[2].hypothesis.text)).toBeVisible();
+    expect(within(screen.getByTestId("thesis-families")).getByText(rows[2].hypothesis.text)).toBeVisible();
   });
 
   it("preserves a killed record and its own stage without assigning a family maximum", () => {
@@ -270,6 +284,8 @@ describe("Ladder collection flow and source lifecycle", () => {
     vi.mocked(getLadder).mockResolvedValue(fixture);
     vi.mocked(getIterations).mockResolvedValue({ iterations: rows.map((row) => ({ ...row, started_at: "2026-01-01T00:00:00Z", ended_at: "2026-01-01T00:01:00Z", journal_entry_path: "" })) });
     const { unmount } = render(<StrictMode><MemoryRouter><Ladder /></MemoryRouter></StrictMode>);
+    await screen.findByTestId("research-records-disclosure");
+    openRecords();
     const expand = await screen.findByRole("button", { name: "Expand curated association: Liquid democracy" });
     expect(getLadder).toHaveBeenCalledTimes(1);
     expect(getIterations).toHaveBeenCalledTimes(1);
@@ -283,7 +299,7 @@ describe("Ladder collection flow and source lifecycle", () => {
     await act(async () => { rejectTopics(new Error("offline topics")); });
     expect(await screen.findByText(/Topic refresh failed: Error: offline topics/)).toBeVisible();
     expect(screen.getByTestId("ladder-error")).toHaveTextContent("Showing last received records");
-    expect(screen.getByText(rows[0].hypothesis.text)).toBeVisible();
+    expect(within(screen.getByTestId("thesis-families")).getByText(rows[0].hypothesis.text)).toBeVisible();
     expect(screen.getByRole("button", { name: "Collapse curated association: Liquid democracy" })).toBeVisible();
     expect(screen.getByTestId("ladder-source-times")).toHaveTextContent("2026-01-03T00:00:00Z");
     expect(screen.getByTestId("ladder-source-times")).not.toHaveTextContent("not fetched in this view");
@@ -300,6 +316,7 @@ describe("Ladder collection flow and source lifecycle", () => {
     vi.mocked(getIterations).mockResolvedValue({ iterations: null } as never);
     render(<MemoryRouter><Ladder /></MemoryRouter>);
     await waitFor(() => expect(screen.getAllByTestId(/^thesis-family-/)).toHaveLength(3));
+    openRecords();
     expect(await screen.findByText(/Topic refresh failed: Error: Iteration topic source is missing or malformed/)).toBeVisible();
     expect(screen.queryByRole("button", { name: "Expand curated association: Liquid democracy" })).not.toBeInTheDocument();
     expect(screen.getByText(/source relationships are not verified/i)).toBeVisible();
