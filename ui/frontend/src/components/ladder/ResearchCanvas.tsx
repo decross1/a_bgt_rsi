@@ -1,7 +1,7 @@
-import { useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { dossierIdOf } from "./ladderModel";
+import { dossierIdOf, isKilled } from "./ladderModel";
 import {
   researchContextForEntry,
   researchEntriesForFamily,
@@ -13,7 +13,7 @@ import type {
 import type { FamilyRecord, ThesisFamily, ThesisModel } from "./thesisModel";
 
 const FAMILY_OPTION_LIMIT = 40;
-const CLAIM_LIMIT = 12;
+const CLAIM_LIMIT = 3;
 
 const META: React.CSSProperties = {
   margin: 0,
@@ -53,6 +53,21 @@ function familyOptionLabel(family: ThesisFamily): string {
   return `${family.title} — collection · ${family.records.length} ${family.records.length === 1 ? "record" : "records"}`;
 }
 
+function claimKey(context: ResearchClaimContext): string {
+  return JSON.stringify([context.record.key, context.iterationId]);
+}
+
+function matchesFamily(option: FamilyOption, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (needle === "" || option.searchText.includes(needle)) return true;
+  // Search already received text lazily; no raw outcome reads or combined
+  // unbounded search document. The visible selector remains bounded.
+  return option.family.records.some((record) =>
+    [record.id, record.title].some((value) => value.toLowerCase().includes(needle))
+    || record.iterations.some((iteration) => [iteration.id, iteration.hypothesis ?? ""]
+      .some((value) => value.toLowerCase().includes(needle))));
+}
+
 function claimAccessibleName(context: ResearchClaimContext): string {
   const kind = context.isPinnedExactClaim ? "source-bound claim" : "recorded entry";
   return `Select ${kind}, ${recordIdentity(context.record)}, iteration ${context.iterationId}: ${context.shortLabel}`;
@@ -63,16 +78,17 @@ function domToken(value: string): string {
 }
 
 function evidenceHeadline(context: ResearchClaimContext): string {
-  if (context.rawOutcome.length > 0) {
+  const outcome = context.iteration?.source.experiment_outcome;
+  if (outcome !== undefined && outcome !== null) {
     return "Recorded outcome supplied; exact claim binding and evidence validity remain unverified.";
   }
-  if (context.limitingEvidence.some((line) => line.label === "Killed history (recorded)")) {
+  if (isKilled(context.record.cluster)) {
     return "Recorded negative history; exact evidence validity remains unknown.";
   }
   if (context.isPinnedExactClaim) {
     return "No compatible test recorded in the dated source assessment.";
   }
-  return "No recorded outcome is supplied in this projection.";
+  return "No outcome is established by this projection.";
 }
 
 function nextTestText(context: ResearchClaimContext): string {
@@ -134,7 +150,7 @@ function ClaimContext({ context, onBack }: { context?: ResearchClaimContext; onB
       <p style={{ ...LABEL, color: "var(--group-research)" }}>Selected claim</p>
       <h3
         id="research-canvas-context-title"
-        style={{ margin: "var(--space-2) 0 0", color: "var(--fg)", fontSize: "var(--text-title-lg)", lineHeight: 1.2 }}
+        style={{ margin: "var(--space-2) 0 0", color: "var(--fg)", fontSize: "var(--text-title)", lineHeight: 1.3 }}
       >
         {context.shortLabel}
       </h3>
@@ -155,6 +171,26 @@ function ClaimContext({ context, onBack }: { context?: ResearchClaimContext; onB
       </section>
 
       <section className="research-canvas__context-section">
+        <h4 style={LABEL}>Next test</h4>
+        <p style={{ margin: "var(--space-2) 0 0", color: "var(--fg)", lineHeight: 1.45 }}>
+          {context.proposedTest === undefined
+            ? "No claim-specific accepted test is supplied."
+            : "Model and measurement decisions come first. The dated proposal remains unadopted."}
+        </p>
+      </section>
+
+      {dossierId !== null && (
+        <Link className="research-canvas__dossier" to={`/dossier/${dossierId}`} aria-label={`Open full dossier for ${dossierId}`}>
+          Open full dossier ↗
+        </Link>
+      )}
+
+      <details className="research-canvas__source" data-testid="research-canvas-source-details">
+        <summary>Source qualification and recorded fields</summary>
+        <p style={{ ...META, marginTop: "var(--space-3)" }}>
+          These fields come from the received Ladder and iteration projections. Collection membership is association only; it does not establish evidence, equivalence, causality or progress. Reviews and outcomes are not authenticated here as valid or claim-bound.
+        </p>
+      <section className="research-canvas__context-section">
         <h4 style={LABEL}>Known blocker</h4>
         <p style={{ margin: "var(--space-2) 0 0", color: "var(--fg)", lineHeight: 1.45 }}>{context.blocker}</p>
       </section>
@@ -166,18 +202,6 @@ function ClaimContext({ context, onBack }: { context?: ResearchClaimContext; onB
           <p style={{ ...META, marginTop: "var(--space-2)" }}>Dated 2026-09-07 engineering proposal · not an adopted protocol</p>
         )}
       </section>
-
-      {dossierId !== null && (
-        <Link className="research-canvas__dossier" to={`/dossier/${dossierId}`}>
-          Open full dossier for {dossierId} ↗
-        </Link>
-      )}
-
-      <details className="research-canvas__source" data-testid="research-canvas-source-details">
-        <summary>Source qualification and recorded fields</summary>
-        <p style={{ ...META, marginTop: "var(--space-3)" }}>
-          These fields come from the received Ladder and iteration projections. Collection membership is association only; it does not establish evidence, equivalence, causality or progress. Reviews and outcomes are not authenticated here as valid or claim-bound.
-        </p>
         <dl className="research-canvas__axes">
           <div><dt>Claim standing</dt><dd>{context.claimStanding}</dd></div>
           <div><dt>Application fit</dt><dd>{context.applicationFit}</dd></div>
@@ -218,12 +242,14 @@ export default function ResearchCanvas({
   model: ThesisModel;
   nextOwed: Record<string, string>;
 }) {
+  const rootRef = useRef<HTMLElement>(null);
+  const previousMobile = useRef(false);
   const searchId = useId();
   const selectId = useId();
-  const familyOptions = useMemo<FamilyOption[]>(() => model.families.map((family, index) => {
+  const familyOptions = useMemo<FamilyOption[]>(() => model.families.map((family) => {
     const label = familyOptionLabel(family);
     return {
-      key: `${index}:${family.id}`,
+      key: family.id,
       family,
       label,
       searchText: [label, family.id, family.basis, ...family.topicLabels].join(" ").toLowerCase(),
@@ -236,7 +262,7 @@ export default function ResearchCanvas({
   // only while that exact family key still exists.
   const [chosenFamilyKey, setChosenFamilyKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [chosenClaimKey, setChosenClaimKey] = useState<string | null>(null);
+  const [chosenClaim, setChosenClaim] = useState<{ familyId: string; key: string } | null>(null);
   const [mobileContext, setMobileContext] = useState(false);
   const selectedFamilyOption = familyOptions.find((option) => option.key === chosenFamilyKey) ?? preferred;
   const selectedFamily = selectedFamilyOption?.family;
@@ -245,7 +271,7 @@ export default function ResearchCanvas({
     const needle = query.trim().toLowerCase();
     const matches = needle.length === 0
       ? familyOptions
-      : familyOptions.filter((option) => option.searchText.includes(needle));
+      : familyOptions.filter((option) => matchesFamily(option, needle));
     const visible = matches.slice(0, FAMILY_OPTION_LIMIT);
     if (selectedFamilyOption !== undefined && !visible.some((option) => option.key === selectedFamilyOption.key)) {
       return [selectedFamilyOption, ...visible.slice(0, FAMILY_OPTION_LIMIT - 1)];
@@ -263,18 +289,38 @@ export default function ResearchCanvas({
     () => visibleEntries.map((entry) => researchContextForEntry(entry, nextOwed)),
     [visibleEntries, nextOwed],
   );
-  const activeContext = visibleContexts.find((context) => context.key === chosenClaimKey) ?? visibleContexts[0];
-  const pinnedCount = entries.reduce((count, entry) => count + (entry.isPinnedExactClaim ? 1 : 0), 0);
+  const activeContext = visibleContexts.find((context) => chosenClaim?.familyId === selectedFamily?.id && claimKey(context) === chosenClaim.key) ?? visibleContexts[0];
 
   const chooseFamily = (key: string) => {
     setChosenFamilyKey(key);
-    setChosenClaimKey(null);
     setMobileContext(false);
   };
   const chooseClaim = (key: string) => {
-    setChosenClaimKey(key);
+    if (selectedFamily !== undefined) setChosenClaim({ familyId: selectedFamily.id, key });
     setMobileContext(true);
   };
+
+  useEffect(() => {
+    if (chosenFamilyKey !== null && !familyOptions.some((option) => option.key === chosenFamilyKey)) {
+      setChosenFamilyKey(null);
+    }
+    if (chosenClaim !== null && (
+      !familyOptions.some((option) => option.family.id === chosenClaim.familyId)
+      || (selectedFamily?.id === chosenClaim.familyId
+        && !entries.some((entry) => JSON.stringify([entry.record.key, entry.iteration?.id ?? "iteration unavailable"]) === chosenClaim.key))
+    )) setChosenClaim(null);
+  }, [familyOptions, chosenFamilyKey, chosenClaim, selectedFamily?.id, entries]);
+
+  useEffect(() => {
+    const wasContext = previousMobile.current;
+    previousMobile.current = mobileContext;
+    if (window.innerWidth > 760) return;
+    if (mobileContext) {
+      rootRef.current?.querySelector<HTMLButtonElement>(".research-canvas__back")?.focus();
+    } else if (wasContext) {
+      rootRef.current?.querySelector<HTMLButtonElement>('.research-canvas__claim[aria-pressed="true"]')?.focus();
+    }
+  }, [mobileContext, activeContext?.key]);
 
   if (preferred === undefined) {
     return (
@@ -287,6 +333,7 @@ export default function ResearchCanvas({
 
   return (
     <section
+      ref={rootRef}
       className="research-canvas"
       data-testid="research-canvas"
       data-mobile-view={mobileContext ? "context" : "membership"}
@@ -299,7 +346,7 @@ export default function ResearchCanvas({
         .research-canvas__control { width: 100%; min-width: 0; height: 38px; padding: 0 var(--space-3); border: 1px solid var(--border-2); border-radius: var(--radius-control); background: var(--surface-1); color: var(--fg); font: inherit; }
         .research-canvas__match-note { grid-column: 1 / -1; min-height: 16px; margin: calc(-1 * var(--space-2)) 0 0; color: var(--fg-muted); font-size: var(--text-meta); }
         .research-canvas__workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 370px); min-height: clamp(500px, 66vh, 720px); overflow: hidden; border: 1px solid var(--border-1); border-radius: var(--radius-card); background: var(--surface-1); }
-        .research-canvas__membership { min-width: 0; padding: var(--space-8); background: radial-gradient(circle at 50% 30%, var(--accent-muted), transparent 44%), var(--surface-1); }
+        .research-canvas__membership { min-width: 0; padding: var(--space-8); background: var(--surface-1); }
         .research-canvas__thesis { max-width: 620px; margin: 0 auto; padding: var(--space-5) var(--space-6); border: 1px solid var(--group-research); border-radius: var(--radius-card); background: var(--surface-glass); text-align: center; }
         .research-canvas__claims { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--space-4); max-width: 900px; margin: var(--space-10) auto 0; padding: 0; list-style: none; }
         .research-canvas__claim { width: 100%; min-height: 150px; padding: var(--space-4); border: 1px solid var(--border-1); border-top: 3px solid var(--group-research); border-radius: var(--radius-card); background: var(--surface-1); color: var(--fg); cursor: pointer; text-align: left; transition: border-color var(--motion-hover) var(--ease-out), background var(--motion-hover) var(--ease-out); }
@@ -359,11 +406,11 @@ export default function ResearchCanvas({
             {matchingFamilyOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
           </select>
         </label>
-        <p className="research-canvas__match-note" role="status">
-          {matchingFamilyOptions.length < familyOptions.length
-            ? `Showing ${matchingFamilyOptions.length} of ${familyOptions.length} thesis choices.`
-            : `${familyOptions.length} thesis ${familyOptions.length === 1 ? "choice" : "choices"}.`}
-        </p>
+        {query.trim() !== "" && <p className="research-canvas__match-note" role="status">
+          {familyOptions.some((option) => matchesFamily(option, query))
+            ? "Matching choices shown; the selected thesis is retained."
+            : "No matching thesis. Your selected thesis is retained."}
+        </p>}
       </div>
 
       <div className="research-canvas__workspace">
@@ -372,16 +419,16 @@ export default function ResearchCanvas({
             <p style={{ ...LABEL, color: "var(--group-research)" }}>
               {selectedFamily.id.startsWith("record:") ? "Individual recorded thesis" : "Recorded thesis collection"}
             </p>
-            <h2 id="research-canvas-thesis-title" style={{ margin: "var(--space-2) 0 0", fontSize: "var(--text-title-lg)", lineHeight: 1.25 }}>
+            <h2 id="research-canvas-thesis-title" style={{ margin: "var(--space-2) 0 0", fontSize: "var(--text-title)", lineHeight: 1.35 }}>
               {selectedFamily.title}
             </h2>
-            <p style={{ ...META, marginTop: "var(--space-2)" }}>{selectedFamily.basis}</p>
+
           </div>
 
           <div style={{ maxWidth: 900, margin: "var(--space-6) auto 0", textAlign: "center" }}>
             <p style={LABEL}>Recorded membership</p>
             <p style={{ ...META, marginTop: "var(--space-1)" }}>
-              Placement shows membership only. It does not show evidence, equivalence, causality or progress.
+              Associated claims · not a chain of experimental evidence.
             </p>
           </div>
 
@@ -390,16 +437,16 @@ export default function ResearchCanvas({
           ) : (
             <ol className="research-canvas__claims" aria-label={`Recorded claim membership for ${selectedFamily.title}`}>
               {visibleContexts.map((context, index) => {
-                const selected = activeContext?.key === context.key;
+                const selected = activeContext !== undefined && claimKey(activeContext) === claimKey(context);
                 return (
-                  <li key={`${context.key}:${index}`}>
+                  <li key={claimKey(context)}>
                     <button
                       type="button"
                       className="research-canvas__claim"
                       aria-label={claimAccessibleName(context)}
                       aria-pressed={selected}
                       aria-controls={selected ? "research-canvas-selected-context" : undefined}
-                      onClick={() => chooseClaim(context.key)}
+                      onClick={() => chooseClaim(claimKey(context))}
                       data-testid={`research-canvas-claim-${domToken(context.iterationId)}-${index}`}
                     >
                       <span className="research-canvas__claim-kicker">
@@ -415,14 +462,10 @@ export default function ResearchCanvas({
           )}
           {entries.length > visibleEntries.length && (
             <p style={{ ...META, marginTop: "var(--space-5)", textAlign: "center" }} data-testid="research-canvas-bounded-note">
-              Showing {visibleEntries.length} of {entries.length} recorded entries here. Open Records and sources for the complete history.
+              Showing {visibleEntries.length} of {entries.length} recorded entries. Full history is in Records and sources.
             </p>
           )}
-          {pinnedCount > 0 && (
-            <p style={{ ...META, marginTop: "var(--space-3)", textAlign: "center" }}>
-              {pinnedCount} dated source-bound {pinnedCount === 1 ? "summary leads" : "summaries lead"} this collection.
-            </p>
-          )}
+
         </section>
 
         <ClaimContext context={activeContext} onBack={() => setMobileContext(false)} />

@@ -233,6 +233,7 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
           <details data-testid="research-records-disclosure" className="mt-6 border-t border-[var(--border-1)] pt-3"
             open={recordsOpen}>
             <summary className="cursor-pointer text-sm text-[var(--fg-muted)]" onClick={(event) => { event.preventDefault(); setRecordsOpen((open) => !open); }}>Records and sources</summary>
+            <div hidden={!recordsOpen}>
             <p className="mt-3 mb-3 text-sm text-[var(--fg-muted)]">Recorded levels are not revalidated experiment eligibility. Collections associate records; they do not establish equivalent claims or evidence.</p>
             <div className="flex flex-wrap gap-2 mb-3" aria-label="Recorded research views">
               {viewBtn("collections")}{viewBtn("board")}{viewBtn("table")}
@@ -307,6 +308,7 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
             </p>
           )}
 
+            </div>
           </details>
 
           <PeekPanel

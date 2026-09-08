@@ -767,9 +767,7 @@ describe("/ladder honest degraded states", () => {
     expect(screen.queryByTestId("ladder-error")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh sources" }));
-    await screen.findByTestId("research-records-disclosure");
-    fireEvent.click(screen.getByText("Records and sources"));
-    expect(screen.getByText("6 recorded clusters")).toBeVisible();
+    await waitFor(() => expect(screen.getByText("6 recorded clusters")).toBeVisible());
     expect(screen.queryByTestId("ladder-error")).not.toBeInTheDocument();
     expect(mocks.getLadder).toHaveBeenCalledTimes(6);
     expect(responses).toHaveLength(0);

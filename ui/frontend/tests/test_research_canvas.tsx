@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import ResearchCanvas from "../src/components/ladder/ResearchCanvas";
 import { buildThesisFamilies } from "../src/components/ladder/thesisModel";
@@ -70,7 +70,7 @@ describe("ResearchCanvas", () => {
     );
     const buttons = screen.getAllByRole("button", { name: /Select source-bound claim/ });
     expect(buttons).toHaveLength(3);
-    claims.forEach((claim) => expect(screen.getByText(claim.label)).toBeVisible());
+    claims.forEach((claim, index) => expect(within(buttons[index]).getByText(claim.label)).toBeVisible());
     expect(buttons[0]).toHaveAttribute("aria-pressed", "true");
 
     const initialContext = screen.getByTestId("research-canvas-context");
@@ -176,9 +176,11 @@ describe("ResearchCanvas", () => {
     expect(options.some((option) => option.textContent?.includes("individual unverified snapshot 1"))).toBe(true);
     expect(options.some((option) => option.textContent?.includes("individual unverified snapshot 2"))).toBe(true);
 
-    const snapshot = options.find((option) => option.textContent?.includes("unverified snapshot 2"))!;
+    const killedFamily = model.families.find((family) => family.records[0]?.cluster.status === "killed")!;
+    const killedRecord = killedFamily.records[0];
+    const snapshot = options.find((option) => option.textContent?.includes(`unverified snapshot ${killedRecord.unverifiedSnapshotNumber}`))!;
     fireEvent.change(select, { target: { value: (snapshot as HTMLOptionElement).value } });
-    expect(screen.getByRole("button", { name: /Select recorded entry, unverified snapshot 2/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: new RegExp(`Select recorded entry, unverified snapshot ${killedRecord.unverifiedSnapshotNumber}`) })).toBeVisible();
     expect(screen.getByTestId("research-canvas-standing")).toHaveTextContent("killed");
     expect(screen.getByTestId("research-canvas-evidence-state")).toHaveTextContent("Recorded negative history");
   });
@@ -230,9 +232,94 @@ describe("ResearchCanvas", () => {
     renderCanvas(model);
 
     expect(within(screen.getByTestId("research-canvas-family-select")).getAllByRole("option")).toHaveLength(40);
-    expect(screen.getAllByRole("button", { name: /Select recorded entry/ })).toHaveLength(12);
-    expect(screen.getByTestId("research-canvas-bounded-note")).toHaveTextContent("Showing 12 of 10000");
+    expect(screen.getAllByRole("button", { name: /Select recorded entry/ })).toHaveLength(3);
+    expect(screen.getByTestId("research-canvas-bounded-note")).toHaveTextContent("Showing 3 of 10000");
     expect(sourceReads).toBeGreaterThan(0);
     expect(sourceReads).toBeLessThanOrEqual(24);
   });
+  it("retains an explicit thesis and claim through source reorder and a thesis round trip", () => {
+    const model = liquidModel();
+    const other = buildThesisFamilies([{ cluster_id: "cl-other", stem: "Other thesis", status: "open", evidence_level: "L0", members: [] }], []);
+    const combined = { ...model, families: [...model.families, ...other.families], records: [...model.records, ...other.records] };
+    const result = renderCanvas(combined);
+    const select = screen.getByTestId("research-canvas-family-select");
+    fireEvent.click(screen.getAllByRole("button", { name: /Select source-bound claim/ })[2]);
+    fireEvent.change(select, { target: { value: other.families[0].id } });
+    expect(select).toHaveValue(other.families[0].id);
+    result.rerender(<MemoryRouter><ResearchCanvas model={{ ...combined, families: [...combined.families].reverse() }} nextOwed={{}} /></MemoryRouter>);
+    expect(select).toHaveValue(other.families[0].id);
+    fireEvent.change(select, { target: { value: model.families[0].id } });
+    expect(screen.getAllByRole("button", { name: /Select source-bound claim/ })[2]).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("does not hide unknown outcome shapes or retain dated pinning after hypothesis drift", () => {
+    const supplied = rows.map((row, index) => index === 0 ? { ...row, experiment_outcome: { future_result: "unverified" } } : row);
+    const result = renderCanvas(buildThesisFamilies(clusters, supplied));
+    expect(screen.getByTestId("research-canvas-evidence-state")).toHaveTextContent("Recorded outcome supplied");
+    const drifted = supplied.map((row) => ({ ...row, hypothesis: { text: row.hypothesis.text + " changed" } }));
+    result.rerender(<MemoryRouter><ResearchCanvas model={buildThesisFamilies(clusters, drifted)} nextOwed={{}} /></MemoryRouter>);
+    expect(screen.queryByRole("button", { name: /Select source-bound claim/ })).toBeNull();
+    expect(screen.getByTestId("research-canvas-evidence-state")).not.toHaveTextContent("No compatible test recorded");
+  });
+
+  it("makes no-match search explicit and transfers narrow-pane focus in both directions", () => {
+    const originalWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 500 });
+    try {
+      renderCanvas(liquidModel());
+      const search = screen.getByTestId("research-canvas-family-search");
+      fireEvent.change(search, { target: { value: "no such thesis" } });
+      expect(screen.getByRole("status")).toHaveTextContent("No matching thesis. Your selected thesis is retained.");
+      const claim = screen.getAllByRole("button", { name: /Select source-bound claim/ })[1];
+      fireEvent.click(claim);
+      const back = screen.getByTestId("research-canvas-back");
+      expect(back).toHaveFocus();
+      fireEvent.click(back);
+      expect(claim).toHaveFocus();
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("finds a grouped thesis through exact child identity and claim text", () => {
+    const model = liquidModel();
+    const other = buildThesisFamilies([{ cluster_id: "cl-first", stem: "Another thesis", members: [], status: "open", evidence_level: "L0" }], []);
+    renderCanvas({ ...model, families: [...other.families, ...model.families] });
+    const search = screen.getByTestId("research-canvas-family-search");
+    const select = screen.getByTestId("research-canvas-family-select");
+    fireEvent.change(select, { target: { value: other.families[0].id } });
+    for (const query of [claims[0].id, "spectral gap"]) {
+      fireEvent.change(search, { target: { value: query } });
+      expect(within(select).getByRole("option", { name: /Liquid democracy/ })).toBeInTheDocument();
+      expect(screen.getByRole("status")).not.toHaveTextContent("No matching thesis");
+    }
+  });
+
+  it("drops an explicitly selected missing family rather than resurrecting it", () => {
+    const model = liquidModel();
+    const other = buildThesisFamilies([{ cluster_id: "cl-other", stem: "Other thesis", members: [], status: "open", evidence_level: "L0" }], []);
+    const combined = { ...model, families: [...model.families, ...other.families] };
+    const result = renderCanvas(combined);
+    const select = screen.getByTestId("research-canvas-family-select");
+    fireEvent.change(select, { target: { value: other.families[0].id } });
+    expect(select).toHaveValue(other.families[0].id);
+    result.rerender(<MemoryRouter><ResearchCanvas model={model} nextOwed={{}} /></MemoryRouter>);
+    expect(select).toHaveValue(model.families[0].id);
+    result.rerender(<MemoryRouter><ResearchCanvas model={combined} nextOwed={{}} /></MemoryRouter>);
+    expect(select).toHaveValue(model.families[0].id);
+  });
+
+  it("retains selected claim identity when members of one record reorder", () => {
+    const cluster = { cluster_id: "cl-many", stem: "Multiple exact entries", status: "open", evidence_level: "L0", members: ["iter-a", "iter-b"] };
+    const iterations = ["a", "b"].map((letter) => ({ iteration_id: `iter-${letter}`, seed: { topic: "One topic" }, hypothesis: { text: `Hypothesis ${letter}` } }));
+    const result = renderCanvas(buildThesisFamilies([cluster], iterations));
+    const button = screen.getByRole("button", { name: /iteration iter-b:/ });
+    fireEvent.click(button);
+    result.rerender(<MemoryRouter><ResearchCanvas model={buildThesisFamilies([{ ...cluster, members: ["iter-b", "iter-a"] }], iterations)} nextOwed={{}} /></MemoryRouter>);
+    expect(screen.getByRole("button", { name: /iteration iter-b:/ })).toBe(button);
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    expect(within(screen.getByTestId("research-canvas-context")).getByRole("link", { name: /Open full dossier/ })).toHaveAttribute("href", "/dossier/iter-b");
+  });
+
 });
