@@ -82,6 +82,9 @@ describe("ActivityGraph", () => {
     renderWithRouter(<ActivityGraph data={GRAPH_FIXTURE} />);
     const list = within(screen.getByTestId("activity-graph-nodes"));
     fireEvent.click(list.getByTestId("node-call-a"));
+    const context = screen.getByRole("complementary", { name: "Selected map record" });
+    expect(within(context).getByText(GRAPH_FIXTURE.nodes[1].task_id!)).toBeInTheDocument();
+    expect(within(context).getByText(GRAPH_FIXTURE.nodes[1].request_id!)).toBeInTheDocument();
     expect(screen.getByText(/does not guarantee an indexed call record/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: "Look up indexed call" }));
     expect(screen.getByTestId("inspector-landing")).toBeInTheDocument();

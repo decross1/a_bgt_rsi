@@ -13,6 +13,7 @@ import {
   ACTIVE_RUN_FIXTURE,
   COORDINATOR_CYCLES_FIXTURE,
 } from "../src/fixtures/coordinator";
+import type { CoordinatorCycle } from "../src/types/schemas";
 
 describe("Cycles route", () => {
   it("renders a compact row per cycle and discloses the frozen full record", () => {
@@ -51,6 +52,35 @@ describe("Cycles route", () => {
     // fixture[1] (10:00); the route sorts/renders newest-first, so the first
     // card carries the newer cycle's topic.
     expect(cards[0]).toHaveTextContent(COORDINATOR_CYCLES_FIXTURE[0].topic);
+  });
+
+  it("groups no-ops only when every supplied non-identity field is equal", () => {
+    const noop = (runId: string, timestamp: string, reason: string): CoordinatorCycle => ({
+      timestamp,
+      run_id: runId,
+      agent: "coordinator",
+      topic: "Budget check",
+      topic_source: "coordinator_propose",
+      status: "executed",
+      plan: [{ action: "noop", args: { reason } }],
+      outcomes: [{ action: "noop", status: "passed" }],
+      promoted_finding_ids: [],
+      bubble_run_ids: [],
+    });
+    render(
+      <Cycles
+        initial={[
+          noop("same-a", "2026-09-08T03:00:00Z", "exact reason"),
+          noop("same-b", "2026-09-08T02:00:00Z", "exact reason"),
+          noop("different", "2026-09-08T01:00:00Z", "different recorded reason"),
+        ]}
+        initialPhasesRun={null}
+      />,
+    );
+
+    expect(screen.getByText(/2 equivalent recorded no-ops/)).toBeInTheDocument();
+    expect(screen.queryByText(/3 equivalent recorded no-ops/)).toBeNull();
+    expect(screen.getAllByTestId("coordinator-cycle-row")).toHaveLength(3);
   });
 
   it("shows a clean empty state when there are no cycles", () => {

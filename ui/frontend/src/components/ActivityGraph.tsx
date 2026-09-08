@@ -314,8 +314,8 @@ export default function ActivityGraph({ data }: { data: ActivityGraphResponse })
                 <dl>
                   <div><dt>Kind</dt><dd>{selected.kind}</dd></div>
                   <div><dt>Status</dt><dd>{valueText(selected.status)}</dd></div>
-                  <div><dt>Task ID</dt><dd title={selected.task_id ?? undefined}>{shortId(selected.task_id)}</dd></div>
-                  <div><dt>Request ID</dt><dd title={selected.request_id ?? undefined}>{shortId(selected.request_id)}</dd></div>
+                  <div><dt>Task ID</dt><dd><code>{selected.task_id || "Not supplied"}</code></dd></div>
+                  <div><dt>Request ID</dt><dd><code>{selected.request_id || "Not supplied"}</code></dd></div>
                 </dl>
                 {selected.request_id ? (
                   <>
