@@ -56,13 +56,10 @@ interface Props {
   /** Injected finding detail — when provided (and kind="finding"), wins and
    *  SUPPRESSES the finding self-fetch. Test-injection / preview override
    *  (mirrors Todo.tsx availability/items). */
-  detail?: FindingDetail | null;
+  detail?: FindingDetail;
   /** Injected iteration journey — when provided (and kind="iteration"), wins and
    *  SUPPRESSES the iteration self-fetch (the iteration-side mirror of `detail`). */
-  journey?: IterationJourneyResponse | null;
-  /** Parent-owned exact-record loader is still resolving. Injected null data
-   *  suppresses duplicate reads while this named state is visible. */
-  loading?: boolean;
+  journey?: IterationJourneyResponse;
   /** R2 SUMMARY variant for the dossier reader header block: trim the overview
    *  to its CLAIM + EVIDENCE REFS (+ the classification badges), dropping the
    *  prose dump — the source-iteration block, "what would change it", "why it
@@ -152,7 +149,6 @@ export default function TutorPanel({
   kind = "finding",
   detail,
   journey,
-  loading = false,
   compact = false,
 }: Props) {
   const idText = asText(findingId);
@@ -234,17 +230,6 @@ export default function TutorPanel({
       {body}
     </div>
   );
-
-  if (loading) {
-    return chrome(
-      <div
-        data-testid="tutor-loading"
-        className="mt-1 text-[11px] text-zinc-500"
-      >
-        Loading exact recorded context…
-      </div>,
-    );
-  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // ITERATION FAMILY — a gate_verdict (ITERATION) item is being interrogated.

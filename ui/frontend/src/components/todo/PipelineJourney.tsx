@@ -393,7 +393,7 @@ function JourneyLinks({ row }: { row: IterationRecord }) {
   const chainId = firstWrapperCallId(row);
 
   return (
-    <Section title="evidence" testid="journey-links">
+    <Section title="journal + links" testid="journey-links">
       {iterationId.length > 0 ? (
         <details
           data-testid="journey-journal"
@@ -401,7 +401,7 @@ function JourneyLinks({ row }: { row: IterationRecord }) {
           className="rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1"
         >
           <summary className="cursor-pointer text-[11px] text-zinc-400">
-            Open evidence · journal entry and source path
+            journal entry
           </summary>
           {journalOpen && <JournalScroll iterationId={iterationId} />}
         </details>
@@ -699,13 +699,10 @@ interface Props {
   item: HumanTodoItem;
   /** Injected journey — when provided, wins and SUPPRESSES the self-fetch.
    *  Test-injection / preview override (mirrors TutorPanel's `detail`). */
-  journey?: IterationJourneyResponse | null;
+  journey?: IterationJourneyResponse;
   /** Injected finding detail (finding_review family) — when provided, wins and
    *  SUPPRESSES the getFindingDetail self-fetch. */
-  detail?: FindingDetail | null;
-  /** Parent-owned exact-record loader is still resolving. Suppresses duplicate
-   *  component reads while keeping a named loading state visible. */
-  loading?: boolean;
+  detail?: FindingDetail;
 }
 
 // Map an item.kind to a family. gate_verdict → iteration; finding_review →
@@ -716,12 +713,7 @@ function familyOf(kind: unknown): "iteration" | "finding" | "other" {
   return "other";
 }
 
-export default function PipelineJourney({
-  item,
-  journey,
-  detail,
-  loading = false,
-}: Props) {
+export default function PipelineJourney({ item, journey, detail }: Props) {
   const itemObj = asRecord(item);
   const kind = itemObj?.kind;
   const family = familyOf(kind);
@@ -891,17 +883,6 @@ export default function PipelineJourney({
     );
   }
 
-  if (loading) {
-    return chrome(
-      <div
-        data-testid="journey-loading"
-        className="mt-2 text-[11px] text-zinc-500"
-      >
-        Loading the exact recorded journey…
-      </div>,
-    );
-  }
-
   // 2) UNAVAILABLE — the journey could not be resolved: a fetch failure, a
   // found:false response, a non-object iteration, OR (finding family) the
   // finding detail failed / had no source iteration. Degrade in place; never
@@ -957,9 +938,6 @@ export default function PipelineJourney({
   const stations = stationsFor(row);
   const byKey = (k: StationKey) =>
     stations.find((s) => s.key === k) ?? stations[0];
-  const furthestRecorded =
-    [...stations].reverse().find((station) => station.reached) ?? stations[0];
-  const verdictStation = byKey("verdict");
 
   const hypothesis = asRecord(row.hypothesis);
   const retrieval = asRecord(row.retrieval);
@@ -1030,25 +1008,6 @@ export default function PipelineJourney({
       {/* the absorbed modal VERDICT HEADER — the chip row stays visible; it is
           the 15-second read. */}
       <VerdictHeader row={row} />
-
-      {/* Evidence comes before the optional full stage walk. The journal stays
-          lazy and safely rendered; exact deep links retain their old targets. */}
-      <JourneyLinks row={row} />
-
-      <details
-        className="dossier-stage-history"
-        data-testid="journey-stage-history"
-      >
-        <summary data-testid="journey-stage-summary">
-          <span>Recorded stage path</span>
-          <span>
-            Furthest recorded: {furthestRecorded.label} ·{" "}
-            {furthestRecorded.status}
-          </span>
-          <span>
-            Decision endpoint: {verdictStation.label} · {verdictStation.status}
-          </span>
-        </summary>
 
       {/* the R2 SUBWAY MAP — sticky under the app header, scrollspy-marked. */}
       <JourneyStepper
@@ -1375,7 +1334,9 @@ export default function PipelineJourney({
           </p>
         </JourneySection>
       </div>
-      </details>
+
+      {/* the absorbed journal disclosure + deep links out of the dossier. */}
+      <JourneyLinks row={row} />
 
       {/* the R2 RAW-EVIDENCE drill-in (R0 PeekPanel — pure presentation). */}
       <PeekPanel

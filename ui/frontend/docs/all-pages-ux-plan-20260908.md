@@ -22,3 +22,9 @@ The release is limited to navigation, Operations, the Dossier library and reader
 Now, Channel, the experiment catalog/detail pair, and the cycle/graph/request-detail redesigns remain held. Their production sources were restored to the public baseline after review found unresolved truth, contrast, keyboard or narrow-layout defects within the bounded work. Those candidates and failure evidence are retained privately. The Research/Ladder sources remain frozen. This is a partial delivery, not completion of the all-pages redesign.
 
 Validation uses private fixtures and blocked external transport. Component tests do not prove backend adoption, runtime availability, scientific progress, Windows-native behavior or screen-reader compatibility. Current source, exact validation and browser receipts govern release; historical passing subsets do not waive a later failure.
+
+## Post-merge adoption gate — Dossier recovery
+
+The actual LAN browser caught a Dossier loading-state defect after the initial reduced release: while the badge said the queue lookup was pending, its accompanying text asserted that the record was absent. The lookup then showed the record as present. Earlier private checks and source review did not establish this transition.
+
+The complete Dossier family is therefore restored to its pre-task public source in a follow-up recovery. Its source, test and capture history remain preserved; no additional production repair allowance was opened. The final adopted improvement is limited to Operations, Calls, task navigation and the channel API read-state helper. Dossiers join the held redesign families listed above. The all-pages objective remains incomplete.
