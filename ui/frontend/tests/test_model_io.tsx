@@ -298,7 +298,7 @@ it("keeps the last rows and says STALE when a later poll fails", async () => {
     target: { value: "iter-9" },
   });
   await waitFor(() =>
-    expect(screen.getByText(/unreachable — showing the last loaded rows/))
+    expect(screen.getByText(/unreachable or unreadable — showing the last loaded rows/))
       .toBeInTheDocument(),
   );
   // The rows are kept, not blanked.

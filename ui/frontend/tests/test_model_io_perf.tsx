@@ -216,7 +216,7 @@ it("keeps rendered rows and says STALE when a poll tick fails — never blanks",
   // Rows kept, stale note shown — the failed refetch blanked nothing.
   expect(screen.getAllByTestId("modelio-row")).toHaveLength(3);
   expect(
-    screen.getByText(/unreachable — showing the last loaded rows/),
+    screen.getByText(/unreachable or unreadable — showing the last loaded rows/),
   ).toBeInTheDocument();
 });
 

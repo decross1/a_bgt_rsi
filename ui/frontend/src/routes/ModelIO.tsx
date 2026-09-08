@@ -221,6 +221,31 @@ type TableData = Omit<ModelIOResponse, "generated_at" | "scanned_bytes"> & {
 // Local source identity; never inferred from the current render key.
 type QueryTableData = TableData & { queryKey: string };
 
+// Validate before the poll hub can treat a malformed 200 as a fresh empty
+// observation. Legacy optional framing stays optional; present fields must be
+// readable. Reject the whole observation rather than silently dropping rows.
+function admitFeed(raw: unknown): ModelIOResponse {
+  const bad = () => { throw new Error("Calls source is malformed; current state is unknown"); };
+  if (!detailObject(raw) || !Array.isArray(raw.calls)) return bad();
+  const strings = (r: Record<string, unknown>, keys: string[]) => keys.every(k => r[k] == null || typeof r[k] === "string");
+  const numbers = (r: Record<string, unknown>, keys: string[]) => keys.every(k => r[k] == null || (typeof r[k] === "number" && Number.isFinite(r[k])));
+  const flags = (r: Record<string, unknown>, keys: string[]) => keys.every(k => r[k] === undefined || typeof r[k] === "boolean");
+  if (!strings(raw, ["source", "generated_at", "next_before_ts"]) || !numbers(raw, ["scanned_bytes", "max_scan_bytes"]) || !flags(raw, ["window_truncated", "end_of_log"])) return bad();
+  for (const c of raw.calls) {
+    if (!detailObject(c) || !strings(c, ["ts", "request_id", "parent_request_id", "model", "backend", "caller_tag", "run_id", "prompt_preview", "completion_preview"]) || !numbers(c, ["latency_ms", "input_tokens", "output_tokens"]) || typeof c.empty !== "boolean") return bad();
+  }
+  if (raw.threads !== undefined) {
+    if (!Array.isArray(raw.threads)) return bad();
+    for (const t of raw.threads) {
+      if (!detailObject(t) || typeof t.session_id !== "string" || !t.session_id || !Array.isArray(t.turns) || !strings(t, ["run_id", "started", "ended"]) || !numbers(t, ["wall_ms", "turn_count"]) || !flags(t, ["turns_truncated", "turns_complete"])) return bad();
+      for (const turn of t.turns) {
+        if (!detailObject(turn) || !strings(turn, ["ts", "request_id", "caller_tag", "stance", "model", "backend", "user_delta"]) || typeof turn.completion !== "string" || !numbers(turn, ["prefix_message_count", "tokens_in", "tokens_out", "latency_ms"]) || !flags(turn, ["user_delta_truncated", "completion_truncated", "empty"])) return bad();
+      }
+    }
+  }
+  return raw as unknown as ModelIOResponse;
+}
+
 // ─── the feed: calls and session threads in one newest-first list ───────
 //
 // A thread is ONE row of the page's 20 (the backend budgets it that way
@@ -444,7 +469,7 @@ async function getOlderModelIO(
     `${RUNTIME_API_BASE}/api/model_io?${params.toString()}`,
   );
   if (!resp.ok) throw new Error(`model_io ${resp.status}`);
-  return (await resp.json()) as ModelIOResponse;
+  return admitFeed(await resp.json());
 }
 
 // The load-older control's state machine: idle (button) → loading →
@@ -743,7 +768,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   const tablePoll = usePolled<QueryTableData>(
     `modelio:calls:${appliedKey}`,
     () => getModelIO(applied, PAGE_SIZE).then(response => ({
-      ...stripVolatile(response), queryKey: appliedKey,
+      ...stripVolatile(admitFeed(response)), queryKey: appliedKey,
     })),
     // evictOnZero: the key is parameterized by the filter — every query
     // ever typed would otherwise leave a hub Entry behind on an always-on
@@ -767,6 +792,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   if (payload !== undefined) lastTableRef.current = payload;
   const data = payload ?? lastTableRef.current;
   const pagingReady = data?.queryKey === appliedKey;
+  const priorFilterVisible = data != null && (!pagingReady || !sameFilters(inputs, applied));
   const sameRetentionKey = retentionKeyRef.current === appliedKey;
   const pendingRetention = useMemo(() => {
     if (!sameRetentionKey) return { older: [], gap: false };
@@ -1006,7 +1032,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
   };
 
   return (
-    <div className="page-full" data-testid="modelio-page">
+    <div className="page-full modelio-page" data-testid="modelio-page" data-context-open={expanded != null ? "true" : "false"}>
       <header className="modelio-page-header">
         <p>Operations</p>
         <h1>Model I/O</h1>
@@ -1025,7 +1051,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
           <span data-testid="modelio-result-count" aria-live="polite">
             {data == null
               ? "Count unavailable"
-              : `${feed.length} visible ${feed.length === 1 ? "record" : "records"}`}
+              : `${feed.length} ${priorFilterVisible ? "retained" : "visible"} ${feed.length === 1 ? "record" : "records"}`}
           </span>
           <span data-testid="modelio-freshness">
             {paused
@@ -1066,6 +1092,7 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
         </details>
       </section>
 
+      {priorFilterVisible && <p role="status" className="text-sm text-[var(--fg)]">Showing retained rows from the previous filter; these are not results for the new query yet.</p>}
       {/* Filters + live-state controls. */}
       <div className="modelio-controls">
         <div className="modelio-filters" aria-label="Filter recorded calls">
@@ -1144,8 +1171,8 @@ export default function ModelIO({ pollMs = 5000 }: { pollMs?: number }) {
       ) : (
         <>
           {stale && (
-            <div className="mt-2 text-xs text-amber-400/80">
-              /api/model_io unreachable — showing the last loaded rows; the
+            <div className="mt-2 text-xs text-[var(--fg)]">
+              /api/model_io unreachable or unreadable — showing the last loaded rows; the
               live state is UNKNOWN, not idle.
             </div>
           )}

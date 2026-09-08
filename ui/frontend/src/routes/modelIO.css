@@ -224,6 +224,21 @@
   gap: var(--space-2);
 }
 
+/* A selected record leaves a compact switching list beside the reader,
+   rather than squeezing seven diagnostic columns into a half-width pane. */
+.modelio-workspace[data-context-open="true"] .modelio-feed-header,
+.modelio-workspace[data-context-open="true"] .modelio-row {
+  grid-template-columns: minmax(54px, .5fr) minmax(124px, 1.1fr) minmax(90px, 1fr) minmax(76px, .65fr);
+}
+.modelio-workspace[data-context-open="true"] .modelio-feed-header > :nth-child(2),
+.modelio-workspace[data-context-open="true"] .modelio-feed-header > :nth-child(4),
+.modelio-workspace[data-context-open="true"] .modelio-feed-header > :nth-child(5),
+.modelio-workspace[data-context-open="true"] .modelio-row-model,
+.modelio-workspace[data-context-open="true"] .modelio-row-condition,
+.modelio-workspace[data-context-open="true"] .modelio-row-cost {
+  display: none;
+}
+
 .modelio-feed-header {
   align-items: end;
   padding: 9px var(--space-3);
@@ -580,6 +595,13 @@
 }
 
 @media (max-width: 1050px) {
+  /* The selected record becomes the reading pane. Back restores the same
+     source links and filter inputs; pause/resume remains available here. */
+  .modelio-page[data-context-open="true"] .modelio-scope,
+  .modelio-page[data-context-open="true"] .modelio-filters {
+    display: none;
+  }
+
   .modelio-workspace[data-context-open="true"] {
     grid-template-columns: minmax(0, 1fr);
   }

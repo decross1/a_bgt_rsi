@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { resetPollHub } from "../src/api/pollhub";
+import { resetPollHub, refreshPoll } from "../src/api/pollhub";
 import type { ModelIOCall, ModelIOResponse } from "../src/api/modelIO";
 import ModelIO from "../src/routes/ModelIO";
 
@@ -242,4 +242,61 @@ it("does not turn an omitted completion into a recorded empty output", async () 
   render(<ModelIO pollMs={600_000} />);
   fireEvent.click(await screen.findByRole("button", { name: /Open record req-alpha/ }));
   expect(await screen.findByText("Completion text was not supplied; this is not a recorded empty completion.")).toBeInTheDocument();
+});
+
+
+it.each([
+  { fixture_malformed: true },
+  { calls: [null] },
+  { calls: [{ ...ALPHA, model: { forged: true } }] },
+  { calls: [], threads: [null] },
+  { calls: [], threads: [{ session_id: "t", turns: [null] }] },
+])("refuses unreadable current feed %j without inferring zero or matching absence", async body => {
+  vi.stubGlobal("fetch", vi.fn(async () => response(body)));
+  render(<ModelIO pollMs={600_000} />);
+  expect(await screen.findByText(/unreachable or unreadable/)).toBeInTheDocument();
+  expect(screen.getByTestId("modelio-result-count")).toHaveTextContent("Count unavailable");
+  expect(screen.queryByText("no calls match in the log tail.")).toBeNull();
+});
+
+
+it("retains the last good rows when a later 200 feed is unreadable", async () => {
+  let body: unknown = page([ALPHA]);
+  vi.stubGlobal("fetch", vi.fn(async () => response(body)));
+  render(<ModelIO pollMs={600_000} />);
+  await screen.findByRole("button", { name: /Open record req-alpha/ });
+  body = { calls: null };
+  await act(async () => { refreshPoll('modelio:calls:["","",""]'); });
+  expect(await screen.findByText(/unreachable or unreadable/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Open record req-alpha/ })).toBeInTheDocument();
+  expect(screen.getByTestId("modelio-result-count")).toHaveTextContent("1 visible record");
+  expect(screen.getByTestId("modelio-freshness")).toHaveTextContent("Refresh failed");
+});
+
+it("refuses a malformed older page without inferring the beginning of the log", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (input: unknown) => response(String(input).includes("before_ts=") ? { calls: null } : { ...page([ALPHA]), next_before_ts: "2026-09-08T00:00:00Z", end_of_log: false })));
+  render(<ModelIO pollMs={600_000} />);
+  fireEvent.click(await screen.findByTestId("load-older"));
+  expect(await screen.findByText("older-page fetch failed — the button retries.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /Open record req-alpha/ })).toBeInTheDocument();
+  expect(screen.queryByTestId("pager-end")).toBeNull();
+});
+
+
+it("labels retained rows as the previous filter while a new query is pending", async () => {
+  let release!: (value: Response) => void;
+  const pending = new Promise<Response>(resolve => { release = resolve; });
+  const mock = vi.fn(async (input: unknown) => String(input).includes("model=qwen") ? pending : response(page([ALPHA])));
+  vi.stubGlobal("fetch", mock);
+  render(<ModelIO pollMs={600_000} />);
+  await screen.findByRole("button", { name: /Open record req-alpha/ });
+  fireEvent.change(screen.getByRole("textbox", { name: "filter by model" }), { target: { value: "qwen" } });
+  expect(await screen.findByText(/Showing retained rows from the previous filter/)).toBeInTheDocument();
+  expect(screen.getByTestId("modelio-result-count")).toHaveTextContent("1 retained record");
+  await waitFor(() => expect(mock.mock.calls.some(([url]) => String(url).includes("model=qwen"))).toBe(true));
+  expect(screen.getByTestId("modelio-result-count")).toHaveTextContent("1 retained record");
+  await act(async () => { release(response(page([BETA]))); });
+  await screen.findByRole("button", { name: /Open record req-beta/ });
+  expect(screen.queryByText(/Showing retained rows from the previous filter/)).toBeNull();
+  expect(screen.getByTestId("modelio-result-count")).toHaveTextContent("1 visible record");
 });
