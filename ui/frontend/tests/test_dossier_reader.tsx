@@ -649,6 +649,12 @@ describe("DossierReader — R2 the journey opens COLLAPSED under the sticky step
       screen.queryByText("A long hypothesis paragraph the reader should not dump."),
     ).toBeNull();
     expect(screen.queryByText("a critic paragraph")).toBeNull();
+    expect(screen.getByTestId("journey-stage-history")).not.toHaveAttribute(
+      "open",
+    );
+    expect(screen.getByTestId("journey-stage-summary")).toHaveTextContent(
+      /Decision endpoint: verdict/i,
+    );
   });
 
   it("expanding a section reveals its prose and leaves the FENCE untouched", async () => {
@@ -671,5 +677,62 @@ describe("DossierReader — R2 the journey opens COLLAPSED under the sticky step
     // Expanding a journey section did NOT reveal the interrogation either —
     // the reveal fence is a separate gate and stays closed.
     expectAuxRevealableTrioHidden();
+  });
+
+  it("loads one logical journey and shares it across the evidence and tutor views", async () => {
+    const journeyReads: string[] = [];
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/todo/concurrency")) return jsonResponse(200, { active: false });
+      if (u.endsWith("/api/attest/available"))
+        return jsonResponse(200, { available: true, actions: { gate_verdict: true, defer: true } });
+      if (u.includes("/journey")) {
+        journeyReads.push(u);
+        return jsonResponse(200, {
+          found: true,
+          iteration_id: GATE_VERDICT_ITEM.id,
+          iteration: {
+            iteration_id: GATE_VERDICT_ITEM.id,
+            started_at: "2026-06-14T09:00:00Z",
+            ended_at: "2026-06-14T09:40:00Z",
+            seed: { topic: "Bound identity" },
+            gate_status: "pending",
+            journal_entry_path: "j.md",
+          },
+        });
+      }
+      if (u.endsWith("/api/coordinator/cycles")) return jsonResponse(200, { cycles: [] });
+      return jsonResponse(404, {});
+    });
+
+    renderReader(GATE_VERDICT_ITEM.id, [GATE_VERDICT_ITEM]);
+    await waitFor(() =>
+      expect(screen.getByTestId("journey-loaded")).toBeInTheDocument(),
+    );
+    expect(journeyReads).toHaveLength(1);
+    expect(screen.getByTestId("tutor-panel")).toHaveTextContent("Bound identity");
+    expect(screen.getByTestId("dossier-evidence-state")).toHaveTextContent(
+      GATE_VERDICT_ITEM.id,
+    );
+  });
+
+  it("puts exact evidence before the unchanged human decision and optional support", () => {
+    renderReader("iter-2026-06-10-001", []);
+    const evidence = document.getElementById("dossier-evidence-heading")!;
+    const decision = document.getElementById("dossier-decision-heading")!;
+    const support = screen.getByTestId("dossier-support");
+    expect(
+      evidence.compareDocumentPosition(decision) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      decision.compareDocumentPosition(support) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.getByTestId("dossier-record-source-state")).toHaveTextContent(
+      /Historical record/i,
+    );
+    expect(screen.getByTestId("dossier-boundary-note")).toHaveTextContent(
+      /neither grants nor removes authority/i,
+    );
+    expect(support).not.toHaveAttribute("open");
   });
 });
