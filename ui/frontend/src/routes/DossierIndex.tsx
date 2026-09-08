@@ -1,15 +1,14 @@
 // DossierIndex — the /dossier PICKER (UI simplification S2, the fetch-owning
-// page evolution of the retired ResolveRail). Owe-first ordering under the
-// 2026-08 selection-before-the-human inversion (D-059):
+// page evolution of the retired ResolveRail). The default view keeps a compact
+// producer-ordered decision queue and one time-qualified recorded context.
+// Search stays immediately available; the rest of the mixed record library is
+// disclosed in bounded pages:
 //
 //   (1) YOU OWE          — gate_verdict + state_gate families (blocking).
-//   (2) CLEARED THE BAR  — finding_review items at L4/L5 (the shared
-//                          src/ladderBar.ts bar). Honest empty state: "Nothing
-//                          cleared L4 this week." — never silence.
-//   (3) EVERYTHING ELSE  — searchable: the below-bar/legacy findings (the
-//                          pre-ladder 31), bubbles, stale runs, unknown kinds,
-//                          and the resolved-iteration history (browse moved
-//                          here from the Dashboard list).
+//   (2) LATEST CONTEXT   — newest parseable iteration timestamp, explicitly
+//                          qualified as recorded context rather than progress.
+//   (3) HISTORY          — cleared/below-bar findings, bubbles, stale runs,
+//                          unknown kinds and bounded resolved iterations.
 //
 // Every row is a <Link> into the dossier reader (/dossier/:id) — the picker
 // exposes NO disposition affordance (the verdict fence: forms live in the
@@ -32,6 +31,7 @@ import {
   toneFor,
 } from "../components/chips";
 import type { HumanTodoItem, IterationRecord } from "../types/schemas";
+import "./dossiers.css";
 
 // --- coercion (the Todo.tsx safeItems idiom, ported) -------------------------
 
@@ -48,6 +48,36 @@ function safeItems(value: unknown): HumanTodoItem[] {
       typeof (it as { id?: unknown }).id === "string" &&
       (it as { id: string }).id.length > 0,
   );
+}
+
+function itemIntegrity(value: unknown): {
+  items: HumanTodoItem[];
+  partial: boolean;
+} {
+  if (!Array.isArray(value)) return { items: [], partial: true };
+  const admitted = safeItems(value);
+  return { items: admitted, partial: admitted.length !== value.length };
+}
+
+function safeIterations(value: unknown): IterationRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (row): row is IterationRecord =>
+      row !== null &&
+      typeof row === "object" &&
+      !Array.isArray(row) &&
+      typeof (row as { iteration_id?: unknown }).iteration_id === "string" &&
+      (row as { iteration_id: string }).iteration_id.length > 0,
+  );
+}
+
+function iterationIntegrity(value: unknown): {
+  rows: IterationRecord[];
+  partial: boolean;
+} {
+  if (!Array.isArray(value)) return { rows: [], partial: true };
+  const admitted = safeIterations(value);
+  return { rows: admitted, partial: admitted.length !== value.length };
 }
 
 // Title is producer-owned and may be any type; only a string is renderable text
@@ -89,6 +119,7 @@ function isFinding(item: HumanTodoItem): boolean {
 // FUTURE: once the idea-ledger cluster_id join reaches /api/human_todo rows,
 // key on cluster_id instead of this frontend stem heuristic (S3 follow-on).
 const STEM_WORDS = 6;
+const HISTORY_PAGE_SIZE = 50;
 function titleStem(title: string): string {
   const norm = title.toLowerCase().replace(/\s+/g, " ").trim();
   if (norm === "") return "";
@@ -128,10 +159,12 @@ function ItemRow({
   item,
   nowMs,
   nested,
+  sourceLabel = "recorded source",
 }: {
   item: HumanTodoItem;
   nowMs: number;
   nested?: boolean;
+  sourceLabel?: string;
 }) {
   const id = item.id; // safeItems guarantees a non-empty string
   const kind = asText(item.kind) ?? "unknown";
@@ -154,30 +187,32 @@ function ItemRow({
     <li data-testid={`dossier-row-${id}`}>
       <Link
         to={`/dossier/${encodeURIComponent(id)}`}
-        className={`flex flex-wrap items-baseline gap-2 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-zinc-600 ${nested ? "ml-3" : ""}`}
+        className={`dossier-record-link ${nested ? "dossier-record-link--nested" : ""}`}
+        aria-label={`Open dossier ${id}: ${title}`}
       >
-        <span className="text-zinc-200">{title}</span>
-        {level && (
-          <span className="rounded bg-emerald-950 px-1 py-0.5 text-[10px] text-emerald-400">
-            {level}
+        <span className="dossier-record-copy">
+          <span className="dossier-record-title" title={title}>
+            {title}
           </span>
-        )}
-        <span className="text-[10px] uppercase tracking-wide text-zinc-600">
-          {kind}
-        </span>
-        {item.deferred === true && (
-          <span
-            data-testid="todo-deferred-tag"
-            className="rounded bg-sky-950 px-1.5 py-0.5 text-[10px] text-sky-400"
-            title={deferralBits.join(" · ") || undefined}
-          >
-            deferred to dev session
-            {deferralBits.length > 0 && (
-              <span className="text-sky-600"> · {deferralBits.join(" · ")}</span>
+          <span className="dossier-record-meta">
+            <span className="dossier-source-label">{sourceLabel}</span>
+            <span className="dossier-record-id">{id}</span>
+            <span>{kind}</span>
+            {level && <span className="dossier-level-chip">{level}</span>}
+            {item.deferred === true && (
+              <span
+                data-testid="todo-deferred-tag"
+                className="dossier-deferred-chip"
+                title={deferralBits.join(" · ") || undefined}
+              >
+                deferred to dev session
+                {deferralBits.length > 0 && ` · ${deferralBits.join(" · ")}`}
+              </span>
             )}
           </span>
-        )}
-        <span className="ml-auto font-mono text-[10px] text-zinc-500">
+        </span>
+        <span className="dossier-record-open">Open dossier</span>
+        <span className="dossier-record-age">
           {ageLabel(item.since, nowMs)}
         </span>
       </Link>
@@ -235,35 +270,51 @@ function ClusterRow({
 // One resolved-iteration row (the browse that moved here from the Dashboard
 // list): id + verdict/novelty/gate chips + topic + timestamp, linking into the
 // reader by iteration id.
-function IterationRow({ row }: { row: IterationRecord }) {
+function IterationRow({
+  row,
+  testid,
+}: {
+  row: IterationRecord;
+  testid?: string;
+}) {
   const id = typeof row.iteration_id === "string" ? row.iteration_id : "";
   if (id.length === 0) return null;
   return (
-    <li data-testid={`dossier-iter-${id}`}>
+    <li data-testid={testid ?? `dossier-iter-${id}`}>
       <Link
         to={`/dossier/${encodeURIComponent(id)}`}
-        className="block rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-zinc-600"
+        className="dossier-record-link dossier-record-link--iteration"
+        aria-label={`Open dossier ${id}`}
       >
-        <div className="flex flex-wrap items-baseline gap-2">
-          <span className="font-mono text-zinc-200">{id}</span>
-          <Badge
-            text={row.critique?.verdict}
-            tone={toneFor(VERDICT_TONE, row.critique?.verdict, "bg-zinc-800 text-zinc-400")}
-          />
-          <Badge
-            text={row.novelty?.class}
-            tone={toneFor(NOVELTY_TONE, row.novelty?.class, "bg-zinc-800 text-zinc-400")}
-          />
-          <Badge text={row.gate_status} tone={toneFor(GATE_TONE, row.gate_status, "")} />
-          <span className="ml-auto font-mono text-[10px] text-zinc-500">
-            {shortTimestamp(row.ended_at)}
+        <span className="dossier-record-copy">
+          <span className="dossier-record-title">{seedTopic(row) || id}</span>
+          <span className="dossier-record-meta">
+            <span className="dossier-source-label">recorded iteration</span>
+            <span className="dossier-record-id">{id}</span>
+            <Badge
+              text={row.critique?.verdict}
+              tone={toneFor(
+                VERDICT_TONE,
+                row.critique?.verdict,
+                "bg-zinc-800 text-zinc-400",
+              )}
+            />
+            <Badge
+              text={row.novelty?.class}
+              tone={toneFor(
+                NOVELTY_TONE,
+                row.novelty?.class,
+                "bg-zinc-800 text-zinc-400",
+              )}
+            />
+            <Badge
+              text={row.gate_status}
+              tone={toneFor(GATE_TONE, row.gate_status, "")}
+            />
           </span>
-        </div>
-        {seedTopic(row) && (
-          <div className="mt-1 truncate text-xs text-zinc-300" title={seedTopic(row)}>
-            {seedTopic(row)}
-          </div>
-        )}
+        </span>
+        <span className="dossier-record-open">Open dossier</span>
+        <span className="dossier-record-age">{shortTimestamp(row.ended_at)}</span>
       </Link>
     </li>
   );
@@ -315,16 +366,29 @@ export default function DossierIndex({
   );
   const [todoLoaded, setTodoLoaded] = useState(items !== undefined);
   const [todoError, setTodoError] = useState<string | null>(null);
+  const [todoPartial, setTodoPartial] = useState(
+    items !== undefined ? itemIntegrity(items).partial : false,
+  );
   const [iterRows, setIterRows] = useState<IterationRecord[]>(
-    Array.isArray(iterations) ? iterations : [],
+    safeIterations(iterations),
+  );
+  const [iterLoaded, setIterLoaded] = useState(iterations !== undefined);
+  const [iterError, setIterError] = useState(false);
+  const [iterPartial, setIterPartial] = useState(
+    iterations !== undefined ? iterationIntegrity(iterations).partial : false,
   );
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [historyLimit, setHistoryLimit] = useState(HISTORY_PAGE_SIZE);
 
   // /api/human_todo — the owe + findings feed (10s poll; the OweStrip idiom).
   useEffect(() => {
     if (items !== undefined) {
-      setTodoItems(safeItems(items));
+      const inspected = itemIntegrity(items);
+      setTodoItems(inspected.items);
+      setTodoPartial(inspected.partial);
+      setTodoLoaded(true);
+      setTodoError(null);
       return;
     }
     let active = true;
@@ -332,12 +396,17 @@ export default function DossierIndex({
       getHumanTodo()
         .then((r) => {
           if (!active) return;
-          setTodoItems(safeItems(r?.items));
+          const inspected = itemIntegrity(r?.items);
+          setTodoItems(inspected.items);
+          setTodoPartial(inspected.partial);
           setTodoLoaded(true);
           setTodoError(null);
         })
         .catch((e) => {
-          if (active) setTodoError(String(e));
+          if (active) {
+            setTodoLoaded(true);
+            setTodoError(String(e));
+          }
         });
     load();
     const id = setInterval(load, Math.max(1000, todoPollMs));
@@ -347,11 +416,15 @@ export default function DossierIndex({
     };
   }, [items, todoPollMs]);
 
-  // /api/loop_v0/iterations — the resolved history (30s poll; failures leave
-  // the section empty-quiet — the todo feed is the load-bearing one).
+  // /api/loop_v0/iterations — resolved history (30s poll). Failures keep any
+  // last good rows and are named separately from a valid empty response.
   useEffect(() => {
     if (iterations !== undefined) {
-      setIterRows(Array.isArray(iterations) ? iterations : []);
+      const inspected = iterationIntegrity(iterations);
+      setIterRows(inspected.rows);
+      setIterPartial(inspected.partial);
+      setIterLoaded(true);
+      setIterError(false);
       return;
     }
     let active = true;
@@ -359,10 +432,17 @@ export default function DossierIndex({
       getIterations()
         .then((r) => {
           if (!active) return;
-          setIterRows(Array.isArray(r?.iterations) ? r.iterations : []);
+          const inspected = iterationIntegrity(r?.iterations);
+          setIterRows(inspected.rows);
+          setIterPartial(inspected.partial);
+          setIterLoaded(true);
+          setIterError(false);
         })
         .catch(() => {
-          /* history feed down → the section just stays empty */
+          if (active) {
+            setIterLoaded(true);
+            setIterError(true);
+          }
         });
     load();
     const id = setInterval(load, Math.max(1000, iterPollMs));
@@ -416,6 +496,21 @@ export default function DossierIndex({
     [iterRows, q],
   );
   const elseCells = useMemo(() => buildCells(visibleElse), [visibleElse]);
+  const visibleIterationPage = visibleIters.slice(0, historyLimit);
+  const remainingIterations = Math.max(
+    0,
+    visibleIters.length - visibleIterationPage.length,
+  );
+  const latestIteration = useMemo(() => {
+    return iterRows.reduce<IterationRecord | null>((latest, row) => {
+      const rowTime = Date.parse(asText(row.ended_at) ?? "");
+      if (Number.isNaN(rowTime)) return latest;
+      if (latest === null) return row;
+      const latestTime = Date.parse(asText(latest.ended_at) ?? "");
+      if (rowTime > latestTime) return row;
+      return latest;
+    }, null);
+  }, [iterRows]);
 
   const toggleCluster = (key: string) =>
     setExpanded((prev) => {
@@ -426,149 +521,260 @@ export default function DossierIndex({
     });
 
   const endpointMissing = todoError !== null && /\b404\b/.test(todoError);
+  const queueState = todoError
+    ? endpointMissing
+      ? "unknown"
+      : "error"
+    : todoPartial
+      ? "partial"
+      : todoLoaded
+        ? "ready"
+        : "loading";
+  const queueStateText = todoError
+    ? todoItems.length > 0
+      ? "Queue refresh unavailable · showing the last recorded response"
+      : endpointMissing
+        ? "Queue source unknown"
+        : "Queue source unavailable"
+    : todoPartial
+      ? "Queue source partial · malformed records omitted"
+      : todoLoaded
+        ? "Queue source loaded"
+        : "Loading queue source";
   const nowMs = Date.now();
 
+  const updateQuery = (nextQuery: string) => {
+    setQuery(nextQuery);
+    setHistoryLimit(HISTORY_PAGE_SIZE);
+  };
+
   return (
-    <div className="mx-auto max-w-5xl p-5" data-testid="dossier-index">
-      <header className="mb-3">
-        <h1 className="text-sm font-semibold uppercase tracking-wide text-zinc-300">
-          /dossier · what deserves your attention
-        </h1>
-        <p className="mt-0.5 text-[11px] text-zinc-500">
-          Owe-first: blocking decisions, then findings that cleared the L4
-          evidence bar, then everything else. Each row opens its full dossier —
-          the journey, the interrogation, and the verdict forms.
-        </p>
+    <div className="dossier-index-page" data-testid="dossier-index">
+      <header className="dossier-page-header">
+        <div>
+          <h1 className="dossier-page-title">Dossiers</h1>
+          <p className="dossier-page-lede">
+            Find the recorded evidence that needs human attention, then open one
+            exact source-bound record.
+          </p>
+        </div>
+        <span
+          className="dossier-source-state"
+          data-state={queueState}
+          data-testid="dossier-source-state"
+        >
+          {queueStateText}
+        </span>
       </header>
 
       {todoError &&
         (endpointMissing ? (
-          <div className="mb-3 text-xs text-amber-400" data-testid="dossier-error">
+          <div className="mb-3 text-xs text-amber-600" data-testid="dossier-error">
             /api/human_todo returned 404 — the queue is UNKNOWN, not empty.
           </div>
         ) : (
-          <div className="mb-3 text-xs text-red-400" data-testid="dossier-error">
-            {todoError}
+          <div className="mb-3 text-xs text-red-600" data-testid="dossier-error">
+            Queue refresh failed: {todoError}
           </div>
         ))}
+      {todoPartial && !todoError && (
+        <div className="mb-3 text-xs text-amber-600" data-testid="dossier-partial">
+          The queue response contained malformed records. Valid records remain
+          available below; the displayed counts are partial.
+        </div>
+      )}
 
-      {/* (1) YOU OWE */}
-      <section data-testid="dossier-owe" className="rounded border border-zinc-800 bg-zinc-900/40 p-4">
+      <div className="dossier-search" role="search">
+        <label htmlFor="dossier-search-input">Find a dossier</label>
+        <input
+          id="dossier-search-input"
+          type="search"
+          data-testid="dossier-search"
+          placeholder="Search title, topic, or exact id"
+          value={query}
+          onChange={(event) => updateQuery(event.target.value)}
+          className="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
+        />
+        <span>Live decisions stay visible; matching history opens below.</span>
+      </div>
+
+      <section data-testid="dossier-owe" className="dossier-surface p-4">
         <SectionHeader
-          title="you owe"
-          hint="gate verdicts + state gates — blocking"
+          title="Needs a decision"
+          hint="live queue · producer order"
           count={owe.length}
           testid="dossier-owe-count"
         />
-        {todoLoaded && !todoError && owe.length === 0 && (
+        {todoLoaded && !todoError && !todoPartial && owe.length === 0 && (
           <div className="mt-2 text-sm text-zinc-500" data-testid="dossier-owe-empty">
-            You owe nothing — the loop is unblocked.
+            You owe nothing listed by the current queue source. This does not
+            establish overall loop or research status.
           </div>
         )}
         {owe.length > 0 && (
           <ul className="mt-2 space-y-1.5">
             {owe.map((it) => (
-              <ItemRow key={it.id} item={it} nowMs={nowMs} />
+              <ItemRow
+                key={it.id}
+                item={it}
+                nowMs={nowMs}
+                sourceLabel="live queue"
+              />
             ))}
           </ul>
         )}
       </section>
 
-      {/* (2) CLEARED THE BAR */}
       <section
-        data-testid="dossier-cleared"
-        className="mt-3 rounded border border-zinc-800 bg-zinc-900/40 p-4"
+        data-testid="dossier-latest"
+        className="dossier-surface mt-3 p-4"
       >
         <SectionHeader
-          title="cleared the bar"
-          hint="findings at L4/L5 (D-059)"
-          count={clearedBar.length}
-          testid="dossier-cleared-count"
+          title="Latest recorded context"
+          hint="iteration history · not a live eligibility signal"
+          count={latestIteration === null ? 0 : 1}
+          testid="dossier-latest-count"
         />
-        {todoLoaded && !todoError && clearedBar.length === 0 && (
-          <div
-            className="mt-2 text-sm text-zinc-500"
-            data-testid="dossier-cleared-empty"
-          >
-            Nothing cleared L4 this week.
+        {!iterLoaded && (
+          <div className="mt-2 text-sm text-zinc-500" data-testid="dossier-latest-loading">
+            Loading recorded iteration history…
           </div>
         )}
-        {clearedBar.length > 0 && (
-          <ul className="mt-2 space-y-1.5">
-            {clearedBar.map((it) => (
-              <ItemRow key={it.id} item={it} nowMs={nowMs} />
-            ))}
+        {iterLoaded && iterError && iterRows.length === 0 && (
+          <div className="mt-2 text-sm text-red-600" data-testid="dossier-history-error">
+            Recorded iteration history is unavailable.
+          </div>
+        )}
+        {iterLoaded && iterPartial && (
+          <div
+            className="mt-2 text-sm text-amber-600"
+            data-testid="dossier-history-partial"
+          >
+            Some iteration records were malformed; this context is partial.
+          </div>
+        )}
+        {latestIteration !== null ? (
+          <ul className="mt-2">
+            <IterationRow
+              row={latestIteration}
+              testid={`dossier-latest-iter-${latestIteration.iteration_id}`}
+            />
           </ul>
+        ) : iterLoaded && !iterError && !iterPartial ? (
+          <div className="mt-2 text-sm text-zinc-500" data-testid="dossier-latest-empty">
+            {iterRows.length > 0
+              ? "No iteration has a usable recorded end time."
+              : "No recorded iterations are available from this source."}
+          </div>
+        ) : null}
+        {iterError && iterRows.length > 0 && (
+          <div className="mt-2 text-xs text-amber-600" data-testid="dossier-history-refresh-error">
+            History refresh failed; showing the last recorded response.
+          </div>
         )}
       </section>
 
-      {/* (3) EVERYTHING ELSE — searchable */}
-      <section
-        data-testid="dossier-else"
-        className="mt-3 rounded border border-zinc-800 bg-zinc-900/40 p-4"
+      <details
+        data-testid="dossier-history-browser"
+        className="dossier-history dossier-surface"
+        open={q !== "" || undefined}
       >
-        <SectionHeader
-          title="everything else"
-          hint="below-bar findings · bubbles · stale runs · resolved iterations"
-          count={visibleElse.length + visibleIters.length}
-          testid="dossier-else-count"
-        />
-        <input
-          type="text"
-          data-testid="dossier-search"
-          aria-label="search dossiers by title, topic, or id"
-          placeholder="search title, topic, or id…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="mt-2 w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-[11px] text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
-        />
-        {visibleElse.length === 0 && visibleIters.length === 0 ? (
-          <div
-            className="mt-2 text-[11px] text-zinc-500"
-            data-testid="dossier-else-empty"
-          >
-            {q !== ""
-              ? "no dossiers match — adjust the search."
-              : "nothing else pending."}
-          </div>
-        ) : (
-          <>
-            {elseCells.length > 0 && (
-              <ul className="mt-2 space-y-1.5">
-                {elseCells.map((cell) =>
-                  cell.type === "single" ? (
-                    <ItemRow key={cell.item.id} item={cell.item} nowMs={nowMs} />
-                  ) : (
-                    <ClusterRow
-                      key={cell.rep.id}
-                      rep={cell.rep}
-                      members={cell.members}
-                      expanded={expanded.has(cell.rep.id)}
-                      onToggle={() => toggleCluster(cell.rep.id)}
-                      nowMs={nowMs}
-                    />
-                  ),
-                )}
-              </ul>
-            )}
-            {visibleIters.length > 0 && (
-              <div className="mt-3" data-testid="dossier-iterations">
-                <h3 className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-                  resolved iterations
-                </h3>
-                <ul className="mt-1 space-y-1.5">
-                  {visibleIters.map((row, i) => (
-                    <IterationRow
-                      key={`${typeof row.iteration_id === "string" ? row.iteration_id : "iter"}-${i}`}
-                      row={row}
-                    />
-                  ))}
-                </ul>
+        <summary>
+          Browse history · {everythingElseItems.length + clearedBar.length + iterRows.length} recorded items
+        </summary>
+        <div className="dossier-history-body">
+          <section data-testid="dossier-cleared" className="mt-4">
+            <SectionHeader
+              title="Cleared the bar"
+              hint="recorded findings at L4/L5 (D-059)"
+              count={clearedBar.length}
+              testid="dossier-cleared-count"
+            />
+            {todoLoaded && !todoError && !todoPartial && clearedBar.length === 0 && (
+              <div className="mt-2 text-sm text-zinc-500" data-testid="dossier-cleared-empty">
+                Nothing cleared L4 this week.
               </div>
             )}
-          </>
-        )}
-      </section>
+            {clearedBar.length > 0 && (
+              <ul className="mt-2 space-y-1.5">
+                {clearedBar.map((it) => (
+                  <ItemRow key={it.id} item={it} nowMs={nowMs} sourceLabel="recorded finding" />
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="mt-4" data-testid="dossier-else">
+            <SectionHeader
+              title="All other records"
+              hint="below-bar findings · bubbles · stale runs · iterations"
+              count={visibleElse.length + visibleIters.length}
+              testid="dossier-else-count"
+            />
+            {visibleElse.length === 0 && visibleIters.length === 0 ? (
+              <div className="mt-2 text-[11px] text-zinc-500" data-testid="dossier-else-empty">
+                {q !== ""
+                  ? "no dossiers match — adjust the search."
+                  : "no other recorded dossiers are available."}
+              </div>
+            ) : (
+              <>
+                {elseCells.length > 0 && (
+                  <ul className="mt-2 space-y-1.5">
+                    {elseCells.map((cell) =>
+                      cell.type === "single" ? (
+                        <ItemRow key={cell.item.id} item={cell.item} nowMs={nowMs} />
+                      ) : (
+                        <ClusterRow
+                          key={cell.rep.id}
+                          rep={cell.rep}
+                          members={cell.members}
+                          expanded={expanded.has(cell.rep.id)}
+                          onToggle={() => toggleCluster(cell.rep.id)}
+                          nowMs={nowMs}
+                        />
+                      ),
+                    )}
+                  </ul>
+                )}
+                {visibleIters.length > 0 && (
+                  <div className="mt-4" data-testid="dossier-iterations">
+                    <h3 className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
+                      Recorded iterations
+                    </h3>
+                    <ul className="mt-2 space-y-1.5">
+                      {visibleIterationPage.map((row) => (
+                        <IterationRow key={row.iteration_id} row={row} />
+                      ))}
+                    </ul>
+                    <div className="dossier-history-progress">
+                      <span data-testid="dossier-history-progress">
+                        Showing {visibleIterationPage.length} of {visibleIters.length} matching iterations
+                      </span>
+                      {(visibleIters.length > HISTORY_PAGE_SIZE || historyLimit > HISTORY_PAGE_SIZE) && (
+                        <button
+                          type="button"
+                          data-testid="dossier-history-more"
+                          disabled={remainingIterations === 0}
+                          onClick={() =>
+                            setHistoryLimit((current) =>
+                              Math.min(current + HISTORY_PAGE_SIZE, visibleIters.length),
+                            )
+                          }
+                        >
+                          {remainingIterations > 0
+                            ? `Show next ${Math.min(HISTORY_PAGE_SIZE, remainingIterations)} · ${remainingIterations} remaining`
+                            : "All matching iterations shown"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </section>
+        </div>
+      </details>
     </div>
   );
 }

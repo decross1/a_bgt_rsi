@@ -153,13 +153,16 @@ describe("DossierIndex — honest empty states", () => {
     );
   });
 
-  it("nothing owed → the unblocked line; empty else → its own quiet line", () => {
+  it("nothing listed stays source-scoped; empty history has its own quiet line", () => {
     renderIndex([]);
     expect(screen.getByTestId("dossier-owe-empty")).toHaveTextContent(
-      /You owe nothing/,
+      /current queue source/,
+    );
+    expect(screen.getByTestId("dossier-owe-empty")).not.toHaveTextContent(
+      /loop is unblocked/i,
     );
     expect(screen.getByTestId("dossier-else-empty")).toHaveTextContent(
-      /nothing else pending/,
+      /no other recorded dossiers/i,
     );
   });
 
@@ -233,9 +236,13 @@ describe("DossierIndex — stem clustering (ported verbatim from ResolveRail)", 
 describe("DossierIndex — search (section 3)", () => {
   it("search hits one cluster member → it surfaces as a singleton (re-cluster on the narrowed set)", () => {
     renderIndex([LEGACY_FINDING_A, LEGACY_FINDING_B]);
+    expect(screen.getByLabelText("Find a dossier")).toBeInTheDocument();
     fireEvent.change(screen.getByTestId("dossier-search"), {
       target: { value: "sf-legacy-002" },
     });
+    expect(screen.getByTestId("dossier-history-browser")).toHaveAttribute(
+      "open",
+    );
     expect(screen.getByTestId("dossier-row-sf-legacy-002")).toBeInTheDocument();
     expect(screen.queryByTestId("dossier-cluster-sf-legacy-001")).toBeNull();
     expect(screen.queryByTestId("dossier-row-sf-legacy-001")).toBeNull();
@@ -286,8 +293,69 @@ describe("DossierIndex — hostile rows degrade", () => {
     ] as unknown as IterationRecord[];
     const { container } = renderIndex(hostileItems, hostileIters);
     expect(screen.getByTestId("dossier-row-iter-2026-06-14-002")).toBeInTheDocument();
+    expect(screen.getByTestId("dossier-partial")).toHaveTextContent(
+      /displayed counts are partial/i,
+    );
+    expect(screen.getByTestId("dossier-history-partial")).toBeInTheDocument();
     expect(container.innerHTML).not.toMatch(/object Object/);
     expect(errSpy).not.toHaveBeenCalled();
     errSpy.mockRestore();
+  });
+});
+
+describe("DossierIndex — compact record library", () => {
+  it("leads with live decisions and one latest context while history is collapsed", () => {
+    renderIndex([GATE, BUBBLE], [ITER_ROW]);
+    expect(screen.getByRole("heading", { name: "Dossiers" })).toBeInTheDocument();
+    expect(screen.getByTestId("dossier-source-state")).toHaveTextContent(
+      /queue source loaded/i,
+    );
+    expect(screen.getByTestId("dossier-owe")).toHaveTextContent(/live queue/i);
+    expect(
+      screen.getByTestId("dossier-latest-iter-iter-2026-06-10-001"),
+    ).toHaveTextContent("resolved history row");
+    expect(screen.getByTestId("dossier-history-browser")).not.toHaveAttribute(
+      "open",
+    );
+  });
+
+  it("keeps exact ids visible in compact decision rows", () => {
+    renderIndex([GATE]);
+    const row = screen.getByTestId(`dossier-row-${GATE.id}`);
+    expect(within(row).getByText(GATE.id)).toBeInTheDocument();
+    expect(within(row).getByText("Open dossier")).toBeInTheDocument();
+  });
+
+  it("bounds large iteration history and appends pages without losing button focus", () => {
+    const rows = Array.from({ length: 121 }, (_, index) => ({
+      ...ITER_ROW,
+      iteration_id: `iter-2026-06-${String(index + 1).padStart(3, "0")}`,
+      ended_at: new Date(Date.UTC(2026, 5, 1, 0, index)).toISOString(),
+    })) as IterationRecord[];
+    renderIndex([], rows);
+
+    expect(screen.getByTestId("dossier-history-progress")).toHaveTextContent(
+      "Showing 50 of 121 matching iterations",
+    );
+    const more = screen.getByTestId("dossier-history-more");
+    more.focus();
+    fireEvent.click(more);
+    expect(more).toHaveFocus();
+    expect(screen.getByTestId("dossier-history-progress")).toHaveTextContent(
+      "Showing 100 of 121 matching iterations",
+    );
+    fireEvent.click(more);
+    expect(more).toBeDisabled();
+    expect(more).toHaveFocus();
+    expect(screen.getByTestId("dossier-history-progress")).toHaveTextContent(
+      "Showing 121 of 121 matching iterations",
+    );
+  });
+
+  it("does not call an undated iteration the latest recorded context", () => {
+    renderIndex([], [{ ...ITER_ROW, ended_at: "not-a-date" }]);
+    expect(screen.getByTestId("dossier-latest-empty")).toHaveTextContent(
+      "No iteration has a usable recorded end time.",
+    );
   });
 });
