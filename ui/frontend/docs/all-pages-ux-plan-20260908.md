@@ -14,3 +14,11 @@ Parallel work uses separate public-based worktrees and exact route-family owners
 6. Publish a source-only PR and merge only qualified code. Verify adoption through the existing frontend process with served-source hashes and desktop/narrow flows; retain known-good source until qualified.
 
 Each family has initial implementation plus two evidence-driven corrections. The owner pass has a three-hour source ceiling and four-hour terminal ceiling, with an hour reserved for review/delivery. Missing evidence or a repeated unexplained failure holds the affected slice; no scientific or service gate is bypassed. Partial delivery must identify the pending routes.
+
+## Final release scope — September 8, 2026
+
+The release is limited to navigation, Operations, the Dossier library and reader, Calls, and a channel API read-state helper. Operations shows one selected source context and exposes existing human reviews through an explicit destination. Dossiers preserve search, evidence and human confirmations while bounding the initial list and clearing form state when the record changes. Calls preserves loaded thread turns while exposing selected record context and distinguishing malformed or retained data from current results.
+
+Now, Channel, the experiment catalog/detail pair, and the cycle/graph/request-detail redesigns remain held. Their production sources were restored to the public baseline after review found unresolved truth, contrast, keyboard or narrow-layout defects within the bounded work. Those candidates and failure evidence are retained privately. The Research/Ladder sources remain frozen. This is a partial delivery, not completion of the all-pages redesign.
+
+Validation uses private fixtures and blocked external transport. Component tests do not prove backend adoption, runtime availability, scientific progress, Windows-native behavior or screen-reader compatibility. Current source, exact validation and browser receipts govern release; historical passing subsets do not waive a later failure.
