@@ -1,4 +1,4 @@
-// OweCard — Pulse's HERO, redesigned (owner ask 2026-08-18: the owed queue
+// OweCard — Pulse's recorded-request lane (owner ask 2026-08-18: the owed queue
 // was "REALLY verbose", mixed 70-day-old fossils with live asks, and never
 // said what an approval actually DOES; second pass same day: "the text and
 // font is all over the place" — the full hypothesis + stats blob rendered as
@@ -44,7 +44,7 @@ import RungGlyph from "../design/RungGlyph";
 import StatusDot from "../design/StatusDot";
 import "../design/primitives.css";
 import { getHumanTodo } from "../api/http";
-import { usePolled } from "../api/pollhub";
+import { usePollAsOf, usePolled } from "../api/pollhub";
 import { ageLabel, clearsLadderBar, evidenceLevelOf } from "../ladderBar";
 import { useNow } from "../time";
 import type { HumanTodoItem, HumanTodoResponse } from "../types/schemas";
@@ -241,22 +241,40 @@ interface Props {
   // Test seam for the age chips: pins the clock when provided; otherwise the
   // LiveAge leaves self-tick every 30 s (frozen-age fix, 2026-08-18).
   nowMs?: number;
+  // Pulse controls the queue disclosure so hash and command-palette journeys
+  // can reveal the exact same list without a second fetch.
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
-function OweCard({ initial, pollMs = 30000, nowMs }: Props) {
+function OweCard({
+  initial,
+  pollMs = 30000,
+  nowMs,
+  expanded,
+  onExpandedChange,
+}: Props) {
   const poll = usePolled<HumanTodoResponse>("human_todo", getHumanTodo, {
     intervalMs: pollMs,
     enabled: initial === undefined,
   });
+  const pollAsOf = usePollAsOf("human_todo");
+  // Fixture-backed component tests historically expose the rows immediately;
+  // Pulse supplies the controlled collapsed state for the real route.
+  const [localExpanded, setLocalExpanded] = useState(initial !== undefined);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   // WHY THE TAG is collapsed by default (the triage_reason runs long); the
   // resolve command collapses to one line, expanding on click.
   const [whyOpen, setWhyOpen] = useState<Record<string, boolean>>({});
   const [cmdOpen, setCmdOpen] = useState<Record<string, boolean>>({});
 
-  const items: HumanTodoItem[] =
-    initial ?? (Array.isArray(poll.data?.items) ? poll.data.items : []);
+  const rawItems: unknown = initial ?? poll.data?.items;
   const loaded = initial !== undefined || poll.data !== undefined;
+  const itemsShapeValid = Array.isArray(rawItems);
+  const items: HumanTodoItem[] = itemsShapeValid
+    ? (rawItems as HumanTodoItem[])
+    : [];
+  const sourceMalformed = loaded && !itemsShapeValid;
   const error =
     poll.failing && poll.data === undefined && initial === undefined
       ? String(poll.error)
@@ -268,91 +286,238 @@ function OweCard({ initial, pollMs = 30000, nowMs }: Props) {
     (it): it is HumanTodoItem =>
       typeof it === "object" && it !== null && !Array.isArray(it),
   );
+  const malformedRows = items.length - rows.length;
   const owedRows = rows.filter(owed);
   const belowBar = rows.filter(
     (it) => asText(it.kind) === "finding_review" && !clearsLadderBar(it),
   ).length;
+
+  const unclassifiedRows = rows.filter((item) => {
+    const kind = asText(item.kind);
+    return !isBlockingKind(kind) && kind !== "finding_review";
+  }).length;
+  const likelySuperseded = owedRows.filter(
+    (item) => asText(item.triage) === "likely_superseded",
+  ).length;
+  const parseableSince = owedRows
+    .map((item) => asText(item.since))
+    .filter((iso): iso is string => iso != null && !Number.isNaN(Date.parse(iso)));
+  const oldestSince = parseableSince.reduce<string | null>((oldest, iso) => {
+    if (oldest == null || Date.parse(iso) < Date.parse(oldest)) return iso;
+    return oldest;
+  }, null);
+  const unknownAges = owedRows.length - parseableSince.length;
+  const listExpanded = expanded ?? localExpanded;
+  const setListExpanded = (next: boolean) => {
+    if (expanded === undefined) setLocalExpanded(next);
+    onExpandedChange?.(next);
+  };
+  const countUnknown =
+    error !== null ||
+    !loaded ||
+    staleFailing ||
+    sourceMalformed ||
+    (malformedRows > 0 && owedRows.length === 0);
+  const countLabel = countUnknown
+    ? "unknown"
+    : malformedRows > 0
+      ? `${owedRows.length}+`
+      : String(owedRows.length);
+  const summaryHeadline = error
+    ? "Request source unavailable — attention state unknown."
+    : !loaded
+      ? "Reading the recorded-request source…"
+      : staleFailing
+        ? "Request refresh is failing — current attention state unknown; retained records remain available."
+      : sourceMalformed
+        ? "Request source malformed — attention state unknown."
+        : owedRows.length > 0
+          ? `${owedRows.length} recorded request${owedRows.length === 1 ? " requires" : "s require"} review before action.`
+          : malformedRows > 0
+            ? "Unreadable request records prevent a complete attention count."
+            : "No request records meet this view's attention boundary in this read.";
 
   const endpointMissing = error !== null && /\b404\b/.test(error);
 
   return (
     <section
       data-testid="owe-strip"
-      style={{
-        background: "var(--surface-1)",
-        border: "1px solid var(--border-1)",
-        borderRadius: "var(--radius-card)",
-        padding: "var(--space-5)",
-      }}
+      className="now-lane now-attention-lane"
     >
-      <header
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          gap: "var(--space-3)",
-          marginBottom: "var(--space-4)",
-        }}
-      >
-        <h2
-          style={{
-            margin: 0,
-            fontSize: "var(--text-title-lg)",
-            fontWeight: "var(--weight-semibold)",
-            color: "var(--fg)",
-          }}
-        >
-          What you owe
-        </h2>
-        <span style={{ fontSize: "var(--text-meta)", color: "var(--fg-muted)" }}>
-          gate verdicts, blocking state gates + findings that cleared L4 ·
-          expand a row for what approving means
-        </span>
-        <span
-          data-testid="owe-count"
-          className="tnum"
-          style={{
-            marginLeft: "auto",
-            fontSize: "var(--text-title-lg)",
-            fontWeight: "var(--weight-semibold)",
-            color: owedRows.length > 0 ? "var(--status-warn)" : "var(--fg-muted)",
-          }}
-        >
-          {owedRows.length}
-        </span>
+      <header className="now-lane__label">
+        <p className="now-lane__eyebrow">Human boundary</p>
+        <h3>Recorded requests</h3>
+        <span className="now-lane__source">/api/human_todo</span>
       </header>
+
+      <div className="now-lane__body">
+        <div className="flex flex-wrap items-baseline gap-3">
+          <p className="now-lane__headline" data-testid="owe-summary">
+            {summaryHeadline}
+          </p>
+          <span
+            data-testid="owe-count"
+            className="tnum"
+            style={{
+              marginLeft: "auto",
+              fontSize: "var(--text-title)",
+              fontWeight: "var(--weight-semibold)",
+              color:
+                countUnknown || owedRows.length > 0
+                  ? "var(--status-warn)"
+                  : "var(--fg-muted)",
+            }}
+          >
+            {countLabel}
+          </span>
+        </div>
+        <p className="now-lane__qualifier">
+          Age and triage come from recorded metadata. They do not establish a
+          current obligation, eligibility, or approval.
+        </p>
+
+        <div className="now-lane__meta" data-testid="owe-source-summary">
+          <span>
+            {initial !== undefined ? (
+              "fixture source snapshot"
+            ) : pollAsOf != null ? (
+              <>
+                source read{" "}
+                <LiveAge
+                  iso={new Date(pollAsOf).toISOString()}
+                  nowMs={nowMs}
+                />{" "}
+                ago
+              </>
+            ) : loaded ? (
+              "source read time unknown"
+            ) : (
+              "source read pending"
+            )}
+          </span>
+          {likelySuperseded > 0 && (
+            <span>{likelySuperseded} tagged likely superseded</span>
+          )}
+          {oldestSince && (
+            <span>
+              oldest recorded wait{" "}
+              <LiveAge iso={oldestSince} nowMs={nowMs} />
+            </span>
+          )}
+          {unknownAges > 0 && (
+            <span>
+              {unknownAges} request age{unknownAges === 1 ? "" : "s"} unknown
+            </span>
+          )}
+        </div>
 
       {error &&
         (endpointMissing ? (
           <div
             data-testid="owe-error"
-            style={{ ...bodyStyle, color: "var(--status-warn)" }}
+            className="now-read-warning mt-3 text-sm"
           >
-            /api/human_todo returned 404 — the queue is UNKNOWN, not empty.
+            /api/human_todo returned 404 — recorded requests are UNKNOWN, not
+            empty.
           </div>
         ) : (
           <div
             data-testid="owe-error"
-            style={{ ...bodyStyle, color: "var(--status-bad)" }}
+            className="now-read-warning mt-3 text-sm"
           >
-            {error}
+            Request source read failed: {error}
           </div>
         ))}
 
-      {loaded && !error && owedRows.length === 0 && (
-        <div
-          data-testid="owe-empty"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "var(--space-3)",
-            fontSize: "var(--text-prose-lg)",
-            color: "var(--fg)",
-          }}
+        {sourceMalformed && !error && (
+          <div
+            data-testid="owe-malformed"
+            className="now-read-warning mt-3 text-sm"
+          >
+            /api/human_todo returned a non-array items field; no zero or cleared
+            state can be inferred.
+          </div>
+        )}
+
+        {malformedRows > 0 && (
+          <div
+            data-testid="owe-malformed-rows"
+            className="now-read-warning mt-3 text-sm"
+          >
+            {malformedRows} unreadable request record
+            {malformedRows === 1 ? "" : "s"} omitted; the displayed count is
+            incomplete.
+          </div>
+        )}
+
+        {staleFailing && (
+          <div
+            data-testid="owe-stale"
+            className="now-read-warning mt-3 text-sm"
+          >
+            refresh failing — showing the recorded source as of{" "}
+            {poll.asOf != null ? (
+              <>
+                <LiveAge
+                  iso={new Date(poll.asOf).toISOString()}
+                  nowMs={nowMs}
+                />{" "}
+                ago
+              </>
+            ) : (
+              "an unknown age"
+            )}
+          </div>
+        )}
+
+        <details
+          data-testid="pulse-human-requests"
+          open={listExpanded}
+          onToggle={(event) => setListExpanded(event.currentTarget.open)}
         >
-          <StatusDot status="ok" label="unblocked" />
-          Nothing owed — the loop is unblocked.
-        </div>
-      )}
+          <summary className="now-action-summary">
+            Review recorded requests
+          </summary>
+          <div className="now-request-list">
+            <p>
+              Review each record and its date before acting. Older records stay
+              visible; this view does not clear or reclassify them.
+            </p>
+
+            {loaded &&
+              !error &&
+              !sourceMalformed &&
+              malformedRows === 0 &&
+              owedRows.length === 0 && (
+                <div
+                  data-testid="owe-empty"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "var(--space-3)",
+                    fontSize: "var(--text-prose-lg)",
+                    color: "var(--fg)",
+                  }}
+                >
+                  <StatusDot
+                    status="idle"
+                    label="no recorded requests in this view"
+                  />
+                  No request records meet this view&apos;s attention boundary in
+                  this read.
+                </div>
+              )}
+
+            {unclassifiedRows > 0 && (
+              <div
+                data-testid="owe-unclassified"
+                className="now-read-warning mb-3 text-sm"
+              >
+                {unclassifiedRows} source record
+                {unclassifiedRows === 1 ? "" : "s"} use an unclassified kind and
+                are not counted as attention requests.
+              </div>
+            )}
 
       {owedRows.length > 0 && (
         <ul
@@ -698,27 +863,9 @@ function OweCard({ initial, pollMs = 30000, nowMs }: Props) {
           </Link>
         </div>
       )}
-
-      {staleFailing && (
-        <div
-          data-testid="owe-stale"
-          style={{
-            marginTop: "var(--space-3)",
-            fontSize: "var(--text-meta)",
-            color: "var(--status-warn)",
-          }}
-        >
-          refresh failing — showing the queue as of{" "}
-          {poll.asOf != null ? (
-            <>
-              <LiveAge iso={new Date(poll.asOf).toISOString()} nowMs={nowMs} />{" "}
-              ago
-            </>
-          ) : (
-            "an unknown age"
-          )}
-        </div>
-      )}
+          </div>
+        </details>
+      </div>
     </section>
   );
 }

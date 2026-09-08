@@ -376,10 +376,16 @@ describe("OweCard (typography polish 2026-08-18)", () => {
     expect(write).toHaveBeenCalledWith(OLD_SUPERSEDED.resolve_command);
   });
 
-  it("the header line names everything that renders (state gates included)", () => {
+  it("qualifies request records as source metadata, not current obligations", () => {
     renderCard([]);
-    expect(screen.getByTestId("owe-strip").textContent).toContain(
-      "gate verdicts, blocking state gates + findings that cleared L4",
+    expect(screen.getByTestId("owe-strip")).toHaveTextContent(
+      "Age and triage come from recorded metadata",
+    );
+    expect(screen.getByTestId("owe-strip")).toHaveTextContent(
+      "They do not establish a current obligation, eligibility, or approval",
+    );
+    expect(screen.getByTestId("owe-strip")).toHaveTextContent(
+      "/api/human_todo",
     );
   });
 });
@@ -399,15 +405,24 @@ describe("OweCard (inherited OweStrip pins)", () => {
     );
   });
 
-  it("empty owed queue is the designed, honest empty state", () => {
+  it("a valid empty read stays bounded to this view and never claims unblocked", () => {
     renderCard([]);
     expect(screen.getByTestId("owe-empty")).toHaveTextContent(
-      "Nothing owed — the loop is unblocked.",
+      "No request records meet this view's attention boundary in this read.",
     );
+    expect(screen.getByTestId("owe-strip")).not.toHaveTextContent(/unblocked/i);
   });
 
   it("malformed rows degrade (non-object entries dropped, never a crash)", () => {
     renderCard([null, 42, ["array-row"], FRESH_VALID] as unknown as HumanTodoItem[]);
     expect(screen.getByTestId("owe-count")).toHaveTextContent("1");
+  });
+
+  it("malformed-only rows never become a zero or cleared request state", () => {
+    renderCard([null, 42] as unknown as HumanTodoItem[]);
+    expect(screen.getByTestId("owe-count")).toHaveTextContent("unknown");
+    expect(screen.getByTestId("owe-malformed-rows")).toBeInTheDocument();
+    expect(screen.queryByTestId("owe-empty")).toBeNull();
+    expect(screen.getByTestId("owe-strip")).not.toHaveTextContent(/unblocked/i);
   });
 });
