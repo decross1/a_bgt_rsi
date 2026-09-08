@@ -503,12 +503,23 @@ export default function DossierIndex({
       }),
     [iterRows, q],
   );
-  const elseCells = useMemo(() => buildCells(visibleElse), [visibleElse]);
-  const visibleIterationPage = visibleIters.slice(0, historyLimit);
-  const remainingIterations = Math.max(
-    0,
-    visibleIters.length - visibleIterationPage.length,
-  );
+  // One bound governs the complete archive in its rendered order: L4/L5
+  // findings, other queue records, then iterations. Search has already run,
+  // so an exact-id match remains reachable while every archive representation
+  // stays inside the same progressive page.
+  const historyTotal =
+    visibleCleared.length + visibleElse.length + visibleIters.length;
+  const visibleClearedPage = visibleCleared.slice(0, historyLimit);
+  const afterCleared = Math.max(0, historyLimit - visibleClearedPage.length);
+  const visibleElsePage = visibleElse.slice(0, afterCleared);
+  const afterElse = Math.max(0, afterCleared - visibleElsePage.length);
+  const visibleIterationPage = visibleIters.slice(0, afterElse);
+  const visibleHistoryCount =
+    visibleClearedPage.length +
+    visibleElsePage.length +
+    visibleIterationPage.length;
+  const remainingHistory = Math.max(0, historyTotal - visibleHistoryCount);
+  const elseCells = buildCells(visibleElsePage);
   const latestIteration = useMemo(() => {
     return iterRows.reduce<IterationRecord | null>((latest, row) => {
       const rowTime = Date.parse(asText(row.ended_at) ?? "");
@@ -577,7 +588,7 @@ export default function DossierIndex({
 
       {todoError &&
         (endpointMissing ? (
-          <div className="mb-3 text-xs text-amber-600" data-testid="dossier-error">
+          <div className="dossier-integrity-message mb-3 text-xs" data-testid="dossier-error">
             /api/human_todo returned 404 — the queue is UNKNOWN, not empty.
           </div>
         ) : (
@@ -586,7 +597,7 @@ export default function DossierIndex({
           </div>
         ))}
       {todoPartial && !todoError && (
-        <div className="mb-3 text-xs text-amber-600" data-testid="dossier-partial">
+        <div className="dossier-integrity-message mb-3 text-xs" data-testid="dossier-partial">
           The queue response contained malformed records. Valid records remain
           available below; the displayed counts are partial.
         </div>
@@ -655,7 +666,7 @@ export default function DossierIndex({
         )}
         {iterLoaded && iterPartial && (
           <div
-            className="mt-2 text-sm text-amber-600"
+            className="dossier-integrity-message mt-2 text-sm"
             data-testid="dossier-history-partial"
           >
             Some iteration records were malformed; this context is partial.
@@ -676,7 +687,7 @@ export default function DossierIndex({
           </div>
         ) : null}
         {iterError && iterRows.length > 0 && (
-          <div className="mt-2 text-xs text-amber-600" data-testid="dossier-history-refresh-error">
+          <div className="dossier-integrity-message mt-2 text-xs" data-testid="dossier-history-refresh-error">
             History refresh failed; showing the last recorded response.
           </div>
         )}
@@ -703,9 +714,9 @@ export default function DossierIndex({
                 No L4/L5 findings are listed in the loaded queue source.
               </div>
             )}
-            {visibleCleared.length > 0 && (
+            {visibleClearedPage.length > 0 && (
               <ul className="mt-2 space-y-1.5">
-                {visibleCleared.map((it) => (
+                {visibleClearedPage.map((it) => (
                   <ItemRow key={it.id} item={it} nowMs={nowMs} sourceLabel="recorded finding" />
                 ))}
               </ul>
@@ -745,7 +756,7 @@ export default function DossierIndex({
                     )}
                   </ul>
                 )}
-                {visibleIters.length > 0 && (
+                {visibleIterationPage.length > 0 && (
                   <div className="mt-4" data-testid="dossier-iterations">
                     <h3 className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
                       Recorded iterations
@@ -755,27 +766,30 @@ export default function DossierIndex({
                         <IterationRow key={row.iteration_id} row={row} />
                       ))}
                     </ul>
-                    <div className="dossier-history-progress">
-                      <span data-testid="dossier-history-progress">
-                        Showing {visibleIterationPage.length} of {visibleIters.length} matching iterations
-                      </span>
-                      {(visibleIters.length > HISTORY_PAGE_SIZE || historyLimit > HISTORY_PAGE_SIZE) && (
-                        <button
-                          type="button"
-                          data-testid="dossier-history-more"
-                          disabled={remainingIterations === 0}
-                          onClick={() =>
-                            setHistoryLimit((current) =>
-                              Math.min(current + HISTORY_PAGE_SIZE, visibleIters.length),
-                            )
-                          }
-                        >
-                          {remainingIterations > 0
-                            ? `Show next ${Math.min(HISTORY_PAGE_SIZE, remainingIterations)} · ${remainingIterations} remaining`
-                            : "All matching iterations shown"}
-                        </button>
-                      )}
-                    </div>
+                  </div>
+                )}
+                {historyTotal > 0 && (
+                  <div className="dossier-history-progress">
+                    <span data-testid="dossier-history-progress">
+                      Showing {visibleHistoryCount} of {historyTotal} matching records
+                    </span>
+                    {(historyTotal > HISTORY_PAGE_SIZE ||
+                      historyLimit > HISTORY_PAGE_SIZE) && (
+                      <button
+                        type="button"
+                        data-testid="dossier-history-more"
+                        disabled={remainingHistory === 0}
+                        onClick={() =>
+                          setHistoryLimit((current) =>
+                            Math.min(current + HISTORY_PAGE_SIZE, historyTotal),
+                          )
+                        }
+                      >
+                        {remainingHistory > 0
+                          ? `Show next ${Math.min(HISTORY_PAGE_SIZE, remainingHistory)} · ${remainingHistory} remaining`
+                          : "All matching records shown"}
+                      </button>
+                    )}
                   </div>
                 )}
               </>

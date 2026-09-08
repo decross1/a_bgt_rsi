@@ -21,7 +21,7 @@
 // letting presence AND absence be asserted by id.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 
 import DossierReader from "../src/routes/DossierReader";
 import { AVAILABILITY_LIVE, AVAILABILITY_STUB } from "../src/fixtures/todo";
@@ -111,6 +111,21 @@ function renderReader(
         />
       </Routes>
     </MemoryRouter>,
+  );
+}
+
+function RouteTransitionHarness({ items }: { items: HumanTodoItem[] }) {
+  const navigate = useNavigate();
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => navigate("/dossier/sf-2026-06-14-002")}
+      >
+        Open second finding
+      </button>
+      <DossierReader availability={AVAILABILITY_LIVE} items={items} />
+    </>
   );
 }
 
@@ -437,6 +452,50 @@ describe("DossierReader — capability wiring (lifted from Todo.tsx)", () => {
     await revealInterrogation();
     expect(screen.getByTestId("tutor-chat-send")).toBeDisabled();
     expect(screen.getByTestId("two-voice-send")).toBeDisabled();
+  });
+});
+
+describe("DossierReader — route identity isolation", () => {
+  it("remounts the whole reader when the route id changes so action state stays with its target", async () => {
+    const secondFinding: HumanTodoItem = {
+      ...FINDING_REVIEW_ITEM,
+      id: "sf-2026-06-14-002",
+      title: "Finding: a distinct second target",
+    };
+    render(
+      <MemoryRouter initialEntries={[`/dossier/${FINDING_REVIEW_ITEM.id}`]}>
+        <Routes>
+          <Route
+            path="/dossier/:id"
+            element={
+              <RouteTransitionHarness
+                items={[FINDING_REVIEW_ITEM, secondFinding]}
+              />
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const firstBoundary = screen.getByTestId("resolution-forms");
+    const note = await screen.findByLabelText(/finding review note/i);
+    fireEvent.change(note, { target: { value: "note belongs only to finding one" } });
+    const directive = screen.getByLabelText(/sign-off directive/i);
+    fireEvent.change(directive, { target: { value: "proceed only from finding one" } });
+    fireEvent.click(screen.getByRole("button", { name: /sign off with directive/i }));
+    await screen.findByTestId("directive-signoff-result");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open second finding" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("dossier-header")).toHaveTextContent(
+        secondFinding.id,
+      ),
+    );
+
+    expect(screen.getByTestId("resolution-forms")).not.toBe(firstBoundary);
+    expect(screen.getByLabelText(/finding review note/i)).toHaveValue("");
+    expect(screen.getByLabelText(/sign-off directive/i)).toHaveValue("");
+    expect(screen.queryByTestId("directive-signoff-result")).toBeNull();
   });
 });
 
