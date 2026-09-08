@@ -156,8 +156,12 @@ function renderLadder(props: Parameters<typeof Ladder>[0] = {}) {
       <Ladder {...props} />
     </MemoryRouter>,
   );
+  // The retained data browser is deliberately behind disclosure; exercise its real control.
+  const disclosure = screen.queryByTestId("research-records-disclosure");
+  if (disclosure) fireEvent.click(within(disclosure).getByText("Records and sources"));
   // These inherited tests exercise the retained board/table, now explicitly selected.
-  fireEvent.click(screen.getByTestId("ladder-view-board"));
+  const board = screen.queryByTestId("ladder-view-board");
+  if (board) fireEvent.click(board);
   return result;
 }
 
@@ -438,6 +442,7 @@ describe("/ladder command palette verbs", () => {
         <Ladder initial={FIXTURE} />
       </MemoryRouter>,
     );
+    fireEvent.click(screen.getByText("Records and sources"));
     fireEvent.click(screen.getByTestId("ladder-view-board"));
     fireEvent.keyDown(window, { key: "k", metaKey: true });
     const palette = screen.getByTestId("command-palette");
@@ -692,7 +697,9 @@ describe("/ladder honest degraded states", () => {
     expect(screen.queryByText("0 recorded clusters")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Retry sources" }));
-    await waitFor(() => expect(screen.getByText("6 recorded clusters")).toBeVisible());
+    await screen.findByTestId("research-records-disclosure");
+    fireEvent.click(screen.getByText("Records and sources"));
+    expect(screen.getByText("6 recorded clusters")).toBeVisible();
     expect(screen.queryByTestId("ladder-error")).not.toBeInTheDocument();
   });
 
@@ -760,7 +767,9 @@ describe("/ladder honest degraded states", () => {
     expect(screen.queryByTestId("ladder-error")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Refresh sources" }));
-    await waitFor(() => expect(screen.getByText("6 recorded clusters")).toBeVisible());
+    await screen.findByTestId("research-records-disclosure");
+    fireEvent.click(screen.getByText("Records and sources"));
+    expect(screen.getByText("6 recorded clusters")).toBeVisible();
     expect(screen.queryByTestId("ladder-error")).not.toBeInTheDocument();
     expect(mocks.getLadder).toHaveBeenCalledTimes(6);
     expect(responses).toHaveLength(0);
@@ -789,7 +798,9 @@ describe("/ladder honest degraded states", () => {
 
     renderLadder();
 
-    await waitFor(() => expect(screen.getByText("1 recorded clusters")).toBeVisible());
+    await screen.findByTestId("research-records-disclosure");
+    fireEvent.click(screen.getByText("Records and sources"));
+    expect(screen.getByText("1 recorded clusters")).toBeVisible();
     expect(screen.getByTestId("ladder-unrung-note")).toHaveTextContent(
       "1 cluster carry no evidence level",
     );
@@ -833,5 +844,25 @@ describe("collection-first command palette", () => {
     invoke("toggle graveyard");
     expect(screen.getByTestId("ladder-view-board")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("ladder-card-cl-b")).toBeVisible();
+  });
+});
+
+
+describe("focused Research workspace", () => {
+  it("leads with one canvas and discloses retained counts, filters and views", () => {
+    render(<MemoryRouter><Ladder initial={FIXTURE} /></MemoryRouter>);
+    expect(screen.getByTestId("research-canvas")).toBeVisible();
+    const disclosure = screen.getByTestId("research-records-disclosure");
+    expect(disclosure).not.toHaveAttribute("open");
+    expect(screen.getByTestId("ladder-counts-header")).not.toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Record status" })).toBeNull();
+    fireEvent.click(within(disclosure).getByText("Records and sources"));
+    expect(screen.getByTestId("ladder-counts-header")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Record status" })).toBeVisible();
+    fireEvent.click(screen.getByTestId("ladder-view-table"));
+    expect(screen.getByTestId("ladder-row-cl-b")).toHaveTextContent("a killed idea");
+    fireEvent.click(within(disclosure).getByText("Records and sources"));
+    expect(screen.getByTestId("research-canvas")).toBeVisible();
+    expect(screen.getByTestId("ladder-table")).not.toBeVisible();
   });
 });
