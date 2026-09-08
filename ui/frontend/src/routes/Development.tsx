@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import FrontierReviews from "../components/FrontierReviews";
 import "./development.css";
@@ -36,6 +36,10 @@ export default function Development() {
   const location = useLocation();
   const navigate = useNavigate();
   const [reviewPaused, setReviewPaused] = useState(false);
+  const reviewHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (location.hash === "#frontier-reviews") reviewHeading.current?.focus();
+  }, [location.hash]);
   const selected = location.hash === "#runtime-evidence" ? "runtime"
     : ["#research-evidence", "#frontier-reviews"].includes(location.hash) ? "science" : "engineering";
   const select = (hash: string) => navigate({ pathname: location.pathname, search: location.search, hash });
@@ -157,6 +161,7 @@ export default function Development() {
       </Card>
       </div>
       <div id="research-evidence" hidden={selected !== "science"}>
+      <div hidden={location.hash === "#frontier-reviews"}>
       <Card title="Scientific evidence / agenda" testId="development-science">
         <p className="text-sm">Ladder positions are recorded classifications, not revalidated experiment eligibility. Engineering commits do not promote research.</p>
         {sources.ladder.data ? <>
@@ -203,14 +208,17 @@ export default function Development() {
         <p className="mt-3 text-sm">The frontier feed reads review and proposal ledgers, not Codex handoffs. No new entry is fabricated when engineering ships.</p>
         <a href="#frontier-reviews" className="mt-3 block text-[var(--accent)]" onClick={(event) => { event.preventDefault(); select("#frontier-reviews"); }}>Review suggestions and human ruling controls →</a>
       </Card>
+      </div>
       <section id="frontier-reviews" aria-label="Human review controls" className="mt-4">
         {location.hash === "#frontier-reviews" && <>
           <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-            <h2 className="text-lg font-semibold">Human review controls</h2>
+            <h2 ref={reviewHeading} tabIndex={-1} className="text-lg font-semibold">Human review controls</h2>
             <button type="button" aria-pressed={reviewPaused} onClick={() => setReviewPaused((value) => !value)} className="rounded border border-[var(--border-1)] px-3 py-2 text-sm">
               {reviewPaused ? "Resume review updates" : "Pause review updates"}
             </button>
           </div>
+          <p className="mb-3 text-sm text-[var(--fg-muted)]">Inspect the exact suggestion and its source before deciding. Recorded history alone does not authorize a ruling.</p>
+          <button type="button" className="mb-4 text-sm text-[var(--accent)]" onClick={() => select("#research-evidence")}>Read scientific source inventory</button>
           <FrontierReviews paused={reviewPaused} initialDelayMs={0} />
         </>}
       </section>

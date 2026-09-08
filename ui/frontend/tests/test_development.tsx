@@ -351,6 +351,8 @@ it("opens the existing guarded review only on its explicit deep link and allows 
   expect(screen.queryByRole("button", { name: "Pause review updates" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("link", { name: "Open human review controls" }));
   expect(window.location.hash).toBe("#frontier-reviews");
+  expect(screen.getByTestId("development-science")).not.toBeVisible();
+  expect(screen.getByRole("heading", { name: "Human review controls" })).toHaveFocus();
   expect(screen.getByRole("region", { name: "Human review controls" })).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Pause review updates" }));
   expect(screen.getByRole("button", { name: "Resume review updates" })).toHaveAttribute("aria-pressed", "true");
