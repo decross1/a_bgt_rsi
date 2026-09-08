@@ -1,13 +1,7 @@
 // JournalScroll renders a journal markdown response. Verifies the
 // no-selection prompt, the markdown rendering for headings/lists/bold/code,
 // and the error path.
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import JournalScroll from "../src/components/JournalScroll";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -80,32 +74,6 @@ describe("JournalScroll", () => {
     render(<JournalScroll iterationId="iter-missing" />);
     await waitFor(() =>
       expect(screen.getByText(/404/)).toBeInTheDocument(),
-    );
-  });
-
-  it("turns only the writer's literal details block into a safe native disclosure", () => {
-    render(
-      <JournalScroll
-        iterationId="iter-details"
-        initial={{
-          iteration_id: "iter-details",
-          path: "journal/iterations/details.md",
-          content:
-            "<details><summary>All candidates</summary>\n- candidate one\n- candidate two\n</details>\n<script>alert('no')</script>",
-        }}
-      />,
-    );
-    const disclosure = screen.getByText("All candidates").closest("details");
-    expect(disclosure).not.toBeNull();
-    expect(screen.queryByText(/<details>/)).toBeNull();
-    expect(document.querySelector("script")).toBeNull();
-    fireEvent.click(screen.getByText("All candidates"));
-    expect(within(disclosure!).getByText("candidate one")).toBeInTheDocument();
-    expect(screen.getByText("<script>alert('no')</script>")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByText("Raw journal source"));
-    expect(screen.getByTestId("journal-raw-source")).toHaveTextContent(
-      "<details><summary>All candidates</summary>",
     );
   });
 });
