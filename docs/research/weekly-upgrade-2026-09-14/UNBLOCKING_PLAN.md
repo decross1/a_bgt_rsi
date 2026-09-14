@@ -5,6 +5,12 @@ or a production change decision. The owner has authorized repository work.
 Older handoff questions do not prevent code, tests, isolated diagnostics, or
 Git/PR delivery within that scope.
 
+**Owner decisions, 2026-09-14:** keep game theory and correct generated topics;
+use subscription-only frontier sessions and design for at most **120 Spark
+GPU-minutes per week**. Neither answer activates calls or scheduling. The
+[implementation runbook](../../weekly_upgrade_implementation.md#owner-decisions-recorded-2026-09-14)
+defines the proposed shared accounting and its current implementation limits.
+
 ## The immediate blocker begins in topic selection
 
 The subsequent [topic-starvation audit](topic_starvation_audit.md) traced all
@@ -24,7 +30,10 @@ can distinguish bad retrieval, a bad
 topicality judgment, and a mismatch between generated topics and the declared
 research scope. All 89 recent primary topicality responses parsed as `off`;
 the sampled recent topics concern collaborative ML while the gate expects
-game theory. The owner has been asked which scope is intended. A
+game theory. The owner has now confirmed game theory: correct upstream
+topic selection/generation, including its mistaken assumption that suggested
+paper titles have already been vetted. Retain the D-075 social-choice
+extension, but do not expand the gate to general collaborative ML. A
 counterfactual eligibility increase is not evidence that
 the newly admitted claims are scientifically sound. Blindly demoting that gate
 would trade an observed traffic problem for an unmeasured validity problem.
@@ -36,11 +45,13 @@ would trade an observed traffic problem for an unmeasured validity problem.
 | Stable regression baseline | Public-artifact reconstructions and explicit-source path fixes added | Original scientific rows/aggregates and real hash-seed checks pass; no ignored raw stores are published; full integrated suite has no failures |
 | Active Qwen builder label | Default corrected to registry Qwen3.8; explicit override retained | Canned endpoint verifies default and both override paths |
 | Repeated machine-mined topic | Queue lifecycle and attribution fixes implemented; frozen replay removes all four handled entries | Consumed machine entries cannot recur; failed dispatches remain retryable; human follow-ups keep their semantics; observe the next deployed cycle |
+| Generated-topic scope | Owner confirmed game theory; planner/hypothesis prompt corrections implemented, effect unmeasured | Paired generation on frozen on-domain, off-domain and camouflage cases; independent scope review, unchanged R0, diversity and failure-inclusive completion/time |
 | Repeated frontier veto reviews | Opt-in cache implemented; production use remains off | Exact unchanged review reuses a complete veto; evidence, prompt, implementation, provider identity, TTL changes invalidate; outages stay uncached |
 | Dormant skeptic diagnosis | R0 blockade located by recorded inputs | Reproducible read-only audit, then isolated paired replay with output/log paths checked before model calls |
 | Role policy benefit | Profiles and paired runner implemented; benefit unmeasured | Frozen task outcomes, failure-inclusive completion/time metrics and repeated trials; broader confirmation before role changes |
 | Weekly research/review | Manual bounded Codex proposal and Claude adversary implemented | Validated report, literal source binding and receipts; rejected reports remain rejected |
 | Weekly experiment execution | Separate evaluator exists; automatic dispatch missing | Controller admits only typed supported experiments, records budget before dispatch, uses fixed commands, survives interruption without duplicate work |
+| Weekly budget | Subscription-only / 120 Spark GPU-minutes design ceiling settled; shared enforcement missing | Atomic weekly reservation/usage/release, interruption accounting and resource coordination across all trials/reviews |
 | Broader benchmark coverage | Public development canaries exist | Independent repository coding tasks, scientific tasks and held-out evidence/context tasks with objective graders and provenance |
 | Scheduled operation | New schedule not activated | Exact schedule, resource budget/coordination, stop control, trial-only runbook and successful manual end-to-end cycle |
 | Challenger runtime | Unqualified | Exact weights/digest/launch configuration, reserved memory slot, same-policy comparison, both-model regressions and tested restore command |
@@ -51,10 +62,26 @@ would trade an observed traffic problem for an unmeasured validity problem.
 **Queue repair first.** Verify the deterministic lifecycle and attribution
 tests, then observe whether the next ordinary cycle chooses a different topic.
 Do not hand-consume scientific agenda items or manufacture a successful cycle.
-The owner scope question does not block this operational bug fix.
+The owner scope answer preserves the scientific gate while this operational
+fix removes stale machine topics from selection.
+
+**Generated topics next.** Correct planner/generator instructions so raw paper
+titles are not treated as scope-vetted or inherently human-authored. Favor
+questions with real players, actions, incentives and testable strategic or
+collective-choice outcomes. Mere use of “cooperation” or “equilibrium” is not a
+pass. Freeze positive, negative and vocabulary-camouflage examples before any
+paired call; compare semantic scope, usefulness/diversity and total time, not
+only the fraction passing R0. A prompt correction is not measured evidence of
+better science. Preserve the input titles and downstream rejection receipts.
+The [40-minute diagnostic design](../../../experiments/PREREG_topic_scope_repair_2026-09-14.md)
+defines eight development topics (including the observed failing seed) and four
+planner-state cases. Its model calls remain
+unexecuted; subjective scope grading needs independent annotations.
 
 **R0 diagnostic if needed.** Follow the audit's frozen-record selection and compare
-the current predicate with the existing advisory counterfactual. Add independent
+the current predicate with independent domain annotations. The existing advisory
+counterfactual remains diagnostic only; the owner selected topic correction,
+not demotion of R0. Add independent
 review of whether each evidence packet actually fits its question. The
 diagnostic may produce fewer or more eligible candidates; neither direction is
 intrinsically a win. Keep the original evidence and critic outputs for paired
@@ -69,6 +96,10 @@ sampling, output caps, request deadlines and task inputs. These are six public
 development templates repeated three times, not a replacement for the older
 skeptic sentinel study or a hidden confirmation panel. The pilot can justify
 a larger trial; it cannot promote a policy.
+Its 112.5-minute reservation replaces that week's panel, leaving at most
+7.5 minutes for other charged work. Defer it when that cannot cover overhead
+and already-used time; do not quietly shorten only one arm or run it on top of
+the regular panel. Keep this study behind the topic-scope diagnostic.
 
 Run local calls in a known idle window. An endpoint's zero queue is a snapshot,
 not a resource reservation. The current runner has per-request deadlines but
@@ -91,6 +122,10 @@ subprocess deadline, and a durable terminal status. Resume reads the journal;
 an uncertain interrupted call is charged and investigated before repetition.
 Start with inference-policy trials against the existing endpoints. Add context
 and runtime trials only after their resource and restoration checks exist.
+Reserve from one shared 120-minute UTC ISO-week balance, not the controller's
+per-card ceiling. Count failures, retries, warmups and GPU-using preflight;
+subscription review has no paid fallback. These are implementation requirements,
+not claims that the current manual commands enforce a weekly cap.
 
 The first scheduled cycle should scan, review, and execute an admitted bounded
 trial, then produce a measured decision. Ordinary code fixes can be prepared,
