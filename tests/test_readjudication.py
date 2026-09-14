@@ -40,6 +40,36 @@ from bench.readjudication import driver
 
 MANIFEST_PATH = REPO_ROOT / "bench" / "readjudication" / "manifest.jsonl"
 OLD_PROMPT_PATH = REPO_ROOT / "bench" / "readjudication" / "old_prompt.txt"
+FROZEN_ROOT = REPO_ROOT / "tests" / "fixtures" / "weekly_upgrade_baseline"
+sys.path.insert(0, str(FROZEN_ROOT))
+import weekly_upgrade_baseline_reconstruct as reconstruction  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def frozen_inputs(tmp_path_factory) -> dict[str, Path]:
+    """Materialize the minimal public reconstruction in a temporary tree."""
+    root = tmp_path_factory.mktemp("readjudication-lock-inputs")
+    built = reconstruction.materialize_readjudication(REPO_ROOT, root)
+    provenance = json.loads((FROZEN_ROOT / "provenance.json").read_text())
+    for relative, expected_sha in provenance["public_artifact_inputs"].items():
+        assert reconstruction.file_sha256(REPO_ROOT / relative) == expected_sha
+    expected = provenance["derived_reconstruction"]["readjudication"]
+    assert built["idea_ledger_sha256"] == expected["idea_ledger_sha256"]
+    assert built["loop_memory_sha256"] == expected["loop_memory_sha256"]
+    return {
+        "loop_memory": built["loop_memory"],
+        "idea_ledger": built["idea_ledger"],
+    }
+
+
+def _build_frozen(frozen_inputs, **overrides):
+    paths = {
+        "ledger_path": frozen_inputs["idea_ledger"],
+        "loop_memory_path": frozen_inputs["loop_memory"],
+        "fixtures_path": bm.DEFAULT_FIXTURES,
+    }
+    paths.update(overrides)
+    return bm.build(**paths)
 
 
 # ── helpers ─────────────────────────────────────────────────────────
@@ -76,17 +106,20 @@ def _arm_rows(good_verdicts, bad_verdicts, target_verdicts=()):
 # ── manifest: determinism ───────────────────────────────────────────
 
 @pytest.mark.parametrize("seed", [0, 1, 17, 2026])
-def test_manifest_is_byte_identical_under_shuffled_inputs(tmp_path, seed):
+def test_manifest_is_byte_identical_under_shuffled_inputs(
+        tmp_path, seed, frozen_inputs):
     """Input LINE ORDER must not reach the output. loop_memory is read into
     a dict keyed by iteration_id and fixtures are re-sorted before the
     order key is applied, so a shuffle changes only the source shas."""
-    lm = _shuffle_lines(REPO_ROOT / "memory" / "loop_memory.jsonl",
+    lm = _shuffle_lines(frozen_inputs["loop_memory"],
                         tmp_path / "loop_memory.jsonl", seed)
     fx = _shuffle_lines(REPO_ROOT / "bench" / "redteam_cal" / "fixtures.jsonl",
                         tmp_path / "fixtures.jsonl", seed + 1000)
 
-    meta_a, rows_a = bm.build()
-    meta_b, rows_b = bm.build(loop_memory_path=lm, fixtures_path=fx)
+    meta_a, rows_a = _build_frozen(frozen_inputs)
+    meta_b, rows_b = _build_frozen(
+        frozen_inputs, loop_memory_path=lm, fixtures_path=fx
+    )
 
     assert [json.dumps(r, sort_keys=True) for r in rows_a] == \
            [json.dumps(r, sort_keys=True) for r in rows_b]
@@ -95,11 +128,12 @@ def test_manifest_is_byte_identical_under_shuffled_inputs(tmp_path, seed):
            {k: v for k, v in meta_b.items() if k not in volatile}
 
 
-def test_manifest_is_byte_identical_under_shuffled_ledger_blocks(tmp_path):
+def test_manifest_is_byte_identical_under_shuffled_ledger_blocks(
+        tmp_path, frozen_inputs):
     """Ledger EVENT order matters to the reducer only WITHIN a cluster.
     Shuffling whole per-cluster blocks (order preserved inside each) must
     not move a single manifest row."""
-    src = REPO_ROOT / "memory" / "idea_ledger.jsonl"
+    src = frozen_inputs["idea_ledger"]
     blocks: dict = {}
     order: list = []
     for line in src.read_text().splitlines():
@@ -115,26 +149,38 @@ def test_manifest_is_byte_identical_under_shuffled_ledger_blocks(tmp_path):
     shuffled.write_text(
         "\n".join(ln for cid in order for ln in blocks[cid]) + "\n")
 
-    _, rows_a = bm.build()
-    _, rows_b = bm.build(ledger_path=shuffled)
+    _, rows_a = _build_frozen(frozen_inputs)
+    _, rows_b = _build_frozen(frozen_inputs, ledger_path=shuffled)
     assert [r["row_id"] for r in rows_a] == [r["row_id"] for r in rows_b]
     assert [json.dumps(r, sort_keys=True) for r in rows_a] == \
            [json.dumps(r, sort_keys=True) for r in rows_b]
 
 
 @pytest.mark.parametrize("hashseed", ["0", "1", "12345"])
-def test_manifest_has_no_hash_seed_dependence(tmp_path, hashseed):
+def test_manifest_has_no_hash_seed_dependence(tmp_path, hashseed, frozen_inputs):
     """A real subprocess per seed — PYTHONHASHSEED only takes effect at
     interpreter start, so an in-process check would prove nothing."""
     out = tmp_path / f"m{hashseed}.jsonl"
     env = dict(os.environ, PYTHONHASHSEED=hashseed, MOCK_LLM="1")
     res = subprocess.run(
         [sys.executable, "-m", "bench.readjudication.build_manifest",
+         "--ledger", str(frozen_inputs["idea_ledger"]),
+         "--loop-memory", str(frozen_inputs["loop_memory"]),
+         "--fixtures", str(bm.DEFAULT_FIXTURES),
          "--out", str(out)],
         cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=300,
     )
     assert res.returncode == 0, res.stderr
-    assert out.read_bytes() == MANIFEST_PATH.read_bytes()
+    generated_meta, generated_rows = bm.load_manifest(out)
+    locked_meta, locked_rows = bm.load_manifest(MANIFEST_PATH)
+    # Paths and source hashes differ because this is a bounded derivation from
+    # the public lock artifacts. Every scientific row and all other metadata
+    # remain exact.
+    for key in ("ledger_path", "ledger_sha256", "loop_memory_sha256"):
+        generated_meta.pop(key)
+        locked_meta.pop(key)
+    assert generated_meta == locked_meta
+    assert generated_rows == locked_rows
 
 
 def test_order_key_is_sha256_of_utf8_row_id():

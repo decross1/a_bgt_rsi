@@ -84,6 +84,8 @@ def _no_live_artifacts(tmp_path, monkeypatch):
                         tmp_path / "idea_ledger.jsonl")
     monkeypatch.setattr(finding_promotion, "DEFAULT_IDEA_LEDGER",
                         tmp_path / "idea_ledger.jsonl")
+    monkeypatch.setattr(finding_promotion, "DEFAULT_FRONTIER_SCREEN_CACHE",
+                        tmp_path / "frontier_screen_cache")
     monkeypatch.setattr(nara, "DEFAULT_IDEA_LEDGER",
                         tmp_path / "idea_ledger.jsonl")
     monkeypatch.setattr(nara, "_DEFAULT_LOG_PATH",

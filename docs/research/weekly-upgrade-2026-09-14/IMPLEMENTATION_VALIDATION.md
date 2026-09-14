@@ -5,6 +5,65 @@ The code was developed in an isolated worktree based on Claude's committed
 handoff `654a055`. Delivery excludes unrelated local-main commits and dirty
 maintenance/session files.
 
+## Unblock tranche: current validation
+
+The later unblock tranche resolves all seven historical failures with minimal
+reconstruction inputs derived from already-committed study artifacts. Exact
+scientific rows, aggregate results and numerical expectations are retained;
+real subprocess hash-seed checks still reconstruct the studies. Unrelated
+population/membership records are explicitly synthetic. Derived hashes are
+distinguished from the original ignored-store pins in
+[fixture provenance](../../../tests/fixtures/weekly_upgrade_baseline/provenance.json).
+The full raw ledger/cache bundles were removed before any commit. Historical
+counts below describe the earlier delivery, before this repair.
+
+This work also fixed two explicit-input defects: critic manifest metadata
+hashed a global source instead of the supplied path, and the audit's cluster
+reconstruction reread global loop memory. Both now use the explicit caller
+input; dedicated regressions point the global path at a missing file.
+
+The full integrated suite now reports **2,692 passed, zero failed, 1 skipped,
+2 xpassed**, plus 68 passing subtests. See
+[validation receipt](unblock_validation.json). The two xpasses are inherited
+expected-failure markers whose tests pass. Public reconstruction and explicit
+source-path checks passed 137 tests; independent cache/promotion review passed
+39 tests; coordinator/frontier integration checks passed 97 tests.
+Shell syntax and scoped diff checks passed.
+
+A fresh `env -u MOCK_LLM` compatibility smoke against the existing Qwen3.8
+endpoint returned exactly `{"sum":2}` using the thinking-off profile. See
+[isolated call record](unblock_qwen_compatibility_smoke.jsonl). Both queues were
+empty at preflight, with approximately 41.5 GiB MemAvailable. This verifies
+request compatibility; the preregistered effort pilot has not run.
+
+Independent review found and fixed cache expiry, provider/transport identity,
+role-routing, and state-directory issues. The cache stays off by default and
+requires declared provider epochs; these are operator attestations, not
+verified immutable server revisions. See
+[operation and rollback](frontier_cache_operation.md). No new live frontier
+calls or cache activation occurred in this tranche.
+
+The [read-only readiness replay](skeptic_readiness_report.json) reproduced
+the upstream R0 blockade: 59 recent completed iterations, zero clean-survives
+candidates eligible for the skeptic. Counterfactual gate demotion does not
+establish scientific validity. Follow the
+[completion tracker](UNBLOCKING_PLAN.md) for the remaining experiments,
+automatic trial dispatch and eventual activation work.
+
+The subsequent [topic-starvation audit](topic_starvation_audit.md) located the
+upstream cause: 60 coordinator research dispatches repeatedly chose one stale
+machine-mined follow-up whose agenda copy had already been consumed. The code
+now omits exact handled machine topics using existing consumed-agenda or
+unambiguous successful-dispatch receipts. Human follow-ups and failed or
+ambiguous dispatches remain eligible. Finalized loop memory alone is not
+treated as proof of success. Topic-source logging follows the selected topic.
+
+The root's [frozen queue replay](topic_queue_repair_replay.json) independently
+removed all four handled machine entries while preserving the recorded arXiv
+suggestion. No model, picker, or canonical-state mutation occurred in that
+replay. This verifies selection behavior, not a completed post-deployment
+scientific iteration or a model-performance gain.
+
 ## Test baseline
 
 The original `654a055` checkout, with frozen copies of the same existing local

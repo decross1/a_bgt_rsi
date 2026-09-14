@@ -54,6 +54,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOOP_MEMORY = REPO_ROOT / "memory" / "loop_memory.jsonl"
 DEFAULT_FEEDBACK = REPO_ROOT / "memory" / "loop_feedback.jsonl"
 DEFAULT_SURFACED = REPO_ROOT / "memory" / "surfaced_findings.jsonl"
+DEFAULT_FRONTIER_SCREEN_CACHE = REPO_ROOT / "run_state" / "frontier_screen_cache"
 SCHEMA_PATH = REPO_ROOT / "schema" / "surfaced_finding.schema.json"
 
 _SCHEMA = json.loads(SCHEMA_PATH.read_text())
@@ -72,6 +73,25 @@ def _frontier_screen_enabled() -> bool:
     evidence ladder, D-059: the vote is now the L3->L4 rung, neither a binary
     gate nor a non-gating advisory.)"""
     return os.environ.get("NARA_FRONTIER_SCREEN") == "1"
+
+
+def _frontier_screen_cache_enabled() -> bool:
+    """Duplicate-veto suppression is a separate, opt-in scientific policy.
+
+    The frontier gate can therefore remain enabled while every screen stays
+    fresh. Only an exact ``1`` activates cache reads/writes.
+    """
+    return os.environ.get("NARA_FRONTIER_SCREEN_CACHE") == "1"
+
+
+def _frontier_screen_cache_ttl() -> str:
+    """Raw TTL for explicit validation by frontier_screen_cache.
+
+    Invalid and over-seven-day values bypass the cache while preserving the
+    fresh fail-open frontier screen.
+    """
+    from workers.frontier_screen_cache import DEFAULT_TTL_S
+    return os.environ.get("NARA_FRONTIER_SCREEN_CACHE_TTL_S", str(DEFAULT_TTL_S))
 
 
 def _max_candidates_override(max_candidates: int | None) -> int | None:
@@ -530,6 +550,7 @@ def promote_findings(
         "near_misses": [{"source_iteration_id", "reason", "stage"}, ...],
         "skipped_already_surfaced": int,
         "qwen_failures": int,        # summed across all voted candidates
+        "frontier_cache_hits": int,  # exact completed vetoes reused
         "errors": [str, ...],
     }
     ```
@@ -645,25 +666,46 @@ def _promote_findings(
     # A veto is an attention filter, not evidence: it removes the candidate
     # from this pass with both reviews attached; survivors carry the reviews
     # as an annotation. Inconclusive/outage NEVER blocks (fail-open seam).
+    # Exact completed veto reuse is independently opt-in and bounded to <=7d.
     frontier_reviews: dict[str, dict[str, Any]] = {}
+    frontier_cache_hits = 0
     if _frontier_screen_enabled() and survivors:
-        from agent_wrapper.frontier_cli import invoke_frontier
+        from agent_wrapper import frontier_cli
         from workers.frontier_review import screen_candidate
+        cache_config: dict[str, Any] | None = None
+        if _frontier_screen_cache_enabled():
+            try:
+                from workers.frontier_screen_cache import requested_provider_config
+                cache_config = requested_provider_config(frontier_cli)
+            except Exception as exc:
+                errors.append(f"frontier cache bypassed (fail-open): {exc}")
         still: list[dict[str, Any]] = []
         for row in survivors:
             iid = row["iteration_id"]
+            candidate = {
+                "iteration_id": iid, "claim": _claim_text(row),
+                "novelty": _sub(row, "novelty"),
+                "critique": _sub(row, "critique"),
+                "experiment_outcome": _sub(row, "experiment_outcome") or None,
+            }
             try:
-                screen = screen_candidate(
-                    {"iteration_id": iid, "claim": _claim_text(row),
-                     "novelty": _sub(row, "novelty"),
-                     "critique": _sub(row, "critique"),
-                     "experiment_outcome": _sub(row, "experiment_outcome") or None},
-                    invoke_frontier,
-                )
+                if cache_config is None:
+                    screen = screen_candidate(candidate, frontier_cli.invoke_frontier)
+                else:
+                    from workers.frontier_screen_cache import screen_candidate_cached
+                    screen = screen_candidate_cached(
+                        candidate,
+                        frontier_cli.invoke_frontier,
+                        cache_dir=DEFAULT_FRONTIER_SCREEN_CACHE,
+                        requested_config=cache_config,
+                        ttl_s=_frontier_screen_cache_ttl(),
+                    )
             except Exception as exc:  # outage = no veto, logged, never a block
                 errors.append(f"{iid}: frontier screen error (fail-open): {exc}")
                 still.append(row)
                 continue
+            if (screen.get("cache") or {}).get("hit") is True:
+                frontier_cache_hits += 1
             if screen.get("verdict") == "veto":
                 basis = ((screen.get("methods") or {}).get("reasoning")
                          or (screen.get("novelty") or {}).get("reasoning")
@@ -826,6 +868,7 @@ def _promote_findings(
         "near_misses": near_misses,
         "skipped_already_surfaced": skipped_already_surfaced,
         "qwen_failures": total_qwen_failures,
+        "frontier_cache_hits": frontier_cache_hits,
         "errors": errors,
     }
 

@@ -1,0 +1,28 @@
+{
+  "command": "MOCK_LLM=1 .venv-chroma/bin/python -m pytest -q tests --junitxml=/tmp/weekly-unblock-final-tests.xml",
+  "baseline_commit": "c165ea2720498fb693d806df4b97f819c8e3320a",
+  "scope": "final integrated unblock tranche, including public reconstruction and queue fixes; no model calls in pytest",
+  "passed": 2692,
+  "failed": 0,
+  "skipped": 1,
+  "xpassed": 2,
+  "subtests_passed": 68,
+  "junit_sha256": "dbb27ad8f32bc45714ae1702f85e30735cebc0c0f6b053a63cc9a20e4a067441",
+  "junit_suites": [
+    {
+      "name": "pytest",
+      "errors": "0",
+      "failures": "0",
+      "skipped": "1",
+      "tests": "2763",
+      "time": "34.952",
+      "timestamp": "2026-09-14T05:19:50.624253+00:00",
+      "hostname": "spark-7eeb"
+    }
+  ],
+  "summary": "2692 passed, 1 skipped, 2 xpassed, 15 warnings, 68 subtests passed in 35.02s",
+  "live_smoke": "unblock_qwen_compatibility_smoke.jsonl",
+  "quality_gain_established": false,
+  "queue_replay": "topic_queue_repair_replay.json",
+  "private_raw_bundles_published": false
+}

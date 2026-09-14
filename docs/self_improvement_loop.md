@@ -143,7 +143,7 @@ git branch -D pkt/PKT-SELF-<slug>      # on abandonment only
 | `PKT_TEST_CMD` | **operator** | no | the acceptance `test_cmd`. Fallback: `tasks/packets/<PKT_TASK_ID>.json` in the worktree. Absent ⇒ loud warning, advisory run skipped |
 | `PKT_ACCEPTANCE_TEST` | operator | no | extra read-only file to show the model; otherwise any existing path named in the `test_cmd` is used |
 | `QWEN_ENDPOINT` | operator | no | default `http://127.0.0.1:8001/v1/chat/completions`; **the test-injection seam** |
-| `QWEN_MODEL` | operator | no | default `qwen3.6-27b-nvfp4-mtp` |
+| `QWEN_MODEL` | operator | no | explicit builder override; otherwise inherits `VLLM_QWEN_MODEL`, then defaults to the registry's `qwen3.8-27b-nvfp4-mtp` |
 | `QWEN_TEMPERATURE` / `QWEN_MAX_TOKENS` / `QWEN_TIMEOUT_SEC` | operator | no | `0.2` / `6144` / `600` |
 | `QWEN_PROMPT_CHAR_CAP` | operator | no | `20000`; file bodies over budget are head-truncated and marked |
 | `QWEN_PYTHON` | operator | no | `python3` (stdlib only — the worktree has no relative `.venv-chroma`) |

@@ -19,6 +19,16 @@ The owner directed Codex to proceed and use both reviews as evidence.
   Codex proposal, Claude adversarial review, validated experiment card and journal.
 - A bounded subscription CLI transport separate from the scientific frontier
   transport, with receipt reservation, time limits, output limits, and no tools.
+- Frozen reconstruction inputs for the older calibration studies, a builder
+  model-default drift fix, a read-only skeptic-readiness audit, and an opt-in
+  cache for exact completed frontier vetoes.
+- Suppression of already-handled machine follow-up topics using existing
+  consumption/dispatch receipts, plus correct planned-topic source attribution.
+
+The [completion tracker](research/weekly-upgrade-2026-09-14/UNBLOCKING_PLAN.md)
+separates delivered code from remaining experiments and activation. Its first
+priority is the stale topic queue feeding the observed R0 blockade upstream of Qwen;
+the paired effort pilot remains a separate, preregistered development test.
 
 The implementation does not activate a schedule, execute an analyst's proposed
 commands, change the scientific frontier policy, restart serving, swap a role,

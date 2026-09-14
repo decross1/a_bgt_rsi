@@ -36,7 +36,8 @@
 #                          the test_cmd is used.
 # ENV -- builder knobs (defaults shown):
 #   QWEN_ENDPOINT=http://127.0.0.1:8001/v1/chat/completions   (test seam)
-#   QWEN_MODEL=qwen3.6-27b-nvfp4-mtp   QWEN_TEMPERATURE=0.2
+#   QWEN_MODEL=${VLLM_QWEN_MODEL:-qwen3.8-27b-nvfp4-mtp}
+#   QWEN_TEMPERATURE=0.2
 #   QWEN_MAX_TOKENS=6144   QWEN_TIMEOUT_SEC=600   QWEN_PROMPT_CHAR_CAP=20000
 #     Those two defaults are sized to the SERVED window, measured 2026-08-15:
 #     vllm-qwen runs --max-model-len 16384 and vLLM returns HTTP 400 (it does
@@ -57,7 +58,10 @@ log() { printf '[%s] qwen_builder: %s\n' "$(ts)" "$*"; }
 die() { printf '[%s] qwen_builder: FATAL %s\n' "$(ts)" "$*" >&2; exit 1; }
 
 QWEN_ENDPOINT="${QWEN_ENDPOINT:-http://127.0.0.1:8001/v1/chat/completions}"
-QWEN_MODEL="${QWEN_MODEL:-qwen3.6-27b-nvfp4-mtp}"
+# Match the vllm-qwen registry's active-model override when the builder does
+# not have its own explicit override.  QWEN_MODEL remains highest precedence
+# because a packet evaluation may deliberately target a challenger model.
+QWEN_MODEL="${QWEN_MODEL:-${VLLM_QWEN_MODEL:-qwen3.8-27b-nvfp4-mtp}}"
 QWEN_TEMPERATURE="${QWEN_TEMPERATURE:-0.2}"
 QWEN_MAX_TOKENS="${QWEN_MAX_TOKENS:-6144}"
 QWEN_TIMEOUT_SEC="${QWEN_TIMEOUT_SEC:-600}"

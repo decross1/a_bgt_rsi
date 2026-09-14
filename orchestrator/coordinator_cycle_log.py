@@ -305,11 +305,22 @@ def cycle_row_from_report(
         topic_source = suggestions[0].get("source")
     # Prefer the topic the plan actually ran, if a run_loop_iteration is present
     # (the planner is told to use the suggestion verbatim, but trust the plan).
+    # Source must follow that same topic. Keeping suggestion[0]'s source after
+    # replacing its topic made valid non-first selections look misrouted.
     for step in plan:
         if isinstance(step, dict) and step.get("name") == "run_loop_iteration":
             arg_topic = (step.get("args") or {}).get("topic")
             if isinstance(arg_topic, str) and arg_topic:
                 topic = arg_topic
+                topic_source = None
+                if isinstance(suggestions, list):
+                    matches = [
+                        sg for sg in suggestions
+                        if isinstance(sg, dict) and sg.get("topic") == arg_topic
+                    ]
+                    sources = [sg.get("source") for sg in matches]
+                    if sources and all(source == sources[0] for source in sources):
+                        topic_source = sources[0]
             break
 
     plan_rows: list[dict[str, Any]] = []

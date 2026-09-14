@@ -371,8 +371,20 @@ def _pick(pool: list[dict], n: int) -> list[dict]:
     return ranked[:n]
 
 
-def resolve(loop_memory: list[dict]) -> tuple[list[dict], dict]:
-    """Returns (fixtures, build_meta). Refuses loudly on any drift."""
+def resolve(
+    loop_memory: list[dict],
+    *,
+    loop_memory_path: Path | None = None,
+) -> tuple[list[dict], dict]:
+    """Returns (fixtures, build_meta). Refuses loudly on any drift.
+
+    ``loop_memory_path`` identifies the bytes represented by ``loop_memory``
+    for provenance.  The optional form keeps existing direct callers working,
+    while :func:`build` always supplies its explicit source path.
+    """
+    source_path = (
+        LOOP_MEMORY_PATH if loop_memory_path is None else loop_memory_path
+    )
     exclusions: list[dict] = []
     usable: list[dict] = []
     for row in loop_memory:
@@ -461,7 +473,7 @@ def resolve(loop_memory: list[dict]) -> tuple[list[dict], dict]:
         "model_calls_made": 0,
         "retrieval_calls_made": 0,
         "loop_memory_sha256": hashlib.sha256(
-            LOOP_MEMORY_PATH.read_bytes()).hexdigest(),
+            source_path.read_bytes()).hexdigest(),
         "loop_memory_rows": len(loop_memory),
         "n_usable": len(usable),
         "cache_namespace": CACHE_NAMESPACE,
@@ -554,7 +566,9 @@ def serialize(fixtures: list[dict]) -> str:
 
 
 def build(loop_memory_path: Path = LOOP_MEMORY_PATH) -> tuple[list[dict], dict]:
-    return resolve(_read_jsonl(loop_memory_path))
+    return resolve(
+        _read_jsonl(loop_memory_path), loop_memory_path=loop_memory_path
+    )
 
 
 def load_manifest(path: Path = MANIFEST_PATH) -> list[dict]:

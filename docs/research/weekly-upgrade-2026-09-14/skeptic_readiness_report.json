@@ -1,0 +1,63 @@
+{
+  "calls": {
+    "backend_counts": {
+      "vllm-gemma": 959
+    },
+    "qwen_attributed_calls": 0,
+    "skeptic_tagged_calls": 0,
+    "wrapper_calls": 959
+  },
+  "captured_at": "2026-09-14T04:52:47.204265Z",
+  "implementation_sha256": {
+    "tools/audit_skeptic_readiness.py": "080478c075ce37c44e89ffd06797d90668cfe704ada14f03bbcc2aa9c64522aa",
+    "workers/retrieval_relevance.py": "7866dd655e4952594fb3cf89b18287dbdb429a51d0b50e11da599693f07ea931"
+  },
+  "loop": {
+    "completed_rows": 59,
+    "current_clean_survives_eligible": 0,
+    "r0_advisory_replay": {
+      "rows_replayed": 59,
+      "state_counts": {
+        "ok|low=false": 59
+      },
+      "stored_raw_survives_now_clean": 14
+    },
+    "raw_survives_overridden": 14,
+    "rows_with_qwen38_skeptic_verdict": 0,
+    "rows_with_skeptic_verdict": 0,
+    "stored_relevance_counts": {
+      "off_domain|low=true": 59
+    },
+    "verdict_counts": {
+      "restated": 5,
+      "undecidable": 54
+    }
+  },
+  "quality_benchmark": false,
+  "read_only": true,
+  "report_type": "skeptic_route_readiness",
+  "sources": {
+    "calls": {
+      "captured_size_bytes": 104128119,
+      "invalid_or_nonobject_rows": 0,
+      "json_object_rows": 8123,
+      "mtime_utc": "2026-09-14T04:02:02.072808Z",
+      "opened_size_bytes": 104128119,
+      "path": "/home/decross1/projects/a_bgt_rsi/logs/calls.jsonl",
+      "sha256": "9356d32696023d4b68581ac3bf63439c59eaf0556a2222ccc9fc4c5b4922e51b"
+    },
+    "loop_memory": {
+      "captured_size_bytes": 8538736,
+      "invalid_or_nonobject_rows": 0,
+      "json_object_rows": 366,
+      "mtime_utc": "2026-09-14T04:02:02.075808Z",
+      "opened_size_bytes": 8538736,
+      "path": "/home/decross1/projects/a_bgt_rsi/memory/loop_memory.jsonl",
+      "sha256": "920bcee938672310327d9f29a93a65598d663c1bd59f1966e7b3484599e5b167"
+    }
+  },
+  "window": {
+    "since_inclusive": "2026-09-07T00:00:00Z",
+    "until_inclusive": "2026-09-14T04:44:00Z"
+  }
+}

@@ -1,0 +1,178 @@
+{
+  "schema_version": "weekly-upgrade-eval-manifest/v1",
+  "suite_id": "weekly-qwen-effort-pilot-20260914-seed29",
+  "description": "Preregistered development pilot: Qwen xhigh versus medium under equal 6144-token and 180-second request budgets. Six public task templates, not hidden confirmation or a production skeptic benchmark. See experiments/PREREG_weekly_qwen_effort_pilot_2026-09-14.md.",
+  "bootstrap_seed": 90210,
+  "bootstrap_samples": 4000,
+  "ordering": "alternating_ab_ba",
+  "source_snapshot": {
+    "path": "bench/weekly_upgrade_eval/fixtures.json",
+    "sha256": "b6c78b403fae9288497b480778479a7578c3588923daa73309c1ef7dd2d5ce13"
+  },
+  "arms": [
+    {
+      "id": "A",
+      "label": "Qwen current critic policy",
+      "backend": "vllm-qwen",
+      "profile": "critic_current",
+      "model": "qwen3.8-27b-nvfp4-mtp",
+      "max_tokens": 6144,
+      "request_timeout_s": 180,
+      "seed": 29
+    },
+    {
+      "id": "B",
+      "label": "Qwen medium-effort critic policy",
+      "backend": "vllm-qwen",
+      "profile": "critic_medium",
+      "model": "qwen3.8-27b-nvfp4-mtp",
+      "max_tokens": 6144,
+      "request_timeout_s": 180,
+      "seed": 29
+    }
+  ],
+  "tasks": [
+    {
+      "id": "tool_experiment_lookup",
+      "family": "tool",
+      "mode": "tools",
+      "system": "Use exactly the relevant supplied tool, then return one JSON object and no prose.",
+      "prompt": "Retrieve the observed mean cooperation rate for experiment exp-042. Return {\"mean_cooperation\":number}.",
+      "tools": [
+        {
+          "name": "lookup_experiment",
+          "description": "Retrieve a registered experiment summary by experiment_id.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "experiment_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "experiment_id"
+            ],
+            "additionalProperties": false
+          },
+          "expected_arguments": {
+            "experiment_id": "exp-042"
+          },
+          "result": {
+            "experiment_id": "exp-042",
+            "mean_cooperation": 0.37,
+            "n_groups": 24
+          }
+        },
+        {
+          "name": "lookup_paper",
+          "description": "Retrieve bibliographic metadata by paper_id.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "paper_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "paper_id"
+            ],
+            "additionalProperties": false
+          },
+          "expected_arguments": {
+            "paper_id": "exp-042"
+          },
+          "result": {
+            "paper_id": "exp-042",
+            "reported_rate": 0.91
+          }
+        }
+      ],
+      "grader": {
+        "kind": "tool_semantics",
+        "absolute_tolerance": 1e-06,
+        "expected": {
+          "tool_name": "lookup_experiment",
+          "arguments": {
+            "experiment_id": "exp-042"
+          },
+          "answer": {
+            "mean_cooperation": 0.37
+          }
+        }
+      }
+    },
+    {
+      "id": "evidence_attrition",
+      "family": "evidence",
+      "mode": "chat",
+      "system": "Use only the evidence packet. Return one JSON object and no prose. Citations must be exact document IDs from the packet.",
+      "prompt": "Evidence packet:\n[D1] Thirty groups were randomized to baseline or a peer-punishment condition. Among observed final-round groups, mean contribution was 4.1 versus 6.8.\n[D2] Four punishment groups with low interim contributions dropped out before the final round; no baseline groups dropped out, and their final outcomes are unknown.\nQuestion: Does this packet identify a causal increase in final-round contribution? Return {\"answer_code\":\"causal_increase_identified_or_causal_increase_not_identified_or_insufficient_outcome_data\",\"citations\":[document IDs used]}.",
+      "grader": {
+        "kind": "evidence_attribution",
+        "expected": {
+          "answer_code": "causal_increase_not_identified",
+          "citations": [
+            "D1",
+            "D2"
+          ]
+        }
+      }
+    },
+    {
+      "id": "critic_proceed_fixable",
+      "family": "critic",
+      "mode": "chat",
+      "system": "Classify a game-theory hypothesis. fatal_flaw means no reasonable design can rescue the claim as stated; proceed includes testable or fixable claims. Return one JSON object and no prose.",
+      "prompt": "Claim: Punishment institutions cause higher public-goods contributions. The motivating dataset compares communities that selected their own institutions, so preferences may confound the association; a reasonable follow-up could randomize institution assignment. Return {\"verdict\":\"fatal_flaw_or_proceed\",\"reason_code\":\"contradicts_dominance_or_theorem_consistent_testable_or_circular_definition_or_fixable_identification\"}.",
+      "grader": {
+        "kind": "critic_classification",
+        "expected": {
+          "verdict": "proceed",
+          "reason_code": "fixable_identification"
+        }
+      }
+    },
+    {
+      "id": "critic_proceed_theorem",
+      "family": "critic",
+      "mode": "chat",
+      "system": "Classify a game-theory hypothesis. fatal_flaw means no reasonable design can rescue the claim as stated; proceed includes testable or fixable claims. Return one JSON object and no prose.",
+      "prompt": "Claim: In an indefinitely repeated Prisoner's Dilemma with T=5,R=3,P=1,S=0 and continuation probability delta=0.9, a grim-trigger strategy profile can sustain cooperation as a subgame-perfect equilibrium. Return {\"verdict\":\"fatal_flaw_or_proceed\",\"reason_code\":\"contradicts_dominance_or_theorem_consistent_testable_or_circular_definition_or_fixable_identification\"}.",
+      "grader": {
+        "kind": "critic_classification",
+        "expected": {
+          "verdict": "proceed",
+          "reason_code": "theorem_consistent_testable"
+        }
+      }
+    },
+    {
+      "id": "critic_fatal_circular",
+      "family": "critic",
+      "mode": "chat",
+      "system": "Classify a game-theory hypothesis. fatal_flaw means no reasonable design can rescue the claim as stated; proceed includes testable or fixable claims. Return one JSON object and no prose.",
+      "prompt": "Claim: Cooperation increases when agents become more cooperative, where 'become more cooperative' is defined solely as choosing cooperation more often. Return {\"verdict\":\"fatal_flaw_or_proceed\",\"reason_code\":\"contradicts_dominance_or_theorem_consistent_testable_or_circular_definition_or_fixable_identification\"}.",
+      "grader": {
+        "kind": "critic_classification",
+        "expected": {
+          "verdict": "fatal_flaw",
+          "reason_code": "circular_definition"
+        }
+      }
+    },
+    {
+      "id": "critic_fatal_dominance",
+      "family": "critic",
+      "mode": "chat",
+      "system": "Classify a game-theory hypothesis. fatal_flaw means no reasonable design can rescue the claim as stated; proceed includes testable or fixable claims. Return one JSON object and no prose.",
+      "prompt": "Claim: In every standard one-shot Prisoner's Dilemma satisfying T>R>P>S, mutual cooperation is the unique Nash equilibrium because cooperation strictly dominates defection. Return {\"verdict\":\"fatal_flaw_or_proceed\",\"reason_code\":\"contradicts_dominance_or_theorem_consistent_testable_or_circular_definition_or_fixable_identification\"}.",
+      "grader": {
+        "kind": "critic_classification",
+        "expected": {
+          "verdict": "fatal_flaw",
+          "reason_code": "contradicts_dominance"
+        }
+      }
+    }
+  ]
+}
