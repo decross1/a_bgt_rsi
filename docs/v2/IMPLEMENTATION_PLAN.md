@@ -2,7 +2,11 @@
 
 The authorized scope is a repository-wide v2 preparation, including implementation, archival, architecture and data-model cleanup, and evaluation. Research remains game theory and agent behavior / agentic game theory. The working question is how incentives and access to information affect cooperation, delegation, and strategic behavior among agents. The declared campaign question concerns own/shared payoff objectives and player-identified history in repeated public-goods games. The first controlled model phase is refined to objective-only comparisons against known scripted opponents; identity/history follows later. CPU calibration is complete; model-game execution remains separately preregistered work.
 
-## Active work
+## Delivered implementation scope
+
+These items describe the implemented scope and must not be treated as an
+instruction to repeat settled trials. [Delivery](DELIVERY.md) records validation;
+the canonical deployment receipt records subsequent runtime adoption.
 
 1. Complete structured-output diagnostics, fresh diversity-selection fixtures, role-aware adaptive-effort evaluation, end-to-end research-pipeline measurement, and actual historical coding repairs.
 2. Audit runtime, data contracts, dependencies, docs, research evidence and operator workflows in independent waves; cross-review recommendations before edits.
