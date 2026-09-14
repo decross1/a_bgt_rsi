@@ -46,16 +46,16 @@ would trade an observed traffic problem for an unmeasured validity problem.
 | Stable regression baseline | Public-artifact reconstructions and explicit-source path fixes added | Original scientific rows/aggregates and real hash-seed checks pass; no ignored raw stores are published; full integrated suite has no failures |
 | Active Qwen builder label | Default corrected to registry Qwen3.8; explicit override retained | Canned endpoint verifies default and both override paths |
 | Repeated machine-mined topic | Queue lifecycle and attribution fixes implemented; frozen replay removes all four handled entries | Consumed machine entries cannot recur; failed dispatches remain retryable; human follow-ups keep their semantics; observe the next deployed cycle |
-| Generated-topic scope | Prompt corrections plus an immutable 80-call topic/planner/R0 diagnostic, blind export and local summary are implemented and tested; no live calls or annotations | Run the registered diagnostic; obtain complete independent blind annotations; summarize scope, usefulness/diversity, unchanged R0 and failure-inclusive time |
+| Generated-topic scope | V1 executed with 79 calls/80 declared attempts; all 90 gradable hypotheses independently annotated by Claude; planner protocol regression found | Repair the planner output contract, freeze a new comparison, and measure topic fidelity; retain the original failed run and R0 disagreements |
 | Repeated frontier veto reviews | Opt-in cache implemented; production use remains off | Exact unchanged review reuses a complete veto; evidence, prompt, implementation, provider identity, TTL changes invalidate; outages stay uncached |
 | Dormant skeptic diagnosis | R0 blockade located by recorded inputs | Reproducible read-only audit, then isolated paired replay with output/log paths checked before model calls |
-| Role policy benefit | Profiles, paired runner and repeat-aware locked-pilot summarizer are implemented and tested; benefit unmeasured | Run all three registered repeats, validate every task/arm/seed cell, apply RSR/CTT rule, then confirm on broader independent tasks before role changes |
+| Role policy benefit | All three repeats and 36 cells attempted; frozen xhigh 13/18 versus medium 12/18; timeout forces `INCOMPLETE`, no gain supported | Preserve negative evidence and grader audit; confirm on broader independently graded tasks before any role change |
 | Weekly research/review | Manual bounded Codex proposal and Claude adversary implemented | Validated report, literal source binding and receipts; rejected reports remain rejected |
-| Weekly experiment execution | Fixed allowlist dispatcher, review binding, hard supervisor deadline, durable journal and no-replay recovery are implemented and tested; no live end-to-end execution | Exercise one manual registered trial and one newly admitted review path after canonical adoption; retain exact receipts and isolated artifacts |
-| Weekly budget | Shared canonical 7,200-second ledger and cooperative execution/GPU/cron leases are implemented and tested; not adopted by the canonical checkout or loaded daemon | Adopt the reviewed code, verify the canonical ledger/lock inode, then prove accounting and resource coordination in a bounded live cycle |
-| Broader benchmark coverage | Public development canaries exist | Independent repository coding tasks, scientific tasks and held-out evidence/context tasks with objective graders and provenance |
+| Weekly experiment execution | Fixed allowlist dispatcher exercised by the real topic diagnostic; terminal failure and actual usage recorded without replay | Complete a newly admitted review-to-trial cycle; retain exact receipts and isolated artifacts |
+| Weekly budget | Canonical adoption complete; shared ledger charged prior use and the real diagnostic, released unused reservation, and admitted the complete Qwen pilot | Keep cumulative accounting across all later trials; the old daemon needs an authorized reload to use the new wrapper lease |
+| Broader benchmark coverage | Eight-task public synthetic game/science/evidence/executed-code portfolio implemented and registered; historical coding candidates identified | Run the new portfolio; prove historical base-fail/fix-pass cases; add held-out evidence/context coverage with objective graders and provenance |
 | Scheduled operation | New schedule not activated | Exact schedule, resource budget/coordination, stop control, trial-only runbook and successful manual end-to-end cycle |
-| Challenger runtime | Unqualified | Exact weights/digest/launch configuration, reserved memory slot, same-policy comparison, both-model regressions and tested restore command |
+| Challenger runtime | Research qualification is `WATCH`; exact image/source candidates and provenance limits recorded | Exact target load, reserved memory slot, same-policy comparison, both-model regressions and tested restore command before runtime promotion |
 | Production improvement | Not established | Repeatable project-level task benefit under reliability/memory constraints, plus recorded runtime/scientific decision when applicable |
 
 ## Next isolated experiments
@@ -82,9 +82,12 @@ planner-state cases. The immutable execution manifest is
 The registered dispatcher always includes the unchanged primary R0 arm: 32
 hypothesis calls, 16 planner calls and 32 R0 calls, for at most 80 serial local
 calls inside a 2,370-second evaluator payload and 2,400-second reservation.
-Its model calls remain unexecuted; subjective scope grading still needs complete
-independent annotations from the blinded package. Raw completions and the
-private arm map stay in the isolated output and must not be published.
+Its first live run and complete independent annotations are recorded in the
+[live evaluation record](LIVE_EVALUATION_RECORD.md). It exposed eight candidate
+planner protocol failures and three disagreements between R0 and independent
+semantic grading. The original result is `INVALID/INCOMPLETE`; neither higher
+R0 acceptance nor a one-case repair establishes improvement. Raw completions
+and the private arm map stay in the isolated output and must not be published.
 
 **R0 diagnostic if needed.** Follow the audit's frozen-record selection and compare
 the current predicate with independent domain annotations. The existing advisory
@@ -141,6 +144,8 @@ execution interface. Its current card catalog is:
 | Public 12-task objective canary | 1,800 s | 1,770 s |
 | Qwen effort seed 17, 29 or 43 | 2,250 s each | 2,220 s each |
 | Topic-scope diagnostic with R0 | 2,400 s | 2,370 s |
+| Topic planner protocol repair v2 with unchanged R0 | 2,400 s | 2,370 s |
+| Eight-task public game/science development portfolio | 2,310 s | 2,280 s |
 
 Inspect a complete offline plan without model calls, writes, ledger reservation,
 locks or endpoint probes:
@@ -188,11 +193,12 @@ omits raw completions/tool payloads. The latter exports candidate text without
 the private arm/source/prompt mapping and requires complete independent
 annotations before summary. No raw private benchmark inputs belong in Git.
 
-These mechanisms are implemented and tested without models. They have not yet
-been adopted in the canonical checkout or exercised by a live manual trial or
-newly admitted review. The running daemon imported older code and will continue
-to do so until explicit activation/reload. No independent topic annotations or
-scientific gain measurement exists yet.
+These mechanisms are implemented, tested and adopted in the canonical checkout.
+The first live manual diagnostic and independent topic annotations are complete,
+with negative findings preserved in the [live record](LIVE_EVALUATION_RECORD.md).
+A newly admitted review-to-trial cycle remains to be exercised. The running
+daemon imported older code and will continue to do so until explicit reload.
+No production scientific gain has been established.
 
 A future first scheduled cycle should scan, review and execute an admitted
 bounded trial, then produce a measured decision. No scheduler or new cron has
@@ -208,6 +214,7 @@ Keep these states separate: implemented, tested without models, live protocol
 verified, task benefit measured, merged, activated. Do not label the original
 request complete while scheduled execution, benchmark coverage or demonstrated
 benefit remains unfinished. No new runtime or weekly recurrence was activated
-by this unblock tranche. There has been no live evaluation, independent
-annotation, new review-to-trial integration, canonical adoption, service reload
-or scheduler activation, and no scientific or performance gain is claimed.
+by this unblock tranche. Canonical adoption, a live registered diagnostic and
+independent annotations are now complete. Review-to-trial execution, follow-up
+measurements and final activation remain separately tracked; no scientific or
+performance gain is claimed from implementation or transport completion.

@@ -4,14 +4,15 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
 
 from orchestrator import weekly_upgrade as wu
-
+from orchestrator import weekly_upgrade_trial as wt
+from orchestrator.weekly_upgrade_budget import BudgetLedger
 
 NOW = datetime(2026, 9, 14, 12, 0, tzinfo=timezone.utc)
 
@@ -170,6 +171,18 @@ def test_schema_is_valid_and_closed():
     assert schema["$defs"]["report"]["additionalProperties"] is False
     assert schema["$defs"]["proposal"]["additionalProperties"] is False
     assert schema["$defs"]["adversary"]["additionalProperties"] is False
+    assert (
+        schema["$defs"]["proposal"]["properties"]["experiment"]
+        ["properties"]["max_gpu_minutes"]["maximum"]
+    ) == 120
+    assert (
+        schema["$defs"]["experiment_card"]["properties"]["caps"]
+        ["properties"]["gpu_minutes"]["maximum"]
+    ) == 120
+    assert (
+        schema["$defs"]["run_manifest"]["properties"]["budget"]
+        ["properties"]["max_gpu_minutes"]["maximum"]
+    ) == 120
     assert schema["$defs"]["run_manifest"]["additionalProperties"] is False
 
 
@@ -189,6 +202,21 @@ def test_plan_is_offline_read_only_and_redacted(tmp_path):
         "start": "2026-09-07T12:00:00Z",
         "end_exclusive": "2026-09-14T12:00:00Z",
     }
+
+
+def test_atomic_receipt_write_fsyncs_file_and_parent(tmp_path, monkeypatch):
+    observed = []
+    real_fsync = wu.os.fsync
+
+    def record(fd):
+        observed.append(fd)
+        return real_fsync(fd)
+
+    monkeypatch.setattr(wu.os, "fsync", record)
+    path = tmp_path / "receipts" / "reserved.json"
+    wu._atomic_json(path, {"status": "reserved"})
+    assert json.loads(path.read_text()) == {"status": "reserved"}
+    assert len(observed) == 2
 
 
 def test_prompt_supplies_exact_bindings_and_week_key_is_stable(tmp_path):
@@ -324,6 +352,31 @@ def test_uncertain_reserved_call_is_not_repeated(tmp_path):
     assert report["status"] == "FRONTIER_UNAVAILABLE"
     assert "automatic retry is refused" in report["reason"]
     assert retry.calls == []
+
+
+def test_resume_uses_frozen_snapshot_when_only_rolling_time_changes(
+    tmp_path, monkeypatch,
+):
+    repo, out = _repo(tmp_path), tmp_path / "out"
+    first = FakeFrontier()
+    reserve = wu._reserve_call
+
+    def interrupt_before_adversary(*args, **kwargs):
+        if kwargs.get("ordinal") == 2:
+            raise KeyboardInterrupt
+        return reserve(*args, **kwargs)
+
+    monkeypatch.setattr(wu, "_reserve_call", interrupt_before_adversary)
+    with pytest.raises(KeyboardInterrupt):
+        _run(repo, out, first)
+    assert [call["vendor"] for call in first.calls] == ["codex"]
+    monkeypatch.setattr(wu, "_reserve_call", reserve)
+
+    second = FakeFrontier()
+    later = NOW + timedelta(seconds=60)
+    report = _run(repo, out, second, now_fn=lambda: later)
+    assert report["status"] == "CONTINUE_TRIAL"
+    assert [call["vendor"] for call in second.calls] == ["claude"]
 
 
 def test_completed_receipt_without_validated_artifact_is_not_repeated(tmp_path):
@@ -682,3 +735,193 @@ def test_generation_policy_path_is_allowed_for_inert_experiment(tmp_path):
         snapshot, change_surface=["agent_wrapper/generation_policy.py"],
     )
     assert wu.validate_proposal(proposal, snapshot, max_gpu_minutes=30) == proposal
+
+
+def test_explicit_review_target_is_snapshot_bound_and_preserves_adversarial_rejection(tmp_path):
+    repo = _repo(tmp_path)
+    target = "experiments/topic_scope_repair_v2_2026-09-14.json"
+    snapshot = wu.build_snapshot(repo, now=NOW, review_target_manifest=target)
+    assert snapshot["review_target_manifest"] == target
+    assert wu._stable_snapshot_binding(snapshot)["review_target_manifest"] == target
+    assert "adversary may reject" in wu._proposal_prompt(snapshot, 120)
+    with pytest.raises(Exception, match="explicit review target"):
+        wu.validate_proposal(_proposal(snapshot), snapshot, max_gpu_minutes=30)
+    with pytest.raises(wu.WeeklyUpgradeError, match="registered experiment"):
+        wu.build_snapshot(repo, now=NOW, review_target_manifest="arbitrary-command.sh")
+
+
+def _write_canonical(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(wu._canonical(value) + b"\n")
+
+
+def test_worktree_snapshot_uses_canonical_production_telemetry(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    canonical = tmp_path / "production"
+    (canonical / "logs").mkdir(parents=True)
+    (canonical / "logs" / "calls.jsonl").write_text(json.dumps({
+        "timestamp": "2026-09-13T10:00:00Z", "caller_tag": "production_loop",
+        "backend": "vllm-gemma", "usage": {"input_tokens": 100, "output_tokens": 20},
+        "latency_ms": 1000, "max_tokens": 100, "completion": "private",
+    }) + "\n")
+    monkeypatch.setattr(wt, "canonical_root", lambda _root: canonical)
+    snapshot = wu.build_snapshot(repo, now=NOW)
+    assert snapshot["telemetry_source"] == "canonical_checkout"
+    assert [row["caller_tag"] for row in snapshot["call_aggregates"]] == ["production_loop"]
+    assert "private" not in json.dumps(snapshot["call_aggregates"])
+
+
+def _receipt_observations(**updates):
+    value = {
+        "fixed_attempts_expected": 80,
+        "fixed_attempts_returned": 79,
+        "fixed_attempts_protocol_valid": 79,
+        "objective_cases_passed": None,
+        "objective_cases_total": None,
+        "repair_cases_passed": 1,
+        "repair_cases_total": 12,
+        "annotation_disagreements": 3,
+    }
+    value.update(updates)
+    return value
+
+
+def test_operational_history_binds_sanitized_evaluation_receipt(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    history = tmp_path / "history"
+    history.mkdir()
+    monkeypatch.setattr(wt, "canonical_root", lambda root: repo)
+    trial_id = "2026-W38-topic-scope-v1"
+    output = tmp_path / "trial-output"
+    result = {
+        "trial_id": trial_id,
+        "status": "failed",
+        "elapsed_s": 137.0,
+        "evaluation": {"sha256": "e" * 64, "execution_complete": False},
+        "budget_receipt": None,
+        "semantic_benefit_measured": False,
+    }
+    ledger = BudgetLedger(repo / "run_state" / "weekly_upgrade_budget.jsonl")
+    ledger.reserve(trial_id, 2_400, "d" * 64, now=NOW)
+    result["budget_receipt"] = ledger.finish(trial_id, 137, "failed", now=NOW)
+    (output / "trial_result.json").parent.mkdir(parents=True)
+    (output / "trial_result.json").write_bytes(
+        json.dumps(result, sort_keys=True, indent=2, allow_nan=False).encode() + b"\n"
+    )
+    journal = {
+        "phase": "finished",
+        "plan": {
+            "trial_id": trial_id, "week_id": "2026-W38",
+            "manifest_path": "experiments/topic_scope_repair_2026-09-14.json",
+            "kind": "topic_scope",
+        },
+        "output": str(output),
+        "result": result,
+    }
+    journal_path = repo / "run_state" / "weekly_upgrade" / "trials" / f"{trial_id}.json"
+    _write_canonical(journal_path, journal)
+    receipt = {
+        "schema_version": "weekly-upgrade-evaluation-summary/v1",
+        "trial_id": trial_id,
+        "recorded_at": "2026-09-14T11:30:00Z",
+        "provenance": "operator_recorded",
+        "trial_journal_sha256": wu._file_sha(journal_path),
+        "trial_result_sha256": wu._file_sha(output / "trial_result.json"),
+        "transport_evaluation_sha256": "e" * 64,
+        "summary_artifact_sha256": "c" * 64,
+        "annotation_artifacts": [{
+            "provenance": "independent_subscription_annotation",
+            "vendor": "claude",
+            "artifact_sha256": "a" * 64,
+            "transport_receipt_sha256": "b" * 64,
+            "model_ids": ["claude-opus-5"],
+        }],
+        "observations": {
+            **_receipt_observations(),
+            "failure_categories": [{"code": "incomplete_transport", "count": 1}],
+        },
+        "arm_observations": [
+            {"arm": "control", **_receipt_observations(
+                fixed_attempts_expected=40, fixed_attempts_returned=40,
+                fixed_attempts_protocol_valid=40, repair_cases_passed=0,
+                repair_cases_total=6, annotation_disagreements=0,
+            )},
+            {"arm": "candidate", **_receipt_observations(
+                fixed_attempts_expected=40, fixed_attempts_returned=39,
+                fixed_attempts_protocol_valid=39, repair_cases_passed=1,
+                repair_cases_total=6, annotation_disagreements=3,
+            )},
+        ],
+    }
+    receipt_path = (
+        repo / "run_state" / "weekly_upgrade" / "evaluations" / f"{trial_id}.json"
+    )
+    _write_canonical(receipt_path, receipt)
+
+    before = sorted(path.relative_to(repo) for path in repo.rglob("*"))
+    snapshot = wu.build_snapshot(
+        repo, operational_history_root=history, now=NOW,
+    )
+    after = sorted(path.relative_to(repo) for path in repo.rglob("*"))
+    operational = snapshot["operational_history"]
+    assert before == after
+    assert operational["status"] == "validated"
+    assert operational["trials"][0]["status"] == "failed"
+    summary = operational["evaluation_summaries"][0]
+    assert summary["evidence_class"] == "UNVERIFIED_OPERATOR_SUMMARY"
+    assert summary["candidate_benefit_verified"] is False
+    assert summary["arm_observations"][0]["repair_cases_passed"] == 0
+    assert summary["arm_observations"][1]["repair_cases_passed"] == 1
+    assert operational["invalid_artifact_counts"] == {
+        "trials": 0, "evaluation_summaries": 0, "prior_reviews": 0,
+    }
+
+
+def test_operational_history_rejects_receipt_hash_as_untrusted(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    history = tmp_path / "history"
+    history.mkdir()
+    monkeypatch.setattr(wt, "canonical_root", lambda root: repo)
+    evaluation = repo / "run_state" / "weekly_upgrade" / "evaluations"
+    _write_canonical(evaluation / "orphan.json", {
+        "schema_version": "weekly-upgrade-evaluation-summary/v1",
+    })
+    snapshot = wu.build_snapshot(
+        repo, operational_history_root=history, now=NOW,
+    )
+    operational = snapshot["operational_history"]
+    assert operational["evaluation_summaries"] == []
+    assert operational["invalid_artifact_counts"]["evaluation_summaries"] == 1
+
+
+def test_naive_snapshot_time_is_rejected(tmp_path):
+    with pytest.raises(wu.WeeklyUpgradeError, match="timezone aware"):
+        wu.build_snapshot(_repo(tmp_path), now=NOW.replace(tzinfo=None))
+
+
+def test_openai_model_catalog_host_is_allowlisted():
+    assert "learn.chatgpt.com" in wu.OFFICIAL_SOURCE_RULES
+
+
+def test_github_release_api_is_bounded_to_allowed_owners_and_semantic_fields():
+    accepted = wu._validate_source_url(
+        "https://api.github.com/repos/vllm-project/vllm/releases/latest",
+        resolver=_public_dns,
+    )
+    assert accepted.endswith("/repos/vllm-project/vllm/releases/latest")
+    with pytest.raises(wu.WeeklyUpgradeError, match="outside the official allowlist"):
+        wu._validate_source_url(
+            "https://api.github.com/repos/untrusted/project/releases/latest",
+            resolver=_public_dns,
+        )
+    raw = json.dumps({
+        "assets": [{"name": "x" * 3000}],
+        "tag_name": "v0.29.0", "published_at": "2026-09-13T00:00:00Z",
+        "html_url": "https://github.com/vllm-project/vllm/releases/tag/v0.29.0",
+        "body": "Important correctness fix after a large asset list.",
+    }).encode()
+    excerpt = wu._source_excerpt(raw, "application/json")
+    assert "v0.29.0" in excerpt
+    assert "Important correctness fix" in excerpt
+    assert "assets" not in excerpt
+    assert len(excerpt) <= 2000

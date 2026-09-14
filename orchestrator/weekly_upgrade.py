@@ -31,14 +31,15 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from collections import defaultdict
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Iterator
+from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker, ValidationError
-
 
 SCHEMA_VERSION = "weekly-upgrade-v1"
 REPORT_VERSION = "weekly-upgrade-report-v1"
@@ -54,6 +55,10 @@ MAX_DIRTY_PATHS = 512
 MAX_TELEMETRY_GROUPS = 128
 MAX_FRONTIER_PROMPT_BYTES = 256_000
 MAX_UNVALIDATED_RESPONSE_BYTES = 262_144
+MAX_OPERATIONAL_HISTORY_BYTES = 2_000_000
+MAX_OPERATIONAL_TRIALS = 16
+MAX_OPERATIONAL_REVIEWS = 8
+MAX_EVALUATION_RECEIPTS = 16
 ALLOWED_CHANGE_ROOTS = {"bench", "docs", "experiments", "tests"}
 ALLOWED_CHANGE_PATHS = {"agent_wrapper/generation_policy.py"}
 
@@ -63,6 +68,7 @@ OFFICIAL_SOURCE_RULES: dict[str, tuple[str, ...] | None] = {
     "platform.claude.com": None,
     "code.claude.com": None,
     "developers.openai.com": None,
+    "learn.chatgpt.com": None,
     "openai.com": None,
     "www.openai.com": None,
     "docs.vllm.ai": None,
@@ -70,6 +76,10 @@ OFFICIAL_SOURCE_RULES: dict[str, tuple[str, ...] | None] = {
     "docs.nvidia.com": None,
     "developer.nvidia.com": None,
     "build.nvidia.com": None,
+    "api.github.com": (
+        "/repos/vllm-project/", "/repos/sgl-project/", "/repos/NVIDIA/",
+        "/repos/openai/", "/repos/anthropics/",
+    ),
     "huggingface.co": ("/Qwen/", "/google/", "/nvidia/", "/openai/"),
     "github.com": (
         "/vllm-project/", "/sgl-project/", "/NVIDIA/", "/QwenLM/",
@@ -112,6 +122,8 @@ SNAPSHOT_FILES = (
 EVAL_MANIFEST_FILES = (
     "bench/weekly_upgrade_eval/fixtures.json",
     "experiments/topic_scope_repair_2026-09-14.json",
+    "experiments/topic_scope_repair_v2_2026-09-14.json",
+    "experiments/weekly_upgrade_game_science_dev_v0_2026-09-14.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_17.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_29.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_43.json",
@@ -178,9 +190,17 @@ def _validate(definition: str, value: Any) -> None:
 
 def _atomic_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_bytes(_canonical(value) + b"\n")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    with tmp.open("xb") as stream:
+        stream.write(_canonical(value) + b"\n")
+        stream.flush()
+        os.fsync(stream.fileno())
     os.replace(tmp, path)
+    directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def _read_json(path: Path) -> Any:
@@ -271,9 +291,12 @@ def _parse_time(value: Any) -> datetime | None:
     if not isinstance(value, str):
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
-    except ValueError:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (OverflowError, ValueError):
         return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
 
 
 def _p50(values: list[float]) -> float | None:
@@ -494,6 +517,25 @@ def _source_opener(resolver: Callable[..., list]):
 
 def _source_excerpt(raw: bytes, content_type: str) -> str:
     text = raw.decode("utf-8", errors="replace")
+    if content_type == "application/json":
+        try:
+            value = json.loads(
+                text,
+                parse_constant=lambda token: (_ for _ in ()).throw(
+                    ValueError(f"non-finite JSON number: {token}")
+                ),
+            )
+        except (json.JSONDecodeError, ValueError):
+            value = None
+        if isinstance(value, dict) and any(
+            key in value for key in ("tag_name", "published_at", "html_url", "body")
+        ):
+            release = {
+                key: value.get(key)
+                for key in ("tag_name", "published_at", "html_url", "body")
+                if value.get(key) is None or isinstance(value.get(key), str)
+            }
+            text = json.dumps(release, ensure_ascii=False, allow_nan=False)
     if "html" in content_type:
         text = re.sub(r"(?is)<(?:script|style).*?>.*?</(?:script|style)>", " ", text)
         text = re.sub(r"(?s)<[^>]+>", " ", text)
@@ -675,18 +717,434 @@ def fetch_sources_from_config(path: str | Path, **kwargs: Any) -> dict:
     return fetch_sources(config, **kwargs)
 
 
+def _bounded_object(path: Path, *, maximum: int = MAX_OPERATIONAL_HISTORY_BYTES) -> dict:
+    """Read a small strict JSON object used as operational evidence."""
+    if path.is_symlink() or not path.is_file():
+        raise WeeklyUpgradeError(f"operational artifact is absent or redirected: {path}")
+    raw = path.read_bytes()
+    if len(raw) > maximum:
+        raise WeeklyUpgradeError(f"operational artifact exceeds {maximum} bytes: {path}")
+
+    def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"duplicate JSON key: {key}")
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(
+            raw,
+            object_pairs_hook=unique,
+            parse_constant=lambda token: (_ for _ in ()).throw(
+                ValueError(f"non-finite JSON number: {token}")
+            ),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise WeeklyUpgradeError(f"invalid operational artifact {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise WeeklyUpgradeError(f"operational artifact root must be an object: {path}")
+    return value
+
+
+def _finite_count(value: Any, field: str) -> int | None:
+    if value is None:
+        return None
+    if type(value) is not int or not 0 <= value <= 1_000_000:
+        raise WeeklyUpgradeError(f"evaluation receipt {field} must be a bounded count or null")
+    return value
+
+
+_SAFE_RECEIPT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
+_SAFE_METRIC_CODE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_OBSERVATION_FIELDS = {
+    "fixed_attempts_expected", "fixed_attempts_returned",
+    "fixed_attempts_protocol_valid", "objective_cases_passed",
+    "objective_cases_total", "repair_cases_passed", "repair_cases_total",
+    "annotation_disagreements",
+}
+
+
+def _validated_observation(value: Any, *, arm: bool = False) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise WeeklyUpgradeError("evaluation receipt observation must be an object")
+    expected = _OBSERVATION_FIELDS | ({"arm"} if arm else {"failure_categories"})
+    if set(value) != expected:
+        raise WeeklyUpgradeError("evaluation receipt observation fields are not the v1 contract")
+    result = {
+        field: _finite_count(value[field], field)
+        for field in sorted(_OBSERVATION_FIELDS)
+    }
+    if arm:
+        if value["arm"] not in {"A", "B", "control", "candidate"}:
+            raise WeeklyUpgradeError("evaluation receipt arm is not allowlisted")
+        return {"arm": value["arm"], **result}
+    failures = value["failure_categories"]
+    if not isinstance(failures, list) or len(failures) > 32:
+        raise WeeklyUpgradeError("evaluation receipt failure categories are not bounded")
+    seen: set[str] = set()
+    normalized = []
+    for item in failures:
+        if not isinstance(item, dict) or set(item) != {"code", "count"}:
+            raise WeeklyUpgradeError("evaluation receipt failure category is malformed")
+        code = item["code"]
+        if not isinstance(code, str) or not _SAFE_METRIC_CODE.fullmatch(code) or code in seen:
+            raise WeeklyUpgradeError("evaluation receipt failure category is unsafe or duplicated")
+        seen.add(code)
+        normalized.append({"code": code, "count": _finite_count(item["count"], "count")})
+    return {**result, "failure_categories": normalized}
+
+
+def _evaluation_receipt(
+    path: Path, trial_run: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate a sanitized operator receipt without upgrading it to ground truth."""
+    value = _bounded_object(path)
+    expected = {
+        "schema_version", "trial_id", "recorded_at", "provenance",
+        "trial_journal_sha256", "trial_result_sha256",
+        "transport_evaluation_sha256", "summary_artifact_sha256",
+        "annotation_artifacts", "observations", "arm_observations",
+    }
+    if set(value) != expected or value.get("schema_version") != "weekly-upgrade-evaluation-summary/v1":
+        raise WeeklyUpgradeError("evaluation receipt is not the closed v1 schema")
+    trial_id = value.get("trial_id")
+    if (
+        not isinstance(trial_id, str) or not _SAFE_RECEIPT_ID.fullmatch(trial_id)
+        or path.stem != trial_id or trial_run.get("trial_id") != trial_id
+    ):
+        raise WeeklyUpgradeError("evaluation receipt trial_id is invalid or unbound")
+    recorded = _parse_time(value.get("recorded_at"))
+    if recorded is None or value.get("provenance") != "operator_recorded":
+        raise WeeklyUpgradeError("evaluation receipt provenance/time is invalid")
+    for field in (
+        "trial_journal_sha256", "trial_result_sha256", "summary_artifact_sha256",
+    ):
+        if not isinstance(value.get(field), str) or not _SHA256.fullmatch(value[field]):
+            raise WeeklyUpgradeError(f"evaluation receipt {field} is not a SHA-256")
+    transport_hash = value.get("transport_evaluation_sha256")
+    if transport_hash is not None and (
+        not isinstance(transport_hash, str) or not _SHA256.fullmatch(transport_hash)
+    ):
+        raise WeeklyUpgradeError("evaluation receipt transport hash is invalid")
+    if (
+        value["trial_journal_sha256"] != trial_run.get("journal_sha256")
+        or value["trial_result_sha256"] != trial_run.get("trial_result_sha256")
+        or transport_hash != trial_run.get("transport_evaluation_sha256")
+    ):
+        raise WeeklyUpgradeError("evaluation receipt does not bind the canonical trial")
+
+    annotations = value.get("annotation_artifacts")
+    if not isinstance(annotations, list) or len(annotations) > 4:
+        raise WeeklyUpgradeError("evaluation receipt annotations are not bounded")
+    clean_annotations = []
+    for item in annotations:
+        if not isinstance(item, dict) or set(item) != {
+            "provenance", "vendor", "artifact_sha256",
+            "transport_receipt_sha256", "model_ids",
+        }:
+            raise WeeklyUpgradeError("evaluation receipt annotation is malformed")
+        if (
+            item["provenance"] != "independent_subscription_annotation"
+            or item["vendor"] not in {"codex", "claude"}
+        ):
+            raise WeeklyUpgradeError("evaluation annotation provenance/vendor is invalid")
+        for field in ("artifact_sha256", "transport_receipt_sha256"):
+            if not isinstance(item[field], str) or not _SHA256.fullmatch(item[field]):
+                raise WeeklyUpgradeError("evaluation annotation hash is invalid")
+        model_ids = item["model_ids"]
+        if (
+            not isinstance(model_ids, list) or not 1 <= len(model_ids) <= 8
+            or any(not isinstance(model, str) or not 1 <= len(model) <= 128 for model in model_ids)
+        ):
+            raise WeeklyUpgradeError("evaluation annotation model_ids are invalid")
+        clean_annotations.append(item)
+
+    observations = _validated_observation(value.get("observations"))
+    arms = value.get("arm_observations")
+    if not isinstance(arms, list) or len(arms) > 4:
+        raise WeeklyUpgradeError("evaluation receipt arm observations are not bounded")
+    clean_arms = [_validated_observation(item, arm=True) for item in arms]
+    if len({item["arm"] for item in clean_arms}) != len(clean_arms):
+        raise WeeklyUpgradeError("evaluation receipt arm observations are duplicated")
+    return {
+        "schema_version": value["schema_version"],
+        "trial_id": trial_id,
+        "recorded_at": _iso(recorded),
+        "provenance": value["provenance"],
+        "evidence_class": "UNVERIFIED_OPERATOR_SUMMARY",
+        "candidate_benefit_verified": False,
+        "trial_journal_sha256": value["trial_journal_sha256"],
+        "trial_result_sha256": value["trial_result_sha256"],
+        "transport_evaluation_sha256": transport_hash,
+        "summary_artifact_sha256": value["summary_artifact_sha256"],
+        "annotation_artifacts": clean_annotations,
+        "observations": observations,
+        "arm_observations": clean_arms,
+    }
+
+
+def _trial_history(canonical_root: Path) -> tuple[list[dict[str, Any]], int]:
+    directory = canonical_root / "run_state" / "weekly_upgrade" / "trials"
+    if not directory.exists():
+        return [], 0
+    if directory.is_symlink() or not directory.is_dir():
+        raise WeeklyUpgradeError("canonical weekly trial journal directory is redirected")
+    paths = sorted(directory.glob("*.json"), key=lambda path: path.name)[-MAX_OPERATIONAL_TRIALS:]
+    rows: list[dict[str, Any]] = []
+    invalid = 0
+    for path in paths:
+        try:
+            journal = _bounded_object(path)
+            plan = journal.get("plan")
+            result = journal.get("result")
+            if (
+                not isinstance(plan, dict) or not isinstance(result, dict)
+                or plan.get("trial_id") != path.stem or result.get("trial_id") != path.stem
+            ):
+                raise WeeklyUpgradeError("trial journal is not terminal or trial-bound")
+            # Match the dispatcher's durable _write encoding, so real terminal
+            # artifacts bind to their canonical journal without a format-only
+            # false rejection. This is also the fallback when the copy is gone.
+            result_bytes = json.dumps(
+                result, sort_keys=True, indent=2, allow_nan=False,
+            ).encode() + b"\n"
+            output = journal.get("output")
+            if isinstance(output, str):
+                result_path = Path(output) / "trial_result.json"
+                if result_path.is_file() and not result_path.is_symlink():
+                    observed = _bounded_object(result_path)
+                    if observed != result or result_path.read_bytes() != result_bytes:
+                        raise WeeklyUpgradeError("trial result copy differs from canonical journal")
+            evaluation = result.get("evaluation")
+            budget = result.get("budget_receipt")
+            rows.append({
+                "trial_id": path.stem,
+                "week_id": plan.get("week_id"),
+                "manifest_path": plan.get("manifest_path"),
+                "kind": plan.get("kind"),
+                "phase": journal.get("phase"),
+                "status": result.get("status"),
+                "elapsed_s": result.get("elapsed_s"),
+                "charged_s": budget.get("charged_s") if isinstance(budget, dict) else None,
+                "execution_complete": (
+                    evaluation.get("execution_complete") is True
+                    if isinstance(evaluation, dict) else False
+                ),
+                "semantic_benefit_measured": result.get("semantic_benefit_measured") is True,
+                "journal_sha256": _file_sha(path),
+                "trial_result_sha256": _sha(result_bytes),
+                "transport_evaluation_sha256": (
+                    evaluation.get("sha256") if isinstance(evaluation, dict) else None
+                ),
+            })
+        except (OSError, ValueError, WeeklyUpgradeError):
+            invalid += 1
+    return rows, invalid
+
+
+def _evaluation_history(
+    canonical_root: Path, trial_runs: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    directory = canonical_root / "run_state" / "weekly_upgrade" / "evaluations"
+    if not directory.exists():
+        return [], 0
+    if directory.is_symlink() or not directory.is_dir():
+        raise WeeklyUpgradeError("canonical evaluation summary directory is redirected")
+    trials = {row["trial_id"]: row for row in trial_runs}
+    paths = sorted(directory.glob("*.json"), key=lambda path: path.name)[-MAX_EVALUATION_RECEIPTS:]
+    rows: list[dict[str, Any]] = []
+    invalid = 0
+    for path in paths:
+        try:
+            trial_run = trials.get(path.stem)
+            if trial_run is None:
+                raise WeeklyUpgradeError("evaluation receipt has no bounded canonical trial")
+            rows.append(_evaluation_receipt(path, trial_run))
+        except (OSError, ValueError, WeeklyUpgradeError):
+            invalid += 1
+    return rows, invalid
+
+
+def _review_history(
+    history_root: Path, current_week: str,
+) -> tuple[list[dict[str, Any]], int]:
+    lexical = history_root.expanduser().absolute()
+    if lexical.is_symlink() or lexical.resolve() != lexical:
+        raise WeeklyUpgradeError("operational history root is redirected")
+    history_root = lexical
+    if not history_root.exists():
+        return [], 0
+    if history_root.is_symlink() or not history_root.is_dir():
+        raise WeeklyUpgradeError("operational history root is redirected")
+    candidates = sorted(
+        path for path in history_root.iterdir()
+        if path.is_dir() and not path.is_symlink()
+        and re.fullmatch(r"[0-9]{4}-W[0-9]{2}", path.name)
+        and path.name < current_week
+    )[-MAX_OPERATIONAL_REVIEWS:]
+    rows: list[dict[str, Any]] = []
+    invalid = 0
+    for directory in candidates:
+        path = directory / "review" / "weekly_report.json"
+        if not path.exists():
+            continue
+        try:
+            report = _bounded_object(path)
+            _validate("report", report)
+            card = report.get("experiment_card")
+            rows.append({
+                "week_id": report.get("week_id"),
+                "status": report.get("status"),
+                "run_id": report.get("run_id"),
+                "snapshot_sha256": report.get("snapshot_sha256"),
+                "proposal_sha256": report.get("proposal_sha256"),
+                "frontier_calls_used": report.get("frontier_calls_used"),
+                "experiment_manifest": (
+                    card.get("fixture_manifest_path") if isinstance(card, dict) else None
+                ),
+                "measurement_ref": (
+                    card.get("measurement_ref") if isinstance(card, dict) else None
+                ),
+                "report_sha256": _file_sha(path),
+            })
+        except (OSError, ValueError, ValidationError, WeeklyUpgradeError):
+            invalid += 1
+    return rows, invalid
+
+
+def _agenda_history(canonical_root: Path) -> dict[str, Any]:
+    latest: dict[str, dict[str, Any]] = {}
+    for row in _bounded_jsonl(canonical_root / "memory" / "frontier_agenda.jsonl"):
+        proposal_id = row.get("proposal_id")
+        if isinstance(proposal_id, str) and _SAFE_RECEIPT_ID.fullmatch(proposal_id):
+            latest[proposal_id] = row
+    counts: dict[str, int] = {}
+    for row in latest.values():
+        status = str(row.get("status") or "unknown")[:64]
+        counts[status] = counts.get(status, 0) + 1
+    return {"proposal_count": len(latest), "latest_status_counts": dict(sorted(counts.items()))}
+
+
+def _budget_history(canonical_root: Path, moment: datetime) -> dict[str, Any]:
+    """Validate/summarize the shared ledger without creating a lock or journal."""
+    from orchestrator.weekly_upgrade_budget import BudgetLedger
+
+    ledger_path = canonical_root / "run_state" / "weekly_upgrade_budget.jsonl"
+    week_id = moment.strftime("%G-W%V")
+    from orchestrator.weekly_upgrade_trial import assert_budget_journal_consistent
+    assert_budget_journal_consistent(canonical_root, week_id)
+    if not ledger_path.exists():
+        return {
+            "schema_version": "weekly-upgrade-budget-v1", "week_id": week_id,
+            "limit_s": 7_200.0, "reserved_s": 0.0, "consumed_s": 0.0,
+            "charged_s": 0.0, "remaining_s": 7_200.0,
+            "active_run_ids": [], "terminal_run_ids": [],
+            "journal_event_count": 0, "journal_head_sha256": None,
+            "status": "not_initialized",
+        }
+    ledger = BudgetLedger(ledger_path)
+    if (
+        ledger_path.is_symlink() or not ledger_path.is_file()
+        or ledger.lock_path.is_symlink() or not ledger.lock_path.is_file()
+    ):
+        raise WeeklyUpgradeError("canonical weekly budget journal/lock is redirected or absent")
+    with ledger.lock_path.open("rb") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_SH)
+        try:
+            events = ledger._read_events()
+            states = ledger._states(events)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    current = [state for state in states.values() if state["week_id"] == week_id]
+    reserved_s = sum(
+        state["reserved_s"] for state in current if state["state"] == "reserved"
+    )
+    consumed_s = sum(
+        state["charged_s"] for state in current if state["state"] == "finished"
+    )
+    charged_s = reserved_s + consumed_s
+    return {
+        "schema_version": "weekly-upgrade-budget-v1", "week_id": week_id,
+        "limit_s": ledger.limit_s, "reserved_s": reserved_s,
+        "consumed_s": consumed_s, "charged_s": charged_s,
+        "remaining_s": max(0.0, ledger.limit_s - charged_s),
+        "active_run_ids": sorted(
+            state["run_id"] for state in current if state["state"] == "reserved"
+        ),
+        "terminal_run_ids": sorted(
+            state["run_id"] for state in current if state["state"] == "finished"
+        ),
+        "journal_event_count": len(events),
+        "journal_head_sha256": events[-1]["event_sha256"] if events else None,
+        "status": "validated",
+    }
+
+
+def _operational_history(
+    repo_root: Path, history_root: str | Path | None, moment: datetime,
+) -> dict[str, Any]:
+    if history_root is None:
+        return {
+            "schema_version": "weekly-upgrade-operational-history/v1",
+            "status": "not_requested",
+        }
+    try:
+        from orchestrator.weekly_upgrade_trial import canonical_root
+
+        canonical = canonical_root(repo_root)
+        budget = _budget_history(canonical, moment)
+        trials, invalid_trials = _trial_history(canonical)
+        evaluations, invalid_evaluations = _evaluation_history(canonical, trials)
+        reviews, invalid_reviews = _review_history(
+            Path(history_root), moment.strftime("%G-W%V"),
+        )
+        return {
+            "schema_version": "weekly-upgrade-operational-history/v1",
+            "status": "validated",
+            "budget": budget,
+            "trials": trials,
+            "evaluation_summaries": evaluations,
+            "prior_reviews": reviews,
+            "agenda_recommendations": _agenda_history(canonical),
+            "invalid_artifact_counts": {
+                "trials": invalid_trials,
+                "evaluation_summaries": invalid_evaluations,
+                "prior_reviews": invalid_reviews,
+            },
+            "limits": {
+                "trials": MAX_OPERATIONAL_TRIALS,
+                "evaluation_summaries": MAX_EVALUATION_RECEIPTS,
+                "prior_reviews": MAX_OPERATIONAL_REVIEWS,
+            },
+            "interpretation": {
+                "operator_receipts_are_ground_truth": False,
+                "candidate_benefit_requires_local_regrading": True,
+            },
+        }
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise WeeklyUpgradeError(f"operational history validation failed: {type(exc).__name__}") from exc
+
+
 def build_snapshot(
     repo_root: str | Path,
     *,
     source_packet: dict | None = None,
     now: datetime | None = None,
     exclude_path: str | Path | None = None,
+    operational_history_root: str | Path | None = None,
+    review_target_manifest: str | None = None,
 ) -> dict:
     """Build a deterministic, redacted weekly snapshot from explicit local inputs."""
     root = Path(repo_root).resolve()
     if not root.is_dir():
         raise WeeklyUpgradeError(f"repo_root is not a directory: {root}")
-    moment = (now or _utcnow()).astimezone(timezone.utc)
+    moment = now or _utcnow()
+    if moment.tzinfo is None or moment.utcoffset() is None:
+        raise WeeklyUpgradeError("snapshot time must be timezone aware")
+    moment = moment.astimezone(timezone.utc)
     iso = moment.isocalendar()
     week_id = f"{iso.year:04d}-W{iso.week:02d}"
     telemetry_start = moment - timedelta(days=7)
@@ -704,11 +1162,22 @@ def build_snapshot(
     packet = source_packet or {"schema_version": "weekly-upgrade-source-packet-v1", "sources": []}
     _validate("source_packet", packet)
     week_key = _sha({"schema_version": "weekly-upgrade-week-v1", "week_id": week_id})
-    from orchestrator.weekly_upgrade_trial import execution_fingerprint, TrialError
+    from orchestrator.weekly_upgrade_trial import (
+        TRIALS,
+        TrialError,
+        canonical_root,
+        execution_fingerprint,
+    )
+    if review_target_manifest is not None and review_target_manifest not in TRIALS:
+        raise WeeklyUpgradeError("review target must be a registered experiment manifest")
     try:
         dependencies = execution_fingerprint(root)
     except TrialError:
         dependencies = None  # Snapshot-only fixtures/non-Git exports cannot dispatch.
+    try:
+        telemetry_root = canonical_root(root)
+    except (TrialError, OSError, subprocess.SubprocessError):
+        telemetry_root = root  # Read-only exports may have no Git common root.
     snapshot = {
         "schema_version": "weekly-upgrade-snapshot-v1",
         "week_id": week_id,
@@ -718,10 +1187,15 @@ def build_snapshot(
         "dirty_paths": dirty[:MAX_DIRTY_PATHS],
         "files": files,
         "telemetry_window": {"start": _iso(telemetry_start), "end_exclusive": _iso(moment)},
-        "call_aggregates": _call_telemetry(root, telemetry_start, moment),
-        "frontier_aggregates": _frontier_telemetry(root, telemetry_start, moment),
+        "telemetry_source": "canonical_checkout" if telemetry_root != root else "snapshot_repository",
+        "call_aggregates": _call_telemetry(telemetry_root, telemetry_start, moment),
+        "frontier_aggregates": _frontier_telemetry(telemetry_root, telemetry_start, moment),
         "evaluation_manifests": _evaluation_manifests(root),
+        "review_target_manifest": review_target_manifest,
         "execution_dependencies": dependencies,
+        "operational_history": _operational_history(
+            root, operational_history_root, moment,
+        ),
         "source_packet_sha256": _sha(packet),
         "sources": packet["sources"],
         "redaction": {
@@ -738,10 +1212,14 @@ def build_snapshot(
 def plan_review(
     repo_root: str | Path,
     *, source_packet: dict | None = None,
+    operational_history_root: str | Path | None = None,
     now: datetime | None = None,
 ) -> dict:
     """Return the complete offline plan. This function performs no writes/calls."""
-    snapshot = build_snapshot(repo_root, source_packet=source_packet, now=now)
+    snapshot = build_snapshot(
+        repo_root, source_packet=source_packet, now=now,
+        operational_history_root=operational_history_root,
+    )
     digest = _sha(snapshot)
     return {
         "mode": "plan",
@@ -854,6 +1332,9 @@ def validate_proposal(value: dict, snapshot: dict, *, max_gpu_minutes: int) -> d
             raise ValidationError(f"change surface is outside inert Tier-P roots: {rel}")
     experiment = value["experiment"]
     _check_fixtures(experiment, snapshot)
+    if (snapshot.get("review_target_manifest") is not None
+            and experiment["fixture_manifest_path"] != snapshot["review_target_manifest"]):
+        raise ValidationError("proposal differs from the explicit review target")
     if experiment["max_gpu_minutes"] > max_gpu_minutes:
         raise ValidationError("experiment exceeds the explicit GPU-minute budget")
     return value
@@ -895,7 +1376,10 @@ def _proposal_prompt(snapshot: dict, max_gpu_minutes: int) -> str:
         "with non-null execution metadata; copy its entire fixture_ids set and "
         "exact execution.seeds. Its reservation_s must fit BOTH declared GPU "
         "and wall caps. The checked-in manifest fixes the actual arm settings; "
-        "describe only that comparison. Other suggestions remain advice until "
+        "describe only that comparison. If review_target_manifest is set, the "
+        "operator has selected that existing experiment for this review; assess "
+        "its actual comparison and use that manifest. The adversary may reject "
+        "it; selection does not imply benefit or approval. Other suggestions remain advice until "
         "an execution type is implemented. The MVP baseline is UNMEASURED with null "
         "artifact/hash/locator/value because the paired evaluator measures both arms. "
         "An external claim is CLAIM_HUMAN_VERIFIED only when its exact claim, content "
@@ -1167,6 +1651,16 @@ def _load_completed_response(
     return validate_adversary(value, snapshot, proposal)
 
 
+def _stable_snapshot_binding(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Exclude rolling telemetry/history timestamps while retaining causal inputs."""
+    keys = (
+        "schema_version", "week_id", "week_key_sha256", "repo_head",
+        "dirty_path_count", "dirty_paths", "files", "evaluation_manifests",
+        "execution_dependencies", "source_packet_sha256", "sources", "review_target_manifest",
+    )
+    return {key: snapshot.get(key) for key in keys}
+
+
 def run_review(
     repo_root: str | Path,
     output_dir: str | Path,
@@ -1176,6 +1670,8 @@ def run_review(
     max_gpu_minutes: int,
     call_timeout_s: int = DEFAULT_CALL_TIMEOUT_S,
     source_packet: dict | None = None,
+    operational_history_root: str | Path | None = None,
+    review_target_manifest: str | None = None,
     invoke_fn: Callable[..., dict] | None = None,
     now_fn: Callable[[], datetime] = _utcnow,
 ) -> dict:
@@ -1190,42 +1686,30 @@ def run_review(
             return report
 
         packet = source_packet or load_source_packet(None)
-        snapshot = build_snapshot(root, source_packet=packet, now=now_fn(), exclude_path=out)
-        snapshot_sha = _sha(snapshot)
-        week_id = snapshot["week_id"]
-        started = now_fn().astimezone(timezone.utc)
-        expected = {
-            "schema_version": "weekly-upgrade-run-v1",
-            "run_id": f"{week_id}-{snapshot['week_key_sha256'][:12]}",
-            "week_id": week_id,
-            "snapshot_sha256": snapshot_sha,
-            "snapshot": snapshot,
-            "source_packet_sha256": snapshot["source_packet_sha256"],
-            "providers": [
-                {"ordinal": 1, "vendor": "codex", "role": "upgrade_proposer"},
-                {"ordinal": 2, "vendor": "claude", "role": "upgrade_adversary"},
-            ],
-            "budget": {
-                "frontier_calls": frontier_call_budget,
-                "total_deadline_s": total_deadline_s,
-                "max_gpu_minutes": max_gpu_minutes,
-                "call_timeout_s": call_timeout_s,
-                "started_at": _iso(started),
-                "deadline_at": _iso(started + timedelta(seconds=total_deadline_s)),
-            },
-        }
+        _validate("source_packet", packet)
         manifest_path = out / "run_manifest.json"
         if manifest_path.exists():
             manifest = _read_json(manifest_path)
             _validate_manifest(manifest)
-            immutable_keys = (
-                "schema_version", "run_id", "week_id", "snapshot_sha256",
-                "snapshot", "source_packet_sha256", "providers",
+            current_snapshot = build_snapshot(
+                root, source_packet=packet, now=now_fn(), exclude_path=out,
+                operational_history_root=operational_history_root,
+                review_target_manifest=review_target_manifest,
             )
-            if any(manifest.get(key) != expected.get(key) for key in immutable_keys):
+            snapshot = manifest["snapshot"]
+            if _stable_snapshot_binding(current_snapshot) != _stable_snapshot_binding(snapshot):
                 return _finish(
                     out, manifest, status="INVALID_REPORT",
-                    reason="repository/source snapshot changed during an incomplete run; no calls repeated",
+                    reason="stable repository/source bindings changed during an incomplete run; no calls repeated",
+                    independence_loss=True,
+                )
+            if (
+                manifest.get("source_packet_sha256") != _sha(packet)
+                or manifest.get("snapshot_sha256") != _sha(snapshot)
+            ):
+                return _finish(
+                    out, manifest, status="INVALID_REPORT",
+                    reason="frozen run manifest no longer binds its source/snapshot",
                     independence_loss=True,
                 )
             requested_budget = {
@@ -1244,11 +1728,46 @@ def run_review(
                     independence_loss=True,
                 )
         else:
-            manifest = expected
+            snapshot = build_snapshot(
+                root, source_packet=packet, now=now_fn(), exclude_path=out,
+                operational_history_root=operational_history_root,
+                review_target_manifest=review_target_manifest,
+            )
+            snapshot_sha = _sha(snapshot)
+            week_id = snapshot["week_id"]
+            started = now_fn()
+            if started.tzinfo is None or started.utcoffset() is None:
+                raise WeeklyUpgradeError("review time must be timezone aware")
+            started = started.astimezone(timezone.utc)
+            manifest = {
+                "schema_version": "weekly-upgrade-run-v1",
+                "run_id": f"{week_id}-{snapshot['week_key_sha256'][:12]}",
+                "week_id": week_id,
+                "snapshot_sha256": snapshot_sha,
+                "snapshot": snapshot,
+                "source_packet_sha256": snapshot["source_packet_sha256"],
+                "providers": [
+                    {"ordinal": 1, "vendor": "codex", "role": "upgrade_proposer"},
+                    {"ordinal": 2, "vendor": "claude", "role": "upgrade_adversary"},
+                ],
+                "budget": {
+                    "frontier_calls": frontier_call_budget,
+                    "total_deadline_s": total_deadline_s,
+                    "max_gpu_minutes": max_gpu_minutes,
+                    "call_timeout_s": call_timeout_s,
+                    "started_at": _iso(started),
+                    "deadline_at": _iso(started + timedelta(seconds=total_deadline_s)),
+                },
+            }
             _validate_manifest(manifest)
             _atomic_json(manifest_path, manifest)
 
-        if frontier_call_budget != 2 or total_deadline_s <= 0 or max_gpu_minutes < 0:
+        if (
+            frontier_call_budget != 2
+            or type(total_deadline_s) is not int or not 0 < total_deadline_s <= 7_200
+            or type(max_gpu_minutes) is not int or not 0 <= max_gpu_minutes <= 120
+            or type(call_timeout_s) is not int or not 0 < call_timeout_s <= total_deadline_s
+        ):
             return _finish(
                 out, manifest, status="BUDGET_EXHAUSTED",
                 reason="run requires an explicit budget of exactly two frontier calls and positive deadline",
@@ -1262,7 +1781,9 @@ def run_review(
             )
         if invoke_fn is None:
             try:
-                from agent_wrapper.maintenance_frontier import invoke_maintenance_frontier
+                from agent_wrapper.maintenance_frontier import (
+                    invoke_maintenance_frontier,
+                )
             except (ImportError, ModuleNotFoundError) as exc:
                 return _finish(
                     out, manifest, status="FRONTIER_UNAVAILABLE",
@@ -1419,6 +1940,7 @@ def _parser() -> argparse.ArgumentParser:
     mode.add_argument("--fetch-sources", metavar="FETCH_CONFIG", help="bounded allowlisted HTTPS source fetch")
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--source-packet", type=Path)
+    parser.add_argument("--operational-history-root", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--frontier-call-budget", type=int)
     parser.add_argument("--total-deadline-s", type=int)
@@ -1447,7 +1969,10 @@ def main(argv: list[str] | None = None) -> int:
         else:
             packet = load_source_packet(args.source_packet)
             if args.plan:
-                result = plan_review(args.repo_root, source_packet=packet)
+                result = plan_review(
+                    args.repo_root, source_packet=packet,
+                    operational_history_root=args.operational_history_root,
+                )
             else:
                 required = {
                     "--output-dir": args.output_dir,
@@ -1465,6 +1990,7 @@ def main(argv: list[str] | None = None) -> int:
                     max_gpu_minutes=args.max_gpu_minutes,
                     call_timeout_s=args.call_timeout_s,
                     source_packet=packet,
+                    operational_history_root=args.operational_history_root,
                 )
         print(json.dumps(result, sort_keys=True, indent=2, ensure_ascii=False))
         return 0

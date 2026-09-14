@@ -39,6 +39,8 @@ TRIALS = {
     **{f"experiments/weekly_qwen_effort_pilot_2026-09-14/seed_{seed}.json":
        ("objective", 2250) for seed in (17, 29, 43)},
     "experiments/topic_scope_repair_2026-09-14.json": ("topic_scope", 2400),
+    "experiments/topic_scope_repair_v2_2026-09-14.json": ("topic_scope", 2400),
+    "experiments/weekly_upgrade_game_science_dev_v0_2026-09-14.json": ("portfolio", 2310),
 }
 ENDPOINTS = ("http://127.0.0.1:8000", "http://127.0.0.1:8001")
 RESIDENT_CONTAINERS = ("vllm-gemma4", "vllm-qwen")
@@ -46,9 +48,11 @@ MIN_MEMORY_GIB = 30  # Existing production preflight floor, not a relaxed gate.
 KILL_GRACE_S = 5
 SUPERVISION_MARGIN_S = 10
 DEPENDENCY_PATHS = (
-    "agent_wrapper", "bench/weekly_upgrade_eval", "orchestrator/coordinator_actions.py",
+    "agent_wrapper", "bench/weekly_upgrade_eval", "bench/weekly_upgrade_portfolio",
+    "orchestrator/coordinator_actions.py", "orchestrator/weekly_upgrade_portfolio_receipt.py",
     "orchestrator/weekly_upgrade_trial.py", "orchestrator/weekly_upgrade_budget.py",
-    "orchestrator/weekly_upgrade.py", "schema/calls.jsonl.schema.json",
+    "orchestrator/weekly_upgrade.py", "orchestrator/weekly_upgrade_cycle.py",
+    "cron/weekly-frontier-agenda.sh", "schema/calls.jsonl.schema.json",
     "schema/weekly_upgrade.schema.json",
 )
 
@@ -111,6 +115,35 @@ def canonical_root(worktree: Path) -> Path:
     if not (root / "run_state").is_dir():
         raise TrialError("canonical checkout has no run_state directory")
     return root
+
+
+def assert_budget_journal_consistent(root: Path, week_id: str) -> None:
+    """A missing budget journal cannot erase canonical same-week trial use."""
+    budget = root / "run_state" / "weekly_upgrade_budget.jsonl"
+    if budget.exists():
+        if budget.is_symlink() or not budget.is_file():
+            raise TrialError("weekly budget journal is redirected")
+        return
+    directory = root / "run_state" / "weekly_upgrade" / "trials"
+    if not directory.exists():
+        return
+    if directory.is_symlink() or not directory.is_dir():
+        raise TrialError("weekly trial journal directory is redirected")
+    paths = list(directory.glob("*.json"))
+    if len(paths) > 512:
+        raise TrialError("weekly trial journal directory is unbounded")
+    for path in paths:
+        if path.is_symlink() or not path.is_file():
+            raise TrialError("weekly trial journal is redirected")
+        try:
+            value = _read(path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            raise TrialError("weekly trial journal is unreadable") from exc
+        plan = value.get("plan")
+        if isinstance(plan, dict) and plan.get("week_id") == week_id:
+            raise TrialError(
+                "same-week trial evidence exists without the canonical budget journal"
+            )
 
 
 def execution_fingerprint(worktree: Path) -> dict:
@@ -198,6 +231,21 @@ def plan_trial(manifest_path: str, *, worktree: Path = ROOT,
         graders = {task.id: task.grader_sha256 for task in manifest.tasks}
         if any(arm.backend not in {"vllm-gemma", "vllm-qwen"} for arm in manifest.arms):
             raise TrialError("only resident local backends are admitted")
+    elif kind == "portfolio":
+        from bench.weekly_upgrade_portfolio.manifest import (
+            load_manifest,
+            plan_dict,
+            sha256_json,
+        )
+        manifest = load_manifest(path)
+        fixtures = plan_dict(manifest)
+        fixture_ids = [task["id"] for task in manifest["tasks"]]
+        seeds = sorted({arm["seed"] for arm in manifest["arms"]})
+        arm_ids = [arm["id"] for arm in manifest["arms"]]
+        configuration_sha = manifest["_configuration_sha256"]
+        attempts = [row["attempt_id"] for row in fixtures["order"]]
+        inputs = manifest["frozen_hashes"]["tasks"]
+        graders = {task["id"]: sha256_json(task["grader"]) for task in manifest["tasks"]}
     else:
         from bench.weekly_upgrade_eval.topic_scope import build_attempts, load_manifest
         manifest = load_manifest(path)
@@ -335,8 +383,9 @@ def trial_command(plan: dict, output_dir: Path, remaining_s: float,
     payload_s = plan["payload_budget_s"]
     if not timeout or remaining_s < payload_s + KILL_GRACE_S + SUPERVISION_MARGIN_S + 1:
         raise TrialError("independent deadline supervisor unavailable or reservation exhausted")
-    module = ("bench.weekly_upgrade_eval.runner" if plan["kind"] == "objective"
-              else "bench.weekly_upgrade_eval.topic_scope")
+    module = {"objective": "bench.weekly_upgrade_eval.runner",
+              "topic_scope": "bench.weekly_upgrade_eval.topic_scope",
+              "portfolio": "bench.weekly_upgrade_portfolio.runner"}[plan["kind"]]
     command = [timeout, "--signal=TERM", f"--kill-after={KILL_GRACE_S}s", f"{payload_s + 1:.3f}s",
                sys.executable, "-m", module, "--run", "--manifest",
                str(worktree / plan["manifest_path"]), "--output-dir", str(output_dir),
@@ -404,7 +453,8 @@ def live_trial_processes(output: Path) -> list[int]:
     elapsed heartbeat. Only public command arguments are inspected.
     """
     target = os.fsencode(str(output / "evaluation"))
-    modules = {b"bench.weekly_upgrade_eval.runner", b"bench.weekly_upgrade_eval.topic_scope"}
+    modules = {b"bench.weekly_upgrade_eval.runner", b"bench.weekly_upgrade_eval.topic_scope",
+               b"bench.weekly_upgrade_portfolio.runner"}
     found = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
@@ -544,7 +594,20 @@ def evaluation_receipt(plan: dict, output: Path) -> dict:
         "manifest.snapshot.json": _sha(snapshot_path.read_bytes()),
     }
 
-    if plan.get("kind") == "objective":
+    if plan.get("kind") == "portfolio":
+        from orchestrator.weekly_upgrade_portfolio_receipt import (
+            validate_portfolio_receipt,
+        )
+        complete = validate_portfolio_receipt(
+            plan, artifact, snapshot_path, regular=regular, json_lines=json_lines,
+            validate_calls=validate_calls, validate_activity=validate_activity,
+            finite_nonnegative=finite_nonnegative,
+        )
+        for name in ("raw_attempts.jsonl", "outcomes.jsonl", "calls.jsonl", "worker_activity.jsonl"):
+            candidate = regular(name, required=complete or name in {"raw_attempts.jsonl", "outcomes.jsonl"})
+            if candidate is not None:
+                artifact_hashes[name] = _sha(candidate.read_bytes())
+    elif plan.get("kind") == "objective":
         from bench.weekly_upgrade_eval.manifest import load_manifest, sha256_json
         from bench.weekly_upgrade_eval.runner import (
             InvocationRequest,
@@ -1184,12 +1247,13 @@ def execute_trial(plan: dict, output_dir: Path, *, worktree: Path = ROOT,
     output = Path(output_dir).resolve()
     if any(output == repo or repo in output.parents for repo in (root, worktree)):
         raise TrialError("evaluation artifacts must be outside both canonical and execution checkouts")
-    ledger = BudgetLedger(root / "run_state" / "weekly_upgrade_budget.jsonl")
     if _sha((worktree / plan["manifest_path"]).read_bytes()) != plan["manifest_sha256"]:
         raise TrialError("manifest changed after planning")
     current_week = datetime.now(timezone.utc).strftime("%G-W%V")
     if plan["week_id"] != current_week:
         raise TrialError("trial plan has crossed a week boundary")
+    assert_budget_journal_consistent(root, current_week)
+    ledger = BudgetLedger(root / "run_state" / "weekly_upgrade_budget.jsonl")
     with resource_lease(root) as descriptors:
         state_dir = root / "run_state" / "weekly_upgrade" / "trials"
         state_dir.mkdir(parents=True, exist_ok=True)

@@ -128,6 +128,25 @@ def test_registered_manifest_cannot_redirect(repo, tmp_path):
         trial.plan_trial(MANIFEST, worktree=repo)
 
 
+def test_topic_protocol_repair_has_distinct_trial_identity_and_keeps_all_cells():
+    moment = datetime(2026, 9, 14, tzinfo=timezone.utc)
+    original = trial.plan_trial(
+        "experiments/topic_scope_repair_2026-09-14.json", now=moment,
+    )
+    repaired = trial.plan_trial(
+        "experiments/topic_scope_repair_v2_2026-09-14.json", now=moment,
+    )
+    assert original["manifest_sha256"] == (
+        "aab09640a9d377fc0a2a1c830223f5cd8b4e7e20299ac968d7bd01f2512b06a2"
+    )
+    assert repaired["trial_id"] != original["trial_id"]
+    assert repaired["expected_attempt_ids"] == original["expected_attempt_ids"]
+    assert repaired["declared_attempts"] == 80
+    assert repaired["include_primary_r0"]
+    assert repaired["reservation_s"] == original["reservation_s"] == 2400
+    assert repaired["payload_budget_s"] == original["payload_budget_s"] == 2370
+
+
 def test_canonical_and_linked_worktrees_share_budget_and_reject_live_outputs(repo, tmp_path):
     linked = tmp_path / "linked"
     git(repo, "worktree", "add", "--detach", str(linked))
@@ -364,4 +383,21 @@ def test_reviewed_execution_rejects_broken_bindings(repo, tmp_path, tamper):
         path.write_text(json.dumps(row))
     with pytest.raises((trial.TrialError, trial.ValidationError)):
         trial.plan_trial(MANIFEST, worktree=repo, review_dir=review_dir)
+    assert not (repo / "run_state" / "weekly_upgrade_budget.jsonl").exists()
+
+
+def test_missing_budget_cannot_erase_same_week_canonical_trial(repo, tmp_path):
+    plan = trial.plan_trial(MANIFEST, worktree=repo)
+    journal = repo / "run_state" / "weekly_upgrade" / "trials" / "prior.json"
+    journal.parent.mkdir(parents=True)
+    journal.write_text(json.dumps({
+        "phase": "finished",
+        "plan": {"week_id": plan["week_id"], "trial_id": "prior"},
+        "result": {"trial_id": "prior", "status": "failed"},
+    }))
+    with pytest.raises(trial.TrialError, match="without the canonical budget"):
+        trial.execute_trial(
+            plan, tmp_path / "out", worktree=repo, manual=True,
+            probe=idle, runner=synthetic_runner,
+        )
     assert not (repo / "run_state" / "weekly_upgrade_budget.jsonl").exists()

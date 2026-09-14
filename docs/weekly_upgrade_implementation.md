@@ -20,14 +20,16 @@ per week.” This sets the design limits; it starts no paid calls or jobs.
 Use authenticated subscription CLI sessions; no metered API fallback. The
 current review permits at most two attempts (Codex proposal, then Claude
 adversary), with no retries; an early failure can prevent the second call. The
-existing agenda also permits up to two, so running both workflows can use up to
-four subscription attempts. Both must be visible in the weekly usage report;
-this decision does not set a numeric subscription-session cap or activate cron.
+existing agenda also permits up to two. When explicitly enabled, the new
+weekly hook replaces that agenda branch, so the scheduled invocation remains
+bounded to two subscription attempts. It does not run both workflows. Separate
+manual diagnostic annotation calls have their own finite receipts; the owner
+decision does not set a numeric subscription-session cap or activate cron.
 
 The delivery implementation now enforces the **shared 120 Spark GPU-minute
 weekly ceiling** through one canonical ledger. This describes the checked and
-tested code; it is not yet the state of the running canonical checkout or its
-already-loaded daemon:
+tested code, now adopted by the canonical checkout and exercised by a real
+registered diagnostic. Its already-loaded daemon still imports older code:
 
 - One ISO week, Monday 00:00 UTC through the next Monday, with no carryover.
   Charge the one physical Spark's reserved elapsed time once, including both
@@ -132,13 +134,14 @@ separates delivered code from remaining experiments and activation. Its first
 priority is the stale topic queue feeding the observed R0 blockade upstream of Qwen;
 the paired effort pilot remains a separate, preregistered development test.
 
-The implementation does not activate a schedule, execute a live diagnostic,
-collect independent annotations, change the scientific frontier policy, restart
-serving, swap a role, raise context limits or promote a candidate. The existing
-agenda cron remains unchanged. No new review artifact has yet exercised the
-review-to-registered-trial binding, and no manual end-to-end trial has run.
-Scheduling, canonical-checkout adoption and runtime qualification remain
-follow-on work with the deployed contracts applied at that point.
+The [live evaluation record](research/weekly-upgrade-2026-09-14/LIVE_EVALUATION_RECORD.md)
+now records canonical adoption, the first manual diagnostic, complete independent
+Claude annotations and admission of the three-repeat Qwen pilot. The diagnostic
+found a planner protocol regression; it did not establish an upgrade. A new
+review artifact has yet to exercise the full review-to-trial path. Scheduling
+and runtime qualification remain separate from code adoption. No schedule,
+serving restart, model-role swap, context increase or production promotion has
+been activated.
 
 ## Corrections established during implementation
 
@@ -212,6 +215,8 @@ The fixed registered-trial catalog is:
 | `bench/weekly_upgrade_eval/fixtures.json` | objective canary | 1,800 s | 1,770 s | 24 |
 | each Qwen seed manifest (`17`, `29`, `43`) | objective repeat | 2,250 s | 2,220 s | 12 |
 | `experiments/topic_scope_repair_2026-09-14.json` | topic scope + primary R0 | 2,400 s | 2,370 s | 80 |
+| `experiments/topic_scope_repair_v2_2026-09-14.json` | planner protocol repair + unchanged R0 | 2,400 s | 2,370 s | 80 |
+| `experiments/weekly_upgrade_game_science_dev_v0_2026-09-14.json` | eight-task public game/science/evidence/code panel | 2,310 s | 2,280 s | 16 |
 
 The fixed 30-second difference between each reservation and payload covers
 resource preflight plus supervisor shutdown. The payload cap is identical for
@@ -400,6 +405,22 @@ not claim two independent proposals or a four-pass debate. Actual vendor/model
 metadata is retained when the CLI exposes it; absent resolved model IDs remain
 unknown. CLI subscriptions are used, with API-key routes removed. The configured
 model is recorded; the controller does not claim an alias is the newest model.
+For the September 14 maintenance review, the current selection is
+`FRONTIER_CODEX_MODEL=gpt-6-astra`, `FRONTIER_CODEX_EFFORT=xhigh`, and
+`FRONTIER_CLAUDE_MODEL=claude-opus-5`, supplied only to the maintenance process.
+The [official Codex model guide](https://learn.chatgpt.com/docs/models)
+recommends Astra for demanding research/coding workflows, and this host's
+fresh subscription model catalog lists it. The completed blind annotation's
+Claude receipt reports Opus 5. Anthropic's
+[current model overview](https://platform.claude.com/docs/en/models/overview)
+recommends Opus 5 for most workloads and Fable 5.1 for demanding reasoning when
+Opus at higher effort falls short. Opus has a successful local subscription
+grading receipt here; Fable is a future analyst candidate, with subscription
+availability and bounded response behavior still to verify. This selection
+does not alter the separate
+scientific frontier seam's defaults. Check actual access and receipts each
+week; documented model availability depends on account and rollout, and a
+stale hard-coded model name does not establish current suitability.
 The example's 40-minute card ceiling is a per-trial proposal bound, not another
 40 minutes granted outside the weekly 120-minute total. A fresh review output
 directory does not reset the weekly balance.
@@ -411,11 +432,16 @@ be recorded as completed frontier analysis. `NO_CHANGE`, `REVISION_REQUIRED`,
 or `CONTINUE_TRIAL` is an advisory result, not a deployment instruction or
 statistical promotion decision.
 
-No live diagnostic, Qwen pilot, independent topic annotation, newly generated
-review integration, canonical-checkout adoption, service reload, or scheduler
-activation has occurred in this delivery. The code and offline plans establish
-protocol behavior only. They do not measure a scientific, coding or performance
-gain.
+Canonical adoption, a real registered diagnostic and independent topic
+annotation are recorded in the
+[live evaluation record](research/weekly-upgrade-2026-09-14/LIVE_EVALUATION_RECORD.md).
+The full Qwen pilot attempted all 36 cells. Its frozen result is 13/18 for
+xhigh versus 12/18 for medium; one timeout leaves the locked decision
+`INCOMPLETE` and no gain supported. A separate grader audit preserves the
+identified false negatives without changing the recorded scores. Newly generated review-to-trial
+integration, service reload and scheduler activation remain separately tracked.
+Neither protocol completion nor a partial pilot establishes a scientific,
+coding or performance gain.
 
 ## Validation and delivery
 
