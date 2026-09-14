@@ -115,6 +115,7 @@ describe("CommandPalette — navigation entries", () => {
       "Research workspace",
       "Record library",
       "Operations delivery",
+      "Benchmark progress",
       "Conversation",
       "Calls",
       "Trace history",

@@ -9,6 +9,7 @@ vi.mock("../src/components/LoopAlertBanner", () => ({
 }));
 vi.mock("../src/routes/Pulse", () => ({ default: () => <div data-testid="route-pulse" /> }));
 vi.mock("../src/routes/Development", () => ({ default: () => <div data-testid="route-development" /> }));
+vi.mock("../src/routes/BenchmarkProgress", () => ({ default: () => <div data-testid="route-benchmarks" /> }));
 vi.mock("../src/routes/Ladder", () => ({ default: () => <div data-testid="route-ladder" /> }));
 vi.mock("../src/routes/DossierIndex", () => ({ default: () => <div data-testid="route-dossier-index" /> }));
 vi.mock("../src/routes/DossierReader", () => ({ default: () => <div data-testid="route-dossier-reader" /> }));
@@ -96,6 +97,7 @@ describe("Atlas shell route preservation", () => {
   it.each([
     ["/", "route-pulse"],
     ["/development", "route-development"],
+    ["/benchmarks", "route-benchmarks"],
     ["/ladder", "route-ladder"],
     ["/dossier", "route-dossier-index"],
     ["/dossier/claim-1", "route-dossier-reader"],
@@ -132,6 +134,7 @@ describe("Atlas navigation grouping", () => {
     ["/dossier/claim-1", "research"],
     ["/experiments/exp-1", "research"],
     ["/development", "operations"],
+    ["/benchmarks", "operations"],
     ["/channel", "operations"],
     ["/model-io", "operations"],
     ["/cycles", "operations"],
@@ -160,7 +163,7 @@ describe("Atlas navigation grouping", () => {
     expect(within(nav).getByRole("link", { name: "Evaluations" })).toHaveAttribute("href", "/experiments");
     expect(within(nav).queryByRole("link", { name: "Calls" })).not.toBeInTheDocument();
     fireEvent.click(within(nav).getByRole("link", { name: "Operations" }));
-    for (const [name, href] of [["Conversation", "/channel"], ["Calls", "/model-io"], ["Trace history", "/cycles"]]) {
+    for (const [name, href] of [["Benchmark progress", "/benchmarks"], ["Conversation", "/channel"], ["Calls", "/model-io"], ["Trace history", "/cycles"]]) {
       expect(within(nav).getByRole("link", { name })).toHaveAttribute("href", href);
     }
     expect(screen.getByRole("link", { name: /brain/ })).toHaveAttribute("href", `http://${window.location.hostname}:5180/dashboard.html`);
