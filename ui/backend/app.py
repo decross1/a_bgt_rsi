@@ -26,14 +26,15 @@ from .frontier_reviews import register as register_frontier_reviews
 from .human_todo import register as register_human_todo
 from .iteration_journey import register as register_iteration_journey
 from .lab_channel_seam import register as register_lab_channel_seam
-from .model_io import register as register_model_io
-from .served_models import register as register_served_models
 from .lab_todo import register as register_lab_todo
 from .ladder import register as register_ladder
 from .loop_alert import register as register_loop_alert
 from .loop_v0 import register as register_loop_v0
+from .model_io import register as register_model_io
+from .served_models import register as register_served_models
 from .tailer import JsonlTailer
 from .todo_cockpit import register as register_todo_cockpit
+from .weekly_upgrade_progress import register as register_weekly_upgrade_progress
 from .workload import compute_workload_hint
 
 _REPO = Path(__file__).resolve().parents[2]
@@ -63,7 +64,8 @@ DEFAULT_COORDINATOR_MEMORY = _PRIMARY_REPO / "memory"
 def _git_sha():
     try:
         proc = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                              cwd=_REPO, capture_output=True, text=True, timeout=5)
+                              cwd=_REPO, capture_output=True, text=True, timeout=5,
+                              check=False)
     except (subprocess.SubprocessError, OSError):
         return "unknown"
     return proc.stdout.strip() or "unknown" if proc.returncode == 0 else "unknown"
@@ -214,6 +216,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
 
     register_activity(app, logs_dir=logs_dir, telemetry_file=telemetry_file)
     register_experiments(app)
+    register_weekly_upgrade_progress(app)
 
     register_loop_v0(
         app,
