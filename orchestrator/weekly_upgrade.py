@@ -128,6 +128,7 @@ EVAL_MANIFEST_FILES = (
     "experiments/topic_scope_repair_v2_2026-09-14.json",
     "experiments/weekly_upgrade_game_science_dev_v0_2026-09-14.json",
     "experiments/weekly_context_capability_v1_2026-09-14.json",
+    "experiments/diversity_selection_dev_v0_2026-09-14.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_17.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_29.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_43.json",
@@ -435,7 +436,7 @@ def _evaluation_manifests(repo_root: Path) -> list[dict]:
                     # Reviewers need the actual fixed comparison, not merely
                     # arm labels. These are public registered inputs, never
                     # live completions, hidden answers or arbitrary log text.
-                    "arm_settings": payload.get("arms", []),
+                    "arm_settings": payload.get("arms", payload.get("conditions", [])),
                     "shared_settings": payload.get("settings"),
                     "ordering": payload.get("ordering"),
                     "publication_class": payload.get("publication_class", "public_development"),

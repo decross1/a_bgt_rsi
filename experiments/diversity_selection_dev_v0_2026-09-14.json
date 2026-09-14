@@ -1,0 +1,234 @@
+{
+  "schema_version": "weekly-upgrade-diversity-selection/v1",
+  "suite_id": "gemma-diversity-selection-public-dev-v0-2026-09-14",
+  "description": "Judge-free development comparison of one deterministic multi-proposal call against three independently seeded exploratory proposal calls followed by deterministic validator selection, with matched output-token and request-time ceilings.",
+  "publication_class": "public_synthetic_development",
+  "claim_limits": [
+    "All tasks and finite feasibility rules are repository-visible; this is not a hidden benchmark.",
+    "The experiment measures valid unique feasible proposals and objective selection recovery, not scientific novelty.",
+    "Five tasks and one run cannot authorize a production inference-policy change."
+  ],
+  "model": {
+    "backend": "vllm-gemma",
+    "served_name": "gemma-4-26b-a4b"
+  },
+  "conditions": [
+    {
+      "id": "control",
+      "profile": "deterministic",
+      "seeds": [
+        0
+      ],
+      "generation_calls": 1,
+      "max_tokens_per_call": 1280,
+      "timeout_s_per_call": 80
+    },
+    {
+      "id": "diverse_select",
+      "generation_profile": "explore",
+      "generation_seeds": [
+        11,
+        29,
+        47
+      ],
+      "generation_max_tokens_per_call": 384,
+      "generation_timeout_s_per_call": 20,
+      "validator_profile": "deterministic",
+      "validator_seed": 0,
+      "validator_max_tokens": 128,
+      "validator_timeout_s": 20
+    }
+  ],
+  "ordering": "alternating_condition_groups",
+  "tasks": [
+    {
+      "id": "DIV-GT-PURE-NASH-001",
+      "family": "game_theory",
+      "problem": "In a two-player game with row and column actions [adopt,status_quo], row payoffs are [[4,0],[3,3]] and column payoffs are [[4,3],[0,3]]. Propose one pure Nash equilibrium.",
+      "proposal_contract": "A proposal is exactly {\"row_action\":\"adopt|status_quo\",\"column_action\":\"adopt|status_quo\"}.",
+      "grader": {
+        "kind": "pure_nash",
+        "version": "1",
+        "inputs": {
+          "actions": [
+            "adopt",
+            "status_quo"
+          ],
+          "row_payoffs": [
+            [
+              4,
+              0
+            ],
+            [
+              3,
+              3
+            ]
+          ],
+          "column_payoffs": [
+            [
+              4,
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ]
+        }
+      },
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "derivation": "Hand-authored two-action coordination game with two objectively enumerable pure equilibria.",
+        "source_refs": [
+          "DECISIONS.md#D-075"
+        ],
+        "claim_limit": "Finite public development task; no empirical or novelty claim."
+      }
+    },
+    {
+      "id": "DIV-D075-BALLOT-001",
+      "family": "collective_choice",
+      "problem": "Construct nonnegative integer counts for all six strict rankings ABC, ACB, BAC, BCA, CAB, CBA. Counts must sum to 7. A must be the unique plurality winner by first choices, while B must be the unique Condorcet winner under pairwise majority.",
+      "proposal_contract": "A proposal is exactly {\"ABC\":int,\"ACB\":int,\"BAC\":int,\"BCA\":int,\"CAB\":int,\"CBA\":int}.",
+      "grader": {
+        "kind": "ballot_counterexample",
+        "version": "1",
+        "inputs": {
+          "candidates": [
+            "A",
+            "B",
+            "C"
+          ],
+          "rankings": [
+            "ABC",
+            "ACB",
+            "BAC",
+            "BCA",
+            "CAB",
+            "CBA"
+          ],
+          "voters": 7,
+          "target_plurality": "A",
+          "target_condorcet": "B"
+        }
+      },
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "derivation": "Finite integer-composition construction with six valid profiles under the declared rules.",
+        "source_refs": [
+          "DECISIONS.md#D-075"
+        ],
+        "claim_limit": "Finite public development task; no empirical or novelty claim."
+      }
+    },
+    {
+      "id": "DIV-D075-DELEGATION-001",
+      "family": "collective_choice",
+      "problem": "Assign each voter x, y, z one value from [A,B,->x,->y,->z]. Direct A/B votes count for every origin whose transitive delegation reaches them. Cycles exhaust. Construct a graph resolving to totals A=2, B=1 with no exhausted voters.",
+      "proposal_contract": "A proposal is exactly {\"x\":\"allowed value\",\"y\":\"allowed value\",\"z\":\"allowed value\"}.",
+      "grader": {
+        "kind": "delegation_graph",
+        "version": "1",
+        "inputs": {
+          "voters": [
+            "x",
+            "y",
+            "z"
+          ],
+          "allowed_values": [
+            "A",
+            "B",
+            "->x",
+            "->y",
+            "->z"
+          ],
+          "target_totals": {
+            "A": 2,
+            "B": 1
+          },
+          "target_exhausted": []
+        }
+      },
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "derivation": "Complete 5^3 delegation domain with nine valid target graphs.",
+        "source_refs": [
+          "DECISIONS.md#D-075"
+        ],
+        "claim_limit": "Finite public development task; no empirical or novelty claim."
+      }
+    },
+    {
+      "id": "DIV-GT-COORDINATION-001",
+      "family": "game_theory",
+      "problem": "Choose integer a,b,c,d from [0,1,2,3,4] for a symmetric two-action game. The row payoff matrix is [[a,b],[c,d]] and the column payoff matrix is its transpose. Both diagonal profiles must be strict Nash equilibria and the interior symmetric probability of the first action must equal 0.5.",
+      "proposal_contract": "A proposal is exactly {\"a\":int,\"b\":int,\"c\":int,\"d\":int}.",
+      "grader": {
+        "kind": "coordination_matrix",
+        "version": "1",
+        "inputs": {
+          "allowed_payoffs": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "target_mixed_probability": 0.5
+        }
+      },
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "derivation": "Complete 5^4 payoff domain with strict-equilibrium and exact-indifference checks.",
+        "source_refs": [
+          "DECISIONS.md#D-075"
+        ],
+        "claim_limit": "Finite public development task; no empirical or novelty claim."
+      }
+    },
+    {
+      "id": "DIV-GT-COALITION-001",
+      "family": "game_theory",
+      "problem": "In the weighted voting game [6:4,3,2,1], players p,q,r,s have those weights and quota 6. Propose one minimal winning coalition: it reaches quota and removing any member makes it lose.",
+      "proposal_contract": "A proposal is exactly {\"coalition\":[distinct player IDs]}; array order is irrelevant.",
+      "grader": {
+        "kind": "minimal_winning_coalition",
+        "version": "1",
+        "inputs": {
+          "weights": {
+            "p": 4,
+            "q": 3,
+            "r": 2,
+            "s": 1
+          },
+          "quota": 6
+        }
+      },
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "derivation": "Complete subset enumeration yields three minimal winning coalitions.",
+        "source_refs": [
+          "DECISIONS.md#D-075"
+        ],
+        "claim_limit": "Finite public development task; no empirical or novelty claim."
+      }
+    }
+  ],
+  "resource_limits": {
+    "planned_calls": 25,
+    "calls_serial": true,
+    "max_total_runtime_s": 850,
+    "max_raw_completion_bytes": 131072
+  },
+  "frozen_hashes": {
+    "model": "bad5501d2f2fd2155baadcac2e4810a80eb9fddab0c4fa0d184ff553d9dca57e",
+    "conditions": "d4b1a7479e9b0668416b2424060556a500cf0718a00bc05b57ac2674a73ed78e",
+    "tasks": {
+      "DIV-GT-PURE-NASH-001": "f22f881f50109dd04b235e93e8cfc47e502f24d75b2d672ac11d258e8bfb8315",
+      "DIV-D075-BALLOT-001": "cee950ecd20a564f20caa067d9ea869d954236a3f59e5bb46aa6e77ead430623",
+      "DIV-D075-DELEGATION-001": "272107931f9dd32fb1cb35fc94943623f6f527bd835af2a2cebe4928695d6186",
+      "DIV-GT-COORDINATION-001": "366b1434cbd06262e3f2cbd079eff8535a3b9f836dfc42434953d8ab296df37b",
+      "DIV-GT-COALITION-001": "507a75ec15da385afbae50e345ad20cd8897cedb2ec9280d5fbad0188a6a204b"
+    }
+  }
+}

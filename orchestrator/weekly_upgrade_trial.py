@@ -42,6 +42,7 @@ TRIALS = {
     "experiments/topic_scope_repair_v2_2026-09-14.json": ("topic_scope", 2400),
     "experiments/weekly_upgrade_game_science_dev_v0_2026-09-14.json": ("portfolio", 2310),
     "experiments/weekly_context_capability_v1_2026-09-14.json": ("objective", 1230),
+    "experiments/diversity_selection_dev_v0_2026-09-14.json": ("diversity", 880),
 }
 ENDPOINTS = ("http://127.0.0.1:8000", "http://127.0.0.1:8001")
 RESIDENT_CONTAINERS = ("vllm-gemma4", "vllm-qwen")
@@ -50,7 +51,7 @@ KILL_GRACE_S = 5
 SUPERVISION_MARGIN_S = 10
 DEPENDENCY_PATHS = (
     "agent_wrapper", "bench/weekly_upgrade_eval", "bench/weekly_upgrade_portfolio",
-    "bench/weekly_upgrade_context",
+    "bench/weekly_upgrade_context", "bench/weekly_upgrade_diversity",
     "orchestrator/coordinator_actions.py", "orchestrator/weekly_upgrade_portfolio_receipt.py",
     "orchestrator/weekly_upgrade_trial.py", "orchestrator/weekly_upgrade_budget.py",
     "orchestrator/weekly_upgrade.py", "orchestrator/weekly_upgrade_cycle.py",
@@ -248,7 +249,26 @@ def plan_trial(manifest_path: str, *, worktree: Path = ROOT,
         attempts = [row["attempt_id"] for row in fixtures["order"]]
         inputs = manifest["frozen_hashes"]["tasks"]
         graders = {task["id"]: sha256_json(task["grader"]) for task in manifest["tasks"]}
-    else:
+    elif kind == "diversity":
+        from bench.weekly_upgrade_diversity.manifest import (
+            load_manifest,
+            plan_dict,
+            sha256_json,
+        )
+
+        manifest = load_manifest(path)
+        frozen = plan_dict(manifest)
+        fixture_ids = [task["id"] for task in manifest["tasks"]]
+        seeds = sorted({call["seed"] for call in frozen["calls"]})
+        arm_ids = [condition["id"] for condition in manifest["conditions"]]
+        configuration_sha = manifest["_configuration_sha256"]
+        attempts = [call["attempt_id"] for call in frozen["calls"]]
+        inputs = manifest["frozen_hashes"]["tasks"]
+        graders = {
+            task["id"]: sha256_json(task["grader"])
+            for task in manifest["tasks"]
+        }
+    elif kind == "topic_scope":
         from bench.weekly_upgrade_eval.topic_scope import build_attempts, load_manifest
         manifest = load_manifest(path)
         fixture_ids = [row["id"] for row in manifest["topics"] + manifest["planner_cases"]]
@@ -260,6 +280,8 @@ def plan_trial(manifest_path: str, *, worktree: Path = ROOT,
         attempts += [row["attempt_id"].replace("hypothesis:", "primary_r0:", 1)
                      for row in base if row["stage"] == "hypothesis"]
         inputs, graders = {}, {}
+    else:  # Registry entries and dispatcher implementations must stay closed.
+        raise TrialError("registered evaluation kind is unsupported")
     moment = now or datetime.now(timezone.utc)
     if moment.tzinfo is None or moment.utcoffset() is None:
         raise TrialError("planning time must include a timezone")
@@ -284,7 +306,7 @@ def plan_trial(manifest_path: str, *, worktree: Path = ROOT,
                 or card["caps"]["wall_minutes"] * 60 < cap):
             raise TrialError("card cap cannot fund the registered trial reservation")
         report_sha = _sha(report)
-    return {
+    plan = {
         "schema_version": "weekly-upgrade-trial-plan/v1", "week_id": week,
         "trial_id": f"{week}-{raw_sha[:24]}", "kind": kind,
         "manifest_path": manifest_path, "manifest_sha256": raw_sha,
@@ -298,6 +320,9 @@ def plan_trial(manifest_path: str, *, worktree: Path = ROOT,
         "include_primary_r0": kind == "topic_scope",
         "declared_attempts": len(attempts),
     }
+    if kind == "diversity":
+        plan["condition_ids"] = arm_ids
+    return plan
 
 
 @contextmanager
@@ -387,7 +412,8 @@ def trial_command(plan: dict, output_dir: Path, remaining_s: float,
         raise TrialError("independent deadline supervisor unavailable or reservation exhausted")
     module = {"objective": "bench.weekly_upgrade_eval.runner",
               "topic_scope": "bench.weekly_upgrade_eval.topic_scope",
-              "portfolio": "bench.weekly_upgrade_portfolio.runner"}[plan["kind"]]
+              "portfolio": "bench.weekly_upgrade_portfolio.runner",
+              "diversity": "bench.weekly_upgrade_diversity.runner"}[plan["kind"]]
     command = [timeout, "--signal=TERM", f"--kill-after={KILL_GRACE_S}s", f"{payload_s + 1:.3f}s",
                sys.executable, "-m", module, "--run", "--manifest",
                str(worktree / plan["manifest_path"]), "--output-dir", str(output_dir),
@@ -456,7 +482,8 @@ def live_trial_processes(output: Path) -> list[int]:
     """
     target = os.fsencode(str(output / "evaluation"))
     modules = {b"bench.weekly_upgrade_eval.runner", b"bench.weekly_upgrade_eval.topic_scope",
-               b"bench.weekly_upgrade_portfolio.runner"}
+               b"bench.weekly_upgrade_portfolio.runner",
+               b"bench.weekly_upgrade_diversity.runner"}
     found = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
@@ -596,7 +623,26 @@ def evaluation_receipt(plan: dict, output: Path) -> dict:
         "manifest.snapshot.json": _sha(snapshot_path.read_bytes()),
     }
 
-    if plan.get("kind") == "portfolio":
+    if plan.get("kind") == "diversity":
+        from bench.weekly_upgrade_diversity.receipt import (
+            validate_diversity_receipt,
+        )
+
+        complete = validate_diversity_receipt(
+            plan, artifact, snapshot_path, regular=regular, json_lines=json_lines,
+            validate_calls=validate_calls, validate_activity=validate_activity,
+            finite_nonnegative=finite_nonnegative,
+        )
+        for name in (
+            "raw_calls.jsonl", "outcomes.jsonl", "calls.jsonl", "worker_activity.jsonl",
+        ):
+            candidate = regular(
+                name,
+                required=complete or name in {"raw_calls.jsonl", "outcomes.jsonl"},
+            )
+            if candidate is not None:
+                artifact_hashes[name] = _sha(candidate.read_bytes())
+    elif plan.get("kind") == "portfolio":
         from orchestrator.weekly_upgrade_portfolio_receipt import (
             validate_portfolio_receipt,
         )

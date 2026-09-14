@@ -753,11 +753,12 @@ def test_explicit_review_target_is_snapshot_bound_and_preserves_adversarial_reje
 def test_registered_review_inputs_expose_actual_arms_and_grading_boundary():
     manifests = {row["path"]: row for row in wu._evaluation_manifests(wt.ROOT)}
     for name in ("topic_scope_repair_v2_2026-09-14.json",
-                 "weekly_upgrade_game_science_dev_v0_2026-09-14.json"):
+                 "weekly_upgrade_game_science_dev_v0_2026-09-14.json",
+                 "diversity_selection_dev_v0_2026-09-14.json"):
         path = f"experiments/{name}"
         document = json.loads((wt.ROOT / path).read_text())
         execution = manifests[path]["execution"]
-        assert execution["arm_settings"] == document["arms"]
+        assert execution["arm_settings"] == document.get("arms", document.get("conditions"))
         assert execution["resource_limits"] == document["resource_limits"]
         assert execution["ordering"] == document["ordering"]
     topic = manifests["experiments/topic_scope_repair_v2_2026-09-14.json"]["execution"]
