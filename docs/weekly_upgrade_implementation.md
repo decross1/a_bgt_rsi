@@ -24,7 +24,10 @@ existing agenda also permits up to two, so running both workflows can use up to
 four subscription attempts. Both must be visible in the weekly usage report;
 this decision does not set a numeric subscription-session cap or activate cron.
 
-Proposed accounting for the **shared 120 Spark GPU-minute weekly ceiling**:
+The delivery implementation now enforces the **shared 120 Spark GPU-minute
+weekly ceiling** through one canonical ledger. This describes the checked and
+tested code; it is not yet the state of the running canonical checkout or its
+already-loaded daemon:
 
 - One ISO week, Monday 00:00 UTC through the next Monday, with no carryover.
   Charge the one physical Spark's reserved elapsed time once, including both
@@ -35,28 +38,42 @@ Proposed accounting for the **shared 120 Spark GPU-minute weekly ceiling**:
 - Treat this as a separate upgrade allowance from D-063's daily coordinator
   activity-unit ledger. Both still require physical-resource coordination;
   a separate accounting allowance does not create an idle resource window.
-- Reserve against the remaining weekly balance before dispatch. Record reserved,
-  consumed and released time; charge uncertain interrupted work conservatively
-  before any retry. For the initial design, defer any run whose maximum reserved
-  duration could cross the UTC week boundary; do not borrow from next week. Multiple
-  output directories and resumed sessions must share the same accounting.
+- Reserve against the remaining weekly balance before dispatch. All checkouts,
+  output directories and resumed sessions resolve the canonical checkout and use
+  `run_state/weekly_upgrade_budget.jsonl`. Its sidecar lock serializes processes;
+  its fsynced append-only records carry sequence and hash-chain checks. An empty,
+  partial, corrupt or inconsistent journal fails closed.
+- Active reservations charge their full maximum. A trustworthy
+  `completed`/`failed`/`cancelled` receipt charges measured elapsed time and
+  releases the unused reservation; `interrupted`/`unknown` retains at least the
+  full reservation. An honest overrun or imported prior-use debit is recorded
+  even when it takes the week over 7,200 seconds, preventing another same-week
+  dispatch. Run IDs are single-use across output directories and week rollover.
+- Defer any run whose maximum duration could cross the next Monday 00:00 UTC;
+  do not borrow from the next week. The registered dispatcher starts accounting
+  before its resource preflight, so that preflight and recovery consume the same
+  reservation rather than creating an unmetered prefix.
 - A normal design allocation is 15 minutes of canaries, 90 minutes for one
   admitted trial and 15 minutes for GPU-using preflight/recovery. This is an
   allocation, not a measured runtime promise. A larger preregistered panel
   replaces that allocation; it never adds another allowance.
 
-The controller's `--max-gpu-minutes` validates one proposed experiment card.
-It does **not** reserve time, execute a trial, enforce a cumulative weekly
-ceiling or coordinate a GPU lease. The evaluator's per-run deadline also
-excludes external preflight. Shared accounting/dispatch remains implementation
-work; until then, any authorized supervised run needs a recorded manual
-reservation and remaining balance. Monthly/deeper/runtime campaigns share
-this ceiling unless an additional budget is explicitly authorized.
+The review controller's `--max-gpu-minutes` still validates only one proposed
+experiment card. It does not grant or reserve GPU time. The separate registered
+trial dispatcher now performs the cumulative reservation, cooperative resource
+lease, bounded child execution and terminal accounting. Monthly, deeper and
+runtime campaigns share the same ledger unless the owner explicitly changes
+the budget contract.
 
 The [Qwen pilot](../experiments/PREREG_weekly_qwen_effort_pilot_2026-09-14.md)
-reserves 112.5 minutes and leaves only 7.5 minutes for all other charged work.
-It replaces that week's panel and must be deferred if the full reservation plus
-required overhead cannot fit. The next scientific diagnostic instead targets
+reserves 112.5 minutes across three 37.5-minute registered repeats and leaves
+only 7.5 minutes for all other charged work. It cannot coexist with an active
+40-minute topic-scope reservation: that reservation leaves only 80 minutes.
+After a trusted terminal topic receipt releases unused time, the pilot can start
+in the same week only if the ledger shows at least 6,750 seconds remaining. In
+other words, the topic run plus every other prior charge must total no more than
+450 seconds. An interrupted topic run remains charged for all 2,400 seconds, so
+the pilot must wait for another week. The next scientific diagnostic targets
 the upstream game-theory topic mismatch before optimizing Qwen effort.
 
 ## Delivered scope
@@ -81,6 +98,30 @@ the upstream game-theory topic mismatch before optimizing Qwen effort.
 - Planner/hypothesis prompt corrections: suggested paper titles are unvetted;
   prioritize substantive game-theory/collective-choice questions and preserve
   verbatim specificity only within scope. The evaluate-as-stated bypass remains.
+- A fixed 7,200-second UTC ISO-week ledger shared through the canonical checkout,
+  with cross-process reservations, fail-closed recovery and exact terminal usage.
+- A cooperative inference lease: ordinary Gemma/Qwen backend calls take the same
+  shared lock, while a weekly trial takes exclusive execution, coordinator-cron
+  and GPU locks. The supervised child inherits the exact GPU-lock descriptor, so
+  a new descriptor or wrong inode cannot bypass an exclusive trial.
+- An allowlisted trial dispatcher for the public objective panel, the three
+  preregistered Qwen repeats and the topic-scope diagnostic. It binds a committed
+  manifest and execution fingerprint to canonical state, isolated artifacts,
+  endpoint/memory checks and an independent GNU `timeout` process-group deadline.
+- Before, during and after execution, the dispatcher checks resident container
+  IDs, image IDs, process/start identity and a hash of launch arguments. A
+  restart or serving change invalidates the experiment even if its answers pass.
+  `preflight.json` and `postflight.json` retain these observations; backend
+  version labels alone are insufficient runtime evidence. This is periodic
+  monitoring, not a claim that every transient resource change is observed.
+- The topic-scope harness, its immutable public development manifest, optional
+  unchanged R0 replay, blind export, independent annotation contract and local
+  summary. The registered 40-minute form includes all 48 generation/planner
+  attempts plus 32 primary-R0 attempts: 80 serial local calls at most.
+- A repeat-aware objective summarizer that checks all task/arm/seed cells and
+  configuration hashes, reports RSR 2-of-3, task-clustered bootstrap intervals,
+  family metrics and failure-inclusive correct-task throughput, without copying
+  raw completions or tool payloads.
 
 The [topic-scope diagnostic](../experiments/PREREG_topic_scope_repair_2026-09-14.md)
 defines the paired measurement still needed for that prompt change. Code
@@ -91,12 +132,13 @@ separates delivered code from remaining experiments and activation. Its first
 priority is the stale topic queue feeding the observed R0 blockade upstream of Qwen;
 the paired effort pilot remains a separate, preregistered development test.
 
-The implementation does not activate a schedule, execute an analyst's proposed
-commands, change the scientific frontier policy, restart serving, swap a role,
-raise context limits, or promote a candidate. The existing agenda cron remains
-unchanged. The weekly controller produces a review artifact; the evaluator is a
-separate explicit command. Scheduling and runtime qualification are follow-on
-work with the deployed contracts applied at that point.
+The implementation does not activate a schedule, execute a live diagnostic,
+collect independent annotations, change the scientific frontier policy, restart
+serving, swap a role, raise context limits or promote a candidate. The existing
+agenda cron remains unchanged. No new review artifact has yet exercised the
+review-to-registered-trial binding, and no manual end-to-end trial has run.
+Scheduling, canonical-checkout adoption and runtime qualification remain
+follow-on work with the deployed contracts applied at that point.
 
 ## Corrections established during implementation
 
@@ -163,22 +205,72 @@ only fixture-owned simple tools.
 ## Evaluation
 
 Use the project's Python environment (for example `.venv-chroma/bin/python`).
-Planning performs no generation and creates no output files:
+The fixed registered-trial catalog is:
+
+| Manifest | Trial | Reservation | Evaluator payload | Declared calls/attempts |
+|---|---:|---:|---:|---:|
+| `bench/weekly_upgrade_eval/fixtures.json` | objective canary | 1,800 s | 1,770 s | 24 |
+| each Qwen seed manifest (`17`, `29`, `43`) | objective repeat | 2,250 s | 2,220 s | 12 |
+| `experiments/topic_scope_repair_2026-09-14.json` | topic scope + primary R0 | 2,400 s | 2,370 s | 80 |
+
+The fixed 30-second difference between each reservation and payload covers
+resource preflight plus supervisor shutdown. The payload cap is identical for
+both arms and every task in a registered repeat. It does not alter any
+per-request deadline in the immutable manifest.
+
+The topic manifest is immutable public development input with SHA-256
+`aab09640a9d377fc0a2a1c830223f5cd8b4e7e20299ac968d7bd01f2512b06a2`.
+Its registered form always enables unchanged primary R0 and therefore contains
+32 hypothesis calls, 16 planner calls and 32 R0 calls: at most 80 serial local
+calls inside the 2,370-second payload.
+
+Planning performs no generation, output writes, ledger reservation, resource
+lock or endpoint probe. Use the registered dispatcher to inspect the complete
+card, including exact manifest/configuration hashes, fixture IDs, seeds,
+dependency fingerprint, reservation, payload and expected attempts:
 
 ```bash
-.venv-chroma/bin/python -m bench.weekly_upgrade_eval.runner --plan \
-  --manifest bench/weekly_upgrade_eval/fixtures.json
+.venv-chroma/bin/python -m orchestrator.weekly_upgrade_trial --plan \
+  --manifest experiments/topic_scope_repair_2026-09-14.json
 ```
 
-For an actual run, first freeze the two arms, caps and task set in a separate
-manifest and reserve its complete cost within the shared weekly allowance
-above. Give each run a fresh output directory outside live ledgers:
+For the underlying topic harness plan, include R0 explicitly so its offline
+count matches the registered card:
 
 ```bash
-env -u MOCK_LLM .venv-chroma/bin/python -m bench.weekly_upgrade_eval.runner \
-  --run --manifest /tmp/my-preregistered-panel.json \
-  --output-dir /tmp/my-weekly-evaluation --runtime-budget-s 1800
+.venv-chroma/bin/python -m bench.weekly_upgrade_eval.topic_scope --plan \
+  --manifest experiments/topic_scope_repair_2026-09-14.json --include-r0
 ```
+
+The dispatcher has two explicit, mutually exclusive live admission modes.
+`--manual` means an operator deliberately invokes an already registered,
+preregistered trial. `--review-dir` revalidates a completed two-provider review
+whose status is `CONTINUE_TRIAL` and binds its exact experiment card, snapshot,
+receipts and execution dependencies. It is not a free-form command interface.
+Neither mode creates a schedule or authorizes production promotion.
+
+Manual topic diagnostic, when an owner/operator elects to spend the reservation:
+
+```bash
+env -u MOCK_LLM .venv-chroma/bin/python -m orchestrator.weekly_upgrade_trial \
+  --run --manual \
+  --manifest experiments/topic_scope_repair_2026-09-14.json \
+  --output-dir /tmp/weekly-topic-scope-2026-W38
+```
+
+Reviewed execution of a card admitted by the weekly review:
+
+```bash
+env -u MOCK_LLM .venv-chroma/bin/python -m orchestrator.weekly_upgrade_trial \
+  --run --review-dir /tmp/weekly-review-2026-W38 \
+  --manifest experiments/topic_scope_repair_2026-09-14.json \
+  --output-dir /tmp/weekly-topic-scope-reviewed-2026-W38
+```
+
+Use a fresh output directory outside both the canonical checkout and this
+worktree. The registered manifest and execution dependencies must be committed
+and clean so the receipt describes the code actually run. That integrity check
+is not a new approval gate for ordinary authorized Git maintenance.
 
 The bundled 384-token Qwen arms diagnose liveness and empty-at-cap behavior.
 They are deliberately too small to establish scientific superiority under
@@ -200,8 +292,66 @@ The runner records manifest, grader, harness, configuration and observed runtime
 provenance hashes. Server labels are observations, not independently verified
 weight-file hashes or immutable runtime image attestations.
 
-Run local evaluations serially during an idle resource window. A request cap
-is not a GPU lease: do not run a competing runtime alongside the resident pair.
+Registered trials run serially under an exclusive cooperative GPU lease plus
+the execution and coordinator-cron locks. Ordinary Gemma/Qwen wrapper calls in
+this delivery code take the matching shared GPU lock. The child receives the
+exact exclusive descriptor and GNU `timeout` independently supervises its
+process group. Preflight requires at least 30 GiB `MemAvailable`, both resident
+endpoint metrics and no competing requests. This does not lock arbitrary
+processes that ignore the protocol.
+The already-running daemon imported older wrapper code and will keep doing so
+until an explicit canonical adoption and reload. The coordinator-cron lock still
+coordinates the dispatcher with the old daemon's cycle. Do not run another
+runtime alongside the resident pair.
+
+The canonical checkout owns both the append-only budget ledger and the durable
+trial journal, regardless of which linked worktree or output directory launches
+the command. A run ID is single-use. Resume inspects the journal, ledger,
+artifacts and live `/proc` handles. It may finish a prepared terminal receipt or
+mark an uncertain orphan interrupted and fully charged; it never replays a
+post-reservation run blindly. A new output directory cannot reset either state.
+
+After a completed topic run, export only the blinded grading package to an
+independent human or subscription frontier reviewer. Keep the private arm map
+and raw completions in the isolated evaluation directory:
+
+```bash
+.venv-chroma/bin/python -m bench.weekly_upgrade_eval.topic_scope \
+  --export-grading-package \
+  --manifest experiments/topic_scope_repair_2026-09-14.json \
+  --artifact-dir /tmp/weekly-topic-scope-2026-W38/evaluation \
+  --grading-package /tmp/topic-scope-blind-2026-W38.json
+
+.venv-chroma/bin/python -m bench.weekly_upgrade_eval.topic_scope \
+  --summarize \
+  --manifest experiments/topic_scope_repair_2026-09-14.json \
+  --artifact-dir /tmp/weekly-topic-scope-2026-W38/evaluation \
+  --annotations /tmp/topic-scope-annotations-2026-W38.json
+```
+
+No independent annotations have been collected. The blind package contains
+candidate text and an annotation template, but no arm/source/prompt mapping.
+Do not publish the raw private evaluation directory or add private benchmark
+inputs to Git.
+
+After all three Qwen repeats complete, aggregate their `run.json` artifacts
+without generation:
+
+```bash
+.venv-chroma/bin/python -m bench.weekly_upgrade_eval.repeats \
+  --runs \
+    /tmp/weekly-qwen-effort-2026-W38-seed17/evaluation/run.json \
+    /tmp/weekly-qwen-effort-2026-W38-seed29/evaluation/run.json \
+    /tmp/weekly-qwen-effort-2026-W38-seed43/evaluation/run.json \
+  --output /tmp/weekly-qwen-effort-2026-W38-summary.json
+```
+
+The summarizer validates the full task/arm/seed matrix and provenance, keeps
+timeouts and partial runs failure-inclusive, computes exact-three-repeat RSR
+2-of-3, task-clustered paired bootstrap intervals, family tables and CTT from
+all arm wall time, and applies the locked pilot threshold. Its output contains
+metrics/status/hashes, not raw completions or tool payloads. `INVALID` and
+`INCOMPLETE` cannot support a gain.
 
 ## Weekly manual procedure
 
@@ -209,9 +359,12 @@ is not a GPU lease: do not run a competing runtime alongside the resident pair.
 2. Fetch a small explicit list of official sources, adding release-specific URLs
    when relevant. Fetched text remains unverified until its claim is checked.
 3. Build a snapshot and run the two-provider review with explicit budgets.
-4. Freeze a concrete evaluation manifest for an admitted experiment, run it in
-   an idle window, and compare the full success/reliability/time vector.
-5. Record NO_CHANGE, a follow-up trial, or a reviewed code change. Runtime
+4. Select a card from the fixed registered catalog, inspect its offline plan,
+   and use either the explicit `--manual` path or a bound `--review-dir` path in
+   an idle window. The canonical ledger decides whether the reservation fits.
+5. Complete objective aggregation or blind independent annotation, as required,
+   before interpreting an evaluation.
+6. Record NO_CHANGE, a follow-up trial, or a reviewed code change. Runtime
    promotion additionally requires exact artifact provenance, regression gates
    and rollback. Most weekly reviews should require no production change.
 
@@ -239,7 +392,7 @@ env -u MOCK_LLM .venv-chroma/bin/python -m orchestrator.weekly_upgrade --run \
   --repo-root . --source-packet /tmp/weekly-source-packet.json \
   --output-dir /tmp/weekly-review-2026-W38 \
   --frontier-call-budget 2 --total-deadline-s 600 \
-  --call-timeout-s 300 --max-gpu-minutes 30
+  --call-timeout-s 300 --max-gpu-minutes 40
 ```
 
 This first implementation uses Codex proposal → Claude falsification. It does
@@ -247,15 +400,22 @@ not claim two independent proposals or a four-pass debate. Actual vendor/model
 metadata is retained when the CLI exposes it; absent resolved model IDs remain
 unknown. CLI subscriptions are used, with API-key routes removed. The configured
 model is recorded; the controller does not claim an alias is the newest model.
-The example's 30-minute card ceiling is a per-trial proposal bound, not another
-30 minutes granted outside the weekly 120-minute total. A fresh review output
+The example's 40-minute card ceiling is a per-trial proposal bound, not another
+40 minutes granted outside the weekly 120-minute total. A fresh review output
 directory does not reset the weekly balance.
 
 Only the declared output directory receives review artifacts. Completed runs
 can be reopened without repeating provider calls. Interrupted call reservations
 are charged and not retried blindly. Mock mode and provider failures cannot
-be recorded as completed frontier analysis. NO_CHANGE, REVISION_REQUIRED, or CONTINUE_TRIAL is an
-advisory result, not a deployment instruction or statistical promotion decision.
+be recorded as completed frontier analysis. `NO_CHANGE`, `REVISION_REQUIRED`,
+or `CONTINUE_TRIAL` is an advisory result, not a deployment instruction or
+statistical promotion decision.
+
+No live diagnostic, Qwen pilot, independent topic annotation, newly generated
+review integration, canonical-checkout adoption, service reload, or scheduler
+activation has occurred in this delivery. The code and offline plans establish
+protocol behavior only. They do not measure a scientific, coding or performance
+gain.
 
 ## Validation and delivery
 

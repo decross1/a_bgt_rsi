@@ -126,3 +126,6 @@ def _no_live_artifacts(tmp_path, monkeypatch):
     # D-048 zero-live-rows invariant for skill_signals.jsonl too.
     monkeypatch.setattr(skill_signals, "SKILL_SIGNALS_PATH",
                         tmp_path / "skill_signals.jsonl")
+    from agent_wrapper import upgrade_lease
+    monkeypatch.setattr(upgrade_lease, "LOCK_PATH", tmp_path / "inference.lock")
+    monkeypatch.delenv("WEEKLY_UPGRADE_GPU_LEASE_FD", raising=False)

@@ -159,6 +159,17 @@ class TwoTurnTest(unittest.TestCase):
 
 
 class MalformedJsonTest(unittest.TestCase):
+    def test_null_arguments_keep_auditable_model_failure(self):
+        with patch.object(W, "_sync_client", MagicMock()) as mc:
+            mc.chat.completions.create.return_value = _mk_resp(
+                tool_calls=[_mk_tool_call(arguments=None)])
+            W.MEMORY_LOG.clear()
+            with self.assertRaises(W.ToolCallError) as cm:
+                W.call_with_tools(PD_MESSAGES, _tools(), caller_tag="t/null_args")
+        self.assertEqual(cm.exception.failure_code, "tool_json")
+        self.assertEqual(cm.exception.records, tuple(W.MEMORY_LOG))
+        self.assertEqual(len(cm.exception.records), 1)
+
     def test_malformed_arguments_raises(self):
         with patch.object(W, "_sync_client", MagicMock()) as mc:
             mc.chat.completions.create.return_value = _mk_resp(
@@ -168,6 +179,8 @@ class MalformedJsonTest(unittest.TestCase):
                 W.call_with_tools(PD_MESSAGES, _tools(),
                                   caller_tag="t/bad_json")
         self.assertIn("malformed JSON", str(cm.exception))
+        self.assertEqual(cm.exception.failure_code, "tool_json")
+        self.assertEqual(cm.exception.records, tuple(W.MEMORY_LOG))
         # The failing first-turn record was still logged (we want SEE the failure).
         self.assertEqual(len(W.MEMORY_LOG), 1)
 
@@ -182,6 +195,8 @@ class SchemaViolationTest(unittest.TestCase):
                 W.call_with_tools(PD_MESSAGES, _tools(),
                                   caller_tag="t/bad_args")
         self.assertIn("failed schema validation", str(cm.exception))
+        self.assertEqual(cm.exception.failure_code, "tool_schema")
+        self.assertEqual(cm.exception.records, tuple(W.MEMORY_LOG))
 
 
 class HallucinatedToolNameTest(unittest.TestCase):
@@ -194,6 +209,8 @@ class HallucinatedToolNameTest(unittest.TestCase):
                 W.call_with_tools(PD_MESSAGES, _tools(),
                                   caller_tag="t/hallucinated")
         self.assertIn("hallucinated tool name", str(cm.exception))
+        self.assertEqual(cm.exception.failure_code, "tool_unknown")
+        self.assertEqual(cm.exception.records, tuple(W.MEMORY_LOG))
 
 
 class MaxDepthTest(unittest.TestCase):
@@ -207,6 +224,8 @@ class MaxDepthTest(unittest.TestCase):
                 W.call_with_tools(PD_MESSAGES, _tools(),
                                   caller_tag="t/max_depth", max_depth=2)
         self.assertIn("max_depth", str(cm.exception))
+        self.assertEqual(cm.exception.failure_code, "tool_depth")
+        self.assertEqual(cm.exception.records, tuple(W.MEMORY_LOG))
         # Logged records up to max_depth+1 attempts before the raise.
         self.assertEqual(len(W.MEMORY_LOG), 3)
         # Every logged record is schema-valid (don't let chain-aborts emit junk).

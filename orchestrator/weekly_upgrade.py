@@ -111,6 +111,10 @@ SNAPSHOT_FILES = (
 
 EVAL_MANIFEST_FILES = (
     "bench/weekly_upgrade_eval/fixtures.json",
+    "experiments/topic_scope_repair_2026-09-14.json",
+    "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_17.json",
+    "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_29.json",
+    "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_43.json",
     "bench/critic_cal/manifest.jsonl",
     "bench/redteam_cal/fixtures.jsonl",
     "bench/readjudication/manifest.jsonl",
@@ -362,6 +366,9 @@ def _evaluation_manifests(repo_root: Path) -> list[dict]:
                 payload = {}
             if isinstance(payload, dict) and isinstance(payload.get("tasks"), list):
                 rows = [row for row in payload["tasks"] if isinstance(row, dict)]
+            elif isinstance(payload, dict) and isinstance(payload.get("topics"), list):
+                rows = [row for row in payload["topics"] + payload.get("planner_cases", [])
+                        if isinstance(row, dict)]
         fixture_ids = []
         for row in rows:
             identifier = next(
@@ -372,11 +379,31 @@ def _evaluation_manifests(repo_root: Path) -> list[dict]:
             if identifier:
                 fixture_ids.append(identifier)
         unique = sorted(set(fixture_ids))
-        catalog.append({
+        entry = {
             "path": rel, "exists": True, "sha256": _file_sha(path),
             "fixture_count": len(unique), "fixture_ids": unique[:256],
             "fixture_ids_truncated": len(unique) > 256,
-        })
+        }
+        # Explicit manifest controls let the analyst select a registered trial
+        # without inventing a prose-to-command translation. Invalid/legacy
+        # manifests remain evidence but are not labelled executable.
+        from orchestrator.weekly_upgrade_trial import TRIALS, plan_trial
+        if rel in TRIALS:
+            try:
+                plan = plan_trial(rel, worktree=repo_root)
+            except (ValueError, OSError, RuntimeError):
+                entry["execution"] = None
+            else:
+                entry["execution"] = {
+                    "kind": plan["kind"], "seeds": plan["seeds"],
+                    "reservation_s": plan["reservation_s"],
+                    "payload_budget_s": plan["payload_budget_s"],
+                    "include_primary_r0": plan["include_primary_r0"],
+                    "declared_attempts": plan["declared_attempts"],
+                    "arm_ids": plan["arm_ids"],
+                    "complete_fixture_set_required": True,
+                }
+        catalog.append(entry)
     return catalog
 
 
@@ -677,6 +704,11 @@ def build_snapshot(
     packet = source_packet or {"schema_version": "weekly-upgrade-source-packet-v1", "sources": []}
     _validate("source_packet", packet)
     week_key = _sha({"schema_version": "weekly-upgrade-week-v1", "week_id": week_id})
+    from orchestrator.weekly_upgrade_trial import execution_fingerprint, TrialError
+    try:
+        dependencies = execution_fingerprint(root)
+    except TrialError:
+        dependencies = None  # Snapshot-only fixtures/non-Git exports cannot dispatch.
     snapshot = {
         "schema_version": "weekly-upgrade-snapshot-v1",
         "week_id": week_id,
@@ -689,6 +721,7 @@ def build_snapshot(
         "call_aggregates": _call_telemetry(root, telemetry_start, moment),
         "frontier_aggregates": _frontier_telemetry(root, telemetry_start, moment),
         "evaluation_manifests": _evaluation_manifests(root),
+        "execution_dependencies": dependencies,
         "source_packet_sha256": _sha(packet),
         "sources": packet["sources"],
         "redaction": {
@@ -858,7 +891,12 @@ def _proposal_prompt(snapshot: dict, max_gpu_minutes: int) -> str:
         "file agent_wrapper/generation_policy.py. Repo references establish only that "
         "a path/hash/locator exists; copy each locator verbatim from evidence_excerpt. "
         "Use only fixture IDs listed under one exact evaluation_manifests entry and "
-        "copy that manifest path/hash. The MVP baseline is UNMEASURED with null "
+        "copy that manifest path/hash. For an executable trial choose an entry "
+        "with non-null execution metadata; copy its entire fixture_ids set and "
+        "exact execution.seeds. Its reservation_s must fit BOTH declared GPU "
+        "and wall caps. The checked-in manifest fixes the actual arm settings; "
+        "describe only that comparison. Other suggestions remain advice until "
+        "an execution type is implemented. The MVP baseline is UNMEASURED with null "
         "artifact/hash/locator/value because the paired evaluator measures both arms. "
         "An external claim is CLAIM_HUMAN_VERIFIED only when its exact claim, content "
         "hash, and evidence excerpt appear in snapshot.sources. Otherwise use "

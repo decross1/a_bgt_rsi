@@ -120,3 +120,7 @@ run_state/loop_memory_embeddings.json
 run_state/codex_home/
 # Opt-in duplicate frontier-veto cache (machine-generated, TTL-bounded).
 run_state/frontier_screen_cache/
+run_state/weekly_upgrade_budget.jsonl
+run_state/weekly_upgrade/
+run_state/pause_weekly_upgrade
+run_state/weekly_upgrade_enabled

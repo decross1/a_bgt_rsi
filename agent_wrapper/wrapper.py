@@ -315,6 +315,11 @@ class ToolCallError(RuntimeError):
     without a final answer. By design we do NOT silently retry: the program
     must see failure rates first."""
 
+    def __init__(self, message, *, records=(), failure_code="tool_protocol"):
+        super().__init__(message)
+        self.records = tuple(records)
+        self.failure_code = failure_code
+
 
 def _index_tools(tools):
     """tools is [{"spec": <openai-function-schema>, "impl": <callable>}, ...].
@@ -506,20 +511,21 @@ def call_with_tools(messages, tools, *, temperature=UNSET, top_p=UNSET, seed=UNS
             if name not in tool_index:
                 raise ToolCallError(
                     f"model hallucinated tool name {name!r}; "
-                    f"known tools: {sorted(tool_index)}")
+                    f"known tools: {sorted(tool_index)}",
+                    records=records, failure_code="tool_unknown")
             try:
                 args = json.loads(raw_args)
-            except json.JSONDecodeError as exc:
+            except (json.JSONDecodeError, TypeError) as exc:
                 raise ToolCallError(
                     f"malformed JSON in tool_calls[{name}].arguments "
                     f"(request_id={record['request_id']}): {exc}; "
-                    f"raw={raw_args!r}") from exc
+                    f"raw={raw_args!r}", records=records, failure_code="tool_json") from exc
             errs = list(tool_index[name]["validator"].iter_errors(args))
             if errs:
                 raise ToolCallError(
                     f"tool {name} arguments failed schema validation "
                     f"(request_id={record['request_id']}): {errs[0].message}; "
-                    f"args={args!r}")
+                    f"args={args!r}", records=records, failure_code="tool_schema")
             result = tool_index[name]["impl"](**args)
             openai_messages.append({
                 "role": "tool",
@@ -529,7 +535,8 @@ def call_with_tools(messages, tools, *, temperature=UNSET, top_p=UNSET, seed=UNS
 
     raise ToolCallError(
         f"reached max_depth={max_depth} without a final answer; "
-        f"last record: {records[-1]['request_id']}")
+        f"last record: {records[-1]['request_id']}",
+        records=records, failure_code="tool_depth")
 
 
 def verify_log_integrity(path):
