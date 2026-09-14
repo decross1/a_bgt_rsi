@@ -212,4 +212,3 @@ def grade_set(
         ],
         "task_success": bool(valid_indices and selection_correct),
     }
-

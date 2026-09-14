@@ -174,4 +174,3 @@ def test_task_hash_covers_grader_and_problem():
     from bench.weekly_upgrade_diversity.manifest import sha256_json
 
     assert sha256_json(mutated) != manifest["frozen_hashes"]["tasks"][mutated["id"]]
-

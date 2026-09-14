@@ -28,7 +28,7 @@ tasks, or general research quality.
 - Manifest loader SHA-256:
   `34905c2f4fd18334ef3224ff53b3557e99585b5159014708420d0ca6fc335806`
 - Objective graders SHA-256:
-  `7b84b864029c8c50152fdd09b5b0509fd8faceb98316bc509c4feb7fc55518bb`
+  `f804340ee5397bae9bda908e64096cdd85c4d8cbd7c8c7c8656dcd79b25f6efd`
 - Runner SHA-256:
   `f3113ba55b4c01aceaca61180b5d796a9860885ba1a5086c64b2fe747e048506`
 - Receipt validator SHA-256:
