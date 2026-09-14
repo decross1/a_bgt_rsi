@@ -14,6 +14,15 @@ byte-for-byte, as were 20,365 unrelated untracked files. Four identical
 untracked colliders were retained in a recoverable sibling backup before their
 identical public versions became tracked. No private history was pushed.
 
+Public PR [#19](https://github.com/decross1/a_bgt_rsi/pull/19) subsequently
+merged as `b672a0ab6481be086821567c11987984741e833a` and was safely adopted into
+canonical private history as `1e7a8c55a2bf8bd5d3e4bbf61da09d3d43f2312e`.
+The adoption receipt preserved all nine dirty tracked files and 20,365 unrelated
+untracked files. The canonical read-only and registered-trial readiness checks
+each passed 14/14. The exact final identity after this documentation-only follow-up and its preservation
+evidence belong in the canonical ignored
+`run_state/weekly_upgrade/completion.json` receipt.
+
 The daemon running since September 2 was not restarted. Its imported Python
 code predates adoption. The existing coordinator lock still coordinates its
 ordinary cycles with the diagnostic; broader participation in the new wrapper

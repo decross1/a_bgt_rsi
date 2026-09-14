@@ -1,12 +1,13 @@
 # Completing the weekly upgrade loop
 
 Prepared 2026-09-14 for
-[public PR 19](https://github.com/decross1/a_bgt_rsi/pull/19). The exact final
-public merge SHA, private adoption SHA, and dirty-state preservation evidence
-are written after adoption to the canonical ignored `completion.json` receipt,
-rather than predicted by this file inside its own future commit. This finite
-tracker does not claim a model improvement, production promotion, daemon reload,
-or schedule activation.
+[public PR 19](https://github.com/decross1/a_bgt_rsi/pull/19), which merged as
+`b672a0ab6481be086821567c11987984741e833a`. It was safely adopted into canonical
+private history as `1e7a8c55a2bf8bd5d3e4bbf61da09d3d43f2312e`. The canonical read-only
+and registered-trial readiness checks each passed 14/14. The exact final identity after this
+documentation-only follow-up and the preservation evidence are bound in the
+canonical ignored `completion.json` receipt. This finite tracker does not claim
+a model improvement, production promotion, daemon reload, or schedule activation.
 
 The owner decisions remain fixed: keep the research program in game theory,
 behavioral game theory, learning in games, and the ratified collective-choice
@@ -140,8 +141,9 @@ contamination-resistant benchmark.
 
 ### Public game/science/evidence/code portfolio
 
-The authorized manual descriptive baseline completed all 16 arm/task cells and
-charged 1,014.852476 seconds. Arm A passed 6/8 and arm B passed 7/8.
+The authorized manual run retained all 16 declared arm/task cells and charged
+1,014.852476 seconds. Thirteen calls returned and three timed out. Arm A passed
+6/8 and arm B passed 7/8.
 
 | Family | Arm A | Arm B |
 | --- | ---: | ---: |
@@ -149,11 +151,12 @@ charged 1,014.852476 seconds. Arm A passed 6/8 and arm B passed 7/8.
 | Evidence contracts | 2/2 | 2/2 |
 | Parent-graded executed code | 0/2 | 1/2 |
 
-Three timeouts remain in the declared denominator; there was no separate error
-outcome. This run establishes that the registered controller, sandbox, and
-family graders operate on a complete panel. It was manually admitted as an
-infrastructure baseline, not approved by either rejected weekly review, and it
-does not authorize a policy promotion.
+The evaluator is `incomplete_transport` and the controller is `failed`; there
+was no separate error outcome. This terminal infrastructure receipt exercises
+the registered controller, sandbox, and family graders, but it does not supply
+a complete paired portfolio result. It was manually admitted, not approved by
+either rejected weekly review, and it does not authorize a policy promotion.
+No retry is required for this delivery.
 
 ### Resident 8K/~14K context capability
 
@@ -196,13 +199,13 @@ is active.
 
 | Workstream | State now | Finite evidence still required |
 | --- | --- | --- |
-| Regression and transport implementation | Implemented; final integrated suite passed 2,955 tests plus 68 subtests with no failures, scoped Ruff passed, and the post-style focused set passed 91 tests | Freeze the reviewed PR 19 commit; no further implementation test is required unless the delivery changes |
+| Regression and transport implementation | Implemented; final integrated suite passed 2,955 tests plus 68 subtests with no failures, scoped Ruff passed, and the post-style focused set passed 91 tests; PR 19 merged as `b672a0ab6481be086821567c11987984741e833a` | No further implementation test is required unless the delivery changes |
 | Topic queue lifecycle | Code and frozen replay complete | Observe ordinary behavior only after a future daemon reload; this is deployment follow-up, not a reason to alter the frozen test evidence |
 | Topic generation | V1 preserved as negative; v2 completed 80/80 protocol-valid with complete independent interpretation `NO-MATERIAL-SIGNAL` | No additional topic-policy call is required for this delivery; retain both immutable results and make any new prompt hypothesis a future experiment |
 | Qwen effort | Three repeats complete; locked result `INCOMPLETE`, no gain | No further Qwen-effort call is required for this delivery; any confirmation is a later new hypothesis |
 | Weekly review | First real cycle completed `REVISION_REQUIRED`; corrected-input qualification then produced a valid Codex card but invalid fenced Claude JSON, so its strict result is `INVALID_REPORT` | Preserve both terminal reviews and do not retry either call. A future cycle may use the corrected inputs, but diagnostic prose from the invalid envelope cannot admit a trial |
 | Review-to-trial execution | Direct registered dispatcher and no-replay path verified; both live reviews ended without admission | No manufactured admission is required. A future strict-valid `CONTINUE_TRIAL` card may exercise the bound path during normal operation; the two terminal rejections remain valid weekly outcomes |
-| Public objective portfolio | Complete manual descriptive baseline: A 6/8, B 7/8, all 16 cells terminal | No evaluation gap; retain the receipt and its manual/not-review-approved label |
+| Public objective portfolio | Terminal incomplete manual baseline: 13 returned, 3 timed out; A 6/8, B 7/8; evaluator `incomplete_transport`, controller `failed` | No retry is required for this delivery; retain the incomplete receipt and its manual/not-review-approved label, and do not call it a complete paired result |
 | Long context | Corrected manifest, tokenizer preflight, and all eight cells complete: Gemma 4/4, Qwen 3/4 | No evaluation gap; retain the disclosed model/reasoning confounds and do not infer a causal context gain |
 | Diversity plus selection | All 25 calls complete: control 3/5, candidate 0/5 | No evaluation gap; retain the no-gain result |
 | Historical repo coding | Six task/grader contracts objectively proved | No additional run is required for this tranche. A grader-hidden agent repair runner is a distinct future benchmark before any coding-capability claim |
@@ -212,19 +215,19 @@ is active.
 
 ## Finite completion boundary
 
-The implementation and its finite initial evaluations are complete. Negative,
-mixed, rejected, and incomplete outcomes remain valid evidence; a favorable
-model result was never a completion condition. Three closure operations remain:
+The implementation is complete and the finite initial campaign has terminal
+receipts. Negative, mixed, rejected, and incomplete outcomes remain valid
+evidence; the portfolio remains an incomplete paired result, and a favorable
+model result was never a completion condition. PR 19 merged publicly as
+`b672a0ab6481be086821567c11987984741e833a`, was safely adopted as
+`1e7a8c55a2bf8bd5d3e4bbf61da09d3d43f2312e`. The canonical read-only and
+registered-trial readiness checks each passed 14/14. Two closure records remain outside this
+self-referential document:
 
-1. **Freeze public PR 19.** Commit the terminal evidence and final documentation.
-   The integrated suite and scoped Ruff checks are already green; rerun only if
-   the delivery changes.
-2. **Merge and reconcile Git state.** Merge PR 19, then safely adopt its exact
-   public merge SHA into canonical private history without publishing that
-   history or overwriting concurrent state. Record the final public SHA, private
-   adoption SHA, and preservation hashes in the canonical ignored
-   `completion.json` receipt.
-3. **Present activation as the final owner choice.** Keep the current hook off
+1. **Bind the final delivery receipt.** After this documentation-only correction
+   is published and adopted, record its exact public/private identities and the
+   preservation hashes in the canonical ignored `completion.json` receipt.
+2. **Present activation as the final owner choice.** Keep the current hook off
    and leave the already-running user daemon untouched until the owner chooses
    from [the activation runbook](ACTIVATION_READINESS.md). If selected, use the
    documented `systemctl --user` reload path and record health/rollback evidence.
@@ -295,7 +298,7 @@ service loaded since September 2 and still has older Python imports. No global
 unit, extra cron line, model restart, context change, or production promotion is
 part of this tranche.
 
-After final public merge and canonical adoption, the owner can review the exact
+After the final completion receipt is bound, the owner can review the exact
 readiness record and choose whether to:
 
 1. keep the hook off;
