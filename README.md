@@ -9,8 +9,8 @@ publication.
 > **V2 foundation — 2026-09-14:** explicit research campaigns, a verified v0/v1
 > archive, and measured benchmark follow-through now have implementation and
 > evidence contracts. The resident models and serving runtime remain the
-> established baseline. The canonical activation and deployment receipts, shown
-> on `/benchmarks`, determine what is live. A controlled model-game study is
+> established baseline. `/benchmarks` shows campaign activation and progress;
+> the separate canonical deployment receipt records adoption. A controlled model-game study is
 > separate work and has not been registered for execution.
 
 New contributors and agent sessions should begin with

@@ -25,9 +25,11 @@ manifest hash, and chronology must match the active pointer; once present, the
 campaign path fails closed. Neither lifecycle receipt edits the declaration or
 changes links already stored in records.
 
-The campaign declaration remains `prepared` in this change. This work does not
-create the activation pointer, start a service, run an LLM study, or turn CPU
-calibration registration into scientific evidence.
+The campaign declaration always remains `prepared`; lifecycle is separate.
+This audit describes the implementation before root deployment. Subsequent
+activation and service adoption are recorded in the canonical
+`run_state/v2_preparation/deployment_receipt.json`, not inferred from this audit.
+Neither activation nor CPU calibration registration is an LLM study result.
 
 ### Immutable extension policy
 
@@ -133,8 +135,10 @@ the new iteration rather than silently importing the old claim as a V2 outcome.
 
 ## Remaining qualification work
 
-1. Independently review the campaign manifest, schemas, activation resolver,
-   coordinator admission, Nara propagation, and promotion filter.
+1. Independent review of the manifest, schemas, activation resolver,
+   coordinator admission, Nara propagation, and promotion filter is complete;
+   the final backend slice passed 270 selected tests and an independent
+   80-test review. See [cross-review](CROSS_REVIEW.md).
 2. Keep the activation pointer absent until the campaign is deliberately
    adopted. At adoption, write one pointer bound to the reviewed manifest hash;
    removing/restoring that small receipt is the rollback. Do not edit the

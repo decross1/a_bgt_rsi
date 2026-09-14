@@ -38,4 +38,10 @@ def test_calibration_keeps_payoff_labels_distinct_and_no_model_credit():
     assert all(cell["episode_regret"] == "0" for cell in result["cells"])
     for cell in result["cells"]:
         if cell["objective"] == "joint_payoff":
-            assert cell["cooperation_rate"] == 1
+            assert cell["focal_cooperation_rate"] == 1
+
+
+def test_focal_cooperation_does_not_imply_group_cooperation():
+    result = evaluate_sequence([1] * 8, MIXES["retainers"], "joint_payoff")
+    assert result["focal_cooperation_rate"] == 1
+    assert result["group_cooperation_rate"] == .25

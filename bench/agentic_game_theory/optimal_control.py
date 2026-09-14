@@ -73,7 +73,9 @@ def evaluate_sequence(actions: list[int], bots: tuple[str, ...], objective: str,
     return {"objective": objective, "player": player, "bots": list(bots),
             "total_utility": str(total), "optimal_total_utility": str(best),
             "episode_regret": str(best - total),
-            "cooperation_rate": sum(actions) / len(actions), "rounds": rows}
+            "focal_cooperation_rate": sum(actions) / len(actions),
+            "group_cooperation_rate": sum(sum(row["joint_actions"]) for row in rows) / (4 * len(actions)),
+            "rounds": rows}
 
 
 def optimal_sequence(bots, objective, rounds, player):
@@ -93,7 +95,7 @@ def calibrate() -> dict:
             for player in (0, 3):
                 sequence = optimal_sequence(bots, objective, 8, player)
                 cells.append({"opponent_mix": name, **evaluate_sequence(sequence, bots, objective, player=player)})
-    return {"schema_version": "agentic-game-theory-optimal-control/v1",
+    return {"schema_version": "agentic-game-theory-optimal-control/v2",
             "campaign_id": "v2-agentic-game-theory-20260914", "model_calls": 0,
             "status": "cpu_oracle_calibrated", "cells": cells,
             "source_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
