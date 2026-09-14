@@ -1,0 +1,280 @@
+{
+  "schema_version": "weekly-upgrade-role-effort-manifest/v1",
+  "suite_id": "role-effort-v1-20260914",
+  "description": "Fresh descriptive pilot: two game-theory fixtures each for critic, evidence extraction and tool selection; three matched policies, one fresh seed. Not production promotion or hidden-set confirmation.",
+  "model": "qwen3.8-27b-nvfp4-mtp",
+  "backend": "vllm-qwen",
+  "seed": 71,
+  "max_tokens": 4096,
+  "attempt_timeout_s": 90,
+  "arms": [
+    {
+      "id": "xhigh",
+      "label": "Fixed xhigh"
+    },
+    {
+      "id": "medium",
+      "label": "Fixed medium"
+    },
+    {
+      "id": "adaptive",
+      "label": "Role-aware with bounded escalation"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "effort_v1_critic_finite_horizon",
+      "role": "critic",
+      "prompt": "Claim: In a commonly known exactly five-round Prisoner's Dilemma with unique stage Nash equilibrium (D,D), perfect monitoring, and standard rationality/common knowledge, grim trigger supports cooperation in every round as a subgame-perfect equilibrium. Choose the verdict and reason for the claim as stated.",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "fatal_flaw",
+              "proceed"
+            ]
+          },
+          "reason_code": {
+            "type": "string",
+            "enum": [
+              "backward_induction",
+              "infinite_horizon_incentives",
+              "observational_confounding"
+            ]
+          },
+          "needs_review": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "verdict",
+          "reason_code",
+          "needs_review"
+        ],
+        "additionalProperties": false
+      },
+      "expected": {
+        "verdict": "fatal_flaw",
+        "reason_code": "backward_induction"
+      }
+    },
+    {
+      "id": "effort_v1_evidence_random_assignment",
+      "role": "evidence",
+      "prompt": "Evidence packet: [E71] Forty agent pairs were randomly assigned before play to a visible-action or hidden-action treatment. [E72] All forty pairs completed ten rounds with identical rewards; mean cooperation was .62 vs .41 respectively. [E73] Another unmatched simulation used different payoffs and reported .8 cooperation. Does E71/E72 support a causal average treatment comparison in this experiment (not external generalization)? Cite exactly the documents needed.",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "answer_code": {
+            "type": "string",
+            "enum": [
+              "causal_comparison_supported",
+              "causal_comparison_not_identified"
+            ]
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "E71",
+                "E72",
+                "E73"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "needs_review": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "answer_code",
+          "citations",
+          "needs_review"
+        ],
+        "additionalProperties": false
+      },
+      "expected": {
+        "answer_code": "causal_comparison_supported",
+        "citations": [
+          "E71",
+          "E72"
+        ]
+      }
+    },
+    {
+      "id": "effort_v1_execution_payoff_lookup",
+      "role": "execution",
+      "prompt": "Select exactly the relevant tool and arguments. Tools: payoff_lookup(experiment_id:string) returns actual measured payoff; paper_lookup(paper_id:string) returns a paper's reported payoff. Task: retrieve the actual measured payoff for experiment agent-pg-118. Return tool_name and arguments; do not invent an observed payoff.",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "tool_name": {
+            "type": "string",
+            "enum": [
+              "payoff_lookup",
+              "paper_lookup"
+            ]
+          },
+          "arguments": {
+            "type": "object",
+            "properties": {
+              "experiment_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "experiment_id"
+            ],
+            "additionalProperties": false
+          },
+          "needs_review": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tool_name",
+          "arguments",
+          "needs_review"
+        ],
+        "additionalProperties": false
+      },
+      "expected": {
+        "tool_name": "payoff_lookup",
+        "arguments": {
+          "experiment_id": "agent-pg-118"
+        }
+      }
+    },
+    {
+      "id": "effort_v1_critic_grim_threshold",
+      "role": "critic",
+      "prompt": "In an infinitely repeated Prisoner's Dilemma with T=7,R=4,P=1,S=0 and common discount factor delta=.6, a claim says grim-trigger mutual cooperation can be sustained as a subgame-perfect equilibrium. Check the incentive constraint under perfect monitoring and choose a verdict and reason.",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "fatal_flaw",
+              "proceed"
+            ]
+          },
+          "reason_code": {
+            "type": "string",
+            "enum": [
+              "discount_below_threshold",
+              "discount_above_threshold",
+              "finite_horizon_unraveling"
+            ]
+          },
+          "needs_review": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "verdict",
+          "reason_code",
+          "needs_review"
+        ],
+        "additionalProperties": false
+      },
+      "expected": {
+        "verdict": "proceed",
+        "reason_code": "discount_above_threshold"
+      }
+    },
+    {
+      "id": "effort_v1_evidence_selection",
+      "role": "evidence",
+      "prompt": "Evidence packet: [E81] Teams chose whether their delegates could communicate; communicative teams earned higher rewards. [E82] Delegates that chose communication had twice as much prior task experience; no adjustment or randomized assignment was used. [E83] Model architecture was identical. Does the packet identify communication as the cause of higher rewards? Cite exactly the documents needed to diagnose the identification problem.",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "answer_code": {
+            "type": "string",
+            "enum": [
+              "causal_comparison_supported",
+              "causal_comparison_not_identified"
+            ]
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "E81",
+                "E82",
+                "E83"
+              ]
+            },
+            "uniqueItems": true
+          },
+          "needs_review": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "answer_code",
+          "citations",
+          "needs_review"
+        ],
+        "additionalProperties": false
+      },
+      "expected": {
+        "answer_code": "causal_comparison_not_identified",
+        "citations": [
+          "E81",
+          "E82"
+        ]
+      }
+    },
+    {
+      "id": "effort_v1_execution_read_only",
+      "role": "execution",
+      "prompt": "Tools: get_result(experiment_id:string) reads a completed result; launch_experiment(experiment_id:string) starts a new run. The owner asks only to inspect the completed result for delegation-204. Select the tool and exact arguments.",
+      "output_schema": {
+        "type": "object",
+        "properties": {
+          "tool_name": {
+            "type": "string",
+            "enum": [
+              "get_result",
+              "launch_experiment"
+            ]
+          },
+          "arguments": {
+            "type": "object",
+            "properties": {
+              "experiment_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "experiment_id"
+            ],
+            "additionalProperties": false
+          },
+          "needs_review": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tool_name",
+          "arguments",
+          "needs_review"
+        ],
+        "additionalProperties": false
+      },
+      "expected": {
+        "tool_name": "get_result",
+        "arguments": {
+          "experiment_id": "delegation-204"
+        }
+      }
+    }
+  ]
+}

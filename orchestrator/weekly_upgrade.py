@@ -122,6 +122,9 @@ SNAPSHOT_FILES = (
     "experiments/PREREG_weekly_qwen_effort_pilot_2026-09-14.md",
     "experiments/PREREG_weekly_context_capability_v1_2026-09-14.md",
     "experiments/PREREG_diversity_selection_dev_v0_2026-09-14.md",
+    "experiments/PREREG_weekly_role_effort_v1_2026-09-14.md",
+    "experiments/PREREG_diversity_selection_v1_2026-09-14.md",
+    "experiments/PREREG_weekly_historical_coding_panel_v2_2026-09-14.md",
 )
 
 EVAL_MANIFEST_FILES = (
@@ -131,6 +134,9 @@ EVAL_MANIFEST_FILES = (
     "experiments/weekly_upgrade_game_science_dev_v0_2026-09-14.json",
     "experiments/weekly_context_capability_v1_2026-09-14.json",
     "experiments/diversity_selection_dev_v0_2026-09-14.json",
+    "experiments/diversity_selection_v1_2026-09-14.json",
+    "experiments/weekly_role_effort_v1_2026-09-14.json",
+    "experiments/weekly_historical_coding_panel_v2_2026-09-14.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_17.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_29.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_43.json",
@@ -147,6 +153,9 @@ _FULL_TEXT_FILES = {
     "experiments/PREREG_weekly_qwen_effort_pilot_2026-09-14.md",
     "experiments/PREREG_weekly_context_capability_v1_2026-09-14.md",
     "experiments/PREREG_diversity_selection_dev_v0_2026-09-14.md",
+    "experiments/PREREG_weekly_role_effort_v1_2026-09-14.md",
+    "experiments/PREREG_diversity_selection_v1_2026-09-14.md",
+    "experiments/PREREG_weekly_historical_coding_panel_v2_2026-09-14.md",
 }
 _KEYWORDS = (
     "D-061", "D-066", "D-072", "D-074", "D-076", "frontier",
