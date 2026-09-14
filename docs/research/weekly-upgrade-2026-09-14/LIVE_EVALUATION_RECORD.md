@@ -216,3 +216,251 @@ development measurement, with explicit operator admission and one separately
 budgeted blind-annotation call. It is not execution of the rejected weekly
 card. Its first two launch attempts met the occupied ordinary coordinator
 lock before any reservation or model call; both refusal logs are preserved.
+
+## Topic-scope diagnostic v2: format repaired, no material scope signal
+
+The v2 diagnostic subsequently ran from the immutable `0e498f9` measurement
+checkout. It repeated the complete v1 matrix: eight topics, four planner
+states, two arms and seeds 17 and 29. Manifest SHA-256 is
+`fbe8d2740e50c08af1f28a94ac5d45bcb6237418cb6f8cbddb428375414ab3f3`;
+trial ID is `2026-W38-fbe8d2740e50c08af1f28a94`. All **80/80** declared
+calls returned, the controller completed, and the trusted budget receipt
+charged **139.203669 seconds** against the 2,400-second reservation. The
+evaluator's failure-inclusive task time was 137.520397 seconds. Runtime
+identity remained stable and all unused reserved time was released.
+
+| Stage | Control | Candidate |
+|---|---:|---:|
+| Hypothesis protocol-valid | 16/16 | 16/16 |
+| Planner protocol-valid | 8/8 | 8/8 |
+| Planner preferred cases correct | 4/8 | 6/8 |
+| Planner exact-copy provenance | 8/8 | 8/8 |
+| Primary R0 returned and valid | 16/16 | 16/16 |
+
+The single preregistered wire-format delta worked: all eight candidate planner
+outputs used `action`/`args`, stayed within the frozen menu and budget, and
+contained no menu-shaped `name` substitution. This supports the diagnostic
+label **`FORMAT_CONTRACT_REPAIRED`**. It does not support
+`PLANNER_SCOPE_SIGNAL`: P1, P2 and P4 chose their preferred topic on both
+seeds, but P3 still selected an off-scope suggestion on both seeds. The
+control did the same on P3. No action from any diagnostic plan was dispatched.
+
+One subscription-only Claude annotation call covered all 93 blind candidate
+items. It completed in 173.377 seconds, requested `claude-opus-5`, and reported
+`claude-opus-5` plus `claude-haiku-4-5-20251001` in model-usage metadata. It
+used no web search/fetch and had no paid API fallback or retry. The original
+response was preserved. Its otherwise complete judgments arrived inside an
+`annotation_template` envelope and used the invalid metadata value
+`reviewer_kind=frontier_model`, which the operator prompt mistakenly requested.
+A recorded format normalization only removed
+that envelope and changed the reviewer-kind metadata to the receipt-consistent
+`subscription_frontier`; all 93 judgment items retained the same canonical
+SHA-256, `3ec783ddcd058b308c3d242db1ad787f154c8515fbc41672686a8a9f071c33b8`.
+The normalized annotation SHA-256 is
+`ae04f5087edd08f0d201eaa3a383cf35abd91ba7d03dbc37160a2443afa86bc1`.
+
+| Independently graded measure | Control | Candidate |
+|---|---:|---:|
+| Strictly valid chosen results on the ten in-scope cells | 7/10 | 6/10 |
+| Useful grounded repair on the six adjacent-topic cells | 0/6 | 1/6 |
+| Chosen result judged in scope | 10/16 | 11/16 |
+| Chosen result in scope, substantive and attribution-safe | 7/16 | 7/16 |
+| All candidates judged out of scope | 18/48 | 11/45 |
+| All candidates judged unclear | 0/48 | 2/45 |
+| Unsupported attribution across all candidates | 6/48 | 11/45 |
+| Primary R0 disagreement with the independent chosen annotation | 0 | 2 |
+
+The locked semantic decision is **`NO-MATERIAL-SIGNAL`**. The candidate found
+one grounded repair and reduced the count graded out of scope, but it regressed
+from seven to six strict valid choices on the positive game-theory cells and
+increased unsupported attribution from six to eleven candidates. It therefore
+fails the preregistered larger-evaluation trigger. This public, reused,
+single-reviewer development panel supplies no scientific-benefit or production
+promotion claim. A resume check returned the existing terminal receipt with
+zero new calls, zero additional budget charge, and byte-identical call, result
+and ledger artifacts.
+
+## Review-input qualification 02: invalid report, diagnostic says revise
+
+A second bounded review qualified the newly exposed portfolio inputs from
+commit `f35275544c551a632ac06e8a36907c771df5e074`. Its admission allowed exactly
+two subscription calls within 600 seconds, no paid fallback and no production
+authority. The target was the eight-task public synthetic portfolio manifest,
+SHA-256 `a268fbf8eb2535066d97f6e7e15327300f35f0d1df727fdd039059b772bb10cf`.
+
+Codex requested `gpt-6-astra` and returned in 104.868 seconds; its receipt does
+not expose a resolved model ID. Claude requested `claude-opus-5`, returned in
+181.324 seconds, and reported that model plus `claude-haiku-4-5-20251001`.
+Both transports completed under subscription authentication. The proposal was
+valid, but the adversary response was not strict JSON. It was not retried. The
+authoritative report is therefore **`INVALID_REPORT`**, records independence
+loss, contains no admitted experiment card, and authorizes no local trial.
+
+For diagnosis only, a separate artifact removed the adversary response's
+syntactic envelope without changing its content. That content says `revise`
+and raises eight issues: a near-automatic pass rule without a material margin,
+deadline/quality confounding, conflict with the week's earlier budget
+allocation, incomplete handling of the prior pilot, underspecified time
+attribution, single-sample family noise, a mislabeled change surface, and an
+unstated clean-tree criterion. The diagnostic explicitly has no admission
+authority and does not replace the invalid report.
+
+The owner separately authorized a manual portfolio run as an infrastructure
+baseline. That execution is independent of the invalid frontier review and is
+not review-approved. At qualification time its outcome remained unreported;
+the next section was added only after the terminal dispatcher receipt and
+objective grades became available.
+
+## Manual portfolio infrastructure baseline: incomplete transport
+
+The separately owner-authorized portfolio run reached a terminal dispatcher
+receipt. It used the immutable qualification checkout and the same manifest
+described above. All 16 declared cells remain in the result, but three coding
+requests reached their 180-second deadlines. The evaluator status is
+**`incomplete_transport`**, the controller status is **`failed`**, and the
+controller recorded no separate error. Its trusted receipt charged
+**1,014.852476 seconds** against the 2,310-second reservation and released the
+unused time. Preflight and postflight serving identities match, both queues
+returned idle, the pinned bubblewrap/Python sandbox identity matched, and the
+receipt validator reproduced the public objective grades without another
+model call.
+
+| Frozen result, failures included | A: xhigh | B: medium |
+|---|---:|---:|
+| Returned / timed out | 6 / 2 | 7 / 1 |
+| Scientific/formal passes | 4/4 | 4/4 |
+| Evidence passes | 2/2 | 2/2 |
+| Coding passes | 0/2 | 1/2 |
+| Total objective passes | 6/8 | 7/8 |
+| Sum of cell wall time | 506.416325 s | 507.345490 s |
+| Derived failure-inclusive correct-task throughput | 42.652653/hour | 49.670295/hour |
+
+All twelve structured scientific/evidence cells returned and passed their
+deterministic calculators, exact schemas and evidence-ID checks. The
+delegation coding task timed out in both arms at 180.045027 and 180.116137
+seconds. On the regret coding task, B returned in 161.322197 seconds and
+passed all five fresh-process behavioral cases; A timed out at 180.115604
+seconds. No returned completion hit its 6,144-token cap. The run-level
+failure-inclusive elapsed time is 1,014.255880 seconds and its descriptive
+aggregate Correct Task Throughput is 46.142202 completed tasks/hour.
+
+A manual audit found no obvious false positive or false negative among the
+thirteen returned cells: the twelve structured answers match independently
+recomputed finite oracles, and B's returned code produced the expected parent-
+checked values/exceptions in all five isolated cases. That finding has narrow
+scope. The prompts, cases and oracles are public, the evidence packets are
+synthetic and constrained, and there is only one seed. The three timeout cells
+contain no gradeable answer, so their failures measure deadline-bounded task
+completion rather than incorrect code. This deadline effect is also why B's
+16.45% higher derived throughput cannot be interpreted as a capability gain.
+
+The run is manual descriptive infrastructure evidence only. It did not pass a
+review gate, does not supply a complete paired result, and supports no policy
+or production change. Key durable hashes are:
+
+| Artifact | SHA-256 |
+|---|---|
+| Manifest snapshot | `a268fbf8eb2535066d97f6e7e15327300f35f0d1df727fdd039059b772bb10cf` |
+| Run | `c7ff223a81fd13d24699d3a7a05fe1cb65492648cd4fdfe39db52135c0be13c2` |
+| Raw attempts | `48d6b157337db2d9c9ba79f1b35b84ccb9e3202a165808144c78c61581b9758c` |
+| Objective outcomes | `c26bc2665689dc0a51789f8e87e7e8df315ef9e8c617986dc4c1e4eacdeba50b` |
+| Durable calls | `1dda7b248867a34fbf9a4f5b805324e76056d0c1232979c4d03ad2764e813e3e` |
+| Worker activity | `3ce2df81d8333f29a150527530476ac6dd8093db9f9ce4e9020b8796c24aa565` |
+| Terminal trial result | `4355c85c6a766a7af7ff647de8f13b20716cee57fcad063f4affff3648d1e888` |
+
+## Diversity plus selection canary: complete negative result
+
+The manual public-development diversity canary ran from immutable commit
+`f490c7ecce81a80a154b361e1869d4d08f6a65ac`. All **25/25** calls returned,
+the runtime identity remained stable, and the trusted receipt replayed every
+prompt, completion, parse and finite objective grade without another model
+call. The controller charged **14.975764 seconds**; the evaluator recorded
+13.675222 failure-inclusive seconds.
+
+| Frozen objective result | Control | Diverse plus selection |
+|---|---:|---:|
+| Creditable task successes | 3/5 | 0/5 |
+| Valid proposals | 6 | 5 |
+| Valid unique proposals | 6 | 2 |
+| Objective selection recoveries | 2 | 0 |
+
+The primary unique-valid-proposal difference is therefore **-4** for the
+diverse condition. All fifteen exploratory proposal calls parsed. The five
+validator calls returned Markdown-fenced JSON despite the frozen strict-JSON
+instruction; the control coalition response had the same formatting defect.
+Every affected call stopped normally far below its output cap, so this was
+schema compliance rather than timeout or truncation.
+
+A post-hoc diagnostic inspected the fenced content without changing the
+frozen grades. Two of five validator choices were objectively correct and
+three were incorrect. Only the diverse coalition cell both contained a valid
+candidate and chose one correctly, so accepting fenced JSON would move its
+task-success total only from 0/5 to 1/5; control would remain 3/5 and the
+primary -4 diversity result would not change. The ballot candidates were
+invalid in both conditions; the diverse delegation and coordination
+candidates were also invalid. The diverse pure-Nash candidates were valid but
+duplicates and were not selected correctly. This result supports no
+exploratory-policy promotion. A future trial requires a newly preregistered
+structured-output validator and a fresh or held-out panel, rather than replay
+of this run.
+
+| Bound artifact | SHA-256 |
+|---|---|
+| Manifest snapshot | `0d1bb84609d7d7ea6f3c60a3ea4ae5a2670c727b47fe3400b906c1af68314ff4` |
+| Replayed run | `02e08386436b2b57c535dda8b1ae36996a375b281f88eb934faf56cb1167bed5` |
+| Terminal trial result | `4d0a46f31a42dde5213609edab5b90afb81e672abcd336654166c044113d49c6` |
+
+## Resident long-context canary: complete with one Qwen schema failure
+
+The context capability canary ran from immutable commit
+`9d21f16b43d263a0df97de42c6104c7471dbcf01`. All **8/8** calls returned,
+runtime identity was unchanged before and after the run, and the controller
+charged **135.553790 seconds**. The result is descriptive because it compares
+the resident defaults: deterministic non-thinking Gemma against deterministic
+Qwen with its template-default `xhigh` thinking mode.
+
+| Input band | Gemma | Qwen |
+|---|---:|---:|
+| Approximately 8K, two tasks | 2/2 | 1/2 |
+| Approximately 14K, two tasks | 2/2 | 2/2 |
+| Total | 4/4 | 3/4 |
+
+Gemma used 14.239863 failure-inclusive seconds and Qwen used 120.107115.
+Across both arms the run completed seven tasks in 134.347780 evaluator seconds,
+or 187.572880 successful arm-tasks per wall-clock hour. These four public
+synthetic tasks support no general capability or production claim.
+
+The sole failure was Qwen's 8K grim-threshold task. It stopped normally after
+528 of 1,024 allowed output tokens, so neither the reasoning cap nor timeout
+caused the failure. Its content contained the correct answer code and all
+three required evidence-role citations, with no factual error or citation
+omission. A leaked thinking delimiter separated two copies of that correct
+JSON object, causing the strict parser's extra-data failure. The original
+failure remains authoritative; this diagnosis is not a regrade.
+
+The pre-dispatch offline receipt bound the exact manifest, source generator,
+execution dependencies, Transformers 5.8.1, Tokenizers 0.22.2, selected
+tokenizer assets, template policies and rendered token-ID hashes. Frozen input
+counts were Gemma **8,104 / 8,354 / 14,267 / 14,537** and Qwen
+**8,138 / 8,383 / 14,286 / 14,573**. Live Qwen usage matched exactly. vLLM
+reported one additional input token for every Gemma request; this uniform
+host-versus-server accounting difference had no fit consequence under Gemma's
+17,207-token minimum frozen margin. Qwen retained a 787-token frozen margin
+after the full 1,024-token output reserve. The preregistration explicitly did
+not claim an independent vLLM tokenizer implementation measurement. No 16K,
+32K, or 64K input lane was measured by this run.
+
+The immutable receipt validator replayed the complete artifact graph without
+another model call and returned `execution_complete=true` and
+`semantic_benefit_measured=false`. Before another context trial, a no-call
+fixture should reproduce and repair Qwen's reasoning-channel separation; that
+would require a newly preregistered run rather than regrading or replaying this
+one.
+
+| Bound artifact | SHA-256 |
+|---|---|
+| Manifest snapshot | `7a65db923631d01c296ba8e65e924e646c9134082bb2a600c099eeb66eb6f735` |
+| Context tokenizer preflight | `aa1a48e787bdce8f0252530c2c81471618485cb6744a763ca6153ee76b8fe201` |
+| Token measurement object | `16868ff8999336a82d8a20a4bf79ab2e44d80f6c7d922e113226e881894dd894` |
+| Replayed run | `8af0b602b6adfc98e576cf03fb6099ee387b2f442943c0ca8dd2d2670c258229` |
+| Terminal trial result | `bdfffa7ffdd5c83aed3ccb83f5e285cf4545d219ff0917fef119f6a7f5b7073a` |

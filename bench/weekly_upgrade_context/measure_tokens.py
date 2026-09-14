@@ -119,9 +119,9 @@ def measure(
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    from tokenizers import __version__ as tokenizers_version
     from transformers import AutoTokenizer
     from transformers import __version__ as transformers_version
-    from tokenizers import __version__ as tokenizers_version
 
     manifest_path = Path(manifest_path)
     manifest_bytes = manifest_path.read_bytes()

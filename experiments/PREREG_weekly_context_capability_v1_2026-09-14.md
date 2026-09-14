@@ -154,7 +154,7 @@ trial.
 | --- | --- |
 | `bench/weekly_upgrade_context/generate_packs.py` | `66df4a88481b29137cb0dfac10981da7c0d45413ffd7137c690b2529d21514ed` |
 | `bench/weekly_upgrade_context/packs.json` | `1ef8d9e02dd233d8126a71c8a4af43e63b19d8085b2f3fbe08619622167a7528` |
-| `bench/weekly_upgrade_context/measure_tokens.py` | `2825f025034573ec727923e63f8ad3cc6c358b8dec490cd05cb98da21202fa7d` |
+| `bench/weekly_upgrade_context/measure_tokens.py` | `dbb50f6b63896d5cdfd48c4479cf96cf043a0fc6a90387fba69ba0279fe12863` |
 | `bench/weekly_upgrade_context/token_counts.json` | `f966245736f4a002441be0ee4eb552bcc8134c2ea75b8797ee05f01bd1974b45` |
 | `bench/weekly_upgrade_context/preflight.py` | `143b8bb8707b7c1ca1140f52d0ab32122ef24fd0fce89cc6cef02334c243d32a` |
 | `experiments/weekly_context_capability_v1_2026-09-14.json` | `7a65db923631d01c296ba8e65e924e646c9134082bb2a600c099eeb66eb6f735` |
@@ -175,3 +175,13 @@ python3 -m bench.weekly_upgrade_eval.runner --plan \
 These commands are preparation checks only. A live run requires separate trial
 registry integration and the existing controller; invoking the runner directly
 is not part of this preregistration.
+
+## Post-measurement source maintenance
+
+The live run used immutable commit `9d21f16` and tokenizer helper SHA-256
+`2825f025034573ec727923e63f8ad3cc6c358b8dec490cd05cb98da21202fa7d`. A subsequent import-order-only lint fix
+changes the current helper hash in the table above to `dbb50f6b63896d5cdfd48c4479cf96cf043a0fc6a90387fba69ba0279fe12863`.
+It changes no prompts, token counts, model settings, grades or recorded result.
+The executed checkout and its original artifacts remain intact; reproduce or
+resume that run from `9d21f16`. This is source maintenance after measurement,
+not a replacement preregistration or a rerun.

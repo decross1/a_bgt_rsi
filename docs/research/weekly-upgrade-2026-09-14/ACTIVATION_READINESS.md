@@ -1,8 +1,8 @@
 # Weekly upgrade loop activation readiness
 
 **Prepared:** 2026-09-14
-**Current decision:** **NOT READY TO ACTIVATE**
-**Deployment state:** No schedule, service, or model call was changed while preparing this artifact.
+**Current decision:** **PREPARED; OWNER ACTIVATION NOT GRANTED**
+**Deployment state:** Manual evaluations are complete; the schedule and running services remain unchanged.
 
 This is the owner runbook for activating the weekly upgrade loop after the
 implementation has been reviewed, merged publicly, adopted into the canonical
@@ -47,15 +47,34 @@ Keep the loop off until every item has a recorded artifact or exact Git SHA:
 7. The active user daemon is restarted only after the adopted code is ready,
    then its readiness/health evidence is recorded.
 
-Evidence to fill after the parent session completes integration:
+Completed validation: the full repository suite passed **2,955 tests**, with
+one skip, two xpasses and 68 passing subtests. A subsequent import-order-only
+maintenance change passed 91 focused checks; scoped implementation lint passes.
+The first manual weekly cycle ended `REVISION_REQUIRED`, and the separately
+bounded input qualification ended `INVALID_REPORT`. Neither admitted a trial.
+Eight independently authorized manual trials have terminal, hash-bound
+receipts, including the unsuccessful cases. The final campaign ledger records
+3,455.296794 seconds consumed, no active reservation, and 3,744.703206 seconds
+remaining. These measurements establish tooling behavior, not a model upgrade.
+
+The delivery step records exact public/canonical Git identities and the final
+readiness result in the canonical local artifact below. Those identities are
+written after the public merge, so they cannot be embedded in their own source
+commit. [PR #19](https://github.com/decross1/a_bgt_rsi/pull/19) contains the public
+change; the private canonical merge is never pushed.
 
 ```text
-public_merge_sha: PENDING
-canonical_adoption_sha: PENDING
-full_test_result: PENDING
-manual_cycle_result: PENDING
-canonical_readiness_result: PENDING
-nara_user_service_reload: PENDING OWNER ACTION
+completion_receipt: run_state/weekly_upgrade/completion.json
+required_receipt_fields:
+  public_merge_sha
+  canonical_adoption_sha
+  canonical_readiness_artifact_sha256
+  canonical_preservation_receipt_sha256
+full_test_result: 2955 passed; no failures
+manual_cycle_result: REVIEW_COMPLETE / REVISION_REQUIRED
+manual_trial_results: 8 terminal receipts; negative results preserved
+nara_user_service_reload: NOT AUTHORIZED OR PERFORMED
+recurring_activation: OFF
 ```
 
 ## Read-only canonical readiness check
@@ -232,7 +251,9 @@ not rewrite canonical `main`.
 
 ## Owner decision
 
-Activation should be approved only after the pending evidence block at the top
-is filled with exact results and the final diff is reviewable. The recommended
-first scheduled state is review-only. A persistent fixed-manifest allowlist is
-appropriate only after its manual execution and receipt chain have passed.
+Activation is the owner's remaining decision after the completion receipt
+binds the exact merge, preserved canonical state and successful read-only
+readiness check. The recommended first scheduled state is review-only. A
+persistent fixed-manifest lane remains available, but each fresh weekly card
+must independently pass review and the shared trial-admission checks. Neither
+configuration can promote a production change.
