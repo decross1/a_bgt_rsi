@@ -189,6 +189,20 @@ def test_corrupt_or_partial_journal_fails_closed_without_appending(tmp_path: Pat
     assert path.read_bytes() == before
 
 
+def test_budget_lock_symlink_fails_closed_without_touching_target(tmp_path: Path):
+    path = tmp_path / "budget.jsonl"
+    ledger = BudgetLedger(path)
+    target = tmp_path / "elsewhere.lock"
+    target.write_bytes(b"unchanged")
+    ledger.lock_path.symlink_to(target)
+
+    with pytest.raises(BudgetCorruptionError, match="lock is unavailable or redirected"):
+        ledger.reserve("must-not-write", 1, MANIFEST, now=MONDAY)
+
+    assert target.read_bytes() == b"unchanged"
+    assert not path.exists()
+
+
 def test_tampering_and_hash_chain_break_fail_closed(tmp_path: Path):
     path = tmp_path / "budget.jsonl"
     ledger = BudgetLedger(path)

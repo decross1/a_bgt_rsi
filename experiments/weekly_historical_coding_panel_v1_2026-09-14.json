@@ -1,0 +1,573 @@
+{
+  "admission_boundary": {
+    "proof_satisfied": true,
+    "remaining": [
+      "Register scrubbed task statements and graders without exposing control artifacts to the candidate.",
+      "Run unchanged relevant regression suites if declared in the scored runner contract.",
+      "Keep this panel separate from the synthetic eight and future private hidden tasks."
+    ],
+    "runnable_panel_registered": false
+  },
+  "artifact_policy": {
+    "contains_model_prompts_or_completions": false,
+    "raw_log_integrity": "per-variant SHA-256 only",
+    "raw_log_location": "disposable private /tmp proof root",
+    "raw_logs_in_git": false
+  },
+  "created_at_utc": "2026-09-14T09:05:21Z",
+  "environment": {
+    "architecture": "aarch64",
+    "platform": "Linux-6.17.0-1018-nvidia-aarch64-with-glibc2.39",
+    "pytest_version": "9.0.3",
+    "python_realpath": "/usr/bin/python3.12",
+    "python_sha256": "6242e0e8650d7dbdebbc25e08bf4c9359ddaf65f54fcae0e57fa99395fa5357a",
+    "python_version": "Python 3.12.3"
+  },
+  "execution_contract": {
+    "canonical_state_writes": 0,
+    "command_template": [
+      ".venv-chroma/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "<test_node>",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp",
+      "<workspace>/.pytest_tmp"
+    ],
+    "cpu_only": true,
+    "credential_environment": "cleared by minimal environment",
+    "dependency_installs": 0,
+    "gpu_calls": 0,
+    "gpu_environment": {
+      "CUDA_VISIBLE_DEVICES": "",
+      "NVIDIA_VISIBLE_DEVICES": "void"
+    },
+    "home": "per-variant temporary directory",
+    "mock_llm": true,
+    "model_calls": 0,
+    "network_and_subprocess_guard": {
+      "accepted_run_guard_event_count": 0,
+      "denied_audit_events": [
+        "socket.connect",
+        "socket.bind",
+        "socket.getaddrinfo",
+        "subprocess.Popen",
+        "os.system",
+        "os.posix_spawn",
+        "os.posix_spawnp"
+      ],
+      "sitecustomize_sha256": "c9a3447df718b2a80786538b30ea2c5458dce0dd90f48b083786168c57a890c8"
+    },
+    "network_calls": 0,
+    "service_actions": 0,
+    "timeout_s_per_variant": 60,
+    "workspace": "task-specific git archive allowlist from exact public commit, outside Git under /tmp"
+  },
+  "manifest_kind": "weekly_historical_coding_panel_proof",
+  "panel_id": "weekly-historical-coding-panel-v1-2026-09-14",
+  "proof_payload_sha256": "838bbea9d52d9890cf847146281102909ddc8bc54402604800e0e3add96d1b4a",
+  "provenance": {
+    "all_base_and_fix_commits_verified_ancestors": true,
+    "class": "public_historical",
+    "contamination_resistant": false,
+    "hidden": false,
+    "private": false,
+    "public_history_boundary": "d920cba71077480035690cd0389a74b42077b231",
+    "source_plan": "docs/research/weekly-upgrade-2026-09-14/HISTORICAL_CODING_PANEL_PLAN.md",
+    "source_plan_sha256": "2cc08a13c56875b9c0582fbc48df53e65e1ca9376a3111d1ea984532257235ff"
+  },
+  "schema_version": 1,
+  "status": "PROOF_COMPLETE_REGISTRATION_PENDING",
+  "summary": {
+    "base_tasks_with_intended_failure": 6,
+    "dependency_or_collection_failures": 0,
+    "fix_tasks_passing": 6,
+    "grader_cases_on_fix": 9,
+    "guard_events": 0,
+    "mutation_tasks_with_intended_failure": 6,
+    "task_count": 6,
+    "timeouts": 0
+  },
+  "tasks": [
+    {
+      "allowed_repair_paths": [
+        "agent_wrapper/wrapper.py"
+      ],
+      "base_commit": "d7faff3019b1e1bff995dd3b5f76c251d1bb427e",
+      "base_tree": "a710a4fe083316590344910f840ba5f936483b38",
+      "defect_contract": "Emitting to a nested configured JSONL path creates missing parent directories before append.",
+      "expected_base_failure": {
+        "class": "missing_parent_directory",
+        "sanitized_observation": "The base raised FileNotFoundError for the nested calls.jsonl path."
+      },
+      "fix_commit": "1eba8f6027caff7f6d076d5acefc5564703e46ec",
+      "fix_tree": "359eb72b89cec7214ac32cda3f7e9503cd923e04",
+      "grader": {
+        "derived_focused_grader": false,
+        "proof_path": "tests/test_wrapper_calls_log_mkdir.py",
+        "public_source_test_path": "tests/test_wrapper_calls_log_mkdir.py",
+        "public_source_test_sha256": "147bc236d0ed2f41aa8a3f4fb4a68e05b112f0f4db185e5efc45bf39dae30dbf",
+        "sha256": "147bc236d0ed2f41aa8a3f4fb4a68e05b112f0f4db185e5efc45bf39dae30dbf",
+        "test_node": "tests/test_wrapper_calls_log_mkdir.py::test_emit_creates_missing_log_dir"
+      },
+      "mutation": {
+        "method": "replace each allowed repair file in the fixed tree with its exact base-commit blob",
+        "retains_other_fix_tree_files": true
+      },
+      "observations": {
+        "base": {
+          "bound_outcome_sha256": "a9980d90f5091437696d213c9b4152a4ac6fb3f160bf3fdfe5bef8a34025da3e",
+          "counts": {
+            "failed": 1
+          },
+          "elapsed_s_observed": 0.938546,
+          "guard_events": [],
+          "raw_log_sha256": "3e58ce5bf03d090a1cddcbae806c1a5cd227c0d0ded253604118b2dba802181b",
+          "returncode": 1,
+          "timed_out": false
+        },
+        "fix": {
+          "bound_outcome_sha256": "5bf08abbc80aadfe2c4b77a3d2ec3698da7123ab0399af5913fe295cc8fe5a22",
+          "counts": {
+            "passed": 1
+          },
+          "elapsed_s_observed": 0.934396,
+          "guard_events": [],
+          "raw_log_sha256": "41c3b06b1f0237013bf2a2d9555cfc394501d11435eed1ea4fe0a018aef42c2e",
+          "returncode": 0,
+          "timed_out": false
+        },
+        "mutation": {
+          "bound_outcome_sha256": "5d9d3e730a9b32895d263ba8b2897a7a357db21133351610688ca6e191fee464",
+          "counts": {
+            "failed": 1
+          },
+          "elapsed_s_observed": 0.920621,
+          "guard_events": [],
+          "raw_log_sha256": "d84a8b8b1acb3fd95c67213cf0b102fb506dbedfbad4e0e54c6063fe93bfc909",
+          "returncode": 1,
+          "timed_out": false
+        }
+      },
+      "provenance": "public_historical",
+      "public_history_ancestor_verified": true,
+      "repair_file_hashes": {
+        "agent_wrapper/wrapper.py": {
+          "base_sha256": "7148e69576d589bd6c1b4d63ced1ce38f34060f716c8b71a3c665e768af53026",
+          "fix_sha256": "a04a5a3a57af90b5568d08c842d5c827691970c559570da2d556ad1f409739ee"
+        }
+      },
+      "status": "PROVED_FOR_CURATION",
+      "task_id": "HCP-001",
+      "task_statement_sha256": "bb11545ed2b06583a90ae6452a07f6e79899ff028333de9557fe82dbf24da41f",
+      "title": "Create a missing call-log directory",
+      "workspace_fixture_allowlist": [
+        "tests/example_call.jsonl"
+      ],
+      "workspace_source_allowlist": [
+        "agent_wrapper",
+        "schema"
+      ]
+    },
+    {
+      "allowed_repair_paths": [
+        "agent_wrapper/frontier_cli.py"
+      ],
+      "base_commit": "350ef5afc34069a74191816c953ca1b13ddfb20e",
+      "base_tree": "0d5651d33af5ba13b315e0af74ca36a0b36938a9",
+      "defect_contract": "Frontier CLI resolution uses explicit environment pin, executable user install, then bare command.",
+      "expected_base_failure": {
+        "class": "resolver_absent",
+        "sanitized_observation": "The base module had no _resolve_binary attribute."
+      },
+      "fix_commit": "2f9738c4a1fa0c7177d7220e421ea5661a8e04a5",
+      "fix_tree": "a2922a33f77e930254a8c7c89762e0e1f1637d45",
+      "grader": {
+        "derived_focused_grader": false,
+        "proof_path": "tests/test_frontier_cli.py",
+        "public_source_test_path": "tests/test_frontier_cli.py",
+        "public_source_test_sha256": "21fb9835b9d1416895f5c211a393ab7b8d706e2bf9cb520a6aa157cf6e3dc5bb",
+        "sha256": "21fb9835b9d1416895f5c211a393ab7b8d706e2bf9cb520a6aa157cf6e3dc5bb",
+        "test_node": "tests/test_frontier_cli.py::test_resolve_binary_order"
+      },
+      "mutation": {
+        "method": "replace each allowed repair file in the fixed tree with its exact base-commit blob",
+        "retains_other_fix_tree_files": true
+      },
+      "observations": {
+        "base": {
+          "bound_outcome_sha256": "5d4e21003019bb4a7d4a94f3754edbecf91d64aad47d7ee4ad8296fa222276c2",
+          "counts": {
+            "failed": 1
+          },
+          "elapsed_s_observed": 0.128222,
+          "guard_events": [],
+          "raw_log_sha256": "58a182fad0e63fa76d9edd31f4c7133a09d72903e25d4cd362a3ea94ea2453b9",
+          "returncode": 1,
+          "timed_out": false
+        },
+        "fix": {
+          "bound_outcome_sha256": "30dfb6ced177c53840a0c7e9af7b050766f57c44cf21e286dffbb779a01908cc",
+          "counts": {
+            "passed": 1
+          },
+          "elapsed_s_observed": 0.120107,
+          "guard_events": [],
+          "raw_log_sha256": "a71df3ef716cabe43ead70bd8311cda3aeadcb986bea501da0ea9262f31c3925",
+          "returncode": 0,
+          "timed_out": false
+        },
+        "mutation": {
+          "bound_outcome_sha256": "658bb2cf4bb82a94f8ee723bd2e6dd96cb96fe83cad179fb878e00ea7d8f5628",
+          "counts": {
+            "failed": 1
+          },
+          "elapsed_s_observed": 0.121619,
+          "guard_events": [],
+          "raw_log_sha256": "a4ab67ab5139f706ab3a575bd6b4cd08ddb99a8afdb326a52794e2d902ed015f",
+          "returncode": 1,
+          "timed_out": false
+        }
+      },
+      "provenance": "public_historical",
+      "public_history_ancestor_verified": true,
+      "repair_file_hashes": {
+        "agent_wrapper/frontier_cli.py": {
+          "base_sha256": "01f7affe2d55c0441084a9c91aea629d87720f0b8603ce067554c4c3a72c1bb2",
+          "fix_sha256": "b8c13d0b808585cbd0fb72c6b8c0faaf4892a2fb83415303ed50d34ae6a34c72"
+        }
+      },
+      "status": "PROVED_FOR_CURATION",
+      "task_id": "HCP-002",
+      "task_statement_sha256": "dcc530561edd66e594e41547a3c4cef970df6088d321757330413318480a9726",
+      "title": "Resolve frontier CLI binaries under a minimal PATH",
+      "workspace_fixture_allowlist": [],
+      "workspace_source_allowlist": [
+        "agent_wrapper"
+      ]
+    },
+    {
+      "allowed_repair_paths": [
+        "orchestrator/coordinator.py"
+      ],
+      "base_commit": "0c3e22d4d771e131ca7e79867d78b494ece268e5",
+      "base_tree": "04ddb9d0a78d0af3190ba89ffbec7d2d71e7898f",
+      "defect_contract": "Bubble-up JSONL append refuses an unterminated existing tail without altering prior bytes.",
+      "expected_base_failure": {
+        "class": "unterminated_tail_appended",
+        "sanitized_observation": "Both old-tail fixtures were reported persisted/persisted instead of error/not_attempted."
+      },
+      "fix_commit": "9c540351a108b9ea678253eae143a44e6d304cbe",
+      "fix_tree": "eb0a63c80514e6f6bb36be589d26fd04a2611e7b",
+      "grader": {
+        "derived_focused_grader": false,
+        "proof_path": "tests/test_coordinator_escalation.py",
+        "public_source_test_path": "tests/test_coordinator_escalation.py",
+        "public_source_test_sha256": "27a4176b3a0df2313ae462eb85f9483f40a62b8fb6709ea75cbc246aef8a2ef4",
+        "sha256": "27a4176b3a0df2313ae462eb85f9483f40a62b8fb6709ea75cbc246aef8a2ef4",
+        "test_node": "tests/test_coordinator_escalation.py::test_t05_unterminated_tail_refuses_append_and_preserves_history"
+      },
+      "mutation": {
+        "method": "replace each allowed repair file in the fixed tree with its exact base-commit blob",
+        "retains_other_fix_tree_files": true
+      },
+      "observations": {
+        "base": {
+          "bound_outcome_sha256": "c361f0af5765a85e77c308de4fb634130aa54fa7a87c61f7bc1415b103cb3492",
+          "counts": {
+            "failed": 2
+          },
+          "elapsed_s_observed": 1.082352,
+          "guard_events": [],
+          "raw_log_sha256": "e6e9161dae899ff96d90cb344e3e3b62676cd305223072f4a40c16e062b3d253",
+          "returncode": 1,
+          "timed_out": false
+        },
+        "fix": {
+          "bound_outcome_sha256": "3774eaf7c79755e7043cac54aaf616ccb769f0a5f1f8c39f96c5d4056aac01b0",
+          "counts": {
+            "passed": 2
+          },
+          "elapsed_s_observed": 0.900487,
+          "guard_events": [],
+          "raw_log_sha256": "fec3c14fd4b14ce6322837033e533d3fb48c079716af71d54d570041aaed2a2a",
+          "returncode": 0,
+          "timed_out": false
+        },
+        "mutation": {
+          "bound_outcome_sha256": "7ebea14f7f9e8e1cc1c598ab0c6629eb3e7ec8c5a4723b08e20feaf2ac540128",
+          "counts": {
+            "failed": 2
+          },
+          "elapsed_s_observed": 1.004053,
+          "guard_events": [],
+          "raw_log_sha256": "11b528665702a55c4207063ee01dae3266f2c4853bb5fffcdac255c402026f6f",
+          "returncode": 1,
+          "timed_out": false
+        }
+      },
+      "provenance": "public_historical",
+      "public_history_ancestor_verified": true,
+      "repair_file_hashes": {
+        "orchestrator/coordinator.py": {
+          "base_sha256": "b8248fcb64705daeeb47a3eee22190071c1c1c054a57b67022c5514579ffdfdc",
+          "fix_sha256": "b50dda81b7b6893f856139613072d23254be9396529f4adac8313038cd9ec45a"
+        }
+      },
+      "status": "PROVED_FOR_CURATION",
+      "task_id": "HCP-005",
+      "task_statement_sha256": "01f7938b289716ed30bedd093dc0f92f23bc4fcf584b5a7170abb793acbd6d02",
+      "title": "Preserve a JSONL ledger with an unterminated tail",
+      "workspace_fixture_allowlist": [],
+      "workspace_source_allowlist": [
+        "agent_wrapper",
+        "orchestrator",
+        "workers",
+        "schema"
+      ]
+    },
+    {
+      "allowed_repair_paths": [
+        "orchestrator/coordinator.py"
+      ],
+      "base_commit": "7405ae953e3a7085447ce7be3a1e8f6e1003f8d7",
+      "base_tree": "7d1f68971c9d1e57cbcff7d609494364b7cf770a",
+      "defect_contract": "A daily-budget refusal recomputes health signals without dispatching a model or handler.",
+      "expected_base_failure": {
+        "class": "health_recompute_omitted",
+        "sanitized_observation": "The budget-refusal result returned without calling the patched health emitter."
+      },
+      "fix_commit": "f7c3c27e56f76432f881cec2277f3189479afe36",
+      "fix_tree": "6648f57b60c380f2e2e804f6da1a94c66aa53f2b",
+      "grader": {
+        "derived_focused_grader": false,
+        "proof_path": "tests/test_coordinator.py",
+        "public_source_test_path": "tests/test_coordinator.py",
+        "public_source_test_sha256": "1565e7031cc4f089c57a0af12bfc7c3ce63fe6c1447240291fee6ea6cdf2a767",
+        "sha256": "1565e7031cc4f089c57a0af12bfc7c3ce63fe6c1447240291fee6ea6cdf2a767",
+        "test_node": "tests/test_coordinator.py::test_budget_refusal_still_recomputes_health_alert"
+      },
+      "mutation": {
+        "method": "replace each allowed repair file in the fixed tree with its exact base-commit blob",
+        "retains_other_fix_tree_files": true
+      },
+      "observations": {
+        "base": {
+          "bound_outcome_sha256": "4a702dbea6b5176e99fca70c473a9a9fa258a3bf493a88d93856f47d098b0fdf",
+          "counts": {
+            "failed": 1
+          },
+          "elapsed_s_observed": 0.96271,
+          "guard_events": [],
+          "raw_log_sha256": "289f7ad4154e10f086e0e2cf99b7ed20aaff5beeac3fb99aa3bfcc1260404335",
+          "returncode": 1,
+          "timed_out": false
+        },
+        "fix": {
+          "bound_outcome_sha256": "c24e3fbb6d034a98ac4e4a9488af86ffee478439aac9de84550f78c9c19017fc",
+          "counts": {
+            "passed": 1
+          },
+          "elapsed_s_observed": 0.97073,
+          "guard_events": [],
+          "raw_log_sha256": "0ee5888eac5501909c7d7da392d69c44baa7c918e85045cdb4f2eb4f722f4c68",
+          "returncode": 0,
+          "timed_out": false
+        },
+        "mutation": {
+          "bound_outcome_sha256": "0eca2eb56757b4e2d62a11721e53fc5ae189173ab39803be7ce47e38cffa5267",
+          "counts": {
+            "failed": 1
+          },
+          "elapsed_s_observed": 1.015624,
+          "guard_events": [],
+          "raw_log_sha256": "88e23109b598c77abcc604f811823328e4d8e696bc96d50261915570a3bf5b5e",
+          "returncode": 1,
+          "timed_out": false
+        }
+      },
+      "provenance": "public_historical",
+      "public_history_ancestor_verified": true,
+      "repair_file_hashes": {
+        "orchestrator/coordinator.py": {
+          "base_sha256": "2798438601f825f905ea3911835b3598b23f79e0c087e9fab9642e8c33f5b690",
+          "fix_sha256": "a3ad7a7d028da1035fc6bc80edeb2c77b9233a4de1338dd2334615791549b9f7"
+        }
+      },
+      "status": "PROVED_FOR_CURATION",
+      "task_id": "HCP-006",
+      "task_statement_sha256": "14d0de89121a81c7c11f2eecce87084a47d4ad0b5f1d0308c40dc0f8555e715b",
+      "title": "Recompute health on a budget-refused cycle",
+      "workspace_fixture_allowlist": [],
+      "workspace_source_allowlist": [
+        "agent_wrapper",
+        "orchestrator",
+        "workers",
+        "schema"
+      ]
+    },
+    {
+      "allowed_repair_paths": [
+        "bench/critic_eval/stage3a_driver.py"
+      ],
+      "base_commit": "4bb4d3d25cb847164a55917556733ac3c155e849",
+      "base_tree": "89c5a71e85c1bd37e0791aa0870bfc2d90b49c5b",
+      "defect_contract": "The stage-3a driver reads the worker's attack_verdict contract and fails loudly when it is absent.",
+      "expected_base_failure": {
+        "class": "worker_driver_contract_helper_absent",
+        "sanitized_observation": "The base lacked the loud _verdict_of helper; two worker-shape controls passed."
+      },
+      "fix_commit": "771c7b15d44b38544d9e80a4e7961e15cb89a39a",
+      "fix_tree": "36497aed67a98e1ea81fde2415a0de13364230de",
+      "grader": {
+        "derived_focused_grader": false,
+        "proof_path": "tests/test_stage3a_driver_contract.py",
+        "public_source_test_path": "tests/test_stage3a_driver_contract.py",
+        "public_source_test_sha256": "7316eee07c744542705dd7b89e7c874b6ef61021a5e385fc4cc08158dd9ad23c",
+        "sha256": "7316eee07c744542705dd7b89e7c874b6ef61021a5e385fc4cc08158dd9ad23c",
+        "test_node": "tests/test_stage3a_driver_contract.py"
+      },
+      "mutation": {
+        "method": "replace each allowed repair file in the fixed tree with its exact base-commit blob",
+        "retains_other_fix_tree_files": true
+      },
+      "observations": {
+        "base": {
+          "bound_outcome_sha256": "7836bdc22c34ea6e5e5f3a3f9a01283e32250683112b4be34ead4e340153113c",
+          "counts": {
+            "failed": 1,
+            "passed": 2
+          },
+          "elapsed_s_observed": 0.918138,
+          "guard_events": [],
+          "raw_log_sha256": "775c05882fde93e132f267f4d67a26b9570a5928e799bf5b7748e8f37266d19e",
+          "returncode": 1,
+          "timed_out": false
+        },
+        "fix": {
+          "bound_outcome_sha256": "8c5c6e4f058203bc3c2aaee144897625bb411767ada70131e51b55e57be8a5fd",
+          "counts": {
+            "passed": 3
+          },
+          "elapsed_s_observed": 0.861345,
+          "guard_events": [],
+          "raw_log_sha256": "db58d0792e021e6c3fb7e4cdfd186077e8b54fd1fe8f52d4871d055bffbca88b",
+          "returncode": 0,
+          "timed_out": false
+        },
+        "mutation": {
+          "bound_outcome_sha256": "d2bbd2da70e3513c74c75fa384057f93d18c1276cea1a34ee3c853bc16af6625",
+          "counts": {
+            "failed": 1,
+            "passed": 2
+          },
+          "elapsed_s_observed": 1.019504,
+          "guard_events": [],
+          "raw_log_sha256": "83d9ea21cc2df658f6af9a722a7e9cba60371e1a800bea1345c7230e08d35bd8",
+          "returncode": 1,
+          "timed_out": false
+        }
+      },
+      "provenance": "public_historical",
+      "public_history_ancestor_verified": true,
+      "repair_file_hashes": {
+        "bench/critic_eval/stage3a_driver.py": {
+          "base_sha256": "003baf651046478bd40905699fec35316f52fc28d047c37cda26944aa28c7d3f",
+          "fix_sha256": "14db5ff8df8d578f62686c44194e773662808f312ceedaea913eecbb8e9ab156"
+        }
+      },
+      "status": "PROVED_FOR_CURATION",
+      "task_id": "HCP-007",
+      "task_statement_sha256": "ea36c1f7723d50e94773829b2d04f009878c4f3dca4fdc31689e00eece127a91",
+      "title": "Bind an evaluation driver to the worker result schema",
+      "workspace_fixture_allowlist": [],
+      "workspace_source_allowlist": [
+        "agent_wrapper",
+        "orchestrator",
+        "workers",
+        "bench/critic_eval",
+        "schema"
+      ]
+    },
+    {
+      "allowed_repair_paths": [
+        "bench/fp8_ab/tool_probe.py"
+      ],
+      "base_commit": "a217880c43744f925490192f14e9cdd22d1cd44b",
+      "base_tree": "44d27ec77abfc8c2c8b4d8d2202332454c80ed8b",
+      "defect_contract": "Normal replayed tool arguments are JSON strings and exactly one designated trap is a dictionary.",
+      "expected_base_failure": {
+        "class": "tool_argument_polarity_reversed",
+        "sanitized_observation": "The trap history contained four dictionary-typed replay calls instead of exactly one."
+      },
+      "fix_commit": "53fc78367f4d3b290156d3bda84c637fb9b8e315",
+      "fix_tree": "5fbf40e3012632495009d5e4cf31f64dc4fa8104",
+      "grader": {
+        "derived_focused_grader": true,
+        "proof_path": "tests/test_weekly_hcp008_hidden.py",
+        "public_source_test_path": "tests/test_fp8_ab_driver.py",
+        "public_source_test_sha256": "298708026710c33d971b2e5c97f080f5071a638527d77617cfd4464061cc46ab",
+        "sha256": "14063092cd0cf0b23fe9fcc6bb8a122603c7c48019167d317642352b9dee4927",
+        "test_node": "tests/test_weekly_hcp008_hidden.py::test_probe_script_is_deterministic_and_trap_is_isolated"
+      },
+      "mutation": {
+        "method": "replace each allowed repair file in the fixed tree with its exact base-commit blob",
+        "retains_other_fix_tree_files": true
+      },
+      "observations": {
+        "base": {
+          "bound_outcome_sha256": "fde76841814bedd7273767d6b21d04b6382c4f69a204e8663002d897800162ec",
+          "counts": {
+            "failed": 1
+          },
+          "elapsed_s_observed": 0.106814,
+          "guard_events": [],
+          "raw_log_sha256": "9e56be3686b33e958bf116a4ac0721359395187733adc7a70c8c00a65bb43754",
+          "returncode": 1,
+          "timed_out": false
+        },
+        "fix": {
+          "bound_outcome_sha256": "44624b26802a84a5594dc7724109d7e27ef879f82716e1039a4cbf8775b75de7",
+          "counts": {
+            "passed": 1
+          },
+          "elapsed_s_observed": 0.099227,
+          "guard_events": [],
+          "raw_log_sha256": "4bcefcc9f6c645923b9993ccf73ad92e6b400ca25458ea14e095857fc2131342",
+          "returncode": 0,
+          "timed_out": false
+        },
+        "mutation": {
+          "bound_outcome_sha256": "175e481475147d54210940af994ffa23f66f350e0c1aa225037c06e24334b130",
+          "counts": {
+            "failed": 1
+          },
+          "elapsed_s_observed": 0.111992,
+          "guard_events": [],
+          "raw_log_sha256": "9e56be3686b33e958bf116a4ac0721359395187733adc7a70c8c00a65bb43754",
+          "returncode": 1,
+          "timed_out": false
+        }
+      },
+      "provenance": "public_historical",
+      "public_history_ancestor_verified": true,
+      "repair_file_hashes": {
+        "bench/fp8_ab/tool_probe.py": {
+          "base_sha256": "588ce8ac71cf7a6fd7be44422f4512ce9ed52857c8960b0f44860327485bf470",
+          "fix_sha256": "8c0cc5a430361e9083b5ac989e49233fa3d1963d5bcb5e5b91063eeedee38536"
+        }
+      },
+      "status": "PROVED_FOR_CURATION",
+      "task_id": "HCP-008",
+      "task_statement_sha256": "239f791aa86e146b1751260f7602c1be59d13be30c7d92be29cc351f1fcf3e3e",
+      "title": "Serialize replayed tool arguments with one deliberate trap",
+      "workspace_fixture_allowlist": [],
+      "workspace_source_allowlist": [
+        "bench/fp8_ab/__init__.py",
+        "bench/fp8_ab/tool_probe.py"
+      ]
+    }
+  ]
+}

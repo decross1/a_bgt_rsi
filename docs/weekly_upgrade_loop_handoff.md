@@ -7,6 +7,14 @@
 > This document preserves the original review; its Session-0/owner-question
 > ordering does not suspend the owner's later implementation authorization.
 
+> **Research correction:** the later
+> [runtime qualification](research/weekly-upgrade-2026-09-14/RUNTIME_CHALLENGER_QUALIFICATION.md)
+> found a third-party long-context sweep. The historical “no context sweep
+> exists” statements below are superseded. That measurement still uses a
+> different target/runtime configuration and does not qualify a local cutover.
+> Current local experiment outcomes are in the
+> [live evaluation record](research/weekly-upgrade-2026-09-14/LIVE_EVALUATION_RECORD.md).
+
 > **Owner decisions, 2026-09-14:** “Keep game theory; correct the generated
 > topics.” “Subscription-only frontier sessions, with up to 2 Spark GPU-hours
 > per week.” The [current accounting design](weekly_upgrade_implementation.md#owner-decisions-recorded-2026-09-14)

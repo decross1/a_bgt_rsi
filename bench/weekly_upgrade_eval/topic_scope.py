@@ -9,6 +9,7 @@ blinded annotation file.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -27,6 +28,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = REPO_ROOT / "experiments" / "topic_scope_repair_2026-09-14.json"
 SCHEMA_VERSION = "topic-scope-repair/v1"
 ANNOTATION_VERSION = "topic-scope-annotations/v1"
+V1_SUITE_ID = "topic-scope-repair-2026-09-14"
+V2_SUITE_ID = "topic-scope-repair-action-key-v2-2026-09-14"
+V1_MANIFEST_SHA256 = "aab09640a9d377fc0a2a1c830223f5cd8b4e7e20299ac968d7bd01f2512b06a2"
+V2_CANDIDATE_SOURCE_COMMIT = "ca39c1a512241341f25845a007097969eddf5ea4"
+V2_CANDIDATE_PLANNER_SHA256 = "4cd842a95e87ab5be39d9fce1b50339e4ee28f0d5c33a310eb3a9f6b7c505754"
 MAX_RUNTIME_S = 40 * 60
 BASE_ATTEMPTS = 48
 R0_ATTEMPTS = 32
@@ -118,16 +124,29 @@ def validate_manifest(doc: Any) -> None:
     _keys(doc, required, required, "manifest")
     if doc["schema_version"] != SCHEMA_VERSION:
         raise ManifestError(f"schema_version must be {SCHEMA_VERSION!r}")
+    suite_id = _text(doc["suite_id"], "suite_id")
+    if suite_id not in {V1_SUITE_ID, V2_SUITE_ID}:
+        raise ManifestError(f"unsupported topic-scope suite_id {suite_id!r}")
     if doc["ordering"] != "alternate_ab_ba_reverse_cases_second_seed":
         raise ManifestError("unexpected ordering contract")
     if doc["seeds"] != [17, 29]:
         raise ManifestError("seeds must be exactly [17, 29]")
     _keys(doc["source_commits"], {"control", "candidate"}, {"control", "candidate"}, "source_commits")
-    for key, expected in {
+    expected_commits = {
         "control": "d4eaeee2813ecf78b2542ed36e6428c928b98bce",
-        "candidate": "3a50b8c",
-    }.items():
-        if not str(doc["source_commits"][key]).startswith(expected):
+        "candidate": (
+            "3a50b8c" if suite_id == V1_SUITE_ID
+            else V2_CANDIDATE_SOURCE_COMMIT
+        ),
+    }
+    for key, expected in expected_commits.items():
+        observed = str(doc["source_commits"][key])
+        matches = (
+            observed.startswith(expected)
+            if suite_id == V1_SUITE_ID
+            else observed == expected
+        )
+        if not matches:
             raise ManifestError(f"source_commits.{key} is not the preregistered commit")
 
     arms = doc["arms"]
@@ -266,6 +285,43 @@ def validate_manifest(doc: Any) -> None:
     }
     if doc["frozen_hashes"] != expected_hashes:
         raise ManifestError("frozen_hashes do not match the literal manifest inputs")
+    if suite_id == V2_SUITE_ID:
+        _validate_v2_lineage(doc)
+
+
+def _validate_v2_lineage(doc: dict[str, Any]) -> None:
+    """Prove v2 changes only the candidate planner contract and its identity."""
+    try:
+        baseline_raw = DEFAULT_MANIFEST.read_bytes()
+        baseline = json.loads(baseline_raw, object_pairs_hook=_unique_object)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ManifestError(f"cannot validate v2 lineage against v1: {exc}") from exc
+    if hashlib.sha256(baseline_raw).hexdigest() != V1_MANIFEST_SHA256:
+        raise ManifestError("the frozen v1 lineage manifest has drifted")
+
+    candidate = next(arm for arm in doc["arms"] if arm["id"] == "candidate")
+    if _sha(candidate["planner_system"]) != V2_CANDIDATE_PLANNER_SHA256:
+        raise ManifestError("v2 candidate planner prompt is not the preregistered repair")
+
+    normalized = copy.deepcopy(doc)
+    normalized["suite_id"] = baseline["suite_id"]
+    normalized["source_commits"]["candidate"] = baseline["source_commits"]["candidate"]
+    normalized_candidate = next(
+        arm for arm in normalized["arms"] if arm["id"] == "candidate"
+    )
+    baseline_candidate = next(
+        arm for arm in baseline["arms"] if arm["id"] == "candidate"
+    )
+    normalized_candidate["source_commit"] = baseline_candidate["source_commit"]
+    normalized_candidate["planner_system"] = baseline_candidate["planner_system"]
+    normalized["frozen_hashes"]["arm_system_prompts"]["candidate"]["planner"] = (
+        baseline["frozen_hashes"]["arm_system_prompts"]["candidate"]["planner"]
+    )
+    if normalized != baseline:
+        raise ManifestError(
+            "v2 may change only suite identity, candidate source identity, "
+            "and candidate planner prompt"
+        )
 
 
 def _case_order(items: list[dict[str, Any]], seed_index: int) -> Iterable[tuple[int, dict[str, Any]]]:
@@ -297,7 +353,7 @@ def build_attempts(manifest: dict[str, Any]) -> list[dict[str, Any]]:
 def plan_dict(manifest: dict[str, Any], *, include_r0: bool = False) -> dict[str, Any]:
     attempts = build_attempts(manifest)
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": manifest["schema_version"],
         "suite_id": manifest["suite_id"],
         "manifest_path": manifest["_path"],
         "manifest_sha256": manifest["_raw_sha256"],

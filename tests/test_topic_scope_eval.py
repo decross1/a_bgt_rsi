@@ -12,6 +12,8 @@ import pytest
 
 from bench.weekly_upgrade_eval import topic_scope as ts
 
+V2_MANIFEST = ts.REPO_ROOT / "experiments" / "topic_scope_repair_v2_2026-09-14.json"
+
 
 @pytest.fixture
 def manifest():
@@ -90,6 +92,45 @@ def test_manifest_freezes_exact_matrix_t6_prompts_menu_states_and_hashes(manifes
     assert "already vetted\nfor scope" in manifest["arms"][0]["planner_system"]
     assert "candidates, NOT scope-vetted" in manifest["arms"][1]["planner_system"]
     assert manifest["frozen_hashes"]["settings"] == ts._sha(manifest["settings"])
+
+
+def test_v2_manifest_is_one_prompt_delta_with_content_addressed_source(manifest):
+    v2 = ts.load_manifest(V2_MANIFEST)
+    candidate = next(arm for arm in v2["arms"] if arm["id"] == "candidate")
+    assert manifest["_raw_sha256"] == ts.V1_MANIFEST_SHA256
+    assert v2["suite_id"] == ts.V2_SUITE_ID
+    assert candidate["source_commit"] == ts.V2_CANDIDATE_SOURCE_COMMIT
+    assert ts._sha(candidate["planner_system"]) == ts.V2_CANDIDATE_PLANNER_SHA256
+    assert "each menu object uses 'name'" in candidate["planner_system"]
+    assert "Never emit a 'name' key in the output" in candidate["planner_system"]
+    assert [row["attempt_id"] for row in ts.build_attempts(v2)] == [
+        row["attempt_id"] for row in ts.build_attempts(manifest)
+    ]
+
+
+def test_v2_lineage_rejects_any_second_input_delta(tmp_path):
+    raw = json.loads(V2_MANIFEST.read_text())
+    raw["topics"][0]["scope_anchor"] += " Additional unregistered text."
+    raw["frozen_hashes"]["topic_grading_anchors"]["T1"] = ts._sha(
+        raw["topics"][0]["scope_anchor"]
+    )
+    path = tmp_path / "mutated-v2.json"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ts.ManifestError, match="v2 may change only"):
+        ts.load_manifest(path)
+
+
+def test_v2_lineage_rejects_a_self_consistent_unregistered_prompt(tmp_path):
+    raw = json.loads(V2_MANIFEST.read_text())
+    candidate = next(arm for arm in raw["arms"] if arm["id"] == "candidate")
+    candidate["planner_system"] += "\nUnregistered instruction."
+    raw["frozen_hashes"]["arm_system_prompts"]["candidate"]["planner"] = ts._sha(
+        candidate["planner_system"]
+    )
+    path = tmp_path / "mutated-prompt-v2.json"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ts.ManifestError, match="not the preregistered repair"):
+        ts.load_manifest(path)
 
 
 def test_order_is_ab_ba_and_second_seed_reverses_cases(manifest):

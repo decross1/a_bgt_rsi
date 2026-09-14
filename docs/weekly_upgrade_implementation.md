@@ -20,14 +20,21 @@ per week.” This sets the design limits; it starts no paid calls or jobs.
 Use authenticated subscription CLI sessions; no metered API fallback. The
 current review permits at most two attempts (Codex proposal, then Claude
 adversary), with no retries; an early failure can prevent the second call. The
-existing agenda also permits up to two, so running both workflows can use up to
-four subscription attempts. Both must be visible in the weekly usage report;
-this decision does not set a numeric subscription-session cap or activate cron.
+existing agenda also permits up to two. When explicitly enabled, the new
+weekly hook replaces that agenda branch, so the scheduled invocation remains
+bounded to two subscription attempts. It does not run both workflows. Separate
+manual diagnostic annotation calls have their own finite receipts; the owner
+decision does not set a numeric subscription-session cap or activate cron.
 
-The delivery implementation now enforces the **shared 120 Spark GPU-minute
-weekly ceiling** through one canonical ledger. This describes the checked and
-tested code; it is not yet the state of the running canonical checkout or its
-already-loaded daemon:
+The earlier public dispatcher/budget tranche now enforces the **shared 120
+Spark GPU-minute weekly ceiling** through one canonical ledger and has been
+adopted by the canonical checkout. The weekly cycle, corrected review inputs,
+and completed measurement panels are the subject of
+[public PR 19](https://github.com/decross1/a_bgt_rsi/pull/19). Because this file
+is part of that delivery, it does not predict its own final commit. The exact
+public merge SHA, private adoption SHA, and dirty-state preservation hashes are
+recorded afterward in the canonical external completion receipt. The
+already-loaded daemon still imports older code:
 
 - One ISO week, Monday 00:00 UTC through the next Monday, with no carryover.
   Charge the one physical Spark's reserved elapsed time once, including both
@@ -66,15 +73,19 @@ runtime campaigns share the same ledger unless the owner explicitly changes
 the budget contract.
 
 The [Qwen pilot](../experiments/PREREG_weekly_qwen_effort_pilot_2026-09-14.md)
-reserves 112.5 minutes across three 37.5-minute registered repeats and leaves
-only 7.5 minutes for all other charged work. It cannot coexist with an active
-40-minute topic-scope reservation: that reservation leaves only 80 minutes.
-After a trusted terminal topic receipt releases unused time, the pilot can start
-in the same week only if the ledger shows at least 6,750 seconds remaining. In
-other words, the topic run plus every other prior charge must total no more than
-450 seconds. An interrupted topic run remains charged for all 2,400 seconds, so
-the pilot must wait for another week. The next scientific diagnostic targets
-the upstream game-theory topic mismatch before optimizing Qwen effort.
+reserved 112.5 minutes across three 37.5-minute registered repeats. All 36
+cells ran. Trusted terminal receipts released unused reservations and charged
+1,833.744028 seconds for those repeats. Including the conservative prior-use
+debit and topic v1, the canonical ledger then showed **2,150.711097 seconds
+(35.845185 minutes) consumed**. The locked result is `INCOMPLETE` and supports
+no gain: xhigh passed 13/18 versus medium 12/18, with one xhigh timeout. The
+post-hoc grader audit found ambiguities but does not alter the frozen result.
+
+After all authorized manual panels, the canonical ledger recorded
+**3,455.296794 seconds (57.588280 minutes) consumed** and **3,744.703206
+seconds remaining** in the 7,200-second UTC-week allowance. The ledger is
+authoritative; displayed per-panel values are rounded independently. No GPU
+trial remains active.
 
 ## Delivered scope
 
@@ -122,23 +133,68 @@ the upstream game-theory topic mismatch before optimizing Qwen effort.
   configuration hashes, reports RSR 2-of-3, task-clustered bootstrap intervals,
   family metrics and failure-inclusive correct-task throughput, without copying
   raw completions or tool payloads.
+- A default-off weekly cycle integrated into the existing Sunday owner. When
+  enabled it replaces, rather than adds to, the legacy agenda firing; it refreshes
+  bounded sources, incorporates sanitized prior outcomes, performs at most one
+  Codex proposal and one Claude adversary attempt, and can dispatch only an exact
+  registered card. Pause, week-boundary, durable no-replay and finite child-kill
+  behavior are covered by focused tests.
+- An eight-task public synthetic game/science/evidence/executed-code portfolio
+  with deterministic parent-side grading and sandbox receipts. Its authorized
+  manual baseline completed all 16 cells in 1,014.852476 charged seconds: arm A
+  passed 6/8 and arm B 7/8. Both passed science 4/4 and evidence 2/2; executed
+  code was 0/2 versus 1/2. Three timeouts remained in the denominator and no
+  separate error outcome occurred.
+- A four-task public synthetic long-context panel using the existing objective
+  runner. Review of its first revision exposed ambiguous citation grading and
+  missing dispatch-time token validation. The corrected manifest
+  `7a65db923631d01c296ba8e65e924e646c9134082bb2a600c099eeb66eb6f735`
+  binds full tokenizer preflight and explicitly records Qwen's default xhigh
+  thinking versus Gemma thinking off. Its largest Qwen request is 15,597 total
+  tokens, 787 below the current 16,384 limit. All eight cells completed in
+  135.553790 seconds: Gemma passed 4/4 and Qwen 3/4; at ~8K the split was 2/2
+  versus 1/2 and at ~14K both passed 2/2. This is a cross-model capability
+  observation, not a causal context- or policy-gain claim.
+- A registered five-task Gemma diversity-plus-objective-selection panel with 25
+  bounded calls and finite feasibility graders. All 25 calls completed in
+  14.975764 seconds. The control passed 3/5 tasks with six valid unique
+  proposals; diversity plus selection passed 0/5 with two. It supports no gain.
+- Six authentic public historical repairs with exact base-fail, fix-pass and
+  reverted-file mutation receipts. This proves task/grader curation only; no
+  agent repair runner is registered and no agent coding performance is measured.
 
 The [topic-scope diagnostic](../experiments/PREREG_topic_scope_repair_2026-09-14.md)
-defines the paired measurement still needed for that prompt change. Code
-compatibility checks do not establish better generated topics or R0 accuracy.
+has run twice. Its locked v1 result is `INVALID/INCOMPLETE`: all eight candidate
+planner responses used the wrong action key, one R0 call was correctly omitted,
+and independent blind annotation found only one of six grounded repairs plus
+three candidate/R0 disagreements. V2 completed 80/80 protocol-valid calls in
+139.203669 seconds and both planner arms passed 8/8. A 173.377-second independent
+Claude pass covered 93 annotations. Its conclusion is
+**`NO-MATERIAL-SIGNAL`**:
+grounded adjacent-topic repair stayed 0/6 versus 1/6, valid on-domain choices
+were 7/10 versus 6/10, and R0 disagreements were 0 versus 2. The original
+annotation envelope used the wrong kind; a recorded local normalization retained
+byte-equivalent judgment items and made no call retry. Neither run establishes
+better generated topics or R0 accuracy.
 
 The [completion tracker](research/weekly-upgrade-2026-09-14/UNBLOCKING_PLAN.md)
-separates delivered code from remaining experiments and activation. Its first
-priority is the stale topic queue feeding the observed R0 blockade upstream of Qwen;
-the paired effort pilot remains a separate, preregistered development test.
+separates the completed initial evaluation set from Git-delivery and activation
+closure. Topic v2 found no material signal, the Qwen pilot remained incomplete,
+and no production-policy change follows from either result.
 
-The implementation does not activate a schedule, execute a live diagnostic,
-collect independent annotations, change the scientific frontier policy, restart
-serving, swap a role, raise context limits or promote a candidate. The existing
-agenda cron remains unchanged. No new review artifact has yet exercised the
-review-to-registered-trial binding, and no manual end-to-end trial has run.
-Scheduling, canonical-checkout adoption and runtime qualification remain
-follow-on work with the deployed contracts applied at that point.
+The [live evaluation record](research/weekly-upgrade-2026-09-14/LIVE_EVALUATION_RECORD.md)
+records canonical adoption, both topic diagnostics and blind annotations, the
+complete three-repeat Qwen pilot, resume-without-replay, and the first manual
+weekly cycle. That cycle refreshed eight sources and completed both subscription
+attempts, but correctly ended `REVISION_REQUIRED`: the card omitted actual arm
+settings and proposed imprecise semantic metrics, so no trial was admitted and
+no Spark time was charged. A separately preregistered corrected-input
+qualification produced a valid Codex card, but Claude returned fenced JSON that
+the strict parser rejected; the report is `INVALID_REPORT` and admitted no
+trial. Its diagnostic content also recommended revision. No provider call was
+retried. Scheduling and runtime qualification remain separate from code
+adoption. No schedule, serving restart, model-role swap, context increase or
+production promotion has been activated.
 
 ## Corrections established during implementation
 
@@ -156,8 +212,11 @@ follow-on work with the deployed contracts applied at that point.
 4. The existing subagent request used temperature 0.2 while its record said 0.0.
    Default logs also went to memory. Both telemetry defects are corrected.
 5. The 64K lane and SGLang/DFlash2 remain qualification experiments. Existing
-   production context limits remain 32K Gemma and 16K Qwen. No new throughput or
-   science-quality claim follows from this implementation's smoke checks.
+   production context limits remain 32K Gemma and 16K Qwen. The measured
+   8K/~14K capability panel fits both contracts and completed 8/8 responses; it
+   compares different resident models and disclosed reasoning defaults. A 32K
+   comparison remains Gemma-only and 64K remains inadmissible under the resident
+   launchers. No broader context or policy claim follows from this small panel.
 
 ## Profile use
 
@@ -205,13 +264,17 @@ only fixture-owned simple tools.
 ## Evaluation
 
 Use the project's Python environment (for example `.venv-chroma/bin/python`).
-The fixed registered-trial catalog is:
+The fixed catalog and its current evidence are:
 
-| Manifest | Trial | Reservation | Evaluator payload | Declared calls/attempts |
-|---|---:|---:|---:|---:|
-| `bench/weekly_upgrade_eval/fixtures.json` | objective canary | 1,800 s | 1,770 s | 24 |
-| each Qwen seed manifest (`17`, `29`, `43`) | objective repeat | 2,250 s | 2,220 s | 12 |
-| `experiments/topic_scope_repair_2026-09-14.json` | topic scope + primary R0 | 2,400 s | 2,370 s | 80 |
+| Manifest | Trial | Reservation | Payload | Calls | Evidence state |
+|---|---|---:|---:|---:|---|
+| `bench/weekly_upgrade_eval/fixtures.json` | objective canary | 1,800 s | 1,770 s | 24 | registered development canary |
+| each Qwen seed manifest (`17`, `29`, `43`) | objective repeat | 2,250 s | 2,220 s | 12 | all three measured; locked `INCOMPLETE` |
+| `experiments/topic_scope_repair_2026-09-14.json` | topic scope + primary R0 | 2,400 s | 2,370 s | 80 | v1 measured `INVALID/INCOMPLETE` |
+| `experiments/topic_scope_repair_v2_2026-09-14.json` | planner protocol repair + unchanged R0 | 2,400 s | 2,370 s | 80 | measured; `NO-MATERIAL-SIGNAL` |
+| `experiments/weekly_upgrade_game_science_dev_v0_2026-09-14.json` | eight-task public game/science/evidence/code panel | 2,310 s | 2,280 s | 16 | manual descriptive baseline complete; A 6/8, B 7/8 |
+| `experiments/weekly_context_capability_v1_2026-09-14.json` | four-task resident 8K/~14K capability panel | 1,230 s | 1,200 s | 8 | corrected panel complete; Gemma 4/4, Qwen 3/4 |
+| `experiments/diversity_selection_dev_v0_2026-09-14.json` | Gemma diversity plus objective selection | 880 s | 850 s | 25 | complete; control 3/5, diverse-selection 0/5; no gain |
 
 The fixed 30-second difference between each reservation and payload covers
 resource preflight plus supervisor shutdown. The payload cap is identical for
@@ -277,12 +340,21 @@ They are deliberately too small to establish scientific superiority under
 xhigh reasoning. A quality experiment must preregister appropriate output caps,
 repeat counts, resource windows and thresholds before generating results.
 
-The panel covers exact mixed equilibrium, external regret, repeated-game traces,
-balanced fatal/proceed critique, evidence attribution and semantic tool use.
-It is public development material in this repository. It is not a hidden
-confirmation set, a repository patch benchmark, or an end-to-end science suite.
-Independent coding tasks, held-out scientific tasks, long context and runtime
-qualification remain separate panels to add when those hypotheses are tested.
+The original objective panel covers exact mixed equilibrium, external regret,
+repeated-game traces, balanced fatal/proceed critique, evidence attribution and
+semantic tool use. The newer eight-task portfolio adds D-075 collective-choice,
+mutually exclusive evidence contracts, and two parent-graded executed-code
+tasks. The frozen context panel adds exact fact/contradiction/source-ID checks at
+approximately 8K and 14K. All remain public synthetic development material.
+They are not a hidden confirmation set, a repository patch benchmark, or an
+end-to-end science suite. Six public historical repair contracts have separate
+curation proofs; an agent runner and scored repair execution are outside this
+delivery.
+A separate five-task Gemma diversity-plus-objective-selection panel is frozen
+and registered with 25 bounded calls and finite feasibility graders. Its live
+run completed with control 3/5 and diversity plus selection 0/5. It measures
+valid unique proposals and selection recovery, not scientific novelty, and the
+result supports no gain.
 
 Failures, timeouts and budget-skipped work stay in the declared denominator.
 Correct-task throughput includes unsuccessful wall time. Bootstrap intervals
@@ -329,13 +401,17 @@ and raw completions in the isolated evaluation directory:
   --annotations /tmp/topic-scope-annotations-2026-W38.json
 ```
 
-No independent annotations have been collected. The blind package contains
-candidate text and an annotation template, but no arm/source/prompt mapping.
-Do not publish the raw private evaluation directory or add private benchmark
-inputs to Git.
+Complete independent annotations were collected separately for topic v1 and
+topic v2 and are bound in the live record. They do not repair v1's invalid
+planner outputs or turn v2's one-case grounded-repair difference into a material
+gain. V2's original annotation envelope had the wrong kind; the recorded local
+normalization retained all 93 judgment items byte-for-byte and made no provider
+retry. Each blind package contains candidate text and an annotation template,
+but no arm/source/prompt mapping. Do not publish the raw private evaluation
+directory or add private benchmark inputs to Git.
 
-After all three Qwen repeats complete, aggregate their `run.json` artifacts
-without generation:
+The three Qwen repeats have completed. Their `run.json` artifacts can be
+re-aggregated without generation using:
 
 ```bash
 .venv-chroma/bin/python -m bench.weekly_upgrade_eval.repeats \
@@ -400,6 +476,22 @@ not claim two independent proposals or a four-pass debate. Actual vendor/model
 metadata is retained when the CLI exposes it; absent resolved model IDs remain
 unknown. CLI subscriptions are used, with API-key routes removed. The configured
 model is recorded; the controller does not claim an alias is the newest model.
+For the September 14 maintenance review, the current selection is
+`FRONTIER_CODEX_MODEL=gpt-6-astra`, `FRONTIER_CODEX_EFFORT=xhigh`, and
+`FRONTIER_CLAUDE_MODEL=claude-opus-5`, supplied only to the maintenance process.
+The [official Codex model guide](https://learn.chatgpt.com/docs/models)
+recommends Astra for demanding research/coding workflows, and this host's
+fresh subscription model catalog lists it. The completed blind annotation's
+Claude receipt reports Opus 5. Anthropic's
+[current model overview](https://platform.claude.com/docs/en/models/overview)
+recommends Opus 5 for most workloads and Fable 5.1 for demanding reasoning when
+Opus at higher effort falls short. Opus has a successful local subscription
+grading receipt here; Fable is a future analyst candidate, with subscription
+availability and bounded response behavior still to verify. This selection
+does not alter the separate
+scientific frontier seam's defaults. Check actual access and receipts each
+week; documented model availability depends on account and rollout, and a
+stale hard-coded model name does not establish current suitability.
 The example's 40-minute card ceiling is a per-trial proposal bound, not another
 40 minutes granted outside the weekly 120-minute total. A fresh review output
 directory does not reset the weekly balance.
@@ -411,13 +503,33 @@ be recorded as completed frontier analysis. `NO_CHANGE`, `REVISION_REQUIRED`,
 or `CONTINUE_TRIAL` is an advisory result, not a deployment instruction or
 statistical promotion decision.
 
-No live diagnostic, Qwen pilot, independent topic annotation, newly generated
-review integration, canonical-checkout adoption, service reload, or scheduler
-activation has occurred in this delivery. The code and offline plans establish
-protocol behavior only. They do not measure a scientific, coding or performance
-gain.
+Canonical adoption, a real registered diagnostic and independent topic
+annotation are recorded in the
+[live evaluation record](research/weekly-upgrade-2026-09-14/LIVE_EVALUATION_RECORD.md).
+The full Qwen pilot attempted all 36 cells. Its frozen result is 13/18 for
+xhigh versus 12/18 for medium; one timeout leaves the locked decision
+`INCOMPLETE` and no gain supported. A separate grader audit preserves the
+identified false negatives without changing the recorded scores. The first
+manual scheduled-style review completed both providers and ended
+`REVISION_REQUIRED`, so its card did not dispatch. Corrected-input qualification
+also ended without admission because Claude's fenced response was strict-parser
+`INVALID_REPORT`; topic v2 ended `NO-MATERIAL-SIGNAL`. The remaining live panels
+then completed as descriptive measurements: portfolio A 6/8 versus B 7/8,
+context Gemma 4/4 versus Qwen 3/4, and diversity control 3/5 versus candidate
+0/5. Service reload and scheduler activation remain separately tracked. Neither
+protocol completion nor these small negative/mixed results establish a
+scientific, coding or performance gain.
 
 ## Validation and delivery
 
 See [implementation validation](research/weekly-upgrade-2026-09-14/IMPLEMENTATION_VALIDATION.md)
-for test counts, live smoke evidence, review findings and outstanding limits.
+for committed test evidence and the
+[live evaluation record](research/weekly-upgrade-2026-09-14/LIVE_EVALUATION_RECORD.md)
+for terminal measurements. The initial bounded evaluation set is complete.
+The final integrated suite passed 2,955 tests with one skipped, two xpassed, 23
+warnings, and no failures; 68 subtests also passed in 66.76 seconds. Scoped Ruff
+checks for the new implementation also passed, followed by 91 focused
+context/trial/review tests after the style-only correction. PR 19 delivery,
+private canonical adoption, and the owner's explicit activation decision are
+the remaining closure steps; none authorizes a model, runtime, context, or
+production-policy promotion.

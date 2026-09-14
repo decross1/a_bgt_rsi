@@ -154,6 +154,28 @@ def test_plan_extracts_array(monkeypatch, state_files):
     assert got == plan_obj
 
 
+def test_planner_prompt_maps_menu_name_to_output_action():
+    prompt = coord._planner_system_prompt(3)
+    assert "each menu object uses 'name'" in prompt
+    assert "copy that value under the\nkey 'action'" in prompt
+    assert "Never emit a 'name' key in the output" in prompt
+    assert '{"action": "run_loop_iteration"' in prompt
+    assert 'not {"name": "run_loop_iteration"' in prompt
+
+
+def test_menu_name_key_is_rejected_by_runtime_validator():
+    """Replay the exact v1 diagnostic failure at the production validator."""
+    malformed = [
+        {"name": "run_loop_iteration", "args": {"topic": "Vickrey auctions"}},
+    ]
+    verdict = coord.validate_plan(malformed, budget=3)
+    assert verdict["ok"] is False
+    assert verdict["normalized"] == []
+    assert verdict["errors"] == [
+        "action[0]: missing or non-string 'action' name",
+    ]
+
+
 def test_plan_call_failure_returns_empty(monkeypatch, state_files):
     def _boom(*a, **k):
         raise RuntimeError("backend down")

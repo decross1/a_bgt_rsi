@@ -20,6 +20,26 @@
       "url": "https://raw.githubusercontent.com/sgl-project/sglang/main/README.md",
       "publisher": "SGLang project",
       "published_at": null
+    },
+    {
+      "url": "https://api.github.com/repos/vllm-project/vllm/releases/latest",
+      "publisher": "vLLM project",
+      "published_at": null
+    },
+    {
+      "url": "https://api.github.com/repos/sgl-project/sglang/releases/latest",
+      "publisher": "SGLang project",
+      "published_at": null
+    },
+    {
+      "url": "https://learn.chatgpt.com/docs/models.md",
+      "publisher": "OpenAI",
+      "published_at": null
+    },
+    {
+      "url": "https://platform.claude.com/docs/en/models/overview.md",
+      "publisher": "Anthropic",
+      "published_at": null
     }
   ]
 }

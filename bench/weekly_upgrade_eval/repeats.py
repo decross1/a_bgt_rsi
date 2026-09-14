@@ -594,8 +594,20 @@ def _load_controller_evidence(run_path: Path, artifact_sha256: str) -> bytes | N
         raise _invalid(f"controller manifest receipt differs for {run_path}")
     if receipt.get("sha256") != artifact_sha256 or result_evaluation != receipt:
         raise _invalid(f"controller result does not bind the exact run artifact in {run_path}")
+    # A bounded, fully receipted transport failure is usable negative evidence.
+    # Keep structural failures invalid, but do not discard a timed-out planned
+    # cell merely because the dispatcher correctly marked the trial failed.
+    # The decision layer independently forces INCOMPLETE and supports_gain=False.
+    evaluation_status = receipt.get("status")
+    if evaluation_status == "complete" and receipt.get("execution_complete") is True:
+        terminal_status, returncode = "completed", 0
+    elif (evaluation_status in INCOMPLETE_RUN_STATUSES
+          and receipt.get("execution_complete") is False):
+        terminal_status, returncode = "failed", 3
+    else:
+        raise _invalid(f"controller receipt has no bounded terminal evaluation: {run_path}")
     if (
-        result.get("status") != "completed"
+        result.get("status") != terminal_status
         or result.get("error") is not None
         or result.get("trial_id") != plan.get("trial_id")
         or result.get("plan_sha256") != controller._sha(plan)
@@ -603,9 +615,9 @@ def _load_controller_evidence(run_path: Path, artifact_sha256: str) -> bytes | N
         or result.get("semantic_benefit_measured") is not False
         or result.get("production_change_authorized") is not False
         or not isinstance(result.get("process"), dict)
-        or result["process"].get("returncode") != 0
+        or result["process"].get("returncode") != returncode
     ):
-        raise _invalid(f"controller terminal result is not a successful bounded run: {run_path}")
+        raise _invalid(f"controller terminal result does not match its bounded evaluation: {run_path}")
     budget = result.get("budget_receipt")
     binding = controller._sha({"plan": plan, "output": str(output.resolve())})
     if (
@@ -613,7 +625,7 @@ def _load_controller_evidence(run_path: Path, artifact_sha256: str) -> bytes | N
         or budget.get("run_id") != plan.get("trial_id")
         or budget.get("manifest_sha256") != binding
         or budget.get("state") != "finished"
-        or budget.get("status") != "completed"
+        or budget.get("status") != terminal_status
     ):
         raise _invalid(f"controller budget receipt does not bind the run in {run_path}")
     try:

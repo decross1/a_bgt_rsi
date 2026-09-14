@@ -17,6 +17,7 @@ import json
 import math
 import os
 import re
+import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -195,7 +196,28 @@ class BudgetLedger:
     @contextmanager
     def _locked(self) -> Iterator[None]:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.lock_path.open("a+b") as lock:
+        flags = (
+            os.O_RDWR
+            | os.O_CREAT
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        try:
+            descriptor = os.open(self.lock_path, flags, 0o600)
+        except OSError as exc:
+            raise BudgetCorruptionError(
+                f"budget lock is unavailable or redirected: {self.lock_path}"
+            ) from exc
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise BudgetCorruptionError(
+                    f"budget lock is not a regular file: {self.lock_path}"
+                )
+        except BaseException:
+            os.close(descriptor)
+            raise
+        with os.fdopen(descriptor, "a+b") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             try:
                 yield
