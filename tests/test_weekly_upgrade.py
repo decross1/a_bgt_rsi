@@ -957,3 +957,18 @@ def test_github_release_api_is_bounded_to_allowed_owners_and_semantic_fields():
     assert "Important correctness fix" in excerpt
     assert "assets" not in excerpt
     assert len(excerpt) <= 2000
+
+
+def test_operational_object_reads_are_bounded_and_bind_exact_bytes(tmp_path, monkeypatch):
+    path = tmp_path / "receipt.json"
+    path.write_bytes(b'{"value":1}\n')
+    monkeypatch.setattr(Path, "read_bytes", lambda self: pytest.fail("unbounded read forbidden"))
+    value, digest = wu._bounded_object(path, with_hash=True)
+    assert value == {"value": 1}
+    assert digest == wu._sha(b'{"value":1}\n')
+    with pytest.raises(wu.WeeklyUpgradeError, match="exceeds"):
+        wu._bounded_object(path, maximum=4)
+    redirected = tmp_path / "redirected.json"
+    redirected.symlink_to(path)
+    with pytest.raises(wu.WeeklyUpgradeError, match="redirected"):
+        wu._bounded_object(redirected)

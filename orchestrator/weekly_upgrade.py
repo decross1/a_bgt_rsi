@@ -23,6 +23,7 @@ import os
 import re
 import signal
 import socket
+import stat
 import statistics
 import subprocess
 import sys
@@ -126,6 +127,12 @@ SNAPSHOT_FILES = (
     "experiments/PREREG_diversity_selection_v1_2026-09-14.md",
     "experiments/PREREG_weekly_historical_coding_panel_v2_2026-09-14.md",
     "experiments/PREREG_weekly_historical_coding_patch_wire_v1_2026-09-14.md",
+    "LOOP_V2.md",
+    "docs/v2/BENCHMARK_FINDINGS.md",
+    "docs/v2/V0_V1_LEARNINGS.md",
+    "docs/v2/research/DATA_MODEL_AUDIT.md",
+    "experiments/research_campaign_v2_agentic_game_theory_20260914.json",
+    "run_state/active_research_campaign.json",
 )
 
 EVAL_MANIFEST_FILES = (
@@ -159,6 +166,12 @@ _FULL_TEXT_FILES = {
     "experiments/PREREG_diversity_selection_v1_2026-09-14.md",
     "experiments/PREREG_weekly_historical_coding_panel_v2_2026-09-14.md",
     "experiments/PREREG_weekly_historical_coding_patch_wire_v1_2026-09-14.md",
+    "LOOP_V2.md",
+    "docs/v2/BENCHMARK_FINDINGS.md",
+    "docs/v2/V0_V1_LEARNINGS.md",
+    "docs/v2/research/DATA_MODEL_AUDIT.md",
+    "experiments/research_campaign_v2_agentic_game_theory_20260914.json",
+    "run_state/active_research_campaign.json",
 }
 _KEYWORDS = (
     "D-061", "D-066", "D-072", "D-074", "D-076", "frontier",
@@ -780,11 +793,17 @@ def fetch_sources_from_config(path: str | Path, **kwargs: Any) -> dict:
     return fetch_sources(config, **kwargs)
 
 
-def _bounded_object(path: Path, *, maximum: int = MAX_OPERATIONAL_HISTORY_BYTES) -> dict:
+def _bounded_object(
+    path: Path, *, maximum: int = MAX_OPERATIONAL_HISTORY_BYTES, with_hash: bool = False,
+) -> Any:
     """Read a small strict JSON object used as operational evidence."""
-    if path.is_symlink() or not path.is_file():
+    if path.absolute().resolve() != path.absolute():
         raise WeeklyUpgradeError(f"operational artifact is absent or redirected: {path}")
-    raw = path.read_bytes()
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as handle:
+        metadata = os.fstat(handle.fileno())
+        if not stat.S_ISREG(metadata.st_mode):
+            raise WeeklyUpgradeError(f"operational artifact is not a regular file: {path}")
+        raw = handle.read(maximum + 1)
     if len(raw) > maximum:
         raise WeeklyUpgradeError(f"operational artifact exceeds {maximum} bytes: {path}")
 
@@ -808,7 +827,7 @@ def _bounded_object(path: Path, *, maximum: int = MAX_OPERATIONAL_HISTORY_BYTES)
         raise WeeklyUpgradeError(f"invalid operational artifact {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise WeeklyUpgradeError(f"operational artifact root must be an object: {path}")
-    return value
+    return (value, _sha(raw)) if with_hash else value
 
 
 def _finite_count(value: Any, field: str) -> int | None:
@@ -979,7 +998,7 @@ def _trial_history(canonical_root: Path) -> tuple[list[dict[str, Any]], int]:
     invalid = 0
     for path in paths:
         try:
-            journal = _bounded_object(path)
+            journal, journal_sha256 = _bounded_object(path, with_hash=True)
             plan = journal.get("plan")
             result = journal.get("result")
             if (
@@ -997,18 +1016,25 @@ def _trial_history(canonical_root: Path) -> tuple[list[dict[str, Any]], int]:
             if isinstance(output, str):
                 result_path = Path(output) / "trial_result.json"
                 if result_path.is_file() and not result_path.is_symlink():
-                    observed = _bounded_object(result_path)
-                    if observed != result or result_path.read_bytes() != result_bytes:
+                    observed, observed_sha256 = _bounded_object(result_path, with_hash=True)
+                    if observed != result or observed_sha256 != _sha(result_bytes):
                         raise WeeklyUpgradeError("trial result copy differs from canonical journal")
             evaluation = result.get("evaluation")
             budget = result.get("budget_receipt")
+            planned_arms = plan.get("arm_ids")
+            if (
+                not isinstance(planned_arms, list) or not 1 <= len(planned_arms) <= 4
+                or any(not isinstance(item, str) or not _SAFE_RECEIPT_ID.fullmatch(item) for item in planned_arms)
+                or len(set(planned_arms)) != len(planned_arms)
+            ):
+                planned_arms = None
             rows.append({
                 "trial_id": path.stem,
                 "week_id": plan.get("week_id"),
                 "manifest_path": plan.get("manifest_path"),
                 "kind": plan.get("kind"),
-                "arm_ids": plan.get("arm_ids"),
-                "declared_attempts": plan.get("declared_attempts"),
+                "arm_ids": planned_arms,
+                "declared_attempts": _finite_count(plan.get("declared_attempts"), "declared_attempts"),
                 "phase": journal.get("phase"),
                 "status": result.get("status"),
                 "elapsed_s": result.get("elapsed_s"),
@@ -1018,7 +1044,7 @@ def _trial_history(canonical_root: Path) -> tuple[list[dict[str, Any]], int]:
                     if isinstance(evaluation, dict) else False
                 ),
                 "semantic_benefit_measured": result.get("semantic_benefit_measured") is True,
-                "journal_sha256": _file_sha(path),
+                "journal_sha256": journal_sha256,
                 "trial_result_sha256": _sha(result_bytes),
                 "transport_evaluation_sha256": (
                     evaluation.get("sha256") if isinstance(evaluation, dict) else None

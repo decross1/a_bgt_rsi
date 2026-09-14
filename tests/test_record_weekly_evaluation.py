@@ -89,3 +89,10 @@ def test_terminal_publication_binds_replayed_bytes_and_refuses_race(tmp_path, mo
         summaries, invalid = _evaluation_history(repo, trials)
         assert invalid == 0
         assert summaries[0]["trial_id"] == trial_id
+
+        for field, bad in (("arm", "unplanned"), ("fixed_attempts_expected", 2)):
+            changed = json.loads(json.dumps(value))
+            changed["arm_observations"][0][field] = bad
+            target.write_text(json.dumps(changed))
+            rejected, invalid = _evaluation_history(repo, trials)
+            assert rejected == [] and invalid == 1

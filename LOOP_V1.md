@@ -1,9 +1,13 @@
 # LOOP_V1 Restructure — un-zombie, evidence ladder, memory, frontier tier, micro-org plumbing
 
-> Active build plan, approved by the owner 2026-08-14 (successor to [`LOOP_V0.md`](LOOP_V0.md),
+> Historical v1 build plan, approved by the owner 2026-08-14 (successor to [`LOOP_V0.md`](LOOP_V0.md),
 > which stays as the record of the v0 slice). Session note: `human/sessions/2026-08-14.md`.
 > Decisions: D-059..D-062 (+ Qwen pin template). CLAUDE.md's "active build plan" pointer is
 > updated to this file as part of the G5 human-gated contract edit.
+
+The current build and operating orientation is [LOOP_V2.md](LOOP_V2.md).
+This file preserves the v1 problem statement and decisions; its dated plans
+should not be treated as current runtime state.
 
 ## Context
 

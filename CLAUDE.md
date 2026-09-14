@@ -5,9 +5,29 @@ It is the operating contract: the rules that don't bend, and the
 pointer set for what's being built right now.
 
 New sessions read [`START_HERE.md`](START_HERE.md) first for orientation,
-then this file. The active build plan is [`LOOP_V1.md`](LOOP_V1.md).
+then this file. The active build plan is [`LOOP_V2.md`](LOOP_V2.md).
 The current session's working note is the most recent file under
 [`human/sessions/`](human/sessions/).
+
+## V2 maintenance and evidence (2026-09-14)
+
+The owner authorized v2 preparation, archival, dead-code retirement, architecture
+and data-contract cleanup, and a fresh game-theory / agent-behavior campaign.
+Read [the operator guide](docs/v2/OPERATOR_GUIDE.md) and
+[v0/v1 lessons](docs/v2/V0_V1_LEARNINGS.md). Historical plans and benchmark drafts
+are evidence, not descriptions of the deployed system. Production state is
+established from launchers, receipts and live services.
+
+Standing project maintenance authority applies to direct Codex sessions and
+their delegated engineers, including Git and PR delivery. The Claude workflow
+roles below organize that workflow; they do not revoke an owner's direct
+maintenance assignment. Coordinate disjoint file ownership and preserve other
+sessions' changes. Research/runtime gates and human-only records remain intact.
+
+Fresh campaign identity must survive topic selection, execution and reporting.
+Legacy records remain readable and separate from new-campaign outcomes. Retain
+shared literature and explicit negative knowledge. CPU calibration does not
+establish an LLM improvement or a validated scientific finding.
 
 ## Operating model (effective 2026-06-05, amends 2026-05-26)
 
@@ -114,7 +134,7 @@ next.
    central question, the sandbox spectrum, the cross-cutting practices.
    Every primary session reads this; it's what keeps build work tethered
    to why the apparatus exists.
-4. Read [`LOOP_V1.md`](LOOP_V1.md) — the active build plan (LOOP_V0.md is the
+4. Read [`LOOP_V2.md`](LOOP_V2.md) — the active build plan (LOOP_V0.md is the
    record of the completed v0 slice).
 5. Read the most recent file in [`human/sessions/`](human/sessions/)
    — that's the current session's focus and prior-session handoff.
@@ -242,7 +262,7 @@ These do not bend.
 | --- | --- |
 | Orientation | [`START_HERE.md`](START_HERE.md) |
 | **Core essence of the project (the WHY)** | [`docs/sources/research_program_v2.md`](docs/sources/research_program_v2.md) |
-| Active build plan | [`LOOP_V1.md`](LOOP_V1.md) |
+| Active build plan | [`LOOP_V2.md`](LOOP_V2.md) |
 | Today's focus / handoff | most recent note in [`human/sessions/`](human/sessions/) |
 | UI session work order | the current session note's "## UI session work order" subsection |
 | Session index | [`human/sessions/INDEX.md`](human/sessions/INDEX.md) |
@@ -264,7 +284,7 @@ Plan-mode files under `~/.claude/plans/` are **scratch** — per-machine,
 un-versioned, invisible to the repo and to a UI session. **Any plan that
 will be executed is committed into the repo before/at execution:**
 
-- active cross-workstream work → [`LOOP_V1.md`](LOOP_V1.md) or a `docs/`
+- active cross-workstream work → [`LOOP_V2.md`](LOOP_V2.md) or a `docs/`
   detail-doc;
 - a UI work order → the session note's "## UI session work order"
   subsection;

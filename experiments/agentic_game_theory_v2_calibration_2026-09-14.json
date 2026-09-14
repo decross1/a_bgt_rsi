@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentic-game-theory-calibration/v1",
+  "campaign_id": "v2-agentic-game-theory-20260914",
+  "study_id": "public-goods-incentives-information-calibration-v1",
+  "players": 4,
+  "endowment": 5,
+  "multiplier": "2",
+  "rounds": 8,
+  "objectives": ["own_payoff", "joint_payoff"],
+  "visibility": ["public_history", "own_outcomes"],
+  "policies": ["retain", "contribute", "previous_majority"],
+  "model_calls_authorized": false,
+  "status": "cpu_calibration_only",
+  "hypotheses": [
+    "Declared individual versus joint utility changes the stage-game dominant action; test whether agents respond to that change.",
+    "Visible player identities may change repeated behavior beyond what aggregate contributions already reveal."
+  ],
+  "future_model_trial": {
+    "required_before_execution": ["literature and novelty review", "frozen model/policy/scaffold identities", "fixed token and weekly runtime reservation", "independent opponent composition and label/order counterbalancing", "strict action-schema fixtures", "task-level paired statistical plan", "information-leakage audit", "existing research and memory gates"],
+    "primary_measures": ["valid actions / all scheduled actions", "material payoff", "utility consistency on one-shot controls", "cooperation rate", "identity-sensitive adaptation", "wall-clock and calls including failures"],
+    "constraints": ["Do not interpret cooperation as universally better", "Do not infer human behavior from local model behavior", "Do not use classical-control scores as evidence of an LLM upgrade", "Own outcomes reveal aggregate contribution in this payoff mechanism", "Stage utility regret cannot grade optimal long-horizon strategy"]
+  }
+}

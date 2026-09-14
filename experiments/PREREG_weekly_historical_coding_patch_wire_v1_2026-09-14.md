@@ -1,7 +1,7 @@
 # Preregistration — public-historical raw-patch wire follow-up v1
 
-**Frozen:** 2026-09-14, before this follow-up's model calls  
-**Manifest:** `experiments/weekly_historical_coding_patch_wire_v1_2026-09-14.json`  
+**Frozen:** 2026-09-14, before this follow-up's model calls
+**Manifest:** `experiments/weekly_historical_coding_patch_wire_v1_2026-09-14.json`
 **Evidence class:** `public_historical`; `contamination_resistant=false`
 
 ## Trigger and question

@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,7 +83,9 @@ def read_bound(path: Path, expected_sha256: str | None, *, lines: bool = False, 
     """Parse the same bounded bytes whose hash matches the replayed receipt."""
     if path.resolve() != path:
         raise ValueError("redirected evaluation artifact")
-    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW), "rb") as stream:
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("evaluation artifact must be a regular file")
         raw = stream.read(16_000_001)
     digest = hashlib.sha256(raw).hexdigest()
     if len(raw) > 16_000_000 or (expected_sha256 is not None and digest != expected_sha256):
