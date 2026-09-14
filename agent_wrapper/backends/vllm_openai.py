@@ -8,6 +8,8 @@ modification.
 """
 from typing import Any
 
+from agent_wrapper.upgrade_lease import local_inference
+
 
 class VLLMBackend:
     name = "vllm-gemma"
@@ -34,10 +36,12 @@ class VLLMBackend:
             # Budgeted eval calls must not multiply their declared timeout via
             # the SDK's automatic retries. Legacy calls keep client defaults.
             client = client.with_options(max_retries=0)
-        return client.chat.completions.create(**kwargs)
+        with local_inference():
+            return client.chat.completions.create(**kwargs)
 
     async def create_chat_async(self, **kwargs: Any) -> Any:
         client = self._w()._async_client
         if "timeout" in kwargs:
             client = client.with_options(max_retries=0)
-        return await client.chat.completions.create(**kwargs)
+        with local_inference():
+            return await client.chat.completions.create(**kwargs)

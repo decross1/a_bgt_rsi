@@ -133,12 +133,19 @@ planner can discard malformed raw output, and `topicality.check()` can add a
 Qwen skeptic call. Replay only the frozen primary topicality prompt directly;
 do not invoke that secondary path. Save every raw response before parsing.
 No coordinator action, retrieval pipeline
-or new runtime is executed. Record queue/memory/production-idle checks and the
-manual reservation; the current evaluator has no shared weekly lease/accounting.
+or new runtime is executed. The registered dispatcher now records
+queue/memory/production-idle checks inside a shared canonical reservation and
+holds the cooperative execution, coordinator and GPU leases. Its registered
+form includes the primary R0 replay: 80 declared attempts, a fixed 2,370-second
+evaluator payload and a 2,400-second total reservation including supervision.
+Require the existing 30 GiB memory floor and unchanged serving identity.
 Defer if contention, remaining balance or week-boundary timing prevents the
 complete reservation. Charge failed/uncertain work; preserve partial results.
-Do not combine this 40-minute reservation with the 112.5-minute Qwen pilot in
-the same week. This experiment takes priority over that pilot.
+An active or fully charged 40-minute reservation cannot coexist with the
+112.5-minute Qwen pilot. After a trusted terminal receipt releases unused time,
+that pilot can start only if at least 6,750 seconds remain in the shared week;
+all prior charges combined must be at most 450 seconds. This experiment takes
+priority over that pilot.
 
 **EVALUATE-LARGER** only if the candidate has more useful grounded in-scope
 outputs than control across the six T5–T7 attempts, and no fewer valid in-scope
@@ -151,8 +158,10 @@ score. **NO-MATERIAL-SIGNAL** if the improvement is only more noops, vocabulary
 changes or R0 pass rate. **INVALID/INCOMPLETE** for drift, missing work or
 unresolved grading. All labels are diagnostic; none proves production benefit.
 
-Execution plumbing still needed: freeze fully rendered planner states/menu,
-export paired raw outputs to isolated artifacts, and collect blinded semantic
-annotations. The existing objective-canary runner is not a ready-made semantic
-topic grader. This document specifies the experiment; it does not claim those
-calls or annotations have been performed.
+The dedicated topic harness and
+[frozen manifest](topic_scope_repair_2026-09-14.json) now include fully rendered
+planner states/menu, paired raw artifacts, source/policy fingerprints and a
+blind-only grading package. Contract, recovery and artifact-tamper tests pass.
+Actual calls and independent semantic annotations remain unperformed. Follow
+the [execution runbook](../docs/weekly_upgrade_implementation.md#evaluation);
+unit tests and protocol completion establish no scientific improvement.

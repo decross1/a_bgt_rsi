@@ -41,7 +41,6 @@ from .manifest import (
 )
 from .stats import summarize_outcomes
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RUN_SCHEMA_VERSION = "weekly-upgrade-eval-run/v1"
 HARNESS_FILES = (
@@ -72,6 +71,7 @@ class InvocationResult:
     records: tuple[dict[str, Any], ...] = ()
     tool_calls: tuple[dict[str, Any], ...] = ()
     runtime_provenance: dict[str, Any] = field(default_factory=dict)
+    failure_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -231,6 +231,8 @@ def _grade_tool(
 
 def grade_task(task: Task, result: InvocationResult) -> GradeResult:
     """Apply the frozen objective grader for one task."""
+    if result.failure_code is not None:
+        return GradeResult(False, result.failure_code)
     payload, error = _strict_object(result.completion)
     if error or payload is None:
         return GradeResult(False, error or "invalid completion")
@@ -275,6 +277,10 @@ def _decode_tool_calls(records: tuple[dict[str, Any], ...]) -> tuple[dict[str, A
                     arguments = json.loads(arguments)
                 except json.JSONDecodeError:
                     arguments = {"__malformed_arguments__": arguments}
+            else:
+                # OpenAI tool arguments must be a JSON-encoded string. Match
+                # the wrapper's audited TypeError path for null/object values.
+                arguments = {"__malformed_arguments__": arguments}
             decoded.append({"name": function["name"], "arguments": arguments})
     return tuple(decoded)
 
@@ -296,6 +302,17 @@ def _validate_live_record_provenance(
 ) -> None:
     if not records:
         raise RuntimeError("wrapper returned no call records")
+    from agent_wrapper.generation_policy import resolve_generation_policy
+    resolved = resolve_generation_policy(
+        profile=request.arm.profile, backend_name=request.arm.backend,
+        model_name=request.arm.model or records[0].get("model"), seed=request.arm.seed,
+        caller_tag=f"weekly_upgrade_eval:{request.task.id}",
+    )
+    expected = {**dict(resolved.logged_params), "profile": request.arm.profile,
+                "reasoning_effort": resolved.reasoning_effort,
+                "sampling_extra": dict(resolved.sampling_extra),
+                "max_tokens": request.arm.max_tokens}
+    identity = None
     for index, record in enumerate(records):
         if record.get("backend") != request.arm.backend:
             raise RuntimeError(
@@ -311,6 +328,13 @@ def _validate_live_record_provenance(
             raise RuntimeError(f"record {index} lacks model_version provenance")
         if not isinstance(record.get("host_metadata"), dict):
             raise RuntimeError(f"record {index} lacks host_metadata provenance")
+        for key, value in expected.items():
+            if key not in record or record[key] != value:
+                raise RuntimeError(f"record {index} effective policy drift: {key}")
+        current = (record["model_version"], record["host_metadata"])
+        if identity is not None and current != identity:
+            raise RuntimeError(f"record {index} runtime changed within tool loop")
+        identity = current
 
 
 def _tool_entries(task: Task) -> list[dict[str, Any]]:
@@ -344,6 +368,7 @@ def invoke_via_wrapper(request: InvocationRequest) -> InvocationResult:
     """Live local-server adapter, imported only after ``--run`` validation."""
     from agent_wrapper import worker_activity
     from agent_wrapper.wrapper import (
+        ToolCallError,
         call_sync,
         call_with_tools,
         get_run_id,
@@ -374,6 +399,7 @@ def invoke_via_wrapper(request: InvocationRequest) -> InvocationResult:
         {"role": "system", "content": request.task.system},
         {"role": "user", "content": request.task.prompt},
     ]
+    failure_code = None
     try:
         if request.task.mode == "tools":
             records_raw = call_with_tools(
@@ -385,6 +411,13 @@ def invoke_via_wrapper(request: InvocationRequest) -> InvocationResult:
             records = tuple(records_raw)
         else:
             records = (call_sync(messages, **common),)
+    except ToolCallError as exc:
+        # Model-emitted tool/schema errors are measured failures, not missing
+        # transport. Keep the already-emitted records for provenance and cost.
+        records = exc.records
+        failure_code = exc.failure_code
+        if not records:
+            raise RuntimeError("tool failure has no auditable partial records") from exc
     finally:
         # This adapter can also be called from a long-lived process in tests or
         # manual tooling. Never strand later application calls on eval sinks.
@@ -397,6 +430,7 @@ def invoke_via_wrapper(request: InvocationRequest) -> InvocationResult:
         records=records,
         tool_calls=_decode_tool_calls(records),
         runtime_provenance=_runtime_provenance(records),
+        failure_code=failure_code,
     )
 
 
@@ -475,6 +509,10 @@ def _result_outcome(
         "arm_id": request.arm.id,
         "execution_index": execution_index,
         "status": "passed" if grade.passed else "failed",
+        "failure_code": (result.failure_code or (
+            None if grade.passed else "tool_semantics" if request.task.mode == "tools"
+            else "parse_failure" if _strict_object(result.completion)[0] is None
+            else "incorrect_answer")),
         "duration_s": round(duration_s, 6),
         "request_timeout_s": request.request_timeout_s,
         "input_sha256": request.task.input_sha256,
@@ -487,6 +525,17 @@ def _result_outcome(
         "completion": result.completion,
         "tool_calls": list(result.tool_calls),
         "usage": usage,
+        "response_telemetry": {
+            "empty_at_cap": sum(not str(record.get("completion", "")).strip()
+                and (record.get("finish_reason") == "length"
+                     or record.get("usage", {}).get("output_tokens", 0) >= request.arm.max_tokens)
+                for record in result.records),
+            "finish_reasons": [record.get("finish_reason") for record in result.records],
+            "reasoning_chars": (sum(record["reasoning_chars"] for record in result.records)
+                if result.records and all(isinstance(record.get("reasoning_chars"), int)
+                                          for record in result.records) else None),
+            "reasoning_tokens": None,
+        },
         "runtime_provenance": result.runtime_provenance,
         "runtime_provenance_sha256": sha256_json(result.runtime_provenance),
     }
@@ -661,7 +710,9 @@ def run_evaluation(
                     error="global monotonic runtime budget exhausted before request",
                 )
 
-    elapsed_s = max(0.0, monotonic() - start)
+    # Use the identical recorded duration for the derived summary so another
+    # reader can reproduce throughput exactly from run.json.
+    elapsed_s = round(max(0.0, monotonic() - start), 6)
     outcomes = [
         outcomes_by_cell[(task.id, arm.id)]
         for task in manifest.tasks

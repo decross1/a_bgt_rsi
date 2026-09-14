@@ -50,10 +50,11 @@ randomness across policies.
 
 The six templates are the independent task units. Three repetitions do not
 turn them into eighteen independent scientific problems. Report outcomes by
-task and seed; keep the three runner summaries separate until a reviewed
-task-clustered aggregation is available.
-Until then, calculating RSR and the decision requires a reviewed manual
-task-by-seed table. Do not pool the three summaries as independent tasks.
+task and seed. The repeat-aware summarizer now validates the complete
+task/arm/seed matrix and matching task inputs, graders, harness and fixed
+configuration, then computes RSR 2-of-3, a task-clustered paired bootstrap and
+the locked decision rule. It does not pool the 18 task-by-seed observations as
+independent tasks or copy raw completions/tool payloads into its summary.
 
 | Manifest | SHA-256 |
 | --- | --- |
@@ -64,9 +65,13 @@ task-by-seed table. Do not pool the three summaries as independent tasks.
 ## Resource and abort rules
 
 Reserve at most 2,250 wall seconds per repeat, 6,750 seconds (112.5 minutes)
-for the three repeats. There are twelve per-repeat task deadlines of at most
-180 seconds; the remaining allowance covers harness overhead. Do not run the
-three repeats concurrently. These are bounds, not a forecast of actual use.
+for the three repeats. The registered dispatcher fixes the evaluator payload at
+2,220 seconds per repeat inside the unchanged 2,250-second upper envelope. The
+30-second difference covers resource preflight and independently supervised
+shutdown; it is the same for every repeat and changes no arm, task deadline,
+output cap or manifest hash. There are twelve per-repeat task deadlines of at
+most 180 seconds. Do not run the three repeats concurrently. These are bounds,
+not a forecast of actual use.
 
 **Budget annotation, 2026-09-14 (no changes to arms or manifest hashes):** the
 owner chose subscription-only frontier sessions and a design ceiling of
@@ -79,17 +84,26 @@ shorten an arm, drop a seed or pool partial weeks after seeing outcomes.
 No metered frontier call is part of this pilot. The budget answer does not
 start the experiment or a schedule.
 
-The runner's `--runtime-budget-s` is a per-run limit; it does not enforce the
-shared weekly allowance and excludes external preflight. Record a manual
-reservation/usage receipt for any supervised execution until shared accounting
-exists. Scope correction now takes priority: the owner confirmed game theory,
-so first test the upstream generated-topic mismatch without weakening R0.
+The dispatcher now enforces one canonical 7,200-second UTC ISO-week ledger
+across worktrees and output directories. An active 2,400-second topic-scope
+reservation leaves only 4,800 seconds and therefore cannot coexist with this
+6,750-second pilot. After a trusted topic terminal receipt releases unused
+time, the pilot may start in the same week only if the ledger shows at least
+6,750 seconds remaining; all prior charges combined must be no more than 450
+seconds. An interrupted topic run remains fully charged, so defer this pilot to
+another week. Scope correction still takes priority: first test the upstream
+generated-topic mismatch without weakening R0.
 
 Before calls verify both endpoints' queues, active workload and memory margin.
-Target at least 20 GiB MemAvailable throughout. Do not stop production or load
-a third server. Defer a run when production needs the same resource. The
-current harness does not enforce a shared GPU lease or continuous memory
-monitoring, so this pilot is operator-supervised until those mechanisms exist.
+Require at least 30 GiB MemAvailable at dispatcher preflight. Do not stop
+production or load a third server. Defer a run when production needs the same
+resource. The delivery dispatcher holds exclusive execution,
+coordinator-cron and GPU locks, and its child inherits the exact GPU-lock
+descriptor. Ordinary Gemma/Qwen calls in the delivery wrapper use the matching
+shared lock. This is cooperative: the running daemon imported older code and
+will not use the new wrapper lock until explicit canonical adoption and reload,
+although the coordinator-cron lock coordinates its old cycle. There is no claim
+of continuous memory monitoring.
 
 Abort on model/runtime drift, evidence of production contention, memory margin
 violation, isolation failure or broken transport. A schema/grader failure is
@@ -130,36 +144,74 @@ No pilot outcome authorizes a production change.
 
 ## Execution
 
-Validate the manifest without calls (this does not probe endpoints or resolve
-the backend/profile combination):
+Inspect each registered card without calls, output writes, ledger reservation,
+locks or endpoint probes:
 
 ```bash
-.venv-chroma/bin/python -m bench.weekly_upgrade_eval.runner --plan \
+.venv-chroma/bin/python -m orchestrator.weekly_upgrade_trial --plan \
   --manifest experiments/weekly_qwen_effort_pilot_2026-09-14/seed_17.json
 ```
 
-Resolve the backend/profile configuration without contacting a model:
+The plan records the exact manifest/configuration hashes, fixtures, seed,
+expected attempts, execution fingerprint, 2,250-second reservation and fixed
+2,220-second payload. Repeat for seed 29 and seed 43. Resolve the backend/profile
+configuration without contacting a model if separately auditing the manifest:
 
 ```bash
 .venv-chroma/bin/python -c 'from bench.weekly_upgrade_eval.manifest import load_manifest; from bench.weekly_upgrade_eval.runner import validate_live_configuration; validate_live_configuration(load_manifest("experiments/weekly_qwen_effort_pilot_2026-09-14/seed_17.json"))'
 ```
 
-Repeat both checks for all three manifests. Endpoint queues, active workload,
-memory margin and output-directory isolation still require the separate
-pre-call checks above; neither no-call command verifies them.
+Repeat the checks for all three manifests. Neither offline command proves live
+endpoint identity, idle resources or memory margin.
 
-After the resource/isolation checks, use a fresh output directory for each
-repeat. Unset profile overrides so the frozen arms remain the actual arms:
+Live dispatcher admission has two mutually exclusive modes. `--manual` is an
+explicit operator invocation of this already preregistered trial. Use a fresh
+output directory outside both the canonical checkout and worktree:
 
 ```bash
-env -u MOCK_LLM -u WRAPPER_PROFILE_OVERRIDES \
-  .venv-chroma/bin/python -m bench.weekly_upgrade_eval.runner --run \
+env -u MOCK_LLM .venv-chroma/bin/python -m orchestrator.weekly_upgrade_trial \
+  --run --manual \
   --manifest experiments/weekly_qwen_effort_pilot_2026-09-14/seed_17.json \
-  --output-dir /tmp/weekly-qwen-effort-20260914-seed17 \
-  --runtime-budget-s 2250
+  --output-dir /tmp/weekly-qwen-effort-2026-W38-seed17
 ```
 
+`--review-dir` is the separate path for an exact card admitted by a newly
+completed two-provider review; do not combine it with `--manual`:
+
+```bash
+env -u MOCK_LLM .venv-chroma/bin/python -m orchestrator.weekly_upgrade_trial \
+  --run --review-dir /tmp/weekly-review-2026-W38 \
+  --manifest experiments/weekly_qwen_effort_pilot_2026-09-14/seed_17.json \
+  --output-dir /tmp/weekly-qwen-effort-reviewed-2026-W38-seed17
+```
+
+The registered manifest and execution dependencies must be committed and clean
+before calls so artifacts bind to the executable code. This is an evaluation
+integrity check, not a new gate for authorized Git work. The dispatcher removes
+`MOCK_LLM` and profile overrides from the child, performs live queue/memory
+preflight inside the reservation, and supervises the fixed evaluator command.
+
 Repeat explicitly for seeds 29 and 43 with their corresponding manifests and
-fresh directories. Archive results, provenance and decision together. A
-scheduled dispatcher and repetition-aware summarizer are follow-on code;
-these commands do not claim that either is already implemented.
+fresh directories only if the canonical ledger can reserve each full envelope.
+A run ID is single-use. After a reservation, rerunning cannot blindly replay;
+recovery inspects the durable canonical journal, ledger, exact artifacts and
+live process handles, then finishes a prepared receipt or records uncertain
+work as interrupted and fully charged.
+
+After all three repeats have terminal artifacts, create a fresh raw-free
+aggregate:
+
+```bash
+.venv-chroma/bin/python -m bench.weekly_upgrade_eval.repeats \
+  --runs \
+    /tmp/weekly-qwen-effort-2026-W38-seed17/evaluation/run.json \
+    /tmp/weekly-qwen-effort-2026-W38-seed29/evaluation/run.json \
+    /tmp/weekly-qwen-effort-2026-W38-seed43/evaluation/run.json \
+  --output /tmp/weekly-qwen-effort-2026-W38-summary.json
+```
+
+Archive the summary and provenance without publishing raw completions, tool
+payloads or private benchmark inputs. This delivery has not run the pilot,
+integrated a new review, adopted the code in the canonical checkout, reloaded
+the daemon or activated a scheduler. It establishes no scientific or policy
+gain.

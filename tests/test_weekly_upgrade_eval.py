@@ -325,6 +325,9 @@ def test_wrapper_adapter_passes_profile_timeout_and_local_paths(
                 "model_version": "test/runtime",
                 "backend": arm.backend,
                 "host_metadata": {"vllm_image_tag": "test"},
+                "temperature": 0.2, "top_p": 0.95, "seed": arm.seed,
+                "profile": arm.profile, "reasoning_effort": "xhigh", "sampling_extra": {},
+                "max_tokens": arm.max_tokens,
             },
             {
                 "completion": json.dumps({"mean_cooperation": 0.37}),
@@ -333,6 +336,9 @@ def test_wrapper_adapter_passes_profile_timeout_and_local_paths(
                 "model_version": "test/runtime",
                 "backend": arm.backend,
                 "host_metadata": {"vllm_image_tag": "test"},
+                "temperature": 0.2, "top_p": 0.95, "seed": arm.seed,
+                "profile": arm.profile, "reasoning_effort": "xhigh", "sampling_extra": {},
+                "max_tokens": arm.max_tokens,
             },
         ]
 
@@ -377,6 +383,9 @@ def test_wrapper_adapter_omits_null_seed(manifest, monkeypatch, tmp_path):
             "model_version": "test/runtime",
             "backend": arm.backend,
             "host_metadata": {"vllm_image_tag": "test"},
+            "temperature": 0.2, "top_p": 0.95, "seed": arm.seed,
+            "profile": arm.profile, "reasoning_effort": "xhigh", "sampling_extra": {},
+            "max_tokens": arm.max_tokens,
         }
 
     monkeypatch.setattr("agent_wrapper.wrapper.call_sync", fake_sync)
@@ -503,3 +512,64 @@ def test_bootstrap_and_failure_inclusive_ctt_are_deterministic():
     assert ctt["successful_arm_tasks"] == 2
     assert ctt["elapsed_wall_s_including_failures"] == 10
     assert ctt["successful_arm_tasks_per_wall_hour"] == 720.0
+
+
+def _observed_record(arm, completion):
+    return {
+        "completion": completion, "usage": {"input_tokens": 10, "output_tokens": 8},
+        "model": arm.model, "backend": arm.backend, "model_version": "test/runtime",
+        "host_metadata": {"vllm_image_tag": "test"}, "temperature": 0.2, "top_p": 0.95,
+        "seed": arm.seed, "max_tokens": arm.max_tokens, "profile": arm.profile,
+        "reasoning_effort": "xhigh", "sampling_extra": {}, "finish_reason": "tool_calls",
+        "reasoning_chars": 12,
+    }
+
+
+@pytest.mark.parametrize("key,value", [("temperature", 0), ("top_p", 1),
+                                      ("reasoning_effort", "medium"), ("seed", 999),
+                                      ("model_version", "changed/runtime")])
+def test_tool_loop_rejects_second_turn_policy_or_runtime_drift(
+    manifest, monkeypatch, tmp_path, key, value,
+):
+    task = next(task for task in manifest.tasks if task.mode == "tools")
+    arm = manifest.arms[0]
+    first = _observed_record(arm, "[]")
+    second = {**first, key: value}
+    monkeypatch.setattr("agent_wrapper.wrapper.call_with_tools", lambda *a, **kw: [first, second])
+    with pytest.raises(RuntimeError, match="drift|changed within"):
+        invoke_via_wrapper(InvocationRequest(
+            "test", task, arm, 20, tmp_path / "calls.jsonl", tmp_path / "activity.jsonl"))
+
+
+def test_auditable_tool_protocol_error_is_scored_failure(manifest, monkeypatch, tmp_path):
+    from agent_wrapper.wrapper import ToolCallError
+    task = next(task for task in manifest.tasks if task.mode == "tools")
+    arm = manifest.arms[0]
+    record = _observed_record(arm, json.dumps([{
+        "function": {"name": "lookup_experiment", "arguments": "{broken"},
+    }]))
+    def malformed(*args, **kwargs):
+        raise ToolCallError("malformed arguments", records=[record], failure_code="tool_json")
+    monkeypatch.setattr("agent_wrapper.wrapper.call_with_tools", malformed)
+    request = InvocationRequest("test", task, arm, 20,
+                                 tmp_path / "calls.jsonl", tmp_path / "activity.jsonl")
+    result = invoke_via_wrapper(request)
+    assert result.records == (record,)
+    assert result.failure_code == "tool_json"
+    from bench.weekly_upgrade_eval.runner import _result_outcome
+    outcome = _result_outcome(request=request, execution_index=1, result=result, duration_s=1)
+    assert outcome["status"] == "failed"
+    assert outcome["failure_code"] == "tool_json"
+    assert outcome["usage"]["output_tokens"] == 8
+    assert outcome["response_telemetry"]["reasoning_chars"] == 12
+
+
+def test_tool_error_without_records_remains_transport_failure(manifest, monkeypatch, tmp_path):
+    from agent_wrapper.wrapper import ToolCallError
+    def missing(*args, **kwargs):
+        raise ToolCallError("no receipt")
+    monkeypatch.setattr("agent_wrapper.wrapper.call_with_tools", missing)
+    task = next(task for task in manifest.tasks if task.mode == "tools")
+    with pytest.raises(RuntimeError, match="no auditable"):
+        invoke_via_wrapper(InvocationRequest("test", task, manifest.arms[0], 20,
+                                             tmp_path / "calls.jsonl", tmp_path / "activity.jsonl"))

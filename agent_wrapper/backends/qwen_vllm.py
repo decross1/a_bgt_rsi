@@ -10,6 +10,8 @@ from typing import Any
 
 from openai import AsyncOpenAI, OpenAI
 
+from agent_wrapper.upgrade_lease import local_inference
+
 
 class VLLMQwenBackend:
     def __init__(
@@ -63,10 +65,12 @@ class VLLMQwenBackend:
         client = self._sync
         if "timeout" in kwargs:
             client = client.with_options(max_retries=0)
-        return client.chat.completions.create(**kwargs)
+        with local_inference():
+            return client.chat.completions.create(**kwargs)
 
     async def create_chat_async(self, **kwargs: Any) -> Any:
         client = self._async
         if "timeout" in kwargs:
             client = client.with_options(max_retries=0)
-        return await client.chat.completions.create(**kwargs)
+        with local_inference():
+            return await client.chat.completions.create(**kwargs)
