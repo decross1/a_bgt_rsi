@@ -1,140 +1,134 @@
-# a_bgt_rsi — self-hosted research apparatus
+# a_bgt_rsi
 
-A self-hosted research apparatus on a single NVIDIA DGX Spark.
-Amplifies one researcher's work in game theory, behavioral game
-theory, and learning in games. The apparatus — not any particular
-finding — is the research contribution.
+`a_bgt_rsi` is a self-hosted research apparatus for game theory,
+behavioral game theory, learning in games, and strategic behavior among
+model agents. It runs on one NVIDIA DGX Spark and keeps the human researcher
+responsible for scientific validity, deployed runtime change, and scientific
+publication.
 
-The canonical specification is the system diagrams under
-[`docs/diagrams/`](docs/diagrams/) (`architecture_v5.svg`,
-`intelligence_loop_v5.svg`); their prose elaboration is
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
+> **V2 foundation — 2026-09-14:** explicit research campaigns, a verified v0/v1
+> archive, and measured benchmark follow-through now have implementation and
+> evidence contracts. The resident models and serving runtime remain the
+> established baseline. The canonical activation and deployment receipts, shown
+> on `/benchmarks`, determine what is live. A controlled model-game study is
+> separate work and has not been registered for execution.
 
-**New here? Start with [`START_HERE.md`](START_HERE.md)** — the single
-orientation document.
+New contributors and agent sessions should begin with
+[`START_HERE.md`](START_HERE.md).
 
-## Target environment
+## What is running
 
-- NVIDIA DGX Spark (GB10, ARM64)
-- CUDA **13.0** (NOT 13.2 — gibberish on low-bit quants)
-- vLLM image `vllm/vllm-openai:v0.21.0` (NOT `:gemma4`)
-- Gemma 4 26B-A4B-NVFP4 weights at `/mnt/models/gemma-4-26b-a4b-nvfp4`
-- BGE-M3 weights at `/mnt/models/bge-m3`
+| Layer | Deployed state |
+| --- | --- |
+| Hardware | NVIDIA DGX Spark, GB10, 128 GB unified memory |
+| Generator / PI | Gemma 4 26B-A4B NVFP4 on `:8000` |
+| Independent skeptic / builder | Qwen3.8-27B NVFP4-MTP on `:8001` |
+| Serving | `vllm/vllm-openai:v0.21.0`, CUDA 13.0 |
+| Research scheduler | user service `nara-daemon.service`, with hourly cron as a gated backstop |
+| Observatory | React/Vite on `:5173`, FastAPI on `:8700`, local telemetry sampler |
+| Weekly maintenance | Sunday 05:30 UTC, review-only, at most two subscription frontier calls and 120 Spark minutes per ISO week |
 
-Full canonical version-pin table in
-[`ARCHITECTURE.md`](ARCHITECTURE.md) §2.
+The exact model launch flags live in
+[`cron/serve-models.sh`](cron/serve-models.sh). A model name returned by
+`/v1/models`, a validated launch receipt, and current code are stronger
+operational evidence than an old prose claim.
 
-## Documentation layout
+## Research flow
 
-| Where | Audience | Use it for |
-| --- | --- | --- |
-| [`START_HERE.md`](START_HERE.md) | Everyone | Orientation, current state, document map |
-| [`LOOP_V0.md`](LOOP_V0.md) | Everyone | The active build slice |
-| [`GLOSSARY.md`](GLOSSARY.md) | Everyone | Stable terminology |
-| [`CLAUDE.md`](CLAUDE.md) | Claude Code | Operating contract for sessions |
-| [`agent/prompts/main.md`](agent/prompts/main.md) | Claude Code | Primary-session prompt |
-| [`agent/prompts/ui_session.md`](agent/prompts/ui_session.md) | Claude Code | Concurrent UI-session prompt |
-| [`human/sessions/`](human/sessions/) | The researcher + agent | Per-session working notes (one file per day) |
-| [`human/learning_track.md`](human/learning_track.md) | The researcher | Reading + problem-set rail |
-| [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) | Everyone | Long-form program background |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Everyone | Technical architecture walkthrough |
-| [`DECISIONS.md`](DECISIONS.md) | Everyone | Decision log |
+```mermaid
+flowchart LR
+    Q[Research question] --> T[Topic attempt]
+    T --> I[Bounded iteration]
+    I --> E[Evidence ladder L0-L3]
+    E --> S[Independent skeptic]
+    S -->|survives| L4[L4 surfaced finding]
+    S -->|fails| K[Rejected or refinement owed]
+    L4 --> H{Human verdict}
+    H -->|valid| L5[L5 human-validated]
+    H -->|revise / reject| K
+```
 
-A previous parallel-execution framework (Track A/B/C/D, autonomy tiers,
-phase roadmap, day tracker, `plan.yaml`) was retired on 2026-05-26
-(see [`DECISIONS.md`](DECISIONS.md) D-030). Those documents are
-preserved under [`archive/`](archive/) for historical reference; they
-are not active rules.
+The loop preserves attempts and negative results. Missing evidence never counts
+as a pass. Only explicit human feedback can produce L5. Frontier Claude and
+Codex sessions are subscription-based falsifiers and maintenance analysts;
+they are not the local generator and cannot promote their own recommendations.
 
-## Quick start
+## Use the system
+
+On the Spark, open the local UI:
+
+- `http://127.0.0.1:5173/` — current state and triage
+- `http://127.0.0.1:5173/ladder` — research evidence and next test owed
+- `http://127.0.0.1:5173/benchmarks` — weekly benchmark and selected-campaign progress
+- `http://127.0.0.1:5173/development` — operational state
+- `http://127.0.0.1:5173/cycles` — coordinator trace history
+
+Read [`docs/v2/OPERATOR_GUIDE.md`](docs/v2/OPERATOR_GUIDE.md) before pausing,
+resuming, or restarting a service. The safe first check is read-only:
 
 ```bash
-git clone git@github.com:decross1/a_bgt_rsi.git
-cd a_bgt_rsi
-cp .env.example .env  # fill in credentials
-
-# Primary session (the one you'll use most of the time):
-env -u MOCK_LLM claude
-
-# Optional concurrent UI session (separate terminal):
-env -u MOCK_LLM claude --worktree ui-session
+ui/scripts/ui-services.sh status
+systemctl --user status nara-daemon.service --no-pager
+curl -fsS http://127.0.0.1:8000/v1/models
+curl -fsS http://127.0.0.1:8001/v1/models
+curl -fsS http://127.0.0.1:8700/api/health
 ```
 
-The primary session reads [`CLAUDE.md`](CLAUDE.md) →
-[`START_HERE.md`](START_HERE.md) → [`LOOP_V0.md`](LOOP_V0.md) → the
-most recent `human/sessions/YYYY-MM-DD.md`. The UI session reads
-[`agent/prompts/ui_session.md`](agent/prompts/ui_session.md) and
-writes only to `ui/` + `ui_plan.md`.
+## Documentation map
 
-## Layout
+| Document | Authority and purpose |
+| --- | --- |
+| [`START_HERE.md`](START_HERE.md) | Current orientation, reading order, and session checklist |
+| [`CLAUDE.md`](CLAUDE.md) | Runtime and scientific operating constraints for Claude sessions |
+| `AGENTS.md` (checkout-local) | Standing Codex repository-maintenance authority and its boundaries |
+| `.codex/config.toml` (checkout-local) | Trusted project permission and approval defaults |
+| [`DECISIONS.md`](DECISIONS.md) | Append-only rationale; later accepted decisions supersede earlier ones |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | System topology and implemented v2 boundary |
+| [`LOOP_V2.md`](LOOP_V2.md) | V2 foundation, activation evidence, and subsequent study gates |
+| [`docs/v2/OPERATOR_GUIDE.md`](docs/v2/OPERATOR_GUIDE.md) | UI, health, pause, weekly review, restart, and rollback procedures |
+| [`docs/v2/IMPLEMENTATION_PLAN.md`](docs/v2/IMPLEMENTATION_PLAN.md) | Current bounded implementation and evaluation work |
+| [`docs/v2/research/PRODUCT_ARCHITECTURE_AUDIT.md`](docs/v2/research/PRODUCT_ARCHITECTURE_AUDIT.md) | Evidence behind the v2 product and data-model direction |
+| [`docs/v2/research/EXTERNAL_CONTEXT.md`](docs/v2/research/EXTERNAL_CONTEXT.md) | Bounded external research context for the next game-theory study |
+| [`docs/v2/RESEARCH_ARCHIVE.md`](docs/v2/RESEARCH_ARCHIVE.md) | Verified v0/v1 archive identity and retrieval instructions |
+| [`LOOP_V1.md`](LOOP_V1.md), [`LOOP_V0.md`](LOOP_V0.md) | Historical build records; useful for provenance, not current orientation |
+| [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) | Historical program background; its dated runtime claims are not current state |
 
-```
-START_HERE.md              # orientation + document map — read this first
-CLAUDE.md                  # operating contract for Claude Code
-LOOP_V0.md                 # active build slice
-GLOSSARY.md                # terminology reference
-PROJECT_CONTEXT.md         # long-form background
-ARCHITECTURE.md            # technical architecture walkthrough
-DECISIONS.md               # decision log
-ui_plan.md                 # UI / observability layer plan
-.env.example               # required credentials
+The v5 SVGs under [`docs/diagrams/`](docs/diagrams/) remain the canonical
+conceptual snapshot adopted in May 2026. They predate several accepted runtime
+and evidence-ladder decisions, so do not use them as a live deployment manifest.
 
-human/
-  sessions/                # per-session working notes (active)
-  learning_track.md        # reading + problem-set rail
-  reading_list.md
-  days_01_30_recap.md
-  retrospectives/
+## Repository map
 
-agent/
-  prompts/
-    main.md                # primary-session prompt
-    ui_session.md          # concurrent UI-session prompt
-
-archive/                   # retired track/tier framework (reference only)
-
-run_state/                 # state file + run log (JSONL)
-agent_wrapper/             # thin wrapper around vLLM OpenAI client
-orchestrator/              # OpenClaw runner (multiprocessing fallback)
-workers/                   # summarize_paper, play_pd_match, …
-pipeline/                  # arXiv scraper + embed-and-store
-ingest/                    # textbook PDF → ChromaDB
-schema/                    # JSON Schemas
-tests/                     # validation scripts
-logs/                      # JSONL call/orchestrator/experiment logs
-bench/                     # micro-benchmarks
-infra/                     # bookmarks, seccomp, docker daemon, cron
-cron/                      # nightly arxiv pipeline
-tools/                     # mock_payoffs, inspect_run, claims_check, …
-scripts/                   # bench, chroma init, lock writer
-experiments/exp001_repeated_pd/  # Day 7 experiment + results/plots/analysis
-notes/research/            # research material
-journal/                   # daily research-journal entries
-setup/                     # per-day setup shell scripts
-docs/diagrams/             # canonical SVG architecture diagrams
-docs/sources/              # original source planning docs (not yet committed)
-ui/                        # observability React/FastAPI stack
-
-books/                     # gitignored — PDFs
-clones/                    # gitignored — third-party repos
-chroma_db/                 # gitignored — embeddings (manifest.json IS tracked)
+```text
+agent_wrapper/   model backends, request policy, tool-call handling, call logs
+orchestrator/    Nara, coordinator, bounded actions, weekly upgrade controller
+workers/         research workers, evidence ladder, ledger reduction
+pipeline/        literature ingestion and embedding
+bench/           checked-in evaluation tasks, graders, runners, receipts
+experiments/     preregistrations, manifests, and retained experiment evidence
+schema/          versioned schemas for core public records
+memory/          append-only research/evidence ledgers and derived projections
+run_state/       append-only operational receipts, locks, activation and budgets
+logs/            model and service event streams
+ui/              local React/FastAPI observatory and telemetry sampler
+docs/v2/         v2 preparation, operator guidance, archive, and research audit
+human/           researcher-owned notes, verdicts, and learning material
+archive/         retired implementation material retained for provenance
 ```
 
-## Inviolate rules (concise)
+## Boundaries
 
-1. Block 1 (foundations) is **human-only**. The agent does not
-   execute, assist, or summarize Block 1 problem sets.
-2. Version pins are verbatim — canonical table in
-   [`ARCHITECTURE.md`](ARCHITECTURE.md) §2.
-3. Human gates are blocking — the agent halts and prints the gate
-   notice; clears only on explicit human attestation.
-4. Validations are never silently coerced into passes.
-5. The state file is authoritative on resume.
-6. Logging is mandatory: every executable task appends a row to
-   `run_state/week1.run.jsonl`.
-7. Fallbacks are explicit, logged, and time-capped.
-8. Code-generation is bounded — resist abstraction.
-9. The retrospective and research-journal prose are the human's.
-10. `MOCK_LLM` discipline — strip the env var for real runs.
+- The domain remains game theory and adjacent strategic-agent research.
+- The system does not infer that model behavior generalizes to humans.
+- A completed transport call is not a successful scientific task.
+- L4 means the automatic evidence and adversarial gates passed; it is not human
+  validation. L5 requires an explicit human `valid` verdict.
+- Weekly frontier analysis is review-only by default. It does not schedule a
+  benchmark rerun, change a model/runtime, or promote production automatically.
+- Live trading, publication, model/runtime cutovers, and removal of a human
+  pause remain separately governed actions.
+- Production mutations must retain a validated rollback and preserve the
+  unified-memory guard.
 
-Full restatement in [`CLAUDE.md`](CLAUDE.md).
+Prior front-door documents are preserved in Git at `3c443e6` and in the
+verified archive described by [`docs/v2/RESEARCH_ARCHIVE.md`](docs/v2/RESEARCH_ARCHIVE.md).
