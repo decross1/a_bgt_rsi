@@ -1,0 +1,47 @@
+{
+  "baseline": {
+    "tests": 2594,
+    "failures": [
+      "tests.test_critic_cal::test_cluster_reconstruction_has_no_ordering_ambiguity",
+      "tests.test_critic_cal::test_pinned_reference_rates_match_the_live_record",
+      "tests.test_critic_cal::test_undecidable_census_splits_native_by_pack_state",
+      "tests.test_critic_cal::test_unusable_rows_are_excluded_by_name_not_by_silence",
+      "tests.test_readjudication::test_manifest_has_no_hash_seed_dependence[0]",
+      "tests.test_readjudication::test_manifest_has_no_hash_seed_dependence[12345]",
+      "tests.test_readjudication::test_manifest_has_no_hash_seed_dependence[1]"
+    ],
+    "skipped": 1
+  },
+  "candidate": {
+    "tests": 2720,
+    "failures": [
+      "tests.test_critic_cal::test_cluster_reconstruction_has_no_ordering_ambiguity",
+      "tests.test_critic_cal::test_pinned_reference_rates_match_the_live_record",
+      "tests.test_critic_cal::test_undecidable_census_splits_native_by_pack_state",
+      "tests.test_critic_cal::test_unusable_rows_are_excluded_by_name_not_by_silence",
+      "tests.test_readjudication::test_manifest_has_no_hash_seed_dependence[0]",
+      "tests.test_readjudication::test_manifest_has_no_hash_seed_dependence[12345]",
+      "tests.test_readjudication::test_manifest_has_no_hash_seed_dependence[1]"
+    ],
+    "skipped": 1
+  },
+  "new_failures": [],
+  "resolved_failures": [],
+  "frozen_input_manifest_sha256": "0a0b2db8817007a0a1b342b8d8552c32fe5c3d7c0bac95028e499f2978640800",
+  "delivery": {
+    "tests": 2727,
+    "failures": [
+      "tests.test_critic_cal::test_cluster_reconstruction_has_no_ordering_ambiguity",
+      "tests.test_critic_cal::test_pinned_reference_rates_match_the_live_record",
+      "tests.test_critic_cal::test_undecidable_census_splits_native_by_pack_state",
+      "tests.test_critic_cal::test_unusable_rows_are_excluded_by_name_not_by_silence",
+      "tests.test_readjudication::test_manifest_has_no_hash_seed_dependence[0]",
+      "tests.test_readjudication::test_manifest_has_no_hash_seed_dependence[12345]",
+      "tests.test_readjudication::test_manifest_has_no_hash_seed_dependence[1]"
+    ],
+    "skipped": 1,
+    "passed": 2649,
+    "xpassed": 2
+  },
+  "delivery_new_failures": []
+}

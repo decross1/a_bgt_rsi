@@ -28,6 +28,8 @@ from pathlib import Path
 
 import pytest
 
+from agent_wrapper.backends.qwen_vllm import VLLMQwenBackend
+
 SCRIPT = Path(__file__).resolve().parent.parent / "tools" / "qwen_builder.sh"
 
 _GIT_ENV = {
@@ -196,6 +198,42 @@ def test_prompt_carries_objective_scope_test_and_output_contract(tmp_path, qwen)
     assert "orchestrator/nara.py" in p                    # out of scope
     assert "git push" in p                                # forbidden actions
     assert "JSON array" in p and "full-file" in p.lower()  # output contract
+
+
+def test_default_model_tracks_vllm_qwen_registry_and_preserves_override(
+        tmp_path, qwen, monkeypatch):
+    """Builder and registry share the same active-model env seam.
+
+    The canned endpoint makes this a request-shape regression test; it never
+    contacts the live Qwen server.
+    """
+    monkeypatch.delenv("VLLM_QWEN_MODEL", raising=False)
+    registry_default = VLLMQwenBackend().default_model
+
+    repo = make_repo(tmp_path)
+    qwen.replies = [GOOD_PLAN]
+    default_run = run_builder(repo, qwen, QWEN_MODEL=None)
+    assert default_run.returncode == 0, default_run.stdout + default_run.stderr
+    assert qwen.requests[0]["model"] == registry_default
+
+    repo = make_repo(tmp_path / "explicit")
+    qwen.replies = [GOOD_PLAN, GOOD_PLAN]
+    explicit_run = run_builder(
+        repo, qwen,
+        QWEN_MODEL="builder-challenger",
+        VLLM_QWEN_MODEL="registry-model",
+    )
+    assert explicit_run.returncode == 0, explicit_run.stdout + explicit_run.stderr
+    assert qwen.requests[1]["model"] == "builder-challenger"
+
+
+def test_default_model_inherits_registry_environment_override(tmp_path, qwen):
+    repo = make_repo(tmp_path)
+    qwen.replies = [GOOD_PLAN]
+    result = run_builder(
+        repo, qwen, QWEN_MODEL=None, VLLM_QWEN_MODEL="registry-candidate")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert qwen.requests[0]["model"] == "registry-candidate"
 
 
 def test_prompt_truncates_over_the_char_cap(tmp_path, qwen):

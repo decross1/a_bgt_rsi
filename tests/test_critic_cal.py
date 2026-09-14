@@ -39,11 +39,69 @@ from bench.critic_cal import build_manifest as bm  # noqa: E402
 from bench.critic_cal import driver as drv  # noqa: E402
 
 PY = str(REPO_ROOT / ".venv-chroma" / "bin" / "python")
+FROZEN_ROOT = REPO_ROOT / "tests" / "fixtures" / "weekly_upgrade_baseline"
+sys.path.insert(0, str(FROZEN_ROOT))
+import weekly_upgrade_baseline_reconstruct as reconstruction  # noqa: E402
 
 
 @pytest.fixture(scope="module")
-def loop_memory() -> list[dict]:
-    return bm._read_jsonl(bm.LOOP_MEMORY_PATH)
+def frozen_inputs(tmp_path_factory) -> dict[str, Path]:
+    """Materialize a bounded public reconstruction of the locked selector.
+
+    The selected scientific rows come from the committed manifest.  Minimal
+    placeholders preserve only the public pool/exclusion census required to
+    rerun selection; ignored live ledgers and retrieval caches are never read.
+    """
+    root = tmp_path_factory.mktemp("critic-cal-lock-inputs")
+    built = reconstruction.materialize_critic(REPO_ROOT, root)
+    audit_built = reconstruction.materialize_critic_audit(
+        REPO_ROOT, root / "audit"
+    )
+    provenance = json.loads((FROZEN_ROOT / "provenance.json").read_text())
+    for relative, expected_sha in provenance["public_artifact_inputs"].items():
+        assert reconstruction.file_sha256(REPO_ROOT / relative) == expected_sha
+    expected = provenance["derived_reconstruction"]["critic_cal"]
+    assert built["loop_memory_sha256"] == expected["loop_memory_sha256"]
+    assert built["cache_tree_sha256"] == expected["cache_tree_sha256"]
+    audit_expected = provenance["derived_reconstruction"]["critic_audit"]
+    for name in (
+        "loop_memory_sha256", "idea_ledger_sha256", "loop_feedback_sha256"
+    ):
+        assert audit_built[name] == audit_expected[name]
+    loop_memory = built["loop_memory"]
+    cache_root = built["cache_root"]
+    assert len(loop_memory.read_text().splitlines()) == 167
+    assert len(list(cache_root.glob("*/retrieval.json"))) == 153
+    assert len(list(cache_root.glob("*/novelty.json"))) == 26
+    return {
+        "loop_memory": loop_memory,
+        "cache_root": cache_root,
+        "audit_report": built["audit_report"],
+        "audit_loop_memory": audit_built["loop_memory"],
+        "audit_idea_ledger": audit_built["idea_ledger"],
+        "audit_loop_feedback": audit_built["loop_feedback"],
+    }
+
+
+@pytest.fixture(scope="module", autouse=True)
+def frozen_cache_root(frozen_inputs):
+    original_cache = bm.CACHE_ROOT
+    original_loop = bm.LOOP_MEMORY_PATH
+    original_audit_loop = audit.LOOP_MEMORY_PATH
+    bm.CACHE_ROOT = frozen_inputs["cache_root"]
+    bm.LOOP_MEMORY_PATH = frozen_inputs["loop_memory"]
+    audit.LOOP_MEMORY_PATH = frozen_inputs["loop_memory"]
+    try:
+        yield
+    finally:
+        bm.CACHE_ROOT = original_cache
+        bm.LOOP_MEMORY_PATH = original_loop
+        audit.LOOP_MEMORY_PATH = original_audit_loop
+
+
+@pytest.fixture(scope="module")
+def loop_memory(frozen_inputs) -> list[dict]:
+    return bm._read_jsonl(frozen_inputs["loop_memory"])
 
 
 @pytest.fixture(scope="module")
@@ -55,11 +113,17 @@ def manifest() -> list[dict]:
 # Manifest — determinism, shape, refusal
 # ===========================================================================
 
-def test_manifest_matches_a_fresh_resolution(manifest):
-    """The frozen manifest re-resolves byte-for-byte from the source stores.
-    This is what makes the manifest (not the builder) the reproducible
-    artifact — and unlike a live-retrieval builder, it can actually hold."""
-    bm.verify_manifest(manifest)
+def test_manifest_matches_a_fresh_resolution(manifest, frozen_inputs):
+    """Public reconstruction re-resolves every locked scientific row."""
+    fresh, meta = bm.build(frozen_inputs["loop_memory"])
+    assert fresh == manifest
+    locked_meta = json.loads(bm.META_PATH.read_text())
+    # The reconstruction deliberately has a new source-byte hash.  All
+    # scientific selection/census metadata must remain exact.
+    for key in ("loop_memory_sha256", "manifest_sha256"):
+        meta.pop(key, None)
+        locked_meta.pop(key, None)
+    assert meta == locked_meta
 
 
 def test_manifest_shape_and_strata(manifest):
@@ -83,7 +147,7 @@ def test_manifest_is_invariant_under_shuffled_input(loop_memory, seed):
 
 
 @pytest.mark.parametrize("hashseed", ["0", "1", "12345"])
-def test_manifest_is_invariant_under_pythonhashseed(hashseed):
+def test_manifest_is_invariant_under_pythonhashseed(hashseed, frozen_inputs):
     """This repo shipped a hash-seed ordering bug on 2026-08-18. Rebuild in
     a fresh interpreter under three seeds and compare the emitted bytes."""
     env = dict(os.environ, PYTHONHASHSEED=hashseed, MOCK_LLM="1")
@@ -91,9 +155,12 @@ def test_manifest_is_invariant_under_pythonhashseed(hashseed):
         [PY, "-c",
          "import sys; sys.path.insert(0, '.');"
          "from bench.critic_cal import build_manifest as bm;"
-         "f, _ = bm.build();"
+         "from pathlib import Path;"
+         "bm.CACHE_ROOT = Path(sys.argv[1]);"
+         "f, _ = bm.build(Path(sys.argv[2]));"
          "import hashlib;"
-         "print(hashlib.sha256(bm.serialize(f).encode()).hexdigest())"],
+         "print(hashlib.sha256(bm.serialize(f).encode()).hexdigest())",
+         str(frozen_inputs["cache_root"]), str(frozen_inputs["loop_memory"])],
         cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=300,
     )
     assert out.returncode == 0, out.stderr
@@ -101,9 +168,13 @@ def test_manifest_is_invariant_under_pythonhashseed(hashseed):
     assert out.stdout.strip() == expected
 
 
-def test_manifest_refuses_a_tampered_row(manifest):
+def test_manifest_refuses_a_tampered_row(manifest, frozen_inputs, monkeypatch):
     tampered = copy.deepcopy(manifest)
     tampered[0]["hypothesis_text"] = tampered[0]["hypothesis_text"] + " TAMPERED"
+    original_build = bm.build
+    monkeypatch.setattr(
+        bm, "build", lambda *args, **kwargs: original_build(frozen_inputs["loop_memory"])
+    )
     with pytest.raises(bm.ResolutionError) as exc:
         bm.verify_manifest(tampered)
     assert "diverges" in str(exc.value)
@@ -372,11 +443,11 @@ def test_clopper_pearson_spot_checks(x, n, lo, hi):
     assert got_hi == pytest.approx(hi, abs=1e-4)
 
 
-def test_pinned_reference_rates_match_the_live_record():
+def test_pinned_reference_rates_match_the_lock_record(report):
     """The bar-calibration references in the driver are not folklore — they
-    must still reproduce from the ledger the audit reads."""
-    rep = audit.build_report(include_rows=False, now="fixed")
-    ref = rep["production_reference_rates"]
+    reproduce from the audit rows already published with the lock."""
+    ref = audit.production_reference_rates(report["rows"])
+    assert ref == report["production_reference_rates"]
     assert (ref["all_time"]["k"], ref["all_time"]["n"]) == (
         drv.REF_NATIVE_UNDECIDABLE_ADEQUATE_ALLTIME
     )
@@ -515,17 +586,65 @@ def test_driver_refuses_a_manifest_of_the_wrong_shape(manifest):
 # ===========================================================================
 
 @pytest.fixture(scope="module")
-def report() -> dict:
-    return audit.build_report(include_rows=True, now="fixed")
+def report(frozen_inputs) -> dict:
+    return json.loads(frozen_inputs["audit_report"].read_text())
 
 
-def test_audit_is_deterministic(report):
-    again = audit.build_report(include_rows=True, now="fixed")
-    assert json.dumps(again, sort_keys=True) == json.dumps(report, sort_keys=True)
+@pytest.fixture(scope="module")
+def rebuilt_audit(frozen_inputs) -> dict:
+    return audit.build_report(
+        loop_memory_path=frozen_inputs["audit_loop_memory"],
+        idea_ledger_path=frozen_inputs["audit_idea_ledger"],
+        loop_feedback_path=frozen_inputs["audit_loop_feedback"],
+        include_rows=True,
+        now="fixed",
+    )
+
+
+def _audit_aggregates(rows: list[dict]) -> dict:
+    return {
+        "undecidable_census": audit.undecidable_census(rows),
+        "production_reference_rates": audit.production_reference_rates(rows),
+        "survives_override_decomposition": (
+            audit.survives_override_decomposition(rows)
+        ),
+        "debate_anatomy": audit.debate_anatomy(rows),
+        "downstream": audit.blocking_summary(rows),
+    }
+
+
+def test_public_audit_rows_reproduce_locked_aggregates(report, rebuilt_audit):
+    """Recompute scientific aggregates from rows already in the public audit.
+
+    This avoids publishing ignored raw ledgers merely to duplicate fields the
+    reviewed report already contains.
+    """
+    assert rebuilt_audit["rows"] == report["rows"]
+    got = _audit_aggregates(rebuilt_audit["rows"])
+    assert got == {key: report[key] for key in got}
+    for key in (
+        "census", "infra", "clusters", "gate_ledger", "invariants_passed"
+    ):
+        assert rebuilt_audit[key] == report[key]
+
+
+def test_minimal_audit_rebuild_is_deterministic(frozen_inputs, rebuilt_audit):
+    again = audit.build_report(
+        loop_memory_path=frozen_inputs["audit_loop_memory"],
+        idea_ledger_path=frozen_inputs["audit_idea_ledger"],
+        loop_feedback_path=frozen_inputs["audit_loop_feedback"],
+        include_rows=True,
+        now="fixed",
+    )
+    assert json.dumps(again, sort_keys=True) == json.dumps(
+        rebuilt_audit, sort_keys=True
+    )
 
 
 @pytest.mark.parametrize("seed", [0, 7, 99])
-def test_audit_aggregates_are_invariant_under_shuffled_rows(loop_memory, seed):
+def test_audit_aggregates_are_invariant_under_shuffled_rows(
+    report, loop_memory, seed
+):
     """Row order must not reach any aggregate. (The idea-ledger fold is a
     genuine event log and is order-DEPENDENT by construction — its
     canonical order is file order, which is why the audit uses
@@ -545,23 +664,32 @@ def test_audit_aggregates_are_invariant_under_shuffled_rows(loop_memory, seed):
     assert json.dumps(audit.production_reference_rates(got), sort_keys=True) == (
         json.dumps(audit.production_reference_rates(base), sort_keys=True)
     )
+    public_rows = list(report["rows"])
+    random.Random(seed).shuffle(public_rows)
+    assert _audit_aggregates(public_rows) == _audit_aggregates(report["rows"])
 
 
 @pytest.mark.parametrize("hashseed", ["0", "1", "9999"])
-def test_audit_is_invariant_under_pythonhashseed(hashseed):
+def test_audit_is_invariant_under_pythonhashseed(
+    hashseed, rebuilt_audit, frozen_inputs
+):
     env = dict(os.environ, PYTHONHASHSEED=hashseed, MOCK_LLM="1")
     out = subprocess.run(
         [PY, "-c",
          "import sys, json, hashlib; sys.path.insert(0, '.');"
          "from bench.critic_cal import audit_overrides as a;"
-         "r = a.build_report(include_rows=True, now='fixed');"
-         "print(hashlib.sha256(json.dumps(r, sort_keys=True).encode()).hexdigest())"],
+         "from pathlib import Path;"
+         "r=a.build_report(Path(sys.argv[1]),Path(sys.argv[2]),Path(sys.argv[3]),"
+         "include_rows=True,now='fixed');"
+         "print(hashlib.sha256(json.dumps(r, sort_keys=True).encode()).hexdigest())",
+         str(frozen_inputs["audit_loop_memory"]),
+         str(frozen_inputs["audit_idea_ledger"]),
+         str(frozen_inputs["audit_loop_feedback"])],
         cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=300,
     )
     assert out.returncode == 0, out.stderr
     ref = hashlib.sha256(
-        json.dumps(audit.build_report(include_rows=True, now="fixed"),
-                   sort_keys=True).encode()
+        json.dumps(rebuilt_audit, sort_keys=True).encode()
     ).hexdigest()
     assert out.stdout.strip() == ref
 
@@ -635,13 +763,20 @@ def test_cluster_reconstruction_has_no_ordering_ambiguity(report):
     assert report["clusters"]["n_open_clusters"] == 20
 
 
-def test_audit_makes_zero_model_calls():
+def test_audit_makes_zero_model_calls(frozen_inputs, report):
     """MEMORY_LOG is process-global and other tests in a full-suite run
     populate it, so measure the DELTA across the audit, not the absolute
     length — an absolute assertion here passes alone and fails in suite,
     which is a test defect, not a finding."""
     from agent_wrapper import wrapper as w
     before = len(w.MEMORY_LOG)
-    rep = audit.build_report(include_rows=False, now="fixed")
+    rep = audit.build_report(
+        loop_memory_path=frozen_inputs["audit_loop_memory"],
+        idea_ledger_path=frozen_inputs["audit_idea_ledger"],
+        loop_feedback_path=frozen_inputs["audit_loop_feedback"],
+        include_rows=False,
+        now="fixed",
+    )
     assert len(w.MEMORY_LOG) - before == 0
     assert rep["model_calls_made"] == 0
+    assert rep["production_reference_rates"] == report["production_reference_rates"]

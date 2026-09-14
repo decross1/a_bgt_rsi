@@ -19,11 +19,13 @@ same; only where the conversation runs changes.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Literal
 
 import jsonschema
@@ -36,6 +38,10 @@ from agent_wrapper.gemma_tool_parse import (
 )
 from agent_wrapper import worker_activity
 from agent_wrapper.backends import get_backend
+from agent_wrapper.generation_policy import (
+    build_policy_record_metadata, resolve_generation_policy,
+    reasoning_text_from_message,
+)
 from agent_wrapper.wrapper import (
     DEFAULT_BACKEND,
     _emit,
@@ -46,6 +52,8 @@ from orchestrator.runtime import append_run_log
 
 
 SubAgentStatus = Literal["passed", "error", "timeout", "schema_mismatch"]
+DEFAULT_CALLS_LOG_PATH = Path(__file__).resolve().parent.parent / "logs" / "calls.jsonl"
+_USE_DEFAULT_LOG = object()
 
 
 @dataclass
@@ -150,6 +158,7 @@ def _emit_record(
     host_metadata: dict,
     backend_name: str | None = None,
     max_tokens: int | None = None,
+    generation_policy=None,
 ) -> dict:
     """Log one sub-agent turn to logs/calls.jsonl in the standard
     call-record shape. Mirrors orchestrator/nara.py's `_record_turn`
@@ -174,7 +183,7 @@ def _emit_record(
         "request_id": str(uuid.uuid4()),
         "model": resp.model,
         "model_version": model_version,
-        "temperature": 0.0,
+        "temperature": 0.2,
         "top_p": 1.0,
         "seed": None,
         "prompt_messages": _project_for_log(openai_messages),
@@ -198,6 +207,9 @@ def _emit_record(
         rec["backend"] = backend_name
     if max_tokens is not None:
         rec["max_tokens"] = max_tokens
+    if generation_policy is not None and generation_policy.metadata_enabled:
+        rec.update(generation_policy.logged_params)
+        rec.update(build_policy_record_metadata(generation_policy, resp))
     _emit(rec, log_path)
     # Per-call UI inference-internals row (best-effort; never raises) so
     # sub-agent turns are visible in the live worker panel.
@@ -225,9 +237,10 @@ def run_subagent(
     tool_dispatch: dict[str, Callable] | None = None,
     budget: SubAgentBudget | None = None,
     parent_request_id: str | None = None,
-    log_path: str | None = None,
+    log_path=_USE_DEFAULT_LOG,
     model: str | None = None,
     backend: str | None = None,
+    profile: str | None = None,
 ) -> SubAgentResult:
     """Run a bounded sub-agent conversation. Returns a SubAgentResult.
 
@@ -268,6 +281,10 @@ def run_subagent(
     tool_dispatch = tool_dispatch or {}
     tool_specs = [t["spec"] if "spec" in t else t for t in tools]
     be = get_backend(backend or DEFAULT_BACKEND)
+    policy = resolve_generation_policy(
+        profile, be.name, model or be.default_model, caller_tag=f"subagent.{name}")
+    if log_path is _USE_DEFAULT_LOG:
+        log_path = os.environ.get("LOOP_V0_CALLS_LOG", str(DEFAULT_CALLS_LOG_PATH))
 
     started_perf = time.perf_counter()
     wrapper_call_ids: list[str] = []
@@ -339,7 +356,8 @@ def run_subagent(
                 model=model or be.default_model,
                 messages=openai_messages,
                 tools=tool_specs if tool_specs else None,
-                temperature=0.2,
+                **(dict(policy.request_kwargs) if policy.metadata_enabled
+                   else {"temperature": 0.2}),
                 # Bounded per-turn output so a tool-call-as-text emission
                 # can't run away. Reasoning models (Qwen3.x) need headroom:
                 # their thinking counts against this cap before the final
@@ -371,6 +389,7 @@ def run_subagent(
             host_metadata=be.host_metadata,
             backend_name=be.name,
             max_tokens=budget.max_tokens_per_turn,
+            generation_policy=policy,
         )
         wrapper_call_ids.append(record["request_id"])
         last_id = record["request_id"]
@@ -429,6 +448,10 @@ def run_subagent(
                     openai_messages.append(
                         {"role": "assistant", "content": text_content}
                     )
+                    if be.name == "vllm-qwen" and policy.preserve_tool_reasoning:
+                        reasoning = reasoning_text_from_message(msg)
+                        if reasoning is not None:
+                            openai_messages[-1]["reasoning"] = reasoning
                     openai_messages.append({
                         "role": "user",
                         "content": (
@@ -488,6 +511,11 @@ def run_subagent(
                 for tc in tool_calls
             ],
         })
+
+        if policy.preserve_tool_reasoning:
+            reasoning = reasoning_text_from_message(msg)
+            if reasoning is not None:
+                openai_messages[-1]["reasoning"] = reasoning
 
         # Dispatch the sub-agent's tools.
         for tc in tool_calls:

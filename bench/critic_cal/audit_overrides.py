@@ -542,7 +542,12 @@ def blocking_summary(rows: list[dict]) -> dict:
     }
 
 
-def cluster_impact(rows: list[dict], ledger_path: Path) -> dict:
+def cluster_impact(
+    rows: list[dict],
+    ledger_path: Path,
+    *,
+    loop_memory_path: Path | None = None,
+) -> dict:
     """Per OPEN cluster: what actually blocks it, and would a critic fix
     move it? Settles the v1 draft's open question C-4 from the record.
 
@@ -555,10 +560,13 @@ def cluster_impact(rows: list[dict], ledger_path: Path) -> dict:
     from workers.evidence_ladder import LEVELS, derive_level
     from workers.idea_ledger import load_state
 
+    source_path = (
+        LOOP_MEMORY_PATH if loop_memory_path is None else loop_memory_path
+    )
     state = load_state(ledger_path)
     by_id = {r["iteration_id"]: r for r in rows}
     loop_order = {r["iteration_id"]: i for i, r in enumerate(rows)}
-    raw_rows = {r["iteration_id"]: r for r in _read_jsonl(LOOP_MEMORY_PATH)}
+    raw_rows = {r["iteration_id"]: r for r in _read_jsonl(source_path)}
 
     out = []
     disagreements = []
@@ -793,7 +801,11 @@ def build_report(
             ),
         },
         "downstream": blocking_summary(rows),
-        "clusters": cluster_impact(rows, idea_ledger_path),
+        "clusters": cluster_impact(
+            rows,
+            idea_ledger_path,
+            loop_memory_path=loop_memory_path,
+        ),
         "gate_ledger": gate_ledger_census(loop_feedback_path),
     }
     report["invariants_passed"] = check_invariants(loop_memory, rows, report)

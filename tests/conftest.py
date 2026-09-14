@@ -20,6 +20,7 @@ from orchestrator import active_run, coordinator, coordinator_cycle_log
 from orchestrator import finding_promotion
 from orchestrator import finding_session, iteration_cache, nara
 from orchestrator import restate_skeptic
+from orchestrator import subagent
 from orchestrator import skill_signals
 from orchestrator import runtime as runtime_mod
 from orchestrator import submitted_run, todo_cli, topicality
@@ -83,10 +84,16 @@ def _no_live_artifacts(tmp_path, monkeypatch):
                         tmp_path / "idea_ledger.jsonl")
     monkeypatch.setattr(finding_promotion, "DEFAULT_IDEA_LEDGER",
                         tmp_path / "idea_ledger.jsonl")
+    monkeypatch.setattr(finding_promotion, "DEFAULT_FRONTIER_SCREEN_CACHE",
+                        tmp_path / "frontier_screen_cache")
     monkeypatch.setattr(nara, "DEFAULT_IDEA_LEDGER",
                         tmp_path / "idea_ledger.jsonl")
     monkeypatch.setattr(nara, "_DEFAULT_LOG_PATH",
                         str(tmp_path / "calls.jsonl"))
+    monkeypatch.setattr(subagent, "DEFAULT_CALLS_LOG_PATH", tmp_path / "calls.jsonl")
+    # Subagent resolves this override at call time. Experiment modules can
+    # set it during collection, so isolate it as well as the module default.
+    monkeypatch.setenv("LOOP_V0_CALLS_LOG", str(tmp_path / "calls.jsonl"))
     # topicality.check() is driven directly by nara (not via the runtime),
     # logs to its own module-level CALLS_LOG_PATH, and makes a REAL model
     # call when MOCK_LLM is unset — both redirected here. (The suite's

@@ -1,0 +1,16 @@
+{
+  "mode": "read-only frozen queue/receipt replay; recorded arxiv suggestion injected; no picker/model calls",
+  "input_sha256": {
+    "followups": "c63de67488e18c7aed92b60b0d3ed28d9ce03066b03cd352a629ba6db12c898d",
+    "idea_ledger": "e4023ce56c625be6890e99fef4872fc6302613cef5c06525bb3d8c2ef840bf83",
+    "cycles": "4279661e77926ee08517b46197ce1e7742d80ef706f88733c2471a3028e9133c"
+  },
+  "input_machine_followups": 4,
+  "output_sources": [
+    "arxiv_pick"
+  ],
+  "remaining_machine_followups": 0,
+  "recorded_arxiv_preserved": true,
+  "canonical_mutations": false,
+  "quality_gain_established": false
+}
