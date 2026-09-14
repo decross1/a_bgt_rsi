@@ -1,0 +1,272 @@
+{
+  "arm": {
+    "backend": "vllm-gemma",
+    "expected_policy": {
+      "reasoning_effort": null,
+      "temperature": 0.2,
+      "top_p": 0.9
+    },
+    "id": "gemma_coding_precise",
+    "label": "Resident Gemma coding_precise experimental baseline",
+    "model": "gemma-4-26b-a4b",
+    "profile": "coding_precise",
+    "seed": 20260914
+  },
+  "claim_limits": [
+    "This public-history panel is not private, hidden from pretraining, or contamination-resistant.",
+    "The first run is a single-arm descriptive baseline and cannot establish a model or policy delta.",
+    "Passing measures these six bounded repository repairs only; it does not authorize promotion or production change."
+  ],
+  "contamination_resistant": false,
+  "description": "Six bounded repairs at authentic public repository failure seams, scored by hidden offline graders.",
+  "frozen_hashes": {
+    "arm": "7c8a393bb7c5ab70df88a3a5c5db24b9b02b1e92cf18c965ff3332f74fc4ed8a",
+    "graders": {
+      "HCP-001": "58598f74d0975b0a00266d532fa843c14f43bb05a85864fc3570ad722080c7d9",
+      "HCP-002": "8b9212e52ed178ca8897f0cfd988577bb3f95e4e214f2f342497b10cbef3e6cd",
+      "HCP-005": "db4d180c06d922d075656b57e333467a0612b50f977d1ca1f88fcc9ce9069912",
+      "HCP-006": "053a4c2aff25b9ce5c9b4efa09e678c6683c1745329c986ef8a00c8ccd0515ae",
+      "HCP-007": "2c54b9a13f16ad000d07d1c1eb825018e8c93750534b004febe8093d89600829",
+      "HCP-008": "78cd53e59d25e5e5eab33f17b5b9866f55e1560d58fccee2e86187a0c9151697"
+    },
+    "inputs": {
+      "HCP-001": "fcd44fe1dd55e30735a54a3adcd772f236bf3a23452c80351af75d0e1b3e2700",
+      "HCP-002": "35fd8ae6d7fa44b13fa9239db595cb8c2f1980ebfb260ca3c9cf652e90716b54",
+      "HCP-005": "43e137e10049d88e9773e135333c9d20a68b8c5ce845fb883c30aec73960ec9d",
+      "HCP-006": "c3941ff918ae1d4232bca829a38535722fb3c55630be8bdbc8ab03895bbab66e",
+      "HCP-007": "790d59bbdd53624fbb2fb993d778ec7fa090d6f1ea97dd2d80a26ff3586b8488",
+      "HCP-008": "fdf5368e1de74b732f70b5ca4a116624245cd4c5456ca958855372ed75b34cbe"
+    },
+    "tasks": {
+      "HCP-001": "d12a9ac68fb2f7898b7af144443a2285d9037d10ee27dd264590df903c41708b",
+      "HCP-002": "602a4044066c16a2467552b7929a36df21d28f6b5168f7d19cae47f7fed0e4e4",
+      "HCP-005": "734dd9017776cf5a5ec600e5fc8608c0f2f89d16c7f3ccd7873b94a7e2938f0c",
+      "HCP-006": "c8c5ee25e53ab66eabb3665d47251210fb88605de0b61897150054f574778ee2",
+      "HCP-007": "6e98b1f235c150b930bf09935a86c3e86be70d3639a07a32154fde1cee076c2b",
+      "HCP-008": "8e64254a87fcf58c1c838ab38a89ad4ecd294447e69770b0afe7611bc94bcb2f"
+    }
+  },
+  "ordering": "fixed_task_order_single_arm",
+  "publication_class": "public_historical",
+  "resource_limits": {
+    "calls_serial": true,
+    "max_grader_output_bytes": 1048576,
+    "max_grading_runtime_s": 90,
+    "max_patch_bytes": 98304,
+    "max_raw_completion_bytes": 131072,
+    "max_total_runtime_s": 1020,
+    "max_workspace_archive_bytes": 16000000,
+    "max_workspace_files": 2000,
+    "planned_calls": 6
+  },
+  "sandbox_runtime": {
+    "audit_guard_sha256": "f915715fe77ffe0b32af3112fc49c21ef5c0881324a88dcf91d25f97addb1615",
+    "bubblewrap_path": "/usr/bin/bwrap",
+    "bubblewrap_sha256": "ae27935781511400c65ebcc0b4669775d602f46251b8707c947a1ac1b160c1c8",
+    "bubblewrap_version": "bubblewrap 0.9.0",
+    "contract": "bubblewrap-pytest-repair/v1",
+    "pytest_version": "9.0.3",
+    "python_path": "/home/decross1/projects/a_bgt_rsi/.venv-chroma/bin/python",
+    "python_sha256": "6242e0e8650d7dbdebbc25e08bf4c9359ddaf65f54fcae0e57fa99395fa5357a",
+    "python_version": "3.12.3",
+    "result_plugin_sha256": "22fbe70bd10e62aaa32a7dccdf92f5293e3a411bcab833bf15140560d985bc27",
+    "supervisor_sha256": "33eecc940d6653a104966a3a7c36e79489aa17a90024e82fb1f3b9e77a0595e3"
+  },
+  "schema_version": "weekly-upgrade-historical-repair/v2",
+  "source_proof": {
+    "panel_id": "weekly-historical-coding-panel-v1-2026-09-14",
+    "path": "experiments/weekly_historical_coding_panel_v1_2026-09-14.json",
+    "sha256": "4ef70dd1e711c43d54a9f366ebfb20ad27382874f10a4070509085c208b93d53"
+  },
+  "suite_id": "weekly-historical-coding-panel-v2-2026-09-14",
+  "tasks": [
+    {
+      "base": {
+        "commit": "d7faff3019b1e1bff995dd3b5f76c251d1bb427e",
+        "repair_path": "agent_wrapper/wrapper.py",
+        "repair_sha256": "7148e69576d589bd6c1b4d63ced1ce38f34060f716c8b71a3c665e768af53026",
+        "tree": "a710a4fe083316590344910f840ba5f936483b38",
+        "workspace_fixture_allowlist": [
+          "tests/example_call.jsonl"
+        ],
+        "workspace_source_allowlist": [
+          "agent_wrapper",
+          "schema"
+        ]
+      },
+      "defect_contract": "Emitting to a nested configured JSONL path creates missing parent directories before append.",
+      "grader": {
+        "expected_cases": 1,
+        "fix_commit": "1eba8f6027caff7f6d076d5acefc5564703e46ec",
+        "kind": "fix_commit_test",
+        "proof_grader_sha256": "147bc236d0ed2f41aa8a3f4fb4a68e05b112f0f4db185e5efc45bf39dae30dbf",
+        "sandbox_path": "tests/test_wrapper_calls_log_mkdir.py",
+        "source_path": "tests/test_wrapper_calls_log_mkdir.py",
+        "source_sha256": "147bc236d0ed2f41aa8a3f4fb4a68e05b112f0f4db185e5efc45bf39dae30dbf",
+        "test_node": "tests/test_wrapper_calls_log_mkdir.py::test_emit_creates_missing_log_dir"
+      },
+      "grader_timeout_s": 15,
+      "id": "HCP-001",
+      "max_tokens": 4096,
+      "proof_task_sha256": "1abb41ca2b4f793434bcd99475e14cb448180f15f8d0867aed34e305157f4db7",
+      "request_timeout_s": 145,
+      "title": "Create a missing call-log directory"
+    },
+    {
+      "base": {
+        "commit": "350ef5afc34069a74191816c953ca1b13ddfb20e",
+        "repair_path": "agent_wrapper/frontier_cli.py",
+        "repair_sha256": "01f7affe2d55c0441084a9c91aea629d87720f0b8603ce067554c4c3a72c1bb2",
+        "tree": "0d5651d33af5ba13b315e0af74ca36a0b36938a9",
+        "workspace_fixture_allowlist": [],
+        "workspace_source_allowlist": [
+          "agent_wrapper"
+        ]
+      },
+      "defect_contract": "Frontier CLI resolution uses explicit environment pin, executable user install, then bare command.",
+      "grader": {
+        "expected_cases": 1,
+        "fix_commit": "2f9738c4a1fa0c7177d7220e421ea5661a8e04a5",
+        "kind": "fix_commit_test",
+        "proof_grader_sha256": "21fb9835b9d1416895f5c211a393ab7b8d706e2bf9cb520a6aa157cf6e3dc5bb",
+        "sandbox_path": "tests/test_frontier_cli.py",
+        "source_path": "tests/test_frontier_cli.py",
+        "source_sha256": "21fb9835b9d1416895f5c211a393ab7b8d706e2bf9cb520a6aa157cf6e3dc5bb",
+        "test_node": "tests/test_frontier_cli.py::test_resolve_binary_order"
+      },
+      "grader_timeout_s": 15,
+      "id": "HCP-002",
+      "max_tokens": 4096,
+      "proof_task_sha256": "ad821a4a6ed8bdb26ee85bdb7befe333ccbbe07119695d85725869f4338eaf53",
+      "request_timeout_s": 145,
+      "title": "Resolve frontier CLI binaries under a minimal PATH"
+    },
+    {
+      "base": {
+        "commit": "0c3e22d4d771e131ca7e79867d78b494ece268e5",
+        "repair_path": "orchestrator/coordinator.py",
+        "repair_sha256": "b8248fcb64705daeeb47a3eee22190071c1c1c054a57b67022c5514579ffdfdc",
+        "tree": "04ddb9d0a78d0af3190ba89ffbec7d2d71e7898f",
+        "workspace_fixture_allowlist": [],
+        "workspace_source_allowlist": [
+          "agent_wrapper",
+          "orchestrator",
+          "workers",
+          "schema"
+        ]
+      },
+      "defect_contract": "Bubble-up JSONL append refuses an unterminated existing tail without altering prior bytes.",
+      "grader": {
+        "expected_cases": 2,
+        "fix_commit": "9c540351a108b9ea678253eae143a44e6d304cbe",
+        "kind": "fix_commit_test",
+        "proof_grader_sha256": "27a4176b3a0df2313ae462eb85f9483f40a62b8fb6709ea75cbc246aef8a2ef4",
+        "sandbox_path": "tests/test_coordinator_escalation.py",
+        "source_path": "tests/test_coordinator_escalation.py",
+        "source_sha256": "27a4176b3a0df2313ae462eb85f9483f40a62b8fb6709ea75cbc246aef8a2ef4",
+        "test_node": "tests/test_coordinator_escalation.py::test_t05_unterminated_tail_refuses_append_and_preserves_history"
+      },
+      "grader_timeout_s": 15,
+      "id": "HCP-005",
+      "max_tokens": 4096,
+      "proof_task_sha256": "2adb237dcc9782a401d6d681fa0ce682b90e9cd8643b2f5a85169762f497cf59",
+      "request_timeout_s": 145,
+      "title": "Preserve a JSONL ledger with an unterminated tail"
+    },
+    {
+      "base": {
+        "commit": "7405ae953e3a7085447ce7be3a1e8f6e1003f8d7",
+        "repair_path": "orchestrator/coordinator.py",
+        "repair_sha256": "2798438601f825f905ea3911835b3598b23f79e0c087e9fab9642e8c33f5b690",
+        "tree": "7d1f68971c9d1e57cbcff7d609494364b7cf770a",
+        "workspace_fixture_allowlist": [],
+        "workspace_source_allowlist": [
+          "agent_wrapper",
+          "orchestrator",
+          "workers",
+          "schema"
+        ]
+      },
+      "defect_contract": "A daily-budget refusal recomputes health signals without dispatching a model or handler.",
+      "grader": {
+        "expected_cases": 1,
+        "fix_commit": "f7c3c27e56f76432f881cec2277f3189479afe36",
+        "kind": "fix_commit_test",
+        "proof_grader_sha256": "1565e7031cc4f089c57a0af12bfc7c3ce63fe6c1447240291fee6ea6cdf2a767",
+        "sandbox_path": "tests/test_coordinator.py",
+        "source_path": "tests/test_coordinator.py",
+        "source_sha256": "1565e7031cc4f089c57a0af12bfc7c3ce63fe6c1447240291fee6ea6cdf2a767",
+        "test_node": "tests/test_coordinator.py::test_budget_refusal_still_recomputes_health_alert"
+      },
+      "grader_timeout_s": 15,
+      "id": "HCP-006",
+      "max_tokens": 4096,
+      "proof_task_sha256": "9e3aee0e09610ff679443d3e9de6e650c1ecaa3449b86407f315df9dfce405df",
+      "request_timeout_s": 145,
+      "title": "Recompute health on a budget-refused cycle"
+    },
+    {
+      "base": {
+        "commit": "4bb4d3d25cb847164a55917556733ac3c155e849",
+        "repair_path": "bench/critic_eval/stage3a_driver.py",
+        "repair_sha256": "003baf651046478bd40905699fec35316f52fc28d047c37cda26944aa28c7d3f",
+        "tree": "89c5a71e85c1bd37e0791aa0870bfc2d90b49c5b",
+        "workspace_fixture_allowlist": [],
+        "workspace_source_allowlist": [
+          "agent_wrapper",
+          "orchestrator",
+          "workers",
+          "bench/critic_eval",
+          "schema"
+        ]
+      },
+      "defect_contract": "The stage-3a driver reads the worker's attack_verdict contract and fails loudly when it is absent.",
+      "grader": {
+        "expected_cases": 3,
+        "fix_commit": "771c7b15d44b38544d9e80a4e7961e15cb89a39a",
+        "kind": "fix_commit_test",
+        "proof_grader_sha256": "7316eee07c744542705dd7b89e7c874b6ef61021a5e385fc4cc08158dd9ad23c",
+        "sandbox_path": "tests/test_stage3a_driver_contract.py",
+        "source_path": "tests/test_stage3a_driver_contract.py",
+        "source_sha256": "7316eee07c744542705dd7b89e7c874b6ef61021a5e385fc4cc08158dd9ad23c",
+        "test_node": "tests/test_stage3a_driver_contract.py"
+      },
+      "grader_timeout_s": 15,
+      "id": "HCP-007",
+      "max_tokens": 4096,
+      "proof_task_sha256": "f5cafced1caa5609c401f4e14cb4c6aab3d50ef638449980b1a0a5e373c78fdf",
+      "request_timeout_s": 145,
+      "title": "Bind an evaluation driver to the worker result schema"
+    },
+    {
+      "base": {
+        "commit": "a217880c43744f925490192f14e9cdd22d1cd44b",
+        "repair_path": "bench/fp8_ab/tool_probe.py",
+        "repair_sha256": "588ce8ac71cf7a6fd7be44422f4512ce9ed52857c8960b0f44860327485bf470",
+        "tree": "44d27ec77abfc8c2c8b4d8d2202332454c80ed8b",
+        "workspace_fixture_allowlist": [],
+        "workspace_source_allowlist": [
+          "bench/fp8_ab/__init__.py",
+          "bench/fp8_ab/tool_probe.py"
+        ]
+      },
+      "defect_contract": "Normal replayed tool arguments are JSON strings and exactly one designated trap is a dictionary.",
+      "grader": {
+        "expected_cases": 1,
+        "fix_commit": "53fc78367f4d3b290156d3bda84c637fb9b8e315",
+        "kind": "embedded_focused",
+        "proof_grader_sha256": "14063092cd0cf0b23fe9fcc6bb8a122603c7c48019167d317642352b9dee4927",
+        "sandbox_path": "tests/test_candidate_contract.py",
+        "source_path": "bench/weekly_upgrade_historical/grader_assets.py",
+        "source_sha256": "4335bfa7f9e052ea218fa2597c02f5ede86fb8ed002c0cd37b81b3c1b494208d",
+        "test_node": "tests/test_candidate_contract.py::test_message_replay_wire_types_and_trap_are_exact"
+      },
+      "grader_timeout_s": 15,
+      "id": "HCP-008",
+      "max_tokens": 4096,
+      "proof_task_sha256": "e78413255f90647852f2f31e628baf26e97f87e0c98782e9bfb8fa66dc73b20e",
+      "request_timeout_s": 145,
+      "title": "Serialize replayed tool arguments with one deliberate trap"
+    }
+  ]
+}

@@ -201,19 +201,44 @@ def _loud_read(label: str, fn):
         return []
 
 
+def _active_campaign_id() -> str | None:
+    """Resolve the canonical pointer; an env mismatch raises and is logged."""
+    from orchestrator.research_campaign import load_active_campaign
+
+    campaign = load_active_campaign()
+    return campaign["campaign_id"] if campaign is not None else None
+
+
 def _gaps() -> list[str]:
     """assess_state gaps (pure reads; loud-degrading)."""
     return _loud_read(
         "assess_state",
-        lambda: list(coordinator.assess_state().get("gaps") or []))
+        lambda: list(
+            coordinator.assess_state(
+                campaign_id=_active_campaign_id(),
+            ).get("gaps") or []
+        ),
+    )
 
 
 def _agenda() -> list[dict]:
     """Unconsumed idea-ledger agenda items (loud-degrading)."""
+    def read() -> list[dict]:
+        campaign_id = _active_campaign_id()
+        if campaign_id is not None:
+            return list(
+                coordinator.assess_state(campaign_id=campaign_id).get(
+                    "topic_suggestions",
+                ) or []
+            )
+        return idea_projection.agenda_topics(
+            idea_ledger.load_state(IDEA_LEDGER_PATH),
+        )
+
     return _loud_read(
         "agenda read",
-        lambda: idea_projection.agenda_topics(
-            idea_ledger.load_state(IDEA_LEDGER_PATH)))
+        read,
+    )
 
 
 def _packet_dispatch_armed() -> bool:
@@ -264,7 +289,11 @@ def _run_cycle(budget: int) -> dict:
     os.environ.pop("MOCK_LLM", None)
     os.environ["NARA_SKEPTIC"] = "1"
     try:
-        return coordinator.coordinator_cycle(budget=budget, dry_run=False)
+        return coordinator.coordinator_cycle(
+            budget=budget,
+            dry_run=False,
+            campaign_id=_active_campaign_id(),
+        )
     finally:
         for key, val in saved.items():
             if val is None:

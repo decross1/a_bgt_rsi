@@ -845,6 +845,7 @@ def test_operational_history_binds_sanitized_evaluation_receipt(tmp_path, monkey
             "trial_id": trial_id, "week_id": "2026-W38",
             "manifest_path": "experiments/topic_scope_repair_2026-09-14.json",
             "kind": "topic_scope",
+            "arm_ids": ["control", "candidate"], "declared_attempts": 80,
         },
         "output": str(output),
         "result": result,
@@ -956,3 +957,18 @@ def test_github_release_api_is_bounded_to_allowed_owners_and_semantic_fields():
     assert "Important correctness fix" in excerpt
     assert "assets" not in excerpt
     assert len(excerpt) <= 2000
+
+
+def test_operational_object_reads_are_bounded_and_bind_exact_bytes(tmp_path, monkeypatch):
+    path = tmp_path / "receipt.json"
+    path.write_bytes(b'{"value":1}\n')
+    monkeypatch.setattr(Path, "read_bytes", lambda self: pytest.fail("unbounded read forbidden"))
+    value, digest = wu._bounded_object(path, with_hash=True)
+    assert value == {"value": 1}
+    assert digest == wu._sha(b'{"value":1}\n')
+    with pytest.raises(wu.WeeklyUpgradeError, match="exceeds"):
+        wu._bounded_object(path, maximum=4)
+    redirected = tmp_path / "redirected.json"
+    redirected.symlink_to(path)
+    with pytest.raises(wu.WeeklyUpgradeError, match="redirected"):
+        wu._bounded_object(redirected)

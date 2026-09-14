@@ -21,28 +21,29 @@ will.
 
 1. [`../../CLAUDE.md`](../../CLAUDE.md) — inviolate rules.
 2. [`../../START_HERE.md`](../../START_HERE.md) — orientation.
-3. [`../../LOOP_V0.md`](../../LOOP_V0.md) — what the UI must surface;
-   see the "What's needed from the UI session" section in particular.
-4. [`../../docs/DATA_SHAPES.md`](../../docs/DATA_SHAPES.md) — **the
-   canonical reference + changelog for every data shape the UI consumes**
-   (iteration_record optional blocks, loop_feedback, the heterogeneous
-   experiment `summary.json` shapes). Read this BEFORE writing any
-   component that parses producer output, and check its Changelog when
-   reconciling with `main`. The primary session logs all shape changes here.
-5. [`../../ui_plan.md`](../../ui_plan.md) — the UI's own build plan
+3. [`../../LOOP_V2.md`](../../LOOP_V2.md) — the active v2 foundation plan,
+   evidence semantics, product flow, and activation criteria.
+4. [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) — deployed services,
+   ledgers, read models, and the implemented v2 foundation and remaining targets.
+5. [`../../docs/DATA_SHAPES.md`](../../docs/DATA_SHAPES.md) — the historical
+   reference and changelog for many UI shapes. Read it before changing a
+   consumer, then verify the current producer, schema, and fixture because
+   newer ledgers are not all registered there yet.
+6. [`../../ui_plan.md`](../../ui_plan.md) — the UI's own build plan
    and status. (Worth linking `docs/DATA_SHAPES.md` from here too.)
-6. **The most recent `../../human/sessions/YYYY-MM-DD.md` note — and
+7. **The most recent `../../human/sessions/YYYY-MM-DD.md` note — and
    specifically its "## UI session work order" subsection. THIS IS YOUR
    WORK ORDER for the session** (the primary co-authors it). Start here
    for what to build; if no such subsection exists, ask the primary.
-7. The current `ui/` codebase to see what's already there
+8. The current `ui/` codebase to see what's already there
    (UnlockPanel, call-chain inspector, dashboard skeleton).
 
 ## What the UI must surface
 
-The loop in [`../../LOOP_V0.md`](../../LOOP_V0.md) is a chain of six
-steps per iteration: seed → hypothesize → retrieve → novelty-classify
-→ critique → journal. The UI must show:
+The original loop in [`../../LOOP_V0.md`](../../LOOP_V0.md) established the
+iteration chain. The evolved apparatus adds an evidence ladder, exact lineage,
+adversarial review, human L5 validation, and weekly evaluation. The UI must
+preserve those distinctions while showing:
 
 ### 1. Active panel — "what's running right now"
 

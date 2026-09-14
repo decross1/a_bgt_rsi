@@ -155,6 +155,168 @@ export interface BenchmarkWeek {
   families: BenchmarkFamily[];
 }
 
+export type ResearchPipelineStatus =
+  | "not_yet_observed"
+  | "partial"
+  | "observed"
+  | "unavailable";
+
+export interface ResearchPipelineCounts {
+  topic_attempts: number | null;
+  dispatch_completions: number | null;
+  dispatch_failures: number | null;
+  ambiguous_dispatches: number | null;
+  missing_dispatch_iteration_links: number | null;
+  distinct_dispatched_iterations: number | null;
+  iterations_recorded: number | null;
+  missing_iteration_records: number | null;
+  unlinked_iteration_records: number | null;
+  campaign_link_mismatch_records: number | null;
+  scope_assessed: number | null;
+  in_scope: number | null;
+  off_domain: number | null;
+  scope_uncertain: number | null;
+  evidence_assessed: number | null;
+  l1_or_higher: number | null;
+  l3_ready_for_skeptic: number | null;
+  skeptic_reviews_recorded: number | null;
+  promotion_rejections: number | null;
+  promotion_validations: number | null;
+  l4_validated: number | null;
+  human_verdicts_recorded: number | null;
+  l5_human_validated: number | null;
+  evidence_levels: Record<"L0" | "L1" | "L2" | "L3" | "L4" | "L5", number | null>;
+}
+
+export interface ResearchPipelineStage {
+  id: string;
+  label: string;
+  count: number | null;
+  status: "recorded" | "not_yet_observed" | "unavailable";
+}
+
+export interface ResearchPipelineCoverage {
+  id: string;
+  label: string;
+  covered: number | null;
+  total: number | null;
+  rate: number | null;
+  status: "recorded" | "not_yet_observed" | "unavailable";
+}
+
+export interface ResearchPipelineRecord {
+  attempt_id: string | null;
+  cycle_run_id: string | null;
+  recorded_at: string | null;
+  topic_source: string;
+  campaign_id: string;
+  topic_id: string;
+  dispatch_status: string;
+  iteration_id: string | null;
+  iteration_status: string;
+  scope_status: string;
+  evidence_level: "L0" | "L1" | "L2" | "L3" | "L4" | "L5" | null;
+  /** Null when health-signal coverage cannot support provisional flags. */
+  evidence_provisional: string[] | null;
+  skeptic_status: string;
+  promotion_status: string;
+  human_validation_status: string;
+  promotion_review_attempts: number | null;
+}
+
+export interface ResearchPipelineCampaign {
+  campaign_id: string;
+  title: string;
+  status: string;
+  opened_at: string;
+  manifest_sha256: string;
+  runtime?: {
+    status: "inactive" | "active" | "closed" | "invalid" | "unknown";
+    activated_at: string | null;
+    activation_sha256: string | null;
+    closed_at: string | null;
+    closure_sha256: string | null;
+  };
+  research_question: {
+    question_id: string;
+    text: string;
+    text_sha256: string;
+  };
+  evidence: {
+    cpu_calibration_registered: boolean;
+    cpu_calibration_verified: boolean | null;
+    model_trial_status:
+      | "not_registered"
+      | "registered_no_bound_result"
+      | "bound_result_observed"
+      | "invalid_bound_result";
+  };
+}
+
+export interface ResearchPipelineLineageCounts {
+  explicit_match: number | null;
+  unlinked_legacy: number | null;
+  malformed_campaign_link: number | null;
+  different_campaign: number | null;
+  campaign_link_mismatch: number | null;
+  malformed_record: number | null;
+}
+
+export interface ResearchPipelineSource {
+  id: string;
+  available: boolean;
+  window_sha256: string | null;
+  bytes_read: number;
+  total_bytes: number | null;
+  truncated_before: boolean;
+  parsed_rows: number;
+  malformed_rows: number;
+}
+
+export interface ResearchPipelineProgress {
+  schema_version: "research-pipeline-progress/v1";
+  generated_at: string;
+  status: ResearchPipelineStatus;
+  headline: string;
+  campaign: ResearchPipelineCampaign | null;
+  scope: { id: string; label: string; assessment_basis: string };
+  cohort: {
+    id: string;
+    label: string;
+    cutoff_at: string;
+    cutoff_reason: string;
+    cutoff_receipt_sha256: string;
+    canonical_head: string;
+    campaign_manifest_sha256?: string;
+    membership_rule?: string;
+  } | null;
+  window: {
+    week: string;
+    mode?: "campaign_to_date";
+    start_at: string;
+    end_at: string;
+    dispatch_end_at?: string;
+    dispatch_closed?: boolean;
+    complete: boolean;
+  };
+  counts: ResearchPipelineCounts | null;
+  stages: ResearchPipelineStage[];
+  coverage: ResearchPipelineCoverage[];
+  bottleneck: { stage: string; status: string; explanation: string };
+  records: ResearchPipelineRecord[];
+  records_window?: {
+    displayed: number;
+    total: number | null;
+    truncated: boolean;
+  };
+  qualifications: { code: string; detail: string }[];
+  provenance: {
+    join_contract?: string[];
+    campaign_lineage?: Record<string, ResearchPipelineLineageCounts>;
+    sources: ResearchPipelineSource[];
+  };
+}
+
 export interface BenchmarkProgressResponse {
   schema_version: "weekly-upgrade-progress/v1";
   generated_at: string;
@@ -164,4 +326,6 @@ export interface BenchmarkProgressResponse {
   summary: BenchmarkProgressSummary;
   warnings: BenchmarkProgressWarning[];
   weeks: BenchmarkWeek[];
+  /** Optional during rolling backend/frontend deployments. */
+  research_pipeline?: ResearchPipelineProgress;
 }

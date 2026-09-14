@@ -34,6 +34,7 @@ import jsonschema
 import pytest
 
 from orchestrator import nara
+from orchestrator import research_campaign as campaigns
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCHEMA = json.loads(
@@ -241,8 +242,6 @@ def test_schema_accepts_new_blocks_and_old_rows():
 
 
 def test_happy_path_wires_all_four(monkeypatch, captured_record):
-    captured_user = {}
-
     def _meta(**kwargs):
         return {"status": "passed",
                 "result": {"conditioning_bullets": ["keep X", "stop Y", "Z surprised"],
@@ -378,3 +377,80 @@ def test_cross_tier_comparison_threaded(monkeypatch, captured_record):
     rec = nara.run_iteration("test topic", runtime=_FakeRuntime(_tool_table()),
                              cross_tier_comparison=comparison)
     assert rec["cross_tier_comparison"] == comparison
+
+
+def test_campaign_link_reaches_iteration_record_and_events(
+    monkeypatch, captured_record, tmp_path,
+):
+    campaign = campaigns.load_campaign()
+    topic = campaign["topic_policy"]["topics"][0]["text"]
+    link = campaigns.bind_topic(campaign, topic)
+    pointer = tmp_path / "active_research_campaign.json"
+    pointer.write_text(json.dumps({
+        "schema_version": "research-campaign-activation/v1",
+        "campaign_id": campaign["campaign_id"],
+        "campaign_manifest_sha256": campaign["_manifest_sha256"],
+        "activated_at": "2026-09-14T22:20:00Z",
+        "activated_by": "test-owner",
+    }))
+    monkeypatch.setattr(campaigns, "DEFAULT_ACTIVATION_PATH", pointer)
+    monkeypatch.delenv("NARA_RESEARCH_CAMPAIGN", raising=False)
+    meta_calls = []
+    monkeypatch.setattr(
+        nara,
+        "_meta_review",
+        lambda **kwargs: meta_calls.append(kwargs) or {
+            "status": "error",
+            "result": None,
+            "errors": ["first campaign iteration has no prior campaign row"],
+        },
+    )
+    monkeypatch.setattr(nara, "_redteam_critic", lambda *a, **k: _redteam("proceed"))
+    monkeypatch.setattr(nara, "get_backend", lambda b: _FakeBackend(_full_chain_script()))
+    monkeypatch.setattr(nara.iteration_cache, "write_entry", lambda *a, **k: None)
+
+    runtime = _FakeRuntime(_tool_table())
+    record = nara.run_iteration(
+        topic,
+        runtime=runtime,
+        campaign_id=campaign["campaign_id"],
+    )
+    assert record["campaign"] == link
+    assert meta_calls == [{
+        "parent_request_id": record["iteration_id"],
+        "campaign_id": campaign["campaign_id"],
+        "campaign_manifest_sha256": campaign["_manifest_sha256"],
+    }]
+    campaign_events = [
+        event for event in runtime.events
+        if event.get("event_type") in {
+            "loop_v0_iteration_start", "loop_v0_iteration_complete",
+        }
+    ]
+    assert len(campaign_events) == 2
+    assert all(event["campaign"] == link for event in campaign_events)
+    assert captured_record["record"] is record
+
+
+def test_campaign_iteration_rejects_non_preregistered_topic_before_runtime(
+    monkeypatch, tmp_path,
+):
+    campaign = campaigns.load_campaign()
+    pointer = tmp_path / "active_research_campaign.json"
+    pointer.write_text(json.dumps({
+        "schema_version": "research-campaign-activation/v1",
+        "campaign_id": campaign["campaign_id"],
+        "campaign_manifest_sha256": campaign["_manifest_sha256"],
+        "activated_at": "2026-09-14T22:20:00Z",
+        "activated_by": "test-owner",
+    }))
+    monkeypatch.setattr(campaigns, "DEFAULT_ACTIVATION_PATH", pointer)
+    monkeypatch.delenv("NARA_RESEARCH_CAMPAIGN", raising=False)
+    runtime = _FakeRuntime(_tool_table())
+    with pytest.raises(campaigns.CampaignError, match="exact preregistered"):
+        nara.run_iteration(
+            "similar but unregistered topic",
+            runtime=runtime,
+            campaign_id=campaign["campaign_id"],
+        )
+    assert runtime.events == []

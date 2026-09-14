@@ -1,0 +1,58 @@
+{
+  "schema_version": "research-campaign/v1",
+  "campaign_id": "v2-agentic-game-theory-20260914",
+  "title": "V2 agentic game theory: incentives and identified history",
+  "status": "prepared",
+  "opened_at": "2026-09-14T22:16:35Z",
+  "closed_at": null,
+  "scope": {
+    "domain": "game_theory_and_agent_behavior",
+    "subjects": ["LLM agents", "repeated public-goods games"],
+    "claim_limits": [
+      "Behavior observed in local model agents does not establish human behavior.",
+      "Cooperation and utility-consistent behavior are separate outcomes.",
+      "A campaign identifier establishes declared lineage, not causality or scientific validity."
+    ],
+    "shared_evidence": {
+      "literature": "cross_campaign_with_source_provenance",
+      "negative_memory": "cross_campaign_with_explicit_match_provenance",
+      "research_outcomes": "explicit_campaign_link_only"
+    }
+  },
+  "research_question": {
+    "question_id": "rq-incentives-identified-history-001",
+    "text": "How do individual versus shared payoff objectives and access to player-identified interaction history affect cooperation and utility-consistent behavior in repeated public-goods games among LLM agents?",
+    "text_sha256": "662d5367dbff6608bc0681bf535d089fb7ce94d29def1139868cd9b6d6c11974",
+    "selection": "team_proposed_within_owner_scope_2026-09-14"
+  },
+  "topic_policy": {
+    "mode": "preregistered_exact",
+    "topics": [
+      {
+        "topic_id": "topic-incentives-identified-history-001",
+        "text": "How do individual versus shared payoff objectives and access to player-identified interaction history affect cooperation and utility-consistent behavior in repeated public-goods games among LLM agents?",
+        "text_sha256": "662d5367dbff6608bc0681bf535d089fb7ce94d29def1139868cd9b6d6c11974",
+        "source": "campaign_preregistered"
+      }
+    ]
+  },
+  "study_manifests": [
+    {
+      "study_id": "public-goods-incentives-information-calibration-v1",
+      "phase": "cpu_calibration",
+      "path": "experiments/agentic_game_theory_v2_calibration_2026-09-14.json",
+      "sha256": "fb061db71c586c91448f263e7e0f37630fbe9ff2781844f1647dda1d08b2c406",
+      "preregistration_path": "experiments/PREREG_agentic_game_theory_v2_calibration_2026-09-14.md",
+      "preregistration_sha256": "8ba085cd52302063ba9ff22e0db53360fb77e19308f4bb890f6e9e2c692380d6"
+    }
+  ],
+  "legacy_policy": {
+    "missing_campaign_link": "unlinked_legacy",
+    "infer_from_timestamp": false,
+    "infer_from_topic_text": false
+  },
+  "campaign_actions": {
+    "admitted": ["run_loop_iteration", "promote_findings", "bubble_up", "noop"],
+    "deferred": ["run_experiment", "forecast_markets", "mine_paper_gap", "refine_idea", "improve_system"]
+  }
+}

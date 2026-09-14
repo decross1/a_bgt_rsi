@@ -1,0 +1,278 @@
+{
+  "schema_version": "weekly-upgrade-diversity-selection/v2",
+  "suite_id": "gemma-diversity-selection-public-followthrough-v1-2026-09-14",
+  "scaffold_version": "diversity-selection/v1",
+  "description": "Judge-free follow-through on fresh game-theory tasks: a deterministic three-proposal control versus three independently seeded, directive-separated exploratory calls and strict deterministic selection. Structured-output failures are classified without salvage.",
+  "publication_class": "public_synthetic_followthrough",
+  "claim_limits": [
+    "The fresh tasks, prompts, and finite graders are public development evidence, not a hidden benchmark.",
+    "The comparison measures this complete scaffold, including directive-separated proposals and strict selection; it cannot isolate sampling temperature alone.",
+    "Protocol, proposal-shape, objective-feasibility, uniqueness, and selection failures are reported separately.",
+    "One five-task run cannot authorize a production inference-policy change or establish scientific novelty."
+  ],
+  "model": {
+    "backend": "vllm-gemma",
+    "served_name": "gemma-4-26b-a4b"
+  },
+  "structured_output": {
+    "visible_channel": "exactly_one_json_object",
+    "reasoning_channel": "separate_if_available",
+    "server_enforcement": "prompt_only_unqualified",
+    "local_parser": "strict_no_salvage/v1",
+    "salvage": "forbidden"
+  },
+  "conditions": [
+    {
+      "id": "control",
+      "profile": "deterministic",
+      "seeds": [
+        503
+      ],
+      "generation_calls": 1,
+      "max_tokens_per_call": 1280,
+      "timeout_s_per_call": 80
+    },
+    {
+      "id": "diverse_select",
+      "generation_profile": "explore",
+      "generation_seeds": [
+        101,
+        211,
+        307
+      ],
+      "generation_max_tokens_per_call": 384,
+      "generation_timeout_s_per_call": 20,
+      "validator_profile": "deterministic",
+      "validator_seed": 401,
+      "validator_max_tokens": 128,
+      "validator_timeout_s": 20
+    }
+  ],
+  "ordering": "alternating_condition_groups",
+  "tasks": [
+    {
+      "id": "DIV1-GT-ASSURANCE-002",
+      "family": "game_theory",
+      "problem": "In a two-player assurance game with row and column actions [invest,wait], row payoffs are [[6,0],[2,3]] and column payoffs are [[6,2],[0,3]]. Propose one pure Nash equilibrium.",
+      "proposal_contract": "A proposal is exactly {\"row_action\":\"invest|wait\",\"column_action\":\"invest|wait\"}.",
+      "diversity_directives": [
+        "Search from the first listed action pair and prefer that equilibrium when valid.",
+        "Search from the second listed action pair and prefer that equilibrium when valid.",
+        "Solve independently and prefer the valid equilibrium with the larger joint payoff."
+      ],
+      "grader": {
+        "kind": "pure_nash",
+        "version": "1",
+        "inputs": {
+          "actions": [
+            "invest",
+            "wait"
+          ],
+          "row_payoffs": [
+            [
+              6,
+              0
+            ],
+            [
+              2,
+              3
+            ]
+          ],
+          "column_payoffs": [
+            [
+              6,
+              2
+            ],
+            [
+              0,
+              3
+            ]
+          ]
+        }
+      },
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "derivation": "New assurance-game parameterization with exactly two enumerable pure equilibria; absent from dev-v0.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "experiments/PREREG_diversity_selection_v1_2026-09-14.md"
+        ],
+        "claim_limit": "Finite public follow-through task; no empirical, novelty, or production claim."
+      }
+    },
+    {
+      "id": "DIV1-GT-CONDORCET-002",
+      "family": "collective_choice",
+      "problem": "Construct nonnegative integer counts for all six strict rankings ABC, ACB, BAC, BCA, CAB, CBA. Counts must sum to 9. C must be the unique plurality winner by first choices, while A must be the unique Condorcet winner under pairwise majority.",
+      "proposal_contract": "A proposal is exactly {\"ABC\":int,\"ACB\":int,\"BAC\":int,\"BCA\":int,\"CAB\":int,\"CBA\":int}.",
+      "diversity_directives": [
+        "Search integer compositions from low ABC and ACB counts upward.",
+        "Search integer compositions from high C-first counts downward while preserving the targets.",
+        "Prefer a valid profile that uses as many distinct ranking types with positive counts as possible."
+      ],
+      "grader": {
+        "kind": "ballot_counterexample",
+        "version": "1",
+        "inputs": {
+          "candidates": [
+            "A",
+            "B",
+            "C"
+          ],
+          "rankings": [
+            "ABC",
+            "ACB",
+            "BAC",
+            "BCA",
+            "CAB",
+            "CBA"
+          ],
+          "voters": 9,
+          "target_plurality": "C",
+          "target_condorcet": "A"
+        }
+      },
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "derivation": "New nine-voter target reversal with eighteen enumerable valid profiles; absent from dev-v0.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "experiments/PREREG_diversity_selection_v1_2026-09-14.md"
+        ],
+        "claim_limit": "Finite public follow-through task; no empirical, novelty, or production claim."
+      }
+    },
+    {
+      "id": "DIV1-GT-DELEGATION-002",
+      "family": "collective_choice",
+      "problem": "Assign each voter u, v, w, x one value from [A,B,->u,->v,->w,->x]. Direct A/B votes count for every origin whose transitive delegation reaches them. Cycles exhaust. Construct a graph resolving to totals A=3, B=1 with no exhausted voters.",
+      "proposal_contract": "A proposal is exactly {\"u\":\"allowed value\",\"v\":\"allowed value\",\"w\":\"allowed value\",\"x\":\"allowed value\"}.",
+      "diversity_directives": [
+        "Prefer a valid graph with the fewest delegation arrows.",
+        "Prefer a valid acyclic graph containing the longest delegation chain you can construct.",
+        "Prefer a valid topology with exactly two delegation arrows when possible."
+      ],
+      "grader": {
+        "kind": "delegation_graph",
+        "version": "1",
+        "inputs": {
+          "voters": [
+            "u",
+            "v",
+            "w",
+            "x"
+          ],
+          "allowed_values": [
+            "A",
+            "B",
+            "->u",
+            "->v",
+            "->w",
+            "->x"
+          ],
+          "target_totals": {
+            "A": 3,
+            "B": 1
+          },
+          "target_exhausted": []
+        }
+      },
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "derivation": "New four-voter transitive-delegation target with sixty-four enumerable valid graphs; absent from dev-v0.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "experiments/PREREG_diversity_selection_v1_2026-09-14.md"
+        ],
+        "claim_limit": "Finite public follow-through task; no empirical, novelty, or production claim."
+      }
+    },
+    {
+      "id": "DIV1-GT-COORDINATION-002",
+      "family": "game_theory",
+      "problem": "Choose integer a,b,c,d from [0,1,2,3,4,5] for a symmetric two-action game. The row payoff matrix is [[a,b],[c,d]] and the column payoff matrix is its transpose. Both diagonal profiles must be strict Nash equilibria and the interior symmetric probability of the first action must equal exactly one third.",
+      "proposal_contract": "A proposal is exactly {\"a\":int,\"b\":int,\"c\":int,\"d\":int}.",
+      "diversity_directives": [
+        "Search valid matrices from the smallest total payoff sum upward.",
+        "Search valid matrices from the largest total payoff sum downward.",
+        "Prefer a valid matrix whose four entries include as many distinct values as possible."
+      ],
+      "grader": {
+        "kind": "coordination_matrix",
+        "version": "1",
+        "inputs": {
+          "allowed_payoffs": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "target_mixed_probability": 0.3333333333333333
+        }
+      },
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "derivation": "New six-value coordination construction with exact one-third mixing and twenty-eight enumerable valid matrices; absent from dev-v0.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "experiments/PREREG_diversity_selection_v1_2026-09-14.md"
+        ],
+        "claim_limit": "Finite public follow-through task; no empirical, novelty, or production claim."
+      }
+    },
+    {
+      "id": "DIV1-GT-COALITION-002",
+      "family": "game_theory",
+      "problem": "In the weighted voting game [8:5,4,3,2,1], players p,q,r,s,t have those weights and quota 8. Propose one minimal winning coalition: it reaches quota and removing any member makes it lose.",
+      "proposal_contract": "A proposal is exactly {\"coalition\":[distinct player IDs]}; array order is irrelevant.",
+      "diversity_directives": [
+        "Prefer a valid coalition with the fewest members and earliest player IDs.",
+        "Prefer a valid coalition with the most members.",
+        "Prefer a valid coalition that excludes player p."
+      ],
+      "grader": {
+        "kind": "minimal_winning_coalition",
+        "version": "1",
+        "inputs": {
+          "weights": {
+            "p": 5,
+            "q": 4,
+            "r": 3,
+            "s": 2,
+            "t": 1
+          },
+          "quota": 8
+        }
+      },
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "derivation": "New five-player quota game with five enumerable minimal winning coalitions; absent from dev-v0.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "experiments/PREREG_diversity_selection_v1_2026-09-14.md"
+        ],
+        "claim_limit": "Finite public follow-through task; no empirical, novelty, or production claim."
+      }
+    }
+  ],
+  "resource_limits": {
+    "planned_calls": 25,
+    "calls_serial": true,
+    "max_total_runtime_s": 850,
+    "max_raw_completion_bytes": 131072
+  },
+  "frozen_hashes": {
+    "model": "bad5501d2f2fd2155baadcac2e4810a80eb9fddab0c4fa0d184ff553d9dca57e",
+    "conditions": "cfab0ca461a2e9510dc67a3b8e1d1a29b132c44e168cc88121685202ddcd6563",
+    "tasks": {
+      "DIV1-GT-ASSURANCE-002": "a7416ef90e4f7a09dc6f20fda3ef13016a2fbc2a1eb2a4e11f628d66d2ab2e53",
+      "DIV1-GT-CONDORCET-002": "ba1b084bba3a37d8e05074f93072c5e900b8c6fabe6906fc89a495e5025cecd5",
+      "DIV1-GT-DELEGATION-002": "0adc034a4baca1c9c7b5697db357cc7e07e1adf9125051fe722ff59a3c7c9156",
+      "DIV1-GT-COORDINATION-002": "152e2f25a7adccc34eb9ee68d2bc1bd153043512fa192964d34da78268ad1f5a",
+      "DIV1-GT-COALITION-002": "85a54d23e7b6ea477c5bcc75cdc4f0dcc4d03e4b0a6cc0dc5b8c4c1cca20f4d0"
+    },
+    "structured_output": "66355e59942060373c934ffa6292377dfd829258a513349c3f9c0371a3899ded"
+  }
+}

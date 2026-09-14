@@ -13,13 +13,22 @@ from .graders import grade_proposal
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = REPO_ROOT / "experiments" / "diversity_selection_dev_v0_2026-09-14.json"
-SCHEMA_VERSION = "weekly-upgrade-diversity-selection/v1"
+V1_MANIFEST = REPO_ROOT / "experiments" / "diversity_selection_v1_2026-09-14.json"
+SCHEMA_VERSION = "weekly-upgrade-diversity-selection/v1"  # Frozen dev-v0 contract.
+SCAFFOLD_V1_SCHEMA_VERSION = "weekly-upgrade-diversity-selection/v2"
 TASK_IDS = (
     "DIV-GT-PURE-NASH-001",
     "DIV-D075-BALLOT-001",
     "DIV-D075-DELEGATION-001",
     "DIV-GT-COORDINATION-001",
     "DIV-GT-COALITION-001",
+)
+SCAFFOLD_V1_TASK_IDS = (
+    "DIV1-GT-ASSURANCE-002",
+    "DIV1-GT-CONDORCET-002",
+    "DIV1-GT-DELEGATION-002",
+    "DIV1-GT-COORDINATION-002",
+    "DIV1-GT-COALITION-002",
 )
 GRADER_KINDS = {
     "pure_nash",
@@ -223,16 +232,30 @@ def _validate_inputs(kind: str, inputs: Any, where: str) -> None:
         _integer(row["quota"], f"{where}.quota", minimum=1)
 
 
-def _validate_task(task: Any, index: int) -> None:
+def _validate_task(task: Any, index: int, *, scaffold_v1: bool) -> None:
+    expected = {"id", "family", "problem", "proposal_contract", "grader", "provenance"}
+    if scaffold_v1:
+        expected.add("diversity_directives")
     row = _keys(
         task,
-        {"id", "family", "problem", "proposal_contract", "grader", "provenance"},
+        expected,
         f"tasks[{index}]",
     )
     for key in ("id", "family", "problem", "proposal_contract"):
         _text(row[key], f"tasks[{index}].{key}")
     if row["family"] not in {"game_theory", "collective_choice"}:
         raise ManifestError(f"tasks[{index}].family is invalid")
+    if scaffold_v1:
+        directives = row["diversity_directives"]
+        if (
+            not isinstance(directives, list)
+            or len(directives) != 3
+            or any(not isinstance(value, str) or not value.strip() for value in directives)
+            or len(set(directives)) != 3
+        ):
+            raise ManifestError(
+                f"tasks[{index}].diversity_directives must contain three unique texts"
+            )
     grader = _keys(row["grader"], {"kind", "version", "inputs"}, f"tasks[{index}].grader")
     if grader["kind"] not in GRADER_KINDS or grader["version"] != "1":
         raise ManifestError(f"tasks[{index}].grader is unsupported")
@@ -258,28 +281,40 @@ def _validate_task(task: Any, index: int) -> None:
 
 
 def validate_manifest(document: Any) -> None:
+    if not isinstance(document, dict):
+        raise ManifestError("manifest must be an object")
+    schema_version = document.get("schema_version")
+    if schema_version not in {SCHEMA_VERSION, SCAFFOLD_V1_SCHEMA_VERSION}:
+        raise ManifestError("schema_version is unsupported")
+    scaffold_v1 = schema_version == SCAFFOLD_V1_SCHEMA_VERSION
+    expected_fields = {
+        "schema_version",
+        "suite_id",
+        "description",
+        "publication_class",
+        "claim_limits",
+        "model",
+        "conditions",
+        "ordering",
+        "tasks",
+        "resource_limits",
+        "frozen_hashes",
+    }
+    if scaffold_v1:
+        expected_fields |= {"scaffold_version", "structured_output"}
     manifest = _keys(
         document,
-        {
-            "schema_version",
-            "suite_id",
-            "description",
-            "publication_class",
-            "claim_limits",
-            "model",
-            "conditions",
-            "ordering",
-            "tasks",
-            "resource_limits",
-            "frozen_hashes",
-        },
+        expected_fields,
         "manifest",
     )
-    if manifest["schema_version"] != SCHEMA_VERSION:
-        raise ManifestError("schema_version is unsupported")
     _text(manifest["suite_id"], "suite_id")
     _text(manifest["description"], "description")
-    if manifest["publication_class"] != "public_synthetic_development":
+    expected_publication = (
+        "public_synthetic_followthrough"
+        if scaffold_v1
+        else "public_synthetic_development"
+    )
+    if manifest["publication_class"] != expected_publication:
         raise ManifestError("publication_class is invalid")
     if (
         not isinstance(manifest["claim_limits"], list)
@@ -290,6 +325,29 @@ def validate_manifest(document: Any) -> None:
     model = _keys(manifest["model"], {"backend", "served_name"}, "model")
     if model != {"backend": "vllm-gemma", "served_name": "gemma-4-26b-a4b"}:
         raise ManifestError("model must be the fixed Gemma baseline")
+    structured_output = None
+    if scaffold_v1:
+        if manifest["scaffold_version"] != "diversity-selection/v1":
+            raise ManifestError("scaffold_version is unsupported")
+        structured_output = _keys(
+            manifest["structured_output"],
+            {
+                "visible_channel",
+                "reasoning_channel",
+                "server_enforcement",
+                "local_parser",
+                "salvage",
+            },
+            "structured_output",
+        )
+        if structured_output != {
+            "visible_channel": "exactly_one_json_object",
+            "reasoning_channel": "separate_if_available",
+            "server_enforcement": "prompt_only_unqualified",
+            "local_parser": "strict_no_salvage/v1",
+            "salvage": "forbidden",
+        }:
+            raise ManifestError("structured_output contract drifted")
     conditions = manifest["conditions"]
     if not isinstance(conditions, list) or len(conditions) != 2:
         raise ManifestError("conditions must contain control and diverse")
@@ -313,26 +371,53 @@ def validate_manifest(document: Any) -> None:
         },
         "conditions[1]",
     )
-    if control != {
-        "id": "control",
-        "profile": "deterministic",
-        "seeds": [0],
-        "generation_calls": 1,
-        "max_tokens_per_call": 1280,
-        "timeout_s_per_call": 80,
-    }:
+    expected_control = (
+        {
+            "id": "control",
+            "profile": "deterministic",
+            "seeds": [503],
+            "generation_calls": 1,
+            "max_tokens_per_call": 1280,
+            "timeout_s_per_call": 80,
+        }
+        if scaffold_v1
+        else {
+            "id": "control",
+            "profile": "deterministic",
+            "seeds": [0],
+            "generation_calls": 1,
+            "max_tokens_per_call": 1280,
+            "timeout_s_per_call": 80,
+        }
+    )
+    if control != expected_control:
         raise ManifestError("control condition drifted")
-    if diverse != {
-        "id": "diverse_select",
-        "generation_profile": "explore",
-        "generation_seeds": [11, 29, 47],
-        "generation_max_tokens_per_call": 384,
-        "generation_timeout_s_per_call": 20,
-        "validator_profile": "deterministic",
-        "validator_seed": 0,
-        "validator_max_tokens": 128,
-        "validator_timeout_s": 20,
-    }:
+    expected_diverse = (
+        {
+            "id": "diverse_select",
+            "generation_profile": "explore",
+            "generation_seeds": [101, 211, 307],
+            "generation_max_tokens_per_call": 384,
+            "generation_timeout_s_per_call": 20,
+            "validator_profile": "deterministic",
+            "validator_seed": 401,
+            "validator_max_tokens": 128,
+            "validator_timeout_s": 20,
+        }
+        if scaffold_v1
+        else {
+            "id": "diverse_select",
+            "generation_profile": "explore",
+            "generation_seeds": [11, 29, 47],
+            "generation_max_tokens_per_call": 384,
+            "generation_timeout_s_per_call": 20,
+            "validator_profile": "deterministic",
+            "validator_seed": 0,
+            "validator_max_tokens": 128,
+            "validator_timeout_s": 20,
+        }
+    )
+    if diverse != expected_diverse:
         raise ManifestError("diverse condition drifted")
     if control["max_tokens_per_call"] != (
         len(diverse["generation_seeds"]) * diverse["generation_max_tokens_per_call"]
@@ -350,8 +435,9 @@ def validate_manifest(document: Any) -> None:
     if not isinstance(tasks, list):
         raise ManifestError("tasks must be an array")
     for index, task in enumerate(tasks):
-        _validate_task(task, index)
-    if tuple(task["id"] for task in tasks) != TASK_IDS:
+        _validate_task(task, index, scaffold_v1=scaffold_v1)
+    expected_task_ids = SCAFFOLD_V1_TASK_IDS if scaffold_v1 else TASK_IDS
+    if tuple(task["id"] for task in tasks) != expected_task_ids:
         raise ManifestError("task IDs or order drifted")
     resources = _keys(
         manifest["resource_limits"],
@@ -370,6 +456,8 @@ def validate_manifest(document: Any) -> None:
         "conditions": sha256_json(conditions),
         "tasks": {task["id"]: sha256_json(task) for task in tasks},
     }
+    if scaffold_v1:
+        expected_hashes["structured_output"] = sha256_json(structured_output)
     if manifest["frozen_hashes"] != expected_hashes:
         raise ManifestError("frozen hashes do not match literal inputs")
 
@@ -390,6 +478,8 @@ def load_manifest(path: str | Path = DEFAULT_MANIFEST) -> dict[str, Any]:
 
 
 def plan_dict(manifest: dict[str, Any]) -> dict[str, Any]:
+    control = manifest["conditions"][0]
+    diverse = manifest["conditions"][1]
     calls: list[dict[str, Any]] = []
     for task_index, task in enumerate(manifest["tasks"]):
         groups = ["control", "diverse_select"]
@@ -397,12 +487,34 @@ def plan_dict(manifest: dict[str, Any]) -> dict[str, Any]:
             groups.reverse()
         for condition in groups:
             if condition == "control":
-                specs = [("generate", 0, "deterministic", 1280, 80)]
+                specs = [
+                    (
+                        "generate",
+                        control["seeds"][0],
+                        control["profile"],
+                        control["max_tokens_per_call"],
+                        control["timeout_s_per_call"],
+                    )
+                ]
             else:
                 specs = [
-                    ("generate", seed, "explore", 384, 20)
-                    for seed in (11, 29, 47)
-                ] + [("validate", 0, "deterministic", 128, 20)]
+                    (
+                        "generate",
+                        seed,
+                        diverse["generation_profile"],
+                        diverse["generation_max_tokens_per_call"],
+                        diverse["generation_timeout_s_per_call"],
+                    )
+                    for seed in diverse["generation_seeds"]
+                ] + [
+                    (
+                        "validate",
+                        diverse["validator_seed"],
+                        diverse["validator_profile"],
+                        diverse["validator_max_tokens"],
+                        diverse["validator_timeout_s"],
+                    )
+                ]
             for role, seed, profile, max_tokens, timeout_s in specs:
                 sequence = sum(
                     row["task_id"] == task["id"]
@@ -423,7 +535,7 @@ def plan_dict(manifest: dict[str, Any]) -> dict[str, Any]:
                     }
                 )
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": manifest["schema_version"],
         "suite_id": manifest["suite_id"],
         "manifest_path": manifest["_path"],
         "manifest_sha256": manifest["_raw_sha256"],

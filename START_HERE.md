@@ -1,112 +1,121 @@
-# START HERE — a_bgt_rsi
+# Start here
 
-> **Read this first.** This is the single orientation document for the
-> repository. It tells you what the project is, where it stands, which
-> document answers which question, and where to go next.
+This is the shortest reliable orientation to `a_bgt_rsi`. It separates what is
+deployed, what is being prepared for v2, and what remains a historical record.
 
----
+## Read in this order
 
-## 1. What this is
+1. Read the user's current request and your assigned scope.
+2. Read checkout-local `AGENTS.md` for Codex repository authority or
+   [`CLAUDE.md`](CLAUDE.md) for Claude's operating contract.
+3. Read this file and the newest relevant note under
+   [`human/sessions/`](human/sessions/).
+4. Read [`LOOP_V2.md`](LOOP_V2.md) for the v2 foundation and subsequent study work.
+5. Read [`ARCHITECTURE.md`](ARCHITECTURE.md) for the deployed system and data
+   boundaries.
+6. Consult [`DECISIONS.md`](DECISIONS.md) when a choice or apparent conflict
+   matters. The most recent accepted decision wins over the older decision it
+   supersedes.
 
-`a_bgt_rsi` is a self-hosted research apparatus on a single NVIDIA
-DGX Spark. The goal: amplify one human researcher's work in game
-theory, behavioral game theory, and learning in games. The apparatus —
-not any particular finding — is the research contribution under test.
+`LOOP_V1.md`, `LOOP_V0.md`, `PROJECT_CONTEXT.md`, and the v5 diagrams are
+valuable historical inputs. They contain dated implementation claims and are
+not a substitute for current code, validated receipts, or a live health check.
 
-The canonical specification is in the system diagrams under
-[`docs/diagrams/`](docs/diagrams/) (`architecture_v5.svg`,
-`intelligence_loop_v5.svg`). Read them. The prose elaboration is
-[`ARCHITECTURE.md`](ARCHITECTURE.md); the intellectual program is
-[`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md).
+## Current state — 2026-09-14
 
-Field of application: game theory, behavioral game theory, learning
-in games. The system is a workflow amplifier, not a frontier-lab
-automation system, not a recursive self-improver, not a theorem
-prover.
+- One DGX Spark hosts two resident local endpoints: Gemma on `:8000` and
+  Qwen3.8 on `:8001`.
+- Nara runs as an event-driven user service. Its coordinator is bounded by a
+  lock, ratification sentinel, human pause file, unified-memory preflight, and
+  daily action budget. Hourly cron uses the same lock and gate ladder.
+- Research claims move through the L0-L5 evidence ladder. Only L4+ can surface;
+  only an explicit human verdict earns L5.
+- The weekly upgrade controller runs Sunday at 05:30 UTC in review-only mode.
+  It may use two subscription frontier sessions to propose and challenge one
+  bounded hypothesis. It cannot promote production automatically.
+- Named generation profiles exist as explicit evaluation arms. Legacy calls
+  that do not select a profile retain their existing deterministic behavior.
+- The v2 foundation adds immutable campaign identity, explicit lifecycle receipts,
+  legacy isolation, and a measured research funnel. Runtime activation is an
+  exact hash-bound pointer; consult `/benchmarks` and
+  `run_state/v2_preparation/deployment_receipt.json` for adoption evidence.
+- The prepared first campaign is `v2-agentic-game-theory-20260914`. It asks how
+  individual versus shared payoff objectives and access to player-identified
+  interaction history affect cooperation and utility-consistent behavior in
+  repeated public-goods games among model agents. Its 324 CPU records are 81
+  scripted-policy assignments under four objective/observation invariance
+  conditions, not 324 independent behavior samples. They made no model calls;
+  the narrower one-model-seat study remains gated.
 
----
+## Truth hierarchy
 
-## 2. Where the project stands
+Use evidence in this order for the question it can answer:
 
-For the current build plan and executable sequencing, see
-[`LOOP_V1.md`](LOOP_V1.md). For today's state across workstreams and the
-prior-session handoff, read the most recent note in
-[`human/sessions/`](human/sessions/) (indexed in
-[`human/sessions/INDEX.md`](human/sessions/INDEX.md)).
+1. **Explicit human instruction** sets task, research, publication, and runtime
+   authority.
+2. **Operating contracts** (`AGENTS.md`, `CLAUDE.md`) define session and
+   maintenance boundaries.
+3. **Latest accepted decision** in `DECISIONS.md` defines design intent.
+4. **Current code plus validated immutable receipts** defines what was built or
+   recorded.
+5. **Live read-only checks** define what is running now.
+6. **Architecture and loop documents** explain the system; dated historical
+   plans do not override evidence above them.
 
-The operating model: one primary session at a time, plus at most one
-concurrent UI session. The previous track-A/B/C/D / autonomy-tier
-framework was retired on 2026-05-26 (see [`DECISIONS.md`](DECISIONS.md)
-D-030); the retired docs live under [`archive/`](archive/).
+Do not convert missing evidence into zero, a timeout into a failed scientific
+claim, an operator summary into ground truth, or an L4 finding into a human
+validation.
 
----
-
-## 3. Document map
-
-Canonical doc map: see the "Where things live" table in
-[`CLAUDE.md`](CLAUDE.md).
-
-**Authority.** [`docs/diagrams/`](docs/diagrams/) is canonical for the
-system spec — when prose disagrees with the diagrams, the diagrams
-win. [`CLAUDE.md`](CLAUDE.md) is canonical for operating rules.
-[`DECISIONS.md`](DECISIONS.md) records why — the most recent decision
-wins over an older one it supersedes. [`ARCHITECTURE.md`](ARCHITECTURE.md)
-is canonical for version pins.
-
----
-
-## 4. Inviolate rules (the short version)
-
-The full text is in [`CLAUDE.md`](CLAUDE.md). The rules that never bend:
-
-1. **No Block 1 help.** Block 1 readings are human-only.
-2. **Version pins are verbatim** (see `ARCHITECTURE.md` §2).
-3. **Human gates are blocking.**
-4. **Validations are never silently coerced.**
-5. **State file is authoritative on resume.**
-6. **Logging is mandatory.**
-7. **Fallbacks are explicit, logged, and time-capped.**
-8. **Code-generation is bounded** (resist abstraction; ~100-line budget
-   for wrapper-style components).
-9. **The retrospective and research-journal prose are the human's.**
-10. **`MOCK_LLM` discipline** — strip the env var for real runs.
-
----
-
-## 5. How to start a session
-
-### Primary session
+## Session start checklist
 
 ```bash
-env -u MOCK_LLM claude
+cd /home/decross1/projects/a_bgt_rsi
+git status --short
+git branch --show-current
+git log -1 --oneline
+ui/scripts/ui-services.sh status
+systemctl --user show nara-daemon.service \
+  -p ActiveState -p SubState -p MainPID -p ExecMainStartTimestamp
+curl -fsS http://127.0.0.1:8700/api/health
+curl -fsS http://127.0.0.1:8000/v1/models
+curl -fsS http://127.0.0.1:8001/v1/models
 ```
 
-Then read in order: [`CLAUDE.md`](CLAUDE.md) →
-[`research program`](docs/sources/research_program_v2.md) → [`LOOP_V1.md`](LOOP_V1.md) →
-the most recent `human/sessions/YYYY-MM-DD.md`. If no session note
-exists for today, the first job is to agree on one with the human and
-write it.
+Then inspect the files and receipts relevant to the task. Preserve all unrelated
+working-tree changes. Do not restart services merely to establish status.
 
-### UI session (concurrent, optional)
+For a new Codex worktree, carry forward the canonical checkout's `.codex`
+configuration, `AGENTS.md`, trust entry, and current rules before launching the
+session. Standing Git authority covers ordinary repository delivery; it does
+not grant a research verdict, unrelated deployment, scientific publication, model cutover, live
+trading, or removal of a human pause.
 
-```bash
-env -u MOCK_LLM claude --worktree ui-session
-```
+## Where to look
 
-Then read [`agent/prompts/ui_session.md`](agent/prompts/ui_session.md).
-Writes only to `ui/` + `ui_plan.md`. Prints `UI READY TO MERGE` when
-done.
+| Need | Start here |
+| --- | --- |
+| Current research and next evidence rung | Local UI `/ladder` |
+| A full finding or iteration record | Local UI `/dossier` or `/experiments` |
+| Weekly benchmark and pipeline progression | Local UI `/benchmarks` |
+| Current operational state | Local UI `/` and `/development` |
+| Model calls and execution trace | Local UI `/model-io` and `/cycles` |
+| Pause, restart, or recovery | [`docs/v2/OPERATOR_GUIDE.md`](docs/v2/OPERATOR_GUIDE.md) |
+| Deployed components and data contracts | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| Current v2 goal and activation bar | [`LOOP_V2.md`](LOOP_V2.md) |
+| Current implementation envelope | [`docs/v2/IMPLEMENTATION_PLAN.md`](docs/v2/IMPLEMENTATION_PLAN.md) |
+| Prior research and documents | [`docs/v2/RESEARCH_ARCHIVE.md`](docs/v2/RESEARCH_ARCHIVE.md) |
+| Why an architecture choice exists | [`DECISIONS.md`](DECISIONS.md) |
 
----
+## What to do next
 
-## 6. Out of scope
+Work the smallest evidence-backed unit that advances the assigned objective.
+Keep model, runtime, inference-policy, scaffold, and data-model changes
+separable so a measured gain can be attributed. Run the checks appropriate to
+the change and write a durable receipt when the change affects runtime or
+scientific evidence.
 
-- Polymarket live trading (design-only until CFTC compliance work).
-- Ungated continuous operation. D-063 permits the bounded hourly coordinator
-  and event-driven daemon only behind the full gate ladder and human kill switch.
-- Fine-tuning / training runs.
-- Additional generator models. Gemma 4 26B-A4B-NVFP4 is the sole generator/PI;
-  Qwen (`vllm-qwen`) is the standing independent skeptic, and frontier CLIs are
-  falsifiers only.
-- The retired track/tier framework — references are in `archive/`,
-  but the active model is one primary + one UI session.
+Distinguish source implementation, campaign runtime activation, controlled
+model-study execution, and validated scientific outcomes. For an ordinary
+campaign iteration verify the active campaign hash and existing research gates.
+For a controlled model study additionally verify its own frozen execution
+manifest, literature/novelty checks, analysis plan, and resource reservation.

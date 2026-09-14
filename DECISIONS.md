@@ -3852,3 +3852,16 @@ none and keep the finding on the record; (iv) an owner-argued alternative.
 Note the flood risk in (i): 20 clusters are open today and 13 of them are
 already blocked at L1 on the critic, so 69 reopens would land on a gate
 that cannot currently pass anything.
+
+
+## V2 preparation — 2026-09-14
+
+The owner authorized repository-wide v2 preparation and retained game theory,
+agent behavior and agentic game theory as the research domain. The implementation
+and evidence record is [LOOP_V2.md](LOOP_V2.md), with
+[v0/v1 lessons](docs/v2/V0_V1_LEARNINGS.md), an
+[archive receipt and scope](docs/v2/RESEARCH_ARCHIVE.md), and the
+[operator guide](docs/v2/OPERATOR_GUIDE.md). Existing historical decisions remain
+unchanged. This maintenance decision does not promote a model/runtime, relax
+research gates, convert local CPU controls into validated findings, or authorize
+paid frontier API calls. The weekly Spark cap remains 120 minutes.

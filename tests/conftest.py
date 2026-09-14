@@ -10,21 +10,60 @@
   (the norm) are unaffected; tests that monkeypatch the same attributes
   themselves simply win inside their own scope. The invariant this buys:
   a full pytest run adds ZERO rows to run_state/, logs/, memory/.
+- `_canonical_corpus_gate`: tests marked ``canonical_corpus`` run when their
+  ignored operator-local inputs exist and otherwise skip in a clean checkout.
+  To require and execute all five host checks, run
+  ``REQUIRE_CANONICAL_CORPUS=1 MOCK_LLM=1 python -m pytest -q`` with the named
+  corpus files materialized; a missing file is then a test failure.
 """
 from __future__ import annotations
+
+import os
+from pathlib import Path
 
 import pytest
 
 from agent_wrapper import worker_activity
-from orchestrator import active_run, coordinator, coordinator_cycle_log
-from orchestrator import finding_promotion
-from orchestrator import finding_session, iteration_cache, nara
-from orchestrator import restate_skeptic
-from orchestrator import subagent
-from orchestrator import skill_signals
+from orchestrator import (
+    active_run,
+    coordinator,
+    coordinator_cycle_log,
+    finding_promotion,
+    finding_session,
+    iteration_cache,
+    nara,
+    restate_skeptic,
+    skill_signals,
+    subagent,
+    submitted_run,
+    todo_cli,
+    topicality,
+    topicality_skeptic,
+)
 from orchestrator import runtime as runtime_mod
-from orchestrator import submitted_run, todo_cli, topicality
-from orchestrator import topicality_skeptic
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "canonical_corpus(*paths): check an operator-local ignored corpus when "
+        "available; REQUIRE_CANONICAL_CORPUS=1 makes missing inputs fail",
+    )
+
+
+@pytest.fixture(autouse=True)
+def _canonical_corpus_gate(request):
+    """Keep private-corpus checks runnable without making clean clones fail."""
+    marker = request.node.get_closest_marker("canonical_corpus")
+    if marker is None:
+        return
+    missing = [str(path) for raw in marker.args if not (path := Path(raw)).is_file()]
+    if not missing:
+        return
+    detail = "operator-local canonical corpus missing: " + ", ".join(missing)
+    if os.environ.get("REQUIRE_CANONICAL_CORPUS") == "1":
+        pytest.fail(detail, pytrace=False)
+    pytest.skip(detail)
 
 
 @pytest.fixture

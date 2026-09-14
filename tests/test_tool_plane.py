@@ -16,7 +16,6 @@ from fastapi.testclient import TestClient
 
 from orchestrator import tool_plane
 
-
 # A representative assess_state snapshot (shape per coordinator.assess_state's
 # docstring). The stub records call count so we can prove /health does NOT
 # trigger an assess (no Chroma load on a liveness ping).
@@ -157,7 +156,7 @@ def _run_client(*, in_flight=False, record=None):
         return record if record is not None else _FAKE_RECORD
 
     app = tool_plane.create_app(
-        assess=lambda: {},  # never used by the run endpoint
+        assess=dict,  # never used by the run endpoint
         run_iteration=_stub_run,
         iteration_in_flight=lambda: in_flight,
     )
@@ -435,7 +434,9 @@ def test_mcp_unknown_tool_and_method_yield_jsonrpc_errors():
     assert out2["error"]["code"] == -32601
 
 
-# ── D-043 run-log attribution regression (landed 2026-06-10) ────────────────
+# ── D-043 run-log attribution (2026-06-10 closeout) ─────────────────────────
+# This behavior has landed; failure must now fail the suite.
+
 def test_run_tool_attributes_run_log_rows_to_nemoclaw_agent():
     # POST-diff behavior: while the handler runs run_iteration, the runtime's
     # ContextVar identity is "nemoclaw_agent", so every log_event the
@@ -454,7 +455,7 @@ def test_run_tool_attributes_run_log_rows_to_nemoclaw_agent():
         return _FAKE_RECORD
 
     app = tool_plane.create_app(
-        assess=lambda: {},
+        assess=dict,
         run_iteration=_stub_run,
         iteration_in_flight=lambda: False,
     )
@@ -479,7 +480,6 @@ def test_run_tool_attributes_run_log_rows_to_nemoclaw_agent():
 @pytest.fixture
 def _seam_tmp(tmp_path, monkeypatch):
     """Self-isolate every path the seam touches (no reliance on conftest)."""
-    import threading as _threading
 
     from orchestrator import active_run, submitted_run
 

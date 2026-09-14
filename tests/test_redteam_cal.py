@@ -33,6 +33,7 @@ from orchestrator.subagent import SubAgentResult
 
 FIXTURES_PATH = REPO_ROOT / "bench" / "redteam_cal" / "fixtures.jsonl"
 DRIVER_PATH = REPO_ROOT / "bench" / "redteam_cal" / "driver.py"
+CANONICAL_LOOP_MEMORY = REPO_ROOT / "memory" / "loop_memory.jsonl"
 
 
 @pytest.fixture(scope="module")
@@ -130,6 +131,7 @@ EXPECTED_SOURCE_IDS = {
 }
 
 
+@pytest.mark.canonical_corpus(str(CANONICAL_LOOP_MEMORY))
 def test_banned_provenance_exclusions(manifest):
     source_ids = {
         r["provenance"]["source_id"]
@@ -140,7 +142,7 @@ def test_banned_provenance_exclusions(manifest):
     # Teeth: the banned records' actual hypothesis TEXTS are absent —
     # no exp-null / Verdict=NO claim rides in under any label.
     lm = {}
-    with (REPO_ROOT / "memory" / "loop_memory.jsonl").open() as fh:
+    with CANONICAL_LOOP_MEMORY.open() as fh:
         for line in fh:
             line = line.strip()
             if line:
@@ -158,6 +160,7 @@ def test_banned_provenance_exclusions(manifest):
     assert not (fixture_texts & banned_texts)
 
 
+@pytest.mark.canonical_corpus(str(CANONICAL_LOOP_MEMORY))
 def test_resolution_reproducibility_determinism(manifest):
     # Fresh resolution from the source stores == the frozen file, twice.
     # Era-bound since 2026-08-19: after the D-076 swap the newly-permissive

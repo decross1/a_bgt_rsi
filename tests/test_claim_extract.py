@@ -184,6 +184,7 @@ def _real_claims():
     return rows
 
 
+@pytest.mark.canonical_corpus(str(SURFACED))
 def test_real_leaked_rows_detected_and_repaired():
     rows = _real_claims()
     assert set(rows) == {"sf-iter-2026-06-13-001", "sf-iter-2026-08-04-001"}
@@ -196,6 +197,7 @@ def test_real_leaked_rows_detected_and_repaired():
         rows["sf-iter-2026-08-04-001"]["claim"])
 
 
+@pytest.mark.canonical_corpus(str(SURFACED))
 def test_real_row_full_extract():
     obj = _real_claims()["sf-iter-2026-06-13-001"]
     claim = ce.extract_claim({
