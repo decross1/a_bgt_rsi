@@ -5,6 +5,60 @@ Prepared 2026-09-14. Entry point for the implementation built from the
 [Codex research](research/weekly-upgrade-2026-09-14/CODEX_RESEARCH_HANDOFF.md).
 The owner directed Codex to proceed and use both reviews as evidence.
 
+## Owner decisions recorded 2026-09-14
+
+**Research scope:** “Keep game theory; correct the generated topics.” Retain
+game theory, behavioral game theory and learning in games, including the
+already-ratified D-075 delegation, liquid-democracy, social-choice and sortition
+extension. Collaborative ML is relevant only when the actual question concerns
+strategic behavior, incentives or collective choice. Adding game vocabulary to
+an infrastructure/performance claim does not make it in-domain. Correct the
+upstream topic/planning instructions; keep R0 and its scientific criteria.
+
+**Budget:** “Subscription-only frontier sessions, with up to 2 Spark GPU-hours
+per week.” This sets the design limits; it starts no paid calls or jobs.
+Use authenticated subscription CLI sessions; no metered API fallback. The
+current review permits at most two attempts (Codex proposal, then Claude
+adversary), with no retries; an early failure can prevent the second call. The
+existing agenda also permits up to two, so running both workflows can use up to
+four subscription attempts. Both must be visible in the weekly usage report;
+this decision does not set a numeric subscription-session cap or activate cron.
+
+Proposed accounting for the **shared 120 Spark GPU-minute weekly ceiling**:
+
+- One ISO week, Monday 00:00 UTC through the next Monday, with no carryover.
+  Charge the one physical Spark's reserved elapsed time once, including both
+  resident models; do not grant separate allowances to each model, arm or run.
+- Count all upgrade-triggered GPU work: preflight generations, warmups, trials,
+  failed/time-out requests, retries, challenger loading and recovery. Frontier
+  subscription analysis and CPU-only planning use zero Spark GPU minutes.
+- Treat this as a separate upgrade allowance from D-063's daily coordinator
+  activity-unit ledger. Both still require physical-resource coordination;
+  a separate accounting allowance does not create an idle resource window.
+- Reserve against the remaining weekly balance before dispatch. Record reserved,
+  consumed and released time; charge uncertain interrupted work conservatively
+  before any retry. For the initial design, defer any run whose maximum reserved
+  duration could cross the UTC week boundary; do not borrow from next week. Multiple
+  output directories and resumed sessions must share the same accounting.
+- A normal design allocation is 15 minutes of canaries, 90 minutes for one
+  admitted trial and 15 minutes for GPU-using preflight/recovery. This is an
+  allocation, not a measured runtime promise. A larger preregistered panel
+  replaces that allocation; it never adds another allowance.
+
+The controller's `--max-gpu-minutes` validates one proposed experiment card.
+It does **not** reserve time, execute a trial, enforce a cumulative weekly
+ceiling or coordinate a GPU lease. The evaluator's per-run deadline also
+excludes external preflight. Shared accounting/dispatch remains implementation
+work; until then, any authorized supervised run needs a recorded manual
+reservation and remaining balance. Monthly/deeper/runtime campaigns share
+this ceiling unless an additional budget is explicitly authorized.
+
+The [Qwen pilot](../experiments/PREREG_weekly_qwen_effort_pilot_2026-09-14.md)
+reserves 112.5 minutes and leaves only 7.5 minutes for all other charged work.
+It replaces that week's panel and must be deferred if the full reservation plus
+required overhead cannot fit. The next scientific diagnostic instead targets
+the upstream game-theory topic mismatch before optimizing Qwen effort.
+
 ## Delivered scope
 
 - Model-aware generation profiles on sync, async, wrapper tool loops, Nara,
@@ -24,6 +78,13 @@ The owner directed Codex to proceed and use both reviews as evidence.
   cache for exact completed frontier vetoes.
 - Suppression of already-handled machine follow-up topics using existing
   consumption/dispatch receipts, plus correct planned-topic source attribution.
+- Planner/hypothesis prompt corrections: suggested paper titles are unvetted;
+  prioritize substantive game-theory/collective-choice questions and preserve
+  verbatim specificity only within scope. The evaluate-as-stated bypass remains.
+
+The [topic-scope diagnostic](../experiments/PREREG_topic_scope_repair_2026-09-14.md)
+defines the paired measurement still needed for that prompt change. Code
+compatibility checks do not establish better generated topics or R0 accuracy.
 
 The [completion tracker](research/weekly-upgrade-2026-09-14/UNBLOCKING_PLAN.md)
 separates delivered code from remaining experiments and activation. Its first
@@ -110,7 +171,8 @@ Planning performs no generation and creates no output files:
 ```
 
 For an actual run, first freeze the two arms, caps and task set in a separate
-manifest. Give each run a fresh output directory outside live ledgers:
+manifest and reserve its complete cost within the shared weekly allowance
+above. Give each run a fresh output directory outside live ledgers:
 
 ```bash
 env -u MOCK_LLM .venv-chroma/bin/python -m bench.weekly_upgrade_eval.runner \
@@ -185,6 +247,9 @@ not claim two independent proposals or a four-pass debate. Actual vendor/model
 metadata is retained when the CLI exposes it; absent resolved model IDs remain
 unknown. CLI subscriptions are used, with API-key routes removed. The configured
 model is recorded; the controller does not claim an alias is the newest model.
+The example's 30-minute card ceiling is a per-trial proposal bound, not another
+30 minutes granted outside the weekly 120-minute total. A fresh review output
+directory does not reset the weekly balance.
 
 Only the declared output directory receives review artifacts. Completed runs
 can be reopened without repeating provider calls. Interrupted call reservations

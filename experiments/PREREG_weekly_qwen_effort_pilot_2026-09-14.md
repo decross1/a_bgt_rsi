@@ -68,6 +68,23 @@ for the three repeats. There are twelve per-repeat task deadlines of at most
 180 seconds; the remaining allowance covers harness overhead. Do not run the
 three repeats concurrently. These are bounds, not a forecast of actual use.
 
+**Budget annotation, 2026-09-14 (no changes to arms or manifest hashes):** the
+owner chose subscription-only frontier sessions and a design ceiling of
+120 Spark GPU-minutes per week. This pilot replaces that week's regular panel;
+112.5 minutes leaves at most **7.5 minutes** for GPU-using preflight, warmups,
+recovery and any other upgrade work. All three repeats draw from one weekly
+balance. Do not start unless the full remaining pilot reservation plus required
+overhead fits the available balance. Defer the pilot if it does not fit; do not
+shorten an arm, drop a seed or pool partial weeks after seeing outcomes.
+No metered frontier call is part of this pilot. The budget answer does not
+start the experiment or a schedule.
+
+The runner's `--runtime-budget-s` is a per-run limit; it does not enforce the
+shared weekly allowance and excludes external preflight. Record a manual
+reservation/usage receipt for any supervised execution until shared accounting
+exists. Scope correction now takes priority: the owner confirmed game theory,
+so first test the upstream generated-topic mismatch without weakening R0.
+
 Before calls verify both endpoints' queues, active workload and memory margin.
 Target at least 20 GiB MemAvailable throughout. Do not stop production or load
 a third server. Defer a run when production needs the same resource. The
