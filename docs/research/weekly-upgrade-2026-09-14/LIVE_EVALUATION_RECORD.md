@@ -179,3 +179,40 @@ terminal result and canonical budget ledger stayed byte-identical. It made
 zero new model calls and charged zero additional time. The external
 `topic-scope-resume-proof.json` records these hashes; a failed scientific or
 protocol result is not silently retried by resume.
+
+## First complete manual weekly review: revision required
+
+The new cycle passed readiness from the immutable `0e498f9` measurement
+checkout. It refreshed eight configured primary sources and completed both
+subscription review attempts. Codex requested `gpt-6-astra` and returned in
+95.101 seconds; its receipt provides no resolved model IDs. Claude requested
+`claude-opus-5`, returned in 100.240 seconds, and reports that model plus
+`claude-haiku-4-5-20251001` in CLI usage metadata.
+
+Claude returned `revise`; the review is **`REVISION_REQUIRED`** and the cycle
+is **`REVIEW_COMPLETE`**. The card was not admitted, no local trial started,
+and no Spark reservation was consumed. Both provider attempts and the
+unchanged rejected report remain under
+`a_bgt_rsi_weekly_upgrade_runs/2026-W38/`.
+
+The review exposed a real snapshot defect: executable entries supplied arm
+IDs and caps but omitted their fixed settings. The proposal consequently
+could not name a concrete difference. It also proposed a semantic repair
+pass rate without a precise denominator or an executable independent grader.
+The corrected snapshot supplies actual public arm settings, ordering,
+resource limits, preregistration text and the distinction between local
+objective grading and topic outputs requiring independent blind annotations.
+
+Other objections are useful limits rather than proof of implementation
+failures. The topic matrix is deliberately reused public development data;
+it cannot establish held-out scientific benefit. The existing dispatcher
+already interleaves the fixed matrix, takes the coordinator/GPU locks,
+validates effective call settings, and gives the evaluator 2,370 seconds
+inside a 2,400-second reservation. The original topic diagnostic had no
+timeout; that failure occurred in the separate Qwen pilot.
+
+The previously preregistered v2 planner diagnostic remains a separate manual
+development measurement, with explicit operator admission and one separately
+budgeted blind-annotation call. It is not execution of the rejected weekly
+card. Its first two launch attempts met the occupied ordinary coordinator
+lock before any reservation or model call; both refusal logs are preserved.

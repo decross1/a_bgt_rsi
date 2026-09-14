@@ -750,6 +750,23 @@ def test_explicit_review_target_is_snapshot_bound_and_preserves_adversarial_reje
         wu.build_snapshot(repo, now=NOW, review_target_manifest="arbitrary-command.sh")
 
 
+def test_registered_review_inputs_expose_actual_arms_and_grading_boundary():
+    manifests = {row["path"]: row for row in wu._evaluation_manifests(wt.ROOT)}
+    for name in ("topic_scope_repair_v2_2026-09-14.json",
+                 "weekly_upgrade_game_science_dev_v0_2026-09-14.json"):
+        path = f"experiments/{name}"
+        document = json.loads((wt.ROOT / path).read_text())
+        execution = manifests[path]["execution"]
+        assert execution["arm_settings"] == document["arms"]
+        assert execution["resource_limits"] == document["resource_limits"]
+        assert execution["ordering"] == document["ordering"]
+    topic = manifests["experiments/topic_scope_repair_v2_2026-09-14.json"]["execution"]
+    assert topic["semantic_grading"] == "independent_blind_annotations_required_after_transport"
+    prereg = wu._snapshot_file(wt.ROOT, "experiments/PREREG_weekly_upgrade_game_science_dev_v0_2026-09-14.md")
+    assert "one seed" in prereg["evidence_excerpt"]
+    assert "no result" in prereg["evidence_excerpt"].lower()
+
+
 def _write_canonical(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(wu._canonical(value) + b"\n")

@@ -117,6 +117,9 @@ SNAPSHOT_FILES = (
     "bench/critic_cal/manifest.jsonl",
     "bench/redteam_cal/fixtures.jsonl",
     "bench/readjudication/manifest.jsonl",
+    "experiments/PREREG_topic_scope_repair_v2_2026-09-14.md",
+    "experiments/PREREG_weekly_upgrade_game_science_dev_v0_2026-09-14.md",
+    "experiments/PREREG_weekly_qwen_effort_pilot_2026-09-14.md",
 )
 
 EVAL_MANIFEST_FILES = (
@@ -124,6 +127,7 @@ EVAL_MANIFEST_FILES = (
     "experiments/topic_scope_repair_2026-09-14.json",
     "experiments/topic_scope_repair_v2_2026-09-14.json",
     "experiments/weekly_upgrade_game_science_dev_v0_2026-09-14.json",
+    "experiments/weekly_context_capability_v1_2026-09-14.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_17.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_29.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_43.json",
@@ -135,6 +139,9 @@ EVAL_MANIFEST_FILES = (
 _FULL_TEXT_FILES = {
     "AGENTS.md", "cron/serve-models.sh", "run_state/vllm_image.digest",
     "agent_wrapper/generation_policy.py",
+    "experiments/PREREG_topic_scope_repair_v2_2026-09-14.md",
+    "experiments/PREREG_weekly_upgrade_game_science_dev_v0_2026-09-14.md",
+    "experiments/PREREG_weekly_qwen_effort_pilot_2026-09-14.md",
 }
 _KEYWORDS = (
     "D-061", "D-066", "D-072", "D-074", "D-076", "frontier",
@@ -425,6 +432,19 @@ def _evaluation_manifests(repo_root: Path) -> list[dict]:
                     "declared_attempts": plan["declared_attempts"],
                     "arm_ids": plan["arm_ids"],
                     "complete_fixture_set_required": True,
+                    # Reviewers need the actual fixed comparison, not merely
+                    # arm labels. These are public registered inputs, never
+                    # live completions, hidden answers or arbitrary log text.
+                    "arm_settings": payload.get("arms", []),
+                    "shared_settings": payload.get("settings"),
+                    "ordering": payload.get("ordering"),
+                    "publication_class": payload.get("publication_class", "public_development"),
+                    "claim_limits": payload.get("claim_limits", []),
+                    "resource_limits": payload.get("resource_limits"),
+                    "semantic_grading": (
+                        "independent_blind_annotations_required_after_transport"
+                        if plan["kind"] == "topic_scope" else "local_objective_graders"
+                    ),
                 }
         catalog.append(entry)
     return catalog

@@ -41,6 +41,7 @@ TRIALS = {
     "experiments/topic_scope_repair_2026-09-14.json": ("topic_scope", 2400),
     "experiments/topic_scope_repair_v2_2026-09-14.json": ("topic_scope", 2400),
     "experiments/weekly_upgrade_game_science_dev_v0_2026-09-14.json": ("portfolio", 2310),
+    "experiments/weekly_context_capability_v1_2026-09-14.json": ("objective", 1230),
 }
 ENDPOINTS = ("http://127.0.0.1:8000", "http://127.0.0.1:8001")
 RESIDENT_CONTAINERS = ("vllm-gemma4", "vllm-qwen")
@@ -49,6 +50,7 @@ KILL_GRACE_S = 5
 SUPERVISION_MARGIN_S = 10
 DEPENDENCY_PATHS = (
     "agent_wrapper", "bench/weekly_upgrade_eval", "bench/weekly_upgrade_portfolio",
+    "bench/weekly_upgrade_context",
     "orchestrator/coordinator_actions.py", "orchestrator/weekly_upgrade_portfolio_receipt.py",
     "orchestrator/weekly_upgrade_trial.py", "orchestrator/weekly_upgrade_budget.py",
     "orchestrator/weekly_upgrade.py", "orchestrator/weekly_upgrade_cycle.py",
