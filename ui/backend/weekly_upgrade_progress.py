@@ -16,7 +16,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
+import stat
+import sys
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta, timezone
@@ -24,6 +27,15 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPOSITORY_ROOT) not in sys.path:
+    # The deployed uvicorn process starts in ``ui/``.  Add the repository
+    # package root once so this read-only projection uses the same evidence
+    # ladder implementation as the research loop.
+    sys.path.insert(0, str(_REPOSITORY_ROOT))
+
+from orchestrator.research_pipeline_progress import project_research_pipeline
 
 DEFAULT_CANONICAL_ROOT = Path("/home/decross1/projects/a_bgt_rsi")
 DEFAULT_UPGRADE_RUNS_ROOT = Path("/home/decross1/projects/a_bgt_rsi_upgrade_runs")
@@ -60,7 +72,18 @@ _KNOWN_RUN_SCHEMAS = {
     "weekly-upgrade-eval-run/v1",
     "weekly-upgrade-game-science-run/v1",
     "weekly-upgrade-diversity-selection-run/v1",
+    "weekly-upgrade-role-effort-run/v1",
+    "weekly-upgrade-historical-repair-run/v1",
     "topic-scope-run/v1",
+}
+
+_PLAN_ARM_COUNTS = {
+    "objective": 2,
+    "diversity": 2,
+    "portfolio": 2,
+    "topic_scope": 2,
+    "role_effort": 3,
+    "historical_repair": 1,
 }
 
 _LABELS = {
@@ -68,6 +91,8 @@ _LABELS = {
     "weekly_context_capability_v1": "Resident context capability",
     "weekly_upgrade_game_science_dev_v0": "Game, science & coding portfolio",
     "diversity_selection_dev_v0": "Diversity + selection",
+    "weekly_role_effort_v1": "Role-aware reasoning effort",
+    "weekly_historical_coding_panel_v2": "Public historical repair baseline",
     "topic_scope_repair": "Topic scope repair",
     "topic_scope_repair_v2": "Topic scope repair v2",
 }
@@ -134,27 +159,54 @@ def _safe_file(
     label: str,
     maximum: int = MAX_JSON_BYTES,
 ) -> tuple[dict[str, Any], bytes]:
-    """Read a regular file whose entire resolved path remains under ``root``."""
+    """Read one bounded regular file beneath ``root`` from a single fd."""
     trusted_root = _root(root, label=f"{label} root", required=True)
     assert trusted_root is not None
     lexical = path.expanduser().absolute()
     try:
-        lexical.relative_to(trusted_root)
+        relative = lexical.relative_to(trusted_root)
     except ValueError as exc:
         raise ProjectionError(f"{label} escapes its allowed root") from exc
-    if (
-        lexical.is_symlink()
-        or not lexical.is_file()
-        or lexical.resolve() != lexical
-    ):
-        raise ProjectionError(f"{label} is missing, redirected, or not regular")
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise ProjectionError(f"{label} has an invalid relative path")
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    cloexec = getattr(os, "O_CLOEXEC", 0)
+    directory_flags = os.O_RDONLY | cloexec | nofollow | os.O_DIRECTORY
+    directories: list[int] = []
+    file_descriptor: int | None = None
     try:
-        size = lexical.stat().st_size
+        directory = os.open(trusted_root, directory_flags)
+        directories.append(directory)
+        for part in relative.parts[:-1]:
+            directory = os.open(part, directory_flags, dir_fd=directory)
+            directories.append(directory)
+        file_descriptor = os.open(
+            relative.parts[-1], os.O_RDONLY | cloexec | nofollow,
+            dir_fd=directory,
+        )
+        size = os.fstat(file_descriptor).st_size
+        if not stat.S_ISREG(os.fstat(file_descriptor).st_mode):
+            raise ProjectionError(f"{label} is not a regular file")
         if size > maximum:
             raise ProjectionError(f"{label} exceeds the read bound")
-        raw = lexical.read_bytes()
+        chunks: list[bytes] = []
+        remaining = maximum + 1
+        while remaining > 0:
+            chunk = os.read(file_descriptor, min(remaining, 1024 * 1024))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > maximum or os.fstat(file_descriptor).st_size != size:
+            raise ProjectionError(f"{label} changed or exceeded the read bound")
     except OSError as exc:
         raise ProjectionError(f"{label} is unreadable") from exc
+    finally:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+        for descriptor in reversed(directories):
+            os.close(descriptor)
     return _strict_object(raw, label=label), raw
 
 
@@ -405,11 +457,13 @@ def _validate_plan_contract(plan: dict[str, Any]) -> None:
     arm_ids = plan.get("arm_ids")
     fixtures = plan.get("fixture_ids")
     seeds = plan.get("seeds")
+    expected_arm_count = _PLAN_ARM_COUNTS.get(kind) if isinstance(kind, str) else None
     if (
-        not isinstance(kind, str) or not _SAFE_ID_RE.fullmatch(kind)
-        or not isinstance(arm_ids, list) or len(arm_ids) != 2
+        not isinstance(kind, str) or expected_arm_count is None
+        or not isinstance(arm_ids, list) or len(arm_ids) != expected_arm_count
         or any(not isinstance(item, str) or not _SAFE_ID_RE.fullmatch(item) for item in arm_ids)
         or len(set(arm_ids)) != len(arm_ids)
+        or kind == "role_effort" and arm_ids != ["xhigh", "medium", "adaptive"]
         or not isinstance(fixtures, list) or not 1 <= len(fixtures) <= 1_000
         or any(not isinstance(item, str) or not _SAFE_ID_RE.fullmatch(item) for item in fixtures)
         or len(set(fixtures)) != len(fixtures)
@@ -716,6 +770,10 @@ def _arm_definitions(trial: dict[str, Any]) -> list[dict[str, Any]]:
     definitions = snapshot.get("arms")
     if definitions is None:
         definitions = snapshot.get("conditions")
+    if definitions is None and isinstance(snapshot.get("arm"), dict):
+        # Historical-repair manifests are deliberately single-arm.  Preserve
+        # that explicit arm identity instead of projecting an anonymous row.
+        definitions = [snapshot["arm"]]
     if not isinstance(definitions, list):
         return []
     by_id = {
@@ -790,11 +848,16 @@ def _run_arm_timings(
     }
     summary = run.get("summary")
     if isinstance(summary, dict) and isinstance(summary.get("arms"), dict):
+        run_schema = run.get("schema_version")
         for arm in arm_ids:
             row = summary["arms"].get(arm)
             if not isinstance(row, dict):
                 return None
-            wall = _finite_number(row.get("charged_wall_s_including_failures"))
+            wall = _finite_number(
+                row.get("wall_s")
+                if run_schema == "weekly-upgrade-role-effort-run/v1"
+                else row.get("charged_wall_s_including_failures")
+            )
             if wall is None:
                 return None
             timings[arm]["wall"] = wall
@@ -1176,6 +1239,8 @@ def _family(week: str, family_id: str, label: str, trials: list[dict[str, Any]])
         family_id, trials
     )
     context_claim_limit = "weekly_context_capability" in family_id
+    role_effort_claim_limit = trials[0]["plan"].get("kind") == "role_effort"
+    historical_claim_limit = trials[0]["plan"].get("kind") == "historical_repair"
     if context_claim_limit:
         break_reasons.append(
             "Arms differ in model, context lane, and reasoning mode; results are descriptive, not a causal model comparison"
@@ -1324,6 +1389,10 @@ def _family(week: str, family_id: str, label: str, trials: list[dict[str, Any]])
         "interpretation_note": (
             "Descriptive capability check only: the arms differ in model, maximum context lane, and reasoning mode. Scores and timing cannot identify a causal model advantage."
             if context_claim_limit else
+            "Descriptive three-arm pilot only: xhigh, medium, and adaptive effort are shown independently. Planned attempts are task-arm slots; retries or escalations can produce more model calls. No two-arm upgrade comparison or production recommendation is inferred."
+            if role_effort_claim_limit else
+            "Public historical single-arm repair baseline. Tasks and historical fixes are public, so this result is not contamination-resistant and cannot establish an upgrade."
+            if historical_claim_limit else
             "Operator-recorded counts preserve failures in their declared denominators; they do not verify a candidate benefit."
         ),
         "_week": week,
@@ -1786,6 +1855,10 @@ def compose_progress(
         },
         "warnings": warnings,
         "weeks": weeks,
+        "research_pipeline": project_research_pipeline(
+            canonical_root=canonical,
+            now=current,
+        ),
     }
 
 

@@ -18,6 +18,11 @@ import type {
   BenchmarkProgressWarning,
   BenchmarkProgressResponse,
   BenchmarkWeek,
+  ResearchPipelineCoverage,
+  ResearchPipelineProgress,
+  ResearchPipelineRecord,
+  ResearchPipelineSource,
+  ResearchPipelineStage,
 } from "../types/benchmarkProgress";
 import "./benchmarkProgress.css";
 
@@ -107,9 +112,9 @@ function ArmTable({ arms }: { arms: BenchmarkArm[] }) {
     <table className="benchmark-table">
       <caption className="sr-only">Measured benchmark arms</caption>
       <thead><tr>
-        <th scope="col">Arm</th><th scope="col">Graded result</th><th scope="col">Transport calls</th>
+        <th scope="col">Arm</th><th scope="col">Graded result</th><th scope="col">Planned attempts</th>
         <th scope="col">Timeouts</th><th scope="col">Success rate</th><th scope="col"><abbr title="Correct Task Throughput">CTT</abbr> / hour</th>
-        <th scope="col"><abbr title="Reliable Success Rate: succeeds in at least two of three repeats">RSR 2 of 3</abbr></th><th scope="col">Recorded wall</th><th scope="col">Mean / transport attempt</th>
+        <th scope="col"><abbr title="Reliable Success Rate: succeeds in at least two of three repeats">RSR 2 of 3</abbr></th><th scope="col">Recorded wall</th><th scope="col">Mean / planned attempt</th>
       </tr></thead>
       <tbody>{arms.map((arm, index) => {
         const metrics = arm.metrics ?? { success_rate: null, ctt_per_hour: null, rsr_2of3: null, recorded_wall_seconds: null, mean_recorded_seconds_per_transport_attempt: null, repair_rate: null, protocol_valid_rate: null, annotation_disagreements: null };
@@ -118,7 +123,7 @@ function ArmTable({ arms }: { arms: BenchmarkArm[] }) {
         return <tr key={text(arm.id, `arm-${index}`)}>
           <th scope="row"><strong>{text(arm.label, `Arm ${index + 1}`)}</strong><span>{text(arm.configuration, text(arm.id, "Configuration not recorded"))}</span></th>
           <td>{hasObjective ? <>{fmtCount(arm.objective_successes)} / {fmtCount(arm.objective_total)}<small> objective tasks</small></> : hasRepair ? <>{fmtCount(arm.repair_successes)} / {fmtCount(arm.repair_total)}<small> repair cases</small></> : <Missing label="Not graded" />}</td>
-          <td>{finite(arm.transport_returned) && finite(arm.transport_expected) ? <>{fmtCount(arm.transport_returned)} / {fmtCount(arm.transport_expected)}<small> returned / expected</small></> : <Missing />}</td>
+          <td>{finite(arm.transport_returned) && finite(arm.transport_expected) ? <>{fmtCount(arm.transport_returned)} / {fmtCount(arm.transport_expected)}<small> returned / planned</small></> : <Missing />}</td>
           <td>{finite(arm.timeouts) ? fmtCount(arm.timeouts) : <Missing />}</td>
           <td>{finite(metrics.success_rate) ? fmtPercent(metrics.success_rate) : <Missing />}</td>
           <td>{finite(metrics.ctt_per_hour) ? fmtNumber(metrics.ctt_per_hour, 1) : <Missing />}</td>
@@ -139,6 +144,112 @@ function HashRow({ label, value }: { label: string; value: unknown }) {
 function HashList({ label, value }: { label: string; value: unknown }) {
   const hashes = Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
   return <div className="benchmark-provenance-row"><dt>{label}</dt><dd>{hashes.length ? hashes.map((hash) => <span key={hash} title={hash}>{hash}</span>) : <Missing label="Not recorded" />}</dd></div>;
+}
+
+function ResearchPipelinePanel({ pipeline }: { pipeline?: ResearchPipelineProgress }) {
+  if (!record(pipeline)) {
+    return <section className="research-pipeline research-pipeline--unavailable" aria-labelledby="research-pipeline-heading">
+      <header className="research-pipeline-head"><div><p className="benchmark-eyebrow">Research system</p><h2 id="research-pipeline-heading">Research follow-through</h2></div><StatusChip value="Unavailable" tone="warn" /></header>
+      <p className="research-pipeline-empty">This snapshot does not include the research-pipeline projection. No topic progression is inferred.</p>
+    </section>;
+  }
+
+  const stages = rows<ResearchPipelineStage>(pipeline.stages);
+  const coverage = rows<ResearchPipelineCoverage>(pipeline.coverage);
+  const attempts = rows<ResearchPipelineRecord>(pipeline.records);
+  const qualifications = rows<{ code: string; detail: string }>(pipeline.qualifications);
+  const sources = record(pipeline.provenance) ? rows<ResearchPipelineSource>(pipeline.provenance.sources) : [];
+  const joinContract = record(pipeline.provenance) ? strings(pipeline.provenance.join_contract) : [];
+  const lineage = record(pipeline.provenance) && record(pipeline.provenance.campaign_lineage) ? pipeline.provenance.campaign_lineage : null;
+  const window = record(pipeline.window) ? pipeline.window : null;
+  const scope = record(pipeline.scope) ? pipeline.scope : null;
+  const cohort = record(pipeline.cohort) ? pipeline.cohort : null;
+  const campaign = record(pipeline.campaign) ? pipeline.campaign : null;
+  const question = campaign && record(campaign.research_question) ? campaign.research_question : null;
+  const campaignEvidence = campaign && record(campaign.evidence) ? campaign.evidence : null;
+  const campaignRuntime = campaign && record(campaign.runtime) ? campaign.runtime : null;
+  const runtimeStatus = text(campaignRuntime?.status, "unknown");
+  const runtimeLabel = runtimeStatus === "active" ? "Active"
+    : runtimeStatus === "closed" ? "Closed"
+    : runtimeStatus === "inactive" ? "Not activated"
+    : runtimeStatus === "invalid" ? "Invalid lifecycle"
+    : "Not reported";
+  const runtimeDetail = runtimeStatus === "active" ? `Activated ${fmtTimestamp(campaignRuntime?.activated_at)}`
+    : runtimeStatus === "closed" ? `Closed ${fmtTimestamp(campaignRuntime?.closed_at)}`
+    : runtimeStatus === "inactive" ? "No runtime pointer recorded"
+    : runtimeStatus === "invalid" ? "Activation or closure receipt is invalid"
+    : "Lifecycle receipt unavailable";
+  const modelStudyStatus = campaignEvidence?.model_trial_status;
+  const modelStudyLabel = modelStudyStatus === "not_registered" ? "No study registered"
+    : modelStudyStatus === "registered_no_bound_result" ? "No bound result"
+    : modelStudyStatus === "bound_result_observed" ? "Bound result observed"
+    : modelStudyStatus === "invalid_bound_result" ? "Invalid bound result"
+    : "Not reported";
+  const bottleneck = record(pipeline.bottleneck) ? pipeline.bottleneck : null;
+  const recordsWindow = record(pipeline.records_window) ? pipeline.records_window : null;
+  const pipelineTone = pipeline.status === "observed" ? "info"
+    : pipeline.status === "unavailable" ? "warn"
+    : pipeline.status === "partial" ? "warn" : "idle";
+
+  return <section className={`research-pipeline research-pipeline--${text(pipeline.status, "unavailable")}`} aria-labelledby="research-pipeline-heading">
+    <header className="research-pipeline-head">
+      <div><p className="benchmark-eyebrow">Research system · {window?.mode === "campaign_to_date" ? "Campaign to date" : text(window?.week, "Current week")}</p><h2 id="research-pipeline-heading">Research follow-through</h2><p>Track explicitly linked campaign records from dispatch through evidence, skeptic review, and human validation.</p></div>
+      <StatusChip value={pipeline.status} tone={pipelineTone} />
+    </header>
+
+    {campaign ? <section className="research-campaign" aria-labelledby="research-campaign-heading">
+      <div className="research-campaign-main">
+        <div className="research-campaign-title"><div><p className="benchmark-eyebrow">Selected V2 campaign</p><h3 id="research-campaign-heading">{text(campaign.title, "Campaign title unavailable")}</h3></div><StatusChip value={`Declaration · ${text(campaign.status, "unknown")}`} tone="idle" /></div>
+        <p className="research-campaign-id">{text(campaign.campaign_id)}</p>
+        <div className="research-question"><span>Research question</span><p>{text(question?.text, "Research question not recorded")}</p></div>
+      </div>
+      <dl className="research-campaign-evidence">
+        <div><dt>Runtime lifecycle</dt><dd>{runtimeLabel}<small>{runtimeDetail}</small></dd></div>
+        <div><dt>CPU calibration</dt><dd>{campaignEvidence?.cpu_calibration_registered === true ? "Manifest registered" : "Not registered"}<small>{campaignEvidence?.cpu_calibration_verified === true ? "Bound result verified" : "Execution not verified here"}</small></dd></div>
+        <div><dt>Model study</dt><dd>{modelStudyLabel}<small>{modelStudyStatus === "not_registered" ? "No campaign model evidence admitted" : "CPU controls are not model evidence"}</small></dd></div>
+      </dl>
+    </section> : <p className="research-campaign-missing">Campaign identity is unavailable in this snapshot. No record should be interpreted as V2 campaign progress.</p>}
+
+    <div className="research-pipeline-intro">
+      <div><h3>{text(pipeline.headline, "Research-pipeline state unavailable")}</h3><p>{text(bottleneck?.explanation, "No observation boundary was reported.")}</p></div>
+      <dl><div><dt>Observation window</dt><dd>{fmtTimestamp(window?.start_at)} – {fmtTimestamp(window?.end_at)}</dd></div>{window?.dispatch_closed === true ? <div><dt>Dispatch window closed</dt><dd>{fmtTimestamp(window?.dispatch_end_at)}</dd></div> : null}<div><dt>Scope</dt><dd>{text(scope?.label)}</dd></div><div><dt>Runtime boundary</dt><dd>{fmtTimestamp(cohort?.cutoff_at)}</dd></div></dl>
+    </div>
+
+    {stages.length > 0 ? <ol className="research-funnel" aria-label="Research follow-through stages">
+      {stages.map((stage, index) => <li key={text(stage.id, `stage-${index}`)} className={`research-funnel-stage research-funnel-stage--${text(stage.status, "unavailable")}`}>
+        <span className="research-funnel-index" aria-hidden="true">{index + 1}</span>
+        <span><small>{humanize(stage.status)}</small><strong>{text(stage.label, "Unnamed stage")}</strong></span>
+        <b>{finite(stage.count) ? fmtCount(stage.count) : <Missing label="Unavailable" />}</b>
+      </li>)}
+    </ol> : <p className="research-pipeline-empty">No trustworthy funnel stages are available in this snapshot.</p>}
+
+    <div className="research-pipeline-lower">
+      <section aria-labelledby="research-coverage-heading"><div className="research-subhead"><h3 id="research-coverage-heading">Linkage coverage</h3><span>Missing is distinct from zero</span></div>
+        {coverage.length ? <div className="research-coverage-list">{coverage.map((item, index) => {
+          const validRate = finite(item.rate) && item.rate >= 0 && item.rate <= 1;
+          return <div key={text(item.id, `coverage-${index}`)} className="research-coverage-row">
+            <div><strong>{text(item.label, "Unnamed link")}</strong><span>{validRate && finite(item.covered) && finite(item.total) ? `${fmtCount(item.covered)} / ${fmtCount(item.total)}` : item.status === "unavailable" ? "Source unavailable" : "Awaiting observations"}</span></div>
+            <div className="research-coverage-track" role={validRate ? "meter" : undefined} aria-label={validRate ? text(item.label) : undefined} aria-valuemin={validRate ? 0 : undefined} aria-valuemax={validRate ? 100 : undefined} aria-valuenow={validRate ? Math.round(item.rate! * 100) : undefined}><span style={{ width: validRate ? `${item.rate! * 100}%` : "0%" }} /></div>
+            <b>{validRate ? fmtPercent(item.rate) : "—"}</b>
+          </div>;
+        })}</div> : <p className="research-pipeline-empty">Coverage cannot be calculated until linked stage records exist.</p>}
+      </section>
+      <aside className="research-bottleneck"><p className="benchmark-eyebrow">Current observation boundary</p><h3>{humanize(bottleneck?.stage)}</h3><StatusChip value={bottleneck?.status} /><p>{text(bottleneck?.explanation)}</p></aside>
+    </div>
+
+    <section className="research-attempts" aria-labelledby="research-attempts-heading"><div className="research-subhead"><h3 id="research-attempts-heading">Campaign topic attempts</h3><span>{attempts.length ? recordsWindow?.truncated === true && finite(recordsWindow.total) ? `${attempts.length} of ${recordsWindow.total} receipt rows shown` : `${attempts.length} receipt ${attempts.length === 1 ? "row" : "rows"}` : "Awaiting first dispatch"}</span></div>
+      {attempts.length ? <div className="benchmark-table-wrap"><table className="benchmark-table research-attempt-table"><caption className="sr-only">Sanitized explicitly linked campaign research attempt receipts</caption><thead><tr><th scope="col">Attempt</th><th scope="col">Dispatch</th><th scope="col">Iteration</th><th scope="col">Scope</th><th scope="col">Evidence</th><th scope="col">Skeptic</th><th scope="col">Human validation</th></tr></thead><tbody>{attempts.map((attempt, index) => <tr key={`${text(attempt.attempt_id, "attempt")}-${index}`}><th scope="row"><strong>{text(attempt.attempt_id, `Attempt ${index + 1}`)}</strong><span>{fmtTimestamp(attempt.recorded_at)} · {humanize(attempt.topic_source)}</span><small>{text(attempt.topic_id, "Topic ID unavailable")}</small></th><td><StatusChip value={attempt.dispatch_status} /></td><td><span title={text(attempt.iteration_id)}>{text(attempt.iteration_id, humanize(attempt.iteration_status))}</span></td><td>{humanize(attempt.scope_status)}</td><td>{text(attempt.evidence_level, attempt.iteration_status === "recorded" ? "Level unavailable" : "Not assessed")}</td><td>{humanize(attempt.skeptic_status)}</td><td>{humanize(attempt.human_validation_status)}</td></tr>)}</tbody></table></div>
+        : <p className="research-pipeline-empty">No explicitly linked campaign dispatch receipt has been observed. Downstream stages remain not yet observed.</p>}
+    </section>
+
+    <details className="benchmark-details research-provenance"><summary>Measurement boundary and source provenance</summary><div className="benchmark-details-grid">
+      <section><h4>Campaign and cohort contract</h4><dl><HashRow label="Campaign manifest SHA-256" value={campaign?.manifest_sha256} /><HashRow label="Research question SHA-256" value={question?.text_sha256} /><HashRow label="Cohort ID" value={cohort?.id} /><HashRow label="Cutoff receipt SHA-256" value={cohort?.cutoff_receipt_sha256} /><HashRow label="Canonical source commit" value={cohort?.canonical_head} /></dl><p>{text(cohort?.membership_rule, "Exact campaign linkage is required.")}</p><p>{text(cohort?.cutoff_reason, "No verified runtime cutoff was reported.")}</p></section>
+      <section><h4>Identifier joins</h4>{joinContract.length ? <ul>{joinContract.map((rule) => <li key={rule}>{rule}</li>)}</ul> : <p>No join contract was reported.</p>}<p>Only the selected research question is public. Topic or hypothesis text from result ledgers is neither exposed nor used to guess lineage.</p></section>
+      <section><h4>Campaign lineage classifications</h4>{lineage ? <dl className="benchmark-provenance">{Object.entries(lineage).map(([sourceId, rawCounts]) => { const counts: Record<string, unknown> = record(rawCounts) ? rawCounts : {}; const explicit = finite(counts.explicit_match) ? counts.explicit_match : null; const excluded = ["unlinked_legacy", "malformed_campaign_link", "different_campaign", "campaign_link_mismatch", "malformed_record"].reduce((total, key) => total + (finite(counts[key]) ? counts[key] : 0), 0); return <div className="benchmark-provenance-row" key={sourceId}><dt>{humanize(sourceId)}</dt><dd>{explicit === null ? "Not recorded" : `${explicit} explicit · ${excluded} excluded`}</dd></div>; })}</dl> : <p>Campaign lineage classifications were not reported.</p>}</section>
+      <section><h4>Source windows</h4><dl className="benchmark-provenance">{sources.map((source, index) => <div className="benchmark-provenance-row" key={text(source.id, `source-${index}`)}><dt>{humanize(source.id)}</dt><dd title={text(source.window_sha256)}>{source.available ? <>{fmtCount(source.parsed_rows)} rows · {text(source.window_sha256, "hash unavailable")}</> : "Unavailable"}</dd></div>)}</dl></section>
+      <section><h4>Qualifications</h4>{qualifications.length ? <ul>{qualifications.map((item, index) => <li key={`${text(item.code)}-${index}`}>{text(item.detail)}</li>)}</ul> : <p>No source qualifications were reported for this bounded window.</p>}</section>
+    </div></details>
+  </section>;
 }
 
 function FamilyCard({ family }: { family: BenchmarkFamily }) {
@@ -180,7 +291,7 @@ function FamilyCard({ family }: { family: BenchmarkFamily }) {
           <dl><div><dt>Fixtures</dt><dd>{finite(details.fixture_count) ? fmtCount(details.fixture_count) : <Missing />}</dd></div>
           <div><dt>Repeats</dt><dd>{fmtCount(details.repeat_count)}</dd></div>
           <div><dt>Grader bound</dt><dd>{details.grader_bound ? "Yes" : "No"}</dd></div>
-          <div><dt>Expected / returned / protocol-valid</dt><dd>{fmtCount(completeness.expected)} / {fmtCount(completeness.returned)} / {fmtCount(completeness.protocol_valid)}</dd></div>
+          <div><dt>Planned / returned / protocol-valid</dt><dd>{fmtCount(completeness.expected)} / {fmtCount(completeness.returned)} / {fmtCount(completeness.protocol_valid)}</dd></div>
           <div><dt>Recorded timeouts</dt><dd>{fmtCount(completeness.timeouts)}</dd></div>
           <div><dt>Evidence class</dt><dd>{humanize(evidence.class)}</dd></div>
           <div><dt>Candidate benefit verified</dt><dd>{evidence.candidate_benefit_verified === false ? "No" : "Not reported"}</dd></div></dl>
@@ -314,6 +425,8 @@ export default function BenchmarkProgress({ initial }: Props) {
     <aside className="benchmark-evidence-note"><strong>Evidence boundary</strong><span>Operator-recorded summaries are not scientific ground truth. Review-only automation scans and critiques proposals; it does not automatically rerun benchmark panels or promote changes.</span></aside>
 
     {(summaryMissing || rows<BenchmarkProgressWarning>(data.warnings).length > 0) && <aside className="benchmark-warnings" aria-label="Data qualifications">{summaryMissing && <p><strong>Progress summary</strong> · The response shape is incomplete. Missing values are withheld rather than inferred as zero.</p>}{rows<BenchmarkProgressWarning>(data.warnings).map((warning, index) => <p key={`${String(warning.code)}-${index}`}><strong>{text(warning.scope, "Record")}</strong> · {text(warning.detail, "An unspecified source qualification was recorded.")}</p>)}</aside>}
+
+    <ResearchPipelinePanel pipeline={data.research_pipeline} />
 
     {weeks.length === 0 ? <section className="benchmark-source-empty" role="status"><h2>{benchmarkSourcesUnavailable ? "Benchmark sources unavailable" : "No measured weeks yet"}</h2><p>{benchmarkSourcesUnavailable ? "Trial and evaluation sources were unavailable when this projection was generated. No benchmark history or zero result is inferred." : "The source is available, but it has not recorded a benchmark week. Missing history is not a zero score."}</p></section> : <>
       <section className="benchmark-week-section" aria-labelledby="benchmark-week-heading"><div className="benchmark-section-heading"><div><p className="benchmark-eyebrow">Timeline</p><h2 id="benchmark-week-heading">Recorded weeks</h2></div>

@@ -10,6 +10,12 @@ Use neutral labels for scoring rule A/B and give the actual formula. In the indi
 
 The starting design has three opponent groups × two utility rules × two focal seat positions = twelve cells. A game uses eight LLM action calls plus a comprehension call, rather than thirty-two player calls. Twelve cells with one episode each are an engineering pilot, not twelve independent replications per condition. Choose repeated episodes, seeds, order/label counterbalancing and a paired statistical plan only after measuring actual latency under a frozen model policy and the remaining weekly cap. Never assume the 324 earlier condition checks are 324 independent observations.
 
+In the fully observed CPU controls, focal and group cooperation rates mean the
+fraction of binary contribute-all actions at the named scope. These are observed
+action rates, not normative judgments. A future model study must report valid
+versus scheduled actions separately and preserve unavailable actions as unknown;
+it cannot count parser failures as strategic choices.
+
 Primary future outcomes: valid actions / scheduled actions, payoff comprehension, episode utility, exact episode regret, focal-seat cooperation rate, group cooperation rate, wall time and calls including all failures. Per-decision regret is measured against optimal continuation and telescopes to episode regret; it is not stage-game regret. Report all ties as optimal. Parser failure cannot be imputed as a strategic defection or cooperation. A treatment effect on an agent with a different disclosed utility function is not a model capability improvement.
 
 CPU validation command:

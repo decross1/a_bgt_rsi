@@ -44,6 +44,7 @@ cutover authority.
 | Document | Status | Use |
 | --- | --- | --- |
 | [`../../LOOP_V2.md`](../../LOOP_V2.md) | Current plan | V2 foundation, research lifecycle, data rules, activation evidence and study gates |
+| [`DELIVERY.md`](DELIVERY.md) | Delivery record | Completed source, measured validation, runtime receipt and next phases |
 | [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) | Preparation | Authorized engineering/evaluation envelope and Spark budget |
 | [`research/PRODUCT_ARCHITECTURE_AUDIT.md`](research/PRODUCT_ARCHITECTURE_AUDIT.md) | Evidence/report | Internal product, service, data-model, and journey audit dated 2026-09-14 |
 | [`BENCHMARK_FINDINGS.md`](BENCHMARK_FINDINGS.md) | Evidence/report | Four measured followthrough trials, failure categories, and limits |
