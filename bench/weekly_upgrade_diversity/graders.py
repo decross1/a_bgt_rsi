@@ -173,6 +173,45 @@ _GRADERS = {
 }
 
 
+def proposal_shape_error(task: dict[str, Any], proposal: Any) -> str | None:
+    """Return an exact JSON-shape failure without grading feasibility.
+
+    This is used only by the versioned follow-through scaffold.  The frozen
+    dev-v0 path continues to send every parsed value directly to its objective
+    grader, preserving its original scoring contract.
+    """
+
+    kind = task["grader"]["kind"]
+    inputs = task["grader"]["inputs"]
+    if kind == "pure_nash":
+        row = _exact_object(proposal, {"row_action", "column_action"})
+        if row is None or any(not isinstance(row[key], str) for key in row):
+            return "proposal must contain exactly two string action fields"
+    elif kind == "ballot_counterexample":
+        row = _exact_object(proposal, set(inputs["rankings"]))
+        if row is None or any(not _integer(row[key]) for key in row):
+            return "proposal must contain one integer for every ranking"
+    elif kind == "delegation_graph":
+        row = _exact_object(proposal, set(inputs["voters"]))
+        if row is None or any(not isinstance(row[key], str) for key in row):
+            return "proposal must contain one string value for every voter"
+    elif kind == "coordination_matrix":
+        row = _exact_object(proposal, {"a", "b", "c", "d"})
+        if row is None or any(not _integer(row[key]) for key in row):
+            return "proposal must contain exactly four integer payoff fields"
+    elif kind == "minimal_winning_coalition":
+        row = _exact_object(proposal, {"coalition"})
+        if (
+            row is None
+            or not isinstance(row["coalition"], list)
+            or any(not isinstance(player, str) for player in row["coalition"])
+        ):
+            return "proposal coalition must be an array of player strings"
+    else:
+        return "proposal grader kind is unsupported"
+    return None
+
+
 def grade_proposal(task: dict[str, Any], proposal: Any) -> ProposalGrade:
     """Grade one proposal against the task's finite objective contract."""
     kind = task["grader"]["kind"]
@@ -211,4 +250,33 @@ def grade_set(
             for row in rows
         ],
         "task_success": bool(valid_indices and selection_correct),
+    }
+
+
+def grade_set_v1(
+    task: dict[str, Any], proposals: list[Any], selected_index: Any
+) -> dict[str, Any]:
+    """Score the follow-through scaffold's deterministic selector contract.
+
+    The validator is instructed to select the lowest-numbered objectively valid
+    slot.  Requiring that exact answer makes selector correctness independently
+    reconstructible and prevents arbitrary preference among feasible outputs.
+    """
+
+    grade = grade_set(task, proposals, selected_index)
+    valid_indices = grade["valid_indices"]
+    expected = valid_indices[0] if valid_indices else None
+    selection_exact = (
+        (selected_index is None and expected is None)
+        or (
+            _integer(selected_index)
+            and expected is not None
+            and selected_index == expected
+        )
+    )
+    return {
+        **grade,
+        "expected_selected_index": expected,
+        "selection_exact": bool(selection_exact),
+        "task_success": bool(valid_indices and selection_exact),
     }

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/decross1/a_bgt_rsi/schema/research_campaign_activation.schema.json",
+  "title": "Active research campaign pointer",
+  "description": "Small reversible runtime pointer. Absence selects the legacy/global cohort; presence activates exactly one immutable registered campaign manifest.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "campaign_id",
+    "campaign_manifest_sha256",
+    "activated_at",
+    "activated_by"
+  ],
+  "properties": {
+    "schema_version": {"const": "research-campaign-activation/v1"},
+    "campaign_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"
+    },
+    "campaign_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "activated_at": {"type": "string", "format": "date-time"},
+    "activated_by": {"type": "string", "minLength": 1, "maxLength": 120}
+  }
+}

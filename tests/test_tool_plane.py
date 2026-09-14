@@ -16,7 +16,6 @@ from fastapi.testclient import TestClient
 
 from orchestrator import tool_plane
 
-
 # A representative assess_state snapshot (shape per coordinator.assess_state's
 # docstring). The stub records call count so we can prove /health does NOT
 # trigger an assess (no Chroma load on a liveness ping).
@@ -157,7 +156,7 @@ def _run_client(*, in_flight=False, record=None):
         return record if record is not None else _FAKE_RECORD
 
     app = tool_plane.create_app(
-        assess=lambda: {},  # never used by the run endpoint
+        assess=dict,  # never used by the run endpoint
         run_iteration=_stub_run,
         iteration_in_flight=lambda: in_flight,
     )
@@ -436,22 +435,8 @@ def test_mcp_unknown_tool_and_method_yield_jsonrpc_errors():
 
 
 # ── D-043 run-log attribution (2026-06-10 closeout) ─────────────────────────
-# orchestrator/tool_plane.py is SPINE: the fix is drafted as
-# ui_overhaul_gallery/spine_drafts/tool_plane_nemoclaw.diff, not made here.
-# xfail(strict=False) so the suite is green both before and after the
-# integrator applies it; the xpass is the landing signal.
+# This behavior has landed; failure must now fail the suite.
 
-
-@pytest.mark.xfail(
-    reason=(
-        "pending spine diff application — "
-        "ui_overhaul_gallery/spine_drafts/tool_plane_nemoclaw.diff wraps the "
-        "run_loop_iteration handler in set_current_agent('nemoclaw_agent') "
-        "try/finally, so sandbox-agent-driven iterations stop logging as "
-        "'nara' (D-043). Flips to xpass the moment the integrator applies it."
-    ),
-    strict=False,
-)
 def test_run_tool_attributes_run_log_rows_to_nemoclaw_agent():
     # POST-diff behavior: while the handler runs run_iteration, the runtime's
     # ContextVar identity is "nemoclaw_agent", so every log_event the
@@ -470,7 +455,7 @@ def test_run_tool_attributes_run_log_rows_to_nemoclaw_agent():
         return _FAKE_RECORD
 
     app = tool_plane.create_app(
-        assess=lambda: {},
+        assess=dict,
         run_iteration=_stub_run,
         iteration_in_flight=lambda: False,
     )
@@ -495,7 +480,6 @@ def test_run_tool_attributes_run_log_rows_to_nemoclaw_agent():
 @pytest.fixture
 def _seam_tmp(tmp_path, monkeypatch):
     """Self-isolate every path the seam touches (no reliance on conftest)."""
-    import threading as _threading
 
     from orchestrator import active_run, submitted_run
 

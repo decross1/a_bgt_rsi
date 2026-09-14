@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,11 +11,125 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend.weekly_upgrade_progress import compose_progress, register
+import backend.weekly_upgrade_progress as progress_api
+from backend.weekly_upgrade_progress import (
+    _arm_definitions,
+    _safe_file,
+    _validate_plan_contract,
+    compose_progress,
+    register,
+)
 
 SHA_A = "a" * 64
 SHA_B = "b" * 64
 SHA_C = "c" * 64
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CAMPAIGN_RELATIVE_FILES = (
+    "schema/research_campaign.schema.json",
+    "experiments/research_campaign_v2_agentic_game_theory_20260914.json",
+    "experiments/agentic_game_theory_v2_calibration_2026-09-14.json",
+    "experiments/PREREG_agentic_game_theory_v2_calibration_2026-09-14.md",
+)
+
+
+def test_single_arm_manifest_preserves_historical_configuration():
+    definitions = _arm_definitions({
+        "plan": {"arm_ids": ["gemma_coding_precise"]},
+        "manifest_snapshot": {
+            "arm": {
+                "id": "gemma_coding_precise",
+                "label": "Resident Gemma coding_precise experimental baseline",
+                "backend": "vllm-gemma",
+                "model": "gemma-4-26b-a4b",
+                "profile": "coding_precise",
+                "expected_policy": {
+                    "temperature": 0.2,
+                    "top_p": 0.9,
+                    "reasoning_effort": None,
+                },
+            },
+        },
+    })
+
+    assert definitions == [{
+        "id": "gemma_coding_precise",
+        "label": "Resident Gemma coding_precise experimental baseline",
+        "backend": "vllm-gemma",
+        "model": "gemma-4-26b-a4b",
+        "profile": "coding_precise",
+        "max_tokens": None,
+        "request_timeout_s": None,
+        "expected_policy": {"temperature": 0.2, "top_p": 0.9},
+        "source_commit": None,
+    }]
+
+
+def _plan_contract(kind: str, arm_ids: list[str]) -> dict:
+    fixtures = [f"fixture-{index}" for index in range(1, 7)]
+    return {
+        "kind": kind,
+        "arm_ids": arm_ids,
+        "fixture_ids": fixtures,
+        "seeds": [20260914],
+        "manifest_sha256": SHA_A,
+        "manifest_configuration_sha256": SHA_B,
+        "expected_input_sha256": {item: SHA_C for item in fixtures},
+        "expected_grader_sha256": {item: SHA_B for item in fixtures},
+        "declared_attempts": len(fixtures) * len(arm_ids),
+        "payload_budget_s": 600,
+        "reservation_s": 660,
+        "production_change_authorized": False,
+    }
+
+
+@pytest.mark.parametrize(("kind", "arm_ids"), [
+    ("role_effort", ["xhigh", "medium", "adaptive"]),
+    ("historical_repair", ["gemma_coding_precise"]),
+    ("historical_repair", ["gemma_patch_native"]),
+])
+def test_new_descriptive_trial_plans_preserve_their_exact_arm_shapes(
+    kind: str, arm_ids: list[str],
+) -> None:
+    _validate_plan_contract(_plan_contract(kind, arm_ids))
+
+
+@pytest.mark.parametrize(("kind", "arm_ids"), [
+    ("role_effort", ["xhigh", "adaptive", "medium"]),
+    ("role_effort", ["xhigh", "medium"]),
+    ("historical_repair", ["first", "second"]),
+    ("unregistered_kind", ["first", "second"]),
+])
+def test_descriptive_trial_plan_rejects_wrong_or_unregistered_arm_shapes(
+    kind: str, arm_ids: list[str],
+) -> None:
+    with pytest.raises(progress_api.ProjectionError):
+        _validate_plan_contract(_plan_contract(kind, arm_ids))
+
+
+def test_safe_file_reads_one_descriptor_across_path_replacement(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    root = tmp_path / "trusted"
+    root.mkdir()
+    source = root / "source.json"
+    original_raw = _write_json(source, {"value": "original"})
+    original_read = progress_api.os.read
+    replaced = False
+
+    def replace_then_read(file_descriptor: int, limit: int) -> bytes:
+        nonlocal replaced
+        if not replaced:
+            replaced = True
+            source.replace(root / "source.original.json")
+            _write_json(source, {"value": "replacement"})
+        return original_read(file_descriptor, limit)
+
+    monkeypatch.setattr(progress_api.os, "read", replace_then_read)
+
+    value, raw = _safe_file(source, root=root, label="test source")
+
+    assert value == {"value": "original"}
+    assert raw == original_raw
 
 
 def _canonical(value) -> bytes:
@@ -47,6 +162,10 @@ def _roots(tmp_path: Path):
     (canonical / "run_state" / "weekly_upgrade" / "evaluations").mkdir()
     upgrade.mkdir()
     reviews.mkdir()
+    for relative in CAMPAIGN_RELATIVE_FILES:
+        destination = canonical / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO_ROOT / relative, destination)
     return canonical, upgrade, reviews
 
 
@@ -348,9 +467,27 @@ def _write_activation(canonical: Path):
         "status": "ACTIVE_REVIEW_ONLY",
         "review_only": True,
         "activated_at": "2026-09-14T16:17:51+00:00",
+        "canonical_head": "a" * 40,
+        "startup_verified": True,
+        "service": {"ActiveState": "active", "SubState": "running"},
         "cron_line": "30 5 * * 0 NARA_WEEKLY_UPGRADE=1 command",
         "automatic_promotion_enabled": False,
         "trial_manifest": None,
+    })
+
+
+def _write_campaign_activation(canonical: Path) -> None:
+    manifest_path = (
+        canonical
+        / "experiments/research_campaign_v2_agentic_game_theory_20260914.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    _write_json(canonical / "run_state/active_research_campaign.json", {
+        "schema_version": "research-campaign-activation/v1",
+        "campaign_id": manifest["campaign_id"],
+        "campaign_manifest_sha256": _sha(manifest_path.read_bytes()),
+        "activated_at": "2026-09-14T22:20:00Z",
+        "activated_by": "backend-route-test",
     })
 
 
@@ -405,9 +542,44 @@ def test_real_contract_separates_denominators_budget_and_untrusted_evidence(tmp_
     assert family["comparison"]["eligible"] is False
     assert family["comparison"]["history_points"] == 1
     assert body["automation"]["mode"] == "review_only"
+    assert body["research_pipeline"]["schema_version"] == (
+        "research-pipeline-progress/v1"
+    )
+    assert body["research_pipeline"]["status"] == "unavailable"
     assert body["weeks"][0]["review"]["experiment_proposals"] == 1
     assert "PRIVATE RAW MODEL TEXT" not in json.dumps(body)
     assert str(tmp_path) not in json.dumps(body)
+
+
+def test_route_projects_empty_post_restart_research_window_without_zero_claim(
+    tmp_path,
+):
+    canonical, upgrade, reviews = _roots(tmp_path)
+    _write_activation(canonical)
+    _write_campaign_activation(canonical)
+    for relative in (
+        "run_state/coordinator_cycles.jsonl",
+        "memory/loop_memory.jsonl",
+        "memory/promotion_near_misses.jsonl",
+        "memory/surfaced_findings.jsonl",
+        "memory/loop_feedback.jsonl",
+        "run_state/health_signals.jsonl",
+    ):
+        path = canonical / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+
+    body = _client(
+        canonical, upgrade, reviews,
+        datetime(2026, 9, 14, 23, tzinfo=timezone.utc),
+    ).get("/api/weekly_upgrade/progress").json()
+
+    pipeline = body["research_pipeline"]
+    assert pipeline["status"] == "not_yet_observed"
+    assert pipeline["counts"]["topic_attempts"] == 0
+    assert pipeline["coverage"][0]["rate"] is None
+    assert pipeline["bottleneck"]["stage"] == "dispatch"
+    assert str(tmp_path) not in json.dumps(pipeline)
 
 
 def test_two_identical_cohorts_form_trend_but_changed_grader_breaks_series(tmp_path):

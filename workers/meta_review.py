@@ -159,6 +159,8 @@ def meta_review(
     feedback_path: str | os.PathLike = DEFAULT_FEEDBACK,
     parent_request_id: str | None = None,
     model: str | None = None,
+    campaign_id: str | None = None,
+    campaign_manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Synthesize 3–5 conditioning bullets from the last `n` loop iterations.
 
@@ -179,6 +181,31 @@ def meta_review(
     ```
     """
     rows = _read_jsonl(loop_memory_path)
+    if campaign_id is not None:
+        # Campaign conditioning may reuse shared literature later in the loop,
+        # but it cannot silently import old topic/claim outcomes. Membership
+        # is exact-link only; dates and text are never a backfill rule.
+        from orchestrator.research_campaign import (
+            CampaignError,
+            load_active_campaign,
+            unique_matching_records,
+        )
+
+        campaign = load_active_campaign()
+        if campaign is None or campaign.get("campaign_id") != campaign_id:
+            raise CampaignError("requested research campaign is not active")
+        if (
+            campaign_manifest_sha256 is not None
+            and campaign["_manifest_sha256"] != campaign_manifest_sha256
+        ):
+            raise CampaignError("research campaign changed before meta-review")
+        rows = unique_matching_records(
+            rows,
+            campaign,
+            identity_field="iteration_id",
+        )
+    elif campaign_manifest_sha256 is not None:
+        raise ValueError("campaign manifest hash requires a campaign id")
     if not rows:
         return {
             "status": "error",
@@ -252,18 +279,19 @@ def meta_review(
     # conditioning lines (graveyard adjacency + agenda context) so generation
     # sees the negative memory. Additive, capped, and fail-open — a missing/
     # empty ledger (pre-consolidation) changes nothing.
-    try:
-        from workers.idea_ledger import load_state
-        from workers.idea_projection import conditioning_lines
-        state = load_state(DEFAULT_IDEA_LEDGER)
-        if state:
-            topic = str((rows[-1].get("seed") or {}).get("topic") or "")
-            extra = [ln for ln in conditioning_lines(state, topic)
-                     if isinstance(ln, str) and ln.strip()][:3]
-            bullets = (bullets + extra)[:8]
-    except Exception as exc:  # logged fail-open — never silent (rule 7)
-        print(f"[meta_review] idea-ledger conditioning skipped: {exc}",
-              file=sys.stderr)
+    if campaign_id is None:
+        try:
+            from workers.idea_ledger import load_state
+            from workers.idea_projection import conditioning_lines
+            state = load_state(DEFAULT_IDEA_LEDGER)
+            if state:
+                topic = str((rows[-1].get("seed") or {}).get("topic") or "")
+                extra = [ln for ln in conditioning_lines(state, topic)
+                         if isinstance(ln, str) and ln.strip()][:3]
+                bullets = (bullets + extra)[:8]
+        except Exception as exc:  # logged fail-open — never silent (rule 7)
+            print(f"[meta_review] idea-ledger conditioning skipped: {exc}",
+                  file=sys.stderr)
 
     # DESIGN-CONSTRAINT CONDITIONING — DARK by default (NARA_CONSTRAINT_CONDITION).
     # The falsifier tiers (frontier screen + local redteam) name the controls a
@@ -275,7 +303,13 @@ def meta_review(
     # ask. The gate state is logged on every run, armed or not.
     raw_gate = os.environ.get(CONSTRAINT_GATE_ENV, "")
     armed = raw_gate.strip().lower() not in ("", "0", "false", "no", "off")
-    if not armed:
+    if campaign_id is not None:
+        # The legacy design-constraint log has no campaign relation. Keep it
+        # readable in legacy mode, but do not import it as campaign evidence.
+        armed = False
+        print("[meta_review] design-constraint conditioning: OFF "
+              "(campaign isolation)", file=sys.stderr)
+    elif not armed:
         print(f"[meta_review] design-constraint conditioning: OFF "
               f"({CONSTRAINT_GATE_ENV}={raw_gate!r})", file=sys.stderr)
     else:
@@ -292,13 +326,16 @@ def meta_review(
             print(f"[meta_review] design-constraint conditioning skipped: {exc}",
                   file=sys.stderr)
 
+    result = {
+        "conditioning_bullets": bullets,
+        "rows_considered": len(rows),
+        "constraint_conditioning": "on" if armed else "off",
+    }
+    if campaign_id is not None:
+        result["campaign_id"] = campaign_id
     return {
         "status": "passed",
-        "result": {
-            "conditioning_bullets": bullets,
-            "rows_considered": len(rows),
-            "constraint_conditioning": "on" if armed else "off",
-        },
+        "result": result,
         "errors": [],
         "wrapper_request_id": wrapper_rid,
         "parent_request_id": parent_request_id,

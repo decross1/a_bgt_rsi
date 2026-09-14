@@ -16,6 +16,29 @@
   ],
   "additionalProperties": true,
   "properties": {
+    "campaign": {
+      "description": "Optional v2 campaign lineage. Absent on legacy rows. Membership requires this complete exact link; readers must not infer it from timestamps or topic text.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "campaign_id",
+        "campaign_manifest_sha256",
+        "research_question_id",
+        "research_question_sha256",
+        "topic_id",
+        "topic_sha256"
+      ],
+      "properties": {
+        "schema_version": {"const": "research-campaign-link/v1"},
+        "campaign_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"},
+        "campaign_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "research_question_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"},
+        "research_question_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "topic_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"},
+        "topic_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
     "iteration_id": {
       "type": "string",
       "pattern": "^iter-\\d{4}-\\d{2}-\\d{2}-\\d{3}$",

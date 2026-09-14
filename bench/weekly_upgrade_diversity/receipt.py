@@ -18,7 +18,7 @@ def validate_diversity_receipt(
     finite_nonnegative,
 ) -> bool:
     """Verify the complete artifact graph and recompute every objective score."""
-    from bench.weekly_upgrade_diversity.graders import grade_set
+    from bench.weekly_upgrade_diversity.graders import grade_set, grade_set_v1
     from bench.weekly_upgrade_diversity.manifest import (
         load_manifest,
         plan_dict,
@@ -27,11 +27,16 @@ def validate_diversity_receipt(
     from bench.weekly_upgrade_diversity.runner import (
         RUN_SCHEMA_VERSION,
         _control_messages,
+        _execution_source_files,
         _explore_messages,
         _parse_control,
+        _parse_control_v1,
         _parse_proposal,
+        _parse_proposal_v1,
         _parse_selection,
+        _parse_selection_v1,
         _runtime_identity,
+        _scaffold_v1,
         _summary,
         _validator_messages,
     )
@@ -46,6 +51,7 @@ def validate_diversity_receipt(
     expected_calls = frozen_plan["calls"]
     expected_ids = [row["attempt_id"] for row in expected_calls]
     tasks = {task["id"]: task for task in manifest["tasks"]}
+    scaffold_v1 = _scaffold_v1(manifest)
     require(
         manifest["_raw_sha256"] == plan["manifest_sha256"]
         and manifest["_configuration_sha256"] == plan["manifest_configuration_sha256"]
@@ -87,10 +93,10 @@ def validate_diversity_receipt(
         "run configuration differs",
     )
     expected_sources = {
-        f"bench/weekly_upgrade_diversity/{name}.py": plan["execution_dependencies"].get(
-            f"bench/weekly_upgrade_diversity/{name}.py"
+        str(path.relative_to(path.parents[2])): plan["execution_dependencies"].get(
+            str(path.relative_to(path.parents[2]))
         )
-        for name in ("manifest", "graders", "runner")
+        for path in _execution_source_files(manifest)
     }
     require(
         all(expected_sources.values())
@@ -268,25 +274,47 @@ def validate_diversity_receipt(
                 require(
                     not rows[0].get("request_id")
                     or by_request[rows[0]["request_id"]].get("prompt_messages")
-                    == _control_messages(task),
+                    == _control_messages(task, scaffold_v1=scaffold_v1),
                     "control prompt differs",
                 )
-                proposals, selected, error = _parse_control(rows[0].get("completion"))
-                parse_errors = [error]
+                if scaffold_v1:
+                    proposals, selected, diagnostic, proposal_protocol_valid = (
+                        _parse_control_v1(task, rows[0].get("completion"))
+                    )
+                    protocol_diagnostics = [diagnostic]
+                else:
+                    proposals, selected, error = _parse_control(
+                        rows[0].get("completion")
+                    )
+                    parse_errors = [error]
             else:
                 proposals = []
-                parse_errors = []
-                for row in rows[:-1]:
+                if scaffold_v1:
+                    protocol_diagnostics = []
+                    proposal_protocol_valid = []
+                else:
+                    parse_errors = []
+                for directive_index, row in enumerate(rows[:-1]):
                     require(row.get("parent_request_id") is None, "explore parent chain differs")
                     require(
                         not row.get("request_id")
                         or by_request[row["request_id"]].get("prompt_messages")
-                        == _explore_messages(task),
+                        == _explore_messages(
+                            task,
+                            directive_index=directive_index if scaffold_v1 else None,
+                        ),
                         "explore prompt differs",
                     )
-                    proposal, error = _parse_proposal(row.get("completion"))
+                    if scaffold_v1:
+                        proposal, diagnostic, proposal_valid = _parse_proposal_v1(
+                            task, row.get("completion")
+                        )
+                        protocol_diagnostics.append(diagnostic)
+                        proposal_protocol_valid.append(proposal_valid)
+                    else:
+                        proposal, error = _parse_proposal(row.get("completion"))
+                        parse_errors.append(error)
                     proposals.append(proposal)
-                    parse_errors.append(error)
                 expected_parent = next(
                     (
                         row.get("request_id")
@@ -303,33 +331,82 @@ def validate_diversity_receipt(
                 require(
                     not validator.get("request_id")
                     or by_request[validator["request_id"]].get("prompt_messages")
-                    == _validator_messages(task, proposals),
+                    == _validator_messages(
+                        task, proposals, scaffold_v1=scaffold_v1
+                    ),
                     "validator prompt does not bind parsed proposals",
                 )
-                selected, error = _parse_selection(validator.get("completion"))
-                parse_errors.append(error)
-            grade = grade_set(task, proposals, selected)
+                if scaffold_v1:
+                    selected, diagnostic = _parse_selection_v1(
+                        validator.get("completion")
+                    )
+                    protocol_diagnostics.append(diagnostic)
+                else:
+                    selected, error = _parse_selection(validator.get("completion"))
+                    parse_errors.append(error)
+            grade = (
+                grade_set_v1(task, proposals, selected)
+                if scaffold_v1
+                else grade_set(task, proposals, selected)
+            )
             all_group_returned = all(row["status"] == "returned" for row in rows)
             group_runtime_valid = all(row["runtime_identity_valid"] for row in rows)
-            expected_outcomes.append(
-                {
-                    "task_id": task["id"],
-                    "family": task["family"],
-                    "condition": condition,
-                    "attempt_ids": [row["attempt_id"] for row in rows],
-                    "request_ids": [row["request_id"] for row in rows],
-                    "calls_complete": all_group_returned,
-                    "runtime_identity_valid": group_runtime_valid,
-                    "parse_errors": parse_errors,
-                    "grade": grade,
-                    "creditable_task_success": bool(
-                        all_group_returned
-                        and group_runtime_valid
-                        and all(error is None for error in parse_errors)
-                        and grade["task_success"]
-                    ),
-                }
-            )
+            outcome = {
+                "task_id": task["id"],
+                "family": task["family"],
+                "condition": condition,
+                "attempt_ids": [row["attempt_id"] for row in rows],
+                "request_ids": [row["request_id"] for row in rows],
+                "calls_complete": all_group_returned,
+                "runtime_identity_valid": group_runtime_valid,
+                "grade": grade,
+            }
+            if scaffold_v1:
+                outcome.update(
+                    {
+                        "structured_output_diagnostics": protocol_diagnostics,
+                        "proposal_protocol_valid": proposal_protocol_valid,
+                        "substantive_proposal_failures": [
+                            {
+                                "slot": index,
+                                "reason": grade["proposal_grades"][index]["reason"],
+                            }
+                            for index, protocol_valid in enumerate(
+                                proposal_protocol_valid
+                            )
+                            if protocol_valid
+                            and not grade["proposal_grades"][index]["valid"]
+                        ],
+                        "substantive_selection_failure": (
+                            None
+                            if protocol_diagnostics[-1] is not None
+                            or grade["selection_exact"]
+                            else "selector did not choose the lowest-numbered valid slot"
+                        ),
+                        "creditable_task_success": bool(
+                            all_group_returned
+                            and group_runtime_valid
+                            and all(
+                                diagnostic is None
+                                for diagnostic in protocol_diagnostics
+                            )
+                            and grade["task_success"]
+                        ),
+                    }
+                )
+            else:
+                outcome.update(
+                    {
+                        "parse_errors": parse_errors,
+                        "creditable_task_success": bool(
+                            all_group_returned
+                            and group_runtime_valid
+                            and all(error is None for error in parse_errors)
+                            and grade["task_success"]
+                        ),
+                    }
+                )
+            expected_outcomes.append(outcome)
     require(outcomes == expected_outcomes, "parsed outcomes or objective grades differ")
     runtime_valid = runtime_valid and len(core_identities) == 1
     expected_status = (
@@ -350,7 +427,10 @@ def validate_diversity_receipt(
         "serial elapsed omits call work",
     )
     require(elapsed <= plan["payload_budget_s"] + 1, "elapsed exceeds supervisor budget")
-    require(summary == _summary(outcomes, elapsed), "summary differs from objective outcomes")
+    require(
+        summary == _summary(outcomes, elapsed, scaffold_v1=scaffold_v1),
+        "summary differs from objective outcomes",
+    )
     return expected_status == "complete"
 
 

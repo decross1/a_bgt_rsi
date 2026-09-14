@@ -36,15 +36,16 @@ import json
 import os
 import sys
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from agent_wrapper.wrapper import call_sync, set_run_id
 from orchestrator import active_run, coordinator_cycle_log, tier_registry
 from orchestrator.coordinator_actions import (
-    ALLOWED_ESCALATION_ACTIONS,
-    ESCALATION_KINDS,
+    ALLOWED_ESCALATION_ACTIONS,  # noqa: F401 - public compatibility re-export
+    ESCALATION_KINDS,  # noqa: F401 - public compatibility re-export
     known_actions,
     validate_bubble_up_args,
     validate_plan,
@@ -189,7 +190,7 @@ def _stamp_plan_steps(
     return stamped
 
 
-def _budget_allowance(now: "datetime | None" = None,
+def _budget_allowance(now: datetime | None = None,
                      cap: int | None = None,
                      floor: int = 3) -> int:
     """Today's spendable budget SO FAR — the elapsed share of the daily cap.
@@ -446,7 +447,9 @@ def _topic_suggestions(
     idea_ledger_path: str | os.PathLike | None = None,
     cycles_path: str | os.PathLike | None = None,
     cycle_rows: list[dict[str, Any]] | None = None,
-) -> list[dict[str, str]]:
+    campaign: dict[str, Any] | None = None,
+    loop_rows: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """Topic candidates for the planner. Never raises; degrades to [] so
     assess_state stays a pure read. Surfacing this is what un-blinds the
     planner — run_loop_iteration's arg_schema requires a non-empty topic.
@@ -456,6 +459,13 @@ def _topic_suggestions(
     unchanged. Machine-mined follow-ups are omitted only after a durable
     successful-dispatch or consumed-agenda receipt proves they were handled.
     Paths set to None resolve at call time (patchable)."""
+    if campaign is not None:
+        from orchestrator.research_campaign import available_topics
+
+        return available_topics(
+            campaign,
+            loop_rows if loop_rows is not None else _read_jsonl(loop_memory_path),
+        )
     if followups_path is None:
         followups_path = DEFAULT_FOLLOWUPS
     if idea_ledger_path is None:
@@ -571,11 +581,14 @@ def assess_state(
     feedback_path: str | os.PathLike = DEFAULT_FEEDBACK,
     active_run_path: str | os.PathLike = DEFAULT_ACTIVE_RUN,
     recent_n: int = _RECENT_N,
+    campaign_id: str | None = None,
+    campaign_manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Read the instrumentation and return a compact structured snapshot.
 
-    Pure reads. NEVER raises — any missing/partial source degrades to an
-    empty/partial section so the planner still gets a usable (if thin) picture.
+    Pure reads. Missing/partial telemetry degrades to an empty/partial section.
+    An explicitly requested unknown or invalid campaign raises instead of
+    silently falling back to the legacy/global cohort.
 
     Returns:
         {
@@ -589,6 +602,25 @@ def assess_state(
           "topic_suggestions": [ {topic, source} ],  # morning-loop candidate(s)
         }
     """
+    campaign: dict[str, Any] | None = None
+    campaign_public: dict[str, Any] | None = None
+    if campaign_id is not None:
+        from orchestrator.research_campaign import (
+            CampaignError,
+            campaign_context,
+            load_campaign,
+        )
+
+        campaign = load_campaign(campaign_id)
+        if (
+            campaign_manifest_sha256 is not None
+            and campaign["_manifest_sha256"] != campaign_manifest_sha256
+        ):
+            raise CampaignError("research campaign changed before assessment")
+        campaign_public = campaign_context(campaign)
+    elif campaign_manifest_sha256 is not None:
+        raise ValueError("campaign manifest hash requires a campaign id")
+
     # --- in-flight: is a run live right now? ---
     ar = _read_json(active_run_path)
     if ar is not None:
@@ -604,7 +636,16 @@ def assess_state(
         in_flight = {"active": False, "run": None}
 
     # --- recent loop iterations + their human verdicts ---
-    rows = _read_jsonl(loop_memory_path)
+    raw_rows = _read_jsonl(loop_memory_path)
+    rows = raw_rows
+    if campaign is not None:
+        from orchestrator.research_campaign import unique_matching_records
+
+        rows = unique_matching_records(
+            rows,
+            campaign,
+            identity_field="iteration_id",
+        )
     feedback = {
         f["iteration_id"]: f
         for f in _read_jsonl(feedback_path)
@@ -648,7 +689,16 @@ def assess_state(
     # 2026-08-15).
     surfaced_pending: list[dict[str, Any]] = []
     surfaced_below_bar = 0
-    for sf in _read_jsonl(surfaced_path):
+    surfaced_rows = _read_jsonl(surfaced_path)
+    if campaign is not None:
+        from orchestrator.research_campaign import unique_matching_records
+
+        surfaced_rows = unique_matching_records(
+            surfaced_rows,
+            campaign,
+            identity_field="finding_id",
+        )
+    for sf in surfaced_rows:
         status = sf.get("status")
         if status not in ("surfaced", "in_review"):
             continue
@@ -685,9 +735,7 @@ def assess_state(
     # planner/channel can mention them without the daemon's work_exists or
     # the planner reading them as owed work.
     # novel-but-unpromoted: a recent novel+survives iteration with no surfaced row.
-    surfaced_src = {
-        sf.get("source_iteration_id") for sf in _read_jsonl(surfaced_path)
-    }
+    surfaced_src = {sf.get("source_iteration_id") for sf in surfaced_rows}
     # D-059: novel+surviving is NOT promotable on its own — promote_findings
     # defers anything below L3 (the vote IS the L3->L4 rung). Reporting the
     # bare novel+surviving count invited the planner to spend a slot on a
@@ -723,20 +771,22 @@ def assess_state(
     # doing research. Pure reads; failures degrade silently. ---
     try:
         from datetime import datetime, timezone
+
         from orchestrator.loop_health import staleness_gap
         stale = staleness_gap(rows, datetime.now(timezone.utc))
         if stale:
             gaps.append(stale)
     except Exception:
         pass
-    try:
-        from orchestrator.loop_health import ladder_gaps
-        from workers.idea_ledger import load_state
-        gaps.extend(ladder_gaps(load_state(DEFAULT_IDEA_LEDGER)))
-    except Exception:
-        pass
+    if campaign is None:
+        try:
+            from orchestrator.loop_health import ladder_gaps
+            from workers.idea_ledger import load_state
+            gaps.extend(ladder_gaps(load_state(DEFAULT_IDEA_LEDGER)))
+        except Exception:
+            pass
 
-    return {
+    result = {
         "in_flight": in_flight,
         "recent_findings": recent_findings,
         "open_threads": open_threads,
@@ -744,16 +794,49 @@ def assess_state(
         "surfaced_pending": surfaced_pending,
         "surfaced_below_bar": surfaced_below_bar,
         "experiments": experiments,
-        "topic_suggestions": _topic_suggestions(loop_memory_path),
+        "topic_suggestions": _topic_suggestions(
+            loop_memory_path,
+            campaign=campaign,
+            loop_rows=raw_rows,
+        ),
         "activity_budget": activity_budget_state(),
     }
+    if campaign_public is not None:
+        result["campaign_context"] = campaign_public
+        from orchestrator.research_campaign import bind_topic
+
+        result["campaign_topic_links"] = [
+            bind_topic(campaign, topic["text"])
+            for topic in campaign["topic_policy"]["topics"]
+        ]
+    return result
 
 
 # ── plan ────────────────────────────────────────────────────────────────
 
 
-def _planner_system_prompt(budget: int) -> str:
+def _planner_system_prompt(
+    budget: int, campaign_context: dict[str, Any] | None = None,
+) -> str:
     menu = known_actions()
+    campaign_rules = ""
+    if campaign_context is not None:
+        admitted = set(
+            (campaign_context.get("campaign_actions") or {}).get("admitted") or []
+        )
+        menu = [item for item in menu if item.get("name") in admitted]
+        question = campaign_context.get("research_question") or {}
+        campaign_rules = (
+            "\nACTIVE RESEARCH CAMPAIGN — this plan is isolated to "
+            f"{campaign_context.get('campaign_id')!r}. Only the reduced menu "
+            "shown above is admitted. For run_loop_iteration, copy one exact "
+            "campaign_preregistered topic from state.topic_suggestions; never "
+            "rewrite it. Legacy agenda, findings, and feedback are outside this "
+            "campaign. promote_findings is campaign-filtered by the dispatcher. "
+            "A finding-id bubble may name only a finding in "
+            "state.surfaced_pending. The campaign question is: "
+            f"{question.get('text')!r}.\n"
+        )
     return (
         "You are the COORDINATOR brain of the a_bgt_rsi research apparatus.\n"
         "Given a snapshot of the apparatus state, decide what to do NEXT by\n"
@@ -764,6 +847,7 @@ def _planner_system_prompt(budget: int) -> str:
         f"the budget of {budget} cost units will be REJECTED and you will be\n"
         "asked to re-plan. Do NOT invent actions. The menu:\n"
         f"{json.dumps(menu, indent=2)}\n"
+        f"{campaign_rules}"
         "\n"
         "FORMAT CONTRACT: each menu object uses 'name' to identify an available\n"
         "action, but every OUTPUT plan object must copy that value under the\n"
@@ -869,7 +953,12 @@ def plan(
     try:
         record = call_sync(
             [
-                {"role": "system", "content": _planner_system_prompt(budget)},
+                {
+                    "role": "system",
+                    "content": _planner_system_prompt(
+                        budget, state.get("campaign_context"),
+                    ),
+                },
                 {"role": "user", "content": user},
             ],
             temperature=0.1,
@@ -891,6 +980,66 @@ def plan(
     if isinstance(parsed, dict) and isinstance(parsed.get("plan"), list):
         return parsed["plan"]
     return []
+
+
+def _campaign_plan_errors(
+    normalized: list[dict[str, Any]],
+    *,
+    campaign: dict[str, Any],
+    state: dict[str, Any],
+) -> list[str]:
+    """Second admission gate over the ordinary closed action validator.
+
+    Campaign identity never comes from model output. The coordinator supplies
+    it to handlers after this gate; the model may only select an admitted
+    action and, for a loop iteration, one still-available exact seed.
+    """
+    from orchestrator.research_campaign import CampaignError, bind_topic
+
+    admitted = set(campaign["campaign_actions"]["admitted"])
+    available = {
+        item.get("topic")
+        for item in state.get("topic_suggestions") or []
+        if isinstance(item, dict)
+        and item.get("source") == "campaign_preregistered"
+    }
+    surfaced_ids = {
+        item.get("finding_id")
+        for item in state.get("surfaced_pending") or []
+        if isinstance(item, dict) and isinstance(item.get("finding_id"), str)
+    }
+    errors: list[str] = []
+    for index, step in enumerate(normalized):
+        action = step.get("name")
+        if action not in admitted:
+            errors.append(
+                f"action[{index}]: {action!r} is deferred for campaign "
+                f"{campaign['campaign_id']!r}"
+            )
+            continue
+        args = step.get("args") or {}
+        if action == "run_loop_iteration":
+            topic = args.get("topic")
+            try:
+                bind_topic(campaign, topic)
+            except CampaignError:
+                errors.append(
+                    f"action[{index}]: topic is not an exact preregistered "
+                    "campaign seed"
+                )
+                continue
+            if topic not in available:
+                errors.append(
+                    f"action[{index}]: campaign topic is not currently available"
+                )
+        elif action == "bubble_up" and args.get("finding_ids"):
+            outside = [fid for fid in args["finding_ids"] if fid not in surfaced_ids]
+            if outside:
+                errors.append(
+                    f"action[{index}]: finding_ids are outside the campaign "
+                    f"surfaced set: {outside!r}"
+                )
+    return errors
 
 
 # ── built-in handlers for the report-only actions ───────────────────────
@@ -1010,18 +1159,30 @@ def handle_forecast_markets(
     return {"status": "passed" if rc_an == 0 else "error", "result": out}
 
 
-def _default_execute_handlers() -> dict[str, Callable[..., Any]]:
+def _default_execute_handlers(
+    *, campaign_id: str | None = None,
+    campaign_manifest_sha256: str | None = None,
+) -> dict[str, Callable[..., Any]]:
     """The real dispatch table, resolved lazily so importing the coordinator
     pulls in nara / finding_promotion only when an --execute cycle runs."""
-    from orchestrator.nara import run_iteration as _run_iteration
     from orchestrator.finding_promotion import promote_findings as _promote_findings
+    from orchestrator.nara import run_iteration as _run_iteration
     from workers.mine_paper_gap import mine_paper_gap as _mine_paper_gap
 
     def _run_loop_iteration(*, topic: str) -> Any:
-        return _run_iteration(topic, source="coordinator")
+        return _run_iteration(
+            topic,
+            source="coordinator",
+            campaign_id=campaign_id,
+            campaign_manifest_sha256=campaign_manifest_sha256,
+        )
 
     def _promote(*, max_candidates: int | None = None) -> Any:
-        result = _promote_findings(max_candidates=max_candidates)
+        result = _promote_findings(
+            max_candidates=max_candidates,
+            campaign_id=campaign_id,
+            campaign_manifest_sha256=campaign_manifest_sha256,
+        )
         _persist_near_misses(result)
         return result
 
@@ -1117,6 +1278,7 @@ def coordinator_cycle(
     surfaced_path: str | os.PathLike = DEFAULT_SURFACED,
     feedback_path: str | os.PathLike = DEFAULT_FEEDBACK,
     active_run_path: str | os.PathLike = DEFAULT_ACTIVE_RUN,
+    campaign_id: str | None = None,
 ) -> dict[str, Any]:
     """One coordinator cycle: assess -> plan -> validate (-> dispatch).
 
@@ -1133,6 +1295,21 @@ def coordinator_cycle(
     per-action status list. Adopts active_run (kind="ad_hoc") + set_run_id
     around the cycle so the UI sees a live coordinator run.
     """
+    from orchestrator.research_campaign import CampaignError, load_active_campaign
+
+    campaign = load_active_campaign()
+    if campaign_id is not None and (
+        campaign is None or campaign.get("campaign_id") != campaign_id
+    ):
+        raise CampaignError(
+            "requested research campaign is not the active campaign"
+        )
+    campaign_public: dict[str, Any] | None = None
+    if campaign is not None:
+        from orchestrator.research_campaign import campaign_context
+
+        campaign_public = campaign_context(campaign)
+
     run_id = f"coordinator_{uuid.uuid4().hex[:8]}"
     # β bounds (D-049) — checked BEFORE any registration or LLM call. A
     # refusal still writes a cycle-log row (best-effort) so the audit/UI
@@ -1147,6 +1324,8 @@ def coordinator_cycle(
             "errors": [f"pause file present: {PAUSE_PATH}"],
             "plan": [], "executed": [], "bubble_up": [], "attempts": [],
         }
+        if campaign_public is not None:
+            report["campaign_context"] = campaign_public
         coordinator_cycle_log.write_coordinator_cycle(report)
         # 2026-08-19 review (B2): the gate_reason above was DEAD without this
         # line — the branch returned before the emit layer, so "paused" could
@@ -1178,6 +1357,8 @@ def coordinator_cycle(
                 "errors": [detail],
                 "plan": [], "executed": [], "bubble_up": [], "attempts": [],
             }
+            if campaign_public is not None:
+                report["campaign_context"] = campaign_public
             # A refusal is NOT a cycle: writing it to coordinator_cycles.jsonl
             # is what put nine empty "no valid plan" rows on the dashboard in
             # one afternoon. It is still logged (rule 6) — as what it is.
@@ -1210,6 +1391,7 @@ def coordinator_cycle(
             surfaced_path=surfaced_path,
             feedback_path=feedback_path,
             active_run_path=active_run_path,
+            campaign=campaign,
         )
     finally:
         active_run.clear_active_run()
@@ -1229,12 +1411,17 @@ def _coordinator_cycle(
     surfaced_path: str | os.PathLike,
     feedback_path: str | os.PathLike,
     active_run_path: str | os.PathLike,
+    campaign: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     state = assess_state(
         loop_memory_path=loop_memory_path,
         surfaced_path=surfaced_path,
         feedback_path=feedback_path,
         active_run_path=active_run_path,
+        campaign_id=campaign["campaign_id"] if campaign is not None else None,
+        campaign_manifest_sha256=(
+            campaign["_manifest_sha256"] if campaign is not None else None
+        ),
     )
     _ts = (state.get("topic_suggestions") or [{}])[0]
     active_run.update_active_run(
@@ -1264,6 +1451,16 @@ def _coordinator_cycle(
             parent_request_id=run_id,
         )
         verdict = validate_plan(raw_plan, budget=budget)
+        if verdict["ok"] and campaign is not None:
+            campaign_errors = _campaign_plan_errors(
+                verdict["normalized"], campaign=campaign, state=state,
+            )
+            if campaign_errors:
+                verdict = {
+                    "ok": False,
+                    "errors": campaign_errors,
+                    "normalized": [],
+                }
         attempts.append({
             "attempt": attempt,
             "raw_plan": raw_plan,
@@ -1321,7 +1518,12 @@ def _coordinator_cycle(
         narration=f"dispatching {len(validated)} action(s)",
     )
     # Execute: dispatch each validated action in order, within budget.
-    handlers = execute_handlers or _default_execute_handlers()
+    handlers = execute_handlers or _default_execute_handlers(
+        campaign_id=campaign["campaign_id"] if campaign is not None else None,
+        campaign_manifest_sha256=(
+            campaign["_manifest_sha256"] if campaign is not None else None
+        ),
+    )
     executed: list[dict[str, Any]] = []
     spent = 0
     # Portfolio state: today's per-class spend BEFORE this cycle, so a class

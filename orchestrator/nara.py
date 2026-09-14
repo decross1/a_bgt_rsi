@@ -28,38 +28,35 @@ from pathlib import Path
 
 import jsonschema
 
+from agent_wrapper import worker_activity
+from agent_wrapper.backends import get_backend
 from agent_wrapper.cleanup import strip_channel_markup
 from agent_wrapper.gemma_tool_parse import (
     SynthToolCall,
     parse_inline_tool_calls,
     split_narration_and_markup,
 )
-from agent_wrapper import worker_activity
-from agent_wrapper.backends import get_backend
 from agent_wrapper.generation_policy import (
-    build_policy_record_metadata, resolve_generation_policy,
+    build_policy_record_metadata,
     reasoning_text_from_message,
+    resolve_generation_policy,
 )
 from agent_wrapper.wrapper import (
     DEFAULT_BACKEND,
-    MEMORY_LOG,
     _emit,
     _project_for_log,
     get_run_id,
     set_run_id,
 )
-from orchestrator import active_run
-from orchestrator import iteration_cache
+from orchestrator import active_run, domain_anchor, iteration_cache
+from orchestrator import topicality as topicality_mod
 from orchestrator.journal_stub import finalize_iteration_record
 from orchestrator.runtime import PyRuntime, Runtime
 from orchestrator.tool_registry import TOOL_SPECS
 from workers.meta_review import meta_review as _meta_review
 from workers.ml_intern import ml_intern as _ml_intern
-from workers.retrieval_relevance import relevance
-from orchestrator import domain_anchor
-from orchestrator import topicality as topicality_mod
 from workers.redteam_critic import redteam_critic as _redteam_critic
-
+from workers.retrieval_relevance import relevance
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_IDEA_LEDGER = REPO_ROOT / "memory" / "idea_ledger.jsonl"
@@ -470,6 +467,8 @@ def run_iteration(
     profile: str | None = None,
     experiment_outcome: dict | None = None,
     cross_tier_comparison: dict | None = None,
+    campaign_id: str | None = None,
+    campaign_manifest_sha256: str | None = None,
 ) -> dict:
     """Run one LOOP_V0 iteration. Returns the final iteration_record dict.
 
@@ -488,7 +487,34 @@ def run_iteration(
     cross_tier_comparison: optional Loop v1 Step-5 cross-mechanism
         replication comparison (from experiments/replication_driver). When
         non-None, threaded into the iteration_record under the
-        `cross_tier_comparison` field. Mirrors `experiment_outcome`."""
+        `cross_tier_comparison` field. Mirrors `experiment_outcome`.
+
+    campaign_id: optional registered research-campaign identity. Execution is
+        allowed only while that campaign is active and ``topic`` exactly
+        matches a preregistered seed; the resulting immutable link is copied
+        to active state, events, and the final iteration record.
+    campaign_manifest_sha256: trusted dispatcher binding to the exact campaign
+        declaration used during planning. A changed pointer/manifest refuses
+        before runtime registration or a model call."""
+    campaign_link: dict[str, str] | None = None
+    from orchestrator.research_campaign import (
+        CampaignError,
+        bind_topic,
+        load_active_campaign,
+    )
+
+    campaign = load_active_campaign()
+    if campaign_id is not None and (
+        campaign is None or campaign.get("campaign_id") != campaign_id
+    ):
+        raise CampaignError("requested research campaign is not active")
+    if campaign_manifest_sha256 is not None and (
+        campaign is None
+        or campaign.get("_manifest_sha256") != campaign_manifest_sha256
+    ):
+        raise CampaignError("research campaign changed after dispatch planning")
+    if campaign is not None:
+        campaign_link = bind_topic(campaign, topic)
     if log_path is _USE_DEFAULT_LOG:
         log_path = _DEFAULT_LOG_PATH  # resolved at call time (patchable)
     runtime = runtime or PyRuntime()
@@ -502,6 +528,8 @@ def run_iteration(
         orchestrator_backend=be.name,
         orchestrator_model=be.default_model,
     )
+    if campaign_link is not None:
+        active["campaign"] = dict(campaign_link)
     runtime.write_state(ACTIVE_PATH, active)
     # UI observability: mirror the iteration into the generalized active_run.json
     # (active_iteration.json stays the loop-detail subset). set_run_id stamps
@@ -514,12 +542,15 @@ def run_iteration(
         iteration_id, "loop_v0", f"LOOP_V0 iteration {iteration_id}",
         model=be.default_model,
     )
-    runtime.log_event({
+    start_event = {
         "event_type": "loop_v0_iteration_start",
         "iteration_id": iteration_id,
         "topic": topic,
         "source": source,
-    })
+    }
+    if campaign_link is not None:
+        start_event["campaign"] = dict(campaign_link)
+    runtime.log_event(start_event)
     # Registration/cleanup wrapper (2026-06-10). The cleanup used to live in
     # finalize's narrow `finally`, so any exception in the ~550-line chain
     # body leaked the run_id contextvar + the live state files — in the
@@ -533,6 +564,7 @@ def run_iteration(
             experiment_outcome=experiment_outcome,
             cross_tier_comparison=cross_tier_comparison,
             generation_policy=policy,
+            campaign_link=campaign_link,
         )
     finally:
         runtime.delete_state(ACTIVE_PATH)
@@ -554,6 +586,7 @@ def _run_iteration_impl(
     experiment_outcome: dict | None,
     cross_tier_comparison: dict | None,
     generation_policy=None,
+    campaign_link: dict[str, str] | None = None,
 ) -> dict:
     """The iteration chain body. Registration (state files, run_id, events)
     and cleanup are the caller's job — run_iteration wraps this in
@@ -574,7 +607,16 @@ def _run_iteration_impl(
     _steps_mark(runtime, active, iteration_id, "meta_review", "running")
     runtime.write_state(ACTIVE_PATH, active)
     try:
-        mr = _meta_review(parent_request_id=iteration_id)
+        if campaign_link is None:
+            mr = _meta_review(parent_request_id=iteration_id)
+        else:
+            mr = _meta_review(
+                parent_request_id=iteration_id,
+                campaign_id=campaign_link["campaign_id"],
+                campaign_manifest_sha256=(
+                    campaign_link["campaign_manifest_sha256"]
+                ),
+            )
         if isinstance(mr, dict) and mr.get("status") == "passed":
             _steps_mark(runtime, active, iteration_id, "meta_review", "passed")
             meta_review_record = mr.get("result")
@@ -1116,8 +1158,8 @@ def _run_iteration_impl(
     # orchestrator calls it directly with whatever it captured during
     # the loop — degraded path, logged as a fallback event.
     if journal_entry_path is None:
-        from workers.journal_writer import journal_writer as _full_jw
         from orchestrator.journal_stub import journal_writer_stub as _stub_jw
+        from workers.journal_writer import journal_writer as _full_jw
 
         if "hypothesis" in captured:
             # We have at least step 1 captured — use the full writer with
@@ -1196,6 +1238,8 @@ def _run_iteration_impl(
         "model_version":      be.model_version,
         "wrapper_call_ids":   wrapper_call_ids,
     }
+    if campaign_link is not None:
+        record["campaign"] = dict(campaign_link)
     # Attach the four substructures when present so the iteration_record
     # reflects the full chain.
     for key in ("hypothesis", "retrieval", "novelty", "critique"):
@@ -1232,16 +1276,19 @@ def _run_iteration_impl(
     # Validate + append to loop_memory
     try:
         finalize_iteration_record(record)
-        runtime.log_event({
+        completion_event = {
             "event_type": "loop_v0_iteration_complete",
             "iteration_id": iteration_id,
             "tool_calls_made": tool_calls_made,
             "duration_ms": int(
                 (datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
                  - datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-                 ).total_seconds() * 1000
+                ).total_seconds() * 1000
             ),
-        })
+        }
+        if campaign_link is not None:
+            completion_event["campaign"] = dict(campaign_link)
+        runtime.log_event(completion_event)
     except jsonschema.ValidationError as exc:
         runtime.log_event({
             "event_type": "loop_v0_iteration_failed",

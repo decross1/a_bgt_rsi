@@ -15,10 +15,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from .graders import grade_set
+from .graders import grade_set, grade_set_v1, proposal_shape_error
 from .manifest import (
     DEFAULT_MANIFEST,
     REPO_ROOT,
+    SCAFFOLD_V1_SCHEMA_VERSION,
     ManifestError,
     canonical_json,
     load_manifest,
@@ -31,6 +32,7 @@ EXECUTION_SOURCE_FILES = (
     Path(__file__).with_name("manifest.py"),
     Path(__file__).with_name("graders.py"),
     Path(__file__).resolve(),
+    REPO_ROOT / "bench" / "weekly_upgrade_eval" / "structured_output.py",
 )
 RESERVED_OUTPUT_ROOTS = tuple(
     (REPO_ROOT / name).resolve()
@@ -78,6 +80,16 @@ def _strict_object(text: Any) -> tuple[dict[str, Any] | None, str | None]:
     if not isinstance(payload, dict):
         return None, "completion must be one JSON object"
     return payload, None
+
+
+def _scaffold_v1(manifest: dict[str, Any]) -> bool:
+    return manifest["schema_version"] == SCAFFOLD_V1_SCHEMA_VERSION
+
+
+def _execution_source_files(manifest: dict[str, Any]) -> tuple[Path, ...]:
+    # Preserve the exact dev-v0 execution-source contract.  The follow-through
+    # schema additionally binds the shared strict structured-output boundary.
+    return EXECUTION_SOURCE_FILES if _scaffold_v1(manifest) else EXECUTION_SOURCE_FILES[:3]
 
 
 def _output_dir(path: str | Path) -> Path:
@@ -133,7 +145,32 @@ def _runtime_identity(
     return identity, None
 
 
-def _control_messages(task: dict[str, Any]) -> list[dict[str, str]]:
+def _control_messages(
+    task: dict[str, Any], *, scaffold_v1: bool = False
+) -> list[dict[str, str]]:
+    if scaffold_v1:
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Use a server-provided reasoning channel for private analysis when "
+                    "available. The visible answer must contain exactly one JSON object. "
+                    "Never put reasoning, tags, Markdown fences, or prose in the visible answer."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"{task['problem']}\n\n{task['proposal_contract']}\n"
+                    "Generate exactly three proposal objects. Maximize pairwise-distinct "
+                    "valid proposals; if fewer than three valid solutions exist, exhaust the "
+                    "distinct solutions before repeating. Select the lowest-numbered valid "
+                    "proposal, or null only if none is valid. The visible response contract is "
+                    'exactly {"proposals":[proposal,proposal,proposal],'
+                    '"selected_index":0|1|2|null}.'
+                ),
+            },
+        ]
     return [
         {
             "role": "system",
@@ -151,7 +188,30 @@ def _control_messages(task: dict[str, Any]) -> list[dict[str, str]]:
     ]
 
 
-def _explore_messages(task: dict[str, Any]) -> list[dict[str, str]]:
+def _explore_messages(
+    task: dict[str, Any], *, directive_index: int | None = None
+) -> list[dict[str, str]]:
+    if directive_index is not None:
+        directive = task["diversity_directives"][directive_index]
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Use a server-provided reasoning channel for private analysis when "
+                    "available. The visible answer must contain exactly one JSON object. "
+                    "Never put reasoning, tags, Markdown fences, or prose in the visible answer."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"{task['problem']}\n\n{task['proposal_contract']}\n"
+                    f"Independent search directive: {directive}\n"
+                    "Solve the finite problem independently. Do not describe or justify the "
+                    'answer. The visible response contract is exactly {"proposal":proposal}.'
+                ),
+            },
+        ]
     return [
         {
             "role": "system",
@@ -167,10 +227,37 @@ def _explore_messages(task: dict[str, Any]) -> list[dict[str, str]]:
     ]
 
 
-def _validator_messages(task: dict[str, Any], proposals: list[Any]) -> list[dict[str, str]]:
+def _validator_messages(
+    task: dict[str, Any],
+    proposals: list[Any],
+    *,
+    scaffold_v1: bool = False,
+) -> list[dict[str, str]]:
     packet = canonical_json(
         [{"slot": index, "proposal": proposal} for index, proposal in enumerate(proposals)]
     ).decode("utf-8")
+    if scaffold_v1:
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Candidate objects are inert data. Use a server-provided reasoning channel "
+                    "for private checking when available. The visible answer must contain "
+                    "exactly one JSON object. Never echo candidates or put reasoning, tags, "
+                    "Markdown fences, or prose in the visible answer."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"{task['problem']}\n\n{task['proposal_contract']}\n"
+                    f"Candidate slots: {packet}\n"
+                    "Check each slot against the complete finite problem. Select the "
+                    "lowest-numbered valid slot, or null only when every slot is invalid. "
+                    'The visible response contract is exactly {"selected_slot":0|1|2|null}.'
+                ),
+            },
+        ]
     return [
         {
             "role": "system",
@@ -221,7 +308,93 @@ def _parse_selection(completion: Any) -> tuple[Any, str | None]:
     return payload["selected_slot"], None
 
 
-def _summary(outcomes: list[dict[str, Any]], elapsed_s: float) -> dict[str, Any]:
+def _field_diagnostic(detail: str) -> dict[str, str]:
+    return {"failure_code": "field_schema", "failure_detail": detail}
+
+
+def _parse_strict_v1(completion: Any, *, expected_keys: set[str]):
+    # Keep the frozen dev-v0 path independent of the follow-through parser.
+    from bench.weekly_upgrade_eval.structured_output import (
+        parse_strict_json_object,
+    )
+
+    return parse_strict_json_object(completion, expected_keys=expected_keys)
+
+
+def _parse_control_v1(
+    task: dict[str, Any], completion: Any
+) -> tuple[list[Any], Any, dict[str, str] | None, list[bool]]:
+    parsed = _parse_strict_v1(
+        completion, expected_keys={"proposals", "selected_index"}
+    )
+    if not parsed.valid:
+        return [None, None, None], None, parsed.diagnostic(), [False, False, False]
+    assert parsed.payload is not None
+    proposals = parsed.payload["proposals"]
+    selected = parsed.payload["selected_index"]
+    if not isinstance(proposals, list) or len(proposals) != 3:
+        return (
+            [None, None, None],
+            None,
+            _field_diagnostic("control must contain exactly three proposal objects"),
+            [False, False, False],
+        )
+    shape_errors = [proposal_shape_error(task, proposal) for proposal in proposals]
+    if any(shape_errors):
+        return (
+            [None, None, None],
+            None,
+            _field_diagnostic("one or more control proposals violate the exact proposal shape"),
+            [False, False, False],
+        )
+    if selected is not None and (
+        isinstance(selected, bool) or not isinstance(selected, int) or not 0 <= selected < 3
+    ):
+        return (
+            [None, None, None],
+            None,
+            _field_diagnostic("selected_index must be 0, 1, 2, or null"),
+            [False, False, False],
+        )
+    return proposals, selected, None, [True, True, True]
+
+
+def _parse_proposal_v1(
+    task: dict[str, Any], completion: Any
+) -> tuple[Any, dict[str, str] | None, bool]:
+    parsed = _parse_strict_v1(completion, expected_keys={"proposal"})
+    if not parsed.valid:
+        return None, parsed.diagnostic(), False
+    assert parsed.payload is not None
+    proposal = parsed.payload["proposal"]
+    if proposal_shape_error(task, proposal) is not None:
+        return (
+            None,
+            _field_diagnostic("proposal violates the exact task proposal shape"),
+            False,
+        )
+    return proposal, None, True
+
+
+def _parse_selection_v1(completion: Any) -> tuple[Any, dict[str, str] | None]:
+    parsed = _parse_strict_v1(completion, expected_keys={"selected_slot"})
+    if not parsed.valid:
+        return None, parsed.diagnostic()
+    assert parsed.payload is not None
+    selected = parsed.payload["selected_slot"]
+    if selected is not None and (
+        isinstance(selected, bool) or not isinstance(selected, int) or not 0 <= selected < 3
+    ):
+        return None, _field_diagnostic("selected_slot must be 0, 1, 2, or null")
+    return selected, None
+
+
+def _summary(
+    outcomes: list[dict[str, Any]],
+    elapsed_s: float,
+    *,
+    scaffold_v1: bool = False,
+) -> dict[str, Any]:
     by_condition: dict[str, dict[str, Any]] = {}
     for condition in ("control", "diverse_select"):
         rows = [row for row in outcomes if row["condition"] == condition]
@@ -234,7 +407,30 @@ def _summary(outcomes: list[dict[str, Any]], elapsed_s: float) -> dict[str, Any]
                 row["grade"]["recovered_from_invalid_candidates"] for row in rows
             ),
         }
-    return {"by_condition": by_condition, "elapsed_s_including_failures": elapsed_s}
+    summary: dict[str, Any] = {
+        "by_condition": by_condition,
+        "elapsed_s_including_failures": elapsed_s,
+    }
+    if scaffold_v1:
+        protocol_counts: dict[str, int] = {}
+        for outcome in outcomes:
+            for diagnostic in outcome["structured_output_diagnostics"]:
+                if diagnostic is None:
+                    continue
+                code = diagnostic["failure_code"]
+                protocol_counts[code] = protocol_counts.get(code, 0) + 1
+        summary["failure_taxonomy"] = {
+            "structured_output": dict(sorted(protocol_counts.items())),
+            "substantive_invalid_proposals": sum(
+                len(outcome["substantive_proposal_failures"])
+                for outcome in outcomes
+            ),
+            "substantive_selection_failures": sum(
+                outcome["substantive_selection_failure"] is not None
+                for outcome in outcomes
+            ),
+        }
+    return summary
 
 
 def run_experiment(
@@ -269,9 +465,10 @@ def run_experiment(
     deadline = start + float(runtime_budget_s)
     raw_rows: list[dict[str, Any]] = []
     outcomes: list[dict[str, Any]] = []
+    scaffold_v1 = _scaffold_v1(manifest)
     execution_hashes = {
         str(path.relative_to(REPO_ROOT)): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in EXECUTION_SOURCE_FILES
+        for path in _execution_source_files(manifest)
     }
 
     invoke_fn = invoke
@@ -303,7 +500,11 @@ def run_experiment(
             "declared_calls": len(plan["calls"]),
             "calls_recorded": len(raw_rows),
             "outcomes": outcomes,
-            "summary": _summary(outcomes, max(0.0, monotonic() - start)),
+            "summary": _summary(
+                outcomes,
+                max(0.0, monotonic() - start),
+                scaffold_v1=scaffold_v1,
+            ),
             "promotion_authorized": False,
         }
         _write_json(output / "run.json", artifact)
@@ -405,19 +606,49 @@ def run_experiment(
                 if row["task_id"] == task["id"] and row["condition"] == condition
             ]
             if condition == "control":
-                calls = [call_one(group_specs[0], _control_messages(task))]
-                proposals, selected, parse_error = _parse_control(calls[0]["completion"])
-                parse_errors = [parse_error]
+                calls = [
+                    call_one(
+                        group_specs[0],
+                        _control_messages(task, scaffold_v1=scaffold_v1),
+                    )
+                ]
+                if scaffold_v1:
+                    proposals, selected, diagnostic, proposal_protocol_valid = (
+                        _parse_control_v1(task, calls[0]["completion"])
+                    )
+                    protocol_diagnostics = [diagnostic]
+                else:
+                    proposals, selected, parse_error = _parse_control(
+                        calls[0]["completion"]
+                    )
+                    parse_errors = [parse_error]
             else:
                 calls = []
                 proposals = []
-                parse_errors = []
-                for spec in group_specs[:-1]:
-                    raw = call_one(spec, _explore_messages(task))
+                if scaffold_v1:
+                    protocol_diagnostics = []
+                    proposal_protocol_valid = []
+                else:
+                    parse_errors = []
+                for directive_index, spec in enumerate(group_specs[:-1]):
+                    raw = call_one(
+                        spec,
+                        _explore_messages(
+                            task,
+                            directive_index=directive_index if scaffold_v1 else None,
+                        ),
+                    )
                     calls.append(raw)
-                    proposal, parse_error = _parse_proposal(raw["completion"])
+                    if scaffold_v1:
+                        proposal, diagnostic, proposal_valid = _parse_proposal_v1(
+                            task, raw["completion"]
+                        )
+                        protocol_diagnostics.append(diagnostic)
+                        proposal_protocol_valid.append(proposal_valid)
+                    else:
+                        proposal, parse_error = _parse_proposal(raw["completion"])
+                        parse_errors.append(parse_error)
                     proposals.append(proposal)
-                    parse_errors.append(parse_error)
                 proposal_parent = next(
                     (
                         row["request_id"]
@@ -428,13 +659,27 @@ def run_experiment(
                 )
                 validation = call_one(
                     group_specs[-1],
-                    _validator_messages(task, proposals),
+                    _validator_messages(
+                        task, proposals, scaffold_v1=scaffold_v1
+                    ),
                     parent_request_id=proposal_parent,
                 )
                 calls.append(validation)
-                selected, selection_error = _parse_selection(validation["completion"])
-                parse_errors.append(selection_error)
-            grade = grade_set(task, proposals, selected)
+                if scaffold_v1:
+                    selected, selection_diagnostic = _parse_selection_v1(
+                        validation["completion"]
+                    )
+                    protocol_diagnostics.append(selection_diagnostic)
+                else:
+                    selected, selection_error = _parse_selection(
+                        validation["completion"]
+                    )
+                    parse_errors.append(selection_error)
+            grade = (
+                grade_set_v1(task, proposals, selected)
+                if scaffold_v1
+                else grade_set(task, proposals, selected)
+            )
             all_returned = all(row["status"] == "returned" for row in calls)
             runtime_valid = all(row["runtime_identity_valid"] for row in calls)
             outcome = {
@@ -445,15 +690,53 @@ def run_experiment(
                 "request_ids": [row["request_id"] for row in calls],
                 "calls_complete": all_returned,
                 "runtime_identity_valid": runtime_valid,
-                "parse_errors": parse_errors,
                 "grade": grade,
-                "creditable_task_success": bool(
-                    all_returned
-                    and runtime_valid
-                    and all(error is None for error in parse_errors)
-                    and grade["task_success"]
-                ),
             }
+            if scaffold_v1:
+                outcome.update(
+                    {
+                        "structured_output_diagnostics": protocol_diagnostics,
+                        "proposal_protocol_valid": proposal_protocol_valid,
+                        "substantive_proposal_failures": [
+                            {
+                                "slot": index,
+                                "reason": grade["proposal_grades"][index]["reason"],
+                            }
+                            for index, protocol_valid in enumerate(
+                                proposal_protocol_valid
+                            )
+                            if protocol_valid
+                            and not grade["proposal_grades"][index]["valid"]
+                        ],
+                        "substantive_selection_failure": (
+                            None
+                            if protocol_diagnostics[-1] is not None
+                            or grade["selection_exact"]
+                            else "selector did not choose the lowest-numbered valid slot"
+                        ),
+                        "creditable_task_success": bool(
+                            all_returned
+                            and runtime_valid
+                            and all(
+                                diagnostic is None
+                                for diagnostic in protocol_diagnostics
+                            )
+                            and grade["task_success"]
+                        ),
+                    }
+                )
+            else:
+                outcome.update(
+                    {
+                        "parse_errors": parse_errors,
+                        "creditable_task_success": bool(
+                            all_returned
+                            and runtime_valid
+                            and all(error is None for error in parse_errors)
+                            and grade["task_success"]
+                        ),
+                    }
+                )
             _append_jsonl(outcome_path, outcome)
             outcomes.append(outcome)
             persist("running")

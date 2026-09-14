@@ -12,14 +12,18 @@ operating model is one primary session at a time.
    contract (auto-loaded).
 2. [`../../START_HERE.md`](../../START_HERE.md) — orientation, doc map,
    where the project stands.
-3. [`../../LOOP_V0.md`](../../LOOP_V0.md) — the active build plan.
-4. The most recent file in [`../../human/sessions/`](../../human/sessions/)
+3. [`../../LOOP_V2.md`](../../LOOP_V2.md) — the active v2 foundation plan and
+   activation evidence; check the canonical lifecycle/deployment receipts.
+4. [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md) — the dated deployed state
+   and the implemented v2 foundation and remaining targets. Use `LOOP_V1.md` and `LOOP_V0.md` as
+   historical build records.
+5. The most recent file in [`../../human/sessions/`](../../human/sessions/)
    — today's focus and prior-session handoff. If no entry exists for
    today, the first job is to agree on one with the human and write
    it.
-5. [`../../run_state/week1.state.json`](../../run_state/week1.state.json)
-   — historical completed work + any `human_gates_pending`. Honor
-   pending gates across restarts.
+6. The task-relevant validated receipts under `../../run_state/`, including
+   active-run, pause, activation, budget, and human-gate records. Honor pending
+   gates across restarts; do not infer state from an absent historical file.
 
 ## Authority within a session
 

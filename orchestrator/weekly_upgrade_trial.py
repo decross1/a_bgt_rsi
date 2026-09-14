@@ -43,8 +43,20 @@ TRIALS = {
     "experiments/weekly_upgrade_game_science_dev_v0_2026-09-14.json": ("portfolio", 2310),
     "experiments/weekly_context_capability_v1_2026-09-14.json": ("objective", 1230),
     "experiments/diversity_selection_dev_v0_2026-09-14.json": ("diversity", 880),
+    "experiments/diversity_selection_v1_2026-09-14.json": ("diversity", 880),
+    "experiments/weekly_role_effort_v1_2026-09-14.json": ("role_effort", 1660),
+    "experiments/weekly_historical_coding_panel_v2_2026-09-14.json": ("historical_repair", 1050),
+    "experiments/weekly_historical_coding_patch_wire_v1_2026-09-14.json": ("historical_repair", 1050),
 }
 CONTEXT_MANIFEST = "experiments/weekly_context_capability_v1_2026-09-14.json"
+TRIAL_MODULES = {
+    "objective": "bench.weekly_upgrade_eval.runner",
+    "topic_scope": "bench.weekly_upgrade_eval.topic_scope",
+    "portfolio": "bench.weekly_upgrade_portfolio.runner",
+    "diversity": "bench.weekly_upgrade_diversity.runner",
+    "role_effort": "bench.weekly_upgrade_effort.runner",
+    "historical_repair": "bench.weekly_upgrade_historical.runner",
+}
 ENDPOINTS = ("http://127.0.0.1:8000", "http://127.0.0.1:8001")
 RESIDENT_CONTAINERS = ("vllm-gemma4", "vllm-qwen")
 MIN_MEMORY_GIB = 30  # Existing production preflight floor, not a relaxed gate.
@@ -53,6 +65,7 @@ SUPERVISION_MARGIN_S = 10
 DEPENDENCY_PATHS = (
     "agent_wrapper", "bench/weekly_upgrade_eval", "bench/weekly_upgrade_portfolio",
     "bench/weekly_upgrade_context", "bench/weekly_upgrade_diversity",
+    "bench/weekly_upgrade_effort", "bench/weekly_upgrade_historical",
     "orchestrator/coordinator_actions.py", "orchestrator/weekly_upgrade_portfolio_receipt.py",
     "orchestrator/weekly_upgrade_trial.py", "orchestrator/weekly_upgrade_budget.py",
     "orchestrator/weekly_upgrade.py", "orchestrator/weekly_upgrade_cycle.py",
@@ -269,6 +282,21 @@ def plan_trial(manifest_path: str, *, worktree: Path = ROOT,
             task["id"]: sha256_json(task["grader"])
             for task in manifest["tasks"]
         }
+    elif kind in {"role_effort", "historical_repair"}:
+        if kind == "role_effort":
+            from bench.weekly_upgrade_effort.manifest import load_manifest, plan_dict
+        else:
+            from bench.weekly_upgrade_historical.manifest import (
+                load_manifest,
+                plan_dict,
+            )
+        manifest = load_manifest(path)
+        frozen = plan_dict(manifest)
+        fixture_ids, arm_ids, seeds = frozen["fixture_ids"], frozen["arm_ids"], frozen["seeds"]
+        configuration_sha = manifest["_configuration_sha256"]
+        attempts = [row["attempt_id"] for row in frozen["order"]]
+        inputs = frozen["input_sha256"] if kind == "role_effort" else frozen["expected_input_sha256"]
+        graders = frozen["grader_sha256"] if kind == "role_effort" else frozen["expected_grader_sha256"]
     elif kind == "topic_scope":
         from bench.weekly_upgrade_eval.topic_scope import build_attempts, load_manifest
         manifest = load_manifest(path)
@@ -411,10 +439,7 @@ def trial_command(plan: dict, output_dir: Path, remaining_s: float,
     payload_s = plan["payload_budget_s"]
     if not timeout or remaining_s < payload_s + KILL_GRACE_S + SUPERVISION_MARGIN_S + 1:
         raise TrialError("independent deadline supervisor unavailable or reservation exhausted")
-    module = {"objective": "bench.weekly_upgrade_eval.runner",
-              "topic_scope": "bench.weekly_upgrade_eval.topic_scope",
-              "portfolio": "bench.weekly_upgrade_portfolio.runner",
-              "diversity": "bench.weekly_upgrade_diversity.runner"}[plan["kind"]]
+    module = TRIAL_MODULES[plan["kind"]]
     command = [timeout, "--signal=TERM", f"--kill-after={KILL_GRACE_S}s", f"{payload_s + 1:.3f}s",
                sys.executable, "-m", module, "--run", "--manifest",
                str(worktree / plan["manifest_path"]), "--output-dir", str(output_dir),
@@ -482,9 +507,7 @@ def live_trial_processes(output: Path) -> list[int]:
     elapsed heartbeat. Only public command arguments are inspected.
     """
     target = os.fsencode(str(output / "evaluation"))
-    modules = {b"bench.weekly_upgrade_eval.runner", b"bench.weekly_upgrade_eval.topic_scope",
-               b"bench.weekly_upgrade_portfolio.runner",
-               b"bench.weekly_upgrade_diversity.runner"}
+    modules = {os.fsencode(module) for module in TRIAL_MODULES.values()}
     found = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
@@ -651,6 +674,24 @@ def evaluation_receipt(plan: dict, output: Path) -> dict:
                 name,
                 required=complete or name in {"raw_calls.jsonl", "outcomes.jsonl"},
             )
+            if candidate is not None:
+                artifact_hashes[name] = _sha(candidate.read_bytes())
+    elif plan.get("kind") in {"role_effort", "historical_repair"}:
+        if plan["kind"] == "role_effort":
+            from bench.weekly_upgrade_effort.receipt import (
+                validate_effort_receipt as validate_receipt,
+            )
+        else:
+            from bench.weekly_upgrade_historical.receipt import (
+                validate_historical_receipt as validate_receipt,
+            )
+        complete = validate_receipt(
+            plan, artifact, snapshot_path, regular=regular, json_lines=json_lines,
+            validate_calls=validate_calls, validate_activity=validate_activity,
+            finite_nonnegative=finite_nonnegative,
+        )
+        for name in ("raw_attempts.jsonl", "outcomes.jsonl", "calls.jsonl", "worker_activity.jsonl"):
+            candidate = regular(name, required=complete or name in {"raw_attempts.jsonl", "outcomes.jsonl"})
             if candidate is not None:
                 artifact_hashes[name] = _sha(candidate.read_bytes())
     elif plan.get("kind") == "portfolio":
