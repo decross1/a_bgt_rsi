@@ -38,9 +38,14 @@ Two seeds are repeatability observations, not independent task replication.
 
 ## Frozen development topics
 
-Seven inputs are synthetic; T6 is the exact recurring title documented in the
-[local starvation audit](../docs/research/weekly-upgrade-2026-09-14/topic_starvation_audit.md).
-No paper body or private findings are included. These are public development
+Seven inputs are synthetic; T6 was transcribed from the recurring seed in the
+frozen `memory/loop_memory.jsonl` snapshot identified by the
+[local starvation audit](../docs/research/weekly-upgrade-2026-09-14/topic_starvation_audit.md):
+8,564,469 bytes, SHA-256
+`542427d9a73f16dd840b07b21a8eebfccbe41bfa3e11516a312166a43b84b2c6`.
+The audit reports one recurring seed but deliberately omits its text. T6 was
+separately verified against that pinned source prefix. No paper body or private
+findings are included. These are public development
 cases, not a hidden confirmation set. The criteria below are grading anchors,
 never part of the generation prompt.
 
