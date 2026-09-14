@@ -29,12 +29,14 @@ decision does not set a numeric subscription-session cap or activate cron.
 The earlier public dispatcher/budget tranche now enforces the **shared 120
 Spark GPU-minute weekly ceiling** through one canonical ledger and has been
 adopted by the canonical checkout. The weekly cycle, corrected review inputs,
-and completed measurement panels are the subject of
-[public PR 19](https://github.com/decross1/a_bgt_rsi/pull/19). Because this file
-is part of that delivery, it does not predict its own final commit. The exact
-public merge SHA, private adoption SHA, and dirty-state preservation hashes are
-recorded afterward in the canonical external completion receipt. The
-already-loaded daemon still imports older code:
+and terminal measurement campaign merged through
+[public PR 19](https://github.com/decross1/a_bgt_rsi/pull/19) as
+`b672a0ab6481be086821567c11987984741e833a`. It was safely adopted into canonical
+private history as `1e7a8c55a2bf8bd5d3e4bbf61da09d3d43f2312e`. The canonical read-only
+and registered-trial readiness checks each passed 14/14. The exact final identity after this
+documentation-only follow-up and the preservation hashes are bound in the
+canonical external `completion.json` receipt. The already-loaded daemon still
+imports older code:
 
 - One ISO week, Monday 00:00 UTC through the next Monday, with no carryover.
   Charge the one physical Spark's reserved elapsed time once, including both
@@ -141,10 +143,12 @@ trial remains active.
   behavior are covered by focused tests.
 - An eight-task public synthetic game/science/evidence/executed-code portfolio
   with deterministic parent-side grading and sandbox receipts. Its authorized
-  manual baseline completed all 16 cells in 1,014.852476 charged seconds: arm A
-  passed 6/8 and arm B 7/8. Both passed science 4/4 and evidence 2/2; executed
-  code was 0/2 versus 1/2. Three timeouts remained in the denominator and no
-  separate error outcome occurred.
+  manual run retained all 16 declared cells in 1,014.852476 charged seconds:
+  13 returned and three timed out, leaving the evaluator
+  `incomplete_transport` and the controller `failed`. Arm A passed 6/8 and arm
+  B 7/8. Both passed science 4/4 and evidence 2/2; executed code was 0/2 versus
+  1/2. No separate error outcome occurred. The terminal infrastructure receipt
+  requires no retry for this delivery, but it is not a complete paired result.
 - A four-task public synthetic long-context panel using the existing objective
   runner. Review of its first revision exposed ambiguous citation grading and
   missing dispatch-time token validation. The corrected manifest
@@ -178,9 +182,9 @@ byte-equivalent judgment items and made no call retry. Neither run establishes
 better generated topics or R0 accuracy.
 
 The [completion tracker](research/weekly-upgrade-2026-09-14/UNBLOCKING_PLAN.md)
-separates the completed initial evaluation set from Git-delivery and activation
-closure. Topic v2 found no material signal, the Qwen pilot remained incomplete,
-and no production-policy change follows from either result.
+separates the terminal initial evaluation campaign from final delivery recording
+and activation. Topic v2 found no material signal, the Qwen pilot and portfolio
+remained incomplete, and no production-policy change follows from those results.
 
 The [live evaluation record](research/weekly-upgrade-2026-09-14/LIVE_EVALUATION_RECORD.md)
 records canonical adoption, both topic diagnostics and blind annotations, the
@@ -272,7 +276,7 @@ The fixed catalog and its current evidence are:
 | each Qwen seed manifest (`17`, `29`, `43`) | objective repeat | 2,250 s | 2,220 s | 12 | all three measured; locked `INCOMPLETE` |
 | `experiments/topic_scope_repair_2026-09-14.json` | topic scope + primary R0 | 2,400 s | 2,370 s | 80 | v1 measured `INVALID/INCOMPLETE` |
 | `experiments/topic_scope_repair_v2_2026-09-14.json` | planner protocol repair + unchanged R0 | 2,400 s | 2,370 s | 80 | measured; `NO-MATERIAL-SIGNAL` |
-| `experiments/weekly_upgrade_game_science_dev_v0_2026-09-14.json` | eight-task public game/science/evidence/code panel | 2,310 s | 2,280 s | 16 | manual descriptive baseline complete; A 6/8, B 7/8 |
+| `experiments/weekly_upgrade_game_science_dev_v0_2026-09-14.json` | eight-task public game/science/evidence/code panel | 2,310 s | 2,280 s | 16 | terminal `incomplete_transport`; 13 returned, 3 timed out; A 6/8, B 7/8 |
 | `experiments/weekly_context_capability_v1_2026-09-14.json` | four-task resident 8K/~14K capability panel | 1,230 s | 1,200 s | 8 | corrected panel complete; Gemma 4/4, Qwen 3/4 |
 | `experiments/diversity_selection_dev_v0_2026-09-14.json` | Gemma diversity plus objective selection | 880 s | 850 s | 25 | complete; control 3/5, diverse-selection 0/5; no gain |
 
@@ -513,23 +517,30 @@ identified false negatives without changing the recorded scores. The first
 manual scheduled-style review completed both providers and ended
 `REVISION_REQUIRED`, so its card did not dispatch. Corrected-input qualification
 also ended without admission because Claude's fenced response was strict-parser
-`INVALID_REPORT`; topic v2 ended `NO-MATERIAL-SIGNAL`. The remaining live panels
-then completed as descriptive measurements: portfolio A 6/8 versus B 7/8,
-context Gemma 4/4 versus Qwen 3/4, and diversity control 3/5 versus candidate
-0/5. Service reload and scheduler activation remain separately tracked. Neither
-protocol completion nor these small negative/mixed results establish a
-scientific, coding or performance gain.
+`INVALID_REPORT`; topic v2 ended `NO-MATERIAL-SIGNAL`. The portfolio reached a
+terminal `incomplete_transport` result with 13/16 calls returned, A 6/8 and B
+7/8. The context panel completed at Gemma 4/4 versus Qwen 3/4, and diversity
+completed at control 3/5 versus candidate 0/5. Service reload and scheduler
+activation remain separately tracked. Neither terminal execution nor these
+small negative/mixed results establish a scientific, coding or performance
+gain.
 
 ## Validation and delivery
 
 See [implementation validation](research/weekly-upgrade-2026-09-14/IMPLEMENTATION_VALIDATION.md)
 for committed test evidence and the
 [live evaluation record](research/weekly-upgrade-2026-09-14/LIVE_EVALUATION_RECORD.md)
-for terminal measurements. The initial bounded evaluation set is complete.
+for terminal measurements. The initial bounded campaign is closed with terminal
+receipts; its portfolio result remains incomplete and requires no retry for this
+delivery.
 The final integrated suite passed 2,955 tests with one skipped, two xpassed, 23
 warnings, and no failures; 68 subtests also passed in 66.76 seconds. Scoped Ruff
 checks for the new implementation also passed, followed by 91 focused
-context/trial/review tests after the style-only correction. PR 19 delivery,
-private canonical adoption, and the owner's explicit activation decision are
-the remaining closure steps; none authorizes a model, runtime, context, or
-production-policy promotion.
+context/trial/review tests after the style-only correction. PR 19 merged as
+`b672a0ab6481be086821567c11987984741e833a`, was safely adopted as
+`1e7a8c55a2bf8bd5d3e4bbf61da09d3d43f2312e`. The canonical read-only and
+registered-trial readiness checks each passed 14/14. The final
+documentation-follow-up identity is bound
+externally in `completion.json`, and the owner's explicit activation decision
+remains separate. None authorizes a model, runtime, context, or production-policy
+promotion.

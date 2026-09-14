@@ -2,7 +2,7 @@
 
 **Prepared:** 2026-09-14
 **Current decision:** **PREPARED; OWNER ACTIVATION NOT GRANTED**
-**Deployment state:** Manual evaluations are complete; the schedule and running services remain unchanged.
+**Deployment state:** The manual campaign has terminal receipts, including one incomplete paired portfolio result; the schedule and running services remain unchanged.
 
 This is the owner runbook for activating the weekly upgrade loop after the
 implementation has been reviewed, merged publicly, adopted into the canonical
@@ -32,12 +32,14 @@ code change.
 Keep the loop off until every item has a recorded artifact or exact Git SHA:
 
 1. The implementation branch passes its focused and full repository checks.
-2. The public PR is merged and its exact `origin/main` SHA is recorded here.
-3. The public merge is safely adopted into canonical private `main`, preserving
-   private history and unrelated tracked/untracked session work; record the
-   local-only adoption SHA here.
-4. `orchestrator.weekly_upgrade_cycle --check` passes from the canonical
-   checkout using the intended output root and source-fetch configuration.
+2. Public PR 19 is merged as
+   `b672a0ab6481be086821567c11987984741e833a`.
+3. PR 19 was safely adopted into canonical private `main` as
+   `1e7a8c55a2bf8bd5d3e4bbf61da09d3d43f2312e`, preserving private history and
+   unrelated tracked/untracked session work.
+4. `orchestrator.weekly_upgrade_cycle --check` passed 14/14 from the canonical
+   checkout using the intended output root and source-fetch configuration; the
+   registered-trial readiness check also passed 14/14.
 5. One authorized manual review cycle is complete or has a terminal,
    non-replayable failure receipt. If a trial is selected, its fixed manifest,
    trial journal, budget receipt, and evaluation receipt must all bind.
@@ -55,13 +57,18 @@ bounded input qualification ended `INVALID_REPORT`. Neither admitted a trial.
 Eight independently authorized manual trials have terminal, hash-bound
 receipts, including the unsuccessful cases. The final campaign ledger records
 3,455.296794 seconds consumed, no active reservation, and 3,744.703206 seconds
-remaining. These measurements establish tooling behavior, not a model upgrade.
+remaining. The portfolio retained all 16 cells, but only 13 returned and its
+evaluator remains `incomplete_transport`; no retry is required for this delivery.
+These measurements establish tooling behavior, not a model upgrade.
 
 The delivery step records exact public/canonical Git identities and the final
 readiness result in the canonical local artifact below. Those identities are
-written after the public merge, so they cannot be embedded in their own source
-commit. [PR #19](https://github.com/decross1/a_bgt_rsi/pull/19) contains the public
-change; the private canonical merge is never pushed.
+written after the public merge and private adoption. [PR #19](https://github.com/decross1/a_bgt_rsi/pull/19)
+merged as `b672a0ab6481be086821567c11987984741e833a` and was safely adopted as
+`1e7a8c55a2bf8bd5d3e4bbf61da09d3d43f2312e`; its canonical read-only and
+registered-trial readiness checks each passed 14/14. The exact identity after this documentation-only follow-up
+and the preservation hashes are bound in `completion.json`. The private
+canonical merge is never pushed.
 
 ```text
 completion_receipt: run_state/weekly_upgrade/completion.json
@@ -72,7 +79,7 @@ required_receipt_fields:
   canonical_preservation_receipt_sha256
 full_test_result: 2955 passed; no failures
 manual_cycle_result: REVIEW_COMPLETE / REVISION_REQUIRED
-manual_trial_results: 8 terminal receipts; negative results preserved
+manual_trial_results: 8 terminal receipts; portfolio incomplete_transport; negative results preserved
 nara_user_service_reload: NOT AUTHORIZED OR PERFORMED
 recurring_activation: OFF
 ```
