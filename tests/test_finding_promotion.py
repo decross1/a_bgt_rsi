@@ -18,12 +18,12 @@ import sys
 from pathlib import Path
 
 import jsonschema
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from orchestrator import finding_promotion as fp
+from orchestrator import research_campaign as campaigns
 from orchestrator.subagent import SubAgentResult
 
 SCHEMA = json.loads((REPO_ROOT / "schema" / "surfaced_finding.schema.json").read_text())
@@ -377,6 +377,74 @@ def test_since_filters_old_iterations(monkeypatch, tmp_path):
     assert out["examined"] == 1
     assert len(out["promoted"]) == 1
     assert out["promoted"][0]["source_iteration_id"] == "iter-2026-06-05-001"
+
+
+def test_campaign_promotion_filters_exact_rows_and_copies_link(monkeypatch, tmp_path):
+    campaign = campaigns.load_campaign()
+    topic = campaign["topic_policy"]["topics"][0]["text"]
+    link = campaigns.bind_topic(campaign, topic)
+    pointer = tmp_path / "active_research_campaign.json"
+    pointer.write_text(json.dumps({
+        "schema_version": "research-campaign-activation/v1",
+        "campaign_id": campaign["campaign_id"],
+        "campaign_manifest_sha256": campaign["_manifest_sha256"],
+        "activated_at": "2026-09-14T22:20:00Z",
+        "activated_by": "test-owner",
+    }))
+    monkeypatch.setattr(campaigns, "DEFAULT_ACTIVATION_PATH", pointer)
+    monkeypatch.delenv("NARA_RESEARCH_CAMPAIGN", raising=False)
+
+    p = _paths(tmp_path)
+    legacy = _row("iter-2026-06-01-001")
+    exact = _row("iter-2026-06-01-002")
+    exact["campaign"] = link
+    _write_jsonl(p["loop_memory_path"], [legacy, exact])
+    _stub_skeptics(monkeypatch, ["stands", "stands", "stands"])
+    _stub_synthesis(monkeypatch)
+
+    out = fp.promote_findings(**p)
+    assert out["examined"] == 1
+    assert out["campaign_id"] == campaign["campaign_id"]
+    assert [row["source_iteration_id"] for row in out["promoted"]] == [
+        exact["iteration_id"],
+    ]
+    assert out["promoted"][0]["campaign"] == link
+    assert json.loads(p["surfaced_path"].read_text())["campaign"] == link
+
+
+def test_campaign_promotion_withholds_cross_cohort_identity_collision(
+    monkeypatch,
+    tmp_path,
+):
+    campaign = campaigns.load_campaign()
+    topic = campaign["topic_policy"]["topics"][0]["text"]
+    pointer = tmp_path / "active_research_campaign.json"
+    pointer.write_text(json.dumps({
+        "schema_version": "research-campaign-activation/v1",
+        "campaign_id": campaign["campaign_id"],
+        "campaign_manifest_sha256": campaign["_manifest_sha256"],
+        "activated_at": "2026-09-14T22:20:00Z",
+        "activated_by": "test-owner",
+    }))
+    monkeypatch.setattr(campaigns, "DEFAULT_ACTIVATION_PATH", pointer)
+    monkeypatch.delenv("NARA_RESEARCH_CAMPAIGN", raising=False)
+
+    exact = _row("iter-2026-06-01-001")
+    exact["campaign"] = campaigns.bind_topic(campaign, topic)
+    legacy_collision = dict(exact)
+    legacy_collision.pop("campaign")
+    p = _paths(tmp_path)
+    _write_jsonl(p["loop_memory_path"], [legacy_collision, exact])
+    monkeypatch.setattr(
+        fp,
+        "run_subagent",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not vote")),
+    )
+
+    out = fp.promote_findings(**p)
+    assert out["examined"] == 0
+    assert out["promoted"] == []
+    assert out["campaign_id"] == campaign["campaign_id"]
 
 
 def test_synthesis_failure_falls_back_deterministically(monkeypatch, tmp_path):

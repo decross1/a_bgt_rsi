@@ -299,6 +299,17 @@ def cycle_row_from_report(
     # auto-chosen topic + source: the candidate assess_state surfaced.
     topic: str | None = None
     topic_source: str | None = None
+    campaign_link: dict[str, Any] | None = None
+    campaign_topic_links = state.get("campaign_topic_links") or []
+    if (
+        isinstance(campaign_topic_links, list)
+        and len(campaign_topic_links) == 1
+        and isinstance(campaign_topic_links[0], dict)
+    ):
+        # A campaign-wide cycle can carry the sole exact topic lineage even
+        # after that seed has been consumed. Multi-topic campaigns stay
+        # unassigned until an action selects one exact topic.
+        campaign_link = copy.deepcopy(campaign_topic_links[0])
     suggestions = state.get("topic_suggestions") or []
     if isinstance(suggestions, list) and suggestions and isinstance(suggestions[0], dict):
         topic = suggestions[0].get("topic")
@@ -321,6 +332,13 @@ def cycle_row_from_report(
                     sources = [sg.get("source") for sg in matches]
                     if sources and all(source == sources[0] for source in sources):
                         topic_source = sources[0]
+                    links = [sg.get("campaign") for sg in matches]
+                    if (
+                        links
+                        and isinstance(links[0], dict)
+                        and all(link == links[0] for link in links)
+                    ):
+                        campaign_link = copy.deepcopy(links[0])
             break
 
     plan_rows: list[dict[str, Any]] = []
@@ -382,6 +400,12 @@ def cycle_row_from_report(
         },
         "planner_attempts": report.get("attempts") or [],
     }
+    campaign_context = state.get("campaign_context") or report.get("campaign_context")
+    if isinstance(campaign_context, dict):
+        out["campaign_context"] = copy.deepcopy(campaign_context)
+        out["planner_state"]["campaign_context"] = copy.deepcopy(campaign_context)
+    if campaign_link is not None:
+        out["campaign"] = campaign_link
     if dispatched is not None:
         out["dispatched_iteration_id"] = dispatched
     if "bubble_receipts" in report:

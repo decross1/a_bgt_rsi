@@ -540,6 +540,8 @@ def promote_findings(
     backend: str = "vllm-qwen",
     dry_run: bool = False,
     parent_request_id: str | None = None,
+    campaign_id: str | None = None,
+    campaign_manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Run the full promotion funnel. Returns:
 
@@ -558,6 +560,19 @@ def promote_findings(
     Never silent-drops (every reject is a near_miss) and never silent-promotes
     (an unmet quorum is inconclusive -> near_miss).
     """
+    from orchestrator.research_campaign import CampaignError, load_active_campaign
+
+    campaign = load_active_campaign()
+    if campaign_id is not None and (
+        campaign is None or campaign.get("campaign_id") != campaign_id
+    ):
+        raise CampaignError("requested research campaign is not active")
+    if campaign_manifest_sha256 is not None and (
+        campaign is None
+        or campaign.get("_manifest_sha256") != campaign_manifest_sha256
+    ):
+        raise CampaignError("research campaign changed after dispatch planning")
+
     # UI observability: announce this promotion pass as the active run so it
     # shows in the UI like the other run modes. set_run_id stamps every wrapper
     # call (synthesis + the Qwen skeptics) in this pass; cleared in finally.
@@ -575,6 +590,7 @@ def promote_findings(
             backend=backend,
             dry_run=dry_run,
             parent_request_id=parent_request_id,
+            campaign=campaign,
         )
     finally:
         active_run.clear_active_run()
@@ -592,9 +608,18 @@ def _promote_findings(
     backend: str,
     dry_run: bool,
     parent_request_id: str | None,
+    campaign: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Inner funnel body. See promote_findings for the contract."""
     rows = _read_jsonl(loop_memory_path)
+    if campaign is not None:
+        from orchestrator.research_campaign import unique_matching_records
+
+        rows = unique_matching_records(
+            rows,
+            campaign,
+            identity_field="iteration_id",
+        )
     feedback = {
         f["iteration_id"]: f
         for f in _read_jsonl(feedback_path)
@@ -835,6 +860,8 @@ def _promote_findings(
             "evidence_level": derived["level"],
             "cluster_id": _ledger_cluster_for(iid),
         }
+        if campaign is not None:
+            finding["campaign"] = dict(row["campaign"])
         if derived.get("provisional"):
             finding["evidence_provisional"] = derived["provisional"]
         if iid in frontier_reviews:
@@ -862,7 +889,7 @@ def _promote_findings(
         already.add(finding["finding_id"])
         promoted.append(finding)
 
-    return {
+    result = {
         "promoted": promoted,
         "examined": examined,
         "near_misses": near_misses,
@@ -871,6 +898,9 @@ def _promote_findings(
         "frontier_cache_hits": frontier_cache_hits,
         "errors": errors,
     }
+    if campaign is not None:
+        result["campaign_id"] = campaign["campaign_id"]
+    return result
 
 
 # ── CLI ──────────────────────────────────────────────────────────────
@@ -890,6 +920,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--backend", default="vllm-qwen")
     p.add_argument("--dry-run", action="store_true",
                    help="Run the funnel but do not write to surfaced_path.")
+    p.add_argument("--campaign-id", default=None,
+                   help="Require and filter to the active exact campaign.")
     p.add_argument("--show-near-misses", action="store_true",
                    help="Print the near-miss list (with reasons).")
     args = p.parse_args(argv)
@@ -900,6 +932,7 @@ def main(argv: list[str] | None = None) -> int:
         n_skeptics=args.n_skeptics,
         backend=args.backend,
         dry_run=args.dry_run,
+        campaign_id=args.campaign_id,
     )
 
     print(

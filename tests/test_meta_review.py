@@ -13,6 +13,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from orchestrator import research_campaign as campaigns
 from workers import meta_review as mr_mod
 
 
@@ -114,6 +115,78 @@ def test_tail_respects_n(monkeypatch, tmp_path):
                              feedback_path=tmp_path / "nope.jsonl")
     assert out["status"] == "passed"
     assert out["result"]["rows_considered"] == 2
+
+
+def test_campaign_review_uses_only_explicit_matching_rows(monkeypatch, tmp_path):
+    campaign = campaigns.load_campaign()
+    topic = campaign["topic_policy"]["topics"][0]["text"]
+    exact = _memory_rows(1)[0]
+    exact["campaign"] = campaigns.bind_topic(campaign, topic)
+    legacy = _memory_rows(2)[1]
+    legacy["seed"]["topic"] = topic
+    mem = tmp_path / "loop_memory.jsonl"
+    _write_jsonl(mem, [legacy, exact])
+    monkeypatch.setattr(campaigns, "load_active_campaign", lambda: campaign)
+    monkeypatch.setattr(mr_mod, "call_sync", _fake_call_sync(_GOOD_COMPLETION))
+    monkeypatch.setenv(mr_mod.CONSTRAINT_GATE_ENV, "1")
+
+    out = mr_mod.meta_review(
+        loop_memory_path=mem,
+        feedback_path=tmp_path / "feedback.jsonl",
+        campaign_id=campaign["campaign_id"],
+    )
+    assert out["status"] == "passed"
+    assert out["result"]["rows_considered"] == 1
+    assert out["result"]["campaign_id"] == campaign["campaign_id"]
+    assert out["result"]["constraint_conditioning"] == "off"
+
+
+def test_campaign_review_withholds_cross_cohort_identity_collision(
+    monkeypatch,
+    tmp_path,
+):
+    campaign = campaigns.load_campaign()
+    topic = campaign["topic_policy"]["topics"][0]["text"]
+    exact = _memory_rows(1)[0]
+    exact["campaign"] = campaigns.bind_topic(campaign, topic)
+    legacy_collision = dict(exact)
+    legacy_collision.pop("campaign")
+    mem = tmp_path / "loop_memory.jsonl"
+    _write_jsonl(mem, [legacy_collision, exact])
+    calls = []
+    monkeypatch.setattr(campaigns, "load_active_campaign", lambda: campaign)
+    monkeypatch.setattr(mr_mod, "call_sync", lambda *a, **k: calls.append(True))
+
+    out = mr_mod.meta_review(
+        loop_memory_path=mem,
+        feedback_path=tmp_path / "feedback.jsonl",
+        campaign_id=campaign["campaign_id"],
+    )
+    assert out["status"] == "error"
+    assert out["result"] is None
+    assert calls == []
+
+
+def test_campaign_review_refuses_same_id_manifest_swap_before_model(
+    monkeypatch,
+    tmp_path,
+):
+    campaign = campaigns.load_campaign()
+    changed = dict(campaign, _manifest_sha256="0" * 64)
+    mem = tmp_path / "loop_memory.jsonl"
+    _write_jsonl(mem, _memory_rows(1))
+    calls = []
+    monkeypatch.setattr(campaigns, "load_active_campaign", lambda: changed)
+    monkeypatch.setattr(mr_mod, "call_sync", lambda *a, **k: calls.append(True))
+
+    with pytest.raises(campaigns.CampaignError, match="changed before meta-review"):
+        mr_mod.meta_review(
+            loop_memory_path=mem,
+            feedback_path=tmp_path / "feedback.jsonl",
+            campaign_id=campaign["campaign_id"],
+            campaign_manifest_sha256=campaign["_manifest_sha256"],
+        )
+    assert calls == []
 
 
 def test_caps_bullets_at_five(monkeypatch, tmp_path):

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/decross1/a_bgt_rsi/schema/research_campaign_closure.schema.json",
+  "title": "Research campaign closure receipt",
+  "description": "Immutable lifecycle receipt that closes one exact campaign declaration without changing the manifest hash embedded in historical records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "campaign_id",
+    "campaign_manifest_sha256",
+    "closed_at",
+    "closed_by"
+  ],
+  "properties": {
+    "schema_version": {"const": "research-campaign-closure/v1"},
+    "campaign_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"
+    },
+    "campaign_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "closed_at": {"type": "string", "format": "date-time"},
+    "closed_by": {"type": "string", "minLength": 1, "maxLength": 120}
+  }
+}

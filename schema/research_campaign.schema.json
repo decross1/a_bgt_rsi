@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/decross1/a_bgt_rsi/schema/research_campaign.schema.json",
+  "title": "Research campaign manifest",
+  "description": "Immutable declaration for one research cohort. A campaign id is accepted only through this manifest; timestamps and topic similarity never backfill legacy records.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "campaign_id",
+    "title",
+    "status",
+    "opened_at",
+    "closed_at",
+    "scope",
+    "research_question",
+    "topic_policy",
+    "study_manifests",
+    "legacy_policy",
+    "campaign_actions"
+  ],
+  "properties": {
+    "schema_version": {"const": "research-campaign/v1"},
+    "campaign_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"
+    },
+    "title": {"type": "string", "minLength": 1, "maxLength": 160},
+    "status": {
+      "const": "prepared",
+      "description": "Immutable declaration state. Runtime activation and closure are separate hash-bound receipts; this field is never edited in place."
+    },
+    "opened_at": {"type": "string", "format": "date-time"},
+    "closed_at": {
+      "const": null,
+      "description": "Retained for v1 shape compatibility and fixed null. A separate closure receipt records lifecycle closure without changing the manifest hash."
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain", "subjects", "claim_limits", "shared_evidence"],
+      "properties": {
+        "domain": {"const": "game_theory_and_agent_behavior"},
+        "subjects": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 80}
+        },
+        "claim_limits": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 240}
+        },
+        "shared_evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["literature", "negative_memory", "research_outcomes"],
+          "properties": {
+            "literature": {"const": "cross_campaign_with_source_provenance"},
+            "negative_memory": {"const": "cross_campaign_with_explicit_match_provenance"},
+            "research_outcomes": {"const": "explicit_campaign_link_only"}
+          }
+        }
+      }
+    },
+    "research_question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question_id", "text", "text_sha256", "selection"],
+      "properties": {
+        "question_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"},
+        "text": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "text_sha256": {"$ref": "#/$defs/sha256"},
+        "selection": {"const": "team_proposed_within_owner_scope_2026-09-14"}
+      }
+    },
+    "topic_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "topics"],
+      "properties": {
+        "mode": {"const": "preregistered_exact"},
+        "topics": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 24,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["topic_id", "text", "text_sha256", "source"],
+            "properties": {
+              "topic_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"},
+              "text": {"type": "string", "minLength": 1, "maxLength": 2000},
+              "text_sha256": {"$ref": "#/$defs/sha256"},
+              "source": {"const": "campaign_preregistered"}
+            }
+          }
+        }
+      }
+    },
+    "study_manifests": {
+      "type": "array",
+      "maxItems": 24,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["study_id", "phase", "path", "sha256", "preregistration_path", "preregistration_sha256"],
+        "properties": {
+          "study_id": {"type": "string", "minLength": 1, "maxLength": 120},
+          "phase": {"type": "string", "enum": ["cpu_calibration", "llm_pilot", "confirmatory"]},
+          "path": {"$ref": "#/$defs/repo_path"},
+          "sha256": {"$ref": "#/$defs/sha256"},
+          "preregistration_path": {"$ref": "#/$defs/repo_path"},
+          "preregistration_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "legacy_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["missing_campaign_link", "infer_from_timestamp", "infer_from_topic_text"],
+      "properties": {
+        "missing_campaign_link": {"const": "unlinked_legacy"},
+        "infer_from_timestamp": {"const": false},
+        "infer_from_topic_text": {"const": false}
+      }
+    },
+    "campaign_actions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["admitted", "deferred"],
+      "properties": {
+        "admitted": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "enum": ["run_loop_iteration", "promote_findings", "bubble_up", "noop"]}
+        },
+        "deferred": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "enum": ["run_experiment", "forecast_markets", "mine_paper_gap", "refine_idea", "improve_system"]}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "repo_path": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$",
+      "maxLength": 240
+    }
+  }
+}
