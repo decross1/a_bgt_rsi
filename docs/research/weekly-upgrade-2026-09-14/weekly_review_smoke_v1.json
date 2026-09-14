@@ -1,0 +1,86 @@
+{
+  "adversary": null,
+  "experiment_card": null,
+  "frontier_calls_used": 2,
+  "independence_loss": true,
+  "proposal": {
+    "abort_conditions": [
+      "Abort if the fixture manifest hash differs from the bound hash.",
+      "Abort if either arm does not receive every listed fixture with seed 0 under otherwise identical settings.",
+      "Abort before exceeding 10 GPU-minutes or 20 wall-minutes."
+    ],
+    "baseline": {
+      "artifact": null,
+      "artifact_sha256": null,
+      "measurement_locator": null,
+      "metric": "median_decision_latency_ms",
+      "status": "UNMEASURED",
+      "value": null
+    },
+    "candidate": {
+      "single_delta": "For the candidate evaluation arm only, substitute the existing critic_medium profile for critic_current, changing only Qwen reasoning effort from xhigh to medium."
+    },
+    "change_surface": [
+      "agent_wrapper/generation_policy.py"
+    ],
+    "claim": "On four balanced critic fixtures, using the existing critic_medium profile instead of critic_current reduces median decision latency by at least 20% without lowering manifest-label accuracy.",
+    "execution_scope": "EVALUATION_ONLY",
+    "experiment": {
+      "arms": [
+        "baseline",
+        "candidate"
+      ],
+      "fixture_ids": [
+        "critic_fatal_circular",
+        "critic_fatal_dominance",
+        "critic_proceed_fixable",
+        "critic_proceed_theorem"
+      ],
+      "fixture_manifest_path": "bench/weekly_upgrade_eval/fixtures.json",
+      "fixture_manifest_sha256": "90ede958fb4ac7a52f78ac503143387456787dbfb31495a1e28c37de2fd2c5a7",
+      "guardrails": [
+        "Use identical fixture text, seed, backend, model, and response limits for both arms; vary only the named profile.",
+        "Score both arms against the same manifest labels, and count missing or unparseable decisions as incorrect.",
+        "Do not alter serving configuration or any production default during evaluation."
+      ],
+      "max_frontier_calls": 0,
+      "max_gpu_minutes": 10,
+      "max_wall_minutes": 20,
+      "pass_rule": "Pass only if candidate median_decision_latency_ms is at most 0.80 times baseline and candidate manifest-label accuracy is not below baseline; otherwise fail.",
+      "primary_metric": "median_decision_latency_ms",
+      "seeds": [
+        0
+      ]
+    },
+    "external_claims": [],
+    "falsifier": "The claim is falsified if the candidate latency ratio exceeds 0.80, candidate manifest-label accuracy is below baseline, or the paired measurements cannot be completed within the caps.",
+    "production_change_authorized": false,
+    "proposal_id": "wu-bfcfe896",
+    "repo_references": [
+      {
+        "locator": "\"critic_current\": _Profile(",
+        "path": "agent_wrapper/generation_policy.py",
+        "sha256": "3a45aa1303bb0f53fe73533b9750b07049acf3c0a0eaa4107582812f5db449a5"
+      },
+      {
+        "locator": "\"critic_medium\": _Profile(",
+        "path": "agent_wrapper/generation_policy.py",
+        "sha256": "3a45aa1303bb0f53fe73533b9750b07049acf3c0a0eaa4107582812f5db449a5"
+      }
+    ],
+    "schema_version": "weekly-upgrade-v1",
+    "snapshot_sha256": "bfcfe89630f5e3c48df436ff3b64f38d713d7eecb581762755de262b89022c1c",
+    "tier": "P",
+    "title": "Evaluate medium-effort Qwen critic profile",
+    "week_id": "2026-W38"
+  },
+  "proposal_sha256": "4014fb2dabf115f939ddcd16a7dbf9d22a17118f4c2b1ffa24afde010b78471f",
+  "reason": "adversary.violated_rules.0: \"change_surface names agent_wrapper/generation_policy.py, but the candidate delta ('substitute critic_medium for critic_current for the candidate arm only') does not require editing that file — both profiles already exist there. The actual mechanism (call-site swap, WRAPPER_PROFILE_OVERRIDES env, or evaluator-injected profile argument) is unspecified, so the recorded change surface is not the surface actually exercised.\" is too long",
+  "reviewed_at": "2026-09-14T04:21:28.240613Z",
+  "run_id": "2026-W38-e25e5a193b38",
+  "run_manifest_sha256": "abeb2e801535607f97fcb217be4e5cb75331c2cda72aae27a8665543dffce924",
+  "schema_version": "weekly-upgrade-report-v1",
+  "snapshot_sha256": "bfcfe89630f5e3c48df436ff3b64f38d713d7eecb581762755de262b89022c1c",
+  "status": "INVALID_REPORT",
+  "week_id": "2026-W38"
+}

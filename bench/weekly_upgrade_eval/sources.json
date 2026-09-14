@@ -1,0 +1,25 @@
+{
+  "schema_version": "weekly-upgrade-fetch-v1",
+  "sources": [
+    {
+      "url": "https://huggingface.co/Qwen/Qwen3.8-27B/raw/main/README.md",
+      "publisher": "Qwen",
+      "published_at": null
+    },
+    {
+      "url": "https://huggingface.co/google/gemma-4-26B-A4B/raw/main/generation_config.json",
+      "publisher": "Google",
+      "published_at": null
+    },
+    {
+      "url": "https://raw.githubusercontent.com/vllm-project/vllm/main/README.md",
+      "publisher": "vLLM project",
+      "published_at": null
+    },
+    {
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/main/README.md",
+      "publisher": "SGLang project",
+      "published_at": null
+    }
+  ]
+}

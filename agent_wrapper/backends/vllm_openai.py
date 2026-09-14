@@ -29,7 +29,15 @@ class VLLMBackend:
         return dict(self._w().HOST_METADATA)
 
     def create_chat(self, **kwargs: Any) -> Any:
-        return self._w()._sync_client.chat.completions.create(**kwargs)
+        client = self._w()._sync_client
+        if "timeout" in kwargs:
+            # Budgeted eval calls must not multiply their declared timeout via
+            # the SDK's automatic retries. Legacy calls keep client defaults.
+            client = client.with_options(max_retries=0)
+        return client.chat.completions.create(**kwargs)
 
     async def create_chat_async(self, **kwargs: Any) -> Any:
-        return await self._w()._async_client.chat.completions.create(**kwargs)
+        client = self._w()._async_client
+        if "timeout" in kwargs:
+            client = client.with_options(max_retries=0)
+        return await client.chat.completions.create(**kwargs)

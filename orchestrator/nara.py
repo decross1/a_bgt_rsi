@@ -36,6 +36,10 @@ from agent_wrapper.gemma_tool_parse import (
 )
 from agent_wrapper import worker_activity
 from agent_wrapper.backends import get_backend
+from agent_wrapper.generation_policy import (
+    build_policy_record_metadata, resolve_generation_policy,
+    reasoning_text_from_message,
+)
 from agent_wrapper.wrapper import (
     DEFAULT_BACKEND,
     MEMORY_LOG,
@@ -185,6 +189,7 @@ def _record_turn(
     host_metadata: dict,
     backend_name: str | None = None,
     max_tokens: int | None = None,
+    generation_policy=None,
 ) -> dict:
     """Schema-valid call record. Mirrors wrapper._record but is local so
     we can decide what goes in 'completion' (text vs tool_calls) ourselves."""
@@ -235,6 +240,9 @@ def _record_turn(
         rec["backend"] = backend_name
     if max_tokens is not None:
         rec["max_tokens"] = max_tokens
+    if generation_policy is not None and generation_policy.metadata_enabled:
+        rec.update(generation_policy.logged_params)
+        rec.update(build_policy_record_metadata(generation_policy, resp))
     _emit(rec, log_path)
     # Per-call UI inference-internals row (best-effort; never raises) —
     # orchestrator turns get the same live-panel visibility as worker calls.
@@ -459,6 +467,7 @@ def run_iteration(
     log_path=_USE_DEFAULT_LOG,
     max_depth: int = _DEFAULT_MAX_DEPTH,
     backend: str | None = None,
+    profile: str | None = None,
     experiment_outcome: dict | None = None,
     cross_tier_comparison: dict | None = None,
 ) -> dict:
@@ -484,6 +493,8 @@ def run_iteration(
         log_path = _DEFAULT_LOG_PATH  # resolved at call time (patchable)
     runtime = runtime or PyRuntime()
     be = get_backend(backend or DEFAULT_BACKEND)
+    policy = resolve_generation_policy(
+        profile, be.name, be.default_model, caller_tag="nara.run_iteration")
     iteration_id = _next_iteration_id()
     started_at = _utcnow_iso()
     active = _initial_active(
@@ -521,6 +532,7 @@ def run_iteration(
             source=source, log_path=log_path, max_depth=max_depth,
             experiment_outcome=experiment_outcome,
             cross_tier_comparison=cross_tier_comparison,
+            generation_policy=policy,
         )
     finally:
         runtime.delete_state(ACTIVE_PATH)
@@ -541,6 +553,7 @@ def _run_iteration_impl(
     max_depth: int,
     experiment_outcome: dict | None,
     cross_tier_comparison: dict | None,
+    generation_policy=None,
 ) -> dict:
     """The iteration chain body. Registration (state files, run_id, events)
     and cleanup are the caller's job — run_iteration wraps this in
@@ -637,7 +650,9 @@ def _run_iteration_impl(
             model=be.default_model,
             messages=openai_messages,
             tools=tool_specs,
-            temperature=0.0,
+            **(dict(generation_policy.request_kwargs)
+               if generation_policy is not None and generation_policy.metadata_enabled
+               else {"temperature": 0.0}),
             # Cap per-turn output so a confused Gemma can't generate the
             # entire neighbor list as a stringified `<|tool_call>...` text
             # blob (a real failure mode we hit on iter-010). 1024 tokens
@@ -656,6 +671,7 @@ def _run_iteration_impl(
             host_metadata=be.host_metadata,
             backend_name=be.name,
             max_tokens=1024,
+            generation_policy=generation_policy,
         )
         wrapper_call_ids.append(record["request_id"])
         last_id = record["request_id"]
@@ -716,6 +732,11 @@ def _run_iteration_impl(
                 "role": "assistant",
                 "content": text_content,
             })
+            if (be.name == "vllm-qwen" and generation_policy is not None
+                    and generation_policy.preserve_tool_reasoning):
+                reasoning = reasoning_text_from_message(msg)
+                if reasoning is not None:
+                    openai_messages[-1]["reasoning"] = reasoning
             next_step = _next_chain_step(captured)
             openai_messages.append({
                 "role": "user",
@@ -744,6 +765,11 @@ def _run_iteration_impl(
                 for tc in tool_calls
             ],
         })
+
+        if generation_policy is not None and generation_policy.preserve_tool_reasoning:
+            reasoning = reasoning_text_from_message(msg)
+            if reasoning is not None:
+                openai_messages[-1]["reasoning"] = reasoning
 
         # Dispatch each tool through the Runtime
         for tc in tool_calls:

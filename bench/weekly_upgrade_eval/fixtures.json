@@ -1,0 +1,268 @@
+{
+  "schema_version": "weekly-upgrade-eval-manifest/v1",
+  "suite_id": "weekly-upgrade-canary-v1",
+  "description": "Small objective liveness/cap canary for paired inference-policy runs. These twelve independently authored task templates test exact game-theory calculations, balanced critic decisions, evidence attribution, and semantic tool use. The deliberately tight 384-token Qwen cap makes empty-at-cap behavior diagnostic; this is not a quality sweep and does not measure novelty or establish production superiority.",
+  "bootstrap_seed": 90210,
+  "bootstrap_samples": 4000,
+  "ordering": "alternating_ab_ba",
+  "source_snapshot": {
+    "path": "docs/research/weekly-upgrade-2026-09-14/CODEX_RESEARCH_HANDOFF.md",
+    "sha256": "729db148293ee40d1c4a8aab82faf15e5b5446a9ee9aa00ad0b30f3047257884"
+  },
+  "arms": [
+    {
+      "id": "A",
+      "label": "Qwen current critic policy",
+      "backend": "vllm-qwen",
+      "profile": "critic_current",
+      "model": "qwen3.8-27b-nvfp4-mtp",
+      "max_tokens": 384,
+      "request_timeout_s": 120,
+      "seed": 0
+    },
+    {
+      "id": "B",
+      "label": "Qwen medium-effort critic policy",
+      "backend": "vllm-qwen",
+      "profile": "critic_medium",
+      "model": "qwen3.8-27b-nvfp4-mtp",
+      "max_tokens": 384,
+      "request_timeout_s": 120,
+      "seed": 0
+    }
+  ],
+  "tasks": [
+    {
+      "id": "gt_zero_sum_2x2",
+      "family": "game_theory",
+      "mode": "chat",
+      "system": "Solve the supplied game exactly. Return one JSON object and no prose or markdown.",
+      "prompt": "A zero-sum game pays the row player A=[[3,0],[1,2]] and the column player -A. Compute the unique mixed equilibrium and value. Return {\"row_mixture\":[p(row1),p(row2)],\"column_mixture\":[p(col1),p(col2)],\"value\":number}.",
+      "grader": {
+        "kind": "zero_sum_equilibrium",
+        "absolute_tolerance": 0.000001,
+        "expected": {
+          "row_mixture": [0.25, 0.75],
+          "column_mixture": [0.5, 0.5],
+          "value": 1.5
+        }
+      }
+    },
+    {
+      "id": "gt_external_regret",
+      "family": "game_theory",
+      "mode": "chat",
+      "system": "Calculate external regret from the supplied trace. Return one JSON object and no prose or markdown.",
+      "prompt": "There are two fixed actions. Their per-round payoff vectors are [(1,0),(0,1),(1,0),(0,1)]. The learner chose action indices [1,0,1,0], with indices starting at 0. Return {\"chosen_total\":number,\"best_fixed_total\":number,\"total_external_regret\":number,\"average_external_regret\":number}. External regret compares with the best single fixed action in hindsight; it does not allow switching comparators.",
+      "grader": {
+        "kind": "external_regret",
+        "absolute_tolerance": 0.000001,
+        "expected": {
+          "chosen_total": 0,
+          "best_fixed_total": 2,
+          "total_external_regret": 2,
+          "average_external_regret": 0.5
+        }
+      }
+    },
+    {
+      "id": "gt_pd_tft_vs_alld",
+      "family": "game_theory",
+      "mode": "chat",
+      "system": "Trace the repeated game exactly. Return one JSON object and no prose or markdown.",
+      "prompt": "A four-round Prisoner's Dilemma has T=5,R=3,P=1,S=0. Player 1 uses Tit-for-Tat: cooperate in round 1, then copy Player 2's previous action. Player 2 always defects. Return {\"player1_actions\":[four strings C_or_D],\"player2_actions\":[four strings C_or_D],\"player1_total\":number,\"player2_total\":number}.",
+      "grader": {
+        "kind": "repeated_pd_trace",
+        "absolute_tolerance": 0.000001,
+        "expected": {
+          "player1_actions": ["C", "D", "D", "D"],
+          "player2_actions": ["D", "D", "D", "D"],
+          "player1_total": 3,
+          "player2_total": 8
+        }
+      }
+    },
+    {
+      "id": "critic_fatal_dominance",
+      "family": "critic",
+      "mode": "chat",
+      "system": "Classify a game-theory hypothesis. fatal_flaw means no reasonable design can rescue the claim as stated; proceed includes testable or fixable claims. Return one JSON object and no prose.",
+      "prompt": "Claim: In every standard one-shot Prisoner's Dilemma satisfying T>R>P>S, mutual cooperation is the unique Nash equilibrium because cooperation strictly dominates defection. Return {\"verdict\":\"fatal_flaw_or_proceed\",\"reason_code\":\"contradicts_dominance_or_theorem_consistent_testable_or_circular_definition_or_fixable_identification\"}.",
+      "grader": {
+        "kind": "critic_classification",
+        "expected": {
+          "verdict": "fatal_flaw",
+          "reason_code": "contradicts_dominance"
+        }
+      }
+    },
+    {
+      "id": "critic_fatal_circular",
+      "family": "critic",
+      "mode": "chat",
+      "system": "Classify a game-theory hypothesis. fatal_flaw means no reasonable design can rescue the claim as stated; proceed includes testable or fixable claims. Return one JSON object and no prose.",
+      "prompt": "Claim: Cooperation increases when agents become more cooperative, where 'become more cooperative' is defined solely as choosing cooperation more often. Return {\"verdict\":\"fatal_flaw_or_proceed\",\"reason_code\":\"contradicts_dominance_or_theorem_consistent_testable_or_circular_definition_or_fixable_identification\"}.",
+      "grader": {
+        "kind": "critic_classification",
+        "expected": {
+          "verdict": "fatal_flaw",
+          "reason_code": "circular_definition"
+        }
+      }
+    },
+    {
+      "id": "critic_proceed_theorem",
+      "family": "critic",
+      "mode": "chat",
+      "system": "Classify a game-theory hypothesis. fatal_flaw means no reasonable design can rescue the claim as stated; proceed includes testable or fixable claims. Return one JSON object and no prose.",
+      "prompt": "Claim: In an indefinitely repeated Prisoner's Dilemma with T=5,R=3,P=1,S=0 and continuation probability delta=0.9, a grim-trigger strategy profile can sustain cooperation as a subgame-perfect equilibrium. Return {\"verdict\":\"fatal_flaw_or_proceed\",\"reason_code\":\"contradicts_dominance_or_theorem_consistent_testable_or_circular_definition_or_fixable_identification\"}.",
+      "grader": {
+        "kind": "critic_classification",
+        "expected": {
+          "verdict": "proceed",
+          "reason_code": "theorem_consistent_testable"
+        }
+      }
+    },
+    {
+      "id": "critic_proceed_fixable",
+      "family": "critic",
+      "mode": "chat",
+      "system": "Classify a game-theory hypothesis. fatal_flaw means no reasonable design can rescue the claim as stated; proceed includes testable or fixable claims. Return one JSON object and no prose.",
+      "prompt": "Claim: Punishment institutions cause higher public-goods contributions. The motivating dataset compares communities that selected their own institutions, so preferences may confound the association; a reasonable follow-up could randomize institution assignment. Return {\"verdict\":\"fatal_flaw_or_proceed\",\"reason_code\":\"contradicts_dominance_or_theorem_consistent_testable_or_circular_definition_or_fixable_identification\"}.",
+      "grader": {
+        "kind": "critic_classification",
+        "expected": {
+          "verdict": "proceed",
+          "reason_code": "fixable_identification"
+        }
+      }
+    },
+    {
+      "id": "evidence_attrition",
+      "family": "evidence",
+      "mode": "chat",
+      "system": "Use only the evidence packet. Return one JSON object and no prose. Citations must be exact document IDs from the packet.",
+      "prompt": "Evidence packet:\n[D1] Thirty groups were randomized to baseline or a peer-punishment condition. Among observed final-round groups, mean contribution was 4.1 versus 6.8.\n[D2] Four punishment groups with low interim contributions dropped out before the final round; no baseline groups dropped out, and their final outcomes are unknown.\nQuestion: Does this packet identify a causal increase in final-round contribution? Return {\"answer_code\":\"causal_increase_identified_or_causal_increase_not_identified_or_insufficient_outcome_data\",\"citations\":[document IDs used]}.",
+      "grader": {
+        "kind": "evidence_attribution",
+        "expected": {
+          "answer_code": "causal_increase_not_identified",
+          "citations": ["D1", "D2"]
+        }
+      }
+    },
+    {
+      "id": "evidence_thresholds",
+      "family": "evidence",
+      "mode": "chat",
+      "system": "Use only the evidence packet. Return one JSON object and no prose. Citations must be exact document IDs from the packet.",
+      "prompt": "Evidence packet:\n[D1] With payoffs T=5,R=3,P=1,S=0, grim trigger can sustain cooperation when delta is at least 0.5.\n[D2] In a simulation using the same payoffs and delta=0.8, grim-trigger players sustained cooperation after cooperative histories.\nQuestion: Do D1 and D2 contradict each other? Return {\"answer_code\":\"contradiction_or_compatible_or_insufficient_outcome_data\",\"citations\":[document IDs used]}.",
+      "grader": {
+        "kind": "evidence_attribution",
+        "expected": {
+          "answer_code": "compatible",
+          "citations": ["D1", "D2"]
+        }
+      }
+    },
+    {
+      "id": "evidence_abstention",
+      "family": "evidence",
+      "mode": "chat",
+      "system": "Use only the evidence packet. Return one JSON object and no prose. Citations must be exact document IDs from the packet.",
+      "prompt": "Evidence packet:\n[D1] The study preregistered a treatment intended to increase contributions and specified mean group contribution as the primary outcome.\n[D2] Recruitment closed with 120 participants. The packet contains no treatment assignments, outcome observations, or analysis.\nQuestion: Did the treatment increase contributions? Return {\"answer_code\":\"increase_or_no_increase_or_insufficient_outcome_data\",\"citations\":[document IDs used]}.",
+      "grader": {
+        "kind": "evidence_attribution",
+        "expected": {
+          "answer_code": "insufficient_outcome_data",
+          "citations": ["D1", "D2"]
+        }
+      }
+    },
+    {
+      "id": "tool_experiment_lookup",
+      "family": "tool",
+      "mode": "tools",
+      "system": "Use exactly the relevant supplied tool, then return one JSON object and no prose.",
+      "prompt": "Retrieve the observed mean cooperation rate for experiment exp-042. Return {\"mean_cooperation\":number}.",
+      "tools": [
+        {
+          "name": "lookup_experiment",
+          "description": "Retrieve a registered experiment summary by experiment_id.",
+          "parameters": {
+            "type": "object",
+            "properties": {"experiment_id": {"type": "string"}},
+            "required": ["experiment_id"],
+            "additionalProperties": false
+          },
+          "expected_arguments": {"experiment_id": "exp-042"},
+          "result": {"experiment_id": "exp-042", "mean_cooperation": 0.37, "n_groups": 24}
+        },
+        {
+          "name": "lookup_paper",
+          "description": "Retrieve bibliographic metadata by paper_id.",
+          "parameters": {
+            "type": "object",
+            "properties": {"paper_id": {"type": "string"}},
+            "required": ["paper_id"],
+            "additionalProperties": false
+          },
+          "expected_arguments": {"paper_id": "exp-042"},
+          "result": {"paper_id": "exp-042", "reported_rate": 0.91}
+        }
+      ],
+      "grader": {
+        "kind": "tool_semantics",
+        "absolute_tolerance": 0.000001,
+        "expected": {
+          "tool_name": "lookup_experiment",
+          "arguments": {"experiment_id": "exp-042"},
+          "answer": {"mean_cooperation": 0.37}
+        }
+      }
+    },
+    {
+      "id": "tool_payoff_lookup",
+      "family": "tool",
+      "mode": "tools",
+      "system": "Use exactly the relevant supplied tool, then calculate the answer and return one JSON object with no prose.",
+      "prompt": "Load zero-sum game zs-01 and return the row player's mixed-strategy maximin value (the zero-sum equilibrium value) as {\"value\":number}. Mixed strategies are allowed; do not report only the best pure row's security level.",
+      "tools": [
+        {
+          "name": "load_payoff_matrix",
+          "description": "Load a registered zero-sum payoff matrix by game_id.",
+          "parameters": {
+            "type": "object",
+            "properties": {"game_id": {"type": "string"}},
+            "required": ["game_id"],
+            "additionalProperties": false
+          },
+          "expected_arguments": {"game_id": "zs-01"},
+          "result": {"game_id": "zs-01", "row_payoff_matrix": [[3, 0], [1, 2]]}
+        },
+        {
+          "name": "lookup_experiment",
+          "description": "Retrieve a registered experiment summary by experiment_id.",
+          "parameters": {
+            "type": "object",
+            "properties": {"experiment_id": {"type": "string"}},
+            "required": ["experiment_id"],
+            "additionalProperties": false
+          },
+          "expected_arguments": {"experiment_id": "zs-01"},
+          "result": {"experiment_id": "zs-01", "value": 2.25}
+        }
+      ],
+      "grader": {
+        "kind": "tool_semantics",
+        "absolute_tolerance": 0.000001,
+        "expected": {
+          "tool_name": "load_payoff_matrix",
+          "arguments": {"game_id": "zs-01"},
+          "answer": {"value": 1.5}
+        }
+      }
+    }
+  ]
+}

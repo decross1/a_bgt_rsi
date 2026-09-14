@@ -1,0 +1,50 @@
+{
+  "receipts": [
+    {
+      "byte_count": 65012,
+      "content_sha256": "57e4bdb258ee1a7d2635c5174ebd4e56abe392505cdb5f8bbb356b0dc4293641",
+      "error_category": null,
+      "final_url": "https://huggingface.co/Qwen/Qwen3.8-27B/raw/main/README.md",
+      "http_status": 200,
+      "retrieved_at": "2026-09-14T04:18:15.909640Z",
+      "status": "FETCHED_UNVERIFIED",
+      "url": "https://huggingface.co/Qwen/Qwen3.8-27B/raw/main/README.md"
+    },
+    {
+      "byte_count": 181,
+      "content_sha256": "de16fa1d777387d5fe6df54a9565d9c0f1213f7b31f2a2cf44805e27686d9c7c",
+      "error_category": null,
+      "final_url": "https://huggingface.co/google/gemma-4-26B-A4B/raw/main/generation_config.json",
+      "http_status": 200,
+      "retrieved_at": "2026-09-14T04:18:16.069557Z",
+      "status": "FETCHED_UNVERIFIED",
+      "url": "https://huggingface.co/google/gemma-4-26B-A4B/raw/main/generation_config.json"
+    },
+    {
+      "byte_count": 5708,
+      "content_sha256": "8d2e7cd8d120bcd91ddfa85ef957f7246021b4a3f46f2e1f4ccf084ec6c20026",
+      "error_category": null,
+      "final_url": "https://raw.githubusercontent.com/vllm-project/vllm/main/README.md",
+      "http_status": 200,
+      "retrieved_at": "2026-09-14T04:18:16.249008Z",
+      "status": "FETCHED_UNVERIFIED",
+      "url": "https://raw.githubusercontent.com/vllm-project/vllm/main/README.md"
+    },
+    {
+      "byte_count": 11952,
+      "content_sha256": "ee6908559f95fe54c3f6773ed23e163d76c984f4750445830a343eac6edca1d0",
+      "error_category": null,
+      "final_url": "https://raw.githubusercontent.com/sgl-project/sglang/main/README.md",
+      "http_status": 200,
+      "retrieved_at": "2026-09-14T04:18:16.409658Z",
+      "status": "FETCHED_UNVERIFIED",
+      "url": "https://raw.githubusercontent.com/sgl-project/sglang/main/README.md"
+    }
+  ],
+  "bounds": {
+    "max_bytes_per_source": 262144,
+    "max_total_bytes": 1048576,
+    "request_timeout_s": 10.0,
+    "total_deadline_s": 60.0
+  }
+}

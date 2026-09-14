@@ -1,5 +1,12 @@
 # Model / Runtime / Inference-Policy Upgrade Loop — Coding-Session Handoff
 
+> **Implementation update, 2026-09-14:** the owner directed Codex to proceed
+> and treat this review as another set of eyes. Start with the
+> [implementation runbook](weekly_upgrade_implementation.md) for delivered
+> commands, corrected findings, validation and remaining runtime gates.
+> This document preserves the original review; its Session-0/owner-question
+> ordering does not suspend the owner's later implementation authorization.
+
 **Prepared:** 2026-09-14 by the primary Claude session, from a five-way review
 (Codex adversary via the repo frontier seam + three Claude research agents +
 a Claude red team) of the 2026-09-13 draft. Sources and full reports:
