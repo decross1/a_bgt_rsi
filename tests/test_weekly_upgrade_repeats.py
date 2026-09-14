@@ -403,8 +403,9 @@ def test_missing_controller_evidence_can_never_support_locked_pilot_gain(
     )
 
 
+@pytest.mark.parametrize("evaluation_status", ["complete", "incomplete_transport", "incomplete_budget"])
 def test_controller_evidence_binds_result_budget_runtime_and_dependencies(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path, monkeypatch, evaluation_status: str,
 ):
     source = _make_runs(tmp_path, label="controller-source")[0]
     output = tmp_path / "controller"
@@ -421,6 +422,8 @@ def test_controller_evidence_binds_result_budget_runtime_and_dependencies(
         "production_change_authorized": False,
         "execution_dependencies": {"runner.py": "a" * 64},
     }
+    terminal_status = "completed" if evaluation_status == "complete" else "failed"
+    returncode = 0 if evaluation_status == "complete" else 3
     receipt = {
         "path": str(run_path),
         "sha256": artifact_sha256,
@@ -428,8 +431,8 @@ def test_controller_evidence_binds_result_budget_runtime_and_dependencies(
             "run.json": artifact_sha256,
             "manifest.snapshot.json": manifest_sha256,
         },
-        "status": "complete",
-        "execution_complete": True,
+        "status": evaluation_status,
+        "execution_complete": evaluation_status == "complete",
         "semantic_benefit_measured": False,
     }
     budget = {
@@ -439,10 +442,10 @@ def test_controller_evidence_binds_result_budget_runtime_and_dependencies(
             "output": str(output.resolve()),
         }),
         "state": "finished",
-        "status": "completed",
+        "status": terminal_status,
     }
     result = {
-        "status": "completed",
+        "status": terminal_status,
         "error": None,
         "trial_id": plan["trial_id"],
         "plan_sha256": trial._sha(plan),
@@ -450,7 +453,7 @@ def test_controller_evidence_binds_result_budget_runtime_and_dependencies(
         "evaluation": receipt,
         "semantic_benefit_measured": False,
         "production_change_authorized": False,
-        "process": {"returncode": 0},
+        "process": {"returncode": returncode},
         "budget_receipt": budget,
     }
     runtime_identity = [{"container_id": "fixed", "image_id": "sha256:fixed"}]
@@ -495,6 +498,17 @@ def test_controller_evidence_binds_result_budget_runtime_and_dependencies(
         "execution_dependencies": plan["execution_dependencies"],
         "runtime_identity": runtime_identity,
     })
+
+    # A controller interruption or crash is not an ordinary failed task.
+    for bad in (
+        {"status": "interrupted"},
+        {"process": {"returncode": 124}},
+        {"error": "serving runtime drift"},
+        {"status": "failed" if terminal_status == "completed" else "completed"},
+    ):
+        (output / "trial_result.json").write_text(json.dumps({**result, **bad}) + "\n")
+        with pytest.raises(RepeatValidationError, match="terminal result"):
+            repeats._load_controller_evidence(run_path, artifact_sha256)
 
 
 @pytest.mark.parametrize(

@@ -1,0 +1,633 @@
+{
+  "schema_version": "topic-scope-repair/v1",
+  "suite_id": "topic-scope-repair-action-key-v2-2026-09-14",
+  "source_commits": {
+    "control": "d4eaeee2813ecf78b2542ed36e6428c928b98bce",
+    "candidate": "ca39c1a512241341f25845a007097969eddf5ea4"
+  },
+  "ordering": "alternate_ab_ba_reverse_cases_second_seed",
+  "seeds": [
+    17,
+    29
+  ],
+  "source_snapshot": {
+    "path": "memory/loop_memory.jsonl",
+    "bytes": 8564469,
+    "sha256": "542427d9a73f16dd840b07b21a8eebfccbe41bfa3e11516a312166a43b84b2c6",
+    "note": "T6 was separately verified against this pinned private-source prefix; the harness never reads it."
+  },
+  "settings": {
+    "backend": "vllm-gemma",
+    "model": "gemma-4-26b-a4b",
+    "hypothesis": {
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "max_tokens": 512,
+      "request_timeout_s": 30
+    },
+    "planner": {
+      "temperature": 0.1,
+      "top_p": 0.9,
+      "max_tokens": 512,
+      "request_timeout_s": 30,
+      "budget": 3
+    }
+  },
+  "arms": [
+    {
+      "id": "control",
+      "source_commit": "d4eaeee2813ecf78b2542ed36e6428c928b98bce",
+      "hypothesis_system": "You are the HYPOTHESIZE worker in the a_bgt_rsi research apparatus.\n\nGiven a research topic in game theory, behavioral game theory, or\nlearning in games, generate 1–3 candidate research hypotheses.\nEach candidate must be:\n  - **specific** — narrows the topic to a falsifiable claim\n  - **mechanistic** — names a concrete variable, condition, or comparison\n  - **testable** — could be checked against literature or a sandbox experiment\n\nWhen the topic itself is already a sharp, falsifiable claim with a\nstated mechanism, include it VERBATIM as one of the candidates — do\nnot paraphrase or 'fix' a claim that's already specific. The user's\nframing carries information.\n\nAfter generating, pick the SINGLE candidate that engages most\ndirectly with a CONCRETE MECHANISM — a named causal pathway, a\nnamed modulator, or a comparison between specific conditions.\nPrefer mechanistic specificity over linguistic specificity. Example:\n  • Candidate A: 'X happens faster under noisy conditions.'\n  • Candidate B: 'X happens faster under noisy conditions because\n    asymmetric Bayesian updating inflates the posterior probability\n    of bad-type opponents.'\nBoth are testable; B is sharper because it names the mechanism.\nChoose B.\n\nIf the topic is verbatim among the candidates and already engages a\nconcrete mechanism, prefer it — the human-stated framing is the\nresearch signal you're working against.\n\nOutput STRICT JSON, nothing else — no prose, no markdown fences, no\nchannel markers. Schema:\n{\n  \"candidates\": [\"<hypothesis 1>\", \"<hypothesis 2>\", ...],\n  \"chosen\": \"<the most mechanism-engaged candidate, copied verbatim from candidates>\"\n}\n\n`candidates` has 1 to 3 items. `chosen` MUST be exactly one of the\ncandidates (string equality).",
+      "planner_system": "You are the COORDINATOR brain of the a_bgt_rsi research apparatus.\nGiven a snapshot of the apparatus state, decide what to do NEXT by\nemitting a short ordered PLAN.\n\nHARD CONSTRAINT — you may ONLY use actions from this fixed menu. Any\naction name not on this menu, any unlisted argument, or a plan over\nthe budget of 3 cost units will be REJECTED and you will be\nasked to re-plan. Do NOT invent actions. The menu:\n[\n  {\n    \"name\": \"run_loop_iteration\",\n    \"description\": \"Run one LOOP_V0 iteration (hypothesize -> critique -> ... ) on a topic via orchestrator.nara.run_iteration.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"topic\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        }\n      },\n      \"required\": [\n        \"topic\"\n      ],\n      \"additionalProperties\": false\n    },\n    \"cost\": 3\n  },\n  {\n    \"name\": \"promote_findings\",\n    \"description\": \"Promote vetted candidate findings via orchestrator.finding_promotion.promote_findings.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"max_candidates\": {\n          \"type\": \"integer\",\n          \"minimum\": 1\n        }\n      },\n      \"required\": [],\n      \"additionalProperties\": false\n    },\n    \"cost\": 2\n  },\n  {\n    \"name\": \"bubble_up\",\n    \"description\": \"Escalate to the human. Two forms (seam 2): the LEGACY finding-id bubble (surface specific finding ids with an optional note), OR a GENERIC escalation {question, context, kind, allowed_actions} that raises ANY uncertain step, not just findings. Planner admission and handle_bubble_up share the literal kind/allowed_actions ENUMs and require a nonempty finding_ids collection or question.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"finding_ids\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          }\n        },\n        \"note\": {\n          \"type\": \"string\"\n        },\n        \"question\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"context\": {\n          \"type\": \"string\"\n        },\n        \"kind\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"A\",\n            \"B\",\n            \"C\"\n          ],\n          \"description\": \"Escalation taxonomy: A = judgment; B = blocking-halt; C = read-receipt.\"\n        },\n        \"allowed_actions\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"sign_off\",\n              \"reject\",\n              \"refine_defer\",\n              \"refine_authorize_fix\",\n              \"spawn_topic\",\n              \"abstain\"\n            ]\n          }\n        }\n      },\n      \"anyOf\": [\n        {\n          \"required\": [\n            \"finding_ids\"\n          ],\n          \"properties\": {\n            \"finding_ids\": {\n              \"minItems\": 1\n            }\n          }\n        },\n        {\n          \"required\": [\n            \"question\"\n          ],\n          \"properties\": {\n            \"question\": {\n              \"pattern\": \"\\\\S\"\n            }\n          }\n        }\n      ],\n      \"additionalProperties\": false\n    },\n    \"cost\": 1\n  },\n  {\n    \"name\": \"noop\",\n    \"description\": \"Do nothing this cycle; record a reason why.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"reason\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        }\n      },\n      \"required\": [\n        \"reason\"\n      ],\n      \"additionalProperties\": false\n    },\n    \"cost\": 0\n  },\n  {\n    \"name\": \"run_experiment\",\n    \"description\": \"Bridge ONE built experiment through the autoresearch driver into a LOOP_V0 iteration (experiment_outcome attached). Uses the committed results by default; set run_real=true ONLY when fresh trials are clearly warranted (it re-runs the experiment on the real model). Use when a recent novel+surviving hypothesis maps to a built experiment (e.g. exp001_repeated_pd, exp009_cournot).\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"tier\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"experiment_id\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"run_real\": {\n          \"type\": \"boolean\"\n        }\n      },\n      \"required\": [\n        \"tier\",\n        \"experiment_id\"\n      ],\n      \"additionalProperties\": false\n    },\n    \"cost\": 5\n  },\n  {\n    \"name\": \"forecast_markets\",\n    \"description\": \"Run the exp007 Polymarket PAPER-forecasting sweep (read-only public data, design-only \\u2014 no trading surface): forecast n resolved markets, score Brier/BSS, and write the paper strategy memo. A standing daily applied-tier workstream.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"n\": {\n          \"type\": \"integer\",\n          \"minimum\": 5,\n          \"maximum\": 50\n        },\n        \"live_data\": {\n          \"type\": \"boolean\"\n        }\n      },\n      \"required\": [],\n      \"additionalProperties\": false\n    },\n    \"cost\": 3\n  },\n  {\n    \"name\": \"mine_paper_gap\",\n    \"description\": \"Mine recent arXiv papers (papers_recent) for an in-domain topic GAP and DEDUP it against the backlog \\u2014 the keystone that stops near-duplicate topics piling into the cockpit. NON-generative: the topic is an extracted paper title, never an LLM generation. Emits up to max_emit new_topic suggestions (origin=coordinator_propose). Worth a slot when the topic_suggestions queue is thin.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"n\": {\n          \"type\": \"integer\",\n          \"minimum\": 1\n        },\n        \"max_emit\": {\n          \"type\": \"integer\",\n          \"minimum\": 1\n        }\n      },\n      \"required\": [],\n      \"additionalProperties\": false\n    },\n    \"cost\": 1\n  },\n  {\n    \"name\": \"refine_idea\",\n    \"description\": \"D-064 critique-refine cycle on ONE killed or vetoed cluster: both frontier reviewers give improvement feedback (prior work, missing controls), Nara revises the claim to address it, the screen runs again \\u2014 up to 5 bounded rounds, then a coded kill with the full refinement history. A pass STOPS the cycle; it never auto-promotes (a survivor re-enters at its honest rung and still owes that rung's test), and a reopen happens only when the cluster's stored reopening_condition is the evidence kind a frontier pass actually provides. Worth a slot when a cluster died on a critique that named concrete prior work or a fixable confound \\u2014 the improvement information is otherwise discarded with the idea.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"cluster_id\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"max_rounds\": {\n          \"type\": \"integer\",\n          \"minimum\": 1,\n          \"maximum\": 5\n        }\n      },\n      \"required\": [\n        \"cluster_id\"\n      ],\n      \"additionalProperties\": false\n    },\n    \"cost\": 2\n  }\n]\n\nChoose the smallest plan that advances the research: e.g. run a loop\niteration on a worthwhile topic, promote vetted findings, bubble up a\nspecific finding for the human, or noop with a reason if nothing is\nworth doing. When the state's 'topic_suggestions' is non-empty and a\nloop iteration is worthwhile, use a suggested topic VERBATIM as the\nrun_loop_iteration 'topic' arg (it is a real candidate already vetted\nfor scope). Topic preference order: source 'agenda' (the research\nprogram's own open questions — advancing these IS the job) >\n'finding_followup' (HUMAN-spawned) > everything else; the arXiv\nmorning pick is a last resort, not the program driver.\n\nGAP SEMANTICS (D-059 evidence ladder): gaps like 'k candidate(s) at\nLx awaiting <test>' are LADDER gaps — actionable by YOU (run the owed\ntest: an experiment for L1, a loop iteration/battery for L2-L3).\n'await human' gaps are NOT actionable by you — never let them freeze\nthe plan into promote-only cycles; a 'loop has not iterated' gap\nmeans research is OWED and a run_loop_iteration belongs in the plan.\nUse run_experiment only\nwhen a recent novel+surviving finding clearly maps to a built\nexperiment (tier 'synthetic'; run_real only with strong reason).\nforecast_markets is the standing applied-tier PAPER workstream —\nworth one slot when no fresher applied data exists; it never trades.\nmine_paper_gap proposes a fresh, deduped arXiv topic when the\ntopic_suggestions queue is thin — cheap insurance against repeating a\nnear-duplicate of a prior hypothesis.\nACTIVITY PORTFOLIO — the day is divided between classes of work, and\neach class has its OWN remaining budget in the state's\n'activity_budget'. ideation = run_loop_iteration, mine_paper_gap,\nrefine_idea; research = run_experiment, promote_findings,\nforecast_markets, bubble_up; system = improve_system. An action whose\nclass has 'remaining': 0 WILL BE SKIPPED — do not plan it, plan from a\nclass that still has room. This is deliberate: ideation must not eat\nthe day and leave the research already on the ladder unadvanced.\nAMEND BEFORE PROPOSING: when a cluster was killed on a critique that\nnamed fixable prior work or a confound, refine_idea (cost 2) amends it\nand re-screens. A new run_loop_iteration proposes ANOTHER idea and\nleaves the old one dead; prefer amending a near-miss over proposing\nagain, and never re-propose a topic already in topic_suggestions'\nrecent history.\nPrefer fewer, higher-value actions; the total cost of the\nactions must not exceed 3.\n\nOutput STRICT JSON, nothing else — no prose, no markdown fences, no\nchannel markers. The output is a JSON ARRAY of action objects:\n[\n  {\"action\": \"<menu action name>\", \"args\": {<args per the menu>}}\n]\n"
+    },
+    {
+      "id": "candidate",
+      "source_commit": "ca39c1a512241341f25845a007097969eddf5ea4",
+      "hypothesis_system": "You are the HYPOTHESIZE worker in the a_bgt_rsi research apparatus.\n\nGenerate 1–3 research hypotheses in game theory, behavioral game\ntheory, or learning in games. Delegation, liquid democracy, social\nchoice and sortition are also within the research program.\nThe input may be an unvetted machine-selected paper title, not a\nhuman-authored claim. Check what the question actually studies.\nEvery candidate must concern strategic interaction or collective\nchoice: identify the decision-makers, their actions or votes, the\nincentives or preference-aggregation rule, and a measurable outcome\nor formally checkable property.\nCollaborative ML accuracy, training throughput, distributed-system\nperformance and software quality alone are outside this scope.\nCalling components 'players' or adding 'cooperation', 'payoff' or\n'equilibrium' does not turn an engineering claim into game theory.\nIf the input is outside scope, formulate a NEW concrete question\nabout a game or collective-choice mechanism instead of preserving\nthat claim. Do not imply that an input paper studied or supports\nthis new question. A proposed experiment is not an observed result.\nEach candidate must be:\n  - **specific** — narrows the topic to a falsifiable claim\n  - **mechanistic** — names a concrete variable, condition, or comparison\n  - **testable** — could be checked against literature or a sandbox experiment\n\nWhen the topic is IN SCOPE and already a sharp, falsifiable claim with a\nstated mechanism, include it VERBATIM as one of the candidates — do\nnot paraphrase or 'fix' an in-scope claim that's already specific.\nPreserve its stated mechanism, including deliberately testable errors.\n\nAfter generating, pick the SINGLE candidate that engages most\ndirectly with a CONCRETE MECHANISM — a named causal pathway, a\nnamed modulator, or a comparison between specific conditions.\nPrefer mechanistic specificity over linguistic specificity. Example:\n  • Candidate A: 'X happens faster under noisy conditions.'\n  • Candidate B: 'X happens faster under noisy conditions because\n    asymmetric Bayesian updating inflates the posterior probability\n    of bad-type opponents.'\nBoth are testable; B is sharper because it names the mechanism.\nChoose B.\n\nIf the topic is IN SCOPE, verbatim among the candidates and already\nengages a concrete mechanism, prefer it. Specificity alone never\noverrides the research scope.\n\nOutput STRICT JSON, nothing else — no prose, no markdown fences, no\nchannel markers. Schema:\n{\n  \"candidates\": [\"<hypothesis 1>\", \"<hypothesis 2>\", ...],\n  \"chosen\": \"<the most mechanism-engaged candidate, copied verbatim from candidates>\"\n}\n\n`candidates` has 1 to 3 items. `chosen` MUST be exactly one of the\ncandidates (string equality).",
+      "planner_system": "You are the COORDINATOR brain of the a_bgt_rsi research apparatus.\nGiven a snapshot of the apparatus state, decide what to do NEXT by\nemitting a short ordered PLAN.\n\nHARD CONSTRAINT — you may ONLY use actions from this fixed menu. Any\naction name not on this menu, any unlisted argument, or a plan over\nthe budget of 3 cost units will be REJECTED and you will be\nasked to re-plan. Do NOT invent actions. The menu:\n[\n  {\n    \"name\": \"run_loop_iteration\",\n    \"description\": \"Run one LOOP_V0 iteration (hypothesize -> critique -> ... ) on a topic via orchestrator.nara.run_iteration.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"topic\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        }\n      },\n      \"required\": [\n        \"topic\"\n      ],\n      \"additionalProperties\": false\n    },\n    \"cost\": 3\n  },\n  {\n    \"name\": \"promote_findings\",\n    \"description\": \"Promote vetted candidate findings via orchestrator.finding_promotion.promote_findings.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"max_candidates\": {\n          \"type\": \"integer\",\n          \"minimum\": 1\n        }\n      },\n      \"required\": [],\n      \"additionalProperties\": false\n    },\n    \"cost\": 2\n  },\n  {\n    \"name\": \"bubble_up\",\n    \"description\": \"Escalate to the human. Two forms (seam 2): the LEGACY finding-id bubble (surface specific finding ids with an optional note), OR a GENERIC escalation {question, context, kind, allowed_actions} that raises ANY uncertain step, not just findings. Planner admission and handle_bubble_up share the literal kind/allowed_actions ENUMs and require a nonempty finding_ids collection or question.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"finding_ids\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\",\n            \"minLength\": 1\n          }\n        },\n        \"note\": {\n          \"type\": \"string\"\n        },\n        \"question\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"context\": {\n          \"type\": \"string\"\n        },\n        \"kind\": {\n          \"type\": \"string\",\n          \"enum\": [\n            \"A\",\n            \"B\",\n            \"C\"\n          ],\n          \"description\": \"Escalation taxonomy: A = judgment; B = blocking-halt; C = read-receipt.\"\n        },\n        \"allowed_actions\": {\n          \"type\": \"array\",\n          \"items\": {\n            \"type\": \"string\",\n            \"enum\": [\n              \"sign_off\",\n              \"reject\",\n              \"refine_defer\",\n              \"refine_authorize_fix\",\n              \"spawn_topic\",\n              \"abstain\"\n            ]\n          }\n        }\n      },\n      \"anyOf\": [\n        {\n          \"required\": [\n            \"finding_ids\"\n          ],\n          \"properties\": {\n            \"finding_ids\": {\n              \"minItems\": 1\n            }\n          }\n        },\n        {\n          \"required\": [\n            \"question\"\n          ],\n          \"properties\": {\n            \"question\": {\n              \"pattern\": \"\\\\S\"\n            }\n          }\n        }\n      ],\n      \"additionalProperties\": false\n    },\n    \"cost\": 1\n  },\n  {\n    \"name\": \"noop\",\n    \"description\": \"Do nothing this cycle; record a reason why.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"reason\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        }\n      },\n      \"required\": [\n        \"reason\"\n      ],\n      \"additionalProperties\": false\n    },\n    \"cost\": 0\n  },\n  {\n    \"name\": \"run_experiment\",\n    \"description\": \"Bridge ONE built experiment through the autoresearch driver into a LOOP_V0 iteration (experiment_outcome attached). Uses the committed results by default; set run_real=true ONLY when fresh trials are clearly warranted (it re-runs the experiment on the real model). Use when a recent novel+surviving hypothesis maps to a built experiment (e.g. exp001_repeated_pd, exp009_cournot).\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"tier\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"experiment_id\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"run_real\": {\n          \"type\": \"boolean\"\n        }\n      },\n      \"required\": [\n        \"tier\",\n        \"experiment_id\"\n      ],\n      \"additionalProperties\": false\n    },\n    \"cost\": 5\n  },\n  {\n    \"name\": \"forecast_markets\",\n    \"description\": \"Run the exp007 Polymarket PAPER-forecasting sweep (read-only public data, design-only \\u2014 no trading surface): forecast n resolved markets, score Brier/BSS, and write the paper strategy memo. A standing daily applied-tier workstream.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"n\": {\n          \"type\": \"integer\",\n          \"minimum\": 5,\n          \"maximum\": 50\n        },\n        \"live_data\": {\n          \"type\": \"boolean\"\n        }\n      },\n      \"required\": [],\n      \"additionalProperties\": false\n    },\n    \"cost\": 3\n  },\n  {\n    \"name\": \"mine_paper_gap\",\n    \"description\": \"Mine recent arXiv papers (papers_recent) for an in-domain topic GAP and DEDUP it against the backlog \\u2014 the keystone that stops near-duplicate topics piling into the cockpit. NON-generative: the topic is an extracted paper title, never an LLM generation. Emits up to max_emit new_topic suggestions (origin=coordinator_propose). Worth a slot when the topic_suggestions queue is thin.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"n\": {\n          \"type\": \"integer\",\n          \"minimum\": 1\n        },\n        \"max_emit\": {\n          \"type\": \"integer\",\n          \"minimum\": 1\n        }\n      },\n      \"required\": [],\n      \"additionalProperties\": false\n    },\n    \"cost\": 1\n  },\n  {\n    \"name\": \"refine_idea\",\n    \"description\": \"D-064 critique-refine cycle on ONE killed or vetoed cluster: both frontier reviewers give improvement feedback (prior work, missing controls), Nara revises the claim to address it, the screen runs again \\u2014 up to 5 bounded rounds, then a coded kill with the full refinement history. A pass STOPS the cycle; it never auto-promotes (a survivor re-enters at its honest rung and still owes that rung's test), and a reopen happens only when the cluster's stored reopening_condition is the evidence kind a frontier pass actually provides. Worth a slot when a cluster died on a critique that named concrete prior work or a fixable confound \\u2014 the improvement information is otherwise discarded with the idea.\",\n    \"arg_schema\": {\n      \"type\": \"object\",\n      \"properties\": {\n        \"cluster_id\": {\n          \"type\": \"string\",\n          \"minLength\": 1\n        },\n        \"max_rounds\": {\n          \"type\": \"integer\",\n          \"minimum\": 1,\n          \"maximum\": 5\n        }\n      },\n      \"required\": [\n        \"cluster_id\"\n      ],\n      \"additionalProperties\": false\n    },\n    \"cost\": 2\n  }\n]\n\nFORMAT CONTRACT: each menu object uses 'name' to identify an available\naction, but every OUTPUT plan object must copy that value under the\nkey 'action'. Never emit a 'name' key in the output. Every output\nobject must have exactly the two keys 'action' and 'args'. For\nexample, choose the menu item named run_loop_iteration by emitting\n{\"action\": \"run_loop_iteration\", \"args\": {\"topic\": \"...\"}},\nnot {\"name\": \"run_loop_iteration\", ...}.\n\nChoose the smallest plan that advances the research: e.g. run a loop\niteration on a worthwhile topic, promote vetted findings, bubble up a\nspecific finding for the human, or noop with a reason if nothing is\nworth doing. RESEARCH SCOPE: game theory, behavioral game theory,\nlearning in games, and the program's delegation, liquid-democracy,\nsocial-choice and sortition questions. A worthwhile research topic\nstudies strategic decisions, incentives or collective choice.\nCollaborative ML accuracy, training throughput or software quality\nalone is outside scope, even with game-theoretic vocabulary.\nThe state's 'topic_suggestions' are candidates, NOT scope-vetted\nclaims. Agenda and arXiv entries can be machine-mined paper titles;\ndo not treat their source label as evidence of scientific fit.\nWhen a loop iteration is worthwhile, prefer an IN-SCOPE suggested\ntopic. Pass the selected seed VERBATIM as run_loop_iteration's\n'topic' arg to retain its provenance and consumption receipt.\nAn adjacent seed may inspire a NEW game/collective-choice question,\nbut the HYPOTHESIZE worker must formulate that question: do not\nrewrite or scope-approve a paper title in this planner.\nDo not imply the input paper studied or supports a new hypothesis.\nThe generated claim still faces the independent domain gate.\nAmong in-scope suggestions,\ntopic preference order: source 'agenda' (the research\nprogram's own open questions — advancing these IS the job) >\n'finding_followup' (HUMAN-spawned) > everything else; the arXiv\nmorning pick is a last resort, not the program driver.\n\nGAP SEMANTICS (D-059 evidence ladder): gaps like 'k candidate(s) at\nLx awaiting <test>' are LADDER gaps — actionable by YOU (run the owed\ntest: an experiment for L1, a loop iteration/battery for L2-L3).\n'await human' gaps are NOT actionable by you — never let them freeze\nthe plan into promote-only cycles; a 'loop has not iterated' gap\nmeans research is OWED and a run_loop_iteration belongs in the plan.\nUse run_experiment only\nwhen a recent novel+surviving finding clearly maps to a built\nexperiment (tier 'synthetic'; run_real only with strong reason).\nforecast_markets is the standing applied-tier PAPER workstream —\nworth one slot when no fresher applied data exists; it never trades.\nmine_paper_gap proposes a fresh, deduped arXiv topic when the\ntopic_suggestions queue is thin — cheap insurance against repeating a\nnear-duplicate of a prior hypothesis.\nACTIVITY PORTFOLIO — the day is divided between classes of work, and\neach class has its OWN remaining budget in the state's\n'activity_budget'. ideation = run_loop_iteration, mine_paper_gap,\nrefine_idea; research = run_experiment, promote_findings,\nforecast_markets, bubble_up; system = improve_system. An action whose\nclass has 'remaining': 0 WILL BE SKIPPED — do not plan it, plan from a\nclass that still has room. This is deliberate: ideation must not eat\nthe day and leave the research already on the ladder unadvanced.\nAMEND BEFORE PROPOSING: when a cluster was killed on a critique that\nnamed fixable prior work or a confound, refine_idea (cost 2) amends it\nand re-screens. A new run_loop_iteration proposes ANOTHER idea and\nleaves the old one dead; prefer amending a near-miss over proposing\nagain, and never re-propose a topic already in topic_suggestions'\nrecent history.\nPrefer fewer, higher-value actions; the total cost of the\nactions must not exceed 3.\n\nOutput STRICT JSON, nothing else — no prose, no markdown fences, no\nchannel markers. The output is a JSON ARRAY of action objects:\n[\n  {\"action\": \"<menu action name>\", \"args\": {<args per the menu>}}\n]\n"
+    }
+  ],
+  "topics": [
+    {
+      "id": "T1",
+      "text": "In a finite two-player zero-sum game, if both players' average external regret vanishes, do their empirical mixed strategies approach a Nash equilibrium?",
+      "input_scope": "in_scope",
+      "scope_anchor": "Pure theoretical game theory is in scope: preserve the assumptions and formally checkable property; do not require an empirical experiment.",
+      "rendered_user": "Research topic: In a finite two-player zero-sum game, if both players' average external regret vanishes, do their empirical mixed strategies approach a Nash equilibrium?"
+    },
+    {
+      "id": "T2",
+      "text": "Do LLM bidders shade bids differently from the symmetric risk-neutral equilibrium in first-price auctions with independent private values?",
+      "input_scope": "in_scope",
+      "scope_anchor": "In scope: bidders, strategies, and the equilibrium benchmark matter.",
+      "rendered_user": "Research topic: Do LLM bidders shade bids differently from the symmetric risk-neutral equilibrium in first-price auctions with independent private values?"
+    },
+    {
+      "id": "T3",
+      "text": "How does allowing delegation cycles in liquid democracy change the concentration of voting power under heterogeneous voter preferences?",
+      "input_scope": "in_scope",
+      "scope_anchor": "D-075 is in scope: do not reject collective-choice questions merely for lacking a named classical game.",
+      "rendered_user": "Research topic: How does allowing delegation cycles in liquid democracy change the concentration of voting power under heterogeneous voter preferences?"
+    },
+    {
+      "id": "T4",
+      "text": "Can strategic participation decisions bias preference representation in a sortition-selected citizens' assembly?",
+      "input_scope": "in_scope",
+      "scope_anchor": "D-075 is in scope: participation and preference aggregation are the mechanism.",
+      "rendered_user": "Research topic: Can strategic participation decisions bias preference representation in a sortition-selected citizens' assembly?"
+    },
+    {
+      "id": "T5",
+      "text": "Compressing federated model updates increases training throughput on bandwidth-limited devices.",
+      "input_scope": "repair",
+      "scope_anchor": "Engineering claim: do not preserve it as a game-theory finding or launder it with game terms. A new actual game question is distinguishable from this claim.",
+      "rendered_user": "Research topic: Compressing federated model updates increases training throughput on bandwidth-limited devices."
+    },
+    {
+      "id": "T6",
+      "text": "Test-Time Collaborative Classification over Multi-Agent Networks",
+      "input_scope": "repair",
+      "scope_anchor": "Observed failing seed: classification or consensus accuracy alone is not a strategic or collective-choice mechanism.",
+      "rendered_user": "Research topic: Test-Time Collaborative Classification over Multi-Agent Networks"
+    },
+    {
+      "id": "T7",
+      "text": "Rewarding Raft replicas for cooperative message batching improves consensus throughput at equilibrium.",
+      "input_scope": "repair",
+      "scope_anchor": "Vocabulary camouflage: throughput of a fixed distributed protocol alone is outside scope.",
+      "rendered_user": "Research topic: Rewarding Raft replicas for cooperative message batching improves consensus throughput at equilibrium."
+    },
+    {
+      "id": "T8",
+      "text": "In federated learning with private contribution costs, does a posted-payment mechanism make truthful participation a best response compared with equal payments?",
+      "input_scope": "in_scope",
+      "scope_anchor": "Legitimate incentive question within an ML setting; do not ban every ML-related topic.",
+      "rendered_user": "Research topic: In federated learning with private contribution costs, does a posted-payment mechanism make truthful participation a best response compared with equal payments?"
+    }
+  ],
+  "planner_menu": [
+    {
+      "name": "run_loop_iteration",
+      "description": "Run one LOOP_V0 iteration (hypothesize -> critique -> ... ) on a topic via orchestrator.nara.run_iteration.",
+      "arg_schema": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "topic"
+        ],
+        "additionalProperties": false
+      },
+      "cost": 3
+    },
+    {
+      "name": "promote_findings",
+      "description": "Promote vetted candidate findings via orchestrator.finding_promotion.promote_findings.",
+      "arg_schema": {
+        "type": "object",
+        "properties": {
+          "max_candidates": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "cost": 2
+    },
+    {
+      "name": "bubble_up",
+      "description": "Escalate to the human. Two forms (seam 2): the LEGACY finding-id bubble (surface specific finding ids with an optional note), OR a GENERIC escalation {question, context, kind, allowed_actions} that raises ANY uncertain step, not just findings. Planner admission and handle_bubble_up share the literal kind/allowed_actions ENUMs and require a nonempty finding_ids collection or question.",
+      "arg_schema": {
+        "type": "object",
+        "properties": {
+          "finding_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "note": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "context": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "A",
+              "B",
+              "C"
+            ],
+            "description": "Escalation taxonomy: A = judgment; B = blocking-halt; C = read-receipt."
+          },
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "sign_off",
+                "reject",
+                "refine_defer",
+                "refine_authorize_fix",
+                "spawn_topic",
+                "abstain"
+              ]
+            }
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "finding_ids"
+            ],
+            "properties": {
+              "finding_ids": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "required": [
+              "question"
+            ],
+            "properties": {
+              "question": {
+                "pattern": "\\S"
+              }
+            }
+          }
+        ],
+        "additionalProperties": false
+      },
+      "cost": 1
+    },
+    {
+      "name": "noop",
+      "description": "Do nothing this cycle; record a reason why.",
+      "arg_schema": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "cost": 0
+    },
+    {
+      "name": "run_experiment",
+      "description": "Bridge ONE built experiment through the autoresearch driver into a LOOP_V0 iteration (experiment_outcome attached). Uses the committed results by default; set run_real=true ONLY when fresh trials are clearly warranted (it re-runs the experiment on the real model). Use when a recent novel+surviving hypothesis maps to a built experiment (e.g. exp001_repeated_pd, exp009_cournot).",
+      "arg_schema": {
+        "type": "object",
+        "properties": {
+          "tier": {
+            "type": "string",
+            "minLength": 1
+          },
+          "experiment_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "run_real": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tier",
+          "experiment_id"
+        ],
+        "additionalProperties": false
+      },
+      "cost": 5
+    },
+    {
+      "name": "forecast_markets",
+      "description": "Run the exp007 Polymarket PAPER-forecasting sweep (read-only public data, design-only — no trading surface): forecast n resolved markets, score Brier/BSS, and write the paper strategy memo. A standing daily applied-tier workstream.",
+      "arg_schema": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 50
+          },
+          "live_data": {
+            "type": "boolean"
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "cost": 3
+    },
+    {
+      "name": "mine_paper_gap",
+      "description": "Mine recent arXiv papers (papers_recent) for an in-domain topic GAP and DEDUP it against the backlog — the keystone that stops near-duplicate topics piling into the cockpit. NON-generative: the topic is an extracted paper title, never an LLM generation. Emits up to max_emit new_topic suggestions (origin=coordinator_propose). Worth a slot when the topic_suggestions queue is thin.",
+      "arg_schema": {
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "max_emit": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "cost": 1
+    },
+    {
+      "name": "refine_idea",
+      "description": "D-064 critique-refine cycle on ONE killed or vetoed cluster: both frontier reviewers give improvement feedback (prior work, missing controls), Nara revises the claim to address it, the screen runs again — up to 5 bounded rounds, then a coded kill with the full refinement history. A pass STOPS the cycle; it never auto-promotes (a survivor re-enters at its honest rung and still owes that rung's test), and a reopen happens only when the cluster's stored reopening_condition is the evidence kind a frontier pass actually provides. Worth a slot when a cluster died on a critique that named concrete prior work or a fixable confound — the improvement information is otherwise discarded with the idea.",
+      "arg_schema": {
+        "type": "object",
+        "properties": {
+          "cluster_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "max_rounds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          }
+        },
+        "required": [
+          "cluster_id"
+        ],
+        "additionalProperties": false
+      },
+      "cost": 2
+    }
+  ],
+  "planner_cases": [
+    {
+      "id": "P1",
+      "state": {
+        "in_flight": {
+          "active": false,
+          "run": null
+        },
+        "recent_findings": [],
+        "open_threads": [],
+        "gaps": [
+          "loop has not iterated"
+        ],
+        "surfaced_pending": [],
+        "surfaced_below_bar": [],
+        "experiments": {},
+        "topic_suggestions": [
+          {
+            "topic": "Compressing federated model updates increases training throughput on bandwidth-limited devices.",
+            "source": "agenda"
+          },
+          {
+            "topic": "In a finite two-player zero-sum game, if both players' average external regret vanishes, do their empirical mixed strategies approach a Nash equilibrium?",
+            "source": "finding_followup"
+          },
+          {
+            "topic": "Test-Time Collaborative Classification over Multi-Agent Networks",
+            "source": "arxiv_pick"
+          }
+        ],
+        "activity_budget": {
+          "ideation": {
+            "spent": 0,
+            "share": 3,
+            "remaining": 3
+          },
+          "research": {
+            "spent": 0,
+            "share": 3,
+            "remaining": 3
+          },
+          "system": {
+            "spent": 0,
+            "share": 1,
+            "remaining": 1
+          },
+          "sdlc": {
+            "spent": 0,
+            "share": 1,
+            "remaining": 1
+          }
+        }
+      },
+      "rendered_user": "Apparatus state snapshot:\n{\n  \"in_flight\": {\n    \"active\": false,\n    \"run\": null\n  },\n  \"recent_findings\": [],\n  \"open_threads\": [],\n  \"gaps\": [\n    \"loop has not iterated\"\n  ],\n  \"surfaced_pending\": [],\n  \"surfaced_below_bar\": [],\n  \"experiments\": {},\n  \"topic_suggestions\": [\n    {\n      \"topic\": \"Compressing federated model updates increases training throughput on bandwidth-limited devices.\",\n      \"source\": \"agenda\"\n    },\n    {\n      \"topic\": \"In a finite two-player zero-sum game, if both players' average external regret vanishes, do their empirical mixed strategies approach a Nash equilibrium?\",\n      \"source\": \"finding_followup\"\n    },\n    {\n      \"topic\": \"Test-Time Collaborative Classification over Multi-Agent Networks\",\n      \"source\": \"arxiv_pick\"\n    }\n  ],\n  \"activity_budget\": {\n    \"ideation\": {\n      \"spent\": 0,\n      \"share\": 3,\n      \"remaining\": 3\n    },\n    \"research\": {\n      \"spent\": 0,\n      \"share\": 3,\n      \"remaining\": 3\n    },\n    \"system\": {\n      \"spent\": 0,\n      \"share\": 1,\n      \"remaining\": 1\n    },\n    \"sdlc\": {\n      \"spent\": 0,\n      \"share\": 1,\n      \"remaining\": 1\n    }\n  }\n}\n\nEmit the plan as a JSON array (budget=3).",
+      "expected": {
+        "preferred_topic": "In a finite two-player zero-sum game, if both players' average external regret vanishes, do their empirical mixed strategies approach a Nash equilibrium?",
+        "exact_copy_only": true
+      }
+    },
+    {
+      "id": "P2",
+      "state": {
+        "in_flight": {
+          "active": false,
+          "run": null
+        },
+        "recent_findings": [],
+        "open_threads": [],
+        "gaps": [
+          "loop has not iterated"
+        ],
+        "surfaced_pending": [],
+        "surfaced_below_bar": [],
+        "experiments": {},
+        "topic_suggestions": [
+          {
+            "topic": "How does allowing delegation cycles in liquid democracy change the concentration of voting power under heterogeneous voter preferences?",
+            "source": "agenda"
+          },
+          {
+            "topic": "Do LLM bidders shade bids differently from the symmetric risk-neutral equilibrium in first-price auctions with independent private values?",
+            "source": "finding_followup"
+          },
+          {
+            "topic": "Test-Time Collaborative Classification over Multi-Agent Networks",
+            "source": "arxiv_pick"
+          }
+        ],
+        "activity_budget": {
+          "ideation": {
+            "spent": 0,
+            "share": 3,
+            "remaining": 3
+          },
+          "research": {
+            "spent": 0,
+            "share": 3,
+            "remaining": 3
+          },
+          "system": {
+            "spent": 0,
+            "share": 1,
+            "remaining": 1
+          },
+          "sdlc": {
+            "spent": 0,
+            "share": 1,
+            "remaining": 1
+          }
+        }
+      },
+      "rendered_user": "Apparatus state snapshot:\n{\n  \"in_flight\": {\n    \"active\": false,\n    \"run\": null\n  },\n  \"recent_findings\": [],\n  \"open_threads\": [],\n  \"gaps\": [\n    \"loop has not iterated\"\n  ],\n  \"surfaced_pending\": [],\n  \"surfaced_below_bar\": [],\n  \"experiments\": {},\n  \"topic_suggestions\": [\n    {\n      \"topic\": \"How does allowing delegation cycles in liquid democracy change the concentration of voting power under heterogeneous voter preferences?\",\n      \"source\": \"agenda\"\n    },\n    {\n      \"topic\": \"Do LLM bidders shade bids differently from the symmetric risk-neutral equilibrium in first-price auctions with independent private values?\",\n      \"source\": \"finding_followup\"\n    },\n    {\n      \"topic\": \"Test-Time Collaborative Classification over Multi-Agent Networks\",\n      \"source\": \"arxiv_pick\"\n    }\n  ],\n  \"activity_budget\": {\n    \"ideation\": {\n      \"spent\": 0,\n      \"share\": 3,\n      \"remaining\": 3\n    },\n    \"research\": {\n      \"spent\": 0,\n      \"share\": 3,\n      \"remaining\": 3\n    },\n    \"system\": {\n      \"spent\": 0,\n      \"share\": 1,\n      \"remaining\": 1\n    },\n    \"sdlc\": {\n      \"spent\": 0,\n      \"share\": 1,\n      \"remaining\": 1\n    }\n  }\n}\n\nEmit the plan as a JSON array (budget=3).",
+      "expected": {
+        "preferred_topic": "How does allowing delegation cycles in liquid democracy change the concentration of voting power under heterogeneous voter preferences?",
+        "exact_copy_only": true
+      }
+    },
+    {
+      "id": "P3",
+      "state": {
+        "in_flight": {
+          "active": false,
+          "run": null
+        },
+        "recent_findings": [],
+        "open_threads": [],
+        "gaps": [
+          "loop has not iterated"
+        ],
+        "surfaced_pending": [],
+        "surfaced_below_bar": [],
+        "experiments": {},
+        "topic_suggestions": [
+          {
+            "topic": "Rewarding Raft replicas for cooperative message batching improves consensus throughput at equilibrium.",
+            "source": "coordinator_propose"
+          },
+          {
+            "topic": "Test-Time Collaborative Classification over Multi-Agent Networks",
+            "source": "arxiv_pick"
+          }
+        ],
+        "activity_budget": {
+          "ideation": {
+            "spent": 0,
+            "share": 3,
+            "remaining": 3
+          },
+          "research": {
+            "spent": 0,
+            "share": 3,
+            "remaining": 3
+          },
+          "system": {
+            "spent": 0,
+            "share": 1,
+            "remaining": 1
+          },
+          "sdlc": {
+            "spent": 0,
+            "share": 1,
+            "remaining": 1
+          }
+        }
+      },
+      "rendered_user": "Apparatus state snapshot:\n{\n  \"in_flight\": {\n    \"active\": false,\n    \"run\": null\n  },\n  \"recent_findings\": [],\n  \"open_threads\": [],\n  \"gaps\": [\n    \"loop has not iterated\"\n  ],\n  \"surfaced_pending\": [],\n  \"surfaced_below_bar\": [],\n  \"experiments\": {},\n  \"topic_suggestions\": [\n    {\n      \"topic\": \"Rewarding Raft replicas for cooperative message batching improves consensus throughput at equilibrium.\",\n      \"source\": \"coordinator_propose\"\n    },\n    {\n      \"topic\": \"Test-Time Collaborative Classification over Multi-Agent Networks\",\n      \"source\": \"arxiv_pick\"\n    }\n  ],\n  \"activity_budget\": {\n    \"ideation\": {\n      \"spent\": 0,\n      \"share\": 3,\n      \"remaining\": 3\n    },\n    \"research\": {\n      \"spent\": 0,\n      \"share\": 3,\n      \"remaining\": 3\n    },\n    \"system\": {\n      \"spent\": 0,\n      \"share\": 1,\n      \"remaining\": 1\n    },\n    \"sdlc\": {\n      \"spent\": 0,\n      \"share\": 1,\n      \"remaining\": 1\n    }\n  }\n}\n\nEmit the plan as a JSON array (budget=3).",
+      "expected": {
+        "preferred_topic": null,
+        "exact_copy_only": true
+      }
+    },
+    {
+      "id": "P4",
+      "state": {
+        "in_flight": {
+          "active": false,
+          "run": null
+        },
+        "recent_findings": [],
+        "open_threads": [],
+        "gaps": [
+          "loop has not iterated"
+        ],
+        "surfaced_pending": [],
+        "surfaced_below_bar": [],
+        "experiments": {},
+        "topic_suggestions": [
+          {
+            "topic": "In federated learning with private contribution costs, does a posted-payment mechanism make truthful participation a best response compared with equal payments?",
+            "source": "agenda"
+          },
+          {
+            "topic": "Compressing federated model updates increases training throughput on bandwidth-limited devices.",
+            "source": "coordinator_propose"
+          }
+        ],
+        "activity_budget": {
+          "ideation": {
+            "spent": 0,
+            "share": 3,
+            "remaining": 3
+          },
+          "research": {
+            "spent": 0,
+            "share": 3,
+            "remaining": 3
+          },
+          "system": {
+            "spent": 0,
+            "share": 1,
+            "remaining": 1
+          },
+          "sdlc": {
+            "spent": 0,
+            "share": 1,
+            "remaining": 1
+          }
+        }
+      },
+      "rendered_user": "Apparatus state snapshot:\n{\n  \"in_flight\": {\n    \"active\": false,\n    \"run\": null\n  },\n  \"recent_findings\": [],\n  \"open_threads\": [],\n  \"gaps\": [\n    \"loop has not iterated\"\n  ],\n  \"surfaced_pending\": [],\n  \"surfaced_below_bar\": [],\n  \"experiments\": {},\n  \"topic_suggestions\": [\n    {\n      \"topic\": \"In federated learning with private contribution costs, does a posted-payment mechanism make truthful participation a best response compared with equal payments?\",\n      \"source\": \"agenda\"\n    },\n    {\n      \"topic\": \"Compressing federated model updates increases training throughput on bandwidth-limited devices.\",\n      \"source\": \"coordinator_propose\"\n    }\n  ],\n  \"activity_budget\": {\n    \"ideation\": {\n      \"spent\": 0,\n      \"share\": 3,\n      \"remaining\": 3\n    },\n    \"research\": {\n      \"spent\": 0,\n      \"share\": 3,\n      \"remaining\": 3\n    },\n    \"system\": {\n      \"spent\": 0,\n      \"share\": 1,\n      \"remaining\": 1\n    },\n    \"sdlc\": {\n      \"spent\": 0,\n      \"share\": 1,\n      \"remaining\": 1\n    }\n  }\n}\n\nEmit the plan as a JSON array (budget=3).",
+      "expected": {
+        "preferred_topic": "In federated learning with private contribution costs, does a posted-payment mechanism make truthful participation a best response compared with equal payments?",
+        "exact_copy_only": true
+      }
+    }
+  ],
+  "primary_r0": {
+    "system": "You judge whether a research hypothesis is IN-DOMAIN for a game-theory research apparatus. In-domain means the claim is PRIMARILY a question of game theory, behavioral game theory, or learning in games — including LLM agents playing games (Prisoner's Dilemma, auctions, beauty contests, coordination, bargaining, mechanism design, equilibrium concepts).\nOFF-domain means the claim is primarily about something else — software engineering, databases, distributed systems, ML infrastructure, code quality, web frameworks — EVEN IF it is phrased with game-theoretic vocabulary (payoffs, equilibria, strategies, cooperation). Strip the vocabulary; ask what the claim is actually about and what evidence would test it.\nAnswer with ONLY a JSON object: {\"domain\": \"on\" | \"off\", \"reason\": \"<one sentence>\"}. If you are genuinely torn, use {\"domain\": \"unsure\", \"reason\": \"...\"}.",
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "max_tokens": 256,
+    "request_timeout_s": 15
+  },
+  "annotation_contract": {
+    "schema_version": "topic-scope-annotations/v1",
+    "domain": [
+      "in_scope",
+      "out_of_scope",
+      "unclear"
+    ],
+    "fidelity": [
+      "preserved",
+      "grounded_transfer",
+      "scope_safe_reset",
+      "unrelated_redirect",
+      "unclear"
+    ],
+    "required_fields": [
+      "candidate_index",
+      "domain",
+      "substantive_mechanism",
+      "fidelity",
+      "unsupported_attribution",
+      "generic_output"
+    ]
+  },
+  "resource_limits": {
+    "max_total_runtime_s": 2400,
+    "base_attempts": 48,
+    "optional_primary_r0_attempts": 32,
+    "calls_serial": true
+  },
+  "frozen_hashes": {
+    "arm_system_prompts": {
+      "control": {
+        "hypothesis": "f35e1f74f6b87ec22086cd37b91cc1e23d31adf4ebe196d32aab9150e5eb5674",
+        "planner": "142745d419702a960d14d33d90c44394f3698770c5d63d5c263eaa6f0f3a63f9"
+      },
+      "candidate": {
+        "hypothesis": "0c440609e3f34d280b2f1e771bd63c1cd8f9330149ec646d819262841ec78bf1",
+        "planner": "4cd842a95e87ab5be39d9fce1b50339e4ee28f0d5c33a310eb3a9f6b7c505754"
+      }
+    },
+    "topic_rendered_users": {
+      "T1": "aaf4976f4b25678b125e103f9bed413d63507939dfe39cd2323ef631b35b4caa",
+      "T2": "1a65cfae3efc5b792da004972c23941b72f29555272a6408b24714db7c392ec4",
+      "T3": "cb865c48ad47ebc2737ff05a813b39418678bb5566b5b6a4c95ac20a65fb18ad",
+      "T4": "ef38de78928d7a1e75e97576642f3ec31ef3e2e97743b441f0f73251680726cd",
+      "T5": "d4742f81dc5a9e37f0b139ec8fc119a413a5f70525347afdf064274e31a752f8",
+      "T6": "ac6bfe0b2b91f0e1dc00d0cfe01e702bbf1463f81f6e689409abf64ff588e46f",
+      "T7": "baf4e39477988dbd65f3c4942b07c9b9536eba1d53700897f1744a29bcc27c87",
+      "T8": "1bef245de5884528e0a72fe770be7400bf9e4636b45b064c197014c0b0e6cc67"
+    },
+    "topic_grading_anchors": {
+      "T1": "0d63e026213134adfd044475e48c6b674d1089087abc3b91dfa15e4810b3553b",
+      "T2": "826f7f5932c45c736f0762dca2c2f880750a7f3c01818242c9445305743d0911",
+      "T3": "5b4693f8022ba5933f5daeb2716e8b38d31ae721ce8430f99ccfe3efe152459b",
+      "T4": "ba35a17921735cc1c139d3cf9833f2e15e9360038d9424c24a71c7152dce1dff",
+      "T5": "5e727d2f97563647fed93cc7f01314d2607d5b802bc33dae76c5e4a05b147f77",
+      "T6": "0b4458445ad0e9ba567ecf7cdf28379fcc61bc99a7786c8bdf1b5a1b5c2f502d",
+      "T7": "a1ece5ad57174012b1c7f1935812288b70184e1d7a2d1ec99200ce3ef6ae0ad6",
+      "T8": "9bf9950d2e99f7a9dad30d93a1da19c58df90610e382f6906d04585248e42f68"
+    },
+    "planner_case_states": {
+      "P1": "def85dbc2c40b8c90c67045a9a6dae4b1e7b00efedb7d798b0e29bc3e58d752e",
+      "P2": "98ca6451b40b79d56a8fbf18f13cb50039ed07306d4e7b9398c4e0e25d40fc24",
+      "P3": "b12fc240a94a8cfd2df2ac892abd23a8fec44052422cac7e0c6db9e312b45bbd",
+      "P4": "1c7a3e59ae925fe80bc77c7da487459c235ba2e338f75c71506275fd32dfaeeb"
+    },
+    "planner_rendered_users": {
+      "P1": "d1c4d6439c3ce85257a57b2850821227a73ed2811a106369736bd6104c1be7da",
+      "P2": "728b88a79ab900a0e4a19a5267a46cf0ddab690d3a16845d1ca86484f3edb77c",
+      "P3": "659a4a707277804a307fda70e4ba5d487d7b8d95f7c80e04ce91d39446de52ad",
+      "P4": "de622637dbd3e532d0f48d75ea739497e6a3e67c31f2fa9afb81b0ea2a5595f4"
+    },
+    "planner_menu": "b3a3d5b03048184a6dd5a3d89d4fcb571bad01813a24b37fd852b2fd88c35638",
+    "settings": "ba3836483d68661dda38caafddc806d46cb4ce1dd900a46bce5a6102360bbd6e",
+    "primary_r0_system": "c45d025ef87b83433685fe2f7fc3a0ced2a5f01481b3951d8f8a608b8d9c8e69"
+  }
+}

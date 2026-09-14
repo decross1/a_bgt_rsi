@@ -1,0 +1,633 @@
+{
+  "schema_version": "weekly-upgrade-game-science-development/v1",
+  "suite_id": "weekly-upgrade-game-science-public-dev-v0-2026-09-14",
+  "description": "Eight public synthetic development tasks add D-075 collective-choice coverage, mutually exclusive evidence contracts, and two safely executed one-file coding repairs. This is regression/calibration evidence, not a hidden confirmation panel or promotion gate.",
+  "publication_class": "public_synthetic_development",
+  "claim_limits": [
+    "Answers and behavioral cases are repository-visible; do not call this a hidden benchmark.",
+    "A single paired run is descriptive development evidence and cannot establish production superiority.",
+    "Synthetic cases are not represented as historical bugs, empirical results, or external benchmark tasks."
+  ],
+  "ordering": "alternating_ab_ba",
+  "source_snapshot": {
+    "path": "docs/research/weekly-upgrade-2026-09-14/BENCHMARK_PORTFOLIO_PLAN.md",
+    "sha256": "59c642437e6f12fbe35be9f9d0b3fe959fb340dc32146e164b1c0be330a30830"
+  },
+  "arms": [
+    {
+      "id": "A",
+      "label": "Qwen current xhigh reasoning policy",
+      "backend": "vllm-qwen",
+      "model": "qwen3.8-27b-nvfp4-mtp",
+      "profile": "critic_current",
+      "seed": 0,
+      "expected_policy": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "reasoning_effort": "xhigh"
+      }
+    },
+    {
+      "id": "B",
+      "label": "Qwen medium reasoning policy",
+      "backend": "vllm-qwen",
+      "model": "qwen3.8-27b-nvfp4-mtp",
+      "profile": "critic_medium",
+      "seed": 0,
+      "expected_policy": {
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "reasoning_effort": "medium"
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "SCI-D075-LD-POWER-001",
+      "family": "scientific",
+      "mode": "structured",
+      "system": "Return exactly the requested JSON object and no prose or markdown. Use the supplied definitions; do not infer empirical evidence.",
+      "prompt": "Baseline direct voting weights are [2,2,2,2]. After transitive delegation resolves, the four active ballot weights are [4,2,1,1]. Define HHI as the sum of squared normalized weights. Return exactly {\"baseline_hhi\":number,\"delegated_hhi\":number,\"delta\":number,\"direction\":\"<one allowed value>\"}, where delta is delegated minus baseline and direction must be exactly one of [\"increased\",\"decreased\",\"unchanged\"].",
+      "max_tokens": 6144,
+      "request_timeout_s": 120,
+      "grader": {
+        "kind": "delegation_hhi",
+        "version": "1",
+        "inputs": {
+          "baseline_weights": [
+            2,
+            2,
+            2,
+            2
+          ],
+          "delegated_weights": [
+            4,
+            2,
+            1,
+            1
+          ]
+        },
+        "absolute_tolerance": 1e-06
+      },
+      "starter": null,
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "concept": "D-075 liquid-democracy voting-power concentration",
+        "derivation": "Hand-authored weights with exact normalized-HHI oracle.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "docs/research/weekly-upgrade-2026-09-14/BENCHMARK_PORTFOLIO_PLAN.md"
+        ],
+        "claim_limit": "Public development regression only; not hidden confirmation or production-promotion evidence."
+      }
+    },
+    {
+      "id": "SCI-D075-SORTITION-001",
+      "family": "scientific",
+      "mode": "structured",
+      "system": "Return exactly the requested JSON object and no prose or markdown. Use the supplied definitions; do not infer empirical evidence.",
+      "prompt": "A population contains 60 members of group A and 40 of group B. Strategic participation leaves 30 A and 30 B members in the eligible pool. A 12-seat assembly is sampled uniformly without replacement from that pool. Return expected values, not one realized draw, as exactly {\"expected_a_seats\":number,\"expected_b_seats\":number,\"expected_a_share\":number,\"population_a_share\":number,\"a_representation_bias\":number}. Bias is expected assembly share minus population share.",
+      "max_tokens": 6144,
+      "request_timeout_s": 120,
+      "grader": {
+        "kind": "sortition_representation",
+        "version": "1",
+        "inputs": {
+          "population": {
+            "A": 60,
+            "B": 40
+          },
+          "eligible": {
+            "A": 30,
+            "B": 30
+          },
+          "seats": 12
+        },
+        "absolute_tolerance": 1e-06
+      },
+      "starter": null,
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "concept": "D-075 strategic participation in sortition",
+        "derivation": "Hand-authored population and participation counts with hypergeometric expectations.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "docs/research/weekly-upgrade-2026-09-14/BENCHMARK_PORTFOLIO_PLAN.md"
+        ],
+        "claim_limit": "Public development regression only; not hidden confirmation or production-promotion evidence."
+      }
+    },
+    {
+      "id": "SCI-D075-SOCIAL-CHOICE-001",
+      "family": "scientific",
+      "mode": "structured",
+      "system": "Return exactly the requested JSON object and no prose or markdown. Use the supplied definitions; do not infer empirical evidence.",
+      "prompt": "Seven voters have strict rankings: 3 voters A>B>C, 2 voters B>C>A, and 2 voters C>B>A. Plurality counts first choices. A Condorcet winner defeats every other candidate pairwise. A pairwise margin is votes preferring the first named candidate minus votes preferring the second. Return exactly {\"plurality_winner\":\"<candidate>\",\"condorcet_winner\":\"<candidate>\",\"b_over_a_margin\":number,\"b_over_c_margin\":number}. Both winner fields must be exactly one of [\"A\",\"B\",\"C\"].",
+      "max_tokens": 6144,
+      "request_timeout_s": 120,
+      "grader": {
+        "kind": "social_choice",
+        "version": "1",
+        "inputs": {
+          "candidates": [
+            "A",
+            "B",
+            "C"
+          ],
+          "ballots": [
+            {
+              "count": 3,
+              "ranking": [
+                "A",
+                "B",
+                "C"
+              ]
+            },
+            {
+              "count": 2,
+              "ranking": [
+                "B",
+                "C",
+                "A"
+              ]
+            },
+            {
+              "count": 2,
+              "ranking": [
+                "C",
+                "B",
+                "A"
+              ]
+            }
+          ]
+        },
+        "absolute_tolerance": 1e-06
+      },
+      "starter": null,
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "concept": "D-075 social-choice aggregation rules",
+        "derivation": "Hand-authored strict ballots with unique plurality and Condorcet winners.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "docs/research/weekly-upgrade-2026-09-14/BENCHMARK_PORTFOLIO_PLAN.md"
+        ],
+        "claim_limit": "Public development regression only; not hidden confirmation or production-promotion evidence."
+      }
+    },
+    {
+      "id": "SCI-GT-COORDINATION-001",
+      "family": "scientific",
+      "mode": "structured",
+      "system": "Return exactly the requested JSON object and no prose or markdown. Use the supplied definitions; do not infer empirical evidence.",
+      "prompt": "Two players each choose adopt or status_quo. With rows and columns ordered [adopt,status_quo], the row-player payoff matrix is [[4,0],[3,3]] and the column-player payoff matrix is [[4,3],[0,3]]. Return every pure Nash equilibrium and the symmetric probability of adopt in the interior mixed equilibrium as exactly {\"pure_equilibria\":[[\"row_action\",\"column_action\"],...],\"mixed_adopt_probability\":number}. The equilibrium array order does not matter; duplicates are invalid.",
+      "max_tokens": 6144,
+      "request_timeout_s": 120,
+      "grader": {
+        "kind": "coordination_equilibrium",
+        "version": "1",
+        "inputs": {
+          "actions": [
+            "adopt",
+            "status_quo"
+          ],
+          "row_payoffs": [
+            [
+              4,
+              0
+            ],
+            [
+              3,
+              3
+            ]
+          ],
+          "column_payoffs": [
+            [
+              4,
+              3
+            ],
+            [
+              0,
+              3
+            ]
+          ]
+        },
+        "absolute_tolerance": 1e-06
+      },
+      "starter": null,
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "concept": "Bounded complete equilibrium reasoning for a symmetric coordination game",
+        "derivation": "Hand-authored two-action game; oracle is recomputed from best responses and indifference.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "docs/research/weekly-upgrade-2026-09-14/BENCHMARK_PORTFOLIO_PLAN.md"
+        ],
+        "claim_limit": "Public development regression only; not hidden confirmation or production-promotion evidence."
+      }
+    },
+    {
+      "id": "EVID-D075-CYCLE-BOUNDARY-001",
+      "family": "evidence",
+      "mode": "structured",
+      "system": "Use only the synthetic evidence packet. Return exactly the requested JSON object and no prose. Citation IDs must come from the packet.",
+      "prompt": "Synthetic evidence packet:\n[C1] A randomized interface experiment measured voting-power concentration under transitive delegation, but its protocol prohibited delegation cycles in every arm.\n[C2] A separate simulator allowed delegation cycles and reported termination rates, but reported no voting-power or concentration outcome and made no allowed-versus-forbidden comparison.\nQuestion: Does this packet identify the causal effect of allowing cycles on voting-power concentration? Return exactly {\"identified\":boolean,\"reason_code\":\"<one allowed value>\",\"citations\":[IDs]}. Here effect_identified means the packet contains a measured allowed-versus-forbidden contrast on concentration; otherwise use no_allowed_vs_forbidden_concentration_comparison. Cite every packet item needed to establish the answer, once each. reason_code must be exactly one of [\"effect_identified\",\"no_allowed_vs_forbidden_concentration_comparison\"].",
+      "max_tokens": 6144,
+      "request_timeout_s": 120,
+      "grader": {
+        "kind": "evidence_cycle_boundary",
+        "version": "1",
+        "inputs": {
+          "required_citations": [
+            "C1",
+            "C2"
+          ],
+          "documents": {
+            "C1": "cycles prohibited; concentration measured",
+            "C2": "cycles allowed; concentration not measured; no contrast"
+          }
+        },
+        "absolute_tolerance": 1e-06
+      },
+      "starter": null,
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "concept": "D-075 delegation-cycle evidence boundary",
+        "derivation": "Two synthetic documents constructed to make the identification alternatives mutually exclusive.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "docs/research/weekly-upgrade-2026-09-14/BENCHMARK_PORTFOLIO_PLAN.md"
+        ],
+        "claim_limit": "Public development regression only; not hidden confirmation or production-promotion evidence."
+      }
+    },
+    {
+      "id": "EVID-GT-SIMPSON-001",
+      "family": "evidence",
+      "mode": "structured",
+      "system": "Use only the synthetic evidence packet. Return exactly the requested JSON object and no prose. Citation IDs must come from the packet.",
+      "prompt": "Synthetic evidence packet:\n[AGG] Across both difficulty strata, treatment has 273 successes out of 350 and control has 289 out of 350.\n[STRATA] In the easy stratum, treatment is 81/87 and control is 234/270. In the hard stratum, treatment is 192/263 and control is 55/80.\nReturn exactly {\"aggregate_direction\":\"<one allowed value>\",\"within_strata_direction\":\"<one allowed value>\",\"conclusion\":\"<one allowed value>\",\"citations\":[IDs]}. aggregation_confounded means the aggregate direction reverses the direction shared by both strata. Cite both numeric tables once. aggregate_direction must be exactly one of [\"treatment_higher\",\"control_higher\"]; within_strata_direction exactly one of [\"treatment_higher_both\",\"not_treatment_higher_both\"]; conclusion exactly one of [\"aggregation_confounded\",\"no_reversal\"].",
+      "max_tokens": 6144,
+      "request_timeout_s": 120,
+      "grader": {
+        "kind": "evidence_simpson",
+        "version": "1",
+        "inputs": {
+          "required_citations": [
+            "AGG",
+            "STRATA"
+          ],
+          "strata": [
+            {
+              "id": "easy",
+              "treatment_success": 81,
+              "treatment_total": 87,
+              "control_success": 234,
+              "control_total": 270
+            },
+            {
+              "id": "hard",
+              "treatment_success": 192,
+              "treatment_total": 263,
+              "control_success": 55,
+              "control_total": 80
+            }
+          ]
+        },
+        "absolute_tolerance": 1e-06
+      },
+      "starter": null,
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "concept": "Scientific inference under Simpson reversal in a game-behavior outcome",
+        "derivation": "Hand-authored integer counts with exact aggregate and within-stratum directions.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "docs/research/weekly-upgrade-2026-09-14/BENCHMARK_PORTFOLIO_PLAN.md"
+        ],
+        "claim_limit": "Public development regression only; not hidden confirmation or production-promotion evidence."
+      }
+    },
+    {
+      "id": "CODE-D075-DELEGATION-001",
+      "family": "coding",
+      "mode": "code",
+      "system": "Repair the supplied synthetic Python module. Return exactly one JSON object with the single field source containing the complete replacement module. Return no prose or markdown fences.",
+      "prompt": "Replace the complete synthetic module below. Implement resolve(ballots) exactly as documented. Values are strings: direct ballots are \"A\" or \"B\"; a delegation is \"->\" followed by the exact target voter ID. Each listed voter has unit weight. A path that ends at A or B contributes one unit for the originating voter. A path that enters a cycle/self-loop, reaches a missing voter, or sees any other value exhausts the originating voter. Return {\"totals\":{\"A\":int,\"B\":int},\"exhausted\":[sorted voter IDs]}; do not mutate input. Only the Python standard builtins allowed by the evaluator may be used. No imports, decorators, helper functions, dynamic calls, private/dunder names, or I/O are allowed. Permitted method calls are add, append, get, items, keys, startswith, and values.\n\nSTARTER MODULE:\n\"\"\"Synthetic development task: replace this file with a correct implementation.\"\"\"\n\n\ndef resolve(ballots):\n    \"\"\"Resolve unit-weight direct ballots and transitive ``->voter`` delegations.\n\n    Return ``{\"totals\": {\"A\": int, \"B\": int}, \"exhausted\": [voter_ids...]}``.\n    A delegation path that enters a cycle/self-loop, points to a missing voter,\n    or encounters any value other than ``A``, ``B``, or ``-><id>`` exhausts\n    every originating vote on that path. Do not mutate ``ballots``.\n    \"\"\"\n    raise NotImplementedError\n",
+      "max_tokens": 6144,
+      "request_timeout_s": 180,
+      "grader": {
+        "kind": "code_function",
+        "version": "1",
+        "inputs": {
+          "cases": [
+            {
+              "id": "basic_chain",
+              "arguments": [
+                {
+                  "a": "A",
+                  "b": "->a",
+                  "c": "->b",
+                  "d": "B"
+                }
+              ],
+              "expected_return": {
+                "totals": {
+                  "A": 3,
+                  "B": 1
+                },
+                "exhausted": []
+              },
+              "timeout_s": 3
+            },
+            {
+              "id": "cycle_with_inbound",
+              "arguments": [
+                {
+                  "a": "A",
+                  "b": "->c",
+                  "c": "->b",
+                  "d": "->b",
+                  "e": "B"
+                }
+              ],
+              "expected_return": {
+                "totals": {
+                  "A": 1,
+                  "B": 1
+                },
+                "exhausted": [
+                  "b",
+                  "c",
+                  "d"
+                ]
+              },
+              "timeout_s": 3
+            },
+            {
+              "id": "self_missing_invalid",
+              "arguments": [
+                {
+                  "a": "->a",
+                  "b": "->missing",
+                  "c": "invalid",
+                  "d": "B"
+                }
+              ],
+              "expected_return": {
+                "totals": {
+                  "A": 0,
+                  "B": 1
+                },
+                "exhausted": [
+                  "a",
+                  "b",
+                  "c"
+                ]
+              },
+              "timeout_s": 3
+            },
+            {
+              "id": "shared_tail_arbitrary_ids",
+              "arguments": [
+                {
+                  "v-1": "->root",
+                  "v-2": "->v-1",
+                  "root": "A",
+                  "other": "B"
+                }
+              ],
+              "expected_return": {
+                "totals": {
+                  "A": 3,
+                  "B": 1
+                },
+                "exhausted": []
+              },
+              "timeout_s": 3
+            }
+          ]
+        },
+        "absolute_tolerance": 1e-06
+      },
+      "starter": {
+        "path": "bench/weekly_upgrade_portfolio/tasks/code_delegation/starter.py",
+        "sha256": "7d97e2c8e6da83622ec9a27039c6b78b85fea93ec721b8f1d0e11d01bb1063f1",
+        "function": "resolve"
+      },
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "concept": "D-075 executable delegation-graph semantics",
+        "derivation": "Synthetic one-file implementation task with parent-held behavioral oracles.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "docs/research/weekly-upgrade-2026-09-14/BENCHMARK_PORTFOLIO_PLAN.md"
+        ],
+        "claim_limit": "Public development regression only; not hidden confirmation or production-promotion evidence."
+      }
+    },
+    {
+      "id": "CODE-GT-REGRET-001",
+      "family": "coding",
+      "mode": "code",
+      "system": "Repair the supplied synthetic Python module. Return exactly one JSON object with the single field source containing the complete replacement module. Return no prose or markdown fences.",
+      "prompt": "Replace the complete synthetic module below. Implement external_regret(payoffs, chosen) exactly as documented. Return a dictionary with exactly chosen_total, best_fixed_total, total_external_regret, and average_external_regret. All payoff rows must have the same positive action count; chosen must have one valid integer index per round; invalid inputs raise ValueError. The comparator is one fixed action across all rounds. Retain negative regret if adaptive choices beat every fixed action, and do not mutate inputs. Only the Python standard builtins allowed by the evaluator may be used. No imports, decorators, helper functions, dynamic calls, private/dunder names, or I/O are allowed. Permitted method calls are add, append, get, items, keys, startswith, and values.\n\nSTARTER MODULE:\n\"\"\"Synthetic development task: replace this file with a correct implementation.\"\"\"\n\n\ndef external_regret(payoffs, chosen):\n    \"\"\"Return earned, best-fixed, total-regret, and average-regret values.\n\n    ``payoffs[t][a]`` is action ``a``'s payoff in round ``t`` and ``chosen[t]``\n    is the chosen action index. Compare against one fixed action in hindsight,\n    retain negative regret when the adaptive choices beat every fixed action,\n    and raise ``ValueError`` for malformed rows/indices. Do not mutate inputs.\n    \"\"\"\n    raise NotImplementedError\n",
+      "max_tokens": 6144,
+      "request_timeout_s": 180,
+      "grader": {
+        "kind": "code_function",
+        "version": "1",
+        "inputs": {
+          "cases": [
+            {
+              "id": "dynamic_oracle_trap",
+              "arguments": [
+                [
+                  [
+                    1,
+                    0
+                  ],
+                  [
+                    0,
+                    1
+                  ],
+                  [
+                    1,
+                    0
+                  ],
+                  [
+                    0,
+                    1
+                  ]
+                ],
+                [
+                  1,
+                  0,
+                  1,
+                  0
+                ]
+              ],
+              "expected_return": {
+                "chosen_total": 0,
+                "best_fixed_total": 2,
+                "total_external_regret": 2,
+                "average_external_regret": 0.5
+              },
+              "timeout_s": 3
+            },
+            {
+              "id": "negative_regret_retained",
+              "arguments": [
+                [
+                  [
+                    1.5,
+                    0
+                  ],
+                  [
+                    0,
+                    1.5
+                  ]
+                ],
+                [
+                  0,
+                  1
+                ]
+              ],
+              "expected_return": {
+                "chosen_total": 3.0,
+                "best_fixed_total": 1.5,
+                "total_external_regret": -1.5,
+                "average_external_regret": -0.75
+              },
+              "timeout_s": 3
+            },
+            {
+              "id": "three_actions",
+              "arguments": [
+                [
+                  [
+                    2,
+                    0,
+                    1
+                  ],
+                  [
+                    0,
+                    3,
+                    1
+                  ],
+                  [
+                    2,
+                    0,
+                    1
+                  ]
+                ],
+                [
+                  2,
+                  2,
+                  2
+                ]
+              ],
+              "expected_return": {
+                "chosen_total": 3,
+                "best_fixed_total": 4,
+                "total_external_regret": 1,
+                "average_external_regret": 0.3333333333333333
+              },
+              "timeout_s": 3
+            },
+            {
+              "id": "ragged_rows",
+              "arguments": [
+                [
+                  [
+                    1,
+                    2
+                  ],
+                  [
+                    3
+                  ]
+                ],
+                [
+                  0,
+                  0
+                ]
+              ],
+              "expected_exception": "ValueError",
+              "timeout_s": 3
+            },
+            {
+              "id": "invalid_index",
+              "arguments": [
+                [
+                  [
+                    1,
+                    2
+                  ],
+                  [
+                    3,
+                    4
+                  ]
+                ],
+                [
+                  0,
+                  2
+                ]
+              ],
+              "expected_exception": "ValueError",
+              "timeout_s": 3
+            }
+          ]
+        },
+        "absolute_tolerance": 1e-06
+      },
+      "starter": {
+        "path": "bench/weekly_upgrade_portfolio/tasks/code_regret/starter.py",
+        "sha256": "89225665945de04d5491da75872b097a0590db311e394e6a82f414e6baf6e267",
+        "function": "external_regret"
+      },
+      "provenance": {
+        "origin": "synthetic_authored_for_eval",
+        "concept": "Executable external-regret accounting",
+        "derivation": "Synthetic one-file repair task contrasting a fixed comparator with a dynamic oracle.",
+        "source_refs": [
+          "DECISIONS.md#D-075",
+          "docs/research/weekly-upgrade-2026-09-14/BENCHMARK_PORTFOLIO_PLAN.md"
+        ],
+        "claim_limit": "Public development regression only; not hidden confirmation or production-promotion evidence."
+      }
+    }
+  ],
+  "resource_limits": {
+    "max_total_runtime_s": 2280,
+    "max_grading_runtime_s": 120,
+    "planned_calls": 16,
+    "calls_serial": true,
+    "max_raw_completion_bytes": 131072
+  },
+  "frozen_hashes": {
+    "arms": "95c033a105a1a4e5d837dea0a6be7da2376ee937cf9de61ebc7f3f551a73e28e",
+    "tasks": {
+      "SCI-D075-LD-POWER-001": "1a7a2a46b84c8d7e762c4d3420979c73c5689e1d76230ce2f8db108d4be670d2",
+      "SCI-D075-SORTITION-001": "6aaedf89d7a31768f724469b29e447ef20d4b571c80966fbab10b44cb04523cc",
+      "SCI-D075-SOCIAL-CHOICE-001": "e542aeca1fb914cfef0fc0878032491554fe46fd1e2412d0191749fb06f503db",
+      "SCI-GT-COORDINATION-001": "948fe252459b5e18e098868b696fcaa7520fff125a81059214e3ff66c58ed87f",
+      "EVID-D075-CYCLE-BOUNDARY-001": "c354612be3d4e0b03ea415fe10d8c200655751f229482a4f91036ed47c6df488",
+      "EVID-GT-SIMPSON-001": "90882aaa95cf4e1470114ce80369910533f16c9aceb2322914edd33f972c0489",
+      "CODE-D075-DELEGATION-001": "58bec51c4ff6623b843ad62f7971a87a0d5e00e43748a1f4eb8faf9e1ae67aeb",
+      "CODE-GT-REGRET-001": "7f56bb54c5430c889f68ef5dd48b696887059359e8cc601479fa913ae0a4ce24"
+    },
+    "starter_files": {
+      "CODE-D075-DELEGATION-001": "7d97e2c8e6da83622ec9a27039c6b78b85fea93ec721b8f1d0e11d01bb1063f1",
+      "CODE-GT-REGRET-001": "89225665945de04d5491da75872b097a0590db311e394e6a82f414e6baf6e267"
+    }
+  },
+  "sandbox_runtime": {
+    "contract": "bubblewrap-python-function/v1",
+    "bubblewrap_path": "/usr/bin/bwrap",
+    "bubblewrap_sha256": "ae27935781511400c65ebcc0b4669775d602f46251b8707c947a1ac1b160c1c8",
+    "bubblewrap_version": "bubblewrap 0.9.0",
+    "python_path": "/usr/bin/python3.12",
+    "python_sha256": "6242e0e8650d7dbdebbc25e08bf4c9359ddaf65f54fcae0e57fa99395fa5357a",
+    "python_version": "3.12.3"
+  }
+}

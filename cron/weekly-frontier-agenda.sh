@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# weekly-frontier-agenda.sh -- weekly frontier agenda-synthesis runway.
-# Shipped DARK (LOOP_V1 P2): NOT installed in crontab, and it FAILS CLOSED
-# until the human clears the G1 frontier-ToS gate by creating the sentinel
-# run_state/frontier_tos_ratified. Hypothesis/ledger text leaves the box on
-# every synthesis call, so the gate is the human's, not the apparatus's.
+# weekly-frontier-agenda.sh -- installed weekly frontier maintenance owner.
+# The existing agenda pass retains its gates. A DEFAULT-OFF branch enabled only
+# by NARA_WEEKLY_UPGRADE=1 replaces that firing with the bounded review/trial
+# cycle under the same owner lock and subscription-only transports.
 # Clones the run-coordinator.sh gate ladder:
 #   1. flock single-instance      run_state/.frontier-agenda-cron.lock
 #   2. ToS sentinel               run_state/frontier_tos_ratified MUST exist
@@ -26,6 +25,7 @@ exec >> "$REPO_ROOT/logs/frontier-cron.log" 2>&1
 log() { echo "[weekly-frontier-agenda] $(date -u +%FT%TZ) $*"; }
 
 PYTHON="$REPO_ROOT/.venv-chroma/bin/python"
+TIMEOUT_BIN="$(command -v timeout || true)"
 RATIFIED="$REPO_ROOT/run_state/frontier_tos_ratified"
 PAUSE="$REPO_ROOT/run_state/pause_frontier"
 LOCK="$REPO_ROOT/run_state/.frontier-agenda-cron.lock"
@@ -34,6 +34,10 @@ log "start"
 
 # Gate 1 -- single instance. A held lock means a prior synthesis is still
 # running (two frontier CLI turns can be slow). Skipping is normal.
+[ ! -L "$LOCK" ] && { [ ! -e "$LOCK" ] || [ -f "$LOCK" ]; } || {
+  log "FATAL: lock $LOCK is redirected or non-regular"
+  exit 1
+}
 exec 9>"$LOCK"
 if ! flock -n 9; then
   log "SKIP: lock $LOCK is held -- a prior synthesis is still running. Exit 0."
@@ -57,22 +61,91 @@ fi
 
 [ -x "$PYTHON" ] || { log "FATAL: python not found at $PYTHON"; exit 1; }
 
-# One synthesis pass. env -u MOCK_LLM (rule 10: a stubbed frontier makes the
-# agenda meaningless).
-log "launch: frontier_agenda --once"
+# The installed owner stays unchanged until this explicit flag is set in its
+# process environment. Enabled runs replace the legacy agenda pass so the same
+# firing cannot spend an agenda call plus the two-call review budget.
+WEEKLY_UPGRADE_ENABLED="${NARA_WEEKLY_UPGRADE:-0}"
+case "$WEEKLY_UPGRADE_ENABLED" in
+  0)
+    log "weekly upgrade cycle disabled; launch frontier_agenda --once"
+    rc=0
+    env -u MOCK_LLM "$PYTHON" -m orchestrator.frontier_agenda --once || rc=$?
+    log "agenda done rc=$rc"
+    exit "$rc"
+    ;;
+  1) ;;
+  *) log "FATAL: NARA_WEEKLY_UPGRADE must be exactly 0 or 1"; exit 2 ;;
+esac
+
+[ -n "$TIMEOUT_BIN" ] || { log "FATAL: timeout command is unavailable"; exit 1; }
+
+bounded_uint() {
+  local name="$1" value="$2" minimum="$3" maximum="$4"
+  if [[ ! "$value" =~ ^(0|[1-9][0-9]{0,4})$ ]] \
+      || (( value < minimum || value > maximum )); then
+    log "FATAL: $name must be an integer in [$minimum,$maximum]"
+    return 2
+  fi
+}
+
+REVIEW_DEADLINE_S="${NARA_WEEKLY_UPGRADE_REVIEW_DEADLINE_S:-600}"
+CALL_TIMEOUT_S="${NARA_WEEKLY_UPGRADE_CALL_TIMEOUT_S:-300}"
+FETCH_DEADLINE_S="${NARA_WEEKLY_UPGRADE_FETCH_DEADLINE_S:-60}"
+CYCLE_DEADLINE_S="${NARA_WEEKLY_UPGRADE_CYCLE_DEADLINE_S:-3300}"
+bounded_uint NARA_WEEKLY_UPGRADE_REVIEW_DEADLINE_S "$REVIEW_DEADLINE_S" 181 1800
+bounded_uint NARA_WEEKLY_UPGRADE_CALL_TIMEOUT_S "$CALL_TIMEOUT_S" 181 1800
+bounded_uint NARA_WEEKLY_UPGRADE_FETCH_DEADLINE_S "$FETCH_DEADLINE_S" 1 120
+bounded_uint NARA_WEEKLY_UPGRADE_CYCLE_DEADLINE_S "$CYCLE_DEADLINE_S" 1 7200
+if (( CALL_TIMEOUT_S > REVIEW_DEADLINE_S )); then
+  log "FATAL: call timeout cannot exceed the review deadline"
+  exit 2
+fi
+
+OUTPUT_ROOT="${NARA_WEEKLY_UPGRADE_OUTPUT_ROOT:-${REPO_ROOT}_weekly_upgrade_runs}"
+SOURCE_PACKET="${NARA_WEEKLY_UPGRADE_SOURCE_PACKET:-}"
+EXPLICIT_FETCH_CONFIG="${NARA_WEEKLY_UPGRADE_FETCH_CONFIG:-}"
+FETCH_CONFIG="${EXPLICIT_FETCH_CONFIG:-$REPO_ROOT/bench/weekly_upgrade_eval/sources.json}"
+if [ -n "$SOURCE_PACKET" ] && [ -n "$EXPLICIT_FETCH_CONFIG" ]; then
+  log "FATAL: choose a source packet or fetch config, not both"
+  exit 2
+fi
+
+cycle_args=(
+  -m orchestrator.weekly_upgrade_cycle --run
+  --repo-root "$REPO_ROOT"
+  --output-root "$OUTPUT_ROOT"
+  --frontier-call-budget 2
+  --review-deadline-s "$REVIEW_DEADLINE_S"
+  --call-timeout-s "$CALL_TIMEOUT_S"
+  --cycle-deadline-s "$CYCLE_DEADLINE_S"
+  --fetch-deadline-s "$FETCH_DEADLINE_S"
+  --max-gpu-minutes 120
+)
+if [ -n "$SOURCE_PACKET" ]; then
+  cycle_args+=(--source-packet "$SOURCE_PACKET")
+else
+  cycle_args+=(--fetch-config "$FETCH_CONFIG")
+fi
+if [ -n "${NARA_WEEKLY_UPGRADE_TRIAL_MANIFEST:-}" ]; then
+  cycle_args+=(--trial-manifest "$NARA_WEEKLY_UPGRADE_TRIAL_MANIFEST")
+fi
+
+# `timeout` is a backstop if the Python controller or its supervision path is
+# killed/wedged. The controller's smaller internal deadline preserves time to
+# write a terminal receipt; the outer owner then sends TERM and KILL finitely.
+HARD_DEADLINE_S=$((CYCLE_DEADLINE_S + 20))
+log "launch: weekly upgrade cycle (subscription calls=2, Spark cap=120m)"
 rc=0
-env -u MOCK_LLM "$PYTHON" -m orchestrator.frontier_agenda --once || rc=$?
-log "done rc=$rc"
+env -u MOCK_LLM WEEKLY_UPGRADE_OWNER_LOCK_FD=9 \
+  "$TIMEOUT_BIN" --signal=TERM --kill-after=10s "${HARD_DEADLINE_S}s" \
+  "$PYTHON" "${cycle_args[@]}" || rc=$?
+log "weekly upgrade cycle done rc=$rc"
 exit "$rc"
 
 # ---------------------------------------------------------------------------
-# !!! DO NOT ENABLE BEFORE G1 (frontier ToS) IS CLEARED !!!
-# Installing this in crontab today is safe-but-pointless (every firing refuses
-# at gate 2 and exits 0), but the operating intent is that the crontab line
-# and the sentinel land TOGETHER, by the HUMAN, on ratification day:
-#   crontab -e    # weekly, Monday 08:00; the script manages its own log
-#   0 8 * * 1 /home/decross1/projects/a_bgt_rsi/cron/weekly-frontier-agenda.sh
-#   touch /home/decross1/projects/a_bgt_rsi/run_state/frontier_tos_ratified
-# To halt later without touching crontab:
+# Current owner schedule is 30 5 * * 0 (Sunday 05:30 UTC). This file does not
+# install or edit it. To halt frontier work without touching crontab:
 #   touch /home/decross1/projects/a_bgt_rsi/run_state/pause_frontier
+# To halt only this cycle while retaining the agenda:
+#   touch /home/decross1/projects/a_bgt_rsi/run_state/pause_weekly_upgrade
 # ---------------------------------------------------------------------------

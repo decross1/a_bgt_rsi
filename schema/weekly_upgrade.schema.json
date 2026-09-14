@@ -115,7 +115,7 @@
               "uniqueItems": true,
               "items": {"type": "integer", "minimum": 0, "maximum": 2147483647}
             },
-            "max_gpu_minutes": {"type": "integer", "minimum": 0, "maximum": 360},
+            "max_gpu_minutes": {"type": "integer", "minimum": 0, "maximum": 120},
             "max_wall_minutes": {"type": "integer", "minimum": 1, "maximum": 480},
             "max_frontier_calls": {"const": 0},
             "primary_metric": {"type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$"},
@@ -236,7 +236,7 @@
           "type": "object", "additionalProperties": false,
           "required": ["gpu_minutes", "wall_minutes", "frontier_calls"],
           "properties": {
-            "gpu_minutes": {"type": "integer", "minimum": 0, "maximum": 360},
+            "gpu_minutes": {"type": "integer", "minimum": 0, "maximum": 120},
             "wall_minutes": {"type": "integer", "minimum": 1, "maximum": 480},
             "frontier_calls": {"const": 0}
           }
@@ -345,7 +345,7 @@
           "properties": {
             "frontier_calls": {"type": "integer", "minimum": 0, "maximum": 2},
             "total_deadline_s": {"type": "integer", "minimum": 1, "maximum": 7200},
-            "max_gpu_minutes": {"type": "integer", "minimum": 0, "maximum": 360},
+            "max_gpu_minutes": {"type": "integer", "minimum": 0, "maximum": 120},
             "call_timeout_s": {"type": "integer", "minimum": 1, "maximum": 3600},
             "started_at": {"type": "string", "format": "date-time"},
             "deadline_at": {"type": "string", "format": "date-time"}
