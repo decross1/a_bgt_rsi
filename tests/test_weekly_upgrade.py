@@ -768,6 +768,19 @@ def test_registered_review_inputs_expose_actual_arms_and_grading_boundary():
     assert "no result" in prereg["evidence_excerpt"].lower()
 
 
+def test_review_resolves_implicit_qwen_thinking_in_deterministic_profile():
+    policies = wu._resolved_review_arms({"arms": [
+        {"id": "A", "backend": "vllm-gemma", "model": "gemma-4-26b-a4b",
+         "profile": "deterministic", "seed": 0},
+        {"id": "B", "backend": "vllm-qwen", "model": "qwen3.8-27b-nvfp4-mtp",
+         "profile": "deterministic", "seed": 0},
+    ]})
+    assert policies[0]["effective_reasoning_effort"] is None
+    assert policies[0]["gemma_thinking"] is False
+    assert policies[1]["effective_reasoning_effort"] == "xhigh"
+    assert policies[1]["request_kwargs"] == {"temperature": 0.0, "top_p": 1.0, "seed": 0}
+
+
 def _write_canonical(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(wu._canonical(value) + b"\n")

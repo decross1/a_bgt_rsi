@@ -5,6 +5,13 @@
 **Status:** prepared and validated offline; no inference call has been made by
 this preparation session.
 
+**Pre-call revision note:** The original manifest at SHA-256
+`df3714cce69b789d2f8567c68c957187d7c6ba73c09dd8aad3ea89797150998c`
+was never executed. Before any model output, an audit corrected the disclosure
+of the resident template policies, made every required evidence role explicit
+in each task, and added a tokenizer/source/dependency-bound offline preflight.
+The current hashes below supersede that unexecuted draft.
+
 ## Question and claim boundary
 
 Can each resident model recover and reconcile exact, widely separated evidence
@@ -23,14 +30,19 @@ external scientific claim.
 
 ## Frozen arms and order
 
-Both arms use the existing `deterministic` generation profile, seed 0, a
-1,024-token output cap, and a 120-second whole-request timeout including
-prefill.
+Both arms use the existing `deterministic` generation profile resolved to
+`temperature=0`, `top_p=1`, and seed 0, plus a 1,024-token output cap and a
+120-second whole-request timeout including prefill. The profile leaves each
+model's resident chat-template policy unchanged: Gemma is non-thinking, while
+Qwen's current template default enables `xhigh` thinking. This comparison
+therefore describes the two resident defaults; it does not isolate model
+weights or thinking policy. Qwen's 1,024-token cap covers its complete generated
+sequence, including any hidden reasoning.
 
 | Arm | Existing backend/model | Serving context contract |
 | --- | --- | --- |
-| A | `vllm-gemma` / `gemma-4-26b-a4b` | 32,768 total tokens |
-| B | `vllm-qwen` / `qwen3.8-27b-nvfp4-mtp` | 16,384 total tokens |
+| A | `vllm-gemma` / `gemma-4-26b-a4b` | non-thinking; 32,768 total tokens |
+| B | `vllm-qwen` / `qwen3.8-27b-nvfp4-mtp` | template-default `xhigh` thinking; 16,384 total tokens |
 
 The unchanged `bench.weekly_upgrade_eval` runner uses alternating AB/BA order.
 The four tasks produce eight planned calls, with no retry.
@@ -44,33 +56,50 @@ The four tasks produce eight planned calls, with no retry.
 | `long_context_14k_social_choice` | ~14K | A joint plurality/Condorcet claim conflicts with the ballot tally | `plurality_a_condorcet_b_claim_contradicted` | `GT14A-CLAIM-0029`, `GT14A-BALLOTS-0126`, `GT14A-TALLY-0239` |
 | `long_context_14k_primary_endpoint` | ~14K | An abstract's causal claim conflicts with the null preregistered endpoint and correction | `primary_endpoint_null_abstract_claim_contradicted` | `GT14B-PLAN-0025`, `GT14B-RESULT-0117`, `GT14B-ABSTRACT-0213`, `GT14B-CORRECTION-0251` |
 
-The existing `evidence_attribution` grader requires the exact answer code and
-the complete, duplicate-free citation set. An omitted or invented source fails.
+Each task question explicitly enumerates the evidence roles shown by the table
+and requires exactly one focal source ID for every role, in that order. The
+existing `evidence_attribution` grader requires the exact answer code and the
+complete, duplicate-free citation set. An omitted or invented source fails;
+the grader accepts the complete correct set in any order. The prompt requests
+role order to make generation unambiguous. These instructions make the strict
+citation contract part of the task rather than a post-hoc interpretation by
+the grader.
 
 ## Frozen tokenization evidence
 
 Token counts include the rendered system message, user pack, model-specific
 chat template, and generation prompt. They were measured CPU-only with
-Transformers 5.8.1 and locally cached tokenizer artifacts using
+Transformers 5.8.1, Tokenizers 0.22.2, and locally cached tokenizer artifacts using
 `AutoTokenizer.apply_chat_template(tokenize=True, add_generation_prompt=True,
 return_dict=False)`. Offline mode was forced. No weights, server, or GPU were
-used.
+used. For every task, the default rendering was token-ID-for-token-ID identical to an
+explicit `enable_thinking=false` rendering for Gemma and to an explicit
+`enable_thinking=true, reasoning_effort=xhigh` rendering for Qwen.
 
 | Task | Gemma input | Qwen input | Qwen total with 1,024 output reserve |
 | --- | ---: | ---: | ---: |
-| `long_context_8k_grim_threshold` | 8,021 | 8,055 | 9,079 |
-| `long_context_8k_attrition` | 8,255 | 8,285 | 9,309 |
-| `long_context_14k_social_choice` | 14,186 | 14,205 | 15,229 |
-| `long_context_14k_primary_endpoint` | 14,447 | 14,481 | 15,505 |
+| `long_context_8k_grim_threshold` | 8,104 | 8,138 | 9,162 |
+| `long_context_8k_attrition` | 8,354 | 8,383 | 9,407 |
+| `long_context_14k_social_choice` | 14,267 | 14,286 | 15,310 |
+| `long_context_14k_primary_endpoint` | 14,537 | 14,573 | 15,597 |
 
-The largest Qwen request retains 879 tokens below its 16,384 total-token server
+The largest Qwen request retains 787 tokens below its 16,384 total-token server
 limit after reserving the full output cap. The same largest request retains
-17,297 tokens under Gemma's 32,768 limit.
+17,207 tokens under Gemma's 32,768 limit.
 
-Tokenizer provenance is frozen in `token_counts.json`, including the tokenizer
-JSON, tokenizer configuration, and rendered chat-template hashes. Any tokenizer
-or template drift invalidates this preregistration until the artifacts and
-counts are reviewed and frozen again.
+Tokenizer provenance is frozen in `token_counts.json`, including all selected
+tokenizer-affecting files present for each checkpoint, the rendered
+chat-template hash, each full rendered token-ID-sequence hash, library versions,
+and the explicit/default template-policy equivalence check. The CPU-only
+context preflight reproduces the complete measurement before a Spark budget
+reservation and emits a receipt bound to the manifest and execution-dependency
+hashes. Any tokenizer, template, source, or frozen-count drift refuses the run.
+
+This check uses the pinned host Transformers/Tokenizers libraries and the
+model-volume tokenizer assets. It does not call a vLLM tokenize endpoint or
+claim that a different server library implementation was independently
+measured. The trial controller separately binds and checks the resident
+container/runtime identity before and after generation.
 
 ## Runtime budget
 
@@ -95,9 +124,11 @@ Before dispatch, the controller must verify:
 2. exact resident runtime/container identity and serving model IDs;
 3. both named profiles resolve without overrides;
 4. `MOCK_LLM` is absent and the registered manifest is exact;
-5. all four full tokenized requests plus the output cap remain inside the
+5. the offline context preflight exactly reproduces the frozen tokenizer asset,
+   template-policy, rendered-input, library-version, and token-count receipt;
+6. all four full tokenized requests plus the output cap remain inside the
    Qwen limit; and
-6. pause, owner lock, GPU lease, weekly ledger, finite deadline, and fresh
+7. pause, owner lock, GPU lease, weekly ledger, finite deadline, and fresh
    output-directory checks pass.
 
 Score each task/arm cell as pass, failed, timeout, transport-incomplete, or
@@ -121,11 +152,12 @@ trial.
 
 | Artifact | SHA-256 |
 | --- | --- |
-| `bench/weekly_upgrade_context/generate_packs.py` | `3fe1ba544eed22cfa0c94930b036b1eb74a5a247fe1ece32b39cb7d0c4fb90e6` |
-| `bench/weekly_upgrade_context/packs.json` | `004f3aaca24b9d40152e4d77db0975569b41db779e99239aacad1cb1f4e13554` |
-| `bench/weekly_upgrade_context/measure_tokens.py` | `ec2a93d29eadd3b5b9639fc71266510284b1ffbd4b73108c4b8e1b5e299a890b` |
-| `bench/weekly_upgrade_context/token_counts.json` | `5850aa3448ec40945fb6aaff4ab143a4fe77a67ab2f6810fa9d17baade23484e` |
-| `experiments/weekly_context_capability_v1_2026-09-14.json` | `df3714cce69b789d2f8567c68c957187d7c6ba73c09dd8aad3ea89797150998c` |
+| `bench/weekly_upgrade_context/generate_packs.py` | `66df4a88481b29137cb0dfac10981da7c0d45413ffd7137c690b2529d21514ed` |
+| `bench/weekly_upgrade_context/packs.json` | `1ef8d9e02dd233d8126a71c8a4af43e63b19d8085b2f3fbe08619622167a7528` |
+| `bench/weekly_upgrade_context/measure_tokens.py` | `2825f025034573ec727923e63f8ad3cc6c358b8dec490cd05cb98da21202fa7d` |
+| `bench/weekly_upgrade_context/token_counts.json` | `f966245736f4a002441be0ee4eb552bcc8134c2ea75b8797ee05f01bd1974b45` |
+| `bench/weekly_upgrade_context/preflight.py` | `143b8bb8707b7c1ca1140f52d0ab32122ef24fd0fce89cc6cef02334c243d32a` |
+| `experiments/weekly_context_capability_v1_2026-09-14.json` | `7a65db923631d01c296ba8e65e924e646c9134082bb2a600c099eeb66eb6f735` |
 
 Offline validation commands:
 
@@ -133,6 +165,8 @@ Offline validation commands:
 python3 -m bench.weekly_upgrade_context.generate_packs --check
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 TOKENIZERS_PARALLELISM=false \
   .venv-chroma/bin/python -m bench.weekly_upgrade_context.measure_tokens --check
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 TOKENIZERS_PARALLELISM=false \
+  .venv-chroma/bin/python -c 'from bench.weekly_upgrade_context.preflight import validate_context_preflight; validate_context_preflight()'
 .venv-chroma/bin/python -m pytest -q tests/test_weekly_upgrade_context.py
 python3 -m bench.weekly_upgrade_eval.runner --plan \
   --manifest experiments/weekly_context_capability_v1_2026-09-14.json

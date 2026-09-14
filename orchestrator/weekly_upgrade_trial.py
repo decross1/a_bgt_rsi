@@ -44,6 +44,7 @@ TRIALS = {
     "experiments/weekly_context_capability_v1_2026-09-14.json": ("objective", 1230),
     "experiments/diversity_selection_dev_v0_2026-09-14.json": ("diversity", 880),
 }
+CONTEXT_MANIFEST = "experiments/weekly_context_capability_v1_2026-09-14.json"
 ENDPOINTS = ("http://127.0.0.1:8000", "http://127.0.0.1:8001")
 RESIDENT_CONTAINERS = ("vllm-gemma4", "vllm-qwen")
 MIN_MEMORY_GIB = 30  # Existing production preflight floor, not a relaxed gate.
@@ -622,6 +623,16 @@ def evaluation_receipt(plan: dict, output: Path) -> dict:
         "run.json": _sha(run_path.read_bytes()),
         "manifest.snapshot.json": _sha(snapshot_path.read_bytes()),
     }
+    if plan.get("manifest_path") == CONTEXT_MANIFEST:
+        from bench.weekly_upgrade_context.preflight import validate_preflight_receipt
+
+        context_path = output / "context_preflight.json"
+        if context_path.is_symlink() or not context_path.is_file():
+            raise TrialError("context evaluation lacks a local tokenizer preflight receipt")
+        validate_preflight_receipt(
+            _read(context_path), plan["manifest_sha256"], plan["execution_dependencies"],
+        )
+        artifact_hashes["../context_preflight.json"] = _sha(context_path.read_bytes())
 
     if plan.get("kind") == "diversity":
         from bench.weekly_upgrade_diversity.receipt import (
@@ -1321,8 +1332,20 @@ def execute_trial(plan: dict, output_dir: Path, *, worktree: Path = ROOT,
                                     plan["manifest_path"], *DEPENDENCY_PATHS],
                                    cwd=worktree, text=True).strip():
             raise TrialError("freeze the registered manifest and execution dependencies in Git before calls")
+        context_preflight = None
+        if plan["manifest_path"] == CONTEXT_MANIFEST:
+            from bench.weekly_upgrade_context.preflight import (
+                validate_context_preflight,
+            )
+
+            # Offline CPU tokenization; reject drift before reserving GPU work.
+            # This includes the pinned default reasoning template and output
+            # reserve, not just an approximate count of the evidence text.
+            context_preflight = validate_context_preflight(worktree / plan["manifest_path"])
         output.mkdir(parents=True, exist_ok=True)
         _write(output / "trial_plan.json", plan)
+        if context_preflight is not None:
+            _write(output / "context_preflight.json", context_preflight)
         start = time.monotonic()
         ledger.reserve(plan["trial_id"], plan["reservation_s"], binding)
         _write(state_path, {"phase": "reserved", "plan": plan, "output": str(output),

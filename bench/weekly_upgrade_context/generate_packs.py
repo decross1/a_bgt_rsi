@@ -28,7 +28,9 @@ SYSTEM = (
     "Use only the public synthetic evidence packet. Distinguish direct evidence, "
     "contradictions, and irrelevant archive records. Return exactly one JSON "
     "object with keys answer_code and citations; citations must be the exact "
-    "source IDs needed for the answer. Return no prose or markdown."
+    "source IDs needed for the answer. The question enumerates required evidence "
+    "roles: cite exactly one focal GT source for every named role and no other "
+    "source. Return no prose or markdown."
 )
 
 _MECHANISMS = (
@@ -64,6 +66,7 @@ class PackSpec:
     planted: dict[int, str]
     answer_code: str
     citations: tuple[str, ...]
+    citation_roles: tuple[str, ...]
     alternatives: tuple[str, ...]
     question: str
 
@@ -97,6 +100,11 @@ PACK_SPECS = (
             "GT8A-CLAIM-0017",
             "GT8A-PAYOFF-0073",
             "GT8A-THRESHOLD-0132",
+        ),
+        citation_roles=(
+            "the draft claim being assessed",
+            "the primitive payoff/incentive relation",
+            "the independently computed threshold audit",
         ),
         alternatives=(
             "claim_supported",
@@ -144,6 +152,12 @@ PACK_SPECS = (
             "GT8B-ATTRITION-0111",
             "GT8B-ANALYSIS-0143",
         ),
+        citation_roles=(
+            "the randomized protocol and preregistered endpoint",
+            "the complete-case estimate",
+            "the differential-attrition audit",
+            "the analysis consequence for the all-randomized contrast",
+        ),
         alternatives=(
             "causal_increase_identified",
             "causal_increase_not_identified_differential_attrition",
@@ -180,6 +194,11 @@ PACK_SPECS = (
             "GT14A-CLAIM-0029",
             "GT14A-BALLOTS-0126",
             "GT14A-TALLY-0239",
+        ),
+        citation_roles=(
+            "the manuscript claim being assessed",
+            "the primitive ballot profile",
+            "the independent plurality and pairwise tally",
         ),
         alternatives=(
             "plurality_a_condorcet_a_claim_supported",
@@ -223,6 +242,12 @@ PACK_SPECS = (
             "GT14B-ABSTRACT-0213",
             "GT14B-CORRECTION-0251",
         ),
+        citation_roles=(
+            "the preregistered endpoint definition",
+            "the primary and exploratory numeric result",
+            "the abstract claim being assessed",
+            "the published correction",
+        ),
         alternatives=(
             "primary_endpoint_supports_claim",
             "primary_endpoint_null_abstract_claim_contradicted",
@@ -259,8 +284,14 @@ def _distractor(pack_id: str, index: int) -> str:
 
 def _question(spec: PackSpec) -> str:
     allowed = json.dumps(list(spec.alternatives), separators=(",", ":"))
+    required_roles = "; ".join(
+        f"({index}) {role}" for index, role in enumerate(spec.citation_roles, 1)
+    )
     return (
-        f"Question: {spec.question} answer_code must be exactly one of {allowed}. "
+        f"Question: {spec.question} Required evidence roles: {required_roles}. "
+        "The citations array must contain exactly one focal GT source ID for each "
+        "required role, in the role order above, and no other IDs. "
+        f"answer_code must be exactly one of {allowed}. "
         "Return exactly {\"answer_code\":\"<one allowed code>\","
         "\"citations\":[\"source IDs needed for the answer\"]}."
     )
@@ -298,6 +329,7 @@ def build_packs() -> dict[str, Any]:
             "expected": {
                 "answer_code": spec.answer_code,
                 "citations": list(spec.citations),
+                "citation_roles": list(spec.citation_roles),
             },
         })
     return {
@@ -312,6 +344,7 @@ def build_packs() -> dict[str, Any]:
             "This panel measures resident-model long-context capability; it is not a causal inference-policy comparison.",
             "All evidence and answers are public synthetic development fixtures, not empirical research or a hidden benchmark.",
             "No result authorizes a model, runtime, policy, context, or production cutover.",
+            "The resident-default arms share temperature=0/top_p=1/seed=0, but Gemma is non-thinking while Qwen uses its template-default xhigh thinking mode.",
         ],
         "packs": packs,
     }
@@ -330,7 +363,10 @@ def build_manifest(packs_doc: dict[str, Any]) -> dict[str, Any]:
             "prompt": pack["prompt"],
             "grader": {
                 "kind": "evidence_attribution",
-                "expected": pack["expected"],
+                "expected": {
+                    "answer_code": pack["expected"]["answer_code"],
+                    "citations": pack["expected"]["citations"],
+                },
             },
         })
     return {
@@ -339,8 +375,10 @@ def build_manifest(packs_doc: dict[str, Any]) -> dict[str, Any]:
         "description": (
             "Four public-synthetic evidence packs compare resident Gemma and "
             "Qwen long-context capability at approximately 8K and 14K input. "
-            "The same deterministic sampling profile, evidence, answer schema, "
-            "1024-token output cap, and request timeout are used in both arms. "
+            "Both resident-default arms use temperature=0, top_p=1, seed=0, "
+            "the same evidence and answer schema, a 1024-token output cap, and "
+            "the same request timeout. Gemma is non-thinking; Qwen retains its "
+            "template-default xhigh thinking mode. "
             "This descriptive model/context capability check is not a causal "
             "inference-policy comparison and grants no production authority."
         ),
@@ -351,7 +389,7 @@ def build_manifest(packs_doc: dict[str, Any]) -> dict[str, Any]:
         "arms": [
             {
                 "id": "A",
-                "label": "Gemma resident deterministic 32K capability lane",
+                "label": "Gemma resident deterministic non-thinking 32K capability lane",
                 "backend": "vllm-gemma",
                 "profile": "deterministic",
                 "model": "gemma-4-26b-a4b",
@@ -361,7 +399,7 @@ def build_manifest(packs_doc: dict[str, Any]) -> dict[str, Any]:
             },
             {
                 "id": "B",
-                "label": "Qwen resident deterministic 16K capability lane",
+                "label": "Qwen resident deterministic template-default xhigh 16K capability lane",
                 "backend": "vllm-qwen",
                 "profile": "deterministic",
                 "model": "qwen3.8-27b-nvfp4-mtp",

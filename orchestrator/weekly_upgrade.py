@@ -120,6 +120,8 @@ SNAPSHOT_FILES = (
     "experiments/PREREG_topic_scope_repair_v2_2026-09-14.md",
     "experiments/PREREG_weekly_upgrade_game_science_dev_v0_2026-09-14.md",
     "experiments/PREREG_weekly_qwen_effort_pilot_2026-09-14.md",
+    "experiments/PREREG_weekly_context_capability_v1_2026-09-14.md",
+    "experiments/PREREG_diversity_selection_dev_v0_2026-09-14.md",
 )
 
 EVAL_MANIFEST_FILES = (
@@ -143,6 +145,8 @@ _FULL_TEXT_FILES = {
     "experiments/PREREG_topic_scope_repair_v2_2026-09-14.md",
     "experiments/PREREG_weekly_upgrade_game_science_dev_v0_2026-09-14.md",
     "experiments/PREREG_weekly_qwen_effort_pilot_2026-09-14.md",
+    "experiments/PREREG_weekly_context_capability_v1_2026-09-14.md",
+    "experiments/PREREG_diversity_selection_dev_v0_2026-09-14.md",
 }
 _KEYWORDS = (
     "D-061", "D-066", "D-072", "D-074", "D-076", "frontier",
@@ -380,6 +384,30 @@ def _frontier_telemetry(repo_root: Path, start: datetime, end: datetime) -> list
     return rows[:16]
 
 
+def _resolved_review_arms(payload: dict) -> list[dict]:
+    """Expose implicit model defaults as well as the named public profile."""
+    from agent_wrapper.generation_policy import resolve_generation_policy
+
+    result = []
+    for arm in payload.get("arms", []):
+        if not all(arm.get(key) for key in ("backend", "model", "profile")):
+            continue
+        overrides = {key: arm[key] for key in (
+            "temperature", "top_p", "seed", "reasoning_effort", "extra_body",
+        ) if key in arm}
+        policy = resolve_generation_policy(
+            arm["profile"], arm["backend"], arm["model"], **overrides,
+        )
+        result.append({
+            "arm": arm["id"], "profile": policy.profile_name,
+            "request_kwargs": dict(policy.request_kwargs),
+            "effective_reasoning_effort": policy.reasoning_effort,
+            "gemma_thinking": policy.gemma_thinking,
+            "sampling_extra": dict(policy.sampling_extra),
+        })
+    return result
+
+
 def _evaluation_manifests(repo_root: Path) -> list[dict]:
     catalog = []
     for rel in EVAL_MANIFEST_FILES:
@@ -422,6 +450,7 @@ def _evaluation_manifests(repo_root: Path) -> list[dict]:
         if rel in TRIALS:
             try:
                 plan = plan_trial(rel, worktree=repo_root)
+                resolved_arms = _resolved_review_arms(payload)
             except (ValueError, OSError, RuntimeError):
                 entry["execution"] = None
             else:
@@ -437,6 +466,7 @@ def _evaluation_manifests(repo_root: Path) -> list[dict]:
                     # arm labels. These are public registered inputs, never
                     # live completions, hidden answers or arbitrary log text.
                     "arm_settings": payload.get("arms", payload.get("conditions", [])),
+                    "resolved_arm_policies": resolved_arms,
                     "shared_settings": payload.get("settings"),
                     "ordering": payload.get("ordering"),
                     "publication_class": payload.get("publication_class", "public_development"),
@@ -799,7 +829,7 @@ def _validated_observation(value: Any, *, arm: bool = False) -> dict[str, Any]:
         for field in sorted(_OBSERVATION_FIELDS)
     }
     if arm:
-        if value["arm"] not in {"A", "B", "control", "candidate"}:
+        if value["arm"] not in {"A", "B", "control", "candidate", "diverse_select"}:
             raise WeeklyUpgradeError("evaluation receipt arm is not allowlisted")
         return {"arm": value["arm"], **result}
     failures = value["failure_categories"]

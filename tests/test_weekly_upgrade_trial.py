@@ -119,6 +119,43 @@ def test_execution_requires_explicit_admission_and_rederives_plan(repo, tmp_path
     assert not list((repo / "run_state").iterdir())
 
 
+def test_context_tokenizer_drift_refuses_before_budget_and_model_calls(repo, tmp_path, monkeypatch):
+    from bench.weekly_upgrade_context import preflight
+
+    monkeypatch.setattr(trial, "CONTEXT_MANIFEST", MANIFEST)
+    def drift(_path):
+        assert not (repo / "run_state/weekly_upgrade_budget.jsonl").exists()
+        raise ValueError("tokenizer artifacts changed")
+    monkeypatch.setattr(preflight, "validate_context_preflight", drift)
+    with pytest.raises(ValueError, match="tokenizer artifacts changed"):
+        run(repo, tmp_path / "context-refused")
+    assert not (repo / "run_state/weekly_upgrade_budget.jsonl").exists()
+    assert not (tmp_path / "context-refused/evaluation").exists()
+
+
+def test_context_tokenizer_receipt_is_persisted_and_bound(repo, tmp_path, monkeypatch):
+    from bench.weekly_upgrade_context import preflight
+
+    marker = {"test_tokenizer_receipt": "bound"}
+    monkeypatch.setattr(trial, "CONTEXT_MANIFEST", MANIFEST)
+    monkeypatch.setattr(preflight, "validate_context_preflight", lambda _path: marker)
+    validations = []
+    def validate(receipt, manifest_sha, dependencies):
+        assert receipt == marker
+        assert manifest_sha == trial.plan_trial(MANIFEST, worktree=repo)["manifest_sha256"]
+        assert dependencies
+        validations.append(receipt)
+        return receipt
+    monkeypatch.setattr(preflight, "validate_preflight_receipt", validate)
+    output = tmp_path / "context-receipt"
+    result = run(repo, output)
+    assert result["status"] == "completed"
+    assert validations == [marker]
+    assert result["evaluation"]["artifact_sha256"]["../context_preflight.json"] == trial._sha(
+        (output / "context_preflight.json").read_bytes(),
+    )
+
+
 def test_registered_manifest_cannot_redirect(repo, tmp_path):
     path = repo / MANIFEST
     copy = tmp_path / "redirect.json"
