@@ -23,6 +23,7 @@ import Ladder from "./routes/Ladder";
 import ModelIO from "./routes/ModelIO";
 import Pulse from "./routes/Pulse";
 import Development from "./routes/Development";
+import BenchmarkProgress from "./routes/BenchmarkProgress";
 
 type Theme = "light" | "dark";
 type NavGroupId = "now" | "research" | "operations";
@@ -68,6 +69,7 @@ const NAV_GROUPS: {
     label: "Operations",
     links: [
       { to: "/development", label: "Operations", primary: true },
+      { to: "/benchmarks", label: "Benchmark progress" },
       { to: "/channel", label: "Conversation" },
       { to: "/model-io", label: "Calls" },
       { to: "/cycles", label: "Trace history" },
@@ -105,6 +107,7 @@ function groupForPath(pathname: string): NavGroupId | null {
   if (
     pathname === "/coordinator" ||
     pathname.startsWith("/development") ||
+    pathname.startsWith("/benchmarks") ||
     pathname.startsWith("/channel") ||
     pathname.startsWith("/model-io") ||
     pathname.startsWith("/cycles") ||
@@ -360,6 +363,7 @@ function AtlasApp() {
           <Routes>
             <Route path="/" element={<Pulse />} />
             <Route path="/development" element={<Development />} />
+            <Route path="/benchmarks" element={<BenchmarkProgress />} />
             <Route path="/ladder" element={<Ladder />} />
             <Route path="/ideas" element={<LegacyRedirect to="/ladder" />} />
             <Route path="/dossier" element={<DossierIndex />} />

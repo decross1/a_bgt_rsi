@@ -17,6 +17,29 @@ can run now. The backend/frontend consume the apparatus's call logs and
 are built against fixtures until those schemas land — see `ui_plan.md`
 §10.
 
+## Benchmark progress
+
+Open **Operations → Benchmark progress** at `/benchmarks` (also available in
+the command palette). The page reads `GET /api/weekly_upgrade/progress` and
+refreshes once a minute; **Refresh records** requests an immediate refresh.
+
+Select a recorded week to inspect frontier review activity, trial completion,
+graded task results, transport failures, and the shared Spark allowance. Expand
+a family for its uncertainty, configuration, and artifact hashes. Task scores
+keep their original denominators, including failed attempts. Missing evidence
+is displayed explicitly.
+
+Week-over-week history appears when two or more weeks share a frozen benchmark
+contract. Changes in fixtures, grading, baseline, seed cohort, or evaluation
+budgets can break comparability. One week establishes a baseline. Recorded
+operator summaries alone do not establish a scientific upgrade.
+
+The Sunday review-only job adds review activity; measured progress requires
+separately executed, recorded benchmark trials. Opening or refreshing this page
+does not run a benchmark or promote a model. See
+[`notes/benchmark_progress_mvp.md`](notes/benchmark_progress_mvp.md) for the
+evidence contract and acceptance criteria.
+
 ## Layout
 
 ```

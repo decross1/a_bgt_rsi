@@ -58,6 +58,7 @@ const ROUTES: {
   { id: "nav-dossier", label: "Record library", to: "/dossier", keywords: ["dossier", "reader", "findings", "todo"], group: "Research" },
   { id: "nav-experiments", label: "Evaluations", to: "/experiments", keywords: ["experiments", "runs", "engine"], group: "Research" },
   { id: "nav-development", label: "Operations delivery", to: "/development", keywords: ["development", "codex", "engineering", "readiness", "overnight"], group: "Operations" },
+  { id: "nav-benchmarks", label: "Benchmark progress", to: "/benchmarks", keywords: ["weekly", "performance", "quality", "upgrades", "scores"], group: "Operations" },
   { id: "nav-channel", label: "Conversation", to: "/channel", keywords: ["channel", "chat", "nara", "lab"], group: "Operations" },
   { id: "nav-model-io", label: "Calls", to: "/model-io", keywords: ["model i/o", "calls", "dispatch", "wrapper"], group: "Operations" },
   { id: "nav-cycles", label: "Trace history", to: "/cycles", keywords: ["cycles", "coordinator", "engine"], group: "Operations" },
