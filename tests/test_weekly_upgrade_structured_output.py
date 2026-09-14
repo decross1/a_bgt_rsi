@@ -67,4 +67,3 @@ def test_value_types_are_left_for_caller_schema_validation():
     )
     assert result.valid
     assert result.payload == {"selected_slot": "0"}
-

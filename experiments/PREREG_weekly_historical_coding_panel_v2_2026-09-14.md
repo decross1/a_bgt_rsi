@@ -1,7 +1,7 @@
 # Preregistration — weekly public-historical coding repair baseline v2
 
-**Frozen:** 2026-09-14  
-**Manifest:** `experiments/weekly_historical_coding_panel_v2_2026-09-14.json`  
+**Frozen:** 2026-09-14
+**Manifest:** `experiments/weekly_historical_coding_panel_v2_2026-09-14.json`
 **Evidence class:** `public_historical`; `contamination_resistant=false`
 
 ## Question

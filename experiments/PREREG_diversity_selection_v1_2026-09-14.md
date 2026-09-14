@@ -1,9 +1,9 @@
 # Preregistration — Gemma diversity + selection scaffold v1 follow-through
 
-**Date frozen:** 2026-09-14  
-**Execution class:** bounded local evaluation only  
-**Manifest:** `experiments/diversity_selection_v1_2026-09-14.json`  
-**Model:** resident `gemma-4-26b-a4b` on `vllm-gemma`  
+**Date frozen:** 2026-09-14
+**Execution class:** bounded local evaluation only
+**Manifest:** `experiments/diversity_selection_v1_2026-09-14.json`
+**Model:** resident `gemma-4-26b-a4b` on `vllm-gemma`
 **Production change authorized:** no
 
 ## Question
