@@ -140,6 +140,48 @@
       "minimum": 0,
       "description": "Generation cap (max_tokens) the caller requested for this call. OPTIONAL — a request param, not a logged-by-default field; absent when the caller passed no cap and on all pre-2026-06-06 records."
     },
+    "profile": {
+      "type": "string",
+      "enum": [
+        "deterministic", "planner", "precise", "coding_precise", "dialog",
+        "scientist", "critic", "critic_current", "critic_medium", "critic_low",
+        "qwen_card_thinking", "qwen_card_coding", "qwen_card_instruct",
+        "gemma_card", "gemma_card_thinking", "explore"
+      ],
+      "description": "Named experimental generation profile resolved for this call. OPTIONAL; absent for legacy calls with no profile."
+    },
+    "reasoning_effort": {
+      "type": ["string", "null"],
+      "enum": ["low", "medium", "xhigh", null],
+      "description": "Effective Qwen reasoning effort. null when the selected backend has no effort ladder or thinking is disabled. OPTIONAL; absent from legacy calls."
+    },
+    "sampling_extra": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Validated effective request controls beyond temperature/top_p/seed. OPTIONAL; absent from legacy calls.",
+      "properties": {
+        "top_k": {"type": "integer", "minimum": 0},
+        "min_p": {"type": "number", "minimum": 0, "maximum": 1},
+        "presence_penalty": {"type": "number", "minimum": -2, "maximum": 2},
+        "repetition_penalty": {"type": "number", "minimum": -2, "maximum": 2},
+        "chat_template_kwargs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enable_thinking": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "finish_reason": {
+      "type": ["string", "null"],
+      "description": "Server-supplied finish reason, or null when unavailable. OPTIONAL; absent from legacy calls."
+    },
+    "reasoning_chars": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Character length of server-supplied reasoning text, or null when unavailable. It is not a fabricated reasoning-token count. OPTIONAL; absent from legacy calls."
+    },
     "retrieval_context": {
       "type": ["array", "null"],
       "description": "Per-call retrieval provenance (P2). null when no retrieval ran. A list when one or more retrievals contributed to the prompt — typically generator and novelty-evaluation calls. Optional field; absent on records that pre-date Day 3.5.",

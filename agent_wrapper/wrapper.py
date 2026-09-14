@@ -22,6 +22,7 @@ program needs to SEE the failure rate before deciding to add guided_json.
 """
 import contextvars
 import json
+import math
 import os
 import time
 import uuid
@@ -35,7 +36,14 @@ from . import worker_activity
 from .backends import get_backend, register_backend
 from .backends.anthropic import AnthropicBackend
 from .backends.ollama_openai import OllamaBackend
+from .backends.qwen_vllm import VLLMQwenBackend
 from .backends.vllm_openai import VLLMBackend
+from .generation_policy import (
+    UNSET,
+    build_policy_record_metadata,
+    reasoning_text_from_message,
+    resolve_generation_policy,
+)
 
 _SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema" / "calls.jsonl.schema.json"
 _VALIDATOR = jsonschema.Draft202012Validator(json.loads(_SCHEMA_PATH.read_text()))
@@ -88,22 +96,16 @@ _async_client = AsyncOpenAI(base_url=BASE_URL, api_key=os.environ.get("VLLM_API_
 register_backend(VLLMBackend())
 register_backend(OllamaBackend())
 register_backend(AnthropicBackend())
-# Second vLLM container on :8001 serving Qwen3.6-27B NVFP4-MTP (the
-# Phase-3 critic-flip target per the Co-Scientist insight, D-035).
-# Reuses the OllamaBackend class since it's an OpenAI-compat wrapper and
-# vllm exposes the same API. Toggle via CRITIC_BACKEND=vllm-qwen at the
-# call site (see workers/critic_loop_v0.py).
-register_backend(OllamaBackend(
-    name="vllm-qwen",
-    base_url="http://127.0.0.1:8001/v1",
-    model="qwen3.8-27b-nvfp4-mtp",  # D-074 cutover 2026-08-18 (was 3.6)
-))
+# Second vLLM container on :8001, with vLLM-specific provenance. The earlier
+# adapter reused OllamaBackend and mislabeled these calls as Ollama even though
+# endpoint/model/request transport were already OpenAI-compatible vLLM.
+register_backend(VLLMQwenBackend())
 DEFAULT_BACKEND = os.environ.get("WRAPPER_DEFAULT_BACKEND", "vllm-gemma")
 
 
 def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id,
             retrieval_context=None, model_version=None, host_metadata=None,
-            max_tokens=None, backend_name=None):
+            max_tokens=None, backend_name=None, policy_metadata=None):
     """Build a schema-conforming record from a chat-completion response.
 
     retrieval_context (D-025 / P2): None when no retrieval ran -- the field is
@@ -152,6 +154,8 @@ def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id,
         rec["max_tokens"] = max_tokens
     if backend_name is not None:
         rec["backend"] = backend_name
+    if policy_metadata:
+        rec.update(policy_metadata)
     return rec
 
 
@@ -175,9 +179,41 @@ def _emit(record, log_path):
     return record
 
 
-def call_sync(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=None,
+def _validate_request_timeout(request_timeout_s, backend_name):
+    if request_timeout_s is None:
+        return None
+    if (isinstance(request_timeout_s, bool)
+            or not isinstance(request_timeout_s, (int, float))
+            or not math.isfinite(float(request_timeout_s))
+            or request_timeout_s <= 0):
+        raise ValueError("request_timeout_s must be a positive finite number")
+    if backend_name not in {"vllm-gemma", "vllm-qwen", "ollama-coder"}:
+        raise ValueError(
+            f"request_timeout_s is not supported on backend {backend_name!r}")
+    return request_timeout_s
+
+
+def _resolved_policy(be, model, caller_tag, profile, temperature, top_p, seed,
+                     reasoning_effort, extra_body):
+    return resolve_generation_policy(
+        profile=profile,
+        backend_name=be.name,
+        model_name=model or be.default_model,
+        caller_tag=caller_tag,
+        temperature=temperature,
+        top_p=top_p,
+        seed=seed,
+        reasoning_effort=reasoning_effort,
+        extra_body=extra_body,
+    )
+
+
+def call_sync(messages, *, temperature=UNSET, top_p=UNSET, seed=UNSET,
+              max_tokens=None,
               caller_tag="unspecified", parent_request_id=None,
-              retrieval_context=None, log_path=None, model=None, backend=None):
+              retrieval_context=None, log_path=None, model=None, backend=None,
+              profile=None, reasoning_effort=UNSET, extra_body=UNSET,
+              request_timeout_s=None):
     """Synchronous chat completion. Returns the logged record. max_tokens caps
     generation; it is a request param, not one of the 14 logged schema fields.
 
@@ -187,19 +223,28 @@ def call_sync(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=Non
         "vllm-gemma" so existing callers are unaffected.
     """
     be = get_backend(backend or DEFAULT_BACKEND)
-    params = {"temperature": temperature, "top_p": top_p, "seed": seed}
+    resolved = _resolved_policy(
+        be, model, caller_tag, profile, temperature, top_p, seed,
+        reasoning_effort, extra_body)
+    params = dict(resolved.logged_params)
+    request_kwargs = dict(resolved.request_kwargs)
+    timeout = _validate_request_timeout(request_timeout_s, be.name)
+    if timeout is not None:
+        request_kwargs["timeout"] = timeout
     t0 = time.perf_counter()
     resp = be.create_chat(
         model=model or be.default_model, messages=messages,
-        max_tokens=max_tokens, **params)
+        max_tokens=max_tokens, **request_kwargs)
     latency_ms = (time.perf_counter() - t0) * 1000.0
+    policy_metadata = build_policy_record_metadata(resolved, resp)
     rec = _emit(_record(messages, params, resp, latency_ms,
                         caller_tag, parent_request_id,
                         retrieval_context=retrieval_context,
                         model_version=be.model_version,
                         host_metadata=be.host_metadata,
                         max_tokens=max_tokens,
-                        backend_name=be.name), log_path)
+                        backend_name=be.name,
+                        policy_metadata=policy_metadata), log_path)
     # Per-call UI inference-internals row (best-effort; never raises).
     worker_activity.emit_worker_activity(
         run_id=get_run_id(),
@@ -214,25 +259,36 @@ def call_sync(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=Non
     return rec
 
 
-async def call_async(messages, *, temperature=0.0, top_p=1.0, seed=None, max_tokens=None,
+async def call_async(messages, *, temperature=UNSET, top_p=UNSET, seed=UNSET,
+                     max_tokens=None,
                      caller_tag="unspecified", parent_request_id=None,
                      retrieval_context=None, log_path=None, model=None,
-                     backend=None):
+                     backend=None, profile=None, reasoning_effort=UNSET,
+                     extra_body=UNSET, request_timeout_s=None):
     """Async chat completion (needed for OpenClaw on Day 6). Returns the record."""
     be = get_backend(backend or DEFAULT_BACKEND)
-    params = {"temperature": temperature, "top_p": top_p, "seed": seed}
+    resolved = _resolved_policy(
+        be, model, caller_tag, profile, temperature, top_p, seed,
+        reasoning_effort, extra_body)
+    params = dict(resolved.logged_params)
+    request_kwargs = dict(resolved.request_kwargs)
+    timeout = _validate_request_timeout(request_timeout_s, be.name)
+    if timeout is not None:
+        request_kwargs["timeout"] = timeout
     t0 = time.perf_counter()
     resp = await be.create_chat_async(
         model=model or be.default_model, messages=messages,
-        max_tokens=max_tokens, **params)
+        max_tokens=max_tokens, **request_kwargs)
     latency_ms = (time.perf_counter() - t0) * 1000.0
+    policy_metadata = build_policy_record_metadata(resolved, resp)
     rec = _emit(_record(messages, params, resp, latency_ms,
                         caller_tag, parent_request_id,
                         retrieval_context=retrieval_context,
                         model_version=be.model_version,
                         host_metadata=be.host_metadata,
                         max_tokens=max_tokens,
-                        backend_name=be.name), log_path)
+                        backend_name=be.name,
+                        policy_metadata=policy_metadata), log_path)
     # Per-call UI inference-internals row (best-effort; never raises).
     # Parity with call_sync — this path was a worker-activity blind spot
     # until 2026-06-10.
@@ -258,6 +314,11 @@ class ToolCallError(RuntimeError):
     or when the model hallucinates a tool name, or when max_depth is reached
     without a final answer. By design we do NOT silently retry: the program
     must see failure rates first."""
+
+    def __init__(self, message, *, records=(), failure_code="tool_protocol"):
+        super().__init__(message)
+        self.records = tuple(records)
+        self.failure_code = failure_code
 
 
 def _index_tools(tools):
@@ -308,11 +369,13 @@ def _project_for_log(messages):
     return out
 
 
-def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
+def call_with_tools(messages, tools, *, temperature=UNSET, top_p=UNSET, seed=UNSET,
                     max_tokens=None, caller_tag="call_with_tools",
                     parent_request_id=None, retrieval_context=None,
                     log_path=None, model=None, backend=None,
-                    max_depth=_DEFAULT_MAX_TOOL_DEPTH):
+                    max_depth=_DEFAULT_MAX_TOOL_DEPTH, profile=None,
+                    reasoning_effort=UNSET, extra_body=UNSET,
+                    request_timeout_s=None):
     """Multi-turn tool-call loop. Returns the list of recorded chain calls.
 
     tools: list of {"spec": <openai-function-schema>, "impl": <callable>}.
@@ -339,22 +402,36 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
     openai_messages = [dict(m) for m in messages]
     records = []
     last_id = parent_request_id
-    params = {"temperature": temperature, "top_p": top_p, "seed": seed}
+    resolved = _resolved_policy(
+        be, model, caller_tag, profile, temperature, top_p, seed,
+        reasoning_effort, extra_body)
+    params = dict(resolved.logged_params)
+    request_kwargs = dict(resolved.request_kwargs)
+    timeout = _validate_request_timeout(request_timeout_s, be.name)
+    deadline = time.monotonic() + timeout if timeout is not None else None
 
     for depth in range(max_depth + 1):
+        turn_kwargs = dict(request_kwargs)
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "request_timeout_s expired for the whole tool loop")
+            turn_kwargs["timeout"] = remaining
         t0 = time.perf_counter()
         resp = be.create_chat(
             model=model or be.default_model,
             messages=openai_messages,
             tools=tool_specs,
             max_tokens=max_tokens,
-            **params,
+            **turn_kwargs,
         )
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
         msg = resp.choices[0].message
         text_content = msg.content or ""
         tool_calls = list(msg.tool_calls or [])
+        policy_metadata = build_policy_record_metadata(resolved, resp)
 
         completion_for_log = (
             _serialize_tool_calls(tool_calls) if tool_calls else text_content
@@ -387,6 +464,7 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
         if max_tokens is not None:
             record["max_tokens"] = max_tokens
         record["backend"] = be.name
+        record.update(policy_metadata)
         _emit(record, log_path)
         records.append(record)
         last_id = record["request_id"]
@@ -407,7 +485,7 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
             return records
 
         # Stage the assistant turn (with tool_calls) for the next OpenAI request.
-        openai_messages.append({
+        assistant_turn = {
             "role": "assistant",
             "content": text_content,
             "tool_calls": [
@@ -416,7 +494,15 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
                               "arguments": tc.function.arguments}}
                 for tc in tool_calls
             ],
-        })
+        }
+        # Both pinned templates accept a `reasoning` field. Preserve it only
+        # on tool-call turns under a profiled thinking contract. This is the
+        # Gemma card's tool-history exception and Qwen's preserve-thinking
+        # behavior; it never changes legacy request history or call logs.
+        reasoning = reasoning_text_from_message(msg)
+        if resolved.preserve_tool_reasoning and reasoning is not None:
+            assistant_turn["reasoning"] = reasoning
+        openai_messages.append(assistant_turn)
 
         # Execute each tool_call. Surface every failure mode.
         for tc in tool_calls:
@@ -425,20 +511,21 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
             if name not in tool_index:
                 raise ToolCallError(
                     f"model hallucinated tool name {name!r}; "
-                    f"known tools: {sorted(tool_index)}")
+                    f"known tools: {sorted(tool_index)}",
+                    records=records, failure_code="tool_unknown")
             try:
                 args = json.loads(raw_args)
-            except json.JSONDecodeError as exc:
+            except (json.JSONDecodeError, TypeError) as exc:
                 raise ToolCallError(
                     f"malformed JSON in tool_calls[{name}].arguments "
                     f"(request_id={record['request_id']}): {exc}; "
-                    f"raw={raw_args!r}") from exc
+                    f"raw={raw_args!r}", records=records, failure_code="tool_json") from exc
             errs = list(tool_index[name]["validator"].iter_errors(args))
             if errs:
                 raise ToolCallError(
                     f"tool {name} arguments failed schema validation "
                     f"(request_id={record['request_id']}): {errs[0].message}; "
-                    f"args={args!r}")
+                    f"args={args!r}", records=records, failure_code="tool_schema")
             result = tool_index[name]["impl"](**args)
             openai_messages.append({
                 "role": "tool",
@@ -448,7 +535,8 @@ def call_with_tools(messages, tools, *, temperature=0.0, top_p=1.0, seed=None,
 
     raise ToolCallError(
         f"reached max_depth={max_depth} without a final answer; "
-        f"last record: {records[-1]['request_id']}")
+        f"last record: {records[-1]['request_id']}",
+        records=records, failure_code="tool_depth")
 
 
 def verify_log_integrity(path):

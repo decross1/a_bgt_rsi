@@ -1,0 +1,133 @@
+{
+  "schema_version": "weekly-upgrade-eval-manifest/v1",
+  "suite_id": "weekly-integration-smoke-20260914",
+  "description": "Two-task integration smoke only; no quality inference.",
+  "bootstrap_seed": 90210,
+  "bootstrap_samples": 4000,
+  "ordering": "alternating_ab_ba",
+  "source_snapshot": {
+    "path": "docs/research/weekly-upgrade-2026-09-14/CODEX_RESEARCH_HANDOFF.md",
+    "sha256": "729db148293ee40d1c4a8aab82faf15e5b5446a9ee9aa00ad0b30f3047257884"
+  },
+  "arms": [
+    {
+      "id": "A",
+      "label": "deterministic",
+      "backend": "vllm-gemma",
+      "profile": "deterministic",
+      "model": "gemma-4-26b-a4b",
+      "max_tokens": 256,
+      "request_timeout_s": 25
+    },
+    {
+      "id": "B",
+      "label": "scientist",
+      "backend": "vllm-gemma",
+      "profile": "scientist",
+      "model": "gemma-4-26b-a4b",
+      "max_tokens": 256,
+      "request_timeout_s": 25
+    }
+  ],
+  "tasks": [
+    {
+      "id": "gt_zero_sum_2x2",
+      "family": "game_theory",
+      "mode": "chat",
+      "system": "Solve the supplied game exactly. Return one JSON object and no prose or markdown.",
+      "prompt": "A zero-sum game pays the row player A=[[3,0],[1,2]] and the column player -A. Compute the unique mixed equilibrium and value. Return {\"row_mixture\":[p(row1),p(row2)],\"column_mixture\":[p(col1),p(col2)],\"value\":number}.",
+      "grader": {
+        "kind": "zero_sum_equilibrium",
+        "absolute_tolerance": 1e-06,
+        "expected": {
+          "row_mixture": [
+            0.25,
+            0.75
+          ],
+          "column_mixture": [
+            0.5,
+            0.5
+          ],
+          "value": 1.5
+        }
+      }
+    },
+    {
+      "id": "tool_payoff_lookup",
+      "family": "tool",
+      "mode": "tools",
+      "system": "Use exactly the relevant supplied tool, then calculate the answer and return one JSON object with no prose.",
+      "prompt": "Load zero-sum game zs-01 and return its maximin value to the row player as {\"value\":number}.",
+      "tools": [
+        {
+          "name": "load_payoff_matrix",
+          "description": "Load a registered zero-sum payoff matrix by game_id.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "game_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "game_id"
+            ],
+            "additionalProperties": false
+          },
+          "expected_arguments": {
+            "game_id": "zs-01"
+          },
+          "result": {
+            "game_id": "zs-01",
+            "row_payoff_matrix": [
+              [
+                3,
+                0
+              ],
+              [
+                1,
+                2
+              ]
+            ]
+          }
+        },
+        {
+          "name": "lookup_experiment",
+          "description": "Retrieve a registered experiment summary by experiment_id.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "experiment_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "experiment_id"
+            ],
+            "additionalProperties": false
+          },
+          "expected_arguments": {
+            "experiment_id": "zs-01"
+          },
+          "result": {
+            "experiment_id": "zs-01",
+            "value": 2.25
+          }
+        }
+      ],
+      "grader": {
+        "kind": "tool_semantics",
+        "absolute_tolerance": 1e-06,
+        "expected": {
+          "tool_name": "load_payoff_matrix",
+          "arguments": {
+            "game_id": "zs-01"
+          },
+          "answer": {
+            "value": 1.5
+          }
+        }
+      }
+    }
+  ]
+}

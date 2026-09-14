@@ -362,32 +362,117 @@ def _extract_json(text: str) -> Any | None:
 # ── assess ────────────────────────────────────────────────────────────────
 
 
+def _topic_key(value: Any) -> str | None:
+    """Whitespace-stable exact topic key; malformed values have no key."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return " ".join(value.split())
+
+
+def _handled_machine_topic_evidence(
+    cycle_rows: list[dict[str, Any]], idea_state: dict[str, Any],
+) -> set[str]:
+    """Durable evidence that a machine-mined follow-up was already handled.
+
+    A coordinator-cycle receipt counts only when exactly one loop action was
+    planned, exactly one loop outcome passed, and an iteration ID was returned;
+    request identity must also match when recorded. A consumed paper-gap agenda
+    item is the other existing append-only receipt. Failed/ambiguous dispatches
+    and pending agenda items deliberately contribute no evidence, so they
+    remain eligible. This is proof of successful dispatch under the recorded
+    API, not proof that every scientific substep produced strong evidence.
+    Returns exact normalized topic keys only.
+    """
+    topics: set[str] = set()
+    for row in cycle_rows:
+        if (not isinstance(row, dict) or row.get("status") != "executed"
+                or not isinstance(row.get("dispatched_iteration_id"), str)
+                or not row["dispatched_iteration_id"].strip()):
+            continue
+        plan = row.get("plan") if isinstance(row.get("plan"), list) else []
+        outcomes = (row.get("outcomes")
+                    if isinstance(row.get("outcomes"), list) else [])
+        loop_steps = [
+            step for step in plan
+            if isinstance(step, dict) and step.get("action") == "run_loop_iteration"
+        ]
+        loop_outcomes = [
+            outcome for outcome in outcomes
+            if isinstance(outcome, dict)
+            and outcome.get("action") == "run_loop_iteration"
+        ]
+        if (len(loop_steps) != 1 or len(loop_outcomes) != 1
+                or loop_outcomes[0].get("status") != "passed"):
+            continue
+        step, outcome = loop_steps[0], loop_outcomes[0]
+        identity_matches = True
+        for field in ("step_id", "request_digest"):
+            if field not in step and field not in outcome:
+                continue
+            expected, actual = step.get(field), outcome.get(field)
+            if (not isinstance(expected, str) or not expected
+                    or expected != actual):
+                identity_matches = False
+                break
+        if not identity_matches:
+            continue
+        key = _topic_key(_sub(step, "args").get("topic"))
+        if key is not None:
+            topics.add(key)
+
+    for cluster in idea_state.values():
+        if not isinstance(cluster, dict):
+            continue
+        agenda = cluster.get("agenda")
+        items = agenda if isinstance(agenda, list) else [agenda]
+        consumed_paper_gap = [
+            item for item in items
+            if isinstance(item, dict) and item.get("source") == "paper_gap"
+            and item.get("status") == "consumed"
+        ]
+        if not consumed_paper_gap:
+            continue
+        for item in consumed_paper_gap:
+            key = _topic_key(item.get("topic"))
+            if key is not None:
+                topics.add(key)
+    return topics
+
+
 def _topic_suggestions(
     loop_memory_path: str | os.PathLike,
     *,
     followups_path: str | os.PathLike | None = None,
+    idea_ledger_path: str | os.PathLike | None = None,
+    cycles_path: str | os.PathLike | None = None,
+    cycle_rows: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     """Topic candidates for the planner. Never raises; degrades to [] so
     assess_state stays a pure read. Surfacing this is what un-blinds the
     planner — run_loop_iteration's arg_schema requires a non-empty topic.
 
-    Sources, in order: (1) up to 2 queued human follow-up topics from
-    memory/finding_followups.jsonl (written by finding_session's
-    spawn_topic outcome; this read closes the orphaned-queue gap — the
-    queue finally has a consumer); (2) the morning pick (newest arXiv
-    paper, else a loop-memory gap probe, else a safe fallback).
-    followups_path=None resolves at call time (patchable)."""
+    Sources, in order: (1) open idea-ledger agenda items; (2) up to two
+    eligible finding follow-ups; (3) the morning pick. Human follow-ups are
+    unchanged. Machine-mined follow-ups are omitted only after a durable
+    successful-dispatch or consumed-agenda receipt proves they were handled.
+    Paths set to None resolve at call time (patchable)."""
     if followups_path is None:
         followups_path = DEFAULT_FOLLOWUPS
+    if idea_ledger_path is None:
+        idea_ledger_path = DEFAULT_IDEA_LEDGER
+    if cycles_path is None:
+        cycles_path = coordinator_cycle_log.DEFAULT_CYCLES_PATH
     out: list[dict[str, str]] = []
     # (0) D-060 agenda-first: open idea-ledger agenda items lead. The agenda
     # carries provenance (what opened it), so topic selection advances the
     # program instead of chasing the day's arXiv draw. Missing/empty ledger
     # degrades silently — pre-consolidation state is legitimate.
+    idea_state: dict[str, Any] = {}
     try:
         from workers.idea_ledger import load_state
         from workers.idea_projection import agenda_topics
-        for item in agenda_topics(load_state(DEFAULT_IDEA_LEDGER))[:3]:
+        idea_state = load_state(idea_ledger_path)
+        for item in agenda_topics(idea_state)[:3]:
             # cluster_id RIDES ALONG so a dispatched agenda topic can be
             # marked consumed. Without it the item stayed open forever: 26 of
             # the 30 executed cycles to 2026-08-16 ran the SAME topic, because
@@ -398,15 +483,29 @@ def _topic_suggestions(
                         "cluster_id": item.get("cluster_id")})
     except Exception:
         pass
-    for row in _read_jsonl(followups_path)[-2:]:
+
+    handled_topics = _handled_machine_topic_evidence(
+        cycle_rows if cycle_rows is not None else _read_jsonl(cycles_path),
+        idea_state,
+    )
+    eligible_followups: list[dict[str, Any]] = []
+    for row in _read_jsonl(followups_path):
         topic = row.get("new_topic")
-        if isinstance(topic, str) and topic.strip():
-            # graft 4 (P4): machine-mined rows share this queue but must NOT
-            # masquerade as human follow-ups (which the planner prefers below).
-            src = ("coordinator_propose"
-                   if row.get("origin") == "coordinator_propose"
-                   else "finding_followup")
-            out.append({"topic": topic, "source": src})
+        key = _topic_key(topic)
+        if key is None:
+            continue
+        if row.get("origin") == "coordinator_propose":
+            if key in handled_topics:
+                continue
+        eligible_followups.append(row)
+    for row in eligible_followups[-2:]:
+        topic = row["new_topic"]
+        # graft 4 (P4): machine-mined rows share this queue but must NOT
+        # masquerade as human follow-ups (which the planner prefers below).
+        src = ("coordinator_propose"
+               if row.get("origin") == "coordinator_propose"
+               else "finding_followup")
+        out.append({"topic": topic, "source": src})
     # The morning arXiv pick is the LAST resort — an agenda candidate, not
     # the program driver (D-060; the Jul-Aug seed churn came from here).
     try:
@@ -669,10 +768,25 @@ def _planner_system_prompt(budget: int) -> str:
         "Choose the smallest plan that advances the research: e.g. run a loop\n"
         "iteration on a worthwhile topic, promote vetted findings, bubble up a\n"
         "specific finding for the human, or noop with a reason if nothing is\n"
-        "worth doing. When the state's 'topic_suggestions' is non-empty and a\n"
-        "loop iteration is worthwhile, use a suggested topic VERBATIM as the\n"
-        "run_loop_iteration 'topic' arg (it is a real candidate already vetted\n"
-        "for scope). Topic preference order: source 'agenda' (the research\n"
+        "worth doing. RESEARCH SCOPE: game theory, behavioral game theory,\n"
+        "learning in games, and the program's delegation, liquid-democracy,\n"
+        "social-choice and sortition questions. A worthwhile research topic\n"
+        "studies strategic decisions, incentives or collective choice.\n"
+        "Collaborative ML accuracy, training throughput or software quality\n"
+        "alone is outside scope, even with game-theoretic vocabulary.\n"
+        "The state's 'topic_suggestions' are candidates, NOT scope-vetted\n"
+        "claims. Agenda and arXiv entries can be machine-mined paper titles;\n"
+        "do not treat their source label as evidence of scientific fit.\n"
+        "When a loop iteration is worthwhile, prefer an IN-SCOPE suggested\n"
+        "topic. Pass the selected seed VERBATIM as run_loop_iteration's\n"
+        "'topic' arg to retain its provenance and consumption receipt.\n"
+        "An adjacent seed may inspire a NEW game/collective-choice question,\n"
+        "but the HYPOTHESIZE worker must formulate that question: do not\n"
+        "rewrite or scope-approve a paper title in this planner.\n"
+        "Do not imply the input paper studied or supports a new hypothesis.\n"
+        "The generated claim still faces the independent domain gate.\n"
+        "Among in-scope suggestions,\n"
+        "topic preference order: source 'agenda' (the research\n"
         "program's own open questions — advancing these IS the job) >\n"
         "'finding_followup' (HUMAN-spawned) > everything else; the arXiv\n"
         "morning pick is a last resort, not the program driver.\n"

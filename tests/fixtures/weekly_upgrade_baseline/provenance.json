@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "study_lock": "2026-08-19",
+  "contains_ignored_live_source_bytes": false,
+  "derivation": "Minimal temporary inputs reconstructed only from committed public benchmark artifacts. Derived hashes identify the reconstruction, not the original ignored ledgers.",
+  "original_source_pins": {
+    "loop_memory": {
+      "rows": 167,
+      "sha256": "01ae8c7a542cf37db709a522d5e34bf8788d48c1e66f5a29e20a6543a1028f46",
+      "recorded_in": [
+        "bench/critic_cal/manifest_meta.json",
+        "bench/critic_cal/runs/override_audit_2026-08-19.json",
+        "bench/readjudication/manifest.jsonl"
+      ]
+    },
+    "idea_ledger": {
+      "events": 329,
+      "sha256": "d277f9bc924f00f00814b0dca40959fc87eb816a1dd63f9cff1e51c9f62a87b0",
+      "recorded_in": [
+        "bench/critic_cal/runs/override_audit_2026-08-19.json",
+        "bench/readjudication/manifest.jsonl"
+      ]
+    },
+    "loop_feedback": {
+      "rows": 7,
+      "sha256": "91da82583a1b3ab411da0ca68394986c5c80edfb75a57dfd70a1287f9d8e82b2",
+      "recorded_in": [
+        "bench/critic_cal/runs/override_audit_2026-08-19.json"
+      ]
+    }
+  },
+  "public_artifact_inputs": {
+    "bench/critic_cal/manifest.jsonl": "0b992f536fbe07eab4a579f192a95aaac99125e081acf6caecd98fb346bceefc",
+    "bench/critic_cal/manifest_meta.json": "275e6bba1fbcbe64bff407affc6eb68d666fcbd9ade0565dbc9378114ebe0845",
+    "bench/critic_cal/runs/override_audit_2026-08-19.json": "9a82c65b2f88c5d3e452cacab1402bb2d8755d6f61131241124a9a104397b5b7",
+    "bench/readjudication/manifest.jsonl": "7ec63389ca9a0a9f789f28631e9adb8b5360aaa0842590f84843d3a9664b64f0",
+    "bench/redteam_cal/fixtures.jsonl": "1f8b738c509528a3e56549c851b482bcc1d36ee8aea3f97961f628b14e31cce4"
+  },
+  "derived_reconstruction": {
+    "critic_cal": {
+      "loop_memory_sha256": "50e2135dc1f68624ac4bd199395f4dc47854521200fac8f01ac2cacafa512579",
+      "cache_tree_sha256": "8405df254742c9b9a1131e60fbf0890aa4f5e8c4e7d9f11955cfb0d7f73bbc5a",
+      "preserves": "Exact 26 selected manifest rows and all normalized selection/census metadata. Unselected content is synthetic and carries only public IDs and classes."
+    },
+    "critic_audit": {
+      "loop_memory_sha256": "d074cc27553fa2e0ab08e947013389ad94803871fd190ed8fe4c4c30918d0f62",
+      "idea_ledger_sha256": "f0ee0d6ec64104a1d3e74f5521e8f4ca722029c6f47757b1cb4f4258cf28f91e",
+      "loop_feedback_sha256": "5c932a5694f65eed78addc76cf0e940607861b90b810769d37fd7323e83af289",
+      "preserves": "Exact public per-row audit table and all committed aggregates, including cluster and gate-ledger results. Reconstructed cluster membership is synthetic except for each public latest iteration; it preserves only public counts and ordering invariants."
+    },
+    "readjudication": {
+      "idea_ledger_sha256": "9d13569d1163338c8f8c50034f5f254df35febbffa734d9f53bb1ab1e5a82d5f",
+      "loop_memory_sha256": "821ef44987af3356806f9653f0c224792a35c09dab6efeef6eea81600bdc2d88",
+      "preserves": "Exact 114 manifest rows and all normalized metadata. Non-target inventory is synthetic and retains only the published aggregate counts."
+    }
+  }
+}

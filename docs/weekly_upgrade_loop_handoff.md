@@ -1,5 +1,22 @@
 # Model / Runtime / Inference-Policy Upgrade Loop — Coding-Session Handoff
 
+> **Implementation update, 2026-09-14:** the owner directed Codex to proceed
+> and treat this review as another set of eyes. Start with the
+> [implementation runbook](weekly_upgrade_implementation.md) for delivered
+> commands, corrected findings, validation and remaining runtime gates.
+> This document preserves the original review; its Session-0/owner-question
+> ordering does not suspend the owner's later implementation authorization.
+
+> **Owner decisions, 2026-09-14:** “Keep game theory; correct the generated
+> topics.” “Subscription-only frontier sessions, with up to 2 Spark GPU-hours
+> per week.” The [current accounting design](weekly_upgrade_implementation.md#owner-decisions-recorded-2026-09-14)
+> sets one shared 120-minute weekly ceiling, including GPU-using preflight,
+> failures and recovery. This answers the research-scope and budget questions;
+> it does not activate paid calls, scheduling, runtime cutovers or broader data
+> egress. Historical panels below are a backlog within that ceiling, not
+> cumulative recurring allocations. Correct upstream topics; retain R0 and
+> the already-ratified D-075 game-theory/social-choice scope.
+
 **Prepared:** 2026-09-14 by the primary Claude session, from a five-way review
 (Codex adversary via the repo frontier seam + three Claude research agents +
 a Claude red team) of the 2026-09-13 draft. Sources and full reports:
@@ -347,7 +364,15 @@ stable logprobs). Week 1 is a calibration run: record actuals, trim in the
 stated order. Every signal stands alone (rule 4); no composite may rescue a
 failed gate.
 
-### 5.1 Weekly v1 — private, all fixtures exist today (~110 min cap 115)
+### 5.1 Original weekly v1 panel proposal — row caps total 120 minutes
+
+**Budget correction, 2026-09-14:** the seven row caps below sum to 120,
+not the originally stated ~110/cap-115. Running every row to its cap leaves
+no allowance for additional GPU-using preflight/recovery. Select and freeze
+a smaller panel before calls within the shared weekly ceiling; the current
+design allocation is 15 minutes of canaries, 90 minutes of one admitted trial,
+and 15 minutes of overhead/reserve. These historical per-family rows are a
+menu, not a weekly execution order or an implemented full benchmark suite.
 
 | Function | Frozen set (n) | Measurements | Hard pass/fail | Cap |
 |---|---|---|---|---|
@@ -363,6 +388,7 @@ Also available for monthly depth: `bench/critic_cal/manifest.jsonl` (26,
 ~90 s/fixture), `bench/judge_cal/set_v2.jsonl` (74, md5-pinned),
 `experiments/fixtures/critic_hypotheses/` (20; `PASS_RATE_BAR 0.80`), full
 22-case skeptic ladder via `bench/critic_eval/stage3a_driver.py`.
+Depth/shadow tasks replace other charged work; they do not add an allowance.
 
 ### 5.2 Weekly v2 shadows (after week-1 calibration; judge-free first)
 
@@ -381,7 +407,13 @@ Prerequisite: a separate eval venv (`inspect_ai`, `inspect_evals`,
 (https://inspect.aisi.org.uk/providers.html) but tool/reasoning parsing is
 "model dependant".
 
-### 5.3 Monthly (6–10 GPU-hours overnight under the pause file) and quarterly
+### 5.3 Deeper benchmark backlog — no recurring budget authorized
+
+The original 6–10 GPU-hour monthly proposal and multi-day quarterly runs exceed
+the owner's selected two-hour weekly envelope. Keep these as backlog. A bounded
+slice may replace a week's trial; any larger campaign needs a separately
+authorized budget. Do not infer accumulated/carryover hours or permission to
+pause production from this section.
 
 Monthly: **SciCode-Verified** full (64 main / 287 subproblems; Apache 2.0;
 judge-free; https://arxiv.org/abs/2608.04975,
@@ -517,6 +549,12 @@ alternative: Fable 5.1 / Opus 5 with `web_search_20260209`, GPT-6 Astra or
 o3-deep-research via Responses — under $1 per 30K-in/8K-out call, ~$3–10 per
 week at the top tier, and it removes the ambiguity.
 
+**Later owner decision:** subscription-only sessions. The metered alternative
+above is an excluded historical proposal; its prices/model claims are not an
+approved or newly verified implementation plan. The current manual transport
+strips API-key routes. Subscription use does not itself activate unattended
+cron or expand the snapshot's approved off-box contents.
+
 ---
 
 ## 7. Runtime challenger lane = trigger watchlist, not a schedule
@@ -586,7 +624,10 @@ coupled and must be run jointly.
    or runtime, and stay inert until acceptance? If no → Gemma proposes,
    frontier falsifies. *(blocks Session B code)*
 3. **G1 scope amendment** naming what the weekly snapshot may send off-box;
-   and the subscription-CLI-in-cron question vs metered APIs. *(blocks B)*
+   and the subscription-CLI-in-cron question vs metered APIs. **Partly answered
+   2026-09-14:** subscription-only frontier sessions; no metered fallback.
+   Scheduling activation and broader off-box scope are separate decisions,
+   not implied by the budget answer. *(Historical Session B question.)*
 4. **Web tools for analysts** in scope of G1, or snapshot-only. *(B)*
 5. **Tier of `agent_wrapper/`** — keep it packet-proof (recommended) and
    treat any production default-profile change as an owner-gated service
@@ -594,9 +635,11 @@ coupled and must be run jointly.
 6. **Control-arm naming** — accept profile names that encode today's values
    (`precise`, `planner`, `dialog`, `critic_current`) alongside the vendor
    points.
-7. **Weekly canary budget** (~110 GPU-min on the residents under the pause
-   file) — charge it to the D-063 cap-60 ledger or declare a separate weekly
-   allowance.
+7. **Weekly canary budget — answered 2026-09-14:** up to 120 Spark GPU-minutes
+   per week for all weekly-upgrade work, not per experiment. Proposed accounting
+   is separate from D-063's coordinator activity units, with shared physical
+   resource coordination. The current controller does not enforce this weekly
+   balance. See the current runbook for overhead and interruption accounting.
 8. **Triage the 43 agenda proposals** via `agenda_cli` — sets the meta-metric
    baseline. *(Session 0)*
 9. **Challenger engine** if a trigger fires: SGLang+DSpark (license

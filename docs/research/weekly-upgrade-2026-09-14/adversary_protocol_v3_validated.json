@@ -1,0 +1,63 @@
+{
+  "schema_version": "weekly-upgrade-v1",
+  "week_id": "2026-W38",
+  "snapshot_sha256": "46f8dbb0dd5fbf51afe35bf4e3ba6f3d4cd3ebdad917d91e52a2e3755c0327f5",
+  "proposal_id": "wu-46f8dbb0",
+  "verdict": "revise",
+  "violated_rules": [
+    "measurement-harness-unspecified",
+    "grader-undefined",
+    "underpowered-timing-comparison",
+    "wall-time-not-controlled-for-shared-server-state",
+    "single-seed-no-variance-estimate"
+  ],
+  "objections": [
+    {
+      "claim": "The bounded card is not executable by a separate evaluator: change_surface lists only a config path (experiments/qwen_critic_effort_ab.json), measurement_ref is null, and no runner locator (path + sha256) is cited that (a) loads bench/weekly_upgrade_eval/fixtures.json, (b) invokes the wrapper per arm with the named profile, (c) extracts a critic decision, and (d) records per-call wall time. Without a pinned harness, arm execution and timing capture are not reproducible.",
+      "repo_references": [],
+      "falsifier": "Cite a single existing runner path and sha256 in-repo whose entrypoint deterministically produces per-arm, per-fixture (decision, wall_time_ms) records from the specified profile and manifest; absent such a locator the card cannot be executed by an independent evaluator."
+    },
+    {
+      "claim": "No grader is specified for critic_decision_accuracy. The four fixtures partition into fatal/proceed classes, but the proposal does not define how model output is parsed into a decision, what counts as 'malformed', or the ground-truth mapping per fixture. Two evaluators can therefore reach different accuracy tallies on identical outputs, violating deterministic pass adjudication.",
+      "repo_references": [],
+      "falsifier": "Specify the exact decision-extraction rule (JSON field name / regex / schema id) and enumerate the ground-truth label for each of critic_fatal_circular, critic_fatal_dominance, critic_proceed_fixable, critic_proceed_theorem."
+    },
+    {
+      "claim": "The >=10% median wall-time reduction claim is underpowered and confounded. With fixture_ids of size 4 and seeds=[0], each arm produces four paired timing samples on a shared vLLM Qwen server that co-resides with the Gemma server and uses --enable-prefix-caching; first-touch KV state, prefix-cache warmup, and cross-tenant load can each shift medians by >10% independently of reasoning_effort.",
+      "repo_references": [
+        {
+          "path": "cron/serve-models.sh",
+          "locator": "--enable-prefix-caching",
+          "sha256": "d8c2d15f9b1365b0d73b71c7c9f8e6df772d78876f6e913e57417d7ce270f663"
+        }
+      ],
+      "falsifier": "Require >=3 seeds or per-fixture repetitions with a warmup call per arm, interleaved arm order per fixture, and prefix-cache discipline (flush or paired warm state); if the >=10% median gap survives that protocol, wall-time confounding is ruled out."
+    },
+    {
+      "claim": "The 'single delta' description understates the coupling. Switching Qwen reasoning_effort from xhigh to medium changes reasoning depth (and thus reasoning_chars), which affects both the target metric (wall time) and the observable that drives the accuracy metric (decision content). On n=4 the pass_rule cannot separate 'faster because less thinking' from 'faster because a cheaper policy is equally good'.",
+      "repo_references": [
+        {
+          "path": "agent_wrapper/generation_policy.py",
+          "locator": "\"critic_current\": _Profile(\n        0.2, 0.95, frozenset({_QWEN_BACKEND}), \"xhigh\"),\n    \"critic_medium\": _Profile(\n        0.2, 0.95, frozenset({_QWEN_BACKEND}), \"medium\"),",
+          "sha256": "3a45aa1303bb0f53fe73533b9750b07049acf3c0a0eaa4107582812f5db449a5"
+        }
+      ],
+      "falsifier": "Record reasoning_chars per fixture per arm alongside wall_time and decision; if reasoning_chars are indistinguishable between arms the effort switch produced no work reduction and the wall-time gain is attributable to noise."
+    },
+    {
+      "claim": "critic_decision_accuracy on four balanced items is coarsely quantized to {0.00,0.25,0.50,0.75,1.00}. 'candidate accuracy >= baseline accuracy' is trivially satisfied when both saturate and grossly punitive when a single item flips, and there is no stated confidence interval or per-item disagreement bound. This weakens the accuracy control in the pass_rule.",
+      "repo_references": [],
+      "falsifier": "Either (a) broaden fixture_ids to include additional critic fixtures from the 12-fixture manifest to reduce quantization, or (b) tighten the accuracy rule to zero per-item decision disagreements between arms rather than an aggregate inequality."
+    }
+  ],
+  "cheapest_decisive_test": "Before promotion, add a pinned runner locator (path + sha256) that reads bench/weekly_upgrade_eval/fixtures.json and emits per-arm (decision, reasoning_chars, wall_time_ms) records, plus a written decision-parse rule and ground-truth labels for the four fixtures; then rerun the paired trial with at least three seeds, a warmup call per arm, interleaved arm order, and identical prefix-cache state, and accept only if median wall time drops >=10% with zero per-item decision disagreements versus baseline.",
+  "residual_risks": [
+    "Co-resident Gemma and Qwen vLLM servers with prefix caching enabled make paired wall-time medians on n=4 sensitive to first-touch cache warming and cross-tenant load, potentially producing >10% swings unrelated to reasoning_effort.",
+    "Single seed removes any variance estimate for Qwen's stochastic reasoning path; a favorable draw on four items can inflate both accuracy and speed comparisons.",
+    "Undefined decision grader can silently vary between evaluators, letting the same raw outputs pass or fail the accuracy condition.",
+    "Reducing critic effort from xhigh to medium may preserve accuracy on the balanced four-fixture subset while degrading on adjacent critic fixtures not evaluated, so a green pass does not generalize beyond the four items even if the local pass_rule fires.",
+    "Because 'candidate accuracy >= baseline' is quantized on n=4, a shared 3/4 result would pass while masking that both arms miss the same item; the run should not be read as evidence of decision preservation.",
+    "No cap on per-call latency; a candidate that median-wins but tail-loses could still increase p95/p99 latency in the critic path if later adopted."
+  ],
+  "external_claims": []
+}

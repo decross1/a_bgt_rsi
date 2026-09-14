@@ -1,0 +1,83 @@
+{
+  "date_utc": "2026-09-14",
+  "purpose": "Independent adversarial review, not implementation or deployment",
+  "cost_note": "CLI model_usage costUSD values are nominal estimates; they are not evidence of incremental metered API billing. Existing Max authentication was used.",
+  "reviews": [
+    {
+      "round": "first-pass",
+      "cli_path": "/usr/bin/claude",
+      "cli_version": "2.1.143",
+      "requested_model": "opus",
+      "effort": "high",
+      "auth_route_observed": "claude.ai / Max subscription",
+      "tool_access": false,
+      "is_error": false,
+      "subtype": "success",
+      "duration_ms": 139341,
+      "num_turns": 1,
+      "model_usage": {
+        "claude-haiku-4-5-20251001": {
+          "inputTokens": 2005,
+          "outputTokens": 16,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0.002085,
+          "contextWindow": 200000,
+          "maxOutputTokens": 32000
+        },
+        "claude-opus-4-7": {
+          "inputTokens": 5,
+          "outputTokens": 8072,
+          "cacheReadInputTokens": 3057,
+          "cacheCreationInputTokens": 7693,
+          "webSearchRequests": 0,
+          "costUSD": 0.25143475,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 64000
+        }
+      },
+      "permission_denials": [],
+      "prompt_sha256": "bff5fcf9cf31d05015f236465fb1f7bc7e01446e46186ddd13d09c5117d02085",
+      "result_sha256": "8b5bffef32c1db5b5ed66baa33565470a255a75dffa95319634418abda757b0e"
+    },
+    {
+      "round": "second-pass",
+      "cli_path": "/usr/bin/claude",
+      "cli_version": "2.1.143",
+      "requested_model": "opus",
+      "effort": "high",
+      "auth_route_observed": "claude.ai / Max subscription",
+      "tool_access": false,
+      "is_error": false,
+      "subtype": "success",
+      "duration_ms": 79310,
+      "num_turns": 1,
+      "model_usage": {
+        "claude-haiku-4-5-20251001": {
+          "inputTokens": 7592,
+          "outputTokens": 17,
+          "cacheReadInputTokens": 0,
+          "cacheCreationInputTokens": 0,
+          "webSearchRequests": 0,
+          "costUSD": 0.007677,
+          "contextWindow": 200000,
+          "maxOutputTokens": 32000
+        },
+        "claude-opus-4-7": {
+          "inputTokens": 6,
+          "outputTokens": 4910,
+          "cacheReadInputTokens": 8160,
+          "cacheCreationInputTokens": 10454,
+          "webSearchRequests": 0,
+          "costUSD": 0.19219750000000002,
+          "contextWindow": 1000000,
+          "maxOutputTokens": 64000
+        }
+      },
+      "permission_denials": [],
+      "prompt_sha256": "cb653fff80a81de6826165795fe3a09d875da430ae76685e5644031b1fa9c812",
+      "result_sha256": "0ab657f80fbc91fb690aff6d26e9efdb18a2a5d959e7115021f9d6f06fdf4d1c"
+    }
+  ]
+}

@@ -42,7 +42,13 @@ class OllamaBackend:
         return {"backend": "ollama", "ollama_base_url": self._base_url}
 
     def create_chat(self, **kwargs: Any) -> Any:
-        return self._sync.chat.completions.create(**kwargs)
+        client = self._sync
+        if "timeout" in kwargs:
+            client = client.with_options(max_retries=0)
+        return client.chat.completions.create(**kwargs)
 
     async def create_chat_async(self, **kwargs: Any) -> Any:
-        return await self._async.chat.completions.create(**kwargs)
+        client = self._async
+        if "timeout" in kwargs:
+            client = client.with_options(max_retries=0)
+        return await client.chat.completions.create(**kwargs)
