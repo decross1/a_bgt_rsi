@@ -48,6 +48,14 @@ TRIALS = {
     "experiments/weekly_historical_coding_panel_v2_2026-09-14.json": ("historical_repair", 1050),
 }
 CONTEXT_MANIFEST = "experiments/weekly_context_capability_v1_2026-09-14.json"
+TRIAL_MODULES = {
+    "objective": "bench.weekly_upgrade_eval.runner",
+    "topic_scope": "bench.weekly_upgrade_eval.topic_scope",
+    "portfolio": "bench.weekly_upgrade_portfolio.runner",
+    "diversity": "bench.weekly_upgrade_diversity.runner",
+    "role_effort": "bench.weekly_upgrade_effort.runner",
+    "historical_repair": "bench.weekly_upgrade_historical.runner",
+}
 ENDPOINTS = ("http://127.0.0.1:8000", "http://127.0.0.1:8001")
 RESIDENT_CONTAINERS = ("vllm-gemma4", "vllm-qwen")
 MIN_MEMORY_GIB = 30  # Existing production preflight floor, not a relaxed gate.
@@ -430,12 +438,7 @@ def trial_command(plan: dict, output_dir: Path, remaining_s: float,
     payload_s = plan["payload_budget_s"]
     if not timeout or remaining_s < payload_s + KILL_GRACE_S + SUPERVISION_MARGIN_S + 1:
         raise TrialError("independent deadline supervisor unavailable or reservation exhausted")
-    module = {"objective": "bench.weekly_upgrade_eval.runner",
-              "topic_scope": "bench.weekly_upgrade_eval.topic_scope",
-              "portfolio": "bench.weekly_upgrade_portfolio.runner",
-              "diversity": "bench.weekly_upgrade_diversity.runner",
-              "role_effort": "bench.weekly_upgrade_effort.runner",
-              "historical_repair": "bench.weekly_upgrade_historical.runner"}[plan["kind"]]
+    module = TRIAL_MODULES[plan["kind"]]
     command = [timeout, "--signal=TERM", f"--kill-after={KILL_GRACE_S}s", f"{payload_s + 1:.3f}s",
                sys.executable, "-m", module, "--run", "--manifest",
                str(worktree / plan["manifest_path"]), "--output-dir", str(output_dir),
@@ -503,9 +506,7 @@ def live_trial_processes(output: Path) -> list[int]:
     elapsed heartbeat. Only public command arguments are inspected.
     """
     target = os.fsencode(str(output / "evaluation"))
-    modules = {b"bench.weekly_upgrade_eval.runner", b"bench.weekly_upgrade_eval.topic_scope",
-               b"bench.weekly_upgrade_portfolio.runner",
-               b"bench.weekly_upgrade_diversity.runner"}
+    modules = {os.fsencode(module) for module in TRIAL_MODULES.values()}
     found = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
