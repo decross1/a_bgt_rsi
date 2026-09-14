@@ -23,6 +23,13 @@ from regressions by the matched-input baseline above.
 
 Final integrated candidate: **2,644 passed, 7 failed, 1 skipped**, with 68 passing subtests. The failure IDs exactly match baseline; there are **zero new failures**. See [machine-readable comparison](test_comparison.json). The full-suite command was `MOCK_LLM=1 .venv-chroma/bin/python -m pytest -q tests`.
 
+Focused delivery branch, built directly from remote main plus the handoff and
+implementation commits: **2,649 passed, 7 failed, 1 skipped, 2 xpassed**, plus
+68 passing subtests. Its seven failures also exactly match the baseline. The
+two expected-failure markers belong to older tests on remote main; both tests
+pass. The final focused implementation set passed **133 tests**. Committed
+changes exclude live ledgers and copied maintenance authority/configuration.
+
 ## Live checks
 
 - **Qwen profile:** the existing `:8001` endpoint accepted
@@ -69,6 +76,29 @@ preserved in [report](weekly_review_smoke_v1.json) and
 [receipts](weekly_review_smoke_v1_receipts.jsonl). It is not a completed validated
 review or a passed trial. The limit was subsequently aligned with the bounded
 objection fields, and raw unvalidated responses are retained for diagnosis.
+
+The second full run also completed both provider calls, but rejected descriptive
+locators that did not occur literally in the frozen excerpts. See the preserved
+[report](weekly_review_smoke_v2.json), [receipts](weekly_review_smoke_v2_receipts.jsonl),
+and [explicitly unvalidated adversary output](weekly_review_smoke_v2_unvalidated_adversary.json).
+The proposer had received the literal-citation instruction; the adversary had
+not. That missing instruction is now supplied to both roles. Original invalid
+reports stay invalid and never authorize an experiment.
+
+Substantive dispositions: accept the need for adequate output caps, paired timing
+controls, and more independent tasks before any quality claim. Keep malformed
+and missing decisions in the primary failure-inclusive metric; a parseable-only
+view is secondary. Do not disable MTP during an inference-policy comparison,
+since that adds a runtime confounder. Three seeds alone do not establish power.
+
+The corrected adversary prompt was then tested in a separate, explicitly
+budgeted protocol replay against the same frozen proposal and snapshot. It
+**passed validation** and returned **revise**, with five objections. See
+[validated response](adversary_protocol_v3_validated.json) and
+[receipt](adversary_protocol_v3_receipt.jsonl). This was a separate one-call
+integration check; it did not rewrite either original report or exceed their
+two-call budgets. No experiment or production change was authorized by these
+review outcomes. The citation-prompt correction passed all 34 controller tests.
 
 ## Independent implementation review
 
