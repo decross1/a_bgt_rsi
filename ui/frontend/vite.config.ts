@@ -7,7 +7,7 @@ import tailwindcss from "@tailwindcss/vite";
 // through an SSH tunnel and directly over the LAN. See ui/frontend/README.md.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  server: { host: true, port: 5173 },
+  server: { host: true, port: 5173, allowedHosts: ["spark-7eeb"] },
   test: {
     environment: "jsdom",
     globals: true,
