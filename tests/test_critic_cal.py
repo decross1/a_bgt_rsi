@@ -38,7 +38,7 @@ from bench.critic_cal import audit_overrides as audit  # noqa: E402
 from bench.critic_cal import build_manifest as bm  # noqa: E402
 from bench.critic_cal import driver as drv  # noqa: E402
 
-PY = str(REPO_ROOT / ".venv-chroma" / "bin" / "python")
+PY = sys.executable
 FROZEN_ROOT = REPO_ROOT / "tests" / "fixtures" / "weekly_upgrade_baseline"
 sys.path.insert(0, str(FROZEN_ROOT))
 import weekly_upgrade_baseline_reconstruct as reconstruction  # noqa: E402

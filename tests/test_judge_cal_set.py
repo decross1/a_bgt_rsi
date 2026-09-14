@@ -28,6 +28,8 @@ from workers.retrieval_relevance import _tokenize  # noqa: E402
 
 SET_PATH = REPO_ROOT / "bench" / "judge_cal" / "set_v2.jsonl"
 BUILD_SET_PATH = REPO_ROOT / "bench" / "judge_cal" / "build_set.py"
+CANONICAL_LOOP_MEMORY = REPO_ROOT / "memory" / "loop_memory.jsonl"
+CANONICAL_IDEA_LEDGER = REPO_ROOT / "memory" / "idea_ledger.jsonl"
 
 _spec = importlib.util.spec_from_file_location("judge_cal_build_set", BUILD_SET_PATH)
 build_set = importlib.util.module_from_spec(_spec)
@@ -147,13 +149,17 @@ def test_mock_judge_pipeline_consumes_set(monkeypatch):
 
 # ── Generator: determinism + by-construction properties on a fixture ─────────
 
+@pytest.mark.canonical_corpus(
+    str(CANONICAL_LOOP_MEMORY),
+    str(CANONICAL_IDEA_LEDGER),
+)
 def test_determinism_same_inputs_same_bytes(tmp_path):
     # Snapshot the live corpora ONCE (the always-on lab appends to them),
     # then build twice from the snapshots: byte-identical output required.
     lm = tmp_path / "loop_memory.jsonl"
     il = tmp_path / "idea_ledger.jsonl"
-    shutil.copyfile(REPO_ROOT / "memory" / "loop_memory.jsonl", lm)
-    shutil.copyfile(REPO_ROOT / "memory" / "idea_ledger.jsonl", il)
+    shutil.copyfile(CANONICAL_LOOP_MEMORY, lm)
+    shutil.copyfile(CANONICAL_IDEA_LEDGER, il)
     out1, out2 = tmp_path / "one.jsonl", tmp_path / "two.jsonl"
     build_set.write_set(build_set.build_rows(lm, il, seed=build_set.SEED), out1)
     build_set.write_set(build_set.build_rows(lm, il, seed=build_set.SEED), out2)
