@@ -125,6 +125,7 @@ SNAPSHOT_FILES = (
     "experiments/PREREG_weekly_role_effort_v1_2026-09-14.md",
     "experiments/PREREG_diversity_selection_v1_2026-09-14.md",
     "experiments/PREREG_weekly_historical_coding_panel_v2_2026-09-14.md",
+    "experiments/PREREG_weekly_historical_coding_patch_wire_v1_2026-09-14.md",
 )
 
 EVAL_MANIFEST_FILES = (
@@ -137,6 +138,7 @@ EVAL_MANIFEST_FILES = (
     "experiments/diversity_selection_v1_2026-09-14.json",
     "experiments/weekly_role_effort_v1_2026-09-14.json",
     "experiments/weekly_historical_coding_panel_v2_2026-09-14.json",
+    "experiments/weekly_historical_coding_patch_wire_v1_2026-09-14.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_17.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_29.json",
     "experiments/weekly_qwen_effort_pilot_2026-09-14/seed_43.json",
@@ -156,6 +158,7 @@ _FULL_TEXT_FILES = {
     "experiments/PREREG_weekly_role_effort_v1_2026-09-14.md",
     "experiments/PREREG_diversity_selection_v1_2026-09-14.md",
     "experiments/PREREG_weekly_historical_coding_panel_v2_2026-09-14.md",
+    "experiments/PREREG_weekly_historical_coding_patch_wire_v1_2026-09-14.md",
 }
 _KEYWORDS = (
     "D-061", "D-066", "D-072", "D-074", "D-076", "frontier",
@@ -827,7 +830,9 @@ _OBSERVATION_FIELDS = {
 }
 
 
-def _validated_observation(value: Any, *, arm: bool = False) -> dict[str, Any]:
+def _validated_observation(
+    value: Any, *, arm: bool = False, allowed_arm_ids: set[str] | None = None,
+) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise WeeklyUpgradeError("evaluation receipt observation must be an object")
     expected = _OBSERVATION_FIELDS | ({"arm"} if arm else {"failure_categories"})
@@ -838,8 +843,8 @@ def _validated_observation(value: Any, *, arm: bool = False) -> dict[str, Any]:
         for field in sorted(_OBSERVATION_FIELDS)
     }
     if arm:
-        if value["arm"] not in {"A", "B", "control", "candidate", "diverse_select"}:
-            raise WeeklyUpgradeError("evaluation receipt arm is not allowlisted")
+        if not isinstance(value["arm"], str) or value["arm"] not in (allowed_arm_ids or set()):
+            raise WeeklyUpgradeError("evaluation receipt arm is not bound to the trial plan")
         return {"arm": value["arm"], **result}
     failures = value["failure_categories"]
     if not isinstance(failures, list) or len(failures) > 32:
@@ -926,9 +931,26 @@ def _evaluation_receipt(
     arms = value.get("arm_observations")
     if not isinstance(arms, list) or len(arms) > 4:
         raise WeeklyUpgradeError("evaluation receipt arm observations are not bounded")
-    clean_arms = [_validated_observation(item, arm=True) for item in arms]
-    if len({item["arm"] for item in clean_arms}) != len(clean_arms):
-        raise WeeklyUpgradeError("evaluation receipt arm observations are duplicated")
+    planned_arms = trial_run.get("arm_ids")
+    if (
+        not isinstance(planned_arms, list) or not 1 <= len(planned_arms) <= 4
+        or any(not isinstance(item, str) or not _SAFE_RECEIPT_ID.fullmatch(item) for item in planned_arms)
+        or len(set(planned_arms)) != len(planned_arms)
+    ):
+        raise WeeklyUpgradeError("evaluation receipt lacks a bounded trial arm plan")
+    clean_arms = [
+        _validated_observation(item, arm=True, allowed_arm_ids=set(planned_arms))
+        for item in arms
+    ]
+    if len(clean_arms) != len(planned_arms) or {item["arm"] for item in clean_arms} != set(planned_arms):
+        raise WeeklyUpgradeError("evaluation receipt arms differ from the trial plan")
+    attempts = _finite_count(trial_run.get("declared_attempts"), "declared_attempts")
+    if (
+        attempts is None or observations["fixed_attempts_expected"] != attempts
+        or any(item["fixed_attempts_expected"] is None for item in clean_arms)
+        or sum(item["fixed_attempts_expected"] for item in clean_arms) != attempts
+    ):
+        raise WeeklyUpgradeError("evaluation receipt attempts differ from the trial plan")
     return {
         "schema_version": value["schema_version"],
         "trial_id": trial_id,
@@ -985,6 +1007,8 @@ def _trial_history(canonical_root: Path) -> tuple[list[dict[str, Any]], int]:
                 "week_id": plan.get("week_id"),
                 "manifest_path": plan.get("manifest_path"),
                 "kind": plan.get("kind"),
+                "arm_ids": plan.get("arm_ids"),
+                "declared_attempts": plan.get("declared_attempts"),
                 "phase": journal.get("phase"),
                 "status": result.get("status"),
                 "elapsed_s": result.get("elapsed_s"),

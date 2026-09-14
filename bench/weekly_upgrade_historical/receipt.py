@@ -28,8 +28,8 @@ def validate_historical_receipt(
     )
     from bench.weekly_upgrade_historical.runner import (
         RUN_SCHEMA_VERSION,
+        _parse_patch_completion,
         _runtime_identity,
-        _strict_patch_object,
         _summary,
     )
     from bench.weekly_upgrade_historical.sandbox import (
@@ -159,7 +159,8 @@ def validate_historical_receipt(
     allowed_patch_errors = {
         None, "completion_output_limit", "completion_not_text",
         "completion_not_strict_json", "completion_schema", "completion_path",
-        "completion_patch_not_text", "patch_missing", "patch_too_large",
+        "completion_patch_not_text", "completion_not_raw_diff",
+        "patch_missing", "patch_too_large",
         "patch_binary_or_nul", "patch_operation_forbidden", "patch_path_or_header",
         "patch_does_not_apply", "patch_apply_error", "patch_scope_violation",
         "workspace_unavailable", "grader_unavailable", "sandbox_runtime_unavailable",
@@ -232,7 +233,9 @@ def validate_historical_receipt(
         )
         base_source = git_blob(task["base"]["commit"], task["base"]["repair_path"]).decode("utf-8")
         require(
-            call.get("prompt_messages") == messages_for(task, base_source)
+            call.get("prompt_messages") == messages_for(
+                task, base_source, schema_version=manifest["schema_version"]
+            )
             and call.get("caller_tag") == "weekly_upgrade.historical_repair"
             and call.get("parent_request_id") is None
             and call.get("max_tokens") == task["max_tokens"],
@@ -275,7 +278,11 @@ def validate_historical_receipt(
             "raw completion error differs",
         )
 
-        payload, parse_error = _strict_patch_object(None if oversized else completion, task["base"]["repair_path"])
+        payload, parse_error = _parse_patch_completion(
+            None if oversized else completion,
+            task["base"]["repair_path"],
+            manifest["schema_version"],
+        )
         if oversized:
             parse_error = "completion_output_limit"
         if drift is not None:

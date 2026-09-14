@@ -20,6 +20,8 @@ DEFAULT_MANIFEST = (
     REPO_ROOT / "experiments" / "weekly_historical_coding_panel_v2_2026-09-14.json"
 )
 SCHEMA_VERSION = "weekly-upgrade-historical-repair/v2"
+PATCH_WIRE_SCHEMA_VERSION = "weekly-upgrade-historical-repair-patch-wire/v1"
+SUPPORTED_SCHEMA_VERSIONS = {SCHEMA_VERSION, PATCH_WIRE_SCHEMA_VERSION}
 PUBLICATION_CLASS = "public_historical"
 EXPECTED_TASK_IDS = ("HCP-001", "HCP-002", "HCP-005", "HCP-006", "HCP-007", "HCP-008")
 MAX_MANIFEST_BYTES = 512_000
@@ -212,8 +214,41 @@ def grader_bundle(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def messages_for(task: dict[str, Any], base_source: str) -> list[dict[str, str]]:
+def messages_for(
+    task: dict[str, Any],
+    base_source: str,
+    *,
+    schema_version: str = SCHEMA_VERSION,
+) -> list[dict[str, str]]:
     """Return the complete model-visible packet; no proof/fix/grader fields enter it."""
+    if schema_version == PATCH_WIRE_SCHEMA_VERSION:
+        path = task["base"]["repair_path"]
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "Repair the supplied Python file. Return exactly one raw unified diff. "
+                    "Do not return JSON, markdown fences, commentary, or any text before or "
+                    "after the diff."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Task: {task['title']}\n"
+                    f"Required behavior: {task['defect_contract']}\n"
+                    f"Only this file may change: {path}\n\n"
+                    "Produce a minimal unified diff against the exact file below. The first "
+                    f"line must be `diff --git a/{path} b/{path}` followed by exact "
+                    f"`--- a/{path}` and `+++ b/{path}` headers, each on its own line. "
+                    "Use valid @@ old/new line-count hunks. End every line, including the "
+                    "last line, with a real newline (LF). Return the diff bytes only.\n\n"
+                    f"Current file:\n{base_source}"
+                ),
+            },
+        ]
+    if schema_version != SCHEMA_VERSION:
+        raise ManifestError("unsupported historical repair response contract")
     return [
         {
             "role": "system",
@@ -240,8 +275,9 @@ def messages_for(task: dict[str, Any], base_source: str) -> list[dict[str, str]]
 
 def validate_manifest(doc: Any) -> None:
     manifest = _keys(doc, _TOP_KEYS, "manifest")
-    if manifest["schema_version"] != SCHEMA_VERSION:
-        raise ManifestError(f"schema_version must be {SCHEMA_VERSION!r}")
+    schema_version = manifest["schema_version"]
+    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+        raise ManifestError("schema_version is not a supported historical repair contract")
     _text(manifest["suite_id"], "suite_id", maximum=120)
     _text(manifest["description"], "description", maximum=500)
     if manifest["publication_class"] != PUBLICATION_CLASS:
@@ -267,8 +303,20 @@ def validate_manifest(doc: Any) -> None:
     arm = _keys(manifest["arm"], _ARM_KEYS, "arm")
     for key in ("id", "label", "backend", "model", "profile"):
         _text(arm[key], f"arm.{key}", maximum=160)
-    if arm["id"] != "gemma_coding_precise" or arm["backend"] != "vllm-gemma" or arm["model"] != "gemma-4-26b-a4b" or arm["profile"] != "coding_precise":
-        raise ManifestError("arm must remain the preregistered resident Gemma baseline")
+    expected_arm_id = (
+        "gemma_patch_native"
+        if schema_version == PATCH_WIRE_SCHEMA_VERSION
+        else "gemma_coding_precise"
+    )
+    if (
+        arm["id"] != expected_arm_id
+        or arm["backend"] != "vllm-gemma"
+        or arm["model"] != "gemma-4-26b-a4b"
+        or arm["profile"] != "coding_precise"
+    ):
+        raise ManifestError(
+            "arm must match the preregistered response-contract treatment"
+        )
     if isinstance(arm["seed"], bool) or not isinstance(arm["seed"], int):
         raise ManifestError("arm.seed must be an integer")
     policy = _keys(arm["expected_policy"], {"temperature", "top_p", "reasoning_effort"}, "arm.expected_policy")
@@ -389,7 +437,15 @@ def validate_manifest(doc: Any) -> None:
         "arm": sha256_json(arm),
         "tasks": {task["id"]: sha256_json(task) for task in tasks},
         "inputs": {
-            task["id"]: sha256_json(messages_for(task, git_blob(task["base"]["commit"], task["base"]["repair_path"]).decode("utf-8")))
+            task["id"]: sha256_json(
+                messages_for(
+                    task,
+                    git_blob(
+                        task["base"]["commit"], task["base"]["repair_path"]
+                    ).decode("utf-8"),
+                    schema_version=schema_version,
+                )
+            )
             for task in tasks
         },
         "graders": {task["id"]: sha256_json(grader_bundle(task)) for task in tasks},
@@ -435,7 +491,7 @@ def plan_dict(manifest: dict[str, Any]) -> dict[str, Any]:
         for task in tasks
     ]
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": manifest["schema_version"],
         "suite_id": manifest["suite_id"],
         "manifest_path": manifest["_path"],
         "manifest_sha256": manifest["_raw_sha256"],
@@ -461,9 +517,11 @@ def plan_dict(manifest: dict[str, Any]) -> dict[str, Any]:
 __all__ = [
     "DEFAULT_MANIFEST",
     "EXPECTED_TASK_IDS",
+    "PATCH_WIRE_SCHEMA_VERSION",
     "PUBLICATION_CLASS",
     "REPO_ROOT",
     "SCHEMA_VERSION",
+    "SUPPORTED_SCHEMA_VERSIONS",
     "ManifestError",
     "canonical_json",
     "git_blob",

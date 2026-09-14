@@ -46,6 +46,7 @@ TRIALS = {
     "experiments/diversity_selection_v1_2026-09-14.json": ("diversity", 880),
     "experiments/weekly_role_effort_v1_2026-09-14.json": ("role_effort", 1660),
     "experiments/weekly_historical_coding_panel_v2_2026-09-14.json": ("historical_repair", 1050),
+    "experiments/weekly_historical_coding_patch_wire_v1_2026-09-14.json": ("historical_repair", 1050),
 }
 CONTEXT_MANIFEST = "experiments/weekly_context_capability_v1_2026-09-14.json"
 TRIAL_MODULES = {

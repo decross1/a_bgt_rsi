@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -24,6 +25,7 @@ from typing import Any
 
 from .manifest import (
     DEFAULT_MANIFEST,
+    PATCH_WIRE_SCHEMA_VERSION,
     REPO_ROOT,
     ManifestError,
     canonical_json,
@@ -107,6 +109,76 @@ def _strict_patch_object(value: Any, expected_path: str) -> tuple[dict[str, str]
     if not isinstance(parsed.get("patch"), str):
         return None, "completion_patch_not_text"
     return {"path": parsed["path"], "patch": parsed["patch"]}, None
+
+
+def _strict_raw_patch(
+    value: Any, expected_path: str,
+) -> tuple[dict[str, str] | None, str | None]:
+    """Accept the completion itself as the patch without stripping or salvage."""
+    if not isinstance(value, str):
+        return None, "completion_not_text"
+    lines = value.splitlines(keepends=True)
+    expected_first_line = f"diff --git a/{expected_path} b/{expected_path}\n"
+    if not lines or lines[0] != expected_first_line or any(
+        not line.endswith("\n") or "\r" in line for line in lines
+    ):
+        return None, "completion_not_raw_diff"
+
+    cursor = 1
+    if cursor < len(lines) and lines[cursor].startswith("index "):
+        if re.fullmatch(
+            r"index [0-9a-f]+\.\.[0-9a-f]+(?: [0-7]{6})?\n",
+            lines[cursor],
+        ) is None:
+            return None, "completion_not_raw_diff"
+        cursor += 1
+    expected_old = f"--- a/{expected_path}\n"
+    expected_new = f"+++ b/{expected_path}\n"
+    if lines[cursor : cursor + 2] != [expected_old, expected_new]:
+        return None, "completion_not_raw_diff"
+    cursor += 2
+
+    hunk_header = re.compile(
+        r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*|)\n"
+    )
+    hunk_count = 0
+    while cursor < len(lines):
+        match = hunk_header.fullmatch(lines[cursor])
+        if match is None:
+            return None, "completion_not_raw_diff"
+        hunk_count += 1
+        expected_source = int(match.group(2) or 1)
+        expected_target = int(match.group(4) or 1)
+        source_count = target_count = 0
+        cursor += 1
+        previous_was_body = False
+        while cursor < len(lines) and not lines[cursor].startswith("@@ "):
+            line = lines[cursor]
+            if line == "\\ No newline at end of file\n":
+                if not previous_was_body:
+                    return None, "completion_not_raw_diff"
+                previous_was_body = False
+                cursor += 1
+                continue
+            if not line or line[0] not in {" ", "+", "-"}:
+                return None, "completion_not_raw_diff"
+            source_count += line[0] in {" ", "-"}
+            target_count += line[0] in {" ", "+"}
+            previous_was_body = True
+            cursor += 1
+        if source_count != expected_source or target_count != expected_target:
+            return None, "completion_not_raw_diff"
+    if hunk_count == 0:
+        return None, "completion_not_raw_diff"
+    return {"path": expected_path, "patch": value}, None
+
+
+def _parse_patch_completion(
+    value: Any, expected_path: str, schema_version: str,
+) -> tuple[dict[str, str] | None, str | None]:
+    if schema_version == PATCH_WIRE_SCHEMA_VERSION:
+        return _strict_raw_patch(value, expected_path)
+    return _strict_patch_object(value, expected_path)
 
 
 def _runtime_identity(
@@ -286,7 +358,9 @@ def run_experiment(
             "request_timeout_s": timeout,
         }
         base_source = git_blob(task["base"]["commit"], task["base"]["repair_path"]).decode("utf-8")
-        messages = messages_for(task, base_source)
+        messages = messages_for(
+            task, base_source, schema_version=manifest["schema_version"]
+        )
         raw = {
             **base, "status": "not_run_budget", "request_id": None, "completion": None,
             "completion_sha256": None, "completion_bytes": None,
@@ -335,9 +409,10 @@ def run_experiment(
             "creditable_success": False,
         }
         if raw["status"] == "returned":
-            payload, parse_error = _strict_patch_object(
+            payload, parse_error = _parse_patch_completion(
                 None if raw["completion_omitted_over_limit"] else raw["completion"],
                 task["base"]["repair_path"],
+                manifest["schema_version"],
             )
             if raw["completion_omitted_over_limit"]:
                 parse_error = "completion_output_limit"
@@ -472,6 +547,7 @@ if __name__ == "__main__":
 
 
 __all__ = [
-    "EXECUTION_SOURCE_FILES", "RUN_SCHEMA_VERSION", "_runtime_identity", "_strict_patch_object",
-    "_summary", "main", "run_experiment",
+    "EXECUTION_SOURCE_FILES", "RUN_SCHEMA_VERSION", "_parse_patch_completion",
+    "_runtime_identity", "_strict_patch_object", "_strict_raw_patch", "_summary",
+    "main", "run_experiment",
 ]

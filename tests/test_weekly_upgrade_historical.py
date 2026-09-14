@@ -13,6 +13,7 @@ import pytest
 from bench.weekly_upgrade_historical.manifest import (
     DEFAULT_MANIFEST,
     EXPECTED_TASK_IDS,
+    PATCH_WIRE_SCHEMA_VERSION,
     REPO_ROOT,
     ManifestError,
     git_blob,
@@ -24,6 +25,7 @@ from bench.weekly_upgrade_historical.receipt import validate_historical_receipt
 from bench.weekly_upgrade_historical.runner import (
     EXECUTION_SOURCE_FILES,
     _strict_patch_object,
+    _strict_raw_patch,
     run_experiment,
 )
 from bench.weekly_upgrade_historical.sandbox import (
@@ -33,6 +35,12 @@ from bench.weekly_upgrade_historical.sandbox import (
     install_grader,
     materialize_workspace,
     run_grader,
+)
+
+PATCH_WIRE_MANIFEST = (
+    REPO_ROOT
+    / "experiments"
+    / "weekly_historical_coding_patch_wire_v1_2026-09-14.json"
 )
 
 
@@ -85,6 +93,29 @@ def test_model_packet_excludes_proof_fix_and_grader_material():
         assert messages[1]["content"].endswith(base)
 
 
+def test_patch_wire_manifest_changes_only_scaffold_and_arm_contract():
+    baseline = load_manifest()
+    native = load_manifest(PATCH_WIRE_MANIFEST)
+    assert native["schema_version"] == PATCH_WIRE_SCHEMA_VERSION
+    assert plan_dict(native)["arm_ids"] == ["gemma_patch_native"]
+    assert native["tasks"] == baseline["tasks"]
+    assert native["resource_limits"] == baseline["resource_limits"]
+    assert native["sandbox_runtime"] == baseline["sandbox_runtime"]
+    assert native["source_proof"] == baseline["source_proof"]
+    assert native["frozen_hashes"]["tasks"] == baseline["frozen_hashes"]["tasks"]
+    assert native["frozen_hashes"]["graders"] == baseline["frozen_hashes"]["graders"]
+    assert native["frozen_hashes"]["inputs"] != baseline["frozen_hashes"]["inputs"]
+    assert native["frozen_hashes"]["arm"] != baseline["frozen_hashes"]["arm"]
+
+    task = native["tasks"][0]
+    base = git_blob(task["base"]["commit"], task["base"]["repair_path"]).decode()
+    packet = messages_for(task, base, schema_version=native["schema_version"])
+    assert "Return exactly one raw unified diff" in packet[0]["content"]
+    assert "Do not return JSON" in packet[0]["content"]
+    assert packet[1]["content"].endswith(base)
+    assert task["grader"]["source_path"] not in json.dumps(packet)
+
+
 def test_manifest_rejects_unknown_fields_and_tampered_inputs(tmp_path):
     raw = json.loads(DEFAULT_MANIFEST.read_text())
     raw["unauthorized"] = True
@@ -105,6 +136,38 @@ def test_strict_patch_schema_and_path_boundary():
     assert _strict_patch_object("not-json", allowed)[1] == "completion_not_strict_json"
     assert _strict_patch_object('{"path":"../escape","patch":"x"}', allowed)[1] == "completion_path"
     assert _strict_patch_object('{"path":"agent_wrapper/wrapper.py","patch":"x","extra":1}', allowed)[1] == "completion_schema"
+
+
+def test_strict_raw_patch_accepts_only_an_unwrapped_exact_first_header():
+    allowed = "agent_wrapper/wrapper.py"
+    patch = (
+        "diff --git a/agent_wrapper/wrapper.py b/agent_wrapper/wrapper.py\n"
+        "--- a/agent_wrapper/wrapper.py\n"
+        "+++ b/agent_wrapper/wrapper.py\n"
+        "@@ -1 +1 @@\n-old\n+new\n"
+    )
+    assert _strict_raw_patch(patch, allowed) == (
+        {"path": allowed, "patch": patch},
+        None,
+    )
+    assert _strict_raw_patch(f"```diff\n{patch}```", allowed)[1] == (
+        "completion_not_raw_diff"
+    )
+    assert _strict_raw_patch("Here is the fix:\n" + patch, allowed)[1] == (
+        "completion_not_raw_diff"
+    )
+    assert _strict_raw_patch(json.dumps({"path": allowed, "patch": patch}), allowed)[1] == (
+        "completion_not_raw_diff"
+    )
+    assert _strict_raw_patch(patch + "Thanks\n", allowed)[1] == (
+        "completion_not_raw_diff"
+    )
+    assert _strict_raw_patch(patch + "```\n", allowed)[1] == (
+        "completion_not_raw_diff"
+    )
+    assert _strict_raw_patch(patch.rstrip("\n"), allowed)[1] == (
+        "completion_not_raw_diff"
+    )
 
 
 def test_patch_application_allows_only_the_registered_file(tmp_path):
@@ -238,10 +301,15 @@ class _FakeInvoke:
 
     def __call__(self, messages, **kwargs):
         task = next(self.tasks)
-        completion = json.dumps({
-            "path": task["base"]["repair_path"],
-            "patch": _known_fix_patch(task),
-        })
+        patch = _known_fix_patch(task)
+        completion = (
+            patch
+            if self.arm["id"] == "gemma_patch_native"
+            else json.dumps({
+                "path": task["base"]["repair_path"],
+                "patch": patch,
+            })
+        )
         request_id = f"request-{task['id']}"
         record = {
             "request_id": request_id, "prompt_messages": messages,
@@ -350,6 +418,46 @@ def test_runner_and_receipt_bind_scores_to_patch_and_grader_hashes(tmp_path):
             validate_activity=lambda rows, calls, run_id: None,
             finite_nonnegative=_finite,
         )
+
+
+def test_patch_wire_runner_reuses_tasks_sandbox_and_receipt_without_json(
+    tmp_path,
+):
+    manifest = load_manifest(PATCH_WIRE_MANIFEST)
+    output = tmp_path / "patch-wire-evaluation"
+    artifact = run_experiment(
+        manifest,
+        output_dir=output,
+        runtime_budget_s=1020,
+        invoke=_FakeInvoke(manifest),
+        grader_fn=_fake_grade,
+    )
+
+    assert artifact["status"] == "complete"
+    assert artifact["summary"]["successful_repairs"] == 6
+    assert all(row["patch_status"] == "valid" for row in artifact["outcomes"])
+    raw = _json_lines(output)("raw_attempts.jsonl")
+    assert all(row["completion"].startswith("diff --git ") for row in raw)
+    assert all(not row["completion"].startswith("{") for row in raw)
+    assert validate_historical_receipt(
+        _controller_plan(manifest),
+        artifact,
+        output / "manifest.snapshot.json",
+        regular=_regular(output),
+        json_lines=_json_lines(output),
+        validate_calls=lambda rows, run_id: None,
+        validate_activity=lambda rows, calls, run_id: None,
+        finite_nonnegative=_finite,
+    ) is True
+
+
+def test_patch_wire_manifest_rejects_json_arm_identity(tmp_path):
+    raw = json.loads(PATCH_WIRE_MANIFEST.read_text())
+    raw["arm"] = json.loads(DEFAULT_MANIFEST.read_text())["arm"]
+    path = tmp_path / "wrong-arm.json"
+    path.write_text(json.dumps(raw))
+    with pytest.raises(ManifestError, match="response-contract treatment"):
+        load_manifest(path)
 
 
 def test_runner_counts_invalid_output_as_failure_without_invoking_grader(tmp_path):

@@ -845,6 +845,7 @@ def test_operational_history_binds_sanitized_evaluation_receipt(tmp_path, monkey
             "trial_id": trial_id, "week_id": "2026-W38",
             "manifest_path": "experiments/topic_scope_repair_2026-09-14.json",
             "kind": "topic_scope",
+            "arm_ids": ["control", "candidate"], "declared_attempts": 80,
         },
         "output": str(output),
         "result": result,
