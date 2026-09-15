@@ -122,9 +122,12 @@ def build_plan() -> tuple[dict[str, Any], dict[str, dict]]:
             for name in (
                 'bench/flash_next_ab/lab_eval_context.py',
                 'bench/flash_next_ab/lab_eval_context_packs.py',
+                'bench/flash_next_ab/lab_eval_plan.py',
+                'bench/flash_next_ab/lab_eval_runner.py',
                 'bench/flash_next_ab/followon_context.py',
                 'bench/flash_next_ab/followon_context_packs.py',
                 'bench/flash_next_ab/harness.py',
+                'bench/flash_next_ab/manifest.py',
                 'bench/flash_next_ab/transport.py',
                 'bench/flash_next_ab/private_evidence.py',
                 'bench/weekly_upgrade_eval/runner.py',
