@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from pathlib import Path
 
 import pytest
 
-from bench.flash_next_ab import adapters, manifest, transport
+from bench.flash_next_ab import adapters, harness, manifest, transport
 from bench.flash_next_ab import lab_eval_plan as plan_mod
 from bench.flash_next_ab import lab_eval_replay as replay
 from bench.flash_next_ab import lab_eval_runner as runner
@@ -40,7 +41,7 @@ class CancelAfterFirst:
         return self.stopped
 
 
-def _fake_complete(cancel: CancelAfterFirst):
+def _fake_complete(cancel: CancelAfterFirst, *, stop_after_first: bool = True):
     def invoke(endpoint, messages, *, policy, max_tokens, timeout_s, seed,
                tools, cancel_event):
         assert cancel_event is cancel
@@ -62,7 +63,8 @@ def _fake_complete(cancel: CancelAfterFirst):
         response['response_stream_sha256'] = hashlib.sha256(raw).hexdigest()
         response['private_evidence'] = transport._private_response_evidence(
             accumulator, raw, response_bytes=len(raw))
-        cancel.stopped = True
+        if stop_after_first:
+            cancel.stopped = True
         return response
     return invoke
 
@@ -127,6 +129,45 @@ def test_role_effort_keeps_actual_medium_to_xhigh_retry_on_both_arms():
     assert all(cell.calls[0].policy_id == 'critic_current' for cell in critics)
     assert all(plan['call_routes']['resident'][cell.cell_id] == ['resident_qwen']
                for cell in critics)
+
+
+def test_adaptive_effort_second_call_is_privately_bound_and_replays(tmp_path: Path):
+    plan, cells = plan_mod.build_plan()
+    cell = next(cell for cell in cells.values() if cell.family == 'role_effort'
+                and cell.condition == 'adaptive' and cell.calls[0].role == 'evidence')
+    cancel = CancelAfterFirst()
+    output = tmp_path / 'private-adaptive'
+    output.mkdir(mode=0o700)
+    ordinal = 0
+
+    def persist(source_cell, evidence):
+        nonlocal ordinal
+        descriptor = harness._persist_private_call(
+            output, ordinal=ordinal,
+            evidence={'schema_version': evidence.pop('schema_version'),
+                      'run_id': 'adaptive-private-test', 'cohort': 'resident',
+                      'cell_id': source_cell.cell_id, **evidence},
+        )
+        ordinal += 1
+        return descriptor
+
+    outcome = harness._execute_outcome(
+        cell, 'resident', arm=runner._arm_for_cell(plan, 'resident', cell.cell_id, cell),
+        deadline=time.monotonic() + 120,
+        invoke_fn=_fake_complete(cancel, stop_after_first=False),
+        cancel_event=cancel, monotonic=time.monotonic, persist_evidence=persist,
+    )
+    assert [call['policy_id'] for call in outcome['calls']] == [
+        'critic_medium', 'critic_current',
+    ]
+    assert outcome['status'] == 'returned'
+    metadata = replay._private_calls(outcome, output)
+    assert metadata[1]['request']['resolved_policy']['reasoning_effort'] == 'xhigh'
+    graded, transformations = replay._grade(
+        cell, outcome, metadata, plan=plan, cohort='resident', normalize_diff=False,
+    )
+    assert transformations == []
+    assert graded.passed == outcome['passed']
 
 
 def test_frozen_plan_rehashes_sources_and_rejects_tamper(tmp_path: Path):
