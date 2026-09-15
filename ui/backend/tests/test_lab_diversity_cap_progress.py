@@ -1,6 +1,7 @@
 """Closed cap results must keep literal source and forty-call denominators."""
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -106,6 +107,50 @@ def test_incomplete_terminal_is_distinct_from_admission_pending(tmp_path, monkey
     (tmp_path / "supervision.json").write_text(json.dumps({"window_sha256": cap.WINDOW_SHA,
                                                              "returncode": 1}))
     assert cap._terminal_status() == "incomplete_terminal"
+
+
+def test_only_sha_bound_pre_evaluation_host_paging_abort_gets_closed_code(
+        tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(cap, "OUTPUT", tmp_path)
+    restoration = {"status": "verified", "errors": [], "diagnostic_errors": [],
+                   "sentinel_retained": False}
+    result = {"schema": "lab-model-window-result/v1",
+              "window_id": "qfn-ab-lab-diversity-cap-20260915-a",
+              "window_sha256": cap.WINDOW_SHA, "status": "aborted",
+              "evaluation_run_sha256": None, "error": "synthetic private failure detail",
+              "restoration": restoration}
+    state = {"window_sha256": cap.WINDOW_SHA, "phase": "aborted",
+             "restoration": restoration}
+    supervisor = {"schema": "lab-model-supervision/v1",
+                  "window_sha256": cap.WINDOW_SHA, "returncode": 1,
+                  "interrupted": None, "terminated_at_cutoff": False,
+                  "emergency_restoration": None}
+    memory = [{"schema": "qwen-flash-next-memory-sample/v3",
+               "monitor_phase": "load", "paging_gate": "startup",
+               "host_swap_5s_bytes": 550_780_928,
+               "candidate": {"armed": True, "oom_killed": False,
+                             "cgroup": {"memory_swap_current_bytes": 0,
+                                        "memory_swap_max_bytes": 0,
+                                        "memory_events_oom": 0,
+                                        "memory_events_oom_kill": 0}}}]
+    for name, value in (("result.json", result), ("state.json", state),
+                        ("supervision.json", supervisor)):
+        (tmp_path / name).write_text(json.dumps(value))
+    (tmp_path / "memory.jsonl").write_text(json.dumps(memory[0]) + "\n")
+    for key, name in (("FAILED_RESULT_SHA", "result.json"),
+                      ("FAILED_STATE_SHA", "state.json"),
+                      ("FAILED_SUPERVISION_SHA", "supervision.json"),
+                      ("FAILED_MEMORY_SHA", "memory.jsonl")):
+        monkeypatch.setattr(cap, key,
+                            hashlib.sha256((tmp_path / name).read_bytes()).hexdigest())
+    assert cap._known_startup_failure() == "startup_host_swap_5s"
+    (tmp_path / "evaluation").mkdir()
+    (tmp_path / "evaluation/run.json").write_text("{}")
+    assert cap._known_startup_failure() is None
+    (tmp_path / "evaluation/run.json").unlink()
+    (tmp_path / "memory.jsonl").write_text(json.dumps({**memory[0],
+        "host_swap_5s_bytes": 1}) + "\n")
+    assert cap._known_startup_failure() is None
 
 
 def test_cap_count_relations_and_nonfinite_time_rejected() -> None:

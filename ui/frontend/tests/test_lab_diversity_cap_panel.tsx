@@ -9,6 +9,7 @@ const base = (status: string, results: unknown = null) => ({
   window_id: "qfn-ab-lab-diversity-cap-20260915-a",
   plan_raw_sha256: sha("a"), window_raw_sha256: sha("b"),
   replay_raw_sha256: results === null ? null : sha("c"), results,
+  failure_reason_code: null,
   original_primary_scores_changed: false, private_content_exported: false,
   promotion_authorized: false, comparison_eligible: false,
 });
@@ -42,6 +43,16 @@ describe("Mia diversity cap panel", () => {
     expect(screen.getByText(/closed incomplete or failed/i)).toBeInTheDocument();
     rerender(<LabDiversityCapPanel data={base("awaiting_admission")} />);
     expect(screen.getByText(/awaiting independent raw-response and grade replay/i)).toBeInTheDocument();
+  });
+
+  it("names only a bound startup host-paging stop without presenting grades", () => {
+    const { rerender } = render(<LabDiversityCapPanel data={{ ...base("incomplete_terminal"),
+      failure_reason_code: "startup_host_swap_5s" }} />);
+    expect(screen.getByText(/Startup host-paging guard stopped this attempt before evaluation; no cap-quality result/i)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /Mia diversity cap results/i })).not.toBeInTheDocument();
+    rerender(<LabDiversityCapPanel data={{ ...base("incomplete_terminal"),
+      failure_reason_code: "candidate_oom" }} />);
+    expect(screen.getByText(/Cap observation unavailable; all diagnostic counts are withheld/i)).toBeInTheDocument();
   });
 
   it("shows admitted objective and protocol counts with recorded timing provenance", () => {
