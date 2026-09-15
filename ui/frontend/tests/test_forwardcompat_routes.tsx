@@ -352,6 +352,7 @@ vi.mock("../src/api/http", () => ({
     resident_services_expected: "unknown", nara_service_expected: "unknown",
     run_id: null, phase: null, source_error: null,
   }),
+  getResearchOpsStatus: vi.fn().mockResolvedValue(null),
   getWorkloadHint: vi.fn().mockResolvedValue({ regime: "idle" }),
   getCoordinatorCycles: vi.fn().mockResolvedValue({ cycles: D.FC_CYCLES }),
   // HUMAN TODO endpoint: quiet empty-queue default.
