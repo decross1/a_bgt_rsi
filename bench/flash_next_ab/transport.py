@@ -33,6 +33,56 @@ class TransportCancelled(TransportError):
     """The caller canceled an in-flight local evaluation request."""
 
 
+def _private_response_evidence(
+    accumulator,
+    raw_stream: bytes,
+    *,
+    response_bytes: int,
+) -> dict[str, Any]:
+    """Capture bounded private channels even when the stream is incomplete.
+
+    The public run receipt retains only hashes and protocol metadata.  The
+    harness writes this object and ``raw_stream`` below a private output
+    directory so malformed JSON, partial reasoning, and tool fragments remain
+    available for an independent audit.
+    """
+    return {
+        "content": "".join(accumulator.content),
+        "reasoning_content": "".join(accumulator.reasoning),
+        "tool_calls": [accumulator.tools[key] for key in sorted(accumulator.tools)],
+        "response_id": accumulator.response_id,
+        "response_model": (
+            accumulator.expected_model if accumulator.has_model else None
+        ),
+        "finish_reason": accumulator.finish_reason,
+        "usage": accumulator.usage,
+        "stream_events": accumulator.events,
+        "response_bytes": response_bytes,
+        "response_stream_sha256": hashlib.sha256(raw_stream).hexdigest(),
+        "raw_response_stream": raw_stream,
+    }
+
+
+def _attach_private_evidence(
+    exc: BaseException,
+    accumulator,
+    raw_stream: bytes,
+    *,
+    response_bytes: int,
+) -> BaseException:
+    # Built-in timeout exceptions accept instance attributes.  Keep this
+    # best-effort because an injected transport may supply an exotic exception.
+    try:
+        exc.private_evidence = _private_response_evidence(  # type: ignore[attr-defined]
+            accumulator,
+            raw_stream,
+            response_bytes=response_bytes,
+        )
+    except (AttributeError, TypeError):
+        pass
+    return exc
+
+
 @dataclass(frozen=True)
 class LocalEndpoint:
     name: str
@@ -316,6 +366,7 @@ def complete(
     accumulator = StreamAccumulator(endpoint.served_model)
     first_token = None
     digest = hashlib.sha256()
+    raw_stream = bytearray()
     total = 0
     buffer = b""
     stop_watcher = threading.Event()
@@ -377,10 +428,15 @@ def complete(
                         if generated and first_token is None:
                             first_token = time.monotonic() - start
                 break
-            total += len(chunk)
-            if total > MAX_RESPONSE_BYTES:
+            if total + len(chunk) > MAX_RESPONSE_BYTES:
+                remaining = MAX_RESPONSE_BYTES - total
+                digest.update(chunk[:remaining])
+                raw_stream.extend(chunk[:remaining])
+                total = len(raw_stream)
                 raise TransportError("stream exceeded response byte ceiling")
+            total += len(chunk)
             digest.update(chunk)
+            raw_stream.extend(chunk)
             buffer += chunk
             while b"\n" in buffer:
                 line, buffer = buffer.split(b"\n", 1)
@@ -394,21 +450,33 @@ def complete(
                 raise TransportError("bytes after terminal stream marker")
         _raise_if_cancelled(cancel_event, cancellation_observed)
         result = accumulator.result()
-    except TransportCancelled:
-        raise
-    except TransportError:
-        raise
+    except TransportCancelled as exc:
+        raise _attach_private_evidence(
+            exc, accumulator, bytes(raw_stream), response_bytes=total
+        )
+    except TransportError as exc:
+        raise _attach_private_evidence(
+            exc, accumulator, bytes(raw_stream), response_bytes=total
+        )
     except TimeoutError as exc:
         if _is_cancelled(cancel_event) or cancellation_observed.is_set():
-            raise TransportCancelled("model request canceled") from exc
-        raise TimeoutError("model request exceeded its wall-clock deadline") from exc
+            normalized = TransportCancelled("model request canceled")
+        else:
+            normalized = TimeoutError("model request exceeded its wall-clock deadline")
+        raise _attach_private_evidence(
+            normalized, accumulator, bytes(raw_stream), response_bytes=total
+        ) from exc
     except (OSError, http.client.HTTPException) as exc:
         if _is_cancelled(cancel_event) or cancellation_observed.is_set():
-            raise TransportCancelled("model request canceled") from exc
-        if time.monotonic() >= deadline:
-            raise TimeoutError("model request exceeded its wall-clock deadline") from exc
-        raise TransportError(
-            f"local model transport failed: {type(exc).__name__}"
+            normalized = TransportCancelled("model request canceled")
+        elif time.monotonic() >= deadline:
+            normalized = TimeoutError("model request exceeded its wall-clock deadline")
+        else:
+            normalized = TransportError(
+                f"local model transport failed: {type(exc).__name__}"
+            )
+        raise _attach_private_evidence(
+            normalized, accumulator, bytes(raw_stream), response_bytes=total
         ) from exc
     finally:
         stop_watcher.set()
@@ -422,5 +490,8 @@ def complete(
                    "request_sha256": hashlib.sha256(raw).hexdigest(),
                    "response_stream_sha256": digest.hexdigest(),
                    "endpoint": endpoint.__dict__, "resolved_request": body,
-                   "response_bytes": total, "retries": 0})
+                   "response_bytes": total, "retries": 0,
+                   "private_evidence": _private_response_evidence(
+                       accumulator, bytes(raw_stream), response_bytes=total,
+                   )})
     return result

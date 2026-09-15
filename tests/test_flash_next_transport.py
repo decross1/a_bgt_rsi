@@ -1,7 +1,9 @@
 """Model identity, separated channels, termination and explicit policy checks."""
+import hashlib
 import json
 import threading
 import time
+from itertools import pairwise
 
 import pytest
 
@@ -294,6 +296,21 @@ def test_buffered_bytes_after_done_are_rejected(monkeypatch):
         invoke()
 
 
+def test_malformed_stream_retains_bounded_private_partial_evidence(monkeypatch):
+    chunks = [
+        b"data: " + frame({"content": "partial-output"}).encode() + b"\n\n",
+        b"data: {malformed-json}\n\n",
+    ]
+    install_connection(monkeypatch, FakeResponse(chunks))
+    with pytest.raises(TransportError, match="malformed") as caught:
+        invoke()
+    evidence = caught.value.private_evidence
+    assert evidence["content"] == "partial-output"
+    assert evidence["reasoning_content"] == ""
+    assert evidence["raw_response_stream"] == b"".join(chunks)
+    assert evidence["response_stream_sha256"] == hashlib.sha256(b"".join(chunks)).hexdigest()
+
+
 def test_absolute_deadline_is_reapplied_before_every_blocking_phase(monkeypatch):
     ticks = iter(i / 10 for i in range(30))
     response = FakeResponse(stream_bytes())
@@ -301,7 +318,7 @@ def test_absolute_deadline_is_reapplied_before_every_blocking_phase(monkeypatch)
     invoke(timeout_s=2)
     connection = holder["connection"]
     observed = [connection.initial_timeout, *connection.sock.timeouts]
-    assert all(later < earlier for earlier, later in zip(observed, observed[1:]))
+    assert all(later < earlier for earlier, later in pairwise(observed))
     assert connection.request_timeout < connection.initial_timeout
 
 

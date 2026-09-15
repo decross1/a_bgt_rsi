@@ -1,0 +1,601 @@
+import copy
+import hashlib
+import json
+import os
+import stat
+import threading
+import time
+from pathlib import Path
+
+import pytest
+
+from bench.flash_next_ab import qualification as q
+from bench.flash_next_ab.compare import summarize_pair, validate_run
+from bench.flash_next_ab.harness import (
+    HarnessError,
+    run_harness,
+    validate_flash_qualification_files,
+    validate_qualification_receipt,
+    validate_resident_qualification_files,
+)
+from bench.flash_next_ab.manifest import (
+    build_plan,
+    make_arm_receipt,
+    sha256_file,
+)
+from bench.flash_next_ab.transport import (
+    TransportCancelled,
+    canonical,
+    request_body,
+)
+
+
+def arms():
+    return [
+        make_arm_receipt(
+            "resident",
+            qualification_receipt_sha256="1" * 64,
+            artifact_sha256_by_endpoint={
+                "resident_gemma": "2" * 64,
+                "resident_qwen": "3" * 64,
+            },
+            runtime_sha256_by_endpoint={
+                "resident_gemma": "4" * 64,
+                "resident_qwen": "5" * 64,
+            },
+        ),
+        make_arm_receipt(
+            "flash",
+            qualification_receipt_sha256="6" * 64,
+            artifact_sha256_by_endpoint={"flash_next": "7" * 64},
+            runtime_sha256_by_endpoint={"flash_next": "8" * 64},
+        ),
+    ]
+
+
+def small_plan(count=1):
+    full, _ = build_plan(arms(), families=["objective"])
+    plan, _ = build_plan(
+        arms(),
+        families=["objective"],
+        cell_ids=full["declared_cells"][:count],
+    )
+    return plan
+
+
+def response(endpoint, messages, **kwargs):
+    body = request_body(
+        endpoint,
+        messages,
+        kwargs["policy"],
+        kwargs["max_tokens"],
+        kwargs["seed"],
+        kwargs["tools"],
+    )
+    stream = b"data: private fake response\n\n"
+    usage = {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11}
+    result = {
+        "request_sha256": hashlib.sha256(canonical(body)).hexdigest(),
+        "response_stream_sha256": hashlib.sha256(stream).hexdigest(),
+        "response_model": endpoint.served_model,
+        "response_id": f"response-{endpoint.name}",
+        "content": "{}",
+        "reasoning_content": "private-reasoning",
+        "tool_calls": [],
+        "usage": usage,
+        "finish_reason": "stop",
+    }
+    result["private_evidence"] = {
+        "content": result["content"],
+        "reasoning_content": result["reasoning_content"],
+        "tool_calls": result["tool_calls"],
+        "response_id": result["response_id"],
+        "response_model": result["response_model"],
+        "finish_reason": result["finish_reason"],
+        "usage": usage,
+        "stream_events": 1,
+        "response_bytes": len(stream),
+        "response_stream_sha256": result["response_stream_sha256"],
+        "raw_response_stream": stream,
+    }
+    return result
+
+
+def gate(_plan, _cohort):
+    return None
+
+
+def registered_contract():
+    return {
+        "schema": "qwen-flash-next-qualification/v1",
+        "contract_id": "qwen38-flash-next-c0-20260915",
+        "profile": "C0",
+        "image": {"id": q.IMAGE_ID, "architecture": "arm64"},
+        "model": {
+            "repository": q.MODEL_REPOSITORY,
+            "revision": q.MODEL_REVISION,
+            "host_path": str(q.MODEL_PATH),
+            "container_path": "/models/qwen",
+            "served_name": q.SERVED_MODEL,
+            "safetensors_total_bytes": q.MODEL_TOTAL_BYTES,
+            "tensor_payload_bytes": q.MODEL_TENSOR_BYTES,
+            "repository_total_bytes": q.MODEL_REPOSITORY_BYTES,
+            "artifact_sha256": q.model_artifact_sha256(),
+            "files": q.expected_model_files(),
+            "full_sha256_before_mutation": True,
+        },
+        "runtime": {
+            "container_name": q.CONTAINER_NAME,
+            "host_address": "127.0.0.1",
+            "host_port": 8012,
+            "container_port": 8000,
+            "compile_cache_path": str(q.COMPILE_CACHE),
+            "max_model_len": 16384,
+            "max_num_seqs": 1,
+            "gpu_memory_utilization": 0.75,
+            "kv_cache_memory_bytes": 1073741824,
+            "max_num_batched_tokens": 4096,
+            "kv_cache_dtype": "auto",
+            "mamba_ssm_cache_dtype": "float32",
+            "mtp_speculative_tokens": 0,
+            "prefix_caching": False,
+            "async_scheduling": False,
+            "qsa_exact_topk": True,
+        },
+        "safety": {
+            "resident_containers": [dict(row) for row in q.RESIDENTS],
+            "nara_service": q.NARA_SERVICE,
+            "min_mem_available_gib": 30,
+            "invocation_deadline_seconds": 3600,
+            "readiness_deadline_seconds": 1200,
+            "restoration_reserve_seconds": 600,
+            "memory_poll_seconds": 1,
+            "probe_timeout_seconds": 120,
+        },
+        "accounting": {
+            "class": "uncapped-local-model-research",
+            "weekly_budget_debit": False,
+            "paid_api_allowed": False,
+            "journal_path": str(q.RESEARCH_LEDGER),
+        },
+        "probe_set": "flash-next-minimal-v1",
+    }
+
+
+def write_json(path, value):
+    path.write_text(json.dumps(value, indent=2) + "\n")
+
+
+def passing_flash_receipts(tmp_path):
+    contract = registered_contract()
+    contract_path = tmp_path / "contract.snapshot.json"
+    write_json(contract_path, contract)
+    raw_contract_path = tmp_path / "launch-contract.raw.json"
+    raw_contract_path.write_text(
+        json.dumps(contract, sort_keys=False, separators=(",", ":")) + "\n"
+    )
+    contract_sha256 = sha256_file(raw_contract_path)
+    launch = q.launch_argv()
+    qualification_plan = {
+        "schema": "qwen-flash-next-qualification-plan/v1",
+        "contract_id": contract["contract_id"],
+        "contract_sha256": contract_sha256,
+        "profile": "C0",
+        "image_id": q.IMAGE_ID,
+        "model_artifact_sha256": q.model_artifact_sha256(),
+        "served_model": q.SERVED_MODEL,
+        "docker_create_argv": launch,
+        "docker_create_argv_sha256": q.sha256(launch),
+        "probe_set": contract["probe_set"],
+        "min_mem_available_gib": 30,
+        "weekly_budget_debit": False,
+        "paid_api_allowed": False,
+        "production_change_authorized": False,
+    }
+    plan_path = tmp_path / "plan.json"
+    write_json(plan_path, qualification_plan)
+    endpoint = {
+        "name": "flash_next",
+        "served_model": q.SERVED_MODEL,
+        "artifact_sha256": q.model_artifact_sha256(),
+    }
+    text_rows = [
+        {
+            "probe_id": "exact_literal",
+            "content": "FLASH_NEXT_OK_17",
+            "tool_calls": [],
+            "finish_reason": "stop",
+            "response_model": q.SERVED_MODEL,
+            "endpoint": endpoint,
+        },
+        {
+            "probe_id": "exact_arithmetic",
+            "content": "703",
+            "tool_calls": [],
+            "finish_reason": "stop",
+            "response_model": q.SERVED_MODEL,
+            "endpoint": endpoint,
+        },
+        {
+            "probe_id": "exact_tool_call",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "record_probe",
+                        "arguments": json.dumps(
+                            {"label": "flash-next", "value": 703}
+                        ),
+                    }
+                }
+            ],
+            "finish_reason": "tool_calls",
+            "response_model": q.SERVED_MODEL,
+            "endpoint": endpoint,
+        },
+    ]
+    write_json(
+        tmp_path / "probes.json",
+        {"probe_set": contract["probe_set"], "results": text_rows},
+    )
+    write_json(
+        tmp_path / "model-verification.json",
+        {
+            "artifact_sha256": q.model_artifact_sha256(),
+            "full_sha256": True,
+            "safetensors_total_bytes": q.MODEL_TOTAL_BYTES,
+            "verified_files": q.expected_model_files(),
+        },
+    )
+    memory_rows = [
+        {
+            "observed_at": "one",
+            "mem_available_gib": 40.0,
+            "pswpout_pages": 10,
+            "pswpout_delta_pages": 0,
+        },
+        {
+            "observed_at": "two",
+            "mem_available_gib": 39.0,
+            "pswpout_pages": 10,
+            "pswpout_delta_pages": 0,
+        },
+    ]
+    (tmp_path / "memory.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in memory_rows)
+    )
+    result = {
+        "schema": "qwen-flash-next-qualification-result/v1",
+        "run_id": "qfn-c0-test",
+        "status": "passed",
+        "qualification_error": None,
+        "restoration": {
+            "status": "verified",
+            "errors": [],
+            "sentinel_retained": False,
+            "no_mutation_verified": False,
+        },
+        "contract_sha256": contract_sha256,
+        "plan_sha256": q.sha256(qualification_plan),
+        "model_artifact_sha256": q.model_artifact_sha256(),
+        "elapsed_seconds": 10.0,
+        "challenger_gpu_seconds": 5.0,
+        "all_gpu_research_seconds": 5.0,
+        "resident_downtime_seconds": 6.0,
+        "memory_samples": 2,
+        "min_mem_available_gib": 39.0,
+        "pswpout_initial_pages": 10,
+        "pswpout_final_pages": 10,
+        "pswpout_delta_pages": 0,
+        "probe_count": 3,
+        "weekly_budget_debit": False,
+        "paid_api_calls": 0,
+        "production_change_authorized": False,
+    }
+    receipt_path = tmp_path / "result.json"
+    write_json(receipt_path, result)
+    return receipt_path, plan_path, contract_path
+
+
+def test_run_receipt_passes_the_independent_comparator_contract(tmp_path):
+    plan = small_plan()
+    result = run_harness(
+        plan,
+        cohort="resident",
+        output_dir=tmp_path / "run",
+        runtime_budget_s=30,
+        qualification_gate=gate,
+        invoke_fn=response,
+        run_id="resident-smoke",
+    )
+    assert result["status"] == "complete"
+    assert list(validate_run(result, "resident")) == plan["declared_cells"]
+    assert result["outcomes"][0]["status"] == "returned"
+    assert result["outcomes"][0]["passed"] is False
+    assert result["outcomes"][0]["wall_s"] >= result["outcomes"][0]["calls"][0]["wall_s"]
+    assert (tmp_path / "run/run.json").is_file()
+    assert not (tmp_path / "run/checkpoint.json").exists()
+    evidence = result["outcomes"][0]["grade"]["details"]["_private_call_evidence"]
+    descriptor = evidence["artifacts"][0]
+    metadata_path = tmp_path / "run" / descriptor["metadata_path"]
+    metadata_raw = metadata_path.read_bytes()
+    metadata = json.loads(metadata_raw)
+    assert hashlib.sha256(metadata_raw).hexdigest() == descriptor["metadata_sha256"]
+    assert metadata["response"]["content"] == "{}"
+    assert metadata["response"]["reasoning_content"] == "private-reasoning"
+    assert metadata["request"]["messages"]
+    stream_path = tmp_path / "run" / descriptor["raw_stream"]["path"]
+    assert hashlib.sha256(stream_path.read_bytes()).hexdigest() == descriptor["raw_stream"]["sha256"]
+    assert stat.S_IMODE(metadata_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(metadata_path.parent.parent.stat().st_mode) == 0o700
+
+
+def test_gate_failure_precedes_filesystem_or_model_activity(tmp_path):
+    called = False
+
+    def invoke(*_args, **_kwargs):
+        nonlocal called
+        called = True
+
+    def refuse(_plan, _cohort):
+        raise HarnessError("qualification did not pass")
+
+    output = tmp_path / "never-created"
+    with pytest.raises(HarnessError, match="qualification"):
+        run_harness(
+            small_plan(),
+            cohort="flash",
+            output_dir=output,
+            runtime_budget_s=30,
+            qualification_gate=refuse,
+            invoke_fn=invoke,
+        )
+    assert called is False
+    assert not output.exists()
+
+
+def test_timeout_is_a_failure_inclusive_completed_cell(tmp_path):
+    attempts = 0
+
+    def timeout_then_return(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise TimeoutError("stalled")
+        return response(*args, **kwargs)
+
+    result = run_harness(
+        small_plan(count=2),
+        cohort="flash",
+        output_dir=tmp_path / "timeouts",
+        runtime_budget_s=30,
+        qualification_gate=gate,
+        invoke_fn=timeout_then_return,
+    )
+    assert result["status"] == "complete"
+    assert [row["status"] for row in result["outcomes"]] == ["timeout", "returned"]
+    assert result["outcomes"][0]["calls"][0]["request_sha256"] is not None
+    validate_run(result, "flash")
+
+
+def test_cancellation_aborts_and_emits_explicit_not_run_denominators(tmp_path):
+    cancel = threading.Event()
+
+    def cancelled(*_args, **_kwargs):
+        cancel.set()
+        raise TransportCancelled("owner cancellation")
+
+    result = run_harness(
+        small_plan(count=2),
+        cohort="resident",
+        output_dir=tmp_path / "cancelled",
+        runtime_budget_s=30,
+        qualification_gate=gate,
+        invoke_fn=cancelled,
+        cancel_event=cancel,
+    )
+    assert result["status"] == "aborted"
+    assert [row["status"] for row in result["outcomes"]] == ["cancelled", "not_run"]
+    assert result["outcomes"][1]["calls"] == []
+    assert result["outcomes"][1]["wall_s"] == 0
+    validate_run(result, "resident")
+
+
+def test_source_or_adapter_drift_refuses_before_output(tmp_path):
+    plan = small_plan()
+    changed = copy.deepcopy(plan)
+    cell_id = changed["declared_cells"][0]
+    changed["cell_receipts"][cell_id]["adapter"]["source_sha256"] = "f" * 64
+    adapter_id = changed["cell_receipts"][cell_id]["adapter"]["id"]
+    for adapter in changed["adapter_bundle"]:
+        if adapter["id"] == adapter_id:
+            adapter["source_sha256"] = "f" * 64
+    with pytest.raises(HarnessError, match="drift"):
+        run_harness(
+            changed,
+            cohort="flash",
+            output_dir=tmp_path / "drift",
+            runtime_budget_s=30,
+            qualification_gate=gate,
+            invoke_fn=response,
+        )
+    assert not (tmp_path / "drift").exists()
+
+
+def test_two_cohorts_share_one_plan_and_are_comparison_eligible(tmp_path):
+    plan = small_plan(count=2)
+    resident = run_harness(
+        plan,
+        cohort="resident",
+        output_dir=tmp_path / "resident",
+        runtime_budget_s=30,
+        qualification_gate=gate,
+        invoke_fn=response,
+        run_id="resident-run",
+    )
+    flash = run_harness(
+        plan,
+        cohort="flash",
+        output_dir=tmp_path / "flash",
+        runtime_budget_s=30,
+        qualification_gate=gate,
+        invoke_fn=response,
+        run_id="flash-run",
+    )
+    comparison = summarize_pair(resident, flash, bootstrap_samples=100)
+    assert comparison["comparison_eligible"] is True
+    assert comparison["promotion_authorized"] is False
+
+
+def test_passing_flash_qualification_is_crossbound_to_registered_arm(tmp_path):
+    receipt_path, qualification_plan_path, contract_path = passing_flash_receipts(
+        tmp_path
+    )
+    summary = validate_flash_qualification_files(
+        receipt_path,
+        qualification_plan_path,
+        contract_path,
+        require_passed=True,
+    )
+    flash = make_arm_receipt(
+        "flash",
+        qualification_receipt_sha256=summary["qualification_receipt_sha256"],
+        artifact_sha256_by_endpoint={
+            "flash_next": summary["model_artifact_sha256"]
+        },
+        runtime_sha256_by_endpoint={"flash_next": summary["runtime_sha256"]},
+    )
+    plan, _ = build_plan([arms()[0], flash], families=["context"])
+    assert (
+        validate_qualification_receipt(
+            plan,
+            "flash",
+            receipt_path=receipt_path,
+            qualification_plan_path=qualification_plan_path,
+            contract_snapshot_path=contract_path,
+        )["admission_eligible"]
+        is True
+    )
+
+
+def test_flash_admission_rejects_a_sub_30_gib_contract(tmp_path):
+    receipt_path, qualification_plan_path, contract_path = passing_flash_receipts(
+        tmp_path
+    )
+    contract = json.loads(contract_path.read_text())
+    contract["safety"]["min_mem_available_gib"] = 29
+    write_json(contract_path, contract)
+    raw_contract_path = tmp_path / "launch-contract.raw.json"
+    raw_contract_path.write_text(json.dumps(contract, separators=(",", ":")) + "\n")
+    qualification_plan = json.loads(qualification_plan_path.read_text())
+    qualification_plan["contract_sha256"] = sha256_file(raw_contract_path)
+    qualification_plan["min_mem_available_gib"] = 29
+    write_json(qualification_plan_path, qualification_plan)
+    result = json.loads(receipt_path.read_text())
+    result["contract_sha256"] = sha256_file(raw_contract_path)
+    result["plan_sha256"] = q.sha256(qualification_plan)
+    write_json(receipt_path, result)
+    summary = validate_flash_qualification_files(
+        receipt_path, qualification_plan_path, contract_path
+    )
+    assert summary["admission_eligible"] is False
+    assert any("30 GiB" in reason for reason in summary["admission_failures"])
+
+
+def test_receipt_reader_rejects_fifo_without_blocking(tmp_path):
+    fifo = tmp_path / "result.json"
+    os.mkfifo(fifo)
+    started = time.monotonic()
+    with pytest.raises(HarnessError, match="regular file"):
+        validate_flash_qualification_files(fifo, fifo, fifo)
+    assert time.monotonic() - started < 1
+
+
+def test_receipt_reader_rejects_a_symlinked_parent(tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "result.json").write_text("{}")
+    redirected = tmp_path / "redirected"
+    redirected.symlink_to(target, target_is_directory=True)
+    with pytest.raises(HarnessError, match="redirected"):
+        validate_flash_qualification_files(
+            redirected / "result.json",
+            redirected / "result.json",
+            redirected / "result.json",
+        )
+
+
+ARTIFACT_ROOT = (
+    "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/"
+    "qwen-flash-next-research"
+)
+FAILED_C0_RESULT = f"{ARTIFACT_ROOT}/qualification-runs/qfn-c0-20260915-0100/result.json"
+FAILED_C0_PLAN = f"{ARTIFACT_ROOT}/qualification-runs/qfn-c0-20260915-0100/plan.json"
+FAILED_C0_SNAPSHOT = (
+    f"{ARTIFACT_ROOT}/qualification-runs/qfn-c0-20260915-0100/"
+    "launch-contract.snapshot.json"
+)
+FAILED_C0_CONTRACT = f"{ARTIFACT_ROOT}/runtime/launch-contract.c0.v1-3757f596d03bd3d3.json"
+RESIDENT_QUALIFICATION = f"{ARTIFACT_ROOT}/runtime/resident-qualification-v2.json"
+RESIDENT_ARTIFACTS = f"{ARTIFACT_ROOT}/runtime/resident-model-artifacts.json"
+
+
+@pytest.mark.canonical_corpus(
+    FAILED_C0_RESULT, FAILED_C0_PLAN, FAILED_C0_SNAPSHOT, FAILED_C0_CONTRACT
+)
+def test_actual_failed_c0_is_valid_history_but_cannot_admit_calls():
+    summary = validate_flash_qualification_files(
+        FAILED_C0_RESULT,
+        FAILED_C0_PLAN,
+        FAILED_C0_SNAPSHOT,
+        contract_raw_path=FAILED_C0_CONTRACT,
+    )
+    assert summary["status"] == "failed"
+    assert summary["admission_eligible"] is False
+    assert summary["qualification_receipt_sha256"] == (
+        "c58f9f623eed98a94546ddca837ea98e48bfe5255dd62a980d3825c407ab6cf7"
+    )
+    with pytest.raises(HarnessError, match="not admissible"):
+        validate_flash_qualification_files(
+            FAILED_C0_RESULT,
+            FAILED_C0_PLAN,
+            FAILED_C0_SNAPSHOT,
+            contract_raw_path=FAILED_C0_CONTRACT,
+            require_passed=True,
+        )
+
+
+@pytest.mark.canonical_corpus(RESIDENT_QUALIFICATION, RESIDENT_ARTIFACTS)
+def test_actual_resident_receipts_recompute_artifacts_and_runtime_bindings(tmp_path):
+    summary = validate_resident_qualification_files(
+        RESIDENT_QUALIFICATION,
+        RESIDENT_ARTIFACTS,
+        require_passed=True,
+    )
+    assert summary["admission_eligible"] is True
+    assert summary["probe_scope"] == "fixed_literal_and_arithmetic_only"
+    assert summary["artifact_sha256_by_endpoint"] == {
+        "resident_gemma": "c63860e164ed838e0b829de106bfe5ed5f8cd82a7db391c752954c69862ee0af",
+        "resident_qwen": "dae0d24c2c46e072aa7975825d14b161dabb475643669f66824dc645a597c10f",
+    }
+
+    # Endpoint identity follows the registered container ID, not array order.
+    reordered = json.loads(Path(RESIDENT_QUALIFICATION).read_text())
+    reordered["before"]["runtime_identity"].reverse()
+    reordered["after"]["runtime_identity"].reverse()
+    reordered_path = tmp_path / "resident-reordered.json"
+    write_json(reordered_path, reordered)
+    assert validate_resident_qualification_files(
+        reordered_path, RESIDENT_ARTIFACTS, require_passed=True
+    )["admission_eligible"]
+
+    inventory = json.loads(Path(RESIDENT_ARTIFACTS).read_text())
+    inventory["models"]["resident_gemma"]["artifact_sha256"] = "f" * 64
+    inventory_path = tmp_path / "tampered-inventory.json"
+    write_json(inventory_path, inventory)
+    with pytest.raises(HarnessError, match="does not bind"):
+        validate_resident_qualification_files(
+            RESIDENT_QUALIFICATION,
+            inventory_path,
+            require_passed=True,
+        )
