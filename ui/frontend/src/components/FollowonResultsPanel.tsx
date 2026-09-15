@@ -37,12 +37,24 @@ function isRecorded(window: RecordedFollowonWindow): boolean {
 export function FollowonResultsPanel({ data }: { data?: FollowonResultsProgress }) {
   if (!data || data.schema_version !== "local-followon-results-progress/v1") return null;
   const windows = Array.isArray(data.windows) ? data.windows : [];
+  const c0ContextGroups = windows.filter(window => isRecorded(window) &&
+    window.id.startsWith("qfn-followon-c0-pilot-")).flatMap(window =>
+    window.blocks.filter(block => block.kind === "context").flatMap(block => block.groups));
+  const contextBands = [...new Set(c0ContextGroups.flatMap(group => {
+    const band = Number(group.condition[0]);
+    return Number.isInteger(band) && band > 0 && band <= 131_072 ? [band] : [];
+  }))].sort((a, b) => a - b);
+  const actualContextMax = Math.max(0, ...c0ContextGroups.flatMap(group =>
+    finite(group.actual_input_tokens_max) && group.actual_input_tokens_max <= 131_072
+      ? [group.actual_input_tokens_max] : []));
   return <section className="research-pipeline local-model-research" aria-labelledby="followon-heading">
     <header className="research-pipeline-head"><div>
       <p className="benchmark-eyebrow">Local model research</p>
       <h2 id="followon-heading">Follow-on model studies</h2>
       <p>Each block is reported after its supervised window closes and the recorded service state is restored.</p>
     </div><span className="benchmark-chip benchmark-chip--info">Descriptive studies</span></header>
+    {contextBands.length > 0 && actualContextMax > 0 &&
+      <p className="benchmark-empty-inline">Measured context in these admitted original C0 windows: {contextBands.map(band => band.toLocaleString()).join(" and ")} input-token bands, with actual prompts up to {actualContextMax.toLocaleString()} tokens. An endpoint's configured context is a server capacity, not a scored context result. These C0 results do not qualify the optimized MTP profile or a longer synthesis task.</p>}
     {windows.length === 0
       ? <p className="benchmark-empty-inline">No restored follow-on window has a recorded admission receipt. Live task results and gains are withheld.</p>
       : windows.map(window => {

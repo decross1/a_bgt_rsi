@@ -128,10 +128,49 @@ describe("Benchmark Progress", () => {
     renderPage();
     expect(screen.getByRole("heading", { name: "Benchmark Progress" })).toBeInTheDocument();
     expect(screen.getByText("baseline recorded", { selector: ".benchmark-chip" })).toBeInTheDocument();
-    expect(screen.getByText(/No upgrade has been established/)).toBeInTheDocument();
+    expect(screen.getByText(/No maintenance upgrade has been established/)).toBeInTheDocument();
     expect(screen.getByText("0", { selector: ".benchmark-summary-grid dd" })).toBeInTheDocument();
     expect(screen.getAllByText("Baseline only")).toHaveLength(2);
     expect(screen.queryByText("Candidate delta")).not.toBeInTheDocument();
+  });
+
+  it("separates a weekly non-upgrade from an admitted mixed local-model pair", () => {
+    const cohort = (passed: number, declared: number) => ({
+      declared, attempted: declared, passed, success_rate: passed / declared,
+      successful_task_runs_per_hour: 1,
+    });
+    const family = (name: string, resident: number, flash: number, declared: number) => ({
+      family: name, comparison_eligible: true, paired_success_delta: null,
+      equal_source_task_success_delta: (flash - resident) / declared,
+      source_task_interval_95: [0, 0] as [number, number],
+      cohorts: { resident: cohort(resident, declared), flash: cohort(flash, declared) },
+    });
+    const local: NonNullable<BenchmarkProgressResponse["local_model_research"]> = {
+      schema_version: "local-model-research-progress/v1", status: "available",
+      candidate: "Qwen3.8 Flash-Next", accounting: "Separate local R&D",
+      evidence_note: "No promotion claim", promotion_authorized: false,
+      warnings: [], qualification_runs: [], comparisons: [{
+        id: "qfn-ab-mia-c0-20260915-a", status: "complete",
+        manifest_sha256: "a".repeat(64), comparison_eligible: true,
+        comparison_eligible_at_recording: true,
+        admission_class: "RECORDED_COMPLETED_PAIR_ADMISSION",
+        current_source_replay: "verified",
+        run_sha256: { resident: "b".repeat(64), flash: "c".repeat(64) },
+        promotion_authorized: false,
+        families: [family("objective", 2, 12, 24), family("topic", 47, 13, 48)],
+      }],
+    };
+    renderPage({ ...fixture, summary: {
+      ...fixture.summary,
+      headline: "No candidate benefit is verified in the recorded benchmark evidence.",
+    }, local_model_research: local });
+    expect(screen.getByRole("heading", { name: "Weekly review: no week-over-week upgrade established" })).toBeInTheDocument();
+    expect(screen.queryByText("No candidate benefit is verified in the recorded benchmark evidence.")).not.toBeInTheDocument();
+    const bridge = screen.getByRole("complementary", { name: "Separate local-model evidence" });
+    expect(bridge).toHaveTextContent("objective tasks passed 12/24 with Flash versus 2/24 with residents");
+    expect(bridge).toHaveTextContent("topic output passed 13/48 versus 47/48");
+    expect(within(bridge).getByRole("link", { name: "View paired evidence" })).toHaveAttribute("href", "#local-model-research-heading");
+    expect(bridge).toHaveTextContent("does not establish a primary-model replacement");
   });
 
   it("separates review, evaluation receipts and complete execution", () => {
@@ -220,7 +259,7 @@ describe("Benchmark Progress", () => {
 
   it("links capability tracking to the separate thesis evidence page", () => {
     renderPage();
-    expect(screen.getByRole("link", { name: /Open Research for thesis evidence/ })).toHaveAttribute("href", "/ladder");
+    expect(screen.getByRole("link", { name: /Open campaign research/ })).toHaveAttribute("href", "/ladder");
     expect(screen.getByText(/does not automatically rerun benchmark panels/)).toBeInTheDocument();
   });
 

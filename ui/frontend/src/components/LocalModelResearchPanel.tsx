@@ -7,7 +7,7 @@ const label = (value: string) => value.replaceAll("_", " ");
 const familyLabel = (value: string) => value === "topic" ? "Topic output protocol" : label(value);
 type Variant = NonNullable<LocalModelResearchProgress["qualification_runs"][number]["variant"]>;
 type Comparison = LocalModelResearchProgress["comparisons"][number];
-const admittedPair = (row: Comparison) => row.admission_class === "RECORDED_COMPLETED_PAIR_ADMISSION" &&
+export const admittedPair = (row: Comparison) => row.admission_class === "RECORDED_COMPLETED_PAIR_ADMISSION" &&
   row.comparison_eligible_at_recording === true &&
   (row.current_source_replay === "verified" || row.current_source_replay === "unavailable");
 function registeredMiaVariant(value: unknown): value is Variant {

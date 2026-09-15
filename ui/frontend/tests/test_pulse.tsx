@@ -109,6 +109,23 @@ vi.mock("../src/api/http", () => ({
     phase: null,
     source_error: null,
   }),
+  getResearchOpsStatus: vi.fn().mockResolvedValue({
+    schema: "research-ops-status/v1",
+    observed_at: new Date().toISOString(),
+    active_campaign: { campaign_id: "campaign-1", manifest_sha256: "a".repeat(64) },
+    campaign_queue: { status: "all_registered_topics_consumed", eligible_count: 0,
+      consumed_count: 1, loop_source_sha256: "b".repeat(64) },
+    next_registered_campaign: null,
+    last_productive: { kind: "campaign_iteration_recorded", iteration_id: "iter-1",
+      topic_id: "topic-1", at: new Date().toISOString(), loop_source_sha256: "b".repeat(64) },
+    last_cycle: { run_id: "cycle-1", at: new Date().toISOString(), action_code: "noop",
+      planned_count: 0, dispatched_count: 0, outcome_count: 1,
+      raw_row_sha256: "c".repeat(64), cycles_source_sha256: "d".repeat(64) },
+    budget: { source_status: "available", spent_today: 3, daily_cap: 60,
+      paced_allowance: 44, ledger_sha256: "e".repeat(64) },
+    dispatch_gate: { operator_pause: false, other_actionable_work: "not_assessed" },
+    ingestion: { source_status: "unknown", latest_attempt_status: "unknown" },
+  }),
   getWorkloadHint: vi.fn().mockResolvedValue({
     available: false,
     sample_size: 0,
@@ -237,6 +254,7 @@ describe("Pulse (/)", () => {
 
     // 1 — healthy? The composed hero, healthy off the fixture stream.
     expect(screen.getByTestId("health-verdict")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View model evidence" })).toHaveAttribute("href", "/benchmarks");
 
     // The ONE now-card: registry board + headline strip. Zero registered
     // runs + no calls + quiet GPU = an honest IDLE, never a blank.
@@ -700,6 +718,38 @@ describe("Pulse (/)", () => {
     expect(verdict).toHaveAttribute("data-level", "research");
     expect(verdict).toHaveTextContent("Nara is paused for this research arm");
     expect(verdict).not.toHaveTextContent("Mia candidate");
+  });
+
+  it("labels a fresh bound lab resident evaluation as active without turning its plan into a score", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "resident", mode_source: "lab_evaluation_state",
+      mode_source_sha256: "a".repeat(64),
+      resident_services_expected: "online", nara_service_expected: "paused",
+      run_id: "qfn-ab-lab-primary-20260915-a.resident", phase: "evaluation",
+      candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Resident model evaluation active" })).toBeInTheDocument());
+    expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "research");
+    expect(screen.getByTestId("health-verdict")).toHaveTextContent("Nara is paused");
+  });
+
+  it("withholds a lab operating-mode claim with an unbound source", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "candidate_research", mode_source: "lab_evaluation_state",
+      mode_source_sha256: "unbound", resident_services_expected: "stopped",
+      nara_service_expected: "paused", run_id: "qfn-ab-lab-primary-20260915-a.flash",
+      phase: "evaluation", candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(http.getModelRuntime).toHaveBeenCalled());
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(screen.getByRole("heading", { name: "Operating mode unverified" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Mia model evaluation active" })).not.toBeInTheDocument();
   });
 
   it("accepts a fresh restored resident receipt that arrives after the UI clock tick", async () => {

@@ -75,7 +75,12 @@
         "question_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"},
         "text": {"type": "string", "minLength": 1, "maxLength": 1000},
         "text_sha256": {"$ref": "#/$defs/sha256"},
-        "selection": {"const": "team_proposed_within_owner_scope_2026-09-14"}
+        "selection": {
+          "enum": [
+            "team_proposed_within_owner_scope_2026-09-14",
+            "team_proposed_within_owner_scope_2026-09-15"
+          ]
+        }
       }
     },
     "topic_policy": {

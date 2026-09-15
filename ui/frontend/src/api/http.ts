@@ -115,7 +115,7 @@ export interface ModelRuntime {
   schema_version: "model-runtime/v1";
   observed_at: string;
   mode: "resident" | "candidate_research" | "transitioning" | "unknown";
-  mode_source: "qualification_state" | "extended_evaluation_state" | "followon_evaluation_state" | "followon_resident_state" | "none";
+  mode_source: "qualification_state" | "extended_evaluation_state" | "followon_evaluation_state" | "followon_resident_state" | "lab_evaluation_state" | "none";
   mode_source_sha256: string | null;
   resident_services_expected: "online" | "stopped" | "unknown";
   nara_service_expected: "running" | "paused" | "unknown";
@@ -142,6 +142,11 @@ export interface ModelRuntime {
 
 export const getModelRuntime = () =>
   getJSON<ModelRuntime>("/api/model_runtime");
+
+// Source-bound, content-free campaign operations and ingestion receipts.
+// Unknown fields stay unknown in the Now card when an older backend lacks it.
+export const getResearchOpsStatus = () =>
+  getJSON<unknown>("/api/research_ops_status");
 
 export const getRecentTelemetry = (limit = 300) =>
   getJSON<{ samples: TelemetrySample[] }>(`/api/telemetry/recent?limit=${limit}`);
