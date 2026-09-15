@@ -131,6 +131,15 @@ def test_live_window_rejects_mock_mode_before_loading(monkeypatch):
         window.main(["--run", "--window", "/unissued.json"])
 
 
+@pytest.mark.parametrize("kind,budget", [("primary", 10431), ("context", 6001), ("fresh", 1801)])
+def test_prepare_rejects_runner_specific_oversized_budget_before_registration(monkeypatch, kind, budget):
+    monkeypatch.setattr(window, "_evaluator", lambda _kind: SimpleNamespace(load_plan=lambda _path: None))
+    monkeypatch.setattr(window, "load_parent", lambda _path: pytest.fail("invalid budget reached runtime registration"))
+    with pytest.raises(ValueError, match="invalid harness budget"):
+        window.prepare(window.ARTIFACT_ROOT / "unissued.plan.json", cohort="flash",
+                       window_id="qfn-ab-budget-test", runtime_budget_s=budget, wall_s=14400, kind=kind)
+
+
 @pytest.mark.parametrize("fault", ["parent_interrupt", "start_receipt_error"])
 def test_supervisor_fault_stops_worker_and_performs_exact_recovery(monkeypatch, tmp_path, fault):
     path = tmp_path / "window.json"
@@ -201,3 +210,31 @@ def test_supervisor_exclusive_reservation_prevents_duplicate_worker(monkeypatch,
     monkeypatch.setattr(window.subprocess, "Popen", lambda *_a, **_kw: pytest.fail("duplicate worker launched"))
     with pytest.raises(FileExistsError):
         window.supervise(path)
+
+
+@pytest.mark.parametrize("absent,correct_image,bound", [(True, True, True), (False, True, False),
+                                                        (True, False, False)])
+def test_resident_recovery_binds_only_exact_sentinel_created_after_proven_absence(
+        monkeypatch, tmp_path, absent, correct_image, bound):
+    document = {"window_id": "qfn-ab-lab-gap"}
+    sentinel_id = "f" * 64
+    row = {"id": sentinel_id,
+           "name": window.resident._sentinel_name(document["window_id"]),
+           "image": window.resident.IMAGE_ID if correct_image else "wrong-image",
+           "running": False, "oom_killed": False, "state_error": "", "restart_policy": "no"}
+    state = {"initial": {"nara": {"ActiveState": "active"}}, "watchdog_sentinel_id": None,
+             "sentinel_absent_before_create": absent}
+    monkeypatch.setattr(window.resident, "_inspect_container", lambda *_a: row)
+    calls = []
+
+    def restore(_ops, captured, _plan, **_kw):
+        calls.append(captured.copy())
+        if bound:
+            assert json.loads((tmp_path / "state.json").read_text())["watchdog_sentinel_id"] == sentinel_id
+        return {"status": "verified" if bound else "unknown"}
+
+    monkeypatch.setattr(window.resident, "restore_resident_window", restore)
+    result = window._restore_resident(None, state, document, tmp_path, deadline=time.monotonic() + 30)
+    assert len(calls) == 1
+    assert calls[0]["watchdog_sentinel_id"] == (sentinel_id if bound else None)
+    assert result["status"] == ("verified" if bound else "unknown")
