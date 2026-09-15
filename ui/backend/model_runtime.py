@@ -28,8 +28,9 @@ BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
 PROC_ROOT = Path("/proc")
 
 SCHEMA_VERSION = "model-runtime/v1"
-STATE_SCHEMA = "qwen-flash-next-qualification-state/v2"
-MEMORY_SCHEMA = "qwen-flash-next-memory-sample/v2"
+STATE_SCHEMA = "qwen-flash-next-qualification-state/v3"
+MEMORY_SCHEMA = "qwen-flash-next-memory-sample/v3"
+RESULT_SCHEMA = "qwen-flash-next-qualification-result/v3"
 RUN_ID = re.compile(r"qfn-c0-[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
@@ -47,13 +48,26 @@ SETUP_PHASES = frozenset(
     {"preflight", "model_verification", "setup_quiescence", "sentinel_create"}
 )
 CANDIDATE_PHASES = frozenset(
-    {"candidate_start", "readiness", "probes", "qualification_passed"}
+    {"readiness", "ready_stabilization", "probes", "qualification_passed"}
 )
-TRANSITION_PHASES = frozenset({"resident_stop", "restoring"})
+TRANSITION_PHASES = frozenset({"resident_stop", "candidate_start", "restoring"})
 TERMINAL_PHASES = frozenset(
     {"complete", "supervisor_recovered", "recovery_unknown"}
 )
 PHASES = SETUP_PHASES | CANDIDATE_PHASES | TRANSITION_PHASES | TERMINAL_PHASES
+MONITOR_PHASE_BY_LIFECYCLE = {
+    "preflight": "setup",
+    "model_verification": "setup",
+    "setup_quiescence": "setup",
+    "sentinel_create": "load",
+    "resident_stop": "load",
+    "candidate_start": "load",
+    "readiness": "load",
+    "ready_stabilization": "ready",
+    "probes": "probes",
+    "qualification_passed": "probes",
+    "restoring": "restoration",
+}
 
 
 class RuntimeSourceError(ValueError):
@@ -330,8 +344,71 @@ def _validate_process(
         raise RuntimeSourceError("worker command differs from the allowlist")
 
 
+def _nonnegative_integer(value: Any, label: str, *, positive: bool = False) -> int:
+    minimum = 1 if positive else 0
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise RuntimeSourceError(f"{label} is invalid")
+    return value
+
+
+def _candidate_memory_is_bound(
+    row: dict[str, Any],
+    *,
+    candidate_id: str,
+    cgroup_path: str,
+    candidate_pid: int,
+    candidate_start_ticks: int,
+) -> None:
+    candidate = row.get("candidate")
+    if not isinstance(candidate, dict):
+        raise RuntimeSourceError("candidate memory evidence is absent")
+    cgroup = candidate.get("cgroup")
+    if not isinstance(cgroup, dict):
+        raise RuntimeSourceError("candidate cgroup evidence is absent")
+    if (
+        candidate.get("id") != candidate_id
+        or candidate.get("armed") is not True
+        or candidate.get("running") is not True
+        or candidate.get("oom_killed") is not False
+        or candidate.get("restart_count") != 0
+        or candidate.get("pid") != candidate_pid
+        or cgroup.get("path") != cgroup_path
+        or cgroup.get("process_start_ticks") != candidate_start_ticks
+        or cgroup.get("memory_swap_current_bytes") != 0
+        or cgroup.get("memory_events_oom") != 0
+        or cgroup.get("memory_events_oom_kill") != 0
+    ):
+        raise RuntimeSourceError("candidate cgroup evidence differs")
+    for key in (
+        "restart_count",
+        "pid",
+    ):
+        _nonnegative_integer(
+            candidate.get(key),
+            f"candidate {key}",
+            positive=key == "pid",
+        )
+    _nonnegative_integer(
+        cgroup.get("process_start_ticks"),
+        "candidate process start identity",
+        positive=True,
+    )
+    for key in (
+        "memory_swap_current_bytes",
+        "memory_events_oom",
+        "memory_events_oom_kill",
+    ):
+        _nonnegative_integer(cgroup.get(key), f"candidate cgroup {key}")
+
+
 def _latest_memory(
-    run_fd: int, now: datetime, *, floor_gib: float, mutation: bool
+    run_fd: int,
+    now: datetime,
+    *,
+    floor_gib: float,
+    expected_phase: str,
+    paging_policy: dict[str, Any],
+    candidate_identity: tuple[str, str, int, int] | None,
 ) -> tuple[dict[str, Any], str]:
     raw = _read_fd(
         run_fd, "memory.jsonl", maximum=MAX_MEMORY_BYTES, label="memory gate"
@@ -357,14 +434,182 @@ def _latest_memory(
         or available < floor_gib
     ):
         raise RuntimeSourceError("memory gate sample is stale or below its floor")
-    if row.get("schema") != MEMORY_SCHEMA:
-        raise RuntimeSourceError("memory gate sample schema is unsupported")
-    if mutation and (
-        row.get("monitor_phase") != "mutation"
-        or row.get("mutation_pswpout_delta_pages") != 0
+    if (
+        row.get("schema") != MEMORY_SCHEMA
+        or row.get("monitor_phase") != expected_phase
     ):
-        raise RuntimeSourceError("mutation memory gate is not clean")
+        raise RuntimeSourceError("memory gate sample schema is unsupported")
+    elapsed = row.get("elapsed_monotonic_seconds")
+    sample_gap = row.get("sample_gap_seconds")
+    max_sample_gap = paging_policy.get("max_sample_gap_seconds")
+    if (
+        isinstance(elapsed, bool)
+        or not isinstance(elapsed, (int, float))
+        or not math.isfinite(elapsed)
+        or elapsed < 0
+        or isinstance(sample_gap, bool)
+        or not isinstance(sample_gap, (int, float))
+        or not math.isfinite(sample_gap)
+        or sample_gap < 0
+        or isinstance(max_sample_gap, bool)
+        or not isinstance(max_sample_gap, (int, float))
+        or not math.isfinite(max_sample_gap)
+        or max_sample_gap <= 0
+        or sample_gap > max_sample_gap
+    ):
+        raise RuntimeSourceError("memory monitor timing is stale or invalid")
+    page_size = _nonnegative_integer(
+        row.get("host_page_size_bytes"), "host page size", positive=True
+    )
+    if page_size != paging_policy.get("host_page_size_bytes"):
+        raise RuntimeSourceError("memory page size differs from the paging policy")
+    expected_gate = {
+        "setup": "setup",
+        "load": "startup",
+        "ready": "startup",
+        "probes": "serving",
+        "restoration": "restoration",
+    }.get(expected_phase)
+    if expected_gate is None or row.get("paging_gate") != expected_gate:
+        raise RuntimeSourceError("memory paging gate differs from its phase")
+    pages = _nonnegative_integer(row.get("pswpout_pages"), "host pswpout")
+    phase_initial = _nonnegative_integer(
+        row.get("phase_initial_pswpout_pages"), "phase pswpout baseline"
+    )
+    phase_delta_pages = _nonnegative_integer(
+        row.get("phase_pswpout_delta_pages"), "phase pswpout delta"
+    )
+    phase_delta_bytes = _nonnegative_integer(
+        row.get("phase_pswpout_delta_bytes"), "phase pswpout bytes"
+    )
+    gate_initial = _nonnegative_integer(
+        row.get("gate_initial_pswpout_pages"), "paging gate baseline"
+    )
+    gate_delta_pages = _nonnegative_integer(
+        row.get("gate_pswpout_delta_pages"), "paging gate delta"
+    )
+    gate_delta_bytes = _nonnegative_integer(
+        row.get("gate_pswpout_delta_bytes"), "paging gate bytes"
+    )
+    window_5s = _nonnegative_integer(
+        row.get("host_swap_5s_bytes"), "five-second host paging"
+    )
+    window_60s = _nonnegative_integer(
+        row.get("host_swap_60s_bytes"), "sixty-second host paging"
+    )
+    _nonnegative_integer(row.get("pswpout_delta_pages"), "whole-window pswpout")
+    if (
+        pages - phase_initial != phase_delta_pages
+        or phase_delta_bytes != phase_delta_pages * page_size
+        or pages - gate_initial != gate_delta_pages
+        or gate_delta_bytes != gate_delta_pages * page_size
+        or gate_delta_pages < phase_delta_pages
+        or window_5s > gate_delta_bytes
+        or window_60s > gate_delta_bytes
+    ):
+        raise RuntimeSourceError("memory paging counters are inconsistent")
+    if not isinstance(row.get("setup_quiescence_active"), bool) or (
+        row.get("ready_quiescence_active") is not (expected_phase == "ready")
+    ):
+        raise RuntimeSourceError("memory quiescence markers are inconsistent")
+    ready_epoch = row.get("ready_quiescence_epoch")
+    if expected_phase == "ready":
+        _nonnegative_integer(ready_epoch, "ready quiescence epoch", positive=True)
+    elif ready_epoch is not None:
+        raise RuntimeSourceError("ready quiescence epoch escaped its phase")
+    if row.get("transition_to") not in {None, "probes"} or (
+        row.get("transition_to") == "probes" and expected_phase != "ready"
+    ):
+        raise RuntimeSourceError("memory phase transition is inconsistent")
+
+    limits = (
+        paging_policy.get("load")
+        if expected_phase in {"load", "ready"}
+        else paging_policy.get("serving")
+        if expected_phase == "probes"
+        else None
+    )
+    if limits is not None:
+        if not isinstance(limits, dict):
+            raise RuntimeSourceError("paging limits are unavailable")
+        thresholds = (
+            _nonnegative_integer(
+                limits.get("window_5s_breach_bytes"),
+                "five-second paging threshold",
+                positive=True,
+            ),
+            _nonnegative_integer(
+                limits.get("window_60s_breach_bytes"),
+                "sixty-second paging threshold",
+                positive=True,
+            ),
+            _nonnegative_integer(
+                limits.get("phase_total_breach_bytes"),
+                "phase paging threshold",
+                positive=True,
+            ),
+        )
+        if (
+            window_5s >= thresholds[0]
+            or window_60s >= thresholds[1]
+            or gate_delta_bytes >= thresholds[2]
+        ):
+            raise RuntimeSourceError("live host paging reached its registered threshold")
+    if candidate_identity is not None:
+        _candidate_memory_is_bound(
+            row,
+            candidate_id=candidate_identity[0],
+            cgroup_path=candidate_identity[1],
+            candidate_pid=candidate_identity[2],
+            candidate_start_ticks=candidate_identity[3],
+        )
     return row, _sha256(row_raw)
+
+
+def _validate_ready_quiescence(
+    state: dict[str, Any], plan: dict[str, Any], *, started: datetime, updated: datetime
+) -> None:
+    proof = state.get("ready_quiescence")
+    required = plan.get("ready_quiescence_seconds")
+    if not isinstance(proof, dict) or proof.get("passed") is not True:
+        raise RuntimeSourceError("ready quiescence proof is absent")
+    if (
+        isinstance(required, bool)
+        or not isinstance(required, int)
+        or required <= 0
+        or proof.get("required_seconds") != required
+    ):
+        raise RuntimeSourceError("ready quiescence duration differs from the plan")
+    duration = proof.get("duration_seconds")
+    if (
+        isinstance(duration, bool)
+        or not isinstance(duration, (int, float))
+        or not math.isfinite(duration)
+        or duration < required
+        or proof.get("initial_pswpout_pages")
+        != proof.get("final_pswpout_pages")
+    ):
+        raise RuntimeSourceError("ready quiescence proof is incomplete")
+    _nonnegative_integer(
+        proof.get("initial_pswpout_pages"), "ready quiescence pswpout"
+    )
+    _nonnegative_integer(
+        proof.get("samples"), "ready quiescence sample count", positive=True
+    )
+    _nonnegative_integer(
+        proof.get("epoch"), "ready quiescence epoch", positive=True
+    )
+    began = _parse_time(proof.get("started_at"), "ready quiescence started_at")
+    completed = _parse_time(
+        proof.get("completed_at"), "ready quiescence completed_at"
+    )
+    if (
+        began < started
+        or completed < began
+        or (completed - began).total_seconds() < required
+        or completed > updated + timedelta(seconds=MAX_CLOCK_SKEW_SECONDS)
+    ):
+        raise RuntimeSourceError("ready quiescence timestamps are inconsistent")
 
 
 def _terminal_restoration(
@@ -399,7 +644,7 @@ def _terminal_restoration(
     if state["phase"] == "complete":
         terminal_validator(run_path)
         valid = (
-            receipt.get("schema") == "qwen-flash-next-qualification-result/v2"
+            receipt.get("schema") == RESULT_SCHEMA
             and receipt.get("run_id") == run_id
             and receipt.get("contract_sha256") == state["contract_sha256"]
             and receipt.get("plan_sha256") == _canonical_sha256(plan)
@@ -503,6 +748,15 @@ def project_model_runtime(
         ):
             raise RuntimeSourceError("runtime directory changed during admission")
         plan_validator(run_path, state, plan, contract, contract_sha)
+        try:
+            from bench.flash_next_ab.qualification import PAGING_POLICY
+        except Exception as exc:
+            raise RuntimeSourceError("runtime paging allowlist is unavailable") from exc
+        if (
+            state.get("paging_policy") != PAGING_POLICY
+            or plan.get("paging_policy") != PAGING_POLICY
+        ):
+            raise RuntimeSourceError("runtime paging policy differs from its plan")
 
         started = _parse_time(state.get("started_at"), "runtime started_at")
         updated = _parse_time(state.get("updated_at"), "runtime updated_at")
@@ -549,16 +803,49 @@ def project_model_runtime(
             if observed >= deadline:
                 raise RuntimeSourceError("runtime authorization deadline expired")
             _validate_process(state, run_path, proc_root)
+            expected_monitor_phase = MONITOR_PHASE_BY_LIFECYCLE.get(phase)
+            if state.get("monitor_phase") != expected_monitor_phase:
+                raise RuntimeSourceError("runtime lifecycle and memory phases differ")
+            candidate_identity = None
+            if phase in CANDIDATE_PHASES:
+                candidate_id = state.get("candidate_id")
+                candidate_path = state.get("candidate_cgroup_path")
+                candidate_pid = state.get("candidate_cgroup_pid")
+                candidate_ticks = state.get("candidate_cgroup_start_ticks")
+                if (
+                    not CONTAINER_ID.fullmatch(str(candidate_id or ""))
+                    or candidate_path
+                    != f"/system.slice/docker-{candidate_id}.scope"
+                ):
+                    raise RuntimeSourceError("candidate cgroup identity is unavailable")
+                _nonnegative_integer(
+                    candidate_pid, "candidate cgroup PID", positive=True
+                )
+                _nonnegative_integer(
+                    candidate_ticks,
+                    "candidate cgroup process identity",
+                    positive=True,
+                )
+                candidate_identity = (
+                    candidate_id,
+                    candidate_path,
+                    candidate_pid,
+                    candidate_ticks,
+                )
             _, memory_sha = _latest_memory(
                 run_fd,
                 observed,
                 floor_gib=plan.get("min_mem_available_gib"),
-                mutation=phase in CANDIDATE_PHASES or phase in TRANSITION_PHASES,
+                expected_phase=expected_monitor_phase,
+                paging_policy=PAGING_POLICY,
+                candidate_identity=candidate_identity,
             )
             if phase in CANDIDATE_PHASES:
-                if not CONTAINER_ID.fullmatch(str(state.get("candidate_id", ""))):
-                    raise RuntimeSourceError("candidate identity is unavailable")
                 nara_initially_active = _validate_initial(state)
+                if phase in {"probes", "qualification_passed"}:
+                    _validate_ready_quiescence(
+                        state, plan, started=started, updated=updated
+                    )
                 mode = "candidate_research"
                 resident_expected = "stopped"
                 nara_expected = "paused"

@@ -35,8 +35,6 @@ EMIT write does not turn this into a flaky red.
 """
 from __future__ import annotations
 
-import json
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -176,14 +174,24 @@ def test_live_cycle_provenance_snapshot(client):
     # A cycle that never got to choose a topic has no topic_source, and that
     # is the honest value: the 2026-08-16 ledger carries nine
     # daily_budget_exhausted rows written before the refusal was moved out of
-    # the cycle log. So the enum binds every cycle that DID pick a topic, and
-    # a null is only tolerated where no topic could have been picked — which
-    # is a STRONGER pin than the old blanket assertion, not a weaker one.
+    # the cycle log. A topicless cycle may also record an explicit no-op when
+    # an existing iteration is awaiting its human gate. In either case it
+    # must not plan or report a topic-dependent research action.
     for c in cycles:
         if c["topic_source"] is None:
-            assert not c.get("plan"), (
-                f"cycle {c.get('run_id')} planned work but recorded no "
-                "topic_source")
+            assert c.get("topic") is None
+            for step in c.get("plan") or []:
+                assert step.get("action") == "noop", (
+                    f"cycle {c.get('run_id')} planned {step.get('action')!r} "
+                    "without a topic_source"
+                )
+                reason = step.get("args", {}).get("reason")
+                assert isinstance(reason, str) and reason.strip()
+            for outcome in c.get("outcomes") or []:
+                assert outcome.get("action") == "noop", (
+                    f"cycle {c.get('run_id')} reported "
+                    f"{outcome.get('action')!r} without a topic_source"
+                )
             continue
         assert c["topic_source"] in known_topic_sources
         if c["topic_source"] == "campaign_preregistered":

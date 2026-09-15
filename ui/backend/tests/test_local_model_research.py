@@ -16,10 +16,10 @@ def write(root, path, value):
     return {"path": path, "sha256": hashlib.sha256(raw).hexdigest()}
 
 
-def qualification(root, *, status="passed", restoration="verified"):
+def qualification(root, *, status="passed", restoration="verified", version=1):
     name = "qfn-c0-fixture"
     return write(root, f"qualification-runs/{name}/result.json", {
-        "schema": "qwen-flash-next-qualification-result/v1", "run_id": name,
+        "schema": f"qwen-flash-next-qualification-result/v{version}", "run_id": name,
         "status": status, "restoration": {"status": restoration},
         "weekly_budget_debit": False, "production_change_authorized": False,
         "challenger_gpu_seconds": 120, "min_mem_available_gib": 35,
@@ -93,6 +93,29 @@ def test_qualification_is_recorded_separately_and_hides_private_text(tmp_path, m
     assert calls == [False]
 
 
+def test_current_v3_passing_qualification_uses_shared_admission(tmp_path, monkeypatch):
+    from bench.flash_next_ab import harness
+
+    qualification(tmp_path, version=3)
+    for name in ("plan.json", "launch-contract.snapshot.json"):
+        write(tmp_path, f"qualification-runs/qfn-c0-fixture/{name}", {})
+    calls = []
+
+    def validate(**kwargs):
+        calls.append(kwargs["require_passed"])
+        return {
+            "qualification_receipt_sha256": hashlib.sha256(
+                kwargs["receipt_path"].read_bytes()
+            ).hexdigest()
+        }
+
+    monkeypatch.setattr(harness, "validate_flash_qualification_files", validate)
+    data = project_local_research(tmp_path)
+    assert data["qualification_runs"][0]["status"] == "passed"
+    assert data["qualification_runs"][0]["probe_count"] == 3
+    assert calls == [True]
+
+
 def test_weak_passing_qualification_has_no_proof_and_is_withheld(tmp_path):
     qualification(tmp_path)
     data = project_local_research(tmp_path)
@@ -114,6 +137,18 @@ def test_orphan_state_does_not_claim_running(tmp_path):
     row = project_local_research(tmp_path)["qualification_runs"][0]
     assert row["status"] == "unfinished_receipt"
     assert row["restoration"] == "unverified"
+
+
+def test_orphan_v3_stabilization_state_remains_an_unfinished_receipt(tmp_path):
+    write(tmp_path, "qualification-runs/qfn-c0-v3/state.json", {
+        "schema": "qwen-flash-next-qualification-state/v3",
+        "run_id": "qfn-c0-v3",
+        "phase": "ready_stabilization",
+    })
+    row = project_local_research(tmp_path)["qualification_runs"][0]
+    assert row["status"] == "unfinished_receipt"
+    assert row["phase"] == "ready_stabilization"
+    assert row["model_started"] is None
 
 
 def test_hash_bound_pair_counts_failures_and_elapsed(tmp_path, monkeypatch):
