@@ -79,6 +79,17 @@ def test_all_forty_timeout_attempts_stay_in_denominator_and_raw_grade_replay(
     assert replay['by_cap']['1536']['generator_timeout'] == 15
     assert replay['by_cap']['384']['selector_timeout'] == 5
     assert replay['by_cap']['1536']['selector_timeout'] == 5
+    assert replay['recorded_evaluator_elapsed_s'] >= 0
+    for cap_budget in ('384', '1536'):
+        arm = replay['by_cap'][cap_budget]
+        assert arm['generator_finish_reason_histogram'] == {'transport_timeout': 15}
+        assert arm['generator_completion_usage_covered_calls'] == 0
+        assert arm['generator_reasoning_usage_covered_calls'] == 0
+        assert arm['generator_completion_tokens_observed_sum'] == 0
+        assert arm['total_call_wall_s'] >= 0
+        assert arm['total_call_wall_s'] == pytest.approx(
+            arm['generator_call_wall_s'] + arm['selector_call_wall_s']
+        )
 
     raw = json.loads((output / 'run.json').read_text())
     raw['outcomes'][0]['passed'] = True
