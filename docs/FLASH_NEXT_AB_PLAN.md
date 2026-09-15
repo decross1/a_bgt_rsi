@@ -72,6 +72,12 @@ with output/reasoning headroom reserved in the server context limit. Keep 64K
 as a capability lane. Compare retrieval plus compact context against longer
 evidence packs, recording both evidence availability and actual token counts.
 
+The first qualification uses a 32,768-token server limit and 2 GiB explicit KV.
+CPU tokenizer preflight found historical coding inputs of 17,422 and 15,246
+tokens; with their 4,096-token output caps both exceed 16K. Keep these complete
+fixtures. This context amendment precedes the first paired cohort; it is not a
+claim that the runtime fits. The qualification must still pass the 20 GiB floor.
+
 The pinned NVIDIA and Mia templates accept thinking off (`enable_thinking=false`)
 and `low`, `medium`, `xhigh` reasoning effort; they reject `high`. CPU template
 rendering verified these controls on 2026-09-15; runtime delivery and task effects
