@@ -36,6 +36,11 @@ The system is designed around five invariants:
 
 ## 2. Deployed topology
 
+This is the incumbent deployment. The owner removed any requirement for two
+concurrently resident models on 2026-09-15. A single-primary topology and
+sequential or on-demand critics are eligible alternatives under the
+[model topology policy](docs/MODEL_TOPOLOGY_POLICY.md).
+
 ```mermaid
 flowchart TB
     H[Human researcher] --> UI[Local Atlas UI :5173]
@@ -115,8 +120,9 @@ when an operator validates a fresh start.
 | Reasoning parser | none | `qwen3` |
 | Concurrency control | batched-token cap 8,192 | max sequences 2 |
 
-Gemma's startup log must confirm the MARLIN NVFP4 MoE backend. Both servers must
-co-reside while retaining the memory margin. Comments or historical benchmark
+Gemma's startup log must confirm the MARLIN NVFP4 MoE backend. Validation and
+restoration of this incumbent configuration check both services and its memory
+margin; future topologies need not keep two models resident. Historical benchmark
 notes that name a different Qwen version, memory fraction, or context are stale
 when they disagree with the launcher and a live endpoint.
 

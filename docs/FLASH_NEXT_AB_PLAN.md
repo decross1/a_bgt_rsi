@@ -6,9 +6,12 @@ lab across existing benchmark families. Production promotion is a later decision
 
 Primary comparison: current role bundle versus Flash-Next in every local model
 role. Generator-only and critic-only ablations separate role effects where
-resources permit. Same-checkpoint author and critic are explicitly correlated;
-they do not inherit the current different-checkpoint meaning of independent
-scientific qualification. Evaluation outputs never write production findings.
+resources permit. The owner removed the two-model concurrent-residency
+requirement; [the topology amendment](MODEL_TOPOLOGY_POLICY.md) permits a
+single-primary candidate and separate critic arrangements. Same-checkpoint
+author and critic are correlated, but that topology is not an automatic veto.
+Measure critic errors and validated outcomes. Evaluation outputs never write
+production findings.
 
 The primary development suite preserves explicit native `top_k` values:
 Gemma 64, resident Qwen 20, Flash 20. This is a deployable system comparison
