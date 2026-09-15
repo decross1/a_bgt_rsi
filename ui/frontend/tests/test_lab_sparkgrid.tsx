@@ -183,4 +183,14 @@ describe("LabSparkgrid render", () => {
     expect(cells).toHaveLength(28);
     expect([...cells].every((c) => c.getAttribute("data-level") === "0")).toBe(true);
   });
+
+  it("scopes an empty current-campaign grid instead of claiming the whole lab was idle", () => {
+    render(<LabSparkgrid weeks={4} nowMs={NOW} activityScope="active_campaign" />);
+    expect(screen.getByTestId("lab-sparkgrid-summary")).toHaveTextContent(
+      "No activity recorded for this active campaign in the last 4 weeks",
+    );
+    expect(screen.getByTestId("lab-sparkgrid-grid")).toHaveAttribute(
+      "aria-label", "Campaign activity heatmap: No activity recorded for this active campaign in the last 4 weeks",
+    );
+  });
 });
