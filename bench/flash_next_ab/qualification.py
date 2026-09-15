@@ -67,6 +67,9 @@ MIN_MEMORY_GIB = 30
 MAX_INVOCATION_SECONDS = 3600
 DEFAULT_RESTORE_RESERVE_SECONDS = 600
 HOST_PORT = 8012
+FAILURE_STAGES = frozenset(
+    {"setup", "candidate_start", "readiness", "probes", "evaluation", "restoration", "unknown"}
+)
 
 WEIGHT_FILES: dict[str, tuple[int, str]] = {
     "model-00001-of-00010.safetensors": (3115991696, "63fde954be6f08b49b876f4f70a0ad0bcfee71aff7b1faa33779b6b32feca2a2"),
@@ -306,6 +309,7 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         "compile_cache_path": str(COMPILE_CACHE),
         "max_model_len": 16384,
         "max_num_seqs": 1,
+        "gpu_memory_utilization": 0.75,
         "kv_cache_memory_bytes": 1073741824,
         "max_num_batched_tokens": 4096,
         "kv_cache_dtype": "auto",
@@ -381,6 +385,22 @@ def load_contract(path: Path = CONTRACT_PATH) -> tuple[dict[str, Any], str]:
     return validate_contract(_strict_json(raw, source=str(path))), sha256(raw)
 
 
+def _verified_contract_raw(
+    contract: dict[str, Any], contract_sha: str, path: Path | None = None
+) -> bytes:
+    """Re-read and bind the exact external bytes copied into a run receipt."""
+    path = path or CONTRACT_PATH
+    if path != CONTRACT_PATH or path.is_symlink() or path.resolve() != CONTRACT_PATH:
+        raise QualificationError("raw contract source is not the fixed external file")
+    raw = path.read_bytes()
+    if sha256(raw) != contract_sha:
+        raise QualificationError("external contract bytes changed after planning")
+    observed = validate_contract(_strict_json(raw, source=str(path)))
+    if observed != contract:
+        raise QualificationError("external contract content changed after planning")
+    return raw
+
+
 def launch_argv() -> list[str]:
     command = [
         "docker", "create",
@@ -408,6 +428,7 @@ def launch_argv() -> list[str]:
             "--tensor-parallel-size", "1",
             "--max-model-len", "16384",
             "--max-num-seqs", "1",
+            "--gpu-memory-utilization", "0.75",
             "--kv-cache-memory-bytes", "1073741824",
             "--no-enable-prefix-caching",
             "--enable-chunked-prefill",
@@ -1073,6 +1094,7 @@ def restore_exact(
                 "sentinel_retained": False,
                 "no_mutation_verified": True,
                 "candidate_stopped_monotonic": None,
+                "restoration_completed_monotonic": time.monotonic(),
             }
         return {
             "status": "unknown",
@@ -1082,6 +1104,7 @@ def restore_exact(
             "sentinel_retained": True,
             "no_mutation_verified": False,
             "candidate_stopped_monotonic": None,
+            "restoration_completed_monotonic": time.monotonic(),
         }
     if candidate_id:
         try:
@@ -1142,25 +1165,48 @@ def restore_exact(
             "resident and Nara restoration withheld because candidate stop is unverified"
         )
     else:
-        for expected in initial.get("residents", []):
+        initial_by_name = {
+            row.get("name"): row
+            for row in initial.get("residents", [])
+            if isinstance(row, dict)
+        }
+        pending = []
+        # Validate every identity before starting either resident. Then restore
+        # one model at a time so each vLLM memory profile sees a stable peer.
+        for registered in RESIDENTS:
+            expected = initial_by_name.get(registered["name"])
+            if not isinstance(expected, dict):
+                errors.append(f"resident {registered['name']}: initial identity is absent")
+                break
             if not expected.get("running"):
                 continue
             try:
                 row = _inspect_container(ops, expected["name"])
                 if row is None or row.get("id") != expected["id"] or row.get("image") != expected["image"]:
                     raise QualificationError("exact resident identity is unavailable")
-                if not row.get("running"):
-                    ops.run(
-                        ["docker", "start", expected["id"]],
-                        timeout=_remaining_timeout(deadline, 30),
-                    )
+                pending.append((expected, row))
             except Exception as exc:
                 errors.append(f"resident {expected.get('name')}: {type(exc).__name__}: {exc}")
+                break
+
         if not errors:
-            try:
-                _wait_resident_restore(ops, initial, deadline)
-            except Exception as exc:
-                errors.append(f"resident readiness: {type(exc).__name__}: {exc}")
+            for expected, observed in pending:
+                try:
+                    if not observed.get("running"):
+                        ops.run(
+                            ["docker", "start", expected["id"]],
+                            timeout=_remaining_timeout(deadline, 30),
+                        )
+                    _wait_resident_restore(
+                        ops,
+                        {"residents": [expected]},
+                        deadline,
+                    )
+                except Exception as exc:
+                    errors.append(
+                        f"resident {expected.get('name')}: {type(exc).__name__}: {exc}"
+                    )
+                    break
 
         if not errors:
             try:
@@ -1206,6 +1252,7 @@ def restore_exact(
         "sentinel_retained": retained,
         "no_mutation_verified": False,
         "candidate_stopped_monotonic": candidate_stopped_monotonic,
+        "restoration_completed_monotonic": time.monotonic(),
     }
 
 
@@ -1278,10 +1325,13 @@ def execute_worker(
     )
 
     qualification_error: str | None = None
+    failure_stage: str | None = None
+    active_stage = "setup"
     probes: list[dict[str, Any]] = []
     candidate_started_mono: float | None = None
     candidate_stopped_mono: float | None = None
     resident_stopped_mono: float | None = None
+    restoration_completed_mono: float | None = None
     monitor = monitor_factory(
         output / "memory.jsonl",
         ops,
@@ -1373,6 +1423,7 @@ def execute_worker(
                     raise QualificationError("30 GiB is unavailable after resident stop")
 
                 state["phase"] = "candidate_start"
+                active_stage = "candidate_start"
                 _atomic_write(state_path, state)
                 monitor.check()
                 candidate_started_mono = time.monotonic()
@@ -1383,6 +1434,7 @@ def execute_worker(
                 monitor.check()
                 state["candidate_gpu_started_monotonic_upper_bound"] = candidate_started_mono
                 state["phase"] = "readiness"
+                active_stage = "readiness"
                 _atomic_write(state_path, state)
                 readiness_deadline = min(
                     work_deadline,
@@ -1394,6 +1446,7 @@ def execute_worker(
                     raise QualificationError("work deadline reached before probes")
 
                 state["phase"] = "probes"
+                active_stage = "probes"
                 _atomic_write(state_path, state)
                 probes = _run_probes(
                     ops,
@@ -1414,8 +1467,10 @@ def execute_worker(
                 _atomic_write(state_path, state)
             except BaseException as exc:
                 qualification_error = f"{type(exc).__name__}: {exc}"
+                failure_stage = active_stage if active_stage in FAILURE_STAGES else "unknown"
             finally:
                 try:
+                    active_stage = "restoration"
                     state["phase"] = "restoring"
                     _atomic_write(state_path, state)
                     restoration = restore_exact(
@@ -1426,25 +1481,41 @@ def execute_worker(
                         diagnostic_path=output / "candidate.log",
                     )
                     candidate_stopped_mono = restoration.get("candidate_stopped_monotonic")
+                    restoration_completed_mono = restoration.get(
+                        "restoration_completed_monotonic"
+                    )
                 except BaseException as exc:
+                    if failure_stage is None:
+                        failure_stage = "restoration"
+                    restoration_completed_mono = time.monotonic()
                     restoration = {
                         "status": "unknown",
                         "verified_at": None,
                         "errors": [f"restoration crashed: {type(exc).__name__}: {exc}"],
                         "sentinel_retained": bool(state.get("candidate_id")),
+                        "restoration_completed_monotonic": restoration_completed_mono,
                     }
     except BaseException as exc:
         if qualification_error is None:
             qualification_error = f"{type(exc).__name__}: {exc}"
+        if failure_stage is None:
+            failure_stage = active_stage if active_stage in FAILURE_STAGES else "unknown"
         if state.get("candidate_id") or state.get("initial"):
+            restoration_completed_mono = time.monotonic()
             restoration = {
                 "status": "unknown",
                 "verified_at": None,
                 "errors": ["resource lease/monitor exited before restoration could be verified"],
                 "sentinel_retained": bool(state.get("candidate_id")),
+                "restoration_completed_monotonic": restoration_completed_mono,
             }
     finally:
         _restore_signals(previous_signals)
+
+    if restoration.get("status") != "verified" and failure_stage is None:
+        failure_stage = "restoration"
+    if monitor.failure and failure_stage is None:
+        failure_stage = active_stage if active_stage in FAILURE_STAGES else "unknown"
 
     elapsed = max(0.0, time.monotonic() - started_mono)
     gpu_seconds = (
@@ -1453,8 +1524,8 @@ def execute_worker(
         else 0.0
     )
     resident_downtime = (
-        max(0.0, candidate_stopped_mono - resident_stopped_mono)
-        if resident_stopped_mono is not None and candidate_stopped_mono is not None
+        max(0.0, restoration_completed_mono - resident_stopped_mono)
+        if resident_stopped_mono is not None and restoration_completed_mono is not None
         else 0.0
     )
     status = (
@@ -1468,6 +1539,7 @@ def execute_worker(
         "schema": "qwen-flash-next-qualification-result/v1",
         "run_id": run_id,
         "status": status,
+        "failure_stage": failure_stage,
         "qualification_error": qualification_error or monitor.failure,
         "restoration": restoration,
         "contract_sha256": plan["contract_sha256"],
@@ -1486,6 +1558,11 @@ def execute_worker(
             else "not_started"
         ),
         "resident_downtime_seconds": resident_downtime,
+        "resident_downtime_seconds_basis": (
+            "monotonic_resident_stop_to_restoration_completion_upper_bound"
+            if resident_stopped_mono is not None and restoration_completed_mono is not None
+            else "not_stopped"
+        ),
         "memory_samples": monitor.samples,
         "min_mem_available_gib": (
             monitor.minimum_observed_gib if math.isfinite(monitor.minimum_observed_gib) else None
@@ -1651,8 +1728,10 @@ def supervisor_emergency_restore(
 
 def supervise_run(contract: dict[str, Any], contract_sha: str, output: Path) -> int:
     output = _validate_output(output, must_be_absent=True)
+    contract_raw = _verified_contract_raw(contract, contract_sha)
     output.mkdir(mode=0o700)
     plan = plan_qualification(contract, contract_sha, output)
+    _atomic_write_bytes(output / "launch-contract.raw.json", contract_raw)
     _atomic_write(output / "launch-contract.snapshot.json", contract)
     _atomic_write(output / "plan.json", plan)
     env = dict(os.environ)

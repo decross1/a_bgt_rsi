@@ -44,6 +44,7 @@ def contract():
             "compile_cache_path": str(q.COMPILE_CACHE),
             "max_model_len": 16384,
             "max_num_seqs": 1,
+            "gpu_memory_utilization": 0.75,
             "kv_cache_memory_bytes": 1073741824,
             "max_num_batched_tokens": 4096,
             "kv_cache_dtype": "auto",
@@ -90,6 +91,7 @@ def plan():
         (("runtime", "container_name"), "vllm-qwen-ab-evil"),
         (("runtime", "mtp_speculative_tokens"), 2),
         (("runtime", "prefix_caching"), True),
+        (("runtime", "gpu_memory_utilization"), 0.92),
         (("runtime", "kv_cache_memory_bytes"), 0),
         (("safety", "min_mem_available_gib"), 29),
         (("safety", "invocation_deadline_seconds"), 3601),
@@ -113,6 +115,18 @@ def test_contract_rejects_duplicate_keys_and_accepts_a_lower_preregistered_cap()
         q._strict_json(b'{"schema":1,"schema":2}', source="test")
 
 
+def test_exact_raw_contract_bytes_are_bound_for_the_run_receipt(monkeypatch, tmp_path):
+    path = tmp_path / "launch-contract.c0.json"
+    raw = json.dumps(contract(), indent=3).encode() + b"\n"
+    path.write_bytes(raw)
+    monkeypatch.setattr(q, "CONTRACT_PATH", path)
+
+    assert q._verified_contract_raw(contract(), q.sha256(raw)) == raw
+    path.write_bytes(raw + b" ")
+    with pytest.raises(q.QualificationError, match="changed after planning"):
+        q._verified_contract_raw(contract(), q.sha256(raw))
+
+
 def test_launch_vector_is_fixed_and_conservative():
     argv = q.launch_argv()
     assert argv[:4] == ["docker", "create", "--name", q.CONTAINER_NAME]
@@ -121,6 +135,7 @@ def test_launch_vector_is_fixed_and_conservative():
     assert "127.0.0.1:8012:8000" in argv
     assert "--restart=no" in argv
     assert "--kv-cache-memory-bytes" in argv and "1073741824" in argv
+    assert "--gpu-memory-utilization" in argv and "0.75" in argv
     assert "--no-enable-prefix-caching" in argv
     assert "--no-async-scheduling" in argv
     assert "VLLM_QSA_EXACT_TOPK=1" in argv
@@ -380,14 +395,29 @@ def test_success_creates_sentinel_first_and_restores_exact_ids(monkeypatch, tmp_
     candidate_start = next(i for i, row in enumerate(ops.log) if row == ("docker", "start", ops.candidate_id))
     candidate_stop = next(i for i, row in enumerate(ops.log) if row == ("docker", "stop", "--time", "20", ops.candidate_id))
     resident_starts = [i for i, row in enumerate(ops.log) if row[:2] == ("docker", "start") and row[-1] != ops.candidate_id]
+    resident_health = [
+        next(
+            i
+            for i, action in enumerate(ops.log)
+            if i > resident_starts[index]
+            and action == ("HTTP", resident["health_url"])
+        )
+        for index, resident in enumerate(q.RESIDENTS)
+    ]
     nara_start = next(i for i, row in enumerate(ops.log) if row[:4] == ("systemctl", "--user", "start", q.NARA_SERVICE))
     sentinel_rm = next(i for i, row in enumerate(ops.log) if row == ("docker", "rm", ops.candidate_id))
     assert create < nara_stop < min(resident_stops) < candidate_start
     assert candidate_start < candidate_stop < min(resident_starts) < nara_start < sentinel_rm
+    assert resident_starts[0] < resident_health[0] < resident_starts[1] < resident_health[1]
     assert not any(row[:2] == ("docker", "rm") and row[-1] in {item["id"] for item in q.RESIDENTS} for row in ops.log)
     assert [item[1]["event"] for item in usage] == ["started", "finished"]
     assert all(item[0] == q.RESEARCH_LEDGER for item in usage)
     assert json.loads((output / "result.json").read_text())["status"] == "passed"
+    assert result["resident_downtime_seconds"] >= result["challenger_gpu_seconds"]
+    assert result["resident_downtime_seconds_basis"] == (
+        "monotonic_resident_stop_to_restoration_completion_upper_bound"
+    )
+    assert result["failure_stage"] is None
 
 
 def test_initially_inactive_nara_is_never_stopped_or_started(monkeypatch, tmp_path):
@@ -406,6 +436,7 @@ def test_memory_failure_restores_and_fails_closed(monkeypatch, tmp_path):
     )
     assert result["status"] == "failed"
     assert "below 30 GiB" in result["qualification_error"]
+    assert result["failure_stage"] == "candidate_start"
     assert result["restoration"]["status"] == "verified"
     assert q.CONTAINER_NAME not in ops.containers
     assert all(ops.containers[row["name"]]["running"] for row in q.RESIDENTS)
