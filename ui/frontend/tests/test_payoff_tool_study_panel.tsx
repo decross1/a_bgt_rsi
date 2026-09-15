@@ -9,6 +9,7 @@ const base = (status: string, results: unknown = null) => ({
   window_id: "qfn-followon-payoff-tool-20260915-a",
   plan_raw_sha256: sha("a"), window_raw_sha256: sha("b"),
   admission_raw_sha256: results === null ? null : sha("c"), results,
+  nonexecution_raw_sha256: status === "closed_unissued" ? sha("d") : null,
   private_content_exported: false, comparison_eligible: false,
   promotion_authorized: false, trading_claim_authorized: false,
 });
@@ -40,6 +41,15 @@ describe("payoff-tool diagnostic panel", () => {
     expect(screen.getByText(/awaiting publication/i)).toBeInTheDocument();
     rerender(<PayoffToolStudyPanel data={base("aborted_unadmitted")} />);
     expect(screen.getByText(/no payoff-tool quality result is admitted/i)).toBeInTheDocument();
+  });
+
+  it("shows only a receipt-bound closed no-call launch window", () => {
+    const { rerender } = render(<PayoffToolStudyPanel data={base("closed_unissued")} />);
+    expect(screen.getByText(/fixed launch window closed unissued: zero model calls/i)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /payoff arithmetic results/i })).not.toBeInTheDocument();
+    rerender(<PayoffToolStudyPanel data={{ ...base("closed_unissued"),
+      nonexecution_raw_sha256: null }} />);
+    expect(screen.getByText(/observation unavailable; arithmetic counts are withheld/i)).toBeInTheDocument();
   });
 
   it("shows only six-pair arithmetic and actual native-call counts after admission", () => {

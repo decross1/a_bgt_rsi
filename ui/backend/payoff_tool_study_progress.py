@@ -18,6 +18,7 @@ OUTPUT = ROOT / "payoff-tool-study" / STUDY_ID
 PLAN = OUTPUT / "plan.json"
 WINDOW = OUTPUT / "window.json"
 ADMISSION = OUTPUT / "admission.json"
+NONEXECUTION = OUTPUT / "not-issued.json"
 CODE_ROOT = Path("/home/decross1/projects/a_bgt_rsi_worktrees/lab-payoff-tool-20260915")
 PLAN_SHA = "45a29a0f04f700b5a0c62bbe531b2a0d595f555026270237666059f493878d84"
 WINDOW_SHA = "e49b3f4d0872bb03f6ec35efcceab9f5b4ed784cd05608ab15f36336996d5e58"
@@ -27,6 +28,7 @@ CALIBRATION_SHA = "88182c3475181cb2d2ccdde7e4377283ff85b9108076d67f98609db34a3a8
 PREREG_SHA = "6fcd8eb8b275c79fd3e35e0a53c5ee5b8c2faeeeb732f43d89063caba0834aeb"
 # Freeze after the no-overwrite terminal admission is published and reviewed.
 ADMISSION_SHA: str | None = None
+NONEXECUTION_SHA = "95341e159bdb32c82acc3b8165e8c7025ea22391ba26a5383209cecffbaf2259"
 SCHEMA = "payoff-tool-study-ui-progress/v1"
 CLAIM = "native calculator invocation and arithmetic only; no strategy, theory promotion, or model promotion"
 BOUND_RAW = {
@@ -35,6 +37,11 @@ BOUND_RAW = {
     "supervision-reservation.json": 2_000_000, "ready-proof.json": 2_000_000,
     "monitor-arm.json": 2_000_000, "memory.jsonl": 8_000_000,
 }
+ABSENT_AFTER_CLOSE = (
+    "supervision-reservation.json", "supervision-start.json", "supervision.json",
+    "state.json", "result.json", "ready-proof.json", "monitor-arm.json",
+    "memory.jsonl", "evaluation", "root-preflight.json", "admission.json",
+)
 
 
 def _document(path: Path, maximum: int = 2_000_000) -> tuple[dict, str]:
@@ -137,6 +144,34 @@ def _terminal(output: Path) -> tuple[str, dict | None, dict | None, dict | None]
              and supervisor.get("terminated_at_cutoff") is False
              and supervisor.get("emergency_restoration") is None)
     return ("awaiting_admission" if clean else "aborted_unadmitted"), result, state, supervisor
+
+
+def _closed_unissued(output: Path) -> str:
+    """Admit only the exact archived prelaunch refusal and continuing no-call state."""
+    row, raw_sha = _document(output / "not-issued.json", 8_000)
+    if (raw_sha != NONEXECUTION_SHA
+            or row.get("schema") != "payoff-tool-study-nonexecution/v1"
+            or row.get("window_id") != STUDY_ID
+            or row.get("window_sha256") != WINDOW_SHA
+            or row.get("plan_sha256") != PLAN_SHA
+            or row.get("status") != "closed_unissued"
+            or row.get("reason_code") != "coordinator_resource_lock_at_final_preflight"
+            or row.get("final_preflight_error") != "resource is occupied: .coordinator-cron.lock"
+            or row.get("latest_safe_start") != "2026-09-15T23:25:00Z"
+            or row.get("post_cutoff_coordinator_absent_observed_at") != "2026-09-15T23:25:12Z"
+            or row.get("scheduled_conditions") != 12
+            or row.get("scheduled_slots") != 18
+            or row.get("issued_model_calls") != 0
+            or row.get("model_quality_result") is not None
+            or row.get("production_mutation_issued") is not False
+            or row.get("comparison_eligible") is not False
+            or row.get("promotion_authorized") is not False
+            or row.get("trading_claim_authorized") is not False
+            or row.get("absent_paths_at_close") != list(ABSENT_AFTER_CLOSE)
+            or any((output / name).exists() or (output / name).is_symlink()
+                   for name in ABSENT_AFTER_CLOSE)):
+        raise ValueError("payoff-tool closed no-call receipt or present sources differ")
+    return raw_sha
 
 
 def _public_counts(plan: dict, run: dict) -> dict:
@@ -287,7 +322,8 @@ def project_progress(root: Path = ROOT) -> dict:
         "schema_version": SCHEMA, "observed_at": observed_at,
         "window_id": STUDY_ID, "status": "source_unavailable",
         "plan_raw_sha256": None, "window_raw_sha256": None,
-        "admission_raw_sha256": None, "results": None,
+        "admission_raw_sha256": None, "nonexecution_raw_sha256": None,
+        "results": None,
         "private_content_exported": False, "comparison_eligible": False,
         "promotion_authorized": False, "trading_claim_authorized": False,
     }
@@ -298,6 +334,10 @@ def project_progress(root: Path = ROOT) -> dict:
             raise ValueError("payoff-tool registered plan/window raw bytes differ")
         _registered(plan, window, output)
         entry.update(plan_raw_sha256=plan_sha, window_raw_sha256=window_sha)
+        if (output / "not-issued.json").exists() or (output / "not-issued.json").is_symlink():
+            entry["nonexecution_raw_sha256"] = _closed_unissued(output)
+            entry["status"] = "closed_unissued"
+            return entry
         status, result, state, supervisor = _terminal(output)
         entry["status"] = status
         if status != "awaiting_admission":
@@ -311,6 +351,7 @@ def project_progress(root: Path = ROOT) -> dict:
         entry["status"] = "source_unavailable"
         entry["results"] = None
         entry["admission_raw_sha256"] = None
+        entry["nonexecution_raw_sha256"] = None
     return entry
 
 

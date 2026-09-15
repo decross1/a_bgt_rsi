@@ -51,6 +51,7 @@ function view(value: unknown): View | null {
       value.trading_claim_authorized !== false) return null;
   const status = value.status;
   if (status === "closed_admitted") {
+    if (value.nonexecution_raw_sha256 !== null) return null;
     const result = results(value.results);
     return result && SHA.test(String(value.plan_raw_sha256)) &&
       SHA.test(String(value.window_raw_sha256)) &&
@@ -60,13 +61,18 @@ function view(value: unknown): View | null {
   if (status !== "source_unavailable" &&
       (!SHA.test(String(value.plan_raw_sha256)) ||
        !SHA.test(String(value.window_raw_sha256)))) return null;
+  if (status === "closed_unissued" &&
+      !SHA.test(String(value.nonexecution_raw_sha256))) return null;
+  if (status !== "closed_unissued" && value.nonexecution_raw_sha256 !== null) return null;
   return ["prepared_unissued", "execution_pending", "awaiting_admission",
-    "aborted_unadmitted", "source_unavailable"].includes(String(status)) &&
+    "aborted_unadmitted", "closed_unissued", "source_unavailable"].includes(String(status)) &&
     value.results === null && value.admission_raw_sha256 === null
     ? { status: String(status), results: null } : null;
 }
 
 function pending(status: string): string {
+  if (status === "closed_unissued")
+    return "The research coordinator still held the resource lease at final preflight. This fixed launch window closed unissued: zero model calls, no payoff-tool quality result.";
   if (status === "prepared_unissued")
     return "Frozen six-pair plan and resident window are prepared; no calls or arithmetic scores are admitted.";
   if (status === "execution_pending")
