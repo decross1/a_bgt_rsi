@@ -504,6 +504,9 @@ def _validate_memory_log_v3(
     prior_pages = samples[0]["pswpout_pages"]
     total_initial = prior_pages
     baseline = prior_pages
+    gate_baseline = prior_pages
+    gate = "setup"
+    gates = {"setup": "setup", "load": "startup", "ready": "startup", "probes": "serving", "restoration": "restoration"}
     phase_start = samples[0]["observed_at"]
     for index, row in enumerate(samples):
         phase = row.get("monitor_phase")
@@ -529,7 +532,10 @@ def _validate_memory_log_v3(
                 if prior_phase == "ready" else row["observed_at"]
             )
             anchor_time = elapsed[-1] if prior_phase == "ready" else mono
-            history = [(anchor_time, baseline)]
+            if gates[phase] != gate:
+                gate = gates[phase]
+                gate_baseline = baseline
+                history = [(anchor_time, baseline)]
         elif not index:
             history = [(mono, baseline)]
         history.append((mono, pages))
@@ -542,6 +548,7 @@ def _validate_memory_log_v3(
                 anchor = observed_pages
             window_bytes.append((pages - anchor) * PAGING_POLICY["host_page_size_bytes"])
         delta = pages - baseline
+        gate_delta = pages - gate_baseline
         expected_counters = {
             "host_page_size_bytes": PAGING_POLICY["host_page_size_bytes"],
             "pswpout_delta_pages": pages - total_initial,
@@ -550,7 +557,12 @@ def _validate_memory_log_v3(
             "phase_pswpout_delta_bytes": delta * PAGING_POLICY["host_page_size_bytes"],
             "host_swap_5s_bytes": window_bytes[0],
             "host_swap_60s_bytes": window_bytes[1],
+            "gate_initial_pswpout_pages": gate_baseline,
+            "gate_pswpout_delta_pages": gate_delta,
+            "gate_pswpout_delta_bytes": gate_delta * PAGING_POLICY["host_page_size_bytes"],
         }
+        if row.get("paging_gate") != gate:
+            raise HarnessError("qualification paging gate differs from its phase")
         for key, expected in expected_counters.items():
             if integer(row.get(key), key) != expected:
                 raise HarnessError(f"qualification {key} differs from raw counters")
@@ -575,7 +587,7 @@ def _validate_memory_log_v3(
         if limits and (
             window_bytes[0] >= limits["window_5s_breach_bytes"]
             or window_bytes[1] >= limits["window_60s_breach_bytes"]
-            or expected_counters["phase_pswpout_delta_bytes"] >= limits["phase_total_breach_bytes"]
+            or expected_counters["gate_pswpout_delta_bytes"] >= limits["phase_total_breach_bytes"]
         ):
             raise HarnessError(f"qualification {phase} host paging threshold was reached")
         summary = phase_summaries.setdefault(phase, {
@@ -646,6 +658,10 @@ def _validate_memory_log_v3(
         "mutation_pswpout_final_pages": prior_pages,
         "mutation_pswpout_delta_pages": prior_pages - load_start,
         "mutation_final_sample_at": samples[-1]["observed_at"],
+        "startup_pswpout_initial_pages": load_start,
+        "startup_pswpout_final_pages": phase_rows["ready"][-1]["pswpout_pages"],
+        "startup_pswpout_delta_pages": phase_rows["ready"][-1]["pswpout_pages"] - load_start,
+        "startup_pswpout_delta_bytes": (phase_rows["ready"][-1]["pswpout_pages"] - load_start) * PAGING_POLICY["host_page_size_bytes"],
     }
     if (load_start != result.get("setup_quiescence_final_pswpout_pages")
             or any(result.get(key) != value for key, value in fields.items())):

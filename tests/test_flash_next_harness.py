@@ -431,6 +431,8 @@ def v3_monitor_proof(path):
             "mutation_window_started_at": monitor.mutation_window_started_at,
             "mutation_pswpout_initial_pages": 12, "mutation_pswpout_final_pages": pages[0],
             "mutation_pswpout_delta_pages": pages[0] - 12, "mutation_final_sample_at": monitor.mutation_final_sample_at,
+            "startup_pswpout_initial_pages": 12, "startup_pswpout_final_pages": 406,
+            "startup_pswpout_delta_pages": 394, "startup_pswpout_delta_bytes": 394 * 4096,
             "paging_policy": copy.deepcopy(q.PAGING_POLICY), "paging_phase_summaries": copy.deepcopy(monitor.phase_summaries),
             "paging_violations": [],
             "paging_warning_phases": [phase for phase, summary in monitor.phase_summaries.items() if summary["pswpout_delta_bytes"] > 0],
@@ -683,6 +685,7 @@ def test_flash_admission_rejects_a_claimed_short_quiescence(tmp_path):
     "boolean_counter", "forged_phase_summary", "missing_transition",
     "counter_rewind", "swapped_phase", "hidden_host_growth", "late_bind",
     "emergency_stop", "missing_restoration_boundary", "early_bind",
+    "startup_reset", "forged_startup_summary",
 ])
 def test_v3_admission_reconstructs_raw_proof_and_rejects_tampering(tmp_path, corruption):
     receipt, plan, contract = passing_flash_receipts(tmp_path)
@@ -732,6 +735,16 @@ def test_v3_admission_reconstructs_raw_proof_and_rejects_tampering(tmp_path, cor
         first = next(row for row in rows if row.get("monitor_phase") == "restoration")
         del first["candidate"]
         result["candidate_cgroup_samples"] -= 1
+    elif corruption == "startup_reset":
+        ready = next(row for row in rows if row.get("monitor_phase") == "ready")
+        ready["gate_initial_pswpout_pages"] = ready["pswpout_pages"]
+        ready["gate_pswpout_delta_pages"] = 0
+        ready["gate_pswpout_delta_bytes"] = 0
+        ready["host_swap_5s_bytes"] = 0
+        ready["host_swap_60s_bytes"] = 0
+    elif corruption == "forged_startup_summary":
+        result["startup_pswpout_delta_pages"] = 0
+        result["startup_pswpout_delta_bytes"] = 0
     write_json(receipt, result)
     path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     with pytest.raises(HarnessError):
