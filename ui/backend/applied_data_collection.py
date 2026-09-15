@@ -8,6 +8,8 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
+from .applied_reference_progress import project_applied_reference
+
 DEFAULT_ROOT = Path(
     "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/applied-trading-public-data/captures"
 )
@@ -27,7 +29,8 @@ PUBLIC_FIELDS = frozenset({
 })
 
 
-def project_market_research(root: Path = DEFAULT_ROOT) -> dict:
+def project_market_research(root: Path = DEFAULT_ROOT, *,
+                            reference_root: Path | None = None) -> dict:
     result = {
         "schema_version": SCHEMA,
         "observed_at": datetime.now(timezone.utc).isoformat(),
@@ -36,6 +39,9 @@ def project_market_research(root: Path = DEFAULT_ROOT) -> dict:
         "paper_result": "not_tested", "orders_placed": 0,
         "scan_complete": True, "max_recent_batches": MAX_RECENT_BATCHES,
         "batches": [], "warnings": [],
+        "reference_studies": project_applied_reference(
+            reference_root or root.parent
+        ),
         "stages": [
             {"id": "capture", "label": "Public data", "status": "not_recorded"},
             {"id": "features", "label": "As-of features", "status": "not_recorded"},
