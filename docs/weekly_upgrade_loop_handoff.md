@@ -591,7 +591,7 @@ one-variable, same-weights A/B, never a cutover:
 | SGLang + NVFP4 + DFlash2 (D-073 track) | blocked on T1 (DSpark license) / T2 / T3 / T4; strongest documented stack (50–72 tok/s code, 20–28 prose; mem-fraction 0.80 to avoid earlyoom); post-09-04 nightly carries the abort fix (#35255) | 
 | Gemma `--moe-backend b12x` (v0.29.0, SM121 native W4A4) vs pinned `marlin` | untested on Gemma 4 upstream → candidate for a Gemma A/B only |
 | `nvidia/Qwen3.8-27B-NVFP4` (2026-09-08 ModelOpt export, MTP head included) vs the Inferact PTQ artifact | same-model quant swap; tested on GB300 only → WATCH |
-| Qwen3.8-Flash-Next / Ling-3.0-flash as seat candidates | WATCH only; roles are fixed (G5); any lead-seat arm needs a decision entry first |
+| Qwen3.8-Flash-Next / Ling-3.0-flash as seat candidates | Fixed-role/concurrent-residency veto superseded by the owner's [2026-09-15 topology amendment](MODEL_TOPOLOGY_POLICY.md); qualify and measure each candidate |
 
 Promotion rule for any runtime candidate: identical weights, request bytes,
 template, parser, MTP/KV config and scoring; no correctness/tool regression;
@@ -698,12 +698,16 @@ Project: a_bgt_rsi. Hardware: ONE NVIDIA DGX Spark (GB10, aarch64, 128 GB unifie
 ~273 GB/s, CUDA 13.0, NO x86 emulation). Production: vllm/vllm-openai:v0.21.0,
 Gemma 4 26B-A4B NVFP4 (generator; MARLIN; MTP n=4; 32K) + Qwen3.8-27B NVFP4
 (skeptic/builder; fp8 KV; qwen3_5_mtp n=3; 16K; reasoning parser qwen3, template
-levels xhigh|medium|low, default xhigh). Roles are FIXED (Gemma PI, Qwen skeptic,
-frontier falsifiers). Verify all of this against cron/serve-models.sh, /v1/models,
+levels xhigh|medium|low, default xhigh). These are the incumbent roles, not a
+requirement for two concurrently resident models. The owner's 2026-09-15 topology
+amendment permits single-primary and separate critic arrangements. Frontier
+subscription sessions remain falsifiers. Verify against cron/serve-models.sh, /v1/models,
 docker ps and free -g before every evaluation; runtime evidence beats this prompt.
 
 TARGET: verified scientific/coding task success per wall-clock and compute, subject
-to reliability, reproducibility and MemAvailable >= 30 GiB with both residents.
+to reliability, reproducibility and the registered resource policy. The current
+isolated Flash research program uses the owner-authorized 20 GiB available-memory
+floor; concurrent residency of both incumbent models is not a candidate gate.
 Report an independent pass/fail vector; never a composite. tok/s is health only.
 
 SEPARATE THE LAYERS and never attribute a gain across them: model weights;

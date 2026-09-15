@@ -324,7 +324,7 @@ def build_plan(
             "Legacy prompt and policy variants are diagnostics, not an extension of their old score series.",
             "Gemma has no Qwen reasoning_effort control; its effective policy omits that field and cannot estimate a reasoning-effort effect.",
             "Topic-scope hypothesis success is protocol compliance only until separate blinded semantic annotations exist.",
-            "Same-checkpoint Flash generator and critic calls are correlated rather than independent review.",
+            "Same-checkpoint Flash generator and critic may share errors; critic quality is measured separately and model count is not an eligibility veto.",
         ],
     }
     validate_plan(plan)
