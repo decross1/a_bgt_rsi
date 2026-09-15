@@ -226,3 +226,82 @@ def test_active_queue_does_not_invoke_global_or_model_assisted_builder(setup):
 def test_unknown_scope_rejected(setup):
     _, client, _, _ = setup
     assert client.get("/api/loop_v0/iterations?research_scope=typo").status_code == 422
+
+
+def test_duplicate_json_campaign_key_is_unavailable_not_current(setup):
+    root, client, current, _ = setup
+    path = root / "memory/loop_memory.jsonl"
+    raw = json.dumps(current)
+    path.write_text(raw[:-1] + ',"campaign":null}\n')
+    assert (
+        client.get("/api/loop_v0/iterations?research_scope=active").status_code == 503
+    )
+
+
+def test_parent_directory_redirect_does_not_import_external_research(setup):
+    root, client, _, _ = setup
+    original = root / "memory"
+    redirect = root / "redirect-memory"
+    original.rename(redirect)
+    original.symlink_to(redirect, target_is_directory=True)
+    assert (
+        client.get("/api/loop_v0/iterations?research_scope=active").status_code == 503
+    )
+
+
+def ledger_events(*members):
+    rows = [{
+        "event_type": "cluster_created", "ts": "2026-09-15T00:00:00Z",
+        "cluster_id": "cl-campaign", "member_id": members[0],
+        "origin": "consolidation",
+    }]
+    rows.extend({
+        "event_type": "member_added", "ts": "2026-09-15T00:00:01Z",
+        "cluster_id": "cl-campaign", "member_id": member,
+    } for member in members[1:])
+    rows.append({
+        "event_type": "evidence_level_changed", "ts": "2026-09-15T00:00:02Z",
+        "cluster_id": "cl-campaign", "evidence_level": "L5",
+    })
+    return rows
+
+
+@pytest.mark.parametrize("endpoint", ["ladder", "lab_todo", "human_todo"])
+@pytest.mark.parametrize("damage", ["redirect", "invalid_schema", "oversized"])
+def test_every_active_ledger_consumer_uses_guarded_snapshot(setup, monkeypatch, endpoint, damage):
+    root, client, _, _ = setup
+    path = root / "memory/idea_ledger.jsonl"
+    write_rows(path, ledger_events("iter-current"))
+    if damage == "redirect":
+        target = root / "external-ledger.jsonl"
+        path.rename(target)
+        path.symlink_to(target)
+    elif damage == "invalid_schema":
+        write_rows(path, [{"event_type": "invented"}])
+    else:
+        monkeypatch.setattr(research_scope, "MAX_SOURCE_BYTES", 1)
+    assert client.get(f"/api/{endpoint}?research_scope=active").status_code == 503
+
+
+def test_active_human_card_does_not_inherit_mixed_collection_facts(setup):
+    root, client, _, _ = setup
+    write_rows(root / "memory/idea_ledger.jsonl", ledger_events("iter-old", "iter-current"))
+    history = client.get("/api/human_todo?research_scope=all").json()
+    history_current = next(item for item in history["items"] if item["id"] == "iter-current")
+    assert "L5" in history_current["doing"]
+    current = client.get("/api/human_todo?research_scope=active").json()
+    card = next(item for item in current["items"] if item["id"] == "iter-current")
+    assert "cluster" not in card
+    assert "L5" not in card["doing"]
+    assert "iter-old" not in json.dumps(card)
+    assert client.get("/api/ladder?research_scope=active").json()["clusters"] == []
+
+
+def test_active_human_card_retains_exclusively_current_collection_facts(setup):
+    root, client, _, _ = setup
+    write_rows(root / "memory/idea_ledger.jsonl", ledger_events("iter-current"))
+    current = client.get("/api/human_todo?research_scope=active").json()
+    card = next(item for item in current["items"] if item["id"] == "iter-current")
+    assert card["cluster"]["cluster_id"] == "cl-campaign"
+    assert "L5" in card["doing"]
+    assert len(client.get("/api/ladder?research_scope=active").json()["clusters"]) == 1

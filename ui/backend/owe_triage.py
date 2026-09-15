@@ -104,7 +104,7 @@ def membership_from_rows(rows: list[dict]) -> dict[str, str]:
     return membership
 
 
-def _ledger_index(memory_dir: Path) -> tuple[dict[str, str], dict[str, dict]]:
+def _ledger_index(memory_dir: Path, rows: list[dict] | None = None) -> tuple[dict[str, str], dict[str, dict]]:
     """Fold ``idea_ledger.jsonl`` (event-sourced) into:
 
     - member_id -> cluster_id via ``membership_from_rows`` (the shared
@@ -117,7 +117,8 @@ def _ledger_index(memory_dir: Path) -> tuple[dict[str, str], dict[str, dict]]:
       false (cluster_reopened is a schema member and the reducer handles
       it).
     """
-    rows = _read_jsonl(memory_dir / "idea_ledger.jsonl")
+    if rows is None:
+        rows = _read_jsonl(memory_dir / "idea_ledger.jsonl")
     membership = membership_from_rows(rows)
     kills: dict[str, dict] = {}
     for row in rows:
@@ -255,12 +256,12 @@ def _vet_bullets(item: dict, kill: dict | None, cluster_id: str | None) -> list[
     return bullets[:3]
 
 
-def enrich_items(items: list[dict], memory_dir: Path) -> None:
+def enrich_items(items: list[dict], memory_dir: Path, *, ledger_rows: list[dict] | None = None) -> None:
     """ADDITIVE in place, matching the _tag_deferred idiom: derived display
     fields only, no existing key changes, no item removed or re-ordered.
     Any per-item derivation failure leaves that item as composed."""
     try:
-        membership, kills = _ledger_index(Path(memory_dir))
+        membership, kills = _ledger_index(Path(memory_dir), ledger_rows)
     except Exception:  # noqa: BLE001 — side-store trouble never costs the queue
         membership, kills = {}, {}
     for item in items:

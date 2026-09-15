@@ -51,7 +51,7 @@ def register(
         204 when the ledger has never been written on this checkout."""
         scope = ResearchScope(research_scope, Path(repo_root), Path(memory_dir))
         path = Path(memory_dir) / "idea_ledger.jsonl"
-        if not path.exists():
+        if research_scope == "all" and not path.exists():
             return Response(status_code=204)
 
         # LAZY import: workers.* lives in the primary repo, not under ui/.
@@ -72,7 +72,7 @@ def register(
             ) from exc
 
         try:
-            state = load_state(path)
+            state = scope.ledger_snapshot()[1] if research_scope == "active" else load_state(path)
         except FileNotFoundError:
             # Race: ledger rotated between exists() and read (cold path).
             return Response(status_code=204)

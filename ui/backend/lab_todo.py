@@ -350,12 +350,7 @@ def register(
             gaps = planner.get("gaps", []) if isinstance(planner, dict) else []
             gaps = [gap for gap in gaps if isinstance(gap, str)]
             from workers import idea_projection
-            from workers.idea_ledger import load_state
-            ledger = Path(memory_dir) / "idea_ledger.jsonl"
-            try:
-                current = scope.clusters(load_state(ledger)) if ledger.exists() else {}
-            except (OSError, ValueError) as exc:
-                raise HTTPException(503, detail="Campaign idea ledger unavailable") from exc
+            current = scope.clusters(scope.ledger_snapshot()[1])
             owed = []
             for level in _LEVELS:
                 clusters = [{"cluster_id": cid, "stem": idea_projection._stem(row),

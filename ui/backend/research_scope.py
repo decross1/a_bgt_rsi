@@ -50,9 +50,15 @@ def _json(data):
     )
 
 
+def _reject_redirected_parents(path: Path) -> None:
+    if any(parent.is_symlink() for parent in path.parents):
+        raise ValueError("redirected source directory")
+
+
 def read_records(path: Path) -> list[dict]:
     """Bounded regular-file snapshot. Unreadable is not an empty campaign."""
     try:
+        _reject_redirected_parents(path)
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
@@ -119,6 +125,20 @@ class ResearchScope:
             read_records(self.memory_dir / "loop_memory.jsonl"), "iteration_id"
         )
 
+    def ledger_snapshot(self) -> tuple[list[dict], dict]:
+        """Validate bounded bytes before using the existing pure reducer."""
+        from jsonschema import ValidationError
+
+        from workers.idea_ledger import reduce_events, validate_event
+
+        events = read_records(self.memory_dir / "idea_ledger.jsonl")
+        try:
+            for event in events:
+                validate_event(event)
+            return events, reduce_events(events)
+        except (ValueError, KeyError, TypeError, ValidationError) as exc:
+            raise HTTPException(503, detail="Campaign idea ledger unavailable") from exc
+
     def clusters(self, state: dict) -> dict:
         if self.name == "all":
             return state
@@ -178,6 +198,7 @@ class ResearchScope:
     @staticmethod
     def _summary(path: Path) -> list[dict]:
         try:
+            _reject_redirected_parents(path)
             fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             with os.fdopen(fd, "rb") as stream:
                 if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
