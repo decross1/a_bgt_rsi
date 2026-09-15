@@ -664,7 +664,7 @@ describe("Pulse (/)", () => {
       resident_services_expected: "unknown",
       nara_service_expected: "unknown",
       run_id: "qfn-c0-setup",
-      phase: "model_verification",
+      phase: "preflight",
       source_error: null,
     });
     render(<MemoryRouter><Pulse /></MemoryRouter>);

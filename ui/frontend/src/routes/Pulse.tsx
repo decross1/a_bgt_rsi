@@ -531,7 +531,7 @@ export default function Pulse() {
     boundRuntimeMode;
   const runtimePreparing =
     runtimeTransition &&
-    ["model_verification", "setup_quiescence", "sentinel_create"].includes(
+    ["preflight", "model_verification", "setup_quiescence", "sentinel_create"].includes(
       modelRuntime.phase ?? "",
     );
   const residentRuntime =
