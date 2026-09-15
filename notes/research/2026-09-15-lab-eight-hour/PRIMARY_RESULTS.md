@@ -21,7 +21,7 @@ The optimized Mia MTP3 Flash configuration completed the same frozen 126 develop
 | Evaluation minutes, including failures | 31.18 | 25.00 |
 | Correct cells per evaluation hour | 167.4 | 242.4 |
 
-The Flash portfolio loss is **12.5 percentage points**, exceeding the preregistered ten-point family regression allowance. The overall score does not override this failure. Fresh coding/science and dedicated context evaluations are still pending, and no production replacement is authorized by this publication.
+The Flash portfolio loss is **12.5 percentage points**, exceeding the preregistered ten-point family regression allowance. The overall score does not override this failure. Fresh coding/science and dedicated context evaluations subsequently completed; see [the consolidated decision and evidence](EIGHT_HOUR_RESULTS.md). No production replacement is authorized by this primary publication.
 
 The exact paired outcomes are 82 both-pass, 19 Flash-only, 5 resident-only, and 20 neither. Repeated policies and placements share underlying tasks; these are descriptive development results, not 126 independent scientific observations or evidence of general benchmark superiority.
 
