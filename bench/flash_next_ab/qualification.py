@@ -33,7 +33,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from .candidate_registry import CandidateSpec
 
 from orchestrator.weekly_upgrade_trial import canonical_root, resource_lease
 
@@ -240,6 +243,55 @@ FIXED_ENV = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _RuntimeIdentity:
+    image_id: str
+    model_path: Path
+    model_revision: str
+    model_repository: str
+    served_model: str
+    container_name: str
+    compile_cache: Path
+    compile_cache_parent: Path
+    host_port: int
+    model_repository_bytes: int
+    model_index_total_bytes: int
+    weight_files: frozenset[str]
+    indexed_weight_files: frozenset[str]
+    cache_metadata_required: bool
+    memory_limit_bytes: int
+    min_memory_gib: int
+    model_artifact_sha256: str
+    packed_ple_path: Path | None = None
+    packed_ple_bytes: int | None = None
+    packed_ple_sha256: str | None = None
+
+
+def _runtime_identity(spec: CandidateSpec | None = None) -> _RuntimeIdentity:
+    """Build a local immutable view; never switch module globals or thread state."""
+    if spec is None:
+        return _RuntimeIdentity(
+            IMAGE_ID, MODEL_PATH, MODEL_REVISION, MODEL_REPOSITORY, SERVED_MODEL,
+            CONTAINER_NAME, COMPILE_CACHE, COMPILE_CACHE_PARENT, HOST_PORT,
+            MODEL_REPOSITORY_BYTES, MODEL_TENSOR_BYTES,
+            frozenset(WEIGHT_FILES), frozenset(WEIGHT_FILES), True,
+            DOCKER_MEMORY_LIMIT_BYTES, MIN_MEMORY_GIB, model_artifact_sha256(),
+        )
+    from .candidate_registry import MIA
+    if spec is not MIA:
+        raise QualificationError("candidate spec is not the code-owned Mia singleton")
+    return _RuntimeIdentity(
+        spec.image_id, spec.model_path, spec.revision, spec.repository,
+        spec.served_name, spec.container_name, spec.compile_cache,
+        spec.compile_cache.parent, spec.host_port, spec.repository_total_bytes,
+        spec.indexed_total_size_bytes, frozenset(spec.weight_files),
+        frozenset(spec.indexed_weight_files), False,
+        spec.docker_memory_limit_bytes, spec.min_mem_available_gib,
+        spec.model_artifact_sha256(), spec.packed_ple_path, spec.packed_ple_bytes,
+        spec.packed_ple_sha256,
+    )
+
+
 class QualificationError(RuntimeError):
     """A fail-closed qualification or restoration error."""
 
@@ -344,14 +396,18 @@ def _bounded_int(value: Any, name: str, low: int, high: int) -> int:
     return value
 
 
-def expected_model_files() -> dict[str, dict[str, Any]]:
+def expected_model_files(spec: CandidateSpec | None = None) -> dict[str, dict[str, Any]]:
+    if spec is not None:
+        return spec.expected_model_files()
     return {
         name: {"bytes": size, "sha256": digest}
         for name, (size, digest) in {**WEIGHT_FILES, **CONTROL_FILES}.items()
     }
 
 
-def model_artifact_sha256() -> str:
+def model_artifact_sha256(spec: CandidateSpec | None = None) -> str:
+    if spec is not None:
+        return spec.model_artifact_sha256()
     return sha256(
         {
             "repository": MODEL_REPOSITORY,
@@ -361,8 +417,18 @@ def model_artifact_sha256() -> str:
     )
 
 
-def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
+def validate_contract(value: dict[str, Any], *, spec: CandidateSpec | None = None) -> dict[str, Any]:
     """Validate all mutable input against the code-reviewed allowlist."""
+    if spec is not None:
+        _runtime_identity(spec)
+        from .mia_candidate_integration import (
+            MiaRegistrationError,
+            validate_mia_contract,
+        )
+        try:
+            return validate_mia_contract(value, sys.modules[__name__])
+        except MiaRegistrationError as exc:
+            raise QualificationError(str(exc)) from exc
     _exact_keys(
         value,
         {"schema", "contract_id", "profile", "image", "model", "runtime", "safety", "accounting", "probe_set"},
@@ -492,9 +558,18 @@ def load_contract(path: Path = CONTRACT_PATH) -> tuple[dict[str, Any], str]:
 
 
 def _verified_contract_raw(
-    contract: dict[str, Any], contract_sha: str, path: Path | None = None
+    contract: dict[str, Any], contract_sha: str, path: Path | None = None,
+    *, spec: CandidateSpec | None = None,
 ) -> bytes:
     """Re-read and bind the exact external bytes copied into a run receipt."""
+    if spec is not None:
+        _runtime_identity(spec)
+        from .mia_candidate_integration import read_mia_contract
+        observed, raw_sha, raw = read_mia_contract(path or spec.contract_path,
+                                                   sys.modules[__name__])
+        if raw_sha != contract_sha or observed != contract:
+            raise QualificationError("Mia external contract changed after planning")
+        return raw
     path = path or CONTRACT_PATH
     if path != CONTRACT_PATH or path.is_symlink() or path.resolve() != CONTRACT_PATH:
         raise QualificationError("raw contract source is not the fixed external file")
@@ -507,7 +582,9 @@ def _verified_contract_raw(
     return raw
 
 
-def launch_argv() -> list[str]:
+def launch_argv(spec: CandidateSpec | None = None) -> list[str]:
+    if spec is not None:
+        return spec.launch_argv(compilation_config=COMPILATION_CONFIG)
     command = [
         "docker", "create",
         "--name", CONTAINER_NAME,
@@ -555,7 +632,16 @@ def launch_argv() -> list[str]:
     return command
 
 
-def _validate_output(output: Path, *, must_be_absent: bool) -> Path:
+def _validate_output(
+    output: Path, *, must_be_absent: bool, spec: CandidateSpec | None = None
+) -> Path:
+    if spec is not None:
+        _runtime_identity(spec)
+        from .mia_candidate_integration import MiaRegistrationError, validate_output
+        try:
+            return validate_output(output, spec, must_be_absent=must_be_absent)
+        except MiaRegistrationError as exc:
+            raise QualificationError(str(exc)) from exc
     output = output.absolute()
     if not re.fullmatch(r"qfn-c0-[A-Za-z0-9][A-Za-z0-9._-]{0,79}", output.name):
         raise QualificationError("output directory name is not a bounded C0 run id")
@@ -571,8 +657,20 @@ def _validate_output(output: Path, *, must_be_absent: bool) -> Path:
 
 
 def plan_qualification(
-    contract: dict[str, Any], contract_sha256: str, output: Path
+    contract: dict[str, Any], contract_sha256: str, output: Path,
+    *, spec: CandidateSpec | None = None,
 ) -> dict[str, Any]:
+    if spec is not None:
+        _runtime_identity(spec)
+        from .mia_candidate_integration import (
+            MiaRegistrationError,
+            plan_mia_qualification,
+        )
+        try:
+            return plan_mia_qualification(contract, contract_sha256, output,
+                                          sys.modules[__name__])
+        except MiaRegistrationError as exc:
+            raise QualificationError(str(exc)) from exc
     contract = validate_contract(contract)
     output = _validate_output(output, must_be_absent=False)
     command = launch_argv()
@@ -980,9 +1078,12 @@ class MemoryMonitor:
         cgroup_reader: Callable[[str, int], dict[str, Any]] = _candidate_cgroup_snapshot,
         paging_policy: dict[str, Any] | None = None,
         clock: Callable[[], float] | None = None,
+        candidate_spec: CandidateSpec | None = None,
     ):
         self.path = path
         self.ops = ops
+        self.candidate_spec = candidate_spec
+        self.runtime = _runtime_identity(candidate_spec)
         self.minimum_gib = minimum_gib
         self.interval_s = interval_s
         self.reader = reader
@@ -990,10 +1091,12 @@ class MemoryMonitor:
         self.swapin_reader = swapin_reader
         self.psi_reader = psi_reader
         self.cgroup_reader = cgroup_reader
+        expected_policy = (candidate_spec.paging_policy() if candidate_spec is not None
+                           else PAGING_POLICY)
         self.paging_policy = json.loads(
-            canonical_json(paging_policy if paging_policy is not None else PAGING_POLICY)
+            canonical_json(paging_policy if paging_policy is not None else expected_policy)
         )
-        if self.paging_policy != PAGING_POLICY:
+        if self.paging_policy != expected_policy:
             raise QualificationError("memory monitor paging policy differs from the allowlist")
         if os.sysconf("SC_PAGE_SIZE") != self.paging_policy["host_page_size_bytes"]:
             raise QualificationError("host page size differs from the paging contract")
@@ -1090,14 +1193,14 @@ class MemoryMonitor:
             if (
                 candidate is None
                 or candidate.get("id") != candidate_id
-                or candidate.get("name") != CONTAINER_NAME
-                or candidate.get("image") != IMAGE_ID
+                or candidate.get("name") != self.runtime.container_name
+                or candidate.get("image") != self.runtime.image_id
                 or candidate.get("running") is not True
                 or candidate.get("oom_killed") is not False
                 or candidate.get("restart_count") != 0
-                or candidate.get("memory_limit_bytes") != DOCKER_MEMORY_LIMIT_BYTES
+                or candidate.get("memory_limit_bytes") != self.runtime.memory_limit_bytes
                 or candidate.get("memory_swap_total_bytes")
-                != DOCKER_MEMORY_SWAP_TOTAL_BYTES
+                != self.runtime.memory_limit_bytes
                 or isinstance(candidate.get("pid"), bool)
                 or not isinstance(candidate.get("pid"), int)
                 or candidate["pid"] <= 0
@@ -1124,7 +1227,7 @@ class MemoryMonitor:
                 or snapshot.get("process_start_ticks") == 0
                 or snapshot.get("memory_swap_current_bytes")
                 != self.paging_policy["candidate_cgroup_swap_max_bytes"]
-                or snapshot.get("memory_max_bytes") != DOCKER_MEMORY_LIMIT_BYTES
+                or snapshot.get("memory_max_bytes") != self.runtime.memory_limit_bytes
                 or snapshot.get("memory_swap_max_bytes") != 0
                 or snapshot.get("memory_events_oom")
                 > self.paging_policy["candidate_cgroup_oom_initial_max"]
@@ -1134,15 +1237,26 @@ class MemoryMonitor:
                 != f"/system.slice/docker-{candidate_id}.scope"
             ):
                 raise QualificationError("candidate cgroup was not clean at bind time")
-            self._record(
-                {
-                    "schema": "qwen-flash-next-cgroup-bind/v1",
-                    "observed_at": utc_now(),
-                    "candidate_id": candidate_id,
-                    "pid": candidate["pid"],
-                    "cgroup": snapshot,
+            bind_receipt = {
+                "schema": "qwen-flash-next-cgroup-bind/v1",
+                "observed_at": utc_now(),
+                "candidate_id": candidate_id,
+                "pid": candidate["pid"],
+                "cgroup": snapshot,
+            }
+            if self.candidate_spec is not None:
+                bind_receipt["candidate_spec"] = {
+                    "id": self.candidate_spec.spec_id,
+                    "spec_sha256": self.candidate_spec.identity_sha256(),
                 }
-            )
+                bind_receipt["container_inspect"] = {
+                    key: candidate[key] for key in (
+                        "id", "name", "image", "running", "oom_killed",
+                        "restart_count", "pid", "memory_limit_bytes",
+                        "memory_swap_total_bytes",
+                    )
+                }
+            self._record(bind_receipt)
             with self._lock:
                 # Phase changes also use _sample_lock.  Recheck the candidate
                 # slot in case an explicit disarm raced the inspection.
@@ -1560,10 +1674,25 @@ class MemoryMonitor:
                     "pid": candidate.get("pid") if candidate else None,
                     "cgroup": None,
                 }
+                if self.candidate_spec is not None:
+                    candidate_row.update({
+                        "name": candidate.get("name") if candidate else None,
+                        "image": candidate.get("image") if candidate else None,
+                        "memory_limit_bytes": candidate.get("memory_limit_bytes") if candidate else None,
+                        "memory_swap_total_bytes": candidate.get("memory_swap_total_bytes") if candidate else None,
+                    })
                 with self._lock:
                     still_armed = self._candidate_id == candidate_id
                 candidate_row["armed"] = still_armed
                 if still_armed:
+                    if self.candidate_spec is not None and (
+                        candidate is None
+                        or candidate.get("name") != self.runtime.container_name
+                        or candidate.get("image") != self.runtime.image_id
+                        or candidate.get("memory_limit_bytes") != self.runtime.memory_limit_bytes
+                        or candidate.get("memory_swap_total_bytes") != self.runtime.memory_limit_bytes
+                    ):
+                        breach_reasons.append("Mia candidate name, image or Docker memory controls changed")
                     if candidate is None or not candidate.get("running"):
                         breach_reasons.append(
                             "candidate disappeared or stopped while qualified runtime was armed"
@@ -1599,7 +1728,7 @@ class MemoryMonitor:
                                 )
                             if (
                                 snapshot.get("memory_max_bytes")
-                                != DOCKER_MEMORY_LIMIT_BYTES
+                                != self.runtime.memory_limit_bytes
                                 or snapshot.get("memory_swap_max_bytes") != 0
                             ):
                                 breach_reasons.append(
@@ -1845,9 +1974,25 @@ class MemoryMonitor:
         self._stream.close()
 
 
+def _open_nofollow_regular(path: Path) -> int:
+    """Open a fixed absolute path through stable nofollow directory FDs."""
+    if not path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts[1:]):
+        raise QualificationError("regular-file path is not fixed and absolute")
+    parent = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for component in path.parts[1:-1]:
+            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=parent)
+            os.close(parent)
+            parent = child
+        return os.open(path.name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
+                       dir_fd=parent)
+    finally:
+        os.close(parent)
+
+
 def _hash_regular_file(path: Path, expected_size: int, monitor=None) -> str:
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(path, flags)
+    descriptor = _open_nofollow_regular(path)
     try:
         details = os.fstat(descriptor)
         if not stat.S_ISREG(details.st_mode) or details.st_size != expected_size:
@@ -1860,6 +2005,10 @@ def _hash_regular_file(path: Path, expected_size: int, monitor=None) -> str:
             digest.update(chunk)
             if monitor is not None:
                 monitor.check()
+        final = os.fstat(descriptor)
+        if (not stat.S_ISREG(final.st_mode) or final.st_size != details.st_size
+            or final.st_mtime_ns != details.st_mtime_ns or final.st_ino != details.st_ino):
+            raise QualificationError(f"model file changed during hashing: {path.name}")
         if hasattr(os, "posix_fadvise") and hasattr(os, "POSIX_FADV_DONTNEED"):
             try:
                 os.posix_fadvise(descriptor, 0, 0, os.POSIX_FADV_DONTNEED)
@@ -1870,9 +2019,35 @@ def _hash_regular_file(path: Path, expected_size: int, monitor=None) -> str:
         os.close(descriptor)
 
 
-def verify_model(contract: dict[str, Any], monitor=None) -> dict[str, Any]:
+def _verify_small_source_receipt(
+    path: Path, expected_sha256: str, expected_bytes: int, monitor=None
+) -> dict[str, Any]:
+    descriptor = _open_nofollow_regular(path)
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode) or details.st_size != expected_bytes:
+            raise QualificationError(f"candidate source receipt is not bounded: {path.name}")
+        raw = os.read(descriptor, details.st_size + 1)
+        final = os.fstat(descriptor)
+        if (len(raw) != details.st_size or final.st_size != details.st_size
+            or final.st_mtime_ns != details.st_mtime_ns):
+            raise QualificationError(f"candidate source receipt changed: {path.name}")
+        if sha256(raw) != expected_sha256:
+            raise QualificationError(f"candidate source receipt SHA differs: {path.name}")
+        _strict_json(raw, source=f"candidate source receipt {path.name}")
+        if monitor is not None:
+            monitor.check()
+        return {"path": str(path), "sha256": expected_sha256, "bytes": len(raw)}
+    finally:
+        os.close(descriptor)
+
+
+def verify_model(
+    contract: dict[str, Any], monitor=None, *, spec: CandidateSpec | None = None
+) -> dict[str, Any]:
+    runtime = _runtime_identity(spec)
     path = Path(contract["model"]["host_path"])
-    if path.is_symlink() or not path.is_dir() or path.resolve() != MODEL_PATH:
+    if path.is_symlink() or not path.is_dir() or path.resolve() != runtime.model_path:
         raise QualificationError("model directory is absent or redirected")
     if list(path.rglob("*.incomplete")):
         raise QualificationError("model download contains incomplete files")
@@ -1881,12 +2056,13 @@ def verify_model(contract: dict[str, Any], monitor=None) -> dict[str, Any]:
         raise QualificationError("model directory contains a redirected top-level entry")
     actual_files = {item.name for item in top_level if item.is_file()}
     actual_directories = {item.name for item in top_level if item.is_dir()}
-    if actual_files != set(contract["model"]["files"]) or actual_directories != {".cache"}:
+    expected_directories = {".cache"} if runtime.cache_metadata_required else set()
+    if actual_files != set(contract["model"]["files"]) or actual_directories != expected_directories:
         raise QualificationError("model repository file set differs from the exact revision")
-    if sum(item["bytes"] for item in contract["model"]["files"].values()) != MODEL_REPOSITORY_BYTES:
+    if sum(item["bytes"] for item in contract["model"]["files"].values()) != runtime.model_repository_bytes:
         raise QualificationError("model repository byte total differs from the manifest")
     actual_weights = {item.name for item in path.glob("*.safetensors")}
-    if actual_weights != set(WEIGHT_FILES):
+    if actual_weights != runtime.weight_files:
         raise QualificationError("safetensor file set differs from the manifest")
     verified = {}
     for name, item in contract["model"]["files"].items():
@@ -1894,33 +2070,69 @@ def verify_model(contract: dict[str, Any], monitor=None) -> dict[str, Any]:
         if digest != item["sha256"]:
             raise QualificationError(f"model content digest mismatch: {name}")
         verified[name] = {"bytes": item["bytes"], "sha256": digest}
-        metadata = path / ".cache" / "huggingface" / "download" / f"{name}.metadata"
-        if not metadata.is_file() or metadata.is_symlink():
-            raise QualificationError(f"download metadata absent: {name}")
-        lines = metadata.read_text().splitlines()
-        if not lines or lines[0] != MODEL_REVISION:
-            raise QualificationError(f"download revision mismatch: {name}")
-        if name in WEIGHT_FILES and (len(lines) < 2 or lines[1] != item["sha256"]):
-            raise QualificationError(f"download content id mismatch: {name}")
-    index = _strict_json(
-        (path / "model.safetensors.index.json").read_bytes(),
-        source="model index",
-        max_bytes=40_000_000,
-    )
+        if runtime.cache_metadata_required:
+            metadata = path / ".cache" / "huggingface" / "download" / f"{name}.metadata"
+            if not metadata.is_file() or metadata.is_symlink():
+                raise QualificationError(f"download metadata absent: {name}")
+            lines = metadata.read_text().splitlines()
+            if not lines or lines[0] != runtime.model_revision:
+                raise QualificationError(f"download revision mismatch: {name}")
+            if name in runtime.weight_files and (len(lines) < 2 or lines[1] != item["sha256"]):
+                raise QualificationError(f"download content id mismatch: {name}")
+    index_item = verified["model.safetensors.index.json"]
+    descriptor = _open_nofollow_regular(path / "model.safetensors.index.json")
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size != index_item["bytes"]:
+            raise QualificationError("model index changed after verification")
+        index_raw = os.read(descriptor, info.st_size + 1)
+        if len(index_raw) != info.st_size or sha256(index_raw) != index_item["sha256"]:
+            raise QualificationError("model index bytes changed after verification")
+    finally:
+        os.close(descriptor)
+    index = _strict_json(index_raw, source="model index", max_bytes=40_000_000)
     if set(index) != {"metadata", "weight_map"}:
         raise QualificationError("model index shape differs")
-    if index["metadata"] != {"total_size": MODEL_TENSOR_BYTES}:
+    if index["metadata"] != {"total_size": runtime.model_index_total_bytes}:
         raise QualificationError("model tensor payload size differs")
     weight_map = index["weight_map"]
-    if not isinstance(weight_map, dict) or set(weight_map.values()) != set(WEIGHT_FILES):
+    if not isinstance(weight_map, dict) or set(weight_map.values()) != runtime.indexed_weight_files:
         raise QualificationError("model index shard mapping differs")
-    return {
-        "artifact_sha256": model_artifact_sha256(),
-        "safetensors_total_bytes": sum(size for size, _ in WEIGHT_FILES.values()),
+    receipt = {
+        "artifact_sha256": runtime.model_artifact_sha256,
+        "safetensors_total_bytes": sum(item["bytes"] for name, item in verified.items()
+                                           if name in runtime.weight_files),
         "verified_files": verified,
         "verified_at": utc_now(),
         "full_sha256": True,
     }
+    if spec is not None:
+        proofs = {}
+        for name, proof_path, proof_sha, proof_bytes in (
+            ("acquisition", spec.acquisition_receipt_path,
+             spec.acquisition_receipt_sha256, spec.acquisition_receipt_bytes),
+            ("image_build", spec.image_build_receipt_path,
+             spec.image_build_receipt_sha256, spec.image_build_receipt_bytes),
+            ("ple_build", spec.ple_build_receipt_path,
+             spec.ple_build_receipt_sha256, spec.ple_build_receipt_bytes),
+        ):
+            proofs[name] = _verify_small_source_receipt(
+                proof_path, proof_sha, proof_bytes, monitor
+            )
+        if (runtime.packed_ple_path is None or runtime.packed_ple_bytes is None
+            or runtime.packed_ple_sha256 is None):
+            raise QualificationError("registered packed PLE is absent")
+        packed_sha = _hash_regular_file(runtime.packed_ple_path,
+                                        runtime.packed_ple_bytes, monitor)
+        if packed_sha != runtime.packed_ple_sha256:
+            raise QualificationError("registered packed PLE content differs")
+        receipt["candidate"] = {"id": spec.spec_id,
+                                "spec_sha256": spec.identity_sha256()}
+        receipt["proof_receipts"] = proofs
+        receipt["packed_ple"] = {"path": str(runtime.packed_ple_path),
+                                 "bytes": runtime.packed_ple_bytes,
+                                 "sha256": packed_sha}
+    return receipt
 
 
 def _append_research_usage(row: dict[str, Any], ledger: Path = RESEARCH_LEDGER) -> None:
@@ -1940,9 +2152,10 @@ def _append_research_usage(row: dict[str, Any], ledger: Path = RESEARCH_LEDGER) 
         os.close(descriptor)
 
 
-def _ensure_compile_cache() -> None:
-    parent = COMPILE_CACHE.parent
-    if parent != COMPILE_CACHE_PARENT:
+def _ensure_compile_cache(spec: CandidateSpec | None = None) -> None:
+    runtime = _runtime_identity(spec)
+    parent = runtime.compile_cache.parent
+    if parent != runtime.compile_cache_parent:
         raise QualificationError("compile-cache parent is outside the allowlist")
     if (
         not parent.exists()
@@ -1953,16 +2166,18 @@ def _ensure_compile_cache() -> None:
         raise QualificationError("compile-cache parent is absent or redirected")
     if parent.stat().st_uid != os.getuid():
         raise QualificationError("compile-cache parent is not owned by the invoking account")
-    if COMPILE_CACHE.exists() and (COMPILE_CACHE.is_symlink() or not COMPILE_CACHE.is_dir()):
+    if runtime.compile_cache.exists() and (runtime.compile_cache.is_symlink()
+                                           or not runtime.compile_cache.is_dir()):
         raise QualificationError("compile-cache path is redirected")
-    COMPILE_CACHE.mkdir(mode=0o755, exist_ok=True)
+    runtime.compile_cache.mkdir(mode=0o755, exist_ok=True)
 
 
-def _assert_port_free() -> None:
+def _assert_port_free(spec: CandidateSpec | None = None) -> None:
+    runtime = _runtime_identity(spec)
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            probe.bind(("127.0.0.1", HOST_PORT))
+            probe.bind(("127.0.0.1", runtime.host_port))
         except OSError as exc:
             raise QualificationError("candidate loopback port is occupied") from exc
 
@@ -1999,12 +2214,14 @@ def _capture_initial_state(ops: HostOps, preflight: dict[str, Any]) -> dict[str,
 
 
 def _wait_candidate_ready(
-    ops: HostOps, monitor: MemoryMonitor, *, deadline: float
+    ops: HostOps, monitor: MemoryMonitor, *, deadline: float,
+    spec: CandidateSpec | None = None,
 ) -> dict[str, Any]:
+    runtime = _runtime_identity(spec)
     last_error = "not probed"
     while time.monotonic() < deadline:
         monitor.check()
-        row = _inspect_container(ops, CONTAINER_NAME)
+        row = _inspect_container(ops, runtime.container_name)
         if (
             row is None
             or not row.get("running")
@@ -2013,12 +2230,12 @@ def _wait_candidate_ready(
         ):
             raise QualificationError("candidate stopped, restarted, or OOM-killed before readiness")
         try:
-            ops.http_bytes("http://127.0.0.1:8012/health", timeout=2)
-            raw = ops.http_bytes("http://127.0.0.1:8012/v1/models", timeout=2)
+            ops.http_bytes(f"http://127.0.0.1:{runtime.host_port}/health", timeout=2)
+            raw = ops.http_bytes(f"http://127.0.0.1:{runtime.host_port}/v1/models", timeout=2)
             models = _strict_json(raw, source="candidate /v1/models")
             data = models.get("data")
             identifiers = [item.get("id") for item in data] if isinstance(data, list) else []
-            if identifiers != [SERVED_MODEL]:
+            if identifiers != [runtime.served_model]:
                 raise QualificationError("candidate model list is not the exact served identity")
             return {"ready_at": utc_now(), "models": identifiers, "container": row}
         except Exception as exc:  # noqa: BLE001 - bounded readiness poll records its final error
@@ -2067,12 +2284,16 @@ def _probe_private_response(
 
 
 def _run_probes(
-    ops: HostOps, monitor: MemoryMonitor, *, timeout_s: int, output: Path
+    ops: HostOps, monitor: MemoryMonitor, *, timeout_s: int, output: Path,
+    spec: CandidateSpec | None = None,
 ) -> list[dict[str, Any]]:
+    runtime = _runtime_identity(spec)
     from bench.flash_next_ab.transport import LocalEndpoint
 
     endpoint = LocalEndpoint(
-        "flash_next", "http://127.0.0.1:8012/v1", SERVED_MODEL, model_artifact_sha256()
+        spec.endpoint_name if spec is not None else "flash_next",
+        f"http://127.0.0.1:{runtime.host_port}/v1",
+        runtime.served_model, runtime.model_artifact_sha256,
     )
     policy = {"temperature": 0, "top_p": 1, "enable_thinking": False}
     specifications = [
@@ -2150,18 +2371,18 @@ def _run_probes(
             "probe_set": "flash-next-minimal-v1", "results": attempts,
         })
 
-    for ordinal, spec in enumerate(specifications):
-        result = attempt(spec["id"], spec["messages"], spec["max_tokens"], 17 + ordinal)
+    for ordinal, request_spec in enumerate(specifications):
+        result = attempt(request_spec["id"], request_spec["messages"], request_spec["max_tokens"], 17 + ordinal)
         valid = (
-            result.get("response_model") == SERVED_MODEL
+            result.get("response_model") == runtime.served_model
             and isinstance(result.get("content"), str)
-            and result["content"].strip() == spec["expected"]
+            and result["content"].strip() == request_spec["expected"]
             and not result.get("tool_calls")
             and result.get("finish_reason") == "stop"
         )
         record("passed" if valid else "failed")
         if not valid:
-            raise QualificationError(f"fixed probe failed: {spec['id']}")
+            raise QualificationError(f"fixed probe failed: {request_spec['id']}")
         results.append(result)
 
     tools = [{
@@ -2199,7 +2420,7 @@ def _run_probes(
             and isinstance(result.get("content"), str)
             and not result["content"].strip()
             and result.get("finish_reason") == "tool_calls"
-            and result.get("response_model") == SERVED_MODEL
+            and result.get("response_model") == runtime.served_model
         )
     record("passed" if valid else "failed")
     if not valid:
@@ -2270,8 +2491,10 @@ def restore_exact(
     deadline: float,
     monitor: MemoryMonitor | None = None,
     diagnostic_path: Path | None = None,
+    spec: CandidateSpec | None = None,
 ) -> dict[str, Any]:
     """Best-effort exact-ID restoration; never re-create a resident."""
+    runtime = _runtime_identity(spec)
     errors: list[str] = []
     diagnostic_errors: list[str] = []
     candidate_id = state.get("candidate_id")
@@ -2280,7 +2503,7 @@ def restore_exact(
     candidate_stopped_monotonic: float | None = None
     restored_expectations: list[dict[str, Any]] = []
     if candidate_id is None and not isinstance(initial, dict):
-        unexpected = _inspect_container(ops, CONTAINER_NAME)
+        unexpected = _inspect_container(ops, runtime.container_name)
         if unexpected is None:
             return {
                 "status": "verified",
@@ -2307,14 +2530,14 @@ def restore_exact(
     if candidate_id:
         try:
             row = _inspect_container(ops, candidate_id)
-            by_name = _inspect_container(ops, CONTAINER_NAME)
+            by_name = _inspect_container(ops, runtime.container_name)
             if by_name is not None and by_name.get("id") != candidate_id:
                 raise QualificationError("A/B sentinel name now belongs to another container")
             if row is not None:
                 if (
                     row.get("id") != candidate_id
-                    or row.get("name") != CONTAINER_NAME
-                    or row.get("image") != IMAGE_ID
+                    or row.get("name") != runtime.container_name
+                    or row.get("image") != runtime.image_id
                 ):
                     raise QualificationError("candidate identity changed during restoration")
                 if diagnostic_path is not None:
@@ -2351,7 +2574,7 @@ def restore_exact(
             candidate_safe = False
             errors.append(f"candidate stop: {type(exc).__name__}: {exc}")
     elif isinstance(initial, dict):
-        unexpected = _inspect_container(ops, CONTAINER_NAME)
+        unexpected = _inspect_container(ops, runtime.container_name)
         if unexpected is not None:
             candidate_safe = False
             errors.append("A/B sentinel exists but its exact candidate ID was not captured")
@@ -2485,7 +2708,7 @@ def restore_exact(
     # after every pre-existing runtime and Nara state is positively verified.
     if not errors and candidate_id:
         try:
-            by_name = _inspect_container(ops, CONTAINER_NAME)
+            by_name = _inspect_container(ops, runtime.container_name)
             by_id = _inspect_container(ops, candidate_id)
             if by_name is None and by_id is None:
                 pass
@@ -2494,8 +2717,8 @@ def restore_exact(
                 or by_id is None
                 or by_name.get("id") != candidate_id
                 or by_id.get("id") != candidate_id
-                or by_id.get("name") != CONTAINER_NAME
-                or by_id.get("image") != IMAGE_ID
+                or by_id.get("name") != runtime.container_name
+                or by_id.get("image") != runtime.image_id
             ):
                 raise QualificationError("candidate sentinel identity changed")
             else:
@@ -2504,7 +2727,7 @@ def restore_exact(
                     timeout=_remaining_timeout(deadline, 20),
                 )
                 if (
-                    _inspect_container(ops, CONTAINER_NAME) is not None
+                    _inspect_container(ops, runtime.container_name) is not None
                     or _inspect_container(ops, candidate_id) is not None
                 ):
                     raise QualificationError(
@@ -2512,7 +2735,7 @@ def restore_exact(
                     )
         except Exception as exc:  # noqa: BLE001 - retain the sentinel on any removal uncertainty
             errors.append(f"sentinel removal: {type(exc).__name__}: {exc}")
-    retained = _inspect_container(ops, CONTAINER_NAME) is not None
+    retained = _inspect_container(ops, runtime.container_name) is not None
     return {
         "status": "verified" if not errors else "unknown",
         "verified_at": utc_now() if not errors else None,
@@ -2554,9 +2777,17 @@ def execute_worker(
     preflight_probe: Callable[..., dict[str, Any]] | None = None,
     monitor_factory=MemoryMonitor,
     ledger: Path = RESEARCH_LEDGER,
+    spec: CandidateSpec | None = None,
 ) -> dict[str, Any]:
     """Execute one already-supervised window.  Tests inject all host effects."""
+    if spec is not None:
+        validate_contract(contract, spec=spec)
+        expected_plan = plan_qualification(contract, plan["contract_sha256"],
+                                           output, spec=spec)
+        if plan != expected_plan:
+            raise QualificationError("Mia worker plan differs from immutable registration")
     ops = ops or HostOps()
+    runtime = _runtime_identity(spec)
     if os.environ.get("MOCK_LLM"):
         raise QualificationError("live qualification refuses MOCK_LLM")
     if preflight_probe is None:
@@ -2571,7 +2802,8 @@ def execute_worker(
     started_wall = datetime.now(timezone.utc)
     run_id = output.name
     state: dict[str, Any] = {
-        "schema": "qwen-flash-next-qualification-state/v3",
+        "schema": ("qwen-flash-next-qualification-state/v4" if spec is not None
+                   else "qwen-flash-next-qualification-state/v3"),
         "run_id": run_id,
         "phase": "preflight",
         "plan_sha256": sha256(plan),
@@ -2595,6 +2827,9 @@ def execute_worker(
         "initial": None,
         "restoration": {"status": "not_started"},
     }
+    if spec is not None:
+        state["candidate"] = plan["candidate"]
+        state["model_artifact_sha256"] = runtime.model_artifact_sha256
     state_path = output / "state.json"
 
     def write_state() -> None:
@@ -2620,17 +2855,19 @@ def execute_worker(
     failure_stage: str | None = None
     active_stage = "setup"
     probes: list[dict[str, Any]] = []
+    model_receipt: dict[str, Any] | None = None
     candidate_started_mono: float | None = None
     candidate_stopped_mono: float | None = None
     resident_stopped_mono: float | None = None
     restoration_completed_mono: float | None = None
-    monitor = monitor_factory(
-        output / "memory.jsonl",
-        ops,
-        minimum_gib=MIN_MEMORY_GIB,
-        interval_s=contract["safety"]["memory_poll_seconds"],
-        paging_policy=contract["safety"]["paging_policy"],
-    )
+    monitor_args = {
+        "minimum_gib": runtime.min_memory_gib,
+        "interval_s": contract["safety"]["memory_poll_seconds"],
+        "paging_policy": contract["safety"]["paging_policy"],
+    }
+    if spec is not None:
+        monitor_args["candidate_spec"] = spec
+    monitor = monitor_factory(output / "memory.jsonl", ops, **monitor_args)
     previous_signals = _signal_guard()
     restoration: dict[str, Any] = {
         "status": "verified",
@@ -2642,23 +2879,28 @@ def execute_worker(
         with resource_lease(root), monitor:
             try:
                 preflight = preflight_probe(root, idle=True)
-                if float(preflight.get("mem_available_gib", 0)) < MIN_MEMORY_GIB:
+                if float(preflight.get("mem_available_gib", 0)) < runtime.min_memory_gib:
                     raise QualificationError("preflight did not preserve the 20 GiB memory gate")
-                if _inspect_container(ops, CONTAINER_NAME) is not None:
+                if _inspect_container(ops, runtime.container_name) is not None:
                     raise QualificationError("A/B sentinel name already exists")
-                _assert_port_free()
+                if spec is not None and _inspect_container(ops, CONTAINER_NAME) is not None:
+                    raise QualificationError("NVIDIA A/B sentinel still exists before Mia window")
+                _assert_port_free(spec) if spec is not None else _assert_port_free()
 
                 state["phase"] = "model_verification"
                 write_state()
-                model_receipt = verify_model(contract, monitor)
+                model_receipt = (
+                    verify_model(contract, monitor, spec=spec) if spec is not None
+                    else verify_model(contract, monitor)
+                )
                 _atomic_write(output / "model-verification.json", model_receipt)
                 image = ops.run(
-                    ["docker", "image", "inspect", "--format", "{{.Id}} {{.Architecture}}", IMAGE_ID],
+                    ["docker", "image", "inspect", "--format", "{{.Id}} {{.Architecture}}", runtime.image_id],
                     timeout=10,
                 ).stdout.strip().split()
-                if image != [IMAGE_ID, "arm64"]:
+                if image != [runtime.image_id, "arm64"]:
                     raise QualificationError("installed image identity or architecture differs")
-                _ensure_compile_cache()
+                _ensure_compile_cache(spec) if spec is not None else _ensure_compile_cache()
                 monitor.check()
 
                 state["phase"] = "setup_quiescence"
@@ -2672,7 +2914,7 @@ def execute_worker(
                 # Re-probe idle queues and capture identities immediately before
                 # the first mutation while the canonical lease is still held.
                 preflight = preflight_probe(root, idle=True)
-                if float(preflight.get("mem_available_gib", 0)) < MIN_MEMORY_GIB:
+                if float(preflight.get("mem_available_gib", 0)) < runtime.min_memory_gib:
                     raise QualificationError("pre-mutation memory gate failed")
                 initial = _capture_initial_state(ops, preflight)
                 state["initial"] = initial
@@ -2691,23 +2933,23 @@ def execute_worker(
                 else:
                     # A created sentinel must remain recoverable even if Docker's
                     # stdout was malformed or unexpectedly decorated.
-                    recovered = _inspect_container(ops, CONTAINER_NAME)
+                    recovered = _inspect_container(ops, runtime.container_name)
                     if recovered is not None and re.fullmatch(
                         r"[0-9a-f]{64}", str(recovered.get("id", ""))
                     ):
                         state["candidate_id"] = recovered["id"]
                         write_state()
                     raise QualificationError("docker create did not return an exact container ID")
-                candidate = _inspect_container(ops, CONTAINER_NAME)
+                candidate = _inspect_container(ops, runtime.container_name)
                 if (
                     candidate is None
                     or candidate.get("id") != created
-                    or candidate.get("image") != IMAGE_ID
+                    or candidate.get("image") != runtime.image_id
                     or candidate.get("running")
                     or candidate.get("restart_policy") not in {"", "no"}
-                    or candidate.get("memory_limit_bytes") != DOCKER_MEMORY_LIMIT_BYTES
+                    or candidate.get("memory_limit_bytes") != runtime.memory_limit_bytes
                     or candidate.get("memory_swap_total_bytes")
-                    != DOCKER_MEMORY_SWAP_TOTAL_BYTES
+                    != runtime.memory_limit_bytes
                 ):
                     raise QualificationError("created candidate differs from the launch contract")
 
@@ -2726,7 +2968,7 @@ def execute_worker(
                         if observed is None or observed["id"] != resident["id"] or observed["running"]:
                             raise QualificationError(f"resident stop unverified: {resident['name']}")
                 monitor.check()
-                if float(monitor.reader()) < MIN_MEMORY_GIB:
+                if float(monitor.reader()) < runtime.min_memory_gib:
                     raise QualificationError("20 GiB is unavailable after resident stop")
 
                 state["phase"] = "candidate_start"
@@ -2756,7 +2998,10 @@ def execute_worker(
                     work_deadline,
                     time.monotonic() + contract["safety"]["readiness_deadline_seconds"],
                 )
-                ready = _wait_candidate_ready(ops, monitor, deadline=readiness_deadline)
+                ready = _wait_candidate_ready(
+                    ops, monitor, deadline=readiness_deadline,
+                    **({"spec": spec} if spec is not None else {}),
+                )
                 state["phase"] = "ready_stabilization"
                 state["monitor_phase"] = "ready"
                 write_state()
@@ -2791,6 +3036,7 @@ def execute_worker(
                     monitor,
                     timeout_s=contract["safety"]["probe_timeout_seconds"],
                     output=output,
+                    **({"spec": spec} if spec is not None else {}),
                 )
                 _atomic_write(output / "probes.json", {"probe_set": plan["probe_set"], "results": probes})
                 monitor.check()
@@ -2828,6 +3074,7 @@ def execute_worker(
                         deadline=hard_deadline,
                         monitor=monitor,
                         diagnostic_path=output / "candidate.log",
+                        **({"spec": spec} if spec is not None else {}),
                     )
                     candidate_stopped_mono = restoration.get("candidate_stopped_monotonic")
                     restoration_completed_mono = restoration.get(
@@ -2879,6 +3126,7 @@ def execute_worker(
     )
     paging_proof_complete = bool(
         getattr(monitor, "ready_quiescence_passed", False)
+        and len(probes) == 3
         and getattr(monitor, "candidate_cgroup_bound_path", None)
         == f"/system.slice/docker-{state.get('candidate_id')}.scope"
         and isinstance(getattr(monitor, "candidate_cgroup_bound_pid", None), int)
@@ -2923,7 +3171,8 @@ def execute_worker(
         else "unknown"
     )
     result = {
-        "schema": "qwen-flash-next-qualification-result/v3",
+        "schema": ("qwen-flash-next-qualification-result/v4" if spec is not None
+                   else "qwen-flash-next-qualification-result/v3"),
         "run_id": run_id,
         "status": status,
         "failure_stage": failure_stage,
@@ -2934,7 +3183,7 @@ def execute_worker(
         "restoration": restoration,
         "contract_sha256": plan["contract_sha256"],
         "plan_sha256": sha256(plan),
-        "model_artifact_sha256": model_artifact_sha256(),
+        "model_artifact_sha256": runtime.model_artifact_sha256,
         "started_at": state["started_at"],
         "elapsed_seconds": elapsed,
         "challenger_gpu_seconds": gpu_seconds,
@@ -3135,15 +3384,23 @@ def execute_worker(
         "production_change_authorized": False,
     }
     diagnostic_sha256, memory_log_sha256 = _write_cgroup_diagnostics(
-        output, state.get("candidate_id"), required=status == "passed"
+        output, state.get("candidate_id"), required=status == "passed",
+        **({"spec": spec} if spec is not None else {}),
     )
     result.update(
-        profile="C0-S1",
-        docker_memory_limit_bytes=DOCKER_MEMORY_LIMIT_BYTES,
-        docker_memory_swap_total_bytes=DOCKER_MEMORY_SWAP_TOTAL_BYTES,
+        profile=spec.profile if spec is not None else "C0-S1",
+        docker_memory_limit_bytes=runtime.memory_limit_bytes,
+        docker_memory_swap_total_bytes=runtime.memory_limit_bytes,
         cgroup_diagnostics_sha256=diagnostic_sha256,
         memory_log_sha256=memory_log_sha256,
     )
+    if spec is not None:
+        result["candidate"] = plan["candidate"]
+        result["proof_receipts"] = plan["proof_receipts"]
+        result["packed_ple"] = plan["packed_ple"] if model_receipt is not None else None
+        result["model_verification_sha256"] = (
+            sha256(model_receipt) if model_receipt is not None else None
+        )
     result["finished_at"] = utc_now()
     state["phase"] = "complete"
     state["restoration"] = restoration
@@ -3202,9 +3459,11 @@ def _read_bounded_run_json(path: Path, *, source: str) -> dict[str, Any]:
 
 
 def _write_cgroup_diagnostics(
-    output: Path, candidate_id: str | None, *, required: bool
+    output: Path, candidate_id: str | None, *, required: bool,
+    spec: CandidateSpec | None = None,
 ) -> tuple[str | None, str | None]:
     """Bind phase telemetry to the raw memory stream after the monitor closes."""
+    runtime = _runtime_identity(spec)
     if candidate_id is None:
         if required:
             raise QualificationError("passed no-swap attempt has no candidate ID")
@@ -3290,18 +3549,22 @@ def _write_cgroup_diagnostics(
     ):
         raise QualificationError("passed no-swap attempt lacks attributed phase snapshots")
     sidecar = {
-        "schema": "qwen-flash-next-c0-s1-cgroup-diagnostics/v1",
+        "schema": ("qwen-flash-next-c0-mia-s1-cgroup-diagnostics/v1" if spec is not None
+                   else "qwen-flash-next-c0-s1-cgroup-diagnostics/v1"),
         "candidate_id": candidate_id,
         "memory_log_sha256": sha256(raw),
         "attributed_samples": attributed,
         "maximum_memory_current_bytes": max_current,
-        "registered_memory_max_bytes": DOCKER_MEMORY_LIMIT_BYTES,
+        "registered_memory_max_bytes": runtime.memory_limit_bytes,
         "registered_swap_max_bytes": 0,
         "phase_first_last": phase_rows,
         "phase_host_first_last": host_phase_rows,
         "host_swap_action": "registered_startup_and_serving_byte_gates",
         "diagnostics_finished_at": utc_now(),
     }
+    if spec is not None:
+        sidecar["candidate"] = {"id": spec.spec_id,
+                                "spec_sha256": spec.identity_sha256()}
     sidecar_file = output / "cgroup-diagnostics.json"
     _atomic_write(sidecar_file, sidecar)
     sidecar_raw, observed_sidecar = _read_regular_file(
@@ -3313,18 +3576,26 @@ def _write_cgroup_diagnostics(
 
 
 def _validated_recovery_state(
-    output: Path, plan: dict[str, Any]
+    output: Path, plan: dict[str, Any], *, spec: CandidateSpec | None = None,
 ) -> dict[str, Any]:
     path = output / "state.json"
     state = _read_bounded_run_json(path, source="worker recovery state")
     if (
-        state.get("schema") != "qwen-flash-next-qualification-state/v3"
+        state.get("schema") != ("qwen-flash-next-qualification-state/v4" if spec is not None
+                                else "qwen-flash-next-qualification-state/v3")
         or state.get("run_id") != output.name
         or state.get("contract_sha256") != plan["contract_sha256"]
         or state.get("plan_sha256") != sha256(plan)
         or state.get("boot_id") != Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     ):
         raise QualificationError("worker recovery state is not bound to this run and boot")
+    if spec is not None and (
+        state.get("candidate") != plan.get("candidate")
+        or state.get("model_artifact_sha256") != spec.model_artifact_sha256()
+        or plan.get("candidate") != {"id": spec.spec_id,
+                                    "spec_sha256": spec.identity_sha256()}
+    ):
+        raise QualificationError("worker recovery Mia spec differs from plan")
     if (
         isinstance(state.get("worker_pid"), bool)
         or not isinstance(state.get("worker_pid"), int)
@@ -3333,7 +3604,8 @@ def _validated_recovery_state(
         or not isinstance(state.get("worker_start_ticks"), int)
         or state["worker_start_ticks"] <= 0
         or state.get("memory_log_relpath") != "memory.jsonl"
-        or state.get("paging_policy") != PAGING_POLICY
+        or state.get("paging_policy") != (spec.paging_policy() if spec is not None
+                                          else PAGING_POLICY)
         or state.get("monitor_phase")
         not in {"setup", "load", "ready", "probes", "restoration"}
         or not isinstance(state.get("invocation_deadline_at"), str)
@@ -3394,7 +3666,9 @@ def _validated_recovery_state(
     return state
 
 
-def _result_has_verified_restoration(output: Path, plan: dict[str, Any]) -> bool:
+def _result_has_verified_restoration(
+    output: Path, plan: dict[str, Any], *, spec: CandidateSpec | None = None
+) -> bool:
     path = output / "result.json"
     try:
         result = _read_bounded_run_json(path, source="worker result")
@@ -3417,10 +3691,12 @@ def _result_has_verified_restoration(output: Path, plan: dict[str, Any]) -> bool
     except (KeyError, TypeError, ValueError):
         timestamps_sane = False
     return bool(
-        result.get("schema") == "qwen-flash-next-qualification-result/v3"
+        result.get("schema") == ("qwen-flash-next-qualification-result/v4" if spec is not None
+                                 else "qwen-flash-next-qualification-result/v3")
         and result.get("run_id") == output.name
         and result.get("contract_sha256") == plan["contract_sha256"]
         and result.get("plan_sha256") == sha256(plan)
+        and (spec is None or result.get("candidate") == plan.get("candidate"))
         and isinstance(restoration, dict)
         and restoration.get("status") == "verified"
         and restoration.get("errors") == []
@@ -3435,19 +3711,23 @@ def supervisor_emergency_restore(
     *,
     deadline: float,
     ops: HostOps | None = None,
+    spec: CandidateSpec | None = None,
 ) -> dict[str, Any]:
     """Recover a killed worker from its last durable exact-ID state."""
     ops = ops or HostOps()
     receipt: dict[str, Any] = {
-        "schema": "qwen-flash-next-supervisor-recovery/v1",
+        "schema": ("qwen-flash-next-supervisor-recovery/v2" if spec is not None
+                   else "qwen-flash-next-supervisor-recovery/v1"),
         "run_id": output.name,
         "started_at": utc_now(),
         "status": "unknown",
         "restoration": None,
         "error": None,
     }
+    if spec is not None:
+        receipt["candidate"] = plan["candidate"]
     try:
-        state = _validated_recovery_state(output, plan)
+        state = _validated_recovery_state(output, plan, spec=spec)
         root = canonical_root(ROOT)
         with resource_lease(root):
             restoration = restore_exact(
@@ -3455,6 +3735,7 @@ def supervisor_emergency_restore(
                 state,
                 deadline=deadline,
                 diagnostic_path=output / "candidate.supervisor.log",
+                **({"spec": spec} if spec is not None else {}),
             )
         receipt["restoration"] = restoration
         receipt["status"] = restoration["status"]
@@ -3481,11 +3762,14 @@ def supervisor_emergency_restore(
     return receipt
 
 
-def supervise_run(contract: dict[str, Any], contract_sha: str, output: Path) -> int:
-    output = _validate_output(output, must_be_absent=True)
-    contract_raw = _verified_contract_raw(contract, contract_sha)
+def supervise_run(
+    contract: dict[str, Any], contract_sha: str, output: Path,
+    *, spec: CandidateSpec | None = None,
+) -> int:
+    output = _validate_output(output, must_be_absent=True, spec=spec)
+    contract_raw = _verified_contract_raw(contract, contract_sha, spec=spec)
     output.mkdir(mode=0o700)
-    plan = plan_qualification(contract, contract_sha, output)
+    plan = plan_qualification(contract, contract_sha, output, spec=spec)
     _atomic_write_bytes(output / "launch-contract.raw.json", contract_raw)
     _atomic_write(output / "launch-contract.snapshot.json", contract)
     _atomic_write(output / "plan.json", plan)
@@ -3498,7 +3782,7 @@ def supervise_run(contract: dict[str, Any], contract_sha: str, output: Path) -> 
         "WRAPPER_PROFILE_OVERRIDES",
     ):
         env.pop(name, None)
-    command = _worker_command(CONTRACT_PATH, output)
+    command = _worker_command(spec.contract_path if spec is not None else CONTRACT_PATH, output)
     start = time.monotonic()
     deadline = start + contract["safety"]["invocation_deadline_seconds"]
     work_cutoff = deadline - contract["safety"]["restoration_reserve_seconds"]
@@ -3540,8 +3824,9 @@ def supervise_run(contract: dict[str, Any], contract_sha: str, output: Path) -> 
         except subprocess.TimeoutExpired:
             killed = True
     emergency = None
-    if not _result_has_verified_restoration(output, plan):
-        emergency = supervisor_emergency_restore(output, plan, deadline=deadline)
+    if not _result_has_verified_restoration(output, plan, spec=spec):
+        emergency = supervisor_emergency_restore(output, plan, deadline=deadline,
+                                                 **({"spec": spec} if spec is not None else {}))
     supervision = {
         "schema": "qwen-flash-next-supervision/v1",
         "argv": command,
@@ -3559,7 +3844,7 @@ def supervise_run(contract: dict[str, Any], contract_sha: str, output: Path) -> 
     return 0 if (
         proc.returncode == 0
         and not killed
-        and _result_has_verified_restoration(output, plan)
+        and _result_has_verified_restoration(output, plan, spec=spec)
     ) else 1
 
 
@@ -3574,8 +3859,43 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _mia_main(args: argparse.Namespace) -> int:
+    """Dispatch one exact Mia v4 spec without changing NVIDIA module globals."""
+    from .candidate_registry import MIA
+    from .mia_candidate_integration import (
+        MiaRegistrationError,
+        load_mia_contract,
+        plan_mia_qualification,
+        validate_output,
+    )
+    try:
+        contract, contract_sha = load_mia_contract(args.contract, sys.modules[__name__])
+        output = validate_output(args.output_dir, MIA, must_be_absent=args.run)
+        plan = plan_mia_qualification(contract, contract_sha, output, sys.modules[__name__])
+    except MiaRegistrationError as exc:
+        raise QualificationError(str(exc)) from exc
+    if args.plan:
+        print(json.dumps(plan, sort_keys=True, indent=2, allow_nan=False))
+        return 0
+    if args.run:
+        return supervise_run(contract, contract_sha, output, spec=MIA)
+    if not output.is_dir() or not (output / "plan.json").is_file():
+        raise QualificationError("Mia worker output has no supervisor plan")
+    recorded = _read_bounded_run_json(output / "plan.json", source="Mia supervisor plan")
+    if recorded != plan:
+        raise QualificationError("Mia worker plan differs from supervisor plan")
+    result = execute_worker(plan, contract, output, spec=MIA)
+    return 0 if result["status"] == "passed" else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    # Preserve the NVIDIA v3 execution path without importing Mia data at all.
+    if args.contract.absolute() == Path(
+        "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/"
+        "qwen-flash-next-research/runtime/launch-contract.mia-c0.json"
+    ):
+        return _mia_main(args)
     contract, contract_sha = load_contract(args.contract)
     output = _validate_output(args.output_dir, must_be_absent=args.run)
     plan = plan_qualification(contract, contract_sha, output)

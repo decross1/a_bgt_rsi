@@ -1,4 +1,4 @@
-"""Evaluation-only streaming transport for the three declared local endpoints.
+"""Evaluation-only streaming transport for fixed local model endpoints.
 
 No backend aliases, production wrapper changes, API keys, retries or log writes.
 The caller owns the hardware reservation and independent process deadline.
@@ -21,7 +21,9 @@ _ENDPOINTS = {
     "resident_gemma": (8000, "gemma-4-26b-a4b"),
     "resident_qwen": (8001, "qwen3.8-27b-nvfp4-mtp"),
     "flash_next": (8012, "qwen3.8-flash-next"),
+    "flash_next_mia": (8012, "qwen3.8-flash-next-mia"),
 }
+MIA_ARTIFACT_SHA256 = "a40ce50173dd3aff54da88503894967e5248bbb927f9e4a91eff5a6a7270c168"
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 
@@ -103,6 +105,8 @@ class LocalEndpoint:
         if (len(self.artifact_sha256) != 64
                 or any(c not in "0123456789abcdef" for c in self.artifact_sha256)):
             raise ValueError("endpoint requires an immutable artifact SHA-256")
+        if self.name == "flash_next_mia" and self.artifact_sha256 != MIA_ARTIFACT_SHA256:
+            raise ValueError("Mia endpoint artifact differs from the registered checkpoint")
         return port
 
 

@@ -58,6 +58,7 @@ _BASE_URLS = {
     "resident_gemma": "http://127.0.0.1:8000/v1",
     "resident_qwen": "http://127.0.0.1:8001/v1",
     "flash_next": "http://127.0.0.1:8012/v1",
+    "flash_next_mia": "http://127.0.0.1:8012/v1",
 }
 
 RawInvokeFn = Callable[..., dict[str, Any]]
@@ -231,6 +232,7 @@ def _validate_flash_probes(
     probe_set: str,
     served_model: str,
     artifact_sha256: str,
+    endpoint_name: str | None = None,
 ) -> None:
     if set(probes) != {"probe_set", "results"} or probes["probe_set"] != probe_set:
         raise HarnessError("Flash qualification probe bundle differs from its plan")
@@ -255,6 +257,7 @@ def _validate_flash_probes(
             or not isinstance(endpoint, dict)
             or endpoint.get("served_model") != served_model
             or endpoint.get("artifact_sha256") != artifact_sha256
+            or (endpoint_name is not None and endpoint.get("name") != endpoint_name)
         ):
             raise HarnessError(f"Flash qualification probe {row.get('probe_id')!r} differs")
     tool_row = rows[2]
@@ -276,26 +279,81 @@ def _validate_flash_probes(
         or not isinstance(endpoint, dict)
         or endpoint.get("served_model") != served_model
         or endpoint.get("artifact_sha256") != artifact_sha256
+        or (endpoint_name is not None and endpoint.get("name") != endpoint_name)
     ):
         raise HarnessError("Flash qualification tool probe differs")
+
+
+def _validate_mia_probe_attempts(run_dir: Path, probes: dict[str, Any]) -> None:
+    """Bind all three Mia v4 public probes to their private SSE evidence."""
+    attempts, _, attempts_file = _read_json_receipt(
+        run_dir / "probe-attempts.json", "Mia probe attempts"
+    )
+    if (
+        attempts_file != run_dir / "probe-attempts.json"
+        or set(attempts) != {"schema", "probe_set", "results"}
+        or attempts["schema"] != "qwen-flash-next-probe-attempts/v1"
+        or attempts["probe_set"] != probes["probe_set"]
+        or not isinstance(attempts["results"], list)
+        or len(attempts["results"]) != 3
+    ):
+        raise HarnessError("Mia durable probe attempt bundle differs")
+    for attempt, public in zip(attempts["results"], probes["results"], strict=True):
+        if not isinstance(attempt, dict) or not isinstance(public, dict):
+            raise HarnessError("Mia durable probe attempt is malformed")
+        private = attempt.get("private_response")
+        probe_id = public.get("probe_id")
+        expected_relpath = f"private-probes/{probe_id}.sse"
+        if (
+            attempt.get("probe_id") != probe_id
+            or attempt.get("status") != "passed"
+            or attempt.get("response") != public
+            or not isinstance(private, dict)
+            or set(private) != {
+                "response_stream_sha256", "response_stream_bytes",
+                "private_stream_relpath",
+            }
+            or private["private_stream_relpath"] != expected_relpath
+            or private["response_stream_sha256"] != public.get("response_stream_sha256")
+            or not _digest(private["response_stream_sha256"])
+            or type(private["response_stream_bytes"]) is not int
+            or not 0 < private["response_stream_bytes"] <= 8 * 1024 * 1024
+        ):
+            raise HarnessError(f"Mia durable probe attempt differs: {probe_id!r}")
+        if _utc_datetime(attempt.get("started_at"), "Mia probe start") > _utc_datetime(
+            attempt.get("finished_at"), "Mia probe finish"
+        ):
+            raise HarnessError(f"Mia probe chronology differs: {probe_id!r}")
+        raw, stream_file = _read_regular_file(
+            run_dir / expected_relpath,
+            label=f"Mia private probe stream {probe_id}",
+            max_bytes=8 * 1024 * 1024,
+        )
+        if (
+            stream_file != run_dir / expected_relpath
+            or len(raw) != private["response_stream_bytes"]
+            or hashlib.sha256(raw).hexdigest() != private["response_stream_sha256"]
+        ):
+            raise HarnessError(f"Mia private probe stream differs: {probe_id!r}")
 
 
 def _validate_memory_log(
     path: Path,
     result: dict[str, Any],
+    *, spec=None,
 ) -> None:
-    s1 = result.get("profile") == "C0-S1"
+    s1_or_mia = result.get("profile") == "C0-S1" or spec is not None
     raw, _ = _read_regular_file(
         path, label="qualification memory log",
-        max_bytes=32 * 1024 * 1024 if result.get("profile") in {"C0-S0", "C0-S1"} else MAX_RECEIPT_BYTES,
+        max_bytes=32 * 1024 * 1024 if result.get("profile") in {"C0-S0", "C0-S1"} or spec is not None else MAX_RECEIPT_BYTES,
     )
     rows: list[dict[str, Any]] = []
     for index, line in enumerate(raw.splitlines()):
         if not line.strip():
             continue
         rows.append(_strict_object(line, f"qualification memory log line {index + 1}"))
-    if s1:
-        _validate_cgroup_diagnostics(path, raw, rows, result)
+    if s1_or_mia:
+        _validate_cgroup_diagnostics(path, raw, rows, result, spec=spec)
     samples = [row for row in rows if "mem_available_gib" in row]
     if len(samples) != result.get("memory_samples") or not samples:
         raise HarnessError("qualification memory sample count differs")
@@ -331,6 +389,11 @@ def _validate_memory_log(
         return
     if result.get("schema") == "qwen-flash-next-qualification-result/v3":
         _validate_memory_log_v3(rows, samples, result)
+        return
+    if result.get("schema") == "qwen-flash-next-qualification-result/v4":
+        if spec is None:
+            raise HarnessError("v4 qualification lacks code-owned candidate spec")
+        _validate_memory_log_v3(rows, samples, result, spec=spec)
         return
 
     if result.get("schema") != "qwen-flash-next-qualification-result/v2":
@@ -524,16 +587,18 @@ def _validate_host_loading_counters(samples, result):
             raise HarnessError("S1 reported PSI summary differs from raw evidence")
 
 
-def _validate_cgroup_diagnostics(path, raw, rows, result):
+def _validate_cgroup_diagnostics(path, raw, rows, result, *, spec=None):
     """Independently reconstruct the no-swap profile's telemetry sidecar."""
     from .qualification import DOCKER_MEMORY_LIMIT_BYTES, DOCKER_MEMORY_SWAP_TOTAL_BYTES
+    memory_limit = spec.docker_memory_limit_bytes if spec is not None else DOCKER_MEMORY_LIMIT_BYTES
+    swap_total = spec.docker_memory_limit_bytes if spec is not None else DOCKER_MEMORY_SWAP_TOTAL_BYTES
 
     raw_sha = hashlib.sha256(raw).hexdigest()
     if (result.get("memory_log_sha256") != raw_sha
             or type(result.get("docker_memory_limit_bytes")) is not int
-            or result["docker_memory_limit_bytes"] != DOCKER_MEMORY_LIMIT_BYTES
+            or result["docker_memory_limit_bytes"] != memory_limit
             or type(result.get("docker_memory_swap_total_bytes")) is not int
-            or result["docker_memory_swap_total_bytes"] != DOCKER_MEMORY_SWAP_TOTAL_BYTES):
+            or result["docker_memory_swap_total_bytes"] != swap_total):
         raise HarnessError("S1 memory digest or registered limits differ")
     sidecar, sidecar_sha, _ = _read_json_receipt(
         path.parent / "cgroup-diagnostics.json", "S1 cgroup diagnostics"
@@ -587,15 +652,19 @@ def _validate_cgroup_diagnostics(path, raw, rows, result):
         }
         phase_rows.setdefault(phase, {"first": observation})["last"] = observation
     expected = {
-        "schema": "qwen-flash-next-c0-s1-cgroup-diagnostics/v1",
+        "schema": ("qwen-flash-next-c0-mia-s1-cgroup-diagnostics/v1" if spec is not None
+                   else "qwen-flash-next-c0-s1-cgroup-diagnostics/v1"),
         "candidate_id": identity, "memory_log_sha256": raw_sha,
         "attributed_samples": attributed, "maximum_memory_current_bytes": maximum,
-        "registered_memory_max_bytes": DOCKER_MEMORY_LIMIT_BYTES,
+        "registered_memory_max_bytes": memory_limit,
         "registered_swap_max_bytes": 0, "phase_first_last": phase_rows,
         "phase_host_first_last": host_phase_rows,
         "host_swap_action": "registered_startup_and_serving_byte_gates",
         "diagnostics_finished_at": sidecar.get("diagnostics_finished_at"),
     }
+    if spec is not None:
+        expected["candidate"] = {"id": spec.spec_id,
+                                 "spec_sha256": spec.identity_sha256()}
     if (sidecar != expected or not {"load", "ready", "probes"}.issubset(phase_rows)
             or set(host_phase_rows) != {"setup", "load", "ready", "probes", "restoration"}):
         raise HarnessError("S1 diagnostic summary differs from its raw evidence")
@@ -611,16 +680,20 @@ def _validate_memory_log_v3(
     rows: list[dict[str, Any]],
     samples: list[dict[str, Any]],
     result: dict[str, Any],
+    *, spec=None,
 ) -> None:
     """Reconstruct the v3 paging gate from raw evidence, not reported verdicts."""
     from .qualification import DOCKER_MEMORY_LIMIT_BYTES, PAGING_POLICY
+    policy = spec.paging_policy() if spec is not None else PAGING_POLICY
+    memory_limit = spec.docker_memory_limit_bytes if spec is not None else DOCKER_MEMORY_LIMIT_BYTES
+    enforce_cap = spec is not None or result.get("profile") in {"C0-S0", "C0-S1"}
 
     def integer(value: Any, label: str, *, minimum: int = 0) -> int:
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
             raise HarnessError(f"qualification {label} is malformed")
         return value
 
-    if (_qualification_sha256(result.get("paging_policy")) != _qualification_sha256(PAGING_POLICY)
+    if (_qualification_sha256(result.get("paging_policy")) != _qualification_sha256(policy)
             or result.get("paging_violations") != []):
         raise HarnessError("qualification paging policy or violations are inadmissible")
     if any(row.get("schema") not in {
@@ -650,7 +723,7 @@ def _validate_memory_log_v3(
         mono = _finite_number(row.get("elapsed_monotonic_seconds"), "memory monotonic time")
         if index and (pages < prior_pages or observed < times[-1] or mono < elapsed[-1]):
             raise HarnessError("qualification memory counters or timestamps decreased")
-        if index and (mono - elapsed[-1] > PAGING_POLICY["max_sample_gap_seconds"] or (observed - times[-1]).total_seconds() > PAGING_POLICY["max_sample_gap_seconds"]):
+        if index and (mono - elapsed[-1] > policy["max_sample_gap_seconds"] or (observed - times[-1]).total_seconds() > policy["max_sample_gap_seconds"]):
             raise HarnessError("qualification memory monitor has a sample gap")
         if abs(_finite_number(row.get("sample_gap_seconds"), "sample gap") - (mono - elapsed[-1] if index else 0)) > 1e-9:
             raise HarnessError("qualification sample gap differs from raw monotonic time")
@@ -679,20 +752,20 @@ def _validate_memory_log_v3(
                 if observed_mono > mono - seconds:
                     break
                 anchor = observed_pages
-            window_bytes.append((pages - anchor) * PAGING_POLICY["host_page_size_bytes"])
+            window_bytes.append((pages - anchor) * policy["host_page_size_bytes"])
         delta = pages - baseline
         gate_delta = pages - gate_baseline
         expected_counters = {
-            "host_page_size_bytes": PAGING_POLICY["host_page_size_bytes"],
+            "host_page_size_bytes": policy["host_page_size_bytes"],
             "pswpout_delta_pages": pages - total_initial,
             "phase_initial_pswpout_pages": baseline,
             "phase_pswpout_delta_pages": delta,
-            "phase_pswpout_delta_bytes": delta * PAGING_POLICY["host_page_size_bytes"],
+            "phase_pswpout_delta_bytes": delta * policy["host_page_size_bytes"],
             "host_swap_5s_bytes": window_bytes[0],
             "host_swap_60s_bytes": window_bytes[1],
             "gate_initial_pswpout_pages": gate_baseline,
             "gate_pswpout_delta_pages": gate_delta,
-            "gate_pswpout_delta_bytes": gate_delta * PAGING_POLICY["host_page_size_bytes"],
+            "gate_pswpout_delta_bytes": gate_delta * policy["host_page_size_bytes"],
         }
         if row.get("paging_gate") != gate:
             raise HarnessError("qualification paging gate differs from its phase")
@@ -714,8 +787,8 @@ def _validate_memory_log_v3(
         ) else None
         if row.get("transition_to") != expected_transition:
             raise HarnessError("qualification ready-to-probes transition is unproven")
-        limits = PAGING_POLICY["load"] if phase in {"load", "ready"} else (
-            PAGING_POLICY["serving"] if phase == "probes" else None
+        limits = policy["load"] if phase in {"load", "ready"} else (
+            policy["serving"] if phase == "probes" else None
         )
         if limits and (
             window_bytes[0] >= limits["window_5s_breach_bytes"]
@@ -794,7 +867,7 @@ def _validate_memory_log_v3(
         "startup_pswpout_initial_pages": load_start,
         "startup_pswpout_final_pages": phase_rows["ready"][-1]["pswpout_pages"],
         "startup_pswpout_delta_pages": phase_rows["ready"][-1]["pswpout_pages"] - load_start,
-        "startup_pswpout_delta_bytes": (phase_rows["ready"][-1]["pswpout_pages"] - load_start) * PAGING_POLICY["host_page_size_bytes"],
+        "startup_pswpout_delta_bytes": (phase_rows["ready"][-1]["pswpout_pages"] - load_start) * policy["host_page_size_bytes"],
     }
     if (load_start != result.get("setup_quiescence_final_pswpout_pages")
             or any(result.get(key) != value for key, value in fields.items())):
@@ -808,6 +881,19 @@ def _validate_memory_log_v3(
     if not _digest(identity):
         raise HarnessError("qualification cgroup container identity is malformed")
     pid = integer(bind.get("pid"), "cgroup PID", minimum=1)
+    if spec is not None:
+        expected_spec = {"id": spec.spec_id,
+                         "spec_sha256": spec.identity_sha256()}
+        expected_inspect = {
+            "id": identity, "name": spec.container_name,
+            "image": spec.image_id, "running": True,
+            "oom_killed": False, "restart_count": 0, "pid": pid,
+            "memory_limit_bytes": spec.docker_memory_limit_bytes,
+            "memory_swap_total_bytes": spec.docker_memory_limit_bytes,
+        }
+        if (bind.get("candidate_spec") != expected_spec
+                or bind.get("container_inspect") != expected_inspect):
+            raise HarnessError("Mia cgroup bind lacks exact Docker image/name/limit proof")
     expected_path = f"/system.slice/docker-{identity}.scope"
     snapshot = bind.get("cgroup")
     if not isinstance(snapshot, dict):
@@ -817,13 +903,13 @@ def _validate_memory_log_v3(
         "path": expected_path, "process_start_ticks": start_ticks,
         "memory_swap_current_bytes": 0, "memory_events_oom": 0, "memory_events_oom_kill": 0,
     }
-    if result.get("profile") in {"C0-S0", "C0-S1"}:
-        cgroup_values.update(memory_max_bytes=DOCKER_MEMORY_LIMIT_BYTES, memory_swap_max_bytes=0)
+    if enforce_cap:
+        cgroup_values.update(memory_max_bytes=memory_limit, memory_swap_max_bytes=0)
     if any(snapshot.get(key) != value for key, value in cgroup_values.items()):
         raise HarnessError("qualification candidate cgroup was not clean at bind")
     for key in ("memory_swap_current_bytes", "memory_events_oom", "memory_events_oom_kill"):
         integer(snapshot[key], f"bound cgroup {key}")
-    if result.get("profile") in {"C0-S0", "C0-S1"}:
+    if enforce_cap:
         for key in ("memory_max_bytes", "memory_swap_max_bytes"):
             integer(snapshot.get(key), f"bound cgroup {key}")
     candidate_rows = []
@@ -865,6 +951,12 @@ def _validate_memory_log_v3(
     for row in candidate_rows:
         candidate = row["candidate"]
         cgroup = candidate.get("cgroup") if isinstance(candidate, dict) else None
+        if spec is not None and any(candidate.get(key) != value for key, value in {
+            "name": spec.container_name, "image": spec.image_id,
+            "memory_limit_bytes": spec.docker_memory_limit_bytes,
+            "memory_swap_total_bytes": spec.docker_memory_limit_bytes,
+        }.items()):
+            raise HarnessError("Mia candidate image/name/Docker limits changed in raw samples")
         if (
             not isinstance(cgroup, dict) or candidate.get("id") != identity
             or candidate.get("pid") != pid or candidate.get("running") is not True
@@ -875,7 +967,7 @@ def _validate_memory_log_v3(
             raise HarnessError("qualification candidate cgroup identity, swap, or OOM proof failed")
         for key in ("memory_swap_current_bytes", "memory_events_oom", "memory_events_oom_kill"):
             integer(cgroup[key], f"cgroup {key}")
-        if result.get("profile") in {"C0-S0", "C0-S1"}:
+        if enforce_cap:
             for key in ("memory_max_bytes", "memory_swap_max_bytes"):
                 integer(cgroup.get(key), f"cgroup {key}")
         integer(candidate["pid"], "candidate PID", minimum=1)
@@ -894,6 +986,331 @@ def _validate_memory_log_v3(
     restoration = result.get("restoration")
     if not isinstance(restoration, dict) or times[-1] < _utc_datetime(restoration.get("verified_at"), "restoration timestamp"):
         raise HarnessError("qualification final memory sample predates restoration")
+
+
+def _validate_registered_mia_plan(
+    contract: dict[str, Any], contract_sha256: str, plan: dict[str, Any], output: Path,
+) -> dict[str, Any]:
+    """Reconstruct the exact v4 launch plan from code-owned registration."""
+    from . import qualification as registered
+    from .candidate_registry import MIA
+    from .mia_candidate_integration import MiaRegistrationError, plan_mia_qualification
+    try:
+        expected = plan_mia_qualification(contract, contract_sha256, output, registered)
+    except (MiaRegistrationError, registered.QualificationError) as exc:
+        raise HarnessError(f"Mia v4 registered plan differs: {exc}") from exc
+    if _qualification_sha256(plan) != _qualification_sha256(expected):
+        raise HarnessError("Mia v4 full plan differs from immutable registration")
+    if plan.get("candidate") != {"id": MIA.spec_id,
+                                  "spec_sha256": MIA.identity_sha256()}:
+        raise HarnessError("Mia v4 candidate spec differs")
+    return {"candidate_id": MIA.spec_id,
+            "spec_sha256": MIA.identity_sha256(),
+            "model_artifact_sha256": MIA.model_artifact_sha256(),
+            "image_id": MIA.image_id}
+
+
+def _validate_mia_qualification_bundle(
+    result: dict[str, Any], receipt_sha256: str, receipt_file: Path,
+    qualification_plan: dict[str, Any], plan_file: Path,
+    contract: dict[str, Any], contract_snapshot_sha256: str, contract_file: Path,
+    *, contract_raw_path: str | Path | None, require_passed: bool,
+) -> dict[str, Any]:
+    """Admit only a fully registered v4 Mia run with raw source and phase proof."""
+    from . import qualification as registered
+    from .candidate_registry import MIA
+    from .mia_candidate_integration import MiaRegistrationError, validate_mia_contract
+
+    failures: list[str] = []
+    if (
+        qualification_plan.get("schema") != "qwen-flash-next-qualification-plan/v4"
+        or contract.get("schema") != MIA.contract_schema
+        or result.get("schema") != "qwen-flash-next-qualification-result/v4"
+    ):
+        raise HarnessError("unsupported Mia qualification schema bundle")
+    if (
+        receipt_file.name != "result.json"
+        or plan_file != receipt_file.parent / "plan.json"
+        or contract_file != receipt_file.parent / "launch-contract.snapshot.json"
+        or result.get("run_id") != receipt_file.parent.name
+        or not receipt_file.parent.name.startswith("qfn-mia-c0-")
+    ):
+        raise HarnessError("Mia qualification siblings or run ID differ")
+    raw_path = Path(contract_raw_path) if contract_raw_path is not None else (
+        receipt_file.parent / "launch-contract.raw.json"
+    )
+    raw_file = None
+    try:
+        raw_contract, contract_sha256, raw_file = _read_json_receipt(
+            raw_path, "Mia raw qualification contract"
+        )
+        if raw_file != receipt_file.parent / "launch-contract.raw.json":
+            raise HarnessError("Mia raw contract is not this run's fixed sibling")
+        if raw_contract != contract:
+            raise HarnessError("Mia raw contract content differs from snapshot")
+    except HarnessError as exc:
+        failures.append(str(exc))
+        contract_sha256 = result.get("contract_sha256")
+    if (
+        not _digest(contract_sha256)
+        or qualification_plan.get("contract_sha256") != contract_sha256
+        or result.get("contract_sha256") != contract_sha256
+    ):
+        raise HarnessError("Mia result, plan and raw contract identity differ")
+    try:
+        validate_mia_contract(contract, registered)
+    except (MiaRegistrationError, registered.QualificationError) as exc:
+        failures.append(f"Mia contract is not registered: {exc}")
+    try:
+        _validate_registered_mia_plan(
+            contract, contract_sha256, qualification_plan, receipt_file.parent
+        )
+    except HarnessError as exc:
+        failures.append(str(exc))
+    if result.get("plan_sha256") != _qualification_sha256(qualification_plan):
+        raise HarnessError("Mia result does not bind its full plan")
+    if any((result.get("candidate") != qualification_plan.get("candidate"),
+            result.get("profile") != MIA.profile,
+            result.get("model_artifact_sha256") != MIA.model_artifact_sha256(),
+            result.get("proof_receipts") != qualification_plan.get("proof_receipts"),
+            qualification_plan.get("image_id") != MIA.image_id,
+            qualification_plan.get("docker_create_argv_sha256")
+            != _qualification_sha256(qualification_plan.get("docker_create_argv")),
+            result.get("paging_policy") != MIA.paging_policy(),
+            qualification_plan.get("paging_policy") != MIA.paging_policy())):
+        raise HarnessError("Mia result identity, argv or paging policy differs")
+
+    if result.get("status") != "passed":
+        failures.append(f"status={result.get('status')!r}")
+    if result.get("qualification_error") is not None or result.get("failure_stage") is not None:
+        failures.append("Mia qualification has an error or failure stage")
+    if result.get("weekly_budget_debit") is not False or type(result.get("paid_api_calls")) is not int or result["paid_api_calls"] != 0:
+        failures.append("Mia qualification debited budget or used paid API")
+    if result.get("production_change_authorized") is not False:
+        failures.append("Mia qualification claims production authority")
+    restoration = result.get("restoration")
+    if (not isinstance(restoration, dict) or restoration.get("status") != "verified"
+        or restoration.get("errors") != [] or restoration.get("sentinel_retained") is not False):
+        failures.append("Mia restoration is not clean and verified")
+    else:
+        try:
+            start = _utc_datetime(result.get("started_at"), "Mia start")
+            verified = _utc_datetime(restoration.get("verified_at"), "Mia restoration")
+            finished = _utc_datetime(result.get("finished_at"), "Mia finish")
+            if not start <= verified <= finished <= datetime.now(timezone.utc):
+                raise HarnessError("Mia restoration chronology differs")
+        except HarnessError as exc:
+            failures.append(str(exc))
+    for key in ("elapsed_seconds", "challenger_gpu_seconds",
+                "all_gpu_research_seconds", "resident_downtime_seconds"):
+        try:
+            if _finite_number(result.get(key), f"Mia {key}") < 0:
+                raise HarnessError(f"Mia {key} is negative")
+        except HarnessError as exc:
+            failures.append(str(exc))
+    try:
+        minimum_observed = _finite_number(
+            result.get("min_mem_available_gib"), "Mia minimum MemAvailable"
+        )
+        if minimum_observed < MIA.min_mem_available_gib:
+            failures.append("Mia memory floor was breached")
+    except HarnessError as exc:
+        minimum_observed = None
+        failures.append(str(exc))
+    if type(result.get("probe_count")) is not int or result["probe_count"] != 3:
+        failures.append("Mia three fixed probes did not return")
+    try:
+        worker_state, _, state_file = _read_json_receipt(
+            receipt_file.parent / "state.json", "Mia terminal worker state"
+        )
+        supervision, _, supervision_file = _read_json_receipt(
+            receipt_file.parent / "supervision.json", "Mia supervisor closure"
+        )
+        worker_pid = worker_state.get("worker_pid")
+        argv = supervision.get("argv")
+        expected_tail = [
+            "-m", "bench.flash_next_ab.qualification", "--worker",
+            "--contract", str(MIA.contract_path),
+            "--output-dir", str(receipt_file.parent),
+        ]
+        if (
+            state_file != receipt_file.parent / "state.json"
+            or supervision_file != receipt_file.parent / "supervision.json"
+            or worker_state.get("schema") != "qwen-flash-next-qualification-state/v4"
+            or worker_state.get("run_id") != result.get("run_id")
+            or worker_state.get("plan_sha256") != result.get("plan_sha256")
+            or worker_state.get("contract_sha256") != contract_sha256
+            or worker_state.get("candidate") != qualification_plan.get("candidate")
+            or worker_state.get("model_artifact_sha256") != MIA.model_artifact_sha256()
+            or worker_state.get("phase") != "complete"
+            or worker_state.get("result_status") != "passed"
+            or worker_state.get("restoration") != restoration
+            or type(worker_pid) is not int or worker_pid <= 0
+            or type(worker_state.get("worker_start_ticks")) is not int
+            or worker_state["worker_start_ticks"] <= 0
+            or supervision.get("schema") != "qwen-flash-next-supervision/v1"
+            or type(supervision.get("pid")) is not int
+            or supervision["pid"] != worker_pid
+            or type(supervision.get("returncode")) is not int
+            or supervision["returncode"] != 0
+            or supervision.get("terminated_at_work_cutoff") is not False
+            or supervision.get("force_killed") is not False
+            or supervision.get("emergency_recovery") is not None
+            or not isinstance(argv, list) or len(argv) != 8
+            or not isinstance(argv[0], str) or not Path(argv[0]).is_absolute()
+            or argv[1:] != expected_tail
+            or supervision.get("argv_sha256") != _qualification_sha256(argv)
+            or supervision.get("hard_deadline_seconds")
+               != contract["safety"]["invocation_deadline_seconds"]
+            or _finite_number(supervision.get("elapsed_seconds"), "Mia supervisor elapsed") <= 0
+            or not _utc_datetime(result.get("finished_at"), "Mia worker finish")
+               <= _utc_datetime(worker_state.get("updated_at"), "Mia state update")
+               <= _utc_datetime(supervision.get("finished_at"), "Mia supervisor finish")
+               <= datetime.now(timezone.utc)
+        ):
+            raise HarnessError("Mia terminal worker or supervisor closure differs")
+    except HarnessError as exc:
+        failures.append(str(exc))
+    try:
+        _validate_memory_log(receipt_file.parent / "memory.jsonl", result, spec=MIA)
+    except HarnessError as exc:
+        failures.append(str(exc))
+
+    try:
+        ready, _, ready_file = _read_json_receipt(
+            receipt_file.parent / "readiness.json", "Mia readiness proof"
+        )
+        container, quiet = ready.get("container"), ready.get("stabilization")
+        if ready_file != receipt_file.parent / "readiness.json" or not isinstance(container, dict) or not isinstance(quiet, dict):
+            raise HarnessError("Mia readiness identity or stabilization is absent")
+        quiet_keys = {
+            "required_seconds": "required_seconds", "passed": "passed",
+            "started_at": "started_at", "completed_at": "completed_at",
+            "duration_seconds": "duration_seconds",
+            "initial_pswpout_pages": "initial_pswpout_pages",
+            "final_pswpout_pages": "final_pswpout_pages",
+            "samples": "samples", "epoch": "epoch",
+        }
+        if (
+            ready.get("models") != [MIA.served_name]
+            or not _digest(container.get("id"))
+            or result.get("candidate_cgroup_path") != f"/system.slice/docker-{container.get('id')}.scope"
+            or container.get("pid") != result.get("candidate_cgroup_pid")
+            or container.get("image") != MIA.image_id
+            or container.get("name") != MIA.container_name
+            or container.get("running") is not True
+            or container.get("oom_killed") is not False
+            or container.get("memory_limit_bytes") != MIA.docker_memory_limit_bytes
+            or container.get("memory_swap_total_bytes") != MIA.docker_memory_limit_bytes
+            or type(container.get("restart_count")) is not int
+            or container["restart_count"] != 0
+            or any(quiet.get(key) != result.get(f"ready_quiescence_{suffix}")
+                   for key, suffix in quiet_keys.items())
+            or _utc_datetime(ready.get("ready_at"), "Mia readiness time")
+               > _utc_datetime(result.get("ready_quiescence_started_at"),
+                               "Mia ready stabilization start")
+        ):
+            raise HarnessError("Mia readiness and post-ready quiet proof differ")
+    except HarnessError as exc:
+        failures.append(str(exc))
+
+    try:
+        probes, _, probes_file = _read_json_receipt(
+            receipt_file.parent / "probes.json", "Mia qualification probes"
+        )
+        if probes_file != receipt_file.parent / "probes.json":
+            raise HarnessError("Mia probe sibling differs")
+        _validate_flash_probes(
+            probes, probe_set=qualification_plan["probe_set"],
+            served_model=MIA.served_name,
+            artifact_sha256=MIA.model_artifact_sha256(),
+            endpoint_name=MIA.endpoint_name,
+        )
+        _validate_mia_probe_attempts(receipt_file.parent, probes)
+    except HarnessError as exc:
+        failures.append(str(exc))
+
+    try:
+        model_receipt, _, model_file = _read_json_receipt(
+            receipt_file.parent / "model-verification.json", "Mia model proof"
+        )
+        if model_file != receipt_file.parent / "model-verification.json":
+            raise HarnessError("Mia model proof sibling differs")
+        if (
+            result.get("model_verification_sha256") != _qualification_sha256(model_receipt)
+            or model_receipt.get("artifact_sha256") != MIA.model_artifact_sha256()
+            or model_receipt.get("full_sha256") is not True
+            or model_receipt.get("safetensors_total_bytes") != MIA.safetensors_total_bytes
+            or model_receipt.get("verified_files") != MIA.expected_model_files()
+            or model_receipt.get("candidate") != qualification_plan["candidate"]
+            or model_receipt.get("packed_ple") != qualification_plan["packed_ple"]
+            or result.get("packed_ple") != qualification_plan["packed_ple"]
+        ):
+            raise HarnessError("Mia full model or packed PLE proof differs")
+        proofs = model_receipt.get("proof_receipts")
+        expected_proofs = qualification_plan["proof_receipts"]
+        if not isinstance(proofs, dict) or set(proofs) != set(expected_proofs):
+            raise HarnessError("Mia source receipt set differs")
+        for label, expected in expected_proofs.items():
+            observed, raw_sha, proof_file = _read_json_receipt(
+                expected["path"], f"Mia {label} source receipt"
+            )
+            if (
+                proof_file != Path(expected["path"])
+                or raw_sha != expected["sha256"]
+                or proofs[label] != expected
+            ):
+                raise HarnessError(f"Mia {label} source receipt content differs")
+            if label == "acquisition" and (
+                observed.get("status") != "verified"
+                or observed.get("model", {}).get("repo_id") != MIA.repository
+                or observed.get("model", {}).get("revision") != MIA.revision
+                or observed.get("model", {}).get("file_count") != len(MIA.files)
+            ):
+                raise HarnessError("Mia acquisition source differs")
+            if label == "image_build" and (
+                observed.get("image_id") != MIA.image_id
+                or observed.get("image_architecture") != "arm64"
+                or observed.get("recipe_commit") != MIA.recipe_commit
+                or observed.get("status") != "cpu_source_verified_unqualified"
+            ):
+                raise HarnessError("Mia image build source differs")
+            if label == "ple_build" and (
+                observed.get("status") != "verified"
+                or observed.get("checkpoint_repo") != MIA.repository
+                or observed.get("checkpoint_revision") != MIA.revision
+                or observed.get("packed_size_bytes") != MIA.packed_ple_bytes
+                or observed.get("packed_sha256") != MIA.packed_ple_sha256
+            ):
+                raise HarnessError("Mia packed PLE build source differs")
+    except HarnessError as exc:
+        failures.append(str(exc))
+
+    summary = {
+        "schema_version": "flash-next-qualification-validation/v2",
+        "cohort": "flash", "variant_id": MIA.spec_id,
+        "run_id": result.get("run_id"), "status": result.get("status"),
+        "admission_eligible": not failures, "admission_failures": failures,
+        "qualification_receipt_sha256": receipt_sha256,
+        "qualification_plan_sha256": result["plan_sha256"],
+        "contract_sha256": contract_sha256,
+        "contract_snapshot_sha256": contract_snapshot_sha256,
+        "model_artifact_sha256": MIA.model_artifact_sha256(),
+        "runtime_sha256": _qualification_runtime_sha256(
+            image_id=MIA.image_id,
+            command_sha256=qualification_plan["docker_create_argv_sha256"]),
+        "served_model": MIA.served_name,
+        "endpoint_name": MIA.endpoint_name,
+        "min_mem_available_gib": minimum_observed,
+        "probe_count": result.get("probe_count"),
+        "restoration_status": restoration.get("status") if isinstance(restoration, dict) else None,
+        "receipt_path": str(receipt_file), "qualification_plan_path": str(plan_file),
+        "contract_snapshot_path": str(contract_file),
+        "contract_raw_path": str(raw_file) if raw_file is not None else None,
+    }
+    if require_passed and failures:
+        raise HarnessError("Mia qualification is not admissible: " + "; ".join(failures))
+    return summary
 
 
 def validate_flash_qualification_files(
@@ -922,6 +1339,14 @@ def validate_flash_qualification_files(
     result_schema = result.get("schema")
     plan_schema = qualification_plan.get("schema")
     contract_schema = contract.get("schema")
+    if result_schema == "qwen-flash-next-qualification-result/v4":
+        return _validate_mia_qualification_bundle(
+            result, receipt_sha256, receipt_file,
+            qualification_plan, plan_file,
+            contract, contract_snapshot_sha256, contract_file,
+            contract_raw_path=contract_raw_path,
+            require_passed=require_passed,
+        )
     supported_bundles = {
         (
             "qwen-flash-next-qualification-result/v1",
@@ -1215,6 +1640,7 @@ def validate_flash_qualification_files(
             command_sha256=qualification_plan["docker_create_argv_sha256"],
         ),
         "served_model": qualification_plan["served_model"],
+        "endpoint_name": "flash_next",
         "min_mem_available_gib": minimum_observed,
         "probe_count": result.get("probe_count"),
         "pswpout_delta_pages": result.get("pswpout_delta_pages"),
@@ -1416,7 +1842,8 @@ def validate_qualification_receipt(
             raise HarnessError("Flash arm does not bind the qualification result file")
         for route in routes.values():
             if (
-                route["served_model"] != summary["served_model"]
+                route["endpoint_name"] != summary["endpoint_name"]
+                or route["served_model"] != summary["served_model"]
                 or route["artifact_sha256"] != summary["model_artifact_sha256"]
                 or route["runtime_sha256"] != summary["runtime_sha256"]
             ):
