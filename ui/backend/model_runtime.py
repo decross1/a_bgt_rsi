@@ -463,15 +463,33 @@ def _latest_memory(
     )
     if page_size != paging_policy.get("host_page_size_bytes"):
         raise RuntimeSourceError("memory page size differs from the paging policy")
+    expected_gate = {
+        "setup": "setup",
+        "load": "startup",
+        "ready": "startup",
+        "probes": "serving",
+        "restoration": "restoration",
+    }.get(expected_phase)
+    if expected_gate is None or row.get("paging_gate") != expected_gate:
+        raise RuntimeSourceError("memory paging gate differs from its phase")
     pages = _nonnegative_integer(row.get("pswpout_pages"), "host pswpout")
-    initial = _nonnegative_integer(
+    phase_initial = _nonnegative_integer(
         row.get("phase_initial_pswpout_pages"), "phase pswpout baseline"
     )
-    delta_pages = _nonnegative_integer(
+    phase_delta_pages = _nonnegative_integer(
         row.get("phase_pswpout_delta_pages"), "phase pswpout delta"
     )
-    delta_bytes = _nonnegative_integer(
+    phase_delta_bytes = _nonnegative_integer(
         row.get("phase_pswpout_delta_bytes"), "phase pswpout bytes"
+    )
+    gate_initial = _nonnegative_integer(
+        row.get("gate_initial_pswpout_pages"), "paging gate baseline"
+    )
+    gate_delta_pages = _nonnegative_integer(
+        row.get("gate_pswpout_delta_pages"), "paging gate delta"
+    )
+    gate_delta_bytes = _nonnegative_integer(
+        row.get("gate_pswpout_delta_bytes"), "paging gate bytes"
     )
     window_5s = _nonnegative_integer(
         row.get("host_swap_5s_bytes"), "five-second host paging"
@@ -481,10 +499,13 @@ def _latest_memory(
     )
     _nonnegative_integer(row.get("pswpout_delta_pages"), "whole-window pswpout")
     if (
-        pages - initial != delta_pages
-        or delta_bytes != delta_pages * page_size
-        or window_5s > delta_bytes
-        or window_60s > delta_bytes
+        pages - phase_initial != phase_delta_pages
+        or phase_delta_bytes != phase_delta_pages * page_size
+        or pages - gate_initial != gate_delta_pages
+        or gate_delta_bytes != gate_delta_pages * page_size
+        or gate_delta_pages < phase_delta_pages
+        or window_5s > gate_delta_bytes
+        or window_60s > gate_delta_bytes
     ):
         raise RuntimeSourceError("memory paging counters are inconsistent")
     if not isinstance(row.get("setup_quiescence_active"), bool) or (
@@ -531,7 +552,7 @@ def _latest_memory(
         if (
             window_5s >= thresholds[0]
             or window_60s >= thresholds[1]
-            or delta_bytes >= thresholds[2]
+            or gate_delta_bytes >= thresholds[2]
         ):
             raise RuntimeSourceError("live host paging reached its registered threshold")
     if candidate_identity is not None:

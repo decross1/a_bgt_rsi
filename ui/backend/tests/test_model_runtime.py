@@ -138,6 +138,16 @@ def fixture(
         "host_page_size_bytes": 4096,
         "pswpout_pages": 10,
         "pswpout_delta_pages": 0,
+        "paging_gate": {
+            "setup": "setup",
+            "load": "startup",
+            "ready": "startup",
+            "probes": "serving",
+            "restoration": "restoration",
+        }[monitor_phase or phase_monitors[phase]],
+        "gate_initial_pswpout_pages": 10,
+        "gate_pswpout_delta_pages": 0,
+        "gate_pswpout_delta_bytes": 0,
         "phase_initial_pswpout_pages": 10,
         "phase_pswpout_delta_pages": 0,
         "phase_pswpout_delta_bytes": 0,
@@ -407,6 +417,8 @@ def test_candidate_mode_rejects_lifecycle_or_paging_drift(tmp_path):
     delta_pages = q.PAGING_POLICY["load"]["window_5s_breach_bytes"] // 4096
     memory.update(
         pswpout_pages=10 + delta_pages,
+        gate_pswpout_delta_pages=delta_pages,
+        gate_pswpout_delta_bytes=delta_pages * 4096,
         phase_pswpout_delta_pages=delta_pages,
         phase_pswpout_delta_bytes=delta_pages * 4096,
         host_swap_5s_bytes=delta_pages * 4096,
@@ -419,6 +431,57 @@ def test_candidate_mode_rejects_lifecycle_or_paging_drift(tmp_path):
     memory_path = run / "memory.jsonl"
     memory = json.loads(memory_path.read_text())
     memory["sample_gap_seconds"] = q.PAGING_POLICY["max_sample_gap_seconds"] + 0.001
+    memory_path.write_text(json.dumps(memory) + "\n")
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+    root, run, proc, boot, _state, _plan = fixture(
+        tmp_path / "wrong-gate", phase="ready_stabilization"
+    )
+    memory_path = run / "memory.jsonl"
+    memory = json.loads(memory_path.read_text())
+    memory["paging_gate"] = "serving"
+    memory_path.write_text(json.dumps(memory) + "\n")
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+
+def test_ready_phase_uses_cumulative_startup_gate_for_windows_and_total(tmp_path):
+    root, run, proc, boot, _state, _plan = fixture(
+        tmp_path / "within", phase="ready_stabilization"
+    )
+    memory_path = run / "memory.jsonl"
+    memory = json.loads(memory_path.read_text())
+    memory.update(
+        pswpout_pages=12,
+        pswpout_delta_pages=2,
+        gate_initial_pswpout_pages=10,
+        gate_pswpout_delta_pages=2,
+        gate_pswpout_delta_bytes=8192,
+        phase_initial_pswpout_pages=12,
+        phase_pswpout_delta_pages=0,
+        phase_pswpout_delta_bytes=0,
+        host_swap_5s_bytes=4096,
+        host_swap_60s_bytes=8192,
+    )
+    memory_path.write_text(json.dumps(memory) + "\n")
+    assert project(root, proc, boot)["mode"] == "candidate_research"
+
+    root, run, proc, boot, _state, _plan = fixture(
+        tmp_path / "breach", phase="ready_stabilization"
+    )
+    memory_path = run / "memory.jsonl"
+    memory = json.loads(memory_path.read_text())
+    delta_pages = q.PAGING_POLICY["load"]["phase_total_breach_bytes"] // 4096
+    current_pages = 10 + delta_pages
+    memory.update(
+        pswpout_pages=current_pages,
+        pswpout_delta_pages=delta_pages,
+        gate_initial_pswpout_pages=10,
+        gate_pswpout_delta_pages=delta_pages,
+        gate_pswpout_delta_bytes=delta_pages * 4096,
+        phase_initial_pswpout_pages=current_pages,
+        phase_pswpout_delta_pages=0,
+        phase_pswpout_delta_bytes=0,
+    )
     memory_path.write_text(json.dumps(memory) + "\n")
     assert project(root, proc, boot)["mode"] == "unknown"
 
