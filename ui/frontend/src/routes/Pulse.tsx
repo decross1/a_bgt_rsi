@@ -143,6 +143,10 @@ const isFollowonFlashRunId = (value: unknown): value is string =>
   typeof value === "string" && /^qfn-followon-[a-z0-9][a-z0-9._-]{0,63}\.flash$/.test(value);
 const isFollowonResidentRunId = (value: unknown): value is string =>
   typeof value === "string" && /^qfn-followon-[a-z0-9][a-z0-9._-]{0,63}\.resident$/.test(value);
+const isLabRunId = (value: unknown): value is string =>
+  typeof value === "string" && /^qfn-ab-[a-z0-9][a-z0-9._-]{0,63}\.(resident|flash)$/.test(value);
+const isLabFlashRunId = (value: unknown): value is string =>
+  typeof value === "string" && /^qfn-ab-[a-z0-9][a-z0-9._-]{0,63}\.flash$/.test(value);
 const isMiaProfileRunId = (value: unknown): value is string =>
   typeof value === "string" && /^qfn-mia-(?:mtp[123]|ctx69632|mtp3-red47k)-[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(value);
 const positiveInteger = (value: unknown) =>
@@ -158,7 +162,7 @@ function isRegisteredMiaVariant(value: ModelRuntime["candidate_variant"],
   // reader. These shared checkpoint/image fields do not establish a passed
   // qualification; they keep the viewport from labeling Mia as NVIDIA.
   const profileConfig = MIA_PROFILE_CONFIG[value.spec_id];
-  return modeSource != null && ["qualification_state", "followon_evaluation_state"].includes(modeSource) &&
+  return modeSource != null && ["qualification_state", "followon_evaluation_state", "lab_evaluation_state"].includes(modeSource) &&
     profileConfig !== undefined &&
     value.repository === MIA_VARIANT.repository &&
     value.revision === MIA_VARIANT.revision &&
@@ -215,10 +219,11 @@ function isModelRuntime(value: unknown): value is ModelRuntime {
     ["resident", "candidate_research", "transitioning", "unknown"].includes(
       String(row.mode),
     ) &&
-    ["qualification_state", "extended_evaluation_state", "followon_evaluation_state", "followon_resident_state", "none"].includes(String(row.mode_source)) &&
+    ["qualification_state", "extended_evaluation_state", "followon_evaluation_state", "followon_resident_state", "lab_evaluation_state", "none"].includes(String(row.mode_source)) &&
     (row.mode_source !== "extended_evaluation_state" || isExtendedFlashRunId(row.run_id)) &&
     (row.mode_source !== "followon_evaluation_state" || isFollowonFlashRunId(row.run_id)) &&
     (row.mode_source !== "followon_resident_state" || isFollowonResidentRunId(row.run_id)) &&
+    (row.mode_source !== "lab_evaluation_state" || isLabRunId(row.run_id)) &&
     ["online", "stopped", "unknown"].includes(
       String(row.resident_services_expected),
     ) &&
@@ -613,7 +618,8 @@ export default function Pulse() {
     (modelRuntime?.mode_source === "qualification_state" ||
       (modelRuntime?.mode_source === "extended_evaluation_state" && isExtendedFlashRunId(modelRuntime.run_id)) ||
       (modelRuntime?.mode_source === "followon_evaluation_state" && isFollowonFlashRunId(modelRuntime.run_id)) ||
-      (modelRuntime?.mode_source === "followon_resident_state" && isFollowonResidentRunId(modelRuntime.run_id))) &&
+      (modelRuntime?.mode_source === "followon_resident_state" && isFollowonResidentRunId(modelRuntime.run_id)) ||
+      (modelRuntime?.mode_source === "lab_evaluation_state" && isLabRunId(modelRuntime.run_id))) &&
     typeof modelRuntime.mode_source_sha256 === "string" &&
     /^[0-9a-f]{64}$/.test(modelRuntime.mode_source_sha256) &&
     typeof modelRuntime.run_id === "string" &&
@@ -630,7 +636,8 @@ export default function Pulse() {
     boundRuntimeMode &&
     modelRuntime.resident_services_expected === "stopped";
   const residentResearchWindow =
-    modelRuntime?.mode_source === "followon_resident_state" &&
+    (modelRuntime?.mode_source === "followon_resident_state" ||
+      (modelRuntime?.mode_source === "lab_evaluation_state" && modelRuntime.run_id?.endsWith(".resident"))) &&
     modelRuntime.mode === "resident" && boundRuntimeMode &&
     modelRuntime.phase === "evaluation" &&
     modelRuntime.resident_services_expected === "online" &&
@@ -640,7 +647,8 @@ export default function Pulse() {
     (modelRuntime?.run_id?.startsWith("qfn-mia-c0-") ||
       isMiaProfileRunId(modelRuntime?.run_id) ||
       (modelRuntime?.mode_source === "extended_evaluation_state" && isExtendedFlashRunId(modelRuntime.run_id)) ||
-      (modelRuntime?.mode_source === "followon_evaluation_state" && isFollowonFlashRunId(modelRuntime.run_id))) &&
+      (modelRuntime?.mode_source === "followon_evaluation_state" && isFollowonFlashRunId(modelRuntime.run_id)) ||
+      (modelRuntime?.mode_source === "lab_evaluation_state" && isLabFlashRunId(modelRuntime.run_id))) &&
     modelRuntime?.mode !== "resident"
       ? modelRuntime?.candidate_variant ?? null
       : null;
@@ -673,11 +681,12 @@ export default function Pulse() {
   ].filter((value): value is string => value != null);
   const runtimeModeLabel =
     residentResearchWindow
-      ? "Resident research window"
+      ? modelRuntime?.mode_source === "lab_evaluation_state" ? "Resident model evaluation active" : "Resident research window"
       : residentRuntime
       ? "Resident serving"
       : candidateResearchWindow
-        ? selectedMiaVariant ? "Mia candidate research window" : "Candidate research window"
+        ? modelRuntime?.mode_source === "lab_evaluation_state" ? "Mia model evaluation active" :
+          selectedMiaVariant ? "Mia candidate research window" : "Candidate research window"
         : runtimeTransition
           ? runtimePreparing
             ? "Preparing research window"

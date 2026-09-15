@@ -20,11 +20,13 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   const campaign = obj(view?.active_campaign) ? view.active_campaign : null;
   const queue = obj(view?.campaign_queue) ? view.campaign_queue : null;
   const next = obj(view?.next_registered_campaign) ? view.next_registered_campaign : null;
+  const plannedWork = obj(view?.next_work) ? view.next_work : null;
   const iteration = obj(view?.last_productive) ? view.last_productive : null;
   const cycle = obj(view?.last_cycle) ? view.last_cycle : null;
   const budget = obj(view?.budget) ? view.budget : null;
   const gate = obj(view?.dispatch_gate) ? view.dispatch_gate : null;
   const ingestion = obj(view?.ingestion) ? view.ingestion : null;
+  const legacy = obj(view?.ingestion_legacy_log) ? view.ingestion_legacy_log : null;
 
   const campaignId = campaign && ID.test(String(campaign.campaign_id)) && SHA.test(String(campaign.manifest_sha256)) ? String(campaign.campaign_id) : null;
   const queueStatus = queue && typeof queue.status === "string" && queues.has(queue.status) &&
@@ -33,6 +35,14 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   const consumed = queue && count(queue.consumed_count) ? queue.consumed_count : null;
   const nextId = next && next.activation_required === true && ID.test(String(next.campaign_id)) &&
     SHA.test(String(next.manifest_sha256)) && count(next.registered_topic_count) ? String(next.campaign_id) : null;
+  const workCode = plannedWork && typeof plannedWork.code === "string" ? plannedWork.code : "source_unknown";
+  const registeredWork = plannedWork && plannedWork.activation_required === false &&
+    campaignId === plannedWork.campaign_id && campaign?.manifest_sha256 === plannedWork.manifest_sha256 &&
+    (workCode === "run_preregistered_campaign_topic" ||
+      workCode === "freeze_and_run_registered_empirical_study");
+  const successorWork = plannedWork && workCode === "activate_registered_successor" &&
+    plannedWork.activation_required === true && nextId === plannedWork.campaign_id &&
+    next?.manifest_sha256 === plannedWork.manifest_sha256;
   const linked = iteration && iteration.kind === "campaign_iteration_recorded" && ID.test(String(iteration.iteration_id)) &&
     ID.test(String(iteration.topic_id)) && utc(iteration.at) && SHA.test(String(iteration.loop_source_sha256)) ? iteration : null;
   const boundCycle = cycle && ID.test(String(cycle.run_id)) && utc(cycle.at) && SHA.test(String(cycle.raw_row_sha256)) &&
@@ -47,9 +57,22 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   const success = ingestionBound && utc(ingestion?.last_success_at) &&
     SHA.test(String(ingestion?.last_success_input_sha256)) && SHA.test(String(ingestion?.last_success_pointer_sha256))
     ? ingestion.last_success_at : null;
+  const legacyObserved = legacy && legacy.receipt_bound === false && utc(legacy.started_at) &&
+    SHA.test(String(legacy.log_sha256)) &&
+    ["source_unknown", "succeeded_log_observed", "fetch_failed_log_observed", "interrupted_unknown"].includes(String(legacy.status)) &&
+    Array.isArray(legacy.http_codes_observed) && legacy.http_codes_observed.length <= 2 &&
+    legacy.http_codes_observed.every((code: unknown) => code === "429" || code === "503") &&
+    count(legacy.retry_count_observed) && legacy.retry_count_observed <= 6 ? legacy : null;
 
   let nextWork = "Next topic work is unknown";
   if (gate?.operator_pause === true) nextWork = "Coordinator paused";
+  else if (successorWork) nextWork = `Activate registered successor ${nextId}`;
+  else if (registeredWork && workCode === "freeze_and_run_registered_empirical_study" &&
+           ID.test(String(plannedWork.study_id)) && SHA.test(String(plannedWork.preregistration_sha256)))
+    nextWork = `Freeze and run registered study ${String(plannedWork.study_id)}`;
+  else if (registeredWork && workCode === "run_preregistered_campaign_topic" &&
+           ID.test(String(plannedWork.topic_id)) && eligible !== null && eligible > 0)
+    nextWork = `Run registered topic ${String(plannedWork.topic_id)}`;
   else if (queueStatus === "eligible" && eligible !== null && eligible > 0)
     nextWork = `${eligible} registered topic${eligible === 1 ? "" : "s"} eligible`;
   else if (queueStatus === "all_registered_topics_consumed" && eligible === 0)
@@ -76,6 +99,7 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
       : <dl className="mt-4 grid gap-3 text-sm md:grid-cols-2">
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Next campaign work</dt>
           <dd className="mt-1">{nextWork}</dd>
+          {successorWork || registeredWork ? <dd className="mt-1 text-xs text-[var(--fg-muted)]">Registered next step; no task dispatch is implied.</dd> : null}
           {campaignId && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Active campaign {campaignId}{consumed !== null ? ` · ${consumed} topics used` : ""}</dd>}
           {nextId && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Next registered campaign {nextId} awaits activation.</dd>}
           {queueStatus === "all_registered_topics_consumed" && gate?.other_actionable_work === "not_assessed" &&
@@ -93,6 +117,14 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Source ingestion</dt>
           <dd className="mt-1">{ingestionText}</dd>
           <dd className="mt-1 text-xs text-[var(--fg-muted)]">Last receipt-bound success: {success ? stamp(success) : "not verified"}</dd>
+          {legacyObserved && <dd className="mt-1 text-xs text-[var(--fg-muted)]">
+            {legacyObserved.status === "fetch_failed_log_observed" ? "Legacy log observed a failed fetch" :
+             legacyObserved.status === "succeeded_log_observed" ? "Legacy log suggests a completed attempt" :
+             "Legacy log attempt outcome unknown"} at {stamp(legacyObserved.started_at)}.
+            {legacyObserved.status === "fetch_failed_log_observed" &&
+              ` HTTP ${(legacyObserved.http_codes_observed as string[]).join("/")}; ${legacyObserved.retry_count_observed} retries.`}
+            {" "}No receipt-bound source result is established by this log.
+          </dd>}
         </div>
       </dl>}
     <div className="mt-3 flex flex-wrap gap-4 text-sm"><Link to="/cycles" className="text-[var(--accent)]">Trace history →</Link>
