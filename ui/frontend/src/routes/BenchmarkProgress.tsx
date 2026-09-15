@@ -15,9 +15,10 @@ import { admittedPair, LocalModelResearchPanel } from "../components/LocalModelR
 import { LabModelEvaluationPanel } from "../components/LabModelEvaluationPanel";
 import { LabModelSupplementPanel } from "../components/LabModelSupplementPanel";
 import { LabContextCrossplanPanel } from "../components/LabContextCrossplanPanel";
+import { LabDiversityCapPanel } from "../components/LabDiversityCapPanel";
 import { FollowonResultsPanel } from "../components/FollowonResultsPanel";
 import { AppliedMarketResearchPanel } from "../components/AppliedMarketResearchPanel";
-import { getLabModelContextCrossplanProgress, getLabModelEvalProgress,
+import { getLabDiversityCapProgress, getLabModelContextCrossplanProgress, getLabModelEvalProgress,
   getLabModelSupplementProgress } from "../api/http";
 import type {
   BenchmarkArm,
@@ -43,6 +44,8 @@ interface Props {
   initialSupplement?: unknown;
   /** Separate matched-24 Qwen/Flash cross-plan publication seam. */
   initialCrossplan?: unknown;
+  /** Five reused-task cap diagnostic, independent of all paired model scores. */
+  initialCap?: unknown;
 }
 
 type FamilyFilter = "all" | "measured" | "comparable" | "incomplete";
@@ -343,7 +346,7 @@ function WeekButton({ week, selected, onSelect }: { week: BenchmarkWeek; selecte
 }
 
 export default function BenchmarkProgress({ initial, initialLab, initialSupplement,
-  initialCrossplan }: Props) {
+  initialCrossplan, initialCap }: Props) {
   const live = initial === undefined;
   const poll = usePolled(BENCHMARK_PROGRESS_POLL_KEY, getBenchmarkProgress, {
     intervalMs: 60_000,
@@ -369,14 +372,22 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
       enabled: live,
       initialDelayMs: 6500,
     });
+  const capPoll = usePolled("lab-diversity-cap:progress", getLabDiversityCapProgress, {
+    intervalMs: 180_000,
+    deadlineMs: 20_000,
+    enabled: live,
+    initialDelayMs: 8000,
+  });
   const refreshing = usePollActivity(BENCHMARK_PROGRESS_POLL_KEY);
   const data = initial === undefined ? poll.data : initial;
   const labData = initialLab === undefined ? labPoll.data : initialLab;
   const supplementData = initialSupplement === undefined ? supplementPoll.data : initialSupplement;
   const crossplanData = initialCrossplan === undefined ? crossplanPoll.data : initialCrossplan;
+  const capData = initialCap === undefined ? capPoll.data : initialCap;
   const showLab = live || initialLab !== undefined;
   const showSupplement = live || initialSupplement !== undefined;
   const showCrossplan = live || initialCrossplan !== undefined;
+  const showCap = live || initialCap !== undefined;
   const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FamilyFilter>("all");
@@ -403,6 +414,7 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
       {showLab && <LabModelEvaluationPanel data={labData} pollingFailed={labPoll.failing} />}
       {showSupplement && <LabModelSupplementPanel data={supplementData} pollingFailed={supplementPoll.failing} />}
       {showCrossplan && <LabContextCrossplanPanel data={crossplanData} pollingFailed={crossplanPoll.failing} />}
+      {showCap && <LabDiversityCapPanel data={capData} pollingFailed={capPoll.failing} />}
     </section>;
   }
 
@@ -416,6 +428,7 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
       {showLab && <LabModelEvaluationPanel data={labData} pollingFailed={labPoll.failing} />}
       {showSupplement && <LabModelSupplementPanel data={supplementData} pollingFailed={supplementPoll.failing} />}
       {showCrossplan && <LabContextCrossplanPanel data={crossplanData} pollingFailed={crossplanPoll.failing} />}
+      {showCap && <LabDiversityCapPanel data={capData} pollingFailed={capPoll.failing} />}
     </section>;
   }
 
@@ -502,6 +515,7 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
     {showLab && <LabModelEvaluationPanel data={labData} pollingFailed={labPoll.failing} />}
     {showSupplement && <LabModelSupplementPanel data={supplementData} pollingFailed={supplementPoll.failing} />}
     {showCrossplan && <LabContextCrossplanPanel data={crossplanData} pollingFailed={crossplanPoll.failing} />}
+    {showCap && <LabDiversityCapPanel data={capData} pollingFailed={capPoll.failing} />}
     <FollowonResultsPanel data={data.local_followon_results} />
     <ResearchPipelinePanel pipeline={data.research_pipeline} />
     <AppliedMarketResearchPanel data={data.applied_market_research} />
