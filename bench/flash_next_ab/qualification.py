@@ -72,6 +72,8 @@ READY_QUIESCENCE_SECONDS = 60
 MAX_SAMPLE_GAP_SECONDS = 10
 HOST_PORT = 8012
 HOST_PAGE_SIZE_BYTES = 4096
+MAX_MODEL_LEN = 32768
+KV_CACHE_MEMORY_BYTES = 2 * 1024**3
 LOAD_SWAP_5S_BREACH_BYTES = 128 * 1024**2
 LOAD_SWAP_60S_BREACH_BYTES = 256 * 1024**2
 LOAD_SWAP_TOTAL_BREACH_BYTES = 512 * 1024**2
@@ -356,10 +358,10 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         "host_port": HOST_PORT,
         "container_port": 8000,
         "compile_cache_path": str(COMPILE_CACHE),
-        "max_model_len": 16384,
+        "max_model_len": MAX_MODEL_LEN,
         "max_num_seqs": 1,
         "gpu_memory_utilization": 0.75,
-        "kv_cache_memory_bytes": 1073741824,
+        "kv_cache_memory_bytes": KV_CACHE_MEMORY_BYTES,
         "max_num_batched_tokens": 4096,
         "kv_cache_dtype": "auto",
         "mamba_ssm_cache_dtype": "float32",
@@ -484,11 +486,11 @@ def launch_argv() -> list[str]:
             "--trust-remote-code",
             "--quantization", "modelopt",
             "--tensor-parallel-size", "1",
-            "--max-model-len", "16384",
+            "--max-model-len", str(MAX_MODEL_LEN),
             "--max-num-seqs", "1",
             "--language-model-only",
             "--gpu-memory-utilization", "0.75",
-            "--kv-cache-memory-bytes", "1073741824",
+            "--kv-cache-memory-bytes", str(KV_CACHE_MEMORY_BYTES),
             "--no-enable-prefix-caching",
             "--enable-chunked-prefill",
             "--max-num-batched-tokens", "4096",

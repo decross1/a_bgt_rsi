@@ -42,10 +42,10 @@ def contract():
             "host_port": 8012,
             "container_port": 8000,
             "compile_cache_path": str(q.COMPILE_CACHE),
-            "max_model_len": 16384,
+            "max_model_len": q.MAX_MODEL_LEN,
             "max_num_seqs": 1,
             "gpu_memory_utilization": 0.75,
-            "kv_cache_memory_bytes": 1073741824,
+            "kv_cache_memory_bytes": q.KV_CACHE_MEMORY_BYTES,
             "max_num_batched_tokens": 4096,
             "kv_cache_dtype": "auto",
             "mamba_ssm_cache_dtype": "float32",
@@ -142,7 +142,8 @@ def test_launch_vector_is_fixed_and_conservative():
     assert f"{q.MODEL_PATH}:/models/qwen:ro" in argv
     assert "127.0.0.1:8012:8000" in argv
     assert "--restart=no" in argv
-    assert "--kv-cache-memory-bytes" in argv and "1073741824" in argv
+    assert "--max-model-len" in argv and str(q.MAX_MODEL_LEN) in argv
+    assert "--kv-cache-memory-bytes" in argv and str(q.KV_CACHE_MEMORY_BYTES) in argv
     assert "--gpu-memory-utilization" in argv and "0.75" in argv
     assert "--language-model-only" in argv
     assert "--no-enable-prefix-caching" in argv
