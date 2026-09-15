@@ -96,7 +96,9 @@ def _registered(plan: dict, window: dict) -> None:
 
 def _terminal_status() -> str:
     if not (OUTPUT / "result.json").exists() and not (OUTPUT / "supervision.json").exists():
-        return "prepared_unissued" if not (OUTPUT / "state.json").exists() else "execution_pending"
+        return ("prepared_unissued" if not (OUTPUT / "state.json").exists()
+                and not (OUTPUT / "supervision-start.json").exists()
+                else "execution_pending")
     try:
         result, _ = _document(OUTPUT / "result.json", 2_000_000)
         supervision, _ = _document(OUTPUT / "supervision.json", 2_000_000)
@@ -104,6 +106,10 @@ def _terminal_status() -> str:
                 or supervision.get("window_sha256") != WINDOW_SHA):
             return "source_unavailable"
         if (result.get("status") != "complete"
+                or not isinstance(result.get("restoration"), dict)
+                or result["restoration"].get("status") != "verified"
+                or result["restoration"].get("errors") != []
+                or result["restoration"].get("sentinel_retained") is not False
                 or supervision.get("returncode") != 0
                 or supervision.get("interrupted") is not None
                 or supervision.get("terminated_at_cutoff") is not False
@@ -243,7 +249,7 @@ def _admitted(replay: dict, plan: dict) -> dict:
             ("profile_canary_attempts_raw_sha256", OUTPUT / "profile-canary-attempts.json", 8_000_000),
             ("admission_ready_proof_raw_sha256", OUTPUT / "admission-ready-proof.json", 2_000_000),
             ("run_raw_sha256", OUTPUT / "evaluation/run.json", 16_000_000),
-            ("memory_raw_sha256", OUTPUT / "memory.jsonl", 8_000_000)):
+            ("memory_raw_sha256", OUTPUT / "memory.jsonl", 32_000_000)):
         raw = _read_path(path, maximum=ceiling, label="bound cap public raw")
         if replay.get(field) != hashlib.sha256(raw).hexdigest():
             raise ValueError("cap replay raw binding differs")
@@ -262,6 +268,7 @@ def _admitted(replay: dict, plan: dict) -> dict:
             or not isinstance(restoration, dict)
             or restoration.get("status") != "verified"
             or restoration.get("errors") != []
+            or restoration.get("diagnostic_errors") != []
             or restoration.get("sentinel_retained") is not False
             or supervisor.get("window_sha256") != WINDOW_SHA
             or supervisor.get("returncode") != 0
