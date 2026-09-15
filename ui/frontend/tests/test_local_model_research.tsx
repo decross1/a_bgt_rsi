@@ -26,6 +26,7 @@ describe("local model research", () => {
     }] }} />);
     expect(screen.getByText(/Unfinished receipt · process state unverified/)).toBeInTheDocument();
     expect(screen.getByText(/Last recorded phase: readiness/)).toBeInTheDocument();
+    expect(screen.getByText("Model identity pending")).toBeInTheDocument();
   });
   it("withholds gains from incomplete pairs even if a bad payload has numbers", () => {
     const arm = { declared: 2, attempted: 1, passed: 1, success_rate: 1, successful_task_runs_per_hour: 99 };
@@ -43,5 +44,26 @@ describe("local model research", () => {
     render(<LocalModelResearchPanel data={{ ...base, status: "unavailable", warnings: ["Source invalid"] }} />);
     expect(screen.getByText(/No progress or result is inferred/)).toBeInTheDocument();
     expect(screen.getByText("Source invalid")).toBeInTheDocument();
+  });
+  it("separates Mia source identity from a host guardrail abort", () => {
+    render(<LocalModelResearchPanel data={{ ...base, qualification_runs: [{
+      id: "qfn-mia-c0-test", status: "failed", phase: "complete",
+      finished_at: "2026-09-15T06:00:00+00:00", candidate_window_minutes: 4,
+      minimum_memory_gib: 31, probe_count: 0, model_started: true,
+      restoration: "verified", source_sha256: "a".repeat(64),
+      failure_class: "experimental_startup_host_pageout_guardrail_abort",
+      variant: {
+        id: "mia-925d7be6-c0-s1", repository: "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4",
+        revision: "925d7be6c14c6c9442ef83e8f05b5a3c39304f69",
+        served_model: "qwen3.8-flash-next-mia",
+        image_id: `sha256:${"b".repeat(64)}`, model_artifact_sha256: "c".repeat(64),
+        spec_sha256: "d".repeat(64), qualification_profile: "C0-MIA-S1",
+        evidence_class: "REGISTERED_SOURCE_ONLY",
+      },
+    }] }} />);
+    expect(screen.getByText("Mia NVFP4")).toBeInTheDocument();
+    expect(screen.getByText(/Host paging guardrail stopped qualification/)).toHaveTextContent("no model-quality conclusion");
+    expect(screen.getByText(/registered source only/)).toBeInTheDocument();
+    expect(screen.queryByText(/runtime qualified/)).toBeNull();
   });
 });

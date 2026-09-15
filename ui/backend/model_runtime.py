@@ -32,6 +32,7 @@ STATE_SCHEMA = "qwen-flash-next-qualification-state/v3"
 MEMORY_SCHEMA = "qwen-flash-next-memory-sample/v3"
 RESULT_SCHEMA = "qwen-flash-next-qualification-result/v3"
 RUN_ID = re.compile(r"qfn-c0-[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
+MIA_RUN_ID = re.compile(r"qfn-mia-c0-[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 MAX_RUNS = 128
@@ -196,7 +197,7 @@ def _open_latest_run(root: Path) -> tuple[int, str, bytes]:
                         "qualification state root exceeds the scan bound"
                     )
         for name in names:
-            if not RUN_ID.fullmatch(name):
+            if not (RUN_ID.fullmatch(name) or MIA_RUN_ID.fullmatch(name)):
                 continue
             try:
                 run_fd = os.open(name, _flags(directory=True), dir_fd=root_fd)
@@ -263,6 +264,76 @@ def _validate_registered_plan(
         raise RuntimeSourceError("runtime contract hash differs")
 
 
+def _mia_spec_for_run(run_id: str):
+    """Select only the code-owned variant from the closed run-ID namespace."""
+    if not MIA_RUN_ID.fullmatch(run_id):
+        return None
+    try:
+        from bench.flash_next_ab.candidate_registry import MIA
+    except Exception as exc:
+        raise RuntimeSourceError("Mia candidate registry is unavailable") from exc
+    return MIA
+
+
+def _validate_registered_mia_plan(
+    run_path: Path,
+    state: dict[str, Any],
+    plan: dict[str, Any],
+    contract: dict[str, Any],
+    contract_raw_sha256: str,
+    spec,
+) -> None:
+    """Cross-bind the v4 source to the fixed Mia spec and external contract."""
+    try:
+        from bench.flash_next_ab import qualification
+        from bench.flash_next_ab.mia_candidate_integration import read_mia_contract
+
+        validated_contract = qualification.validate_contract(contract, spec=spec)
+        expected_plan = qualification.plan_qualification(
+            validated_contract, contract_raw_sha256, run_path, spec=spec
+        )
+        registered_contract, registered_sha, _ = read_mia_contract(
+            spec.contract_path, qualification
+        )
+    except Exception as exc:
+        raise RuntimeSourceError("Mia runtime plan or contract is unregistered") from exc
+    candidate = {"id": spec.spec_id, "spec_sha256": spec.identity_sha256()}
+    if (
+        plan != expected_plan
+        or contract != registered_contract
+        or contract_raw_sha256 != registered_sha
+        or state.get("candidate") != candidate
+        or plan.get("candidate") != candidate
+        or state.get("model_artifact_sha256") != spec.model_artifact_sha256()
+        or plan.get("model_artifact_sha256") != spec.model_artifact_sha256()
+        or plan.get("image_id") != spec.image_id
+        or plan.get("served_model") != spec.served_name
+        or plan.get("model_path") != str(spec.model_path)
+        or state.get("contract_sha256") != contract_raw_sha256
+    ):
+        raise RuntimeSourceError("Mia runtime variant source differs from registration")
+
+
+def _variant_projection(spec, *, image_observed: bool = False) -> dict[str, Any] | None:
+    if spec is None:
+        return None
+    return {
+        "spec_id": spec.spec_id,
+        "spec_sha256": spec.identity_sha256(),
+        "repository": spec.repository,
+        "revision": spec.revision,
+        "served_model": spec.served_name,
+        "image_id": spec.image_id,
+        "model_artifact_sha256": spec.model_artifact_sha256(),
+        "profile": spec.profile,
+        "source": "registered_plan_and_controller_state",
+        "image_evidence": (
+            "bound_live_container" if image_observed else "registered_source_only"
+        ),
+        "promotion_authorized": False,
+    }
+
+
 def _validate_initial(state: dict[str, Any]) -> bool:
     initial = state.get("initial")
     if not isinstance(initial, dict) or not isinstance(
@@ -291,7 +362,7 @@ def _validate_initial(state: dict[str, Any]) -> bool:
 
 
 def _validate_process(
-    state: dict[str, Any], run_path: Path, proc_root: Path
+    state: dict[str, Any], run_path: Path, proc_root: Path, *, contract_path: Path | None = None
 ) -> None:
     pid = state.get("worker_pid")
     ticks = state.get("worker_start_ticks")
@@ -332,7 +403,7 @@ def _validate_process(
         "bench.flash_next_ab.qualification",
         "--worker",
         "--contract",
-        str(CONTRACT_PATH),
+        str(contract_path or CONTRACT_PATH),
         "--output-dir",
         str(run_path),
     ]
@@ -448,6 +519,7 @@ def _latest_memory(
     paging_policy: dict[str, Any],
     candidate_identity: tuple[str, str, int, int] | None,
     memory_limit_bytes: int,
+    spec=None,
 ) -> tuple[dict[str, Any], str]:
     raw = _read_fd(
         run_fd, "memory.jsonl", maximum=MAX_MEMORY_BYTES, label="memory gate"
@@ -474,7 +546,6 @@ def _latest_memory(
             cgroup_binds.append(sample)
             continue
         if sample.get("schema") != MEMORY_SCHEMA:
-            # Emergency-stop and unknown rows cannot establish a live window.
             raise RuntimeSourceError("memory stream contains an unrecognized event")
         if cgroup_binds:
             sampled_after_bind = True
@@ -667,18 +738,18 @@ def _latest_memory(
         if len(cgroup_binds) != 1 or not sampled_after_bind:
             raise RuntimeSourceError("observed candidate cgroup bind is unavailable")
         bound = cgroup_binds[0]
-        snapshot = bound.get("cgroup")
+        bound_cgroup = bound.get("cgroup")
         if (
             bound.get("candidate_id") != candidate_identity[0]
             or bound.get("pid") != candidate_identity[2]
-            or not isinstance(snapshot, dict)
-            or snapshot.get("path") != candidate_identity[1]
-            or snapshot.get("process_start_ticks") != candidate_identity[3]
-            or snapshot.get("memory_max_bytes") != memory_limit_bytes
-            or snapshot.get("memory_swap_max_bytes") != 0
-            or snapshot.get("memory_swap_current_bytes") != 0
-            or snapshot.get("memory_events_oom") != 0
-            or snapshot.get("memory_events_oom_kill") != 0
+            or not isinstance(bound_cgroup, dict)
+            or bound_cgroup.get("path") != candidate_identity[1]
+            or bound_cgroup.get("process_start_ticks") != candidate_identity[3]
+            or bound_cgroup.get("memory_max_bytes") != memory_limit_bytes
+            or bound_cgroup.get("memory_swap_max_bytes") != 0
+            or bound_cgroup.get("memory_swap_current_bytes") != 0
+            or bound_cgroup.get("memory_events_oom") != 0
+            or bound_cgroup.get("memory_events_oom_kill") != 0
         ):
             raise RuntimeSourceError("observed candidate cgroup bind differs")
         bind_at = _parse_time(bound.get("observed_at"), "cgroup bind observed_at")
@@ -693,6 +764,38 @@ def _latest_memory(
             candidate_start_ticks=candidate_identity[3],
             memory_limit_bytes=memory_limit_bytes,
         )
+        if spec is not None:
+            inspection = bound.get("container_inspect")
+            expected_candidate = {
+                "id": spec.spec_id, "spec_sha256": spec.identity_sha256()
+            }
+            if (
+                bound.get("candidate_spec") != expected_candidate
+                or bound.get("candidate_id") != candidate_identity[0]
+                or bound.get("pid") != candidate_identity[2]
+                or not isinstance(inspection, dict)
+            ):
+                raise RuntimeSourceError("Mia cgroup bind variant differs")
+            expected_inspection = {
+                "id": candidate_identity[0],
+                "name": spec.container_name,
+                "image": spec.image_id,
+                "running": True,
+                "oom_killed": False,
+                "restart_count": 0,
+                "pid": candidate_identity[2],
+                "memory_limit_bytes": memory_limit_bytes,
+                "memory_swap_total_bytes": memory_limit_bytes,
+            }
+            if inspection != expected_inspection:
+                raise RuntimeSourceError("Mia bound image or Docker controls differ")
+            latest_candidate = row.get("candidate")
+            if not isinstance(latest_candidate, dict) or any(
+                latest_candidate.get(key) != value
+                for key, value in expected_inspection.items()
+                if key != "id"
+            ):
+                raise RuntimeSourceError("Mia live image or Docker controls differ")
     return row, _sha256(raw)
 
 
@@ -789,6 +892,7 @@ def _terminal_restoration(
     memory_limit_bytes: int,
     memory_swap_total_bytes: int,
     terminal_validator: Callable[[Path], None],
+    spec=None,
 ) -> str:
     restoration = state.get("restoration")
     if (
@@ -811,11 +915,23 @@ def _terminal_restoration(
     if state["phase"] == "complete":
         terminal_validator(run_path)
         valid = (
-            receipt.get("schema") == RESULT_SCHEMA
+            receipt.get("schema") == (
+                "qwen-flash-next-qualification-result/v4" if spec is not None else RESULT_SCHEMA
+            )
             and receipt.get("run_id") == run_id
             and receipt.get("contract_sha256") == state["contract_sha256"]
             and receipt.get("plan_sha256") == _canonical_sha256(plan)
-            and receipt.get("profile") == plan.get("profile") == "C0-S1"
+            and receipt.get("profile") == plan.get("profile") == (
+                spec.profile if spec is not None else "C0-S1"
+            )
+            and (
+                spec is None
+                or (
+                    receipt.get("candidate") == plan.get("candidate")
+                    and receipt.get("model_artifact_sha256") == spec.model_artifact_sha256()
+                    and receipt.get("proof_receipts") == plan.get("proof_receipts")
+                )
+            )
             and receipt.get("docker_memory_limit_bytes") == memory_limit_bytes
             and receipt.get("docker_memory_swap_total_bytes")
             == memory_swap_total_bytes
@@ -842,9 +958,13 @@ def _terminal_restoration(
             valid = valid and failure_class is None
     else:
         valid = (
-            receipt.get("schema") == "qwen-flash-next-supervisor-recovery/v1"
+            receipt.get("schema") == (
+                "qwen-flash-next-supervisor-recovery/v2" if spec is not None
+                else "qwen-flash-next-supervisor-recovery/v1"
+            )
             and receipt.get("run_id") == run_id
             and receipt.get("status") == "verified"
+            and (spec is None or receipt.get("candidate") == plan.get("candidate"))
             and isinstance(receipt.get("restoration"), dict)
             and receipt["restoration"] == restoration
         )
@@ -880,6 +1000,7 @@ def _unknown(observed_at: str, error: str) -> dict[str, Any]:
         "nara_service_expected": "unknown",
         "run_id": None,
         "phase": None,
+        "candidate_variant": None,
         "source_error": error,
     }
 
@@ -899,9 +1020,12 @@ def project_model_runtime(
     run_fd = None
     try:
         run_fd, run_id, state_raw = _open_latest_run(qualification_root)
+        spec = _mia_spec_for_run(run_id)
         state = _strict_object(state_raw, "runtime state")
         if (
-            state.get("schema") != STATE_SCHEMA
+            state.get("schema") != (
+                "qwen-flash-next-qualification-state/v4" if spec is not None else STATE_SCHEMA
+            )
             or state.get("run_id") != run_id
             or state.get("phase") not in PHASES
             or not SHA256.fullmatch(str(state.get("plan_sha256", "")))
@@ -936,7 +1060,12 @@ def project_model_runtime(
             != (descriptor_details.st_dev, descriptor_details.st_ino)
         ):
             raise RuntimeSourceError("runtime directory changed during admission")
-        plan_validator(run_path, state, plan, contract, contract_sha)
+        if spec is None:
+            plan_validator(run_path, state, plan, contract, contract_sha)
+        else:
+            _validate_registered_mia_plan(
+                run_path, state, plan, contract, contract_sha, spec
+            )
         try:
             from bench.flash_next_ab.qualification import (
                 DOCKER_MEMORY_LIMIT_BYTES,
@@ -945,16 +1074,24 @@ def project_model_runtime(
             )
         except Exception as exc:
             raise RuntimeSourceError("runtime paging allowlist is unavailable") from exc
+        registered_paging_policy = spec.paging_policy() if spec is not None else PAGING_POLICY
+        registered_profile = spec.profile if spec is not None else "C0-S1"
+        registered_memory_limit = (
+            spec.docker_memory_limit_bytes if spec is not None else DOCKER_MEMORY_LIMIT_BYTES
+        )
+        registered_swap_total = (
+            spec.docker_memory_limit_bytes if spec is not None else DOCKER_MEMORY_SWAP_TOTAL_BYTES
+        )
         if (
-            state.get("paging_policy") != PAGING_POLICY
-            or plan.get("paging_policy") != PAGING_POLICY
-            or plan.get("profile") != "C0-S1"
-            or contract.get("profile") != "C0-S1"
+            state.get("paging_policy") != registered_paging_policy
+            or plan.get("paging_policy") != registered_paging_policy
+            or plan.get("profile") != registered_profile
+            or contract.get("profile") != registered_profile
             or not isinstance(contract.get("runtime"), dict)
             or contract["runtime"].get("docker_memory_limit_bytes")
-            != DOCKER_MEMORY_LIMIT_BYTES
+            != registered_memory_limit
             or contract["runtime"].get("docker_memory_swap_total_bytes")
-            != DOCKER_MEMORY_SWAP_TOTAL_BYTES
+            != registered_swap_total
         ):
             raise RuntimeSourceError("runtime profile or paging policy is unregistered")
 
@@ -994,9 +1131,10 @@ def project_model_runtime(
                 plan,
                 started=started,
                 observed=observed,
-                memory_limit_bytes=DOCKER_MEMORY_LIMIT_BYTES,
-                memory_swap_total_bytes=DOCKER_MEMORY_SWAP_TOTAL_BYTES,
+                memory_limit_bytes=registered_memory_limit,
+                memory_swap_total_bytes=registered_swap_total,
                 terminal_validator=terminal_validator,
+                spec=spec,
             )
             mode = "resident"
             resident_expected = "online"
@@ -1004,7 +1142,10 @@ def project_model_runtime(
         else:
             if observed >= deadline:
                 raise RuntimeSourceError("runtime authorization deadline expired")
-            _validate_process(state, run_path, proc_root)
+            _validate_process(
+                state, run_path, proc_root,
+                contract_path=spec.contract_path if spec is not None else None,
+            )
             expected_monitor_phase = MONITOR_PHASE_BY_LIFECYCLE.get(phase)
             if state.get("monitor_phase") != expected_monitor_phase:
                 raise RuntimeSourceError("runtime lifecycle and memory phases differ")
@@ -1039,9 +1180,10 @@ def project_model_runtime(
                 observed,
                 floor_gib=plan.get("min_mem_available_gib"),
                 expected_phase=expected_monitor_phase,
-                paging_policy=PAGING_POLICY,
+                paging_policy=registered_paging_policy,
                 candidate_identity=candidate_identity,
-                memory_limit_bytes=DOCKER_MEMORY_LIMIT_BYTES,
+                memory_limit_bytes=registered_memory_limit,
+                spec=spec,
             )
             if phase in CANDIDATE_PHASES:
                 nara_initially_active = _validate_initial(state)
@@ -1063,6 +1205,7 @@ def project_model_runtime(
             contract=contract_sha,
             memory=memory_sha or "",
             restoration=receipt_sha or "",
+            variant=spec.identity_sha256() if spec is not None else "",
         )
         if _read_fd(
             run_fd,
@@ -1081,6 +1224,10 @@ def project_model_runtime(
             "nara_service_expected": nara_expected,
             "run_id": run_id,
             "phase": phase,
+            "candidate_variant": _variant_projection(
+                spec,
+                image_observed=phase in CANDIDATE_PHASES and memory_sha is not None,
+            ),
             "source_error": None,
         }
     except (OSError, RuntimeSourceError, ValueError, TypeError, AttributeError):

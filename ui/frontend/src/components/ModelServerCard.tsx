@@ -31,7 +31,7 @@
 import { memo, type ReactNode } from "react";
 import { useNow } from "../time";
 import { getWorkloadHint } from "../api/http";
-import type { ServedModel } from "../api/http";
+import type { ModelRuntime, ServedModel } from "../api/http";
 import { usePolled } from "../api/pollhub";
 import { fmt, fmtRatioPct } from "../format";
 import { callerTagTone, drivingTags } from "../roles";
@@ -192,6 +192,9 @@ export interface ModelServerCardProps {
   // controller-bound runtime receipt. The card never derives planned state
   // from reachability itself.
   serviceExpectation?: "expected_offline" | "starting" | "standby" | null;
+  // An exact, controller-bound v4 plan/state selects Mia for this run. This
+  // never follows /v1/models reachability alone and does not qualify a model.
+  selectedVariant?: NonNullable<ModelRuntime["candidate_variant"]> | null;
 }
 
 function ModelServerCard({
@@ -206,6 +209,7 @@ function ModelServerCard({
   inventory = null,
   endpointName,
   serviceExpectation = null,
+  selectedVariant = null,
 }: ModelServerCardProps) {
   const inventoryAware =
     inventory?.service_status === "online" ||
@@ -292,8 +296,16 @@ function ModelServerCard({
   // reads as a down server — "● up" (latest sample has data), amber
   // "● stale" (retaining last-good data through a short miss run), red
   // "● down" (miss run at the limit, or no data ever).
+  const selectedIdentityMatch = inventoryAware &&
+    inventory?.service_status === "online" &&
+    inventory?.model === selectedVariant?.served_model;
+  const selectedVariantConflict = selectedVariant != null &&
+    inventory?.service_status === "online" &&
+    inventory?.model !== selectedVariant.served_model;
   const badge = inventoryAware
-    ? inventory?.identity_status === "mismatch"
+    ? selectedVariantConflict
+      ? "variant-mismatch"
+      : inventory?.identity_status === "mismatch" && !selectedIdentityMatch
       ? "mismatch"
       : inventory?.service_status === "offline" && serviceExpectation === "expected_offline"
         ? "expected-offline"
@@ -376,6 +388,8 @@ function ModelServerCard({
                       ? "● not serving"
                 : badge === "mismatch"
                   ? "● identity mismatch"
+                  : badge === "variant-mismatch"
+                    ? "● selected variant mismatch"
                   : badge === "unknown"
                     ? "● unknown"
                     : badge === "offline"
@@ -408,7 +422,27 @@ function ModelServerCard({
           )}
         </div>
       )}
-      {inventoryAware && inventory?.identity_status === "mismatch" && (
+      {selectedVariant && (
+        <p className="mt-2 text-xs text-violet-300" data-testid={`${endpointName ?? servedModel}-selected-variant`}>
+          Controller-selected candidate: <strong>{selectedVariant.repository}</strong> at
+          <span className="font-mono"> {selectedVariant.revision.slice(0, 8)}</span>.
+          {selectedIdentityMatch
+            ? " The served name matches this recorded variant; qualification remains separate."
+            : " The selected variant has not been observed serving at this probe."}
+          {selectedVariant.image_evidence === "bound_live_container"
+            ? " Its image matches the controller's live cgroup-bind receipt."
+            : " Its image is registered in the plan; this phase does not include a current live image proof."}
+          {inventory?.configured_model && <span> Static inventory default: <span className="font-mono">{inventory.configured_model}</span>.</span>}
+        </p>
+      )}
+      {selectedVariantConflict && (
+        <p className="mt-2 text-xs text-red-400" data-testid={`${endpointName ?? servedModel}-variant-mismatch`}>
+          The last endpoint probe's served name does not match the controller-selected variant.
+          Expected <span className="font-mono">{selectedVariant.served_model}</span>;
+          observed <span className="font-mono">{inventory?.model ?? "unknown"}</span>.
+        </p>
+      )}
+      {inventoryAware && inventory?.identity_status === "mismatch" && !selectedIdentityMatch && (
         <p className="mt-2 text-xs text-red-400">
           Served identity does not match the configured model. Configured:{" "}
           <span className="font-mono">{inventory.configured_model ?? "unknown"}</span>.
@@ -489,9 +523,9 @@ function ModelServerCard({
             />
             <Row
               label="Model identity"
-              value={inventory?.identity_status ?? "unknown"}
+              value={selectedIdentityMatch ? "match · controller-selected variant" : inventory?.identity_status ?? "unknown"}
               valueClass={
-                inventory?.identity_status === "mismatch"
+                inventory?.identity_status === "mismatch" && !selectedIdentityMatch
                   ? "text-red-400"
                   : "text-zinc-500"
               }
@@ -601,9 +635,9 @@ function ModelServerCard({
                   />
                   <Row
                     label="Model identity"
-                    value={inventory?.identity_status ?? "unknown"}
+                    value={selectedIdentityMatch ? "match · controller-selected variant" : inventory?.identity_status ?? "unknown"}
                     valueClass={
-                      inventory?.identity_status === "mismatch"
+                      inventory?.identity_status === "mismatch" && !selectedIdentityMatch
                         ? "text-red-400"
                         : inventory?.identity_status === "match"
                           ? "text-emerald-400"

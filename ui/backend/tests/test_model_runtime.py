@@ -827,3 +827,125 @@ def test_model_runtime_api_caches_the_original_observation():
     second = client.get("/api/model_runtime").json()
     assert first == second
     assert calls == [1]
+
+
+def mia_fixture(tmp_path, monkeypatch):
+    """Producer-shaped v4 bind/sample proof with registered Mia identity.
+
+    The closed plan/contract validator is isolated here; these cases exercise
+    the live mode reader's raw image, Docker-limit, and cgroup bindings.
+    """
+    from backend import model_runtime as module
+    from bench.flash_next_ab.candidate_registry import MIA
+
+    root, run, proc, boot, state, plan = fixture(tmp_path)
+    mia_run = root / "qfn-mia-c0-runtime-fixture"
+    run.rename(mia_run)
+    plan["profile"] = MIA.profile
+    plan["paging_policy"] = MIA.paging_policy()
+    plan["min_mem_available_gib"] = MIA.min_mem_available_gib
+    write_json(mia_run / "plan.json", plan)
+    contract = {
+        "profile": MIA.profile,
+        "runtime": {
+            "docker_memory_limit_bytes": MIA.docker_memory_limit_bytes,
+            "docker_memory_swap_total_bytes": MIA.docker_memory_limit_bytes,
+        },
+    }
+    contract_raw = json.dumps(contract).encode()
+    (mia_run / "launch-contract.raw.json").write_bytes(contract_raw)
+    state.update(
+        schema="qwen-flash-next-qualification-state/v4",
+        run_id=mia_run.name,
+        plan_sha256=canonical_sha(plan),
+        contract_sha256=hashlib.sha256(contract_raw).hexdigest(),
+        paging_policy=MIA.paging_policy(),
+        candidate={"id": MIA.spec_id, "spec_sha256": MIA.identity_sha256()},
+        model_artifact_sha256=MIA.model_artifact_sha256(),
+    )
+    write_json(mia_run / "state.json", state)
+
+    rows = memory_rows(mia_run / "memory.jsonl")
+    rows[1]["candidate_spec"] = state["candidate"]
+    rows[1]["container_inspect"] = {
+        "id": CONTAINER, "name": MIA.container_name, "image": MIA.image_id,
+        "running": True, "oom_killed": False, "restart_count": 0,
+        "pid": 300, "memory_limit_bytes": MIA.docker_memory_limit_bytes,
+        "memory_swap_total_bytes": MIA.docker_memory_limit_bytes,
+    }
+    rows[2]["candidate"].update(
+        name=MIA.container_name, image=MIA.image_id,
+        memory_limit_bytes=MIA.docker_memory_limit_bytes,
+        memory_swap_total_bytes=MIA.docker_memory_limit_bytes,
+    )
+    write_memory_rows(mia_run / "memory.jsonl", rows)
+    process = proc / str(PID)
+    command = [
+        "/usr/bin/python3", "-m", "bench.flash_next_ab.qualification",
+        "--worker", "--contract", str(MIA.contract_path),
+        "--output-dir", str(mia_run),
+    ]
+    (process / "cmdline").write_bytes(
+        b"\0".join(value.encode() for value in command) + b"\0"
+    )
+    monkeypatch.setattr(module, "_validate_registered_mia_plan", lambda *_args: None)
+    return root, mia_run, proc, boot, MIA
+
+
+def test_mia_live_mode_exposes_exact_variant_and_observed_image(tmp_path, monkeypatch):
+    root, _run, proc, boot, spec = mia_fixture(tmp_path, monkeypatch)
+    row = project(root, proc, boot)
+    assert row["mode"] == "candidate_research"
+    assert row["candidate_variant"] == {
+        "spec_id": spec.spec_id,
+        "spec_sha256": spec.identity_sha256(),
+        "repository": spec.repository,
+        "revision": spec.revision,
+        "served_model": spec.served_name,
+        "image_id": spec.image_id,
+        "model_artifact_sha256": spec.model_artifact_sha256(),
+        "profile": spec.profile,
+        "source": "registered_plan_and_controller_state",
+        "image_evidence": "bound_live_container",
+        "promotion_authorized": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["spec_hash", "bind_image", "bind_name", "bind_memory", "sample_image", "sample_name", "sample_memory"],
+)
+def test_mia_variant_drift_withholds_active_research_mode(tmp_path, monkeypatch, mutation):
+    root, run, proc, boot, _spec = mia_fixture(tmp_path, monkeypatch)
+    source = run / "memory.jsonl"
+    rows = memory_rows(source)
+    target = rows[1] if mutation.startswith("bind") or mutation == "spec_hash" else rows[2]["candidate"]
+    if mutation == "spec_hash":
+        target["candidate_spec"]["spec_sha256"] = "0" * 64
+    elif mutation == "bind_image":
+        target["container_inspect"]["image"] = "sha256:" + "0" * 64
+    elif mutation == "bind_name":
+        target["container_inspect"]["name"] = "unregistered-mia"
+    elif mutation == "bind_memory":
+        target["container_inspect"]["memory_limit_bytes"] -= 1
+    elif mutation == "sample_image":
+        target["image"] = "sha256:" + "0" * 64
+    elif mutation == "sample_name":
+        target["name"] = "unregistered-mia"
+    else:
+        target["memory_limit_bytes"] -= 1
+    write_memory_rows(source, rows)
+    row = project(root, proc, boot)
+    assert row["mode"] == "unknown"
+    assert row["candidate_variant"] is None
+
+
+def test_newer_invalid_mia_state_blocks_fallback_to_older_nvidia_state(tmp_path):
+    root, _run, proc, boot, _state, _plan = fixture(tmp_path)
+    newest = root / "qfn-mia-c0-invalid-newest"
+    newest.mkdir()
+    (newest / "state.json").write_bytes(b"{invalid JSON")
+    row = project(root, proc, boot)
+    assert row["mode"] == "unknown"
+    assert row["run_id"] is None
+    assert row["candidate_variant"] is None
