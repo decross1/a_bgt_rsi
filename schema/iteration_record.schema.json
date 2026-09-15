@@ -143,6 +143,7 @@
         "skeptic_backend":         {"type": ["string", "null"], "description": "D-065. Backend registry name that RAN the skeptic exchange (e.g. 'vllm-qwen'). NOT the same as subagent_backend, which is the critic sub-agent's backend — without this field the D-041/D-044 independence claim is unverifiable from the record. Present whenever skeptic_verdict is."},
         "skeptic_model":           {"type": ["string", "null"], "description": "D-065. Model/provenance string the skeptic backend resolved to. Null when the exchange crashed before a backend resolved."},
         "skeptic_wall_seconds":    {"type": "number"},
+        "skeptic_elapsed_wall_seconds": {"type": "number", "minimum": 0},
         "debate": {
           "description": "D-065. Bounded multi-turn adversarial debate that replaces the single-shot skeptic exchange when NARA_DEBATE=1 (dark by default). Absent otherwise.",
           "type": "object",
@@ -154,6 +155,31 @@
             },
             "rounds":      {"type": ["integer", "null"], "minimum": 0},
             "stop_reason": {"type": ["string", "null"]},
+            "turn_count": {"type": "integer", "minimum": 0, "maximum": 13},
+            "chronology_truncated": {"type": "boolean"},
+            "chronology_complete": {"type": "boolean"},
+            "observed_turn_wall_seconds": {"type": "number", "minimum": 0},
+            "turn_wall_seconds": {"type": "number", "minimum": 0},
+            "elapsed_wall_seconds": {"type": "number", "minimum": 0},
+            "turn_chronology": {
+              "description": "Content-free chronology of every turn before the six-turn text excerpt. Six rounds have at most twelve model turns; a pre-turn error adds one system row.",
+              "type": "array",
+              "maxItems": 13,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["round", "role", "backend", "model", "wall_seconds", "failed", "text_sha256"],
+                "properties": {
+                  "round": {"type": ["integer", "null"], "minimum": 0},
+                  "role": {"type": ["string", "null"], "enum": ["challenger", "defender", "system", null]},
+                  "backend": {"type": ["string", "null"], "maxLength": 80},
+                  "model": {"type": ["string", "null"], "maxLength": 160},
+                  "wall_seconds": {"type": ["number", "null"], "minimum": 0},
+                  "failed": {"type": "boolean"},
+                  "text_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+                }
+              }
+            },
             "transcript": {
               "description": "Bounded excerpt (<=6 turns, text truncated) of the exchange. Every model turn carries the backend/model that produced it; an error row carries nulls.",
               "type": "array",
