@@ -86,7 +86,7 @@ describe("LabModelSupplementPanel", () => {
     expect(screen.getByRole("region", { name: /Context quality by total capacity/ })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: /Context quality by capacity and answer position/ })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Resident Gemma passed" })).toBeInTheDocument();
-    expect(screen.getByText(/does not test Qwen 16K answer quality/)).toBeInTheDocument();
+    expect(screen.getByText(/Qwen results, when admitted, belong to a separate cross-plan study/)).toBeInTheDocument();
     expect(screen.getByText(/A prepared 64K packet or server flag is not a 64K quality result/)).toBeInTheDocument();
   });
 
