@@ -1,4 +1,4 @@
-# H1 REST displayed-quote diagnostic, source-only draft
+# H1 REST displayed-quote diagnostic
 
 The runnable adapter is `rest_reference_driver.py`. It evaluates **one frozen 2–5h pilot block** of the BTCUSDT Spot 1h long/flat application using public, sealed REST L5 snapshots and hourly signed-flow features. It reads local files only. The original `applied_trial/v1` contract and its `sequence_valid=true` paper gate remain unchanged. Every result here says `nonexecutable_reference_only=true`, `sequence_valid=false`, `paper_supported=false`, `orders_placed=0`, and `external_plan_freeze_proof=unverified`; an independent preregistration receipt is still needed to establish when the plan existed.
 
@@ -56,9 +56,10 @@ Candidate and baseline intercept/momentum values **must be identical**; the vali
 After capture has continued through at least `forward_end + hold_s + exit_timeout_s`, derive `features.jsonl`/`feature-source.json` using the unchanged `prospective_hourly_features` CLI on a contiguous ordered list of at most 96 sealed **complete_incremental_batch** directories and at most 250,000 trade events. The 96-batch cap at a five-minute cadence cannot cover 24 hours, much less a month, once the prior-hour marker and exit reserve are included; a busy trade period may hit the 250,000-event bound sooner. This pilot deliberately limits the frozen block to 2–5 hours chosen before outcomes. A future forward study must bind and aggregate separately frozen ordered blocks without dropping failed or missing block cells; this script makes no 30-day claim. Then run from the worktree; pass the *same* ordered batch list used to build features:
 
 ```bash
-.venv-chroma/bin/python -m bench.applied_trading.rest_reference_driver \
+PYTHONPATH=/home/decross1/projects/a_bgt_rsi_worktrees/flash-followon-20260915 \
+python /tmp/applied-gt-trading-20260915/rest_reference_driver.py \
   --plan /absolute/direct-child/h1-rest-plan.json \
-  --topic-transfer bench/applied_trading/h1_topic_transfer.json \
+  --topic-transfer /absolute/direct-child/h1-topic-transfer.json \
   --feature-dir /absolute/direct-child/feature-output \
   --batch /absolute/direct-child/first-complete-batch \
   --batch /absolute/direct-child/next-complete-batch \
@@ -71,4 +72,4 @@ When both later reference snapshots exist, the driver also computes a **midquote
 
 This adapter never says a displayed quote could have been executed. No REST request/receipt proves venue event time, cancellations, queue or actual order fill. The v1 `paper_supported` route remains unavailable until a separately reviewed diff-depth reconciliation and stronger quote-source receipt exist. A continuous WebSocket subscription is also **not** a series of new post-boundary HTTP requests: current v1 quote validation hardcodes local HTTP snapshots and requires `request_started_at` after each entry/exit boundary. A later typed WS source must preserve subscription start, venue/frame update IDs, local frame receipt and reconciled book chronology rather than inventing a per-frame request start.
 
-The packaged tests are `tests/test_applied_trading_rest_reference_driver.py`; 17 combined timer/REST tests passed in the short CPU window after Flash restoration. The module and exact H1 topic-transfer source are now packaged, but **no** forward plan, diagnostic run, capture timer activation or order has been executed. Before a real pilot, review and publish the exact plan/topic/module SHA and an immutable prestart publication receipt, then review the UI's content-free projection. The results remain diagnostic even after those steps.
+Run installed focused checks outside a GPU program with `.venv-chroma/bin/python -m pytest -q tests/test_applied_trading_rest_reference_driver.py tests/test_applied_trading_h1_pilot_lifecycle.py`. They cover raw-plan/topic/source identity, fixed candidate/baseline, HH:05 schedule, ordered source batches, post-boundary quote selection, private-cell denominator and deterministic result replay, and score withholding on missing evidence. The dated [publication and due-evaluation operator sequence](PUBLICATION_AND_H1_DUE_OPERATOR.md) records any actual plan, diagnostic result or timer activation; this guide alone is not an execution receipt.

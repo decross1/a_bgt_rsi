@@ -1,0 +1,11 @@
+[Unit]
+Description=Check one frozen H1 REST pilot after its observation horizon (%i)
+
+[Timer]
+OnCalendar=*-*-* *:3/5:30
+AccuracySec=10s
+Persistent=false
+Unit=applied-h1-rest-due@%i.service
+
+[Install]
+WantedBy=timers.target

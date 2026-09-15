@@ -1,0 +1,12 @@
+[Unit]
+Description=Offline source-bound H1 REST pilot due review (%i)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/decross1/projects/a_bgt_rsi
+ExecStart=/home/decross1/projects/a_bgt_rsi/.venv-chroma/bin/python -m bench.applied_trading.h1_pilot_lifecycle --evaluate-due --study-id %i
+TimeoutStartSec=240s
+CPUQuota=50%
+MemoryMax=1G
+Nice=10
+NoNewPrivileges=yes
