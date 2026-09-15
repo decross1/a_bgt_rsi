@@ -53,10 +53,9 @@ from typing import Any
 from agent_wrapper.backends import get_backend
 from agent_wrapper.cleanup import strip_channel_markup
 from agent_wrapper.wrapper import call_sync
-from orchestrator import iteration_cache
+from orchestrator import empirical_context, iteration_cache
 from orchestrator.chroma_query import query_top_k
 from workers.novelty_skeptic import _extract_json_object, _format_neighbors
-
 
 CALLS_LOG_PATH = os.environ.get("LOOP_V0_CALLS_LOG", "logs/calls.jsonl")
 
@@ -199,6 +198,7 @@ def restate_attack(
     iteration_id: str | None = None,
     backend: str | None = None,
     novelty_top_neighbor_id: str | None = None,
+    empirical_entry: dict | None = None,
 ) -> dict[str, Any]:
     """Restatement attack on a novelty-judged rediscovery (residual 2).
 
@@ -232,6 +232,12 @@ def restate_attack(
             "empty hypothesis_text; nothing to attack",
             None, None, backend, "",
         )
+    try:
+        empirical_note = (empirical_context.note(empirical_entry)
+                          if empirical_entry is not None else "")
+    except ValueError as exc:
+        return _result("inconclusive", f"untrusted empirical context: {exc}",
+                       None, None, backend, "")
 
     # Resolve the backend up front so provenance is stamped on every
     # outcome. Unknown name -> inconclusive (fail-open), not coerced to
@@ -308,6 +314,8 @@ def restate_attack(
         f"Retrieved neighbors ({len(neighbors)}):\n"
         f"{_format_neighbors(neighbors)}\n"
     )
+    if empirical_note:
+        user_content += "\n" + empirical_note
 
     # Step 3 — the transfer-rule judge.
     try:

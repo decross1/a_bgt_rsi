@@ -53,11 +53,11 @@ import re
 from typing import Any, Callable
 
 from agent_wrapper.backends import get_backend
+from orchestrator import empirical_context
 from orchestrator.chroma_query import query_top_k
 from orchestrator.subagent import SubAgentBudget, run_subagent
 from workers.novelty_skeptic import _format_neighbors
 from workers.retrieval_relevance import _tokenize
-
 
 # Hard cap. `max_rounds` above this raises — the bound is not negotiable
 # from the call site (that is what makes it a bound).
@@ -300,7 +300,9 @@ def _subagent_turn(
     return payload
 
 
-def _default_challenger(claim, evidence_text, transcript, iteration_id):
+def _default_challenger(claim, evidence_text, transcript, iteration_id,
+                        empirical_note: str = ""):
+    empirical_block = f"{empirical_note}\n\n" if empirical_note else ""
     return _subagent_turn(
         role="challenger",
         backend=os.environ.get(
@@ -309,6 +311,7 @@ def _default_challenger(claim, evidence_text, transcript, iteration_id):
         user_prompt=(
             f"Claim under debate:\n{claim}\n\n"
             f"Retrieved evidence:\n{evidence_text}\n\n"
+            f"{empirical_block}"
             f"Transcript so far:\n{_transcript_block(transcript)}\n\n"
             "Your turn."
         ),
@@ -318,7 +321,9 @@ def _default_challenger(claim, evidence_text, transcript, iteration_id):
     )
 
 
-def _default_defender(claim, evidence_text, transcript, iteration_id):
+def _default_defender(claim, evidence_text, transcript, iteration_id,
+                      empirical_note: str = ""):
+    empirical_block = f"{empirical_note}\n\n" if empirical_note else ""
     return _subagent_turn(
         role="defender",
         backend=DEFENDER_BACKEND,
@@ -326,6 +331,7 @@ def _default_defender(claim, evidence_text, transcript, iteration_id):
         user_prompt=(
             f"Claim you are defending:\n{claim}\n\n"
             f"Retrieved evidence:\n{evidence_text}\n\n"
+            f"{empirical_block}"
             f"Transcript so far:\n{_transcript_block(transcript)}\n\n"
             "Rebut the challenger's latest objection, or concede it."
         ),
@@ -383,6 +389,7 @@ def debate(
     challenger_fn: Callable | None = None,
     max_rounds: int = MAX_DEBATE_ROUNDS,
     iteration_id: str | None = None,
+    empirical_entry: dict | None = None,
 ) -> dict[str, Any]:
     """Run a bounded adversarial debate over `claim`. See module docstring.
 
@@ -410,6 +417,16 @@ def debate(
         }))
         return _out("inconclusive", 0, transcript, "error")
 
+    try:
+        empirical_note = (empirical_context.note(empirical_entry)
+                          if empirical_entry is not None else "")
+    except ValueError as exc:
+        transcript.append(_turn(0, "system", {
+            "text": f"untrusted empirical context: {exc}",
+            "error": "untrusted empirical context",
+        }))
+        return _out("inconclusive", 0, transcript, "error")
+
     evidence_text, ev_error = _evidence_text(claim.strip(), evidence, iteration_id)
     if ev_error:
         transcript.append(_turn(0, "system", {
@@ -418,9 +435,11 @@ def debate(
         return _out("inconclusive", 0, transcript, "error")
 
     challenger = challenger_fn or (
-        lambda c, e, t: _default_challenger(c, e, t, iteration_id))
+        lambda c, e, t: _default_challenger(c, e, t, iteration_id,
+                                            empirical_note))
     defender = defender_fn or (
-        lambda c, e, t: _default_defender(c, e, t, iteration_id))
+        lambda c, e, t: _default_defender(c, e, t, iteration_id,
+                                          empirical_note))
 
     prev_challenger_tokens: set[str] | None = None
 
