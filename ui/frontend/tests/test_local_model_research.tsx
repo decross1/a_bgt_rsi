@@ -11,6 +11,37 @@ const base: LocalModelResearchProgress = {
 };
 
 describe("local model research", () => {
+  const recordedPair = (replay: "verified" | "unavailable"): LocalModelResearchProgress["comparisons"][number] => ({
+    id: "qfn-ab-example", status: "complete", manifest_sha256: "a".repeat(64),
+    comparison_eligible: true, comparison_eligible_at_recording: true,
+    admission_class: "RECORDED_COMPLETED_PAIR_ADMISSION", current_source_replay: replay,
+    run_sha256: { resident: "b".repeat(64), flash: "c".repeat(64) }, promotion_authorized: false,
+    families: [{ family: "objective", comparison_eligible: true,
+      paired_success_delta: 0.5, equal_source_task_success_delta: 0.5,
+      source_task_interval_95: [0, 1], cohorts: {
+        resident: { declared: 2, attempted: 2, passed: 1, success_rate: 0.5, successful_task_runs_per_hour: 30 },
+        flash: { declared: 2, attempted: 2, passed: 2, success_rate: 1, successful_task_runs_per_hour: 40 },
+      } }],
+  });
+  it("shows admitted historical scores with an explicit replay limitation", () => {
+    render(<LocalModelResearchPanel data={{ ...base, comparisons: [recordedPair("unavailable")] }} />);
+    expect(screen.getByText("Completed pair admitted")).toBeInTheDocument();
+    expect(screen.getByText(/source replay is currently unavailable/)).toBeInTheDocument();
+    expect(screen.getByText("+50.0 pp")).toBeInTheDocument();
+  });
+  it("distinguishes current source replay from recorded admission", () => {
+    render(<LocalModelResearchPanel data={{ ...base, comparisons: [recordedPair("verified")] }} />);
+    expect(screen.getByText(/passes source replay now/)).toBeInTheDocument();
+    expect(screen.getByText("+50.0 pp")).toBeInTheDocument();
+  });
+  it("withholds complete-looking scores without the recorded admission fields", () => {
+    const pair = recordedPair("verified");
+    delete pair.admission_class;
+    render(<LocalModelResearchPanel data={{ ...base, comparisons: [pair] }} />);
+    expect(screen.getAllByText("Withheld")).toHaveLength(3);
+    expect(screen.queryByText("+50.0 pp")).not.toBeInTheDocument();
+    expect(screen.getByText(/without verified recorded admission/)).toBeInTheDocument();
+  });
   it("shows pending work without invented scores", () => {
     render(<LocalModelResearchPanel data={base} />);
     expect(screen.getByText(/No qualification result recorded/)).toBeInTheDocument();
@@ -68,13 +99,33 @@ describe("local model research", () => {
     expect(screen.getByText(/registered source only/)).toBeInTheDocument();
     expect(screen.queryByText(/runtime qualified/)).toBeNull();
   });
-  it("withholds a malformed or unregistered variant without blanking the panel", () => {
+  it("shows registered MTP settings without treating registration as qualification", () => {
+    render(<LocalModelResearchPanel data={{ ...base, qualification_runs: [{
+      id: "qfn-mia-mtp3-example", status: "unfinished_receipt", phase: "readiness",
+      finished_at: null, candidate_window_minutes: null, minimum_memory_gib: null,
+      probe_count: null, model_started: null, restoration: "unverified",
+      source_sha256: "a".repeat(64),
+      variant: {
+        id: "mia-925d7be6-mtp3-fullvocab-v1", repository: "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4",
+        revision: "925d7be6c14c6c9442ef83e8f05b5a3c39304f69",
+        served_model: "qwen3.8-flash-next-mia",
+        image_id: "sha256:da68dd27a8ef1dadd0f380178a51f0a0671dc4235933ea1ae89fdaf66295ec72",
+        model_artifact_sha256: "a40ce50173dd3aff54da88503894967e5248bbb927f9e4a91eff5a6a7270c168",
+        spec_sha256: "32268b7d267e188643ccd918054e26f8505072a704e5b574a441fd8b9b465e65",
+        qualification_profile: "MIA-MTP3-FULLVOCAB-32K", evidence_class: "REGISTERED_SOURCE_ONLY",
+      },
+    }] }} />);
+    expect(screen.getByText("32,768 total tokens · MTP 3")).toBeInTheDocument();
+    expect(screen.getByText("2.0 GiB")).toBeInTheDocument();
+    expect(screen.queryByText(/runtime qualified/)).not.toBeInTheDocument();
+  });
+  it.each([null, "__proto__", "constructor"])("withholds malformed or unregistered variant %s without blanking the panel", (id) => {
     render(<LocalModelResearchPanel data={{ ...base, qualification_runs: [{
       id: "qfn-mia-c0-unbound", status: "unfinished_receipt", phase: "readiness",
       finished_at: null, candidate_window_minutes: null, minimum_memory_gib: null,
       probe_count: null, model_started: null, restoration: "unverified",
       source_sha256: "a".repeat(64),
-      variant: { id: null } as unknown as LocalModelResearchProgress["qualification_runs"][number]["variant"],
+      variant: { id } as unknown as LocalModelResearchProgress["qualification_runs"][number]["variant"],
     }] }} />);
     expect(screen.getByText("Variant unavailable")).toBeInTheDocument();
     expect(screen.queryByText("Mia NVFP4")).toBeNull();

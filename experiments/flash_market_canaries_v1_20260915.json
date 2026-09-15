@@ -1,0 +1,109 @@
+{
+  "schema": "flash-fresh-market-game-theory-canaries/v1",
+  "suite_id": "fresh-market-gt-canaries-20260915-v1",
+  "created_before_any_fresh_canary_model_call": true,
+  "purpose": "Fresh controlled application-readiness tasks for local model comparison; not evidence of a trading edge.",
+  "comparison": "Separate scientific-validity diagnostic: resident Qwen27B versus one qualified Mia profile at matched supported reasoning controls. This does not replace the first role-bundle comparison.",
+  "source_visibility": "New local development fixtures; expected outputs are grader-only and never included in model messages.",
+  "conditions": ["deterministic", "medium_reasoning"],
+  "repetition_seeds": [107, 509],
+  "max_output_tokens_per_call": 4096,
+  "timeout_seconds_per_call": 90,
+  "seed_block_model_call_ceiling_seconds": 2160,
+  "seed_block_total_budget_seconds": 2220,
+  "temperature_by_condition": {"deterministic": 0.0, "medium_reasoning": 1.0},
+  "top_p_by_condition": {"deterministic": 1.0, "medium_reasoning": 0.95},
+  "top_k": 20,
+  "grading": {
+    "primary": "Strict single JSON object, exact required keys, boolean/string/integer types as requested, finite numeric values within absolute tolerance 1e-6, exact categorical values.",
+    "diagnostic": "Separately report one complete fenced-JSON envelope with no other text. Diagnostic normalization never changes the strict primary result.",
+    "timeouts_and_errors": "Retain in attempted denominator; no selective retry or dropped tasks.",
+    "statistical_unit": "task_id; seeds and policies are repeated conditions, not independent scientific tasks"
+  },
+  "tasks": [
+    {
+      "task_id": "dealer_positive_margin",
+      "role": "execution",
+      "mechanism": "Adverse selection with informed and uninformed order flow",
+      "prompt": "This is a synthetic dealer model, not observed market data. All quantities are basis points per filled trade. The dealer earns half-spread s, pays fee f, and loses v to informed flow with probability alpha. Expected profit is s - alpha*v - f. Let s=8, alpha=0.2, v=30, f=1. Return exactly a JSON object with numeric expected_profit_bps and break_even_half_spread_bps, and boolean positive_expected_profit. No other keys or prose.",
+      "expected": {"expected_profit_bps": 1.0, "break_even_half_spread_bps": 7.0, "positive_expected_profit": true}
+    },
+    {
+      "task_id": "dealer_negative_margin",
+      "role": "execution",
+      "mechanism": "Adverse selection exceeds the quoted spread",
+      "prompt": "In a synthetic dealer model, all amounts are basis points per filled trade and expected profit equals s - alpha*v - f. Let half-spread s=5, informed-flow probability alpha=0.3, informed markout v=24, and fee f=1.5. Return exactly JSON with numeric expected_profit_bps and break_even_half_spread_bps, and boolean positive_expected_profit. Do not give a trading recommendation or add keys/prose.",
+      "expected": {"expected_profit_bps": -3.7, "break_even_half_spread_bps": 8.7, "positive_expected_profit": false}
+    },
+    {
+      "task_id": "quote_fill_denominator",
+      "role": "evidence",
+      "mechanism": "Conditional execution and adverse selection",
+      "prompt": "A synthetic passive quote fills with probability 0.4. Conditional on filling it earns 7 bps of half-spread, suffers 6 bps of adverse markout, and pays 2 bps in fees. An unfilled quote has zero profit and no cost. Return exactly JSON with numeric expected_profit_per_fill_bps and expected_profit_per_submitted_quote_bps, plus boolean profitable_in_expectation. No other keys/prose.",
+      "expected": {"expected_profit_per_fill_bps": -1.0, "expected_profit_per_submitted_quote_bps": -0.4, "profitable_in_expectation": false}
+    },
+    {
+      "task_id": "competitive_spreads_equilibrium",
+      "role": "critic",
+      "mechanism": "Competition can prevent a jointly preferable wide-spread outcome",
+      "prompt": "Two synthetic dealers simultaneously choose TIGHT or WIDE. Payoff pairs are (2,2) at (TIGHT,TIGHT), (5,0) at (TIGHT,WIDE), (0,5) at (WIDE,TIGHT), and (3,3) at (WIDE,WIDE). A report claims WIDE,WIDE is a Nash equilibrium because both receive more than at TIGHT,TIGHT. Return exactly JSON with boolean report_correct, string unique_pure_nash chosen from TIGHT_TIGHT or WIDE_WIDE, and numeric unilateral_gain_from_wide_wide. No other keys/prose.",
+      "expected": {"report_correct": false, "unique_pure_nash": "TIGHT_TIGHT", "unilateral_gain_from_wide_wide": 2.0}
+    },
+    {
+      "task_id": "crowded_entry_mixed_equilibrium",
+      "role": "critic",
+      "mechanism": "Capacity-constrained entry creates strategic crowding",
+      "prompt": "Two symmetric synthetic arbitrageurs choose ENTER or STAY_OUT. Staying out pays 0. Entering alone pays 4. If both enter, each loses 2. In a symmetric mixed equilibrium let p be the probability the other agent enters. Return exactly JSON with numeric symmetric_entry_probability, integer number_of_pure_nash_equilibria, and boolean both_enter_is_nash. No other keys/prose.",
+      "expected": {"symmetric_entry_probability": 0.6666666666666666, "number_of_pure_nash_equilibria": 2, "both_enter_is_nash": false}
+    },
+    {
+      "task_id": "winner_curse_conditioning",
+      "role": "generator",
+      "mechanism": "Winning changes the posterior in a common-value auction",
+      "prompt": "A synthetic common value V is 0 or 10 with equal prior probability. Conditional on V, the two bidders receive independent signals. Each bidder observes H with probability 0.75 if V=10 and with probability 0.25 if V=0; otherwise the signal is L. A bidder bids 6 on H and 0 on L. Condition on bidder A having H AND strictly winning against B (so B has L; ties are excluded). A pays its bid of 6. Return exactly JSON with numeric expected_value_given_own_high_signal, expected_value_given_strict_win, and expected_profit_given_strict_win. No other keys/prose.",
+      "expected": {"expected_value_given_own_high_signal": 7.5, "expected_value_given_strict_win": 5.0, "expected_profit_given_strict_win": -1.0}
+    },
+    {
+      "task_id": "liquidity_run_threshold",
+      "role": "generator",
+      "mechanism": "Strategic withdrawal thresholds",
+      "prompt": "In a synthetic two-agent liquidity game, withdrawing pays 1 regardless of the other agent. Waiting pays 3 if the other waits and -2 if the other withdraws. Let p be the probability the other withdraws. Return exactly JSON with numeric indifference_probability and best_response_at_p_0_6 as the string WAIT or WITHDRAW. No other keys/prose.",
+      "expected": {"indifference_probability": 0.4, "best_response_at_p_0_6": "WITHDRAW"}
+    },
+    {
+      "task_id": "available_at_lookahead",
+      "role": "validator",
+      "mechanism": "A decision cannot use information published afterward",
+      "prompt": "A synthetic backtest makes a decision at 2026-09-15T09:01:00Z. A feature describes trades ending at 09:00:00Z but the feature file was first available at 09:02:00Z. The backtest uses that feature for the 09:01 decision. Return exactly JSON with boolean decision_information_valid and string violation chosen from NONE or FUTURE_AVAILABILITY. Judge availability at decision time, not the observation period's endpoint. No other keys/prose.",
+      "expected": {"decision_information_valid": false, "violation": "FUTURE_AVAILABILITY"}
+    },
+    {
+      "task_id": "round_trip_cost_hurdle",
+      "role": "execution",
+      "mechanism": "Costs can consume a forecast signal",
+      "prompt": "A synthetic paper trade forecasts gross return 45 bps. Fees are 10 bps on entry and 10 bps on exit. Total round-trip spread cost is 12 bps, and slippage is 5 bps on each leg. A preregistered rule requires net expected return of at least 5 bps. Return exactly JSON with numeric total_cost_bps and net_expected_return_bps, plus boolean clears_preregistered_hurdle. No other keys/prose.",
+      "expected": {"total_cost_bps": 42.0, "net_expected_return_bps": 3.0, "clears_preregistered_hurdle": false}
+    },
+    {
+      "task_id": "multiple_strategy_selection",
+      "role": "critic",
+      "mechanism": "Selection among many tested rules inflates false-positive risk",
+      "prompt": "An analyst tests 20 strategy hypotheses and selects the best unadjusted p-value, 0.02. The preregistered familywise significance level is 0.05 with Bonferroni correction across all 20 hypotheses. Return exactly JSON with numeric per_hypothesis_threshold and boolean selected_result_passes. Apply the declared correction even if the analyst only reports the selected strategy. No other keys/prose.",
+      "expected": {"per_hypothesis_threshold": 0.0025, "selected_result_passes": false}
+    },
+    {
+      "task_id": "coordination_causal_overclaim",
+      "role": "evidence",
+      "mechanism": "Common information can mimic strategic coordination",
+      "prompt": "Use only these synthetic evidence statements. S1: Several agents' buy orders are positively correlated. S2: All agents receive the same public news at the same time. No intervention, private communication data, or identified causal design is available. A report says S1 proves collusion. Return exactly JSON with boolean collusion_identified and common_information_is_alternative_explanation, and string evidence_scope chosen from ASSOCIATION or IDENTIFIED_COLLUSION. No other keys/prose.",
+      "expected": {"collusion_identified": false, "common_information_is_alternative_explanation": true, "evidence_scope": "ASSOCIATION"}
+    },
+    {
+      "task_id": "known_theory_applied_evidence",
+      "role": "validator",
+      "mechanism": "Scientific novelty and empirical application evidence are separate",
+      "prompt": "A synthetic lab record cites an established adverse-selection model as its prior mechanism. It preregisters a new application test and has not collected any forward quotes or paper outcomes yet. Under the declared application dispositions NOT_TESTED, INVALID, NEGATIVE, PAPER_SUPPORTED, NEEDS_REPLICATION, select the current disposition. Return exactly JSON with string application_disposition, boolean establishes_new_theory, and boolean establishes_trading_edge. Do not equate an established mechanism with a failed application test. No other keys/prose.",
+      "expected": {"application_disposition": "NOT_TESTED", "establishes_new_theory": false, "establishes_trading_edge": false}
+    }
+  ]
+}
