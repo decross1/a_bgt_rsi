@@ -2,9 +2,11 @@
 
 **Decision: retain Gemma at 32K and Qwen at 16K for production.** The optimized Mia Flash configuration is a viable challenger, with higher development-panel accuracy and a shorter evaluation time. It fails the preregistered portfolio non-regression gate, and one fresh scientific arithmetic case fails. This report compares the deployed resident setup, a tested experimental resident policy bundle, and the qualified Flash bundle without attributing all differences to model weights.
 
+Retention means keeping the existing deployed per-caller decoding settings, not promoting experimental bundle b or imposing temperature zero globally. The live Nara process had no profile-override environment setting at the [recorded check](retained-production-policy-observation.json). Both C0 and b remain explicitly labeled evaluation arms.
+
 All registered primary, fresh and supported-context model comparisons are complete and independently published. This records the core decision; separately preregistered follow-ups do not rewrite these scores. The work window is September 15 16:09:45 through September 16 00:09:45 UTC.
 
-The core goal passed its final service and live-dashboard checks at 21:28 UTC, about five hours and twenty minutes into the window. The successor campaign was activated with three eligible questions, resident services were restored, and both overnight experiment timers were enabled. The separately registered [Mia game follow-up](STRETCH_RESULTS.md) subsequently completed with all twelve episodes admitted; a further output-cap diagnostic is separately preregistered.
+The core goal passed its final service and live-dashboard checks at 21:28 UTC, about five hours and twenty minutes into the window. The successor campaign was activated with three eligible questions, resident services were restored, and both overnight experiment timers were enabled. The separately registered [Mia game follow-up](STRETCH_RESULTS.md) subsequently completed with all twelve episodes admitted; the further output-cap diagnostic stopped during startup and produced no quality result.
 
 ## Model comparison
 
@@ -58,6 +60,8 @@ The wire audit confirms requested thinking controls. The resident Qwen27B and Mi
 
 Eleven of fifteen Flash diversity candidate calls consumed their entire 384-token allowance in reasoning and produced no final answer. Increasing that cap is a specific testable intervention. The existing 20-second timeout can itself bind a larger cap, so a cap-only test and a broader time/token-budget test must be labeled separately. These observations support more targeted role tests, not a global switch to high temperature or high effort.
 
+The later paired cap diagnostic did not reach evaluation: the startup host-paging guard stopped it after a five-second pageout burst exceeded 512 MiB. Candidate swap/OOM counters remained zero and resident restoration was verified. This adds a runtime reliability observation; it supplies no evidence for either cap. See the [stretch result and bound failure audit](STRETCH_RESULTS.md).
+
 Fresh coding shows a separate production opportunity: a narrowly defined patch framing adapter may recover useful code. It needs its own versioned contract and fresh tests; accepting fenced JSON alone would not fix missing final answers, source-API violations, or substantive arithmetic errors.
 
 ## Research pipeline and actual scientific result
@@ -66,13 +70,17 @@ The known-opponent pilot completed 108/108 calls, 96/96 valid action slots, and 
 
 A guarded bridge carried the exact empirical outcome into the research process and completed `iter-2026-09-15-006`, with a **refuted** critic verdict and a **pending** human gate. Independent audit binds its unique final record, journal, schema and outcome, and confirms the outcome hash in all issued Nara, critic and debate prompts. Services restored successfully. Earlier failed attempts, caches and the orphan journal remain intact.
 
-The failures exposed and repaired three concrete integration defects: inherited inference-lease identification, journal handling of the already-valid refuted verdict, and the missing bridge seed source in the final schema. Iteration IDs now reserve failed attempts instead of reusing their evidence directories. The full latest core suite passes 3,532 tests, with five skipped.
+The failures exposed and repaired three concrete integration defects: inherited inference-lease identification, journal handling of the already-valid refuted verdict, and the missing bridge seed source in the final schema. Iteration IDs now reserve failed attempts instead of reusing their evidence directories. The final integrated core suite passes 3,552 tests, with five skipped; focused UI and transport checks also pass.
 
 A bounded grounding check found that the final hypothesis and critique did not explicitly name the measured 3/12 and 0/12 counts. This is a limitation of research interpretation despite successful transport and recording, not evidence of accepted science. The successor campaign should address payoff arithmetic, seat/representation binding and retaliation lookahead with exact finite-game conditions, observed denominators and explicit untested explanations.
 
 ## Continued operation
 
 The registered successor campaign `v2-utility-mechanism-followon-20260915` contains three exact questions and preserves the original campaign and empirical receipts. Activation is a separate source-bound runtime action, recorded in the dashboard and activation receipt. Its empty study-manifest list does not pretend that those new experiments have already been executed or preregistered as full protocols.
+
+The ordinary 22:00 coordinator cycle used the activated successor campaign rather than the exhausted earlier topic queue. It dispatched `topic-binary-payoff-oracle-001` as preregistered iteration `iter-2026-09-15-007` and closed at 22:16:25 UTC with `run_loop_iteration=passed`, novelty `novel`, critique `survives`, skeptic `survives_debate`, and red-team `proceed`. The science gate remains `pending`; this is operational proof of a working successor dispatch and journal, not a promoted finding or empirical validation. The content-free [read-only source and row-hash receipt](ordinary-successor-cycle-007.json) binds the manifest, terminal loop and coordinator rows, journal entry, and current source bytes at review.
+
+A second ordinary cycle completed at 22:28:43 on `topic-binary-seat-representation-001` as `iter-2026-09-15-008`. Its critic returned `undecidable`, the skeptic was `inconclusive`, and its science gate is also `pending`. The [second cycle receipt](ordinary-successor-cycle-008.json) preserves the exact source and row hashes. Two completed dispatches show that the successor queue works; they do not constitute two validated scientific results.
 
 The dashboard separates topic availability, advisory review of existing evidence, completed records, critic verdicts and human gates. A completed row does not imply scientific acceptance. Literature ingestion failures are visible as typed failures; the observed upstream 429/503 errors are not claimed fixed.
 
@@ -91,3 +99,9 @@ The immutable artifacts live under `/home/decross1/projects/a_bgt_rsi_v2_artifac
 - `h1-next-study-activation.json` and the preserved earlier capture-recovery receipts.
 
 A new prospective model decision could change with replicated improvement on actual game behavior, a resolved delegation-contract failure on fresh tasks, sufficient reasoning/output budgets, and continued tool/context/runtime non-regression. The immediate priority is measured task completion and grounded interpretation. Raw tokens per second, a newer release, or a single overall score is insufficient.
+
+## Independent Claude review
+
+An actual Claude subscription session reviewed the supplied result notes with tools and MCP disabled. It upheld retention as a preregistered gate decision while rejecting an interpretation that incumbent scientific quality had been proved superior. Its strongest counterargument is that Flash's portfolio regression repeats one task lineage while its overall and joint-payoff results improve. It recommends a fresh known-opponent experiment crossing model and calculator support, reporting regret separately by utility objective and never revealing the optimal-action oracle.
+
+This is an independent interpretive critique, not raw-artifact replay or another benchmark score. Its text-only uncertainty about who stopped the cap container does not supersede our bound monitor/terminal audit. The [subscription review provenance](claude-subscription-review-provenance.json) records the confirmed auth route, CLI, reported model, isolated/tool-free invocation and request/response hashes. No ordinary frontier ledger row or historical failure was rewritten.
