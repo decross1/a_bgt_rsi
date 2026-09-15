@@ -42,6 +42,7 @@ LOCK_NAMES = (
 TICK_MAX_WALL_S = 90
 BOOTSTRAP_MAX_WALL_S = 150
 MAX_PREDECESSOR_AGE_S = 900
+TRANSIENT_GET_COOLDOWN_S = 600
 STATE_MAX_BYTES = 16_384
 MAX_PAGES = 8
 REGISTERED_COLLECTOR_SHA256 = "4310f64e61cb9b50c80f55f9e4d41557081ff99ad956420050a23be249315037"
@@ -402,14 +403,120 @@ def _blocked(state: dict, reason: str) -> dict:
             "updated_at": _now()}
 
 
+def _sealed_transient_get(state: dict) -> dict | None:
+    """Classify one sealed recoverable GET-unavailability branch; never retry it.
+
+    Literal URLError does not expose its underlying reason in the journal, so
+    its cause remains unknown. Fresh bootstrap keeps the same HTTPS/TLS checks.
+    Redirects, HTTP 4xx, schema and response failures, cursor gaps, truncated
+    journals and interrupted/unsealed children remain blocked.
+    """
+    if (state["mode"] != "blocked" or state["blocked_reason"] not in {
+            "continuation_failed:TickError", "bootstrap_failed:TickError"}
+            or state["attempt_output_path"] is None):
+        return None
+    try:
+        child = _fixed_capture(state["attempt_output_path"])
+        failed, failed_sha = _batch(child)
+        if (failed["status"] != "incomplete" or failed["requests_failed"] != 1
+                or failed["requests_attempted"] != (
+                    failed["requests_succeeded"] + failed["requests_failed"])
+                or failed["attempt_denominator_verified"] is not True
+                or failed["failure"] is None or failed["cursor_gap"]
+                or failed["page_gap"]):
+            return None
+        journal = _read_relative(child, "attempts.jsonl", 128_000)
+        last = collector.strict_json(journal.splitlines()[-1])
+        if (last["attempt_status"] != "failed" or last["raw_relpath"] is not None
+                or last["raw_sha256"] is not None or last["raw_bytes"] != 0):
+            return None
+        recoverable = (
+            last["failure_stage"] == "transport"
+            and last["failure_code"] in {"TimeoutError", "URLError"}
+            and last["http_status"] is None
+        ) or (
+            last["failure_stage"] == "http_contract"
+            and last["failure_code"] == "HTTPError"
+            and type(last["http_status"]) is int
+            and 500 <= last["http_status"] <= 599
+        )
+        if not recoverable:
+            return None
+        failed_at = _utc(last["response_received_at"])
+        failed_seal = _utc(failed["sealed_at"])
+        current = datetime.now(timezone.utc)
+        if failed_seal < failed_at or failed_seal > current or failed_at > current:
+            return None
+        old_sealed_at = None
+        if state["last_complete_path"] is not None:
+            predecessor = _fixed_capture(state["last_complete_path"])
+            previous, previous_sha = _batch(predecessor)
+            if (previous["status"] != "complete_incremental_batch"
+                    or previous_sha != state["last_complete_sha256"]
+                    or failed["from_aggregate_id"] != previous["next_aggregate_id"]
+                    or _utc(previous["sealed_at"]) > _utc(failed["started_at"])):
+                return None
+            report = collector.strict_json(_read_relative(child, "continuation.json", 32_000))
+            if (report["schema"] != continuation.SCHEMA
+                    or report["status"] != "stopped_incomplete"
+                    or report["previous_batch_path"] != str(predecessor)
+                    or report["previous_batch_sha256"] != previous_sha
+                    or report["batch_sha256"] != failed_sha
+                    or report["from_aggregate_id"] != previous["next_aggregate_id"]
+                    or report["collector_source_sha256"] != _source_sha()
+                    or report["continuation_source_sha256"] != _continuation_sha()
+                    or report["current_requests"] != {
+                        key: failed[f"requests_{key}"]
+                        for key in ("attempted", "succeeded", "failed")
+                    }
+                    or report["orders_placed"] != 0
+                    or report["credentials_used"] is not False):
+                return None
+            old_sealed_at = previous["sealed_at"]
+        elif state["bootstrap_warmup_path"] is not None:
+            warmup = _fixed_capture(state["bootstrap_warmup_path"])
+            warmup_batch, _ = _batch(warmup)
+            if (warmup_batch["status"] != "incomplete"
+                    or warmup_batch["initial_history_gap"] is not True
+                    or warmup_batch["failure"] is not None
+                    or warmup_batch["requests_failed"] != 0
+                    or failed["from_aggregate_id"] != warmup_batch["next_aggregate_id"]
+                    or _utc(warmup_batch["sealed_at"]) > _utc(failed["started_at"])):
+                return None
+        elif failed["from_aggregate_id"] is not None:
+            return None
+        return {
+            "failed_output_path": str(child), "failed_batch_sha256": failed_sha,
+            "failed_attempt_record_sha256": last["record_sha256"],
+            "failed_request_received_at": last["response_received_at"],
+            "failed_request_kind": last["kind"],
+            "failed_http_status": last["http_status"],
+            "failed_failure_code": last["failure_code"],
+            "failed_cause_class": (
+                "sealed_transport_unavailability_unknown"
+                if last["failure_code"] == "URLError" else
+                "sealed_timeout_or_http5xx_unavailability"
+            ),
+            "failed_requests_attempted": failed["requests_attempted"],
+            "failed_backlog_unresolved": failed["backlog_unresolved"],
+            "old_sealed_at": old_sealed_at,
+        }
+    except (TickError, collector.CaptureError, OSError, ValueError,
+            KeyError, IndexError, TypeError):
+        return None
+
+
 def bootstrap_new(*, abandon_state_sha256: str | None = None,
                   max_wall_s: int = BOOTSTRAP_MAX_WALL_S,
                   _held_lock: bool = False,
-                  _verified_stale_gap: dict | None = None) -> dict:
-    """Restart from venue tail; auto mode requires a verified stale predecessor."""
+                  _verified_stale_gap: dict | None = None,
+                  _verified_transient_gap: dict | None = None) -> dict:
+    """Restart from venue tail, archiving any exactly reviewed old branch."""
     if type(max_wall_s) is not int or not 60 <= max_wall_s <= BOOTSTRAP_MAX_WALL_S:
         raise TickError("bootstrap wall cap differs from registered 60..150 seconds")
-    if _verified_stale_gap is not None and not _held_lock:
+    if _verified_stale_gap is not None and _verified_transient_gap is not None:
+        raise TickError("only one registered lineage-gap cause is allowed")
+    if (_verified_stale_gap is not None or _verified_transient_gap is not None) and not _held_lock:
         raise TickError("auto-new lineage requires the already-held scheduler and idle leases")
     _ensure_scheduler()
     started, tick_id = _now(), _tick_id()
@@ -443,6 +550,25 @@ def bootstrap_new(*, abandon_state_sha256: str | None = None,
             != prior["last_complete_sha256"]
         ):
             raise TickError("auto-new lineage has no exact verified stale predecessor")
+        if _verified_transient_gap is not None and (
+            prior is None or prior["mode"] != "blocked"
+            or abandon_state_sha256 != prior_sha
+            or set(_verified_transient_gap) != {
+                "failed_output_path", "failed_batch_sha256",
+                "failed_attempt_record_sha256", "failed_request_received_at",
+                "failed_request_kind", "failed_http_status",
+                "failed_failure_code", "failed_requests_attempted",
+                "failed_cause_class", "failed_backlog_unresolved",
+                "old_sealed_at",
+            }
+            or _verified_transient_gap["failed_output_path"]
+                != prior["attempt_output_path"]
+            or _sealed_transient_get(prior) != _verified_transient_gap
+            or (datetime.now(timezone.utc)
+                - _utc(_verified_transient_gap["failed_request_received_at"])
+                ).total_seconds() < TRANSIENT_GET_COOLDOWN_S
+        ):
+            raise TickError("auto-new lineage has no exact cooled transient GET branch")
         if prior is not None:
             if abandon_state_sha256 != prior_sha:
                 raise TickError("new lineage needs exact prior state SHA acknowledgment")
@@ -457,22 +583,36 @@ def bootstrap_new(*, abandon_state_sha256: str | None = None,
             raise TickError("no prior capture state exists to acknowledge")
         lineage_id = "h1-" + tick_id
         gap_relpath = None
-        if _verified_stale_gap is not None:
+        if _verified_stale_gap is not None or _verified_transient_gap is not None:
             gap_relpath = f"gaps/gap-{tick_id}.json"
             gap = {
-                "schema": GAP_SCHEMA, "reason": "verified_stale_cursor_new_lineage",
-                "old_lineage_id": _verified_stale_gap["old_lineage_id"],
+                "schema": GAP_SCHEMA,
+                "reason": (
+                    "verified_stale_cursor_new_lineage" if _verified_stale_gap else
+                    "verified_transport_unavailability_unknown_new_lineage_after_cooldown"
+                    if _verified_transient_gap["failed_cause_class"]
+                    == "sealed_transport_unavailability_unknown" else
+                    "verified_timeout_or_http5xx_new_lineage_after_cooldown"
+                ),
+                "old_lineage_id": prior["lineage_id"],
                 "new_lineage_id": lineage_id,
                 "old_state_sha256": prior_sha,
-                "old_batch_sha256": _verified_stale_gap["old_batch_sha256"],
-                "unobserved_after_old_seal_at": _verified_stale_gap["old_sealed_at"],
+                "old_batch_sha256": (_verified_stale_gap["old_batch_sha256"]
+                                     if _verified_stale_gap else prior["last_complete_sha256"]),
+                "unobserved_after_old_seal_at": (
+                    _verified_stale_gap["old_sealed_at"] if _verified_stale_gap
+                    else _verified_transient_gap["old_sealed_at"]),
                 "new_bootstrap_started_at": started,
                 "collector_source_sha256": _source_sha(),
                 "continuation_source_sha256": _continuation_sha(),
                 "gap_is_explicit": True, "cursor_linked_across_gap": False,
-                "requests_attempted_before_gap_receipt": 0,
+                "requests_attempted_before_gap_receipt": (
+                    0 if _verified_stale_gap else
+                    _verified_transient_gap["failed_requests_attempted"]),
                 "orders_placed": 0,
             }
+            if _verified_transient_gap is not None:
+                gap["failed_branch"] = _verified_transient_gap
             _write_new(SCHEDULER_ROOT / gap_relpath, _canon(gap))
         warmup_path = _capture_child()
         state = _attempt_state(lineage_id=lineage_id, output=warmup_path,
@@ -578,6 +718,23 @@ def run_once(*, max_wall_s: int = TICK_MAX_WALL_S) -> dict:
             _replace_state(_blocked(state, "collector_source_drift"))
             return row
         if state["mode"] != "active":
+            if state["mode"] == "blocked" and state_sha is not None:
+                failed = _sealed_transient_get(state)
+                if failed is not None:
+                    age = (datetime.now(timezone.utc)
+                           - _utc(failed["failed_request_received_at"])).total_seconds()
+                    if age < TRANSIENT_GET_COOLDOWN_S or max_wall_s < 60:
+                        row = _receipt(
+                            tick_id=tick_id, started_at=started,
+                            status="skipped_get_unavailability_cooldown",
+                            reason=("sealed_get_unavailability_cooldown" if age < TRANSIENT_GET_COOLDOWN_S
+                                    else "auto_new_lineage_needs_at_least_60s"),
+                            lineage_id=state["lineage_id"])
+                        _persist_tick(row)
+                        return row
+                    return bootstrap_new(
+                        abandon_state_sha256=state_sha, max_wall_s=max_wall_s,
+                        _held_lock=True, _verified_transient_gap=failed)
             row = _receipt(tick_id=tick_id, started_at=started,
                            status="blocked", reason="prior_lineage_" + state["mode"],
                            requests_attempted=None if state["mode"] == "attempting" else 0,
@@ -708,7 +865,7 @@ def main(argv: list[str] | None = None) -> int:
                       "tick_id": row["tick_id"],
                       "requests_attempted": row["requests_attempted"]}, sort_keys=True))
     return 0 if row["status"] in {"continued_complete", "bootstrapped_complete",
-                                  "skipped_busy"} else 1
+                                  "skipped_busy", "skipped_get_unavailability_cooldown"} else 1
 
 
 if __name__ == "__main__":

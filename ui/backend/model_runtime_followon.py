@@ -46,6 +46,33 @@ ACTIVE_PHASES = frozenset({
 TERMINAL_PHASES = frozenset({"complete", "supervisor_recovered", "recovery_unknown"})
 
 
+def _registered_expected_for_window(registered_path: Path, run_path: Path) -> dict:
+    """Select the exact study's isolated source validator without global imports."""
+    registered_raw = mr._read_path(
+        registered_path, maximum=2 * 1024 * 1024,
+        label="registered follow-on window source",
+    )
+    registered_hint = mr._strict_object(
+        registered_raw, "registered follow-on window source",
+    )
+    if registered_hint.get("study_id") == "coding-temp1-medium-and-decode-v1":
+        from .registered_followon_coding_plan import (
+            CODE_ROOT as CODING_CODE_ROOT,
+        )
+        from .registered_followon_coding_plan import (
+            registered_expected as coding_expected,
+        )
+        if registered_hint.get("registered_code_root") != str(CODING_CODE_ROOT):
+            raise mr.RuntimeSourceError("coding study source root differs")
+        return coding_expected(registered_path, run_path, cohort="flash")
+    from .registered_followon_coding_plan import CODE_ROOT as CODING_CODE_ROOT
+    if registered_hint.get("registered_code_root") == str(CODING_CODE_ROOT):
+        raise mr.RuntimeSourceError("unregistered study in coding source root")
+    from .registered_followon_plan import registered_expected
+
+    return registered_expected(registered_path, run_path, cohort="flash")
+
+
 def _latest_slot_mtime(root: Path) -> int | None:
     """Find direct-child source freshness, including an invalid newest state."""
     try:
@@ -315,10 +342,7 @@ def project_followon_runtime(
         registered_path = grouped.RESEARCH_ROOT / (
             f"evaluation/followon-window-plans/{pair_id}.flash.json"
         )
-        from .registered_followon_plan import registered_expected
-
-        registered = registered_expected(registered_path, run_path,
-                                         cohort="flash")
+        registered = _registered_expected_for_window(registered_path, run_path)
         window = SimpleNamespace(
             document=registered["document"],
             qualification_plan=registered["qualification_plan"],
@@ -326,6 +350,10 @@ def project_followon_runtime(
             v5_parent=(object() if registered["v5_parent"] else None),
         )
         expected_plan = registered["plan"]
+        coding_study = (
+            window.document.get("study_id")
+            == "coding-temp1-medium-and-decode-v1"
+        )
         plan_raw = mr._read_fd(
             run_fd, "extended-plan.json", maximum=8 * 1024 * 1024,
             label="extended runtime plan",
@@ -414,8 +442,9 @@ def project_followon_runtime(
         updated = mr._parse_time(state.get("updated_at"), "extended updated_at")
         deadline = mr._parse_time(state.get("invocation_deadline_at"), "extended deadline")
         duration = plan.get("effective_invocation_deadline_seconds")
+        expected_duration = 4200 if coding_study else ew.WINDOW_DEADLINE_SECONDS
         if (
-            duration != ew.WINDOW_DEADLINE_SECONDS
+            duration != expected_duration
             or abs((deadline - started - timedelta(seconds=duration)).total_seconds()) > .001
             or updated < started
             or updated > observed + timedelta(seconds=mr.MAX_CLOCK_SKEW_SECONDS)
