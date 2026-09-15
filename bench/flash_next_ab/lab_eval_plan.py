@@ -59,8 +59,11 @@ def _source_bundle() -> dict[str, str]:
 
 def _policy(endpoint: str, logical: str) -> dict[str, Any]:
     bases = {
-        'critic_xhigh': (.2, .95, 'xhigh'),
+        # The unchanged role-effort adapter reads these original policy IDs to
+        # distinguish a medium first call from an xhigh escalation.
+        'critic_current': (.2, .95, 'xhigh'),
         'critic_medium': (.2, .95, 'medium'),
+        'critic_xhigh': (.2, .95, 'xhigh'),
         'science_medium': (.2, .95, 'medium'),
         'execution_off': (.2, .95, None),
         'topic_hypothesis_off': (.7, .95, None),
@@ -86,7 +89,7 @@ def _policy(endpoint: str, logical: str) -> dict[str, Any]:
 
 def _policies(endpoint: str) -> dict[str, dict[str, Any]]:
     return {logical: _policy(endpoint, logical) for logical in (
-        'critic_xhigh', 'critic_medium', 'science_medium', 'execution_off',
+        'critic_current', 'critic_medium', 'critic_xhigh', 'science_medium', 'execution_off',
         'topic_hypothesis_off', 'topic_planner_off', 'context_off',
         'portfolio_coding_off', 'historical_coding_off', 'explore_medium',
         'deterministic_off',
@@ -96,7 +99,7 @@ def _policies(endpoint: str) -> dict[str, dict[str, Any]]:
 def _resident_endpoint(cell: adapters.CellDefinition, call: adapters.CallSpec) -> str:
     if (cell.family == 'objective' and call.role in {'critic', 'generator', 'evidence'}
         or cell.family == 'portfolio' and call.role in {'generator', 'evidence'}
-        or cell.family == 'role_effort' and call.role in {'critic', 'evidence'}):
+        or cell.family == 'role_effort'):
         return 'resident_qwen'
     return 'resident_gemma'
 
@@ -115,9 +118,9 @@ def _new_policy_id(cell: adapters.CellDefinition, call: adapters.CallSpec) -> st
     if cell.family == 'diversity':
         return 'explore_medium' if call.policy_id == 'explore' else 'deterministic_off'
     if cell.family == 'role_effort':
-        if call.role == 'critic':
-            return 'critic_xhigh' if call.policy_id == 'critic_current' else 'critic_medium'
-        return 'science_medium' if call.role == 'evidence' else 'execution_off'
+        if call.policy_id not in {'critic_current', 'critic_medium'}:
+            raise LabPlanError('role-effort source policy changed')
+        return call.policy_id
     if cell.family == 'historical':
         return 'historical_coding_off'
     raise LabPlanError('unregistered task family')
@@ -245,7 +248,8 @@ def build_plan() -> tuple[dict[str, Any], dict[str, adapters.CellDefinition]]:
             'All 126 source tasks are reused public development fixtures; no held-out confirmation.',
             'This compares two deployable model/policy/runtime bundles, not weights alone.',
             'Gemma has no Qwen reasoning-effort control and uses explicit thinking off.',
-            'Resident science/evidence uses Qwen medium; topic, coding, tools and context use Gemma.',
+            'Resident science/evidence and all role-effort arms use Qwen; topic, coding, objective tools and context use Gemma.',
+            'Role-effort retains original medium/xhigh policy IDs so the unchanged adaptive adapter can escalate correctly.',
             'Original primary grades and manifests remain immutable; normalization is secondary only.',
         ],
     }
