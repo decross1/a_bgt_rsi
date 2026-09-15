@@ -28,6 +28,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Response
 
+from .research_scope import ResearchScope, ScopeName
+
 # The six ladder rungs (schema/idea_ledger.schema.json evidence_level enum).
 _LEVELS = ("L0", "L1", "L2", "L3", "L4", "L5")
 
@@ -44,9 +46,10 @@ def register(
     router = APIRouter(prefix="/api", tags=["ladder"])
 
     @router.get("/ladder")
-    def ladder():
+    def ladder(research_scope: ScopeName = "all"):
         """The reduced idea-ledger state, projected for the /ladder page.
         204 when the ledger has never been written on this checkout."""
+        scope = ResearchScope(research_scope, Path(repo_root), Path(memory_dir))
         path = Path(memory_dir) / "idea_ledger.jsonl"
         if not path.exists():
             return Response(status_code=204)
@@ -59,6 +62,7 @@ def register(
             sys.path.insert(0, root)
         try:
             import jsonschema  # idea_ledger's hard dep; names its errors below
+
             from workers import idea_projection
             from workers.idea_ledger import load_state
         except ImportError as exc:
@@ -79,6 +83,8 @@ def register(
                 status_code=500, detail=f"idea_ledger unreadable: {exc}"
             ) from exc
 
+        original_count = len(state)
+        state = scope.clusters(state)
         clusters = []
         counts = {"open": 0, "surfaced": 0, "killed": 0}
         histogram = {level: 0 for level in _LEVELS}
@@ -120,6 +126,7 @@ def register(
             })
 
         return {
+            **({"research_scope": {**scope.metadata(), "omitted_clusters": original_count - len(state)}} if research_scope == "active" else {}),
             "clusters": clusters,
             "histogram": histogram,
             "counts": counts,

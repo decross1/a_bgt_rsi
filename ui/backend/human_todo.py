@@ -70,6 +70,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from .owe_triage import enrich_items, membership_from_rows
+from .research_scope import ResearchScope, ScopeName
 
 KINDS = (
     "gate_verdict",
@@ -836,7 +837,7 @@ def register(
     router = APIRouter(prefix="/api/human_todo", tags=["human_todo"])
 
     @router.get("")
-    def human_todo():
+    def human_todo(research_scope: ScopeName = "all"):
         """Everything awaiting the human, oldest-first by ``since``, each
         with the exact CLI command that resolves it. Never 500s on absent
         or garbled data files."""
@@ -863,10 +864,12 @@ def register(
         # Oldest-first: the longest-waiting item tops the queue. Items with
         # no parseable `since` sort first (unknown age is surfaced, not hidden).
         items.sort(key=lambda item: item.get("since") or "")
+        scope = ResearchScope(research_scope, run_state.parent, memory)
+        items, omitted = scope.todo(items)
         counts = {kind: 0 for kind in KINDS}
         for item in items:
             counts[item["kind"]] += 1
-        return {"items": items, "counts": counts}
+        return {"items": items, "counts": counts, **({"research_scope": {**scope.metadata(), "omitted_historical_items": omitted, "global_safety_gates_retained": True}} if research_scope == "active" else {})}
 
     app.include_router(router)
     return router

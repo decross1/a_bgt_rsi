@@ -72,6 +72,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from .coordinator import _read_jsonl
+from .research_scope import ResearchScope, ScopeName, read_records
 
 # PERF (2026-08-18): on a backend served from .venv-chroma the live
 # assess_state path holds for a LONG time (BGE-M3 embedder + Chroma query
@@ -167,6 +168,7 @@ def register(
             sys.path.insert(0, root)
         try:
             import jsonschema  # idea_ledger's hard dep; names its errors below
+
             from workers import idea_projection
             from workers.idea_ledger import load_state
         except ImportError as exc:
@@ -333,11 +335,46 @@ def register(
             state["building"] = False
 
     @router.get("/lab_todo")
-    def lab_todo():
+    def lab_todo(research_scope: ScopeName = "all"):
         """What the lab owes ITSELF: the agent-actionable gaps, the test each
         open cluster's rung owes, the queued agenda, and the killed clusters
         `refine_idea` could still improve. Served stale-while-revalidate; the
         response names its own age (cache_age_s) and any failed refresh."""
+        if research_scope == "active":
+            # Never invoke model-assisted assess_state from a current-campaign
+            # read, or reuse the cache containing historical/global queues.
+            scope = ResearchScope(research_scope, Path(repo_root), Path(memory_dir))
+            cycles = scope.records(read_records(Path(run_state_dir) / "coordinator_cycles.jsonl"), "run_id")
+            latest = max(cycles, key=lambda row: str(row.get("timestamp", "")), default={})
+            planner = latest.get("planner_state")
+            gaps = planner.get("gaps", []) if isinstance(planner, dict) else []
+            gaps = [gap for gap in gaps if isinstance(gap, str)]
+            from workers import idea_projection
+            from workers.idea_ledger import load_state
+            ledger = Path(memory_dir) / "idea_ledger.jsonl"
+            try:
+                current = scope.clusters(load_state(ledger)) if ledger.exists() else {}
+            except (OSError, ValueError) as exc:
+                raise HTTPException(503, detail="Campaign idea ledger unavailable") from exc
+            owed = []
+            for level in _LEVELS:
+                clusters = [{"cluster_id": cid, "stem": idea_projection._stem(row),
+                             "last_event_ts": row.get("last_event_ts")}
+                            for cid, row in current.items()
+                            if row.get("status") != "killed" and row.get("evidence_level") == level]
+                if clusters:
+                    owed.append({"rung": level, "test": idea_projection._owed(level), "clusters": clusters})
+            return {
+                "agent_gaps": [gap for gap in gaps if not any(marker in gap for marker in HUMAN_GAP_MARKERS)],
+                "human_gaps": [gap for gap in gaps if any(marker in gap for marker in HUMAN_GAP_MARKERS)],
+                "gaps_source": "last_cycle" if latest else "unavailable",
+                "gaps_as_of": latest.get("timestamp"),
+                "owed": owed, "agenda": idea_projection.agenda_topics(current),
+                "refine_candidates": [],
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "cache_age_s": 0.0, "refresh_error": None,
+                "research_scope": scope.metadata(),
+            }
         with lock:
             cached = state["payload"]
             built_at = state["built_at"]

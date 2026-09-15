@@ -29,6 +29,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
+from .research_scope import ResearchScope, ScopeName
 
 # Default to the worktree root's experiments/ dir (git-tracked, populated).
 # ``parents[2]`` from ui/backend/experiments.py == the worktree root.
@@ -621,7 +622,8 @@ def register(
         }
 
     @research_router.get("")
-    def research():
+    def research(research_scope: ScopeName = "all"):
+        scope = ResearchScope(research_scope, loop_memory_path.parent.parent, loop_memory_path.parent)
         if not experiments_dir.is_dir():
             return {
                 "available": False,
@@ -631,13 +633,17 @@ def register(
             }
         # Parse the loop_memory bridge ONCE per request, not once per experiment.
         bridges = _read_loop_memory_bridges(loop_memory_path)
+        if research_scope == "active":
+            ids = {row["iteration_id"] for row in scope.iterations()}
+            bridges = {key: [row for row in rows if row.get("iteration_id") in ids] for key, rows in bridges.items()}
         tiered_ids: set[str] = set()
         tiers_out = []
         for tier in _TIER_MAP:
             experiments = []
             for exp_id in tier["experiment_ids"]:
                 tiered_ids.add(exp_id)
-                experiments.append(_research_experiment(exp_id, bridges))
+                if scope.experiment_matches(experiments_dir / exp_id / "results"):
+                    experiments.append(_research_experiment(exp_id, bridges))
             tiers_out.append({
                 "tier": tier["tier"],
                 "label": tier["label"],
@@ -653,9 +659,11 @@ def register(
                 continue
             if child.name in tiered_ids:
                 continue
-            untiered.append(_research_experiment(child.name, bridges))
+            if scope.experiment_matches(child / "results"):
+                untiered.append(_research_experiment(child.name, bridges))
         return {
             "available": True,
+            **({"research_scope": scope.metadata()} if research_scope == "active" else {}),
             "tiers": tiers_out,
             "untiered": untiered,
         }
