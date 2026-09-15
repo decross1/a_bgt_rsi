@@ -30,11 +30,15 @@ const view = (fresh: unknown = pending("fresh"), context: unknown = pending("con
 
 const freshArms = () => {
   const resident = { variant_id: "resident-role-bundle", elapsed_s: 120,
-    scores: { total: score(12, 7, 120),
-      by_kind: { science: score(6, 5, 60), coding: score(6, 2, 60) } } };
+    scores: { total: score(12, 5, 120),
+      by_kind: { science: score(6, 5, 60), coding: score(6, 0, 60) } },
+    normalization_diagnostic: { coding_returned_attempted: 6,
+      sandbox_passes_after_predeclared_transform: 6, never_replaces_primary_score: true } };
   const flash = { variant_id: "mia-925d7be6-mtp3-reduced47k-v2opt-v1", elapsed_s: 100,
     scores: { total: score(12, 8, 100),
-      by_kind: { science: score(6, 6, 50), coding: score(6, 2, 50) } } };
+      by_kind: { science: score(6, 6, 50), coding: score(6, 2, 50) } },
+    normalization_diagnostic: { coding_returned_attempted: 6,
+      sandbox_passes_after_predeclared_transform: 3, never_replaces_primary_score: true } };
   return { resident, flash };
 };
 const contextArms = () => {
@@ -69,8 +73,9 @@ describe("LabModelSupplementPanel", () => {
     render(<LabModelSupplementPanel data={view(admitted("fresh", freshArms()))} />);
     expect(screen.getByText("New quantitative games")).toBeInTheDocument();
     expect(screen.getByText("New one-file repairs")).toBeInTheDocument();
-    expect(screen.getByText(/All fresh cells: resident 7 \/ 12, Flash 8 \/ 12/)).toBeInTheDocument();
-    expect(screen.getByText(/normalization diagnostic is separate/)).toBeInTheDocument();
+    expect(screen.getByText(/All fresh cells: resident 5 \/ 12, Flash 8 \/ 12/)).toBeInTheDocument();
+    expect(screen.getByText(/resident 6\/6 returned coding attempts passed/)).toBeInTheDocument();
+    expect(screen.getByText(/strict coding grades above are unchanged/)).toBeInTheDocument();
     expect(screen.getByText(/Context pair publication pending/)).toBeInTheDocument();
   });
 
@@ -80,6 +85,8 @@ describe("LabModelSupplementPanel", () => {
     expect(screen.getByText(/Each lane has 12 planned cells/)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: /Context quality by total capacity/ })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: /Context quality by capacity and answer position/ })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Resident Gemma passed" })).toBeInTheDocument();
+    expect(screen.getByText(/does not test Qwen 16K answer quality/)).toBeInTheDocument();
     expect(screen.getByText(/A prepared 64K packet or server flag is not a 64K quality result/)).toBeInTheDocument();
   });
 
