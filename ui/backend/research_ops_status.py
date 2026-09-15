@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from .guarded_research_attempts import project_attempts
+from .mia_utility_pilot_progress import project_mia_pilot
 
 DEFAULT_REPO = Path("/home/decross1/projects/a_bgt_rsi")
 PILOT_ROOT = Path("/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/"
@@ -380,6 +381,7 @@ def register(app, *, repo_root: Path = DEFAULT_REPO,
             "guarded_research_attempts": project_attempts(
                 producer_view=enriched, repo_root=repo_root,
             ),
+            "mia_known_opponent_pilot": project_mia_pilot(),
         }
 
     app.include_router(router)

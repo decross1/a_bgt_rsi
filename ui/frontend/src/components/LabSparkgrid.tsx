@@ -122,6 +122,8 @@ export interface LabSparkgridProps {
   /** Injectable clock; defaults to now. */
   nowMs?: number;
   weeks?: number;
+  /** The active-campaign view scopes an empty grid to that campaign. */
+  activityScope?: "active_campaign" | "lab_history";
 }
 
 function LabSparkgrid({
@@ -129,6 +131,7 @@ function LabSparkgrid({
   cycleTimes,
   nowMs,
   weeks = DEFAULT_WEEKS,
+  activityScope = "lab_history",
 }: LabSparkgridProps) {
   const now = nowMs ?? Date.now();
   const days = weeks * 7;
@@ -164,12 +167,15 @@ function LabSparkgrid({
   // GitHub alignment, where a row is always the same weekday.
   const leadPad = new Date(`${keys[0]}T00:00:00Z`).getUTCDay();
   const summary = `${plural(totalIters, "iteration")} · ${plural(totalCycles, "coordinator cycle")} over the last ${weeks} weeks`;
+  const emptySummary = activityScope === "active_campaign"
+    ? `No activity recorded for this active campaign in the last ${weeks} weeks`
+    : `nothing ran in the last ${weeks} weeks`;
 
   return (
     <div data-testid="lab-sparkgrid">
       <div
         role="img"
-        aria-label={`Lab activity heatmap: ${summary}`}
+        aria-label={`${activityScope === "active_campaign" ? "Campaign" : "Lab"} activity heatmap: ${active ? summary : emptySummary}`}
         data-testid="lab-sparkgrid-grid"
         style={{
           display: "grid",
@@ -196,7 +202,7 @@ function LabSparkgrid({
               data-level={level}
               title={
                 total === 0
-                  ? `${key} · nothing ran`
+                  ? `${key} · ${activityScope === "active_campaign" ? "no recorded activity for this campaign" : "nothing ran"}`
                   : `${key} · ${plural(iv, "iteration")} · ${plural(cv, "cycle")}`
               }
               style={{
@@ -222,7 +228,7 @@ function LabSparkgrid({
           color: "var(--fg-muted)",
         }}
       >
-        <span>{active ? summary : `nothing ran in the last ${weeks} weeks`}</span>
+        <span>{active ? summary : emptySummary}</span>
         <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: GAP_PX }}>
           less
           {RAMP.map((c, i) => (
