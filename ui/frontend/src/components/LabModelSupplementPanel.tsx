@@ -12,7 +12,8 @@ const seconds = (value: unknown): value is number =>
 type Score = { declared: number; attempted: number; returned: number; timeout: number;
   error: number; cancelled: number; passed: number; wall_s_including_failures: number };
 type Arm = { variant_id: string; elapsed_s: number; scores: Record<string, unknown>;
-  configured_context_tokens?: number; output_reserve_tokens?: number };
+  configured_context_tokens?: number; output_reserve_tokens?: number;
+  normalization_diagnostic?: Record<string, unknown> };
 type Pair = { kind: "fresh" | "context"; pair_id: string; status: string;
   denominator_per_cohort: number; cohorts: { resident: Arm; flash: Arm } | null };
 const ids = {
@@ -67,6 +68,12 @@ function pair(value: unknown, kind: "fresh" | "context"): Pair | null {
     const scores = arm.scores as Record<string, unknown>;
     if (kind === "fresh") {
       if (!group(scores.by_kind, ["science", "coding"], 6)) return null;
+      const diagnostic = arm.normalization_diagnostic;
+      if (!obj(diagnostic) || diagnostic.never_replaces_primary_score !== true ||
+          !count(diagnostic.coding_returned_attempted, 6) ||
+          !count(diagnostic.sandbox_passes_after_predeclared_transform, 6) ||
+          diagnostic.sandbox_passes_after_predeclared_transform >
+          diagnostic.coding_returned_attempted) return null;
     } else {
       if (!group(scores.by_capacity, ["8192", "16384", "32768"], 12) ||
           !group(scores.by_placement, ["early", "middle", "late"], 12) ||
@@ -133,7 +140,12 @@ export function LabModelSupplementPanel({ data, pollingFailed = false }: {
               <td>{rate(resident)}</td><td>{rate(flash)}</td></tr>;
           })}</tbody></table></div>
         <p className="benchmark-empty-inline">All fresh cells: resident {countLabel(freshScores.resident.scores.total as Score)}, Flash {countLabel(freshScores.flash.scores.total as Score)}. Each score keeps all attempted cells in the denominator.</p>
-        <p className="benchmark-evidence-note">The predeclared coding normalization diagnostic is separate from each primary grade and cannot turn a failed task into a primary pass.</p>
+        <p className="benchmark-empty-inline">Separate predeclared coding normalization diagnostic: resident{" "}
+          {String((freshScores.resident.normalization_diagnostic as Record<string, unknown>).sandbox_passes_after_predeclared_transform)}/
+          {String((freshScores.resident.normalization_diagnostic as Record<string, unknown>).coding_returned_attempted)} returned coding attempts passed the sandbox after the transform; Flash{" "}
+          {String((freshScores.flash.normalization_diagnostic as Record<string, unknown>).sandbox_passes_after_predeclared_transform)}/
+          {String((freshScores.flash.normalization_diagnostic as Record<string, unknown>).coding_returned_attempted)}.
+          The strict coding grades above are unchanged. This diagnostic is not a primary pass or rescued count.</p>
       </> : <p className="benchmark-empty-inline">{fresh?.status === "pending_publication"
         ? "Fresh pair publication pending; no pass or timing scores admitted yet."
         : "Fresh pair source or admission unavailable; scores withheld."}</p>}
@@ -143,8 +155,8 @@ export function LabModelSupplementPanel({ data, pollingFailed = false }: {
         <div className="benchmark-table-wrap" role="region" tabIndex={0}
           aria-label="Context quality by total capacity, scroll horizontally"><table className="benchmark-table">
           <caption className="sr-only">Admitted context quality by declared total capacity</caption>
-          <thead><tr><th scope="col">Declared total lane</th><th scope="col">Resident passed</th><th scope="col">Flash passed</th>
-            <th scope="col">Largest resident prompt observed</th><th scope="col">Largest Flash prompt observed</th></tr></thead>
+          <thead><tr><th scope="col">Declared total lane</th><th scope="col">Resident Gemma passed</th><th scope="col">Flash passed</th>
+            <th scope="col">Largest Resident Gemma prompt observed</th><th scope="col">Largest Flash prompt observed</th></tr></thead>
           <tbody>{(["8192", "16384", "32768"] as const).map(cap => {
             const resident = (contextScores.resident.scores.by_capacity as Record<string, Score>)[cap];
             const flash = (contextScores.flash.scores.by_capacity as Record<string, Score>)[cap];
@@ -159,7 +171,7 @@ export function LabModelSupplementPanel({ data, pollingFailed = false }: {
           aria-label="Context quality by capacity and answer position, scroll horizontally"><table className="benchmark-table">
           <caption className="sr-only">Admitted context answers by total lane and answer position</caption>
           <thead><tr><th scope="col">Lane</th><th scope="col">Answer position</th>
-            <th scope="col">Resident passed / planned</th><th scope="col">Flash passed / planned</th></tr></thead>
+            <th scope="col">Resident Gemma passed / planned</th><th scope="col">Flash passed / planned</th></tr></thead>
           <tbody>{(["8192", "16384", "32768"] as const).flatMap(cap =>
             (["early", "middle", "late"] as const).map(place => {
               const resident = ((contextScores.resident.scores.by_capacity_placement as Record<string, Record<string, Score>>)[cap])[place];
@@ -167,7 +179,7 @@ export function LabModelSupplementPanel({ data, pollingFailed = false }: {
               return <tr key={cap + place}><th scope="row">{Number(cap).toLocaleString()} tokens</th>
                 <td>{place}</td><td>{countLabel(resident)}</td><td>{countLabel(flash)}</td></tr>;
             }))}</tbody></table></div>
-        <p className="benchmark-evidence-note">Both servers were configured at 32,768 total tokens for this study with a 2,048-token output reserve. The tables show answer quality and actual prompt use in these three lanes. A prepared 64K packet or server flag is not a 64K quality result.</p>
+        <p className="benchmark-evidence-note">This paired context study tests Resident Gemma against optimized Mia Flash; it does not test Qwen 16K answer quality. Both servers were configured at 32,768 total tokens with a 2,048-token output reserve. The tables show answer quality and actual prompt use in these three lanes. A prepared 64K packet or server flag is not a 64K quality result.</p>
       </> : <p className="benchmark-empty-inline">{context?.status === "pending_publication"
         ? "Context pair publication pending; tested quality is unknown."
         : "Context pair source or admission unavailable; quality scores withheld."}</p>}
