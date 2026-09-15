@@ -34,6 +34,7 @@ def _closed_window(path: Path, *, cohort: str, plan_path: Path,
     window, _ = controller.load_window(path)
     output = Path(window['output_dir'])
     result, result_sha = _doc(output / 'result.json', label=f'{cohort} terminal result')
+    state, state_sha = _doc(output / 'state.json', label=f'{cohort} terminal state')
     supervision, supervision_sha = _doc(output / 'supervision.json', label=f'{cohort} supervision')
     run_path = output / 'evaluation/run.json'
     run, run_sha = _doc(run_path, label=f'{cohort} model run', ceiling=16_000_000)
@@ -44,6 +45,8 @@ def _closed_window(path: Path, *, cohort: str, plan_path: Path,
             or window['evaluation_plan']['sha256'] != plan_raw_sha
             or result.get('cohort') != cohort or result.get('status') != 'complete'
             or result.get('evaluation_run_sha256') != run_sha
+            or state.get('phase') != 'complete'
+            or state.get('restoration') != restoration
             or not isinstance(restoration, dict)
             or restoration.get('status') != 'verified'
             or restoration.get('errors') != []
@@ -58,6 +61,7 @@ def _closed_window(path: Path, *, cohort: str, plan_path: Path,
         raise ReportError(f'{cohort} window lacks exact restoration/supervision/run admission')
     window_sha = manifest.sha256_file(path)
     if (result.get('window_sha256') != window_sha
+            or state.get('window_sha256') != window_sha
             or supervision.get('window_sha256') != window_sha
             or supervision.get('window_sha256') != result.get('window_sha256')):
         raise ReportError(f'{cohort} terminal receipts belong to another window')
@@ -69,6 +73,7 @@ def _closed_window(path: Path, *, cohort: str, plan_path: Path,
     refs = {
         'window_path': str(path), 'window_raw_sha256': window_sha,
         'result_path': str(output / 'result.json'), 'result_raw_sha256': result_sha,
+        'state_path': str(output / 'state.json'), 'state_raw_sha256': state_sha,
         'supervision_path': str(output / 'supervision.json'),
         'supervision_raw_sha256': supervision_sha,
         'run_path': str(run_path), 'run_raw_sha256': run_sha,
@@ -150,8 +155,10 @@ def build_report(plan_path: str | Path, resident_window_path: str | Path,
         'claim_limit': 'DESCRIPTIVE_REUSED_126_TASK_DEPLOYABLE_BUNDLE_COMPARISON',
     }
     refs['plan'] = {'path': str(plan_path), 'raw_sha256': plan_raw_sha}
-    refs['report_builder'] = {'path': str(Path(__file__).absolute()),
-                              'raw_sha256': manifest.sha256_file(__file__)}
+    refs['report_builder'] = {
+        'source_path': 'bench/flash_next_ab/lab_eval_report.py',
+        'raw_sha256': manifest.sha256_file(__file__),
+    }
     return report, refs, {'resident': resident_replay, 'flash': flash_replay}
 
 
@@ -233,17 +240,22 @@ def read_publication(index_path: str | Path) -> dict:
     if not isinstance(sources, dict) or set(sources) != {'plan', 'report_builder', 'resident', 'flash'}:
         raise ReportError('paired source inventory differs')
     if (sources['report_builder'] != {
-            'path': str(Path(__file__).absolute()),
+            'source_path': 'bench/flash_next_ab/lab_eval_report.py',
             'raw_sha256': manifest.sha256_file(__file__),
         } or sources['plan']['raw_sha256'] != report['plan_raw_sha256']):
         raise ReportError('report builder or plan source differs')
+    bound_runs = {}
+    bound_replays = {}
+    bound_terminals = {}
     for cohort in ('resident', 'flash'):
         source = sources[cohort]
         if (not isinstance(source, dict) or set(source) != {
                 'window_path', 'window_raw_sha256', 'result_path', 'result_raw_sha256',
+                'state_path', 'state_raw_sha256',
                 'supervision_path', 'supervision_raw_sha256', 'run_path', 'run_raw_sha256'
             } or Path(source['window_path']).name != 'window.json'
                 or Path(source['result_path']).parent != Path(source['window_path']).parent
+                or Path(source['state_path']).parent != Path(source['window_path']).parent
                 or Path(source['supervision_path']).parent != Path(source['window_path']).parent
                 or Path(source['run_path']) != Path(source['window_path']).parent / 'evaluation/run.json'):
             raise ReportError(f'{cohort} publication source paths differ')
@@ -253,6 +265,7 @@ def read_publication(index_path: str | Path) -> dict:
         replay, replay_sha = _doc(
             index_path.parent / replay_ref['relpath'], label=f'{cohort} grade replay',
         )
+        bound_replays[cohort] = replay
         if (replay_sha != replay_ref['raw_sha256']
                 or replay.get('cohort') != cohort
                 or replay.get('run_raw_sha256') != source['run_raw_sha256']
@@ -263,17 +276,91 @@ def read_publication(index_path: str | Path) -> dict:
         for leaf, digest in (
             ('window_path', 'window_raw_sha256'),
             ('result_path', 'result_raw_sha256'),
+            ('state_path', 'state_raw_sha256'),
             ('supervision_path', 'supervision_raw_sha256'),
             ('run_path', 'run_raw_sha256'),
         ):
-            _, actual_sha = _doc(Path(source[leaf]), label=f'{cohort} {leaf}', ceiling=16_000_000)
+            value, actual_sha = _doc(Path(source[leaf]), label=f'{cohort} {leaf}', ceiling=16_000_000)
             if actual_sha != source[digest]:
                 raise ReportError(f'{cohort} published source bytes changed')
+            if leaf == 'run_path':
+                bound_runs[cohort] = value
+            elif leaf in {'window_path', 'result_path', 'state_path', 'supervision_path'}:
+                bound_terminals.setdefault(cohort, {})[leaf] = value
     _, actual_plan_sha = _doc(Path(sources['plan']['path']), label='published exact plan')
     if actual_plan_sha != sources['plan']['raw_sha256']:
         raise ReportError('published evaluation plan bytes changed')
-    load_plan(Path(sources['plan']['path']))
-    controller = importlib.import_module('bench.flash_next_ab.lab_window')
+    plan, _, _ = load_plan(Path(sources['plan']['path']))
+    if (report.get('suite_id') != plan['suite_id']
+            or report.get('cell_set') != plan['cell_set']
+            or report.get('plan_sha256') != manifest.sha256_json(plan)
+            or report.get('family_set') != list(_family(bound_runs['resident']))
+            or report.get('original_scores_rebased') is not False
+            or report.get('heldout_claim') is not False
+            or report.get('capacity_vs_quality_separated') is not True):
+        raise ReportError('numeric report plan or claim labels differ')
     for cohort in ('resident', 'flash'):
-        controller.load_window(Path(sources[cohort]['window_path']))
+        run = bound_runs[cohort]
+        replay = bound_replays[cohort]
+        terminal = bound_terminals[cohort]
+        window = terminal['window_path']
+        result = terminal['result_path']
+        state = terminal['state_path']
+        supervision = terminal['supervision_path']
+        restoration = result.get('restoration')
+        if (window.get('cohort') != cohort
+                or window.get('window_id') != report['pair_id']
+                or result.get('cohort') != cohort or result.get('status') != 'complete'
+                or result.get('evaluation_run_sha256') != sources[cohort]['run_raw_sha256']
+                or result.get('window_sha256') != sources[cohort]['window_raw_sha256']
+                or state.get('phase') != 'complete'
+                or state.get('window_sha256') != sources[cohort]['window_raw_sha256']
+                or state.get('restoration') != restoration
+                or not isinstance(restoration, dict)
+                or restoration.get('status') != 'verified'
+                or restoration.get('errors') != []
+                or restoration.get('sentinel_retained') is not False
+                or supervision.get('schema') != 'lab-model-supervision/v1'
+                or supervision.get('window_sha256') != sources[cohort]['window_raw_sha256']
+                or supervision.get('returncode') != 0
+                or supervision.get('interrupted') is not None
+                or supervision.get('terminated_at_cutoff') is not False
+                or supervision.get('emergency_restoration') is not None):
+            raise ReportError(f'{cohort} terminal state/restore/supervision proof differs')
+        expected = {
+            'variant_id': run['candidate_variant_id'],
+            'configured_context_tokens_by_endpoint': run['configured_context_tokens_by_endpoint'],
+            'measured_prompt_tokens_max_by_endpoint': run['measured_prompt_tokens_max_by_endpoint'],
+            'status': 'complete', 'declared': 126,
+            'attempted': sum(bool(row['calls']) for row in run['outcomes']),
+            'passed': sum(row['passed'] is True for row in run['outcomes']),
+            'timeout': sum(row['status'] == 'timeout' for row in run['outcomes']),
+            'elapsed_s': run['elapsed_s'],
+            'families': _family(run),
+            'raw_response_replay_passed': replay['primary_replay_passed'],
+            'normalization_diagnostic': replay['normalization_diagnostic'],
+        }
+        if (run.get('status') != 'complete'
+                or run.get('declared_cells') != plan['declared_cells']
+                or [row.get('cell_id') for row in run.get('outcomes', [])] != plan['declared_cells']
+                or report['cohorts'][cohort] != expected):
+            raise ReportError(f'{cohort} numeric family/total values differ from bound run')
+    for cohort in ('resident', 'flash'):
+        window, _ = _doc(
+            Path(sources[cohort]['window_path']), label=f'{cohort} published controller window',
+        )
+        code_root = Path(window['code_root'])
+        bundle = window['controller_sources']
+        if (not isinstance(bundle, dict)
+                or 'bench/flash_next_ab/lab_window.py' not in bundle
+                or window.get('evaluation_kind') != 'primary'
+                or window.get('cohort') != cohort
+                or window.get('evaluation_plan', {}).get('sha256') != report['plan_raw_sha256']):
+            raise ReportError(f'{cohort} window source bundle or plan differs')
+        for relative, identity in bundle.items():
+            registered = code_root / relative
+            if (identity != {'path': str(registered), 'sha256': manifest.sha256_file(registered)}
+                    or manifest.sha256_file(Path(__file__).resolve().parents[2] / relative)
+                    != identity['sha256']):
+                raise ReportError(f'{cohort} controller source differs from delivered code')
     return report
