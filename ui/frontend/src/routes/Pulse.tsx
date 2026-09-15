@@ -98,6 +98,23 @@ const pickQwen = (s: TelemetrySample) => s.vllm_qwen;
 const pickNoTelemetry = (_s: TelemetrySample) => null;
 
 const MODEL_ORDER = ["gemma", "qwen", "flash"] as const;
+const MIA_VARIANT = {
+  spec_id: "mia-925d7be6-c0-s1",
+  spec_sha256: "dde4fe1f72cf91de92089a95748cee1f6a8204e351d517aa0ae46d8d27122857",
+  repository: "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4",
+  revision: "925d7be6c14c6c9442ef83e8f05b5a3c39304f69",
+  served_model: "qwen3.8-flash-next-mia",
+  image_id: "sha256:da68dd27a8ef1dadd0f380178a51f0a0671dc4235933ea1ae89fdaf66295ec72",
+  model_artifact_sha256: "a40ce50173dd3aff54da88503894967e5248bbb927f9e4a91eff5a6a7270c168",
+  profile: "C0-MIA-S1",
+} as const;
+
+function isRegisteredMiaVariant(value: ModelRuntime["candidate_variant"]): boolean {
+  if (!value) return false;
+  return Object.entries(MIA_VARIANT).every(([key, expected]) =>
+    value[key as keyof typeof MIA_VARIANT] === expected,
+  );
+}
 const MODEL_PRESENTATION: Record<
   string,
   {
@@ -115,6 +132,21 @@ const MODEL_PRESENTATION: Record<
 function isModelRuntime(value: unknown): value is ModelRuntime {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
+  const variant = row.candidate_variant;
+  const variantValid = variant === undefined || variant === null || (
+    typeof variant === "object" && !Array.isArray(variant) &&
+    (() => {
+      const source = variant as Record<string, unknown>;
+      return ["spec_id", "repository", "revision", "served_model", "profile"].every(
+        key => typeof source[key] === "string" && (source[key] as string).length > 0,
+      ) && ["spec_sha256", "model_artifact_sha256"].every(
+        key => typeof source[key] === "string" && /^[0-9a-f]{64}$/.test(source[key] as string),
+      ) && typeof source.image_id === "string" && /^sha256:[0-9a-f]{64}$/.test(source.image_id) &&
+        source.source === "registered_plan_and_controller_state" &&
+        ["registered_source_only", "bound_live_container"].includes(String(source.image_evidence)) &&
+        source.promotion_authorized === false;
+    })()
+  );
   return (
     row.schema_version === "model-runtime/v1" &&
     typeof row.observed_at === "string" &&
@@ -129,7 +161,8 @@ function isModelRuntime(value: unknown): value is ModelRuntime {
     (row.mode_source_sha256 === null || typeof row.mode_source_sha256 === "string") &&
     (row.run_id === null || typeof row.run_id === "string") &&
     (row.phase === null || typeof row.phase === "string") &&
-    (row.source_error === null || typeof row.source_error === "string")
+    (row.source_error === null || typeof row.source_error === "string") &&
+    variantValid
   );
 }
 
@@ -523,6 +556,12 @@ export default function Pulse() {
     modelRuntime?.mode === "candidate_research" &&
     boundRuntimeMode &&
     modelRuntime.resident_services_expected === "stopped";
+  const selectedMiaVariant = boundRuntimeMode &&
+    isRegisteredMiaVariant(modelRuntime?.candidate_variant) &&
+    modelRuntime?.run_id?.startsWith("qfn-mia-c0-") &&
+    modelRuntime?.mode !== "resident"
+      ? modelRuntime?.candidate_variant ?? null
+      : null;
   const candidateEndpointStarting =
     candidateResearchWindow &&
     ["candidate_start", "readiness"].includes(modelRuntime.phase ?? "");
@@ -554,7 +593,7 @@ export default function Pulse() {
     residentRuntime
       ? "Resident serving"
       : candidateResearchWindow
-        ? "Candidate research window"
+        ? selectedMiaVariant ? "Mia candidate research window" : "Candidate research window"
         : runtimeTransition
           ? runtimePreparing
             ? "Preparing research window"
@@ -565,8 +604,8 @@ export default function Pulse() {
       ? "Controller state expects the production resident services online."
       : candidateResearchWindow
         ? candidateEndpointStarting
-          ? "Controller state expects residents stopped while the research candidate endpoint starts. Promotion remains unauthorized."
-          : "Controller state expects residents stopped while the research candidate is evaluated. Promotion remains unauthorized."
+          ? `Controller state expects residents stopped while ${selectedMiaVariant ? "the registered Mia variant" : "the research candidate"} endpoint starts. Promotion remains unauthorized.`
+          : `Controller state expects residents stopped while ${selectedMiaVariant ? "the registered Mia variant" : "the research candidate"} is evaluated. Promotion remains unauthorized.`
         : runtimeTransition
           ? runtimePreparing
             ? "The controller is verifying prerequisites before model services are changed."
@@ -889,6 +928,7 @@ export default function Pulse() {
               endpointName={key}
               inventory={row}
               serviceExpectation={serviceExpectation}
+              selectedVariant={key === "flash" ? selectedMiaVariant : null}
               pick={presentation.pick}
               samples={cleanSamples}
               liveCalls={liveCalls}

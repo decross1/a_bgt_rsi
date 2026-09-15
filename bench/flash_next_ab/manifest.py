@@ -37,7 +37,9 @@ _ENDPOINTS = {
     "resident_gemma": "gemma-4-26b-a4b",
     "resident_qwen": "qwen3.8-27b-nvfp4-mtp",
     "flash_next": "qwen3.8-flash-next",
+    "flash_next_mia": "qwen3.8-flash-next-mia",
 }
+FLASH_ENDPOINTS = frozenset({"flash_next", "flash_next_mia"})
 
 
 class PlanError(ValueError):
@@ -128,7 +130,7 @@ def resolved_policy(policy_id: str, endpoint_name: str) -> dict[str, Any]:
     policy["top_k"] = 64 if endpoint_name == "resident_gemma" else 20
     if endpoint_name == "resident_gemma":
         policy.pop("reasoning_effort", None)
-    elif endpoint_name not in {"resident_qwen", "flash_next"}:
+    elif endpoint_name not in {"resident_qwen", *FLASH_ENDPOINTS}:
         raise PlanError(f"unknown endpoint {endpoint_name!r}")
     return policy
 
@@ -170,12 +172,11 @@ def _validate_route(route: Any, cohort: str, index: int) -> dict[str, Any]:
         raise PlanError(f"{where}.endpoint_name is unsupported")
     if route["served_model"] != _ENDPOINTS[endpoint_name]:
         raise PlanError(f"{where} served model differs from endpoint allowlist")
-    expected_endpoint = (
-        "resident_qwen" if cohort == "resident" and role == "critic"
-        else "resident_gemma" if cohort == "resident"
-        else "flash_next"
+    allowed_endpoints = (
+        {"resident_qwen" if role == "critic" else "resident_gemma"}
+        if cohort == "resident" else FLASH_ENDPOINTS
     )
-    if endpoint_name != expected_endpoint:
+    if endpoint_name not in allowed_endpoints:
         raise PlanError(f"{where} violates the fixed role bundle")
     _digest(route["artifact_sha256"], f"{where}.artifact_sha256")
     _digest(route["runtime_sha256"], f"{where}.runtime_sha256")
@@ -193,16 +194,25 @@ def make_arm_receipt(
     qualification_receipt_sha256: str,
     artifact_sha256_by_endpoint: dict[str, str],
     runtime_sha256_by_endpoint: dict[str, str],
+    flash_endpoint_name: str = "flash_next",
 ) -> dict[str, Any]:
-    """Construct a complete arm receipt; callers supply measured identities."""
+    """Bind every Flash role to one explicit, qualified checkpoint variant.
+
+    NVIDIA remains the default. Selecting Mia requires its own measured
+    qualification, artifact and runtime identities; no incumbent plan is edited.
+    """
     if cohort not in COHORTS:
         raise PlanError("cohort must be resident or flash")
+    if flash_endpoint_name not in FLASH_ENDPOINTS:
+        raise PlanError("Flash variant endpoint is not registered")
+    if cohort == "resident" and flash_endpoint_name != "flash_next":
+        raise PlanError("a resident arm cannot select a Flash variant")
     routes = []
     for role in ROLES:
         endpoint_name = (
             "resident_qwen" if cohort == "resident" and role == "critic"
             else "resident_gemma" if cohort == "resident"
-            else "flash_next"
+            else flash_endpoint_name
         )
         policies = policy_set(endpoint_name)
         routes.append(
@@ -247,6 +257,11 @@ def validate_arms(arms: Any, *, partial: bool = False) -> list[dict[str, Any]]:
             _validate_route(route, cohort, index)
         if [route["role"] for route in routes] != list(ROLES):
             raise PlanError("arm routes must follow the canonical role order")
+        if cohort == "flash" and len({
+            (route["endpoint_name"], route["artifact_sha256"], route["runtime_sha256"])
+            for route in routes
+        }) != 1:
+            raise PlanError("all Flash roles must use one checkpoint and runtime")
     if len(cohorts) != len(set(cohorts)):
         raise PlanError("arm cohorts must be unique")
     if not partial and cohorts != list(COHORTS):

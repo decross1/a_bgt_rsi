@@ -249,3 +249,28 @@ def test_qualification_changed_between_projection_and_validation_is_withheld(tmp
         "qualification_receipt_sha256": "0" * 64,
     })
     assert project_local_research(tmp_path)["qualification_runs"] == []
+
+
+def test_mia_and_nvidia_receipts_order_by_recorded_time_not_prefix(tmp_path, monkeypatch):
+    from backend import local_model_research as module
+
+    old = tmp_path / "qualification-runs" / "qfn-mia-c0-old"
+    new = tmp_path / "qualification-runs" / "qfn-c0-new"
+    old.mkdir(parents=True)
+    new.mkdir(parents=True)
+    write(old, "state.json", {"run_id": old.name})
+    write(new, "state.json", {"run_id": new.name})
+    old_stamp = 1_000_000_000_000_000_000
+    new_stamp = 1_100_000_000_000_000_000
+    for path in (old, old / "state.json"):
+        os.utime(path, ns=(old_stamp, old_stamp))
+    for path in (new, new / "state.json"):
+        os.utime(path, ns=(new_stamp, new_stamp))
+    monkeypatch.setattr(
+        module,
+        "_qualification",
+        lambda _reader, run_id: {"id": run_id},
+    )
+
+    rows = project_local_research(tmp_path)["qualification_runs"]
+    assert [row["id"] for row in rows] == ["qfn-c0-new", "qfn-mia-c0-old"]

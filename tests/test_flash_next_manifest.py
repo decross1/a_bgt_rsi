@@ -10,6 +10,7 @@ from bench.flash_next_ab.manifest import (
     plan_fingerprints,
     policy_set,
     sha256_json,
+    validate_arms,
     validate_plan,
 )
 
@@ -125,3 +126,54 @@ def test_plan_and_call_hashes_are_canonical_and_recomputable():
     for arm in plan["arms"]:
         for route in arm["routes"]:
             assert route["policy_set_sha256"] == sha256_json(route["policies"])
+
+
+def mia_arm():
+    return make_arm_receipt(
+        "flash",
+        qualification_receipt_sha256="9" * 64,
+        artifact_sha256_by_endpoint={"flash_next_mia": "a" * 64},
+        runtime_sha256_by_endpoint={"flash_next_mia": "b" * 64},
+        flash_endpoint_name="flash_next_mia",
+    )
+
+
+def test_explicit_mia_bundle_uses_same_tasks_and_policy_with_distinct_identity():
+    resident, nvidia = arms()
+    nvidia_plan, _ = build_plan([resident, nvidia])
+    mia_plan, _ = build_plan([resident, mia_arm()])
+    assert validate_plan(mia_plan) is mia_plan
+    assert mia_plan["declared_cells"] == nvidia_plan["declared_cells"]
+    assert mia_plan["cell_receipts"] == nvidia_plan["cell_receipts"]
+    assert mia_plan["arms"][0] == nvidia_plan["arms"][0]
+    assert sha256_json(mia_plan) != sha256_json(nvidia_plan)
+    assert policy_set("flash_next_mia") == policy_set("flash_next")
+    assert {row["endpoint_name"] for row in mia_plan["arms"][1]["routes"]} == {"flash_next_mia"}
+    assert {row["served_model"] for row in mia_plan["arms"][1]["routes"]} == {"qwen3.8-flash-next-mia"}
+
+
+@pytest.mark.parametrize("mutation", ["variant", "artifact", "runtime", "resident", "served_name"])
+def test_flash_bundle_rejects_mixed_variants_or_identities(mutation):
+    candidate = mia_arm()
+    row = candidate["routes"][-1]
+    if mutation == "variant":
+        row.update(endpoint_name="flash_next", served_model="qwen3.8-flash-next")
+    elif mutation == "artifact":
+        row["artifact_sha256"] = "c" * 64
+    elif mutation == "runtime":
+        row["runtime_sha256"] = "d" * 64
+    elif mutation == "resident":
+        row.update(endpoint_name="resident_qwen", served_model="qwen3.8-27b-nvfp4-mtp")
+    else:
+        row["served_model"] = "qwen3.8-flash-next"
+    with pytest.raises(PlanError):
+        validate_arms([candidate], partial=True)
+
+
+def test_unknown_flash_variant_is_not_an_endpoint_alias():
+    with pytest.raises(PlanError, match="not registered"):
+        make_arm_receipt(
+            "flash", qualification_receipt_sha256="1" * 64,
+            artifact_sha256_by_endpoint={}, runtime_sha256_by_endpoint={},
+            flash_endpoint_name="http://example.invalid/model",
+        )

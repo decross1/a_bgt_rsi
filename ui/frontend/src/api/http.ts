@@ -121,6 +121,19 @@ export interface ModelRuntime {
   nara_service_expected: "running" | "paused" | "unknown";
   run_id: string | null;
   phase: string | null;
+  candidate_variant?: {
+    spec_id: string;
+    spec_sha256: string;
+    repository: string;
+    revision: string;
+    served_model: string;
+    image_id: string;
+    model_artifact_sha256: string;
+    profile: string;
+    source: "registered_plan_and_controller_state";
+    image_evidence: "registered_source_only" | "bound_live_container";
+    promotion_authorized: false;
+  } | null;
   source_error: string | null;
 }
 
