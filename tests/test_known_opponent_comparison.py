@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import importlib
+import json
+import subprocess
 import sys
 from copy import deepcopy
 
@@ -90,3 +92,29 @@ def test_matching_requires_exact_ordered_tasks_and_seed_policy():
     changed_seed = {**manifest, "seed_base": 302}
     with pytest.raises(c.ComparisonError, match="task, seed or request policy"):
         c._matching(manifest, changed_seed)
+
+
+def test_historical_gemma_replay_uses_registered_root_and_rejects_failed_child(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    expected = {"admission_eligible": True, "recorded_episodes": 12}
+
+    def good(argv, **kwargs):
+        assert argv[:2] == [sys.executable, "-c"]
+        assert argv[-1] == str(c.GEMMA_OUTPUT / "pilot")
+        assert kwargs["cwd"] == c.GEMMA_CODE_ROOT
+        assert kwargs["env"]["PYTHONPATH"] == str(c.GEMMA_CODE_ROOT)
+        assert kwargs["timeout"] == 30
+        return subprocess.CompletedProcess(
+            argv, 0, json.dumps(expected, sort_keys=True,
+                                separators=(",", ":")) + "\n", "")
+
+    monkeypatch.setattr(c.subprocess, "run", good)
+    assert c._replay_historical_gemma() == expected
+
+    def failed(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 1, "", "private failure withheld")
+
+    monkeypatch.setattr(c.subprocess, "run", failed)
+    with pytest.raises(c.ComparisonError, match="did not pass"):
+        c._replay_historical_gemma()
