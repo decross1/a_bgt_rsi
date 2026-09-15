@@ -16,6 +16,29 @@ export interface FollowonGroup {
   actual_input_tokens_min: number | null;
   actual_input_tokens_max: number | null;
 }
+export interface RepairReplayLane {
+  declared: number;
+  producer_passed: number;
+  replayed: number;
+  replayed_passed: number;
+  producer_consistent: number;
+  producer_inconsistent: number;
+  grader_unavailable: number;
+}
+export interface RepairReplay {
+  schema: "flash-followon-selected-repair-grader-replay/v1";
+  run_sha256: string;
+  replay_receipt_sha256: string;
+  source_replay_status: "available" | "unavailable";
+  raw_private_calls_verified: number;
+  declared: number;
+  replayed: number;
+  producer_consistent: number;
+  producer_inconsistent: number;
+  grader_unavailable: number;
+  by_lane: Partial<Record<"resident_native" | "flash_off" | "flash_medium", RepairReplayLane>>;
+  comparison_eligible: false;
+}
 export interface FollowonBlock {
   block_id: string;
   kind: string;
@@ -24,6 +47,7 @@ export interface FollowonBlock {
   passed: number | null;
   timeouts: number;
   groups: FollowonGroup[];
+  grader_replay?: RepairReplay | null;
 }
 export interface RecordedFollowonWindow {
   id: string;

@@ -80,6 +80,21 @@ export function FollowonResultsPanel({ data }: { data?: FollowonResultsProgress 
                       ? "—" : `${group.actual_input_tokens_min.toLocaleString()}–${group.actual_input_tokens_max.toLocaleString()} tokens`}</td>
                   </tr>,
                 ))}</tbody></table></div>
+            {window.blocks.filter(block => block.kind === "selected_repair").map(block => {
+              const replay = block.grader_replay;
+              const bound = replay?.schema === "flash-followon-selected-repair-grader-replay/v1" &&
+                replay.run_sha256 === block.run_sha256 &&
+                SHA256.test(replay.replay_receipt_sha256) &&
+                replay.comparison_eligible === false;
+              return <p key={`${block.block_id}-grader-check`} className="benchmark-evidence-note">
+                <strong>Independent repair grade check:</strong>{" "}
+                {!bound || !replay
+                  ? "Not recorded for this restored window. The table shows recorded producer grades only."
+                  : replay.source_replay_status === "unavailable"
+                    ? `Original grader replay unavailable for ${replay.declared} attempted repairs; recorded grades are shown separately.`
+                    : `${replay.producer_consistent} of ${replay.declared} recorded grades reproduced; ${replay.grader_unavailable} could not be rerun; ${replay.producer_inconsistent} differed. This check was recorded at report publication.`}
+              </p>;
+            })}
             <details className="benchmark-provenance"><summary>Recorded sources</summary><dl>
               <dt>Admission SHA256</dt><dd>{window.admission_sha256}</dd>
               <dt>Recorded controller code SHA256</dt><dd>{window.recorded_controller_source_bundle_sha256}</dd>

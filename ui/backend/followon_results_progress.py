@@ -7,8 +7,11 @@ separate explicit operation; polling never touches private SSE or model APIs.
 """
 from __future__ import annotations
 
+import hashlib
 import math
+import os
 import re
+import stat
 from pathlib import Path
 
 from .local_model_research import DEFAULT_RESEARCH_ROOT, Reader, SourceError
@@ -28,6 +31,10 @@ MAX_WINDOWS = 4
 MAX_BLOCKS = 16
 MAX_GROUPS = 64
 CONDITION = re.compile(r"[A-Za-z0-9_]{1,32}\Z")
+SELECTED_RESIDENT_ID = "qfn-followon-selected-repair-20260915-a"
+SELECTED_COMPAT_SHA256 = (
+    "c701a71890e6378171321d117e3699ec8b6a08fdc42c022c2e48067280759662"
+)
 
 
 def _integer(value: object, *, ceiling: int = 10_000) -> bool:
@@ -46,7 +53,73 @@ def _optional_tokens(value: object) -> bool:
     return value is None or _integer(value, ceiling=200_000)
 
 
-def _public_blocks(report: dict) -> list[dict]:
+def _repair_replay(block: dict, cohort: str) -> dict | None:
+    """Project only bounded grader counts from one hash-bound repair run."""
+    value = block.get("grader_replay")
+    if value is None:
+        return None
+    _require(block["kind"] == "selected_repair" and isinstance(value, dict)
+             and value.get("schema")
+                == "flash-followon-selected-repair-grader-replay/v1"
+             and value.get("run_sha256") == block["run_sha256"]
+             and _sha(value.get("replay_receipt_sha256"))
+             and value.get("source_replay_status")
+                in {"available", "unavailable"}
+             and value.get("comparison_eligible") is False
+             and value.get("private_content_exported") is False,
+             "published repair grader replay is unbound")
+    counts = ("raw_private_calls_verified", "declared", "replayed",
+              "producer_consistent", "producer_inconsistent",
+              "grader_unavailable")
+    _require(all(_integer(value.get(key), ceiling=44) for key in counts)
+             and value["declared"] == value["raw_private_calls_verified"]
+             == block["attempted"]
+             and value["replayed"] + value["grader_unavailable"]
+                == value["declared"]
+             and value["producer_consistent"]
+                + value["producer_inconsistent"] == value["replayed"],
+             "published repair replay denominator is malformed")
+    lanes = value.get("by_lane")
+    expected = ({"flash_off", "flash_medium"}
+                if cohort == "flash" else {"resident_native"})
+    lane_counts = ("declared", "producer_passed", "replayed",
+                   "replayed_passed", "producer_consistent",
+                   "producer_inconsistent", "grader_unavailable")
+    _require(isinstance(lanes, dict) and set(lanes) == expected
+             and all(isinstance(row, dict)
+                     and all(_integer(row.get(key), ceiling=44)
+                             for key in lane_counts)
+                     for row in lanes.values())
+             and sum(row["declared"] for row in lanes.values())
+                == value["declared"]
+             and sum(row["replayed"] for row in lanes.values())
+                == value["replayed"]
+             and sum(row["producer_consistent"] for row in lanes.values())
+                == value["producer_consistent"]
+             and sum(row["producer_inconsistent"] for row in lanes.values())
+                == value["producer_inconsistent"]
+             and sum(row["grader_unavailable"] for row in lanes.values())
+                == value["grader_unavailable"]
+             and sum(row["producer_passed"] for row in lanes.values())
+                == block["passed"]
+             and all(row["producer_passed"] <= row["declared"]
+                     and row["replayed_passed"] <= row["replayed"]
+                     and row["producer_consistent"]
+                        + row["producer_inconsistent"] == row["replayed"]
+                     and row["replayed"] + row["grader_unavailable"]
+                        == row["declared"]
+                     for row in lanes.values()),
+             "published repair replay lane counts are malformed")
+    return {"schema": value["schema"], "run_sha256": value["run_sha256"],
+            "replay_receipt_sha256": value["replay_receipt_sha256"],
+            "source_replay_status": value["source_replay_status"],
+            **{key: value[key] for key in counts},
+            "by_lane": {lane: {key: row[key] for key in lane_counts}
+                        for lane, row in sorted(lanes.items())},
+            "comparison_eligible": False}
+
+
+def _public_blocks(report: dict, cohort: str) -> list[dict]:
     """Return only fixed numeric/categorical fields from a published report."""
     blocks = report.get("blocks")
     _require(isinstance(blocks, list) and 0 < len(blocks) <= MAX_BLOCKS,
@@ -107,7 +180,8 @@ def _public_blocks(report: dict) -> list[dict]:
         projected.append({key: block[key] for key in (
             "block_id", "kind", "run_sha256", "attempted", "passed",
             "timeouts",
-        )} | {"groups": visible_groups})
+        )} | {"groups": visible_groups,
+             "grader_replay": _repair_replay(block, cohort)})
     return projected
 
 
@@ -139,6 +213,84 @@ def _ref(reader: Reader, root: Path, value: object) -> tuple[dict, str]:
              "published follow-on reference is outside evaluation")
     content, digest = reader.read(str(relative), digest=value["sha256"])
     return content, digest
+
+
+def _selected_resident_gate(reader: Reader, root: Path, publication: Path,
+                            index: dict, gate: dict, report: dict,
+                            window_id: str, cohort: str) -> None:
+    """Require the archived prelaunch start-chronology reader for this trial."""
+    selected = any(isinstance(block, dict)
+                   and block.get("kind") == "selected_repair"
+                   for block in report.get("blocks", []))
+    if not selected or cohort != "resident":
+        return
+    marker = gate.get("chronology_compatibility")
+    refs = index.get("archived_reader_source_refs")
+    ref = (refs.get("selected-resident-compat.py")
+           if isinstance(refs, dict) else None)
+    _require(window_id == SELECTED_RESIDENT_ID
+             and isinstance(marker, dict)
+             and marker.get("schema")
+                == "flash-followon-selected-repair-resident-start-compatibility/v1"
+             and marker.get("repair")
+                == "missing_result_started_at_derived_from_exact_final_state_only"
+             and marker.get("original_result_bytes_preserved") is True
+             and marker.get("other_completed_window_checks_unchanged") is True
+             and marker.get("comparison_eligible") is False
+             and marker.get("compatibility_reader_sha256")
+                == SELECTED_COMPAT_SHA256
+             and all(_sha(marker.get(key)) for key in (
+                 "state_sha256", "supervision_sha256", "memory_log_sha256",
+                 "gate_source_sha256",
+             ))
+             and isinstance(marker.get("final_state_started_at"), str)
+             and isinstance(ref, dict)
+             and ref.get("sha256") == SELECTED_COMPAT_SHA256
+             and ref.get("path")
+                == str(publication / "selected-resident-compat.py")
+             and _integer(ref.get("bytes"), ceiling=128_000)
+             and ref["bytes"] > 0,
+             "selected resident completion lacks its predeclared chronology proof")
+    _read_archived_source(reader, root, ref)
+
+
+def _read_archived_source(reader: Reader, root: Path, ref: dict) -> None:
+    """Hash one small archived source file without parsing or serving its text."""
+    relative = Path(ref["path"]).relative_to(root)
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    opened = []
+    try:
+        current = os.open(reader.root, flags | os.O_DIRECTORY)
+        opened.append(current)
+        for part in relative.parts[:-1]:
+            current = os.open(part, flags | os.O_DIRECTORY, dir_fd=current)
+            opened.append(current)
+        current = os.open(relative.name, flags, dir_fd=current)
+        opened.append(current)
+        before = os.fstat(current)
+        _require(stat.S_ISREG(before.st_mode)
+                 and before.st_size == ref["bytes"],
+                 "archived completion reader size changed")
+        remaining = ref["bytes"] + 1
+        chunks = []
+        while remaining:
+            chunk = os.read(current, min(remaining, 64 * 1024))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        after = os.fstat(current)
+        _require(len(raw) == ref["bytes"]
+                 and before.st_size == after.st_size
+                 and before.st_mtime_ns == after.st_mtime_ns
+                 and hashlib.sha256(raw).hexdigest() == ref["sha256"],
+                 "archived completion reader bytes drifted")
+    except OSError as exc:
+        raise SourceError("archived completion reader is unreadable") from exc
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
 
 
 def _raw_refs(reader: Reader, root: Path, index: dict, gate: dict,
@@ -278,8 +430,10 @@ def _window(reader: Reader, root: Path, child: str) -> dict:
                 == gate.get("controller_source_bundle_sha256")
                 == index.get("recorded_controller_source_bundle_sha256"),
              "published report does not bind the archived gate")
+    _selected_resident_gate(reader, root, publication, index, gate, report,
+                            window_id, cohort)
     routes = _raw_refs(reader, root, index, gate, report)
-    public_blocks = _public_blocks(report)
+    public_blocks = _public_blocks(report, cohort)
     # The final index's replay label is not a replay receipt. Polling makes no
     # current-source assertion even if a mutable index claims verified.
     return {

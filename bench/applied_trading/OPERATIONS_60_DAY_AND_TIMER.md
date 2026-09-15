@@ -6,7 +6,7 @@ The fixed calendar is **2026-07-17 through 2026-09-14, inclusive**, exactly 60 c
 
 The current archive fetcher caps each ZIP at 80 MB, expanded member at 300 MB, and rows at five million; each public GET has a 30-second timeout. The 59 missing days therefore have a code-bounded ZIP transfer ceiling of **4.72 GB**, before failed attempts, checksums and logs. Actual sizes and wall time are unknown. Repeated ZIP parsing, SHA-256 verification and bootstrap scoring also use CPU and storage bandwidth. Do this only after the resident and Flash GPU measurement windows have closed with restoration verified. Freeze `public_archive_adapter.py` SHA-256 `740944d...` and `trade_only_baseline.py` SHA-256 `7addeda...` for acquisition/scoring; a later archive fetcher edit makes the baseline reject the first day and every older receipt. The full-run reader is the admission check for preexisting day directories; seeing a directory or receipt name alone is not proof that a day is valid.
 
-After the model window closes, run from `/home/decross1/projects/a_bgt_rsi_worktrees/flash-followon-20260915`:
+After the model window closes, run from the delivered canonical checkout `/home/decross1/projects/a_bgt_rsi`:
 
 ```bash
 .venv-chroma/bin/python -m bench.applied_trading.public_archive_adapter --plan --symbol BTCUSDT --day 2026-07-17
