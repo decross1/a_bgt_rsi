@@ -4,7 +4,8 @@
 // amber staleness note EVEN over "ok" (a silent cron is the failure this
 // surface exists to catch). Absent flag / unknown level = nothing — the
 // banner never invents an alert. Fixture renders via `initial` + a pinned
-// `nowMs` (no fetch, deterministic staleness clock).
+// `nowMs` (no fetch, deterministic staleness clock). Recognized frontier
+// failures keep amber but describe the recorded calls, not current service.
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LoopAlert } from "../src/types/schemas";
@@ -57,6 +58,34 @@ describe("LoopAlertBanner", () => {
     );
     expect(screen.getByText("loop degraded")).toBeInTheDocument();
     expect(screen.getByText("arxiv fetch 429-degraded")).toBeInTheDocument();
+  });
+
+  it("calls a vendor-only amber signal recorded failures, not present availability", () => {
+    render(<LoopAlertBanner initial={{ level: "amber",
+      reasons: ["frontier_vendor_down:claude"], updated_at: FRESH }} nowMs={NOW} />);
+    expect(screen.getByText("Recorded frontier failures")).toBeInTheDocument();
+    const reason = screen.getByText(
+      "Last recorded Claude CLI calls failed; this alert does not establish current availability.",
+    );
+    expect(reason).toHaveAttribute("title", "frontier_vendor_down:claude");
+    expect(screen.queryByText("loop degraded")).not.toBeInTheDocument();
+    expect(screen.queryByText(/recently|last checked|currently unavailable/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps mixed, red and unknown vendor alerts in their original alert modes", () => {
+    const { rerender } = render(<LoopAlertBanner initial={{ level: "amber",
+      reasons: ["frontier_vendor_down:claude", "loop_gated:budget"],
+      updated_at: FRESH }} nowMs={NOW} />);
+    expect(screen.getByText("loop degraded")).toBeInTheDocument();
+    expect(screen.getByText("loop_gated:budget")).toBeInTheDocument();
+    expect(screen.getByText(/Last recorded Claude CLI calls failed/)).toBeInTheDocument();
+    rerender(<LoopAlertBanner initial={{ level: "red",
+      reasons: ["frontier_vendor_down:claude"], updated_at: FRESH }} nowMs={NOW} />);
+    expect(screen.getByText("LOOP STALLED")).toBeInTheDocument();
+    rerender(<LoopAlertBanner initial={{ level: "amber",
+      reasons: ["frontier_vendor_down:other"], updated_at: FRESH }} nowMs={NOW} />);
+    expect(screen.getByText("loop degraded")).toBeInTheDocument();
+    expect(screen.getByText("frontier_vendor_down:other")).toBeInTheDocument();
   });
 
   it("ok & fresh: invisible — the calm state gets no chrome", () => {
