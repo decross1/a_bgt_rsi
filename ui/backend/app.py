@@ -33,6 +33,7 @@ from .loop_alert import register as register_loop_alert
 from .loop_v0 import register as register_loop_v0
 from .model_io import register as register_model_io
 from .research_scope import register as register_research_scope
+from .research_ops_status import register as register_research_ops_status
 from .served_models import register as register_served_models
 from .tailer import JsonlTailer
 from .todo_cockpit import register as register_todo_cockpit
@@ -221,6 +222,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     register_weekly_upgrade_progress(app)
     register_applied_data_collection(app)
     register_research_scope(app, repo_root=Path(loop_v0_repo), memory_dir=Path(coordinator_memory))
+    register_research_ops_status(app, repo_root=Path(loop_v0_repo))
 
     register_loop_v0(
         app,

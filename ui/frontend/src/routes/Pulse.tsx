@@ -52,6 +52,7 @@ import ModelServerCard, {
 import NaraPromptForm from "../components/NaraPromptForm";
 import NowBoard from "../components/NowBoard";
 import OweCard from "../components/OweCard";
+import { ResearchOpsCard } from "../components/ResearchOpsCard";
 import ResearchScopeBar from "../components/ResearchScopeBar";
 import { getActivityMonitor } from "../api/activity";
 import {
@@ -59,6 +60,7 @@ import {
   getHealth,
   getIterations,
   getModelRuntime,
+  getResearchOpsStatus,
   getServedModels,
 } from "../api/http";
 import type { ModelRuntime, ServedModel } from "../api/http";
@@ -409,6 +411,10 @@ export default function Pulse() {
     initialDelayMs: 50,
   });
   const modelRuntime = isModelRuntime(runtimePoll.data) ? runtimePoll.data : null;
+  const researchOpsPoll = usePolled("research_ops_status", getResearchOpsStatus, {
+    intervalMs: 60000,
+    initialDelayMs: 350,
+  });
   const modelCatalog = useMemo(
     () => orderedModelCatalog(servedModels),
     [servedModels],
@@ -836,6 +842,9 @@ export default function Pulse() {
           <OweCard />
         </details>
       </div>
+
+      <div className="mt-4"><ResearchOpsCard data={researchOpsPoll.data}
+        failing={researchOpsPoll.error != null} /></div>
 
       {/* ── 1b · the LAB's queue — secondary to the hero, by design ─────── */}
       {/* The human's queue is the hero; what Nara and the PI advance on their
