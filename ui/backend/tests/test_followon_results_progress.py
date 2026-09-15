@@ -5,7 +5,15 @@ import hashlib
 import json
 from pathlib import Path
 
-from backend.followon_results_progress import project_followon_results
+import pytest
+
+from backend import followon_results_progress as projection
+from backend.followon_results_progress import (
+    SourceError,
+    _repair_replay,
+    project_followon_results,
+)
+from backend.local_model_research import Reader
 
 
 def _write(path: Path, value: dict) -> dict:
@@ -131,3 +139,96 @@ def test_hash_bound_but_unregistered_condition_text_is_withheld(tmp_path):
     projection = project_followon_results(root)
     assert projection["windows"] == []
     assert projection["status"] == "partial"
+
+
+def test_selected_repair_replay_projects_only_bound_numeric_counts():
+    replay = {
+        "schema": "flash-followon-selected-repair-grader-replay/v1",
+        "run_sha256": "e" * 64,
+        "replay_receipt_sha256": "f" * 64,
+        "source_replay_status": "available",
+        "raw_private_calls_verified": 22, "declared": 22,
+        "replayed": 20, "producer_consistent": 20,
+        "producer_inconsistent": 0, "grader_unavailable": 2,
+        "by_lane": {"resident_native": {
+            "declared": 22, "producer_passed": 8,
+            "replayed": 20, "replayed_passed": 8,
+            "producer_consistent": 20, "producer_inconsistent": 0,
+            "grader_unavailable": 2,
+        }},
+        "comparison_eligible": False,
+        "private_content_exported": False,
+        "private_completion": "must never enter the public response",
+    }
+    block = {"kind": "selected_repair", "run_sha256": "e" * 64,
+             "attempted": 22, "passed": 8, "grader_replay": replay}
+    projected = _repair_replay(block, "resident")
+    assert projected["producer_consistent"] == 20
+    assert projected["grader_unavailable"] == 2
+    assert "private_completion" not in projected
+    assert "private_content_exported" not in projected
+
+
+@pytest.mark.parametrize("change", [
+    {"run_sha256": "a" * 64},
+    {"declared": 21},
+    {"source_replay_status": "verified"},
+])
+def test_selected_repair_replay_rejects_unbound_or_incomplete_counts(change):
+    replay = {
+        "schema": "flash-followon-selected-repair-grader-replay/v1",
+        "run_sha256": "e" * 64, "replay_receipt_sha256": "f" * 64,
+        "source_replay_status": "available",
+        "raw_private_calls_verified": 22, "declared": 22,
+        "replayed": 22, "producer_consistent": 22,
+        "producer_inconsistent": 0, "grader_unavailable": 0,
+        "by_lane": {"resident_native": {
+            "declared": 22, "producer_passed": 8,
+            "replayed": 22, "replayed_passed": 8,
+            "producer_consistent": 22, "producer_inconsistent": 0,
+            "grader_unavailable": 0,
+        }},
+        "comparison_eligible": False, "private_content_exported": False,
+    }
+    replay.update(change)
+    block = {"kind": "selected_repair", "run_sha256": "e" * 64,
+             "attempted": 22, "passed": 8, "grader_replay": replay}
+    with pytest.raises(SourceError):
+        _repair_replay(block, "resident")
+
+
+def test_selected_resident_predeclared_compatibility_source_is_byte_bound(
+    tmp_path, monkeypatch,
+):
+    root = tmp_path / "research"
+    publication = (root / "evaluation/followon-reports" /
+                   "qfn-followon-selected-repair-20260915-a.resident")
+    publication.mkdir(parents=True)
+    source = publication / "selected-resident-compat.py"
+    raw = b"# archived chronology validator\n"
+    source.write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    monkeypatch.setattr(projection, "SELECTED_COMPAT_SHA256", digest)
+    index = {"archived_reader_source_refs": {
+        "selected-resident-compat.py": {
+            "path": str(source), "sha256": digest, "bytes": len(raw),
+        },
+    }}
+    gate = {"chronology_compatibility": {
+        "schema": "flash-followon-selected-repair-resident-start-compatibility/v1",
+        "repair": "missing_result_started_at_derived_from_exact_final_state_only",
+        "original_result_bytes_preserved": True,
+        "other_completed_window_checks_unchanged": True,
+        "comparison_eligible": False,
+        "compatibility_reader_sha256": digest,
+        "state_sha256": "a" * 64, "supervision_sha256": "b" * 64,
+        "memory_log_sha256": "c" * 64, "gate_source_sha256": "d" * 64,
+        "final_state_started_at": "2026-09-15T12:00:00Z",
+    }}
+    report = {"blocks": [{"kind": "selected_repair"}]}
+    args = (Reader(root), root, publication, index, gate, report,
+            "qfn-followon-selected-repair-20260915-a", "resident")
+    projection._selected_resident_gate(*args)
+    source.write_bytes(raw + b"# drift\n")
+    with pytest.raises(SourceError):
+        projection._selected_resident_gate(*args)

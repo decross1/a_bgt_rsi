@@ -76,4 +76,38 @@ describe("recorded follow-on studies", () => {
     expect(screen.getByText("Timing only")).toBeInTheDocument();
     expect(screen.queryByText("0 / 3")).not.toBeInTheDocument();
   });
+
+  it("separates selected repair producer scores from an archived grade replay", () => {
+    const row = admitted.windows[0];
+    const block = {
+      ...row.blocks[0], block_id: "repair-0", kind: "selected_repair",
+      attempted: 22, passed: 8, timeouts: 1,
+      groups: [{ ...row.blocks[0].groups[0],
+        condition: ["resident_native"], declared: 22, attempted: 22,
+        passed: 8, timeouts: 1,
+      }],
+      grader_replay: {
+        schema: "flash-followon-selected-repair-grader-replay/v1" as const,
+        run_sha256: row.blocks[0].run_sha256,
+        replay_receipt_sha256: "f".repeat(64),
+        source_replay_status: "available" as const,
+        raw_private_calls_verified: 22, declared: 22, replayed: 20,
+        producer_consistent: 20, producer_inconsistent: 0,
+        grader_unavailable: 2,
+        by_lane: { resident_native: {
+          declared: 22, producer_passed: 8, replayed: 20,
+          replayed_passed: 8, producer_consistent: 20,
+          producer_inconsistent: 0, grader_unavailable: 2,
+        } },
+        comparison_eligible: false as const,
+      },
+    };
+    render(<FollowonResultsPanel data={{ ...admitted,
+      windows: [{ ...row, blocks: [block] }],
+    }} />);
+    expect(screen.getByText("8 / 22")).toBeInTheDocument();
+    expect(screen.getByText(/20 of 22 recorded grades reproduced/)).toBeInTheDocument();
+    expect(screen.getByText(/2 could not be rerun/)).toBeInTheDocument();
+    expect(screen.queryByText(/private completion/)).not.toBeInTheDocument();
+  });
 });
