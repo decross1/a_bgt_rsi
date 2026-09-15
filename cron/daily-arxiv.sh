@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
-# daily-arxiv.sh -- Day 5 artifact. NOT yet installed in crontab; Day 6
-# enables it.
+# daily-arxiv.sh -- receipt-bound daily literature ingestion.
 #
-# Pulls the last 24 hours of cs.MA / cs.GT / econ.TH abstracts from the
-# arXiv API, embeds them with BGE-M3, and appends to the `papers_recent`
-# ChromaDB collection. Idempotent: pipeline/embed_and_store.py
-# deduplicates on arxiv_id, so a same-day re-run adds nothing.
+# Fetches a three-day overlapping cs.MA / cs.GT / econ.TH window, then embeds
+# fresh fetched inputs with BGE-M3. Every invocation gets durable started and
+# terminal receipts; a failed fetch keeps the last-success input as provenance
+# only. The embedder deduplicates arxiv_id on repeated successful windows.
 #
 # Source: arXiv API (DECISIONS.md D-027) -- no API key required.
 #
-# Intended schedule once Day 6 installs it (03:00 local):
-#   0 3 * * *  /abs/path/to/repo/cron/daily-arxiv.sh >> /abs/path/to/repo/logs/cron-arxiv.log 2>&1
+# The existing 03:00 UTC crontab entry remains the only scheduler.
 set -euo pipefail
 
 # Resolve the repo root from this script's own location (cron/ sits one
@@ -21,32 +19,14 @@ cd "$REPO_ROOT"
 
 PYTHON="$REPO_ROOT/.venv-chroma/bin/python"
 BGE_M3_WEIGHTS=/mnt/models/bge-m3
-PAPERS_JSONL="$(mktemp /tmp/papers_daily_XXXXXX.jsonl)"
-trap 'rm -f "$PAPERS_JSONL"' EXIT
 
 [ -x "$PYTHON" ]            || { echo "FATAL: python not found at $PYTHON"; exit 1; }
 [ -d "$BGE_M3_WEIGHTS" ]    || { echo "FATAL: BGE-M3 weights not at $BGE_M3_WEIGHTS"; exit 1; }
 
 echo "[daily-arxiv] $(date -u +%FT%TZ) start"
 
-# Track A uses the real BGE-M3 model. Strip MOCK_LLM in case it is set in
-# the environment -- it is a Track B/C testing flag and would silently
-# swap in the deterministic stub embedder.
-# --since-days 3 (not 1): a run that fails on arXiv 429 retry-exhaustion
-# leaves no backfill, and the next day's 1-day window would never recover
-# that day's papers. A 3-day window lets up to two consecutive failed days
-# self-heal on the next success; embed_and_store dedupes on arxiv_id so the
-# day-over-day overlap costs nothing.
-env -u MOCK_LLM "$PYTHON" pipeline/arxiv_scraper.py \
-  --categories cs.MA,cs.GT,econ.TH \
-  --since-days 3 \
-  --jitter-seconds 300 \
-  --output "$PAPERS_JSONL"
-
-env -u MOCK_LLM "$PYTHON" pipeline/embed_and_store.py \
-  --input "$PAPERS_JSONL" \
-  --collection papers_recent \
-  --bge-m3-weights "$BGE_M3_WEIGHTS" \
-  --db-path "$REPO_ROOT/chroma_db"
+# The job unsets MOCK_LLM in both subprocesses and records arXiv retry codes,
+# the fetched JSONL SHA/cache, and whether embedding was actually attempted.
+env -u MOCK_LLM "$PYTHON" -m pipeline.daily_arxiv_job --run
 
 echo "[daily-arxiv] $(date -u +%FT%TZ) done"

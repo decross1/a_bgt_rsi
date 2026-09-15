@@ -31,9 +31,17 @@ DEFAULT_CAMPAIGN_ID = "v2-agentic-game-theory-20260914"
 DEFAULT_CAMPAIGN_MANIFEST = (
     REPO_ROOT / "experiments" / "research_campaign_v2_agentic_game_theory_20260914.json"
 )
+KNOWN_OPPONENT_CAMPAIGN_ID = "v2-known-opponent-utility-20260915"
+KNOWN_OPPONENT_CAMPAIGN_MANIFEST = (
+    REPO_ROOT / "experiments"
+    / "research_campaign_v2_known_opponent_utility_20260915.json"
+)
 CAMPAIGN_MANIFESTS: Mapping[str, str] = {
     DEFAULT_CAMPAIGN_ID: (
         "experiments/research_campaign_v2_agentic_game_theory_20260914.json"
+    ),
+    KNOWN_OPPONENT_CAMPAIGN_ID: (
+        "experiments/research_campaign_v2_known_opponent_utility_20260915.json"
     ),
 }
 MAX_MANIFEST_BYTES = 128_000
@@ -191,6 +199,26 @@ def validate_campaign(
             raise CampaignError(
                 f"study manifest identity differs for {study['study_id']}"
             )
+        if study["study_id"] == "known-opponent-utility-response-pilot-v1":
+            modules = study_manifest.get("execution_modules")
+            expected = {
+                "producer": "experiments/known_opponent_utility/pilot.py",
+                "manifest_schema": "experiments/known_opponent_utility/manifest.schema.json",
+                "independent_admission": "experiments/known_opponent_utility/admission.py",
+                "experiment_outcome_bridge": "experiments/known_opponent_utility/loop_bridge.py",
+            }
+            if not isinstance(modules, dict) or set(modules) != {
+                field for name in expected for field in (f"{name}_path", f"{name}_sha256")
+            }:
+                raise CampaignError("known-opponent execution bundle is not closed")
+            for name, registered_path in expected.items():
+                path_field, sha_field = f"{name}_path", f"{name}_sha256"
+                if modules[path_field] != registered_path:
+                    raise CampaignError("known-opponent execution source path differs")
+                _source_path, source_raw = _read_regular(
+                    repo_root, registered_path, limit=MAX_REFERENCED_BYTES)
+                if _sha256(source_raw) != modules[sha_field]:
+                    raise CampaignError("known-opponent execution source hash differs")
         _prereg_path, prereg_bytes = _read_regular(
             repo_root,
             study["preregistration_path"],
@@ -532,6 +560,8 @@ __all__ = [
     "DEFAULT_ACTIVATION_PATH",
     "DEFAULT_CAMPAIGN_ID",
     "DEFAULT_CAMPAIGN_MANIFEST",
+    "KNOWN_OPPONENT_CAMPAIGN_ID",
+    "KNOWN_OPPONENT_CAMPAIGN_MANIFEST",
     "LINK_FIELDS",
     "LINK_SCHEMA_VERSION",
     "CampaignError",

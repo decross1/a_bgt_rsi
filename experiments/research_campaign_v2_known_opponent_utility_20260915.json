@@ -1,0 +1,85 @@
+{
+  "schema_version": "research-campaign/v1",
+  "campaign_id": "v2-known-opponent-utility-20260915",
+  "title": "Known-opponent utility consistency in local model agents",
+  "status": "prepared",
+  "opened_at": "2026-09-15T16:19:00Z",
+  "closed_at": null,
+  "scope": {
+    "domain": "game_theory_and_agent_behavior",
+    "subjects": [
+      "local LLM agents",
+      "disclosed scripted public-goods opponents"
+    ],
+    "claim_limits": [
+      "Observed model actions do not establish human strategic behavior.",
+      "A complete episode is an engineering observation, not an independent replication or a new game-theory theorem.",
+      "Cooperation and utility-consistent action are distinct outcomes.",
+      "A known-prior external H1 market diagnostic remains a separate application, not a scientific rung or live order."
+    ],
+    "shared_evidence": {
+      "literature": "cross_campaign_with_source_provenance",
+      "negative_memory": "cross_campaign_with_explicit_match_provenance",
+      "research_outcomes": "explicit_campaign_link_only"
+    }
+  },
+  "research_question": {
+    "question_id": "rq-known-opponent-utility-consistency-001",
+    "text": "Across publicly disclosed eight-round public-goods opponent scripts, do local LLM agents choose actions consistent with their declared own-payoff or joint-payoff objective?",
+    "text_sha256": "84b81251482eaab00f032d9ba53031517910eaab1657fc5cf32f390fef755a52",
+    "selection": "team_proposed_within_owner_scope_2026-09-15"
+  },
+  "topic_policy": {
+    "mode": "preregistered_exact",
+    "topics": [
+      {
+        "topic_id": "topic-known-grim-utility-001",
+        "text": "Against a disclosed grim-trigger script in an eight-round public-goods game, does the declared own-payoff versus joint-payoff objective change utility-consistent complete-episode behavior of a local LLM agent?",
+        "text_sha256": "38bb145a4b3c6849774da23baebcac5354cc1a757a82f6c16695cf712dc24b6b",
+        "source": "campaign_preregistered"
+      },
+      {
+        "topic_id": "topic-known-retain-utility-001",
+        "text": "Against a disclosed all-retain script in an eight-round public-goods game, does the declared own-payoff versus joint-payoff objective change utility-consistent complete-episode behavior of a local LLM agent?",
+        "text_sha256": "9f534207ea52336fb99793428cb6a52d9d9f25258b461c1506f88b4103209d48",
+        "source": "campaign_preregistered"
+      },
+      {
+        "topic_id": "topic-known-contribute-utility-001",
+        "text": "Against a disclosed all-contribute script in an eight-round public-goods game, does the declared own-payoff versus joint-payoff objective change utility-consistent complete-episode behavior of a local LLM agent?",
+        "text_sha256": "62b5f5012c8c2ff1ce99c602cdca53c48ec83528ebd7ab87ee303998cbb6000f",
+        "source": "campaign_preregistered"
+      }
+    ]
+  },
+  "study_manifests": [
+    {
+      "study_id": "known-opponent-utility-response-pilot-v1",
+      "phase": "llm_pilot",
+      "path": "experiments/known_opponent_utility_response_2026-09-15.json",
+      "sha256": "fc72637f7659dc4ed71eec9906101273b556b79acce23e85e01e39ea33b031ca",
+      "preregistration_path": "experiments/PREREG_known_opponent_utility_response_2026-09-15.md",
+      "preregistration_sha256": "f0cea5c8219418088cda548e1d597a47379c82a44e49962760a6286ddd5e99cf"
+    }
+  ],
+  "legacy_policy": {
+    "missing_campaign_link": "unlinked_legacy",
+    "infer_from_timestamp": false,
+    "infer_from_topic_text": false
+  },
+  "campaign_actions": {
+    "admitted": [
+      "run_loop_iteration",
+      "promote_findings",
+      "bubble_up",
+      "noop"
+    ],
+    "deferred": [
+      "run_experiment",
+      "forecast_markets",
+      "mine_paper_gap",
+      "refine_idea",
+      "improve_system"
+    ]
+  }
+}
