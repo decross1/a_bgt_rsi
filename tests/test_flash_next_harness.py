@@ -109,8 +109,8 @@ def gate(_plan, _cohort):
 def registered_contract(version=3):
     contract = {
         "schema": f"qwen-flash-next-qualification/v{version}",
-        "contract_id": "qwen38-flash-next-c0-s0-20260915" if version == 3 else "qwen38-flash-next-c0-20260915",
-        "profile": "C0-S0" if version == 3 else "C0",
+        "contract_id": "qwen38-flash-next-c0-s1-20260915" if version == 3 else "qwen38-flash-next-c0-20260915",
+        "profile": "C0-S1" if version == 3 else "C0",
         "image": {"id": q.IMAGE_ID, "architecture": "arm64"},
         "model": {
             "repository": q.MODEL_REPOSITORY,
@@ -410,6 +410,8 @@ def v3_monitor_proof(path):
         monitor = q.MemoryMonitor(
             path, object(), reader=lambda: 39.0, swap_reader=lambda: pages[0],
             cgroup_reader=lambda *_: dict(cgroup), clock=lambda: now[0],
+            swapin_reader=lambda: 9 + int(now[0]),
+            psi_reader=lambda: {"some": 100 + int(now[0]) * 2, "full": 10 + int(now[0])},
         )
         with path.open("xb") as stream:
             monitor._stream = stream
@@ -450,6 +452,13 @@ def v3_monitor_proof(path):
             "candidate_cgroup_path": cgroup["path"], "candidate_cgroup_pid": 123,
             "candidate_cgroup_start_ticks": 12345,
             "candidate_cgroup_samples": monitor.candidate_cgroup_samples,
+            "failure_class": None,
+            "pswpin_initial_pages": monitor.initial_pswpin,
+            "pswpin_final_pages": monitor.final_pswpin,
+            "pswpin_delta_pages": monitor.final_pswpin - monitor.initial_pswpin,
+            "host_memory_psi_initial_us": monitor.initial_host_psi_totals,
+            "host_memory_psi_final_us": monitor.final_host_psi_totals,
+            "host_memory_psi_delta_us": {k: monitor.final_host_psi_totals[k] - monitor.initial_host_psi_totals[k] for k in ("some", "full")},
             "candidate_cgroup_swap_peak_bytes": 0, "candidate_cgroup_oom_initial": 0,
             "candidate_cgroup_oom_final": 0, "candidate_cgroup_oom_kill_initial": 0,
             "candidate_cgroup_oom_kill_final": 0, "ready_quiescence_epoch": monitor.ready_quiescence_epoch,
@@ -461,7 +470,7 @@ def v3_monitor_proof(path):
             for name in ("initial_pswpout", "final_pswpout"):
                 result[f"{phase}_quiescence_{name}_pages"] = getattr(monitor, f"{phase}_quiescence_{name}")
         sidecar_sha, memory_sha = q._write_cgroup_diagnostics(path.parent, cid, required=True)
-        result.update(profile="C0-S0", docker_memory_limit_bytes=q.DOCKER_MEMORY_LIMIT_BYTES,
+        result.update(profile="C0-S1", docker_memory_limit_bytes=q.DOCKER_MEMORY_LIMIT_BYTES,
                       docker_memory_swap_total_bytes=q.DOCKER_MEMORY_SWAP_TOTAL_BYTES,
                       cgroup_diagnostics_sha256=sidecar_sha, memory_log_sha256=memory_sha,
                       finished_at=q.utc_now())
@@ -502,7 +511,7 @@ def test_run_receipt_passes_the_independent_comparator_contract(tmp_path):
 
 
 @pytest.mark.parametrize("corruption", ["missing_profile", "memory_limit", "swap_limit", "sidecar_peak", "missing_sidecar", "memory_digest", "early_sidecar", "future_sidecar"])
-def test_s0_requires_effective_no_swap_controls_and_bound_diagnostics(tmp_path, corruption):
+def test_s1_requires_effective_no_swap_controls_and_bound_diagnostics(tmp_path, corruption):
     receipt, plan, contract = passing_flash_receipts(tmp_path)
     directory = receipt.parent
     result = json.loads(receipt.read_text())
@@ -535,6 +544,39 @@ def test_s0_requires_effective_no_swap_controls_and_bound_diagnostics(tmp_path, 
         (directory / "cgroup-diagnostics.json").unlink()
     else:
         result["memory_log_sha256"] = "0" * 64
+    write_json(receipt, result)
+    with pytest.raises(HarnessError):
+        validate_flash_qualification_files(receipt, plan, contract, require_passed=True)
+
+
+@pytest.mark.parametrize("corruption", ["pagein_decrease", "psi_decrease", "delta_lie", "boolean_total", "summary_lie", "failed_class"])
+def test_s1_rejects_resealed_host_diagnostic_corruption(tmp_path, corruption):
+    receipt, plan, contract = passing_flash_receipts(tmp_path)
+    result = json.loads(receipt.read_text())
+    memory = receipt.parent / "memory.jsonl"
+    rows = [json.loads(line) for line in memory.read_text().splitlines()]
+    row = rows[20]  # Interior setup sample; phase first/last remain unchanged.
+    if corruption == "pagein_decrease":
+        row["pswpin_pages"] = rows[19]["pswpin_pages"] - 1
+        row["pswpin_delta_pages"] = row["pswpin_pages"] - rows[0]["pswpin_pages"]
+    elif corruption == "psi_decrease":
+        row["host_memory_psi_total_us"]["some"] = rows[19]["host_memory_psi_total_us"]["some"] - 1
+        row["host_memory_psi_delta_us"]["some"] = row["host_memory_psi_total_us"]["some"] - rows[0]["host_memory_psi_total_us"]["some"]
+    elif corruption == "delta_lie":
+        row["pswpin_delta_pages"] += 1
+    elif corruption == "boolean_total":
+        row["host_memory_psi_total_us"]["full"] = True
+    elif corruption == "summary_lie":
+        result["host_memory_psi_final_us"]["some"] += 1
+    else:
+        result["failure_class"] = "experimental_startup_host_pageout_guardrail_abort"
+    memory.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    result["memory_log_sha256"] = hashlib.sha256(memory.read_bytes()).hexdigest()
+    sidecar = receipt.parent / "cgroup-diagnostics.json"
+    value = json.loads(sidecar.read_text())
+    value["memory_log_sha256"] = result["memory_log_sha256"]
+    write_json(sidecar, value)
+    result["cgroup_diagnostics_sha256"] = hashlib.sha256(sidecar.read_bytes()).hexdigest()
     write_json(receipt, result)
     with pytest.raises(HarnessError):
         validate_flash_qualification_files(receipt, plan, contract, require_passed=True)

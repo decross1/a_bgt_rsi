@@ -284,18 +284,18 @@ def _validate_memory_log(
     path: Path,
     result: dict[str, Any],
 ) -> None:
-    s0 = result.get("profile") == "C0-S0"
+    s1 = result.get("profile") == "C0-S1"
     raw, _ = _read_regular_file(
         path, label="qualification memory log",
-        max_bytes=32 * 1024 * 1024 if s0 else MAX_RECEIPT_BYTES,
+        max_bytes=32 * 1024 * 1024 if result.get("profile") in {"C0-S0", "C0-S1"} else MAX_RECEIPT_BYTES,
     )
     rows: list[dict[str, Any]] = []
     for index, line in enumerate(raw.splitlines()):
         if not line.strip():
             continue
         rows.append(_strict_object(line, f"qualification memory log line {index + 1}"))
-    if s0:
-        _validate_s0_diagnostics(path, raw, rows, result)
+    if s1:
+        _validate_cgroup_diagnostics(path, raw, rows, result)
     samples = [row for row in rows if "mem_available_gib" in row]
     if len(samples) != result.get("memory_samples") or not samples:
         raise HarnessError("qualification memory sample count differs")
@@ -480,7 +480,51 @@ def _validate_memory_log(
         raise HarnessError("qualification final memory sample predates restoration")
 
 
-def _validate_s0_diagnostics(path, raw, rows, result):
+def _validate_host_loading_counters(samples, result):
+    """Check diagnostic provenance without making PSI magnitude a fit gate."""
+    def integer(value, label):
+        if type(value) is not int or value < 0:
+            raise HarnessError(f"S1 {label} must be a nonnegative integer")
+        return value
+
+    def psi(value, label):
+        if not isinstance(value, dict) or set(value) != {"some", "full"}:
+            raise HarnessError(f"S1 {label} must contain exact PSI totals")
+        return {key: integer(value[key], f"{label}.{key}") for key in ("some", "full")}
+
+    if not samples:
+        raise HarnessError("S1 has no host diagnostic samples")
+    initial_in = integer(samples[0].get("pswpin_pages"), "initial pswpin")
+    initial_psi = psi(samples[0].get("host_memory_psi_total_us"), "initial PSI")
+    previous_in, previous_psi = initial_in, initial_psi
+    for row in samples:
+        current_in = integer(row.get("pswpin_pages"), "pswpin")
+        current_psi = psi(row.get("host_memory_psi_total_us"), "PSI")
+        delta_in = integer(row.get("pswpin_delta_pages"), "pswpin delta")
+        delta_psi = psi(row.get("host_memory_psi_delta_us"), "PSI delta")
+        if (current_in < previous_in or delta_in != current_in - initial_in
+                or any(current_psi[key] < previous_psi[key]
+                       or delta_psi[key] != current_psi[key] - initial_psi[key]
+                       for key in ("some", "full"))):
+            raise HarnessError("S1 host counters decreased or their deltas differ")
+        previous_in, previous_psi = current_in, current_psi
+    for key, expected in {
+        "pswpin_initial_pages": initial_in,
+        "pswpin_final_pages": previous_in,
+        "pswpin_delta_pages": previous_in - initial_in,
+    }.items():
+        if integer(result.get(key), key) != expected:
+            raise HarnessError("S1 reported page-in summary differs from raw evidence")
+    for key, expected in {
+        "host_memory_psi_initial_us": initial_psi,
+        "host_memory_psi_final_us": previous_psi,
+        "host_memory_psi_delta_us": {key: previous_psi[key] - initial_psi[key] for key in ("some", "full")},
+    }.items():
+        if psi(result.get(key), key) != expected:
+            raise HarnessError("S1 reported PSI summary differs from raw evidence")
+
+
+def _validate_cgroup_diagnostics(path, raw, rows, result):
     """Independently reconstruct the no-swap profile's telemetry sidecar."""
     from .qualification import DOCKER_MEMORY_LIMIT_BYTES, DOCKER_MEMORY_SWAP_TOTAL_BYTES
 
@@ -490,31 +534,46 @@ def _validate_s0_diagnostics(path, raw, rows, result):
             or result["docker_memory_limit_bytes"] != DOCKER_MEMORY_LIMIT_BYTES
             or type(result.get("docker_memory_swap_total_bytes")) is not int
             or result["docker_memory_swap_total_bytes"] != DOCKER_MEMORY_SWAP_TOTAL_BYTES):
-        raise HarnessError("S0 memory digest or registered limits differ")
+        raise HarnessError("S1 memory digest or registered limits differ")
     sidecar, sidecar_sha, _ = _read_json_receipt(
-        path.parent / "cgroup-diagnostics.json", "S0 cgroup diagnostics"
+        path.parent / "cgroup-diagnostics.json", "S1 cgroup diagnostics"
     )
     if result.get("cgroup_diagnostics_sha256") != sidecar_sha:
-        raise HarnessError("S0 diagnostic digest differs")
+        raise HarnessError("S1 diagnostic digest differs")
     phase_rows = {}
+    host_phase_rows = {}
+    samples = [row for row in rows if "mem_available_gib" in row]
+    _validate_host_loading_counters(samples, result)
     attributed = 0
     maximum = 0
     identity = None
-    for row in rows:
+    for row in samples:
+        phase = row.get("monitor_phase")
+        if phase not in {"setup", "load", "ready", "probes", "restoration"}:
+            raise HarnessError("S1 host diagnostic phase is malformed")
+        host_observation = {
+            "observed_at": row.get("observed_at"),
+            "host_meminfo_kib": row.get("host_meminfo_kib"),
+            "mem_available_gib": row.get("mem_available_gib"),
+            "host_pswpout_pages": row.get("pswpout_pages"),
+            "host_pswpin_pages": row.get("pswpin_pages"),
+            "host_memory_psi_total_us": row.get("host_memory_psi_total_us"),
+        }
+        host_phase_rows.setdefault(phase, {"first": host_observation})["last"] = host_observation
         candidate = row.get("candidate")
         if not isinstance(candidate, dict) or candidate.get("armed") is not True:
             continue
         cgroup = candidate.get("cgroup")
         phase = row.get("monitor_phase")
         if not isinstance(cgroup, dict) or phase not in {"load", "ready", "probes", "restoration"}:
-            raise HarnessError("S0 attributed diagnostic row is malformed")
+            raise HarnessError("S1 attributed diagnostic row is malformed")
         if identity is None:
             identity = candidate.get("id")
         if candidate.get("id") != identity:
-            raise HarnessError("S0 diagnostic identity changed")
+            raise HarnessError("S1 diagnostic identity changed")
         current = cgroup.get("memory_current_bytes")
         if type(current) is not int or current < 0:
-            raise HarnessError("S0 memory.current is malformed")
+            raise HarnessError("S1 memory.current is malformed")
         attributed += 1
         maximum = max(maximum, current)
         observation = {
@@ -523,25 +582,29 @@ def _validate_s0_diagnostics(path, raw, rows, result):
             "candidate_cgroup": cgroup,
             "mem_available_gib": row.get("mem_available_gib"),
             "host_pswpout_pages": row.get("pswpout_pages"),
+            "host_pswpin_pages": row.get("pswpin_pages"),
+            "host_memory_psi_total_us": row.get("host_memory_psi_total_us"),
         }
         phase_rows.setdefault(phase, {"first": observation})["last"] = observation
     expected = {
-        "schema": "qwen-flash-next-c0-s0-cgroup-diagnostics/v1",
+        "schema": "qwen-flash-next-c0-s1-cgroup-diagnostics/v1",
         "candidate_id": identity, "memory_log_sha256": raw_sha,
         "attributed_samples": attributed, "maximum_memory_current_bytes": maximum,
         "registered_memory_max_bytes": DOCKER_MEMORY_LIMIT_BYTES,
         "registered_swap_max_bytes": 0, "phase_first_last": phase_rows,
+        "phase_host_first_last": host_phase_rows,
         "host_swap_action": "registered_startup_and_serving_byte_gates",
         "diagnostics_finished_at": sidecar.get("diagnostics_finished_at"),
     }
-    if sidecar != expected or not {"load", "ready", "probes"}.issubset(phase_rows):
-        raise HarnessError("S0 diagnostic summary differs from its raw evidence")
-    diagnostic_time = _utc_datetime(sidecar.get("diagnostics_finished_at"), "S0 diagnostic timestamp")
-    sample_times = [_utc_datetime(row.get("observed_at"), "S0 sample timestamp")
+    if (sidecar != expected or not {"load", "ready", "probes"}.issubset(phase_rows)
+            or set(host_phase_rows) != {"setup", "load", "ready", "probes", "restoration"}):
+        raise HarnessError("S1 diagnostic summary differs from its raw evidence")
+    diagnostic_time = _utc_datetime(sidecar.get("diagnostics_finished_at"), "S1 diagnostic timestamp")
+    sample_times = [_utc_datetime(row.get("observed_at"), "S1 sample timestamp")
                     for row in rows if "mem_available_gib" in row]
     if (not sample_times or not max(sample_times) <= diagnostic_time
-            <= _utc_datetime(result.get("finished_at"), "S0 result completion")):
-        raise HarnessError("S0 diagnostic timestamp is outside result publication order")
+            <= _utc_datetime(result.get("finished_at"), "S1 result completion")):
+        raise HarnessError("S1 diagnostic timestamp is outside result publication order")
 
 
 def _validate_memory_log_v3(
@@ -754,13 +817,13 @@ def _validate_memory_log_v3(
         "path": expected_path, "process_start_ticks": start_ticks,
         "memory_swap_current_bytes": 0, "memory_events_oom": 0, "memory_events_oom_kill": 0,
     }
-    if result.get("profile") == "C0-S0":
+    if result.get("profile") in {"C0-S0", "C0-S1"}:
         cgroup_values.update(memory_max_bytes=DOCKER_MEMORY_LIMIT_BYTES, memory_swap_max_bytes=0)
     if any(snapshot.get(key) != value for key, value in cgroup_values.items()):
         raise HarnessError("qualification candidate cgroup was not clean at bind")
     for key in ("memory_swap_current_bytes", "memory_events_oom", "memory_events_oom_kill"):
         integer(snapshot[key], f"bound cgroup {key}")
-    if result.get("profile") == "C0-S0":
+    if result.get("profile") in {"C0-S0", "C0-S1"}:
         for key in ("memory_max_bytes", "memory_swap_max_bytes"):
             integer(snapshot.get(key), f"bound cgroup {key}")
     candidate_rows = []
@@ -812,7 +875,7 @@ def _validate_memory_log_v3(
             raise HarnessError("qualification candidate cgroup identity, swap, or OOM proof failed")
         for key in ("memory_swap_current_bytes", "memory_events_oom", "memory_events_oom_kill"):
             integer(cgroup[key], f"cgroup {key}")
-        if result.get("profile") == "C0-S0":
+        if result.get("profile") in {"C0-S0", "C0-S1"}:
             for key in ("memory_max_bytes", "memory_swap_max_bytes"):
                 integer(cgroup.get(key), f"cgroup {key}")
         integer(candidate["pid"], "candidate PID", minimum=1)
@@ -1021,6 +1084,8 @@ def validate_flash_qualification_files(
         failures.append("qualification_error is present")
     if bundle_v3 and result.get("profile") != contract.get("profile"):
         failures.append("v3 qualification result profile differs from its contract")
+    if bundle_v3 and ("failure_class" not in result or result["failure_class"] is not None):
+        failures.append("v3 qualification failure_class is absent or non-null")
     if bundle_v3 and ("failure_stage" not in result or result["failure_stage"] is not None):
         failures.append("v3 qualification failure_stage is absent or non-null")
     restoration = result.get("restoration")
