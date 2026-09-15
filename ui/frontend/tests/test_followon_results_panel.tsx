@@ -45,6 +45,28 @@ describe("recorded follow-on studies", () => {
     })).toHaveAttribute("tabindex", "0");
   });
 
+  it("labels measured original C0 context separately from configured capacity", () => {
+    const row = admitted.windows[0];
+    const group = row.blocks[0].groups[0];
+    render(<FollowonResultsPanel data={{ ...admitted, windows: [{ ...row,
+      blocks: [{ ...row.blocks[0], kind: "context", block_id: "context-8k",
+        attempted: 8, passed: 8, timeouts: 0, groups: [
+          { ...group, condition: ["2048", "early"], declared: 4,
+            attempted: 4, passed: 4, supported: 4, timeouts: 0,
+            actual_input_tokens_min: 2071, actual_input_tokens_max: 2105 },
+          { ...group, condition: ["8192", "late"], declared: 4,
+            attempted: 4, passed: 4, supported: 4, timeouts: 0,
+            actual_input_tokens_min: 8195, actual_input_tokens_max: 8248 },
+        ] }],
+    }] }} />);
+    expect(screen.getByText(/Measured context in these admitted original C0 windows/))
+      .toHaveTextContent("2,048 and 8,192 input-token bands");
+    expect(screen.getByText(/Measured context in these admitted original C0 windows/))
+      .toHaveTextContent("actual prompts up to 8,248 tokens");
+    expect(screen.getByText(/Measured context in these admitted original C0 windows/))
+      .toHaveTextContent("do not qualify the optimized MTP profile");
+  });
+
   it("withholds counts when a complete-looking row lacks archived source proof", () => {
     const row = admitted.windows[0];
     render(<FollowonResultsPanel data={{
