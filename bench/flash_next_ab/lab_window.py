@@ -45,6 +45,7 @@ EVALUATORS = {
     "context": ("lab_eval_context", "lab_eval_context"),
     "fresh": ("lab_eval_fresh", "lab_eval_fresh"),
 }
+MAX_EVALUATOR_BUDGET_S = {"primary": 10_430, "context": 6000, "fresh": 1800}
 
 
 def _evaluator(kind: str, *, runner: bool = False):
@@ -98,7 +99,7 @@ def prepare(plan_path: Path, *, cohort: str, window_id: str,
     _must(cohort in {"resident", "flash"}, "unknown cohort")
     _must(re.fullmatch(r"qfn-ab-[a-z0-9][a-z0-9._-]{0,63}", window_id) is not None,
           "invalid window ID")
-    _must(type(runtime_budget_s) is int and 60 <= runtime_budget_s <= 10_800,
+    _must(type(runtime_budget_s) is int and 60 <= runtime_budget_s <= MAX_EVALUATOR_BUDGET_S[kind],
           "invalid harness budget")
     minimum_setup = 1500 if cohort == "flash" else 60
     _must(runtime_budget_s + RESTORE_S + minimum_setup <= wall_s <= 14_400,
@@ -156,7 +157,7 @@ def load_window(path: Path) -> tuple[dict, object]:
           and document["promotion_authorized"] is False, "window authority changed")
     minimum_setup = 1500 if document["cohort"] == "flash" else 60
     _must(type(document["runtime_budget_s"]) is int
-          and 60 <= document["runtime_budget_s"] <= 10_800
+          and 60 <= document["runtime_budget_s"] <= MAX_EVALUATOR_BUDGET_S[document["evaluation_kind"]]
           and type(document["wall_s"]) is int
           and document["runtime_budget_s"] + RESTORE_S + minimum_setup <= document["wall_s"] <= 14_400,
           "window budget or restoration reserve is invalid")
@@ -306,10 +307,30 @@ def _flash(document: dict, parent, output: Path, deadline: float, *, executor=No
     return _finish(document, output, state, result, error, monitor)
 
 
+def _restore_resident(ops, state: dict, document: dict, output: Path, *, deadline: float,
+                      monitor=None) -> dict:
+    # Recover the small create→durable-ID gap, but only when this worker proved
+    # the fixed name absent before creating it. Never adopt a pre-existing one.
+    if (isinstance(state.get("initial"), dict)
+            and state.get("watchdog_sentinel_id") is None
+            and state.get("sentinel_absent_before_create") is True):
+        try:
+            observed = resident._inspect_container(ops, resident._sentinel_name(document["window_id"]))
+            if observed is not None:
+                resident._verify_sentinel(ops, document["window_id"], observed["id"])
+                state["watchdog_sentinel_id"] = observed["id"]
+                q._atomic_write(output / "state.json", state)
+        except Exception as exc:  # noqa: BLE001 - retain unknown sentinel, still try service restore
+            state["sentinel_recovery_error"] = f"{type(exc).__name__}: {exc}"
+    return resident.restore_resident_window(ops, state, {"pair_id": document["window_id"]},
+                                             deadline=deadline, monitor=monitor)
+
+
 def _resident(document: dict, parent, output: Path, deadline: float, *, executor=None) -> dict:
     ops, result, error = q.HostOps(), None, None
     cutoff = deadline - RESTORE_S
     state = {"phase": "preflight", "initial": None, "watchdog_sentinel_id": None,
+             "sentinel_absent_before_create": False,
              "nara_stop_attempted": False, "started_at": q.utc_now(),
              "window_sha256": _sha(_raw(output / "window.json")), **_process_identity(os.getpid())}
     q._atomic_write(output / "state.json", state)
@@ -320,6 +341,10 @@ def _resident(document: dict, parent, output: Path, deadline: float, *, executor
         monitor = resident.ResidentSafetyMonitor(output / "memory.jsonl", ops, state["initial"], deadline=deadline)
         with monitor:
             try:
+                _must(resident._inspect_container(ops, resident._sentinel_name(document["window_id"]))
+                      is None, "resident watchdog sentinel already exists")
+                state["sentinel_absent_before_create"] = True
+                q._atomic_write(output / "state.json", state)
                 sid = resident._create_sentinel(ops, document["window_id"])
                 state["watchdog_sentinel_id"] = sid
                 q._atomic_write(output / "state.json", state)
@@ -340,8 +365,8 @@ def _resident(document: dict, parent, output: Path, deadline: float, *, executor
                 try:
                     monitor.transition("restoration")
                 finally:
-                    state["restoration"] = resident.restore_resident_window(
-                        ops, state, {"pair_id": document["window_id"]}, deadline=deadline,
+                    state["restoration"] = _restore_resident(
+                        ops, state, document, output, deadline=deadline,
                         monitor=monitor if monitor.phase == "restoration" else None)
                     q._atomic_write(output / "state.json", state)
     return _finish(document, output, state, result, error, monitor)
@@ -414,8 +439,8 @@ def supervise(path: Path) -> int:
                 recovery = q.restore_exact(q.HostOps(), state, deadline=time.monotonic() + RESTORE_S,
                                            spec=parent.spec, diagnostic_path=output / "recovery-candidate.log")
             else:
-                recovery = resident.restore_resident_window(q.HostOps(), state,
-                    {"pair_id": document["window_id"]}, deadline=time.monotonic() + RESTORE_S)
+                recovery = _restore_resident(q.HostOps(), state, document, output,
+                                             deadline=time.monotonic() + RESTORE_S)
     _new(output / "supervision.json", {"schema": "lab-model-supervision/v1",
         "window_sha256": _sha(_raw(path)), "returncode": child.returncode,
         "elapsed_s": time.monotonic() - started, "terminated_at_cutoff": terminated,

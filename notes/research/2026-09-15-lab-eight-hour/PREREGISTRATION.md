@@ -89,6 +89,13 @@ Report task families separately. The 48 topic tasks must not dominate a pooled
 claim about scientific ability. Report equal-family mean accuracy as a secondary
 summary, individual family success counts, and correct tasks per total evaluation
 hour including failed attempts. Report cold start and restoration separately.
+The seven primary families are exactly `context`, `diversity`, `historical`,
+`objective`, `portfolio`, `role_effort` and `topic`; none may be omitted after
+outcomes. The science/coding comparison below uses the closed union `objective`,
+`portfolio` and `historical`. Its time denominator is the sum of all measured
+cell execution seconds in those three families, including every failed attempt
+and local grading/repair execution. Separately report whole-panel wall-clock
+throughput; do not substitute time spent on successful calls alone.
 
 For an upgrade recommendation, fresh coding and science success must each be at
 least the resident arm's, no primary task family may lose more than ten absolute
