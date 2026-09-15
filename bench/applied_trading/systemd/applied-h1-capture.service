@@ -1,0 +1,16 @@
+[Unit]
+Description=Bounded public BTCUSDT Spot paper-research capture tick
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/decross1/projects/a_bgt_rsi
+Environment=PYTHONPATH=/home/decross1/projects/a_bgt_rsi
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/decross1/projects/a_bgt_rsi/.venv-chroma/bin/python -m bench.applied_trading.capture_tick --run-once --max-wall-s 90
+TimeoutStartSec=100s
+KillMode=control-group
+Nice=10
+CPUQuota=50%
+MemoryMax=512M
+NoNewPrivileges=yes
