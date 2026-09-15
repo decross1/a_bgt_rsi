@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 
 import jsonschema
 import pytest
@@ -76,7 +77,7 @@ class _FakeBackend:
     name = "fake-backend"
     default_model = "fake-model"
     model_version = "fake-1.0"
-    host_metadata = {"host": "test"}
+    host_metadata: ClassVar[dict[str, str]] = {"host": "test"}
 
     def __init__(self, scripted):
         # scripted: list of (content, [(tool_name, args), ...] | None)
@@ -267,7 +268,7 @@ def test_happy_path_wires_all_four(monkeypatch, captured_record):
     assert rec["redteam"]["retries_used"] == 0
     # The full chain captured.
     assert "hypothesis" in rec and "critique" in rec
-    captured_record["record"] is rec
+    assert captured_record["record"] is rec
 
 
 def test_meta_review_bullets_injected_into_user_message(monkeypatch, captured_record):
@@ -480,3 +481,114 @@ def test_campaign_iteration_rejects_non_preregistered_topic_before_runtime(
             campaign_id=campaign["campaign_id"],
         )
     assert runtime.events == []
+
+
+def test_known_opponent_bridge_refuted_record_reaches_real_finalizer(
+    monkeypatch, tmp_path, capsys,
+):
+    """Bridge dispatch, real journal fallback, and final schema agree.
+
+    This uses scripted tool results and temporary journal/cache/memory files.
+    No model or admitted pilot is contacted.
+    """
+    from experiments.known_opponent_utility import loop_bridge
+    from orchestrator import journal_stub
+    from workers import journal_writer as writer
+
+    monkeypatch.setenv("MOCK_LLM", "1")
+
+    campaign = campaigns.load_campaign(campaigns.KNOWN_OPPONENT_CAMPAIGN_ID)
+    topic = campaign["topic_policy"]["topics"][2]
+    pointer = tmp_path / "active_research_campaign.json"
+    pointer.write_text(json.dumps({
+        "schema_version": "research-campaign-activation/v1",
+        "campaign_id": campaign["campaign_id"],
+        "campaign_manifest_sha256": campaign["_manifest_sha256"],
+        "activated_at": "2026-09-15T16:45:00Z",
+        "activated_by": "test-owner",
+    }))
+    monkeypatch.setattr(campaigns, "DEFAULT_ACTIVATION_PATH", pointer)
+    monkeypatch.delenv("NARA_RESEARCH_CAMPAIGN", raising=False)
+    monkeypatch.setattr(nara.iteration_cache, "CACHE_ROOT", tmp_path / "cache")
+    monkeypatch.setattr(writer, "JOURNAL_DIR", tmp_path / "journal")
+    memory = tmp_path / "loop_memory.jsonl"
+    monkeypatch.setattr(journal_stub, "LOOP_MEMORY_PATH", memory)
+    monkeypatch.setattr(nara, "_next_iteration_id",
+                        lambda *a, **k: "iter-2026-09-15-999")
+    monkeypatch.setattr(nara, "_meta_review", lambda **k: {
+        "status": "error", "result": None, "errors": ["no prior row"]})
+    monkeypatch.setattr(nara, "_redteam_critic",
+                        lambda *a, **k: _redteam("proceed"))
+    # Four tools, then a final turn: the orchestrator invokes the actual
+    # journal_writer fallback rather than a canned journal result.
+    scripted = _full_chain_script()[:4] + [("Final summary.", None)]
+    monkeypatch.setattr(nara, "get_backend", lambda b: _FakeBackend(scripted))
+    tool_table = _tool_table()
+    tool_table["critic_loop_v0"] = [{
+        "status": "passed",
+        "result": {"verdict": "refuted", "rationale": "Observation is narrower",
+                   "contradicting_paper_id": None,
+                   "skeptic_backend": "fake-backend", "skeptic_model": "fake-model",
+                   "skeptic_wall_seconds": 0.2,
+                   "skeptic_elapsed_wall_seconds": 0.3,
+                   "debate": {
+                       "verdict": "refuted", "rounds": 1,
+                       "stop_reason": "bounded_refutation",
+                       "turn_count": 2, "chronology_truncated": False,
+                       "chronology_complete": True,
+                       "observed_turn_wall_seconds": 0.2,
+                       "elapsed_wall_seconds": 0.3,
+                       "turn_chronology": [
+                           {"round": i, "role": role,
+                            "backend": "fake-backend", "model": "fake-model",
+                            "wall_seconds": 0.1, "failed": False,
+                            "text_sha256": "a" * 64}
+                           for i, role in ((0, "challenger"), (0, "defender"))],
+                       "transcript": [
+                           {"round": 0, "role": role,
+                            "backend": "fake-backend", "model": "fake-model",
+                            "text": "bounded test excerpt", "wall_seconds": 0.1}
+                           for role in ("challenger", "defender")],
+                   }},
+        "errors": [],
+    }]
+    runtime = _FakeRuntime(tool_table)
+    actual_run_iteration = nara.run_iteration
+    monkeypatch.setattr(nara, "run_iteration", lambda **kwargs:
+                        actual_run_iteration(runtime=runtime,
+                                             max_depth=len(scripted), **kwargs))
+    outcome = {
+        "experiment_id": "known-opponent-utility-response-pilot-v1",
+        "metric": "disclosed_utility_action_validity_and_full_horizon_regret",
+        "value": {"zero_regret_complete_episodes": 3,
+                  "comprehension_passed": 0},
+        "trials": 12,
+        "summary": "Binary disclosed-utility behavior only; no theory claim.",
+    }
+    plan = {
+        "schema": "known-opponent-utility-response-loop-bridge/v1",
+        "campaign_id": campaign["campaign_id"],
+        "campaign_manifest_sha256": campaign["_manifest_sha256"],
+        "topic_id": topic["topic_id"], "topic_text": topic["text"],
+        "pilot_admission": {"run_sha256": "a" * 64},
+        "experiment_outcome": outcome,
+    }
+    monkeypatch.setattr(loop_bridge, "build_bridge_payload", lambda *a, **k: plan)
+    monkeypatch.setattr(loop_bridge, "_assert_live_eligibility", lambda *a, **k: None)
+
+    assert loop_bridge.main([
+        "--pilot-output", str(tmp_path / "synthetic-pilot"),
+        "--topic-id", topic["topic_id"], "--live",
+    ]) == 0
+    rows = [json.loads(line) for line in memory.read_text().splitlines()]
+    assert len(rows) == 1
+    record = rows[0]
+    _VALIDATOR.validate(record)
+    assert record["seed"] == {
+        "topic": topic["text"], "source": "known_opponent_utility_bridge"}
+    assert record["experiment_outcome"] == outcome
+    assert record["critique"]["verdict"] == "refuted"
+    assert record["gate_status"] == "pending"
+    assert record["journal_entry_path"] == "journal/iterations/001.md"
+    assert (tmp_path / "journal/001.md").is_file()
+    assert json.loads(capsys.readouterr().out)["iteration_id"] == record["iteration_id"]
