@@ -1,0 +1,179 @@
+{
+  "schema": "overnight-decision-evidence-index/v1",
+  "decision": "RETAIN_INCUMBENT",
+  "private_content_exported": false,
+  "artifact_refs": [
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/evaluation/aggregate-summaries/qfn-ab-mia-c0-20260915-a.json",
+      "sha256": "9945ca6960fa94922aed51b45b5f041a1a9d6f71cf47de00a582ef7bb0606e14",
+      "bytes": 6257
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/evaluation/followon-reports/qfn-followon-c0-pilot-20260915-a.flash/index.json",
+      "sha256": "0fb60283431b11d97d29b10410d342d9f0cc1de856a9cb58a0fc5a47be560012",
+      "bytes": 4663
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/evaluation/followon-reports/qfn-followon-c0-pilot-20260915-a.resident/index.json",
+      "sha256": "d983cdccb04cf061187faafd07c49f9ee9eb849c226bee3c6e4f105c65093188",
+      "bytes": 4250
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/evaluation/followon-reports/qfn-followon-c0-pilot-20260915-a.shared/index.json",
+      "sha256": "34e64fb7530125fd94a1eef52809739b5e5c4f07898ff222a9fe690c71334b0d",
+      "bytes": 7406
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/evaluation/followon-reports/qfn-followon-coding-temp1-20260915-b.flash/index.json",
+      "sha256": "15adedf75da13a138c02ed04a8733b907b5afa4158331591915394688f0b52d0",
+      "bytes": 3613
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/evaluation/followon-reports/qfn-followon-selected-repair-20260915-a.flash/index.json",
+      "sha256": "167e4d3bfcbbbcdd956207f7de26692918c923365e83b7ff4b0116b94b98239f",
+      "bytes": 2936
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/evaluation/followon-reports/qfn-followon-selected-repair-20260915-a.resident/index.json",
+      "sha256": "7d032cb1c69215549eef7acb8756767c9dec761a8d77d69f9c138006be225e98",
+      "bytes": 3280
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/evaluation/followon-reports/qfn-followon-selected-repair-20260915-a.shared/index.json",
+      "sha256": "e9063a7b54c03ca1616b0b57da5e57e1cf137fccdb03c65fdfa4ceb44ec02a0f",
+      "bytes": 4678
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/applied-trading-public-data/publications/fixed60-BTCUSDT-v1.json",
+      "sha256": "5fbcbb4f3d568bff67f81f05baff0bae1a516c4771a32cf44f8677e290ed0bd1",
+      "bytes": 1006
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/applied-trading-public-data/publications/h1-rest-h1-btcusdt-rest-20260915-142133.plan.json",
+      "sha256": "56a23eacdd5538b567ea7354a0122d9d3b19dd269c718f35102c97739b3ff6ba",
+      "bytes": 1306
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/applied-trading-public-data/publications/source-gate-BTCUSDT-fixed60-v1.json",
+      "sha256": "0787fe2c04fcd7be3196099fd354627c5ed0836687a00107efe29aeacaf53e2a",
+      "bytes": 30797
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/applied-trading-public-data/operator-execution/20260915T142129.638124Z-capture.json",
+      "sha256": "42316b4fae3b41862395af87be22eb996e1363f362f17779fa6b437e94039f38",
+      "bytes": 1358
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/applied-trading-public-data/operator-execution/20260915T142212.675797Z-history.json",
+      "sha256": "93c55a7b54966d3ffa2937b25f2309217efa6b2cd1d6af7474a2b7e3db7ecf60",
+      "bytes": 1358
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/coding-temp1-format-diagnostic.json",
+      "sha256": "330dc330f3169772d9157d174ae8fac3d8788ec379eee7787c1dee02f854fffc",
+      "bytes": 1222
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/hcp001-sse-framing-diagnostic.json",
+      "sha256": "7d419734aa5d1cb1e62d462baac5c0c60b1ae19892ded09a376f57cac4434128",
+      "bytes": 927
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/selected-repair-timeout-diagnostic.json",
+      "sha256": "31b04936b913bcf2e1ac5604f7c26cc93b18d20099e49abc8990264406be2b73",
+      "bytes": 1732
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/mtp3-reduced47k-vs-mtp0-decoded-parity.json",
+      "sha256": "5152f6ba42f42d6be3311de6dd6c89efaa3c606ddddf05c2755dd75a52b8f520",
+      "bytes": 1771
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/quote-abstain-control-20260915-a/manifest.json",
+      "sha256": "f9cac6f0bc73e160f55b738b13caaac63e760d0cf83f9cf67abbddcb80068bc1",
+      "bytes": 37432
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/quote-abstain-control-20260915-a/run.json",
+      "sha256": "21d30170a68b55198f6d4cfcef3db80151cd2e199733b7d85e17e07f0e34abed",
+      "bytes": 17530
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/applied-trading-public-data/publications/h1-rest-h1-btcusdt-rest-20260915-144919.plan.json",
+      "sha256": "055a8d816fa528e5962853997920db4942bf46cd8fef22eb38146605cc0ff847",
+      "bytes": 1306
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/applied-trading-public-data/operator-execution/capture-cap32-publish-20260915T144919.json",
+      "sha256": "4fc40d655bc7093ffedc2a7d66b9143652255ee315c59819c82670f62cc2699b",
+      "bytes": 2269
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/applied-trading-public-data/operator-execution/capture-cap32-recovery-20260915T144812.json",
+      "sha256": "fe34648833b3c1e1c11a6b92fb6a22d9bebbe2101dbe934f9fde0f8fb81fad4f",
+      "bytes": 4064
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/applied-trading-public-data/operator-execution/capture-page-cap-stop-20260915.json",
+      "sha256": "e665ea55d598f5e9f212b2af36638976b57704f11ababc3c47f9fb43b322932e",
+      "bytes": 1553
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-final-results-integration/live-api-smoke.json",
+      "sha256": "cac34f77d761f0550ce9ad7f80756600cacb41e9d29858876f526dc40da31b98",
+      "bytes": 189969
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-final-results-integration/backend-restart.json",
+      "sha256": "5a8ed8ccfbb422e050a28d1b1e0d4d50f769c157bc73d78d29d1550cc3605828",
+      "bytes": 283
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-final-results-integration/integration-receipt.json",
+      "sha256": "29d05e27514693c98064251349d098d20b5ca8f15ad52b548db0c53befddc0f5",
+      "bytes": 1370
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-final-results-integration/preservation.json",
+      "sha256": "6f1670b9ebb2ef95f9a4c07d6617fc0ccd195136f7588f48caff4958cd2ca01d",
+      "bytes": 946
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/quote-abstain-control-20260915-b/manifest.json",
+      "sha256": "7cc94b93df916294d135c2d8327933aa8afd2b1d8e5a7ddedb158d5007e01157",
+      "bytes": 43960
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/quote-abstain-control-20260915-b/run.json",
+      "sha256": "fcdfbcacee6fbc1fe2228ef4c092413288b722dec93254b6f583b7861fcd0446",
+      "bytes": 17569
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/quote-abstain-control-20260915-c/manifest.json",
+      "sha256": "40e0eed483327a95099e8639fb61e8fe0e1b8fccdb88c73c9c66838760d62767",
+      "bytes": 43960
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/quote-abstain-control-20260915-c/run.json",
+      "sha256": "b9004edc469c14f8100b447e6fb9f23b64951854e302f6a42964cec551fe6b02",
+      "bytes": 17532
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/capture-1435-backlog-audit.json",
+      "sha256": "c05ce214b1221ae743be99e6e12a62692f99f70ccbbb65103cada5a18e069571",
+      "bytes": 1648
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/quote-abstain-c-content-diagnostic.json",
+      "sha256": "ed8b0079dd180eb66b69ab9535222cd8ae83b1b914a56c6ea44817b647ce8d2e",
+      "bytes": 1024
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/quote-abstain-c-content-diagnostic-policy-correction.json",
+      "sha256": "9b1f3b08e47a8c120618ab0ce13f0de7d452ad1dd501cb8b2fabf766b62bb59a",
+      "bytes": 753
+    }
+  ],
+  "implementation_pull_request": "https://github.com/decross1/a_bgt_rsi/pull/37",
+  "active_future_study": "h1-btcusdt-rest-20260915-144919"
+}
