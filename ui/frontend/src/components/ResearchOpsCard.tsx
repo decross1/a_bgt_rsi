@@ -179,6 +179,16 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
     (queue.status === "source_unknown" || queue.status === "unknown" || SHA.test(String(queue.loop_source_sha256))) ? queue.status : "unknown";
   const eligible = queue && count(queue.eligible_count) ? queue.eligible_count : null;
   const consumed = queue && count(queue.consumed_count) ? queue.consumed_count : null;
+  const registeredTotal = eligible !== null && consumed !== null &&
+    eligible + consumed > 0 && count(eligible + consumed)
+    ? eligible + consumed : null;
+  const eligibleIds = queueStatus === "eligible" && queue && Array.isArray(queue.eligible_topic_ids) &&
+    queue.eligible_topic_ids.length <= 24 &&
+    queue.eligible_topic_ids.every((topic: unknown) => typeof topic === "string" && ID.test(topic)) &&
+    new Set(queue.eligible_topic_ids).size === queue.eligible_topic_ids.length
+    ? queue.eligible_topic_ids as string[] : null;
+  const firstEligible = campaignId && eligible !== null && eligible > 0 && eligibleIds?.length
+    ? eligibleIds[0] : null;
   const nextId = next && next.activation_required === true && ID.test(String(next.campaign_id)) &&
     SHA.test(String(next.manifest_sha256)) && count(next.registered_topic_count) ? String(next.campaign_id) : null;
   const workCode = plannedWork && typeof plannedWork.code === "string" ? plannedWork.code : "source_unknown";
@@ -265,6 +275,14 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   else if (queueStatus === "all_registered_topics_consumed" && eligible === 0)
     nextWork = "All topics in this campaign have been used";
   else if (queueStatus === "source_unknown") nextWork = "Campaign queue source unverified";
+  const queueLine = campaignId && registeredTotal !== null &&
+    (queueStatus === "eligible" || queueStatus === "all_registered_topics_consumed")
+    ? queueStatus === "all_registered_topics_consumed" && eligible === 0
+      ? "Registered topic queue exhausted: 0 of " + registeredTotal +
+        " eligible; no further topic dispatch from this campaign."
+      : "Registered topic queue: " + eligible + " of " + registeredTotal +
+        " eligible; " + consumed + " used."
+    : "Registered topic queue availability unverified.";
 
   let ingestionText = "Source attempt status unknown";
   if (attempt === "succeeded") ingestionText = "Latest source attempt succeeded";
@@ -284,9 +302,13 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
     </div>
     {!view ? <p className="mt-4 text-sm text-[var(--fg-muted)]">Current research operations and ingestion are unknown. System health and historical traces remain separate.</p>
       : <dl className="mt-4 grid gap-3 text-sm md:grid-cols-2">
-        <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Next campaign work</dt>
+        <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Campaign queue and next registered step</dt>
+          <dd className="mt-1">{queueLine}</dd>
+          {firstEligible && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Next eligible registered topic {firstEligible}; eligibility does not establish dispatch.</dd>}
           <dd className="mt-1">{nextWork}</dd>
           {successorWork || registeredWork ? <dd className="mt-1 text-xs text-[var(--fg-muted)]">Registered next step; no task dispatch is implied.</dd> : null}
+          {registeredWork && workCode === "review_admitted_empirical_pilot" && pilotAdmitted &&
+            <dd className="mt-1 text-xs text-[var(--fg-muted)]">This reviews an already recorded pilot; it is not a new topic run or an accepted scientific finding.</dd>}
           {campaignId && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Active campaign {campaignId}{consumed !== null ? ` · ${consumed} topics used` : ""}</dd>}
           {nextId && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Next registered campaign {nextId} awaits activation.</dd>}
           {queueStatus === "all_registered_topics_consumed" && gate?.other_actionable_work === "not_assessed" &&
