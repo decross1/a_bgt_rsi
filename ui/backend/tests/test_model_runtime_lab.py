@@ -144,3 +144,30 @@ def test_producer_shaped_preflight_requires_bound_window_plan_and_worker(tmp_pat
                                          observed=datetime.now(timezone.utc))
     assert projected["mode"] == "unknown"
     assert projected["mode_source_sha256"] is None
+
+    # A fully re-sealed context plan cannot borrow the primary window's
+    # larger call budget. The controller's context cap is 6,000 seconds.
+    plan_path.write_text(json.dumps({"schema_version": "lab-model-context-plan/v1",
+                                     "evaluator_source_bundle": {}}))
+    window["evaluation_kind"] = "context"
+    window["runtime_budget_s"] = 6000
+    window["evaluation_plan"]["sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    window_path.write_text(json.dumps(window))
+    resealed = hashlib.sha256(window_path.read_bytes()).hexdigest()
+    state["window_sha256"] = resealed
+    start["window_sha256"] = resealed
+    (run / "state.json").write_text(json.dumps(state))
+    (run / "supervision-start.json").write_text(json.dumps(start))
+    projected = lab.project_lab_runtime(root, proc_root=proc, boot_id_path=boot,
+                                         observed=datetime.now(timezone.utc))
+    assert projected["mode"] == "transitioning"
+    window["runtime_budget_s"] = 6001
+    window_path.write_text(json.dumps(window))
+    resealed = hashlib.sha256(window_path.read_bytes()).hexdigest()
+    state["window_sha256"] = resealed
+    start["window_sha256"] = resealed
+    (run / "state.json").write_text(json.dumps(state))
+    (run / "supervision-start.json").write_text(json.dumps(start))
+    projected = lab.project_lab_runtime(root, proc_root=proc, boot_id_path=boot,
+                                         observed=datetime.now(timezone.utc))
+    assert projected["mode"] == "unknown"

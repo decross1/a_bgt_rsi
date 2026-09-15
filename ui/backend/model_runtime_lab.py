@@ -27,6 +27,7 @@ RESIDENT_PHASES = frozenset({"preflight", "evaluation", "restoration", "complete
 PLAN_SCHEMAS = {"primary": "lab-model-eval-plan/v1",
                 "context": "lab-model-context-plan/v1",
                 "fresh": "lab-model-fresh-plan/v1"}
+KIND_BUDGET_CAPS = {"primary": 10_430, "context": 6_000, "fresh": 1_800}
 PRIMARY_EVALUATOR_FILES = frozenset({
     "bench/flash_next_ab/lab_eval_plan.py", "bench/flash_next_ab/lab_eval_runner.py",
     "bench/flash_next_ab/lab_eval_replay.py", "bench/flash_next_ab/adapters.py",
@@ -116,7 +117,7 @@ def _sources(window: dict) -> str:
     expected = {"bench/flash_next_ab/" + name for name in FOLLOWON_SOURCE_MODULES}
     expected |= {"bench/flash_next_ab/lab_window.py", "orchestrator/weekly_upgrade_trial.py"}
     refs = window.get("controller_sources")
-    _need(isinstance(refs, dict) and expected <= set(refs) and len(refs) <= 64,
+    _need(isinstance(refs, dict) and set(refs) == expected,
           "lab controller source tuple incomplete")
     for name, ref in refs.items():
         _need(isinstance(name, str) and not Path(name).is_absolute() and
@@ -251,7 +252,7 @@ def project_lab_runtime(root: Path = WINDOW_ROOT, *, proc_root: Path = mr.PROC_R
               window.get("restoration_reserve_s") == 600 and
               window.get("minimum_mem_available_gib") == 20 and
               type(window.get("runtime_budget_s")) is int and
-              60 <= window["runtime_budget_s"] <= 10800 and
+              60 <= window["runtime_budget_s"] <= KIND_BUDGET_CAPS[window["evaluation_kind"]] and
               type(window.get("wall_s")) is int and
               window["runtime_budget_s"] + 600 + (1500 if cohort == "flash" else 60)
               <= window["wall_s"] <= 14400 and

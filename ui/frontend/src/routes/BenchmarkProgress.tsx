@@ -12,8 +12,10 @@ import {
 } from "../api/pollhub";
 import { SkeletonCard } from "../design/Skeleton";
 import { admittedPair, LocalModelResearchPanel } from "../components/LocalModelResearchPanel";
+import { LabModelEvaluationPanel } from "../components/LabModelEvaluationPanel";
 import { FollowonResultsPanel } from "../components/FollowonResultsPanel";
 import { AppliedMarketResearchPanel } from "../components/AppliedMarketResearchPanel";
+import { getLabModelEvalProgress } from "../api/http";
 import type {
   BenchmarkArm,
   BenchmarkComparisonPoint,
@@ -338,6 +340,12 @@ export default function BenchmarkProgress({ initial }: Props) {
     deadlineMs: 16_000,
     enabled: live,
   });
+  const labPoll = usePolled("lab-model-eval:progress", getLabModelEvalProgress, {
+    intervalMs: 90_000,
+    deadlineMs: 20_000,
+    enabled: live,
+    initialDelayMs: 2500,
+  });
   const refreshing = usePollActivity(BENCHMARK_PROGRESS_POLL_KEY);
   const data = initial === undefined ? poll.data : initial;
   const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
@@ -447,7 +455,7 @@ export default function BenchmarkProgress({ initial }: Props) {
     <aside className="benchmark-evidence-note" aria-labelledby="local-evidence-bridge-heading">
       <strong id="local-evidence-bridge-heading">Separate local-model evidence</strong>
       <span>{localPair && pairCountsBound && localObjective && localTopic
-        ? <>The admitted original Flash/resident pair is mixed: objective tasks passed {localObjective.cohorts.flash.passed}/{localObjective.cohorts.flash.declared} with Flash versus {localObjective.cohorts.resident.passed}/{localObjective.cohorts.resident.declared} with residents, while topic output passed {localTopic.cohorts.flash.passed}/{localTopic.cohorts.flash.declared} versus {localTopic.cohorts.resident.passed}/{localTopic.cohorts.resident.declared}. The optimized MTP profile has separate follow-on studies; this original pair does not establish a primary-model replacement. <a href="#local-model-research-heading">View paired evidence</a> and <a href="#followon-heading">optimized follow-ons</a>.</>
+        ? <>The admitted original Flash/resident pair is mixed: objective tasks passed {localObjective.cohorts.flash.passed}/{localObjective.cohorts.flash.declared} with Flash versus {localObjective.cohorts.resident.passed}/{localObjective.cohorts.resident.declared} with residents, while topic output passed {localTopic.cohorts.flash.passed}/{localTopic.cohorts.flash.declared} versus {localTopic.cohorts.resident.passed}/{localTopic.cohorts.resident.declared}. The optimized MTP profile has separate follow-on studies and a newly frozen paired trial; this original pair does not establish a primary-model replacement. <a href="#local-model-research-heading">View original paired evidence</a>, <a href="#lab-model-eval-heading">optimized paired status</a>, and <a href="#followon-heading">optimized follow-ons</a>.</>
         : <>No complete, admitted local pair is available in this snapshot. Local-model scores are withheld here; <a href="#local-model-research-heading">view source status below</a>.</>}</span>
     </aside>
 
@@ -456,6 +464,7 @@ export default function BenchmarkProgress({ initial }: Props) {
     {(summaryMissing || rows<BenchmarkProgressWarning>(data.warnings).length > 0) && <aside className="benchmark-warnings" aria-label="Data qualifications">{summaryMissing && <p><strong>Progress summary</strong> · The response shape is incomplete. Missing values are withheld rather than inferred as zero.</p>}{rows<BenchmarkProgressWarning>(data.warnings).map((warning, index) => <p key={`${String(warning.code)}-${index}`}><strong>{text(warning.scope, "Record")}</strong> · {text(warning.detail, "An unspecified source qualification was recorded.")}</p>)}</aside>}
 
     <LocalModelResearchPanel data={data.local_model_research} />
+    {live && <LabModelEvaluationPanel data={labPoll.data} pollingFailed={labPoll.failing} />}
     <FollowonResultsPanel data={data.local_followon_results} />
     <ResearchPipelinePanel pipeline={data.research_pipeline} />
     <AppliedMarketResearchPanel data={data.applied_market_research} />
