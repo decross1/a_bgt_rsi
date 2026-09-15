@@ -40,6 +40,7 @@ MAX_PLAN_BYTES = 2 * 1024 * 1024
 MAX_CONTRACT_BYTES = 4 * 1024 * 1024
 MAX_RESULT_BYTES = 2 * 1024 * 1024
 MAX_MEMORY_BYTES = 32 * 1024 * 1024
+MAX_MEMORY_ROWS = 8_000
 MAX_PROC_BYTES = 32 * 1024
 MAX_MEMORY_AGE_SECONDS = 5.0
 MAX_CLOCK_SKEW_SECONDS = 5.0
@@ -451,11 +452,46 @@ def _latest_memory(
     raw = _read_fd(
         run_fd, "memory.jsonl", maximum=MAX_MEMORY_BYTES, label="memory gate"
     )
-    lines = [line for line in raw.splitlines() if line.strip()]
-    if not lines:
+    lines = raw.splitlines()
+    if not lines or len(lines) > MAX_MEMORY_ROWS or any(not line.strip() for line in lines):
         raise RuntimeSourceError("memory gate has no samples")
-    row_raw = lines[-1]
-    row = _strict_object(row_raw, "memory gate sample")
+    previous = None
+    for line in lines:
+        sample = _strict_object(line, "memory gate sample")
+        page_in = _nonnegative_integer(sample.get("pswpin_pages"), "host pswpin")
+        page_in_delta = _nonnegative_integer(
+            sample.get("pswpin_delta_pages"), "whole-window pswpin"
+        )
+        psi_total = sample.get("host_memory_psi_total_us")
+        psi_delta = sample.get("host_memory_psi_delta_us")
+        if (
+            not isinstance(psi_total, dict)
+            or set(psi_total) != {"some", "full"}
+            or not isinstance(psi_delta, dict)
+            or set(psi_delta) != {"some", "full"}
+        ):
+            raise RuntimeSourceError("host memory pressure diagnostics are absent")
+        totals = tuple(
+            _nonnegative_integer(psi_total[key], f"memory pressure {key}")
+            for key in ("some", "full")
+        )
+        deltas = tuple(
+            _nonnegative_integer(psi_delta[key], f"memory pressure delta {key}")
+            for key in ("some", "full")
+        )
+        current = (page_in, page_in_delta, *totals, *deltas)
+        if previous is not None and (
+            any(new < old for new, old in zip(current, previous, strict=True))
+            or current[0] - previous[0] != current[1] - previous[1]
+            or any(
+                current[index] - previous[index]
+                != current[index + 2] - previous[index + 2]
+                for index in (2, 3)
+            )
+        ):
+            raise RuntimeSourceError("host page-in or pressure counters decreased")
+        previous = current
+        row = sample
     observed_at = _parse_time(row.get("observed_at"), "memory observed_at")
     age = (now - observed_at).total_seconds()
     available = row.get("mem_available_gib")
@@ -611,7 +647,7 @@ def _latest_memory(
             candidate_start_ticks=candidate_identity[3],
             memory_limit_bytes=memory_limit_bytes,
         )
-    return row, _sha256(row_raw)
+    return row, _sha256(raw)
 
 
 def _validate_ready_quiescence(
@@ -660,6 +696,41 @@ def _validate_ready_quiescence(
         raise RuntimeSourceError("ready quiescence timestamps are inconsistent")
 
 
+def _s1_result_diagnostics(receipt: dict[str, Any]) -> bool:
+    """Validate raw page-in/PSI identities without inventing magnitude gates."""
+    keys = (
+        "pswpin_initial_pages", "pswpin_final_pages", "pswpin_delta_pages",
+        "host_memory_psi_initial_us", "host_memory_psi_final_us",
+        "host_memory_psi_delta_us",
+    )
+    values = [receipt.get(key) for key in keys]
+    if all(value is None for value in values):
+        return receipt.get("status") != "passed"
+    if any(value is None for value in values):
+        return False
+    try:
+        initial, final, delta = (
+            _nonnegative_integer(receipt[key], key) for key in keys[:3]
+        )
+        if final - initial != delta:
+            return False
+        maps = [receipt[key] for key in keys[3:]]
+        if any(
+            not isinstance(value, dict) or set(value) != {"some", "full"}
+            for value in maps
+        ):
+            return False
+        for label in ("some", "full"):
+            beginning, ending, growth = (
+                _nonnegative_integer(value[label], f"PSI {label}") for value in maps
+            )
+            if ending - beginning != growth:
+                return False
+    except RuntimeSourceError:
+        return False
+    return True
+
+
 def _terminal_restoration(
     run_fd: int,
     run_path: Path,
@@ -698,7 +769,7 @@ def _terminal_restoration(
             and receipt.get("run_id") == run_id
             and receipt.get("contract_sha256") == state["contract_sha256"]
             and receipt.get("plan_sha256") == _canonical_sha256(plan)
-            and receipt.get("profile") == plan.get("profile") == "C0-S0"
+            and receipt.get("profile") == plan.get("profile") == "C0-S1"
             and receipt.get("docker_memory_limit_bytes") == memory_limit_bytes
             and receipt.get("docker_memory_swap_total_bytes")
             == memory_swap_total_bytes
@@ -714,6 +785,15 @@ def _terminal_restoration(
         )
         if receipt.get("status") == "passed":
             valid = valid and bool(diagnostic_hash and memory_hash)
+        failure_class = receipt.get("failure_class")
+        valid = valid and failure_class in {
+            None,
+            "experimental_startup_host_pageout_guardrail_abort",
+            "other_qualification_failure",
+            "restoration_unknown",
+        } and _s1_result_diagnostics(receipt)
+        if receipt.get("status") == "passed":
+            valid = valid and failure_class is None
     else:
         valid = (
             receipt.get("schema") == "qwen-flash-next-supervisor-recovery/v1"
@@ -822,8 +902,8 @@ def project_model_runtime(
         if (
             state.get("paging_policy") != PAGING_POLICY
             or plan.get("paging_policy") != PAGING_POLICY
-            or plan.get("profile") != "C0-S0"
-            or contract.get("profile") != "C0-S0"
+            or plan.get("profile") != "C0-S1"
+            or contract.get("profile") != "C0-S1"
             or not isinstance(contract.get("runtime"), dict)
             or contract["runtime"].get("docker_memory_limit_bytes")
             != DOCKER_MEMORY_LIMIT_BYTES
