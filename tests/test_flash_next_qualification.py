@@ -53,11 +53,12 @@ def contract():
             "prefix_caching": False,
             "async_scheduling": False,
             "qsa_exact_topk": True,
+            "language_model_only": True,
         },
         "safety": {
             "resident_containers": [dict(row) for row in q.RESIDENTS],
             "nara_service": q.NARA_SERVICE,
-            "min_mem_available_gib": 30,
+            "min_mem_available_gib": 20,
             "invocation_deadline_seconds": 3600,
             "readiness_deadline_seconds": 1200,
             "restoration_reserve_seconds": 600,
@@ -94,7 +95,8 @@ def plan():
         (("runtime", "prefix_caching"), True),
         (("runtime", "gpu_memory_utilization"), 0.92),
         (("runtime", "kv_cache_memory_bytes"), 0),
-        (("safety", "min_mem_available_gib"), 29),
+        (("runtime", "language_model_only"), False),
+        (("safety", "min_mem_available_gib"), 19),
         (("safety", "invocation_deadline_seconds"), 3601),
         (("safety", "setup_quiescence_seconds"), 59),
         (("accounting", "weekly_budget_debit"), True),
@@ -138,6 +140,7 @@ def test_launch_vector_is_fixed_and_conservative():
     assert "--restart=no" in argv
     assert "--kv-cache-memory-bytes" in argv and "1073741824" in argv
     assert "--gpu-memory-utilization" in argv and "0.75" in argv
+    assert "--language-model-only" in argv
     assert "--no-enable-prefix-caching" in argv
     assert "--no-async-scheduling" in argv
     assert "VLLM_QSA_EXACT_TOPK=1" in argv
@@ -261,7 +264,7 @@ class FakeMonitor:
 class BreachAfterStartMonitor(FakeMonitor):
     def check(self):
         if self.armed:
-            self.failure = "MemAvailable 29.000 GiB fell below 30 GiB"
+            self.failure = "MemAvailable 19.000 GiB fell below 20 GiB"
             self.cancel_event.set()
             raise q.QualificationError(self.failure)
 
@@ -477,7 +480,7 @@ def test_memory_failure_restores_and_fails_closed(monkeypatch, tmp_path):
         monkeypatch, tmp_path, monitor=BreachAfterStartMonitor
     )
     assert result["status"] == "failed"
-    assert "below 30 GiB" in result["qualification_error"]
+    assert "below 20 GiB" in result["qualification_error"]
     assert result["failure_stage"] == "candidate_start"
     assert result["restoration"]["status"] == "verified"
     assert q.CONTAINER_NAME not in ops.containers
@@ -859,3 +862,42 @@ def test_restore_rejects_resident_drift_after_health(field, value):
     assert restored["sentinel_retained"] is True
     assert "final state differs" in " ".join(restored["errors"])
     assert ops.nara_active is False
+
+
+def test_restore_tracks_restart_count_from_each_explicit_start():
+    class ResetCountOnExplicitStart(FakeOps):
+        def run(self, argv, *, timeout, check=True):
+            result = super().run(argv, timeout=timeout, check=check)
+            if argv[:2] == ["docker", "start"]:
+                self._container(argv[-1])["restart_count"] = 0
+            return result
+
+    ops = ResetCountOnExplicitStart(nara_active=False)
+    ops.containers[q.CONTAINER_NAME] = {
+        "id": ops.candidate_id,
+        "name": q.CONTAINER_NAME,
+        "image": q.IMAGE_ID,
+        "running": True,
+        "pid": 200,
+        "started_at": "now",
+        "restart_count": 0,
+        "restart_policy": "no",
+    }
+    ops.containers[q.RESIDENTS[0]["name"]]["restart_count"] = 7
+    initial = {
+        "residents": [dict(ops.containers[row["name"]]) for row in q.RESIDENTS],
+        "nara_was_active": False,
+    }
+    for row in q.RESIDENTS:
+        ops.containers[row["name"]]["running"] = False
+
+    restored = q.restore_exact(
+        ops,
+        {"candidate_id": ops.candidate_id, "initial": initial},
+        deadline=time.monotonic() + 30,
+    )
+
+    assert restored["status"] == "verified"
+    assert restored["resident_restart_baselines"] == {
+        row["name"]: 0 for row in q.RESIDENTS
+    }

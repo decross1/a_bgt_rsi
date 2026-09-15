@@ -207,7 +207,7 @@ def test_resident_window_uses_only_registered_resident_evidence(monkeypatch, tmp
     ("mutation", "match"),
     [
         (lambda value: value["benchmark"].update(runtime_budget_seconds=10_429), "full frozen"),
-        (lambda value: value["safety"].update(min_mem_available_gib=29), "safety envelope"),
+        (lambda value: value["safety"].update(min_mem_available_gib=19), "safety envelope"),
         (lambda value: value["accounting"].update(weekly_budget_debit=True), "accounting"),
         (lambda value: value.update(promotion_authorized=True), "promotion"),
         (lambda value: value.update(shell="curl example.com"), "fields differ"),

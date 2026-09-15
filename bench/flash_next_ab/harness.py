@@ -615,7 +615,9 @@ def validate_flash_qualification_files(
     if _finite_number(
         safety.get("min_mem_available_gib"), "contract minimum MemAvailable"
     ) < registered.MIN_MEMORY_GIB:
-        registration_failures.append("contract memory floor is below registered 30 GiB")
+        registration_failures.append(
+            f"contract memory floor is below registered {registered.MIN_MEMORY_GIB} GiB"
+        )
 
     # The controller writes these siblings from the same bounded attempt.  A
     # failed preflight may legitimately lack later evidence; a pass may not.

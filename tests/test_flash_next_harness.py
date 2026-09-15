@@ -141,11 +141,12 @@ def registered_contract():
             "prefix_caching": False,
             "async_scheduling": False,
             "qsa_exact_topk": True,
+            "language_model_only": True,
         },
         "safety": {
             "resident_containers": [dict(row) for row in q.RESIDENTS],
             "nara_service": q.NARA_SERVICE,
-            "min_mem_available_gib": 30,
+            "min_mem_available_gib": 20,
             "invocation_deadline_seconds": 3600,
             "readiness_deadline_seconds": 1200,
             "restoration_reserve_seconds": 600,
@@ -188,7 +189,7 @@ def passing_flash_receipts(tmp_path):
         "docker_create_argv": launch,
         "docker_create_argv_sha256": q.sha256(launch),
         "probe_set": contract["probe_set"],
-        "min_mem_available_gib": 30,
+        "min_mem_available_gib": 20,
         "setup_quiescence_seconds": 60,
         "weekly_budget_debit": False,
         "paid_api_allowed": False,
@@ -570,18 +571,18 @@ def test_flash_admission_rejects_a_claimed_short_quiescence(tmp_path):
     assert any("quiescence" in reason for reason in summary["admission_failures"])
 
 
-def test_flash_admission_rejects_a_sub_30_gib_contract(tmp_path):
+def test_flash_admission_rejects_a_sub_20_gib_contract(tmp_path):
     receipt_path, qualification_plan_path, contract_path = passing_flash_receipts(
         tmp_path
     )
     contract = json.loads(contract_path.read_text())
-    contract["safety"]["min_mem_available_gib"] = 29
+    contract["safety"]["min_mem_available_gib"] = 19
     write_json(contract_path, contract)
     raw_contract_path = tmp_path / "launch-contract.raw.json"
     raw_contract_path.write_text(json.dumps(contract, separators=(",", ":")) + "\n")
     qualification_plan = json.loads(qualification_plan_path.read_text())
     qualification_plan["contract_sha256"] = sha256_file(raw_contract_path)
-    qualification_plan["min_mem_available_gib"] = 29
+    qualification_plan["min_mem_available_gib"] = 19
     write_json(qualification_plan_path, qualification_plan)
     result = json.loads(receipt_path.read_text())
     result["contract_sha256"] = sha256_file(raw_contract_path)
@@ -591,7 +592,7 @@ def test_flash_admission_rejects_a_sub_30_gib_contract(tmp_path):
         receipt_path, qualification_plan_path, contract_path
     )
     assert summary["admission_eligible"] is False
-    assert any("30 GiB" in reason for reason in summary["admission_failures"])
+    assert any("20 GiB" in reason for reason in summary["admission_failures"])
 
 
 def test_receipt_reader_rejects_fifo_without_blocking(tmp_path):

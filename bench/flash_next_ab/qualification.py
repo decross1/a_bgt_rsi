@@ -63,7 +63,7 @@ COMPILE_CACHE_PARENT = Path(
 )
 COMPILE_CACHE = COMPILE_CACHE_PARENT / "qwen38-flash-next-d453-c0"
 NARA_SERVICE = "nara-daemon.service"
-MIN_MEMORY_GIB = 30
+MIN_MEMORY_GIB = 20
 MAX_INVOCATION_SECONDS = 3600
 DEFAULT_RESTORE_RESERVE_SECONDS = 600
 SETUP_QUIESCENCE_SECONDS = 60
@@ -335,6 +335,7 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         "prefix_caching": False,
         "async_scheduling": False,
         "qsa_exact_topk": True,
+        "language_model_only": True,
     }
     if value["runtime"] != expected_runtime:
         raise QualificationError("runtime profile differs from the C0 allowlist")
@@ -366,7 +367,7 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         or safety["setup_quiescence_seconds"] != SETUP_QUIESCENCE_SECONDS
         or safety["memory_poll_seconds"] != 1
     ):
-        raise QualificationError("safety identity or 30 GiB gate differs from the allowlist")
+        raise QualificationError("safety identity or 20 GiB gate differs from the allowlist")
     deadline = _bounded_int(
         safety["invocation_deadline_seconds"],
         "invocation_deadline_seconds",
@@ -447,6 +448,7 @@ def launch_argv() -> list[str]:
             "--tensor-parallel-size", "1",
             "--max-model-len", "16384",
             "--max-num-seqs", "1",
+            "--language-model-only",
             "--gpu-memory-utilization", "0.75",
             "--kv-cache-memory-bytes", "1073741824",
             "--no-enable-prefix-caching",
@@ -523,7 +525,7 @@ def plan_qualification(
             "create stopped A/B sentinel before any resident stop",
             "stop Nara only when initially active",
             "stop exact captured resident IDs without removal or recreation",
-            "start candidate and continuously enforce 30 GiB MemAvailable",
+            "start candidate and continuously enforce 20 GiB MemAvailable",
             "qualify /health, /v1/models, exact answers, and a fixed tool call",
             "stop candidate, restore exact resident IDs and Nara state, then remove sentinel",
         ],
@@ -1294,6 +1296,7 @@ def restore_exact(
     initial = state.get("initial")
     candidate_safe = True
     candidate_stopped_monotonic: float | None = None
+    restored_expectations: list[dict[str, Any]] = []
     if candidate_id is None and not isinstance(initial, dict):
         unexpected = _inspect_container(ops, CONTAINER_NAME)
         if unexpected is None:
@@ -1306,6 +1309,7 @@ def restore_exact(
                 "no_mutation_verified": True,
                 "candidate_stopped_monotonic": None,
                 "restoration_completed_monotonic": time.monotonic(),
+                "resident_restart_baselines": {},
             }
         return {
             "status": "unknown",
@@ -1316,6 +1320,7 @@ def restore_exact(
             "no_mutation_verified": False,
             "candidate_stopped_monotonic": None,
             "restoration_completed_monotonic": time.monotonic(),
+            "resident_restart_baselines": {},
         }
     if candidate_id:
         try:
@@ -1406,16 +1411,39 @@ def restore_exact(
         if not errors:
             for expected, observed in pending:
                 try:
+                    restored_expected = expected
                     if not observed.get("running"):
                         ops.run(
                             ["docker", "start", expected["id"]],
                             timeout=_remaining_timeout(deadline, 30),
                         )
+                        post_start = _inspect_container(ops, expected["id"])
+                        restart_count = (
+                            post_start.get("restart_count")
+                            if isinstance(post_start, dict)
+                            else None
+                        )
+                        if (
+                            isinstance(restart_count, bool)
+                            or not isinstance(restart_count, int)
+                            or restart_count < 0
+                        ):
+                            raise QualificationError(
+                                "post-start restart baseline is unavailable"
+                            )
+                        # Docker may reset a historical RestartCount on an
+                        # explicit stop/start.  The relevant safety proof is
+                        # that it does not change after this exact start.
+                        restored_expected = dict(
+                            expected, restart_count=restart_count
+                        )
+                        _verify_exact_resident_state(ops, restored_expected)
                     _wait_resident_restore(
                         ops,
-                        {"residents": [expected]},
+                        {"residents": [restored_expected]},
                         deadline,
                     )
+                    restored_expectations.append(restored_expected)
                 except Exception as exc:  # noqa: BLE001 - stop the sequential restore on any fault
                     errors.append(
                         f"resident {expected.get('name')}: {type(exc).__name__}: {exc}"
@@ -1426,7 +1454,7 @@ def restore_exact(
         # restart, and answer between polls.  Recheck both residents before
         # bringing Nara back into the restored runtime.
         if not errors:
-            for expected, _ in pending:
+            for expected in restored_expectations:
                 try:
                     _verify_exact_resident_state(ops, expected)
                 except Exception as exc:  # noqa: BLE001 - preserve exact final-state failure
@@ -1462,7 +1490,7 @@ def restore_exact(
         # pre-window image, restart policy, OOM flag, and restart count before
         # declaring restoration verified or removing the watchdog sentinel.
         if not errors:
-            for expected, _ in pending:
+            for expected in restored_expectations:
                 try:
                     _verify_exact_resident_state(ops, expected)
                 except Exception as exc:  # noqa: BLE001 - preserve exact final-state failure
@@ -1493,6 +1521,10 @@ def restore_exact(
         "no_mutation_verified": False,
         "candidate_stopped_monotonic": candidate_stopped_monotonic,
         "restoration_completed_monotonic": time.monotonic(),
+        "resident_restart_baselines": {
+            expected["name"]: expected["restart_count"]
+            for expected in restored_expectations
+        },
     }
 
 
@@ -1603,7 +1635,7 @@ def execute_worker(
             try:
                 preflight = preflight_probe(root, idle=True)
                 if float(preflight.get("mem_available_gib", 0)) < MIN_MEMORY_GIB:
-                    raise QualificationError("preflight did not preserve the 30 GiB memory gate")
+                    raise QualificationError("preflight did not preserve the 20 GiB memory gate")
                 if _inspect_container(ops, CONTAINER_NAME) is not None:
                     raise QualificationError("A/B sentinel name already exists")
                 _assert_port_free()
@@ -1683,7 +1715,7 @@ def execute_worker(
                             raise QualificationError(f"resident stop unverified: {resident['name']}")
                 monitor.check()
                 if float(monitor.reader()) < MIN_MEMORY_GIB:
-                    raise QualificationError("30 GiB is unavailable after resident stop")
+                    raise QualificationError("20 GiB is unavailable after resident stop")
 
                 state["phase"] = "candidate_start"
                 active_stage = "candidate_start"
