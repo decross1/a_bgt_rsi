@@ -4,6 +4,20 @@ const number = (value: unknown, digits = 1) =>
   typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "Not recorded";
 const label = (value: string) => value.replaceAll("_", " ");
 const familyLabel = (value: string) => value === "topic" ? "Topic output protocol" : label(value);
+type Variant = NonNullable<LocalModelResearchProgress["qualification_runs"][number]["variant"]>;
+function registeredMiaVariant(value: unknown): value is Variant {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return row.id === "mia-925d7be6-c0-s1" &&
+    row.spec_sha256 === "dde4fe1f72cf91de92089a95748cee1f6a8204e351d517aa0ae46d8d27122857" &&
+    row.repository === "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4" &&
+    row.revision === "925d7be6c14c6c9442ef83e8f05b5a3c39304f69" &&
+    row.served_model === "qwen3.8-flash-next-mia" &&
+    row.image_id === "sha256:da68dd27a8ef1dadd0f380178a51f0a0671dc4235933ea1ae89fdaf66295ec72" &&
+    row.model_artifact_sha256 === "a40ce50173dd3aff54da88503894967e5248bbb927f9e4a91eff5a6a7270c168" &&
+    row.qualification_profile === "C0-MIA-S1" &&
+    ["REGISTERED_SOURCE_ONLY", "QUALIFICATION_ADMITTED"].includes(String(row.evidence_class));
+}
 
 export function LocalModelResearchPanel({ data }: { data?: LocalModelResearchProgress }) {
   if (!data || data.schema_version !== "local-model-research-progress/v1") return null;
@@ -23,7 +37,7 @@ export function LocalModelResearchPanel({ data }: { data?: LocalModelResearchPro
         <thead><tr><th scope="col">Run</th><th scope="col">Variant</th><th scope="col">Result</th><th scope="col">Candidate window</th><th scope="col">Host memory headroom</th><th scope="col">Probes</th><th scope="col">Resident restoration</th></tr></thead>
         <tbody>{qualifications.map(run => <tr key={run.id}>
           <th scope="row"><strong>{run.id}</strong><span>{run.finished_at ?? `Last recorded phase: ${label(run.phase)}`}</span></th>
-          <td>{run.variant?.id.startsWith("mia-") ? <><strong>Mia NVFP4</strong><small>{run.variant.revision.slice(0, 8)} · {run.variant.evidence_class === "QUALIFICATION_ADMITTED" ? "runtime qualified" : "registered source only"}</small><details className="benchmark-provenance"><summary>Variant provenance</summary><dl><dt>Repository</dt><dd>{run.variant.repository}</dd><dt>Revision</dt><dd>{run.variant.revision}</dd><dt>Image SHA256</dt><dd>{run.variant.image_id}</dd><dt>Artifact SHA256</dt><dd>{run.variant.model_artifact_sha256}</dd><dt>Spec SHA256</dt><dd>{run.variant.spec_sha256}</dd></dl></details></> : run.id.startsWith("qfn-c0-") ? run.status === "unfinished_receipt" ? "Model identity pending" : "NVIDIA NVFP4 · recorded receipt" : "Variant unavailable"}</td>
+          <td>{registeredMiaVariant(run.variant) ? <><strong>Mia NVFP4</strong><small>{run.variant.revision.slice(0, 8)} · {run.variant.evidence_class === "QUALIFICATION_ADMITTED" ? "runtime qualified" : "registered source only"}</small><details className="benchmark-provenance"><summary>Variant provenance</summary><dl><dt>Repository</dt><dd>{run.variant.repository}</dd><dt>Revision</dt><dd>{run.variant.revision}</dd><dt>Image SHA256</dt><dd>{run.variant.image_id}</dd><dt>Artifact SHA256</dt><dd>{run.variant.model_artifact_sha256}</dd><dt>Spec SHA256</dt><dd>{run.variant.spec_sha256}</dd></dl></details></> : run.id.startsWith("qfn-c0-") ? run.status === "unfinished_receipt" ? "Model identity pending" : "NVIDIA NVFP4 · recorded receipt" : "Variant unavailable"}</td>
           <td>{run.status === "unfinished_receipt" ? "Unfinished receipt · process state unverified" : run.failure_class === "experimental_startup_host_pageout_guardrail_abort" ? "Host paging guardrail stopped qualification · no model-quality conclusion" : run.status === "failed" && run.model_started === false ? "Setup failed · model not started" : label(run.status)}</td>
           <td>{run.model_started === false ? "Not started" : run.candidate_window_minutes === null ? "Not recorded" : `${number(run.candidate_window_minutes)} min maximum`}</td><td>{run.minimum_memory_gib === null ? "Not recorded" : `${number(run.minimum_memory_gib)} GiB minimum`}</td>
           <td>{number(run.probe_count, 0)}</td><td>{label(run.restoration)}</td>
