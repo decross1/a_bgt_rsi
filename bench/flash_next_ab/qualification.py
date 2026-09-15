@@ -2731,7 +2731,6 @@ def execute_worker(
         "plan_sha256": sha256(plan),
         "model_artifact_sha256": model_artifact_sha256(),
         "started_at": state["started_at"],
-        "finished_at": utc_now(),
         "elapsed_seconds": elapsed,
         "challenger_gpu_seconds": gpu_seconds,
         "all_gpu_research_seconds": gpu_seconds,
@@ -2916,6 +2915,7 @@ def execute_worker(
         cgroup_diagnostics_sha256=diagnostic_sha256,
         memory_log_sha256=memory_log_sha256,
     )
+    result["finished_at"] = utc_now()
     state["phase"] = "complete"
     state["restoration"] = restoration
     state["result_status"] = status
