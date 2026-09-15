@@ -225,7 +225,30 @@ def fixture(
                 "memory_events_oom_kill": 0,
             },
         }
-    (run / "memory.jsonl").write_text(json.dumps(memory) + "\n", encoding="utf-8")
+    if candidate_phase:
+        # Producer order: one unarmed load sample, durable cgroup-bind event,
+        # then the armed sample. The event has no pswpin/PSI sample counters.
+        observed = datetime.fromisoformat(memory["observed_at"])
+        before = dict(memory)
+        before.pop("candidate")
+        before["observed_at"] = (observed - timedelta(seconds=0.5)).isoformat()
+        before["monitor_phase"] = "load"
+        before["paging_gate"] = "startup"
+        before["ready_quiescence_active"] = False
+        before["ready_quiescence_epoch"] = None
+        bind = {
+            "schema": "qwen-flash-next-cgroup-bind/v1",
+            "observed_at": (observed - timedelta(seconds=0.25)).isoformat(),
+            "candidate_id": CONTAINER,
+            "pid": 300,
+            "cgroup": memory["candidate"]["cgroup"],
+        }
+        memory_rows = [before, bind, memory]
+    else:
+        memory_rows = [memory]
+    (run / "memory.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in memory_rows), encoding="utf-8"
+    )
 
     proc = tmp_path / "proc"
     boot = proc / "sys/kernel/random/boot_id"
@@ -255,6 +278,26 @@ def fixture(
     return root, run, proc, boot, state, plan
 
 
+def memory_rows(path):
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def write_memory_rows(path, rows):
+    path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+
+
+def last_memory_sample(path):
+    return memory_rows(path)[-1]
+
+
+def write_last_memory_sample(path, sample):
+    rows = memory_rows(path)
+    rows[-1] = sample
+    write_memory_rows(path, rows)
+
+
 def project(root, proc, boot, **kwargs):
     terminal_validator = kwargs.pop("terminal_validator", lambda _path: None)
     return project_model_runtime(
@@ -280,6 +323,51 @@ def test_live_candidate_phase_reports_authorized_research_expectations(tmp_path)
     assert row["run_id"] == RUN_ID
     assert row["phase"] == "readiness"
     assert row["source_error"] is None
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["missing", "duplicate", "wrong_id", "wrong_pid", "wrong_ticks", "wrong_phase", "emergency"],
+)
+def test_live_candidate_requires_one_exact_durable_bind_event(tmp_path, mutation):
+    root, run, proc, boot, _state, _plan = fixture(tmp_path)
+    source = run / "memory.jsonl"
+    rows = [json.loads(line) for line in source.read_text().splitlines()]
+    assert [row["schema"] for row in rows] == [
+        "qwen-flash-next-memory-sample/v3",
+        "qwen-flash-next-cgroup-bind/v1",
+        "qwen-flash-next-memory-sample/v3",
+    ]
+    if mutation == "missing":
+        del rows[1]
+    elif mutation == "duplicate":
+        rows.insert(2, dict(rows[1]))
+    elif mutation == "wrong_id":
+        rows[1]["candidate_id"] = "d" * 64
+    elif mutation == "wrong_pid":
+        rows[1]["pid"] = 301
+    elif mutation == "wrong_ticks":
+        rows[1]["cgroup"]["process_start_ticks"] = 4445
+    elif mutation == "wrong_phase":
+        rows[0]["monitor_phase"] = "setup"
+    else:
+        rows.append({
+            "observed_at": NOW.isoformat(), "event": "emergency_candidate_stop",
+            "candidate_id": CONTAINER, "returncode": 0,
+        })
+    source.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    projected = project(root, proc, boot)
+    assert projected["mode"] == "unknown"
+    assert projected["mode_source"] == "none"
+
+
+def test_transition_before_arm_does_not_claim_candidate_research(tmp_path):
+    root, _run, proc, boot, _state, _plan = fixture(
+        tmp_path, phase="candidate_start"
+    )
+    projected = project(root, proc, boot)
+    assert projected["mode"] == "transitioning"
+    assert projected["resident_services_expected"] == "unknown"
 
 
 def test_setup_and_stop_restore_phases_are_transitions(tmp_path):
@@ -427,17 +515,17 @@ def test_candidate_mode_requires_matching_live_cgroup_evidence(tmp_path):
 
     root, run, proc, boot, _state, _plan = fixture(tmp_path / "memory")
     memory_path = run / "memory.jsonl"
-    memory = json.loads(memory_path.read_text())
+    memory = last_memory_sample(memory_path)
     memory["candidate"]["cgroup"]["memory_swap_current_bytes"] = 4096
-    memory_path.write_text(json.dumps(memory) + "\n")
+    write_last_memory_sample(memory_path, memory)
     assert project(root, proc, boot)["mode"] == "unknown"
 
     root, run, proc, boot, _state, _plan = fixture(tmp_path / "unarmed")
     memory_path = run / "memory.jsonl"
-    memory = json.loads(memory_path.read_text())
+    memory = last_memory_sample(memory_path)
     memory["candidate"]["armed"] = False
     memory["candidate"]["cgroup"] = None
-    memory_path.write_text(json.dumps(memory) + "\n")
+    write_last_memory_sample(memory_path, memory)
     assert project(root, proc, boot)["mode"] == "unknown"
 
 
@@ -481,7 +569,7 @@ def test_candidate_mode_rejects_missing_or_drifted_no_swap_diagnostics(
 ):
     root, run, proc, boot, _state, _plan = fixture(tmp_path)
     memory_path = run / "memory.jsonl"
-    memory = json.loads(memory_path.read_text())
+    memory = last_memory_sample(memory_path)
     candidate = memory["candidate"]
     cgroup = candidate["cgroup"]
     if field == "cgroup_memory_max":
@@ -498,16 +586,20 @@ def test_candidate_mode_rejects_missing_or_drifted_no_swap_diagnostics(
         cgroup["memory_events_local"]["oom"] = value
     elif field == "host_meminfo_missing":
         del memory["host_meminfo_kib"]["SwapFree"]
-    memory_path.write_text(json.dumps(memory) + "\n", encoding="utf-8")
+    write_last_memory_sample(memory_path, memory)
     assert project(root, proc, boot)["mode"] == "unknown"
 
 
 def test_registered_v3_memory_reader_accepts_more_than_legacy_four_megabytes(tmp_path):
     root, run, proc, boot, _state, _plan = fixture(tmp_path)
     memory_path = run / "memory.jsonl"
-    one_sample = memory_path.read_bytes()
+    rows = memory_rows(memory_path)
+    one_sample = (json.dumps(rows[-1]) + "\n").encode()
     copies = (5 * 1024 * 1024 // len(one_sample)) + 1
-    memory_path.write_bytes(one_sample * copies)
+    memory_path.write_bytes(
+        "".join(json.dumps(row) + "\n" for row in rows[:-1]).encode()
+        + one_sample * copies
+    )
     assert 4 * 1024 * 1024 < memory_path.stat().st_size < 32 * 1024 * 1024
     assert project(root, proc, boot)["mode"] == "candidate_research"
 
@@ -522,36 +614,36 @@ def test_registered_v3_memory_reader_accepts_more_than_legacy_four_megabytes(tmp
 def test_s1_raw_pagein_and_pressure_diagnostics_are_required(tmp_path, field):
     root, run, proc, boot, _state, _plan = fixture(tmp_path)
     memory_path = run / "memory.jsonl"
-    sample = json.loads(memory_path.read_text())
+    sample = last_memory_sample(memory_path)
     del sample[field]
-    memory_path.write_text(json.dumps(sample) + "\n", encoding="utf-8")
+    write_last_memory_sample(memory_path, sample)
     assert project(root, proc, boot)["mode"] == "unknown"
 
 
 def test_s1_pagein_and_pressure_are_monotonic_across_the_full_bounded_log(tmp_path):
     root, run, proc, boot, _state, _plan = fixture(tmp_path)
     memory_path = run / "memory.jsonl"
-    final = json.loads(memory_path.read_text())
+    prefix = memory_rows(memory_path)[:-1]
+    final = last_memory_sample(memory_path)
     earlier = json.loads(json.dumps(final))
     earlier["pswpin_pages"] = 8
     earlier["pswpin_delta_pages"] = 1
     earlier["host_memory_psi_total_us"]["some"] = 101
     earlier["host_memory_psi_delta_us"]["some"] = 1
-    memory_path.write_text(
-        json.dumps(earlier) + "\n" + json.dumps(final) + "\n", encoding="utf-8"
-    )
+    write_memory_rows(memory_path, [*prefix, earlier, final])
     assert project(root, proc, boot)["mode"] == "unknown"
 
     earlier = json.loads(json.dumps(final))
     later = json.loads(json.dumps(final))
     later["pswpin_pages"] = 8
     later["pswpin_delta_pages"] = 0  # Raw counter rose without its delta.
-    memory_path.write_text(
-        json.dumps(earlier) + "\n" + json.dumps(later) + "\n", encoding="utf-8"
-    )
+    write_memory_rows(memory_path, [*prefix, earlier, later])
     assert project(root, proc, boot)["mode"] == "unknown"
 
-    memory_path.write_text("{malformed}\n" + json.dumps(final) + "\n")
+    memory_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in prefix)
+        + "{malformed}\n" + json.dumps(final) + "\n"
+    )
     assert project(root, proc, boot)["mode"] == "unknown"
 
 
@@ -560,7 +652,8 @@ def test_s1_pagein_and_pressure_magnitude_is_diagnostic_not_a_new_hard_gate(
 ):
     root, run, proc, boot, _state, _plan = fixture(tmp_path)
     memory_path = run / "memory.jsonl"
-    first = json.loads(memory_path.read_text())
+    prefix = memory_rows(memory_path)[:-1]
+    first = last_memory_sample(memory_path)
     later = json.loads(json.dumps(first))
     later["pswpin_pages"] = 100_000
     later["pswpin_delta_pages"] = 100_000 - first["pswpin_pages"]
@@ -569,9 +662,7 @@ def test_s1_pagein_and_pressure_magnitude_is_diagnostic_not_a_new_hard_gate(
         "some": 1_000_000 - first["host_memory_psi_total_us"]["some"],
         "full": 100_000 - first["host_memory_psi_total_us"]["full"],
     }
-    memory_path.write_text(
-        json.dumps(first) + "\n" + json.dumps(later) + "\n", encoding="utf-8"
-    )
+    write_memory_rows(memory_path, [*prefix, later])
     assert project(root, proc, boot)["mode"] == "candidate_research"
 
 
@@ -630,7 +721,7 @@ def test_candidate_mode_rejects_lifecycle_or_paging_drift(tmp_path):
 
     root, run, proc, boot, _state, _plan = fixture(tmp_path / "threshold")
     memory_path = run / "memory.jsonl"
-    memory = json.loads(memory_path.read_text())
+    memory = last_memory_sample(memory_path)
     delta_pages = q.PAGING_POLICY["load"]["window_5s_breach_bytes"] // 4096
     memory.update(
         pswpout_pages=10 + delta_pages,
@@ -641,23 +732,23 @@ def test_candidate_mode_rejects_lifecycle_or_paging_drift(tmp_path):
         host_swap_5s_bytes=delta_pages * 4096,
         host_swap_60s_bytes=delta_pages * 4096,
     )
-    memory_path.write_text(json.dumps(memory) + "\n")
+    write_last_memory_sample(memory_path, memory)
     assert project(root, proc, boot)["mode"] == "unknown"
 
     root, run, proc, boot, _state, _plan = fixture(tmp_path / "sample-gap")
     memory_path = run / "memory.jsonl"
-    memory = json.loads(memory_path.read_text())
+    memory = last_memory_sample(memory_path)
     memory["sample_gap_seconds"] = q.PAGING_POLICY["max_sample_gap_seconds"] + 0.001
-    memory_path.write_text(json.dumps(memory) + "\n")
+    write_last_memory_sample(memory_path, memory)
     assert project(root, proc, boot)["mode"] == "unknown"
 
     root, run, proc, boot, _state, _plan = fixture(
         tmp_path / "wrong-gate", phase="ready_stabilization"
     )
     memory_path = run / "memory.jsonl"
-    memory = json.loads(memory_path.read_text())
+    memory = last_memory_sample(memory_path)
     memory["paging_gate"] = "serving"
-    memory_path.write_text(json.dumps(memory) + "\n")
+    write_last_memory_sample(memory_path, memory)
     assert project(root, proc, boot)["mode"] == "unknown"
 
 
@@ -666,7 +757,7 @@ def test_ready_phase_uses_cumulative_startup_gate_for_windows_and_total(tmp_path
         tmp_path / "within", phase="ready_stabilization"
     )
     memory_path = run / "memory.jsonl"
-    memory = json.loads(memory_path.read_text())
+    memory = last_memory_sample(memory_path)
     memory.update(
         pswpout_pages=12,
         pswpout_delta_pages=2,
@@ -679,14 +770,14 @@ def test_ready_phase_uses_cumulative_startup_gate_for_windows_and_total(tmp_path
         host_swap_5s_bytes=4096,
         host_swap_60s_bytes=8192,
     )
-    memory_path.write_text(json.dumps(memory) + "\n")
+    write_last_memory_sample(memory_path, memory)
     assert project(root, proc, boot)["mode"] == "candidate_research"
 
     root, run, proc, boot, _state, _plan = fixture(
         tmp_path / "breach", phase="ready_stabilization"
     )
     memory_path = run / "memory.jsonl"
-    memory = json.loads(memory_path.read_text())
+    memory = last_memory_sample(memory_path)
     delta_pages = q.PAGING_POLICY["load"]["phase_total_breach_bytes"] // 4096
     current_pages = 10 + delta_pages
     memory.update(
@@ -699,7 +790,7 @@ def test_ready_phase_uses_cumulative_startup_gate_for_windows_and_total(tmp_path
         phase_pswpout_delta_pages=0,
         phase_pswpout_delta_bytes=0,
     )
-    memory_path.write_text(json.dumps(memory) + "\n")
+    write_last_memory_sample(memory_path, memory)
     assert project(root, proc, boot)["mode"] == "unknown"
 
 

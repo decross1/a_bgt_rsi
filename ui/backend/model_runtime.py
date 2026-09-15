@@ -456,8 +456,30 @@ def _latest_memory(
     if not lines or len(lines) > MAX_MEMORY_ROWS or any(not line.strip() for line in lines):
         raise RuntimeSourceError("memory gate has no samples")
     previous = None
+    latest_sample = None
+    cgroup_binds: list[dict[str, Any]] = []
+    sampled_before_bind = False
+    sampled_after_bind = False
     for line in lines:
         sample = _strict_object(line, "memory gate sample")
+        if sample.get("schema") == "qwen-flash-next-cgroup-bind/v1":
+            if (
+                not sampled_before_bind
+                or cgroup_binds
+                or latest_sample is None
+                or latest_sample.get("monitor_phase") != "load"
+                or latest_sample.get("candidate") is not None
+            ):
+                raise RuntimeSourceError("candidate cgroup bind is duplicated or out of order")
+            cgroup_binds.append(sample)
+            continue
+        if sample.get("schema") != MEMORY_SCHEMA:
+            # Emergency-stop and unknown rows cannot establish a live window.
+            raise RuntimeSourceError("memory stream contains an unrecognized event")
+        if cgroup_binds:
+            sampled_after_bind = True
+        else:
+            sampled_before_bind = True
         page_in = _nonnegative_integer(sample.get("pswpin_pages"), "host pswpin")
         page_in_delta = _nonnegative_integer(
             sample.get("pswpin_delta_pages"), "whole-window pswpin"
@@ -491,7 +513,10 @@ def _latest_memory(
         ):
             raise RuntimeSourceError("host page-in or pressure counters decreased")
         previous = current
-        row = sample
+        latest_sample = sample
+    if latest_sample is None:
+        raise RuntimeSourceError("memory gate has no sample rows")
+    row = latest_sample
     observed_at = _parse_time(row.get("observed_at"), "memory observed_at")
     age = (now - observed_at).total_seconds()
     available = row.get("mem_available_gib")
@@ -639,6 +664,27 @@ def _latest_memory(
         ):
             raise RuntimeSourceError("live host paging reached its registered threshold")
     if candidate_identity is not None:
+        if len(cgroup_binds) != 1 or not sampled_after_bind:
+            raise RuntimeSourceError("observed candidate cgroup bind is unavailable")
+        bound = cgroup_binds[0]
+        snapshot = bound.get("cgroup")
+        if (
+            bound.get("candidate_id") != candidate_identity[0]
+            or bound.get("pid") != candidate_identity[2]
+            or not isinstance(snapshot, dict)
+            or snapshot.get("path") != candidate_identity[1]
+            or snapshot.get("process_start_ticks") != candidate_identity[3]
+            or snapshot.get("memory_max_bytes") != memory_limit_bytes
+            or snapshot.get("memory_swap_max_bytes") != 0
+            or snapshot.get("memory_swap_current_bytes") != 0
+            or snapshot.get("memory_events_oom") != 0
+            or snapshot.get("memory_events_oom_kill") != 0
+        ):
+            raise RuntimeSourceError("observed candidate cgroup bind differs")
+        bind_at = _parse_time(bound.get("observed_at"), "cgroup bind observed_at")
+        sample_at = _parse_time(row.get("observed_at"), "armed sample observed_at")
+        if bind_at > sample_at + timedelta(seconds=MAX_CLOCK_SKEW_SECONDS):
+            raise RuntimeSourceError("candidate cgroup bind follows the armed sample")
         _candidate_memory_is_bound(
             row,
             candidate_id=candidate_identity[0],
