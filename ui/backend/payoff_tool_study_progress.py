@@ -169,7 +169,9 @@ def _closed_unissued(output: Path) -> str:
             or row.get("trading_claim_authorized") is not False
             or row.get("absent_paths_at_close") != list(ABSENT_AFTER_CLOSE)
             or any((output / name).exists() or (output / name).is_symlink()
-                   for name in ABSENT_AFTER_CLOSE)):
+                   for name in ABSENT_AFTER_CLOSE)
+            or any(child.name not in {"plan.json", "window.json", "not-issued.json"}
+                   for child in output.iterdir())):
         raise ValueError("payoff-tool closed no-call receipt or present sources differ")
     return raw_sha
 

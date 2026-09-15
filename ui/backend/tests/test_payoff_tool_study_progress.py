@@ -72,6 +72,9 @@ def test_fixed_closed_no_call_receipt_requires_absence_of_worker_sources(prepare
     assert row["status"] == "closed_unissued"
     assert row["nonexecution_raw_sha256"] == p.NONEXECUTION_SHA
     assert row["results"] is None
+    (output / "controller.log").write_bytes(b"controller may have opened a child\n")
+    assert p.project_progress(root)["status"] == "source_unavailable"
+    (output / "controller.log").unlink()
     (output / "supervision-reservation.json").write_bytes(b"{}\n")
     assert p.project_progress(root)["status"] == "source_unavailable"
 
