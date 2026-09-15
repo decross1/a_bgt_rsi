@@ -28,6 +28,20 @@ const admitted = {
   promotion_authorized: false, registered_pair_ids: [pair, "qfn-ab-lab-primary-20260915-a"],
   cohorts: { resident: cohort("resident"), flash: cohort("flash") },
 };
+const pending = {
+  ...admitted, status: "pending_admission", source_status: "prepared_sources_verified",
+  grade_replay: "not_available", cohorts: null,
+  provisional_execution: {
+    resident: { schema_version: "lab-model-eval-execution/v1",
+      cohort: "resident", plan_raw_sha256: sha,
+      status: "recorded_prefix", recorded_cells: 13,
+      checkpoint_raw_sha256: sha, run_raw_sha256: null },
+    flash: { schema_version: "lab-model-eval-execution/v1",
+      cohort: "flash", plan_raw_sha256: sha,
+      status: "prepared", recorded_cells: null,
+      checkpoint_raw_sha256: null, run_raw_sha256: null },
+  },
+};
 
 describe("paired lab model publication", () => {
   it("shows only pending status for a frozen but incomplete pair", () => {
@@ -36,6 +50,42 @@ describe("paired lab model publication", () => {
     expect(screen.getByText(/source-bound 126-task paired plan is frozen/)).toBeInTheDocument();
     expect(screen.queryByText("24 / 24")).not.toBeInTheDocument();
     expect(screen.getByText(/Earlier registered window IDs remain/)).toBeInTheDocument();
+  });
+
+  it("labels bound checkpoint order as provisional execution without grades", () => {
+    const { rerender } = render(<LabModelEvaluationPanel data={pending} />);
+    expect(screen.getByText(/Resident: 13\/126 cells recorded/)).toBeInTheDocument();
+    expect(screen.getByText(/Flash: prepared/)).toBeInTheDocument();
+    expect(screen.getByText(/A recorded cell may be a failed or skipped task/))
+      .toBeInTheDocument();
+    expect(screen.queryByText("24 / 24")).not.toBeInTheDocument();
+    rerender(<LabModelEvaluationPanel data={{ ...pending, provisional_execution: {
+      ...pending.provisional_execution,
+      resident: { ...pending.provisional_execution.resident,
+        status: "awaiting_verification", recorded_cells: null,
+        checkpoint_raw_sha256: null, run_raw_sha256: sha },
+    } }} />);
+    expect(screen.getByText(/Resident: recorded run awaiting verification/)).toBeInTheDocument();
+    expect(screen.queryByText(/Resident: 13\/126 cells recorded/)).not.toBeInTheDocument();
+  });
+
+  it("withholds provisional count on stale polling or unbound execution receipt", () => {
+    const { rerender } = render(<LabModelEvaluationPanel data={pending} pollingFailed />);
+    expect(screen.queryByText(/Resident: 13\/126 cells recorded/)).not.toBeInTheDocument();
+    rerender(<LabModelEvaluationPanel data={{ ...pending, provisional_execution: {
+      ...pending.provisional_execution,
+      resident: { ...pending.provisional_execution.resident,
+        checkpoint_raw_sha256: null },
+    } }} />);
+    expect(screen.queryByText(/Resident: 13\/126 cells recorded/)).not.toBeInTheDocument();
+    rerender(<LabModelEvaluationPanel data={{ ...pending,
+      source_status: "unverified" }} />);
+    expect(screen.queryByText(/Resident: 13\/126 cells recorded/)).not.toBeInTheDocument();
+    rerender(<LabModelEvaluationPanel data={{ ...pending, provisional_execution: {
+      ...pending.provisional_execution,
+      resident: { ...pending.provisional_execution.resident, cohort: "flash" },
+    } }} />);
+    expect(screen.queryByText(/Resident: 13\/126 cells recorded/)).not.toBeInTheDocument();
   });
 
   it("shows admitted family denominators, throughput and measured versus configured context", () => {

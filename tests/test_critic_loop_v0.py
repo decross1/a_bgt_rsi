@@ -6,10 +6,13 @@ function with scripted SubAgentResults to exercise every status + verdict
 `neighbors` from the per-iteration cache by `iteration_id`, so each test
 pre-populates the cache via the `cache` fixture in tests/conftest.py.
 """
+import hashlib
+import json
 import sys
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -870,7 +873,19 @@ def test_debate_armed_replaces_the_single_shot_attack(cache, monkeypatch):
     def fake_debate(claim, evidence, *, iteration_id=None, **kw):
         seen["claim"], seen["evidence"], seen["iteration_id"] = (
             claim, evidence, iteration_id)
-        return _debate_out("survives_debate", stop_reason="challenger_conceded")
+        turns = [
+            {"round": 1, "role": "challenger", "backend": "vllm-qwen",
+             "model": "qwen3.6-27b-nvfp4-mtp", "text": "OBJECT: cited objection",
+             "wall_seconds": 1.5},
+            {"round": 1, "role": "defender", "backend": "vllm-gemma",
+             "model": "gemma-4-26b-a4b-nvfp4", "text": "REBUT: cited answer",
+             "wall_seconds": 2.0},
+            {"round": 2, "role": "challenger", "backend": "vllm-qwen",
+             "model": "qwen3.6-27b-nvfp4-mtp", "text": "CONCEDE: no objection",
+             "wall_seconds": 0.0},
+        ]
+        return _debate_out("survives_debate", stop_reason="challenger_conceded",
+                           turns=turns)
     _install_fake_debate(monkeypatch, fake_debate)
     monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
     _stage(cache, "dbt-2", _neighbors("a"))
@@ -980,13 +995,13 @@ def test_debate_transcript_is_capped_in_the_record(cache, monkeypatch):
          "role": "challenger" if i % 2 == 0 else "defender",
          "backend": "vllm-qwen" if i % 2 == 0 else "vllm-gemma",
          "model": "qwen3.6-27b-nvfp4-mtp" if i % 2 == 0 else "gemma-4-26b-a4b-nvfp4",
-         "text": "OBJECT: " + "x" * 2000, "wall_seconds": 1.0}
-        for i in range(8)
+         "text": "OBJECT: " + "x" * 2000, "wall_seconds": float(i + 1)}
+        for i in range(12)
     ]
     _install_fake_skeptic(monkeypatch, lambda *a, **k: {})
     _install_fake_debate(
         monkeypatch,
-        lambda *a, **k: _debate_out("inconclusive", rounds=4,
+        lambda *a, **k: _debate_out("inconclusive", rounds=6,
                                     stop_reason="round_cap", turns=long_turns))
     monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
     _stage(cache, "dbt-5", _neighbors("a"))
@@ -995,6 +1010,100 @@ def test_debate_transcript_is_capped_in_the_record(cache, monkeypatch):
     assert len(transcript) == crit_mod.DEBATE_TRANSCRIPT_TURNS == 6
     assert all(len(t["text"]) <= crit_mod.DEBATE_TURN_TEXT_CHARS for t in transcript)
     assert all(t["backend"] and t["model"] for t in transcript)
+    debate = res["debate"]
+    chronology = debate["turn_chronology"]
+    assert debate["stop_reason"] == "round_cap"
+    assert debate["turn_count"] == len(chronology) == 12
+    assert debate["chronology_truncated"] is False
+    assert debate["chronology_complete"] is True
+    assert (debate["observed_turn_wall_seconds"] == debate["turn_wall_seconds"]
+            == res["skeptic_wall_seconds"] == 78.0)
+    assert res["skeptic_elapsed_wall_seconds"] == debate["elapsed_wall_seconds"]
+    assert sum(t["wall_seconds"] for t in transcript) == 21.0
+    assert debate["elapsed_wall_seconds"] >= 0
+    assert [t["round"] for t in chronology] == [i // 2 + 1 for i in range(12)]
+    assert all(set(t) == {"round", "role", "backend", "model",
+                          "wall_seconds", "failed", "text_sha256"}
+               for t in chronology)
+    assert all(t["failed"] is False for t in chronology)
+    assert [t["text_sha256"] for t in chronology] == [
+        hashlib.sha256(t["text"].encode()).hexdigest() for t in long_turns
+    ]
+    schema = json.loads((REPO_ROOT / "schema/iteration_record.schema.json").read_text())
+    debate_schema = schema["properties"]["critique"]["properties"]["debate"]
+    assert not list(Draft202012Validator(debate_schema).iter_errors(debate))
+
+
+@pytest.mark.parametrize("bad_wall", [None, float("nan")])
+def test_debate_incomplete_duration_exposes_only_observed_subtotal(
+    cache, monkeypatch, bad_wall
+):
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_DEBATE", "1")
+    turns = _debate_out("refuted", rounds=1)["transcript"]
+    turns[1]["wall_seconds"] = bad_wall
+    _install_fake_debate(monkeypatch, lambda *a, **k: _debate_out(
+        "refuted", rounds=1, turns=turns))
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "dbt-incomplete", _neighbors("a"))
+    res = crit_mod.critic_loop_v0("h", "dbt-incomplete")["result"]
+    assert res["verdict"] == "refuted"  # epistemic behavior is unchanged
+    assert "skeptic_wall_seconds" not in res
+    debate = res["debate"]
+    assert debate["chronology_complete"] is False
+    assert debate["chronology_truncated"] is False
+    assert debate["turn_count"] == 2
+    assert debate["turn_chronology"][1]["wall_seconds"] is None
+    assert debate["observed_turn_wall_seconds"] == 1.5
+    assert "turn_wall_seconds" not in debate
+    assert res["skeptic_elapsed_wall_seconds"] == debate["elapsed_wall_seconds"]
+
+
+def test_debate_oversize_chronology_is_bounded_and_not_total(cache, monkeypatch):
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_DEBATE", "1")
+    turns = [
+        {"round": i // 2 + 1, "role": "challenger" if i % 2 == 0 else "defender",
+         "backend": "vllm-qwen", "model": "m", "text": "OBJECT: x",
+         "wall_seconds": 1.0}
+        for i in range(14)
+    ]
+    _install_fake_debate(monkeypatch, lambda *a, **k: _debate_out(
+        "inconclusive", rounds=6, stop_reason="round_cap", turns=turns))
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "dbt-oversize", _neighbors("a"))
+    res = crit_mod.critic_loop_v0("h", "dbt-oversize")["result"]
+    debate = res["debate"]
+    assert debate["turn_count"] == len(debate["turn_chronology"]) == 13
+    assert debate["chronology_truncated"] is True
+    assert debate["chronology_complete"] is False
+    assert debate["observed_turn_wall_seconds"] == 13.0
+    assert "turn_wall_seconds" not in debate
+    assert "skeptic_wall_seconds" not in res
+
+
+def test_six_round_stop_with_only_excerpt_turns_is_not_a_full_total(
+    cache, monkeypatch
+):
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_DEBATE", "1")
+    turns = [
+        {"round": i // 2 + 1, "role": "challenger" if i % 2 == 0 else "defender",
+         "backend": "vllm-qwen", "model": "m", "text": "OBJECT: x",
+         "wall_seconds": 1.0}
+        for i in range(6)
+    ]
+    _install_fake_debate(monkeypatch, lambda *a, **k: _debate_out(
+        "inconclusive", rounds=6, stop_reason="round_cap", turns=turns))
+    monkeypatch.setattr(crit_mod, "run_subagent", _survives_subagent())
+    _stage(cache, "dbt-excerpt-only", _neighbors("a"))
+    res = crit_mod.critic_loop_v0("h", "dbt-excerpt-only")["result"]
+    assert res["debate"]["turn_count"] == 6
+    assert res["debate"]["observed_turn_wall_seconds"] == 6.0
+    assert res["debate"]["chronology_complete"] is False
+    assert res["debate"]["chronology_truncated"] is False
+    assert "skeptic_wall_seconds" not in res
+    assert "turn_wall_seconds" not in res["debate"]
 
 
 def test_debate_crash_is_recorded_not_fatal(cache, monkeypatch):
@@ -1013,3 +1122,6 @@ def test_debate_crash_is_recorded_not_fatal(cache, monkeypatch):
     assert out["result"]["skeptic_verdict"].startswith("error:")
     assert out["result"]["skeptic_backend"] == "vllm-qwen"
     assert "debate" not in out["result"]
+    assert "skeptic_wall_seconds" not in out["result"]
+    assert isinstance(out["result"]["skeptic_elapsed_wall_seconds"], float)
+    assert out["result"]["skeptic_elapsed_wall_seconds"] >= 0

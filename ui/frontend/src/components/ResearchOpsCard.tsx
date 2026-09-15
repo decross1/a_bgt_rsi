@@ -27,6 +27,7 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   const gate = obj(view?.dispatch_gate) ? view.dispatch_gate : null;
   const ingestion = obj(view?.ingestion) ? view.ingestion : null;
   const legacy = obj(view?.ingestion_legacy_log) ? view.ingestion_legacy_log : null;
+  const empirical = obj(view?.empirical_pilot) ? view.empirical_pilot : null;
 
   const campaignId = campaign && ID.test(String(campaign.campaign_id)) && SHA.test(String(campaign.manifest_sha256)) ? String(campaign.campaign_id) : null;
   const queueStatus = queue && typeof queue.status === "string" && queues.has(queue.status) &&
@@ -39,12 +40,21 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   const registeredWork = plannedWork && plannedWork.activation_required === false &&
     campaignId === plannedWork.campaign_id && campaign?.manifest_sha256 === plannedWork.manifest_sha256 &&
     (workCode === "run_preregistered_campaign_topic" ||
-      workCode === "freeze_and_run_registered_empirical_study");
+      workCode === "freeze_and_run_registered_empirical_study" ||
+      workCode === "review_admitted_empirical_pilot");
+  const pilotAdmitted = empirical && empirical.status === "recorded_admitted" &&
+    ID.test(String(empirical.window_id)) && SHA.test(String(empirical.admission_receipt_sha256)) &&
+    SHA.test(String(empirical.pilot_run_sha256)) && count(empirical.attempted_calls) &&
+    empirical.attempted_calls <= 108 && count(empirical.complete_episodes) &&
+    empirical.complete_episodes <= 12 && empirical.current_source_replay === "not_performed" &&
+    plannedWork?.pilot_admission_receipt_sha256 === empirical.admission_receipt_sha256;
   const successorWork = plannedWork && workCode === "activate_registered_successor" &&
     plannedWork.activation_required === true && nextId === plannedWork.campaign_id &&
     next?.manifest_sha256 === plannedWork.manifest_sha256;
   const linked = iteration && iteration.kind === "campaign_iteration_recorded" && ID.test(String(iteration.iteration_id)) &&
     ID.test(String(iteration.topic_id)) && utc(iteration.at) && SHA.test(String(iteration.loop_source_sha256)) ? iteration : null;
+  const linkedGate = linked && ["pending", "blocked", "passed", "failed"].includes(String(linked.gate_status))
+    ? String(linked.gate_status) : "unknown";
   const boundCycle = cycle && ID.test(String(cycle.run_id)) && utc(cycle.at) && SHA.test(String(cycle.raw_row_sha256)) &&
     SHA.test(String(cycle.cycles_source_sha256)) && count(cycle.planned_count) && count(cycle.dispatched_count) &&
     count(cycle.outcome_count) && (cycle.action_code === "noop" || cycle.action_code === "actions_planned") &&
@@ -70,6 +80,9 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   else if (registeredWork && workCode === "freeze_and_run_registered_empirical_study" &&
            ID.test(String(plannedWork.study_id)) && SHA.test(String(plannedWork.preregistration_sha256)))
     nextWork = `Freeze and run registered study ${String(plannedWork.study_id)}`;
+  else if (registeredWork && workCode === "review_admitted_empirical_pilot" && pilotAdmitted &&
+           ID.test(String(plannedWork.study_id)) && SHA.test(String(plannedWork.preregistration_sha256)))
+    nextWork = `Review admitted binary pilot ${String(plannedWork.study_id)}`;
   else if (registeredWork && workCode === "run_preregistered_campaign_topic" &&
            ID.test(String(plannedWork.topic_id)) && eligible !== null && eligible > 0)
     nextWork = `Run registered topic ${String(plannedWork.topic_id)}`;
@@ -100,6 +113,8 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Next campaign work</dt>
           <dd className="mt-1">{nextWork}</dd>
           {successorWork || registeredWork ? <dd className="mt-1 text-xs text-[var(--fg-muted)]">Registered next step; no task dispatch is implied.</dd> : null}
+          {pilotAdmitted && registeredWork && workCode === "review_admitted_empirical_pilot" &&
+            <dd className="mt-1 text-xs text-[var(--fg-muted)]">Recorded pilot: {String(empirical?.complete_episodes)} complete episodes, {String(empirical?.attempted_calls)} attempted calls. Current source replay was not performed; the continuous-weight hypothesis remains unconfirmed.</dd>}
           {campaignId && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Active campaign {campaignId}{consumed !== null ? ` · ${consumed} topics used` : ""}</dd>}
           {nextId && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Next registered campaign {nextId} awaits activation.</dd>}
           {queueStatus === "all_registered_topics_consumed" && gate?.other_actionable_work === "not_assessed" &&
@@ -108,6 +123,7 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Last linked campaign iteration</dt>
           <dd className="mt-1">{linked ? `${String(linked.iteration_id)} · ${stamp(linked.at)}` : "No linked iteration verified in this observation"}</dd>
           {linked && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Topic {String(linked.topic_id)}</dd>}
+          {linked && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Review gate: {linkedGate}. A linked iteration does not itself establish an accepted finding.</dd>}
         </div>
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Latest coordinator cycle</dt>
           <dd className="mt-1">{boundCycle ? `${boundCycle.action_code === "noop" ? "No-op plan" : "Plan recorded"} · ${String(boundCycle.planned_count)} planned · ${String(boundCycle.dispatched_count)} dispatched` : "No bound coordinator check"}</dd>
