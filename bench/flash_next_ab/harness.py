@@ -235,11 +235,13 @@ def _validate_flash_probes(
     if set(probes) != {"probe_set", "results"} or probes["probe_set"] != probe_set:
         raise HarnessError("Flash qualification probe bundle differs from its plan")
     rows = probes["results"]
-    if not isinstance(rows, list) or [row.get("probe_id") for row in rows if isinstance(row, dict)] != [
+    if (not isinstance(rows, list) or len(rows) != 3
+            or not all(isinstance(row, dict) for row in rows)
+            or [row.get("probe_id") for row in rows] != [
         "exact_literal",
         "exact_arithmetic",
         "exact_tool_call",
-    ]:
+    ]):
         raise HarnessError("Flash qualification probe identities differ")
     expected_text = ("FLASH_NEXT_OK_17", "703")
     for index, expected in enumerate(expected_text):
@@ -320,6 +322,9 @@ def _validate_memory_log(
     ):
         raise HarnessError("qualification swap summary differs from its log")
     if result.get("schema") == "qwen-flash-next-qualification-result/v1":
+        return
+    if result.get("schema") == "qwen-flash-next-qualification-result/v3":
+        _validate_memory_log_v3(rows, samples, result)
         return
 
     if result.get("schema") != "qwen-flash-next-qualification-result/v2":
@@ -469,6 +474,271 @@ def _validate_memory_log(
         raise HarnessError("qualification final memory sample predates restoration")
 
 
+def _validate_memory_log_v3(
+    rows: list[dict[str, Any]],
+    samples: list[dict[str, Any]],
+    result: dict[str, Any],
+) -> None:
+    """Reconstruct the v3 paging gate from raw evidence, not reported verdicts."""
+    from .qualification import PAGING_POLICY
+
+    def integer(value: Any, label: str, *, minimum: int = 0) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+            raise HarnessError(f"qualification {label} is malformed")
+        return value
+
+    if (_qualification_sha256(result.get("paging_policy")) != _qualification_sha256(PAGING_POLICY)
+            or result.get("paging_violations") != []):
+        raise HarnessError("qualification paging policy or violations are inadmissible")
+    if any(row.get("schema") not in {
+        "qwen-flash-next-memory-sample/v3", "qwen-flash-next-cgroup-bind/v1"
+    } or "event" in row for row in rows):
+        raise HarnessError("qualification memory log contains a failure or unexpected event")
+    phase_names = ["setup", "load", "ready", "probes", "restoration"]
+    phase_rows: dict[str, list[dict[str, Any]]] = {name: [] for name in phase_names}
+    phase_summaries: dict[str, dict[str, Any]] = {}
+    history: list[tuple[float, int]] = []
+    times: list[datetime] = []
+    elapsed: list[float] = []
+    prior_phase = "setup"
+    prior_pages = samples[0]["pswpout_pages"]
+    total_initial = prior_pages
+    baseline = prior_pages
+    phase_start = samples[0]["observed_at"]
+    for index, row in enumerate(samples):
+        phase = row.get("monitor_phase")
+        if row.get("schema") != "qwen-flash-next-memory-sample/v3" or phase not in phase_rows:
+            raise HarnessError("qualification v3 memory phase/schema is malformed")
+        pages = integer(row.get("pswpout_pages"), "pswpout")
+        observed = _utc_datetime(row.get("observed_at"), "memory timestamp")
+        mono = _finite_number(row.get("elapsed_monotonic_seconds"), "memory monotonic time")
+        if index and (pages < prior_pages or observed < times[-1] or mono < elapsed[-1]):
+            raise HarnessError("qualification memory counters or timestamps decreased")
+        if index and (mono - elapsed[-1] > PAGING_POLICY["max_sample_gap_seconds"] or (observed - times[-1]).total_seconds() > PAGING_POLICY["max_sample_gap_seconds"]):
+            raise HarnessError("qualification memory monitor has a sample gap")
+        if abs(_finite_number(row.get("sample_gap_seconds"), "sample gap") - (mono - elapsed[-1] if index else 0)) > 1e-9:
+            raise HarnessError("qualification sample gap differs from raw monotonic time")
+        if phase != prior_phase:
+            if phase_names.index(phase) != phase_names.index(prior_phase) + 1:
+                raise HarnessError("qualification memory phases are not contiguous")
+            # An ordinary phase transition carries the prior raw counter into
+            # its new baseline. Ready->probes transitions at the final quiet row.
+            baseline = prior_pages
+            phase_start = (
+                samples[index - 1]["observed_at"]
+                if prior_phase == "ready" else row["observed_at"]
+            )
+            anchor_time = elapsed[-1] if prior_phase == "ready" else mono
+            history = [(anchor_time, baseline)]
+        elif not index:
+            history = [(mono, baseline)]
+        history.append((mono, pages))
+        window_bytes = []
+        for seconds in (5, 60):
+            anchor = history[0][1]
+            for observed_mono, observed_pages in history:
+                if observed_mono > mono - seconds:
+                    break
+                anchor = observed_pages
+            window_bytes.append((pages - anchor) * PAGING_POLICY["host_page_size_bytes"])
+        delta = pages - baseline
+        expected_counters = {
+            "host_page_size_bytes": PAGING_POLICY["host_page_size_bytes"],
+            "pswpout_delta_pages": pages - total_initial,
+            "phase_initial_pswpout_pages": baseline,
+            "phase_pswpout_delta_pages": delta,
+            "phase_pswpout_delta_bytes": delta * PAGING_POLICY["host_page_size_bytes"],
+            "host_swap_5s_bytes": window_bytes[0],
+            "host_swap_60s_bytes": window_bytes[1],
+        }
+        for key, expected in expected_counters.items():
+            if integer(row.get(key), key) != expected:
+                raise HarnessError(f"qualification {key} differs from raw counters")
+        for key in ("setup_quiescence_active", "ready_quiescence_active"):
+            if not isinstance(row.get(key), bool):
+                raise HarnessError(f"qualification {key} is malformed")
+        if row["setup_quiescence_active"] and phase != "setup":
+            raise HarnessError("qualification setup quiescence crossed a phase")
+        if row["ready_quiescence_active"] != (phase == "ready"):
+            raise HarnessError("qualification ready quiescence phase differs")
+        if not row["ready_quiescence_active"] and row.get("ready_quiescence_epoch") is not None:
+            raise HarnessError("qualification ready epoch appears outside ready phase")
+        expected_transition = "probes" if (
+            phase == "ready" and index + 1 < len(samples)
+            and samples[index + 1].get("monitor_phase") == "probes"
+        ) else None
+        if row.get("transition_to") != expected_transition:
+            raise HarnessError("qualification ready-to-probes transition is unproven")
+        limits = PAGING_POLICY["load"] if phase in {"load", "ready"} else (
+            PAGING_POLICY["serving"] if phase == "probes" else None
+        )
+        if limits and (
+            window_bytes[0] >= limits["window_5s_breach_bytes"]
+            or window_bytes[1] >= limits["window_60s_breach_bytes"]
+            or expected_counters["phase_pswpout_delta_bytes"] >= limits["phase_total_breach_bytes"]
+        ):
+            raise HarnessError(f"qualification {phase} host paging threshold was reached")
+        summary = phase_summaries.setdefault(phase, {
+            "started_at": phase_start, "initial_pswpout_pages": baseline,
+            "max_window_5s_bytes": 0, "max_window_60s_bytes": 0,
+            "samples": 0, "threshold_breached": False,
+        })
+        summary.update({
+            "completed_at": row["observed_at"], "final_pswpout_pages": pages,
+            "pswpout_delta_pages": delta,
+            "pswpout_delta_bytes": expected_counters["phase_pswpout_delta_bytes"],
+            "max_window_5s_bytes": max(summary["max_window_5s_bytes"], window_bytes[0]),
+            "max_window_60s_bytes": max(summary["max_window_60s_bytes"], window_bytes[1]),
+            "samples": summary["samples"] + 1,
+        })
+        phase_rows[phase].append(row)
+        times.append(observed)
+        elapsed.append(mono)
+        prior_pages, prior_phase = pages, phase
+    if any(not phase_rows[name] for name in phase_names):
+        raise HarnessError("qualification lacks a required memory phase")
+    if _qualification_sha256(result.get("paging_phase_summaries")) != _qualification_sha256(phase_summaries):
+        raise HarnessError("qualification paging phase summary differs from raw evidence")
+    warning_phases = [name for name, row in phase_summaries.items() if row["pswpout_delta_bytes"] > 0]
+    if result.get("paging_warning_phases") != warning_phases:
+        raise HarnessError("qualification paging warnings differ from raw evidence")
+
+    for quiet_phase in ("setup", "ready"):
+        quiet = [row for row in samples if row[f"{quiet_phase}_quiescence_active"]]
+        if quiet_phase == "ready":
+            epochs = [integer(row.get("ready_quiescence_epoch"), "ready epoch", minimum=1) for row in quiet]
+            if any(b < a or b > a + 1 for a, b in pairwise(epochs)):
+                raise HarnessError("qualification ready quiescence epochs are discontinuous")
+            final_epoch = integer(result.get("ready_quiescence_epoch"), "final ready epoch", minimum=1)
+            if not epochs or final_epoch != epochs[-1]:
+                raise HarnessError("qualification final ready quiescence epoch differs")
+            quiet = [row for row in quiet if row["ready_quiescence_epoch"] == final_epoch]
+        if not quiet:
+            raise HarnessError(f"qualification {quiet_phase} quiescence is absent")
+        indexes = [samples.index(row) for row in quiet]
+        quiet_mono = [row["elapsed_monotonic_seconds"] for row in quiet]
+        quiet_times = [_utc_datetime(row["observed_at"], "quiescence timestamp") for row in quiet]
+        fields = {
+            "required_seconds": 60, "passed": True,
+            "started_at": quiet[0]["observed_at"], "completed_at": quiet[-1]["observed_at"],
+            "initial_pswpout_pages": quiet[0]["pswpout_pages"],
+            "final_pswpout_pages": quiet[-1]["pswpout_pages"], "samples": len(quiet),
+        }
+        if (
+            indexes != list(range(indexes[0], indexes[-1] + 1))
+            or any(result.get(f"{quiet_phase}_quiescence_{key}") != value for key, value in fields.items())
+            or result.get(f"{quiet_phase}_quiescence_passed") is not True
+            or any(row["pswpout_pages"] != quiet[0]["pswpout_pages"] for row in quiet)
+            or quiet_mono[-1] - quiet_mono[0] < 60
+            or (quiet_times[-1] - quiet_times[0]).total_seconds() < 60
+            or _finite_number(result.get(f"{quiet_phase}_quiescence_duration_seconds"), "quiescence duration") < 60
+            or any(b - a > 2.5 for a, b in pairwise(quiet_mono))
+            or any((b - a).total_seconds() > 2.5 for a, b in pairwise(quiet_times))
+        ):
+            raise HarnessError(f"qualification {quiet_phase} quiescence differs from raw proof")
+    load_start = phase_summaries["load"]["initial_pswpout_pages"]
+    fields = {
+        "setup_pswpout_initial_pages": total_initial,
+        "setup_pswpout_final_pages": load_start,
+        "setup_pswpout_delta_pages": load_start - total_initial,
+        "mutation_window_started_at": phase_summaries["load"]["started_at"],
+        "mutation_pswpout_initial_pages": load_start,
+        "mutation_pswpout_final_pages": prior_pages,
+        "mutation_pswpout_delta_pages": prior_pages - load_start,
+        "mutation_final_sample_at": samples[-1]["observed_at"],
+    }
+    if (load_start != result.get("setup_quiescence_final_pswpout_pages")
+            or any(result.get(key) != value for key, value in fields.items())):
+        raise HarnessError("qualification mutation summary differs from raw proof")
+
+    binds = [row for row in rows if row.get("schema") == "qwen-flash-next-cgroup-bind/v1"]
+    if len(binds) != 1:
+        raise HarnessError("qualification requires exactly one candidate cgroup binding")
+    bind = binds[0]
+    identity = bind.get("candidate_id")
+    if not _digest(identity):
+        raise HarnessError("qualification cgroup container identity is malformed")
+    pid = integer(bind.get("pid"), "cgroup PID", minimum=1)
+    expected_path = f"/system.slice/docker-{identity}.scope"
+    snapshot = bind.get("cgroup")
+    if not isinstance(snapshot, dict):
+        raise HarnessError("qualification cgroup binding snapshot is absent")
+    start_ticks = integer(snapshot.get("process_start_ticks"), "cgroup process start ticks", minimum=1)
+    cgroup_values = {
+        "path": expected_path, "process_start_ticks": start_ticks,
+        "memory_swap_current_bytes": 0, "memory_events_oom": 0, "memory_events_oom_kill": 0,
+    }
+    if any(snapshot.get(key) != value for key, value in cgroup_values.items()):
+        raise HarnessError("qualification candidate cgroup was not clean at bind")
+    for key in ("memory_swap_current_bytes", "memory_events_oom", "memory_events_oom_kill"):
+        integer(snapshot[key], f"bound cgroup {key}")
+    candidate_rows = []
+    for row in samples:
+        candidate = row.get("candidate")
+        if candidate is None:
+            continue
+        if not isinstance(candidate, dict) or not isinstance(candidate.get("armed"), bool):
+            raise HarnessError("qualification candidate arm marker is malformed")
+        if candidate["armed"]:
+            candidate_rows.append(row)
+        elif row["monitor_phase"] != "restoration" or candidate.get("id") != identity:
+            raise HarnessError("qualification unarmed candidate precedes restoration")
+    if not candidate_rows:
+        raise HarnessError("qualification candidate cgroup samples are absent")
+    first_candidate = samples.index(candidate_rows[0])
+    bind_index = rows.index(bind)
+    prior_bind_samples = [row for row in rows[:bind_index] if row.get("schema") == "qwen-flash-next-memory-sample/v3"]
+    after_bind_samples = [row for row in rows[bind_index + 1:] if row.get("schema") == "qwen-flash-next-memory-sample/v3"]
+    bind_time = _utc_datetime(bind.get("observed_at"), "cgroup bind time")
+    if (bind_index >= rows.index(candidate_rows[0])
+            or not prior_bind_samples or not after_bind_samples
+            or prior_bind_samples[-1].get("monitor_phase") != "load"
+            or not (_utc_datetime(prior_bind_samples[-1].get("observed_at"), "pre-bind memory time")
+                    <= bind_time <= _utc_datetime(after_bind_samples[0].get("observed_at"), "post-bind memory time"))
+            or candidate_rows[0]["monitor_phase"] != "load"):
+        raise HarnessError("qualification cgroup binding record order differs")
+    restoration_start = samples.index(phase_rows["restoration"][0])
+    if first_candidate >= samples.index(phase_rows["ready"][0]) or any(
+        not isinstance(row.get("candidate"), dict) or row["candidate"].get("armed") is not True
+        for row in samples[first_candidate:restoration_start]
+    ):
+        raise HarnessError("qualification candidate cgroup proof has an armed gap")
+    first_restoration_candidate = phase_rows["restoration"][0].get("candidate")
+    if not isinstance(first_restoration_candidate, dict) or first_restoration_candidate.get("armed") is not True:
+        raise HarnessError("qualification restoration boundary lacks armed cgroup proof")
+    if _utc_datetime(bind.get("observed_at"), "cgroup bind time") > _utc_datetime(candidate_rows[0]["observed_at"], "first cgroup time"):
+        raise HarnessError("qualification cgroup samples predate their binding")
+    for row in candidate_rows:
+        candidate = row["candidate"]
+        cgroup = candidate.get("cgroup") if isinstance(candidate, dict) else None
+        if (
+            not isinstance(cgroup, dict) or candidate.get("id") != identity
+            or candidate.get("pid") != pid or candidate.get("running") is not True
+            or candidate.get("oom_killed") is not False
+            or integer(candidate.get("restart_count"), "candidate restart count") != 0
+            or any(cgroup.get(key) != value for key, value in cgroup_values.items())
+        ):
+            raise HarnessError("qualification candidate cgroup identity, swap, or OOM proof failed")
+        for key in ("memory_swap_current_bytes", "memory_events_oom", "memory_events_oom_kill"):
+            integer(cgroup[key], f"cgroup {key}")
+        integer(candidate["pid"], "candidate PID", minimum=1)
+        integer(cgroup["process_start_ticks"], "candidate process start ticks", minimum=1)
+    for key, value in {
+        "candidate_cgroup_path": expected_path, "candidate_cgroup_pid": pid,
+        "candidate_cgroup_start_ticks": start_ticks, "candidate_cgroup_samples": len(candidate_rows),
+        "candidate_cgroup_swap_peak_bytes": 0, "candidate_cgroup_oom_initial": 0,
+        "candidate_cgroup_oom_final": 0, "candidate_cgroup_oom_kill_initial": 0,
+        "candidate_cgroup_oom_kill_final": 0,
+    }.items():
+        if result.get(key) != value:
+            raise HarnessError(f"qualification {key} differs from raw cgroup evidence")
+        if isinstance(value, int):
+            integer(result[key], key)
+    restoration = result.get("restoration")
+    if not isinstance(restoration, dict) or times[-1] < _utc_datetime(restoration.get("verified_at"), "restoration timestamp"):
+        raise HarnessError("qualification final memory sample predates restoration")
+
+
 def validate_flash_qualification_files(
     receipt_path: str | Path,
     qualification_plan_path: str | Path,
@@ -506,10 +776,16 @@ def validate_flash_qualification_files(
             "qwen-flash-next-qualification-plan/v2",
             "qwen-flash-next-qualification/v2",
         ),
+        (
+            "qwen-flash-next-qualification-result/v3",
+            "qwen-flash-next-qualification-plan/v3",
+            "qwen-flash-next-qualification/v3",
+        ),
     }
     if (result_schema, plan_schema, contract_schema) not in supported_bundles:
         raise HarnessError("unsupported Flash qualification result schema")
     bundle_v2 = result_schema == "qwen-flash-next-qualification-result/v2"
+    bundle_v3 = result_schema == "qwen-flash-next-qualification-result/v3"
     if result.get("plan_sha256") != _qualification_sha256(qualification_plan):
         raise HarnessError("Flash qualification result does not bind its plan")
     # The controller binds the original byte-for-byte external contract.  Its
@@ -582,7 +858,7 @@ def validate_flash_qualification_files(
         or qualification_plan.get("min_mem_available_gib")
         != safety.get("min_mem_available_gib")
         or (
-            bundle_v2
+            (bundle_v2 or bundle_v3)
             and qualification_plan.get("setup_quiescence_seconds")
             != safety.get("setup_quiescence_seconds")
         )
@@ -590,6 +866,12 @@ def validate_flash_qualification_files(
         != _qualification_sha256(qualification_plan.get("docker_create_argv"))
     ):
         raise HarnessError("Flash qualification plan identity differs from its contract")
+    if bundle_v3 and (
+        qualification_plan.get("paging_policy") != safety.get("paging_policy")
+        or result.get("paging_policy") != safety.get("paging_policy")
+        or qualification_plan.get("ready_quiescence_seconds") != safety.get("ready_quiescence_seconds")
+    ):
+        raise HarnessError("Flash qualification paging policy differs across its evidence")
     if (
         accounting.get("weekly_budget_debit") is not False
         or accounting.get("paid_api_allowed") is not False
@@ -600,7 +882,7 @@ def validate_flash_qualification_files(
         raise HarnessError("Flash qualification contract authorizes a forbidden side effect")
 
     registration_failures = []
-    if not bundle_v2:
+    if not bundle_v3:
         registration_failures.append(
             "legacy qualification schema is historical and cannot admit calls"
         )
@@ -610,6 +892,23 @@ def validate_flash_qualification_files(
         registered.validate_contract(contract)
     except registered.QualificationError as exc:
         registration_failures.append(f"contract is not current registered C0 ({exc})")
+    if bundle_v3:
+        if (
+            result.get("run_id") != receipt_file.parent.name
+            or receipt_file.name != "result.json"
+            or plan_file != receipt_file.parent / "plan.json"
+            or contract_file != receipt_file.parent / "launch-contract.snapshot.json"
+            or raw_contract_file != receipt_file.parent / "launch-contract.raw.json"
+        ):
+            registration_failures.append("v3 qualification files are not bound siblings of their run")
+        try:
+            expected_plan = registered.plan_qualification(
+                contract, contract_sha256, receipt_file.parent
+            )
+            if _qualification_sha256(qualification_plan) != _qualification_sha256(expected_plan):
+                registration_failures.append("v3 qualification plan differs from the full registered plan")
+        except registered.QualificationError as exc:
+            registration_failures.append(f"v3 qualification plan is not registered ({exc})")
     if qualification_plan.get("docker_create_argv") != registered.launch_argv():
         registration_failures.append("launch argv is not current registered C0")
     if _finite_number(
@@ -626,11 +925,13 @@ def validate_flash_qualification_files(
         failures.append(f"status={result.get('status')!r}")
     if result.get("qualification_error") is not None:
         failures.append("qualification_error is present")
+    if bundle_v3 and ("failure_stage" not in result or result["failure_stage"] is not None):
+        failures.append("v3 qualification failure_stage is absent or non-null")
     restoration = result.get("restoration")
     if not isinstance(restoration, dict) or restoration.get("status") != "verified":
         failures.append("restoration is not verified")
     else:
-        if restoration.get("errors") not in (None, []):
+        if (bundle_v3 and restoration.get("errors") != []) or restoration.get("errors") not in (None, []):
             failures.append("restoration reports errors")
         if restoration.get("sentinel_retained") is not False:
             failures.append("qualification sentinel was retained")
@@ -652,11 +953,11 @@ def validate_flash_qualification_files(
     if bundle_v2:
         if result.get("mutation_pswpout_delta_pages") != 0:
             failures.append("host swap-out increased during the mutation window")
-    elif result.get("pswpout_delta_pages") != 0:
+    elif not bundle_v3 and result.get("pswpout_delta_pages") != 0:
         failures.append("host swap-out increased")
     if result.get("weekly_budget_debit") is not False:
         failures.append("weekly maintenance budget was debited")
-    if result.get("paid_api_calls") != 0:
+    if result.get("paid_api_calls") != 0 or (bundle_v3 and type(result.get("paid_api_calls")) is not int):
         failures.append("paid API calls are nonzero")
     if result.get("production_change_authorized") is not False:
         failures.append("qualification claims production authority")
@@ -672,6 +973,39 @@ def validate_flash_qualification_files(
         _validate_memory_log(receipt_file.parent / "memory.jsonl", result)
     except HarnessError as exc:
         failures.append(str(exc))
+
+    if bundle_v3:
+        try:
+            ready, _, _ = _read_json_receipt(
+                receipt_file.parent / "readiness.json", "Flash readiness proof"
+            )
+            container = ready.get("container")
+            quiet = ready.get("stabilization")
+            if not isinstance(container, dict) or not isinstance(quiet, dict):
+                raise HarnessError("Flash readiness identity or stabilization is absent")
+            quiet_keys = {
+                "required_seconds": "required_seconds", "passed": "passed",
+                "started_at": "started_at", "completed_at": "completed_at",
+                "duration_seconds": "duration_seconds", "initial_pswpout_pages": "initial_pswpout_pages",
+                "final_pswpout_pages": "final_pswpout_pages", "samples": "samples", "epoch": "epoch",
+            }
+            if (
+                ready.get("models") != [registered.SERVED_MODEL]
+                or not _digest(container.get("id"))
+                or result.get("candidate_cgroup_path") != f"/system.slice/docker-{container.get('id')}.scope"
+                or container.get("pid") != result.get("candidate_cgroup_pid")
+                or container.get("image") != registered.IMAGE_ID
+                or container.get("name") != registered.CONTAINER_NAME
+                or container.get("running") is not True
+                or container.get("oom_killed") is not False
+                or type(container.get("restart_count")) is not int
+                or container["restart_count"] != 0
+                or any(quiet.get(key) != result.get(f"ready_quiescence_{suffix}") for key, suffix in quiet_keys.items())
+                or _utc_datetime(ready.get("ready_at"), "readiness time") > _utc_datetime(result.get("ready_quiescence_started_at"), "ready stabilization start")
+            ):
+                raise HarnessError("Flash readiness and post-ready quiet proof differ")
+        except HarnessError as exc:
+            failures.append(str(exc))
 
     probes_path = receipt_file.parent / "probes.json"
     if probes_path.exists():

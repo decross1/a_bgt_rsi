@@ -44,7 +44,7 @@ RESIDENT_QUALIFICATION = RUNTIME_ROOT / "resident-qualification-v2.json"
 RESIDENT_ARTIFACTS = RUNTIME_ROOT / "resident-model-artifacts.json"
 
 WINDOW_SCHEMA = "flash-next-evaluation-window/v1"
-EXTENDED_PLAN_SCHEMA = "flash-next-extended-evaluation-plan/v1"
+EXTENDED_PLAN_SCHEMA = "flash-next-extended-evaluation-plan/v2"
 ATTEMPT_SCHEMA = "flash-next-extended-evaluation-harness-attempt/v1"
 RESULT_SCHEMA = "flash-next-extended-evaluation-result/v1"
 FULL_COHORT_BUDGET_SECONDS = MAX_RUNTIME_BUDGET_S
@@ -117,6 +117,8 @@ EXTENDED_PLAN_KEYS = frozenset(
         "benchmark_runtime_budget_seconds",
         "restoration_reserve_seconds",
         "setup_quiescence_seconds",
+        "ready_quiescence_seconds",
+        "paging_policy",
         "min_mem_available_gib",
         "resource_locks",
         "research_usage_journal",
@@ -429,6 +431,8 @@ def build_extended_evaluation_plan(
     must_be_absent: bool = False,
 ) -> dict[str, Any]:
     """Build the distinct lifecycle plan for a post-C0 Flash window."""
+    from .qualification import PAGING_POLICY
+
     if not isinstance(window, FrozenEvaluationWindow) or window.cohort != "flash":
         raise EvaluationWindowError("an extended lifecycle plan requires a Flash window")
     output = _evaluation_output(
@@ -451,7 +455,7 @@ def build_extended_evaluation_plan(
     if (
         not isinstance(qualification_plan, dict)
         or qualification_plan.get("schema")
-        != "qwen-flash-next-qualification-plan/v2"
+        != "qwen-flash-next-qualification-plan/v3"
         or summary.get("admission_eligible") is not True
         or not _digest(summary.get("qualification_receipt_sha256"))
         or not _digest(summary.get("qualification_plan_sha256"))
@@ -464,6 +468,8 @@ def build_extended_evaluation_plan(
         != summary.get("model_artifact_sha256")
         or qualification_plan.get("served_model") != summary.get("served_model")
         or qualification_plan.get("setup_quiescence_seconds") != 60
+        or qualification_plan.get("ready_quiescence_seconds") != 60
+        or qualification_plan.get("paging_policy") != PAGING_POLICY
     ):
         raise EvaluationWindowError("prior C0 qualification identity is incomplete")
     docker_argv = qualification_plan.get("docker_create_argv")
@@ -513,6 +519,8 @@ def build_extended_evaluation_plan(
         "benchmark_runtime_budget_seconds": window.runtime_budget_seconds,
         "restoration_reserve_seconds": reserve,
         "setup_quiescence_seconds": 60,
+        "ready_quiescence_seconds": 60,
+        "paging_policy": json.loads(json.dumps(PAGING_POLICY)),
         "min_mem_available_gib": MIN_MEMORY_GIB,
         "resource_locks": [
             ".weekly-upgrade-execution.lock",

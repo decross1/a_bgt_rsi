@@ -53,6 +53,47 @@ extend through registered families and context/stability tests; publish exact
 coverage, failures, uncertainty and a retain/adopt-for-trial verdict. Unsupported
 or unimplemented external benchmark suites remain explicitly not run.
 
+## Context, thinking, quantization and speed experiments
+
+The owner reaffirmed this active goal on 2026-09-15 and explicitly requested
+alternative Flash quants, all relevant speed controls, different context lengths
+and different thinking levels. These are required evaluation dimensions, not
+assumed improvements. Keep the first paired bundle result separate from later
+optimization cohorts; never retroactively change its policy or denominator.
+
+Screen NVIDIA NVFP4 and the pinned Mia mixed-quant export independently. If
+neither achieves the resource/quality target, evaluate the documented W4A16 or
+GGUF alternatives with their own runtime and quantization provenance. Every
+artifact requires its own correctness evidence; smaller disk size does not
+establish lower resident memory or inherited quality.
+
+Evaluate actual input lengths around 2K, 8K, 16K, 32K and 64K where supported,
+with output/reasoning headroom reserved in the server context limit. Keep 64K
+as a capability lane. Compare retrieval plus compact context against longer
+evidence packs, recording both evidence availability and actual token counts.
+
+The pinned NVIDIA and Mia templates accept thinking off (`enable_thinking=false`)
+and `low`, `medium`, `xhigh` reasoning effort; they reject `high`. CPU template
+rendering verified these controls on 2026-09-15; runtime delivery and task effects
+still require evaluation. Test these supported levels by role. Record output caps,
+reasoning tokens, empty-at-cap failures, retries and time to correct completion.
+Compare adaptive escalation against fixed effort. Unsupported effort labels
+must be reported as unavailable, never silently downgraded.
+
+Screen MTP depth and draft settings, exact-model DFlash support, NVMe-backed
+PLE/weight storage, packed representations, prewarm/read parallelism, KV
+precision and allocation, prefix caching, scheduling, batching and kernels.
+Require an actual compatible draft/runtime artifact for DFlash; evidence from
+the dense 27B checkpoint cannot establish compatibility with Flash-Next.
+Measure cold and warm behavior separately and single-stream performance first.
+
+Change one control at a time for screening, then freeze promising combinations
+for repeated task-quality and reliability comparisons. Include the strongest
+tested incumbent policy in the optimized comparison. All supported dimensions
+receive a measured result or an explicit, evidenced reason for exclusion.
+Retain the 20 GiB reserve, local research accounting, exact rollback and finite
+invocation limits throughout. No optimization result is a production cutover.
+
 ## Viewing the evidence
 
 Benchmark Progress (`/benchmarks`) includes a separate **Local model research**
