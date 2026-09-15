@@ -33,6 +33,7 @@ MEMORY_SCHEMA = "qwen-flash-next-memory-sample/v3"
 RESULT_SCHEMA = "qwen-flash-next-qualification-result/v3"
 RUN_ID = re.compile(r"qfn-c0-[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 MIA_RUN_ID = re.compile(r"qfn-mia-c0-[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
+EXTENDED_FLASH_RUN_ID = re.compile(r"qfn-ab-[a-z0-9][a-z0-9._-]{0,63}\.flash\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
 MAX_RUNS = 128
@@ -180,7 +181,9 @@ def _canonical_sha256(value: Any) -> str:
     )
 
 
-def _open_latest_run(root: Path) -> tuple[int, str, bytes]:
+def _open_latest_run(
+    root: Path, *, namespace: re.Pattern[str] | None = None
+) -> tuple[int, str, bytes]:
     """Open the latest direct child and return its fd, id and raw state."""
     try:
         root_fd = os.open(root, _flags(directory=True))
@@ -197,7 +200,10 @@ def _open_latest_run(root: Path) -> tuple[int, str, bytes]:
                         "qualification state root exceeds the scan bound"
                     )
         for name in names:
-            if not (RUN_ID.fullmatch(name) or MIA_RUN_ID.fullmatch(name)):
+            if not (
+                namespace.fullmatch(name) if namespace is not None
+                else RUN_ID.fullmatch(name) or MIA_RUN_ID.fullmatch(name)
+            ):
                 continue
             try:
                 run_fd = os.open(name, _flags(directory=True), dir_fd=root_fd)
@@ -520,12 +526,16 @@ def _latest_memory(
     candidate_identity: tuple[str, str, int, int] | None,
     memory_limit_bytes: int,
     spec=None,
+    maximum_bytes: int = MAX_MEMORY_BYTES,
+    maximum_rows: int = MAX_MEMORY_ROWS,
+    maximum_age_seconds: float = MAX_MEMORY_AGE_SECONDS,
+    extended_serving_profile: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
     raw = _read_fd(
-        run_fd, "memory.jsonl", maximum=MAX_MEMORY_BYTES, label="memory gate"
+        run_fd, "memory.jsonl", maximum=maximum_bytes, label="memory gate"
     )
     lines = raw.splitlines()
-    if not lines or len(lines) > MAX_MEMORY_ROWS or any(not line.strip() for line in lines):
+    if not lines or len(lines) > maximum_rows or any(not line.strip() for line in lines):
         raise RuntimeSourceError("memory gate has no samples")
     previous = None
     latest_sample = None
@@ -597,7 +607,7 @@ def _latest_memory(
         or not math.isfinite(floor_gib)
         or floor_gib <= 0
         or age < -MAX_CLOCK_SKEW_SECONDS
-        or age > MAX_MEMORY_AGE_SECONDS
+        or age > maximum_age_seconds
         or isinstance(available, bool)
         or not isinstance(available, (int, float))
         or not math.isfinite(available)
@@ -647,6 +657,7 @@ def _latest_memory(
         "load": "startup",
         "ready": "startup",
         "probes": "serving",
+        "evaluation": "extended_serving" if extended_serving_profile is not None else None,
         "restoration": "restoration",
     }.get(expected_phase)
     if expected_gate is None or row.get("paging_gate") != expected_gate:
@@ -708,6 +719,19 @@ def _latest_memory(
         if expected_phase == "probes"
         else None
     )
+    if expected_phase == "evaluation":
+        if not isinstance(extended_serving_profile, dict):
+            raise RuntimeSourceError("extended serving policy is unavailable")
+        five = _nonnegative_integer(
+            extended_serving_profile.get("host_pswpout_5s_burst_bytes"),
+            "extended five-second paging limit", positive=True,
+        )
+        sixty = _nonnegative_integer(
+            extended_serving_profile.get("host_pswpout_60s_burst_bytes"),
+            "extended sixty-second paging limit", positive=True,
+        )
+        if window_5s >= five or window_60s >= sixty:
+            raise RuntimeSourceError("live extended host paging reached its registered threshold")
     if limits is not None:
         if not isinstance(limits, dict):
             raise RuntimeSourceError("paging limits are unavailable")
@@ -1008,6 +1032,7 @@ def _unknown(observed_at: str, error: str) -> dict[str, Any]:
 def project_model_runtime(
     qualification_root: Path = QUALIFICATION_ROOT,
     *,
+    evaluation_root: Path | None = None,
     proc_root: Path = PROC_ROOT,
     boot_id_path: Path = BOOT_ID_PATH,
     now: Callable[[], datetime] | None = None,
@@ -1019,6 +1044,21 @@ def project_model_runtime(
     observed_at = observed.isoformat()
     run_fd = None
     try:
+        if evaluation_root is not None or qualification_root == QUALIFICATION_ROOT:
+            from .model_runtime_extended import (
+                EVALUATION_RUN_ROOT,
+                maybe_project_extended,
+            )
+
+            extended = maybe_project_extended(
+                qualification_root,
+                evaluation_root or EVALUATION_RUN_ROOT,
+                proc_root=proc_root,
+                boot_id_path=boot_id_path,
+                observed=observed,
+            )
+            if extended is not None:
+                return extended
         run_fd, run_id, state_raw = _open_latest_run(qualification_root)
         spec = _mia_spec_for_run(run_id)
         state = _strict_object(state_raw, "runtime state")
@@ -1230,7 +1270,7 @@ def project_model_runtime(
             ),
             "source_error": None,
         }
-    except (OSError, RuntimeSourceError, ValueError, TypeError, AttributeError):
+    except (OSError, ImportError, RuntimeSourceError, ValueError, TypeError, AttributeError):
         return _unknown(observed_at, "runtime state is absent, stale, or untrusted")
     finally:
         if run_fd is not None:

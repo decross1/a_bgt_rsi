@@ -392,12 +392,14 @@ def validate_plan(plan: Any) -> dict[str, Any]:
         or any(not isinstance(item, str) or not item for item in declared)
         or len(declared) != len(set(declared))
         or not isinstance(receipts, dict)
-        or list(receipts) != declared
+        # JSON object member order is not the execution order. Canonical
+        # serialization sorts these keys; declared_cells owns that order.
+        or set(receipts) != set(declared)
     ):
         raise PlanError("declared cells and receipts differ")
     call_ids: list[str] = []
-    for cell_id, receipt in receipts.items():
-        call_ids.extend(_validate_cell_receipt(cell_id, receipt))
+    for cell_id in declared:
+        call_ids.extend(_validate_cell_receipt(cell_id, receipts[cell_id]))
     if len(call_ids) != len(set(call_ids)):
         raise PlanError("planned call IDs are not globally unique")
     canonical_json(plan)

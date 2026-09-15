@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from bench.flash_next_ab import evaluation_window as ew
+from bench.flash_next_ab import qualification as q
 from bench.flash_next_ab.qualification import PAGING_POLICY
 
 
@@ -63,14 +64,19 @@ def fixture(monkeypatch, tmp_path, *, cohort="flash"):
         qualification_plan = qualification_dir / "plan.json"
         contract_snapshot = qualification_dir / "launch-contract.snapshot.json"
         contract_raw = qualification_dir / "launch-contract.raw.json"
-        _write(receipt, {"marker": "result"})
+        raw_contract_digest = _write(contract_raw, {"profile": "C0-S1", "marker": "raw"})
+        _write(receipt, {
+            "schema": "qwen-flash-next-qualification-result/v3",
+            "profile": "C0-S1", "contract_sha256": raw_contract_digest,
+            "model_artifact_sha256": q.model_artifact_sha256(),
+        })
         launch = ["docker", "create", "fixed-image"]
         qualification_plan_document = {
             "schema": "qwen-flash-next-qualification-plan/v3",
-            "contract_sha256": "1" * 64,
-            "image_id": "sha256:" + "2" * 64,
-            "model_artifact_sha256": "3" * 64,
-            "served_model": "qwen3.8-flash-next",
+            "contract_sha256": raw_contract_digest,
+            "image_id": q.IMAGE_ID,
+            "model_artifact_sha256": q.model_artifact_sha256(),
+            "served_model": q.SERVED_MODEL,
             "docker_create_argv": launch,
             "docker_create_argv_sha256": hashlib.sha256(
                 json.dumps(launch, sort_keys=True, separators=(",", ":")).encode()
@@ -82,7 +88,6 @@ def fixture(monkeypatch, tmp_path, *, cohort="flash"):
         }
         _write(qualification_plan, qualification_plan_document)
         _write(contract_snapshot, {"marker": "snapshot"})
-        _write(contract_raw, {"marker": "raw"})
         qualification = {
             "receipt": _ref(receipt),
             "qualification_plan": _ref(qualification_plan),
@@ -121,10 +126,10 @@ def fixture(monkeypatch, tmp_path, *, cohort="flash"):
                             separators=(",", ":"),
                         ).encode()
                     ).hexdigest(),
-                    "contract_sha256": "1" * 64,
+                    "contract_sha256": raw_contract_digest,
                     "runtime_sha256": "4" * 64,
-                    "model_artifact_sha256": "3" * 64,
-                    "served_model": "qwen3.8-flash-next",
+                    "model_artifact_sha256": q.model_artifact_sha256(),
+                    "served_model": q.SERVED_MODEL,
                 }
             )
         return summary
