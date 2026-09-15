@@ -110,7 +110,7 @@ export function computeVerdict(input: VerdictInput): Verdict {
 
   return {
     level: "healthy",
-    headline: "all systems nominal",
+    headline: "telemetry fresh; Gemma metrics present",
     reasons: [],
   };
 }
