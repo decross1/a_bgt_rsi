@@ -6,6 +6,7 @@ Counter-derived values (decode tok/s, MTP token deltas) are computed
 across sample intervals and return None while priming or just after a
 counter reset (vLLM restart -> counters drop to zero).
 """
+import math
 import time
 
 import requests
@@ -67,18 +68,36 @@ def _first(metrics, names):
     return None
 
 
-class VllmMetricsReader:
-    """Stateful reader: holds previous counter values for rate computation."""
+def _nonnegative(value):
+    if value is None or not math.isfinite(value) or value < 0:
+        return None
+    return value
 
-    def __init__(self, url="http://localhost:8000/metrics", timeout=2.0):
-        self.url = url
-        self.timeout = timeout
+
+def _fraction(value):
+    value = _nonnegative(value)
+    return value if value is not None and value <= 1 else None
+
+
+class VllmMetricsAccumulator:
+    """Interpret successive Prometheus snapshots from one vLLM endpoint.
+
+    Network I/O deliberately lives outside this class.  The sampler uses it
+    after a ``requests`` read, while the served-model inventory uses it after
+    its stricter bounded loopback-only read.  Keeping one accumulator avoids
+    two subtly different definitions of decode rate, counter reset, or idle.
+    """
+
+    def __init__(self):
         self._rate_prev = {}   # key -> (monotonic_ts, value)
         self._delta_prev = {}  # key -> value
 
     def _rate(self, key, value, now):
         """Per-second rate of a counter. None while priming or after a reset."""
         if value is None:
+            # Do not bridge a later counter across an interval in which its
+            # source was missing or malformed.
+            self._rate_prev.pop(key, None)
             return None
         prev = self._rate_prev.get(key)
         self._rate_prev[key] = (now, value)
@@ -103,17 +122,10 @@ class VllmMetricsReader:
             return None
         return value - prev
 
-    def read(self):
-        """Return (vllm_dict, None) or (None, error_str)."""
-        try:
-            resp = requests.get(self.url, timeout=self.timeout)
-        except requests.RequestException as exc:
-            return None, f"vllm /metrics unreachable: {exc}"
-        if resp.status_code != 200:
-            return None, f"vllm /metrics HTTP {resp.status_code}"
-
-        metrics = parse_prometheus(resp.text)
-        now = time.monotonic()
+    def observe(self, text, *, now=None):
+        """Return ``(sample, None)`` or ``(None, error)`` for one snapshot."""
+        metrics = parse_prometheus(text)
+        now = time.monotonic() if now is None else now
 
         running = _first(metrics, _RUNNING)
         waiting = _first(metrics, _WAITING)
@@ -123,24 +135,39 @@ class VllmMetricsReader:
                    if val is None]
         if missing:
             return None, f"vllm /metrics missing core gauges: {missing}"
+        if any(not math.isfinite(value) or value < 0
+               for value in (running, waiting, cache)):
+            return None, "vllm /metrics has invalid core gauges"
 
-        tps = self._rate("gen_tokens", _first(metrics, _GEN_TOKENS), now)
+        tps = self._rate(
+            "gen_tokens", _nonnegative(_first(metrics, _GEN_TOKENS)), now
+        )
 
         # Prefix-cache hit rate: use the direct gauge if present, else
         # compute it from the hit/query counter deltas over the interval.
-        prefix_hit = _first(metrics, _PREFIX_HIT_GAUGE)
+        prefix_hit = _fraction(_first(metrics, _PREFIX_HIT_GAUGE))
         if prefix_hit is None:
-            queries = self._delta("prefix_queries", _first(metrics, _PREFIX_QUERIES))
-            hits = self._delta("prefix_hits", _first(metrics, _PREFIX_HITS))
+            queries = self._delta(
+                "prefix_queries", _nonnegative(_first(metrics, _PREFIX_QUERIES))
+            )
+            hits = self._delta(
+                "prefix_hits", _nonnegative(_first(metrics, _PREFIX_HITS))
+            )
             if queries is not None and queries > 0 and hits is not None:
-                prefix_hit = hits / queries
+                observed = hits / queries
+                prefix_hit = observed if observed <= 1 else None
 
-        draft_delta = self._delta("spec_draft", _first(metrics, _SPEC_DRAFT))
-        accepted_delta = self._delta("spec_accepted", _first(metrics, _SPEC_ACCEPTED))
-        accept_rate = _first(metrics, _SPEC_ACCEPT_RATE)
+        draft_delta = self._delta(
+            "spec_draft", _nonnegative(_first(metrics, _SPEC_DRAFT))
+        )
+        accepted_delta = self._delta(
+            "spec_accepted", _nonnegative(_first(metrics, _SPEC_ACCEPTED))
+        )
+        accept_rate = _fraction(_first(metrics, _SPEC_ACCEPT_RATE))
         if (accept_rate is None and draft_delta is not None and draft_delta > 0
                 and accepted_delta is not None):
-            accept_rate = accepted_delta / draft_delta
+            observed = accepted_delta / draft_delta
+            accept_rate = observed if observed <= 1 else None
 
         return {
             "running_requests": running,
@@ -153,3 +180,22 @@ class VllmMetricsReader:
             "mtp_draft_tokens": draft_delta,
             "mtp_accepted_tokens": accepted_delta,
         }, None
+
+
+class VllmMetricsReader:
+    """Stateful network reader used by the telemetry sampler."""
+
+    def __init__(self, url="http://localhost:8000/metrics", timeout=2.0):
+        self.url = url
+        self.timeout = timeout
+        self.accumulator = VllmMetricsAccumulator()
+
+    def read(self):
+        """Return (vllm_dict, None) or (None, error_str)."""
+        try:
+            resp = requests.get(self.url, timeout=self.timeout)
+        except requests.RequestException as exc:
+            return None, f"vllm /metrics unreachable: {exc}"
+        if resp.status_code != 200:
+            return None, f"vllm /metrics HTTP {resp.status_code}"
+        return self.accumulator.observe(resp.text)
