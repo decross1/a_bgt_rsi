@@ -17,9 +17,9 @@
 //   2. The loop's state — "Running now" (the D-047 registry as Vercel-style
 //      deployment cards), then the lab-activity sparkgrid + the L0->L5 ladder
 //      mini-funnel side by side.
-//   3. Secondary, dense — last cycle, host/GPU strip, the two model servers,
-//      and the launch disclosure. Marked data-density="dense" so shared rows
-//      tighten to 28px without per-component props.
+//   3. Secondary, dense — last cycle, host/GPU strip, the dynamic model
+//      endpoint catalog, and the launch disclosure. Marked data-density=
+//      "dense" so shared rows tighten to 28px without per-component props.
 //
 // This page owns the WS telemetry stream; LoopAlertBanner is global (App).
 // It also owns the ONE /api/coordinator/cycles poll, handing the rows to both
@@ -54,7 +54,14 @@ import NowBoard from "../components/NowBoard";
 import OweCard from "../components/OweCard";
 import ResearchScopeBar from "../components/ResearchScopeBar";
 import { getActivityMonitor } from "../api/activity";
-import { getCoordinatorCycles, getHealth, getIterations, getServedModels } from "../api/http";
+import {
+  getCoordinatorCycles,
+  getHealth,
+  getIterations,
+  getModelRuntime,
+  getServedModels,
+} from "../api/http";
+import type { ModelRuntime, ServedModel } from "../api/http";
 import { usePolled } from "../api/pollhub";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { useNow } from "../time";
@@ -65,6 +72,7 @@ import type {
   Health,
   IterationRecord,
   TelemetrySample,
+  VllmSample,
 } from "../types/schemas";
 
 // Newest parseable ISO instant among candidates, or null. Used for the honest
@@ -83,10 +91,86 @@ function newestIso(candidates: unknown[]): string | null {
   return best?.iso ?? null;
 }
 
-// Stable `pick` identities for the two ModelServerCards — inline arrows would
+// Stable `pick` identities for the model catalog cards — inline arrows would
 // re-create per render and defeat the cards' React.memo.
 const pickGemma = (s: TelemetrySample) => s.vllm;
 const pickQwen = (s: TelemetrySample) => s.vllm_qwen;
+const pickNoTelemetry = (_s: TelemetrySample) => null;
+
+const MODEL_ORDER = ["gemma", "qwen", "flash"] as const;
+const MODEL_PRESENTATION: Record<
+  string,
+  {
+    pick: (sample: TelemetrySample) => VllmSample | null | undefined;
+    accent: "zinc" | "sky" | "violet";
+    workloadHint: boolean;
+    transientDropBanner: boolean;
+  }
+> = {
+  gemma: { pick: pickGemma, accent: "zinc", workloadHint: true, transientDropBanner: false },
+  qwen: { pick: pickQwen, accent: "sky", workloadHint: false, transientDropBanner: true },
+  flash: { pick: pickNoTelemetry, accent: "violet", workloadHint: false, transientDropBanner: true },
+};
+
+function isModelRuntime(value: unknown): value is ModelRuntime {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return (
+    row.schema_version === "model-runtime/v1" &&
+    typeof row.observed_at === "string" &&
+    ["resident", "candidate_research", "transitioning", "unknown"].includes(
+      String(row.mode),
+    ) &&
+    ["qualification_state", "none"].includes(String(row.mode_source)) &&
+    ["online", "stopped", "unknown"].includes(
+      String(row.resident_services_expected),
+    ) &&
+    ["running", "paused", "unknown"].includes(String(row.nara_service_expected)) &&
+    (row.mode_source_sha256 === null || typeof row.mode_source_sha256 === "string") &&
+    (row.run_id === null || typeof row.run_id === "string") &&
+    (row.phase === null || typeof row.phase === "string") &&
+    (row.source_error === null || typeof row.source_error === "string")
+  );
+}
+
+function orderedModelCatalog(value: unknown): Array<[string, ServedModel]> {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) return [];
+  const source = value as Record<string, unknown>;
+  const keys = [
+    ...MODEL_ORDER.filter((key) => key in source),
+    ...Object.keys(source)
+      .filter((key) => !MODEL_ORDER.includes(key as (typeof MODEL_ORDER)[number]))
+      .sort(),
+  ];
+  return keys.flatMap((key) => {
+    const row = source[key];
+    if (row == null || typeof row !== "object" || Array.isArray(row)) return [];
+    return [[key, row as ServedModel]];
+  });
+}
+
+function isInventoryModel(row: ServedModel): boolean {
+  const positiveInteger = (value: unknown) =>
+    typeof value === "number" && Number.isInteger(value) && value > 0;
+  return (
+    typeof row.url === "string" &&
+    (row.model === null || typeof row.model === "string") &&
+    typeof row.probed_at === "string" &&
+    Number.isFinite(Date.parse(row.probed_at)) &&
+    typeof row.configured_model === "string" &&
+    row.configured_model.length > 0 &&
+    positiveInteger(row.configured_max_context_tokens) &&
+    (row.observed_max_context_tokens == null || positiveInteger(row.observed_max_context_tokens)) &&
+    ["production_resident", "research_candidate"].includes(String(row.deployment_role)) &&
+    ["resident", "flash"].includes(String(row.benchmark_cohort)) &&
+    row.promotion_authorized === false &&
+    ["available", "unreachable", "invalid_response"].includes(String(row.models_endpoint_status)) &&
+    ["online", "offline", "unknown"].includes(String(row.service_status)) &&
+    ["match", "mismatch", "unknown"].includes(String(row.identity_status)) &&
+    ["available", "unreachable", "invalid_response"].includes(String(row.metrics_endpoint_status)) &&
+    ["busy", "idle", "unknown"].includes(String(row.activity_status))
+  );
+}
 
 // A telemetry row is evidence for model health only when it carries the
 // producer's minimum model fields. The websocket boundary is unvalidated, so
@@ -178,7 +262,7 @@ const fetchIterationTimes = (scope: ResearchScope) =>
 // CHURN-STRIP (adversarial-review residual fix 2, 2026-08-18):
 // /api/activity/monitor stamps a fresh top-level `generated_at` on EVERY
 // response, so an otherwise-idle monitor payload always read as "changed"
-// to the hub's JSON change detection — NowBoard and both ModelServerCards
+// to the hub's JSON change detection — NowBoard and the model catalog cards
 // re-rendered on every 15 s poll of a perfectly quiet lab. Strip it BEFORE
 // the payload reaches the hub. It is the only churn-only field on this
 // payload (live_calls / synthetic_inference / active / recent move only
@@ -222,11 +306,21 @@ export default function Pulse() {
   // dashboard. SWR keeps the previous value on a failed read rather than
   // blanking the card; a reachable endpoint reporting no model renders
   // "unknown".
-  const servedModels = usePolled("served_models", getServedModels, {
+  const servedModelsPoll = usePolled("served_models", getServedModels, {
     intervalMs: 30000,
-  }).data ?? null;
+  });
+  const servedModels = servedModelsPoll.data ?? null;
+  const runtimePoll = usePolled("model_runtime", getModelRuntime, {
+    intervalMs: 5000,
+    initialDelayMs: 50,
+  });
+  const modelRuntime = isModelRuntime(runtimePoll.data) ? runtimePoll.data : null;
+  const modelCatalog = useMemo(
+    () => orderedModelCatalog(servedModels),
+    [servedModels],
+  );
   // The live wrapper-call aggregate — feeds the NowBoard headline strip and
-  // both ModelServerCards' "driving" sub-lines. limit=1 keeps the monitor
+  // each ModelServerCard's "driving" sub-line. limit=1 keeps the monitor
   // payload cheap (only its live_calls block is read). Fails quiet (SWR).
   const monitor = usePolled("monitor", fetchMonitor, {
     intervalMs: 15000,
@@ -410,6 +504,74 @@ export default function Pulse() {
           : telemetryStale
             ? "historical-stale"
             : "current";
+  const runtimeObservedMs = modelRuntime ? Date.parse(modelRuntime.observed_at) : Number.NaN;
+  const runtimeAgeMs = Number.isFinite(runtimeObservedMs) ? now - runtimeObservedMs : Number.NaN;
+  const boundRuntimeMode =
+    modelRuntime?.mode_source === "qualification_state" &&
+    typeof modelRuntime.mode_source_sha256 === "string" &&
+    /^[0-9a-f]{64}$/.test(modelRuntime.mode_source_sha256) &&
+    typeof modelRuntime.run_id === "string" &&
+    modelRuntime.run_id.length > 0 &&
+    typeof modelRuntime.phase === "string" &&
+    modelRuntime.phase.length > 0 &&
+    modelRuntime.source_error === null &&
+    Number.isFinite(runtimeAgeMs) &&
+    runtimeAgeMs >= 0 &&
+    runtimeAgeMs <= 20_000 &&
+    !runtimePoll.failing;
+  const candidateResearchWindow =
+    modelRuntime?.mode === "candidate_research" &&
+    boundRuntimeMode &&
+    modelRuntime.resident_services_expected === "stopped";
+  const candidateEndpointStarting =
+    candidateResearchWindow &&
+    ["candidate_start", "readiness"].includes(modelRuntime.phase ?? "");
+  const runtimeTransition =
+    modelRuntime?.mode === "transitioning" &&
+    boundRuntimeMode;
+  const runtimePreparing =
+    runtimeTransition &&
+    ["preflight", "model_verification", "setup_quiescence", "sentinel_create"].includes(
+      modelRuntime.phase ?? "",
+    );
+  const residentRuntime =
+    modelRuntime?.mode === "resident" &&
+    boundRuntimeMode &&
+    modelRuntime.resident_services_expected === "online";
+  const inventoryCatalog = modelCatalog.filter(([, row]) => isInventoryModel(row));
+  const inventoryContractReady =
+    MODEL_ORDER.every((key) =>
+      inventoryCatalog.some(([endpointName]) => endpointName === key),
+    ) && inventoryCatalog.length === modelCatalog.length;
+  const runtimeObservabilityIssues = [
+    !connected ? "telemetry disconnected" : null,
+    cleanSamples.length === 0 ? "no telemetry received" : null,
+    cleanSamples.length > 0 && telemetryTimeUnknown ? "telemetry time unknown" : null,
+    cleanSamples.length > 0 && telemetryStale ? "telemetry stale" : null,
+    readErrors.length > 0 ? `read errors: ${readErrors.join(", ")}` : null,
+  ].filter((value): value is string => value != null);
+  const runtimeModeLabel =
+    residentRuntime
+      ? "Resident serving"
+      : candidateResearchWindow
+        ? "Candidate research window"
+        : runtimeTransition
+          ? runtimePreparing
+            ? "Preparing research window"
+            : "Runtime transition"
+          : "Operating mode unverified";
+  const runtimeModeNote =
+    residentRuntime
+      ? "Controller state expects the production resident services online."
+      : candidateResearchWindow
+        ? candidateEndpointStarting
+          ? "Controller state expects residents stopped while the research candidate endpoint starts. Promotion remains unauthorized."
+          : "Controller state expects residents stopped while the research candidate is evaluated. Promotion remains unauthorized."
+        : runtimeTransition
+          ? runtimePreparing
+            ? "The controller is verifying prerequisites before model services are changed."
+            : "The controller is changing model services; endpoint observations may be temporarily mixed."
+          : "No current controller-bound operating-mode receipt is available. Endpoint observations remain independent.";
 
   // Sparkgrid inputs: both endpoints sort newest-first, so [0] is the most
   // recent of each and their newer end is "last finished". Memoized for the
@@ -458,7 +620,44 @@ export default function Pulse() {
         </span>
         <span>backend-reported revision {health?.version ?? "unknown"}</span>
         <span style={{ marginLeft: "auto" }}>
-          {gemmaUp === null || !connected || telemetryTimeUnknown || telemetryStale ? (
+          {candidateResearchWindow ? (
+            <div
+              data-testid="health-verdict"
+              data-level="research"
+              className="flex flex-wrap items-center gap-2 text-[var(--fg-muted)]"
+            >
+              <span className="font-semibold text-[var(--accent)]">RESEARCH WINDOW</span>
+              <span>Resident model services are expected to be stopped.</span>
+              <span>
+                During this phase Nara is expected {modelRuntime.nara_service_expected === "paused" ? "paused" : modelRuntime.nara_service_expected === "running" ? "running" : "in an unknown state"}; live Nara status is not inferred.
+              </span>
+              {runtimeObservabilityIssues.length > 0 && (
+                <span className="text-[var(--status-warn)]" data-testid="runtime-observability-warning">
+                  Observability: {runtimeObservabilityIssues.join("; ")}.
+                </span>
+              )}
+            </div>
+          ) : runtimeTransition ? (
+            <div
+              data-testid="health-verdict"
+              data-level="transitioning"
+              className="flex flex-wrap items-center gap-2 text-[var(--fg-muted)]"
+            >
+              <span className="font-semibold text-[var(--status-warn)]">
+                {runtimePreparing ? "PREPARING" : "TRANSITIONING"}
+              </span>
+              <span>
+                {runtimePreparing
+                  ? "Research-window prerequisites are being verified; model services have not been changed in this phase."
+                  : "Model runtime transition is recorded; endpoint expectations are not yet settled."}
+              </span>
+              {runtimeObservabilityIssues.length > 0 && (
+                <span className="text-[var(--status-warn)]" data-testid="runtime-observability-warning">
+                  Observability: {runtimeObservabilityIssues.join("; ")}.
+                </span>
+              )}
+            </div>
+          ) : gemmaUp === null || !connected || telemetryTimeUnknown || telemetryStale ? (
             <div data-testid="health-verdict" data-level="unknown"
               className="flex flex-wrap items-center gap-2 text-[var(--fg-muted)]">
               <span className="font-semibold">UNKNOWN</span>
@@ -586,32 +785,118 @@ export default function Pulse() {
 
         <HealthStrip samples={cleanSamples} />
 
-        {/* Entry point to the Model I/O viewer (owner request 2026-08-18):
-            the cards below say the servers are healthy; this link answers
-            what is actually passing through them. */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            fontSize: "var(--text-meta)",
-          }}
-        >
-          <Link
-            to="/model-io"
-            data-testid="pulse-model-io-link"
-            className="text-[var(--fg-muted)] transition-colors hover:text-[var(--fg)]"
+        <section aria-labelledby="model-runtime-heading" data-testid="pulse-model-runtime">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-widest text-[var(--fg-muted)]">
+                Model runtime
+              </p>
+              <h2 id="model-runtime-heading" className="mt-1 text-lg font-medium">
+                {runtimeModeLabel}
+              </h2>
+              <p className="mt-1 max-w-3xl text-xs text-[var(--fg-muted)]">
+                {runtimeModeNote}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3 text-xs">
+              <Link
+                to="/benchmarks"
+                className="text-[var(--accent)] transition-colors hover:text-[var(--fg)]"
+              >
+                Benchmark evidence →
+              </Link>
+              <Link
+                to="/model-io"
+                data-testid="pulse-model-io-link"
+                className="text-[var(--accent)] transition-colors hover:text-[var(--fg)]"
+              >
+                Inspect model I/O →
+              </Link>
+            </div>
+          </div>
+          {inventoryContractReady && (
+            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-[var(--fg-muted)]">
+              <span className="rounded border border-[var(--border-1)] px-2 py-1">
+                {inventoryCatalog.length} configured endpoints
+              </span>
+              <span className="rounded border border-[var(--border-1)] px-2 py-1">
+                {inventoryCatalog.filter(([, row]) => row.service_status === "online").length} online
+              </span>
+              {inventoryCatalog.some(([, row]) => row.service_status === "offline") && (
+                <span className="rounded border border-[var(--border-1)] px-2 py-1">
+                  {inventoryCatalog.filter(([, row]) => row.service_status === "offline").length} offline
+                </span>
+              )}
+              {inventoryCatalog.some(([, row]) => row.service_status === "unknown") && (
+                <span className="rounded border border-[var(--border-1)] px-2 py-1">
+                  {inventoryCatalog.filter(([, row]) => row.service_status === "unknown").length} service unknown
+                </span>
+              )}
+              <span className="rounded border border-[var(--border-1)] px-2 py-1">
+                {inventoryCatalog.filter(([, row]) => row.activity_status === "busy").length} busy
+              </span>
+              {inventoryCatalog.some(([, row]) => row.activity_status === "unknown") && (
+                <span className="rounded border border-[var(--border-1)] px-2 py-1">
+                  {inventoryCatalog.filter(([, row]) => row.activity_status === "unknown").length} activity unknown
+                </span>
+              )}
+            </div>
+          )}
+          {inventoryContractReady && (
+            <p className="mt-2 text-[11px] text-[var(--fg-muted)]">
+              Live rates come from each server&apos;s metrics endpoint. Advertised context is capacity, not tested long-context quality; benchmark evidence stays separate.
+            </p>
+          )}
+          {!inventoryContractReady && servedModels != null && (
+            <p className="mt-2 text-[11px] text-[var(--status-warn)]" data-testid="model-inventory-legacy">
+              Detailed endpoint inventory is unavailable from this backend response. Only legacy resident telemetry is shown.
+            </p>
+          )}
+          {!inventoryContractReady && servedModels == null && servedModelsPoll.failing && (
+            <p className="mt-2 text-[11px] text-[var(--status-warn)]" data-testid="model-inventory-unavailable">
+              Endpoint inventory is unavailable. Configured and live endpoint states are not inferred.
+            </p>
+          )}
+          <div
+            className="mt-3"
+            style={{
+              display: "grid",
+              gap: "var(--space-4)",
+              gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+            }}
           >
-            what&apos;s passing through →
-          </Link>
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gap: "var(--space-4)",
-            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-          }}
-        >
-          {modelEvidenceMode === "current" ? <>
+          {inventoryContractReady ? inventoryCatalog.map(([key, row]) => {
+            const presentation = MODEL_PRESENTATION[key] ?? MODEL_PRESENTATION.flash;
+            const observedName = typeof row.model === "string" && row.model.trim() ? row.model : null;
+            const configuredName = typeof row.configured_model === "string" && row.configured_model.trim()
+              ? row.configured_model
+              : null;
+            const identity = observedName ?? configuredName ?? "unknown model";
+            const serviceExpectation =
+              row.service_status !== "offline"
+                ? null
+                : row.deployment_role === "production_resident" && candidateResearchWindow
+                  ? "expected_offline"
+                  : row.deployment_role === "research_candidate" && candidateEndpointStarting
+                    ? "starting"
+                    : row.deployment_role === "research_candidate" && !candidateResearchWindow
+                      ? "standby"
+                      : null;
+            return <ModelServerCard
+              key={key}
+              title={identity}
+              servedModel={observedName ?? `unobserved-${key}`}
+              endpointName={key}
+              inventory={row}
+              serviceExpectation={serviceExpectation}
+              pick={presentation.pick}
+              samples={cleanSamples}
+              liveCalls={liveCalls}
+              accent={presentation.accent}
+              workloadHint={presentation.workloadHint}
+              transientDropBanner={presentation.transientDropBanner}
+            />;
+          }) : modelEvidenceMode === "current" ? <>
             <ModelServerCard
               title={servedModels?.gemma?.model ?? "unknown"}
               servedModel={servedModels?.gemma?.model ?? VLLM_SERVED_MODEL}
@@ -645,7 +930,8 @@ export default function Pulse() {
               accent="sky"
             />
           </>}
-        </div>
+          </div>
+        </section>
 
         {/* Launching an iteration is deliberate, not ambient — disclosed.
             Controlled so the ⌘K "launch an iteration" verb can open it. */}

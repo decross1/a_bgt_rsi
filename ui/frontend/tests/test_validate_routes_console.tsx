@@ -375,6 +375,12 @@ vi.mock("../src/api/http", () => ({
     gemma: { url: "http://localhost:8000", model: "gemma-4-26b-a4b", error: null },
     qwen: { url: "http://localhost:8001", model: "qwen3.6-27b-nvfp4-mtp", error: null },
   }),
+  getModelRuntime: vi.fn().mockResolvedValue({
+    schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+    mode: "unknown", mode_source: "none", mode_source_sha256: null,
+    resident_services_expected: "unknown", nara_service_expected: "unknown",
+    run_id: null, phase: null, source_error: null,
+  }),
   getWorkloadHint: vi.fn().mockResolvedValue({ regime: "idle" }),
   // Coordinator loop: real cycles (the one surviving coordinator endpoint).
   getCoordinatorCycles: vi.fn().mockResolvedValue({ cycles: D.REAL_CYCLES }),

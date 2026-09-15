@@ -25,7 +25,9 @@ class _Resp:
     def __init__(self, payload):
         self._payload = payload
 
-    def read(self):
+    def read(self, _limit=None):
+        if isinstance(self._payload, str):
+            return self._payload.encode("utf-8")
         return json.dumps(self._payload).encode("utf-8")
 
     def __enter__(self):
@@ -57,6 +59,16 @@ ENDPOINTS = {"gemma": "http://g:8000", "qwen": "http://q:8001"}
 PAYLOADS = {
     "http://g:8000/v1/models": {"data": [{"id": "gemma-4-26b-a4b"}]},
     "http://q:8001/v1/models": {"data": [{"id": "qwen3.8-27b-nvfp4-mtp"}]},
+    "http://g:8000/metrics": (
+        "vllm:num_requests_running 0\n"
+        "vllm:num_requests_waiting 0\n"
+        "vllm:kv_cache_usage_perc 0.25\n"
+    ),
+    "http://q:8001/metrics": (
+        "vllm:num_requests_running 1\n"
+        "vllm:num_requests_waiting 0\n"
+        "vllm:kv_cache_usage_perc 0.5\n"
+    ),
 }
 
 
@@ -72,10 +84,10 @@ def test_within_ttl_serves_cache_without_reprobing():
     calls, clock = [], _Clock()
     client = _client(calls, clock)
     first = client.get("/api/served_models").json()
-    assert len(calls) == 2  # one probe per role
+    assert len(calls) == 4  # model + metrics probe per role
     clock.t += 3.0  # inside the 8 s TTL
     second = client.get("/api/served_models").json()
-    assert len(calls) == 2  # NO new probes
+    assert len(calls) == 4  # NO new probes
     # The cached answer is byte-identical — including probed_at, so the
     # reader can compute the true age instead of being told "fresh".
     assert second == first
@@ -86,10 +98,10 @@ def test_past_ttl_reprobes():
     calls, clock = [], _Clock()
     client = _client(calls, clock)
     client.get("/api/served_models")
-    assert len(calls) == 2
+    assert len(calls) == 4
     clock.t += 9.0  # past the TTL
     resp = client.get("/api/served_models").json()
-    assert len(calls) == 4  # re-probed both roles
+    assert len(calls) == 8  # re-probed both paths for both roles
     assert resp["gemma"]["model"] == "gemma-4-26b-a4b"
     assert resp["qwen"]["model"] == "qwen3.8-27b-nvfp4-mtp"
 
@@ -99,12 +111,16 @@ def test_every_role_is_probed_and_stamped():
     client = _client(calls, clock)
     body = client.get("/api/served_models").json()
     assert set(body) == {"gemma", "qwen"}
-    assert sorted(calls) == sorted(
-        ["http://g:8000/v1/models", "http://q:8001/v1/models"])
+    assert sorted(calls) == sorted([
+        "http://g:8000/v1/models", "http://g:8000/metrics",
+        "http://q:8001/v1/models", "http://q:8001/metrics",
+    ])
     for role in ("gemma", "qwen"):
         assert body[role]["error"] is None
         assert isinstance(body[role]["probed_at"], str)
         assert body[role]["probed_at"].endswith("Z")
+    assert body["gemma"]["activity_status"] == "idle"
+    assert body["qwen"]["activity_status"] == "busy"
 
 
 def test_failed_probe_is_cached_honestly_not_retried_in_ttl():
@@ -112,7 +128,10 @@ def test_failed_probe_is_cached_honestly_not_retried_in_ttl():
     app = FastAPI()
     register(app, endpoints=ENDPOINTS,
              opener=_counting_opener(
-                 {"http://g:8000/v1/models": PAYLOADS["http://g:8000/v1/models"]},
+                 {
+                     "http://g:8000/v1/models": PAYLOADS["http://g:8000/v1/models"],
+                     "http://g:8000/metrics": PAYLOADS["http://g:8000/metrics"],
+                 },
                  calls),
              ttl_s=8.0, clock=clock)
     client = TestClient(app)

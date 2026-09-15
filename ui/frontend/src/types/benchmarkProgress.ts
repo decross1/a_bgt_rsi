@@ -328,4 +328,35 @@ export interface BenchmarkProgressResponse {
   weeks: BenchmarkWeek[];
   /** Optional during rolling backend/frontend deployments. */
   research_pipeline?: ResearchPipelineProgress;
+  local_model_research?: LocalModelResearchProgress;
+}
+
+export interface LocalModelResearchProgress {
+  schema_version: "local-model-research-progress/v1";
+  status: "available" | "partial" | "unavailable";
+  candidate: string;
+  accounting: string;
+  evidence_note: string;
+  promotion_authorized: false;
+  warnings: string[];
+  qualification_runs: {
+    id: string; status: "passed" | "failed" | "unknown" | "unfinished_receipt";
+    phase: string; finished_at: string | null; candidate_window_minutes: number | null;
+    minimum_memory_gib: number | null; probe_count: number | null;
+    model_started: boolean | null;
+    restoration: string; source_sha256: string;
+  }[];
+  comparisons: {
+    id: string; status: "complete" | "incomplete"; manifest_sha256: string;
+    comparison_eligible: boolean;
+    run_sha256: Record<"resident" | "flash", string>; promotion_authorized: false;
+    families: {
+      family: string; comparison_eligible: boolean; paired_success_delta: number | null;
+      equal_source_task_success_delta: number | null; source_task_interval_95: [number, number] | null;
+      cohorts: Record<"resident" | "flash", {
+        declared: number; attempted: number; passed: number;
+        success_rate: number | null; successful_task_runs_per_hour: number | null;
+      }>;
+    }[];
+  }[];
 }
