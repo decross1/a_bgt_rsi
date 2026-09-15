@@ -1,4 +1,5 @@
 import type { AppliedMarketResearchProgress } from "./appliedMarketResearch";
+import type { FollowonResultsProgress } from "./followonResults";
 export type AutomationMode = "review_only" | "trial_allowlisted" | "disabled" | "unknown";
 export type BenchmarkFamilyStatus = "complete" | "incomplete" | "awaiting_annotation" | "mixed" | "unknown";
 
@@ -331,6 +332,7 @@ export interface BenchmarkProgressResponse {
   /** Optional during rolling backend/frontend deployments. */
   research_pipeline?: ResearchPipelineProgress;
   local_model_research?: LocalModelResearchProgress;
+  local_followon_results?: FollowonResultsProgress;
 }
 
 export interface LocalModelResearchProgress {

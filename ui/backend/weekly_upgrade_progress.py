@@ -38,6 +38,7 @@ if str(_REPOSITORY_ROOT) not in sys.path:
 from orchestrator.research_pipeline_progress import project_research_pipeline
 
 from .applied_data_collection import project_market_research
+from .followon_results_progress import project_followon_results
 from .local_model_research import DEFAULT_RESEARCH_ROOT, project_local_research
 
 DEFAULT_CANONICAL_ROOT = Path("/home/decross1/projects/a_bgt_rsi")
@@ -1864,6 +1865,7 @@ def compose_progress(
             now=current,
         ),
         "local_model_research": project_local_research(local_research_root),
+        "local_followon_results": project_followon_results(local_research_root),
         "applied_market_research": project_market_research(),
     }
 

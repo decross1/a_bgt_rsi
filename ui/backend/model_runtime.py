@@ -292,9 +292,14 @@ def _mia_spec_for_run(run_id: str):
         raise RuntimeSourceError("Mia profile registry is unavailable") from exc
     except Exception as exc:
         raise RuntimeSourceError("Mia candidate registry is unavailable") from exc
-    matching = [spec for spec in REGISTERED_MIA_SPECS
-                if run_id.startswith(spec.run_id_prefix)]
-    if len(matching) != 1:
+    matching = sorted(
+        (spec for spec in REGISTERED_MIA_SPECS
+         if run_id.startswith(spec.run_id_prefix)),
+        key=lambda spec: len(spec.run_id_prefix), reverse=True,
+    )
+    if (not matching or
+            len(matching) > 1 and len(matching[0].run_id_prefix)
+            == len(matching[1].run_id_prefix)):
         raise RuntimeSourceError("Mia run namespace does not select one code-owned spec")
     return matching[0]
 

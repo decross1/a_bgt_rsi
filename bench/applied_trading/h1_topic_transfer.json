@@ -1,0 +1,40 @@
+{
+  "schema": "applied-topic-transfer-draft/v1",
+  "application_id": "h1-btcusdt-strategic-liquidity-paper",
+  "status": "design_only",
+  "primary_horizon_hours": 1,
+  "secondary_horizon_hours": 4,
+  "prior": {
+    "classification": "known_prior",
+    "mechanism_id": "dealer-inventory-adverse-selection-quote-supply",
+    "mechanism_url": "https://math.nyu.edu/inmemoriam/avellaneda/HighFrequencyTrading.pdf",
+    "strategic_assumption": "Liquidity suppliers may adjust displayed offers in response to inventory and adverse-selection exposure",
+    "claim_ceiling": "mechanism_consistent_predictive_application_not_identified_agent_causality"
+  },
+  "research_transfer": {
+    "historical_scope": "lagged_signed_taker_flow_trade_only_no_historical_L2",
+    "forward_proxy": "jointly_gated_prior_hour_buy_taker_imbalance_and_visible_ask_L5_size_contraction",
+    "rest_snapshot_limit": "different_price_levels_no_cancellation_fill_inventory_or_sequence_identification",
+    "registered_forward_direction": "positive_joint_condition_or_negative_result",
+    "current_v1_rule": "additive_flow_and_depletion_terms_with_conjunctive_minimum_thresholds_no_literal_interaction_coefficient",
+    "current_v1_match_gap": "candidate_and_baseline_intercept_momentum_weights_declared_independently",
+    "matched_baseline": "current_rest_pilot_enforces_equal_intercept_momentum_spread_cost_hold_exposure_without_flow_depletion_terms_or_joint_gate",
+    "current_rest_pilot_uncontrolled_factors": "lagged_volatility_and_total_volume_absent_from_forward_feature_rows",
+    "negative_control": "later_within_day_lagged_volatility_strata_prior_flow_sign_shuffle_only_after_asof_volatility_field_registered_not_executed_in_pilot",
+    "primary_outcome": "forward_1h_incremental_rest_displayed_quote_reference_net_bps_per_all_scheduled_opportunities_after_base_and_doubled_costs_nonexecutable"
+  },
+  "source_requirement": {
+    "current_rest_L5_sequence_valid": false,
+    "strict_paper_driver_requires_sequence_valid": true,
+    "next_source_action": "weaker_separately_labeled_rest_displayed_quote_diagnostic_now_then_bounded_forward_diff_depth_snapshot_reconciliation_for_strict_paper",
+    "no_source_proof_invented": true
+  },
+  "pipeline_action": {
+    "science_ladder_changed": false,
+    "new_active_campaign_required": false,
+    "source_campaign_link": null,
+    "next_registered_record": "one_rest_displayed_quote_diagnostic_frozen_before_forward_decisions_then_strict_applied_trial_v1_only_after_sequence_proof",
+    "orders_authorized": false,
+    "event_lane": "watch"
+  }
+}
