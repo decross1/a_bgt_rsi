@@ -1,6 +1,6 @@
-# Qwen3.8-Flash-Next C0-S0 qualification runbook
+# Qwen3.8-Flash-Next C0-S1 qualification runbook
 
-This runbook covers bounded GPU qualification of the exact C0-S0 runtime. The
+This runbook covers bounded GPU qualification of the exact C0-S1 runtime. The
 owner has authorized local model A/B and optimization work; broader execution
 uses the separately reviewed evaluation window and frozen benchmark plan.
 Production adoption remains a separate decision. This controller uses the
@@ -10,13 +10,13 @@ recreates a resident.
 
 ## Frozen inputs
 
-- Controller commit: `199ed4c169b08515eb8cabe31088d5f169507389`.
+- Controller commit: `f01e35c7f3ce2e3896f37f6e86132edc76d27b15`.
 - Controller SHA-256:
-  `bdfe772f9605e308bedeeeb09a5e89bbcb903c00cc16fd40ff37041e41b6d22d`.
+  `de0ce4db5f788c6725ad701e46e7660bd66e2685dbbdb87119f3198784fb2afe`.
 - External contract:
   `/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/runtime/launch-contract.c0.json`.
 - Contract SHA-256:
-  `e581639b1ce3e3c5db00b368b638cf95bfcd3d296bc529aa189d88e6e758758f`.
+  `e63c046aed5f765361803cf080d85ed98b378002c72aaa9994c0572dd2505d2b`.
 - Image ID:
   `sha256:345bea72ff3bb548594d88f6a7661636c07cd3e7367f8e54b0e4a98494e5a48d`.
 - Model revision:
@@ -46,9 +46,21 @@ checkpoint shards: candidate swap reached 715,464,704 bytes and startup host
 paging exceeded its limits. Its minimum available memory was 31.1813 GiB;
 the 20 GiB floor was not breached. Both original services and Nara were
 restored and verified. The original contract is archived read-only as
-`launch-contract.c0.v7-792be64624d1863b.json`. C0-S0 tests whether disabling
-candidate swap can avoid that failure; it does not claim completed-runtime fit
-or weaken the previous paging criteria.
+`launch-contract.c0.v7-792be64624d1863b.json`. C0-S0 subsequently loaded four shards with zero candidate swap/OOM but
+aborted at a host paging burst of 140,914,688 bytes in five seconds. Its minimum
+host reserve was 31.1554 GiB; restoration was verified at 04:59:23 UTC. That
+result remains failed and does not demonstrate a hardware-fit failure.
+
+C0-S1 is a new exploratory startup guard: 512 MiB/5s, 2 GiB/60s and 4 GiB total.
+These limits were registered before a new attempt, after review of the S0
+failure. Candidate swap/OOM, host reserve, ready quiet and serving gates stay
+unchanged. Continuous page-in and host PSI counters plus separate dashboard
+responsiveness observations support interpretation of a future paging burst.
+
+The owner's current authority permits a separately registered 12 GiB absolute
+reserve if needed; 20 GiB remains preferred and is still this S1 profile's
+mandatory floor. Local R&D has no weekly GPU-hour cap and is accounted separately
+from the 120-minute weekly maintenance allowance.
 
 ## Side-effect-free review
 
@@ -92,7 +104,7 @@ env -u MOCK_LLM .venv-chroma/bin/python \
   -m bench.flash_next_ab.qualification \
   --run \
   --contract /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/runtime/launch-contract.c0.json \
-  --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/qualification-runs/qfn-c0-s0-20260915t0445z
+  --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/qualification-runs/qfn-c0-s1-20260915t0515z
 ```
 
 `--run` launches its worker in a separate process group. The preregistered
@@ -135,8 +147,8 @@ does not change host VM settings. The 20 GiB host reserve remains independent
 of the container limit, because cgroup accounting is not a complete Spark
 physical-memory ledger.
 
-Host paging limits are cumulative across **load and ready together**: 128 MiB
-in 5 seconds, 256 MiB in 60 seconds, or 512 MiB total. During serving/probes the
+Host paging limits are cumulative across **load and ready together**: 512 MiB
+in 5 seconds, 2 GiB in 60 seconds, or 4 GiB total. During serving/probes the
 limits are 32 MiB in 5 seconds, 64 MiB in 60 seconds, or 128 MiB total. Reaching a
 limit aborts. Startup phase changes cannot reset these limits. Setup and the
 final ready interval each require 60 seconds of zero host swap growth.
@@ -151,7 +163,7 @@ cgroup identity, quiet intervals, and the final restoration sample. A broader
 local A/B requires:
 
 - `schema == "qwen-flash-next-qualification-result/v3"`;
-- `status == "passed"`, `failure_stage == null`, and no errors;
+- `status == "passed"`, `failure_stage == null`, `failure_class == null`, and no errors;
 - `restoration.status == "verified"`;
 - the registered contract, plan, and model-manifest hashes;
 - three successful fixed probes with exact provenance;
@@ -160,8 +172,10 @@ local A/B requires:
 - `weekly_budget_debit == false`, `paid_api_calls == 0`, and
   `production_change_authorized == false`.
 
-C0-S0 additionally binds the raw memory-log hash and `cgroup-diagnostics.json`.
-Admission reconstructs its attributed phase snapshots and peak charged memory.
+C0-S1 additionally binds the raw memory-log hash and `cgroup-diagnostics.json`.
+Admission reconstructs its attributed phase snapshots, peak charged memory,
+all five host phases, and raw page-in/PSI totals and deltas. PSI magnitude is
+diagnostic; missing, malformed or decreasing counters cannot support a pass.
 Each sample records cgroup current/anon/file/reclaim/pressure and host memory
 diagnostics, so another failure can distinguish more possible causes.
 
