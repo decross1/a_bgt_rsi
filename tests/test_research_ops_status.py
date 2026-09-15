@@ -13,6 +13,7 @@ import pytest
 from orchestrator.research_campaign import (
     DEFAULT_CAMPAIGN_ID,
     KNOWN_OPPONENT_CAMPAIGN_ID,
+    UTILITY_MECHANISM_CAMPAIGN_ID,
     CampaignError,
     bind_topic,
     load_campaign,
@@ -21,6 +22,7 @@ from orchestrator.research_ops_status import main, project_research_ops_status
 from pipeline import daily_arxiv_job as job
 
 NOW = datetime(2026, 9, 15, 16, 30, tzinfo=timezone.utc)
+FOLLOWON_NOW = datetime(2026, 9, 15, 20, 50, tzinfo=timezone.utc)
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
 CAMPAIGN_FILES = (
     "schema/research_campaign.schema.json",
@@ -30,6 +32,7 @@ CAMPAIGN_FILES = (
     "experiments/agentic_game_theory_v2_calibration_2026-09-14.json",
     "experiments/PREREG_agentic_game_theory_v2_calibration_2026-09-14.md",
     "experiments/research_campaign_v2_known_opponent_utility_20260915.json",
+    "experiments/research_campaign_v2_utility_mechanism_followon_20260915.json",
     "experiments/known_opponent_utility_response_2026-09-15.json",
     "experiments/PREREG_known_opponent_utility_response_2026-09-15.md",
     "experiments/known_opponent_utility/pilot.py",
@@ -62,7 +65,9 @@ def _root(tmp_path: Path, campaign_id: str = DEFAULT_CAMPAIGN_ID) -> Path:
         "schema_version": "research-campaign-activation/v1",
         "campaign_id": campaign_id,
         "campaign_manifest_sha256": campaign["_manifest_sha256"],
-        "activated_at": "2026-09-15T16:20:00Z",
+        "activated_at": ("2026-09-15T20:45:00Z"
+                         if campaign_id == UTILITY_MECHANISM_CAMPAIGN_ID
+                         else "2026-09-15T16:20:00Z"),
         "activated_by": "ops-status-test",
     })
     for relative in ("memory/loop_memory.jsonl", "run_state/coordinator_cycles.jsonl",
@@ -123,15 +128,44 @@ def test_unlinked_text_does_not_consume_and_broken_loop_is_unknown(tmp_path):
     assert x["campaign_queue"]["eligible_count"] is None
 
 
-def test_new_campaign_has_three_distinct_eligible_topics(tmp_path):
+def test_known_campaign_has_three_distinct_eligible_topics_and_registered_followon(tmp_path):
     root = _root(tmp_path, KNOWN_OPPONENT_CAMPAIGN_ID)
     x = project_research_ops_status(repo_root=root, observed_at=NOW)
     assert x["active_campaign"]["campaign_id"] == KNOWN_OPPONENT_CAMPAIGN_ID
     assert x["campaign_queue"]["status"] == "eligible"
     assert x["campaign_queue"]["eligible_count"] == 3
     assert len(set(x["campaign_queue"]["eligible_topic_ids"])) == 3
-    assert x["next_registered_campaign"] is None
+    assert x["next_registered_campaign"]["campaign_id"] == UTILITY_MECHANISM_CAMPAIGN_ID
+    assert x["next_registered_campaign"]["registered_topic_count"] == 3
+    assert x["next_registered_campaign"]["activation_required"] is True
     assert x["next_work"]["code"] == "run_preregistered_campaign_topic"
+
+
+def test_exhausted_known_campaign_preserves_pilot_advisory_and_separate_followon(tmp_path):
+    root = _root(tmp_path, KNOWN_OPPONENT_CAMPAIGN_ID)
+    campaign = load_campaign(KNOWN_OPPONENT_CAMPAIGN_ID, repo_root=root)
+    _rows(root, "memory/loop_memory.jsonl", [
+        {"iteration_id": f"iter-known-{index}",
+         "ended_at": f"2026-09-15T20:3{index}:00Z",
+         "campaign": bind_topic(campaign, topic["text"]),
+         "gate_status": "pending"}
+        for index, topic in enumerate(campaign["topic_policy"]["topics"])
+    ])
+    x = project_research_ops_status(repo_root=root, observed_at=FOLLOWON_NOW)
+    assert x["campaign_queue"]["status"] == "all_registered_topics_consumed"
+    assert x["campaign_queue"]["consumed_count"] == 3
+    assert x["next_work"]["code"] == "freeze_and_run_registered_empirical_study"
+    assert x["next_registered_campaign"]["campaign_id"] == UTILITY_MECHANISM_CAMPAIGN_ID
+    assert x["next_registered_campaign"]["activation_required"] is True
+
+
+def test_followon_is_eligible_only_after_separate_hash_bound_activation(tmp_path):
+    root = _root(tmp_path, UTILITY_MECHANISM_CAMPAIGN_ID)
+    x = project_research_ops_status(repo_root=root, observed_at=FOLLOWON_NOW)
+    assert x["active_campaign"]["campaign_id"] == UTILITY_MECHANISM_CAMPAIGN_ID
+    assert x["campaign_queue"]["eligible_count"] == 3
+    assert x["next_work"]["code"] == "run_preregistered_campaign_topic"
+    assert x["next_registered_campaign"] is None
 
 
 def test_one_new_iteration_proposes_empirical_study_with_two_topics_still_queued(tmp_path):

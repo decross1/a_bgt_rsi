@@ -36,12 +36,20 @@ KNOWN_OPPONENT_CAMPAIGN_MANIFEST = (
     REPO_ROOT / "experiments"
     / "research_campaign_v2_known_opponent_utility_20260915.json"
 )
+UTILITY_MECHANISM_CAMPAIGN_ID = "v2-utility-mechanism-followon-20260915"
+UTILITY_MECHANISM_CAMPAIGN_MANIFEST = (
+    REPO_ROOT / "experiments"
+    / "research_campaign_v2_utility_mechanism_followon_20260915.json"
+)
 CAMPAIGN_MANIFESTS: Mapping[str, str] = {
     DEFAULT_CAMPAIGN_ID: (
         "experiments/research_campaign_v2_agentic_game_theory_20260914.json"
     ),
     KNOWN_OPPONENT_CAMPAIGN_ID: (
         "experiments/research_campaign_v2_known_opponent_utility_20260915.json"
+    ),
+    UTILITY_MECHANISM_CAMPAIGN_ID: (
+        "experiments/research_campaign_v2_utility_mechanism_followon_20260915.json"
     ),
 }
 MAX_MANIFEST_BYTES = 128_000
@@ -564,6 +572,8 @@ __all__ = [
     "KNOWN_OPPONENT_CAMPAIGN_MANIFEST",
     "LINK_FIELDS",
     "LINK_SCHEMA_VERSION",
+    "UTILITY_MECHANISM_CAMPAIGN_ID",
+    "UTILITY_MECHANISM_CAMPAIGN_MANIFEST",
     "CampaignError",
     "available_topics",
     "bind_topic",
