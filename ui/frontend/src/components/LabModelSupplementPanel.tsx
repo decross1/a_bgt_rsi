@@ -179,7 +179,7 @@ export function LabModelSupplementPanel({ data, pollingFailed = false }: {
               return <tr key={cap + place}><th scope="row">{Number(cap).toLocaleString()} tokens</th>
                 <td>{place}</td><td>{countLabel(resident)}</td><td>{countLabel(flash)}</td></tr>;
             }))}</tbody></table></div>
-        <p className="benchmark-evidence-note">This paired context study tests Resident Gemma against optimized Mia Flash; it does not test Qwen 16K answer quality. Both servers were configured at 32,768 total tokens with a 2,048-token output reserve. The tables show answer quality and actual prompt use in these three lanes. A prepared 64K packet or server flag is not a 64K quality result.</p>
+        <p className="benchmark-evidence-note">This table compares Resident Gemma with optimized Mia Flash. Qwen results, when admitted, belong to a separate cross-plan study. Both servers were configured at 32,768 total tokens with a 2,048-token output reserve. The tables show answer quality and actual prompt use in these three lanes. A prepared 64K packet or server flag is not a 64K quality result.</p>
       </> : <p className="benchmark-empty-inline">{context?.status === "pending_publication"
         ? "Context pair publication pending; tested quality is unknown."
         : "Context pair source or admission unavailable; quality scores withheld."}</p>}
