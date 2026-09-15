@@ -47,7 +47,7 @@ def build(outcome: dict) -> dict:
         raise ValueError("experiment outcome exceeds context byte bound")
     entry = {
         "schema": SCHEMA,
-        "outcome": outcome,
+        "outcome": json.loads(raw),
         "outcome_sha256": hashlib.sha256(raw).hexdigest(),
     }
     note(entry)  # Prove the projected model input is itself bounded.

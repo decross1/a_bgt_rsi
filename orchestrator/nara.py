@@ -563,7 +563,7 @@ def run_iteration(
         return _run_iteration_impl(
             runtime, be, iteration_id, started_at, active, topic,
             source=source, log_path=log_path, max_depth=max_depth,
-            experiment_outcome=experiment_outcome,
+            experiment_outcome=(context["outcome"] if context is not None else None),
             empirical_entry=context,
             cross_tier_comparison=cross_tier_comparison,
             generation_policy=policy,

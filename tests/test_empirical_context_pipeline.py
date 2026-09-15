@@ -134,6 +134,15 @@ def test_invalid_or_oversized_outcome_refuses_before_model(cache, monkeypatch, t
     assert not cache.has_entry("iter-2099-01-01-001", "empirical_context")
 
 
+def test_context_freezes_caller_owned_outcome():
+    supplied = json.loads(json.dumps(OUTCOME))
+    entry = empirical_context.build(supplied)
+    expected_note = empirical_context.note(entry)
+    supplied["value"]["complete_episodes"] = 0
+    assert entry["outcome"]["value"]["complete_episodes"] == 12
+    assert empirical_context.note(entry) == expected_note
+
+
 def test_tampered_empirical_cache_refuses_critic_model(cache, monkeypatch):
     cache.write_entry("iter-tamper", "retrieval", {
         "status": "passed", "result": {"k": 0, "neighbors": []},
