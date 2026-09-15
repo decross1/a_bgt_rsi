@@ -568,6 +568,55 @@ def test_success_creates_sentinel_first_and_restores_exact_ids(monkeypatch, tmp_
     assert state["memory_log_relpath"] == "memory.jsonl"
 
 
+def test_finished_usage_is_durable_before_result_publication(monkeypatch, tmp_path):
+    output = tmp_path / "qfn-c0-ledger-fault"
+    output.mkdir()
+    ops = FakeOps()
+    usage = []
+
+    def append_usage(row, ledger=q.RESEARCH_LEDGER):
+        usage.append((ledger, row))
+        if row["event"] == "finished":
+            raise OSError("injected ledger failure")
+
+    monkeypatch.delenv("MOCK_LLM", raising=False)
+    monkeypatch.setattr(q, "canonical_root", lambda root: tmp_path)
+    monkeypatch.setattr(q, "resource_lease", fake_lease)
+    monkeypatch.setattr(q, "verify_model", lambda *args, **kwargs: {"full_sha256": True})
+    monkeypatch.setattr(q, "_assert_port_free", lambda: None)
+    monkeypatch.setattr(q, "_ensure_compile_cache", lambda: None)
+    monkeypatch.setattr(q, "_append_research_usage", append_usage)
+
+    recovery_plan = plan()
+    with pytest.raises(OSError, match="injected ledger failure"):
+        q.execute_worker(
+            recovery_plan,
+            contract(),
+            output,
+            ops=ops,
+            preflight_probe=preflight,
+            monitor_factory=FakeMonitor,
+        )
+
+    assert not (output / "result.json").exists()
+    assert [row[1]["event"] for row in usage] == ["started", "finished"]
+    assert q.CONTAINER_NAME not in ops.containers
+    assert all(ops.containers[row["name"]]["running"] for row in q.RESIDENTS)
+    assert ops.nara_active is True
+
+    recovery_usage = []
+    monkeypatch.setattr(q, "_append_research_usage", lambda row: recovery_usage.append(row))
+    receipt = q.supervisor_emergency_restore(
+        output,
+        recovery_plan,
+        deadline=time.monotonic() + 30,
+        ops=ops,
+    )
+    assert receipt["status"] == "verified"
+    assert receipt["restoration"]["sentinel_retained"] is False
+    assert recovery_usage[0]["event"] == "supervisor_recovery"
+
+
 def test_initially_inactive_nara_is_never_stopped_or_started(monkeypatch, tmp_path):
     result, ops, _, _ = prepare_execution(monkeypatch, tmp_path, nara_active=False)
     assert result["status"] == "passed"
@@ -984,6 +1033,71 @@ def test_arm_requires_clean_exact_pid_cgroup_and_preserves_binding(tmp_path):
     )
     assert monitor.candidate_cgroup_bound_pid == 200
     assert monitor.candidate_cgroup_start_ticks == 12345
+
+
+def test_arm_records_binding_before_publishing_to_background_sampler(tmp_path):
+    ops = FakeOps()
+    ops.containers[q.CONTAINER_NAME] = {
+        "id": ops.candidate_id,
+        "name": q.CONTAINER_NAME,
+        "image": q.IMAGE_ID,
+        "running": True,
+        "pid": 200,
+        "started_at": "now",
+        "oom_killed": False,
+        "restart_count": 0,
+        "restart_policy": "no",
+    }
+    monitor = manual_monitor(tmp_path, ops)
+    original_record = monitor._record
+    bind_entered = threading.Event()
+    release_bind = threading.Event()
+    sample_started = threading.Event()
+    sample_finished = threading.Event()
+
+    def blocked_record(row):
+        if row.get("schema") == "qwen-flash-next-cgroup-bind/v1":
+            bind_entered.set()
+            assert release_bind.wait(2)
+        original_record(row)
+
+    monitor._record = blocked_record
+    arm_thread = threading.Thread(target=monitor.arm, args=(ops.candidate_id,))
+    arm_thread.start()
+    assert bind_entered.wait(2)
+
+    def sample():
+        sample_started.set()
+        monitor._sample_once()
+        sample_finished.set()
+
+    sample_thread = threading.Thread(target=sample)
+    sample_thread.start()
+    assert sample_started.wait(2)
+    assert not sample_finished.wait(0.05)
+    release_bind.set()
+    arm_thread.join(2)
+    sample_thread.join(2)
+    assert not arm_thread.is_alive()
+    assert not sample_thread.is_alive()
+    monitor._stream.close()
+
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "memory.jsonl").read_text().splitlines()
+    ]
+    bind_index = next(
+        index
+        for index, row in enumerate(rows)
+        if row.get("schema") == "qwen-flash-next-cgroup-bind/v1"
+    )
+    armed_indexes = [
+        index
+        for index, row in enumerate(rows)
+        if row.get("candidate", {}).get("armed") is True
+    ]
+    assert rows[bind_index - 1]["monitor_phase"] == "load"
+    assert armed_indexes and bind_index < min(armed_indexes)
 
 
 def test_arm_refuses_unavailable_or_dirty_cgroup_proof(tmp_path):

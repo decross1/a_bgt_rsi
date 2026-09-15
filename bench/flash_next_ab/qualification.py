@@ -915,74 +915,87 @@ class MemoryMonitor:
         return self
 
     def arm(self, candidate_id: str) -> None:
-        candidate = _inspect_container(self.ops, candidate_id)
-        if (
-            candidate is None
-            or candidate.get("id") != candidate_id
-            or candidate.get("name") != CONTAINER_NAME
-            or candidate.get("image") != IMAGE_ID
-            or candidate.get("running") is not True
-            or candidate.get("oom_killed") is not False
-            or candidate.get("restart_count") != 0
-            or isinstance(candidate.get("pid"), bool)
-            or not isinstance(candidate.get("pid"), int)
-            or candidate["pid"] <= 0
-        ):
-            raise QualificationError("candidate cannot be bound to a live cgroup")
-        snapshot = self.cgroup_reader(candidate_id, candidate["pid"])
-        if not isinstance(snapshot, dict):
-            raise QualificationError("candidate cgroup snapshot is malformed")
-        numeric_snapshot = (
-            snapshot.get("process_start_ticks"),
-            snapshot.get("memory_swap_current_bytes"),
-            snapshot.get("memory_events_oom"),
-            snapshot.get("memory_events_oom_kill"),
-        )
-        if (
-            any(
-                isinstance(value, bool)
-                or not isinstance(value, int)
-                or value < 0
-                for value in numeric_snapshot
+        # Do not publish the armed identity until its clean cgroup binding is
+        # durable.  Otherwise the background sampler can emit an armed sample
+        # before the binding row needed to interpret it.
+        with self._sample_lock:
+            with self._lock:
+                if self._candidate_id is not None:
+                    raise QualificationError("candidate cgroup was already armed")
+                if self._phase != "load" or self.mutation_initial_pswpout is None:
+                    raise QualificationError(
+                        "candidate cgroup binding requires a load-phase sample"
+                    )
+            candidate = _inspect_container(self.ops, candidate_id)
+            if (
+                candidate is None
+                or candidate.get("id") != candidate_id
+                or candidate.get("name") != CONTAINER_NAME
+                or candidate.get("image") != IMAGE_ID
+                or candidate.get("running") is not True
+                or candidate.get("oom_killed") is not False
+                or candidate.get("restart_count") != 0
+                or isinstance(candidate.get("pid"), bool)
+                or not isinstance(candidate.get("pid"), int)
+                or candidate["pid"] <= 0
+            ):
+                raise QualificationError("candidate cannot be bound to a live cgroup")
+            snapshot = self.cgroup_reader(candidate_id, candidate["pid"])
+            if not isinstance(snapshot, dict):
+                raise QualificationError("candidate cgroup snapshot is malformed")
+            numeric_snapshot = (
+                snapshot.get("process_start_ticks"),
+                snapshot.get("memory_swap_current_bytes"),
+                snapshot.get("memory_events_oom"),
+                snapshot.get("memory_events_oom_kill"),
             )
-            or snapshot.get("process_start_ticks") == 0
-            or snapshot.get("memory_swap_current_bytes")
-            != self.paging_policy["candidate_cgroup_swap_max_bytes"]
-            or snapshot.get("memory_events_oom")
-            > self.paging_policy["candidate_cgroup_oom_initial_max"]
-            or snapshot.get("memory_events_oom_kill")
-            > self.paging_policy["candidate_cgroup_oom_kill_initial_max"]
-            or snapshot.get("path")
-            != f"/system.slice/docker-{candidate_id}.scope"
-        ):
-            raise QualificationError("candidate cgroup was not clean at bind time")
-        with self._lock:
-            if self._candidate_id is not None:
-                raise QualificationError("candidate cgroup was already armed")
-            self._candidate_id = candidate_id
-            self._candidate_pid = candidate["pid"]
-            self._candidate_cgroup_path = snapshot["path"]
-            self._candidate_start_ticks = snapshot["process_start_ticks"]
-            self.candidate_cgroup_bound_path = snapshot["path"]
-            self.candidate_cgroup_bound_pid = candidate["pid"]
-            self.candidate_cgroup_start_ticks = snapshot["process_start_ticks"]
-            self.candidate_cgroup_oom_initial = snapshot["memory_events_oom"]
-            self.candidate_cgroup_oom_final = snapshot["memory_events_oom"]
-            self.candidate_cgroup_oom_kill_initial = snapshot[
-                "memory_events_oom_kill"
-            ]
-            self.candidate_cgroup_oom_kill_final = snapshot[
-                "memory_events_oom_kill"
-            ]
-        self._record(
-            {
-                "schema": "qwen-flash-next-cgroup-bind/v1",
-                "observed_at": utc_now(),
-                "candidate_id": candidate_id,
-                "pid": candidate["pid"],
-                "cgroup": snapshot,
-            }
-        )
+            if (
+                any(
+                    isinstance(value, bool)
+                    or not isinstance(value, int)
+                    or value < 0
+                    for value in numeric_snapshot
+                )
+                or snapshot.get("process_start_ticks") == 0
+                or snapshot.get("memory_swap_current_bytes")
+                != self.paging_policy["candidate_cgroup_swap_max_bytes"]
+                or snapshot.get("memory_events_oom")
+                > self.paging_policy["candidate_cgroup_oom_initial_max"]
+                or snapshot.get("memory_events_oom_kill")
+                > self.paging_policy["candidate_cgroup_oom_kill_initial_max"]
+                or snapshot.get("path")
+                != f"/system.slice/docker-{candidate_id}.scope"
+            ):
+                raise QualificationError("candidate cgroup was not clean at bind time")
+            self._record(
+                {
+                    "schema": "qwen-flash-next-cgroup-bind/v1",
+                    "observed_at": utc_now(),
+                    "candidate_id": candidate_id,
+                    "pid": candidate["pid"],
+                    "cgroup": snapshot,
+                }
+            )
+            with self._lock:
+                # Phase changes also use _sample_lock.  Recheck the candidate
+                # slot in case an explicit disarm raced the inspection.
+                if self._candidate_id is not None or self._phase != "load":
+                    raise QualificationError("candidate cgroup bind state changed")
+                self._candidate_id = candidate_id
+                self._candidate_pid = candidate["pid"]
+                self._candidate_cgroup_path = snapshot["path"]
+                self._candidate_start_ticks = snapshot["process_start_ticks"]
+                self.candidate_cgroup_bound_path = snapshot["path"]
+                self.candidate_cgroup_bound_pid = candidate["pid"]
+                self.candidate_cgroup_start_ticks = snapshot["process_start_ticks"]
+                self.candidate_cgroup_oom_initial = snapshot["memory_events_oom"]
+                self.candidate_cgroup_oom_final = snapshot["memory_events_oom"]
+                self.candidate_cgroup_oom_kill_initial = snapshot[
+                    "memory_events_oom_kill"
+                ]
+                self.candidate_cgroup_oom_kill_final = snapshot[
+                    "memory_events_oom_kill"
+                ]
         try:
             self._sample_once()
         except BaseException as exc:  # noqa: BLE001 - an unobservable live candidate is unsafe
@@ -2139,12 +2152,31 @@ def restore_exact(
     # after every pre-existing runtime and Nara state is positively verified.
     if not errors and candidate_id:
         try:
-            ops.run(
-                ["docker", "rm", candidate_id],
-                timeout=_remaining_timeout(deadline, 20),
-            )
-            if _inspect_container(ops, CONTAINER_NAME) is not None:
-                raise QualificationError("candidate sentinel removal was not verified")
+            by_name = _inspect_container(ops, CONTAINER_NAME)
+            by_id = _inspect_container(ops, candidate_id)
+            if by_name is None and by_id is None:
+                pass
+            elif (
+                by_name is None
+                or by_id is None
+                or by_name.get("id") != candidate_id
+                or by_id.get("id") != candidate_id
+                or by_id.get("name") != CONTAINER_NAME
+                or by_id.get("image") != IMAGE_ID
+            ):
+                raise QualificationError("candidate sentinel identity changed")
+            else:
+                ops.run(
+                    ["docker", "rm", candidate_id],
+                    timeout=_remaining_timeout(deadline, 20),
+                )
+                if (
+                    _inspect_container(ops, CONTAINER_NAME) is not None
+                    or _inspect_container(ops, candidate_id) is not None
+                ):
+                    raise QualificationError(
+                        "candidate sentinel removal was not verified"
+                    )
         except Exception as exc:  # noqa: BLE001 - retain the sentinel on any removal uncertainty
             errors.append(f"sentinel removal: {type(exc).__name__}: {exc}")
     retained = _inspect_container(ops, CONTAINER_NAME) is not None
@@ -2721,7 +2753,6 @@ def execute_worker(
     state["restoration"] = restoration
     state["result_status"] = status
     write_state()
-    _atomic_write(output / "result.json", result)
     _append_research_usage(
         {
             "schema": "local-model-research-usage/v1",
@@ -2740,6 +2771,7 @@ def execute_worker(
         },
         ledger,
     )
+    _atomic_write(output / "result.json", result)
     return result
 
 
