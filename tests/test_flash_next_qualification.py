@@ -219,6 +219,8 @@ class FakeMonitor:
         self.mutation_final_pswpout = None
         self.mutation_window_started_at = None
         self.mutation_final_sample_at = None
+        self.startup_initial_pswpout = None
+        self.startup_final_pswpout = None
         self.setup_quiescence_passed = False
         self.setup_quiescence_started_at = None
         self.setup_quiescence_completed_at = None
@@ -278,6 +280,8 @@ class FakeMonitor:
         self.mutation_final_pswpout = 10
         self.mutation_window_started_at = "2026-09-15T00:01:01+00:00"
         self.mutation_final_sample_at = "2026-09-15T00:02:00+00:00"
+        self.startup_initial_pswpout = 10
+        self.startup_final_pswpout = 10
 
     def arm(self, candidate_id):
         self.armed = candidate_id
@@ -818,6 +822,82 @@ def test_small_host_swap_is_diagnostic_but_registered_load_threshold_stops(tmp_p
     assert "5-second byte threshold" in monitor.failure
 
 
+def test_startup_total_gate_is_cumulative_across_load_and_ready(tmp_path):
+    page_size = q.HOST_PAGE_SIZE_BYTES
+    four_mib_pages = 4 * 1024**2 // page_size
+    pages = [10]
+    clock = [100.0]
+    monitor = q.MemoryMonitor(
+        tmp_path / "startup-total.jsonl",
+        FakeOps(),
+        reader=lambda: 64.0,
+        swap_reader=lambda: pages[0],
+        cgroup_reader=clean_cgroup,
+        clock=lambda: clock[0],
+    )
+    monitor._stream = (tmp_path / "startup-total.jsonl").open("xb")
+    monitor._sample_once()
+    monitor.setup_quiescence_passed = True
+    monitor.setup_quiescence_final_pswpout = pages[0]
+    monitor.begin_mutation_window()
+
+    for _ in range(75):
+        clock[0] += 1
+        pages[0] += four_mib_pages
+        monitor._sample_once()
+    monitor._sample_once(begin_phase="ready")
+    assert monitor.phase_summaries["load"]["pswpout_delta_bytes"] == 300 * 1024**2
+    assert not monitor.cancel_event.is_set()
+
+    final = None
+    for _ in range(53):
+        clock[0] += 1
+        pages[0] += four_mib_pages
+        final = monitor._sample_once()
+    monitor._stream.close()
+
+    assert final is not None
+    assert final["paging_gate"] == "startup"
+    assert final["phase_pswpout_delta_bytes"] == 212 * 1024**2
+    assert final["gate_pswpout_delta_bytes"] == q.LOAD_SWAP_TOTAL_BREACH_BYTES
+    assert final["host_swap_60s_bytes"] < q.LOAD_SWAP_60S_BREACH_BYTES
+    assert monitor.cancel_event.is_set()
+    assert "startup host swap reached the gate-total" in monitor.failure
+
+
+def test_startup_rolling_gate_spans_the_load_to_ready_boundary(tmp_path):
+    seventy_mib_pages = 70 * 1024**2 // q.HOST_PAGE_SIZE_BYTES
+    pages = [10]
+    clock = [100.0]
+    monitor = q.MemoryMonitor(
+        tmp_path / "startup-window.jsonl",
+        FakeOps(),
+        reader=lambda: 64.0,
+        swap_reader=lambda: pages[0],
+        cgroup_reader=clean_cgroup,
+        clock=lambda: clock[0],
+    )
+    monitor._stream = (tmp_path / "startup-window.jsonl").open("xb")
+    monitor._sample_once()
+    monitor.setup_quiescence_passed = True
+    monitor.setup_quiescence_final_pswpout = pages[0]
+    monitor.begin_mutation_window()
+    clock[0] += 1
+    pages[0] += seventy_mib_pages
+    monitor._sample_once()
+    clock[0] += 1
+    pages[0] += seventy_mib_pages
+    ready = monitor._sample_once(begin_phase="ready")
+    monitor._stream.close()
+
+    assert ready["paging_gate"] == "startup"
+    assert ready["phase_pswpout_delta_bytes"] == 70 * 1024**2
+    assert ready["gate_pswpout_delta_bytes"] == 140 * 1024**2
+    assert ready["host_swap_5s_bytes"] == 140 * 1024**2
+    assert monitor.cancel_event.is_set()
+    assert "startup host swap reached the 5-second" in monitor.failure
+
+
 def test_restoration_host_paging_is_diagnostic_and_does_not_interrupt(tmp_path):
     pages = iter([10, 10, 10 + (2 * 1024**3 // q.HOST_PAGE_SIZE_BYTES)])
     monitor = q.MemoryMonitor(
@@ -1200,6 +1280,9 @@ def test_monitor_ignores_a_stale_lifecycle_sample_after_disarm(tmp_path):
     ops.monitor = monitor
     monitor._stream = (tmp_path / "race.jsonl").open("xb")
     monitor._sample_once()
+    monitor.setup_quiescence_passed = True
+    monitor.setup_quiescence_final_pswpout = 10
+    monitor.begin_mutation_window()
     monitor.arm(ops.candidate_id)
     monitor._sample_once()
     monitor._stream.close()

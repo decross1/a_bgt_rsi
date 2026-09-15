@@ -80,6 +80,7 @@ SERVING_SWAP_60S_BREACH_BYTES = 64 * 1024**2
 SERVING_SWAP_TOTAL_BREACH_BYTES = 128 * 1024**2
 PAGING_POLICY = {
     "host_page_size_bytes": HOST_PAGE_SIZE_BYTES,
+    "startup_gate_phases": ["load", "ready"],
     "load": {
         "window_5s_breach_bytes": LOAD_SWAP_5S_BREACH_BYTES,
         "window_60s_breach_bytes": LOAD_SWAP_60S_BREACH_BYTES,
@@ -867,6 +868,10 @@ class MemoryMonitor:
         self._phase_initial_pswpout: int | None = None
         self._phase_started_at: str | None = None
         self._phase_started_mono: float | None = None
+        self._paging_gate = "setup"
+        self._gate_initial_pswpout: int | None = None
+        # Rolling host-paging windows belong to a policy gate.  In particular,
+        # load and ready share the startup history across their phase boundary.
         self._phase_history: deque[tuple[float, int]] = deque()
         self.phase_summaries: dict[str, dict[str, Any]] = {}
         self.minimum_observed_gib = math.inf
@@ -880,6 +885,8 @@ class MemoryMonitor:
         self.mutation_final_pswpout: int | None = None
         self.mutation_window_started_at: str | None = None
         self.mutation_final_sample_at: str | None = None
+        self.startup_initial_pswpout: int | None = None
+        self.startup_final_pswpout: int | None = None
         self.setup_quiescence_started_at: str | None = None
         self.setup_quiescence_completed_at: str | None = None
         self.setup_quiescence_duration_seconds: float | None = None
@@ -1053,10 +1060,18 @@ class MemoryMonitor:
             anchor = pages
         return history[-1][1] - anchor
 
-    def _phase_limits(self, phase: str) -> dict[str, int] | None:
+    @staticmethod
+    def _paging_gate_for_phase(phase: str) -> str:
         if phase in {"load", "ready"}:
-            return self.paging_policy["load"]
+            return "startup"
         if phase == "probes":
+            return "serving"
+        return phase
+
+    def _gate_limits(self, gate: str) -> dict[str, int] | None:
+        if gate == "startup":
+            return self.paging_policy["load"]
+        if gate == "serving":
             return self.paging_policy["serving"]
         return None
 
@@ -1071,7 +1086,11 @@ class MemoryMonitor:
         self._phase_initial_pswpout = pages
         self._phase_started_at = observed_at
         self._phase_started_mono = observed_mono
-        self._phase_history = deque([(observed_mono, pages)])
+        next_gate = self._paging_gate_for_phase(phase)
+        if next_gate != self._paging_gate:
+            self._paging_gate = next_gate
+            self._gate_initial_pswpout = pages
+            self._phase_history = deque([(observed_mono, pages)])
         self.phase_summaries[phase] = {
             "started_at": observed_at,
             "completed_at": observed_at,
@@ -1088,6 +1107,8 @@ class MemoryMonitor:
             self.mutation_initial_pswpout = pages
             self.mutation_final_pswpout = pages
             self.mutation_window_started_at = observed_at
+            self.startup_initial_pswpout = pages
+            self.startup_final_pswpout = pages
         elif phase == "ready":
             self._ready_quiescence_active = True
             self.ready_quiescence_epoch = 1
@@ -1178,6 +1199,8 @@ class MemoryMonitor:
                     self._phase_initial_pswpout = pswpout
                     self._phase_started_at = observed_at
                     self._phase_started_mono = observed_mono
+                    self._paging_gate = "setup"
+                    self._gate_initial_pswpout = pswpout
                     self._phase_history = deque([(observed_mono, pswpout)])
                     self.phase_summaries["setup"] = {
                         "started_at": observed_at,
@@ -1232,6 +1255,8 @@ class MemoryMonitor:
                 phase = self._phase
                 phase_initial = self._phase_initial_pswpout
                 phase_started_mono = self._phase_started_mono
+                paging_gate = self._paging_gate
+                gate_initial = self._gate_initial_pswpout
                 setup_active = self._setup_quiescence_active
                 ready_active = self._ready_quiescence_active
                 ready_epoch = self.ready_quiescence_epoch
@@ -1240,14 +1265,20 @@ class MemoryMonitor:
                 candidate_cgroup_path = self._candidate_cgroup_path
                 candidate_start_ticks = self._candidate_start_ticks
 
-            if phase_initial is None or phase_started_mono is None:
-                raise QualificationError("memory phase baseline is absent")
+            if (
+                phase_initial is None
+                or phase_started_mono is None
+                or gate_initial is None
+            ):
+                raise QualificationError("memory phase or paging-gate baseline is absent")
             self.samples += 1
             self.minimum_observed_gib = min(self.minimum_observed_gib, available)
             self.final_pswpout = pswpout
             if self.mutation_initial_pswpout is not None:
                 self.mutation_final_pswpout = pswpout
                 self.mutation_final_sample_at = observed_at
+            if paging_gate == "startup":
+                self.startup_final_pswpout = pswpout
             if setup_active:
                 self.setup_quiescence_samples += 1
             if ready_active:
@@ -1266,12 +1297,19 @@ class MemoryMonitor:
                 self._phase_history, observed_mono, 60
             )
             phase_delta_pages = pswpout - phase_initial
-            if min(delta_5_pages, delta_60_pages, phase_delta_pages) < 0:
-                raise ValueError("phase pswpout delta became negative")
+            gate_delta_pages = pswpout - gate_initial
+            if min(
+                delta_5_pages,
+                delta_60_pages,
+                phase_delta_pages,
+                gate_delta_pages,
+            ) < 0:
+                raise ValueError("phase or paging-gate pswpout delta became negative")
             page_size = self.paging_policy["host_page_size_bytes"]
             delta_5_bytes = delta_5_pages * page_size
             delta_60_bytes = delta_60_pages * page_size
             phase_delta_bytes = phase_delta_pages * page_size
+            gate_delta_bytes = gate_delta_pages * page_size
             summary = self.phase_summaries[phase]
             summary.update(
                 {
@@ -1296,6 +1334,7 @@ class MemoryMonitor:
                 - self._monitor_started_mono,
                 "sample_gap_seconds": sample_gap_seconds,
                 "monitor_phase": phase,
+                "paging_gate": paging_gate,
                 "setup_quiescence_active": setup_active,
                 "ready_quiescence_active": ready_active,
                 "ready_quiescence_epoch": ready_epoch if ready_active else None,
@@ -1306,6 +1345,9 @@ class MemoryMonitor:
                 "phase_initial_pswpout_pages": phase_initial,
                 "phase_pswpout_delta_pages": phase_delta_pages,
                 "phase_pswpout_delta_bytes": phase_delta_bytes,
+                "gate_initial_pswpout_pages": gate_initial,
+                "gate_pswpout_delta_pages": gate_delta_pages,
+                "gate_pswpout_delta_bytes": gate_delta_bytes,
                 "host_swap_5s_bytes": delta_5_bytes,
                 "host_swap_60s_bytes": delta_60_bytes,
                 "transition_to": None,
@@ -1408,19 +1450,19 @@ class MemoryMonitor:
                                     )
                 row["candidate"] = candidate_row
 
-            limits = self._phase_limits(phase)
+            limits = self._gate_limits(paging_gate)
             if limits is not None:
                 if delta_5_bytes >= limits["window_5s_breach_bytes"]:
                     breach_reasons.append(
-                        f"{phase} host swap reached the 5-second byte threshold"
+                        f"{paging_gate} host swap reached the 5-second byte threshold"
                     )
                 if delta_60_bytes >= limits["window_60s_breach_bytes"]:
                     breach_reasons.append(
-                        f"{phase} host swap reached the 60-second byte threshold"
+                        f"{paging_gate} host swap reached the 60-second byte threshold"
                     )
-                if phase_delta_bytes >= limits["phase_total_breach_bytes"]:
+                if gate_delta_bytes >= limits["phase_total_breach_bytes"]:
                     breach_reasons.append(
-                        f"{phase} host swap reached the phase-total byte threshold"
+                        f"{paging_gate} host swap reached the gate-total byte threshold"
                     )
             if breach_reasons:
                 summary["threshold_breached"] = True
@@ -2554,6 +2596,9 @@ def execute_worker(
         and getattr(monitor, "candidate_cgroup_oom_final", None) == 0
         and getattr(monitor, "candidate_cgroup_oom_kill_initial", None) == 0
         and getattr(monitor, "candidate_cgroup_oom_kill_final", None) == 0
+        and isinstance(getattr(monitor, "startup_initial_pswpout", None), int)
+        and isinstance(getattr(monitor, "startup_final_pswpout", None), int)
+        and monitor.startup_final_pswpout >= monitor.startup_initial_pswpout
         and not getattr(monitor, "violations", [])
         and all(
             phase in getattr(monitor, "phase_summaries", {})
@@ -2680,6 +2725,25 @@ def execute_worker(
         ),
         "mutation_final_sample_at": getattr(
             monitor, "mutation_final_sample_at", None
+        ),
+        "startup_pswpout_initial_pages": getattr(
+            monitor, "startup_initial_pswpout", None
+        ),
+        "startup_pswpout_final_pages": getattr(
+            monitor, "startup_final_pswpout", None
+        ),
+        "startup_pswpout_delta_pages": (
+            monitor.startup_final_pswpout - monitor.startup_initial_pswpout
+            if getattr(monitor, "startup_initial_pswpout", None) is not None
+            and getattr(monitor, "startup_final_pswpout", None) is not None
+            else None
+        ),
+        "startup_pswpout_delta_bytes": (
+            (monitor.startup_final_pswpout - monitor.startup_initial_pswpout)
+            * contract["safety"]["paging_policy"]["host_page_size_bytes"]
+            if getattr(monitor, "startup_initial_pswpout", None) is not None
+            and getattr(monitor, "startup_final_pswpout", None) is not None
+            else None
         ),
         "paging_policy": contract["safety"]["paging_policy"],
         "paging_phase_summaries": getattr(monitor, "phase_summaries", {}),
