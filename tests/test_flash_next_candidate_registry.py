@@ -465,6 +465,8 @@ class CandidateRegistryTests(unittest.TestCase):
                 ops = MalformedCreateOps(image)
                 plan = plan_mia_qualification(MIA_CONTRACT, q.sha256(raw), run, q)
                 with (
+                    patch.dict(q.os.environ, {key: value for key, value in q.os.environ.items()
+                                              if key != "MOCK_LLM"}, clear=True),
                     patch.object(q, "canonical_root", return_value=run),
                     patch.object(q, "resource_lease", lease),
                     patch.object(q, "verify_model", return_value={"full_sha256": True}),

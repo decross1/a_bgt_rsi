@@ -25,6 +25,8 @@ verdict enums, different intended use.
 """
 from __future__ import annotations
 
+import hashlib
+import math
 import os
 import time
 from typing import Any
@@ -32,14 +34,13 @@ from typing import Any
 from agent_wrapper.backends import get_backend
 from agent_wrapper.cleanup import strip_channel_markup
 from agent_wrapper.wrapper import DEFAULT_BACKEND
-from orchestrator import iteration_cache
+from orchestrator import empirical_context, iteration_cache
 from orchestrator.chroma_query import query_top_k
 from orchestrator.subagent import (
     SubAgentBudget,
     SubAgentResult,
     run_subagent,
 )
-
 
 # The critic sub-agent's OWN verdict enum. "refuted" is deliberately NOT
 # here — it enters the critique verdict only via the D-075 R3b skeptic
@@ -63,6 +64,24 @@ SINGLE_SHOT_INFRA_RATIONALE_PREFIX = "(unparseable or off-enum"
 # carries a bounded excerpt so loop_memory rows stay readable.
 DEBATE_TRANSCRIPT_TURNS = 6
 DEBATE_TURN_TEXT_CHARS = 600
+# workers.debate permits six rounds (two turns each), plus one system row
+# when it fails before the first model turn. This metadata never carries text.
+DEBATE_CHRONOLOGY_TURNS = 13
+
+
+def _expected_debate_turns(rounds: Any, stop_reason: Any) -> int | None:
+    """Number of rows produced by the bounded debate stop protocol."""
+    if not isinstance(rounds, int) or isinstance(rounds, bool) or not 0 <= rounds <= 6:
+        return None
+    if stop_reason == "error":
+        return 1 if rounds == 0 else None
+    if rounds == 0:
+        return None
+    if stop_reason in ("challenger_error", "challenger_conceded", "converged"):
+        return 2 * rounds - 1
+    if stop_reason in ("defender_error", "defender_conceded", "round_cap"):
+        return 2 * rounds
+    return None
 
 
 CRITIC_AGENT_SYSTEM_PROMPT = (
@@ -252,7 +271,8 @@ def _configured_skeptic_backend() -> str:
 
 
 def _run_single_attack(
-    result: dict, hypothesis_text: str, iteration_id: str | None
+    result: dict, hypothesis_text: str, iteration_id: str | None,
+    empirical_entry: dict | None = None,
 ) -> tuple[bool, str | None, str | None]:
     """The single-shot skeptic exchange (D-041/D-044 attack()).
 
@@ -279,7 +299,10 @@ def _run_single_attack(
         return (False, None, None)
     t0 = time.perf_counter()
     try:
-        out = attack(hypothesis_text, iteration_id=iteration_id) or {}
+        kwargs = {"iteration_id": iteration_id}
+        if empirical_entry is not None:
+            kwargs["empirical_entry"] = empirical_entry
+        out = attack(hypothesis_text, **kwargs) or {}
     except Exception as exc:  # a skeptic crash is recorded, never fatal
         result["skeptic_verdict"] = f"error: {type(exc).__name__}: {exc}"[:200]
         result["skeptic_backend"] = _configured_skeptic_backend()
@@ -328,7 +351,8 @@ def _run_single_attack(
 
 
 def _run_debate_exchange(
-    result: dict, hypothesis_text: str, iteration_id: str | None
+    result: dict, hypothesis_text: str, iteration_id: str | None,
+    empirical_entry: dict | None = None,
 ) -> tuple[bool, str | None, str | None]:
     """The NARA_DEBATE=1 variant of the skeptic exchange (D-065).
 
@@ -350,19 +374,59 @@ def _run_debate_exchange(
         from workers import debate as debate_mod  # lazy: dark by default
     except ImportError:
         return (False, None, None)
+    debate_started = time.perf_counter()
     try:
-        out = debate_mod.debate(
-            hypothesis_text, None, iteration_id=iteration_id
-        ) or {}
+        kwargs = {"iteration_id": iteration_id}
+        if empirical_entry is not None:
+            kwargs["empirical_entry"] = empirical_entry
+        out = debate_mod.debate(hypothesis_text, None, **kwargs) or {}
     except Exception as exc:  # a debate crash is recorded, never fatal
+        result["skeptic_elapsed_wall_seconds"] = round(
+            time.perf_counter() - debate_started, 3
+        )
         result["skeptic_verdict"] = f"error: {type(exc).__name__}: {exc}"[:200]
         result["skeptic_backend"] = _configured_skeptic_backend()
         result["skeptic_model"] = None
         return (True, None, None)
 
+    elapsed_wall_seconds = round(time.perf_counter() - debate_started, 3)
+    result["skeptic_elapsed_wall_seconds"] = elapsed_wall_seconds
+    raw_turns = out.get("transcript") or []
+    if not isinstance(raw_turns, list):
+        raw_turns = []
+    all_turns = [t for t in raw_turns[:DEBATE_CHRONOLOGY_TURNS]
+                 if isinstance(t, dict)]
+    chronology = []
+    for turn in all_turns:
+        wall = turn.get("wall_seconds")
+        valid_wall = (
+            isinstance(wall, (int, float)) and not isinstance(wall, bool)
+            and math.isfinite(wall) and wall >= 0
+        )
+        chronology.append({
+            "round": turn.get("round"),
+            "role": turn.get("role"),
+            "backend": turn.get("backend"),
+            "model": turn.get("model"),
+            "wall_seconds": round(float(wall), 3) if valid_wall else None,
+            "failed": bool(turn.get("error")),
+            "text_sha256": hashlib.sha256(
+                str(turn.get("text") or "").encode("utf-8")
+            ).hexdigest(),
+        })
+    chronology_complete = (
+        len(raw_turns) == len(chronology)
+        and len(chronology) == _expected_debate_turns(
+            out.get("rounds"), out.get("stop_reason")
+        )
+        and all(row["wall_seconds"] is not None for row in chronology)
+    )
+    observed_turn_wall_seconds = round(sum(
+        row["wall_seconds"] or 0.0 for row in chronology
+    ), 3)
     transcript = [
         {**t, "text": str(t.get("text") or "")[:DEBATE_TURN_TEXT_CHARS]}
-        for t in (out.get("transcript") or [])[:DEBATE_TRANSCRIPT_TURNS]
+        for t in all_turns[:DEBATE_TRANSCRIPT_TURNS]
         if isinstance(t, dict)
     ]
     verdict = out.get("verdict")
@@ -370,26 +434,28 @@ def _run_debate_exchange(
     # The CHALLENGER is the skeptic in a debate, so its tag is what
     # `skeptic_backend`/`skeptic_model` mean here; the defender's tag
     # rides on its own transcript turns.
-    challenger_turns = [t for t in transcript if t.get("role") == "challenger"]
+    challenger_turns = [t for t in all_turns if t.get("role") == "challenger"]
     last_challenger = challenger_turns[-1] if challenger_turns else {}
     result["skeptic_backend"] = (
         last_challenger.get("backend") or _configured_skeptic_backend()
     )
     result["skeptic_model"] = last_challenger.get("model") or None
-    result["skeptic_wall_seconds"] = round(
-        sum(
-            t.get("wall_seconds") or 0.0
-            for t in transcript
-            if isinstance(t.get("wall_seconds"), (int, float))
-        ),
-        3,
-    )
+    if chronology_complete:
+        result["skeptic_wall_seconds"] = observed_turn_wall_seconds
     result["debate"] = {
         "verdict":     verdict,
         "rounds":      out.get("rounds"),
         "stop_reason": out.get("stop_reason"),
         "transcript":  transcript,
+        "turn_count": len(chronology),
+        "chronology_truncated": len(raw_turns) > len(chronology),
+        "chronology_complete": chronology_complete,
+        "turn_chronology": chronology,
+        "observed_turn_wall_seconds": observed_turn_wall_seconds,
+        "elapsed_wall_seconds": elapsed_wall_seconds,
     }
+    if chronology_complete:
+        result["debate"]["turn_wall_seconds"] = observed_turn_wall_seconds
 
     # D-075 R3b classification, from the debate's own recorded stop_reason
     # (which the record block above carries — the evidence stays auditable).
@@ -417,7 +483,8 @@ def _run_debate_exchange(
 
 
 def _maybe_run_skeptic(
-    result: dict, hypothesis_text: str, iteration_id: str | None
+    result: dict, hypothesis_text: str, iteration_id: str | None,
+    empirical_entry: dict | None = None,
 ) -> None:
     """Optional adversarial second-channel check (β skeptic-gate seam, D-041).
 
@@ -447,11 +514,11 @@ def _maybe_run_skeptic(
         return
     if os.environ.get("NARA_DEBATE", "0") == "1":
         ran, override_reason, disposition = _run_debate_exchange(
-            result, hypothesis_text, iteration_id
+            result, hypothesis_text, iteration_id, empirical_entry
         )
     else:
         ran, override_reason, disposition = _run_single_attack(
-            result, hypothesis_text, iteration_id
+            result, hypothesis_text, iteration_id, empirical_entry
         )
     if not ran:
         return
@@ -472,6 +539,7 @@ def _maybe_run_restate_skeptic(
     iteration_id: str | None,
     novelty_class: str | None,
     novelty_top_id: str | None,
+    empirical_entry: dict | None = None,
 ) -> None:
     """Optional restatement-skeptic check (residual-2 seam).
 
@@ -501,10 +569,11 @@ def _maybe_run_restate_skeptic(
         return
     t0 = time.perf_counter()
     try:
-        out = restate_attack(
-            hypothesis_text, iteration_id=iteration_id,
-            novelty_top_neighbor_id=novelty_top_id,
-        ) or {}
+        kwargs = {"iteration_id": iteration_id,
+                  "novelty_top_neighbor_id": novelty_top_id}
+        if empirical_entry is not None:
+            kwargs["empirical_entry"] = empirical_entry
+        out = restate_attack(hypothesis_text, **kwargs) or {}
     except Exception as exc:  # a skeptic crash is recorded, never fatal
         result["restate_verdict"] = f"error: {type(exc).__name__}: {exc}"[:200]
         result["restate_backend"] = _configured_skeptic_backend()
@@ -572,10 +641,15 @@ def critic_loop_v0(
             "skeptic_backend": str,
             "skeptic_model": str | None,
             "skeptic_wall_seconds": float,
+            "skeptic_elapsed_wall_seconds": float,
             # only when the debate variant ran (NARA_SKEPTIC=1 AND
             # NARA_DEBATE=1) — bounded multi-turn transcript, every turn
             # tagged with the backend/model that produced it:
-            "debate": {"verdict", "rounds", "stop_reason", "transcript"},
+            "debate": {"verdict", "rounds", "stop_reason", "transcript",
+                       "turn_count", "chronology_truncated",
+                       "chronology_complete", "turn_chronology",
+                       "observed_turn_wall_seconds", "turn_wall_seconds",
+                       "elapsed_wall_seconds"},
             # only when the restatement-skeptic seam ran (env
             # NARA_RESTATE_SKEPTIC=1, novelty=rediscovery, clean
             # survives/undecidable):
@@ -680,10 +754,26 @@ def critic_loop_v0(
         if novelty_class == "rediscovery" else ""
     )
 
+    empirical_note = ""
+    empirical_entry = None
+    if iteration_cache.has_entry(iteration_id, "empirical_context"):
+        try:
+            empirical_entry = iteration_cache.read_entry(iteration_id, "empirical_context")
+            empirical_note = "\n\n" + empirical_context.note(empirical_entry)
+        except (KeyError, ValueError) as exc:
+            return {
+                "status": "error",
+                "result": None,
+                "errors": [f"empirical context cache is untrusted: {exc}"],
+                "wrapper_request_id": None,
+                "parent_request_id": parent_request_id,
+            }
+
     user_prompt = (
         f"Hypothesis:\n{hypothesis_text.strip()}\n\n"
         f"Initial retrieved neighbors ({len(neighbors)}):\n"
-        f"{_format_neighbors(neighbors)}\n{relevance_warning}{novelty_note}\n"
+        f"{_format_neighbors(neighbors)}\n{relevance_warning}{novelty_note}"
+        f"{empirical_note}\n"
         "Decide your verdict. If the initial neighbors are sufficient,\n"
         "emit the final JSON now. If you genuinely need to check a\n"
         "specific angle, call `query_chroma` with a focused query first."
@@ -770,13 +860,14 @@ def critic_loop_v0(
         if not rel_low and rel.get("category") in (None, "ok"):
             _maybe_run_restate_skeptic(
                 validated, hypothesis_text, iteration_id,
-                novelty_class, novelty_top_id,
+                novelty_class, novelty_top_id, empirical_entry,
             )
 
         # β skeptic-gate seam (D-041): independent-retrieval attack on a
         # clean 'survives'. No-op unless NARA_SKEPTIC=1 and the module exists.
         if validated.get("verdict") == "survives" and not rel_low:
-            _maybe_run_skeptic(validated, hypothesis_text, iteration_id)
+            _maybe_run_skeptic(validated, hypothesis_text, iteration_id,
+                               empirical_entry)
 
         # Novelty/critic consistency check: a final 'survives' on a
         # hypothesis novelty called a rediscovery is flagged, never flipped
@@ -864,6 +955,7 @@ if __name__ == "__main__":
     # under a synthetic iteration_id, then calls the worker by id —
     # mirrors how Nara wires this in production.
     import json
+
     from workers.retrieve_literature import retrieve_literature
     hyp = (
         "In finitely repeated Prisoner's Dilemma with known horizon, "

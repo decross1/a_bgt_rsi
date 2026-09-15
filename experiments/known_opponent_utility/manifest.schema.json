@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "known-opponent-utility-response-pilot/v1",
+  "title": "Frozen known-opponent engineering pilot manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "campaign_id", "study_id", "claim_scope", "source_root",
+    "source_sha256", "admission_validator_source_sha256",
+    "runner_source_sha256", "manifest_schema_source_sha256", "prereg_source_sha256",
+    "endpoint", "registered_admission", "registered_admission_sha256",
+    "policy", "policy_sha256", "seed_base", "max_tokens",
+    "per_call_timeout_s", "max_window_s", "max_calls", "horizon",
+    "schedule", "tasks", "comprehension_feedback", "invalid_action_rule",
+    "current_or_future_bot_actions_in_prompt", "manifest_sha256"
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "cell": {
+      "type": "object", "additionalProperties": false,
+      "required": ["ordinal", "id", "mix", "objective", "seat", "rule_label"],
+      "properties": {
+        "ordinal": {"type": "integer", "minimum": 0, "maximum": 11},
+        "id": {"type": "string"},
+        "mix": {"enum": ["retainers", "contributors", "grim"]},
+        "objective": {"enum": ["own_payoff", "joint_payoff"]},
+        "seat": {"enum": [0, 3]},
+        "rule_label": {"enum": ["A", "B"]}
+      }
+    },
+    "message": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "content"],
+      "properties": {
+        "role": {"enum": ["system", "user"]},
+        "content": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "properties": {
+    "schema": {"const": "known-opponent-utility-response-pilot/v1"},
+    "campaign_id": {"const": "v2-known-opponent-utility-20260915"},
+    "study_id": {"const": "known-opponent-utility-response-pilot-v1"},
+    "claim_scope": {"const": "local_behavior_pilot_no_theory_novelty_equilibrium_or_trading_claim"},
+    "source_root": {"type": "string", "minLength": 1},
+    "source_sha256": {
+      "type": "object", "additionalProperties": false,
+      "required": ["oracle", "payoff", "transport"],
+      "properties": {
+        "oracle": {"$ref": "#/$defs/sha256"},
+        "payoff": {"$ref": "#/$defs/sha256"},
+        "transport": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "runner_source_sha256": {"$ref": "#/$defs/sha256"},
+    "manifest_schema_source_sha256": {"$ref": "#/$defs/sha256"},
+    "admission_validator_source_sha256": {"$ref": "#/$defs/sha256"},
+    "prereg_source_sha256": {"$ref": "#/$defs/sha256"},
+    "endpoint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "base_url", "served_model", "artifact_sha256"],
+      "properties": {
+        "name": {"type": "string"},
+        "base_url": {"type": "string"},
+        "served_model": {"type": "string"},
+        "artifact_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "registered_admission": {"type": "object", "minProperties": 1},
+    "registered_admission_sha256": {"$ref": "#/$defs/sha256"},
+    "policy": {"type": "object", "minProperties": 2},
+    "policy_sha256": {"$ref": "#/$defs/sha256"},
+    "seed_base": {"type": "integer", "minimum": 1, "maximum": 2147483540},
+    "max_tokens": {"type": "integer", "minimum": 1, "maximum": 32768},
+    "per_call_timeout_s": {"type": "number", "exclusiveMinimum": 0, "maximum": 60},
+    "max_window_s": {"const": 900},
+    "max_calls": {"const": 108},
+    "horizon": {"const": 8},
+    "schedule": {"type": "array", "minItems": 12, "maxItems": 12,
+      "items": {"$ref": "#/$defs/cell"}},
+    "tasks": {
+      "type": "array", "minItems": 12, "maxItems": 12,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["cell", "horizon", "opponent_scripts",
+          "comprehension_messages", "initial_action_messages",
+          "payoff_parameters", "task_sha256"],
+        "properties": {
+          "cell": {"$ref": "#/$defs/cell"},
+          "horizon": {"const": 8},
+          "opponent_scripts": {"type": "array", "minItems": 3, "maxItems": 3,
+            "items": {"enum": ["retain", "contribute", "grim_trigger"]}},
+          "comprehension_messages": {"type": "array", "minItems": 1,
+            "items": {"$ref": "#/$defs/message"}},
+          "initial_action_messages": {"type": "array", "minItems": 2,
+            "items": {"$ref": "#/$defs/message"}},
+          "payoff_parameters": {"const": {"endowment": 5, "multiplier": "2", "players": 4}},
+          "task_sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "comprehension_feedback": {"const": "none"},
+    "invalid_action_rule": {"const": "stop_episode_remaining_actions_unknown_full_horizon_regret_null"},
+    "current_or_future_bot_actions_in_prompt": {"const": false},
+    "manifest_sha256": {"$ref": "#/$defs/sha256"}
+  }
+}

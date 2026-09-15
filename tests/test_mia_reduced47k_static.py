@@ -8,8 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-
-HERE = Path(__file__).parent
+HERE = Path(__file__).resolve().parents[1] / "bench/flash_next_ab/image_build"
 STOCK = HERE / "source-audit/mtp.current-c0.py"
 PATCH = HERE / "patch_mtp_draft_vocab.py"
 IDS = Path("/mnt/models/qwen3.8-flash-next-mia-recipe-d0380900/"
@@ -37,6 +36,8 @@ def test_exact_stock_patch_and_47149_ids_make_a_separate_image_source(tmp_path):
     assert "VLLM_MTP_DRAFT_VOCAB" in patched
     assert "def get_top_tokens" in patched
     dockerfile = (HERE / "Dockerfile.mia-reduced47k-draft").read_text()
-    assert "sha256:da68dd27a8ef1dadd0f380178a51f0a0671dc4235933ea1ae89fdaf66295ec72" in dockerfile
+    assert "FROM local/qfn-mia-base:da68dd27a8ef1dadd0f380178a51f0a0671dc4235933ea1ae89fdaf66295ec72" in dockerfile
+    builder = (HERE / "build_reduced_overlay.py").read_text()
+    assert 'BASE_ID = "sha256:da68dd27a8ef1dadd0f380178a51f0a0671dc4235933ea1ae89fdaf66295ec72"' in builder
     assert "7735cee47d0d1e4776bebd30d907e4a62160409ce4ef2d65611559f8d58af431" in dockerfile
     assert "2c7d19b8021f2c439920ae7f7df6f7b008eb635256a8423ef03e168d3984911f" in dockerfile

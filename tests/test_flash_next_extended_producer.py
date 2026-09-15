@@ -290,6 +290,7 @@ def test_real_mia_flash_controller_harness_and_completion_gate(
     tmp_path, monkeypatch, timeout_first_harness_call
 ):
     """126 real frozen cells; a first-byte timeout remains a denominator failure."""
+    monkeypatch.delenv("MOCK_LLM", raising=False)
     window, extended_plan, output, journal = frozen_inputs(tmp_path, monkeypatch)
     # This test replays the immutable original pair producer from the distinct
     # follow-on checkout. Bind its simulated worker to the original registered
