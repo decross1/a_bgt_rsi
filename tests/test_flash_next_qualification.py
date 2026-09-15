@@ -20,8 +20,8 @@ from bench.flash_next_ab import qualification as q
 def contract():
     return {
         "schema": "qwen-flash-next-qualification/v3",
-        "contract_id": "qwen38-flash-next-c0-20260915",
-        "profile": "C0",
+        "contract_id": "qwen38-flash-next-c0-s0-20260915",
+        "profile": "C0-S0",
         "image": {"id": q.IMAGE_ID, "architecture": "arm64"},
         "model": {
             "repository": q.MODEL_REPOSITORY,
@@ -54,6 +54,8 @@ def contract():
             "async_scheduling": False,
             "qsa_exact_topk": True,
             "language_model_only": True,
+            "docker_memory_limit_bytes": q.DOCKER_MEMORY_LIMIT_BYTES,
+            "docker_memory_swap_total_bytes": q.DOCKER_MEMORY_SWAP_TOTAL_BYTES,
         },
         "safety": {
             "resident_containers": [dict(row) for row in q.RESIDENTS],
@@ -98,6 +100,8 @@ def plan():
         (("runtime", "gpu_memory_utilization"), 0.92),
         (("runtime", "kv_cache_memory_bytes"), 0),
         (("runtime", "language_model_only"), False),
+        (("runtime", "docker_memory_limit_bytes"), 0),
+        (("runtime", "docker_memory_swap_total_bytes"), 0),
         (("safety", "min_mem_available_gib"), 19),
         (("safety", "invocation_deadline_seconds"), 3601),
         (("safety", "setup_quiescence_seconds"), 59),
@@ -146,6 +150,8 @@ def test_launch_vector_is_fixed_and_conservative():
     assert "--kv-cache-memory-bytes" in argv and str(q.KV_CACHE_MEMORY_BYTES) in argv
     assert "--gpu-memory-utilization" in argv and "0.75" in argv
     assert "--language-model-only" in argv
+    assert argv[argv.index("--memory") + 1] == str(96 * 1024**3)
+    assert argv[argv.index("--memory-swap") + 1] == str(96 * 1024**3)
     assert "--no-enable-prefix-caching" in argv
     assert "--no-async-scheduling" in argv
     assert "VLLM_QSA_EXACT_TOPK=1" in argv
@@ -365,6 +371,11 @@ class FakeOps(q.HostOps):
     def _container(self, identity):
         for row in self.containers.values():
             if identity in {row["id"], row["name"]}:
+                if row["name"] == q.CONTAINER_NAME:
+                    row.setdefault("memory_limit_bytes", q.DOCKER_MEMORY_LIMIT_BYTES)
+                    row.setdefault(
+                        "memory_swap_total_bytes", q.DOCKER_MEMORY_SWAP_TOTAL_BYTES
+                    )
                 return row
         return None
 
@@ -462,6 +473,15 @@ def clean_cgroup(candidate_id, pid, *, swap=0, oom=0, oom_kill=0):
     return {
         "path": f"/system.slice/docker-{candidate_id}.scope",
         "process_start_ticks": 12345,
+        "memory_max_bytes": q.DOCKER_MEMORY_LIMIT_BYTES,
+        "memory_swap_max_bytes": 0,
+        "memory_current_bytes": 1024,
+        "selected_memory_stat": {
+            "anon": 512, "file": 512, "shmem": 0, "active_file": 0,
+            "inactive_file": 0, "pgscan": 0, "pgsteal": 0,
+        },
+        "memory_pressure": "some avg10=0.00 total=0\nfull avg10=0.00 total=0",
+        "memory_events_local": {"oom": oom, "oom_kill": oom_kill},
         "memory_swap_current_bytes": swap,
         "memory_events_oom": oom,
         "memory_events_oom_kill": oom_kill,
@@ -503,10 +523,10 @@ def fake_lease(root):
     yield (10, 11, 12)
 
 
-def prepare_execution(monkeypatch, tmp_path, *, nara_active=True, monitor=FakeMonitor):
+def prepare_execution(monkeypatch, tmp_path, *, nara_active=True, monitor=FakeMonitor, ops=None):
     output = tmp_path / "qfn-c0-unit"
     output.mkdir()
-    ops = FakeOps(nara_active=nara_active)
+    ops = ops or FakeOps(nara_active=nara_active)
     usage = []
     monkeypatch.delenv("MOCK_LLM", raising=False)
     monkeypatch.setattr(q, "canonical_root", lambda root: tmp_path)
@@ -514,12 +534,37 @@ def prepare_execution(monkeypatch, tmp_path, *, nara_active=True, monitor=FakeMo
     monkeypatch.setattr(q, "verify_model", lambda *args, **kwargs: {"full_sha256": True})
     monkeypatch.setattr(q, "_assert_port_free", lambda: None)
     monkeypatch.setattr(q, "_ensure_compile_cache", lambda: None)
+    monkeypatch.setattr(
+        q, "_write_cgroup_diagnostics",
+        lambda *_args, **_kwargs: ("d" * 64, "e" * 64),
+    )
     monkeypatch.setattr(q, "_append_research_usage", lambda row, ledger=q.RESEARCH_LEDGER: usage.append((ledger, row)))
     result = q.execute_worker(
         plan(), contract(), output, ops=ops, preflight_probe=preflight,
         monitor_factory=monitor,
     )
     return result, ops, usage, output
+
+
+def test_docker_limit_is_verified_before_either_resident_is_stopped(monkeypatch, tmp_path):
+    class WrongMemory(FakeOps):
+        def run(self, argv, *, timeout, check=True):
+            result = super().run(argv, timeout=timeout, check=check)
+            if argv[:2] == ["docker", "create"]:
+                self.containers[q.CONTAINER_NAME]["memory_limit_bytes"] = 0
+            return result
+
+    result, ops, _, _ = prepare_execution(monkeypatch, tmp_path, ops=WrongMemory())
+    assert result["status"] == "failed"
+    assert "created candidate differs" in result["qualification_error"]
+    assert all(row["running"] for row in (ops.containers[r["name"]] for r in q.RESIDENTS))
+    assert ops.nara_active
+    assert not any(
+        argv[:4] == ("docker", "stop", "--time", "30")
+        or argv[:4] == ("systemctl", "--user", "stop", q.NARA_SERVICE)
+        for argv in ops.log
+    )
+    assert q.CONTAINER_NAME not in ops.containers
 
 
 def test_success_creates_sentinel_first_and_restores_exact_ids(monkeypatch, tmp_path):
@@ -591,6 +636,10 @@ def test_finished_usage_is_durable_before_result_publication(monkeypatch, tmp_pa
     monkeypatch.setattr(q, "_assert_port_free", lambda: None)
     monkeypatch.setattr(q, "_ensure_compile_cache", lambda: None)
     monkeypatch.setattr(q, "_append_research_usage", append_usage)
+    monkeypatch.setattr(
+        q, "_write_cgroup_diagnostics",
+        lambda *_args, **_kwargs: ("d" * 64, "e" * 64),
+    )
 
     recovery_plan = plan()
     with pytest.raises(OSError, match="injected ledger failure"):
@@ -1207,6 +1256,106 @@ def test_arm_refuses_unavailable_or_dirty_cgroup_proof(tmp_path):
     monitor._stream.close()
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("memory_max_bytes", q.DOCKER_MEMORY_LIMIT_BYTES + 4096),
+        ("memory_swap_max_bytes", 4096),
+    ],
+)
+def test_arm_rejects_unregistered_live_cgroup_controls(tmp_path, field, value):
+    ops = FakeOps()
+    ops.containers[q.CONTAINER_NAME] = {
+        "id": ops.candidate_id, "name": q.CONTAINER_NAME, "image": q.IMAGE_ID,
+        "running": True, "pid": 200, "started_at": "now", "restart_count": 0,
+        "oom_killed": False, "restart_policy": "no",
+    }
+    monitor = manual_monitor(
+        tmp_path,
+        ops,
+        cgroup_reader=lambda _id, _pid: {
+            **clean_cgroup(ops.candidate_id, 200), field: value,
+        },
+    )
+    with pytest.raises(q.QualificationError, match="not clean"):
+        monitor.arm(ops.candidate_id)
+    assert monitor._candidate_id is None
+    monitor._stream.close()
+
+
+def test_live_swap_limit_drift_stops_only_the_exact_candidate(tmp_path):
+    ops = FakeOps()
+    ops.containers[q.CONTAINER_NAME] = {
+        "id": ops.candidate_id, "name": q.CONTAINER_NAME, "image": q.IMAGE_ID,
+        "running": True, "pid": 200, "started_at": "now", "restart_count": 0,
+        "oom_killed": False, "restart_policy": "no",
+    }
+    snapshots = iter([
+        clean_cgroup(ops.candidate_id, 200),
+        clean_cgroup(ops.candidate_id, 200),
+        {
+            **clean_cgroup(ops.candidate_id, 200),
+            "memory_swap_max_bytes": 4096,
+        },
+    ])
+    monitor = manual_monitor(
+        tmp_path, ops, cgroup_reader=lambda *_args: next(snapshots)
+    )
+    monitor.arm(ops.candidate_id)
+    monitor._sample_once()
+    with pytest.raises(q.QualificationError, match="no-swap controls changed"):
+        monitor.check()
+    assert "no-swap controls changed" in monitor.failure
+    assert ops.containers[q.CONTAINER_NAME]["running"] is False
+    assert all(ops.containers[row["name"]]["running"] for row in q.RESIDENTS)
+    monitor._stream.close()
+
+
+def test_cgroup_sidecar_binds_raw_phase_telemetry_without_forging_a_pass(tmp_path):
+    output = tmp_path / "qfn-c0-s0-sidecar"
+    output.mkdir()
+    rows = []
+    for ordinal, phase in enumerate(("load", "ready", "probes"), 1):
+        cgroup = {
+            **clean_cgroup(FakeOps.candidate_id, 200),
+            "memory_current_bytes": ordinal * 1024,
+            "selected_memory_stat": {
+                "anon": ordinal * 512, "file": ordinal * 512,
+                "shmem": 0, "active_file": 0, "inactive_file": 0,
+                "pgscan": ordinal, "pgsteal": ordinal,
+            },
+        }
+        rows.append({
+            "schema": "qwen-flash-next-memory-sample/v3",
+            "observed_at": f"2026-09-15T00:00:0{ordinal}+00:00",
+            "monitor_phase": phase,
+            "candidate": {"id": FakeOps.candidate_id, "armed": True, "cgroup": cgroup},
+            "mem_available_gib": 36.0,
+            "host_meminfo_kib": {"MemFree": 1024, "Cached": 2048},
+            "pswpout_pages": 123 + ordinal,
+        })
+    raw = b"".join(q.canonical_json(row) + b"\n" for row in rows)
+    (output / "memory.jsonl").write_bytes(raw)
+    diagnostic_sha, memory_sha = q._write_cgroup_diagnostics(
+        output, FakeOps.candidate_id, required=True
+    )
+    sidecar_raw = (output / "cgroup-diagnostics.json").read_bytes()
+    sidecar = json.loads(sidecar_raw)
+    assert diagnostic_sha == q.sha256(sidecar_raw)
+    assert memory_sha == q.sha256(raw) == sidecar["memory_log_sha256"]
+    assert sidecar["maximum_memory_current_bytes"] == 3072
+    assert sidecar["phase_first_last"]["probes"]["last"]["candidate_cgroup"]["selected_memory_stat"]["anon"] == 1536
+    assert sidecar["registered_memory_max_bytes"] == q.DOCKER_MEMORY_LIMIT_BYTES
+    assert sidecar["registered_swap_max_bytes"] == 0
+
+    rows[1]["candidate"]["id"] = "b" * 64
+    (output / "memory.jsonl").write_bytes(
+        b"".join(q.canonical_json(row) + b"\n" for row in rows)
+    )
+    with pytest.raises(q.QualificationError, match="diagnostic identity changed"):
+        q._write_cgroup_diagnostics(output, FakeOps.candidate_id, required=True)
+
+
 def test_cgroup_snapshot_reads_local_events_between_stable_pid_checks(monkeypatch):
     ticks = iter([12345, 12345])
     reads = []
@@ -1215,6 +1364,16 @@ def test_cgroup_snapshot_reads_local_events_between_stable_pid_checks(monkeypatc
         reads.append((str(path), max_bytes, dir_fd))
         if str(path).endswith("/cgroup"):
             return f"0::/system.slice/docker-{FakeOps.candidate_id}.scope\n".encode()
+        if str(path) == "memory.max":
+            return f"{q.DOCKER_MEMORY_LIMIT_BYTES}\n".encode()
+        if str(path) == "memory.swap.max":
+            return b"0\n"
+        if str(path) == "memory.current":
+            return b"1024\n"
+        if str(path) == "memory.stat":
+            return b"anon 512\nfile 512\nshmem 0\nactive_file 0\ninactive_file 0\npgscan 0\npgsteal 0\n"
+        if str(path) == "memory.pressure":
+            return b"some avg10=0.00 total=0\nfull avg10=0.00 total=0\n"
         if str(path) == "memory.swap.current":
             return b"0\n"
         if str(path) == "memory.events.local":
@@ -1227,6 +1386,9 @@ def test_cgroup_snapshot_reads_local_events_between_stable_pid_checks(monkeypatc
     monkeypatch.setattr(q.os, "close", lambda _descriptor: None)
     snapshot = q._candidate_cgroup_snapshot(FakeOps.candidate_id, 200)
     assert snapshot["process_start_ticks"] == 12345
+    assert snapshot["memory_max_bytes"] == q.DOCKER_MEMORY_LIMIT_BYTES
+    assert snapshot["memory_swap_max_bytes"] == 0
+    assert snapshot["selected_memory_stat"]["anon"] == 512
     assert any(path == "memory.events.local" for path, _, _ in reads)
 
 
@@ -1236,6 +1398,16 @@ def test_cgroup_snapshot_rejects_pid_reuse_across_read(monkeypatch):
     def bounded(path, *, max_bytes, dir_fd=None):
         if str(path).endswith("/cgroup"):
             return f"0::/system.slice/docker-{FakeOps.candidate_id}.scope\n".encode()
+        if str(path) == "memory.max":
+            return f"{q.DOCKER_MEMORY_LIMIT_BYTES}\n".encode()
+        if str(path) == "memory.swap.max":
+            return b"0\n"
+        if str(path) == "memory.current":
+            return b"1024\n"
+        if str(path) == "memory.stat":
+            return b"anon 512\nfile 512\nshmem 0\nactive_file 0\ninactive_file 0\npgscan 0\npgsteal 0\n"
+        if str(path) == "memory.pressure":
+            return b"some avg10=0.00 total=0\nfull avg10=0.00 total=0\n"
         if str(path) == "memory.swap.current":
             return b"0\n"
         if str(path) == "memory.events.local":
