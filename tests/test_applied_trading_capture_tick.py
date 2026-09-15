@@ -16,6 +16,11 @@ import pytest
 from bench.applied_trading import capture_tick as tick
 
 
+def test_capture_tick_registers_full_collector_page_cap_and_exact_continuation():
+    assert tick.MAX_PAGES == tick.collector.MAX_PAGES == 32
+    assert tick._actual_continuation_sha() == tick.REGISTERED_CONTINUATION_SHA256
+
+
 @pytest.fixture
 def isolated(monkeypatch, tmp_path):
     captures = tmp_path / "captures"
@@ -174,7 +179,7 @@ def test_verified_stale_gap_receipt_precedes_first_new_get(isolated, monkeypatch
             "old_sealed_at": old_seal,
         })
     gap = json.loads((scheduler / result["gap_relpath"]).read_text())
-    assert calls == [(None, 1), (42, 8)]
+    assert calls == [(None, 1), (42, 32)]
     assert gap["old_state_sha256"] == old_sha
     assert gap["old_lineage_id"] == old_state["lineage_id"]
     assert gap["new_lineage_id"] == result["lineage_id"]
@@ -226,7 +231,7 @@ def test_new_bootstrap_uses_venue_tail_not_old_lineage(isolated, monkeypatch):
     monkeypatch.setattr(tick, "_batch", lambda path: (
         (warmup, "d" * 64) if path == first else (current, "e" * 64)))
     result = tick.bootstrap_new()
-    assert calls == [(None, 1), (42, 8)]
+    assert calls == [(None, 1), (42, 32)]
     assert result["status"] == "bootstrapped_complete"
     assert result["requests_attempted"] == result["requests_succeeded"] == 6
     assert result["requests_failed"] == 0
@@ -424,7 +429,7 @@ def test_sealed_transient_gap_archived_before_any_new_get(isolated, monkeypatch)
         abandon_state_sha256=old_sha, max_wall_s=90, _held_lock=True,
         _verified_transient_gap=failed)
     gap = json.loads((scheduler / result["gap_relpath"]).read_text())
-    assert seen == [(None, 1), (42, 8)]
+    assert seen == [(None, 1), (42, 32)]
     assert gap["reason"] == "verified_timeout_or_http5xx_new_lineage_after_cooldown"
     assert gap["failed_branch"] == failed
     assert gap["requests_attempted_before_gap_receipt"] == 3

@@ -143,9 +143,9 @@ def _prior_totals(previous_path: Path, previous: dict, prior_sha: str,
 
 def run_once(*, previous_batch: Path, output_dir: Path,
              bootstrap_warmup: Path | None = None,
-             max_pages: int = 8, root: Path = CAPTURE_ROOT) -> dict[str, Any]:
-    if type(max_pages) is not int or not 1 <= max_pages <= min(8, MAX_PAGES):
-        raise CaptureError("continuation page cap must be 1..8")
+             max_pages: int = 32, root: Path = CAPTURE_ROOT) -> dict[str, Any]:
+    if type(max_pages) is not int or not 1 <= max_pages <= MAX_PAGES:
+        raise CaptureError("continuation page cap must be 1..32")
     previous_path = _fixed_child(previous_batch, root)
     output_path = _fixed_child(output_dir, root)
     if output_path.exists() or previous_path == output_path:
@@ -210,13 +210,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--previous-batch", type=Path)
     parser.add_argument("--bootstrap-warmup", type=Path)
     parser.add_argument("--output-dir", type=Path)
-    parser.add_argument("--max-pages", type=int, default=8)
+    parser.add_argument("--max-pages", type=int, default=32)
     args = parser.parse_args(argv)
     if args.plan == args.run_once:
         raise CaptureError("choose exactly --plan or --run-once")
     if args.plan:
         print(json.dumps({"schema": SCHEMA, "mode": "manual_run_once",
-                          "max_pages": min(8, MAX_PAGES),
+                          "max_pages": MAX_PAGES,
                           "fixed_capture_root": str(CAPTURE_ROOT),
                           "timer_active": False, "orders": 0}, sort_keys=True))
         return 0

@@ -17,19 +17,21 @@ def ms(hour: int, minute: int, second: int = 0) -> int:
                         tzinfo=timezone.utc).timestamp() * 1000)
 
 
-def fixture(monkeypatch, *, gap: bool = False, late_depth: bool = False):
+def fixture(monkeypatch, *, gap: bool = False, late_depth: bool = False,
+            extra_trades: int = 0):
     paths = [Path("/tmp/batch-h1-a"), Path("/tmp/batch-h1-b")]
     first = {
         "source_id": "binance-spot-public", "started_at": "2026-09-15T07:59:00+00:00",
         "sealed_at": "2026-09-15T08:32:00+00:00",
-        "from_aggregate_id": 100, "next_aggregate_id": 102,
+        "from_aggregate_id": 100, "next_aggregate_id": 102 + extra_trades,
     }
     second = {
         "source_id": "binance-spot-public",
         "started_at": ("2026-09-15T08:56:00+00:00" if late_depth
                        else "2026-09-15T09:00:00+00:00"),
         "sealed_at": "2026-09-15T09:01:10+00:00",
-        "from_aggregate_id": 102 + int(gap), "next_aggregate_id": 103 + int(gap),
+        "from_aggregate_id": 102 + extra_trades + int(gap),
+        "next_aggregate_id": 103 + extra_trades + int(gap),
     }
     depth = {"lastUpdateId": 42, "bids": [["100", "4"]],
              "asks": [["101", "2"]]}
@@ -37,7 +39,10 @@ def fixture(monkeypatch, *, gap: bool = False, late_depth: bool = False):
                   "asks": [["102", "1"]]}
     trade_a = [{"a": 100, "T": ms(7, 30), "p": "100", "q": "1", "m": True},
                {"a": 101, "T": ms(8, 30), "p": "101", "q": "1", "m": False}]
-    trade_b = [{"a": 102 + int(gap), "T": ms(9, 0, 40),
+    trade_a.extend({"a": 102 + index, "T": ms(8, 31, index),
+                    "p": "101", "q": "1", "m": False}
+                   for index in range(extra_trades))
+    trade_b = [{"a": 102 + extra_trades + int(gap), "T": ms(9, 0, 40),
                 "p": "102", "q": "1", "m": False}]
 
     def attempt(kind, received, path):
@@ -95,3 +100,15 @@ def test_stale_depth_withholds_paper_use(monkeypatch):
     _, rows = features.derive(paths, collector_sha256="a" * 64,
                               symbol="BTCUSDT")
     assert rows[0]["usable_for_paper_observation"] is False
+
+
+def test_event_budget_accepts_bounded_source_and_rejects_next_event(monkeypatch):
+    paths = fixture(monkeypatch, extra_trades=1)
+    assert features.MAX_TRADES == 500_000
+    source, rows = features.derive(paths, collector_sha256="a" * 64,
+                                   symbol="BTCUSDT")
+    assert source["batch_count"] == 2
+    assert rows[0]["trade_count"] == 2
+    monkeypatch.setattr(features, "MAX_TRADES", 3)
+    with pytest.raises(CaptureError, match="bounded budget"):
+        features.derive(paths, collector_sha256="a" * 64, symbol="BTCUSDT")

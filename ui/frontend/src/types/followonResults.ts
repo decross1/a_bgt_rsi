@@ -39,6 +39,20 @@ export interface RepairReplay {
   by_lane: Partial<Record<"resident_native" | "flash_off" | "flash_medium", RepairReplayLane>>;
   comparison_eligible: false;
 }
+export interface CodingReplay {
+  schema: "flash-followon-coding-temp1-grader-replay/v1";
+  run_sha256: string;
+  replay_receipt_sha256: string;
+  source_replay_status: "available" | "unavailable";
+  raw_private_calls_verified: number;
+  declared: number;
+  replayed: number;
+  producer_consistent: number;
+  producer_inconsistent: number;
+  grader_unavailable: number;
+  by_family: Partial<Record<"portfolio" | "historical", RepairReplayLane>>;
+  comparison_eligible: false;
+}
 export interface FollowonBlock {
   block_id: string;
   kind: string;
@@ -47,7 +61,7 @@ export interface FollowonBlock {
   passed: number | null;
   timeouts: number;
   groups: FollowonGroup[];
-  grader_replay?: RepairReplay | null;
+  grader_replay?: RepairReplay | CodingReplay | null;
 }
 export interface RecordedFollowonWindow {
   id: string;
