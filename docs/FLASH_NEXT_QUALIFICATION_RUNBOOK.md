@@ -1,8 +1,10 @@
 # Qwen3.8-Flash-Next C0 qualification runbook
 
-This runbook covers the first, bounded GPU qualification of the exact C0
-runtime. It does not authorize a broad A/B, an optimization arm, or production
-adoption. The controller uses the existing canonical resource lease and
+This runbook covers bounded GPU qualification of the exact C0 runtime. The
+owner has authorized local model A/B and optimization work; broader execution
+uses the separately reviewed evaluation window and frozen benchmark plan.
+Production adoption remains a separate decision. This controller uses the
+existing canonical resource lease and
 restores the current containers by their captured IDs; it never removes or
 recreates a resident.
 
@@ -12,13 +14,14 @@ recreates a resident.
   followed by race hardening commit
   `e1595bfbb48cdac6c71ee21a00b09017483ce011`, and owned-cache remediation
   commit `8c2949c`, explicit-memory/sequential-restoration fix `83435cc`,
-  and localized recovery-catch cleanup `de59223`.
+  localized recovery-catch cleanup `de59223`, and the phase-separated
+  v2 monitor/validator in `71cc9af`.
 - Controller SHA-256:
-  `5e7e223a6ccdc3ed9c7531d427d3b4b9156a36fb4dc3bed19136d8871e8f6279`.
+  `2e77867c0d3e4c63ed21f763482dd6c6a39c8ed3d162007bd9a8a26c9d51ae53`.
 - External contract:
   `/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/runtime/launch-contract.c0.json`.
 - Contract SHA-256:
-  `ff97f26e0981072dc63664cc86046899dedd3bf8c65002fc7baf50e6d8ccafd2`.
+  `b409dda5f58d720f2057ca97260bd01db36f4b9eece7a48feaba46ec3bf3f3e3`.
 - Image ID:
   `sha256:345bea72ff3bb548594d88f6a7661636c07cd3e7367f8e54b0e4a98494e5a48d`.
 - Model revision:
@@ -67,10 +70,12 @@ arbitrary extra argument, or API key.
 
 ## One qualification invocation
 
-Finish unrelated CPU test/build jobs first. Record a bounded 60-second idle
-precheck with zero host swap-out growth and at least 30 GiB MemAvailable. The
-zero-swap monitor remains active throughout qualification; setup churn is a
-failed setup window, not evidence of Flash model capability.
+Finish unrelated CPU test/build jobs first. The v2 controller records all swap
+activity during checkpoint verification, then requires a fixed 60-second quiet
+interval with at least 30 GiB MemAvailable. A new baseline is recorded immediately
+before the first Docker mutation; even counter growth between quiet completion
+and that baseline aborts. Setup churn remains visible and is not attributed to
+Flash inference. No historical failed receipt is changed.
 
 Use a fresh direct child of the fixed qualification-run root:
 
@@ -95,7 +100,9 @@ The guarded sequence is:
 1. acquire `.weekly-upgrade-execution.lock`, `.coordinator-cron.lock`, and
    `.weekly-upgrade-gpu.lock` in the canonical checkout;
 2. require idle production queues and at least 30 GiB `MemAvailable`;
-3. verify all checkpoint SHA-256 values and the exact ARM64 image;
+3. verify all checkpoint SHA-256 values and the exact ARM64 image, then prove
+   60 seconds of zero swap-counter growth before establishing the mutation
+   baseline;
 4. recheck the idle queues and capture both resident IDs and the Nara user
    service state;
 5. create the stopped `vllm-qwen-ab-flash-20260915` container, which makes the
@@ -110,20 +117,24 @@ The guarded sequence is:
 
 The one-second monitor runs from before any service stop through restoration.
 It cancels the request and stops the exact challenger ID on any
-`MemAvailable < 30 GiB`, increase in host `pswpout`, candidate OOM, candidate
+`MemAvailable < 30 GiB`, increase in mutation-window `pswpout`, candidate OOM, candidate
 restart, disappearance, or unexpected stop. A stale lifecycle sample is ignored
 after restoration disarms that same candidate ID.
 
 ## Result gate
 
-The run is eligible for a broader local A/B only when `result.json` has all of:
+The shared validator checks exact source bindings, a contiguous setup-to-mutation
+sample sequence, zero counter growth across the entire mutation window, and a
+final sample after restoration. The run is eligible for a broader local A/B only
+when `result.json` has all of:
 
-- `schema == "qwen-flash-next-qualification-result/v1"`;
+- `schema == "qwen-flash-next-qualification-result/v2"`;
 - `status == "passed"`;
 - `restoration.status == "verified"`;
 - the frozen contract, plan, and model-manifest hashes;
 - `probe_count == 3`;
-- `min_mem_available_gib >= 30` and `pswpout_delta_pages == 0`;
+- `min_mem_available_gib >= 30`, raw-sample-confirmed 60-second setup
+  quiescence, and `mutation_pswpout_delta_pages == 0`;
 - `weekly_budget_debit == false`, `paid_api_calls == 0`, and
   `production_change_authorized == false`.
 
@@ -157,3 +168,8 @@ the exact IDs. Confirm the challenger is absent or stopped before starting the
 captured resident IDs. Start Nara only after both resident health endpoints
 return successfully. Remove the sentinel last. An unverified recovery never
 qualifies the model, even when a later manual restore succeeds.
+
+The v2 state receipt records worker PID, Linux process start ticks, boot ID,
+phase, update time and deadline. The UI verifies that process identity and a
+fresh memory sample before describing an active research window. A stale state
+file or a reachable candidate alone does not establish an authorized live window.
