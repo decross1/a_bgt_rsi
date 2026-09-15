@@ -148,6 +148,9 @@ export const getModelRuntime = () =>
 export const getResearchOpsStatus = () =>
   getJSON<unknown>("/api/research_ops_status");
 
+export const getLabModelEvalProgress = () =>
+  getJSON<unknown>("/api/lab_model_eval_progress");
+
 export const getRecentTelemetry = (limit = 300) =>
   getJSON<{ samples: TelemetrySample[] }>(`/api/telemetry/recent?limit=${limit}`);
 
