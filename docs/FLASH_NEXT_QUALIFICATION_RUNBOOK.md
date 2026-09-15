@@ -10,18 +10,13 @@ recreates a resident.
 
 ## Frozen inputs
 
-- Controller commits: `29dbb0c41b61c675d7caca3cce2468a6ad7720b9`,
-  followed by race hardening commit
-  `e1595bfbb48cdac6c71ee21a00b09017483ce011`, and owned-cache remediation
-  commit `8c2949c`, explicit-memory/sequential-restoration fix `83435cc`,
-  localized recovery-catch cleanup `de59223`, and the phase-separated
-  v2 monitor/validator in `71cc9af`.
+- Controller commit: `75fead002b624cfa222aa24fb7b9f5954f559a6c`.
 - Controller SHA-256:
-  `2e77867c0d3e4c63ed21f763482dd6c6a39c8ed3d162007bd9a8a26c9d51ae53`.
+  `611362f8a98f3e22cd2a731e23edeffe7e133f46153ee45f2e70028fc6bba328`.
 - External contract:
   `/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/runtime/launch-contract.c0.json`.
 - Contract SHA-256:
-  `b409dda5f58d720f2057ca97260bd01db36f4b9eece7a48feaba46ec3bf3f3e3`.
+  `792be64624d1863bc6088755b5fdc839503bdd134baa6b3f03124009b9292a1f`.
 - Image ID:
   `sha256:345bea72ff3bb548594d88f6a7661636c07cd3e7367f8e54b0e4a98494e5a48d`.
 - Model revision:
@@ -29,7 +24,7 @@ recreates a resident.
 - Model-manifest SHA-256:
   `54e961084a2fca63b0dcd32d542eb340a7baa20224298b00030ffa7e59145063`.
 - Docker argument-vector SHA-256:
-  `6a3afd70f65527b10e6ebd4d44fa1c9f81b2d3a2f0930ac81713ecfec6072630`.
+  `090b2ef066487b7b513064050e5e1ba58240d3dc33d71a8f993ed188b515f655`.
 
 The first invocation used contract SHA-256
 `3757f596d03bd3d386ac30d21b7b2397fbe0c4910b8fab95a5d1b72cd58486f1`
@@ -62,17 +57,19 @@ env -u MOCK_LLM .venv-chroma/bin/python \
 
 Verify the three hashes above and inspect the complete `docker_create_argv`.
 The vector must use port 8012, `--restart=no`, the image ID rather than a tag,
-a read-only model bind, 16,384 maximum context, one sequence, 1 GiB explicit KV,
-BF16 KV, explicit `--gpu-memory-utilization 0.75`, FP32 recurrent state,
-exact top-k, MTP0, prefix cache off, and async
+a read-only model bind, 32,768 maximum context, one sequence, 2 GiB explicit KV,
+KV dtype `auto` (record the resolved runtime dtype when observable), explicit
+`--gpu-memory-utilization 0.75`, FP32 recurrent state,
+exact QSA top-k environment settings (`VLLM_QSA_EXACT_TOPK=1`,
+`VLLM_QSA_DET_TOPK=0`), MTP0, prefix cache off, and async
 scheduling off. It must contain no remote URL, host network, privileged mode,
 arbitrary extra argument, or API key.
 
 ## One qualification invocation
 
-Finish unrelated CPU test/build jobs first. The v2 controller records all swap
+Finish unrelated CPU test/build jobs first. The v3 controller records all swap
 activity during checkpoint verification, then requires a fixed 60-second quiet
-interval with at least 30 GiB MemAvailable. A new baseline is recorded immediately
+interval with at least 20 GiB MemAvailable. A new baseline is recorded immediately
 before the first Docker mutation; even counter growth between quiet completion
 and that baseline aborts. Setup churn remains visible and is not attributed to
 Flash inference. No historical failed receipt is changed.
@@ -85,7 +82,7 @@ env -u MOCK_LLM .venv-chroma/bin/python \
   -m bench.flash_next_ab.qualification \
   --run \
   --contract /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/runtime/launch-contract.c0.json \
-  --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/qualification-runs/qfn-c0-20260915t0100z
+  --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/qualification-runs/qfn-c0-20260915t0410z
 ```
 
 `--run` launches its worker in a separate process group. The preregistered
@@ -99,7 +96,7 @@ The guarded sequence is:
 
 1. acquire `.weekly-upgrade-execution.lock`, `.coordinator-cron.lock`, and
    `.weekly-upgrade-gpu.lock` in the canonical checkout;
-2. require idle production queues and at least 30 GiB `MemAvailable`;
+2. require idle production queues and at least 20 GiB `MemAvailable`;
 3. verify all checkpoint SHA-256 values and the exact ARM64 image, then prove
    60 seconds of zero swap-counter growth before establishing the mutation
    baseline;
@@ -109,34 +106,48 @@ The guarded sequence is:
    existing watchdog stand down, before stopping Nara or either resident;
 6. stop Nara only if it was active, then stop the two exact resident IDs;
 7. start the challenger and require `/health`, the exact `/v1/models` identity,
-   two fixed exact answers, and one fixed parsed tool call;
+   a fresh 60-second interval without host swap growth, then two fixed exact
+   answers and one fixed parsed tool call;
 8. capture bounded candidate logs, stop and verify the candidate, start and
    health-check Gemma first, then start and health-check Qwen, using their exact
    original IDs. Restore Nara only after both residents
    are healthy, then remove the stopped watchdog sentinel.
 
 The one-second monitor runs from before any service stop through restoration.
-It cancels the request and stops the exact challenger ID on any
-`MemAvailable < 30 GiB`, increase in mutation-window `pswpout`, candidate OOM, candidate
-restart, disappearance, or unexpected stop. A stale lifecycle sample is ignored
-after restoration disarms that same candidate ID.
+It stops the exact challenger on `MemAvailable < 20 GiB`, any candidate-cgroup
+swap or local OOM event, unexpected restart/stop, identity mismatch, stale
+sampling, or a paging-rate breach. Candidate attribution binds container ID,
+PID, process start ticks, and cgroup v2 membership before and after each read.
+
+Host paging limits are cumulative across **load and ready together**: 128 MiB
+in 5 seconds, 256 MiB in 60 seconds, or 512 MiB total. During serving/probes the
+limits are 32 MiB in 5 seconds, 64 MiB in 60 seconds, or 128 MiB total. Reaching a
+limit aborts. Startup phase changes cannot reset these limits. Setup and the
+final ready interval each require 60 seconds of zero host swap growth.
+Restoration host paging is recorded diagnostically; it does not interrupt
+recovery. The memory floor and exact resident identity/health checks still apply.
 
 ## Result gate
 
-The shared validator checks exact source bindings, a contiguous setup-to-mutation
-sample sequence, zero counter growth across the entire mutation window, and a
-final sample after restoration. The run is eligible for a broader local A/B only
-when `result.json` has all of:
+The shared validator reconstructs registered source bindings, raw contract and
+plan hashes, contiguous phase/gate counters and rolling windows, candidate
+cgroup identity, quiet intervals, and the final restoration sample. A broader
+local A/B requires:
 
-- `schema == "qwen-flash-next-qualification-result/v2"`;
-- `status == "passed"`;
+- `schema == "qwen-flash-next-qualification-result/v3"`;
+- `status == "passed"`, `failure_stage == null`, and no errors;
 - `restoration.status == "verified"`;
-- the frozen contract, plan, and model-manifest hashes;
-- `probe_count == 3`;
-- `min_mem_available_gib >= 30`, raw-sample-confirmed 60-second setup
-  quiescence, and `mutation_pswpout_delta_pages == 0`;
+- the registered contract, plan, and model-manifest hashes;
+- three successful fixed probes with exact provenance;
+- `min_mem_available_gib >= 20`, raw-sample-confirmed setup and ready quiet
+  intervals, continuous startup/serving limits, and zero candidate swap/OOM;
 - `weekly_budget_debit == false`, `paid_api_calls == 0`, and
   `production_change_authorized == false`.
+
+A claimed pass without its complete raw evidence cannot admit an evaluation.
+Older v1/v2 receipts remain historical evidence under their original rules;
+they cannot qualify the current v3 runtime. The research usage finish record
+must be durable before a result is published.
 
 `challenger_gpu_seconds` and `all_gpu_research_seconds` are the same conservative
 upper bound, measured from the candidate start attempt to its stop confirmation.
@@ -169,7 +180,7 @@ captured resident IDs. Start Nara only after both resident health endpoints
 return successfully. Remove the sentinel last. An unverified recovery never
 qualifies the model, even when a later manual restore succeeds.
 
-The v2 state receipt records worker PID, Linux process start ticks, boot ID,
+The v3 state receipt records worker PID, Linux process start ticks, boot ID,
 phase, update time and deadline. The UI verifies that process identity and a
 fresh memory sample before describing an active research window. A stale state
 file or a reachable candidate alone does not establish an authorized live window.

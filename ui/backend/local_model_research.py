@@ -124,11 +124,15 @@ def _qualification(reader, run_id):
         row, digest = reader.read(f"{prefix}/result.json")
     except FileNotFoundError:
         row, digest = reader.read(f"{prefix}/state.json")
-        if row.get("schema") not in {"qwen-flash-next-qualification-state/v1", "qwen-flash-next-qualification-state/v2"} or row.get("run_id") != run_id:
+        if row.get("schema") not in {
+            "qwen-flash-next-qualification-state/v1",
+            "qwen-flash-next-qualification-state/v2",
+            "qwen-flash-next-qualification-state/v3",
+        } or row.get("run_id") != run_id:
             raise SourceError("An in-progress qualification has an invalid identity.")
         phase = row.get("phase")
         if phase not in {"preflight", "model_verification", "setup_quiescence", "sentinel_create", "resident_stop",
-                         "candidate_start", "readiness", "probes", "qualification_passed", "restoring",
+                         "candidate_start", "readiness", "ready_stabilization", "probes", "qualification_passed", "restoring",
                          "complete", "supervisor_recovered", "recovery_unknown"}:
             raise SourceError("A qualification phase is not recognized.")
         # A state file can outlive a process. Never label it as currently running.
@@ -136,7 +140,11 @@ def _qualification(reader, run_id):
                 "finished_at": None, "candidate_window_minutes": None, "minimum_memory_gib": None,
                 "probe_count": None, "restoration": "unverified", "source_sha256": digest,
                 "model_started": None}
-    if (row.get("schema") not in {"qwen-flash-next-qualification-result/v1", "qwen-flash-next-qualification-result/v2"}
+    if (row.get("schema") not in {
+            "qwen-flash-next-qualification-result/v1",
+            "qwen-flash-next-qualification-result/v2",
+            "qwen-flash-next-qualification-result/v3",
+        }
             or row.get("run_id") != run_id or row.get("status") not in {"passed", "failed", "unknown"}
             or row.get("weekly_budget_debit") is not False
             or row.get("production_change_authorized") is not False):

@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from bench.flash_next_ab import evaluation_window as ew
+from bench.flash_next_ab.qualification import PAGING_POLICY
 
 
 def _raw(value):
@@ -65,7 +66,7 @@ def fixture(monkeypatch, tmp_path, *, cohort="flash"):
         _write(receipt, {"marker": "result"})
         launch = ["docker", "create", "fixed-image"]
         qualification_plan_document = {
-            "schema": "qwen-flash-next-qualification-plan/v2",
+            "schema": "qwen-flash-next-qualification-plan/v3",
             "contract_sha256": "1" * 64,
             "image_id": "sha256:" + "2" * 64,
             "model_artifact_sha256": "3" * 64,
@@ -76,6 +77,8 @@ def fixture(monkeypatch, tmp_path, *, cohort="flash"):
             ).hexdigest(),
             "probe_set": "flash-next-minimal-v1",
             "setup_quiescence_seconds": 60,
+            "ready_quiescence_seconds": 60,
+            "paging_policy": json.loads(json.dumps(PAGING_POLICY)),
         }
         _write(qualification_plan, qualification_plan_document)
         _write(contract_snapshot, {"marker": "snapshot"})
@@ -184,6 +187,8 @@ def test_flash_window_loads_and_cross_binds_every_evidence_file(monkeypatch, tmp
     assert extended["schema_version"] == ew.EXTENDED_PLAN_SCHEMA
     assert extended["effective_invocation_deadline_seconds"] == 14_400
     assert extended["work_cutoff_seconds"] == 13_800
+    assert extended["ready_quiescence_seconds"] == 60
+    assert extended["paging_policy"] == PAGING_POLICY
     assert extended["benchmark_runtime_budget_seconds"] == 10_430
     assert extended["prior_qualification_receipt_sha256"] == (
         window.qualification_summary["qualification_receipt_sha256"]

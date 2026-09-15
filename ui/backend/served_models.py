@@ -56,7 +56,7 @@ REGISTERED_MODELS: dict[str, dict[str, Any]] = {
     "flash": {
         "url": "http://127.0.0.1:8012",
         "configured_model": "qwen3.8-flash-next",
-        "configured_max_context_tokens": 16_384,
+        "configured_max_context_tokens": 32_768,
         "deployment_role": "research_candidate",
         "benchmark_cohort": "flash",
     },

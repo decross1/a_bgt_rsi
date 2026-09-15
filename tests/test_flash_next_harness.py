@@ -5,6 +5,7 @@ import os
 import stat
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -105,9 +106,9 @@ def gate(_plan, _cohort):
     return None
 
 
-def registered_contract():
-    return {
-        "schema": "qwen-flash-next-qualification/v2",
+def registered_contract(version=3):
+    contract = {
+        "schema": f"qwen-flash-next-qualification/v{version}",
         "contract_id": "qwen38-flash-next-c0-20260915",
         "profile": "C0",
         "image": {"id": q.IMAGE_ID, "architecture": "arm64"},
@@ -130,10 +131,10 @@ def registered_contract():
             "host_port": 8012,
             "container_port": 8000,
             "compile_cache_path": str(q.COMPILE_CACHE),
-            "max_model_len": 16384,
+            "max_model_len": q.MAX_MODEL_LEN,
             "max_num_seqs": 1,
             "gpu_memory_utilization": 0.75,
-            "kv_cache_memory_bytes": 1073741824,
+            "kv_cache_memory_bytes": q.KV_CACHE_MEMORY_BYTES,
             "max_num_batched_tokens": 4096,
             "kv_cache_dtype": "auto",
             "mamba_ssm_cache_dtype": "float32",
@@ -162,15 +163,28 @@ def registered_contract():
         },
         "probe_set": "flash-next-minimal-v1",
     }
+    if version == 3:
+        contract["safety"].update({
+            "ready_quiescence_seconds": 60,
+            "paging_policy": copy.deepcopy(q.PAGING_POLICY),
+        })
+    return contract
 
 
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n")
 
 
-def passing_flash_receipts(tmp_path):
-    contract = registered_contract()
-    contract_path = tmp_path / "contract.snapshot.json"
+@pytest.fixture(autouse=True)
+def registered_test_run_root(monkeypatch, tmp_path):
+    monkeypatch.setattr(q, "OUTPUT_ROOT", tmp_path)
+
+
+def passing_flash_receipts(tmp_path, version=3):
+    tmp_path = tmp_path / "qfn-c0-test"
+    tmp_path.mkdir()
+    contract = registered_contract(version)
+    contract_path = tmp_path / "launch-contract.snapshot.json"
     write_json(contract_path, contract)
     raw_contract_path = tmp_path / "launch-contract.raw.json"
     raw_contract_path.write_text(
@@ -179,7 +193,7 @@ def passing_flash_receipts(tmp_path):
     contract_sha256 = sha256_file(raw_contract_path)
     launch = q.launch_argv()
     qualification_plan = {
-        "schema": "qwen-flash-next-qualification-plan/v2",
+        "schema": f"qwen-flash-next-qualification-plan/v{version}",
         "contract_id": contract["contract_id"],
         "contract_sha256": contract_sha256,
         "profile": "C0",
@@ -195,6 +209,8 @@ def passing_flash_receipts(tmp_path):
         "paid_api_allowed": False,
         "production_change_authorized": False,
     }
+    if version == 3:
+        qualification_plan = q.plan_qualification(contract, contract_sha256, tmp_path)
     plan_path = tmp_path / "plan.json"
     write_json(plan_path, qualification_plan)
     endpoint = {
@@ -299,6 +315,7 @@ def passing_flash_receipts(tmp_path):
         "run_id": "qfn-c0-test",
         "status": "passed",
         "qualification_error": None,
+        "failure_stage": None,
         "restoration": {
             "status": "verified",
             "verified_at": "2026-09-16T00:01:59+00:00",
@@ -340,8 +357,99 @@ def passing_flash_receipts(tmp_path):
         "production_change_authorized": False,
     }
     receipt_path = tmp_path / "result.json"
+    if version == 3:
+        (tmp_path / "memory.jsonl").unlink()
+        result.update(v3_monitor_proof(tmp_path / "memory.jsonl"))
+        write_json(tmp_path / "readiness.json", {
+            "ready_at": result["ready_quiescence_started_at"], "models": [q.SERVED_MODEL],
+            "container": {
+                "id": "c" * 64, "pid": 123, "image": q.IMAGE_ID, "name": q.CONTAINER_NAME,
+                "running": True, "oom_killed": False, "restart_count": 0,
+            },
+            "stabilization": {key: result[f"ready_quiescence_{key}"] for key in (
+                "required_seconds", "passed", "started_at", "completed_at", "duration_seconds",
+                "initial_pswpout_pages", "final_pswpout_pages", "samples", "epoch",
+            )},
+        })
     write_json(receipt_path, result)
     return receipt_path, plan_path, contract_path
+
+
+def v3_monitor_proof(path):
+    """Produce real controller telemetry with an injected host and virtual clock."""
+    now = [0.0]
+    pages = [10]
+    cid = "c" * 64
+    base = datetime(2026, 9, 16, tzinfo=timezone.utc)
+    candidate = {
+        "id": cid, "name": q.CONTAINER_NAME, "image": q.IMAGE_ID,
+        "running": True, "oom_killed": False, "restart_count": 0, "pid": 123,
+    }
+    cgroup = {
+        "path": f"/system.slice/docker-{cid}.scope", "process_start_ticks": 12345,
+        "memory_swap_current_bytes": 0, "memory_events_oom": 0, "memory_events_oom_kill": 0,
+    }
+    def sleep(seconds):
+        now[0] += seconds
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(q.time, "sleep", sleep)
+        patch.setattr(q, "utc_now", lambda: (base + timedelta(seconds=now[0])).isoformat())
+        patch.setattr(q, "_inspect_container", lambda *_: candidate)
+        monitor = q.MemoryMonitor(
+            path, object(), reader=lambda: 39.0, swap_reader=lambda: pages[0],
+            cgroup_reader=lambda *_: dict(cgroup), clock=lambda: now[0],
+        )
+        with path.open("xb") as stream:
+            monitor._stream = stream
+            monitor._sample_once()
+            sleep(1)
+            pages[0] = 12
+            monitor.require_setup_quiescence(duration_s=60, deadline=300)
+            monitor.begin_mutation_window()
+            monitor.arm(cid)
+            sleep(1)
+            pages[0] += 394  # Small host paging is allowed; candidate swap stays zero.
+            monitor._sample_once()
+            monitor.require_ready_quiescence(duration_s=60, deadline=300)
+            sleep(1)
+            monitor._sample_once()
+            sleep(1)
+            monitor._sample_once()
+            monitor.begin_restoration()
+            monitor.disarm()
+            sleep(1)
+            pages[0] += 522059  # Restoration paging is diagnostic, not a candidate veto.
+            monitor._sample_once()
+        assert monitor.failure is None
+        result = {
+            "schema": "qwen-flash-next-qualification-result/v3",
+            "restoration": {"status": "verified", "verified_at": q.utc_now(), "errors": [], "sentinel_retained": False},
+            "memory_samples": monitor.samples, "min_mem_available_gib": 39.0,
+            "pswpout_initial_pages": 10, "pswpout_final_pages": pages[0], "pswpout_delta_pages": pages[0] - 10,
+            "setup_pswpout_initial_pages": 10, "setup_pswpout_final_pages": 12, "setup_pswpout_delta_pages": 2,
+            "mutation_window_started_at": monitor.mutation_window_started_at,
+            "mutation_pswpout_initial_pages": 12, "mutation_pswpout_final_pages": pages[0],
+            "mutation_pswpout_delta_pages": pages[0] - 12, "mutation_final_sample_at": monitor.mutation_final_sample_at,
+            "startup_pswpout_initial_pages": 12, "startup_pswpout_final_pages": 406,
+            "startup_pswpout_delta_pages": 394, "startup_pswpout_delta_bytes": 394 * 4096,
+            "paging_policy": copy.deepcopy(q.PAGING_POLICY), "paging_phase_summaries": copy.deepcopy(monitor.phase_summaries),
+            "paging_violations": [],
+            "paging_warning_phases": [phase for phase, summary in monitor.phase_summaries.items() if summary["pswpout_delta_bytes"] > 0],
+            "candidate_cgroup_path": cgroup["path"], "candidate_cgroup_pid": 123,
+            "candidate_cgroup_start_ticks": 12345,
+            "candidate_cgroup_samples": monitor.candidate_cgroup_samples,
+            "candidate_cgroup_swap_peak_bytes": 0, "candidate_cgroup_oom_initial": 0,
+            "candidate_cgroup_oom_final": 0, "candidate_cgroup_oom_kill_initial": 0,
+            "candidate_cgroup_oom_kill_final": 0, "ready_quiescence_epoch": monitor.ready_quiescence_epoch,
+        }
+        for phase in ("setup", "ready"):
+            result[f"{phase}_quiescence_required_seconds"] = 60
+            for name in ("passed", "started_at", "completed_at", "duration_seconds", "samples"):
+                result[f"{phase}_quiescence_{name}"] = getattr(monitor, f"{phase}_quiescence_{name}")
+            for name in ("initial_pswpout", "final_pswpout"):
+                result[f"{phase}_quiescence_{name}_pages"] = getattr(monitor, f"{phase}_quiescence_{name}")
+        return result
 
 
 def test_run_receipt_passes_the_independent_comparator_contract(tmp_path):
@@ -504,9 +612,9 @@ def test_passing_flash_qualification_is_crossbound_to_registered_arm(tmp_path):
         contract_path,
         require_passed=True,
     )
-    assert summary["pswpout_delta_pages"] == 2
+    assert summary["pswpout_delta_pages"] == 522455
     assert summary["setup_pswpout_delta_pages"] == 2
-    assert summary["mutation_pswpout_delta_pages"] == 0
+    assert summary["mutation_pswpout_delta_pages"] == 522453
     flash = make_arm_receipt(
         "flash",
         qualification_receipt_sha256=summary["qualification_receipt_sha256"],
@@ -530,16 +638,16 @@ def test_passing_flash_qualification_is_crossbound_to_registered_arm(tmp_path):
 
 def test_flash_admission_rejects_swap_inside_the_mutation_window(tmp_path):
     receipt_path, qualification_plan_path, contract_path = passing_flash_receipts(
-        tmp_path
+        tmp_path, version=2
     )
     rows = [
         json.loads(line)
-        for line in (tmp_path / "memory.jsonl").read_text().splitlines()
+        for line in (receipt_path.parent / "memory.jsonl").read_text().splitlines()
     ]
     rows[-1]["pswpout_pages"] = 13
     rows[-1]["pswpout_delta_pages"] = 3
     rows[-1]["mutation_pswpout_delta_pages"] = 1
-    (tmp_path / "memory.jsonl").write_text(
+    (receipt_path.parent / "memory.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in rows)
     )
     result = json.loads(receipt_path.read_text())
@@ -571,6 +679,140 @@ def test_flash_admission_rejects_a_claimed_short_quiescence(tmp_path):
     assert any("quiescence" in reason for reason in summary["admission_failures"])
 
 
+@pytest.mark.parametrize("corruption", [
+    "candidate_swap", "candidate_oom", "pid_reuse", "missing_candidate",
+    "missing_bind", "sample_gap", "short_ready", "policy_change",
+    "boolean_counter", "forged_phase_summary", "missing_transition",
+    "counter_rewind", "swapped_phase", "hidden_host_growth", "late_bind",
+    "emergency_stop", "missing_restoration_boundary", "early_bind",
+    "startup_reset", "forged_startup_summary",
+])
+def test_v3_admission_reconstructs_raw_proof_and_rejects_tampering(tmp_path, corruption):
+    receipt, plan, contract = passing_flash_receipts(tmp_path)
+    result = json.loads(receipt.read_text())
+    path = receipt.parent / "memory.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    serving = next(row for row in rows if row.get("monitor_phase") == "probes")
+    if corruption == "candidate_swap":
+        serving["candidate"]["cgroup"]["memory_swap_current_bytes"] = 4096
+    elif corruption == "candidate_oom":
+        serving["candidate"]["cgroup"]["memory_events_oom"] = 1
+    elif corruption == "pid_reuse":
+        serving["candidate"]["cgroup"]["process_start_ticks"] += 1
+    elif corruption == "missing_candidate":
+        del serving["candidate"]
+    elif corruption == "missing_bind":
+        rows = [row for row in rows if row.get("schema") != "qwen-flash-next-cgroup-bind/v1"]
+    elif corruption == "sample_gap":
+        serving["elapsed_monotonic_seconds"] += 20
+    elif corruption == "short_ready":
+        result["ready_quiescence_duration_seconds"] = 59.99
+    elif corruption == "policy_change":
+        result["paging_policy"]["candidate_cgroup_swap_max_bytes"] = 4096
+    elif corruption == "boolean_counter":
+        serving["candidate"]["cgroup"]["memory_events_oom"] = False
+    elif corruption == "forged_phase_summary":
+        result["paging_phase_summaries"]["load"]["max_window_5s_bytes"] = 0
+    elif corruption == "missing_transition":
+        next(row for row in rows if row.get("transition_to") == "probes")["transition_to"] = None
+    elif corruption == "counter_rewind":
+        serving["pswpout_pages"] -= 1
+    elif corruption == "swapped_phase":
+        serving["monitor_phase"] = "restoration"
+    elif corruption == "hidden_host_growth":
+        serving["pswpout_pages"] += 8192
+    elif corruption == "late_bind":
+        bind = next(row for row in rows if row.get("schema") == "qwen-flash-next-cgroup-bind/v1")
+        rows.remove(bind)
+        rows.append(bind)
+    elif corruption == "early_bind":
+        bind = next(row for row in rows if row.get("schema") == "qwen-flash-next-cgroup-bind/v1")
+        rows.remove(bind)
+        rows.insert(0, bind)
+    elif corruption == "emergency_stop":
+        rows.append({"event": "emergency_candidate_stop", "candidate_id": "c" * 64, "returncode": 0})
+    elif corruption == "missing_restoration_boundary":
+        first = next(row for row in rows if row.get("monitor_phase") == "restoration")
+        del first["candidate"]
+        result["candidate_cgroup_samples"] -= 1
+    elif corruption == "startup_reset":
+        ready = next(row for row in rows if row.get("monitor_phase") == "ready")
+        ready["gate_initial_pswpout_pages"] = ready["pswpout_pages"]
+        ready["gate_pswpout_delta_pages"] = 0
+        ready["gate_pswpout_delta_bytes"] = 0
+        ready["host_swap_5s_bytes"] = 0
+        ready["host_swap_60s_bytes"] = 0
+    elif corruption == "forged_startup_summary":
+        result["startup_pswpout_delta_pages"] = 0
+        result["startup_pswpout_delta_bytes"] = 0
+    write_json(receipt, result)
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    with pytest.raises(HarnessError):
+        validate_flash_qualification_files(receipt, plan, contract, require_passed=True)
+
+
+def test_v2_pass_is_retained_as_history_without_v3_admission(tmp_path):
+    receipt, plan, contract = passing_flash_receipts(tmp_path, version=2)
+    summary = validate_flash_qualification_files(receipt, plan, contract)
+    assert summary["status"] == "passed"
+    assert summary["admission_eligible"] is False
+    assert any("legacy" in item for item in summary["admission_failures"])
+
+
+@pytest.mark.parametrize("failure", ["missing", "wrong_model", "later_readiness", "different_pid"])
+def test_v3_requires_exact_readiness_before_quiet_proof(tmp_path, failure):
+    receipt, plan, contract = passing_flash_receipts(tmp_path)
+    path = receipt.parent / "readiness.json"
+    ready = json.loads(path.read_text())
+    if failure == "missing":
+        path.unlink()
+    else:
+        if failure == "wrong_model":
+            ready["models"] = ["wrong-model"]
+        elif failure == "later_readiness":
+            ready["ready_at"] = "2026-09-16T01:00:00+00:00"
+        elif failure == "different_pid":
+            ready["container"]["pid"] = 999
+        write_json(path, ready)
+    with pytest.raises(HarnessError, match="readiness"):
+        validate_flash_qualification_files(receipt, plan, contract, require_passed=True)
+
+
+@pytest.mark.parametrize("field", ["output_dir", "endpoint", "resource_locks", "invocation_deadline_seconds"])
+def test_v3_requires_the_complete_registered_plan(tmp_path, field):
+    receipt, plan, contract = passing_flash_receipts(tmp_path)
+    document = json.loads(plan.read_text())
+    del document[field]
+    write_json(plan, document)
+    result = json.loads(receipt.read_text())
+    result["plan_sha256"] = q.sha256(document)
+    write_json(receipt, result)
+    with pytest.raises(HarnessError, match="full registered plan"):
+        validate_flash_qualification_files(receipt, plan, contract, require_passed=True)
+
+
+@pytest.mark.parametrize("corruption", ["run_id", "missing_errors", "failure_stage", "boolean_paid_calls", "extra_probe"])
+def test_v3_rejects_malformed_pass_semantics(tmp_path, corruption):
+    receipt, plan, contract = passing_flash_receipts(tmp_path)
+    result = json.loads(receipt.read_text())
+    if corruption == "run_id":
+        result["run_id"] = "qfn-c0-different"
+    elif corruption == "missing_errors":
+        del result["restoration"]["errors"]
+    elif corruption == "failure_stage":
+        result["failure_stage"] = "restoration"
+    elif corruption == "boolean_paid_calls":
+        result["paid_api_calls"] = False
+    elif corruption == "extra_probe":
+        path = receipt.parent / "probes.json"
+        probes = json.loads(path.read_text())
+        probes["results"].insert(0, "unexpected")
+        write_json(path, probes)
+    write_json(receipt, result)
+    with pytest.raises(HarnessError):
+        validate_flash_qualification_files(receipt, plan, contract, require_passed=True)
+
+
 def test_flash_admission_rejects_a_sub_20_gib_contract(tmp_path):
     receipt_path, qualification_plan_path, contract_path = passing_flash_receipts(
         tmp_path
@@ -578,7 +820,7 @@ def test_flash_admission_rejects_a_sub_20_gib_contract(tmp_path):
     contract = json.loads(contract_path.read_text())
     contract["safety"]["min_mem_available_gib"] = 19
     write_json(contract_path, contract)
-    raw_contract_path = tmp_path / "launch-contract.raw.json"
+    raw_contract_path = receipt_path.parent / "launch-contract.raw.json"
     raw_contract_path.write_text(json.dumps(contract, separators=(",", ":")) + "\n")
     qualification_plan = json.loads(qualification_plan_path.read_text())
     qualification_plan["contract_sha256"] = sha256_file(raw_contract_path)

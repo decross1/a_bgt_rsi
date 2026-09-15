@@ -90,7 +90,7 @@ def test_fixed_registry_has_two_residents_and_one_unpromoted_candidate():
     assert REGISTERED_MODELS["flash"] == {
         "url": "http://127.0.0.1:8012",
         "configured_model": "qwen3.8-flash-next",
-        "configured_max_context_tokens": 16_384,
+        "configured_max_context_tokens": 32_768,
         "deployment_role": "research_candidate",
         "benchmark_cohort": "flash",
     }
@@ -119,6 +119,8 @@ def test_inventory_preserves_legacy_fields_and_separates_idle_from_offline():
     assert body["qwen"]["activity_status"] == "busy"
     assert body["qwen"]["metrics"]["gpu_cache_usage_pct"] == 50
     assert body["flash"]["service_status"] == "offline"
+    assert body["flash"]["configured_max_context_tokens"] == 32768
+    assert body["flash"]["observed_max_context_tokens"] is None
     assert body["flash"]["activity_status"] == "unknown"
     assert body["flash"]["metrics"] is None
     assert body["flash"]["deployment_role"] == "research_candidate"
@@ -140,11 +142,15 @@ def test_wrong_model_is_online_but_identity_mismatch():
 def test_metrics_failure_does_not_turn_a_serving_model_offline():
     one = {"flash": "http://f:8012"}
     body = client({
-        "http://f:8012/v1/models": {"data": [{"id": "qwen3.8-flash-next"}]},
+        "http://f:8012/v1/models": {
+            "data": [{"id": "qwen3.8-flash-next", "max_model_len": 16384}]
+        },
         "http://f:8012/metrics": "not prometheus core gauges\n",
     }, endpoints=one).get("/api/served_models").json()["flash"]
     assert body["service_status"] == "online"
     assert body["identity_status"] == "match"
+    assert body["configured_max_context_tokens"] == 32768
+    assert body["observed_max_context_tokens"] == 16384
     assert body["metrics_endpoint_status"] == "invalid_response"
     assert body["activity_status"] == "unknown"
     assert body["metrics"] is None
