@@ -60,7 +60,8 @@ The vector must use port 8012, `--restart=no`, the image ID rather than a tag,
 a read-only model bind, 32,768 maximum context, one sequence, 2 GiB explicit KV,
 KV dtype `auto` (record the resolved runtime dtype when observable), explicit
 `--gpu-memory-utilization 0.75`, FP32 recurrent state,
-exact top-k, MTP0, prefix cache off, and async
+exact QSA top-k environment settings (`VLLM_QSA_EXACT_TOPK=1`,
+`VLLM_QSA_DET_TOPK=0`), MTP0, prefix cache off, and async
 scheduling off. It must contain no remote URL, host network, privileged mode,
 arbitrary extra argument, or API key.
 
