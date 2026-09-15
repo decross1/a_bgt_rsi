@@ -28,13 +28,13 @@ import threading
 import time
 import urllib.request
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from orchestrator.weekly_upgrade_trial import canonical_root, resource_lease
-
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = Path(
@@ -751,7 +751,7 @@ class MemoryMonitor:
         while not self._done.is_set():
             try:
                 self._sample_once()
-            except BaseException as exc:
+            except BaseException as exc:  # noqa: BLE001 - any monitor fault must stop the candidate
                 self._breach(f"memory monitor failed: {type(exc).__name__}: {exc}")
             self._done.wait(self.interval_s)
 
@@ -939,7 +939,7 @@ def _wait_candidate_ready(
             if identifiers != [SERVED_MODEL]:
                 raise QualificationError("candidate model list is not the exact served identity")
             return {"ready_at": utc_now(), "models": identifiers, "container": row}
-        except Exception as exc:  # readiness is a bounded poll; final error remains explicit
+        except Exception as exc:  # noqa: BLE001 - bounded readiness poll records its final error
             last_error = f"{type(exc).__name__}: {exc}"
         time.sleep(min(2, max(0, deadline - time.monotonic())))
     raise QualificationError(f"candidate readiness deadline expired ({last_error})")
@@ -1051,7 +1051,7 @@ def _wait_resident_restore(ops: HostOps, initial: dict[str, Any], deadline: floa
             try:
                 ops.http_bytes(health, timeout=min(2, max(0.1, deadline - time.monotonic())))
                 pending.pop(expected["name"])
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - bounded health poll records its final error
                 last_error = f"{type(exc).__name__}: {exc}"
         if pending:
             time.sleep(min(2, max(0, deadline - time.monotonic())))
@@ -1130,7 +1130,7 @@ def restore_exact(
                             diagnostic_path,
                             (logs.stdout + ("\n[stderr]\n" + logs.stderr if logs.stderr else "")).encode(),
                         )
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - diagnostics cannot block restoration
                         diagnostic_errors.append(
                             f"candidate log capture: {type(exc).__name__}: {exc}"
                         )
@@ -1149,7 +1149,7 @@ def restore_exact(
                 if monitor is not None and monitor.emergency_stop_at is not None
                 else time.monotonic()
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - restoration must record stop uncertainty
             candidate_safe = False
             errors.append(f"candidate stop: {type(exc).__name__}: {exc}")
     elif isinstance(initial, dict):
@@ -1185,7 +1185,7 @@ def restore_exact(
                 if row is None or row.get("id") != expected["id"] or row.get("image") != expected["image"]:
                     raise QualificationError("exact resident identity is unavailable")
                 pending.append((expected, row))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - validate all identities before any start
                 errors.append(f"resident {expected.get('name')}: {type(exc).__name__}: {exc}")
                 break
 
@@ -1202,7 +1202,7 @@ def restore_exact(
                         {"residents": [expected]},
                         deadline,
                     )
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - stop the sequential restore on any fault
                     errors.append(
                         f"resident {expected.get('name')}: {type(exc).__name__}: {exc}"
                     )
@@ -1226,7 +1226,7 @@ def restore_exact(
                         raise QualificationError("Nara active state was not restored")
                 elif service["ActiveState"] == "active":
                     raise QualificationError("Nara became active despite an initially inactive state")
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - preserve unknown service restoration
                 errors.append(f"Nara: {type(exc).__name__}: {exc}")
         elif initial.get("nara_was_active"):
             errors.append("Nara restoration withheld until resident health is verified")
@@ -1241,7 +1241,7 @@ def restore_exact(
             )
             if _inspect_container(ops, CONTAINER_NAME) is not None:
                 raise QualificationError("candidate sentinel removal was not verified")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - retain the sentinel on any removal uncertainty
             errors.append(f"sentinel removal: {type(exc).__name__}: {exc}")
     retained = _inspect_container(ops, CONTAINER_NAME) is not None
     return {
@@ -1465,7 +1465,7 @@ def execute_worker(
                     raise QualificationError("candidate OOM/restart/running-state gate failed")
                 state["phase"] = "qualification_passed"
                 _atomic_write(state_path, state)
-            except BaseException as exc:
+            except BaseException as exc:  # noqa: BLE001 - signals and faults must enter finally
                 qualification_error = f"{type(exc).__name__}: {exc}"
                 failure_stage = active_stage if active_stage in FAILURE_STAGES else "unknown"
             finally:
@@ -1484,7 +1484,7 @@ def execute_worker(
                     restoration_completed_mono = restoration.get(
                         "restoration_completed_monotonic"
                     )
-                except BaseException as exc:
+                except BaseException as exc:  # noqa: BLE001 - restoration failures become durable unknown
                     if failure_stage is None:
                         failure_stage = "restoration"
                     restoration_completed_mono = time.monotonic()
@@ -1495,7 +1495,7 @@ def execute_worker(
                         "sentinel_retained": bool(state.get("candidate_id")),
                         "restoration_completed_monotonic": restoration_completed_mono,
                     }
-    except BaseException as exc:
+    except BaseException as exc:  # noqa: BLE001 - lease/monitor failures must remain fail-closed
         if qualification_error is None:
             qualification_error = f"{type(exc).__name__}: {exc}"
         if failure_stage is None:
@@ -1707,7 +1707,7 @@ def supervisor_emergency_restore(
         state["phase"] = "supervisor_recovered" if restoration["status"] == "verified" else "recovery_unknown"
         state["restoration"] = restoration
         _atomic_write(output / "state.json", state)
-    except BaseException as exc:
+    except BaseException as exc:  # noqa: BLE001 - emergency recovery always emits a receipt
         receipt["error"] = f"{type(exc).__name__}: {exc}"
     receipt["finished_at"] = utc_now()
     _atomic_write(output / "supervisor-recovery.json", receipt)

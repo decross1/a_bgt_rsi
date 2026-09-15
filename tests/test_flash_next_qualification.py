@@ -148,7 +148,7 @@ def test_launch_vector_is_fixed_and_conservative():
 
 
 def test_controller_does_not_import_or_construct_weekly_budget_ledger():
-    tree = ast.parse(q.__file__ and open(q.__file__, encoding="utf-8").read())
+    tree = ast.parse(Path(q.__file__).read_text(encoding="utf-8"))
     imported = {
         alias.name
         for node in ast.walk(tree)
