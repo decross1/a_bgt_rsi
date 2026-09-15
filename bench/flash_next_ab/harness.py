@@ -587,13 +587,18 @@ def _validate_host_loading_counters(samples, result):
             raise HarnessError("S1 reported PSI summary differs from raw evidence")
 
 
-def _validate_cgroup_diagnostics(path, raw, rows, result, *, spec=None):
+def _validate_cgroup_diagnostics(path, raw, rows, result, *, spec=None,
+                                 extended_plan=None):
     """Independently reconstruct the no-swap profile's telemetry sidecar."""
     from .qualification import DOCKER_MEMORY_LIMIT_BYTES, DOCKER_MEMORY_SWAP_TOTAL_BYTES
     memory_limit = spec.docker_memory_limit_bytes if spec is not None else DOCKER_MEMORY_LIMIT_BYTES
     swap_total = spec.docker_memory_limit_bytes if spec is not None else DOCKER_MEMORY_SWAP_TOTAL_BYTES
 
     raw_sha = hashlib.sha256(raw).hexdigest()
+    phases = ({"setup", "load", "ready", "probes", "evaluation", "restoration"}
+              if extended_plan is not None else
+              {"setup", "load", "ready", "probes", "restoration"})
+    attributed_phases = phases - {"setup"}
     if (result.get("memory_log_sha256") != raw_sha
             or type(result.get("docker_memory_limit_bytes")) is not int
             or result["docker_memory_limit_bytes"] != memory_limit
@@ -614,7 +619,7 @@ def _validate_cgroup_diagnostics(path, raw, rows, result, *, spec=None):
     identity = None
     for row in samples:
         phase = row.get("monitor_phase")
-        if phase not in {"setup", "load", "ready", "probes", "restoration"}:
+        if phase not in phases:
             raise HarnessError("S1 host diagnostic phase is malformed")
         host_observation = {
             "observed_at": row.get("observed_at"),
@@ -630,7 +635,7 @@ def _validate_cgroup_diagnostics(path, raw, rows, result, *, spec=None):
             continue
         cgroup = candidate.get("cgroup")
         phase = row.get("monitor_phase")
-        if not isinstance(cgroup, dict) or phase not in {"load", "ready", "probes", "restoration"}:
+        if not isinstance(cgroup, dict) or phase not in attributed_phases:
             raise HarnessError("S1 attributed diagnostic row is malformed")
         if identity is None:
             identity = candidate.get("id")
@@ -652,21 +657,30 @@ def _validate_cgroup_diagnostics(path, raw, rows, result, *, spec=None):
         }
         phase_rows.setdefault(phase, {"first": observation})["last"] = observation
     expected = {
-        "schema": ("qwen-flash-next-c0-mia-s1-cgroup-diagnostics/v1" if spec is not None
-                   else "qwen-flash-next-c0-s1-cgroup-diagnostics/v1"),
+        "schema": ("flash-next-extended-cgroup-diagnostics/v1" if extended_plan
+                   is not None else "qwen-flash-next-c0-mia-s1-cgroup-diagnostics/v1"
+                   if spec is not None else "qwen-flash-next-c0-s1-cgroup-diagnostics/v1"),
         "candidate_id": identity, "memory_log_sha256": raw_sha,
         "attributed_samples": attributed, "maximum_memory_current_bytes": maximum,
         "registered_memory_max_bytes": memory_limit,
         "registered_swap_max_bytes": 0, "phase_first_last": phase_rows,
         "phase_host_first_last": host_phase_rows,
-        "host_swap_action": "registered_startup_and_serving_byte_gates",
+        "host_swap_action": (
+            "registered_startup_and_extended_serving_rate_gates_host_total_diagnostic"
+            if extended_plan is not None else "registered_startup_and_serving_byte_gates"
+        ),
         "diagnostics_finished_at": sidecar.get("diagnostics_finished_at"),
     }
+    if extended_plan is not None:
+        expected["extended_plan_sha256"] = _qualification_sha256(extended_plan)
+        expected["extended_serving_profile_sha256"] = extended_plan[
+            "extended_serving_profile_sha256"
+        ]
     if spec is not None:
         expected["candidate"] = {"id": spec.spec_id,
                                  "spec_sha256": spec.identity_sha256()}
-    if (sidecar != expected or not {"load", "ready", "probes"}.issubset(phase_rows)
-            or set(host_phase_rows) != {"setup", "load", "ready", "probes", "restoration"}):
+    if (sidecar != expected or not (attributed_phases - {"restoration"}).issubset(phase_rows)
+            or set(host_phase_rows) != phases):
         raise HarnessError("S1 diagnostic summary differs from its raw evidence")
     diagnostic_time = _utc_datetime(sidecar.get("diagnostics_finished_at"), "S1 diagnostic timestamp")
     sample_times = [_utc_datetime(row.get("observed_at"), "S1 sample timestamp")
@@ -680,11 +694,18 @@ def _validate_memory_log_v3(
     rows: list[dict[str, Any]],
     samples: list[dict[str, Any]],
     result: dict[str, Any],
-    *, spec=None,
+    *, spec=None, extended_plan=None,
 ) -> None:
     """Reconstruct the v3 paging gate from raw evidence, not reported verdicts."""
     from .qualification import DOCKER_MEMORY_LIMIT_BYTES, PAGING_POLICY
     policy = spec.paging_policy() if spec is not None else PAGING_POLICY
+    if extended_plan is not None:
+        from .evaluation_window import EXTENDED_SERVING_PROFILE
+        if (extended_plan.get("extended_serving_profile") != EXTENDED_SERVING_PROFILE
+                or result.get("extended_serving_profile") != EXTENDED_SERVING_PROFILE
+                or result.get("extended_serving_profile_sha256")
+                    != extended_plan.get("extended_serving_profile_sha256")):
+            raise HarnessError("extended serving profile differs from the registered lifecycle")
     memory_limit = spec.docker_memory_limit_bytes if spec is not None else DOCKER_MEMORY_LIMIT_BYTES
     enforce_cap = spec is not None or result.get("profile") in {"C0-S0", "C0-S1"}
 
@@ -700,7 +721,10 @@ def _validate_memory_log_v3(
         "qwen-flash-next-memory-sample/v3", "qwen-flash-next-cgroup-bind/v1"
     } or "event" in row for row in rows):
         raise HarnessError("qualification memory log contains a failure or unexpected event")
-    phase_names = ["setup", "load", "ready", "probes", "restoration"]
+    phase_names = ["setup", "load", "ready", "probes"]
+    if extended_plan is not None:
+        phase_names.append("evaluation")
+    phase_names.append("restoration")
     phase_rows: dict[str, list[dict[str, Any]]] = {name: [] for name in phase_names}
     phase_summaries: dict[str, dict[str, Any]] = {}
     history: list[tuple[float, int]] = []
@@ -713,6 +737,8 @@ def _validate_memory_log_v3(
     gate_baseline = prior_pages
     gate = "setup"
     gates = {"setup": "setup", "load": "startup", "ready": "startup", "probes": "serving", "restoration": "restoration"}
+    if extended_plan is not None:
+        gates["evaluation"] = "extended_serving"
     phase_start = samples[0]["observed_at"]
     for index, row in enumerate(samples):
         phase = row.get("monitor_phase")
@@ -787,13 +813,16 @@ def _validate_memory_log_v3(
         ) else None
         if row.get("transition_to") != expected_transition:
             raise HarnessError("qualification ready-to-probes transition is unproven")
-        limits = policy["load"] if phase in {"load", "ready"} else (
-            policy["serving"] if phase == "probes" else None
-        )
+        limits = (policy["load"] if phase in {"load", "ready"} else
+                  policy["serving"] if phase == "probes" else
+                  {"window_5s_breach_bytes": EXTENDED_SERVING_PROFILE["host_pswpout_5s_burst_bytes"],
+                   "window_60s_breach_bytes": EXTENDED_SERVING_PROFILE["host_pswpout_60s_burst_bytes"]}
+                  if phase == "evaluation" and extended_plan is not None else None)
         if limits and (
             window_bytes[0] >= limits["window_5s_breach_bytes"]
             or window_bytes[1] >= limits["window_60s_breach_bytes"]
-            or expected_counters["gate_pswpout_delta_bytes"] >= limits["phase_total_breach_bytes"]
+            or (phase != "evaluation" and
+                expected_counters["gate_pswpout_delta_bytes"] >= limits["phase_total_breach_bytes"])
         ):
             raise HarnessError(f"qualification {phase} host paging threshold was reached")
         summary = phase_summaries.setdefault(phase, {
