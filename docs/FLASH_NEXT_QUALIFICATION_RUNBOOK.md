@@ -11,13 +11,14 @@ recreates a resident.
 - Controller commits: `29dbb0c41b61c675d7caca3cce2468a6ad7720b9`,
   followed by race hardening commit
   `e1595bfbb48cdac6c71ee21a00b09017483ce011`, and owned-cache remediation
-  commit `8c2949c`.
+  commit `8c2949c`, explicit-memory/sequential-restoration fix `83435cc`,
+  and localized recovery-catch cleanup `de59223`.
 - Controller SHA-256:
-  `6e87b504169ac2bfb21d4d2cceea70975d562751a5520b9283557d8aef1d5318`.
+  `5e7e223a6ccdc3ed9c7531d427d3b4b9156a36fb4dc3bed19136d8871e8f6279`.
 - External contract:
   `/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/runtime/launch-contract.c0.json`.
 - Contract SHA-256:
-  `1e3efd13b39f2b44a95e4c4e2486ff58289d290d0a73d2ebd4f30607ae217eb0`.
+  `ff97f26e0981072dc63664cc86046899dedd3bf8c65002fc7baf50e6d8ccafd2`.
 - Image ID:
   `sha256:345bea72ff3bb548594d88f6a7661636c07cd3e7367f8e54b0e4a98494e5a48d`.
 - Model revision:
@@ -25,7 +26,7 @@ recreates a resident.
 - Model-manifest SHA-256:
   `54e961084a2fca63b0dcd32d542eb340a7baa20224298b00030ffa7e59145063`.
 - Docker argument-vector SHA-256:
-  `a06fdb8e91fedc4de22409a425ed4c0432b652a07752572a4c8b3849c4b595ca`.
+  `6a3afd70f65527b10e6ebd4d44fa1c9f81b2d3a2f0930ac81713ecfec6072630`.
 
 The first invocation used contract SHA-256
 `3757f596d03bd3d386ac30d21b7b2397fbe0c4910b8fab95a5d1b72cd58486f1`
@@ -59,11 +60,17 @@ env -u MOCK_LLM .venv-chroma/bin/python \
 Verify the three hashes above and inspect the complete `docker_create_argv`.
 The vector must use port 8012, `--restart=no`, the image ID rather than a tag,
 a read-only model bind, 16,384 maximum context, one sequence, 1 GiB explicit KV,
-BF16 KV, FP32 recurrent state, exact top-k, MTP0, prefix cache off, and async
+BF16 KV, explicit `--gpu-memory-utilization 0.75`, FP32 recurrent state,
+exact top-k, MTP0, prefix cache off, and async
 scheduling off. It must contain no remote URL, host network, privileged mode,
 arbitrary extra argument, or API key.
 
 ## One qualification invocation
+
+Finish unrelated CPU test/build jobs first. Record a bounded 60-second idle
+precheck with zero host swap-out growth and at least 30 GiB MemAvailable. The
+zero-swap monitor remains active throughout qualification; setup churn is a
+failed setup window, not evidence of Flash model capability.
 
 Use a fresh direct child of the fixed qualification-run root:
 
@@ -97,7 +104,8 @@ The guarded sequence is:
 7. start the challenger and require `/health`, the exact `/v1/models` identity,
    two fixed exact answers, and one fixed parsed tool call;
 8. capture bounded candidate logs, stop and verify the candidate, start and
-   health-check the exact resident IDs, restore Nara only after both residents
+   health-check Gemma first, then start and health-check Qwen, using their exact
+   original IDs. Restore Nara only after both residents
    are healthy, then remove the stopped watchdog sentinel.
 
 The one-second monitor runs from before any service stop through restoration.
@@ -121,10 +129,15 @@ The run is eligible for a broader local A/B only when `result.json` has all of:
 
 `challenger_gpu_seconds` and `all_gpu_research_seconds` are the same conservative
 upper bound, measured from the candidate start attempt to its stop confirmation.
-They exclude subsequent resident boot verification. The raw one-second samples,
+They exclude subsequent resident boot verification. `resident_downtime_seconds`
+now measures from resident stop through full restoration completion. Older run
+`qfn-c0-20260915-0107` undercounts this value and must not be used for downtime
+comparison; its original receipt is retained. The raw one-second samples,
 model verification, readiness response, probe provenance, bounded candidate
 log, durable state, result, and supervisor receipt stay inside that run's
-isolated directory.
+isolated directory. Exact original contract bytes are saved as
+`launch-contract.raw.json`, alongside the normalized snapshot; raw and semantic
+JSON hashes are intentionally distinct.
 
 Local model R&D is uncapped by the 120-minute weekly maintenance ledger under
 the owner's 2026-09-15 instruction. The controller does not import or construct
