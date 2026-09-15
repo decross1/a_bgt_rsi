@@ -34,14 +34,13 @@ from typing import Any
 from agent_wrapper.backends import get_backend
 from agent_wrapper.cleanup import strip_channel_markup
 from agent_wrapper.wrapper import DEFAULT_BACKEND
-from orchestrator import iteration_cache
+from orchestrator import empirical_context, iteration_cache
 from orchestrator.chroma_query import query_top_k
 from orchestrator.subagent import (
     SubAgentBudget,
     SubAgentResult,
     run_subagent,
 )
-
 
 # The critic sub-agent's OWN verdict enum. "refuted" is deliberately NOT
 # here — it enters the critique verdict only via the D-075 R3b skeptic
@@ -746,10 +745,25 @@ def critic_loop_v0(
         if novelty_class == "rediscovery" else ""
     )
 
+    empirical_note = ""
+    if iteration_cache.has_entry(iteration_id, "empirical_context"):
+        try:
+            cached = iteration_cache.read_entry(iteration_id, "empirical_context")
+            empirical_note = "\n\n" + empirical_context.note(cached)
+        except (KeyError, ValueError) as exc:
+            return {
+                "status": "error",
+                "result": None,
+                "errors": [f"empirical context cache is untrusted: {exc}"],
+                "wrapper_request_id": None,
+                "parent_request_id": parent_request_id,
+            }
+
     user_prompt = (
         f"Hypothesis:\n{hypothesis_text.strip()}\n\n"
         f"Initial retrieved neighbors ({len(neighbors)}):\n"
-        f"{_format_neighbors(neighbors)}\n{relevance_warning}{novelty_note}\n"
+        f"{_format_neighbors(neighbors)}\n{relevance_warning}{novelty_note}"
+        f"{empirical_note}\n"
         "Decide your verdict. If the initial neighbors are sufficient,\n"
         "emit the final JSON now. If you genuinely need to check a\n"
         "specific angle, call `query_chroma` with a focused query first."
@@ -930,6 +944,7 @@ if __name__ == "__main__":
     # under a synthetic iteration_id, then calls the worker by id —
     # mirrors how Nara wires this in production.
     import json
+
     from workers.retrieve_literature import retrieve_literature
     hyp = (
         "In finitely repeated Prisoner's Dilemma with known horizon, "

@@ -48,7 +48,7 @@ from agent_wrapper.wrapper import (
     get_run_id,
     set_run_id,
 )
-from orchestrator import active_run, domain_anchor, iteration_cache
+from orchestrator import active_run, domain_anchor, empirical_context, iteration_cache
 from orchestrator import topicality as topicality_mod
 from orchestrator.journal_stub import finalize_iteration_record
 from orchestrator.runtime import PyRuntime, Runtime
@@ -477,10 +477,10 @@ def run_iteration(
         are dispatched by the runtime and may run on a different backend
         per the per-tool tier (a future routing extension).
 
-    experiment_outcome: optional Tier-1/Tier-2 sandbox-experiment outcome to
-        attach to the resulting iteration_record. When non-None, the dict is
-        threaded into the iteration_record under the `experiment_outcome`
-        field (schema-validated by `finalize_iteration_record`). Used by
+    experiment_outcome: optional Tier-1/Tier-2 sandbox-experiment outcome.
+        When non-None, validate and bound it before a model call, show the
+        same hash-bound observation to Nara and the independent critic, and
+        attach it to the resulting iteration_record. Used by
         experiment → LOOP_V0 bridges (e.g., exp003_vickrey_rediscovery's
         loop_bridge.py).
 
@@ -515,6 +515,8 @@ def run_iteration(
         raise CampaignError("research campaign changed after dispatch planning")
     if campaign is not None:
         campaign_link = bind_topic(campaign, topic)
+    context = (empirical_context.build(experiment_outcome)
+               if experiment_outcome is not None else None)
     if log_path is _USE_DEFAULT_LOG:
         log_path = _DEFAULT_LOG_PATH  # resolved at call time (patchable)
     runtime = runtime or PyRuntime()
@@ -562,6 +564,7 @@ def run_iteration(
             runtime, be, iteration_id, started_at, active, topic,
             source=source, log_path=log_path, max_depth=max_depth,
             experiment_outcome=experiment_outcome,
+            empirical_entry=context,
             cross_tier_comparison=cross_tier_comparison,
             generation_policy=policy,
             campaign_link=campaign_link,
@@ -584,6 +587,7 @@ def _run_iteration_impl(
     log_path: str | None,
     max_depth: int,
     experiment_outcome: dict | None,
+    empirical_entry: dict | None,
     cross_tier_comparison: dict | None,
     generation_policy=None,
     campaign_link: dict[str, str] | None = None,
@@ -598,6 +602,11 @@ def _run_iteration_impl(
         f"iteration_id: {iteration_id}\n\n"
         f"Evaluate this research topic: {topic}"
     )
+    if empirical_entry is not None:
+        user_content += "\n\n" + empirical_context.note(empirical_entry)
+        # The critic reads this exact validated snapshot by iteration id,
+        # rather than relying on Nara to re-emit evidence in tool arguments.
+        iteration_cache.write_entry(iteration_id, "empirical_context", empirical_entry)
 
     # Loop v1 Step 1.5 — meta-review PRE-STEP. Read the loop's own memory
     # and condition the next iteration on it. Orchestrator-driven (not a
