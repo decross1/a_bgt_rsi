@@ -67,6 +67,13 @@ describe("paired lab model publication", () => {
     } }} />);
     expect(screen.getByText(/Resident: recorded run awaiting verification/)).toBeInTheDocument();
     expect(screen.queryByText(/Resident: 13\/126 cells recorded/)).not.toBeInTheDocument();
+    rerender(<LabModelEvaluationPanel data={{ ...pending, provisional_execution: {
+      ...pending.provisional_execution,
+      resident: { ...pending.provisional_execution.resident,
+        status: "setup", recorded_cells: null, checkpoint_raw_sha256: null },
+    } }} />);
+    expect(screen.getByText(/Resident: preparing model evaluation/)).toBeInTheDocument();
+    expect(screen.queryByText(/Resident: 13\/126 cells recorded/)).not.toBeInTheDocument();
   });
 
   it("withholds provisional count on stale polling or unbound execution receipt", () => {

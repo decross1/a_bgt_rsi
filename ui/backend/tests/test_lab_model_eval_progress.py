@@ -181,6 +181,11 @@ def test_current_checkpoint_projects_only_frozen_ordered_prefix(monkeypatch, tmp
     assert progress._provisional_cohort("resident", window, SHA,
                                          ["cell-0", "cell-1", "cell-2"],
                                          observed)["status"] == "unverified"
+    rows[window.parent / "state.json"]["phase"] = "preflight"
+    setup = progress._provisional_cohort("resident", window, SHA,
+                                         ["cell-0", "cell-1", "cell-2"], observed)
+    assert setup["status"] == "setup"
+    assert setup["recorded_cells"] is None
 
 
 def test_stale_checkpoint_or_preflight_refusal_has_no_execution_count(monkeypatch, tmp_path):

@@ -11,7 +11,7 @@ type CohortRow = { variant_id: string; declared: number; attempted: number; pass
   configured_context_tokens_by_endpoint: Record<string, number>;
   measured_prompt_tokens_max_by_endpoint: Record<string, number | null> };
 type Admitted = { resident: CohortRow; flash: CohortRow };
-type ExecutionRow = { status: "prepared" | "live_no_checkpoint" | "recorded_prefix" |
+type ExecutionRow = { status: "prepared" | "setup" | "live_no_checkpoint" | "recorded_prefix" |
   "awaiting_verification" | "unverified"; recorded_cells: number | null };
 type Provisional = { resident: ExecutionRow; flash: ExecutionRow };
 
@@ -81,7 +81,7 @@ function provisional(data: unknown): Provisional | null {
     const row = rows[cohort];
     if (!object(row) || row.schema_version !== "lab-model-eval-execution/v1" ||
         row.cohort !== cohort || row.plan_raw_sha256 !== data.plan_raw_sha256 ||
-        !["prepared", "live_no_checkpoint", "recorded_prefix",
+        !["prepared", "setup", "live_no_checkpoint", "recorded_prefix",
       "awaiting_verification", "unverified"].includes(String(row.status))) return null;
     if (row.status === "recorded_prefix") {
       if (!whole(row.recorded_cells) || typeof row.checkpoint_raw_sha256 !== "string" ||
@@ -99,6 +99,7 @@ const executionLabel = (cohort: Cohort, row: ExecutionRow) => {
   const name = cohort === "resident" ? "Resident" : "Flash";
   if (row.status === "recorded_prefix") return name + ": " + row.recorded_cells + "/126 cells recorded in the active window";
   if (row.status === "awaiting_verification") return name + ": recorded run awaiting verification";
+  if (row.status === "setup") return name + ": preparing model evaluation";
   if (row.status === "live_no_checkpoint") return name + ": evaluation starting";
   if (row.status === "prepared") return name + ": prepared";
   return name + ": execution record unverified";
