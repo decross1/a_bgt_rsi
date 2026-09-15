@@ -16,9 +16,11 @@ import { LabModelEvaluationPanel } from "../components/LabModelEvaluationPanel";
 import { LabModelSupplementPanel } from "../components/LabModelSupplementPanel";
 import { LabContextCrossplanPanel } from "../components/LabContextCrossplanPanel";
 import { LabDiversityCapPanel } from "../components/LabDiversityCapPanel";
+import { PayoffToolStudyPanel } from "../components/PayoffToolStudyPanel";
 import { FollowonResultsPanel } from "../components/FollowonResultsPanel";
 import { AppliedMarketResearchPanel } from "../components/AppliedMarketResearchPanel";
 import { getLabDiversityCapProgress, getLabModelContextCrossplanProgress, getLabModelEvalProgress,
+  getPayoffToolStudyProgress,
   getLabModelSupplementProgress } from "../api/http";
 import type {
   BenchmarkArm,
@@ -46,6 +48,8 @@ interface Props {
   initialCrossplan?: unknown;
   /** Five reused-task cap diagnostic, independent of all paired model scores. */
   initialCap?: unknown;
+  /** Fresh six-pair native payoff-tool instrument, independent of model scores. */
+  initialPayoffTool?: unknown;
 }
 
 type FamilyFilter = "all" | "measured" | "comparable" | "incomplete";
@@ -346,7 +350,7 @@ function WeekButton({ week, selected, onSelect }: { week: BenchmarkWeek; selecte
 }
 
 export default function BenchmarkProgress({ initial, initialLab, initialSupplement,
-  initialCrossplan, initialCap }: Props) {
+  initialCrossplan, initialCap, initialPayoffTool }: Props) {
   const live = initial === undefined;
   const poll = usePolled(BENCHMARK_PROGRESS_POLL_KEY, getBenchmarkProgress, {
     intervalMs: 60_000,
@@ -378,16 +382,24 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
     enabled: live,
     initialDelayMs: 8000,
   });
+  const payoffToolPoll = usePolled("payoff-tool-study:progress", getPayoffToolStudyProgress, {
+    intervalMs: 180_000,
+    deadlineMs: 20_000,
+    enabled: live,
+    initialDelayMs: 9500,
+  });
   const refreshing = usePollActivity(BENCHMARK_PROGRESS_POLL_KEY);
   const data = initial === undefined ? poll.data : initial;
   const labData = initialLab === undefined ? labPoll.data : initialLab;
   const supplementData = initialSupplement === undefined ? supplementPoll.data : initialSupplement;
   const crossplanData = initialCrossplan === undefined ? crossplanPoll.data : initialCrossplan;
   const capData = initialCap === undefined ? capPoll.data : initialCap;
+  const payoffToolData = initialPayoffTool === undefined ? payoffToolPoll.data : initialPayoffTool;
   const showLab = live || initialLab !== undefined;
   const showSupplement = live || initialSupplement !== undefined;
   const showCrossplan = live || initialCrossplan !== undefined;
   const showCap = live || initialCap !== undefined;
+  const showPayoffTool = live || initialPayoffTool !== undefined;
   const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FamilyFilter>("all");
@@ -415,6 +427,7 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
       {showSupplement && <LabModelSupplementPanel data={supplementData} pollingFailed={supplementPoll.failing} />}
       {showCrossplan && <LabContextCrossplanPanel data={crossplanData} pollingFailed={crossplanPoll.failing} />}
       {showCap && <LabDiversityCapPanel data={capData} pollingFailed={capPoll.failing} />}
+      {showPayoffTool && <PayoffToolStudyPanel data={payoffToolData} pollingFailed={payoffToolPoll.failing} />}
     </section>;
   }
 
@@ -429,6 +442,7 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
       {showSupplement && <LabModelSupplementPanel data={supplementData} pollingFailed={supplementPoll.failing} />}
       {showCrossplan && <LabContextCrossplanPanel data={crossplanData} pollingFailed={crossplanPoll.failing} />}
       {showCap && <LabDiversityCapPanel data={capData} pollingFailed={capPoll.failing} />}
+      {showPayoffTool && <PayoffToolStudyPanel data={payoffToolData} pollingFailed={payoffToolPoll.failing} />}
     </section>;
   }
 
@@ -516,6 +530,7 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
     {showSupplement && <LabModelSupplementPanel data={supplementData} pollingFailed={supplementPoll.failing} />}
     {showCrossplan && <LabContextCrossplanPanel data={crossplanData} pollingFailed={crossplanPoll.failing} />}
     {showCap && <LabDiversityCapPanel data={capData} pollingFailed={capPoll.failing} />}
+    {showPayoffTool && <PayoffToolStudyPanel data={payoffToolData} pollingFailed={payoffToolPoll.failing} />}
     <FollowonResultsPanel data={data.local_followon_results} />
     <ResearchPipelinePanel pipeline={data.research_pipeline} />
     <AppliedMarketResearchPanel data={data.applied_market_research} />

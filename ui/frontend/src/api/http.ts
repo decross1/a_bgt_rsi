@@ -160,6 +160,9 @@ export const getLabModelContextCrossplanProgress = () =>
 export const getLabDiversityCapProgress = () =>
   getJSON<unknown>("/api/lab_diversity_cap_progress");
 
+export const getPayoffToolStudyProgress = () =>
+  getJSON<unknown>("/api/payoff_tool_study_progress");
+
 export const getRecentTelemetry = (limit = 300) =>
   getJSON<{ samples: TelemetrySample[] }>(`/api/telemetry/recent?limit=${limit}`);
 
