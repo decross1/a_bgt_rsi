@@ -305,3 +305,57 @@ def test_active_human_card_retains_exclusively_current_collection_facts(setup):
     assert card["cluster"]["cluster_id"] == "cl-campaign"
     assert "L5" in card["doing"]
     assert len(client.get("/api/ladder?research_scope=active").json()["clusters"]) == 1
+
+
+def test_active_experiment_verdict_uses_only_admitted_json_not_legacy_sidecar(setup, monkeypatch):
+    root, client, current, _ = setup
+    results = root / "experiments/exp001_repeated_pd/results"
+    results.mkdir(parents=True)
+    summary = {"campaign": current["campaign"], "per_opponent": [
+        {"opponent": "old", "llm_mean": 1.0, "baseline_mean": 2.0,
+         "delta": -1.0, "ci95": [-2.0, -0.5], "verdict": "NO"},
+    ]}
+    (results / "summary.json").write_text(json.dumps(summary))
+    external = root / "external.md"
+    external.write_text("**Verdict: YES from unrelated research**\n")
+    (results / "summary.md").symlink_to(external)
+    monkeypatch.setattr(experiments, "_resolve_headline", lambda _: pytest.fail("active verdict reopened legacy sidecars"))
+    data = client.get("/api/research?research_scope=active").json()
+    entry = data["tiers"][0]["experiments"][0]
+    assert "unrelated" not in json.dumps(entry)
+
+
+def test_active_experiment_rejects_mismatched_named_identity(setup):
+    root, client, current, _ = setup
+    results = root / "experiments/exp001_repeated_pd/results"
+    results.mkdir(parents=True)
+    (results / "summary.json").write_text(json.dumps({
+        "campaign": current["campaign"], "experiment_id": "exp-old-reused", "verdict": "YES",
+    }))
+    data = client.get("/api/research?research_scope=active").json()
+    assert all(not tier["experiments"] for tier in data["tiers"])
+
+
+def test_multiple_current_bubbles_are_distinct_and_acknowledge_individually(setup):
+    root, client, current, _ = setup
+    bubbles = [{"run_id": "cycle-current", "step_id": f"cycle-current:step:{index}",
+                "campaign": current["campaign"], "note": f"ask {index}"} for index in (1, 2)]
+    write_rows(root / "memory/coordinator_bubbles.jsonl", bubbles)
+    data = client.get("/api/human_todo?research_scope=active").json()
+    assert {i["id"] for i in data["items"] if i["kind"] == "bubble_ack"} == {
+        "cycle-current:step:1", "cycle-current:step:2",
+    }
+    write_rows(root / "memory/coordinator_acks.jsonl", [{"bubble_run_id": "cycle-current:step:1"}])
+    data = client.get("/api/human_todo?research_scope=active").json()
+    assert [i["id"] for i in data["items"] if i["kind"] == "bubble_ack"] == ["cycle-current:step:2"]
+    write_rows(root / "memory/coordinator_acks.jsonl", [{"bubble_run_id": "cycle-current"}])
+    assert client.get("/api/human_todo?research_scope=active").json()["counts"]["bubble_ack"] == 0
+
+
+def test_modern_bubble_identity_collision_with_history_is_excluded(setup):
+    root, client, current, _ = setup
+    write_rows(root / "memory/coordinator_bubbles.jsonl", [
+        {"run_id": "cycle", "step_id": "cycle:step:1", "campaign": current["campaign"], "note": "current"},
+        {"run_id": "cycle:step:1", "note": "old colliding record"},
+    ])
+    assert client.get("/api/human_todo?research_scope=active").json()["counts"]["bubble_ack"] == 0

@@ -70,7 +70,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from .owe_triage import enrich_items, membership_from_rows
-from .research_scope import ResearchScope, ScopeName, read_records
+from .research_scope import ResearchScope, ScopeName, bubble_identity, read_records
 
 KINDS = (
     "gate_verdict",
@@ -695,11 +695,14 @@ def _bubble_ack_items(memory_dir: Path, reader=_read_jsonl) -> list[dict]:
     items = []
     for bubble in reader(memory_dir / "coordinator_bubbles.jsonl"):
         run_id = _as_text(bubble.get("run_id"))
-        if run_id and run_id in acked:
+        bubble_id = bubble_identity(bubble)
+        # A modern per-step ack closes that bubble; a legacy run-wide ack
+        # deliberately retains its established whole-cycle meaning.
+        if (run_id and run_id in acked) or (bubble_id and bubble_id in acked):
             continue
         items.append(_item(
             "bubble_ack",
-            run_id or _as_text(bubble.get("timestamp")),
+            bubble_id or _as_text(bubble.get("timestamp")),
             _as_text(bubble.get("note")) or "(bubble with no note)",
             _as_text(bubble.get("timestamp")),
             "the loop raised this to the human; no acknowledgement recorded",

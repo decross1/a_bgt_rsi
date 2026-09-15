@@ -81,6 +81,20 @@ def read_records(path: Path) -> list[dict]:
         ) from exc
 
 
+def bubble_identity(row: dict) -> str:
+    """New campaign bubbles are step-addressed; historical acks stay run-wide."""
+    run_id = row.get("run_id")
+    step_id = row.get("step_id")
+    campaign = row.get("campaign")
+    if (isinstance(run_id, str) and isinstance(step_id, str)
+            and step_id.startswith(run_id + ":step:")
+            and step_id.removeprefix(run_id + ":step:").isdigit()
+            and isinstance(campaign, dict)
+            and campaign.get("schema_version") == "research-campaign-link/v1"):
+        return step_id
+    return run_id if isinstance(run_id, str) else ""
+
+
 class ResearchScope:
     def __init__(self, name: ScopeName, repo_root: Path, memory_dir: Path):
         self.name = name
@@ -165,11 +179,13 @@ class ResearchScope:
                 read_records(self.memory_dir / "surfaced_findings.jsonl"), "finding_id"
             )
         }
+        bubble_rows = [
+            {**row, "_ui_bubble_id": bubble_identity(row)}
+            for row in read_records(self.memory_dir / "coordinator_bubbles.jsonl")
+        ]
         bubbles = {
-            row["run_id"]
-            for row in self.records(
-                read_records(self.memory_dir / "coordinator_bubbles.jsonl"), "run_id"
-            )
+            row["_ui_bubble_id"]
+            for row in self.records(bubble_rows, "_ui_bubble_id")
         }
         eligible = {
             "gate_verdict": iterations,
@@ -184,16 +200,18 @@ class ResearchScope:
         ]
         return visible, len(items) - len(visible)
 
-    def experiment_matches(self, results: Path) -> bool:
-        if self.name == "all":
-            return True
+    def experiment_summary(self, results: Path) -> dict | None:
+        """Admit one immutable JSON read; callers must not re-read sidecars."""
         if self.campaign is None:
-            return False
+            return None
         path = results / "summary.json"
         if not os.path.lexists(path):
-            return False
+            return None
         rows = self._summary(path)
-        return bool(len(rows) == 1 and record_matches(rows[0], self.campaign))
+        return rows[0] if record_matches(rows[0], self.campaign) else None
+
+    def experiment_matches(self, results: Path) -> bool:
+        return self.name == "all" or self.experiment_summary(results) is not None
 
     @staticmethod
     def _summary(path: Path) -> list[dict]:
