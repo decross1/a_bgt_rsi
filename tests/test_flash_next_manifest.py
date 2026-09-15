@@ -80,6 +80,11 @@ def test_fixed_bundle_routes_and_gemma_effort_omission_are_explicit():
     assert {route["endpoint_name"] for route in flash["routes"]} == {"flash_next"}
     assert "reasoning_effort" not in policy_set("resident_gemma")["critic_current"]
     assert policy_set("flash_next")["critic_current"]["reasoning_effort"] == "xhigh"
+    assert all(
+        policy["top_k"] == 20
+        for endpoint in ("resident_gemma", "resident_qwen", "flash_next")
+        for policy in policy_set(endpoint).values()
+    )
 
 
 def test_small_plan_preserves_requested_order_and_rejects_unknown_cells():

@@ -121,6 +121,10 @@ def resolved_policy(policy_id: str, endpoint_name: str) -> dict[str, Any]:
     if policy_id not in bases:
         raise PlanError(f"unknown logical policy {policy_id!r}")
     policy = dict(bases[policy_id])
+    # Qwen/Flash model defaults use top_k=20 while resident Gemma defaults to
+    # 64.  Send one explicit value so sampled cells do not silently measure
+    # that generation-config difference.
+    policy["top_k"] = 20
     if endpoint_name == "resident_gemma":
         policy.pop("reasoning_effort", None)
     elif endpoint_name not in {"resident_qwen", "flash_next"}:
