@@ -28,11 +28,12 @@ import threading
 import time
 import urllib.request
 import uuid
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from orchestrator.weekly_upgrade_trial import canonical_root, resource_lease
 
@@ -67,7 +68,35 @@ MIN_MEMORY_GIB = 20
 MAX_INVOCATION_SECONDS = 3600
 DEFAULT_RESTORE_RESERVE_SECONDS = 600
 SETUP_QUIESCENCE_SECONDS = 60
+READY_QUIESCENCE_SECONDS = 60
 HOST_PORT = 8012
+HOST_PAGE_SIZE_BYTES = 4096
+LOAD_SWAP_5S_BREACH_BYTES = 128 * 1024**2
+LOAD_SWAP_60S_BREACH_BYTES = 256 * 1024**2
+LOAD_SWAP_TOTAL_BREACH_BYTES = 512 * 1024**2
+SERVING_SWAP_5S_BREACH_BYTES = 32 * 1024**2
+SERVING_SWAP_60S_BREACH_BYTES = 64 * 1024**2
+SERVING_SWAP_TOTAL_BREACH_BYTES = 128 * 1024**2
+PAGING_POLICY = {
+    "host_page_size_bytes": HOST_PAGE_SIZE_BYTES,
+    "load": {
+        "window_5s_breach_bytes": LOAD_SWAP_5S_BREACH_BYTES,
+        "window_60s_breach_bytes": LOAD_SWAP_60S_BREACH_BYTES,
+        "phase_total_breach_bytes": LOAD_SWAP_TOTAL_BREACH_BYTES,
+    },
+    "serving": {
+        "window_5s_breach_bytes": SERVING_SWAP_5S_BREACH_BYTES,
+        "window_60s_breach_bytes": SERVING_SWAP_60S_BREACH_BYTES,
+        "phase_total_breach_bytes": SERVING_SWAP_TOTAL_BREACH_BYTES,
+    },
+    "candidate_cgroup_swap_max_bytes": 0,
+    "candidate_cgroup_oom_initial_max": 0,
+    "candidate_cgroup_oom_max_delta": 0,
+    "candidate_cgroup_oom_kill_initial_max": 0,
+    "candidate_cgroup_oom_kill_max_delta": 0,
+    "ready_quiescence_seconds": READY_QUIESCENCE_SECONDS,
+    "restoration_host_swap_action": "diagnostic_only",
+}
 FAILURE_STAGES = frozenset(
     {"setup", "candidate_start", "readiness", "probes", "evaluation", "restoration", "unknown"}
 )
@@ -291,7 +320,7 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         "contract",
     )
     if (
-        value["schema"] != "qwen-flash-next-qualification/v2"
+        value["schema"] != "qwen-flash-next-qualification/v3"
         or value["contract_id"] != "qwen38-flash-next-c0-20260915"
         or value["profile"] != "C0"
         or value["probe_set"] != "flash-next-minimal-v1"
@@ -351,8 +380,10 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
             "readiness_deadline_seconds",
             "restoration_reserve_seconds",
             "setup_quiescence_seconds",
+            "ready_quiescence_seconds",
             "memory_poll_seconds",
             "probe_timeout_seconds",
+            "paging_policy",
         },
         "safety",
     )
@@ -365,9 +396,13 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         or safety["nara_service"] != NARA_SERVICE
         or safety["min_mem_available_gib"] != MIN_MEMORY_GIB
         or safety["setup_quiescence_seconds"] != SETUP_QUIESCENCE_SECONDS
+        or safety["ready_quiescence_seconds"] != READY_QUIESCENCE_SECONDS
         or safety["memory_poll_seconds"] != 1
+        or safety["paging_policy"] != PAGING_POLICY
     ):
-        raise QualificationError("safety identity or 20 GiB gate differs from the allowlist")
+        raise QualificationError(
+            "safety identity, paging policy, or 20 GiB gate differs from the allowlist"
+        )
     deadline = _bounded_int(
         safety["invocation_deadline_seconds"],
         "invocation_deadline_seconds",
@@ -489,7 +524,7 @@ def plan_qualification(
     output = _validate_output(output, must_be_absent=False)
     command = launch_argv()
     return {
-        "schema": "qwen-flash-next-qualification-plan/v2",
+        "schema": "qwen-flash-next-qualification-plan/v3",
         "contract_id": contract["contract_id"],
         "contract_sha256": contract_sha256,
         "profile": "C0",
@@ -514,6 +549,8 @@ def plan_qualification(
         "readiness_deadline_seconds": contract["safety"]["readiness_deadline_seconds"],
         "restoration_reserve_seconds": contract["safety"]["restoration_reserve_seconds"],
         "setup_quiescence_seconds": contract["safety"]["setup_quiescence_seconds"],
+        "ready_quiescence_seconds": contract["safety"]["ready_quiescence_seconds"],
+        "paging_policy": contract["safety"]["paging_policy"],
         "research_usage_journal": str(RESEARCH_LEDGER),
         "weekly_budget_debit": False,
         "paid_api_allowed": False,
@@ -526,7 +563,10 @@ def plan_qualification(
             "stop Nara only when initially active",
             "stop exact captured resident IDs without removal or recreation",
             "start candidate and continuously enforce 20 GiB MemAvailable",
-            "qualify /health, /v1/models, exact answers, and a fixed tool call",
+            "hard-gate exact candidate cgroup swap, OOM events, restart, and exit",
+            "bound host swap by registered load and serving byte-rate limits",
+            "require 60 seconds of zero host and candidate swap after /v1/models",
+            "qualify three fixed probes under the serving paging gate",
             "stop candidate, restore exact resident IDs and Nara state, then remove sentinel",
         ],
     }
@@ -650,14 +690,133 @@ def _pswpout_pages() -> int:
     return int(match[1])
 
 
-class MemoryMonitor:
-    """One-second memory gate with phase-separated swap accounting.
+def _bounded_nofollow_bytes(
+    path: Path, *, max_bytes: int, dir_fd: int | None = None
+) -> bytes:
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, dir_fd=dir_fd)
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode):
+            raise QualificationError(f"runtime evidence is not regular: {path}")
+        raw = os.read(descriptor, max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise QualificationError(f"runtime evidence exceeded its bound: {path}")
+        return raw
+    finally:
+        os.close(descriptor)
 
-    Setup I/O may expose unrelated or pre-existing host swap churn.  It is
-    retained in the receipt, then followed by a fixed quiet interval.  The
-    zero-swap safety gate begins immediately before the first Docker mutation
-    and remains active through the final post-restoration sample.
-    """
+
+def _nonnegative_decimal(raw: bytes, *, label: str) -> int:
+    try:
+        text = raw.decode("ascii").strip()
+        value = int(text)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise QualificationError(f"{label} is malformed") from exc
+    if not text.isdecimal() or value < 0:
+        raise QualificationError(f"{label} is malformed")
+    return value
+
+
+def _memory_events(raw: bytes) -> dict[str, int]:
+    events: dict[str, int] = {}
+    try:
+        lines = raw.decode("ascii").splitlines()
+    except UnicodeDecodeError as exc:
+        raise QualificationError("candidate cgroup memory.events is malformed") from exc
+    for line in lines:
+        fields = line.split()
+        if len(fields) != 2 or fields[0] in events:
+            raise QualificationError("candidate cgroup memory.events is malformed")
+        events[fields[0]] = _nonnegative_decimal(
+            fields[1].encode(), label=f"candidate cgroup memory.events {fields[0]}"
+        )
+    if not {"oom", "oom_kill"}.issubset(events):
+        raise QualificationError("candidate cgroup OOM counters are absent")
+    return events
+
+
+def _process_start_ticks(pid: int) -> int:
+    raw = _bounded_nofollow_bytes(Path(f"/proc/{pid}/stat"), max_bytes=4096)
+    closing = raw.rfind(b")")
+    if closing < 0:
+        raise QualificationError("candidate process start identity is unavailable")
+    fields_from_three = raw[closing + 1 :].split()
+    try:
+        value = int(fields_from_three[19])
+    except (IndexError, ValueError) as exc:
+        raise QualificationError("candidate process start identity is malformed") from exc
+    if value <= 0:
+        raise QualificationError("candidate process start identity is invalid")
+    return value
+
+
+def _candidate_cgroup_snapshot(candidate_id: str, pid: int) -> dict[str, Any]:
+    """Bind one live Docker PID to its exact cgroup-v2 memory counters."""
+    if (
+        not re.fullmatch(r"[0-9a-f]{64}", candidate_id)
+        or isinstance(pid, bool)
+        or not isinstance(pid, int)
+        or pid <= 0
+    ):
+        raise QualificationError("candidate cgroup identity is malformed")
+    process_start_ticks = _process_start_ticks(pid)
+    expected_relpath = f"/system.slice/docker-{candidate_id}.scope"
+    raw_cgroup = _bounded_nofollow_bytes(
+        Path(f"/proc/{pid}/cgroup"), max_bytes=4096
+    )
+    try:
+        lines = raw_cgroup.decode("ascii").splitlines()
+    except UnicodeDecodeError as exc:
+        raise QualificationError("candidate process cgroup is malformed") from exc
+    if lines != [f"0::{expected_relpath}"]:
+        raise QualificationError("candidate process is outside its exact cgroup-v2 scope")
+
+    cgroup_path = Path("/sys/fs/cgroup") / expected_relpath.removeprefix("/")
+    directory = os.open(
+        cgroup_path,
+        os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+    )
+    try:
+        swap_current = _nonnegative_decimal(
+            _bounded_nofollow_bytes(
+                Path("memory.swap.current"), max_bytes=128, dir_fd=directory
+            ),
+            label="candidate cgroup memory.swap.current",
+        )
+        events = _memory_events(
+            _bounded_nofollow_bytes(
+                Path("memory.events.local"), max_bytes=4096, dir_fd=directory
+            )
+        )
+    finally:
+        os.close(directory)
+    if (
+        _bounded_nofollow_bytes(Path(f"/proc/{pid}/cgroup"), max_bytes=4096)
+        != raw_cgroup
+    ):
+        raise QualificationError("candidate cgroup changed during counter sampling")
+    if _process_start_ticks(pid) != process_start_ticks:
+        raise QualificationError("candidate process changed during cgroup sampling")
+    return {
+        "path": expected_relpath,
+        "process_start_ticks": process_start_ticks,
+        "memory_swap_current_bytes": swap_current,
+        "memory_events_oom": events["oom"],
+        "memory_events_oom_kill": events["oom_kill"],
+    }
+
+
+class MemoryMonitor:
+    """One-second memory, cgroup, and phase-attributed paging gate."""
+
+    _TRANSITIONS: ClassVar[dict[str, set[str]]] = {
+        "setup": {"load", "restoration"},
+        "load": {"ready", "restoration"},
+        "ready": {"probes", "restoration"},
+        "probes": {"restoration"},
+        "restoration": set(),
+    }
 
     def __init__(
         self,
@@ -668,6 +827,9 @@ class MemoryMonitor:
         interval_s: float = 1,
         reader: Callable[[], float] = _available_gib,
         swap_reader: Callable[[], int] = _pswpout_pages,
+        cgroup_reader: Callable[[str, int], dict[str, Any]] = _candidate_cgroup_snapshot,
+        paging_policy: dict[str, Any] | None = None,
+        clock: Callable[[], float] | None = None,
     ):
         self.path = path
         self.ops = ops
@@ -675,15 +837,38 @@ class MemoryMonitor:
         self.interval_s = interval_s
         self.reader = reader
         self.swap_reader = swap_reader
+        self.cgroup_reader = cgroup_reader
+        self.paging_policy = json.loads(
+            canonical_json(paging_policy if paging_policy is not None else PAGING_POLICY)
+        )
+        if self.paging_policy != PAGING_POLICY:
+            raise QualificationError("memory monitor paging policy differs from the allowlist")
+        if os.sysconf("SC_PAGE_SIZE") != self.paging_policy["host_page_size_bytes"]:
+            raise QualificationError("host page size differs from the paging contract")
+        self.clock = clock or time.monotonic
         self.cancel_event = threading.Event()
         self._done = threading.Event()
         self._candidate_id: str | None = None
+        self._candidate_pid: int | None = None
+        self._candidate_cgroup_path: str | None = None
+        self._candidate_start_ticks: int | None = None
+        self.candidate_cgroup_bound_path: str | None = None
+        self.candidate_cgroup_bound_pid: int | None = None
+        self.candidate_cgroup_start_ticks: int | None = None
         self._lock = threading.Lock()
         self._sample_lock = threading.Lock()
         self._record_lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._monitor_started_mono: float | None = None
+        self._phase = "setup"
+        self._phase_initial_pswpout: int | None = None
+        self._phase_started_at: str | None = None
+        self._phase_started_mono: float | None = None
+        self._phase_history: deque[tuple[float, int]] = deque()
+        self.phase_summaries: dict[str, dict[str, Any]] = {}
         self.minimum_observed_gib = math.inf
         self.failure: str | None = None
+        self.violations: list[str] = []
         self.emergency_stop_at: float | None = None
         self.samples = 0
         self.initial_pswpout: int | None = None
@@ -700,23 +885,113 @@ class MemoryMonitor:
         self.setup_quiescence_samples = 0
         self.setup_quiescence_passed = False
         self._setup_quiescence_active = False
+        self.ready_quiescence_started_at: str | None = None
+        self.ready_quiescence_completed_at: str | None = None
+        self.ready_quiescence_duration_seconds: float | None = None
+        self.ready_quiescence_initial_pswpout: int | None = None
+        self.ready_quiescence_final_pswpout: int | None = None
+        self.ready_quiescence_samples = 0
+        self.ready_quiescence_epoch = 0
+        self.ready_quiescence_passed = False
+        self._ready_quiescence_active = False
+        self._ready_epoch_started_mono: float | None = None
+        self.candidate_cgroup_samples = 0
+        self.candidate_cgroup_swap_peak_bytes = 0
+        self.candidate_cgroup_oom_initial: int | None = None
+        self.candidate_cgroup_oom_final: int | None = None
+        self.candidate_cgroup_oom_kill_initial: int | None = None
+        self.candidate_cgroup_oom_kill_final: int | None = None
 
     def __enter__(self):
         self._stream = self.path.open("xb")
-        # Establish and record the total-window baseline in one observation so
-        # the receipt does not infer an unlogged counter value.
         self._sample_once()
-        self._thread = threading.Thread(target=self._loop, name="flash-next-mem-gate", daemon=True)
+        self._thread = threading.Thread(
+            target=self._loop, name="flash-next-mem-gate", daemon=True
+        )
         self._thread.start()
         return self
 
     def arm(self, candidate_id: str) -> None:
+        candidate = _inspect_container(self.ops, candidate_id)
+        if (
+            candidate is None
+            or candidate.get("id") != candidate_id
+            or candidate.get("name") != CONTAINER_NAME
+            or candidate.get("image") != IMAGE_ID
+            or candidate.get("running") is not True
+            or candidate.get("oom_killed") is not False
+            or candidate.get("restart_count") != 0
+            or isinstance(candidate.get("pid"), bool)
+            or not isinstance(candidate.get("pid"), int)
+            or candidate["pid"] <= 0
+        ):
+            raise QualificationError("candidate cannot be bound to a live cgroup")
+        snapshot = self.cgroup_reader(candidate_id, candidate["pid"])
+        if not isinstance(snapshot, dict):
+            raise QualificationError("candidate cgroup snapshot is malformed")
+        numeric_snapshot = (
+            snapshot.get("process_start_ticks"),
+            snapshot.get("memory_swap_current_bytes"),
+            snapshot.get("memory_events_oom"),
+            snapshot.get("memory_events_oom_kill"),
+        )
+        if (
+            any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+                for value in numeric_snapshot
+            )
+            or snapshot.get("process_start_ticks") == 0
+            or snapshot.get("memory_swap_current_bytes")
+            != self.paging_policy["candidate_cgroup_swap_max_bytes"]
+            or snapshot.get("memory_events_oom")
+            > self.paging_policy["candidate_cgroup_oom_initial_max"]
+            or snapshot.get("memory_events_oom_kill")
+            > self.paging_policy["candidate_cgroup_oom_kill_initial_max"]
+            or snapshot.get("path")
+            != f"/system.slice/docker-{candidate_id}.scope"
+        ):
+            raise QualificationError("candidate cgroup was not clean at bind time")
         with self._lock:
+            if self._candidate_id is not None:
+                raise QualificationError("candidate cgroup was already armed")
             self._candidate_id = candidate_id
+            self._candidate_pid = candidate["pid"]
+            self._candidate_cgroup_path = snapshot["path"]
+            self._candidate_start_ticks = snapshot["process_start_ticks"]
+            self.candidate_cgroup_bound_path = snapshot["path"]
+            self.candidate_cgroup_bound_pid = candidate["pid"]
+            self.candidate_cgroup_start_ticks = snapshot["process_start_ticks"]
+            self.candidate_cgroup_oom_initial = snapshot["memory_events_oom"]
+            self.candidate_cgroup_oom_final = snapshot["memory_events_oom"]
+            self.candidate_cgroup_oom_kill_initial = snapshot[
+                "memory_events_oom_kill"
+            ]
+            self.candidate_cgroup_oom_kill_final = snapshot[
+                "memory_events_oom_kill"
+            ]
+        self._record(
+            {
+                "schema": "qwen-flash-next-cgroup-bind/v1",
+                "observed_at": utc_now(),
+                "candidate_id": candidate_id,
+                "pid": candidate["pid"],
+                "cgroup": snapshot,
+            }
+        )
+        try:
+            self._sample_once()
+        except BaseException as exc:  # noqa: BLE001 - an unobservable live candidate is unsafe
+            self._breach(f"candidate cgroup monitor failed: {type(exc).__name__}: {exc}")
+        self.check()
 
     def disarm(self) -> None:
         with self._lock:
             self._candidate_id = None
+            self._candidate_pid = None
+            self._candidate_cgroup_path = None
+            self._candidate_start_ticks = None
 
     def _record(self, row: dict[str, Any]) -> None:
         with self._record_lock:
@@ -724,17 +999,21 @@ class MemoryMonitor:
             self._stream.flush()
 
     def _breach(self, reason: str) -> None:
-        if self.cancel_event.is_set():
-            return
-        self.failure = reason
-        self.cancel_event.set()
         with self._lock:
+            if reason not in self.violations:
+                self.violations.append(reason)
+            if self.cancel_event.is_set():
+                return
+            self.failure = reason
+            self.cancel_event.set()
             candidate_id = self._candidate_id
         if candidate_id:
             result = self.ops.run(
-                ["docker", "stop", "--time", "10", candidate_id], timeout=20, check=False
+                ["docker", "stop", "--time", "10", candidate_id],
+                timeout=20,
+                check=False,
             )
-            self.emergency_stop_at = time.monotonic()
+            self.emergency_stop_at = self.clock()
             self._record(
                 {
                     "observed_at": utc_now(),
@@ -744,33 +1023,149 @@ class MemoryMonitor:
                 }
             )
 
+    @staticmethod
+    def _window_delta_pages(
+        history: deque[tuple[float, int]], now: float, seconds: float
+    ) -> int:
+        if not history:
+            return 0
+        boundary = now - seconds
+        anchor = history[0][1]
+        for observed, pages in history:
+            if observed > boundary:
+                break
+            anchor = pages
+        return history[-1][1] - anchor
+
+    def _phase_limits(self, phase: str) -> dict[str, int] | None:
+        if phase in {"load", "ready"}:
+            return self.paging_policy["load"]
+        if phase == "probes":
+            return self.paging_policy["serving"]
+        return None
+
+    def _start_phase_locked(
+        self, phase: str, *, pages: int, observed_at: str, observed_mono: float
+    ) -> None:
+        if phase not in self._TRANSITIONS.get(self._phase, set()):
+            raise QualificationError(
+                f"memory monitor phase transition {self._phase}->{phase} is invalid"
+            )
+        self._phase = phase
+        self._phase_initial_pswpout = pages
+        self._phase_started_at = observed_at
+        self._phase_started_mono = observed_mono
+        self._phase_history = deque([(observed_mono, pages)])
+        self.phase_summaries[phase] = {
+            "started_at": observed_at,
+            "completed_at": observed_at,
+            "initial_pswpout_pages": pages,
+            "final_pswpout_pages": pages,
+            "pswpout_delta_pages": 0,
+            "pswpout_delta_bytes": 0,
+            "max_window_5s_bytes": 0,
+            "max_window_60s_bytes": 0,
+            "samples": 0,
+            "threshold_breached": False,
+        }
+        if phase == "load":
+            self.mutation_initial_pswpout = pages
+            self.mutation_final_pswpout = pages
+            self.mutation_window_started_at = observed_at
+        elif phase == "ready":
+            self._ready_quiescence_active = True
+            self.ready_quiescence_epoch = 1
+            self._ready_epoch_started_mono = observed_mono
+            self.ready_quiescence_started_at = observed_at
+            self.ready_quiescence_initial_pswpout = pages
+            self.ready_quiescence_samples = 0
+        elif phase == "restoration":
+            self._ready_quiescence_active = False
+
+    def _restart_ready_epoch_locked(
+        self, *, pages: int, observed_at: str, observed_mono: float
+    ) -> None:
+        if self._phase != "ready" or not self._ready_quiescence_active:
+            raise QualificationError("ready quiescence epoch is outside the ready phase")
+        self.ready_quiescence_epoch += 1
+        self._ready_epoch_started_mono = observed_mono
+        self.ready_quiescence_started_at = observed_at
+        self.ready_quiescence_initial_pswpout = pages
+        self.ready_quiescence_samples = 0
+
+    def _complete_ready_locked(
+        self, *, pages: int, observed_at: str, observed_mono: float
+    ) -> None:
+        if (
+            self._phase != "ready"
+            or not self._ready_quiescence_active
+            or self._ready_epoch_started_mono is None
+            or self.ready_quiescence_initial_pswpout != pages
+            or observed_mono - self._ready_epoch_started_mono
+            < READY_QUIESCENCE_SECONDS
+        ):
+            raise QualificationError("ready quiescence proof is incomplete")
+        self._ready_quiescence_active = False
+        self.ready_quiescence_completed_at = observed_at
+        self.ready_quiescence_final_pswpout = pages
+        self.ready_quiescence_duration_seconds = (
+            observed_mono - self._ready_epoch_started_mono
+        )
+        self.ready_quiescence_passed = True
+        self._start_phase_locked(
+            "probes", pages=pages, observed_at=observed_at, observed_mono=observed_mono
+        )
+
     def _sample_once(
         self,
         *,
-        begin_mutation: bool = False,
+        begin_phase: str | None = None,
         begin_quiescence: bool = False,
         end_quiescence: bool = False,
+        restart_ready_epoch: bool = False,
+        finish_ready: bool = False,
     ) -> dict[str, Any]:
         with self._sample_lock:
             if begin_quiescence and end_quiescence:
                 raise QualificationError("setup quiescence markers overlap")
-            with self._lock:
-                if begin_quiescence:
-                    if self._setup_quiescence_active:
-                        raise QualificationError("setup quiescence was already active")
-                    self._setup_quiescence_active = True
             available = float(self.reader())
             if not math.isfinite(available) or available < 0:
                 raise ValueError("invalid MemAvailable")
             pswpout = self.swap_reader()
             if isinstance(pswpout, bool) or not isinstance(pswpout, int) or pswpout < 0:
                 raise ValueError("invalid pswpout")
+            observed_mono = self.clock()
             observed_at = utc_now()
+            if self._monitor_started_mono is None:
+                self._monitor_started_mono = observed_mono
+
             with self._lock:
-                if begin_mutation:
-                    if self.mutation_initial_pswpout is not None:
-                        raise QualificationError("mutation swap baseline was already established")
-                    if (
+                if self.initial_pswpout is None:
+                    self.initial_pswpout = pswpout
+                    self.final_pswpout = pswpout
+                    self._phase_initial_pswpout = pswpout
+                    self._phase_started_at = observed_at
+                    self._phase_started_mono = observed_mono
+                    self._phase_history = deque([(observed_mono, pswpout)])
+                    self.phase_summaries["setup"] = {
+                        "started_at": observed_at,
+                        "completed_at": observed_at,
+                        "initial_pswpout_pages": pswpout,
+                        "final_pswpout_pages": pswpout,
+                        "pswpout_delta_pages": 0,
+                        "pswpout_delta_bytes": 0,
+                        "max_window_5s_bytes": 0,
+                        "max_window_60s_bytes": 0,
+                        "samples": 0,
+                        "threshold_breached": False,
+                    }
+                previous_pswpout = self.final_pswpout
+                if previous_pswpout is None:
+                    raise QualificationError("memory monitor prior counter is absent")
+                if pswpout < previous_pswpout:
+                    raise ValueError("pswpout decreased during one boot")
+                if begin_phase is not None:
+                    if begin_phase == "load" and (
                         not self.setup_quiescence_passed
                         or self.setup_quiescence_final_pswpout is None
                         or pswpout != self.setup_quiescence_final_pswpout
@@ -778,89 +1173,256 @@ class MemoryMonitor:
                         raise QualificationError(
                             "host pswpout changed after setup quiescence"
                         )
-                    self.mutation_initial_pswpout = pswpout
-                    self.mutation_final_pswpout = pswpout
-                    self.mutation_window_started_at = observed_at
-                mutation_initial = self.mutation_initial_pswpout
-                quiescence_active = self._setup_quiescence_active
+                    prior_pages = self.final_pswpout
+                    if prior_pages is None:
+                        raise QualificationError("memory phase has no prior sample")
+                    self._start_phase_locked(
+                        begin_phase,
+                        pages=prior_pages,
+                        observed_at=observed_at,
+                        observed_mono=observed_mono,
+                    )
+                    if begin_phase == "ready":
+                        # Attribute any transition-gap pages to the ready phase,
+                        # while beginning the quiet epoch at this observed raw
+                        # counter rather than forgiving later growth.
+                        self.ready_quiescence_initial_pswpout = pswpout
+                if begin_quiescence:
+                    if self._setup_quiescence_active or self._phase != "setup":
+                        raise QualificationError("setup quiescence was already active")
+                    self._setup_quiescence_active = True
+                if restart_ready_epoch:
+                    self._restart_ready_epoch_locked(
+                        pages=pswpout,
+                        observed_at=observed_at,
+                        observed_mono=observed_mono,
+                    )
+                phase = self._phase
+                phase_initial = self._phase_initial_pswpout
+                phase_started_mono = self._phase_started_mono
+                setup_active = self._setup_quiescence_active
+                ready_active = self._ready_quiescence_active
+                ready_epoch = self.ready_quiescence_epoch
                 candidate_id = self._candidate_id
-            if self.initial_pswpout is None:
-                self.initial_pswpout = pswpout
-                self.final_pswpout = pswpout
-            if pswpout < self.initial_pswpout:
-                raise ValueError("pswpout decreased during one boot")
+                candidate_pid = self._candidate_pid
+                candidate_cgroup_path = self._candidate_cgroup_path
+                candidate_start_ticks = self._candidate_start_ticks
 
+            if phase_initial is None or phase_started_mono is None:
+                raise QualificationError("memory phase baseline is absent")
             self.samples += 1
             self.minimum_observed_gib = min(self.minimum_observed_gib, available)
             self.final_pswpout = pswpout
-            setup_final = (
-                mutation_initial if mutation_initial is not None else pswpout
-            )
-            mutation_delta = (
-                pswpout - mutation_initial if mutation_initial is not None else None
-            )
-            if mutation_delta is not None and mutation_delta < 0:
-                raise ValueError("pswpout fell below the mutation baseline")
-            if mutation_initial is not None:
+            if self.mutation_initial_pswpout is not None:
                 self.mutation_final_pswpout = pswpout
                 self.mutation_final_sample_at = observed_at
-            if quiescence_active:
+            if setup_active:
                 self.setup_quiescence_samples += 1
-            row = {
-                "schema": "qwen-flash-next-memory-sample/v2",
+            if ready_active:
+                self.ready_quiescence_samples += 1
+
+            self._phase_history.append((observed_mono, pswpout))
+            while (
+                len(self._phase_history) > 1
+                and self._phase_history[1][0] <= observed_mono - 60
+            ):
+                self._phase_history.popleft()
+            delta_5_pages = self._window_delta_pages(
+                self._phase_history, observed_mono, 5
+            )
+            delta_60_pages = self._window_delta_pages(
+                self._phase_history, observed_mono, 60
+            )
+            phase_delta_pages = pswpout - phase_initial
+            if min(delta_5_pages, delta_60_pages, phase_delta_pages) < 0:
+                raise ValueError("phase pswpout delta became negative")
+            page_size = self.paging_policy["host_page_size_bytes"]
+            delta_5_bytes = delta_5_pages * page_size
+            delta_60_bytes = delta_60_pages * page_size
+            phase_delta_bytes = phase_delta_pages * page_size
+            summary = self.phase_summaries[phase]
+            summary.update(
+                {
+                    "completed_at": observed_at,
+                    "final_pswpout_pages": pswpout,
+                    "pswpout_delta_pages": phase_delta_pages,
+                    "pswpout_delta_bytes": phase_delta_bytes,
+                    "max_window_5s_bytes": max(
+                        summary["max_window_5s_bytes"], delta_5_bytes
+                    ),
+                    "max_window_60s_bytes": max(
+                        summary["max_window_60s_bytes"], delta_60_bytes
+                    ),
+                    "samples": summary["samples"] + 1,
+                }
+            )
+
+            row: dict[str, Any] = {
+                "schema": "qwen-flash-next-memory-sample/v3",
                 "observed_at": observed_at,
-                "monitor_phase": (
-                    "mutation" if mutation_initial is not None else "setup"
-                ),
-                "setup_quiescence_active": quiescence_active,
+                "elapsed_monotonic_seconds": observed_mono
+                - self._monitor_started_mono,
+                "monitor_phase": phase,
+                "setup_quiescence_active": setup_active,
+                "ready_quiescence_active": ready_active,
+                "ready_quiescence_epoch": ready_epoch if ready_active else None,
                 "mem_available_gib": available,
+                "host_page_size_bytes": page_size,
                 "pswpout_pages": pswpout,
                 "pswpout_delta_pages": pswpout - self.initial_pswpout,
-                "setup_pswpout_delta_pages": setup_final - self.initial_pswpout,
-                "mutation_pswpout_delta_pages": mutation_delta,
+                "phase_initial_pswpout_pages": phase_initial,
+                "phase_pswpout_delta_pages": phase_delta_pages,
+                "phase_pswpout_delta_bytes": phase_delta_bytes,
+                "host_swap_5s_bytes": delta_5_bytes,
+                "host_swap_60s_bytes": delta_60_bytes,
+                "transition_to": None,
             }
+            breach_reasons: list[str] = []
             if candidate_id:
                 candidate = _inspect_container(self.ops, candidate_id)
-                row["candidate"] = {
+                candidate_row: dict[str, Any] = {
                     "id": candidate_id,
                     "running": candidate.get("running") if candidate else None,
                     "oom_killed": candidate.get("oom_killed") if candidate else None,
                     "restart_count": candidate.get("restart_count") if candidate else None,
+                    "pid": candidate.get("pid") if candidate else None,
+                    "cgroup": None,
                 }
-                # Restoration can disarm and stop the container while this
-                # inspect is in flight.  Act only if the same ID remains armed.
                 with self._lock:
                     still_armed = self._candidate_id == candidate_id
                 if still_armed:
                     if candidate is None or not candidate.get("running"):
-                        self._breach(
+                        breach_reasons.append(
                             "candidate disappeared or stopped while qualified runtime was armed"
                         )
                     elif candidate.get("oom_killed"):
-                        self._breach("candidate container reports OOMKilled")
+                        breach_reasons.append("candidate container reports OOMKilled")
                     elif candidate.get("restart_count") != 0:
-                        self._breach("candidate container restart count changed")
+                        breach_reasons.append("candidate container restart count changed")
+                    elif candidate.get("pid") != candidate_pid:
+                        breach_reasons.append("candidate process identity changed")
+                    else:
+                        try:
+                            snapshot = self.cgroup_reader(candidate_id, candidate_pid)
+                        except BaseException:
+                            with self._lock:
+                                still_armed = self._candidate_id == candidate_id
+                            if still_armed:
+                                raise
+                            snapshot = None
+                        with self._lock:
+                            still_armed = self._candidate_id == candidate_id
+                        if still_armed and snapshot is not None:
+                            candidate_row["cgroup"] = snapshot
+                            if snapshot.get("path") != candidate_cgroup_path:
+                                breach_reasons.append("candidate cgroup identity changed")
+                            if (
+                                snapshot.get("process_start_ticks")
+                                != candidate_start_ticks
+                            ):
+                                breach_reasons.append(
+                                    "candidate process start identity changed"
+                                )
+                            swap_current = snapshot.get("memory_swap_current_bytes")
+                            oom = snapshot.get("memory_events_oom")
+                            oom_kill = snapshot.get("memory_events_oom_kill")
+                            if (
+                                isinstance(swap_current, bool)
+                                or not isinstance(swap_current, int)
+                                or swap_current < 0
+                                or isinstance(oom, bool)
+                                or not isinstance(oom, int)
+                                or oom < 0
+                                or isinstance(oom_kill, bool)
+                                or not isinstance(oom_kill, int)
+                                or oom_kill < 0
+                            ):
+                                breach_reasons.append("candidate cgroup counters are malformed")
+                            else:
+                                self.candidate_cgroup_samples += 1
+                                self.candidate_cgroup_swap_peak_bytes = max(
+                                    self.candidate_cgroup_swap_peak_bytes,
+                                    swap_current,
+                                )
+                                self.candidate_cgroup_oom_final = oom
+                                self.candidate_cgroup_oom_kill_final = oom_kill
+                                if swap_current != 0:
+                                    breach_reasons.append(
+                                        "candidate cgroup memory.swap.current is nonzero"
+                                    )
+                                if (
+                                    oom - self.candidate_cgroup_oom_initial
+                                    > self.paging_policy[
+                                        "candidate_cgroup_oom_max_delta"
+                                    ]
+                                ):
+                                    breach_reasons.append(
+                                        "candidate cgroup OOM event counter changed"
+                                    )
+                                if (
+                                    oom_kill - self.candidate_cgroup_oom_kill_initial
+                                    > self.paging_policy[
+                                        "candidate_cgroup_oom_kill_max_delta"
+                                    ]
+                                ):
+                                    breach_reasons.append(
+                                        "candidate cgroup OOM-kill counter changed"
+                                    )
+                row["candidate"] = candidate_row
+
+            limits = self._phase_limits(phase)
+            if limits is not None:
+                if delta_5_bytes >= limits["window_5s_breach_bytes"]:
+                    breach_reasons.append(
+                        f"{phase} host swap reached the 5-second byte threshold"
+                    )
+                if delta_60_bytes >= limits["window_60s_breach_bytes"]:
+                    breach_reasons.append(
+                        f"{phase} host swap reached the 60-second byte threshold"
+                    )
+                if phase_delta_bytes >= limits["phase_total_breach_bytes"]:
+                    breach_reasons.append(
+                        f"{phase} host swap reached the phase-total byte threshold"
+                    )
+            if breach_reasons:
+                summary["threshold_breached"] = True
+            if finish_ready:
+                with self._lock:
+                    can_finish = (
+                        self._phase == "ready"
+                        and self._ready_epoch_started_mono is not None
+                        and self.ready_quiescence_initial_pswpout == pswpout
+                        and observed_mono - self._ready_epoch_started_mono
+                        >= READY_QUIESCENCE_SECONDS
+                    )
+                if can_finish:
+                    row["transition_to"] = "probes"
+
             self._record(row)
             if available < self.minimum_gib:
-                self._breach(
+                breach_reasons.append(
                     f"MemAvailable {available:.3f} GiB fell below {self.minimum_gib} GiB"
                 )
-            if mutation_delta is not None and mutation_delta > 0:
-                self._breach(
-                    f"mutation-window pswpout increased by {mutation_delta} pages"
-                )
+            for reason in breach_reasons:
+                self._breach(reason)
             if end_quiescence:
                 with self._lock:
                     if not self._setup_quiescence_active:
                         raise QualificationError("setup quiescence was not active")
                     self._setup_quiescence_active = False
+            if finish_ready and row["transition_to"] == "probes":
+                with self._lock:
+                    self._complete_ready_locked(
+                        pages=pswpout,
+                        observed_at=observed_at,
+                        observed_mono=observed_mono,
+                    )
             return row
 
     def require_setup_quiescence(self, *, duration_s: int, deadline: float) -> None:
-        """Require one fixed quiet interval without forgiving prior setup I/O."""
         if duration_s != SETUP_QUIESCENCE_SECONDS:
             raise QualificationError("setup quiescence duration is not registered")
-        requested_mono = time.monotonic()
+        requested_mono = self.clock()
         if requested_mono + duration_s > deadline:
             raise QualificationError("setup quiescence would consume the work deadline")
         with self._lock:
@@ -872,16 +1434,16 @@ class MemoryMonitor:
             first = self._sample_once(begin_quiescence=True)
             self.setup_quiescence_started_at = first["observed_at"]
             self.setup_quiescence_initial_pswpout = first["pswpout_pages"]
-            started_mono = time.monotonic()
+            started_mono = self.clock()
             if started_mono + duration_s > deadline:
                 raise QualificationError(
                     "setup quiescence would consume the work deadline"
                 )
             end = started_mono + duration_s
-            while time.monotonic() < end:
+            while self.clock() < end:
                 self.check()
-                time.sleep(min(self.interval_s, max(0.0, end - time.monotonic())))
-                if time.monotonic() >= end:
+                time.sleep(min(self.interval_s, max(0.0, end - self.clock())))
+                if self.clock() >= end:
                     break
                 last = self._sample_once()
                 if last["pswpout_pages"] != first["pswpout_pages"]:
@@ -897,7 +1459,7 @@ class MemoryMonitor:
             self.setup_quiescence_completed_at = last["observed_at"]
             self.setup_quiescence_final_pswpout = last["pswpout_pages"]
             self.setup_quiescence_duration_seconds = max(
-                0.0, time.monotonic() - started_mono
+                0.0, self.clock() - started_mono
             )
             self.setup_quiescence_passed = (
                 self.setup_quiescence_duration_seconds >= duration_s
@@ -911,7 +1473,7 @@ class MemoryMonitor:
                 self.setup_quiescence_completed_at = last["observed_at"]
                 self.setup_quiescence_final_pswpout = last["pswpout_pages"]
                 self.setup_quiescence_duration_seconds = max(
-                    0.0, time.monotonic() - requested_mono
+                    0.0, self.clock() - requested_mono
                 )
             with self._lock:
                 self._setup_quiescence_active = False
@@ -920,8 +1482,41 @@ class MemoryMonitor:
         if not self.setup_quiescence_passed:
             raise QualificationError("mutation baseline requires setup quiescence proof")
         self.check()
-        self._sample_once(begin_mutation=True)
+        self._sample_once(begin_phase="load")
         self.check()
+
+    def require_ready_quiescence(self, *, duration_s: int, deadline: float) -> None:
+        """Find one contiguous post-/models interval with zero host swap growth."""
+        if duration_s != READY_QUIESCENCE_SECONDS:
+            raise QualificationError("ready quiescence duration is not registered")
+        first = self._sample_once(begin_phase="ready")
+        baseline_pages = first["pswpout_pages"]
+        while self.clock() < deadline:
+            self.check()
+            remaining = deadline - self.clock()
+            if remaining <= 0:
+                break
+            time.sleep(min(self.interval_s, remaining))
+            finish = (
+                self._ready_epoch_started_mono is not None
+                and self.clock() - self._ready_epoch_started_mono >= duration_s
+            )
+            row = self._sample_once(finish_ready=finish)
+            self.check()
+            if self._phase == "probes":
+                return
+            if row["pswpout_pages"] != baseline_pages:
+                row = self._sample_once(restart_ready_epoch=True)
+                baseline_pages = row["pswpout_pages"]
+        raise QualificationError(
+            "no contiguous 60-second zero-swap interval fit before the readiness deadline"
+        )
+
+    def begin_restoration(self) -> None:
+        with self._lock:
+            if self._phase == "restoration":
+                return
+        self._sample_once(begin_phase="restoration")
 
     def _loop(self) -> None:
         while not self._done.is_set():
@@ -940,8 +1535,8 @@ class MemoryMonitor:
         if self._thread is not None:
             self._thread.join(timeout=max(2, self.interval_s + 1))
         try:
-            # This sample is deliberately after restoration, while the
-            # mutation baseline is still active.
+            if self._phase != "restoration":
+                self.begin_restoration()
             self._sample_once()
         except BaseException as monitor_exc:  # noqa: BLE001 - final evidence is fail-closed
             self._breach(
@@ -1570,7 +2165,7 @@ def execute_worker(
     started_wall = datetime.now(timezone.utc)
     run_id = output.name
     state: dict[str, Any] = {
-        "schema": "qwen-flash-next-qualification-state/v2",
+        "schema": "qwen-flash-next-qualification-state/v3",
         "run_id": run_id,
         "phase": "preflight",
         "plan_sha256": sha256(plan),
@@ -1584,7 +2179,13 @@ def execute_worker(
             started_wall + timedelta(seconds=deadline_seconds)
         ).isoformat(),
         "memory_log_relpath": "memory.jsonl",
+        "monitor_phase": "setup",
+        "paging_policy": contract["safety"]["paging_policy"],
         "candidate_id": None,
+        "candidate_cgroup_path": None,
+        "candidate_cgroup_pid": None,
+        "candidate_cgroup_start_ticks": None,
+        "ready_quiescence": {"status": "not_started"},
         "initial": None,
         "restoration": {"status": "not_started"},
     }
@@ -1622,6 +2223,7 @@ def execute_worker(
         ops,
         minimum_gib=MIN_MEMORY_GIB,
         interval_s=contract["safety"]["memory_poll_seconds"],
+        paging_policy=contract["safety"]["paging_policy"],
     )
     previous_signals = _signal_guard()
     restoration: dict[str, Any] = {
@@ -1672,6 +2274,7 @@ def execute_worker(
 
                 monitor.begin_mutation_window()
                 state["mutation_window_started_at"] = monitor.mutation_window_started_at
+                state["monitor_phase"] = "load"
                 state["phase"] = "sentinel_create"
                 write_state()
                 monitor.check()
@@ -1726,6 +2329,15 @@ def execute_worker(
                 write_state()
                 ops.run(["docker", "start", created], timeout=30)
                 monitor.arm(created)
+                state["candidate_cgroup_path"] = getattr(
+                    monitor, "candidate_cgroup_bound_path", None
+                )
+                state["candidate_cgroup_pid"] = getattr(
+                    monitor, "candidate_cgroup_bound_pid", None
+                )
+                state["candidate_cgroup_start_ticks"] = getattr(
+                    monitor, "candidate_cgroup_start_ticks", None
+                )
                 monitor.check()
                 state["candidate_gpu_started_monotonic_upper_bound"] = candidate_started_mono
                 state["phase"] = "readiness"
@@ -1736,11 +2348,33 @@ def execute_worker(
                     time.monotonic() + contract["safety"]["readiness_deadline_seconds"],
                 )
                 ready = _wait_candidate_ready(ops, monitor, deadline=readiness_deadline)
+                state["phase"] = "ready_stabilization"
+                state["monitor_phase"] = "ready"
+                write_state()
+                monitor.require_ready_quiescence(
+                    duration_s=contract["safety"]["ready_quiescence_seconds"],
+                    deadline=readiness_deadline,
+                )
+                ready["stabilization"] = {
+                    "required_seconds": contract["safety"][
+                        "ready_quiescence_seconds"
+                    ],
+                    "passed": monitor.ready_quiescence_passed,
+                    "started_at": monitor.ready_quiescence_started_at,
+                    "completed_at": monitor.ready_quiescence_completed_at,
+                    "duration_seconds": monitor.ready_quiescence_duration_seconds,
+                    "initial_pswpout_pages": monitor.ready_quiescence_initial_pswpout,
+                    "final_pswpout_pages": monitor.ready_quiescence_final_pswpout,
+                    "samples": monitor.ready_quiescence_samples,
+                    "epoch": monitor.ready_quiescence_epoch,
+                }
                 _atomic_write(output / "readiness.json", ready)
+                state["ready_quiescence"] = ready["stabilization"]
                 if time.monotonic() >= work_deadline:
                     raise QualificationError("work deadline reached before probes")
 
                 state["phase"] = "probes"
+                state["monitor_phase"] = "probes"
                 active_stage = "probes"
                 write_state()
                 probes = _run_probes(
@@ -1766,7 +2400,17 @@ def execute_worker(
             finally:
                 try:
                     active_stage = "restoration"
+                    try:
+                        monitor.begin_restoration()
+                    except BaseException as phase_exc:  # noqa: BLE001 - restoration must continue
+                        if qualification_error is None:
+                            qualification_error = (
+                                f"{type(phase_exc).__name__}: {phase_exc}"
+                            )
+                        if failure_stage is None:
+                            failure_stage = "restoration"
                     state["phase"] = "restoring"
+                    state["monitor_phase"] = "restoration"
                     write_state()
                     restoration = restore_exact(
                         ops,
@@ -1823,15 +2467,50 @@ def execute_worker(
         if resident_stopped_mono is not None and restoration_completed_mono is not None
         else 0.0
     )
+    paging_proof_complete = bool(
+        getattr(monitor, "ready_quiescence_passed", False)
+        and getattr(monitor, "candidate_cgroup_bound_path", None)
+        == f"/system.slice/docker-{state.get('candidate_id')}.scope"
+        and isinstance(getattr(monitor, "candidate_cgroup_bound_pid", None), int)
+        and getattr(monitor, "candidate_cgroup_bound_pid", 0) > 0
+        and isinstance(getattr(monitor, "candidate_cgroup_start_ticks", None), int)
+        and getattr(monitor, "candidate_cgroup_start_ticks", 0) > 0
+        and getattr(monitor, "candidate_cgroup_samples", 0) > 0
+        and getattr(monitor, "candidate_cgroup_swap_peak_bytes", None) == 0
+        and getattr(monitor, "candidate_cgroup_oom_initial", None) == 0
+        and getattr(monitor, "candidate_cgroup_oom_final", None) == 0
+        and getattr(monitor, "candidate_cgroup_oom_kill_initial", None) == 0
+        and getattr(monitor, "candidate_cgroup_oom_kill_final", None) == 0
+        and not getattr(monitor, "violations", [])
+        and all(
+            phase in getattr(monitor, "phase_summaries", {})
+            for phase in ("load", "ready", "probes", "restoration")
+        )
+        and not any(
+            summary.get("threshold_breached") is True
+            for summary in getattr(monitor, "phase_summaries", {}).values()
+        )
+    )
+    if (
+        qualification_error is None
+        and restoration["status"] == "verified"
+        and not monitor.failure
+        and not paging_proof_complete
+    ):
+        qualification_error = "QualificationError: candidate paging proof is incomplete"
+        failure_stage = failure_stage or "probes"
     status = (
         "passed"
-        if qualification_error is None and restoration["status"] == "verified" and not monitor.failure
+        if qualification_error is None
+        and restoration["status"] == "verified"
+        and not monitor.failure
+        and paging_proof_complete
         else "failed"
         if restoration["status"] == "verified"
         else "unknown"
     )
     result = {
-        "schema": "qwen-flash-next-qualification-result/v2",
+        "schema": "qwen-flash-next-qualification-result/v3",
         "run_id": run_id,
         "status": status,
         "failure_stage": failure_stage,
@@ -1929,6 +2608,69 @@ def execute_worker(
         "mutation_final_sample_at": getattr(
             monitor, "mutation_final_sample_at", None
         ),
+        "paging_policy": contract["safety"]["paging_policy"],
+        "paging_phase_summaries": getattr(monitor, "phase_summaries", {}),
+        "paging_violations": getattr(monitor, "violations", []),
+        "paging_warning_phases": [
+            phase
+            for phase, summary in getattr(monitor, "phase_summaries", {}).items()
+            if summary.get("pswpout_delta_bytes", 0) > 0
+            and not summary.get("threshold_breached", False)
+        ],
+        "ready_quiescence_required_seconds": contract["safety"][
+            "ready_quiescence_seconds"
+        ],
+        "ready_quiescence_passed": getattr(
+            monitor, "ready_quiescence_passed", False
+        ),
+        "ready_quiescence_started_at": getattr(
+            monitor, "ready_quiescence_started_at", None
+        ),
+        "ready_quiescence_completed_at": getattr(
+            monitor, "ready_quiescence_completed_at", None
+        ),
+        "ready_quiescence_duration_seconds": getattr(
+            monitor, "ready_quiescence_duration_seconds", None
+        ),
+        "ready_quiescence_initial_pswpout_pages": getattr(
+            monitor, "ready_quiescence_initial_pswpout", None
+        ),
+        "ready_quiescence_final_pswpout_pages": getattr(
+            monitor, "ready_quiescence_final_pswpout", None
+        ),
+        "ready_quiescence_samples": getattr(
+            monitor, "ready_quiescence_samples", 0
+        ),
+        "ready_quiescence_epoch": getattr(
+            monitor, "ready_quiescence_epoch", 0
+        ),
+        "candidate_cgroup_path": getattr(
+            monitor, "candidate_cgroup_bound_path", None
+        ),
+        "candidate_cgroup_pid": getattr(
+            monitor, "candidate_cgroup_bound_pid", None
+        ),
+        "candidate_cgroup_start_ticks": getattr(
+            monitor, "candidate_cgroup_start_ticks", None
+        ),
+        "candidate_cgroup_samples": getattr(
+            monitor, "candidate_cgroup_samples", 0
+        ),
+        "candidate_cgroup_swap_peak_bytes": getattr(
+            monitor, "candidate_cgroup_swap_peak_bytes", 0
+        ),
+        "candidate_cgroup_oom_initial": getattr(
+            monitor, "candidate_cgroup_oom_initial", None
+        ),
+        "candidate_cgroup_oom_final": getattr(
+            monitor, "candidate_cgroup_oom_final", None
+        ),
+        "candidate_cgroup_oom_kill_initial": getattr(
+            monitor, "candidate_cgroup_oom_kill_initial", None
+        ),
+        "candidate_cgroup_oom_kill_final": getattr(
+            monitor, "candidate_cgroup_oom_kill_final", None
+        ),
         "probe_count": len(probes),
         "weekly_budget_debit": False,
         "paid_api_calls": 0,
@@ -1996,7 +2738,7 @@ def _validated_recovery_state(
     path = output / "state.json"
     state = _read_bounded_run_json(path, source="worker recovery state")
     if (
-        state.get("schema") != "qwen-flash-next-qualification-state/v2"
+        state.get("schema") != "qwen-flash-next-qualification-state/v3"
         or state.get("run_id") != output.name
         or state.get("contract_sha256") != plan["contract_sha256"]
         or state.get("plan_sha256") != sha256(plan)
@@ -2011,6 +2753,9 @@ def _validated_recovery_state(
         or not isinstance(state.get("worker_start_ticks"), int)
         or state["worker_start_ticks"] <= 0
         or state.get("memory_log_relpath") != "memory.jsonl"
+        or state.get("paging_policy") != PAGING_POLICY
+        or state.get("monitor_phase")
+        not in {"setup", "load", "ready", "probes", "restoration"}
         or not isinstance(state.get("invocation_deadline_at"), str)
         or not isinstance(state.get("updated_at"), str)
     ):
@@ -2018,6 +2763,31 @@ def _validated_recovery_state(
     candidate_id = state.get("candidate_id")
     if candidate_id is not None and not re.fullmatch(r"[0-9a-f]{64}", str(candidate_id)):
         raise QualificationError("worker recovery candidate ID is invalid")
+    candidate_cgroup_path = state.get("candidate_cgroup_path")
+    candidate_cgroup_pid = state.get("candidate_cgroup_pid")
+    candidate_cgroup_start_ticks = state.get("candidate_cgroup_start_ticks")
+    if (
+        any(
+            value is not None
+            for value in (
+                candidate_cgroup_path,
+                candidate_cgroup_pid,
+                candidate_cgroup_start_ticks,
+            )
+        )
+        and (
+            candidate_id is None
+            or candidate_cgroup_path
+            != f"/system.slice/docker-{candidate_id}.scope"
+            or isinstance(candidate_cgroup_pid, bool)
+            or not isinstance(candidate_cgroup_pid, int)
+            or candidate_cgroup_pid <= 0
+            or isinstance(candidate_cgroup_start_ticks, bool)
+            or not isinstance(candidate_cgroup_start_ticks, int)
+            or candidate_cgroup_start_ticks <= 0
+        )
+    ):
+        raise QualificationError("worker recovery candidate cgroup is invalid")
     initial = state.get("initial")
     if initial is not None:
         if not isinstance(initial, dict) or not isinstance(initial.get("nara_was_active"), bool):
@@ -2067,7 +2837,7 @@ def _result_has_verified_restoration(output: Path, plan: dict[str, Any]) -> bool
     except (KeyError, TypeError, ValueError):
         timestamps_sane = False
     return bool(
-        result.get("schema") == "qwen-flash-next-qualification-result/v2"
+        result.get("schema") == "qwen-flash-next-qualification-result/v3"
         and result.get("run_id") == output.name
         and result.get("contract_sha256") == plan["contract_sha256"]
         and result.get("plan_sha256") == sha256(plan)

@@ -19,7 +19,7 @@ from bench.flash_next_ab import qualification as q
 
 def contract():
     return {
-        "schema": "qwen-flash-next-qualification/v2",
+        "schema": "qwen-flash-next-qualification/v3",
         "contract_id": "qwen38-flash-next-c0-20260915",
         "profile": "C0",
         "image": {"id": q.IMAGE_ID, "architecture": "arm64"},
@@ -63,8 +63,10 @@ def contract():
             "readiness_deadline_seconds": 1200,
             "restoration_reserve_seconds": 600,
             "setup_quiescence_seconds": 60,
+            "ready_quiescence_seconds": 60,
             "memory_poll_seconds": 1,
             "probe_timeout_seconds": 120,
+            "paging_policy": copy.deepcopy(q.PAGING_POLICY),
         },
         "accounting": {
             "class": "uncapped-local-model-research",
@@ -99,6 +101,8 @@ def plan():
         (("safety", "min_mem_available_gib"), 19),
         (("safety", "invocation_deadline_seconds"), 3601),
         (("safety", "setup_quiescence_seconds"), 59),
+        (("safety", "ready_quiescence_seconds"), 59),
+        (("safety", "paging_policy"), {}),
         (("accounting", "weekly_budget_debit"), True),
         (("accounting", "paid_api_allowed"), True),
     ],
@@ -222,6 +226,27 @@ class FakeMonitor:
         self.setup_quiescence_initial_pswpout = None
         self.setup_quiescence_final_pswpout = None
         self.setup_quiescence_samples = 0
+        self.ready_quiescence_passed = False
+        self.ready_quiescence_started_at = None
+        self.ready_quiescence_completed_at = None
+        self.ready_quiescence_duration_seconds = None
+        self.ready_quiescence_initial_pswpout = None
+        self.ready_quiescence_final_pswpout = None
+        self.ready_quiescence_samples = 0
+        self.ready_quiescence_epoch = 0
+        self.candidate_cgroup_bound_path = None
+        self.candidate_cgroup_bound_pid = None
+        self.candidate_cgroup_start_ticks = None
+        self.candidate_cgroup_samples = 0
+        self.candidate_cgroup_swap_peak_bytes = 0
+        self.candidate_cgroup_oom_initial = None
+        self.candidate_cgroup_oom_final = None
+        self.candidate_cgroup_oom_kill_initial = None
+        self.candidate_cgroup_oom_kill_final = None
+        self.violations = []
+        self.phase_summaries = {
+            "setup": {"pswpout_delta_bytes": 0, "threshold_breached": False}
+        }
 
     def __enter__(self):
         self.path.write_text("")
@@ -256,6 +281,46 @@ class FakeMonitor:
 
     def arm(self, candidate_id):
         self.armed = candidate_id
+        self.candidate_cgroup_bound_path = (
+            f"/system.slice/docker-{candidate_id}.scope"
+        )
+        self.candidate_cgroup_bound_pid = 200
+        self.candidate_cgroup_start_ticks = 12345
+        self.candidate_cgroup_samples = 1
+        self.candidate_cgroup_oom_initial = 0
+        self.candidate_cgroup_oom_final = 0
+        self.candidate_cgroup_oom_kill_initial = 0
+        self.candidate_cgroup_oom_kill_final = 0
+
+    def require_ready_quiescence(self, *, duration_s, deadline):
+        assert duration_s == 60
+        assert deadline > time.monotonic()
+        self.ready_quiescence_passed = True
+        self.ready_quiescence_started_at = "2026-09-15T00:02:00+00:00"
+        self.ready_quiescence_completed_at = "2026-09-15T00:03:00+00:00"
+        self.ready_quiescence_duration_seconds = 60.0
+        self.ready_quiescence_initial_pswpout = 10
+        self.ready_quiescence_final_pswpout = 10
+        self.ready_quiescence_samples = 61
+        self.ready_quiescence_epoch = 1
+        self.phase_summaries["load"] = {
+            "pswpout_delta_bytes": 0,
+            "threshold_breached": False,
+        }
+        self.phase_summaries["ready"] = {
+            "pswpout_delta_bytes": 0,
+            "threshold_breached": False,
+        }
+        self.phase_summaries["probes"] = {
+            "pswpout_delta_bytes": 0,
+            "threshold_breached": False,
+        }
+
+    def begin_restoration(self):
+        self.phase_summaries["restoration"] = {
+            "pswpout_delta_bytes": 0,
+            "threshold_breached": False,
+        }
 
     def disarm(self):
         self.armed = None
@@ -310,6 +375,8 @@ class FakeOps(q.HostOps):
                 "running": False,
                 "pid": 0,
                 "started_at": "",
+                "oom_killed": False,
+                "state_error": "",
                 "restart_count": 0,
                 "restart_policy": "no",
             }
@@ -330,6 +397,8 @@ class FakeOps(q.HostOps):
             row = self._container(argv[-1])
             if row:
                 row["running"] = True
+                if row["name"] == q.CONTAINER_NAME:
+                    row["pid"] = 200
             return q.CommandResult(0, (row or {}).get("id", "") + "\n", "")
         if argv[:2] == ["docker", "rm"]:
             row = self._container(argv[-1])
@@ -380,6 +449,40 @@ class FakeOps(q.HostOps):
             }
         answer = "703" if "37 * 19" in messages[0]["content"] else "FLASH_NEXT_OK_17"
         return {**base, "content": answer, "tool_calls": [], "finish_reason": "stop"}
+
+
+def clean_cgroup(candidate_id, pid, *, swap=0, oom=0, oom_kill=0):
+    assert candidate_id == FakeOps.candidate_id
+    assert pid == 200
+    return {
+        "path": f"/system.slice/docker-{candidate_id}.scope",
+        "process_start_ticks": 12345,
+        "memory_swap_current_bytes": swap,
+        "memory_events_oom": oom,
+        "memory_events_oom_kill": oom_kill,
+    }
+
+
+def manual_monitor(
+    tmp_path,
+    ops,
+    *,
+    swap_reader=lambda: 10,
+    cgroup_reader=clean_cgroup,
+):
+    monitor = q.MemoryMonitor(
+        tmp_path / "memory.jsonl",
+        ops,
+        reader=lambda: 64.0,
+        swap_reader=swap_reader,
+        cgroup_reader=cgroup_reader,
+    )
+    monitor._stream = (tmp_path / "memory.jsonl").open("xb")
+    monitor._sample_once()
+    monitor.setup_quiescence_passed = True
+    monitor.setup_quiescence_final_pswpout = monitor.final_pswpout
+    monitor.begin_mutation_window()
+    return monitor
 
 
 def preflight(root, *, idle):
@@ -460,7 +563,7 @@ def test_success_creates_sentinel_first_and_restores_exact_ids(monkeypatch, tmp_
     assert result["setup_quiescence_passed"] is True
     assert result["mutation_pswpout_delta_pages"] == 0
     state = json.loads((output / "state.json").read_text())
-    assert state["schema"] == "qwen-flash-next-qualification-state/v2"
+    assert state["schema"] == "qwen-flash-next-qualification-state/v3"
     assert state["worker_pid"] > 0 and state["worker_start_ticks"] > 0
     assert state["memory_log_relpath"] == "memory.jsonl"
 
@@ -512,10 +615,10 @@ def test_memory_monitor_breach_stops_only_the_exact_candidate(tmp_path):
     ops.containers[q.CONTAINER_NAME] = {
         "id": ops.candidate_id, "name": q.CONTAINER_NAME, "image": q.IMAGE_ID,
         "running": True, "pid": 200, "started_at": "now", "restart_count": 0,
+        "oom_killed": False,
         "restart_policy": "no",
     }
-    monitor = q.MemoryMonitor(tmp_path / "memory.jsonl", ops)
-    monitor._stream = (tmp_path / "memory.jsonl").open("xb")
+    monitor = manual_monitor(tmp_path, ops)
     monitor.arm(ops.candidate_id)
     monitor._breach("MemAvailable below floor")
     monitor._stream.close()
@@ -570,35 +673,24 @@ def test_no_mutation_preflight_failure_is_verified_without_restore_actions():
 
 
 @pytest.mark.parametrize(
-    ("oom_killed", "restart_count", "swap_after", "expected"),
+    ("field", "value", "expected"),
     [
-        (True, 0, 10, "OOMKilled"),
-        (False, 1, 10, "restart count"),
-        (False, 0, 11, "pswpout increased"),
+        ("oom_killed", True, "OOMKilled"),
+        ("restart_count", 1, "restart count"),
+        ("pid", 201, "process identity"),
     ],
 )
-def test_monitor_rejects_oom_restart_and_swapout(
-    tmp_path, oom_killed, restart_count, swap_after, expected
-):
+def test_monitor_rejects_candidate_lifecycle_drift(tmp_path, field, value, expected):
     ops = FakeOps()
     ops.containers[q.CONTAINER_NAME] = {
         "id": ops.candidate_id, "name": q.CONTAINER_NAME, "image": q.IMAGE_ID,
         "running": True, "pid": 200, "started_at": "now",
-        "oom_killed": oom_killed, "restart_count": restart_count,
+        "oom_killed": False, "restart_count": 0,
         "restart_policy": "no",
     }
-    swap_values = iter([10, swap_after])
-    monitor = q.MemoryMonitor(
-        tmp_path / "monitor.jsonl", ops, reader=lambda: 64.0,
-        swap_reader=lambda: next(swap_values),
-    )
-    monitor._stream = (tmp_path / "monitor.jsonl").open("xb")
-    monitor.initial_pswpout = 10
-    monitor.final_pswpout = 10
-    monitor.setup_quiescence_passed = True
-    monitor.setup_quiescence_final_pswpout = 10
-    monitor.begin_mutation_window()
+    monitor = manual_monitor(tmp_path, ops)
     monitor.arm(ops.candidate_id)
+    ops.containers[q.CONTAINER_NAME][field] = value
     monitor._sample_once()
     monitor._stream.close()
     assert monitor.cancel_event.is_set()
@@ -606,8 +698,100 @@ def test_monitor_rejects_oom_restart_and_swapout(
     assert ("docker", "stop", "--time", "10", ops.candidate_id) in ops.log
 
 
+@pytest.mark.parametrize(
+    ("swap", "oom", "oom_kill", "expected"),
+    [
+        (4096, 0, 0, "memory.swap.current"),
+        (0, 1, 0, "OOM event"),
+        (0, 0, 1, "OOM-kill"),
+    ],
+)
+def test_monitor_rejects_candidate_cgroup_pressure(
+    tmp_path, swap, oom, oom_kill, expected
+):
+    ops = FakeOps()
+    ops.containers[q.CONTAINER_NAME] = {
+        "id": ops.candidate_id,
+        "name": q.CONTAINER_NAME,
+        "image": q.IMAGE_ID,
+        "running": True,
+        "pid": 200,
+        "started_at": "now",
+        "oom_killed": False,
+        "restart_count": 0,
+        "restart_policy": "no",
+    }
+    snapshots = iter(
+        [
+            clean_cgroup(ops.candidate_id, 200),
+            clean_cgroup(ops.candidate_id, 200),
+            clean_cgroup(
+                ops.candidate_id,
+                200,
+                swap=swap,
+                oom=oom,
+                oom_kill=oom_kill,
+            ),
+        ]
+    )
+    monitor = manual_monitor(
+        tmp_path, ops, cgroup_reader=lambda *_args: next(snapshots)
+    )
+    monitor.arm(ops.candidate_id)
+    monitor._sample_once()
+    monitor._stream.close()
+    assert monitor.cancel_event.is_set()
+    assert expected in monitor.failure
+
+
+def test_small_host_swap_is_diagnostic_but_registered_load_threshold_stops(tmp_path):
+    threshold_pages = q.LOAD_SWAP_5S_BREACH_BYTES // q.HOST_PAGE_SIZE_BYTES
+    values = iter([10, 10, 11, 10 + threshold_pages])
+    ops = FakeOps()
+    monitor = q.MemoryMonitor(
+        tmp_path / "memory.jsonl",
+        ops,
+        reader=lambda: 64.0,
+        swap_reader=lambda: next(values),
+        cgroup_reader=clean_cgroup,
+    )
+    monitor._stream = (tmp_path / "memory.jsonl").open("xb")
+    monitor._sample_once()
+    monitor.setup_quiescence_passed = True
+    monitor.setup_quiescence_final_pswpout = 10
+    monitor.begin_mutation_window()
+    small = monitor._sample_once()
+    assert small["phase_pswpout_delta_bytes"] == q.HOST_PAGE_SIZE_BYTES
+    assert not monitor.cancel_event.is_set()
+    monitor._sample_once()
+    monitor._stream.close()
+    assert monitor.cancel_event.is_set()
+    assert "5-second byte threshold" in monitor.failure
+
+
+def test_restoration_host_paging_is_diagnostic_and_does_not_interrupt(tmp_path):
+    pages = iter([10, 10, 10 + (2 * 1024**3 // q.HOST_PAGE_SIZE_BYTES)])
+    monitor = q.MemoryMonitor(
+        tmp_path / "memory.jsonl",
+        FakeOps(),
+        reader=lambda: 64.0,
+        swap_reader=lambda: next(pages),
+        cgroup_reader=clean_cgroup,
+    )
+    monitor._stream = (tmp_path / "memory.jsonl").open("xb")
+    monitor._sample_once()
+    monitor.setup_quiescence_passed = True
+    monitor.setup_quiescence_final_pswpout = 10
+    monitor.begin_mutation_window()
+    row = monitor._sample_once(begin_phase="restoration")
+    monitor._stream.close()
+    assert row["phase_pswpout_delta_bytes"] == 2 * 1024**3
+    assert monitor.cancel_event.is_set() is False
+    assert monitor.phase_summaries["restoration"]["threshold_breached"] is False
+
+
 def test_monitor_records_setup_swap_but_rejects_gap_churn_before_mutation(tmp_path):
-    values = iter([11, 12])
+    values = iter([10, 11, 12])
     ops = FakeOps()
     monitor = q.MemoryMonitor(
         tmp_path / "setup-swap.jsonl",
@@ -616,16 +800,32 @@ def test_monitor_records_setup_swap_but_rejects_gap_churn_before_mutation(tmp_pa
         swap_reader=lambda: next(values),
     )
     monitor._stream = (tmp_path / "setup-swap.jsonl").open("xb")
-    monitor.initial_pswpout = 10
-    monitor.final_pswpout = 10
+    monitor._sample_once()
     row = monitor._sample_once()
     assert row["monitor_phase"] == "setup"
-    assert row["setup_pswpout_delta_pages"] == 1
+    assert row["phase_pswpout_delta_pages"] == 1
     assert not monitor.cancel_event.is_set()
     monitor.setup_quiescence_passed = True
     monitor.setup_quiescence_final_pswpout = 11
     with pytest.raises(q.QualificationError, match="changed after setup quiescence"):
         monitor.begin_mutation_window()
+    monitor._stream.close()
+
+
+def test_monitor_rejects_counter_decrease_even_when_still_above_initial(tmp_path):
+    values = iter([10, 12, 11])
+    monitor = q.MemoryMonitor(
+        tmp_path / "decrease.jsonl",
+        FakeOps(),
+        reader=lambda: 64.0,
+        swap_reader=lambda: next(values),
+        cgroup_reader=clean_cgroup,
+    )
+    monitor._stream = (tmp_path / "decrease.jsonl").open("xb")
+    monitor._sample_once()
+    monitor._sample_once()
+    with pytest.raises(ValueError, match="decreased"):
+        monitor._sample_once()
     monitor._stream.close()
 
 
@@ -642,8 +842,7 @@ def test_setup_quiescence_records_a_full_sixty_second_sample_span(
         swap_reader=lambda: 10,
     )
     monitor._stream = (tmp_path / "quiet.jsonl").open("xb")
-    monitor.initial_pswpout = 10
-    monitor.final_pswpout = 10
+    monitor._sample_once()
     monitor.require_setup_quiescence(duration_s=60, deadline=161.0)
     monitor._stream.close()
     assert monitor.setup_quiescence_passed is True
@@ -651,12 +850,165 @@ def test_setup_quiescence_records_a_full_sixty_second_sample_span(
     assert monitor.setup_quiescence_samples >= 2
 
 
+def test_ready_quiescence_restarts_then_proves_a_fresh_sixty_seconds(
+    monkeypatch, tmp_path
+):
+    clock = [100.0]
+    monkeypatch.setattr(q.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        q.time,
+        "sleep",
+        lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+    )
+    ops = FakeOps()
+    ops.containers[q.CONTAINER_NAME] = {
+        "id": ops.candidate_id,
+        "name": q.CONTAINER_NAME,
+        "image": q.IMAGE_ID,
+        "running": True,
+        "pid": 200,
+        "started_at": "now",
+        "oom_killed": False,
+        "restart_count": 0,
+        "restart_policy": "no",
+    }
+    monitor = q.MemoryMonitor(
+        tmp_path / "ready.jsonl",
+        ops,
+        reader=lambda: 64.0,
+        swap_reader=lambda: 10 if clock[0] < 130 else 11,
+        cgroup_reader=clean_cgroup,
+    )
+    monitor._stream = (tmp_path / "ready.jsonl").open("xb")
+    monitor._sample_once()
+    monitor.setup_quiescence_passed = True
+    monitor.setup_quiescence_final_pswpout = 10
+    monitor.begin_mutation_window()
+    monitor.arm(ops.candidate_id)
+    monitor.require_ready_quiescence(duration_s=60, deadline=192.0)
+    monitor._stream.close()
+
+    assert monitor.ready_quiescence_passed is True
+    assert monitor.ready_quiescence_epoch == 2
+    assert monitor.ready_quiescence_initial_pswpout == 11
+    assert monitor.ready_quiescence_final_pswpout == 11
+    assert monitor.ready_quiescence_duration_seconds >= 60
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "ready.jsonl").read_text().splitlines()
+    ]
+    ready = [row for row in rows if row.get("monitor_phase") == "ready"]
+    assert ready[-1]["transition_to"] == "probes"
+    assert ready[-1]["elapsed_monotonic_seconds"] - next(
+        row["elapsed_monotonic_seconds"]
+        for row in ready
+        if row.get("ready_quiescence_epoch") == 2
+    ) >= 60
+
+
+def test_arm_requires_clean_exact_pid_cgroup_and_preserves_binding(tmp_path):
+    ops = FakeOps()
+    ops.containers[q.CONTAINER_NAME] = {
+        "id": ops.candidate_id,
+        "name": q.CONTAINER_NAME,
+        "image": q.IMAGE_ID,
+        "running": True,
+        "pid": 200,
+        "started_at": "now",
+        "oom_killed": False,
+        "restart_count": 0,
+        "restart_policy": "no",
+    }
+    monitor = manual_monitor(tmp_path, ops)
+    monitor.arm(ops.candidate_id)
+    monitor.disarm()
+    monitor._stream.close()
+    assert monitor.candidate_cgroup_bound_path == (
+        f"/system.slice/docker-{ops.candidate_id}.scope"
+    )
+    assert monitor.candidate_cgroup_bound_pid == 200
+    assert monitor.candidate_cgroup_start_ticks == 12345
+
+
+def test_arm_refuses_unavailable_or_dirty_cgroup_proof(tmp_path):
+    ops = FakeOps()
+    ops.containers[q.CONTAINER_NAME] = {
+        "id": ops.candidate_id,
+        "name": q.CONTAINER_NAME,
+        "image": q.IMAGE_ID,
+        "running": True,
+        "pid": 200,
+        "started_at": "now",
+        "oom_killed": False,
+        "restart_count": 0,
+        "restart_policy": "no",
+    }
+    monitor = manual_monitor(
+        tmp_path,
+        ops,
+        cgroup_reader=lambda *_args: {
+            **clean_cgroup(ops.candidate_id, 200),
+            "memory_swap_current_bytes": 4096,
+        },
+    )
+    with pytest.raises(q.QualificationError, match="not clean"):
+        monitor.arm(ops.candidate_id)
+    monitor._stream.close()
+
+
+def test_cgroup_snapshot_reads_local_events_between_stable_pid_checks(monkeypatch):
+    ticks = iter([12345, 12345])
+    reads = []
+
+    def bounded(path, *, max_bytes, dir_fd=None):
+        reads.append((str(path), max_bytes, dir_fd))
+        if str(path).endswith("/cgroup"):
+            return f"0::/system.slice/docker-{FakeOps.candidate_id}.scope\n".encode()
+        if str(path) == "memory.swap.current":
+            return b"0\n"
+        if str(path) == "memory.events.local":
+            return b"low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\n"
+        raise AssertionError(path)
+
+    monkeypatch.setattr(q, "_process_start_ticks", lambda _pid: next(ticks))
+    monkeypatch.setattr(q, "_bounded_nofollow_bytes", bounded)
+    monkeypatch.setattr(q.os, "open", lambda *_args, **_kwargs: 77)
+    monkeypatch.setattr(q.os, "close", lambda _descriptor: None)
+    snapshot = q._candidate_cgroup_snapshot(FakeOps.candidate_id, 200)
+    assert snapshot["process_start_ticks"] == 12345
+    assert any(path == "memory.events.local" for path, _, _ in reads)
+
+
+def test_cgroup_snapshot_rejects_pid_reuse_across_read(monkeypatch):
+    ticks = iter([12345, 54321])
+
+    def bounded(path, *, max_bytes, dir_fd=None):
+        if str(path).endswith("/cgroup"):
+            return f"0::/system.slice/docker-{FakeOps.candidate_id}.scope\n".encode()
+        if str(path) == "memory.swap.current":
+            return b"0\n"
+        if str(path) == "memory.events.local":
+            return b"oom 0\noom_kill 0\n"
+        raise AssertionError(path)
+
+    monkeypatch.setattr(q, "_process_start_ticks", lambda _pid: next(ticks))
+    monkeypatch.setattr(q, "_bounded_nofollow_bytes", bounded)
+    monkeypatch.setattr(q.os, "open", lambda *_args, **_kwargs: 77)
+    monkeypatch.setattr(q.os, "close", lambda _descriptor: None)
+    with pytest.raises(q.QualificationError, match="changed"):
+        q._candidate_cgroup_snapshot(FakeOps.candidate_id, 200)
+
+
 def test_monitor_ignores_a_stale_lifecycle_sample_after_disarm(tmp_path):
     class DisarmDuringInspect(FakeOps):
         monitor = None
 
         def run(self, argv, *, timeout, check=True):
-            if argv[:2] == ["docker", "inspect"] and argv[-1] == self.candidate_id:
+            if (
+                argv[:2] == ["docker", "inspect"]
+                and argv[-1] == self.candidate_id
+                and self.monitor._candidate_id == self.candidate_id
+            ):
                 self.monitor.disarm()
                 self.containers[q.CONTAINER_NAME]["running"] = False
             return super().run(argv, timeout=timeout, check=check)
@@ -665,14 +1017,19 @@ def test_monitor_ignores_a_stale_lifecycle_sample_after_disarm(tmp_path):
     ops.containers[q.CONTAINER_NAME] = {
         "id": ops.candidate_id, "name": q.CONTAINER_NAME, "image": q.IMAGE_ID,
         "running": True, "pid": 200, "started_at": "now", "restart_count": 0,
+        "oom_killed": False,
         "restart_policy": "no",
     }
     monitor = q.MemoryMonitor(
-        tmp_path / "race.jsonl", ops, reader=lambda: 64.0, swap_reader=lambda: 10
+        tmp_path / "race.jsonl",
+        ops,
+        reader=lambda: 64.0,
+        swap_reader=lambda: 10,
+        cgroup_reader=clean_cgroup,
     )
     ops.monitor = monitor
     monitor._stream = (tmp_path / "race.jsonl").open("xb")
-    monitor.initial_pswpout = 10
+    monitor._sample_once()
     monitor.arm(ops.candidate_id)
     monitor._sample_once()
     monitor._stream.close()
@@ -718,7 +1075,7 @@ def test_supervisor_can_restore_a_killed_worker_from_durable_exact_ids(
         ops.containers[row["name"]]["running"] = False
     recovery_plan = plan()
     state = {
-        "schema": "qwen-flash-next-qualification-state/v2",
+        "schema": "qwen-flash-next-qualification-state/v3",
         "run_id": output.name,
         "phase": "readiness",
         "plan_sha256": q.sha256(recovery_plan),
@@ -730,7 +1087,12 @@ def test_supervisor_can_restore_a_killed_worker_from_durable_exact_ids(
         "updated_at": "2026-09-15T00:00:01+00:00",
         "invocation_deadline_at": "2026-09-15T01:00:00+00:00",
         "memory_log_relpath": "memory.jsonl",
+        "monitor_phase": "load",
+        "paging_policy": copy.deepcopy(q.PAGING_POLICY),
         "candidate_id": ops.candidate_id,
+        "candidate_cgroup_path": None,
+        "candidate_cgroup_pid": None,
+        "candidate_cgroup_start_ticks": None,
         "initial": initial,
     }
     q._atomic_write(output / "state.json", state)
@@ -756,7 +1118,7 @@ def test_recovery_state_requires_every_captured_resident_to_be_running(tmp_path)
     residents = [dict(ops.containers[row["name"]]) for row in q.RESIDENTS]
     residents[0]["running"] = False
     state = {
-        "schema": "qwen-flash-next-qualification-state/v2",
+        "schema": "qwen-flash-next-qualification-state/v3",
         "run_id": output.name,
         "phase": "readiness",
         "plan_sha256": q.sha256(recovery_plan),
@@ -768,7 +1130,12 @@ def test_recovery_state_requires_every_captured_resident_to_be_running(tmp_path)
         "updated_at": "2026-09-15T00:00:01+00:00",
         "invocation_deadline_at": "2026-09-15T01:00:00+00:00",
         "memory_log_relpath": "memory.jsonl",
+        "monitor_phase": "load",
+        "paging_policy": copy.deepcopy(q.PAGING_POLICY),
         "candidate_id": None,
+        "candidate_cgroup_path": None,
+        "candidate_cgroup_pid": None,
+        "candidate_cgroup_start_ticks": None,
         "initial": {
             "residents": residents,
             "nara_was_active": True,
@@ -796,7 +1163,7 @@ def test_supervisor_trusts_only_a_clean_time_bound_restoration_result(
     output.mkdir()
     recovery_plan = plan()
     result = {
-        "schema": "qwen-flash-next-qualification-result/v2",
+        "schema": "qwen-flash-next-qualification-result/v3",
         "run_id": output.name,
         "contract_sha256": recovery_plan["contract_sha256"],
         "plan_sha256": q.sha256(recovery_plan),
