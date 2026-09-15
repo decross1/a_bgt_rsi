@@ -14,7 +14,7 @@ const queues = new Set(["eligible", "all_registered_topics_consumed", "source_un
 const attempts = new Set(["succeeded", "fetch_failed", "embed_failed", "interrupted_unknown", "none", "unknown"]);
 const PILOT_ID = "qfn-followon-known-opponent-lab8h-a";
 const BRIDGE_SCHEMA = "guarded-research-attempts-observation/v1";
-const bridgeIds = ["c", "b", "a"].map(arm =>
+const bridgeIds = ["d", "c", "b", "a"].map(arm =>
   "qfn-followon-known-opponent-lab8h-bridge-" + arm);
 const bridgeStatuses = new Set(["no_terminal_receipt", "source_unavailable",
   "incomplete", "guard_recorded_final_unverified", "guard_recorded_final_bound"]);
@@ -31,7 +31,7 @@ function guardedRows(value: unknown): Record<string, unknown>[] | null {
       value.scientific_admission_claimed !== false ||
       value.private_content_exported !== false ||
       value.source_status !== "available" ||
-      !Array.isArray(value.attempts) || value.attempts.length !== 3) return null;
+      !Array.isArray(value.attempts) || value.attempts.length !== 4) return null;
   const rows = value.attempts;
   if (!rows.every((row: unknown, index: number) => {
     if (!obj(row) || row.window_id !== bridgeIds[index] ||
@@ -64,7 +64,7 @@ function guardedRows(value: unknown): Record<string, unknown>[] | null {
         row.iteration_id === null && row.loop_memory_raw_sha256 === null &&
         row.journal_raw_sha256 === null &&
         (row.partial_prompt_receipts === null ||
-         (index === 1 && row.partial_prompt_receipts === 15 &&
+         (index === 2 && row.partial_prompt_receipts === 15 &&
           SHA.test(String(row.partial_audit_raw_sha256))));
     if (index !== 0 || !ID.test(String(row.iteration_id))) return false;
     if (row.restoration_status !== "guard_verified_parent_unverified" ||
