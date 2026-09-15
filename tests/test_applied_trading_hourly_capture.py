@@ -81,3 +81,26 @@ def test_incomplete_predecessor_blocks_before_any_get(tmp_path, monkeypatch):
         hourly_capture.run_once(
             previous_batch=warmup, output_dir=_path(tmp_path, "01"),
             bootstrap_warmup=warmup, max_pages=1, root=tmp_path)
+
+
+def test_missing_historical_collector_code_cannot_donate_a_cursor(tmp_path, monkeypatch):
+    monkeypatch.setattr(public_spot_capture, "_fetch", _fake_fetch)
+    warmup, prior, output = (_path(tmp_path, minute)
+                             for minute in ("00", "01", "02"))
+    public_spot_capture.capture_once(
+        warmup, symbol="BTCUSDT", from_id=None, max_pages=1)
+    public_spot_capture.capture_once(
+        prior, symbol="BTCUSDT", from_id=51, max_pages=1)
+    receipt_path = prior / "capture-batch.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["collector_source_sha256"] = (
+        "780d846508ac2a5003d32bb372ddab68b5fb406c55feefab82794d553053bcf5"
+    )
+    receipt_path.write_text(json.dumps(receipt, sort_keys=True))
+    def no_get(*_args, **_kwargs):
+        raise AssertionError("unverified historical source issued a new GET")
+    monkeypatch.setattr(public_spot_capture, "_fetch", no_get)
+    with pytest.raises(public_spot_capture.CaptureError, match="source is unavailable"):
+        hourly_capture.run_once(
+            previous_batch=prior, output_dir=output,
+            bootstrap_warmup=warmup, max_pages=1, root=tmp_path)

@@ -37,9 +37,6 @@ CAPTURE_ROOT = Path(
     "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/"
     "applied-trading-public-data/captures"
 )
-OLD_COLLECTOR_SHA256 = (
-    "780d846508ac2a5003d32bb372ddab68b5fb406c55feefab82794d553053bcf5"
-)
 NAME = re.compile(r"spot-(BTCUSDT|ETHUSDT)-[0-9]{8}T[0-9]{6}Z\Z")
 
 
@@ -67,13 +64,12 @@ def _verified_batch(path: Path, root: Path) -> tuple[dict, dict, str]:
     if not isinstance(batch, dict) or batch.get("symbol") not in SYMBOLS:
         raise CaptureError("sealed Spot batch is malformed")
     source_sha = batch.get("collector_source_sha256")
-    if source_sha not in {OLD_COLLECTOR_SHA256, _current_collector_sha256()}:
-        raise CaptureError("batch collector source is unregistered")
+    if source_sha != _current_collector_sha256():
+        raise CaptureError("cursor donor collector source is unavailable or differs")
     projection = project_collection(path, expected_collector_sha256=source_sha)
     if projection["requests_unjournaled"] or not projection["attempt_denominator_verified"]:
         raise CaptureError("prior GET request denominator is incomplete")
-    # The original smoke collector checked trade ID/time/side but not p/q.
-    # Revalidate its raw returned trade frames before a cursor is reused.
+    # Revalidate raw returned trade frames before a cursor is reused.
     journal = _read_relative(path, "attempts.jsonl", 128_000)
     for line in journal.splitlines():
         attempt = strict_json(line)
