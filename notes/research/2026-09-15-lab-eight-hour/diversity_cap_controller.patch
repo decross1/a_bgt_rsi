@@ -1,0 +1,26 @@
+diff --git a/bench/flash_next_ab/lab_window.py b/bench/flash_next_ab/lab_window.py
+index 1749f12..984a4b2 100644
+--- a/bench/flash_next_ab/lab_window.py
++++ b/bench/flash_next_ab/lab_window.py
+@@ -46,0 +47 @@ EVALUATORS = {
++    "diversity_cap": ("lab_eval_diversity_cap", "lab_eval_diversity_cap"),
+@@ -48 +49,2 @@ EVALUATORS = {
+-MAX_EVALUATOR_BUDGET_S = {"primary": 10_430, "context": 6000, "fresh": 1800}
++MAX_EVALUATOR_BUDGET_S = {"primary": 10_430, "context": 6000, "fresh": 1800,
++                          "diversity_cap": 2200}
+@@ -88 +90,6 @@ def _source_bundle() -> dict:
+-    names |= {"bench/flash_next_ab/lab_window.py", "orchestrator/weekly_upgrade_trial.py"}
++    names |= {"bench/flash_next_ab/lab_window.py",
++              "bench/flash_next_ab/lab_eval_diversity_cap.py",
++              "bench/flash_next_ab/lab_eval_plan.py",
++              "bench/flash_next_ab/lab_eval_runner.py",
++              "bench/flash_next_ab/lab_eval_replay.py",
++              "orchestrator/weekly_upgrade_trial.py"}
+@@ -97,0 +105,3 @@ def prepare(plan_path: Path, *, cohort: str, window_id: str,
++    if kind == "diversity_cap":
++        _must(cohort == "flash" and runtime_budget_s == 2200 and wall_s == 4500,
++              "prospective diversity-cap window uses the exact Flash budget")
+@@ -157,0 +168,3 @@ def load_window(path: Path) -> tuple[dict, object]:
++    if document["evaluation_kind"] == "diversity_cap":
++        _must(document["cohort"] == "flash" and document["runtime_budget_s"] == 2200
++              and document["wall_s"] == 4500, "diversity-cap window budget changed")

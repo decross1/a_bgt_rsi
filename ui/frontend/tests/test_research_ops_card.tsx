@@ -239,6 +239,97 @@ describe("ResearchOpsCard", () => {
     expect(screen.queryByText(/Action syntax: 96\/96/)).not.toBeInTheDocument();
   });
 
+  it("labels a prepared Mia arm as pending without displaying attempted calls", () => {
+    const data = { ...receipt(), mia_known_opponent_pilot: {
+      schema_version: "known-opponent-mia-ui-observation/v1",
+      status: "prepared_admission_pending",
+      window_id: "qfn-followon-known-opponent-mia-lab8h-a",
+      window_raw_sha256: sha("1"), matched_gemma_admission_sha256: sha("2"),
+      current_source_replay: "not_performed", comparison_eligible: false,
+      promotion_authorized: false, trading_claim_authorized: false,
+      private_content_exported: false, arms: null,
+    } };
+    const { rerender } = show(data);
+    expect(screen.getByText(/Registered Mia window prepared; restored-window admission/)).toBeInTheDocument();
+    expect(screen.getByText(/Preparation is not an executed call or a model score/)).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: /matched known-opponent pilot arms/i })).not.toBeInTheDocument();
+    const recorded = { ...data.mia_known_opponent_pilot,
+      status: "recorded_admission_report_pending", mia_admission_sha256: sha("3") };
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data,
+      mia_known_opponent_pilot: recorded }} /></MemoryRouter>);
+    expect(screen.getByText(/Archived Mia admission receipt recorded; descriptive comparison source verification is pending/)).toBeInTheDocument();
+  });
+
+  it("shows only a raw-bound descriptive two-arm pilot with separate regret denominators", () => {
+    const admission = sha("5"), run = sha("6");
+    const behavior = { schema_version: "known-opponent-pilot-behavior/v1",
+      admission_receipt_sha256: admission, pilot_run_sha256: run,
+      manifest_raw_sha256: sha("7"), scheduled_action_calls: 96,
+      valid_action_calls: 96, complete_episodes: 12,
+      zero_regret_complete_episodes: 3, comprehension_passed: 0,
+      comprehension_scheduled_episodes: 12, comprehension_prompt_forms: 2,
+      form_repetitions_each: 6,
+      by_utility: { own_payoff: { complete: 6, zero_regret: 3 },
+        joint_payoff: { complete: 6, zero_regret: 0 } },
+      current_source_replay: "not_performed", theory_accepted: false,
+      strategy_causal_claim: false };
+    const gemma = { scheduled_cells: 12, recorded_cells: 12,
+      scheduled_action_calls: 96, attempted_calls: 108, arithmetic_passed: 0,
+      valid_action_calls: 96, complete_episodes: 12,
+      zero_regret_complete_episodes: 3, returned_sse_verified: 108,
+      evaluator_elapsed_s: 23.614,
+      by_utility: behavior.by_utility };
+    const mia = { ...gemma, zero_regret_complete_episodes: 2,
+      evaluator_elapsed_s: 84.5,
+      by_utility: { own_payoff: { complete: 6, zero_regret: 1 },
+        joint_payoff: { complete: 6, zero_regret: 1 } } };
+    const pilot = { schema_version: "known-opponent-mia-ui-observation/v1",
+      status: "admitted_descriptive", window_id: "qfn-followon-known-opponent-mia-lab8h-a",
+      window_raw_sha256: sha("1"), matched_gemma_admission_sha256: admission,
+      report_raw_sha256: sha("2"), index_raw_sha256: sha("3"),
+      report_source_sha256: sha("4"), mia_admission_sha256: sha("8"),
+      current_source_replay: "not_performed", comparison_eligible: false,
+      promotion_authorized: false, trading_claim_authorized: false,
+      private_content_exported: false, arms: { gemma, mia } };
+    const data = { ...receipt(),
+      empirical_pilot: { status: "recorded_admitted",
+        window_id: "qfn-followon-known-opponent-lab8h-a",
+        admission_receipt_sha256: admission, pilot_run_sha256: run,
+        attempted_calls: 108, complete_episodes: 12,
+        current_source_replay: "not_performed", behavior_summary: behavior },
+      mia_known_opponent_pilot: pilot };
+    const { rerender } = show(data);
+    const table = screen.getByRole("table", { name: "Descriptive matched known-opponent pilot arms" });
+    expect(table).toHaveTextContent("Resident Gemma");
+    expect(table).toHaveTextContent("Optimized Flash Mia · MTP3");
+    expect(table).toHaveTextContent("3/6");
+    expect(table).toHaveTextContent("1/6");
+    expect(table).toHaveTextContent("23.6 s");
+    expect(table).toHaveTextContent("84.5 s");
+    expect(screen.getByText(/incomplete episodes have unknown full-horizon regret/)).toBeInTheDocument();
+    expect(screen.getByText(/Private response replay ran at publication/)).toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data,
+      mia_known_opponent_pilot: { ...pilot, arms: { gemma, mia: {
+        ...mia, attempted_calls: 107, valid_action_calls: 95,
+        returned_sse_verified: 107, complete_episodes: 11,
+        by_utility: { own_payoff: { complete: 5, zero_regret: 1 },
+          joint_payoff: { complete: 6, zero_regret: 1 } }
+      } } }
+    }} /></MemoryRouter>);
+    expect(screen.getByRole("table", { name: /matched known-opponent pilot arms/i })).toHaveTextContent("11/12");
+    expect(screen.getByRole("table", { name: /matched known-opponent pilot arms/i })).toHaveTextContent("1/5");
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data,
+      mia_known_opponent_pilot: { ...pilot, arms: { gemma, mia: {
+        ...mia, evaluator_elapsed_s: Number.NaN } } }
+    }} /></MemoryRouter>);
+    expect(screen.queryByRole("table", { name: /matched known-opponent pilot arms/i })).not.toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data,
+      mia_known_opponent_pilot: { ...pilot, matched_gemma_admission_sha256: sha("9") }
+    }} /></MemoryRouter>);
+    expect(screen.queryByRole("table", { name: /matched known-opponent pilot arms/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/outcome counts withheld/)).toBeInTheDocument();
+  });
+
   it("shows the two registered payoff job windows without claiming timer activation or dispatch", () => {
     show({ ...receipt(), next_work: { code: "run_preregistered_campaign_topic",
       topic_id: "unrelated-topic" }, payoff_jobs: payoffObservation() });
