@@ -4,6 +4,8 @@
 
 All registered primary, fresh and supported-context model comparisons are complete and independently published. This records the core decision; separately preregistered follow-ups do not rewrite these scores. The work window is September 15 16:09:45 through September 16 00:09:45 UTC.
 
+The core goal passed its final service and live-dashboard checks at 21:28 UTC, about five hours and twenty minutes into the window. The successor campaign was activated with three eligible questions, resident services were restored, and both overnight experiment timers were enabled. The separately registered [Mia game follow-up](STRETCH_RESULTS.md) subsequently completed with all twelve episodes admitted; a further output-cap diagnostic is separately preregistered.
+
 ## Model comparison
 
 | Evaluation | Experimental resident bundle b | Optimized Mia Flash | Interpretation |
@@ -74,7 +76,7 @@ The registered successor campaign `v2-utility-mechanism-followon-20260915` conta
 
 The dashboard separates topic availability, advisory review of existing evidence, completed records, critic verdicts and human gates. A completed row does not imply scientific acceptance. Literature ingestion failures are visible as typed failures; the observed upstream 429/503 errors are not claimed fixed.
 
-The previous public-data capture gap remains missing evidence. The four-minute collector has resumed on a new recorded lineage. A new forward diagnostic is registered for September 16 01:05–03:05 UTC and becomes eligible for source evaluation after 04:15; its [prestart hash witness](FORWARD_STUDY_20260916.md) records the exact plan. The separate payoff-representation B timer begins at 03:35. These are scheduled future measurements, not completed findings.
+The previous public-data capture gap remains missing evidence. Its due review closed as `closed_missing_source` at 21:48 UTC, with no valid performance score. The four-minute collector has resumed on a new recorded lineage. A new forward diagnostic is registered for September 16 01:05–03:05 UTC and becomes eligible for source evaluation after 04:15; its [prestart hash witness](FORWARD_STUDY_20260916.md) records the exact plan. The separate payoff-representation B timer begins at 03:35. These are scheduled future measurements, not completed findings.
 
 ## Evidence and decisions that could change this verdict
 
