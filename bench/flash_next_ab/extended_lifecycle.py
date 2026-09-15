@@ -56,6 +56,7 @@ def _registered(
 
     selection = select_window(eval_plan_path, cohort="flash")
     if selection.kind == "followon":
+        from .followon_dispatch import OUTER_DEADLINE
         from .followon_plans import flash_plan, load_execution
         from .followon_profiles import SPECS_BY_ID, is_registered_spec
 
@@ -88,7 +89,10 @@ def _registered(
                != contract["safety"]["paging_policy"]
             or extended_plan["extended_serving_profile"]
                != EXTENDED_SERVING_PROFILE
-            or extended_plan["effective_invocation_deadline_seconds"] != 14_400
+            or OUTER_DEADLINE != 4_200
+            or extended_plan["effective_invocation_deadline_seconds"]
+               != OUTER_DEADLINE
+            or extended_plan["work_cutoff_seconds"] != 3_600
             or extended_plan["restoration_reserve_seconds"] != 600
             or extended_plan["controller_source_bundle_sha256"]
                != sha256(extended_plan["controller_source_bundle"])):

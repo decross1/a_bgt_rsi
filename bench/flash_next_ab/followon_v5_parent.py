@@ -96,14 +96,21 @@ def _admit(sources: dict[str, Path], raw: dict[str, bytes],
     result = _json(raw["result.json"])
     plan = _json(raw["plan.json"])
     snapshot = _json(raw["launch-contract.snapshot.json"])
-    summary = validate_mia_v5_bundle(
-        result, hashlib.sha256(raw["result.json"]).hexdigest(),
-        sources["result.json"], plan, sources["plan.json"], snapshot,
-        hashlib.sha256(raw["launch-contract.snapshot.json"]).hexdigest(),
-        sources["launch-contract.snapshot.json"],
-        contract_raw_path=sources["launch-contract.raw.json"],
-        require_passed=True,
+    from .historical_v5_parent_bridge import (
+        OLD_ROOT, QUALIFICATION_RUN_ID, replay_reduced_parent,
     )
+    if (sources["result.json"].parent.name == QUALIFICATION_RUN_ID
+            and plan.get("registered_code_root") == str(OLD_ROOT)):
+        summary = replay_reduced_parent(raw, sources, plan, spec)
+    else:
+        summary = validate_mia_v5_bundle(
+            result, hashlib.sha256(raw["result.json"]).hexdigest(),
+            sources["result.json"], plan, sources["plan.json"], snapshot,
+            hashlib.sha256(raw["launch-contract.snapshot.json"]).hexdigest(),
+            sources["launch-contract.snapshot.json"],
+            contract_raw_path=sources["launch-contract.raw.json"],
+            require_passed=True,
+        )
     _require(summary["admission_eligible"] is True
              and summary["variant_id"] == spec.spec_id
              and summary["status"] == "passed"

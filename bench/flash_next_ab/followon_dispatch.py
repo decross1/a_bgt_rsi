@@ -29,7 +29,7 @@ RESEARCH_ROOT = Path(
     "qwen-flash-next-research"
 )
 FOLLOWON_CODE_ROOT = Path(
-    "/home/decross1/projects/a_bgt_rsi_worktrees/flash-followon-20260915"
+    "/home/decross1/projects/a_bgt_rsi_worktrees/flash-coding-temp1-20260915"
 )
 # Keep frozen_controller_source_bundle() and its original registered root
 # untouched. Follow-on plans bind these files in a different code checkout.
@@ -48,6 +48,8 @@ FOLLOWON_SOURCE_MODULES = tuple(SOURCE_BUNDLE_MODULES) + (
     "followon_v5_parent.py", "reduced_profile_literal.py",
     "followon_selected_repair.py",
     "followon_repair_prepare.py",
+    "followon_coding_temp1.py", "CODING_TEMP1_PROTOCOL.json",
+    "historical_v5_parent_bridge.py",
 )
 WINDOW_SCHEMA = "flash-followon-window/v1"
 V5_WINDOW_SCHEMA = "flash-followon-window/v2"
@@ -81,6 +83,7 @@ RUNNER_MODULES = {
     "mtp0_controls": "bench.flash_next_ab.mtp0_controls",
     "mtp_decode_timing": "bench.flash_next_ab.mtp_decode_diagnostic",
     "selected_repair": "bench.flash_next_ab.followon_selected_repair",
+    "coding_temp1_medium": "bench.flash_next_ab.followon_coding_temp1",
 }
 THINKING_CEILING = 2700
 MARKET_CEILING = 2220
@@ -88,11 +91,12 @@ MTP0_CEILING = 720
 MTP_DECODE_CEILING = 360
 SELECTED_REPAIR_FLASH_CEILING = 4500
 SELECTED_REPAIR_RESIDENT_CEILING = 2500
+CODING_TEMP1_CEILING = 1560
 CONTEXT_CEILINGS = {
     2048: 1440, 8192: 2160, 16384: 2880,
     32768: 4320, 65536: 5760,
 }
-OUTER_DEADLINE = 14_400
+OUTER_DEADLINE = 4_200
 RESTORE_RESERVE = 600
 
 
@@ -184,6 +188,11 @@ def _shape(study_id: str, cohort: str, blocks: list[dict]) -> bool:
                     for band in (2048, 8192, 16384)]
         return any(described == required + optional[:count]
                    for count in range(len(optional) + 1))
+    if study_id == "coding-temp1-medium-and-decode-v1" and cohort == "flash":
+        return described == [
+            ("coding_temp1_medium", "flash_next_mia", None, None),
+            ("mtp_decode_timing", "flash_next_mia", 17, None),
+        ]
     if study_id == "thinking-market-diagnostics-v1":
         if cohort == "flash":
             required = [
@@ -430,6 +439,14 @@ def load_window(window_id: str, cohort: str, *, root: Path = RESEARCH_ROOT) -> F
                           or plan.get("candidate_variant_id")
                              == value["candidate_variant_id"]),
                      "selected repair route differs from the admitted model")
+        elif block["kind"] == "coding_temp1_medium":
+            _require(cohort == "flash" and v5_window
+                     and plan.get("route")
+                        == {key: route[key] for key in ROUTE_KEYS
+                            if key != "max_model_len"}
+                     and plan.get("candidate_variant_id")
+                        == value["candidate_variant_id"],
+                     "registered coding diagnostic route/profile differs")
         else:
             _require(plan.get("route") == route,
                      "context block route differs from qualified window")
@@ -441,6 +458,8 @@ def load_window(window_id: str, cohort: str, *, root: Path = RESEARCH_ROOT) -> F
                    else MARKET_CEILING if block["kind"] == "market_canaries"
                    else MTP0_CEILING if block["kind"] == "mtp0_controls"
                    else MTP_DECODE_CEILING if block["kind"] == "mtp_decode_timing"
+                   else CODING_TEMP1_CEILING
+                   if block["kind"] == "coding_temp1_medium"
                    else (SELECTED_REPAIR_FLASH_CEILING if cohort == "flash"
                          else SELECTED_REPAIR_RESIDENT_CEILING)
                    if block["kind"] == "selected_repair"
@@ -462,8 +481,11 @@ def load_window(window_id: str, cohort: str, *, root: Path = RESEARCH_ROOT) -> F
                           and block["seed_block"] == 17
                           and plan.get("spec_id") == value["candidate_variant_id"]))
                  and (block["kind"] != "selected_repair"
-                      or block["target_block"] is None
-                         and block["seed_block"] is None),
+                     or block["target_block"] is None
+                         and block["seed_block"] is None)
+                 and (block["kind"] != "coding_temp1_medium"
+                     or block["target_block"] is None
+                        and block["seed_block"] is None),
                  "follow-on block ceiling or seed differs")
         if block["kind"] == "context":
             required = {
@@ -495,6 +517,7 @@ def load_window(window_id: str, cohort: str, *, root: Path = RESEARCH_ROOT) -> F
     _require(not v5_window or value["study_id"] in {
         "selected-profile-quality-v1", "selected-profile-repair-v1",
         "selected-native-context-stress-v1",
+        "coding-temp1-medium-and-decode-v1",
     },
              "v5 window has no separate selected-profile study form")
     _require(value["block_budget_total_seconds"] == total
@@ -817,7 +840,8 @@ def run_group(frozen: FrozenWindow, *, controller_callbacks: Any,
                     result, plan, block["endpoint_name"], block["seed_block"]
                 )
             elif block["kind"] in {"market_canaries", "mtp0_controls",
-                                    "mtp_decode_timing", "selected_repair"}:
+                                    "mtp_decode_timing", "selected_repair",
+                                    "coding_temp1_medium"}:
                 result = runner.run_model(
                     plan, endpoint_name=block["endpoint_name"],
                     seed_block=block["seed_block"], output_dir=child,
@@ -834,13 +858,15 @@ def run_group(frozen: FrozenWindow, *, controller_callbacks: Any,
                         result, plan, block["endpoint_name"]
                     ) if block["kind"] == "mtp0_controls"
                     else result.get("status") == "complete"
+                         and result.get("abort_reason") is None
                          and result.get("summary", {}).get("attempted")
-                            == (44 if block["endpoint_name"] == "flash_next_mia"
+                            == (4 if block["kind"] == "coding_temp1_medium"
+                                else 44 if block["endpoint_name"] == "flash_next_mia"
                                 else 22)
                          and runner.validate_run(
                              result, plan, block["endpoint_name"]
                          ) is None
-                    if block["kind"] == "selected_repair"
+                    if block["kind"] in {"selected_repair", "coding_temp1_medium"}
                     else _mtp_decode_block_complete(
                         result, plan, block["endpoint_name"]
                     )
@@ -868,7 +894,7 @@ def run_group(frozen: FrozenWindow, *, controller_callbacks: Any,
                      and result.get("promotion_authorized") is False,
                      "block public result changed path or authority")
             if block["kind"] in {"thinking", "market_canaries",
-                                 "selected_repair"}:
+                                 "selected_repair", "coding_temp1_medium"}:
                 outcomes = result.get("outcomes", [])
                 attempted = sum(row.get("status") != "not_run" for row in outcomes)
                 passed = sum(row.get("passed") is True for row in outcomes)

@@ -2977,7 +2977,14 @@ def execute_worker(
                    != frozen_controller_source_bundle()
             ):
                 raise QualificationError("extended runtime differs from the qualified candidate")
-        if (extended_plan["extended_serving_profile"] != EXTENDED_SERVING_PROFILE
+        if followon_kind:
+            from .followon_dispatch import OUTER_DEADLINE
+            expected_extended_deadline = OUTER_DEADLINE
+        else:
+            expected_extended_deadline = 14_400
+        if (expected_extended_deadline
+                != (4_200 if followon_kind else 14_400)
+            or extended_plan["extended_serving_profile"] != EXTENDED_SERVING_PROFILE
             or extended_plan["candidate_spec_sha256"]
                != (spec.identity_sha256() if spec is not None else None)
             or extended_plan["candidate_variant_id"]
@@ -2988,7 +2995,10 @@ def execute_worker(
                != _runtime_identity(spec).model_artifact_sha256
             or extended_plan["paging_policy"]
                != (spec.paging_policy() if spec is not None else PAGING_POLICY)
-            or extended_plan["effective_invocation_deadline_seconds"] != 14_400
+            or extended_plan["effective_invocation_deadline_seconds"]
+               != expected_extended_deadline
+            or extended_plan["work_cutoff_seconds"]
+               != expected_extended_deadline - 600
             or extended_plan["restoration_reserve_seconds"] != 600
             or extended_plan["controller_source_bundle_sha256"]
                != sha256(extended_plan["controller_source_bundle"])

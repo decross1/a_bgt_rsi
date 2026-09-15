@@ -208,6 +208,13 @@ def _block(window: plans.FollowonExecution, output: Path, ordinal: int,
                         else 22)
                  and run.get("abort_reason") is None,
                  "selected repair omitted its measured denominator cells")
+    elif kind == "coding_temp1_medium":
+        from bench.flash_next_ab import followon_coding_temp1 as runner
+        runner.validate_run(run, plan, declaration["endpoint_name"])
+        _require(run.get("status") == "complete"
+                 and run.get("summary", {}).get("attempted") == 4
+                 and run.get("abort_reason") is None,
+                 "registered coding diagnostic omitted one of four attempts")
     elif kind == "mtp0_controls":
         from bench.flash_next_ab import mtp0_controls as runner
         runner.validate_run(run, plan)

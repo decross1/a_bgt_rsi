@@ -1,0 +1,34 @@
+{
+  "schema": "flash-followon-coding-temp1-protocol/v1",
+  "study_id": "coding-temp1-medium-and-decode-v1",
+  "panel_id": "four-original-coding-and-patch-tasks-v1",
+  "ordered_original_cell_ids": [
+    "portfolio/CODE-D075-DELEGATION-001/policy-A-critic_current/seed-0",
+    "portfolio/CODE-GT-REGRET-001/policy-A-critic_current/seed-0",
+    "historical/HCP-001/matched/seed-20260914",
+    "historical/HCP-002/matched/seed-20260914"
+  ],
+  "original_task_and_grader_sources": "immutable_first_126_benchmark_and_existing_adapters",
+  "sampling_origin": "owner_declared_prospective_model_recommended_diagnostic_20260915",
+  "sampling_policy": {
+    "temperature": 1,
+    "top_p": 0.95,
+    "top_k": 20,
+    "enable_thinking": true,
+    "reasoning_effort": "medium"
+  },
+  "call_caps": {
+    "maximum_calls": 4,
+    "max_output_tokens_per_call": 8192,
+    "timeout_seconds_per_call": 360,
+    "block_budget_seconds": 1560
+  },
+  "seed_policy": "retain_each_original_frozen_cell_seed",
+  "timeout_rule": "measured_failure_in_all_four_denominators",
+  "abort_rule": "monitor_cancel_cutoff_or_grader_infrastructure_fault_aborts_supervised_window",
+  "source_version": "new_registered_checkout_required_old_frozen39_immutable",
+  "comparison_eligible": false,
+  "promotion_authorized": false,
+  "scientific_novelty_claim": false,
+  "trading_claim_authorized": false
+}

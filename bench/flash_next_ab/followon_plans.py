@@ -212,6 +212,9 @@ def flash_plan(window: FollowonExecution, output: Path,
         window_plan_path=str(window.source_path),
         window_plan_sha256=window.source_sha256,
         benchmark_runtime_budget_seconds=window.runtime_budget_seconds,
+        effective_invocation_deadline_seconds=grouped.OUTER_DEADLINE,
+        work_cutoff_seconds=(grouped.OUTER_DEADLINE - grouped.RESTORE_RESERVE),
+        restoration_reserve_seconds=grouped.RESTORE_RESERVE,
         launcher_python_path=_launcher(),
         controller_source_bundle=bundle,
         controller_source_bundle_sha256=grouped._canonical_sha(bundle),
@@ -258,8 +261,11 @@ def flash_plan(window: FollowonExecution, output: Path,
                      compilation_config=q.COMPILATION_CONFIG,
                  ),
                  "v5 follow-on launch is not the literal qualified argv")
-    _require(plan["effective_invocation_deadline_seconds"] == 14_400
-             and plan["restoration_reserve_seconds"] == 600,
+    _require(plan["effective_invocation_deadline_seconds"]
+                 == grouped.OUTER_DEADLINE == 4_200
+             and plan["work_cutoff_seconds"] == 3_600
+             and plan["restoration_reserve_seconds"]
+                 == grouped.RESTORE_RESERVE == 600,
              "follow-on Flash plan has a different lifecycle ceiling")
     return plan
 
