@@ -73,6 +73,26 @@ describe("ResearchOpsCard", () => {
     expect(screen.queryByText("Latest source attempt succeeded")).not.toBeInTheDocument();
   });
 
+  it("requires exact archived binary-pilot admission before offering review", () => {
+    const data = {
+      ...receipt(),
+      next_work: { code: "review_admitted_empirical_pilot", campaign_id: "v2-campaign",
+        topic_id: null, study_id: "known-opponent-utility-response-pilot-v1",
+        manifest_sha256: sha("a"), preregistration_sha256: sha("4"),
+        activation_required: false, pilot_admission_receipt_sha256: sha("5") },
+      empirical_pilot: { status: "recorded_admitted", window_id: "binary-pilot-001",
+        admission_receipt_sha256: sha("5"), pilot_run_sha256: sha("6"),
+        attempted_calls: 108, complete_episodes: 12, current_source_replay: "not_performed" },
+    };
+    const { rerender } = show(data);
+    expect(screen.getByText(/Review admitted binary pilot/)).toBeInTheDocument();
+    expect(screen.getByText(/12 complete episodes, 108 attempted calls/)).toBeInTheDocument();
+    expect(screen.getByText(/continuous-weight hypothesis remains unconfirmed/)).toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data,
+      empirical_pilot: { ...data.empirical_pilot, admission_receipt_sha256: sha("7") } }} /></MemoryRouter>);
+    expect(screen.queryByText(/Review admitted binary pilot/)).not.toBeInTheDocument();
+  });
+
   it("withholds current work on stale, wrong-schema, or failed reads", () => {
     const stale = { ...receipt(), observed_at: new Date(Date.now() - 10 * 60_000).toISOString() };
     const { rerender } = show(stale);
