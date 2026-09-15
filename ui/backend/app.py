@@ -27,17 +27,22 @@ from .frontier_reviews import register as register_frontier_reviews
 from .human_todo import register as register_human_todo
 from .iteration_journey import register as register_iteration_journey
 from .lab_channel_seam import register as register_lab_channel_seam
-from .lab_model_context_crossplan_progress import register as register_lab_model_context_crossplan_progress
 from .lab_diversity_cap_progress import register as register_lab_diversity_cap_progress
+from .lab_model_context_crossplan_progress import (
+    register as register_lab_model_context_crossplan_progress,
+)
 from .lab_model_eval_progress import register as register_lab_model_eval_progress
-from .lab_model_supplement_progress import register as register_lab_model_supplement_progress
+from .lab_model_supplement_progress import (
+    register as register_lab_model_supplement_progress,
+)
 from .lab_todo import register as register_lab_todo
 from .ladder import register as register_ladder
 from .loop_alert import register as register_loop_alert
 from .loop_v0 import register as register_loop_v0
 from .model_io import register as register_model_io
-from .research_scope import register as register_research_scope
+from .payoff_tool_study_progress import register as register_payoff_tool_study_progress
 from .research_ops_status import register as register_research_ops_status
+from .research_scope import register as register_research_scope
 from .served_models import register as register_served_models
 from .tailer import JsonlTailer
 from .todo_cockpit import register as register_todo_cockpit
@@ -231,6 +236,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     register_lab_model_supplement_progress(app)
     register_lab_model_context_crossplan_progress(app)
     register_lab_diversity_cap_progress(app)
+    register_payoff_tool_study_progress(app)
 
     register_loop_v0(
         app,
