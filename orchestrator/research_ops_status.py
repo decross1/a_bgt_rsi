@@ -20,7 +20,9 @@ from typing import Any
 
 from orchestrator import coordinator
 from orchestrator.research_campaign import (
+    DEFAULT_CAMPAIGN_ID,
     KNOWN_OPPONENT_CAMPAIGN_ID,
+    UTILITY_MECHANISM_CAMPAIGN_ID,
     CampaignError,
     available_topics,
     load_active_campaign,
@@ -450,16 +452,22 @@ def project_research_ops_status(
                             "pending", "blocked", "passed", "failed"} else "unknown",
                         "loop_source_sha256": proof["sha256"],
                     }
-        if campaign["campaign_id"] != KNOWN_OPPONENT_CAMPAIGN_ID:
+        successor_id = {
+            DEFAULT_CAMPAIGN_ID: KNOWN_OPPONENT_CAMPAIGN_ID,
+            KNOWN_OPPONENT_CAMPAIGN_ID: UTILITY_MECHANISM_CAMPAIGN_ID,
+        }.get(campaign["campaign_id"])
+        if successor_id is not None:
             try:
-                next_campaign = load_campaign(KNOWN_OPPONENT_CAMPAIGN_ID, repo_root=repo_root)
+                next_campaign = load_campaign(successor_id, repo_root=repo_root)
                 out["next_registered_campaign"] = {
                     "campaign_id": next_campaign["campaign_id"],
                     "manifest_sha256": next_campaign["_manifest_sha256"],
                     "registered_topic_count": len(next_campaign["topic_policy"]["topics"]),
                     "activation_required": True,
                 }
-                if out["campaign_queue"]["status"] == "all_registered_topics_consumed":
+                if (campaign["campaign_id"] != KNOWN_OPPONENT_CAMPAIGN_ID
+                        and out["campaign_queue"]["status"]
+                        == "all_registered_topics_consumed"):
                     out["next_work"] = {
                         "code": "activate_registered_successor",
                         "campaign_id": next_campaign["campaign_id"],

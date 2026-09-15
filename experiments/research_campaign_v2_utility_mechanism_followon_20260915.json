@@ -1,0 +1,76 @@
+{
+  "schema_version": "research-campaign/v1",
+  "campaign_id": "v2-utility-mechanism-followon-20260915",
+  "title": "Bounded utility reasoning and action consistency in local model agents",
+  "status": "prepared",
+  "opened_at": "2026-09-15T20:42:00Z",
+  "closed_at": null,
+  "scope": {
+    "domain": "game_theory_and_agent_behavior",
+    "subjects": [
+      "local LLM agents",
+      "disclosed scripted eight-round public-goods opponents"
+    ],
+    "claim_limits": [
+      "The earlier single-model pilot observed 3/12 zero-regret episodes and 0/12 combined comprehension passes; those counts motivate, but do not confirm, these hypotheses.",
+      "Model actions do not establish human strategic behavior, a new equilibrium, or a trading edge.",
+      "Payoff explanations without measured source-bound action and oracle evidence remain untested.",
+      "An oracle diagnostic is not an independent replication or scientific promotion."
+    ],
+    "shared_evidence": {
+      "literature": "cross_campaign_with_source_provenance",
+      "negative_memory": "cross_campaign_with_explicit_match_provenance",
+      "research_outcomes": "explicit_campaign_link_only"
+    }
+  },
+  "research_question": {
+    "question_id": "rq-bounded-utility-mechanism-001",
+    "text": "In disclosed binary-action eight-round public-goods games against fixed scripted opponents, when do local LLM agents choose actions consistent with an explicitly stated own-payoff or joint-payoff objective, and can bounded oracle and negative-control tests distinguish payoff arithmetic, seat binding, and lookahead errors? Treat prior instrument measurements as motivation only when their exact receipt is available; otherwise mark them unknown.",
+    "text_sha256": "f5bcf39224ab74383c27925dc9c79d842f9d9d66fe86f5833a32013720b26efe",
+    "selection": "team_proposed_within_owner_scope_2026-09-15"
+  },
+  "topic_policy": {
+    "mode": "preregistered_exact",
+    "topics": [
+      {
+        "topic_id": "topic-binary-payoff-oracle-001",
+        "text": "Prior local-model instrument observation: 12/12 pilot episodes complete, 3/12 zero-regret, and 0/12 combined comprehension passed. Source: /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/lab-eight-hour/known-opponent-utility/qfn-followon-known-opponent-lab8h-a/admission.json, raw SHA-256 824403c23c6969eeb1e2cbc11c4ec2c5222cf7ff2123cbc867427868042bcee1. These counts motivate a new falsifiable hypothesis; they do not establish human behavior, an equilibrium, or a trading edge. If the receipt cannot be verified, call the prior observation unknown. Against the same disclosed eight-round scripted public-goods opponent and binary action menu, propose a bounded test of whether a local LLM agent chooses oracle-consistent actions more often when it computes exact focal and pooled payoffs correctly. Freeze the objective and script, prespecify separate arithmetic and full-horizon regret outcomes, attempted and valid denominators, and a scripted analytical best-response comparator.",
+        "text_sha256": "81761638d1c741934d882c5f7c8311c4e8a24db3115f629b72abdcbdd6a59607",
+        "source": "campaign_preregistered"
+      },
+      {
+        "topic_id": "topic-binary-seat-representation-001",
+        "text": "Prior local-model instrument observation: 12/12 pilot episodes complete, 3/12 zero-regret, and 0/12 combined comprehension passed. Source: /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/lab-eight-hour/known-opponent-utility/qfn-followon-known-opponent-lab8h-a/admission.json, raw SHA-256 824403c23c6969eeb1e2cbc11c4ec2c5222cf7ff2123cbc867427868042bcee1. These counts motivate a new falsifiable hypothesis; they do not establish human behavior, an equilibrium, or a trading edge. If the receipt cannot be verified, call the prior observation unknown. For fresh disclosed binary-action public-goods tuples with the same payoff rule and local LLM policy, propose a matched test of whether a seat-indexed action table versus a word-list representation changes exact focal-seat payoff, pooled payoff, and oracle action-choice agreement. Keep seat order and objective explicit, use a label-permutation negative control, and prespecify per-view and per-seat attempted denominators.",
+        "text_sha256": "79133aa89412b8024600f0be19711dc1a9cfabd012384527a039b1023c8acd48",
+        "source": "campaign_preregistered"
+      },
+      {
+        "topic_id": "topic-binary-grim-lookahead-001",
+        "text": "Prior local-model instrument observation: 12/12 pilot episodes complete, 3/12 zero-regret, and 0/12 combined comprehension passed. Source: /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/lab-eight-hour/known-opponent-utility/qfn-followon-known-opponent-lab8h-a/admission.json, raw SHA-256 824403c23c6969eeb1e2cbc11c4ec2c5222cf7ff2123cbc867427868042bcee1. These counts motivate a new falsifiable hypothesis; they do not establish human behavior, an equilibrium, or a trading edge. If the receipt cannot be verified, call the prior observation unknown. Against a disclosed grim-trigger opponent in a bounded eight-round binary-action public-goods game, propose a test of whether a local LLM agent distinguishes immediate payoff from future retaliation for its stated own-payoff or joint-payoff objective. Compare with an analytical scripted best response under identical rules, include an all-retain negative control, and prespecify complete-episode regret and invalid-action denominators.",
+        "text_sha256": "885a2e210af225df88a307b263568e8bbe4f5eac443946b220cc21f91ba97092",
+        "source": "campaign_preregistered"
+      }
+    ]
+  },
+  "study_manifests": [],
+  "legacy_policy": {
+    "missing_campaign_link": "unlinked_legacy",
+    "infer_from_timestamp": false,
+    "infer_from_topic_text": false
+  },
+  "campaign_actions": {
+    "admitted": [
+      "run_loop_iteration",
+      "promote_findings",
+      "bubble_up",
+      "noop"
+    ],
+    "deferred": [
+      "run_experiment",
+      "forecast_markets",
+      "mine_paper_gap",
+      "refine_idea",
+      "improve_system"
+    ]
+  }
+}
