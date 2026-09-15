@@ -23,6 +23,7 @@ import {
   YAxis,
 } from "recharts";
 import MiniMarkdown from "../components/MiniMarkdown";
+import ResearchScopeBar from "../components/ResearchScopeBar";
 import { getExperimentDetail } from "../api/experiments";
 import { fmt, fmtRatioPct } from "../format";
 import type {
@@ -33,6 +34,7 @@ import type {
   PerRoundEntry,
   SummaryJson,
 } from "../types/experiments";
+import { researchScopedHref } from "../researchScope";
 
 interface Props {
   initial?: ExperimentDetailT | null;
@@ -666,7 +668,7 @@ export default function ExperimentDetail({ initial, expIdOverride }: Props) {
     <div className="mx-auto max-w-7xl p-5" data-testid="experiment-detail-page">
       <div className="flex items-baseline gap-3">
         <Link
-          to="/experiments"
+          to={researchScopedHref("/experiments", "all")}
           className="text-xs text-sky-400 hover:text-sky-300"
         >
           ← experiments
@@ -678,6 +680,17 @@ export default function ExperimentDetail({ initial, expIdOverride }: Props) {
           <span className="text-xs text-zinc-500">{data.title}</span>
         )}
       </div>
+
+      <ResearchScopeBar
+        fetchMetadata={initial === undefined}
+        className="mt-4"
+        scopeOverride="all"
+        activeTarget="/experiments"
+        allTarget={`/experiments/${encodeURIComponent(expId)}`}
+      />
+      <p className="mt-3 rounded border border-zinc-800 bg-zinc-900/40 p-3 text-xs text-zinc-400" data-testid="experiment-history-boundary">
+        Source-library history. This detail endpoint contains the preserved experiment record and may be broader than the campaign-scoped summary card. It is not relabeled as current-campaign evidence.
+      </p>
 
       {error && <div className="mt-3 text-sm text-red-400">{error}</div>}
       {!data && !error && (

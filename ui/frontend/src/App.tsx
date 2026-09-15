@@ -24,6 +24,11 @@ import ModelIO from "./routes/ModelIO";
 import Pulse from "./routes/Pulse";
 import Development from "./routes/Development";
 import BenchmarkProgress from "./routes/BenchmarkProgress";
+import {
+  researchScopeFromSearch,
+  researchScopedHref,
+  type ResearchScope,
+} from "./researchScope";
 
 type Theme = "light" | "dark";
 type NavGroupId = "now" | "research" | "operations";
@@ -122,9 +127,11 @@ function groupForPath(pathname: string): NavGroupId | null {
 function AtlasNavigation({
   selected,
   onNavigate,
+  researchScope,
 }: {
   selected: NavGroupId | null;
   onNavigate: () => void;
+  researchScope: ResearchScope;
 }) {
   return (
     <nav className="atlas-nav" aria-label="Lab workspace">
@@ -155,7 +162,7 @@ function AtlasNavigation({
                 end={link.end ?? false}
                 key={link.to}
                 onClick={onNavigate}
-                to={link.to}
+                to={researchScopedHref(link.to, researchScope)}
               >
                 {link.label}
               </NavLink>
@@ -187,7 +194,8 @@ function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }
 }
 
 function AtlasApp() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
+  const researchScope = researchScopeFromSearch(search);
   const [theme, setTheme] = useState<Theme>(readTheme);
   const [isNarrow, setIsNarrow] = useState(isNarrowViewport);
   const [navOpen, setNavOpen] = useState(() => !isNarrowViewport());
@@ -319,7 +327,11 @@ function AtlasApp() {
           <span className="atlas-brand-kicker">research workspace</span>
         </div>
 
-        <AtlasNavigation selected={groupForPath(pathname)} onNavigate={closeNarrowNav} />
+        <AtlasNavigation
+          selected={groupForPath(pathname)}
+          onNavigate={closeNarrowNav}
+          researchScope={researchScope}
+        />
 
         <div className="atlas-sidebar-footer">
           <a

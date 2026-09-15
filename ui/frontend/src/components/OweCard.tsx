@@ -47,6 +47,7 @@ import { getHumanTodo } from "../api/http";
 import { usePolled } from "../api/pollhub";
 import { ageLabel, clearsLadderBar, evidenceLevelOf } from "../ladderBar";
 import { useNow } from "../time";
+import { researchScopedHref, useResearchScope } from "../researchScope";
 import type { HumanTodoItem, HumanTodoResponse } from "../types/schemas";
 
 // Coerce a producer-owned display scalar to renderable text (the
@@ -244,10 +245,15 @@ interface Props {
 }
 
 function OweCard({ initial, pollMs = 30000, nowMs }: Props) {
-  const poll = usePolled<HumanTodoResponse>("human_todo", getHumanTodo, {
+  const researchScope = useResearchScope();
+  const poll = usePolled<HumanTodoResponse>(
+    `human_todo:${researchScope}`,
+    () => getHumanTodo(researchScope),
+    {
     intervalMs: pollMs,
     enabled: initial === undefined,
-  });
+    },
+  );
   const [open, setOpen] = useState<Record<string, boolean>>({});
   // WHY THE TAG is collapsed by default (the triage_reason runs long); the
   // resolve command collapses to one line, expanding on click.
@@ -349,8 +355,8 @@ function OweCard({ initial, pollMs = 30000, nowMs }: Props) {
             color: "var(--fg)",
           }}
         >
-          <StatusDot status="ok" label="unblocked" />
-          Nothing owed — the loop is unblocked.
+          <StatusDot status="idle" label="no recorded requests" />
+          No recorded requests in this view. This does not establish that the loop is unblocked.
         </div>
       )}
 
@@ -454,7 +460,7 @@ function OweCard({ initial, pollMs = 30000, nowMs }: Props) {
                   </button>
                   {id ? (
                     <Link
-                      to={`/dossier/${encodeURIComponent(id)}`}
+                      to={researchScopedHref(`/dossier/${encodeURIComponent(id)}`, "all")}
                       style={{
                         display: "flex",
                         flex: "1 1 0",
@@ -663,7 +669,7 @@ function OweCard({ initial, pollMs = 30000, nowMs }: Props) {
                       {id && (
                         <div style={{ marginTop: "var(--space-1)" }}>
                           <Link
-                            to={`/dossier/${encodeURIComponent(id)}`}
+                            to={researchScopedHref(`/dossier/${encodeURIComponent(id)}`, "all")}
                             style={{
                               ...bodyStyle,
                               color: "var(--fg-muted)",
@@ -693,7 +699,7 @@ function OweCard({ initial, pollMs = 30000, nowMs }: Props) {
           }}
         >
           {belowBar} below-bar finding{belowBar === 1 ? "" : "s"} demoted to the{" "}
-          <Link to="/ladder" style={{ color: "var(--fg-muted)" }}>
+          <Link to={researchScopedHref("/ladder", researchScope)} style={{ color: "var(--fg-muted)" }}>
             ladder
           </Link>
         </div>

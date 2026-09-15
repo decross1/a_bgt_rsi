@@ -1,33 +1,36 @@
 import { getIterations, getLadder } from "./http";
 import { refreshPoll, usePolled, usePollActivity, usePollAsOf } from "./pollhub";
 import type { LadderResponse } from "../types/schemas";
+import { browserResearchScope, type ResearchScope } from "../researchScope";
 
-const RECORDS = "ladder:records";
-const TOPICS = "ladder:iteration-topics:v1";
 // Keep the join small. Full source papers and evidence remain in each dossier;
 // retrieving every abstract here would add megabytes to each poll.
 export const TOPIC_FIELDS = "iteration_id,seed,hypothesis,started_at,ended_at";
 
-export function useLadderSources({ initial, initialIterations, pollMs }: {
+export function useLadderSources({ initial, initialIterations, pollMs, researchScope }: {
   initial?: LadderResponse | null;
   initialIterations?: unknown[];
   pollMs: number;
+  researchScope?: ResearchScope;
 }) {
+  const scope = researchScope ?? browserResearchScope();
+  const recordsKey = `ladder:records:${scope}`;
+  const topicsKey = `ladder:iteration-topics:v1:${scope}`;
   const enabled = initial === undefined;
-  const records = usePolled(RECORDS, getLadder, {
+  const records = usePolled(recordsKey, () => getLadder(scope), {
     enabled, intervalMs: Math.max(5_000, pollMs), deadlineMs: 20_000,
   });
-  const topics = usePolled(TOPICS, async () => {
-    const response = await getIterations({ fields: TOPIC_FIELDS });
+  const topics = usePolled(topicsKey, async () => {
+    const response = await getIterations({ fields: TOPIC_FIELDS }, scope);
     if (!response || !Array.isArray(response.iterations)) {
       throw new Error("Iteration topic source is missing or malformed");
     }
     return response.iterations;
   }, { enabled, intervalMs: Math.max(30_000, pollMs), deadlineMs: 20_000 });
-  const recordsAsOf = usePollAsOf(RECORDS);
-  const topicsAsOf = usePollAsOf(TOPICS);
-  const recordsRefreshing = usePollActivity(RECORDS);
-  const topicsRefreshing = usePollActivity(TOPICS);
+  const recordsAsOf = usePollAsOf(recordsKey);
+  const topicsAsOf = usePollAsOf(topicsKey);
+  const recordsRefreshing = usePollActivity(recordsKey);
+  const topicsRefreshing = usePollActivity(topicsKey);
   return {
     data: enabled ? records.data : initial,
     loaded: !enabled || records.data !== undefined,
@@ -38,7 +41,7 @@ export function useLadderSources({ initial, initialIterations, pollMs }: {
     topicsAsOf: enabled ? topicsAsOf : null,
     refreshing: enabled && (recordsRefreshing || topicsRefreshing),
     refresh: () => {
-      if (enabled) { refreshPoll(RECORDS); refreshPoll(TOPICS); }
+      if (enabled) { refreshPoll(recordsKey); refreshPoll(topicsKey); }
     },
   };
 }

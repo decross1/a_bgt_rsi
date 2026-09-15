@@ -16,6 +16,7 @@ import type {
   ResearchEvidenceLine,
 } from "./researchContext";
 import type { FamilyRecord, ThesisFamily } from "./thesisModel";
+import { researchScopedHref } from "../../researchScope";
 
 const META: React.CSSProperties = {
   margin: 0,
@@ -260,11 +261,11 @@ function ClaimCard({
       {context.iteration !== undefined && (
         <div style={{ marginTop: "var(--space-3)" }}>
           <Link
-            to={`/dossier/${context.iterationId}`}
-            aria-label={`Open full dossier for ${context.iterationId}`}
+            to={researchScopedHref(`/dossier/${context.iterationId}`, "all")}
+            aria-label={`Open source-history dossier for ${context.iterationId}`}
             style={{ color: "var(--accent)", fontSize: "var(--text-ui)" }}
           >
-            Open full dossier →
+            Open source-history dossier →
           </Link>
         </div>
       )}
@@ -347,7 +348,7 @@ function RecordHistory({
                 <li key={member} className="font-mono" style={{ ...META, padding: "2px 0" }}>
                   {dossierId === null
                     ? <span>{member}</span>
-                    : <Link to={`/dossier/${dossierId}`} style={{ color: "var(--accent)" }}>{member}</Link>}
+                    : <Link to={researchScopedHref(`/dossier/${dossierId}`, "all")} title="Source-history dossier" style={{ color: "var(--accent)" }}>{member}</Link>}
                 </li>
               );
             })}

@@ -78,9 +78,9 @@ describe("ResearchCanvas", () => {
       "No compatible test recorded in the dated source assessment.",
     );
     expect(initialContext).toHaveTextContent("not an adopted protocol");
-    expect(within(initialContext).getByRole("link", { name: /Open full dossier/ })).toHaveAttribute(
+    expect(within(initialContext).getByRole("link", { name: /Open source-history dossier/ })).toHaveAttribute(
       "href",
-      "/dossier/iter-2026-08-16-003",
+      "/dossier/iter-2026-08-16-003?research_scope=all",
     );
 
     fireEvent.click(buttons[2]);
@@ -319,7 +319,7 @@ describe("ResearchCanvas", () => {
     result.rerender(<MemoryRouter><ResearchCanvas model={buildThesisFamilies([{ ...cluster, members: ["iter-b", "iter-a"] }], iterations)} nextOwed={{}} /></MemoryRouter>);
     expect(screen.getByRole("button", { name: /iteration iter-b:/ })).toBe(button);
     expect(button).toHaveAttribute("aria-pressed", "true");
-    expect(within(screen.getByTestId("research-canvas-context")).getByRole("link", { name: /Open full dossier/ })).toHaveAttribute("href", "/dossier/iter-b");
+    expect(within(screen.getByTestId("research-canvas-context")).getByRole("link", { name: /Open source-history dossier/ })).toHaveAttribute("href", "/dossier/iter-b?research_scope=all");
   });
 
 });

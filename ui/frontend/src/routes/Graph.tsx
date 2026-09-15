@@ -57,7 +57,7 @@ export default function Graph({ initialGraph }: GraphProps) {
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <h1 className="font-mono text-sm text-zinc-200">graph</h1>
         <div className="flex items-baseline gap-3">
-          <span className="text-xs text-zinc-600">recent task history · 5 s</span>
+          <span className="text-xs text-zinc-600">all recorded operations history · not campaign-filtered · 5 s</span>
           <DetailToggle value={detail} onChange={setDetail} />
         </div>
       </div>

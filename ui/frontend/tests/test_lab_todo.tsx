@@ -183,7 +183,7 @@ describe("LabTodo", () => {
       "no killed cluster is still improvable",
     );
     expect(screen.getByTestId("lab-todo-gaps-empty")).toHaveTextContent(
-      "the loop is honestly idle",
+      "No agent-actionable current-campaign gap is recorded in this view.",
     );
   });
 

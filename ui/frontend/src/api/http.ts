@@ -20,6 +20,12 @@ import type {
   TelemetrySample,
   WorkloadHint,
 } from "../types/schemas";
+import {
+  browserResearchScope,
+  scopedResearchApiPath,
+  type ResearchScope,
+} from "../researchScope";
+import { admitScopedResearchPayload } from "./researchScope";
 
 // Port defaults to 8700; VITE_API_PORT lets a worktree preview point at a
 // backend on another port without disturbing a primary instance on 8700.
@@ -105,14 +111,18 @@ export const getWorkloadHint = () =>
 // caller that only needs timestamps (Pulse's sparkgrid) asks for that column.
 // An older backend binary ignores unknown query params and answers in full,
 // so the slim call degrades gracefully across version skew.
-export const getIterations = (opts?: { fields?: string; limit?: number }) => {
+export const getIterations = (
+  opts?: { fields?: string; limit?: number },
+  scope: ResearchScope = browserResearchScope(),
+) => {
   const q = new URLSearchParams();
   if (opts?.fields) q.set("fields", opts.fields);
   if (opts?.limit != null) q.set("limit", String(opts.limit));
+  q.set("research_scope", scope);
   const qs = q.toString();
   return getJSON<IterationsResponse>(
     `/api/loop_v0/iterations${qs ? `?${qs}` : ""}`,
-  );
+  ).then((value) => admitScopedResearchPayload(value, scope));
 };
 
 // The full pipeline journey for one iteration (PipelineJourney, S2 reframe).
@@ -139,7 +149,12 @@ export const getCoordinatorCycles = () =>
 // --- HUMAN TODO (ui/backend, observability_reconciliation_plan.md §B3) ---
 // Read-only composition of everything awaiting a human: pending gate verdicts,
 // findings in review, unacked bubbles, stale active_run, state-file gates.
-export const getHumanTodo = () => getJSON<HumanTodoResponse>("/api/human_todo");
+export const getHumanTodo = (
+  scope: ResearchScope = browserResearchScope(),
+) =>
+  getJSON<HumanTodoResponse>(
+    scopedResearchApiPath("/api/human_todo", scope),
+  ).then((value) => admitScopedResearchPayload(value, scope));
 
 // --- LOOP ALERT + IDEAS (ui/backend/loop_alert.py, 2026-08-14 work order) ---
 // GET /api/loop_alert returns 204 when run_state/loop_alert.json has never
@@ -219,13 +234,26 @@ function admitLadderResponse(value: unknown): LadderResponse {
   return value as LadderResponse;
 }
 
-export async function getLadder(): Promise<LadderResponse | null> {
-  const resp = await fetch(`${API_BASE}/api/ladder`);
-  if (resp.status === 204) return null;
+export async function getLadder(
+  scope: ResearchScope = browserResearchScope(),
+): Promise<LadderResponse | null> {
+  const path = scopedResearchApiPath("/api/ladder", scope);
+  const resp = await fetch(`${API_BASE}${path}`);
+  if (resp.status === 204) {
+    if (scope === "active") {
+      throw new Error(
+        "Research scope integrity error: active response has no identity envelope",
+      );
+    }
+    return null;
+  }
   if (!resp.ok) {
     throw await errorFromResponse(resp);
   }
-  return admitLadderResponse(await resp.json());
+  return admitScopedResearchPayload(
+    admitLadderResponse(await resp.json()),
+    scope,
+  );
 }
 
 // --- LAB TODO (ui/backend/lab_todo.py) ---
@@ -235,7 +263,10 @@ export async function getLadder(): Promise<LadderResponse | null> {
 // even on a cold checkout (gaps ship, the ledger lists are empty); a 404 means
 // the RUNNING BINARY predates the endpoint — version skew, which the HttpError
 // status lets LabTodo render as a quiet EndpointMissingNote.
-export const getLabTodo = () => getJSON<LabTodoResponse>("/api/lab_todo");
+export const getLabTodo = (
+  scope: ResearchScope = browserResearchScope(),
+) => getJSON<LabTodoResponse>(scopedResearchApiPath("/api/lab_todo", scope))
+  .then((value) => admitScopedResearchPayload(value, scope));
 
 // GET /api/ideas returns 204 when memory/ideas.md is absent -> null.
 export async function getIdeas(): Promise<IdeasResponse | null> {

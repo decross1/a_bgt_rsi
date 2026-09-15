@@ -9,9 +9,15 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import CoordinatorCycleCard from "../components/CoordinatorCycleCard";
+import ResearchScopeBar from "../components/ResearchScopeBar";
 import { getResearch } from "../api/experiments";
 import { getCoordinatorCycles } from "../api/http";
 import { fmt } from "../format";
+import {
+  researchScopedHref,
+  useResearchScope,
+  type ResearchScope,
+} from "../researchScope";
 import type {
   ResearchBridge,
   ResearchExperiment,
@@ -211,7 +217,8 @@ function ResearchCard({
   const title = asText(exp.title);
   return (
     <Link
-      to={`/experiments/${safeEncodePath(id)}`}
+      to={researchScopedHref(`/experiments/${safeEncodePath(id)}`, "all")}
+      aria-label={`${title ?? id} · source history`}
       data-testid={`research-card-${id}`}
       className={CARD}
     >
@@ -226,6 +233,10 @@ function ResearchCard({
       {notRun && (
         <div className="mt-2 text-xs text-amber-400/90">{notRunCopy}</div>
       )}
+
+      <div className="mt-2 text-[9px] uppercase tracking-wide text-zinc-600">
+        Source record · all history
+      </div>
 
       <BridgeRow exp={exp} />
     </Link>
@@ -274,27 +285,47 @@ function TierSection({ tier }: { tier: ResearchTier }) {
 }
 
 export default function Experiments({ initial, initialCoordinatorCycles }: Props) {
+  const researchScope = useResearchScope();
   const [data, setData] = useState<ResearchResponse | null>(initial ?? null);
+  const [dataScope, setDataScope] = useState<ResearchScope | null>(
+    initial !== undefined ? researchScope : null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [cycles, setCycles] = useState<CoordinatorCycle[]>(
     initialCoordinatorCycles ?? [],
   );
 
   useEffect(() => {
-    if (initial !== undefined) return;
+    if (initial !== undefined) {
+      setDataScope(researchScope);
+      return;
+    }
     let active = true;
-    getResearch()
-      .then((d) => active && setData(d))
-      .catch((e) => active && setError(String(e)));
+    getResearch(researchScope)
+      .then((d) => {
+        if (!active) return;
+        setData(d);
+        setDataScope(researchScope);
+        setError(null);
+      })
+      .catch((e) => {
+        if (!active) return;
+        setDataScope(researchScope);
+        setError(String(e));
+      });
     return () => {
       active = false;
     };
-  }, [initial]);
+  }, [initial, researchScope]);
 
   useEffect(() => {
     // Static-render gate: when the research index is injected (test mode), do
     // not self-fetch the coordinator cycles either — use whatever was injected.
     if (initial !== undefined) return;
+    if (researchScope !== "all") {
+      setCycles([]);
+      return;
+    }
     let active = true;
     getCoordinatorCycles()
       .then((r) => {
@@ -310,7 +341,13 @@ export default function Experiments({ initial, initialCoordinatorCycles }: Props
     return () => {
       active = false;
     };
-  }, [initial]);
+  }, [initial, researchScope]);
+
+  // Never render the prior scope while a client-side history transition is
+  // resolving. The visible scope switch performs a full reload as the main
+  // cache boundary; this guards other navigation mechanisms too.
+  const scopedData = dataScope === researchScope ? data : null;
+  const scopedError = dataScope === researchScope ? error : null;
 
   // `tiers` / `untiered` / per-tier `experiments` are producer-owned (the
   // backend computes /api/research, but a legacy/partial/truncated payload —
@@ -319,15 +356,19 @@ export default function Experiments({ initial, initialCoordinatorCycles }: Props
   // reduce/length/map target so a non-array field reads "empty" instead of
   // crashing the page on `.reduce`/`.map`. Non-object tier/exp elements are
   // dropped (a null/number in the array carries no section/card).
-  const tiers = asArray<ResearchTier>(data?.tiers).filter(
+  const tiers = asArray<ResearchTier>(scopedData?.tiers).filter(
     (t): t is ResearchTier => typeof t === "object" && t !== null,
   );
-  const untiered = asArray<ResearchExperiment>(data?.untiered).filter(
+  const untiered = asArray<ResearchExperiment>(scopedData?.untiered).filter(
     (e): e is ResearchExperiment => typeof e === "object" && e !== null,
   );
   const nExperiments =
     tiers.reduce((acc, t) => acc + asArray(t?.experiments).length, 0) +
     untiered.length;
+  const visibleTiers = tiers.filter(
+    (tier) =>
+      researchScope === "all" || asArray(tier.experiments).length > 0,
+  );
   // `cycles` is React state (CoordinatorCycle[]); the live fetch path is
   // .catch-guarded, but an injected `initialCoordinatorCycles` could be a
   // non-array or carry a null/non-object element. Coerce to an array and drop
@@ -336,6 +377,8 @@ export default function Experiments({ initial, initialCoordinatorCycles }: Props
   const cycleList = asArray<CoordinatorCycle>(cycles).filter(
     (c): c is CoordinatorCycle => typeof c === "object" && c !== null,
   );
+  const showCoordinatorHistory =
+    researchScope === "all" || initialCoordinatorCycles !== undefined;
 
   return (
     <div className="mx-auto max-w-7xl p-5" data-testid="experiments-page">
@@ -344,26 +387,34 @@ export default function Experiments({ initial, initialCoordinatorCycles }: Props
         <span className="text-[10px] text-zinc-600">/api/research</span>
       </div>
       <p className="mt-1 text-xs text-zinc-500">
-        Experiments grouped by sandbox tier, each with its outcome verdict and
-        the loop iteration(s) it bridged into.
+        {researchScope === "active"
+          ? "Only experiment summaries explicitly bound to the current campaign are shown."
+          : "Preserved experiments grouped by sandbox tier, with their recorded outcomes and bridges."}
       </p>
 
-      {error && <div className="mt-3 text-sm text-red-400">{error}</div>}
+      <ResearchScopeBar fetchMetadata={initial === undefined} className="mt-4" />
 
-      {data && !data.available && (
+      {scopedError && <div className="mt-3 text-sm text-red-400">{scopedError}</div>}
+
+      {scopedData && !scopedData.available && (
         <div
           className="mt-4 rounded border border-amber-800/50 bg-amber-900/10 p-4 text-sm text-amber-300"
           data-testid="experiments-unavailable"
         >
           Experiments directory is not available
-          {data.reason ? ` (${data.reason})` : ""}.
+          {scopedData.reason ? ` (${scopedData.reason})` : ""}.
         </div>
       )}
 
-      {data && data.available && (
+      {scopedData && scopedData.available && (
         <>
-          {tiers.map((tier, i) => (
-            <TierSection key={asText(tier.tier) ?? `tier-${i}`} tier={tier} />
+          {researchScope === "active" && nExperiments === 0 && (
+            <div className="mt-4 rounded border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-400" data-testid="experiments-campaign-empty">
+              No experiment summary is explicitly linked to the current campaign. This is an empty campaign view, not a missing history archive.
+            </div>
+          )}
+          {visibleTiers.map((tier, i) => (
+              <TierSection key={asText(tier.tier) ?? `tier-${i}`} tier={tier} />
           ))}
 
           {untiered.length > 0 && (
@@ -384,7 +435,7 @@ export default function Experiments({ initial, initialCoordinatorCycles }: Props
         </>
       )}
 
-      {!data && !error && (
+      {!scopedData && !scopedError && (
         <div className="mt-4 text-sm text-zinc-500">Loading…</div>
       )}
 
@@ -392,10 +443,10 @@ export default function Experiments({ initial, initialCoordinatorCycles }: Props
           plan → outcome → evidence chain (incl. an errored dispatch as an
           explicit row), so a coordinator-driven result can be trusted or
           doubted alongside the hand-run experiments above. */}
-      <section className="mt-8" data-testid="coordinator-cycles-section">
+      {showCoordinatorHistory && <section className="mt-8" data-testid="coordinator-cycles-section">
         <div className="flex items-baseline gap-2">
           <h2 className="text-sm font-semibold text-zinc-100">
-            Coordinator cycles
+            Coordinator cycles · history
           </h2>
           <span className="font-mono text-[10px] text-zinc-600">
             /api/coordinator/cycles
@@ -427,10 +478,10 @@ export default function Experiments({ initial, initialCoordinatorCycles }: Props
             ))}
           </div>
         )}
-      </section>
+      </section>}
 
       <div className="mt-6 text-[11px] text-zinc-600">
-        {fmt(nExperiments)} experiment(s) across {fmt(tiers.length)} tier(s).
+        {fmt(nExperiments)} experiment(s) across {fmt(visibleTiers.length)} visible tier(s).
       </div>
     </div>
   );

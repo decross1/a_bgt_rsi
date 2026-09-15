@@ -67,7 +67,7 @@ describe("OweStrip", () => {
     const link = screen.getByRole("link", {
       name: /ladder finding that cleared the bar/,
     });
-    expect(link).toHaveAttribute("href", "/dossier/sf-ladder-001");
+    expect(link).toHaveAttribute("href", "/dossier/sf-ladder-001?research_scope=all");
   });
 
   it("carries the L4 chip on bar-clearing findings", () => {
@@ -102,7 +102,7 @@ describe("OweStrip", () => {
   it("empty owed queue is the designed, honest empty state", () => {
     renderStrip([LEGACY_FINDING, BUBBLE]);
     expect(screen.getByTestId("owe-empty")).toHaveTextContent(
-      "Nothing owed — the loop is unblocked.",
+      "No recorded requests in this view. This does not establish that the loop is unblocked.",
     );
     expect(screen.getByTestId("owe-count")).toHaveTextContent("0");
     // The demoted finding still gets its muted line — the calm state is

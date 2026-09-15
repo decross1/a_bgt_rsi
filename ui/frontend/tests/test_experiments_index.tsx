@@ -20,7 +20,7 @@ function renderPage(
   coordinatorCycles: CoordinatorCycle[] = [],
 ) {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={["/experiments?research_scope=all"]}>
       <Experiments
         initial={initial}
         initialCoordinatorCycles={coordinatorCycles}
@@ -56,6 +56,17 @@ describe("Research index (tier-grouped)", () => {
     const bridge = screen.getByTestId("bridge-exp003_vickrey_rediscovery");
     expect(bridge).toHaveTextContent("iter-2026-05-27-028");
     expect(bridge).toHaveTextContent("truthful_bid_fraction=1");
+  });
+
+  it("opens unscoped experiment details in the labeled history view", () => {
+    renderPage(RESEARCH_FIXTURE);
+    expect(screen.getByTestId("research-card-exp003_vickrey_rediscovery")).toHaveAttribute(
+      "href",
+      "/experiments/exp003_vickrey_rediscovery?research_scope=all",
+    );
+    expect(screen.getByTestId("research-card-exp003_vickrey_rediscovery")).toHaveTextContent(
+      "Source record · all history",
+    );
   });
 
   it("attaches the exp006 semi_synthetic bridge", () => {

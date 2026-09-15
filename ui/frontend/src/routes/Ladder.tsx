@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import EndpointMissingNote, {
   isVersionSkew404,
 } from "../components/EndpointMissingNote";
+import ResearchScopeBar from "../components/ResearchScopeBar";
 import MiniMarkdown from "../components/MiniMarkdown";
 import KillsByRung from "../components/ladder/KillsByRung";
 import LadderBoard from "../components/ladder/LadderBoard";
@@ -21,6 +22,7 @@ import PeekPanel from "../design/PeekPanel";
 import { SkeletonCard } from "../design/Skeleton";
 import { registerPaletteActions } from "../design/CommandPalette";
 import { getIdeas } from "../api/http";
+import { researchScopedHref, useResearchScope } from "../researchScope";
 import type { LadderCluster, LadderResponse } from "../types/schemas";
 
 const LADDER_ENDPOINT = "/api/ladder";
@@ -85,7 +87,8 @@ function receivedAt(at: number | null) {
 }
 
 export default function Ladder({ initial, initialIdeas, initialIterations, pollMs = 30_000 }: Props) {
-  const source = useLadderSources({ initial, initialIterations, pollMs });
+  const researchScope = useResearchScope();
+  const source = useLadderSources({ initial, initialIterations, pollMs, researchScope });
   const { data, loaded, error } = source;
   const skew = isVersionSkew404(error, LADDER_ENDPOINT);
   const [view, setView] = useState<View>("collections");
@@ -176,8 +179,10 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
     <div className="page-full" data-testid="ladder-page">
       <header className="flex min-w-0 items-center justify-between gap-3 mb-5">
         <h1 style={{ margin: 0, fontSize: "var(--text-title-lg)", fontWeight: "var(--weight-semibold)" }}>Research</h1>
-        <Link to="/#lab-queue" data-testid="ladder-lab-queue-link" className="text-sm text-[var(--accent)]">Lab queue →</Link>
+        <Link to={researchScopedHref("/#lab-queue", researchScope)} data-testid="ladder-lab-queue-link" className="text-sm text-[var(--accent)]">Lab queue →</Link>
       </header>
+
+      <ResearchScopeBar fetchMetadata={initial === undefined} />
 
       {error != null && (!skew || loaded) && (
         <div
@@ -201,7 +206,7 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
       {skew && data == null && !loaded && (
         <>
           <EndpointMissingNote endpoint={LADDER_ENDPOINT} />
-          <IdeasFallback initial={initialIdeas} />
+          {researchScope === "all" && <IdeasFallback initial={initialIdeas} />}
         </>
       )}
 
@@ -213,10 +218,11 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
             data-testid="ladder-empty"
             style={{ fontSize: "var(--text-ui)", color: "var(--fg-muted)" }}
           >
-            no idea ledger yet — memory/idea_ledger.jsonl has not been written
-            on this checkout.
+            {researchScope === "active"
+              ? "No clusters are explicitly linked to the current campaign. Historical records remain in All research history."
+              : "no idea ledger yet — memory/idea_ledger.jsonl has not been written on this checkout."}
           </div>
-          <IdeasFallback initial={initialIdeas} />
+          {researchScope === "all" && <IdeasFallback initial={initialIdeas} />}
         </>
       )}
 
