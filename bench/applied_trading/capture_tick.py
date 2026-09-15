@@ -3,9 +3,11 @@
 After a verified stale cursor, the timer may archive the old state, record an
 unobserved gap, and bootstrap a NEW independent BTCUSDT lineage from venue
 tail. It never chooses a cursor by timestamp or repairs a failed branch. The
-three canonical Spark leases are read under nonblocking shared flocks and held
-through one bounded capture, so a live model/weekly/coordinator lease causes an
-immutable skipped tick. No account, model request, or order surface is present.
+Capture owns its scheduler lock, independently of GPU/model research leases.
+A memory preflight leaves 20 GiB plus the larger 1 GiB offline evaluator cap;
+the systemd services enforce their own CPU, memory and wall-time limits. Operator
+pause and insufficient/unknown memory produce immutable zero-GET skips. No
+account, model request, or order surface is present.
 """
 
 from __future__ import annotations
@@ -33,12 +35,8 @@ GAP_SCHEMA = "applied-trial-h1-capture-lineage-gap/v1"
 SYMBOL = "BTCUSDT"
 CAPTURE_ROOT = continuation.CAPTURE_ROOT
 SCHEDULER_ROOT = CAPTURE_ROOT / "_scheduler"
-CANONICAL_REPO = Path("/home/decross1/projects/a_bgt_rsi")
-LOCK_NAMES = (
-    ".weekly-upgrade-execution.lock",
-    ".coordinator-cron.lock",
-    ".weekly-upgrade-gpu.lock",
-)
+MEMINFO_PATH = Path("/proc/meminfo")
+MIN_AVAILABLE_KIB = 21 * 1024**2
 TICK_MAX_WALL_S = 90
 BOOTSTRAP_MAX_WALL_S = 150
 MAX_PREDECESSOR_AGE_S = 900
@@ -297,49 +295,29 @@ def _scheduler_lock():
 
 @contextmanager
 def _idle_leases():
-    """Read-only SH flocks cooperate with the exact canonical EX leases."""
-    run_state = CANONICAL_REPO / "run_state"
-    if run_state.is_symlink() or not run_state.is_dir():
-        yield "canonical_run_state_unavailable"
-        return
+    """Compatibility name for the CPU-only capture/due resource preflight.
+
+    Neither operation uses a model endpoint. Holding GPU or coordinator leases
+    here previously interrupted forward observations during every benchmark.
+    The capture scheduler and due worker retain their separate exclusive locks.
+    This is a start-time check, not a continuous host-memory reservation.
+    """
     pause = SCHEDULER_ROOT / "pause_capture"
     if pause.exists() or pause.is_symlink():
         yield "operator_pause_capture"
         return
-    handles: list[int] = []
-    reason = None
-    run_state_fd = None
     try:
-        run_state_fd = os.open(run_state, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-                               | getattr(os, "O_CLOEXEC", 0))
-        for name in LOCK_NAMES:
-            path = run_state / name
-            if path.is_symlink() or not path.is_file():
-                reason = f"missing_or_redirected_lease:{name}"
-                break
-            fd = os.open(name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
-                         | getattr(os, "O_CLOEXEC", 0), dir_fd=run_state_fd)
-            handles.append(fd)
-            info = os.fstat(fd)
-            current = os.stat(name, dir_fd=run_state_fd, follow_symlinks=False)
-            if not stat.S_ISREG(info.st_mode) or info.st_size > 4_096 or (
-                    info.st_dev, info.st_ino) != (current.st_dev, current.st_ino):
-                reason = f"invalid_lease:{name}"
-                break
-            try:
-                fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-            except BlockingIOError:
-                reason = f"research_lease_busy:{name}"
-                break
-    except OSError:
-        reason = "research_lease_unreadable"
-    try:
-        yield reason
-    finally:
-        for fd in reversed(handles):
-            os.close(fd)
-        if run_state_fd is not None:
-            os.close(run_state_fd)
+        rows = [line.split() for line in MEMINFO_PATH.read_text().splitlines()
+                if line.startswith("MemAvailable:")]
+        if (len(rows) != 1 or len(rows[0]) != 3 or rows[0][2] != "kB"
+                or not rows[0][1].isdigit()):
+            raise ValueError("invalid MemAvailable")
+        available = int(rows[0][1])
+    except (OSError, ValueError, UnicodeError):
+        yield "memory_available_unverified"
+        return
+    yield (None if available >= MIN_AVAILABLE_KIB
+           else "memory_available_below_21gib")
 
 
 def _capture_child() -> Path:
@@ -849,7 +827,8 @@ def main(argv: list[str] | None = None) -> int:
                           "tick_max_wall_s": TICK_MAX_WALL_S,
                           "bootstrap_max_wall_s": BOOTSTRAP_MAX_WALL_S,
                           "predecessor_max_age_s": MAX_PREDECESSOR_AGE_S,
-                          "canonical_lease_names": LOCK_NAMES,
+                          "gpu_lease_required": False,
+                          "minimum_mem_available_gib": 21,
                           "timer_enabled": False, "orders": 0}, sort_keys=True))
         return 0
     if args.bootstrap_new:

@@ -31,11 +31,14 @@ def isolated(monkeypatch, tmp_path):
     canonical = tmp_path / "canonical"
     run_state = canonical / "run_state"
     run_state.mkdir(parents=True)
-    for name in tick.LOCK_NAMES:
+    for name in (".weekly-upgrade-execution.lock", ".coordinator-cron.lock",
+                 ".weekly-upgrade-gpu.lock"):
         (run_state / name).write_text("")
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text(f"MemAvailable: {32 * 1024**2} kB\n")
+    monkeypatch.setattr(tick, "MEMINFO_PATH", meminfo)
     monkeypatch.setattr(tick, "CAPTURE_ROOT", captures)
     monkeypatch.setattr(tick, "SCHEDULER_ROOT", scheduler)
-    monkeypatch.setattr(tick, "CANONICAL_REPO", canonical)
     monkeypatch.setattr(tick, "_ensure_scheduler", lambda: None)
     monkeypatch.setattr(tick, "_source_sha", lambda: "a" * 64)
     monkeypatch.setattr(tick, "_continuation_sha", lambda: "b" * 64)
@@ -67,18 +70,54 @@ def _complete(*, from_id: int = 10, next_id: int = 11,
             "backlog_unresolved": False}
 
 
-def test_busy_canonical_lease_issues_zero_gets(isolated, monkeypatch):
-    captures, _scheduler, run_state, rows, _states = isolated
-    monkeypatch.setattr(tick, "_state", lambda: (_active(captures / "unused"), "d" * 64))
+def test_gpu_lease_does_not_block_cpu_capture(isolated, monkeypatch):
+    captures, _scheduler, run_state, rows, states = isolated
+    previous, output = captures / "previous", captures / "next"
+    batch = _complete()
+    output.mkdir()
+    (output / "capture-batch.json").write_text(json.dumps(batch))
+    monkeypatch.setattr(tick, "_state", lambda: (_active(previous), "d" * 64))
+    monkeypatch.setattr(tick, "_fixed_capture", lambda text: Path(text))
+    monkeypatch.setattr(tick, "_batch", lambda _path: (batch, "c" * 64))
+    monkeypatch.setattr(tick, "_capture_child", lambda: output)
+    calls = []
     monkeypatch.setattr(tick.continuation, "run_once",
-                        lambda **_kwargs: pytest.fail("busy lease issued GET"))
+                        lambda **kwargs: (calls.append(kwargs) or
+                                          {"status": "continued_complete"}))
     with (run_state / ".weekly-upgrade-gpu.lock").open("rb") as holder:
         fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
         result = tick.run_once()
+    assert result["status"] == "continued_complete"
+    assert result["requests_attempted"] == 3
+    assert len(calls) == 1 and states[-1]["mode"] == "active"
+    assert rows == [result]
+
+
+@pytest.mark.parametrize("meminfo,reason", [
+    ("MemAvailable: 1024 kB\n", "memory_available_below_21gib"),
+    ("MemTotal: 128000000 kB\n", "memory_available_unverified"),
+    ("MemAvailable: -1 kB\n", "memory_available_unverified"),
+    ("MemAvailable: 128 GiB\n", "memory_available_unverified"),
+])
+def test_memory_pressure_or_unknown_issues_zero_gets(isolated, monkeypatch, meminfo, reason):
+    _captures, _scheduler, _run_state, rows, _states = isolated
+    tick.MEMINFO_PATH.write_text(meminfo)
+    monkeypatch.setattr(tick.continuation, "run_once",
+                        lambda **_kwargs: pytest.fail("memory gate issued GET"))
+    result = tick.run_once()
     assert result["status"] == "skipped_busy"
+    assert result["reason"] == reason
     assert result["requests_attempted"] == result["requests_succeeded"] == 0
     assert result["attempt_denominator_verified"] is True
     assert rows == [result]
+
+
+def test_capture_scheduler_still_excludes_second_tick(isolated):
+    _captures, scheduler, _run_state, _rows, _states = isolated
+    with (scheduler / "capture-tick.lock").open("wb") as holder:
+        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with pytest.raises(tick.TickError, match="another capture tick"):
+            tick.run_once()
 
 
 def test_operator_pause_records_zero_get_skip(isolated, monkeypatch):
@@ -437,17 +476,17 @@ def test_sealed_transient_gap_archived_before_any_new_get(isolated, monkeypatch)
     assert rows == [result] and states[-1]["mode"] == "active"
 
 
-def test_blocked_transient_preserves_canonical_lease(isolated, monkeypatch):
-    captures, _scheduler, run_state, rows, _states = isolated
+def test_blocked_transient_preserves_memory_preflight(isolated, monkeypatch):
+    captures, _scheduler, _run_state, rows, _states = isolated
+    tick.MEMINFO_PATH.write_text("MemAvailable: 1024 kB\n")
     state = {**_active(captures / "unused"), "mode": "blocked",
              "blocked_reason": "continuation_failed:TickError"}
     monkeypatch.setattr(tick, "_state", lambda: (state, "f" * 64))
     monkeypatch.setattr(tick, "_sealed_transient_get",
-                        lambda _state: pytest.fail("busy lease inspected failed branch"))
-    with (run_state / ".weekly-upgrade-gpu.lock").open("rb") as holder:
-        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        result = tick.run_once()
+                        lambda _state: pytest.fail("memory gate inspected failed branch"))
+    result = tick.run_once()
     assert result["status"] == "skipped_busy"
+    assert result["reason"] == "memory_available_below_21gib"
     assert rows == [result] and result["requests_attempted"] == 0
 
 
