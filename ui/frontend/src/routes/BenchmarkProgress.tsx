@@ -11,7 +11,7 @@ import {
   usePollActivity,
 } from "../api/pollhub";
 import { SkeletonCard } from "../design/Skeleton";
-import { LocalModelResearchPanel } from "../components/LocalModelResearchPanel";
+import { admittedPair, LocalModelResearchPanel } from "../components/LocalModelResearchPanel";
 import { FollowonResultsPanel } from "../components/FollowonResultsPanel";
 import { AppliedMarketResearchPanel } from "../components/AppliedMarketResearchPanel";
 import type {
@@ -40,6 +40,8 @@ const text = (value: unknown, fallback = "Not recorded"): string =>
   typeof value === "string" && value.trim() ? value : fallback;
 const finite = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
+const wholeCount = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0;
 const record = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const rows = <T,>(value: unknown): T[] =>
@@ -391,6 +393,23 @@ export default function BenchmarkProgress({ initial }: Props) {
     ? Math.min(budget.limit_minutes, Math.max(0, budget.charged_minutes)) : null;
   const budgetOverrun = finite(budget?.charged_minutes) && finite(budget?.limit_minutes) && budget.charged_minutes > budget.limit_minutes
     ? budget.charged_minutes - budget.limit_minutes : null;
+  const localPair = data.local_model_research?.comparisons.find(row =>
+    row.status === "complete" && row.comparison_eligible === true && admittedPair(row));
+  const localObjective = localPair?.families.find(row => row.family === "objective" && row.comparison_eligible);
+  const localTopic = localPair?.families.find(row => row.family === "topic" && row.comparison_eligible);
+  const pairCountsBound = [localObjective, localTopic].every(row => row &&
+    [row.cohorts.resident.declared, row.cohorts.resident.attempted,
+      row.cohorts.resident.passed, row.cohorts.flash.declared,
+      row.cohorts.flash.attempted, row.cohorts.flash.passed].every(wholeCount) &&
+    row.cohorts.resident.declared > 0 &&
+    row.cohorts.resident.attempted === row.cohorts.resident.declared &&
+    row.cohorts.flash.attempted === row.cohorts.flash.declared &&
+    row.cohorts.resident.declared === row.cohorts.flash.declared &&
+    row.cohorts.resident.passed <= row.cohorts.resident.declared &&
+    row.cohorts.flash.passed <= row.cohorts.flash.declared);
+  const weeklyHeadline = summary.upgrade_established === false
+    ? "Weekly review: no week-over-week upgrade established"
+    : text(summary.headline, upgradeLabel);
 
   return <section className="page-full benchmark-progress" aria-labelledby="benchmark-progress-title">
     <header className="benchmark-page-head">
@@ -411,9 +430,9 @@ export default function BenchmarkProgress({ initial }: Props) {
 
     <section className="benchmark-hero" aria-labelledby="benchmark-outcome-heading">
       <div className="benchmark-outcome"><StatusChip value={upgradeLabel} tone={upgradeTone} />
-        <h2 id="benchmark-outcome-heading">{text(summary.headline, upgradeLabel)}</h2>
-        <p>{summary.upgrade_established === false ? "No upgrade has been established. " : ""}Operational review activity and measured capability are separate. More comparable measurements are needed to show progression.</p>
-        <Link to="/ladder">Open Research for thesis evidence <span aria-hidden="true">→</span></Link>
+        <h2 id="benchmark-outcome-heading">{weeklyHeadline}</h2>
+        <p>{summary.upgrade_established === false ? "No maintenance upgrade has been established from the recorded weeks. " : ""}This weekly review does not grade the separate local-model study below.</p>
+        <Link to="/ladder">Open campaign research <span aria-hidden="true">→</span></Link>
       </div>
       <dl className="benchmark-summary-grid">
         <div><dt>Weeks recorded</dt><dd>{fmtCount(summary.weeks_seen)}</dd><small>baseline {text(summary.latest_week)}</small></div>
@@ -424,6 +443,13 @@ export default function BenchmarkProgress({ initial }: Props) {
           <small>{finite(budget?.prior_import_minutes) && budget.prior_import_minutes > 0 ? `Includes ${fmtNumber(budget.prior_import_minutes, 1)} min prior-use debit · ` : ""}{budgetOverrun !== null ? `${fmtNumber(budgetOverrun, 1)} min over allowance` : finite(budget?.remaining_minutes) ? `${fmtNumber(budget.remaining_minutes, 1)} min remaining` : "Remaining allowance not recorded"}</small></div>
       </dl>
     </section>
+
+    <aside className="benchmark-evidence-note" aria-labelledby="local-evidence-bridge-heading">
+      <strong id="local-evidence-bridge-heading">Separate local-model evidence</strong>
+      <span>{localPair && pairCountsBound && localObjective && localTopic
+        ? <>The admitted original Flash/resident pair is mixed: objective tasks passed {localObjective.cohorts.flash.passed}/{localObjective.cohorts.flash.declared} with Flash versus {localObjective.cohorts.resident.passed}/{localObjective.cohorts.resident.declared} with residents, while topic output passed {localTopic.cohorts.flash.passed}/{localTopic.cohorts.flash.declared} versus {localTopic.cohorts.resident.passed}/{localTopic.cohorts.resident.declared}. The optimized MTP profile has separate follow-on studies; this original pair does not establish a primary-model replacement. <a href="#local-model-research-heading">View paired evidence</a> and <a href="#followon-heading">optimized follow-ons</a>.</>
+        : <>No complete, admitted local pair is available in this snapshot. Local-model scores are withheld here; <a href="#local-model-research-heading">view source status below</a>.</>}</span>
+    </aside>
 
     <aside className="benchmark-evidence-note"><strong>Evidence boundary</strong><span>Operator-recorded summaries are not scientific ground truth. Review-only automation scans and critiques proposals; it does not automatically rerun benchmark panels or promote changes.</span></aside>
 

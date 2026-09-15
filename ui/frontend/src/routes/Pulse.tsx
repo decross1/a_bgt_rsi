@@ -718,6 +718,7 @@ export default function Pulse() {
         </div>
         <div className="flex flex-wrap gap-3 text-sm">
           <Link to={researchScopedHref("/ladder", researchScope)} className="rounded-md border border-[var(--border-2)] bg-[var(--surface-1)] px-4 py-2 text-[var(--accent)]">Explore research</Link>
+          <Link to="/benchmarks" className="rounded-md border border-[var(--border-2)] bg-[var(--surface-1)] px-4 py-2 text-[var(--accent)]">View model evidence</Link>
           <Link to="/development" className="rounded-md border border-[var(--border-2)] bg-[var(--surface-1)] px-4 py-2 text-[var(--accent)]">Review delivery and readiness</Link>
         </div>
       </header>
