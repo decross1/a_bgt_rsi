@@ -10,6 +10,7 @@ import re
 import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from . import model_runtime as mr
@@ -142,6 +143,134 @@ def _candidate_identity(state: dict[str, Any]) -> tuple[str, str, int, int] | No
     )
 
 
+def _terminal_flash_restoration(
+    run_fd: int, run_path: Path, run_id: str, state: dict[str, Any],
+    plan: dict[str, Any], window_path: Path, window_sha: str,
+    *, observed: datetime,
+) -> str:
+    """Read closed operational restoration; never admit task scores here."""
+    from bench.flash_next_ab import extended_admission as safety
+    from bench.flash_next_ab import followon_dispatch as grouped
+    from bench.flash_next_ab import qualification as q
+
+    result_raw = mr._read_fd(
+        run_fd, "result.json", maximum=mr.MAX_RESULT_BYTES,
+        label="follow-on terminal result",
+    )
+    result = mr._strict_object(result_raw, "follow-on terminal result")
+    supervisor_raw = mr._read_fd(
+        run_fd, "supervision.json", maximum=mr.MAX_RESULT_BYTES,
+        label="follow-on terminal supervision",
+    )
+    supervisor = mr._strict_object(
+        supervisor_raw, "follow-on terminal supervision",
+    )
+    attempt_raw = mr._read_fd(
+        run_fd, "group-attempt.json", maximum=2 * 1024 * 1024,
+        label="follow-on terminal attempt",
+    )
+    attempt = mr._strict_object(attempt_raw, "follow-on terminal attempt")
+    argv = [
+        plan["launcher_python_path"], "-m",
+        "bench.flash_next_ab.extended_lifecycle", "--worker",
+        "--eval-plan", str(window_path), "--output-dir", str(run_path),
+    ]
+    if (
+        state.get("phase") != "complete"
+        or state.get("result_status") != "complete"
+        or result.get("schema") != FOLLOWON_RESULT_SCHEMA
+        or result.get("status") != "complete"
+        or result.get("run_id") != run_id
+        or result.get("pair_id") != state.get("pair_id")
+        or result.get("window_plan_sha256") != window_sha
+        or result.get("extended_plan_sha256")
+           != state.get("extended_plan_sha256")
+        or result.get("contract_sha256") != state.get("contract_sha256")
+        or result.get("plan_sha256") != state.get("plan_sha256")
+        or result.get("candidate_variant_id")
+           != state.get("candidate", {}).get("id")
+        or result.get("candidate_spec_sha256")
+           != state.get("candidate", {}).get("spec_sha256")
+        or result.get("model_artifact_sha256")
+           != plan.get("model_artifact_sha256")
+        or result.get("prior_qualification_receipt_sha256")
+           != state.get("prior_qualification_receipt_sha256")
+        or result.get("controller_source_bundle_sha256")
+           != state.get("controller_source_bundle_sha256")
+        or result.get("evaluation_kind") != "followon"
+        or result.get("group_attempt_status")
+           != "blocks_complete_pending_restoration"
+        or result.get("group_attempt_sha256") != mr._sha256(attempt_raw)
+        or result.get("followon_block_count")
+           != len(plan.get("followon_blocks", []))
+        or result.get("restoration") != state.get("restoration")
+        or result.get("weekly_budget_debit") is not False
+        or result.get("paid_api_calls") != 0
+        or result.get("production_change_authorized") is not False
+        or supervisor.get("schema") != "flash-followon-flash-supervision/v1"
+        or supervisor.get("pair_id") != state.get("pair_id")
+        or supervisor.get("window_plan_sha256") != window_sha
+        or supervisor.get("extended_plan_sha256")
+           != state.get("extended_plan_sha256")
+        or supervisor.get("candidate_variant_id")
+           != plan.get("candidate_variant_id")
+        or supervisor.get("candidate_spec_sha256")
+           != plan.get("candidate_spec_sha256")
+        or supervisor.get("controller_source_bundle_sha256")
+           != state.get("controller_source_bundle_sha256")
+        or supervisor.get("argv") != argv
+        or supervisor.get("argv_sha256") != q.sha256(argv)
+        or supervisor.get("pid") != state.get("worker_pid")
+        or supervisor.get("worker_start_ticks")
+           != state.get("worker_start_ticks")
+        or supervisor.get("boot_id") != state.get("boot_id")
+        or supervisor.get("returncode") != 0
+        or supervisor.get("terminated_at_work_cutoff") is not False
+        or supervisor.get("force_killed") is not False
+        or supervisor.get("emergency_recovery") is not None
+        or attempt.get("schema_version") != grouped.ATTEMPT_SCHEMA
+        or attempt.get("window_id") != state.get("pair_id")
+        or attempt.get("cohort") != "flash"
+        or attempt.get("status")
+           != "blocks_complete_pending_restoration"
+        or attempt.get("abort_reason") is not None
+        or attempt.get("window_plan_sha256") != window_sha
+        or attempt.get("followon_source_bundle_sha256")
+           != state.get("controller_source_bundle_sha256")
+        or attempt.get("restoration_required") is not True
+        or attempt.get("comparison_eligible") is not False
+        or attempt.get("promotion_authorized") is not False
+    ):
+        raise mr.RuntimeSourceError(
+            "follow-on terminal state/result/supervision differs"
+        )
+    started = mr._parse_time(result.get("started_at"), "follow-on terminal start")
+    verified = mr._parse_time(
+        result["restoration"].get("verified_at"),
+        "follow-on restoration verification",
+    )
+    finished = mr._parse_time(result.get("finished_at"), "follow-on result finish")
+    supervisor_finished = mr._parse_time(
+        supervisor.get("finished_at"), "follow-on supervision finish",
+    )
+    if (
+        started > verified or verified > finished
+        or finished > supervisor_finished
+        or supervisor_finished > observed + timedelta(seconds=mr.MAX_CLOCK_SKEW_SECONDS)
+    ):
+        raise mr.RuntimeSourceError("follow-on terminal chronology differs")
+    # The existing pure identity subvalidator checks exact original resident
+    # IDs/images/restart/OOM status, both endpoint health checks, Nara activity,
+    # sentinel removal, and final observation chronology. It opens no private
+    # SSE and does not replay diagnostic scores.
+    safety._final_identity(result, state)
+    return mr._composite_sha256(
+        result=mr._sha256(result_raw),
+        supervision=mr._sha256(supervisor_raw),
+        attempt=mr._sha256(attempt_raw),
+    )
+
+
 def project_followon_runtime(
     followon_root: Path,
     *,
@@ -186,8 +315,17 @@ def project_followon_runtime(
         registered_path = grouped.RESEARCH_ROOT / (
             f"evaluation/followon-window-plans/{pair_id}.flash.json"
         )
-        window = fp.load_execution(registered_path, cohort="flash")
-        expected_plan = fp.flash_plan(window, run_path)
+        from .registered_followon_plan import registered_expected
+
+        registered = registered_expected(registered_path, run_path,
+                                         cohort="flash")
+        window = SimpleNamespace(
+            document=registered["document"],
+            qualification_plan=registered["qualification_plan"],
+            source_sha256=registered["source_sha256"],
+            v5_parent=(object() if registered["v5_parent"] else None),
+        )
+        expected_plan = registered["plan"]
         plan_raw = mr._read_fd(
             run_fd, "extended-plan.json", maximum=8 * 1024 * 1024,
             label="extended runtime plan",
@@ -295,25 +433,14 @@ def project_followon_runtime(
             # Only terminal, fully supervised source sets may attest a
             # restored resident mode. Comparative scores have a separate pair
             # gate and are never inferred from this operational projection.
-            from bench.flash_next_ab.followon_completed_window_admission import (
-                validate_completed_window,
-            )
-
-            proof = validate_completed_window(
-                registered_path, run_path, cohort="flash"
-            )
-            if proof.get("window_id") != pair_id or proof.get("cohort") != "flash":
-                raise mr.RuntimeSourceError("extended terminal source differs")
             mr._validate_initial(state)
+            terminal_sha = _terminal_flash_restoration(
+                run_fd, run_path, run_id, state, plan,
+                registered_path, window.source_sha256, observed=observed,
+            )
             mode, residents, nara = "resident", "online", (
                 "running" if state["initial"]["nara_was_active"] else "paused"
             )
-            terminal_sha = mr._sha256(mr._read_fd(
-                run_fd, "result.json", maximum=mr.MAX_RESULT_BYTES,
-                label="extended terminal result",
-            ))
-            if terminal_sha != proof.get("result_sha256"):
-                raise mr.RuntimeSourceError("extended terminal result changed after admission")
         else:
             if observed >= deadline:
                 raise mr.RuntimeSourceError("extended authorization deadline expired")

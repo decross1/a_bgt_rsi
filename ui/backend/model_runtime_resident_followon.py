@@ -188,6 +188,135 @@ def _last_memory(path: Path, observed: datetime, state: dict) -> dict:
     return row
 
 
+def _terminal_restoration(run_fd: int, state: dict, plan: dict,
+                          run_path: Path, source: Path, boot: str) -> tuple[str, str]:
+    """Operational restoration only; this does not admit block scores.
+
+    The resident completed-window gate currently expects a result.started_at
+    field absent from the authentic result; durable state and supervision each
+    carry that time. This branch checks the recorded terminal receipts without
+    changing their bytes or asserting comparison eligibility.
+    """
+    result_raw = mr._read_fd(run_fd, "result.json", maximum=mr.MAX_RESULT_BYTES,
+                             label="resident terminal result")
+    result = mr._strict_object(
+        result_raw,
+        "resident terminal result",
+    )
+    supervision_raw = mr._read_fd(
+        run_fd, "supervision.json", maximum=mr.MAX_RESULT_BYTES,
+        label="resident terminal supervision",
+    )
+    supervision = mr._strict_object(
+        supervision_raw,
+        "resident terminal supervision",
+    )
+    expected_argv = [
+        plan["launcher_python_path"], "-m",
+        "bench.flash_next_ab.resident_evaluation_window", "--worker",
+        "--eval-plan", str(source), "--output-dir", str(run_path),
+    ]
+    restoration = result.get("restoration")
+    final = result.get("final_observation")
+    initial = state.get("initial")
+    _require(state.get("phase") == "complete"
+             and state.get("result_status") == "complete"
+             and result.get("schema") == "flash-followon-resident-result/v1"
+             and result.get("status") == "complete"
+             and supervision.get("schema")
+                == "flash-followon-resident-supervision/v1"
+             and supervision.get("complete") is True
+             and supervision.get("returncode") == 0
+             and supervision.get("terminated_at_work_cutoff") is False
+             and supervision.get("force_killed") is False
+             and supervision.get("emergency_recovery") is None
+             and supervision.get("argv") == expected_argv
+             and supervision.get("command_sha256")
+                == q_sha256(expected_argv)
+             and result.get("pair_id") == state.get("pair_id")
+                == supervision.get("pair_id")
+             and result.get("plan_sha256") == state.get("plan_sha256")
+                == supervision.get("plan_sha256")
+             and result.get("window_plan_sha256")
+                == state.get("window_plan_sha256")
+             and result.get("qualified_parent_window")
+                == state.get("qualified_parent_window")
+             and result.get("evaluation_kind") == "followon"
+             and result.get("followon_block_count")
+                == len(plan["followon_blocks"])
+             and result.get("group_attempt_status")
+                == "blocks_complete_pending_restoration"
+             and result.get("exact_final_verification") is True
+             and result.get("weekly_budget_debit") is False
+             and result.get("paid_api_calls") == 0
+             and result.get("production_change_authorized") is False
+             and state.get("worker_pid") == supervision.get("pid")
+             and state.get("worker_start_ticks")
+                == supervision.get("worker_start_ticks")
+             and supervision.get("boot_id") == state.get("boot_id") == boot
+             and isinstance(initial, dict) and isinstance(final, dict)
+             and isinstance(restoration, dict)
+             and restoration == state.get("restoration")
+             and final == state.get("final_observation")
+             and restoration.get("status") == "verified"
+             and restoration.get("errors") == []
+             and restoration.get("sentinel_retained") is False
+             and restoration.get("final_observation") == final
+             and final.get("watchdog_sentinel_by_name") is None
+             and final.get("watchdog_sentinel_by_id") is None,
+             "resident terminal state/result/supervision or restoration differs")
+    started = mr._parse_time(state.get("started_at"), "resident terminal start")
+    supervision_started = mr._parse_time(supervision.get("started_at"),
+                                         "resident supervision start")
+    result_finished = mr._parse_time(result.get("finished_at"),
+                                     "resident terminal finish")
+    supervisor_finished = mr._parse_time(supervision.get("finished_at"),
+                                         "resident supervision finish")
+    _require(supervision_started <= started <= result_finished
+             <= supervisor_finished,
+             "resident terminal publication chronology differs")
+    _require(initial.get("residents") == final.get("residents")
+             and initial.get("residents_by_name")
+                == final.get("residents_by_name")
+             and isinstance(initial.get("cgroups_by_name"), dict)
+             and isinstance(final.get("cgroups_by_name"), dict),
+             "resident terminal containers changed from captured identities")
+    baseline = initial["cgroups_by_name"]
+    observed = final["cgroups_by_name"]
+    stable = (
+        "path", "process_start_ticks", "memory_max_bytes",
+        "memory_swap_max_bytes", "memory_events_oom",
+        "memory_events_oom_kill",
+    )
+    _require(set(baseline) == set(observed)
+             and all(isinstance(before, dict)
+                     and isinstance(observed[name], dict)
+                     and all(before.get(key) == observed[name].get(key)
+                             for key in stable)
+                     for name, before in baseline.items()),
+             "resident terminal cgroup identities changed")
+    original_nara = initial.get("nara")
+    current_nara = final.get("nara")
+    _require(isinstance(original_nara, dict)
+             and isinstance(current_nara, dict)
+             and original_nara.get("ActiveState") in {"active", "inactive"}
+             and current_nara.get("ActiveState")
+                == original_nara.get("ActiveState"),
+             "resident terminal Nara activity was not restored")
+    expected_nara = ("running" if original_nara["ActiveState"] == "active"
+                     else "paused")
+    terminal_sha = mr._composite_sha256(
+        result=mr._sha256(result_raw),
+        supervision=mr._sha256(supervision_raw),
+    )
+    return expected_nara, terminal_sha
+
+
+def q_sha256(value: object) -> str:
+    from bench.flash_next_ab import qualification as q
+    return q.sha256(value)
+
+
 def project_resident_runtime(root: Path, *, proc_root: Path,
                              boot_id_path: Path, observed: datetime) -> dict[str, Any]:
     """Admit one resident research phase without claiming Flash serves."""
@@ -208,15 +337,19 @@ def project_resident_runtime(root: Path, *, proc_root: Path,
                  "resident follow-on state is not registered")
         source = plans.grouped._plan_path(pair_id, "resident",
                                           plans.grouped.RESEARCH_ROOT)
-        window = plans.load_execution(source, cohort="resident")
-        expected = plans.resident_plan(window, run_path)
+        from .registered_followon_plan import registered_expected
+
+        registered = registered_expected(source, run_path,
+                                         cohort="resident")
+        expected = registered["plan"]
+        source_sha = registered["source_sha256"]
         plan_raw = mr._read_fd(run_fd, "plan.json", maximum=mr.MAX_PLAN_BYTES,
                                label="resident follow-on plan")
         plan = mr._strict_object(plan_raw, "resident follow-on plan")
         _require(plan == expected and plan.get("schema") == PLAN_SCHEMA
                  and plan.get("output_dir") == str(run_path)
-                 and plan.get("window_plan_sha256") == window.source_sha256
-                 and state.get("window_plan_sha256") == window.source_sha256
+                 and plan.get("window_plan_sha256") == source_sha
+                 and state.get("window_plan_sha256") == source_sha
                  and state.get("plan_sha256") == q.sha256(plan)
                  and state.get("followon_blocks") == plan["followon_blocks"]
                  and state.get("qualified_parent_window")
@@ -227,22 +360,12 @@ def project_resident_runtime(root: Path, *, proc_root: Path,
         _require(state.get("boot_id") == boot,
                  "resident worker belongs to an earlier boot")
         phase = state["phase"]
+        terminal_sha = ""
         if phase in TERMINAL:
-            from bench.flash_next_ab.followon_completed_window_admission import (
-                validate_completed_window,
+            nara, terminal_sha = _terminal_restoration(
+                run_fd, state, plan, run_path, source, boot,
             )
-            proof = validate_completed_window(source, run_path,
-                                              cohort="resident")
-            _require(proof.get("exact_restoration_verified") is True,
-                     "resident follow-on terminal restoration is unverified")
-            original_nara = state.get("initial", {}).get("nara", {}).get(
-                "ActiveState"
-            )
-            _require(original_nara in {"active", "inactive"},
-                     "resident terminal has no captured Nara baseline")
-            mode, nara = "resident", (
-                "running" if original_nara == "active" else "paused"
-            )
+            mode = "resident"
         else:
             deadline = mr._parse_time(state.get("invocation_deadline_at"),
                                       "resident invocation deadline")
@@ -259,7 +382,10 @@ def project_resident_runtime(root: Path, *, proc_root: Path,
             "schema_version": mr.SCHEMA_VERSION,
             "observed_at": observed.isoformat(),
             "mode": mode, "mode_source": "followon_resident_state",
-            "mode_source_sha256": mr._sha256(state_raw),
+            "mode_source_sha256": mr._composite_sha256(
+                state=mr._sha256(state_raw), plan=mr._sha256(plan_raw),
+                window=source_sha, terminal=terminal_sha,
+            ),
             "resident_services_expected": (
                 "online" if mode == "resident" else "unknown"
             ),
