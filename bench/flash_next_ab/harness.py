@@ -390,9 +390,12 @@ def _validate_memory_log(
     if result.get("schema") == "qwen-flash-next-qualification-result/v3":
         _validate_memory_log_v3(rows, samples, result)
         return
-    if result.get("schema") == "qwen-flash-next-qualification-result/v4":
+    if result.get("schema") in {
+        "qwen-flash-next-qualification-result/v4",
+        "qwen-flash-next-qualification-result/v5",
+    }:
         if spec is None:
-            raise HarnessError("v4 qualification lacks code-owned candidate spec")
+            raise HarnessError("v4/v5 qualification lacks code-owned candidate spec")
         _validate_memory_log_v3(rows, samples, result, spec=spec)
         return
 
@@ -659,6 +662,8 @@ def _validate_cgroup_diagnostics(path, raw, rows, result, *, spec=None,
     expected = {
         "schema": ("flash-next-extended-cgroup-diagnostics/v1" if extended_plan
                    is not None else "qwen-flash-next-c0-mia-s1-cgroup-diagnostics/v1"
+                   if spec is not None and spec.contract_schema.endswith("/v4") else
+                   "qwen-flash-next-mia-followon-cgroup-diagnostics/v1"
                    if spec is not None else "qwen-flash-next-c0-s1-cgroup-diagnostics/v1"),
         "candidate_id": identity, "memory_log_sha256": raw_sha,
         "attributed_samples": attributed, "maximum_memory_current_bytes": maximum,
@@ -1370,6 +1375,15 @@ def validate_flash_qualification_files(
     contract_schema = contract.get("schema")
     if result_schema == "qwen-flash-next-qualification-result/v4":
         return _validate_mia_qualification_bundle(
+            result, receipt_sha256, receipt_file,
+            qualification_plan, plan_file,
+            contract, contract_snapshot_sha256, contract_file,
+            contract_raw_path=contract_raw_path,
+            require_passed=require_passed,
+        )
+    if result_schema == "qwen-flash-next-qualification-result/v5":
+        from .followon_qualification_admission import validate_mia_v5_bundle
+        return validate_mia_v5_bundle(
             result, receipt_sha256, receipt_file,
             qualification_plan, plan_file,
             contract, contract_snapshot_sha256, contract_file,

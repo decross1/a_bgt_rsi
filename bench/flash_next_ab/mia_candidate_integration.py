@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .candidate_registry import MIA, CandidateSpec, select_candidate
+from .followon_profiles import SPECS_BY_CONTRACT_PATH, is_registered_spec
 
 
 class MiaRegistrationError(ValueError):
@@ -35,7 +36,8 @@ def validate_mia_contract(value: dict[str, Any], registered) -> dict[str, Any]:
         spec = select_candidate(value)
     except (TypeError, ValueError) as exc:
         raise MiaRegistrationError(str(exc)) from exc
-    _require(spec is MIA, "Mia v4 candidate was not selected")
+    _require(spec is not None and is_registered_spec(spec),
+             "Mia candidate was not selected from the closed registry")
     _require(set(value) == {
         "schema", "contract_id", "profile", "candidate", "image", "model",
         "runtime", "safety", "accounting", "probe_set",
@@ -44,17 +46,21 @@ def validate_mia_contract(value: dict[str, Any], registered) -> dict[str, Any]:
              "Mia image differs")
     _require(value["model"] == spec.expected_model_section(), "Mia model differs")
     _require(value["runtime"] == spec.expected_runtime_section(), "Mia runtime differs")
-    _require(value["probe_set"] == "flash-next-minimal-v1", "Mia probe set differs")
+    _require(value["probe_set"] == spec.qualification_probe_set,
+             "Mia probe set differs")
 
     safety = value["safety"]
     _require(isinstance(safety, dict), "Mia safety is not an object")
-    _require(set(safety) == {
+    expected_safety_keys = {
         "resident_containers", "nara_service", "min_mem_available_gib",
         "invocation_deadline_seconds", "readiness_deadline_seconds",
         "restoration_reserve_seconds", "setup_quiescence_seconds",
         "ready_quiescence_seconds", "memory_poll_seconds", "probe_timeout_seconds",
         "paging_policy",
-    }, "Mia safety fields differ")
+    }
+    if spec is not MIA:
+        expected_safety_keys.add("profile_canary_timeout_seconds")
+    _require(set(safety) == expected_safety_keys, "Mia safety fields differ")
     residents = [{k: row[k] for k in ("name", "id", "image_id", "health_url")}
                  for row in registered.RESIDENTS]
     _require(safety["resident_containers"] == residents, "Mia residents differ")
@@ -77,6 +83,10 @@ def validate_mia_contract(value: dict[str, Any], registered) -> dict[str, Any]:
                                       "Mia restoration reserve", 300, 900)
     registered._bounded_int(safety["probe_timeout_seconds"],
                             "Mia probe timeout", 5, 120)
+    if spec is not MIA:
+        _require(safety["profile_canary_timeout_seconds"]
+                 == spec.profile_canary_timeout_seconds,
+                 "Mia profile canary timeout differs")
     _require(readiness + reserve < deadline,
              "Mia readiness plus restoration exhausts deadline")
     _require(value["accounting"] == {
@@ -89,8 +99,9 @@ def validate_mia_contract(value: dict[str, Any], registered) -> dict[str, Any]:
 def read_mia_contract(path: Path, registered) -> tuple[dict[str, Any], str, bytes]:
     """Read only the fixed Mia contract through stable nofollow parents."""
     path = path.absolute()
-    _require(path == MIA.contract_path and not path.is_symlink(),
-             "Mia contract path differs from the fixed external file")
+    expected_spec = SPECS_BY_CONTRACT_PATH.get(path)
+    _require(expected_spec is not None and not path.is_symlink(),
+             "Mia contract path differs from all fixed external files")
     try:
         parent = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -118,7 +129,10 @@ def read_mia_contract(path: Path, registered) -> tuple[dict[str, Any], str, byte
     except OSError as exc:
         raise MiaRegistrationError(f"Mia contract read failed: {exc}") from exc
     observed = registered._strict_json(raw, source="Mia fixed external contract")
-    return validate_mia_contract(observed, registered), registered.sha256(raw), raw
+    contract = validate_mia_contract(observed, registered)
+    _require(select_candidate(contract) is expected_spec,
+             "Mia raw contract profile differs from its exact path")
+    return contract, registered.sha256(raw), raw
 
 
 def load_mia_contract(path: Path, registered) -> tuple[dict[str, Any], str]:
@@ -128,8 +142,10 @@ def load_mia_contract(path: Path, registered) -> tuple[dict[str, Any], str]:
 
 def validate_output(output: Path, spec: CandidateSpec = MIA, *, must_be_absent: bool = False) -> Path:
     output = output.absolute()
-    _require(bool(re.fullmatch(r"qfn-mia-c0-[A-Za-z0-9][A-Za-z0-9._-]{0,79}",
-                               output.name)), "Mia output run ID differs")
+    _require(is_registered_spec(spec), "Mia output spec is not registered")
+    _require(bool(re.fullmatch(re.escape(spec.run_id_prefix) +
+                               r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", output.name)),
+             "Mia output run ID differs")
     _require(spec.output_root.is_dir() and not spec.output_root.is_symlink()
              and spec.output_root.resolve() == spec.output_root,
              "Mia output root is absent or redirected")
@@ -143,13 +159,16 @@ def validate_output(output: Path, spec: CandidateSpec = MIA, *, must_be_absent: 
 def plan_mia_qualification(value: dict[str, Any], raw_contract_sha256: str,
                            output: Path, registered) -> dict[str, Any]:
     value = validate_mia_contract(value, registered)
-    output = validate_output(output)
-    spec = MIA
+    spec = select_candidate(value)
+    _require(spec is not None and is_registered_spec(spec),
+             "Mia plan has no registered spec")
+    output = validate_output(output, spec)
     command = spec.launch_argv(compilation_config=registered.COMPILATION_CONFIG)
     _require(len(raw_contract_sha256) == 64 and all(c in "0123456789abcdef" for c in raw_contract_sha256),
              "Mia raw contract SHA is malformed")
-    return {
-        "schema": "qwen-flash-next-qualification-plan/v4",
+    plan = {
+        "schema": "qwen-flash-next-qualification-plan/v4" if spec is MIA else
+                  "qwen-flash-next-qualification-plan/v5",
         "contract_id": spec.contract_id,
         "contract_sha256": raw_contract_sha256,
         "profile": spec.profile,
@@ -167,7 +186,7 @@ def plan_mia_qualification(value: dict[str, Any], raw_contract_sha256: str,
                        "bytes": spec.packed_ple_bytes,
                        "sha256": spec.packed_ple_sha256},
         "proof_receipts": spec.identity_snapshot()["proof_receipts"],
-        "probe_set": "flash-next-minimal-v1",
+        "probe_set": spec.qualification_probe_set,
         "resident_ids": [row["id"] for row in registered.RESIDENTS],
         "resource_locks": [".weekly-upgrade-execution.lock",
                            ".coordinator-cron.lock", ".weekly-upgrade-gpu.lock"],
@@ -177,6 +196,9 @@ def plan_mia_qualification(value: dict[str, Any], raw_contract_sha256: str,
         "restoration_reserve_seconds": value["safety"]["restoration_reserve_seconds"],
         "setup_quiescence_seconds": value["safety"]["setup_quiescence_seconds"],
         "ready_quiescence_seconds": value["safety"]["ready_quiescence_seconds"],
+        **({"profile_canary_timeout_seconds":
+            value["safety"]["profile_canary_timeout_seconds"]}
+           if spec is not MIA else {}),
         "paging_policy": value["safety"]["paging_policy"],
         "research_usage_journal": str(registered.RESEARCH_LEDGER),
         "weekly_budget_debit": False, "paid_api_allowed": False,
@@ -193,7 +215,18 @@ def plan_mia_qualification(value: dict[str, Any], raw_contract_sha256: str,
             "enforce Docker 96 GiB charged-RAM cap and zero candidate swap",
             "bound host swap by registered load and serving byte-rate limits",
             "require 60 seconds of zero host and candidate swap after /v1/models",
-            "qualify three fixed probes under the serving paging gate",
+            "qualify three fixed probes and selected canary under the serving paging gate"
+            if spec is not MIA else "qualify three fixed probes under the serving paging gate",
             "stop candidate, restore exact resident IDs and Nara state, then remove sentinel",
         ],
     }
+    if spec is not MIA:
+        from .followon_dispatch import (
+            FOLLOWON_CODE_ROOT, frozen_followon_source_bundle,
+        )
+        source_bundle = frozen_followon_source_bundle()
+        plan["registered_code_root"] = str(FOLLOWON_CODE_ROOT)
+        plan["followon_source_bundle"] = source_bundle
+        plan["followon_source_bundle_sha256"] = registered.sha256(source_bundle)
+        plan["profile_canary_timeout_seconds"] = spec.profile_canary_timeout_seconds
+    return plan

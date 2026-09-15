@@ -1,0 +1,81 @@
+{
+  "schema": "flash-next-mia-fullvocab-mtp-parity-protocol/v1",
+  "registered_before_first_mtp_call": true,
+  "control": {
+    "profile": "C0-MIA-S1",
+    "spec_id": "mia-925d7be6-c0-s1",
+    "repetitions_per_request": 3,
+    "requires_separate_supervised_control_window": true,
+    "same_checkpoint_image_runtime_except_speculation": true
+  },
+  "candidate": {
+    "depths": [1, 2, 3],
+    "repetitions_per_request": 3,
+    "full_vocab_first": true,
+    "reduced_vocab_is_distinct_later_image_and_profile": true
+  },
+  "request_policy": {
+    "temperature": 0,
+    "top_p": 1,
+    "enable_thinking": false,
+    "seed": 17,
+    "stream": true,
+    "max_tokens_default": 128
+  },
+  "requests": [
+    {
+      "id": "literal64",
+      "messages": [{"role": "user", "content": "Return exactly this string, without quotes or extra text: ALPHA17_BETA703_GAMMA29_DELTA11"}],
+      "max_tokens": 64,
+      "tools": null
+    },
+    {
+      "id": "short_reasoned_answer",
+      "messages": [{"role": "user", "content": "Four players each choose A or B. A player earns 3 if their choice is unique and 1 otherwise. The choices are A, A, B, B. Return only the payoffs in player order as comma-separated integers."}],
+      "max_tokens": 128,
+      "tools": null
+    },
+    {
+      "id": "code_generation",
+      "messages": [{"role": "user", "content": "Write only a Python function named clamp01 that returns 0.0 for values below zero, 1.0 for values above one, and float(value) otherwise."}],
+      "max_tokens": 128,
+      "tools": null
+    },
+    {
+      "id": "structured_tool",
+      "messages": [{"role": "user", "content": "Call record_probe exactly once with label mtp-parity and value 703. Do not answer in text."}],
+      "max_tokens": 128,
+      "tools": [{
+        "type": "function",
+        "function": {
+          "name": "record_probe",
+          "description": "Record an exact local value.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "label": {"type": "string"},
+              "value": {"type": "integer"}
+            },
+            "required": ["label", "value"],
+            "additionalProperties": false
+          }
+        }
+      }]
+    }
+  ],
+  "comparison_granularity": {
+    "decoded_content": "exact UTF-8 bytes from returned content, without trim or normalization",
+    "decoded_reasoning_content": "exact UTF-8 bytes only when returned; otherwise null",
+    "tool_calls": "function name and exact argument-string bytes in original call order; ignore generated tool-call IDs",
+    "finish_reason": "exact returned value",
+    "target_token_ids": "compare only if actual API/receipt exposes them; text-only API does not",
+    "raw_sse": "private provenance SHA, not target-token parity because SSE framing/IDs may vary"
+  },
+  "interpretation": {
+    "stable_controls_and_equal_candidate": "decoded-output parity observed; token-level losslessness unproven unless token IDs available",
+    "control_repeats_differ": "runtime nondeterminism confounded; do not attribute candidate difference to MTP or claim losslessness",
+    "stable_controls_and_candidate_differs": "decoded-output parity failed; record exact difference and block lossless claim",
+    "arithmetic_or_tool_failure": "substantive correctness regression independent of parity interpretation",
+    "swap_oom_restart_memory_floor_failure": "resource qualification failure independent of parity interpretation"
+  }
+}

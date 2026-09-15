@@ -1,0 +1,45 @@
+{
+  "schema": "flash-next-mia-mtp-decode-diagnostic/v1",
+  "registered_before_first_mtp_call": true,
+  "purpose": "single-stream local runtime diagnostic, not a scientific or trading score",
+  "profiles": [
+    "mia-925d7be6-c0-s1",
+    "mia-925d7be6-mtp1-fullvocab-v1",
+    "mia-925d7be6-mtp2-fullvocab-v1",
+    "mia-925d7be6-mtp3-fullvocab-v1",
+    "mia-925d7be6-mtp3-reduced47k-v2opt-v1"
+  ],
+  "sampling": {
+    "temperature": 0,
+    "top_p": 1,
+    "enable_thinking": false,
+    "seed": 17,
+    "repetitions": 3,
+    "timeout_seconds_per_call": 120
+  },
+  "request": {
+    "id": "csv_200_rows_512_output",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Output only a CSV table with exactly 200 data rows. Header: i,square,cube. For each integer i from 1 through 200 in ascending order, write i,i*i,i*i*i as decimal integers. Do not abbreviate, omit rows, add prose, or use a code fence."
+      }
+    ],
+    "max_tokens": 512,
+    "tools": null
+  },
+  "measurements": [
+    "response usage completion_tokens",
+    "actual finish_reason and early-stop length",
+    "wall_seconds",
+    "transport latency_seconds",
+    "transport first-token latency_seconds",
+    "approximate decode tokens per second only when telemetry is bound"
+  ],
+  "interpretation": {
+    "same_prompt_and_budget": "diagnostic throughput comparison only",
+    "early_stop_or_length_mismatch": "report actual output length and finish; do not normalize to 512 or attribute speed solely to speculation",
+    "no_token_ids": "do not infer target token or acceptance rates from decoded text",
+    "failed_call": "keep denominator and no speed score"
+  }
+}
