@@ -12,9 +12,19 @@ import pytest
 from experiments.known_opponent_utility import mia_controller as c
 
 
+@pytest.mark.canonical_corpus(
+    c.PARENT_PATH,
+    c.GEMMA_ROOT / "admission.json",
+    c.GEMMA_ROOT / "manifest.snapshot.json",
+    c.GEMMA_ROOT / "pilot/run.json",
+    c.GEMMA_ROOT / "window.json",
+    c.GEMMA_ROOT / "result.json",
+    c.GEMMA_ROOT / "supervision.json",
+)
 def test_real_parent_preparation_roundtrips_exact_gemma_fixture_and_source(monkeypatch, tmp_path):
     """This is a read-only parent replay and plan freeze; it contacts no model."""
     monkeypatch.setenv("MOCK_LLM", "1")
+    monkeypatch.setattr(c, "REGISTERED_ROOT", c.CODE_ROOT)
     monkeypatch.setattr(c, "OUTPUT_ROOT", tmp_path / "mia")
     path = c.prepare(window_id="qfn-followon-known-opponent-mia-test-a", seed=301)
     window, manifest, parent = c.load_window(path)
@@ -28,6 +38,14 @@ def test_real_parent_preparation_roundtrips_exact_gemma_fixture_and_source(monke
     path.write_bytes(c.pilot._raw_json(tampered) + b"\n")
     with pytest.raises(c.MiaStudyError, match="model, admission or sampling differs"):
         c.load_window(path)
+
+
+def test_prepare_rejects_unregistered_root_before_parent_replay(monkeypatch):
+    monkeypatch.setattr(c, "REGISTERED_ROOT", c.CODE_ROOT / "unregistered")
+    monkeypatch.setattr(c, "load_parent", lambda _path: pytest.fail(
+        "unregistered root reached external parent replay"))
+    with pytest.raises(c.MiaStudyError, match="root or ID is not registered"):
+        c.prepare(window_id="qfn-followon-known-opponent-mia-test-root")
 
 
 def _executor_fixture(monkeypatch, tmp_path, *, candidate_image: str):
