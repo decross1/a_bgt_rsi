@@ -156,12 +156,14 @@ def _qualification(reader, run_id):
     for name in ("plan.json", "launch-contract.snapshot.json"):
         reader.read(f"{prefix}/{name}")
     try:
-        validate_flash_qualification_files(
+        validation = validate_flash_qualification_files(
             receipt_path=reader.root / prefix / "result.json",
             qualification_plan_path=reader.root / prefix / "plan.json",
             contract_snapshot_path=reader.root / prefix / "launch-contract.snapshot.json",
             require_passed=row["status"] == "passed",
         )
+        if validation["qualification_receipt_sha256"] != digest:
+            raise SourceError("A qualification changed during source validation.")
     except HarnessError as exc:
         raise SourceError("A qualification failed source validation.") from exc
     gpu_s = _number(row.get("challenger_gpu_seconds"))

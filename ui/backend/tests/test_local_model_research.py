@@ -83,6 +83,7 @@ def test_qualification_is_recorded_separately_and_hides_private_text(tmp_path, m
     calls = []
     def validate(**kwargs):
         calls.append(kwargs["require_passed"])
+        return {"qualification_receipt_sha256": hashlib.sha256(kwargs["receipt_path"].read_bytes()).hexdigest()}
     monkeypatch.setattr(harness, "validate_flash_qualification_files", validate)
     data = project_local_research(tmp_path)
     assert data["qualification_runs"][0]["candidate_window_minutes"] == 2
@@ -201,3 +202,15 @@ def test_failed_qualification_without_source_proof_is_withheld(tmp_path):
     data = project_local_research(tmp_path)
     assert data["qualification_runs"] == []
     assert data["warnings"]
+
+
+def test_qualification_changed_between_projection_and_validation_is_withheld(tmp_path, monkeypatch):
+    from bench.flash_next_ab import harness
+
+    qualification(tmp_path, status="failed")
+    for name in ("plan.json", "launch-contract.snapshot.json"):
+        write(tmp_path, f"qualification-runs/qfn-c0-fixture/{name}", {})
+    monkeypatch.setattr(harness, "validate_flash_qualification_files", lambda **kwargs: {
+        "qualification_receipt_sha256": "0" * 64,
+    })
+    assert project_local_research(tmp_path)["qualification_runs"] == []
