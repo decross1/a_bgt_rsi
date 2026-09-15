@@ -12,6 +12,7 @@ import {
 } from "../api/pollhub";
 import { SkeletonCard } from "../design/Skeleton";
 import { LocalModelResearchPanel } from "../components/LocalModelResearchPanel";
+import { AppliedMarketResearchPanel } from "../components/AppliedMarketResearchPanel";
 import type {
   BenchmarkArm,
   BenchmarkComparisonPoint,
@@ -429,6 +430,7 @@ export default function BenchmarkProgress({ initial }: Props) {
 
     <LocalModelResearchPanel data={data.local_model_research} />
     <ResearchPipelinePanel pipeline={data.research_pipeline} />
+    <AppliedMarketResearchPanel data={data.applied_market_research} />
 
     {weeks.length === 0 ? <section className="benchmark-source-empty" role="status"><h2>{benchmarkSourcesUnavailable ? "Benchmark sources unavailable" : "No measured weeks yet"}</h2><p>{benchmarkSourcesUnavailable ? "Trial and evaluation sources were unavailable when this projection was generated. No benchmark history or zero result is inferred." : "The source is available, but it has not recorded a benchmark week. Missing history is not a zero score."}</p></section> : <>
       <section className="benchmark-week-section" aria-labelledby="benchmark-week-heading"><div className="benchmark-section-heading"><div><p className="benchmark-eyebrow">Timeline</p><h2 id="benchmark-week-heading">Recorded weeks</h2></div>

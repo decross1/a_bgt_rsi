@@ -1,0 +1,5 @@
+# Preserve the exact audited upstream bytes used by the immutable image build.
+[lint.per-file-ignores]
+"patch_mtp_draft_vocab.py" = ["ALL"]
+"source-audit/*" = ["ALL"]
+"build_reduced_overlay.py" = ["PLW1510"]

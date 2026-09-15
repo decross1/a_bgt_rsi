@@ -1,3 +1,4 @@
+import type { AppliedMarketResearchProgress } from "./appliedMarketResearch";
 export type AutomationMode = "review_only" | "trial_allowlisted" | "disabled" | "unknown";
 export type BenchmarkFamilyStatus = "complete" | "incomplete" | "awaiting_annotation" | "mixed" | "unknown";
 
@@ -318,6 +319,7 @@ export interface ResearchPipelineProgress {
 }
 
 export interface BenchmarkProgressResponse {
+  applied_market_research?: AppliedMarketResearchProgress;
   schema_version: "weekly-upgrade-progress/v1";
   generated_at: string;
   current_week: string;
@@ -354,12 +356,18 @@ export interface LocalModelResearchProgress {
       id: string; repository: string; revision: string; served_model: string;
       image_id: string; model_artifact_sha256: string; spec_sha256: string;
       qualification_profile: string;
+      mtp_speculative_tokens?: number;
+      max_model_len?: number;
+      kv_cache_memory_bytes?: number;
       evidence_class: "REGISTERED_SOURCE_ONLY" | "QUALIFICATION_ADMITTED";
     } | null;
   }[];
   comparisons: {
     id: string; status: "complete" | "incomplete"; manifest_sha256: string;
     comparison_eligible: boolean;
+    comparison_eligible_at_recording?: boolean;
+    admission_class?: "RECORDED_COMPLETED_PAIR_ADMISSION";
+    current_source_replay?: "verified" | "unavailable";
     run_sha256: Record<"resident" | "flash", string>; promotion_authorized: false;
     families: {
       family: string; comparison_eligible: boolean; paired_success_delta: number | null;

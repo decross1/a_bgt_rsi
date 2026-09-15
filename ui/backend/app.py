@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from .activity import register as register_activity
+from .applied_data_collection import register as register_applied_data_collection
 from .attest import register as register_attest
 from .chain import LogStore, build_chain_by_request_id
 from .chat_seam import register as register_chat_seam
@@ -218,6 +219,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     register_activity(app, logs_dir=logs_dir, telemetry_file=telemetry_file)
     register_experiments(app)
     register_weekly_upgrade_progress(app)
+    register_applied_data_collection(app)
     register_research_scope(app, repo_root=Path(loop_v0_repo), memory_dir=Path(coordinator_memory))
 
     register_loop_v0(

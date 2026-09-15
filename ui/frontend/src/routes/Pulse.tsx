@@ -108,15 +108,63 @@ const MIA_VARIANT = {
   model_artifact_sha256: "a40ce50173dd3aff54da88503894967e5248bbb927f9e4a91eff5a6a7270c168",
   profile: "C0-MIA-S1",
 } as const;
+const MIA_PROFILE_CONFIG: Record<string, {
+  profile: string; context: number; mtp: number; kvBytes: number;
+  imageId?: string;
+}> = {
+  "mia-925d7be6-mtp1-fullvocab-v1": {
+    profile: "MIA-MTP1-FULLVOCAB-32K", context: 32768, mtp: 1,
+    kvBytes: 2 * 1024 ** 3,
+  },
+  "mia-925d7be6-mtp2-fullvocab-v1": {
+    profile: "MIA-MTP2-FULLVOCAB-32K", context: 32768, mtp: 2,
+    kvBytes: 2 * 1024 ** 3,
+  },
+  "mia-925d7be6-mtp3-fullvocab-v1": {
+    profile: "MIA-MTP3-FULLVOCAB-32K", context: 32768, mtp: 3,
+    kvBytes: 2 * 1024 ** 3,
+  },
+  "mia-925d7be6-ctx69632-bf16kv3g-v1": {
+    profile: "MIA-NATIVE69632-BF16KV3G-MTP0", context: 69632,
+    mtp: 0, kvBytes: 3 * 1024 ** 3,
+  },
+  "mia-925d7be6-mtp3-reduced47k-v2opt-v1": {
+    profile: "MIA-MTP3-REDUCED47K-V2-FULL4-MODE0-32K",
+    context: 32768, mtp: 3, kvBytes: 2 * 1024 ** 3,
+    imageId: "sha256:29eab5a29b765eef8b6405bbe0f2d385fc1e7b5e3c7ae18ae70382a68a0a2201",
+  },
+};
 
 const isExtendedFlashRunId = (value: unknown): value is string =>
   typeof value === "string" && /^qfn-ab-[a-z0-9][a-z0-9._-]{0,63}\.flash$/.test(value);
+const isFollowonFlashRunId = (value: unknown): value is string =>
+  typeof value === "string" && /^qfn-followon-[a-z0-9][a-z0-9._-]{0,63}\.flash$/.test(value);
+const isMiaProfileRunId = (value: unknown): value is string =>
+  typeof value === "string" && /^qfn-mia-(?:mtp[123]|ctx69632|mtp3-red47k)-[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(value);
+const positiveInteger = (value: unknown) =>
+  typeof value === "number" && Number.isInteger(value) && value > 0;
 
-function isRegisteredMiaVariant(value: ModelRuntime["candidate_variant"]): boolean {
+function isRegisteredMiaVariant(value: ModelRuntime["candidate_variant"],
+                                modeSource: ModelRuntime["mode_source"] | undefined): boolean {
   if (!value) return false;
-  return Object.entries(MIA_VARIANT).every(([key, expected]) =>
+  if (Object.entries(MIA_VARIANT).every(([key, expected]) =>
     value[key as keyof typeof MIA_VARIANT] === expected,
-  );
+  )) return true;
+  // Profile variants are selected only by the newer exact-state backend
+  // reader. These shared checkpoint/image fields do not establish a passed
+  // qualification; they keep the viewport from labeling Mia as NVIDIA.
+  const profileConfig = MIA_PROFILE_CONFIG[value.spec_id];
+  return modeSource != null && ["qualification_state", "followon_evaluation_state"].includes(modeSource) &&
+    profileConfig !== undefined &&
+    value.repository === MIA_VARIANT.repository &&
+    value.revision === MIA_VARIANT.revision &&
+    value.served_model === MIA_VARIANT.served_model &&
+    value.image_id === (profileConfig.imageId ?? MIA_VARIANT.image_id) &&
+    value.model_artifact_sha256 === MIA_VARIANT.model_artifact_sha256 &&
+    value.profile === profileConfig.profile &&
+    value.configured_max_context_tokens === profileConfig.context &&
+    value.configured_mtp_speculative_tokens === profileConfig.mtp &&
+    value.configured_kv_cache_memory_bytes === profileConfig.kvBytes;
 }
 const MODEL_PRESENTATION: Record<
   string,
@@ -145,6 +193,13 @@ function isModelRuntime(value: unknown): value is ModelRuntime {
       ) && ["spec_sha256", "model_artifact_sha256"].every(
         key => typeof source[key] === "string" && /^[0-9a-f]{64}$/.test(source[key] as string),
       ) && typeof source.image_id === "string" && /^sha256:[0-9a-f]{64}$/.test(source.image_id) &&
+        (source.configured_max_context_tokens === undefined || positiveInteger(source.configured_max_context_tokens)) &&
+        (source.configured_mtp_speculative_tokens === undefined ||
+          typeof source.configured_mtp_speculative_tokens === "number" &&
+          Number.isInteger(source.configured_mtp_speculative_tokens) &&
+          source.configured_mtp_speculative_tokens >= 0 &&
+          source.configured_mtp_speculative_tokens <= 3) &&
+        (source.configured_kv_cache_memory_bytes === undefined || positiveInteger(source.configured_kv_cache_memory_bytes)) &&
         source.source === "registered_plan_and_controller_state" &&
         ["registered_source_only", "bound_live_container"].includes(String(source.image_evidence)) &&
         source.promotion_authorized === false;
@@ -156,8 +211,9 @@ function isModelRuntime(value: unknown): value is ModelRuntime {
     ["resident", "candidate_research", "transitioning", "unknown"].includes(
       String(row.mode),
     ) &&
-    ["qualification_state", "extended_evaluation_state", "none"].includes(String(row.mode_source)) &&
+    ["qualification_state", "extended_evaluation_state", "followon_evaluation_state", "none"].includes(String(row.mode_source)) &&
     (row.mode_source !== "extended_evaluation_state" || isExtendedFlashRunId(row.run_id)) &&
+    (row.mode_source !== "followon_evaluation_state" || isFollowonFlashRunId(row.run_id)) &&
     ["online", "stopped", "unknown"].includes(
       String(row.resident_services_expected),
     ) &&
@@ -187,8 +243,6 @@ function orderedModelCatalog(value: unknown): Array<[string, ServedModel]> {
 }
 
 function isInventoryModel(row: ServedModel): boolean {
-  const positiveInteger = (value: unknown) =>
-    typeof value === "number" && Number.isInteger(value) && value > 0;
   return (
     typeof row.url === "string" &&
     (row.model === null || typeof row.model === "string") &&
@@ -562,9 +616,11 @@ export default function Pulse() {
     boundRuntimeMode &&
     modelRuntime.resident_services_expected === "stopped";
   const selectedMiaVariant = boundRuntimeMode &&
-    isRegisteredMiaVariant(modelRuntime?.candidate_variant) &&
+    isRegisteredMiaVariant(modelRuntime?.candidate_variant, modelRuntime?.mode_source) &&
     (modelRuntime?.run_id?.startsWith("qfn-mia-c0-") ||
-      (modelRuntime?.mode_source === "extended_evaluation_state" && isExtendedFlashRunId(modelRuntime.run_id))) &&
+      isMiaProfileRunId(modelRuntime?.run_id) ||
+      (modelRuntime?.mode_source === "extended_evaluation_state" && isExtendedFlashRunId(modelRuntime.run_id)) ||
+      (modelRuntime?.mode_source === "followon_evaluation_state" && isFollowonFlashRunId(modelRuntime.run_id))) &&
     modelRuntime?.mode !== "resident"
       ? modelRuntime?.candidate_variant ?? null
       : null;

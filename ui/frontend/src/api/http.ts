@@ -115,7 +115,7 @@ export interface ModelRuntime {
   schema_version: "model-runtime/v1";
   observed_at: string;
   mode: "resident" | "candidate_research" | "transitioning" | "unknown";
-  mode_source: "qualification_state" | "extended_evaluation_state" | "none";
+  mode_source: "qualification_state" | "extended_evaluation_state" | "followon_evaluation_state" | "none";
   mode_source_sha256: string | null;
   resident_services_expected: "online" | "stopped" | "unknown";
   nara_service_expected: "running" | "paused" | "unknown";
@@ -130,6 +130,9 @@ export interface ModelRuntime {
     image_id: string;
     model_artifact_sha256: string;
     profile: string;
+    configured_max_context_tokens?: number;
+    configured_mtp_speculative_tokens?: number;
+    configured_kv_cache_memory_bytes?: number;
     source: "registered_plan_and_controller_state";
     image_evidence: "registered_source_only" | "bound_live_container";
     promotion_authorized: false;
