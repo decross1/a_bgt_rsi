@@ -123,6 +123,14 @@ def _datetime(value):
     return datetime.fromisoformat(normalized) if normalized is not None else None
 
 
+def _registered_mia_spec(run_id: str):
+    from bench.flash_next_ab.candidate_registry import MIA
+    if run_id.startswith("qfn-mia-c0-"):
+        return MIA
+    from bench.flash_next_ab.followon_projection import spec_for_run_name
+    return spec_for_run_name(run_id)
+
+
 def _startup_evidence(reader: Reader, run_id: str, result: dict):
     """Record observed server start to first valid models response, if bound.
 
@@ -135,6 +143,7 @@ def _startup_evidence(reader: Reader, run_id: str, result: dict):
     if result.get("schema") not in {
         "qwen-flash-next-qualification-result/v3",
         "qwen-flash-next-qualification-result/v4",
+        "qwen-flash-next-qualification-result/v5",
     }:
         return absent
     relative = f"qualification-runs/{run_id}/readiness.json"
@@ -145,10 +154,12 @@ def _startup_evidence(reader: Reader, run_id: str, result: dict):
     except SourceError:
         return dict(absent, startup_status="unavailable")
     try:
-        if result["schema"].endswith("/v4"):
-            from bench.flash_next_ab.candidate_registry import MIA
-            expected = (MIA.container_name, MIA.image_id, MIA.served_name,
-                        MIA.docker_memory_limit_bytes)
+        if result["schema"].endswith(("/v4", "/v5")):
+            spec = _registered_mia_spec(run_id)
+            if spec is None:
+                return dict(absent, startup_status="unavailable")
+            expected = (spec.container_name, spec.image_id, spec.served_name,
+                        spec.docker_memory_limit_bytes)
         else:
             from bench.flash_next_ab import qualification as q
             expected = (q.CONTAINER_NAME, q.IMAGE_ID, q.SERVED_MODEL,
@@ -198,23 +209,23 @@ def _startup_evidence(reader: Reader, run_id: str, result: dict):
 
 
 def _mia_variant(reader: Reader, run_id: str, state_or_result: dict):
-    """Use code-owned v4 source identity; never infer variant from endpoint text."""
-    if not run_id.startswith("qfn-mia-c0-"):
+    """Use the literal v4/v5 registry and exact files, never endpoint text."""
+    spec = _registered_mia_spec(run_id)
+    if spec is None:
         return None
     try:
         from bench.flash_next_ab import qualification as q
-        from bench.flash_next_ab.candidate_registry import MIA
         from bench.flash_next_ab.mia_candidate_integration import read_mia_contract
 
         prefix = f"qualification-runs/{run_id}"
         plan, _ = reader.read(f"{prefix}/plan.json")
         contract, contract_sha = reader.read(f"{prefix}/launch-contract.raw.json")
         snapshot, _ = reader.read(f"{prefix}/launch-contract.snapshot.json")
-        fixed_contract, fixed_sha, _ = read_mia_contract(MIA.contract_path, q)
+        fixed_contract, fixed_sha, _ = read_mia_contract(spec.contract_path, q)
         expected = q.plan_qualification(
-            fixed_contract, fixed_sha, reader.root / prefix, spec=MIA
+            fixed_contract, fixed_sha, reader.root / prefix, spec=spec
         )
-        candidate = {"id": MIA.spec_id, "spec_sha256": MIA.identity_sha256()}
+        candidate = {"id": spec.spec_id, "spec_sha256": spec.identity_sha256()}
     except Exception as exc:
         raise SourceError("Mia registered variant sources are unavailable.") from exc
     if (
@@ -225,21 +236,24 @@ def _mia_variant(reader: Reader, run_id: str, state_or_result: dict):
         or state_or_result.get("candidate") != candidate
         or state_or_result.get("plan_sha256") != q.sha256(plan)
         or state_or_result.get("contract_sha256") != contract_sha
-        or state_or_result.get("model_artifact_sha256") != MIA.model_artifact_sha256()
-        or plan.get("image_id") != MIA.image_id
-        or plan.get("served_model") != MIA.served_name
-        or plan.get("profile") != MIA.profile
+        or state_or_result.get("model_artifact_sha256") != spec.model_artifact_sha256()
+        or plan.get("image_id") != spec.image_id
+        or plan.get("served_model") != spec.served_name
+        or plan.get("profile") != spec.profile
     ):
         raise SourceError("Mia registered variant sources differ.")
     return {
-        "id": MIA.spec_id,
-        "repository": MIA.repository,
-        "revision": MIA.revision,
-        "served_model": MIA.served_name,
-        "image_id": MIA.image_id,
-        "model_artifact_sha256": MIA.model_artifact_sha256(),
-        "spec_sha256": MIA.identity_sha256(),
-        "qualification_profile": MIA.profile,
+        "id": spec.spec_id,
+        "repository": spec.repository,
+        "revision": spec.revision,
+        "served_model": spec.served_name,
+        "image_id": spec.image_id,
+        "model_artifact_sha256": spec.model_artifact_sha256(),
+        "spec_sha256": spec.identity_sha256(),
+        "qualification_profile": spec.profile,
+        "mtp_speculative_tokens": spec.mtp_speculative_tokens,
+        "max_model_len": spec.max_model_len,
+        "kv_cache_memory_bytes": spec.kv_cache_memory_bytes,
         "evidence_class": "REGISTERED_SOURCE_ONLY",
     }
 
@@ -255,6 +269,7 @@ def _qualification(reader, run_id):
             "qwen-flash-next-qualification-state/v2",
             "qwen-flash-next-qualification-state/v3",
             "qwen-flash-next-qualification-state/v4",
+            "qwen-flash-next-qualification-state/v5",
         } or row.get("run_id") != run_id:
             raise SourceError("An in-progress qualification has an invalid identity.")
         phase = row.get("phase")
@@ -264,7 +279,7 @@ def _qualification(reader, run_id):
             raise SourceError("A qualification phase is not recognized.")
         # A state file can outlive a process. Never label it as currently running.
         variant = _mia_variant(reader, run_id, row)
-        if (row.get("schema") == "qwen-flash-next-qualification-state/v4") != (variant is not None):
+        if (row.get("schema") in {"qwen-flash-next-qualification-state/v4", "qwen-flash-next-qualification-state/v5"}) != (variant is not None):
             raise SourceError("An unfinished qualification variant differs.")
         return {"id": run_id, "status": "unfinished_receipt", "phase": phase,
                 "finished_at": None, "candidate_window_minutes": None, "minimum_memory_gib": None,
@@ -278,6 +293,7 @@ def _qualification(reader, run_id):
             "qwen-flash-next-qualification-result/v2",
             "qwen-flash-next-qualification-result/v3",
             "qwen-flash-next-qualification-result/v4",
+            "qwen-flash-next-qualification-result/v5",
         }
             or row.get("run_id") != run_id or row.get("status") not in {"passed", "failed", "unknown"}
             or row.get("weekly_budget_debit") is not False
@@ -295,7 +311,7 @@ def _qualification(reader, run_id):
     }:
         raise SourceError("A qualification failure class is unsupported.")
     variant = _mia_variant(reader, run_id, row)
-    if (row.get("schema") == "qwen-flash-next-qualification-result/v4") != (variant is not None):
+    if (row.get("schema") in {"qwen-flash-next-qualification-result/v4", "qwen-flash-next-qualification-result/v5"}) != (variant is not None):
         raise SourceError("A terminal qualification variant differs.")
     from bench.flash_next_ab.harness import (
         HarnessError,
@@ -339,58 +355,9 @@ def _qualification(reader, run_id):
 
 
 def _comparison(reader, entry):
-    from bench.flash_next_ab.compare import summarize_pair, validate_run
-    from bench.flash_next_ab.harness import HarnessError, validate_qualification_receipt
+    from .local_model_pair_proof import project_proof_aware_pair
 
-    if not isinstance(entry, dict) or not ID.fullmatch(str(entry.get("id", ""))):
-        raise SourceError("A comparison index entry has an invalid identity.")
-    runs = {}
-    indexed = {}
-    hashes = {}
-    for cohort in ("resident", "flash"):
-        ref = entry.get(cohort)
-        if not isinstance(ref, dict) or set(ref) != {"path", "sha256"}:
-            raise SourceError("A comparison source reference is incomplete.")
-        if not isinstance(ref["path"], str) or not ref["path"].startswith("evaluation/"):
-            raise SourceError("A comparison source is outside the evaluation directory.")
-        run, digest = reader.read(ref["path"], digest=ref["sha256"])
-        if not isinstance(run.get("outcomes"), list) or len(run["outcomes"]) > 2048:
-            raise SourceError("A comparison exceeds the task-run bound.")
-        indexed[cohort] = validate_run(run, cohort)
-        if any(row["family"] not in FAMILIES for row in indexed[cohort].values()):
-            raise SourceError("A comparison contains an unregistered public family.")
-        runs[cohort], hashes[cohort] = run, digest
-        qualification = entry.get("qualifications", {}).get(cohort)
-        expected = {"receipt", "artifacts"} if cohort == "resident" else {"receipt", "plan", "contract"}
-        if not isinstance(qualification, dict) or set(qualification) != expected:
-            raise SourceError("A comparison lacks bound qualification sources.")
-        for path in qualification.values():
-            if not isinstance(path, str):
-                raise SourceError("A qualification reference is invalid.")
-            reader.read(path)
-        kwargs = {"receipt_path": reader.root / qualification["receipt"]}
-        if cohort == "resident":
-            kwargs["resident_artifacts_path"] = reader.root / qualification["artifacts"]
-        else:
-            kwargs.update(qualification_plan_path=reader.root / qualification["plan"],
-                          contract_snapshot_path=reader.root / qualification["contract"])
-        try:
-            validate_qualification_receipt(run["plan"], cohort, **kwargs)
-        except HarnessError as exc:
-            raise SourceError("A comparison failed qualification source validation.") from exc
-    summary = summarize_pair(runs["resident"], runs["flash"])
-    families = []
-    for family, row in summary["families"].items():
-        arms = {cohort: {key: row["cohorts"][cohort][key] for key in (
-            "declared", "attempted", "passed", "success_rate", "successful_task_runs_per_hour"
-        )} for cohort in ("resident", "flash")}
-        families.append({"family": family, "cohorts": arms, "comparison_eligible": row["comparison_eligible"],
-                         "paired_success_delta": row["paired_success_delta"],
-                         "equal_source_task_success_delta": row["equal_source_task_success_delta"],
-                         "source_task_interval_95": row["source_task_cluster_resampling_95_interval"]})
-    return {"id": entry["id"], "status": summary["status"], "comparison_eligible": summary["comparison_eligible"],
-            "manifest_sha256": summary["manifest_sha256"], "run_sha256": hashes,
-            "families": families, "promotion_authorized": False}
+    return project_proof_aware_pair(reader, entry)
 
 
 def _receipt_recorded_mtime(path: Path) -> int:
@@ -438,7 +405,7 @@ def project_local_research(root: Path | None = None):
                 key=lambda p: (_receipt_recorded_mtime(p), p.name), reverse=True
             )
             for child in children:
-                if not ID.fullmatch(child.name) or not child.name.startswith(("qfn-c0-", "qfn-mia-c0-")):
+                if not ID.fullmatch(child.name) or not (child.name.startswith(("qfn-c0-", "qfn-mia-c0-")) or _registered_mia_spec(child.name) is not None):
                     continue
                 try:
                     result["qualification_runs"].append(_qualification(reader, child.name))

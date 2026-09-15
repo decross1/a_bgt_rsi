@@ -177,6 +177,10 @@ def test_resident_real_producers_admit_complete_run_including_timeout(
 
     monkeypatch.setattr(resident, 'run_harness', real_harness)
     plan = resident._resident_plan(window, output)
+    # The original pair's producer receipt names the older registered checkout.
+    # Simulate that exact root when replaying this fixture from the follow-on
+    # checkout; the production execution guard remains strict.
+    monkeypatch.setattr(resident, 'ROOT', ew.REGISTERED_CODE_ROOT)
 
     class InProcessWorker:
         def __init__(self, command, **kwargs):

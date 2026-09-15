@@ -64,6 +64,23 @@ class CandidateSpec:
     kv_cache_memory_bytes: int = 2 * 1024**3
     docker_memory_limit_bytes: int = 96 * 1024**3
     min_mem_available_gib: int = 20
+    # Additive follow-on fields. Defaults preserve the historical Mia C0
+    # identity snapshot, contract and launch vector byte for byte.
+    mtp_speculative_tokens: int = 0
+    qualification_probe_set: str = "flash-next-minimal-v1"
+    run_id_prefix: str = "qfn-mia-c0-"
+    mtp_module_sha256: str | None = None
+    profile_canary_timeout_seconds: int = 120
+    # Only a separately built/registered reduced-MTP3 child may set these.
+    # Defaults keep C0 and full-vocabulary profile identities unchanged.
+    draft_vocab_path: Path | None = None
+    draft_vocab_bytes: int | None = None
+    draft_vocab_sha256: str | None = None
+    draft_vocab_id_count: int | None = None
+    reduced_mtp_patch_sha256: str | None = None
+    use_local_argmax_reduction: bool = False
+    v2_model_runner_pin: bool = False
+    optimized_compilation_config_json: str | None = None
 
     @property
     def endpoint_name(self) -> str:
@@ -83,6 +100,43 @@ class CandidateSpec:
             raise ValueError("candidate indexed shard set differs")
         if sum(size for name, size, _ in self.files if name in safetensors) != self.safetensors_total_bytes:
             raise ValueError("candidate safetensor byte sum differs")
+        if type(self.mtp_speculative_tokens) is not int or self.mtp_speculative_tokens not in (0, 1, 2, 3):
+            raise ValueError("native MTP depth must be exactly 0, 1, 2, or 3")
+        if self.mtp_speculative_tokens > 0:
+            digest = self.mtp_module_sha256
+            if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+                raise ValueError("MTP profile needs an exact native module SHA")
+        elif self.mtp_module_sha256 is not None:
+            raise ValueError("MTP0 profile cannot claim a native draft module")
+        if (type(self.profile_canary_timeout_seconds) is not int
+            or self.profile_canary_timeout_seconds not in (120, 300)
+            or self.profile_canary_timeout_seconds == 300
+               and self.max_model_len != 69_632):
+            raise ValueError("profile canary timeout is not a registered literal ceiling")
+        if self.draft_vocab_path is None:
+            if any(value is not None for value in (
+                self.draft_vocab_bytes, self.draft_vocab_sha256,
+                self.draft_vocab_id_count, self.reduced_mtp_patch_sha256,
+            )) or self.use_local_argmax_reduction:
+                raise ValueError("full-vocabulary profile cannot claim reduced drafting")
+        else:
+            if (self.mtp_speculative_tokens != 3
+                or not self.draft_vocab_path.is_absolute()
+                or self.draft_vocab_bytes != 274_530
+                or self.draft_vocab_id_count != 47_149
+                or self.draft_vocab_sha256
+                   != "20e36b6e8eae2598019298959a578ef8adc2948bbed7189e43a8da9b9d84a0b1"
+                or self.reduced_mtp_patch_sha256
+                   != "2c7d19b8021f2c439920ae7f7df6f7b008eb635256a8423ef03e168d3984911f"
+                or self.use_local_argmax_reduction is not True):
+                raise ValueError("reduced MTP3 source/profile is not exact")
+        optimized = '{"cudagraph_capture_sizes":[4],"cudagraph_mode":"FULL_DECODE_ONLY","mode":0}'
+        if self.draft_vocab_path is None:
+            if self.v2_model_runner_pin or self.optimized_compilation_config_json is not None:
+                raise ValueError("full-vocabulary profile cannot claim reduced optimized bundle")
+        elif (self.v2_model_runner_pin is not True
+              or self.optimized_compilation_config_json != optimized):
+            raise ValueError("reduced MTP3 bundle needs exact V2/FULL width-four compile config")
 
     def expected_model_files(self) -> dict[str, dict[str, Any]]:
         return {name: {"bytes": size, "sha256": digest} for name, size, digest in self.files}
@@ -92,7 +146,7 @@ class CandidateSpec:
                         "files": self.expected_model_files()})
 
     def identity_snapshot(self) -> dict[str, Any]:
-        return {
+        snapshot = {
             "spec_id": self.spec_id, "repository": self.repository, "revision": self.revision,
             "model_path": str(self.model_path), "image_id": self.image_id,
             "served_name": self.served_name, "container_name": self.container_name,
@@ -119,6 +173,29 @@ class CandidateSpec:
             "docker_memory_limit_bytes": self.docker_memory_limit_bytes,
             "min_mem_available_gib": self.min_mem_available_gib,
         }
+        if self.mtp_speculative_tokens:
+            snapshot["mtp_speculative_tokens"] = self.mtp_speculative_tokens
+        if self.qualification_probe_set != "flash-next-minimal-v1":
+            snapshot["qualification_probe_set"] = self.qualification_probe_set
+        if self.run_id_prefix != "qfn-mia-c0-":
+            snapshot["run_id_prefix"] = self.run_id_prefix
+        if self.mtp_module_sha256 is not None:
+            snapshot["mtp_module_sha256"] = self.mtp_module_sha256
+        if self.profile_canary_timeout_seconds != 120:
+            snapshot["profile_canary_timeout_seconds"] = self.profile_canary_timeout_seconds
+        if self.draft_vocab_path is not None:
+            snapshot["reduced_draft_vocab"] = {
+                "path": str(self.draft_vocab_path),
+                "bytes": self.draft_vocab_bytes,
+                "sha256": self.draft_vocab_sha256,
+                "id_count": self.draft_vocab_id_count,
+                "mtp_patch_sha256": self.reduced_mtp_patch_sha256,
+            }
+            snapshot["v2_model_runner_pin"] = True
+            snapshot["optimized_compilation_config_json"] = (
+                self.optimized_compilation_config_json
+            )
+        return snapshot
 
     def identity_sha256(self) -> str:
         return _digest(self.identity_snapshot())
@@ -144,7 +221,7 @@ class CandidateSpec:
         }
 
     def expected_runtime_section(self) -> dict[str, Any]:
-        return {
+        runtime = {
             "container_name": self.container_name,
             "host_address": "127.0.0.1", "host_port": self.host_port,
             "container_port": 8000, "compile_cache_path": str(self.compile_cache),
@@ -153,7 +230,7 @@ class CandidateSpec:
             "kv_cache_memory_bytes": self.kv_cache_memory_bytes,
             "max_num_batched_tokens": 4096,
             "kv_cache_dtype": "auto", "mamba_ssm_cache_dtype": "float32",
-            "mtp_speculative_tokens": 0, "prefix_caching": False,
+            "mtp_speculative_tokens": self.mtp_speculative_tokens, "prefix_caching": False,
             "async_scheduling": False, "qsa_exact_topk": True,
             "language_model_only": True,
             "docker_memory_limit_bytes": self.docker_memory_limit_bytes,
@@ -164,11 +241,30 @@ class CandidateSpec:
             "packed_ple_bytes": self.packed_ple_bytes,
             "packed_ple_sha256": self.packed_ple_sha256,
         }
+        if self.mtp_speculative_tokens:
+            runtime["speculative_config"] = {
+                "method": "mtp", "num_speculative_tokens": self.mtp_speculative_tokens,
+            }
+        if self.draft_vocab_path is not None:
+            runtime["speculative_config"]["use_local_argmax_reduction"] = True
+            runtime["reduced_draft_vocab"] = {
+                "host_path": str(self.draft_vocab_path),
+                "container_path": "/root/draft_vocab.txt",
+                "bytes": self.draft_vocab_bytes,
+                "sha256": self.draft_vocab_sha256,
+                "id_count": self.draft_vocab_id_count,
+                "mtp_patch_sha256": self.reduced_mtp_patch_sha256,
+            }
+            runtime["v2_model_runner_pin"] = True
+            runtime["compilation_config"] = json.loads(
+                self.optimized_compilation_config_json
+            )
+        return runtime
 
     def launch_argv(self, *, compilation_config: str) -> list[str]:
         """Exact local C0 launch vector; this function never invokes Docker."""
         cache = self.compile_cache
-        env = (
+        env = [
             ("HF_HUB_OFFLINE", "1"), ("TRANSFORMERS_OFFLINE", "1"),
             ("VLLM_ENGINE_READY_TIMEOUT_S", "3600"),
             ("VLLM_PLE_CPU_OFFLOAD", "1"),
@@ -177,7 +273,10 @@ class CandidateSpec:
             ("VLLM_QSA_EXACT_TOPK", "1"),
             ("VLLM_MXFP8_EMULATION_DEQUANT_AT_LOAD", "0"),
             ("PROMETHEUS_MULTIPROC_DIR", "/tmp/vllm-prometheus"),
-        )
+        ]
+        if self.draft_vocab_path is not None:
+            env.append(("VLLM_MTP_DRAFT_VOCAB", "/root/draft_vocab.txt"))
+            env.append(("VLLM_USE_V2_MODEL_RUNNER", "1"))
         argv = [
             "docker", "create", "--name", self.container_name, "--restart=no",
             "--gpus", "all", "--memory", str(self.docker_memory_limit_bytes),
@@ -188,6 +287,8 @@ class CandidateSpec:
             "-v", f"{self.packed_ple_path.parent}:/models/ple:ro",
             "-v", f"{cache}:/root/.cache:rw",
         ]
+        if self.draft_vocab_path is not None:
+            argv += ["-v", f"{self.draft_vocab_path}:/root/draft_vocab.txt:ro"]
         for name, value in env:
             argv += ["-e", f"{name}={value}"]
         argv += [
@@ -204,7 +305,9 @@ class CandidateSpec:
             "--no-enable-prefix-caching", "--enable-chunked-prefill",
             "--max-num-batched-tokens", "4096",
             "--distributed-executor-backend", "mp",
-            "--compilation-config", compilation_config,
+            "--compilation-config", (
+                self.optimized_compilation_config_json or compilation_config
+            ),
             "--no-enable-flashinfer-autotune",
             "--kv-cache-dtype", "auto",
             "--mamba-ssm-cache-dtype", "float32",
@@ -212,6 +315,14 @@ class CandidateSpec:
             "--reasoning-parser", "qwen3",
             "--enable-auto-tool-choice", "--tool-call-parser", "qwen3_coder",
         ]
+        if self.mtp_speculative_tokens:
+            speculative = {"method": "mtp", "num_speculative_tokens": self.mtp_speculative_tokens}
+            if self.draft_vocab_path is not None:
+                speculative["use_local_argmax_reduction"] = True
+            argv += ["--speculative-config", json.dumps(
+                speculative,
+                sort_keys=True, separators=(",", ":"), allow_nan=False,
+            )]
         return argv
 
 
@@ -361,10 +472,9 @@ def select_candidate(contract: dict[str, Any]) -> CandidateSpec | None:
         }:
             raise ValueError("legacy NVIDIA contract identity differs")
         return None
-    if schema != MIA.contract_schema:
+    if schema not in (MIA.contract_schema, "qwen-flash-next-qualification/v5"):
         raise ValueError("unsupported candidate contract schema")
-    if contract.get("contract_id") != MIA.contract_id or contract.get("profile") != MIA.profile:
-        raise ValueError("Mia contract identity differs")
-    if contract.get("candidate") != {"id": MIA.spec_id, "spec_sha256": MIA.identity_sha256()}:
-        raise ValueError("Mia spec identity differs")
-    return MIA
+    # Import after CandidateSpec and MIA exist; the follow-on registry contains
+    # only four literal dataclasses.replace(MIA, ...) objects.
+    from .followon_profiles import select_mia_contract
+    return select_mia_contract(contract)

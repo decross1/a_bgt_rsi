@@ -60,7 +60,8 @@ def _latest_slot_mtime(root: Path, *, extended: bool) -> int | None:
                 name = entry.name
                 accepted = (
                     mr.EXTENDED_FLASH_RUN_ID.fullmatch(name) if extended
-                    else mr.RUN_ID.fullmatch(name) or mr.MIA_RUN_ID.fullmatch(name)
+                    else (mr.RUN_ID.fullmatch(name) or mr.MIA_RUN_ID.fullmatch(name)
+                          or mr.MIA_PROFILE_RUN_ID.fullmatch(name))
                 )
                 if not accepted:
                     continue

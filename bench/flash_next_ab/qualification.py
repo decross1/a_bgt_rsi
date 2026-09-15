@@ -301,9 +301,9 @@ def _runtime_identity(spec: CandidateSpec | None = None) -> _RuntimeIdentity:
             frozenset(WEIGHT_FILES), frozenset(WEIGHT_FILES), True,
             DOCKER_MEMORY_LIMIT_BYTES, MIN_MEMORY_GIB, model_artifact_sha256(),
         )
-    from .candidate_registry import MIA
-    if spec is not MIA:
-        raise QualificationError("candidate spec is not the code-owned Mia singleton")
+    from .followon_profiles import is_registered_spec
+    if not is_registered_spec(spec):
+        raise QualificationError("candidate spec is outside the code-owned Mia registry")
     return _RuntimeIdentity(
         spec.image_id, spec.model_path, spec.revision, spec.repository,
         spec.served_name, spec.container_name, spec.compile_cache,
@@ -314,6 +314,14 @@ def _runtime_identity(spec: CandidateSpec | None = None) -> _RuntimeIdentity:
         spec.model_artifact_sha256(), spec.packed_ple_path, spec.packed_ple_bytes,
         spec.packed_ple_sha256,
     )
+
+
+def _mia_standard_schema(kind: str, spec: CandidateSpec) -> str:
+    """Only the original singleton retains v4; new literal profiles use v5."""
+    from .followon_profiles import MIA, is_registered_spec
+    if kind not in ("state", "result") or not is_registered_spec(spec):
+        raise QualificationError("unregistered Mia schema kind/spec")
+    return f"qwen-flash-next-qualification-{kind}/" + ("v4" if spec is MIA else "v5")
 
 
 class QualificationError(RuntimeError):
@@ -2198,6 +2206,16 @@ def verify_model(
         receipt["packed_ple"] = {"path": str(runtime.packed_ple_path),
                                  "bytes": runtime.packed_ple_bytes,
                                  "sha256": packed_sha}
+        if spec.draft_vocab_path is not None:
+            draft_sha = _hash_regular_file(
+                spec.draft_vocab_path, spec.draft_vocab_bytes, monitor
+            )
+            if draft_sha != spec.draft_vocab_sha256:
+                raise QualificationError("registered reduced draft vocabulary content differs")
+            receipt["reduced_draft_vocab"] = {
+                "path": str(spec.draft_vocab_path), "bytes": spec.draft_vocab_bytes,
+                "sha256": draft_sha, "id_count": spec.draft_vocab_id_count,
+            }
     return receipt
 
 
@@ -2355,6 +2373,7 @@ def _run_probes(
 ) -> list[dict[str, Any]]:
     runtime = _runtime_identity(spec)
     from bench.flash_next_ab.transport import LocalEndpoint
+    probe_set = spec.qualification_probe_set if spec is not None else "flash-next-minimal-v1"
 
     endpoint = LocalEndpoint(
         spec.endpoint_name if spec is not None else "flash_next",
@@ -2388,7 +2407,7 @@ def _run_probes(
         attempts.append(row)
         _atomic_write(output / "probe-attempts.json", {
             "schema": "qwen-flash-next-probe-attempts/v1",
-            "probe_set": "flash-next-minimal-v1", "results": attempts,
+            "probe_set": probe_set, "results": attempts,
         })
         try:
             monitor.check()
@@ -2407,14 +2426,14 @@ def _run_probes(
                         "finished_at": utc_now()})
             _atomic_write(output / "probe-attempts.json", {
                 "schema": "qwen-flash-next-probe-attempts/v1",
-                "probe_set": "flash-next-minimal-v1", "results": attempts,
+                "probe_set": probe_set, "results": attempts,
             })
             raise
         if not isinstance(result, dict):
             row.update({"status": "malformed_response", "finished_at": utc_now()})
             _atomic_write(output / "probe-attempts.json", {
                 "schema": "qwen-flash-next-probe-attempts/v1",
-                "probe_set": "flash-next-minimal-v1", "results": attempts,
+                "probe_set": probe_set, "results": attempts,
             })
             raise QualificationError(f"fixed probe response is malformed: {probe_id}")
         evidence = result.get("private_evidence")
@@ -2434,7 +2453,7 @@ def _run_probes(
         attempts[-1]["status"] = status
         _atomic_write(output / "probe-attempts.json", {
             "schema": "qwen-flash-next-probe-attempts/v1",
-            "probe_set": "flash-next-minimal-v1", "results": attempts,
+            "probe_set": probe_set, "results": attempts,
         })
 
     for ordinal, request_spec in enumerate(specifications):
@@ -2891,6 +2910,12 @@ def execute_worker(
     """Execute one already-supervised window.  Tests inject all host effects."""
     evaluation_window: Any = None
     extended_plan: dict[str, Any] | None = None
+    followon_kind = False
+    from .followon_profiles import MIA_CTX69632, requires_profile_canary
+
+    profile_canary_required = requires_profile_canary(spec)
+    native_packet_factory = None
+    profile_canary_summary: dict[str, Any] | None = None
     if evaluation_context is not None:
         from .evaluation_window import (
             EXTENDED_SERVING_PROFILE,
@@ -2904,18 +2929,55 @@ def execute_worker(
 
         if not isinstance(evaluation_context, tuple) or len(evaluation_context) != 2:
             raise QualificationError("extended evaluation inputs are not frozen")
-        if ROOT != REGISTERED_CODE_ROOT:
-            raise QualificationError("extended worker was imported outside the registered worktree")
         evaluation_window, extended_plan = evaluation_context
-        if (not isinstance(evaluation_window, FrozenEvaluationWindow)
-            or not isinstance(extended_plan, dict)
-            or evaluation_window.cohort != "flash"
-            or load_evaluation_window(
-                evaluation_window.source_path, expected_cohort="flash"
-            ) != evaluation_window
-            or build_extended_evaluation_plan(evaluation_window, output) != extended_plan
-            or plan != evaluation_window.qualification_plan
-            or extended_plan["extended_serving_profile"] != EXTENDED_SERVING_PROFILE
+        followon_kind = (isinstance(extended_plan, dict)
+                         and extended_plan.get("evaluation_kind") == "followon")
+        if followon_kind:
+            from .followon_dispatch import (
+                FOLLOWON_CODE_ROOT,
+                frozen_followon_source_bundle,
+            )
+            from .followon_plans import FollowonExecution, flash_plan, load_execution
+
+            if (ROOT != FOLLOWON_CODE_ROOT
+                or not isinstance(evaluation_window, FollowonExecution)
+                or evaluation_window.cohort != "flash"
+                or load_execution(evaluation_window.source_path, cohort="flash")
+                   != evaluation_window
+                or flash_plan(evaluation_window, output) != extended_plan
+                or extended_plan.get("schema_version")
+                   != ("flash-followon-flash-plan/v2"
+                       if evaluation_window.v5_parent is not None
+                       else "flash-followon-flash-plan/v1")
+                or (evaluation_window.v5_parent is not None and
+                    extended_plan.get("v5_qualified_parent")
+                    != evaluation_window.document.get("v5_qualified_parent"))
+                or plan != evaluation_window.qualification_plan
+                or extended_plan["controller_source_bundle"]
+                   != frozen_followon_source_bundle()
+                or extended_plan["registered_code_root"] != str(FOLLOWON_CODE_ROOT)
+            ):
+                raise QualificationError("follow-on worker/source differs from registration")
+            # The old portfolio helper enforces the old exact plan key tuple.
+            # q's canonical hash has the same byte convention for this closed
+            # new plan, while the old branch keeps its original helper.
+            extended_plan_sha256 = sha256
+        else:
+            if ROOT != REGISTERED_CODE_ROOT:
+                raise QualificationError("extended worker was imported outside the registered worktree")
+            if (not isinstance(evaluation_window, FrozenEvaluationWindow)
+                or not isinstance(extended_plan, dict)
+                or evaluation_window.cohort != "flash"
+                or load_evaluation_window(
+                    evaluation_window.source_path, expected_cohort="flash"
+                ) != evaluation_window
+                or build_extended_evaluation_plan(evaluation_window, output) != extended_plan
+                or plan != evaluation_window.qualification_plan
+                or extended_plan["controller_source_bundle"]
+                   != frozen_controller_source_bundle()
+            ):
+                raise QualificationError("extended runtime differs from the qualified candidate")
+        if (extended_plan["extended_serving_profile"] != EXTENDED_SERVING_PROFILE
             or extended_plan["candidate_spec_sha256"]
                != (spec.identity_sha256() if spec is not None else None)
             or extended_plan["candidate_variant_id"]
@@ -2928,8 +2990,6 @@ def execute_worker(
                != (spec.paging_policy() if spec is not None else PAGING_POLICY)
             or extended_plan["effective_invocation_deadline_seconds"] != 14_400
             or extended_plan["restoration_reserve_seconds"] != 600
-            or extended_plan["controller_source_bundle"]
-               != frozen_controller_source_bundle()
             or extended_plan["controller_source_bundle_sha256"]
                != sha256(extended_plan["controller_source_bundle"])
         ):
@@ -2942,6 +3002,16 @@ def execute_worker(
                                            is not None else output, spec=spec)
         if plan != expected_plan:
             raise QualificationError("Mia worker plan differs from immutable registration")
+        if spec.contract_schema.endswith("/v5"):
+            from .followon_dispatch import (
+                FOLLOWON_CODE_ROOT,
+                frozen_followon_source_bundle,
+            )
+            if (ROOT != FOLLOWON_CODE_ROOT
+                or plan.get("registered_code_root") != str(FOLLOWON_CODE_ROOT)
+                or plan.get("followon_source_bundle") != frozen_followon_source_bundle()
+                or plan.get("followon_source_bundle_sha256") != sha256(plan["followon_source_bundle"])):
+                raise QualificationError("v5 worker source root or module bytes differ")
     ops = ops or HostOps()
     runtime = _runtime_identity(spec)
     if os.environ.get("MOCK_LLM"):
@@ -2964,8 +3034,10 @@ def execute_worker(
     started_wall = datetime.now(timezone.utc)
     run_id = output.name
     state: dict[str, Any] = {
-        "schema": ("flash-next-extended-evaluation-state/v2" if extended_plan
-                   is not None else "qwen-flash-next-qualification-state/v4" if spec is not None
+        "schema": ("flash-followon-flash-state/v1" if followon_kind
+                   else "flash-next-extended-evaluation-state/v2"
+                   if extended_plan is not None
+                   else _mia_standard_schema("state", spec) if spec is not None
                    else "qwen-flash-next-qualification-state/v3"),
         "run_id": run_id,
         "phase": "preflight",
@@ -2993,6 +3065,11 @@ def execute_worker(
     if spec is not None:
         state["candidate"] = plan["candidate"]
         state["model_artifact_sha256"] = runtime.model_artifact_sha256
+        if spec.contract_schema.endswith("/v5"):
+            state["followon_source_bundle_sha256"] = plan["followon_source_bundle_sha256"]
+    if profile_canary_required:
+        state["profile_canary_status"] = "not_started"
+        state["profile_canary_protocol_sha256"] = None
     if extended_plan is not None:
         state.update(
             pair_id=evaluation_window.pair_id,
@@ -3010,6 +3087,14 @@ def execute_worker(
                 "controller_source_bundle_sha256"
             ],
         )
+        if followon_kind:
+            state["evaluation_kind"] = "followon"
+            state["qualified_parent_window"] = extended_plan[
+                "qualified_parent_window"]
+            state["followon_blocks"] = extended_plan["followon_blocks"]
+            if evaluation_window.v5_parent is not None:
+                state["v5_qualified_parent"] = extended_plan[
+                    "v5_qualified_parent"]
     state_path = output / "state.json"
 
     def write_state() -> None:
@@ -3065,12 +3150,11 @@ def execute_worker(
     try:
         with resource_lease(root), monitor:
             if extended_plan is not None:
-                from .evaluation_window import extended_plan_sha256
                 from .extended_observer import UIObserver
 
                 ui_observer = UIObserver(
                     output, monitor=monitor, pair_id=evaluation_window.pair_id,
-                    extended_plan_sha256=extended_plan_sha256(extended_plan),
+                    extended_plan_sha256=sha256(extended_plan),
                     profile=extended_plan["extended_serving_profile"],
                 )
                 ui_observer.start()
@@ -3078,6 +3162,13 @@ def execute_worker(
                 preflight = preflight_probe(root, idle=True)
                 if float(preflight.get("mem_available_gib", 0)) < runtime.min_memory_gib:
                     raise QualificationError("preflight did not preserve the 20 GiB memory gate")
+                if spec is MIA_CTX69632:
+                    from .followon_native_packet import prepared_factory
+
+                    # A real locally retokenized 65K packet must exist before
+                    # any Nara/resident/container mutation. No hand-declared
+                    # model context length substitutes for source evidence.
+                    native_packet_factory = prepared_factory()
                 if _inspect_container(ops, runtime.container_name) is not None:
                     raise QualificationError("A/B sentinel name already exists")
                 if spec is not None and _inspect_container(ops, CONTAINER_NAME) is not None:
@@ -3250,24 +3341,63 @@ def execute_worker(
                     or final_candidate.get("restart_count") != 0
                 ):
                     raise QualificationError("candidate OOM/restart/running-state gate failed")
-                if extended_plan is not None:
-                    from .evaluation_window import run_flash_after_probes
+                if profile_canary_required:
+                    from .followon_canaries import run_profile_canary
 
+                    state["profile_canary_status"] = "started"
+                    write_state()
+                    profile_canary_summary = run_profile_canary(
+                        ops, monitor, spec=spec, output=output,
+                        timeout_s=spec.profile_canary_timeout_seconds,
+                        work_deadline=work_deadline,
+                        atomic_write=_atomic_write,
+                        record_private=_probe_private_response,
+                        native_context_packet_factory=native_packet_factory,
+                    )
+                    if profile_canary_summary.get("status") != "passed":
+                        raise QualificationError("registered profile canary failed")
+                    state["profile_canary_status"] = "passed"
+                    state["profile_canary_protocol_sha256"] = (
+                        profile_canary_summary["protocol_sha256"]
+                    )
+                    write_state()
+                if extended_plan is not None:
                     monitor.begin_evaluation()
                     state["phase"] = "evaluation"
                     state["monitor_phase"] = "evaluation"
                     active_stage = "evaluation"
                     write_state()
-                    evaluation_attempt = run_flash_after_probes(
-                        evaluation_window,
-                        execution_plan=extended_plan,
-                        evaluation_output=output,
-                        work_deadline=work_deadline,
-                        monitor=monitor,
-                    )
+                    if followon_kind:
+                        from .followon_admission import flash_callbacks
+                        from .followon_dispatch import run_group
+
+                        callbacks = flash_callbacks(
+                            evaluation_window, state, monitor, final_candidate,
+                            cutoff=work_deadline,
+                        )
+                        evaluation_attempt = run_group(
+                            evaluation_window.frozen,
+                            controller_callbacks=callbacks,
+                            work_cutoff_s=work_deadline,
+                            cancel_event=monitor.cancel_event,
+                        )
+                    else:
+                        from .evaluation_window import run_flash_after_probes
+
+                        evaluation_attempt = run_flash_after_probes(
+                            evaluation_window,
+                            execution_plan=extended_plan,
+                            evaluation_output=output,
+                            work_deadline=work_deadline,
+                            monitor=monitor,
+                        )
                     monitor.check()
-                    if evaluation_attempt.get("status") != "harness_complete_pending_restoration":
-                        raise QualificationError("extended harness did not finish before restoration")
+                    required_attempt_status = (
+                        "blocks_complete_pending_restoration" if followon_kind
+                        else "harness_complete_pending_restoration"
+                    )
+                    if evaluation_attempt.get("status") != required_attempt_status:
+                        raise QualificationError("registered evaluation did not finish before restoration")
                     state["phase"] = "evaluation_complete_pending_restoration"
                 else:
                     state["phase"] = "qualification_passed"
@@ -3414,19 +3544,25 @@ def execute_worker(
         and restoration["status"] == "verified"
         and not monitor.failure
         and paging_proof_complete
+        and (not profile_canary_required or profile_canary_summary is not None
+             and profile_canary_summary.get("status") == "passed")
         and (extended_plan is None or ui_observer_summary is not None and
              ui_observer_summary.get("joined") is True and
              ui_observer_summary.get("failed") is False and
              ui_observer_summary.get("ticks", 0) >= 2)
         and (extended_plan is None or evaluation_attempt is not None and
-             evaluation_attempt.get("status") == "harness_complete_pending_restoration")
+             evaluation_attempt.get("status") == (
+                 "blocks_complete_pending_restoration" if followon_kind
+                 else "harness_complete_pending_restoration"))
         else "failed"
         if restoration["status"] == "verified"
         else "unknown"
     )
     result = {
-        "schema": ("flash-next-extended-evaluation-result/v2" if extended_plan
-                   is not None else "qwen-flash-next-qualification-result/v4" if spec is not None
+        "schema": ("flash-followon-flash-result/v1" if followon_kind
+                   else "flash-next-extended-evaluation-result/v2"
+                   if extended_plan is not None
+                   else _mia_standard_schema("result", spec) if spec is not None
                    else "qwen-flash-next-qualification-result/v3"),
         "run_id": run_id,
         "status": status,
@@ -3652,10 +3788,51 @@ def execute_worker(
     )
     if spec is not None:
         result["candidate"] = plan["candidate"]
+        if spec.contract_schema.endswith("/v5"):
+            result["followon_source_bundle_sha256"] = plan["followon_source_bundle_sha256"]
         result["proof_receipts"] = plan["proof_receipts"]
         result["packed_ple"] = plan["packed_ple"] if model_receipt is not None else None
         result["model_verification_sha256"] = (
             sha256(model_receipt) if model_receipt is not None else None
+        )
+    if profile_canary_required:
+        from .harness import _read_regular_file
+
+        canary_file = output / "profile-canary.json"
+        attempts_file = output / "profile-canary-attempts.json"
+        canary_raw = attempts_raw = None
+        for source in (canary_file, attempts_file):
+            if source.exists():
+                raw, observed = _read_regular_file(
+                    source, label="registered profile canary", max_bytes=2_000_000
+                )
+                if observed != source.absolute():
+                    raise QualificationError("registered profile canary redirected")
+                if source == canary_file:
+                    canary_raw = raw
+                else:
+                    attempts_raw = raw
+        if status in {"passed", "complete"} and (
+            canary_raw is None or attempts_raw is None
+            or profile_canary_summary is None
+        ):
+            raise QualificationError("passed profile omitted durable canary proof")
+        result.update(
+            profile_canary_timeout_seconds=spec.profile_canary_timeout_seconds,
+            profile_canary_status=(profile_canary_summary.get("status")
+                                   if profile_canary_summary is not None
+                                   else "unknown"),
+            profile_canary_sha256=sha256(canary_raw) if canary_raw else None,
+            profile_canary_attempts_sha256=(sha256(attempts_raw)
+                                            if attempts_raw else None),
+            profile_canary_protocol_sha256=(
+                profile_canary_summary.get("protocol_sha256")
+                if profile_canary_summary is not None else None),
+            profile_canary_attempt_count=(
+                profile_canary_summary.get("attempt_count")
+                if profile_canary_summary is not None else None),
+            profile_canary_suite=(profile_canary_summary.get("suite")
+                                  if profile_canary_summary is not None else None),
         )
     if extended_plan is not None:
         result.update(
@@ -3681,15 +3858,34 @@ def execute_worker(
             effective_invocation_deadline_seconds=deadline_seconds,
             ui_observer_log_sha256=(ui_observer_summary.get("observer_log_sha256")
                                     if ui_observer_summary is not None else None),
-            harness_attempt_status=(evaluation_attempt.get("status")
-                                    if evaluation_attempt is not None else None),
-            harness_run_sha256=(evaluation_attempt.get("harness_run_sha256")
-                                if evaluation_attempt is not None else None),
         )
+        if followon_kind:
+            result.update(
+                evaluation_kind="followon",
+                qualified_parent_window=extended_plan["qualified_parent_window"],
+                group_attempt_status=(evaluation_attempt.get("status")
+                                      if evaluation_attempt is not None else None),
+                followon_block_count=len(extended_plan["followon_blocks"]),
+                followon_block_budget_total_seconds=extended_plan[
+                    "followon_block_budget_total_seconds"],
+                group_attempt_sha256=None,
+            )
+            if evaluation_window.v5_parent is not None:
+                result["v5_qualified_parent"] = extended_plan[
+                    "v5_qualified_parent"]
+        else:
+            result.update(
+                harness_attempt_status=(evaluation_attempt.get("status")
+                                        if evaluation_attempt is not None else None),
+                harness_run_sha256=(evaluation_attempt.get("harness_run_sha256")
+                                    if evaluation_attempt is not None else None),
+            )
         from .harness import _read_regular_file
 
         for source, key, limit in (
-            ("harness-attempt.json", "harness_attempt_sha256", 2_000_000),
+            (("group-attempt.json" if followon_kind else "harness-attempt.json"),
+             ("group_attempt_sha256" if followon_kind else "harness_attempt_sha256"),
+             2_000_000),
             ("probes.json", "probes_file_sha256", 2_000_000),
             ("probe-attempts.json", "probe_attempts_sha256", 2_000_000),
             ("readiness.json", "readiness_file_sha256", 2_000_000),
@@ -3870,8 +4066,11 @@ def _write_cgroup_diagnostics(
         raise QualificationError("passed no-swap attempt lacks attributed phase snapshots")
     sidecar = {
         "schema": ("flash-next-extended-cgroup-diagnostics/v1" if extended_plan
-                   is not None else "qwen-flash-next-c0-mia-s1-cgroup-diagnostics/v1" if spec is not None
-                   else "qwen-flash-next-c0-s1-cgroup-diagnostics/v1"),
+                   is not None else
+                   "qwen-flash-next-c0-mia-s1-cgroup-diagnostics/v1"
+                   if spec is not None and spec.contract_schema.endswith("/v4") else
+                   "qwen-flash-next-mia-followon-cgroup-diagnostics/v1"
+                   if spec is not None else "qwen-flash-next-c0-s1-cgroup-diagnostics/v1"),
         "candidate_id": candidate_id,
         "memory_log_sha256": sha256(raw),
         "attributed_samples": attributed,
@@ -3912,8 +4111,11 @@ def _validated_recovery_state(
     path = output / "state.json"
     state = _read_bounded_run_json(path, source="worker recovery state")
     if (
-        state.get("schema") != ("flash-next-extended-evaluation-state/v2" if extended_plan
-                                is not None else "qwen-flash-next-qualification-state/v4" if spec is not None
+        state.get("schema") != ("flash-followon-flash-state/v1"
+                                if extended_plan is not None
+                                and extended_plan.get("evaluation_kind") == "followon"
+                                else "flash-next-extended-evaluation-state/v2" if extended_plan
+                                is not None else _mia_standard_schema("state", spec) if spec is not None
                                 else "qwen-flash-next-qualification-state/v3")
         or state.get("run_id") != output.name
         or state.get("contract_sha256") != plan["contract_sha256"]
@@ -3943,6 +4145,16 @@ def _validated_recovery_state(
            != extended_plan["controller_source_bundle_sha256"]
     ):
         raise QualificationError("extended worker recovery source/profile changed")
+    if extended_plan is not None and extended_plan.get("evaluation_kind") == "followon":  # noqa: SIM102 - separate parent contract check
+        if (state.get("evaluation_kind") != "followon"
+            or state.get("qualified_parent_window")
+               != extended_plan["qualified_parent_window"]
+            or state.get("followon_blocks") != extended_plan["followon_blocks"]
+            or (extended_plan.get("schema_version")
+                == "flash-followon-flash-plan/v2" and
+                state.get("v5_qualified_parent")
+                != extended_plan.get("v5_qualified_parent"))):
+            raise QualificationError("follow-on recovery group or parent changed")
     if (
         isinstance(state.get("worker_pid"), bool)
         or not isinstance(state.get("worker_pid"), int)
@@ -4040,6 +4252,22 @@ def _result_has_verified_restoration(
         )
     except (KeyError, TypeError, ValueError):
         timestamps_sane = False
+    followon_kind = (extended_plan is not None
+                     and extended_plan.get("evaluation_kind") == "followon")
+    attempt_complete = (
+        result.get("group_attempt_status") == "blocks_complete_pending_restoration"
+        and isinstance(result.get("group_attempt_sha256"), str)
+        if followon_kind else
+        result.get("harness_attempt_status") == "harness_complete_pending_restoration"
+        and isinstance(result.get("harness_run_sha256"), str)
+    )
+    final_restored = (
+        isinstance(restoration, dict)
+        and isinstance(restoration.get("final_observation"), dict)
+        and restoration["final_observation"].get("sentinel_by_name") is None
+        and restoration["final_observation"].get("sentinel_by_id") is None
+        and isinstance(result.get("ui_observer_log_sha256"), str)
+    )
     if extended_plan is not None and (
         result.get("pair_id") != extended_plan["pair_id"]
         or result.get("window_plan_sha256") != extended_plan["window_plan_sha256"]
@@ -4058,20 +4286,16 @@ def _result_has_verified_restoration(
         or result.get("effective_invocation_deadline_seconds")
            != extended_plan["effective_invocation_deadline_seconds"]
         or result.get("status") not in {"complete", "failed", "unknown"}
-        or (result.get("status") == "complete" and
-            (result.get("harness_attempt_status")
-             != "harness_complete_pending_restoration"
-             or not isinstance(result.get("harness_run_sha256"), str)
-             or not isinstance(restoration, dict)
-             or not isinstance(restoration.get("final_observation"), dict)
-             or restoration["final_observation"].get("sentinel_by_name") is not None
-             or restoration["final_observation"].get("sentinel_by_id") is not None
-             or not isinstance(result.get("ui_observer_log_sha256"), str)))
+        or (result.get("status") == "complete"
+            and (not attempt_complete or not final_restored))
     ):
         return False
     return bool(
-        result.get("schema") == ("flash-next-extended-evaluation-result/v2" if extended_plan
-                                 is not None else "qwen-flash-next-qualification-result/v4" if spec is not None
+        result.get("schema") == ("flash-followon-flash-result/v1"
+                                 if extended_plan is not None
+                                 and extended_plan.get("evaluation_kind") == "followon"
+                                 else "flash-next-extended-evaluation-result/v2" if extended_plan
+                                 is not None else _mia_standard_schema("result", spec) if spec is not None
                                  else "qwen-flash-next-qualification-result/v3")
         and result.get("run_id") == output.name
         and result.get("contract_sha256") == plan["contract_sha256"]
@@ -4097,9 +4321,15 @@ def supervisor_emergency_restore(
     """Recover a killed worker from its last durable exact-ID state."""
     ops = ops or HostOps()
     receipt: dict[str, Any] = {
-        "schema": ("flash-next-extended-supervisor-recovery/v1" if extended_plan
-                   is not None else "qwen-flash-next-supervisor-recovery/v2" if spec is not None
-                   else "qwen-flash-next-supervisor-recovery/v1"),
+        "schema": ("flash-followon-flash-supervisor-recovery/v1"
+                   if extended_plan is not None
+                   and extended_plan.get("evaluation_kind") == "followon"
+                   else "flash-next-extended-supervisor-recovery/v1" if extended_plan
+                   is not None else
+                   "qwen-flash-next-supervisor-recovery/v2"
+                   if spec is not None and spec.contract_schema.endswith("/v4") else
+                   "qwen-flash-next-supervisor-recovery/v3"
+                   if spec is not None else "qwen-flash-next-supervisor-recovery/v1"),
         "run_id": output.name,
         "started_at": utc_now(),
         "status": "unknown",
@@ -4155,6 +4385,9 @@ def supervise_run(
     contract: dict[str, Any], contract_sha: str, output: Path,
     *, spec: CandidateSpec | None = None,
 ) -> int:
+    from .followon_profiles import requires_profile_canary
+
+    v5_profile = requires_profile_canary(spec)
     output = _validate_output(output, must_be_absent=True, spec=spec)
     contract_raw = _verified_contract_raw(contract, contract_sha, spec=spec)
     output.mkdir(mode=0o700)
@@ -4177,6 +4410,8 @@ def supervise_run(
     work_cutoff = deadline - contract["safety"]["restoration_reserve_seconds"]
     terminated = False
     killed = False
+    v5_boot_id = None
+    v5_worker_start_ticks = None
     with (output / "controller.log").open("xb") as stream:
         proc = subprocess.Popen(
             command,
@@ -4186,6 +4421,18 @@ def supervise_run(
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+        if v5_profile:
+            # These are observation receipts, not admission shortcuts. If
+            # the process disappears before capture, keep restoration active
+            # and publish an ineligible v5 supervision receipt.
+            try:
+                v5_worker_start_ticks = _process_start_ticks(proc.pid)
+                v5_boot_id = Path(
+                    "/proc/sys/kernel/random/boot_id"
+                ).read_text().strip()
+            except (OSError, QualificationError, ValueError):
+                v5_worker_start_ticks = None
+                v5_boot_id = None
         while proc.poll() is None and time.monotonic() < work_cutoff:
             time.sleep(min(1, max(0, work_cutoff - time.monotonic())))
         if proc.poll() is None:
@@ -4229,6 +4476,9 @@ def supervise_run(
         "hard_deadline_seconds": contract["safety"]["invocation_deadline_seconds"],
         "finished_at": utc_now(),
     }
+    if v5_profile:
+        supervision["boot_id"] = v5_boot_id
+        supervision["worker_start_ticks"] = v5_worker_start_ticks
     _atomic_write(output / "supervision.json", supervision)
     return 0 if (
         proc.returncode == 0
@@ -4249,8 +4499,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _mia_main(args: argparse.Namespace) -> int:
-    """Dispatch one exact Mia v4 spec without changing NVIDIA module globals."""
-    from .candidate_registry import MIA
+    """Dispatch one registered Mia v4/v5 spec without module-global switching."""
+    from .candidate_registry import select_candidate
     from .mia_candidate_integration import (
         MiaRegistrationError,
         load_mia_contract,
@@ -4259,7 +4509,10 @@ def _mia_main(args: argparse.Namespace) -> int:
     )
     try:
         contract, contract_sha = load_mia_contract(args.contract, sys.modules[__name__])
-        output = validate_output(args.output_dir, MIA, must_be_absent=args.run)
+        spec = select_candidate(contract)
+        if spec is None:
+            raise MiaRegistrationError("Mia contract selected legacy NVIDIA")
+        output = validate_output(args.output_dir, spec, must_be_absent=args.run)
         plan = plan_mia_qualification(contract, contract_sha, output, sys.modules[__name__])
     except MiaRegistrationError as exc:
         raise QualificationError(str(exc)) from exc
@@ -4267,23 +4520,32 @@ def _mia_main(args: argparse.Namespace) -> int:
         print(json.dumps(plan, sort_keys=True, indent=2, allow_nan=False))
         return 0
     if args.run:
-        return supervise_run(contract, contract_sha, output, spec=MIA)
+        return supervise_run(contract, contract_sha, output, spec=spec)
     if not output.is_dir() or not (output / "plan.json").is_file():
         raise QualificationError("Mia worker output has no supervisor plan")
     recorded = _read_bounded_run_json(output / "plan.json", source="Mia supervisor plan")
     if recorded != plan:
         raise QualificationError("Mia worker plan differs from supervisor plan")
-    result = execute_worker(plan, contract, output, spec=MIA)
+    result = execute_worker(plan, contract, output, spec=spec)
     return 0 if result["status"] == "passed" else 1
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     # Preserve the NVIDIA v3 execution path without importing Mia data at all.
-    if args.contract.absolute() == Path(
+    mia_contract_parent = Path(
         "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/"
-        "qwen-flash-next-research/runtime/launch-contract.mia-c0.json"
-    ):
+        "qwen-flash-next-research/runtime"
+    )
+    mia_contract_names = frozenset({
+        "launch-contract.mia-c0.json",
+        "launch-contract.mia-mtp1-fullvocab.json",
+        "launch-contract.mia-mtp2-fullvocab.json",
+        "launch-contract.mia-mtp3-fullvocab.json",
+            "launch-contract.mia-mtp3-reduced47k-v2full4.json",
+        "launch-contract.mia-native69632-bf16kv3g.json",
+    })
+    if args.contract.absolute().parent == mia_contract_parent and args.contract.name in mia_contract_names:
         return _mia_main(args)
     contract, contract_sha = load_contract(args.contract)
     output = _validate_output(args.output_dir, must_be_absent=args.run)

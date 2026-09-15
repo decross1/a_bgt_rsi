@@ -1,8 +1,8 @@
-"""UNAPPLIED REVIEW DRAFT. Distinct supervised post-C0 Flash cohort.
+"""Supervise a registered Flash evaluation window and exact restoration.
 
-This file is deliberately outside the imported worktree while C0 is active.
-It requires the companion qualification.py draft to supply a frozen
-evaluation_context and extended exact-ID recovery proof. No shell callbacks.
+Portfolio and follow-on plans use distinct registered source roots. The
+worker consumes frozen supervisor inputs and the existing qualification
+controller enforces live cgroup and memory checks. No shell callbacks.
 """
 from __future__ import annotations
 
@@ -52,6 +52,51 @@ from .qualification import (
 def _registered(
     eval_plan_path: Path, output: Path, *, must_be_absent: bool
 ) -> tuple[object, dict, dict, dict, bytes, CandidateSpec | None]:
+    from .followon_selection import select_window
+
+    selection = select_window(eval_plan_path, cohort="flash")
+    if selection.kind == "followon":
+        from .followon_plans import flash_plan, load_execution
+        from .followon_profiles import SPECS_BY_ID, is_registered_spec
+
+        window = load_execution(eval_plan_path, cohort="flash")
+        extended_plan = flash_plan(window, output,
+                                   must_be_absent=must_be_absent)
+        variant = extended_plan["candidate_variant_id"]
+        spec: CandidateSpec | None = (
+            None if variant == "nvidia-nvfp4-fc694b54"
+            else SPECS_BY_ID.get(variant)
+        )
+        if variant != "nvidia-nvfp4-fc694b54" and (
+            spec is None or not is_registered_spec(spec)
+        ):
+            raise EvaluationWindowError("follow-on candidate is not code-owned")
+        contract, contract_sha256, raw_contract = (
+            read_mia_contract(spec.contract_path, q) if spec is not None
+            else (*load_contract(CONTRACT_PATH), b"")
+        )
+        prior_plan = window.qualification_plan
+        runtime = _runtime_identity(spec)
+        if (not isinstance(prior_plan, dict)
+            or contract_sha256 != prior_plan.get("contract_sha256")
+            or extended_plan["contract_sha256"] != contract_sha256
+            or prior_plan.get("image_id") != runtime.image_id
+            or prior_plan.get("docker_create_argv") != launch_argv(spec)
+            or extended_plan["candidate_spec_sha256"]
+               != (spec.identity_sha256() if spec is not None else None)
+            or extended_plan["paging_policy"]
+               != contract["safety"]["paging_policy"]
+            or extended_plan["extended_serving_profile"]
+               != EXTENDED_SERVING_PROFILE
+            or extended_plan["effective_invocation_deadline_seconds"] != 14_400
+            or extended_plan["restoration_reserve_seconds"] != 600
+            or extended_plan["controller_source_bundle_sha256"]
+               != sha256(extended_plan["controller_source_bundle"])):
+            raise EvaluationWindowError("follow-on runtime differs from qualified parent")
+        verified = _verified_contract_raw(contract, contract_sha256, spec=spec)
+        if spec is not None and raw_contract != verified:
+            raise EvaluationWindowError("follow-on Mia contract raw bytes changed")
+        return window, extended_plan, prior_plan, contract, verified, spec
     # The frozen loader checks the registered pair/source path, all receipt
     # hashes, prior fully restored C0, benchmark plan, and weekly/paid limits.
     window = load_evaluation_window(eval_plan_path, expected_cohort="flash")
@@ -117,7 +162,12 @@ def _frozen_worker_inputs(output: Path, window, extended_plan, prior_plan,
         output / "controller-source-bundle.snapshot.json", source="controller source snapshot"
     ) != extended_plan["controller_source_bundle"]:
         raise EvaluationWindowError("worker source bundle differs from supervisor")
-    if frozen_controller_source_bundle() != extended_plan["controller_source_bundle"]:
+    if extended_plan.get("evaluation_kind") == "followon":
+        from .followon_dispatch import frozen_followon_source_bundle
+        actual_sources = frozen_followon_source_bundle()
+    else:
+        actual_sources = frozen_controller_source_bundle()
+    if actual_sources != extended_plan["controller_source_bundle"]:
         raise EvaluationWindowError("registered controller code changed before worker mutation")
 
 
@@ -136,7 +186,12 @@ def _worker_command(window, output: Path, extended_plan: dict) -> list[str]:
 
 def supervise(window, extended_plan: dict, prior_plan: dict, contract: dict,
               contract_raw: bytes, output: Path, spec: CandidateSpec | None) -> int:
-    if ROOT != REGISTERED_CODE_ROOT:
+    if extended_plan.get("evaluation_kind") == "followon":
+        from .followon_dispatch import FOLLOWON_CODE_ROOT
+        expected_root = FOLLOWON_CODE_ROOT
+    else:
+        expected_root = REGISTERED_CODE_ROOT
+    if ROOT != expected_root:
         raise EvaluationWindowError("extended supervisor was imported outside the registered worktree")
     output.mkdir(mode=0o700)
     _atomic_write_bytes(output / "launch-contract.raw.json", contract_raw)
@@ -213,10 +268,15 @@ def supervise(window, extended_plan: dict, prior_plan: dict, contract: dict,
     _atomic_write(
         output / "supervision.json",
         {
-            "schema": "flash-next-extended-supervision/v1",
+            "schema": ("flash-followon-flash-supervision/v1"
+                       if extended_plan.get("evaluation_kind") == "followon"
+                       else "flash-next-extended-supervision/v1"),
             "pair_id": window.pair_id,
             "window_plan_sha256": window.source_sha256,
-            "extended_plan_sha256": extended_plan_sha256(extended_plan),
+            "extended_plan_sha256": (
+                sha256(extended_plan)
+                if extended_plan.get("evaluation_kind") == "followon"
+                else extended_plan_sha256(extended_plan)),
             "candidate_variant_id": extended_plan["candidate_variant_id"],
             "candidate_spec_sha256": extended_plan["candidate_spec_sha256"],
             "controller_source_bundle_sha256": extended_plan[

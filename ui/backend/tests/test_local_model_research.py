@@ -156,19 +156,18 @@ def test_orphan_v3_stabilization_state_remains_an_unfinished_receipt(tmp_path):
     assert row["model_started"] is None
 
 
-def test_hash_bound_pair_counts_failures_and_elapsed(tmp_path, monkeypatch):
+def test_hash_bound_pair_without_recorded_admission_withholds_scores(tmp_path, monkeypatch):
     pair(tmp_path, monkeypatch)
-    row = project_local_research(tmp_path)["comparisons"][0]["families"][0]
-    assert row["cohorts"]["resident"]["passed"] == 0
-    assert row["cohorts"]["flash"]["successful_task_runs_per_hour"] == 30
-    assert row["paired_success_delta"] == 1
+    result = project_local_research(tmp_path)
+    assert result["comparisons"] == []
+    assert result["warnings"]
 
 
 def test_aborted_pair_has_no_comparative_gain(tmp_path, monkeypatch):
     pair(tmp_path, monkeypatch, flash_status="aborted")
-    row = project_local_research(tmp_path)["comparisons"][0]["families"][0]
-    assert row["paired_success_delta"] is None
-    assert all(arm["success_rate"] is None and arm["successful_task_runs_per_hour"] is None for arm in row["cohorts"].values())
+    result = project_local_research(tmp_path)
+    assert result["comparisons"] == []
+    assert result["warnings"]
 
 
 def test_rewritten_run_rejected_even_if_json_is_valid(tmp_path, monkeypatch):

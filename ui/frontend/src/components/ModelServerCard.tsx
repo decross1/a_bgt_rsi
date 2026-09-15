@@ -423,17 +423,33 @@ function ModelServerCard({
         </div>
       )}
       {selectedVariant && (
-        <p className="mt-2 text-xs text-violet-300" data-testid={`${endpointName ?? servedModel}-selected-variant`}>
-          Controller-selected candidate: <strong>{selectedVariant.repository}</strong> at
-          <span className="font-mono"> {selectedVariant.revision.slice(0, 8)}</span>.
-          {selectedIdentityMatch
-            ? " The served name matches this recorded variant; qualification remains separate."
-            : " The selected variant has not been observed serving at this probe."}
-          {selectedVariant.image_evidence === "bound_live_container"
-            ? " Its image matches the controller's live cgroup-bind receipt."
-            : " Its image is registered in the plan; this phase does not include a current live image proof."}
-          {inventory?.configured_model && <span> Static inventory default: <span className="font-mono">{inventory.configured_model}</span>.</span>}
-        </p>
+        <div className="mt-2 text-xs text-violet-300" data-testid={`${endpointName ?? servedModel}-selected-variant`}>
+          <p>
+            Controller-selected candidate: <strong>{selectedVariant.repository}</strong> at
+            <span className="font-mono"> {selectedVariant.revision.slice(0, 8)}</span>.
+            {selectedIdentityMatch
+              ? " The served name matches this recorded variant; qualification remains separate."
+              : " The selected variant has not been observed serving at this probe."}
+            {selectedVariant.image_evidence === "bound_live_container"
+              ? " Its image matches the controller's live cgroup-bind receipt."
+              : " Its image is registered in the plan; this phase does not include a current live image proof."}
+            {inventory?.configured_model && <span> Static inventory default: <span className="font-mono">{inventory.configured_model}</span>.</span>}
+          </p>
+          {(selectedVariant.configured_max_context_tokens !== undefined ||
+            selectedVariant.configured_mtp_speculative_tokens !== undefined ||
+            selectedVariant.configured_kv_cache_memory_bytes !== undefined) && (
+            <p className="mt-1 text-zinc-400" data-testid={`${endpointName ?? servedModel}-profile-config`}>
+              Controller profile:
+              {selectedVariant.configured_max_context_tokens !== undefined &&
+                <span> context {selectedVariant.configured_max_context_tokens.toLocaleString()} tokens;</span>}
+              {selectedVariant.configured_mtp_speculative_tokens !== undefined &&
+                <span> MTP configured depth {selectedVariant.configured_mtp_speculative_tokens};</span>}
+              {selectedVariant.configured_kv_cache_memory_bytes !== undefined &&
+                <span> KV reserve {(selectedVariant.configured_kv_cache_memory_bytes / 1024 ** 3).toFixed(1)} GiB.</span>}
+              <span> These settings do not measure context quality or decode speed.</span>
+            </p>
+          )}
+        </div>
       )}
       {selectedVariantConflict && (
         <p className="mt-2 text-xs text-red-400" data-testid={`${endpointName ?? servedModel}-variant-mismatch`}>
@@ -506,7 +522,7 @@ function ModelServerCard({
           </summary>
           <div className="mt-1">
             <Row
-              label="Configured context"
+              label={selectedVariant ? "Inventory default context" : "Configured context"}
               value={
                 typeof inventory?.configured_max_context_tokens === "number"
                   ? `${Math.round(inventory.configured_max_context_tokens / 1024)}K`

@@ -1,0 +1,21 @@
+# CPU build only; runtime qualification is a separate supervised experiment.
+# The builder verifies this fresh local base tag resolves to the exact image ID.
+FROM local/qfn-mia-base:da68dd27a8ef1dadd0f380178a51f0a0671dc4235933ea1ae89fdaf66295ec72
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG MTP_PKG=/usr/local/lib/python3.12/dist-packages/vllm/models/qwen3_8_flash_next/nvidia/mtp.py
+
+COPY patch_mtp_draft_vocab.py /opt/mia-reduced47k/patch_mtp_draft_vocab.py
+RUN test "$(sha256sum "$MTP_PKG" | cut -d' ' -f1)" = \
+        "7735cee47d0d1e4776bebd30d907e4a62160409ce4ef2d65611559f8d58af431" \
+ && test "$(sha256sum /opt/mia-reduced47k/patch_mtp_draft_vocab.py | cut -d' ' -f1)" = \
+        "2c7d19b8021f2c439920ae7f7df6f7b008eb635256a8423ef03e168d3984911f" \
+ && cp "$MTP_PKG" /opt/mia-reduced47k/mtp_patched.py.orig \
+ && python3 /opt/mia-reduced47k/patch_mtp_draft_vocab.py \
+ && python3 -c "import ast; ast.parse(open('/opt/mia-reduced47k/mtp_patched.py').read())" \
+ && grep -q 'VLLM_MTP_DRAFT_VOCAB' /opt/mia-reduced47k/mtp_patched.py \
+ && grep -q 'def get_top_tokens' /opt/mia-reduced47k/mtp_patched.py \
+ && cp /opt/mia-reduced47k/mtp_patched.py "$MTP_PKG"
+
+# The 47,149-ID source remains an exact read-only host mount in the registered
+# Docker create argv. Do not bake mutable corpus/token files into this image.
