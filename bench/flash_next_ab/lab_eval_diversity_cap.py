@@ -368,6 +368,13 @@ def replay_run(plan_path: str | Path, run_path: str | Path) -> dict[str, Any]:
         'length_reasoning_only_empty': 0, 'empty_visible_final': 0,
         'valid_proposals': 0, 'selector_calls': 0,
         'selector_returned': 0, 'selector_timeout': 0,
+        'total_call_wall_s': 0.0, 'generator_call_wall_s': 0.0,
+        'selector_call_wall_s': 0.0,
+        'generator_completion_tokens_observed_sum': 0,
+        'generator_completion_usage_covered_calls': 0,
+        'generator_reasoning_tokens_observed_sum': 0,
+        'generator_reasoning_usage_covered_calls': 0,
+        'generator_finish_reason_histogram': {},
         'underlying_objective_success': 0,
         'creditable_protocol_pass': 0,
     } for cap in CAPS}
@@ -393,6 +400,11 @@ def replay_run(plan_path: str | Path, run_path: str | Path) -> dict[str, Any]:
             mismatches.append({'cell_id': cell.cell_id, 'kind': 'aggregate_call_status'})
         metadata = _private_calls(row, actual.parent)
         for spec, call, private in zip(cell.calls, row['calls'], metadata, strict=True):
+            wall = call.get('wall_s')
+            if type(wall) not in (int, float) or not math.isfinite(wall) or wall < 0:
+                mismatches.append({'cell_id': cell.cell_id, 'kind': 'unbounded_call_wall'})
+                wall = 0.0
+            group['total_call_wall_s'] += wall
             if (call.get('max_tokens') != spec.max_tokens
                     or call.get('timeout_s') != spec.timeout_s
                     or private['request'].get('timeout_s') != spec.timeout_s):
@@ -400,8 +412,20 @@ def replay_run(plan_path: str | Path, run_path: str | Path) -> dict[str, Any]:
             response = private['response']
             if spec.role == 'generator':
                 group['generator_calls'] += 1
+                group['generator_call_wall_s'] += wall
                 group['generator_returned'] += int(call['status'] == 'returned')
                 group['generator_timeout'] += int(call['status'] == 'timeout')
+                finish = call.get('finish_reason') if call['status'] == 'returned' else None
+                if call['status'] == 'returned':
+                    finish_key = (finish if finish in {'stop', 'length', 'tool_calls'}
+                                  else 'other_returned_finish_reason')
+                elif call['status'] in {'timeout', 'error', 'cancelled'}:
+                    finish_key = f"transport_{call['status']}"
+                else:
+                    finish_key = 'other_transport_status'
+                    mismatches.append({'cell_id': cell.cell_id, 'kind': 'generator_status'})
+                histogram = group['generator_finish_reason_histogram']
+                histogram[finish_key] = histogram.get(finish_key, 0) + 1
                 content = response.get('content')
                 empty = isinstance(content, str) and not content.strip()
                 if call['status'] == 'returned' and empty:
@@ -410,12 +434,19 @@ def replay_run(plan_path: str | Path, run_path: str | Path) -> dict[str, Any]:
                 details = usage.get('completion_tokens_details') or {}
                 reasoning = details.get('reasoning_tokens')
                 total = usage.get('completion_tokens')
+                if type(total) is int and total >= 0:
+                    group['generator_completion_usage_covered_calls'] += 1
+                    group['generator_completion_tokens_observed_sum'] += total
+                if type(reasoning) is int and reasoning >= 0:
+                    group['generator_reasoning_usage_covered_calls'] += 1
+                    group['generator_reasoning_tokens_observed_sum'] += reasoning
                 group['length_reasoning_only_empty'] += int(
                     call['status'] == 'returned' and call.get('finish_reason') == 'length'
                     and empty and type(reasoning) is int and reasoning == total == cap
                 )
             else:
                 group['selector_calls'] += 1
+                group['selector_call_wall_s'] += wall
                 group['selector_returned'] += int(call['status'] == 'returned')
                 group['selector_timeout'] += int(call['status'] == 'timeout')
         try:
@@ -444,6 +475,10 @@ def replay_run(plan_path: str | Path, run_path: str | Path) -> dict[str, Any]:
         except (KeyError, TypeError, ValueError) as exc:
             mismatches.append({'cell_id': cell.cell_id, 'kind': type(exc).__name__})
     paired = all(set(values) == {'384', '1536'} for values in pair_rows.values())
+    elapsed = run.get('elapsed_s')
+    if type(elapsed) not in (int, float) or not math.isfinite(elapsed) or elapsed < 0:
+        mismatches.append({'cell_id': 'run', 'kind': 'unbounded_evaluator_elapsed'})
+        elapsed = None
     result = {
         'schema_version': REPLAY_SCHEMA,
         'status': 'source_bound_replay_passed' if not mismatches and paired else 'invalid',
@@ -455,6 +490,7 @@ def replay_run(plan_path: str | Path, run_path: str | Path) -> dict[str, Any]:
         'private_streams_verified': evidence['response_streams_verified'],
         'declared_task_pairs': 5, 'declared_condition_cells': 10,
         'declared_calls': 40, 'attempted_calls': 40,
+        'recorded_evaluator_elapsed_s': elapsed,
         'by_cap': summary,
         'paired_task_protocol_differences': {
             'cap1536_pass_cap384_fail': sum(values.get('1536') is True and values.get('384') is False
