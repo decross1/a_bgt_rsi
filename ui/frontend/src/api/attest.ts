@@ -405,7 +405,10 @@ export function useAttestSubmission(): {
     let confirmed = false;
     let repollError: string | null = null;
     try {
-      const fresh = await getHumanTodo();
+      // Dossier write-back operates on the preserved source record. Detail
+      // routes are explicitly all-history because their producer endpoints
+      // are not campaign scoped; confirm against that same queue boundary.
+      const fresh = await getHumanTodo("all");
       const items = Array.isArray(fresh?.items) ? fresh.items : [];
       confirmed = opts.confirmed(items);
     } catch (err) {

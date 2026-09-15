@@ -150,9 +150,12 @@ const FIXTURE: LadderResponse = {
   },
 };
 
-function renderLadder(props: Parameters<typeof Ladder>[0] = {}) {
+function renderLadder(
+  props: Parameters<typeof Ladder>[0] = {},
+  initialEntries: string[] = ["/ladder"],
+) {
   const result = render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <Ladder {...props} />
     </MemoryRouter>,
   );
@@ -363,7 +366,7 @@ describe("/ladder peek panel", () => {
     const members = screen.getByTestId("ladder-peek-members");
     expect(within(members).getByText("iter-001")).toHaveAttribute(
       "href",
-      "/dossier/iter-001",
+      "/dossier/iter-001?research_scope=all",
     );
     // A paper member is not a dossier — it renders unlinked.
     expect(within(members).getByText("paper:2508.00001").tagName).not.toBe("A");
@@ -554,23 +557,23 @@ describe("/ladder honest degraded states", () => {
       }));
 
     try {
-      await expect(getLadderFromWire()).resolves.toBeNull();
-      await expect(getLadderFromWire()).rejects.toThrow("Ladder response integrity error");
-      await expect(getLadderFromWire()).rejects.toThrow("clusters must be an array");
-      await expect(getLadderFromWire()).rejects.toThrow("histogram must be an object");
-      await expect(getLadderFromWire()).rejects.toThrow("histogram.L1 must be a non-negative safe integer");
-      await expect(getLadderFromWire()).rejects.toThrow("counts.open must be a non-negative safe integer");
-      await expect(getLadderFromWire()).rejects.toThrow("histogram.L5 must be a non-negative safe integer");
-      await expect(getLadderFromWire()).rejects.toThrow("counts.killed must be a non-negative safe integer");
-      await expect(getLadderFromWire()).rejects.toThrow("counts must be an object");
-      await expect(getLadderFromWire()).resolves.toEqual({
+      await expect(getLadderFromWire("all")).resolves.toBeNull();
+      await expect(getLadderFromWire("all")).rejects.toThrow("Ladder response integrity error");
+      await expect(getLadderFromWire("all")).rejects.toThrow("clusters must be an array");
+      await expect(getLadderFromWire("all")).rejects.toThrow("histogram must be an object");
+      await expect(getLadderFromWire("all")).rejects.toThrow("histogram.L1 must be a non-negative safe integer");
+      await expect(getLadderFromWire("all")).rejects.toThrow("counts.open must be a non-negative safe integer");
+      await expect(getLadderFromWire("all")).rejects.toThrow("histogram.L5 must be a non-negative safe integer");
+      await expect(getLadderFromWire("all")).rejects.toThrow("counts.killed must be a non-negative safe integer");
+      await expect(getLadderFromWire("all")).rejects.toThrow("counts must be an object");
+      await expect(getLadderFromWire("all")).resolves.toEqual({
         clusters: [],
         histogram: { L0: 0, L1: 0, L2: 0, L3: 0, L4: 0, L5: 0 },
         counts: { open: 0, surfaced: 0, killed: 0 },
         agenda: [],
         next_owed: {},
       });
-      await expect(getLadderFromWire()).resolves.toMatchObject({
+      await expect(getLadderFromWire("all")).resolves.toMatchObject({
         clusters: [{ status: "future-status", evidence_level: "L9" }],
         histogram: { L9: 1 },
         counts: { deferred: 1 },
@@ -591,7 +594,7 @@ describe("/ladder honest degraded states", () => {
       counts: { open: 1, surfaced: 0, killed: 0 },
     }), { status: 200, headers: { "content-type": "application/json" } }));
     try {
-      await expect(getLadderFromWire()).rejects.toThrow("agenda must be an array");
+      await expect(getLadderFromWire("all")).rejects.toThrow("agenda must be an array");
     } finally {
       fetchMock.mockRestore();
     }
@@ -618,7 +621,7 @@ describe("/ladder honest degraded states", () => {
       next_owed: {},
     }), { status: 200, headers: { "content-type": "application/json" } }));
     try {
-      await expect(getLadderFromWire()).rejects.toThrow("Ladder response integrity error");
+      await expect(getLadderFromWire("all")).rejects.toThrow("Ladder response integrity error");
       expect(fetchMock).toHaveBeenCalledTimes(1);
     } finally {
       fetchMock.mockRestore();
@@ -629,7 +632,7 @@ describe("/ladder honest degraded states", () => {
     renderLadder({
       initial: null,
       initialIdeas: "# Ideas\n\n## Live work\n\n- x",
-    });
+    }, ["/ladder?research_scope=all"]);
     expect(screen.getByTestId("ladder-empty")).toHaveTextContent(
       "no idea ledger yet",
     );
@@ -641,12 +644,24 @@ describe("/ladder honest degraded states", () => {
     expect(screen.queryByTestId("ladder-board")).toBeNull();
   });
 
+  it("does not substitute the global ideas.md projection into the current campaign", () => {
+    renderLadder({
+      initial: null,
+      initialIdeas: "# Historical ideas\n\n- should remain outside current",
+    });
+    expect(screen.getByTestId("ladder-empty")).toHaveTextContent(
+      "No clusters are explicitly linked to the current campaign",
+    );
+    expect(screen.queryByTestId("ladder-ideas-fallback")).not.toBeInTheDocument();
+    expect(screen.queryByText("should remain outside current")).not.toBeInTheDocument();
+  });
+
   it("version-skew 404 renders EndpointMissingNote + the ideas.md fallback", async () => {
     mocks.getLadder.mockRejectedValue(
       Object.assign(new Error("404 Not Found"), { status: 404 }),
     );
     mocks.getIdeas.mockResolvedValue({ markdown: "# Ideas\n\nfallback body" });
-    renderLadder();
+    renderLadder({}, ["/ladder?research_scope=all"]);
     await waitFor(() =>
       expect(screen.getByTestId("endpoint-missing-note")).toBeInTheDocument(),
     );

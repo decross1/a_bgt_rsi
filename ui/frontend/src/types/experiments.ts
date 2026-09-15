@@ -1,3 +1,5 @@
+import type { ResearchScopeMetadata } from "../researchScope";
+
 // Page B — Interactive Experiment Digestion. Types mirror
 // ui/backend/experiments.py. The experiments are HETEROGENEOUS: most
 // fields are nullable because a given experiment may carry a JSON summary,
@@ -180,4 +182,5 @@ export interface ResearchResponse {
   reason?: string;
   tiers: ResearchTier[];
   untiered: ResearchExperiment[];
+  research_scope?: ResearchScopeMetadata;
 }

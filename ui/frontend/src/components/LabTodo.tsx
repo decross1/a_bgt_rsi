@@ -27,6 +27,11 @@ import EndpointMissingNote, { isVersionSkew404 } from "./EndpointMissingNote";
 import { getLabTodo } from "../api/http";
 import { usePolled } from "../api/pollhub";
 import { ageLabel } from "../ladderBar";
+import {
+  browserResearchScope,
+  researchScopedHref,
+  type ResearchScope,
+} from "../researchScope";
 import { useNow } from "../time";
 import type {
   LabTodoOwedCluster,
@@ -116,9 +121,16 @@ export interface LabTodoProps {
   /** Fixture injection: tests render synchronously, never fetch. */
   initial?: LabTodoResponse;
   pollMs?: number;
+  /** Parent routes pass their parsed scope; standalone fixtures default from
+   * the document URL and therefore retain their network-free contract. */
+  researchScope?: ResearchScope;
 }
 
-function LabTodo({ initial, pollMs = 120000 }: LabTodoProps) {
+function LabTodo({
+  initial,
+  pollMs = 120000,
+  researchScope = browserResearchScope(),
+}: LabTodoProps) {
   // pollhub (perf 2026-08-18). /api/lab_todo is THE slow endpoint on the
   // live backend (assess_state loads the BGE-M3 embedder + queries Chroma
   // inside the request; measured >120 s under load on 2026-08-18): the old
@@ -127,7 +139,7 @@ function LabTodo({ initial, pollMs = 120000 }: LabTodoProps) {
   // error — the "keeps refreshing" feeling. Now: slow cadence, in-flight
   // guard (never two concurrent reads), and SWR (a failing refetch keeps the
   // last good queue rendered, with an honest stale note).
-  const poll = usePolled<LabTodoResponse>("lab_todo", getLabTodo, {
+  const poll = usePolled<LabTodoResponse>(`lab_todo:${researchScope}`, () => getLabTodo(researchScope), {
     intervalMs: pollMs,
     initialDelayMs: 250,
     enabled: initial === undefined,
@@ -362,7 +374,7 @@ function LabTodo({ initial, pollMs = 120000 }: LabTodoProps) {
                                 }}
                               >
                                 <Link
-                                  to="/ladder"
+                                  to={researchScopedHref("/ladder", researchScope)}
                                   style={{
                                     fontFamily: "var(--font-mono)",
                                     color: "var(--accent)",
@@ -431,7 +443,7 @@ function LabTodo({ initial, pollMs = 120000 }: LabTodoProps) {
                       )}
                       {cid && (
                         <Link
-                          to="/ladder"
+                          to={researchScopedHref("/ladder", researchScope)}
                           style={{
                             fontFamily: "var(--font-mono)",
                             fontSize: "var(--text-meta)",
@@ -492,7 +504,7 @@ function LabTodo({ initial, pollMs = 120000 }: LabTodoProps) {
                         title={asText(c.stem) ?? undefined}
                       >
                         <Link
-                          to="/ladder"
+                          to={researchScopedHref("/ladder", researchScope)}
                           style={{
                             fontFamily: "var(--font-mono)",
                             color: "var(--accent)",
@@ -534,7 +546,9 @@ function LabTodo({ initial, pollMs = 120000 }: LabTodoProps) {
               </div>
             ) : agentGaps.length === 0 ? (
               <div data-testid="lab-todo-gaps-empty" style={emptyStyle}>
-                no agent-actionable gap — the loop is honestly idle
+                {researchScope === "active"
+                  ? "No agent-actionable current-campaign gap is recorded in this view."
+                  : "No agent-actionable gap is recorded in this view; this alone does not establish that the loop is idle."}
               </div>
             ) : (
               <ul

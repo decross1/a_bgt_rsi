@@ -195,7 +195,7 @@ describe("Pulse (/)", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/?research_scope=all"]}>
         <Pulse />
       </MemoryRouter>,
     );
@@ -227,7 +227,7 @@ describe("Pulse (/)", () => {
     );
     expect(
       screen.getByRole("link", { name: /awaiting verdict/ }),
-    ).toHaveAttribute("href", "/dossier/iter-2026-08-14-001");
+    ).toHaveAttribute("href", "/dossier/iter-2026-08-14-001?research_scope=all");
 
     // The demoted mass is INFORMATION, not a queue: one muted line, and the
     // owed count stays at the one real gate item.
@@ -318,7 +318,7 @@ describe("Pulse (/)", () => {
 
   it("registers its verbs in the ⌘K palette, and withdraws them on unmount", async () => {
     const { unmount } = render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/?research_scope=all"]}>
         <CommandPalette />
         <Pulse />
       </MemoryRouter>,
@@ -370,7 +370,7 @@ describe("Pulse (/)", () => {
     const { getCoordinatorCycles } = await import("../src/api/http");
     vi.mocked(getCoordinatorCycles).mockRejectedValueOnce(new Error("500 boom"));
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={["/?research_scope=all"]}>
         <Pulse />
       </MemoryRouter>,
     );

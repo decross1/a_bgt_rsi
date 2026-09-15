@@ -11,6 +11,7 @@ import RungGlyph from "../../design/RungGlyph";
 import { ageLabel } from "../../ladderBar";
 import { asText, dossierIdOf, isKilled, membersOf } from "./ladderModel";
 import type { LadderAgendaItem, LadderCluster } from "../../types/schemas";
+import { researchScopedHref } from "../../researchScope";
 
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -219,7 +220,7 @@ export default function ClusterPeek({
                   }}
                 >
                   {to !== null ? (
-                    <Link to={`/dossier/${to}`} style={{ color: "var(--accent)" }}>
+                    <Link to={researchScopedHref(`/dossier/${to}`, "all")} title="Source-history dossier" style={{ color: "var(--accent)" }}>
                       {m}
                     </Link>
                   ) : (

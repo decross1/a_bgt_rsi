@@ -169,8 +169,8 @@ describe("Ladder topic collections", () => {
     for (const topic of topics) expect(within(family).getByText(topic)).toBeVisible();
     for (const row of rows) {
       expect(within(family).getByText(row.hypothesis.text)).toBeVisible();
-      expect(within(family).getByRole("link", { name: `Open evidence for ${row.iteration_id}` }))
-        .toHaveAttribute("href", `/dossier/${row.iteration_id}`);
+      expect(within(family).getByRole("link", { name: `Open source-history evidence for ${row.iteration_id}` }))
+        .toHaveAttribute("href", `/dossier/${row.iteration_id}?research_scope=all`);
     }
     expect(within(family).getAllByTestId(/^thesis-record-/)).toHaveLength(3);
   });
@@ -275,7 +275,7 @@ describe("Ladder collection flow and source lifecycle", () => {
     fireEvent.click(button);
     expect(document.getElementById(controls!)).toBeVisible();
     expect(screen.getAllByTestId(/^thesis-record-/)).toHaveLength(4);
-    expect(screen.getAllByRole("link", { name: `Open evidence for ${rows[0].iteration_id}` })).toHaveLength(2);
+    expect(screen.getAllByRole("link", { name: `Open source-history evidence for ${rows[0].iteration_id}` })).toHaveLength(2);
     // Keyboard activation is also checked in the real browser; jsdom does
     // not emulate the browser's native Enter-to-click default behavior.
   });
@@ -283,13 +283,13 @@ describe("Ladder collection flow and source lifecycle", () => {
   it("deduplicates actual StrictMode source subscriptions and manual refresh, retaining stale data on failure", async () => {
     vi.mocked(getLadder).mockResolvedValue(fixture);
     vi.mocked(getIterations).mockResolvedValue({ iterations: rows.map((row) => ({ ...row, started_at: "2026-01-01T00:00:00Z", ended_at: "2026-01-01T00:01:00Z", journal_entry_path: "" })) });
-    const { unmount } = render(<StrictMode><MemoryRouter><Ladder /></MemoryRouter></StrictMode>);
+    const { unmount } = render(<StrictMode><MemoryRouter initialEntries={["/ladder?research_scope=all"]}><Ladder /></MemoryRouter></StrictMode>);
     await screen.findByTestId("research-records-disclosure");
     openRecords();
     const expand = await screen.findByRole("button", { name: "Expand curated association: Liquid democracy" });
     expect(getLadder).toHaveBeenCalledTimes(1);
     expect(getIterations).toHaveBeenCalledTimes(1);
-    expect(getIterations).toHaveBeenCalledWith({ fields: TOPIC_FIELDS });
+    expect(getIterations).toHaveBeenCalledWith({ fields: TOPIC_FIELDS }, "all");
     fireEvent.click(expand);
     let rejectTopics: (reason: Error) => void = () => {};
     vi.mocked(getIterations).mockImplementationOnce(() => new Promise((_, reject) => { rejectTopics = reject; }));
@@ -428,10 +428,10 @@ describe("final review disclosure and last-good empty boundaries", () => {
     it(`retains a confirmed 204 empty source and fallback after a later ${status}`, async () => {
       vi.mocked(getLadder).mockResolvedValueOnce(null);
       vi.mocked(getIterations).mockResolvedValue({ iterations: [] });
-      render(<MemoryRouter><Ladder initialIdeas="# Last received ideas" /></MemoryRouter>);
+      render(<MemoryRouter initialEntries={["/ladder?research_scope=all"]}><Ladder initialIdeas="# Last received ideas" /></MemoryRouter>);
       expect(await screen.findByTestId("ladder-empty")).toBeVisible();
       vi.mocked(getLadder).mockRejectedValueOnce(Object.assign(new Error(`${status} refresh failed`), { status }));
-      await act(async () => { refreshPoll("ladder:records"); });
+      await act(async () => { refreshPoll("ladder:records:all"); });
       expect(await screen.findByTestId("ladder-error")).toHaveTextContent(`${status} refresh failed`);
       expect(screen.getByTestId("ladder-empty")).toBeVisible();
       expect(screen.getAllByTestId("ladder-ideas-fallback")).toHaveLength(1);
@@ -441,10 +441,10 @@ describe("final review disclosure and last-good empty boundaries", () => {
   it("does not hide a later 404 behind a last-good populated source", async () => {
     vi.mocked(getLadder).mockResolvedValueOnce(fixture);
     vi.mocked(getIterations).mockResolvedValue({ iterations: [] });
-    render(<MemoryRouter><Ladder /></MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/ladder?research_scope=all"]}><Ladder /></MemoryRouter>);
     expect(await screen.findByTestId("ladder-counts-header")).toHaveTextContent("3 recorded clusters");
     vi.mocked(getLadder).mockRejectedValueOnce(Object.assign(new Error("404 refresh failed"), { status: 404 }));
-    await act(async () => { refreshPoll("ladder:records"); });
+    await act(async () => { refreshPoll("ladder:records:all"); });
     expect(await screen.findByTestId("ladder-error")).toHaveTextContent("Showing last received records");
     expect(screen.getByTestId("ladder-counts-header")).toHaveTextContent("3 recorded clusters");
     expect(screen.queryByTestId("ladder-empty")).not.toBeInTheDocument();

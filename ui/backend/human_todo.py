@@ -70,6 +70,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from .owe_triage import enrich_items, membership_from_rows
+from .research_scope import ResearchScope, ScopeName, bubble_identity, read_records
 
 KINDS = (
     "gate_verdict",
@@ -164,13 +165,13 @@ def _item(kind: str, id_: str, title: str, since: str, detail: str,
     }
 
 
-def _gate_verdict_items(memory_dir: Path) -> list[dict]:
+def _gate_verdict_items(memory_dir: Path, reader=_read_jsonl) -> list[dict]:
     feedback_ids = {
         r.get("iteration_id")
-        for r in _read_jsonl(memory_dir / "loop_feedback.jsonl")
+        for r in reader(memory_dir / "loop_feedback.jsonl")
     }
     items = []
-    for row in _read_jsonl(memory_dir / "loop_memory.jsonl"):
+    for row in reader(memory_dir / "loop_memory.jsonl"):
         if row.get("gate_status") != "pending":
             continue
         iteration_id = _as_text(row.get("iteration_id"))
@@ -282,7 +283,7 @@ def _num(value):
 _LEDGER_MEMO: dict[str, tuple[int, int, tuple[dict, dict]]] = {}
 
 
-def _ledger_clusters(memory_dir: Path) -> tuple[dict[str, str], dict[str, dict]]:
+def _ledger_clusters(memory_dir: Path, snapshot: tuple[list[dict], dict] | None = None) -> tuple[dict[str, str], dict[str, dict]]:
     """(member_id -> cluster_id, cluster_id -> facts) off the idea ledger.
 
     member_id -> cluster_id is ``owe_triage.membership_from_rows`` — the ONE
@@ -313,12 +314,14 @@ def _ledger_clusters(memory_dir: Path) -> tuple[dict[str, str], dict[str, dict]]
         memo_id = (stat.st_mtime_ns, stat.st_size)
     except OSError:
         pass  # absent/unstatable ledger: compute (cheaply) without the memo
+    if snapshot is not None:
+        memo_key = None
     if memo_key is not None:
         hit = _LEDGER_MEMO.get(memo_key)
         if hit is not None and (hit[0], hit[1]) == memo_id:
             return hit[2]
 
-    rows = _read_jsonl_quiet(path)
+    rows = snapshot[0] if snapshot is not None else _read_jsonl_quiet(path)
     member_of = membership_from_rows(rows)
     kills: dict[str, dict] = {}
     raw_members: dict[str, list[str]] = {}
@@ -341,8 +344,8 @@ def _ledger_clusters(memory_dir: Path) -> tuple[dict[str, str], dict[str, dict]]
             # (2026-08-18 fix — a reopened cluster is live, not killed).
             kills.pop(cid, None)
 
-    state: dict[str, dict] = {}
-    if path.exists():
+    state: dict[str, dict] = snapshot[1] if snapshot is not None else {}
+    if snapshot is None and path.exists():
         try:
             root = str(_REPO_ROOT)
             if root not in sys.path:
@@ -608,7 +611,7 @@ def _pointed_probes(row: dict, cluster: dict | None) -> list[str]:
     return [text for _priority, text in probes[:5]]
 
 
-def _point_gate_verdicts(items: list[dict], memory_dir: Path) -> None:
+def _point_gate_verdicts(items: list[dict], memory_dir: Path, *, rows=None, ledger_snapshot=None) -> None:
     """Override doing / approval_means / vet on gate_verdict items with the
     pointed, record-joined copy. In place, after owe_triage.enrich_items;
     any per-item failure leaves that item's generic enrichment standing."""
@@ -617,11 +620,11 @@ def _point_gate_verdicts(items: list[dict], memory_dir: Path) -> None:
         return
     try:
         rows_by_id: dict[str, dict] = {}
-        for row in _read_jsonl_quiet(Path(memory_dir) / "loop_memory.jsonl"):
+        for row in (rows if rows is not None else _read_jsonl_quiet(Path(memory_dir) / "loop_memory.jsonl")):
             row_id = row.get("iteration_id")
             if isinstance(row_id, str) and row_id:
                 rows_by_id[row_id] = row
-        member_of, clusters = _ledger_clusters(Path(memory_dir))
+        member_of, clusters = _ledger_clusters(Path(memory_dir), ledger_snapshot)
     except Exception:  # noqa: BLE001 — pointing must never cost the queue
         return
     for item in gate_items:
@@ -647,12 +650,12 @@ def _point_gate_verdicts(items: list[dict], memory_dir: Path) -> None:
             continue
 
 
-def _finding_review_items(memory_dir: Path) -> list[dict]:
-    findings = _read_jsonl(memory_dir / "surfaced_findings.jsonl")
+def _finding_review_items(memory_dir: Path, reader=_read_jsonl) -> list[dict]:
+    findings = reader(memory_dir / "surfaced_findings.jsonl")
     # Effective status = LAST audit row per finding_id overriding the base
     # row (surfaced_findings.jsonl is never edited in place).
     overrides: dict[str, str] = {}
-    for status_row in _read_jsonl(memory_dir / "surfaced_findings.status.jsonl"):
+    for status_row in reader(memory_dir / "surfaced_findings.status.jsonl"):
         fid = status_row.get("finding_id")
         if isinstance(fid, str) and fid:
             overrides[fid] = _as_text(status_row.get("status"))
@@ -684,19 +687,22 @@ def _finding_review_items(memory_dir: Path) -> list[dict]:
     return items
 
 
-def _bubble_ack_items(memory_dir: Path) -> list[dict]:
+def _bubble_ack_items(memory_dir: Path, reader=_read_jsonl) -> list[dict]:
     acked = {
         a.get("bubble_run_id")
-        for a in _read_jsonl(memory_dir / "coordinator_acks.jsonl")
+        for a in reader(memory_dir / "coordinator_acks.jsonl")
     }
     items = []
-    for bubble in _read_jsonl(memory_dir / "coordinator_bubbles.jsonl"):
+    for bubble in reader(memory_dir / "coordinator_bubbles.jsonl"):
         run_id = _as_text(bubble.get("run_id"))
-        if run_id and run_id in acked:
+        bubble_id = bubble_identity(bubble)
+        # A modern per-step ack closes that bubble; a legacy run-wide ack
+        # deliberately retains its established whole-cycle meaning.
+        if (run_id and run_id in acked) or (bubble_id and bubble_id in acked):
             continue
         items.append(_item(
             "bubble_ack",
-            run_id or _as_text(bubble.get("timestamp")),
+            bubble_id or _as_text(bubble.get("timestamp")),
             _as_text(bubble.get("note")) or "(bubble with no note)",
             _as_text(bubble.get("timestamp")),
             "the loop raised this to the human; no acknowledgement recorded",
@@ -780,7 +786,7 @@ def _state_gate_items(run_state_dir: Path) -> list[dict]:
     return items
 
 
-def _open_deferrals(memory_dir: Path) -> dict[str, dict]:
+def _open_deferrals(memory_dir: Path, reader=_read_jsonl) -> dict[str, dict]:
     """Fold ``memory/dev_session_queue.jsonl`` by ``ref_id`` — LAST status
     wins (``defer`` appends ``status:"open"``, ``close`` appends
     ``status:"closed"``; the ledger is append-only, never edited in place).
@@ -789,7 +795,7 @@ def _open_deferrals(memory_dir: Path) -> dict[str, dict]:
     ``ref_id`` alone. Absent file == no deferrals (D-046; the ledger is new
     and gitignored)."""
     folded: dict[str, dict] = {}
-    for row in _read_jsonl(memory_dir / "dev_session_queue.jsonl"):
+    for row in reader(memory_dir / "dev_session_queue.jsonl"):
         ref = row.get("ref_id")
         if not isinstance(ref, str) or not ref:
             continue
@@ -803,12 +809,12 @@ def _open_deferrals(memory_dir: Path) -> dict[str, dict]:
     return folded
 
 
-def _tag_deferred(items: list[dict], memory_dir: Path) -> None:
+def _tag_deferred(items: list[dict], memory_dir: Path, reader=_read_jsonl) -> None:
     """ADDITIVE in place: an item whose id has an open deferral gains
     ``deferred: true`` + ``deferral: {note, by, at}``. The item stays listed
     and stays counted — a deferral assigns the work; it does not resolve the
     item. Untagged items are untouched (no existing keys change)."""
-    deferrals = _open_deferrals(memory_dir)
+    deferrals = _open_deferrals(memory_dir, reader)
     if not deferrals:
         return
     for item in items:
@@ -836,37 +842,47 @@ def register(
     router = APIRouter(prefix="/api/human_todo", tags=["human_todo"])
 
     @router.get("")
-    def human_todo():
+    def human_todo(research_scope: ScopeName = "all"):
         """Everything awaiting the human, oldest-first by ``since``, each
         with the exact CLI command that resolves it. Never 500s on absent
         or garbled data files."""
         run_state = Path(run_state_dir)
         memory = Path(memory_dir)
+        scope = ResearchScope(research_scope, run_state.parent, memory)
+        reader = read_records if research_scope == "active" else _read_jsonl
         items: list[dict] = []
-        items.extend(_gate_verdict_items(memory))
-        items.extend(_finding_review_items(memory))
-        items.extend(_bubble_ack_items(memory))
+        items.extend(_gate_verdict_items(memory, reader))
+        items.extend(_finding_review_items(memory, reader))
+        items.extend(_bubble_ack_items(memory, reader))
         items.extend(_stale_active_run_items(run_state))
         items.extend(_state_gate_items(run_state))
         # D-046 additive fold: tag (never remove) items with open deferrals.
-        _tag_deferred(items, memory)
+        items, omitted = scope.todo(items)
+        _tag_deferred(items, memory, reader)
         # Owe-card triage (2026-08-18, additive): action phrase, what the
         # approval means, vet-first bullets, and the documented
         # likely-superseded / observable heuristics off idea_ledger.jsonl.
         # Tags never dismiss — every item stays listed and counted.
-        enrich_items(items, memory)
+        snapshot = None
+        current_rows = None
+        if research_scope == "active":
+            events, state = scope.ledger_snapshot()
+            state = scope.clusters(state)
+            snapshot = ([event for event in events if event["cluster_id"] in state], state)
+            current_rows = scope.iterations()
+        enrich_items(items, memory, ledger_rows=snapshot[0] if snapshot is not None else None)
         # Pointed gate-verdict copy (owner ask 2026-08-18 #2): join each
         # item's loop_memory row + the idea-ledger reduction so the card
         # says exactly WHAT is being judged, what the verdict CHANGES, and
         # what to PROBE — overriding the generic doing/approval_means/vet.
-        _point_gate_verdicts(items, memory)
+        _point_gate_verdicts(items, memory, rows=current_rows, ledger_snapshot=snapshot)
         # Oldest-first: the longest-waiting item tops the queue. Items with
         # no parseable `since` sort first (unknown age is surfaced, not hidden).
         items.sort(key=lambda item: item.get("since") or "")
         counts = {kind: 0 for kind in KINDS}
         for item in items:
             counts[item["kind"]] += 1
-        return {"items": items, "counts": counts}
+        return {"items": items, "counts": counts, **({"research_scope": {**scope.metadata(), "omitted_historical_items": omitted, "global_safety_gates_retained": True}} if research_scope == "active" else {})}
 
     app.include_router(router)
     return router

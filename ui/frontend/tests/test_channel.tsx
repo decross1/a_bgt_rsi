@@ -839,7 +839,7 @@ describe("/channel reference chips → peek (R4)", () => {
     expect(peek).toHaveTextContent("rediscovery");
     expect(within(peek).getByTestId("channel-peek-link")).toHaveAttribute(
       "href",
-      "/ladder",
+      "/ladder?research_scope=all",
     );
     // THE THREAD IS NOT AN OBJECT VIEWER: the feed still shows only the chip.
     expect(screen.getByTestId("channel-feed")).not.toHaveTextContent(
@@ -871,7 +871,7 @@ describe("/channel reference chips → peek (R4)", () => {
     expect(peek).toHaveTextContent("the bias is unchanged under NVFP4");
     expect(within(peek).getByTestId("channel-peek-link")).toHaveAttribute(
       "href",
-      "/dossier/sf-009",
+      "/dossier/sf-009?research_scope=all",
     );
   });
 
@@ -911,7 +911,7 @@ describe("/channel reference chips → peek (R4)", () => {
     expect(peek).toHaveTextContent("valid");
     expect(within(peek).getByTestId("channel-peek-link")).toHaveAttribute(
       "href",
-      "/dossier/iter-2026-08-15-001",
+      "/dossier/iter-2026-08-15-001?research_scope=all",
     );
   });
 

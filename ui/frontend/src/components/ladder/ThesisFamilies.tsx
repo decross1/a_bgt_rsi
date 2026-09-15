@@ -11,6 +11,7 @@ import type {
   ThesisFamily,
   ThesisModel,
 } from "./thesisModel";
+import { researchScopedHref } from "../../researchScope";
 
 type StatusFilter = "open" | "all" | "killed" | "surfaced" | "unknown";
 type StageFilter = "all" | "L0" | "L1" | "L2" | "L3" | "L4" | "L5" | "unknown";
@@ -402,8 +403,8 @@ function RecordCard({
                 <div key={member} style={{ minWidth: 0 }}>
                   {isDossierMember(member) ? (
                     <Link
-                      to={`/dossier/${member}`}
-                      aria-label={`Open evidence for ${member}`}
+                      to={researchScopedHref(`/dossier/${member}`, "all")}
+                      aria-label={`Open source-history evidence for ${member}`}
                       className="font-mono"
                       style={{ color: "var(--accent)", fontSize: "var(--text-meta)", overflowWrap: "anywhere" }}
                     >

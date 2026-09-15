@@ -11,8 +11,9 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import "./primitives.css";
+import { researchScopeFromSearch, researchScopedHref } from "../researchScope";
 
 export type PaletteAction = {
   id: string;
@@ -84,6 +85,8 @@ export default function CommandPalette({
 }: CommandPaletteProps = {}) {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
+  const { search } = useLocation();
+  const researchScope = researchScopeFromSearch(search);
   const actions = useSyncExternalStore(subscribe, getSnapshot);
   const dialogRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -202,10 +205,10 @@ export default function CommandPalette({
                   <Command.Item
                     key={route.id}
                     value={`${route.label} ${route.keywords.join(" ")}`}
-                    onSelect={() => run(() => navigate(route.to))}
+                    onSelect={() => run(() => navigate(researchScopedHref(route.to, researchScope)))}
                   >
                     {route.label}
-                    <span className="dsn-palette-hint">{route.to}</span>
+                    <span className="dsn-palette-hint">{researchScopedHref(route.to, researchScope)}</span>
                   </Command.Item>
                 ))}
               </Command.Group>

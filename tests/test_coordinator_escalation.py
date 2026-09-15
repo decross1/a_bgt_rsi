@@ -229,6 +229,34 @@ def test_persist_legacy_bubble_keeps_ui_reader_fields(tmp_path):
     Draft7Validator(ESCALATION_SCHEMA).validate(row)
 
 
+def test_direct_bubble_campaign_claim_is_not_persisted(tmp_path):
+    """Only the coordinator's validated cycle context can add provenance."""
+    path = tmp_path / "coordinator_bubbles.jsonl"
+    coord._persist_bubble_up(
+        [{
+            "finding_ids": ["sf-009"],
+            "note": "review me",
+            "campaign": {"campaign_id": "model-or-caller-claim"},
+        }],
+        run_id="coordinator_unscoped",
+        path=path,
+    )
+    assert "campaign" not in _read_rows(path)[0]
+
+
+def test_malformed_cycle_campaign_fails_before_bubble_append(tmp_path):
+    path = tmp_path / "coordinator_bubbles.jsonl"
+    receipts = coord._persist_bubble_up(
+        [{"finding_ids": ["sf-009"], "note": "review me"}],
+        run_id="coordinator_bad_context",
+        path=path,
+        campaign={"topic_policy": {"topics": "not-a-topic-list"}},
+    )
+    assert receipts[0]["status"] == "error"
+    assert receipts[0]["durability"] == "not_persisted"
+    assert not path.exists()
+
+
 def test_persist_generic_escalation_writes_four_fields(tmp_path):
     bubbles = [{
         "finding_ids": [],
