@@ -320,6 +320,32 @@ def test_meta_review_failure_degrades_gracefully(monkeypatch, captured_record):
                and "meta_review" in e.get("note", "") for e in rt.events)
 
 
+def test_failed_journal_fallback_preserves_error_without_fake_record(
+    monkeypatch, captured_record,
+):
+    """An error result with no path must never become a passed journal step."""
+    from workers import journal_writer as journal_module
+
+    scripted = _full_chain_script()[:-2] + [("Final summary.", None)]
+    monkeypatch.setattr(nara, "_meta_review", lambda **k: {
+        "status": "error", "result": None, "errors": [],
+        "wrapper_request_id": None, "parent_request_id": None,
+    })
+    monkeypatch.setattr(nara, "_redteam_critic", lambda *a, **k: _redteam("proceed"))
+    monkeypatch.setattr(nara, "get_backend", lambda b: _FakeBackend(scripted))
+    monkeypatch.setattr(nara.iteration_cache, "write_entry", lambda *a, **k: None)
+    monkeypatch.setattr(journal_module, "journal_writer", lambda **k: {
+        "status": "error", "result": None, "errors": ["unsupported verdict"],
+    })
+    rt = _FakeRuntime(_tool_table())
+    with pytest.raises(RuntimeError, match="no verified journal path"):
+        nara.run_iteration("test topic", runtime=rt, max_depth=len(scripted))
+    assert "record" not in captured_record
+    assert any(e.get("event_type") == "loop_v0_journal_fallback_failed"
+               and e.get("worker_status") == "error"
+               and e.get("worker_result_present") is False for e in rt.events)
+
+
 def test_redteam_fatal_flaw_retries_and_overwrites(monkeypatch, captured_record):
     """fatal_flaw with retries left re-calls hypothesize, overwrites the
     cached hypothesis, caps at 2 retries; final result records retries_used."""
