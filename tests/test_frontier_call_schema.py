@@ -99,7 +99,25 @@ def test_writer_stub_row_shape(stub_row):
     assert stub_row["verdict"] is None
     assert stub_row["cli_version"] == "mock"
     assert stub_row["exit_code"] == 0
-    assert set(stub_row) == set(REQUIRED_FIELDS)
+    assert set(stub_row) == set(REQUIRED_FIELDS) | {
+        "resolved_binary_path", "failure_code",
+    }
+    assert stub_row["resolved_binary_path"] is None
+    assert stub_row["failure_code"] is None
+
+
+def test_historical_eight_field_row_remains_valid(stub_row):
+    old_row = {key: stub_row[key] for key in REQUIRED_FIELDS}
+    assert _errors(old_row) == []
+
+
+def test_new_diagnostic_fields_are_closed(stub_row):
+    row = dict(stub_row)
+    row["resolved_binary_path"] = "/home/example/.local/bin/claude"
+    row["failure_code"] = "nonzero_exit"
+    assert _errors(row) == []
+    row["failure_code"] = "secret stderr pasted into ledger"
+    assert _errors(row) != []
 
 
 # ------------------------------------------------- rejection coverage -------

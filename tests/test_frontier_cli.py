@@ -78,6 +78,8 @@ def test_mock_llm_stub_never_spawns(monkeypatch, tmp_path):
     assert res["cli_version"] == "mock"
     assert res["vendor"] == "claude"
     assert res["exit_code"] == 0
+    assert res["failure_code"] is None
+    assert res["resolved_binary_path"] is None
     sha = hashlib.sha256(b"hello").hexdigest()
     assert sha[:16] in res["text"]
     # deterministic: same inputs -> same text
@@ -89,6 +91,8 @@ def test_mock_llm_stub_never_spawns(monkeypatch, tmp_path):
     rows = _read_ledger(ledger)
     assert len(rows) == 2
     assert rows[0]["prompt_sha256"] == sha
+    assert rows[0]["failure_code"] is None
+    assert rows[0]["resolved_binary_path"] is None
 
 
 # ------------------------------------------------- env stripping (MANDATORY)
@@ -202,6 +206,7 @@ def test_claude_unparseable_stdout_is_structured_error(tmp_path, fake_run,
     assert res["error"] is not None and "unparseable" in res["error"]
     assert res["text"] == ""
     assert res["exit_code"] == 0
+    assert res["failure_code"] == "unparseable_output"
 
 
 def test_claude_is_error_flag_is_structured_error(tmp_path, fake_run,
@@ -214,6 +219,8 @@ def test_claude_is_error_flag_is_structured_error(tmp_path, fake_run,
     )
     assert res["error"] is not None
     assert res["text"] == ""
+    assert res["failure_code"] == "cli_reported_error"
+    assert "over budget" not in res["error"]
 
 
 def test_codex_no_agent_message_is_structured_error(tmp_path, fake_run,
@@ -233,15 +240,20 @@ def test_codex_no_agent_message_is_structured_error(tmp_path, fake_run,
 
 def test_nonzero_exit_is_structured_error(tmp_path, fake_run, real_mode):
     fake_run.reply = lambda cmd, kw: _completed(
-        cmd, returncode=2, stderr="auth expired"
+        cmd, returncode=2, stderr="secret account detail"
     )
     ledger = tmp_path / "l.jsonl"
     res = fc.invoke_frontier(
         "claude", "p", timeout_s=5, role="methods_reviewer", ledger_path=ledger,
     )
-    assert res["error"] is not None and "auth expired" in res["error"]
+    assert res["error"] == "nonzero exit 2"
+    assert res["failure_code"] == "nonzero_exit"
+    assert "secret account detail" not in json.dumps(res)
     assert res["exit_code"] == 2
-    assert _read_ledger(ledger)[-1]["exit_code"] == 2
+    row = _read_ledger(ledger)[-1]
+    assert row["exit_code"] == 2
+    assert row["failure_code"] == "nonzero_exit"
+    assert "secret account detail" not in json.dumps(row)
 
 
 def test_timeout_is_structured_error(tmp_path, fake_run, real_mode):
@@ -255,7 +267,8 @@ def test_timeout_is_structured_error(tmp_path, fake_run, real_mode):
     )
     assert res["error"] is not None and "timeout" in res["error"]
     assert res["exit_code"] == -1
-    assert _read_ledger(ledger)[-1]["exit_code"] == -1
+    assert res["failure_code"] == "timeout"
+    assert _read_ledger(ledger)[-1]["failure_code"] == "timeout"
 
 
 def test_missing_binary_is_structured_error(tmp_path, fake_run, real_mode):
@@ -269,6 +282,8 @@ def test_missing_binary_is_structured_error(tmp_path, fake_run, real_mode):
     )
     assert res["error"] is not None and "launch failed" in res["error"]
     assert res["exit_code"] == 127
+    assert res["failure_code"] == "launch_error"
+    assert "No such file" not in res["error"]
 
 
 # -------------------------------------------------------------- ledger ------
@@ -288,6 +303,7 @@ def test_ledger_row_shape_and_written_before_return(tmp_path, fake_run,
     assert set(row) == {
         "timestamp", "vendor", "cli_version", "role", "verdict",
         "duration_ms", "exit_code", "prompt_sha256",
+        "resolved_binary_path", "failure_code",
     }
     assert row["vendor"] == "claude"
     assert row["role"] == "methods_reviewer"
@@ -295,6 +311,8 @@ def test_ledger_row_shape_and_written_before_return(tmp_path, fake_run,
     assert row["prompt_sha256"] == hashlib.sha256(b"the prompt").hexdigest()
     assert isinstance(row["duration_ms"], int)
     assert row["timestamp"].endswith("Z")
+    assert row["failure_code"] is None
+    assert row["resolved_binary_path"] == fc._binary_path(fc._resolve_binary("claude"))
 
 
 def test_default_ledger_path_used_when_none(monkeypatch, tmp_path, fake_run,
@@ -394,6 +412,77 @@ def test_resolve_binary_order(monkeypatch, tmp_path):
     exe.write_text("#!/bin/sh\n")
     exe.chmod(0o755)
     monkeypatch.setattr(fc, "_USER_NPM_BIN", fake_bin)
+    monkeypatch.setattr(fc, "_USER_LOCAL_BIN", tmp_path / "missing-local")
     assert fc._resolve_binary("codex") == str(exe)
     exe.unlink()
+    monkeypatch.setattr(fc.shutil, "which", lambda name: None)
     assert fc._resolve_binary("codex") == "codex"
+
+
+def test_claude_resolver_prefers_explicit_then_npm_then_current_user_then_path(
+        monkeypatch, tmp_path):
+    npm = tmp_path / "npm"
+    user = tmp_path / "local"
+    npm.mkdir()
+    user.mkdir()
+    npm_cli = npm / "claude"
+    user_cli = user / "claude"
+    for path in (npm_cli, user_cli):
+        path.write_text("#!/bin/sh\n")
+        path.chmod(0o755)
+    monkeypatch.setattr(fc, "_USER_NPM_BIN", npm)
+    monkeypatch.setattr(fc, "_USER_LOCAL_BIN", user)
+    monkeypatch.setattr(fc.shutil, "which", lambda name: "/stale-path/claude")
+    monkeypatch.setenv("FRONTIER_CLAUDE_BIN", "/missing/explicit-claude")
+    assert fc._resolve_binary("claude") == "/missing/explicit-claude"
+    monkeypatch.delenv("FRONTIER_CLAUDE_BIN")
+    assert fc._resolve_binary("claude") == str(npm_cli)
+    npm_cli.unlink()
+    assert fc._resolve_binary("claude") == str(user_cli)
+    user_cli.chmod(0o644)
+    assert fc._resolve_binary("claude") == "/stale-path/claude"
+
+
+def test_invalid_explicit_pin_never_falls_back(tmp_path, monkeypatch, fake_run,
+                                               real_mode):
+    monkeypatch.setenv("FRONTIER_CLAUDE_BIN", "/missing/pinned-claude")
+
+    def missing(cmd, kw):
+        assert cmd[0] == "/missing/pinned-claude"
+        raise FileNotFoundError("secret account text")
+
+    fake_run.reply = missing
+    ledger = tmp_path / "l.jsonl"
+    result = fc.invoke_frontier("claude", "p", timeout_s=5,
+                                role="methods_reviewer", ledger_path=ledger)
+    assert result["failure_code"] == "launch_error"
+    assert result["resolved_binary_path"] == "/missing/pinned-claude"
+    assert _read_ledger(ledger)[0]["resolved_binary_path"] == "/missing/pinned-claude"
+    assert "secret account text" not in json.dumps(result)
+
+
+def test_version_cache_follows_selected_binary_not_vendor(tmp_path, monkeypatch,
+                                                          real_mode):
+    seen = []
+
+    def fake(cmd, **kw):
+        seen.append(list(cmd))
+        if cmd[-1] == "--version":
+            return _completed(cmd, stdout=f"version-{cmd[0]}\n")
+        return _completed(cmd, stdout=CLAUDE_OK_STDOUT)
+
+    monkeypatch.setattr(fc.subprocess, "run", fake)
+    monkeypatch.setattr(fc, "_version_cache", {})
+    ledger = tmp_path / "l.jsonl"
+    for pin in ("/pinned/claude-a", "/pinned/claude-b", "/pinned/claude-b"):
+        monkeypatch.setenv("FRONTIER_CLAUDE_BIN", pin)
+        result = fc.invoke_frontier("claude", "p", timeout_s=5,
+                                    role="methods_reviewer", ledger_path=ledger)
+        assert result["cli_version"] == f"version-{pin}"
+        assert result["resolved_binary_path"] == pin
+    assert [cmd[0] for cmd in seen if cmd[-1] == "--version"] == [
+        "/pinned/claude-a", "/pinned/claude-b",
+    ]
+    assert [row["resolved_binary_path"] for row in _read_ledger(ledger)] == [
+        "/pinned/claude-a", "/pinned/claude-b", "/pinned/claude-b",
+    ]
