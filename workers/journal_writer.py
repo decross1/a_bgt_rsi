@@ -31,7 +31,6 @@ from typing import Any
 
 from orchestrator import iteration_cache
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 JOURNAL_DIR = REPO_ROOT / "journal" / "iterations"
 
