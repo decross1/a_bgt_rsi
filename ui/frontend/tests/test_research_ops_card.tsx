@@ -42,6 +42,39 @@ const payoffObservation = () => ({
       comparison_eligible: false },
   ],
 });
+const guardedObservation = () => {
+  const base = (arm: string) => ({
+    window_id: "qfn-followon-known-opponent-lab8h-bridge-" + arm,
+    terminal_status: "incomplete", restoration_status: "guard_and_parent_verified",
+    final_record_status: "absent", started_at: new Date().toISOString(),
+    finished_at: new Date().toISOString(), result_raw_sha256: sha("1"),
+    state_raw_sha256: sha("2"), plan_raw_sha256: sha("3"),
+    parent_emergency_raw_sha256: sha("4"), partial_prompt_receipts: null as number | null,
+    partial_audit_raw_sha256: null as string | null, iteration_id: null as string | null,
+    loop_memory_raw_sha256: null as string | null, journal_raw_sha256: null as string | null,
+    scientific_admission_claimed: false,
+  });
+  return {
+    schema_version: "guarded-research-attempts-observation/v1",
+    observed_at: new Date().toISOString(), source_status: "available",
+    latest_terminal_window_id: "qfn-followon-known-opponent-lab8h-bridge-b",
+    attempts: [
+      { ...base("c"), terminal_status: "no_terminal_receipt",
+        restoration_status: "unknown", final_record_status: "unknown",
+        started_at: null, finished_at: null, result_raw_sha256: null,
+        state_raw_sha256: null, plan_raw_sha256: null,
+        parent_emergency_raw_sha256: null },
+      { ...base("b"), partial_prompt_receipts: 15,
+        partial_audit_raw_sha256: sha("5") },
+      { ...base("a"), restoration_status: "guard_verified_parent_unverified" },
+    ],
+    current_source_replay: "not_performed", scientific_admission_claimed: false,
+    private_content_exported: false,
+  };
+};
+const guardedRow = (label: string, content: string) =>
+  (_: string, element: Element | null) => element?.tagName === "DD" &&
+    !!element.textContent?.includes(label + ": " + content);
 
 describe("ResearchOpsCard", () => {
   it("separates exhausted campaign topics, recorded iterations, no-op plans, dispatch, and unknown ingestion", () => {
@@ -203,6 +236,50 @@ describe("ResearchOpsCard", () => {
       comparison_eligible: false } });
     expect(screen.getByText(/Payoff job package unavailable/)).toBeInTheDocument();
     expect(screen.queryByText(/Prepared and eligible/)).not.toBeInTheDocument();
+  });
+
+  it("shows guarded A/B as incomplete history without changing the last linked iteration", () => {
+    show({ ...receipt(), guarded_research_attempts: guardedObservation() });
+    expect(screen.getByText("Guarded research attempts")).toBeInTheDocument();
+    expect(screen.getByText(/Latest terminal observation B/)).toBeInTheDocument();
+    expect(screen.getByText(guardedRow("B", "Incomplete; guard and parent verified restoration"))).toBeInTheDocument();
+    expect(screen.getByText(guardedRow("A", "Incomplete; guard recorded restoration, parent recovery unverified"))).toBeInTheDocument();
+    expect(screen.getByText(/15 prompt receipts; no empirical or scientific result was admitted/)).toBeInTheDocument();
+    expect(screen.getByText(/iter-001/)).toBeInTheDocument();
+    expect(screen.queryByText(/journal_fallback_enum_mismatch/)).not.toBeInTheDocument();
+  });
+
+  it("withholds unbound guarded receipts and distinguishes guard record from final journal binding", () => {
+    const observation = guardedObservation();
+    const data = { ...receipt(), guarded_research_attempts: observation };
+    const { rerender } = show(data);
+    expect(screen.getByText(guardedRow("B", "Incomplete"))).toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, guarded_research_attempts: {
+      ...observation, attempts: [observation.attempts[0],
+        { ...observation.attempts[1], result_raw_sha256: "unbound" },
+        observation.attempts[2]] } }} /></MemoryRouter>);
+    expect(screen.getByText(/Guarded attempt receipts unavailable or unbound/)).toBeInTheDocument();
+    const c = { ...observation.attempts[1],
+      window_id: "qfn-followon-known-opponent-lab8h-bridge-c",
+      terminal_status: "guard_recorded_final_unverified",
+      restoration_status: "guard_verified_parent_unverified",
+      final_record_status: "unverified", iteration_id: "iter-2026-09-15-005",
+      partial_prompt_receipts: null, partial_audit_raw_sha256: null,
+      parent_emergency_raw_sha256: null,
+    };
+    const pending = { ...observation,
+      latest_terminal_window_id: c.window_id,
+      attempts: [c, observation.attempts[1], observation.attempts[2]] };
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data,
+      guarded_research_attempts: pending }} /></MemoryRouter>);
+    expect(screen.getByText(guardedRow("C", "Guard recorded and restored; final iteration record unverified"))).toBeInTheDocument();
+    expect(screen.queryByText(/acceptance of its scientific claim/)).not.toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, guarded_research_attempts: {
+      ...pending, attempts: [{ ...c, terminal_status: "guard_recorded_final_bound",
+        final_record_status: "bound", loop_memory_raw_sha256: sha("6"),
+        journal_raw_sha256: sha("7") }, observation.attempts[1], observation.attempts[2]] } }} /></MemoryRouter>);
+    expect(screen.getByText(guardedRow("C", "Guard recorded and restored; final iteration record bound"))).toBeInTheDocument();
+    expect(screen.getByText(/not acceptance of its scientific claim/)).toBeInTheDocument();
   });
 
   it("withholds current work on stale, wrong-schema, or failed reads", () => {

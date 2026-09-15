@@ -13,6 +13,90 @@ const stamp = (v: unknown) => utc(v)
 const queues = new Set(["eligible", "all_registered_topics_consumed", "source_unknown", "unknown"]);
 const attempts = new Set(["succeeded", "fetch_failed", "embed_failed", "interrupted_unknown", "none", "unknown"]);
 const PILOT_ID = "qfn-followon-known-opponent-lab8h-a";
+const BRIDGE_SCHEMA = "guarded-research-attempts-observation/v1";
+const bridgeIds = ["c", "b", "a"].map(arm =>
+  "qfn-followon-known-opponent-lab8h-bridge-" + arm);
+const bridgeStatuses = new Set(["no_terminal_receipt", "source_unavailable",
+  "incomplete", "guard_recorded_final_unverified", "guard_recorded_final_bound"]);
+const bridgeRestore = new Set(["unknown", "guard_verified_parent_unverified",
+  "guard_and_parent_verified"]);
+const bridgeFinal = new Set(["unknown", "absent", "unverified", "bound"]);
+const boundSha = (value: unknown) => value === null ||
+  (typeof value === "string" && SHA.test(value));
+function guardedRows(value: unknown): Record<string, unknown>[] | null {
+  if (!obj(value) || value.schema_version !== BRIDGE_SCHEMA ||
+      !utc(value.observed_at) || Date.now() - Date.parse(value.observed_at) < 0 ||
+      Date.now() - Date.parse(value.observed_at) > 120_000 ||
+      value.current_source_replay !== "not_performed" ||
+      value.scientific_admission_claimed !== false ||
+      value.private_content_exported !== false ||
+      value.source_status !== "available" ||
+      !Array.isArray(value.attempts) || value.attempts.length !== 3) return null;
+  const rows = value.attempts;
+  if (!rows.every((row: unknown, index: number) => {
+    if (!obj(row) || row.window_id !== bridgeIds[index] ||
+        !bridgeStatuses.has(String(row.terminal_status)) ||
+        !bridgeRestore.has(String(row.restoration_status)) ||
+        !bridgeFinal.has(String(row.final_record_status)) ||
+        row.scientific_admission_claimed !== false ||
+        !boundSha(row.result_raw_sha256) || !boundSha(row.state_raw_sha256) ||
+        !boundSha(row.plan_raw_sha256) ||
+        !boundSha(row.parent_emergency_raw_sha256) ||
+        !boundSha(row.partial_audit_raw_sha256) ||
+        !boundSha(row.loop_memory_raw_sha256) ||
+        !boundSha(row.journal_raw_sha256)) return false;
+    const status = String(row.terminal_status);
+    if (status === "no_terminal_receipt" || status === "source_unavailable")
+      return row.final_record_status === "unknown" && row.restoration_status === "unknown" &&
+        row.result_raw_sha256 === null && row.state_raw_sha256 === null &&
+        row.plan_raw_sha256 === null && row.partial_prompt_receipts === null &&
+        row.parent_emergency_raw_sha256 === null &&
+        row.partial_audit_raw_sha256 === null && row.iteration_id === null &&
+        row.loop_memory_raw_sha256 === null && row.journal_raw_sha256 === null;
+    if (!utc(row.started_at) || !utc(row.finished_at) ||
+        !SHA.test(String(row.result_raw_sha256)) ||
+        !SHA.test(String(row.state_raw_sha256)) ||
+        !SHA.test(String(row.plan_raw_sha256))) return false;
+    if (status === "incomplete")
+      return row.final_record_status === "absent" &&
+        (row.restoration_status === "guard_verified_parent_unverified" ||
+         row.restoration_status === "guard_and_parent_verified") &&
+        row.iteration_id === null && row.loop_memory_raw_sha256 === null &&
+        row.journal_raw_sha256 === null &&
+        (row.partial_prompt_receipts === null ||
+         (index === 1 && row.partial_prompt_receipts === 15 &&
+          SHA.test(String(row.partial_audit_raw_sha256))));
+    if (index !== 0 || !ID.test(String(row.iteration_id))) return false;
+    if (row.restoration_status !== "guard_verified_parent_unverified" ||
+        row.parent_emergency_raw_sha256 !== null ||
+        row.partial_prompt_receipts !== null ||
+        row.partial_audit_raw_sha256 !== null) return false;
+    return status === "guard_recorded_final_bound"
+      ? row.final_record_status === "bound" &&
+        SHA.test(String(row.loop_memory_raw_sha256)) &&
+        SHA.test(String(row.journal_raw_sha256))
+      : row.final_record_status === "unverified" &&
+        row.loop_memory_raw_sha256 === null && row.journal_raw_sha256 === null;
+  })) return null;
+  const latest = rows.find((row: Record<string, unknown>) =>
+    row.terminal_status !== "no_terminal_receipt" &&
+    row.terminal_status !== "source_unavailable")?.window_id ?? null;
+  return value.latest_terminal_window_id === latest ? rows : null;
+}
+function guardedLabel(row: Record<string, unknown>): string {
+  switch (row.terminal_status) {
+    case "no_terminal_receipt": return "No terminal receipt observed; outcome unknown";
+    case "source_unavailable": return "Public attempt source unavailable; outcome withheld";
+    case "incomplete":
+      return row.restoration_status === "guard_and_parent_verified"
+        ? "Incomplete; guard and parent verified restoration; no final research record"
+        : "Incomplete; guard recorded restoration, parent recovery unverified; no final research record";
+    case "guard_recorded_final_bound":
+      return "Guard recorded and restored; final iteration record bound to loop memory and journal";
+    default:
+      return "Guard recorded and restored; final iteration record unverified";
+  }
+}
 const PAYOFF_SCHEMA = "registered-payoff-jobs-observation/v1";
 const payoffJobs = [
   { job_id: "payoff-representation-a", panel_id: "payoff-representation-a",
@@ -69,6 +153,10 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   const legacy = obj(view?.ingestion_legacy_log) ? view.ingestion_legacy_log : null;
   const empirical = obj(view?.empirical_pilot) ? view.empirical_pilot : null;
   const payoff = obj(view?.payoff_jobs) ? view.payoff_jobs : null;
+  const bridges = guardedRows(view?.guarded_research_attempts);
+  const bridgeLatest = bridges?.find(row =>
+    row.terminal_status !== "no_terminal_receipt" &&
+    row.terminal_status !== "source_unavailable") ?? null;
   const payoffCheckedMs = payoff && utc(payoff.checked_at) ? Date.parse(String(payoff.checked_at)) : Number.NaN;
   const payoffCheckFresh = Number.isFinite(payoffCheckedMs) &&
     Date.now() - payoffCheckedMs >= 0 && Date.now() - payoffCheckedMs <= 360_000;
@@ -236,6 +324,24 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
           </dd>}
           <dd className="mt-1 text-xs text-[var(--fg-muted)]">Current source replay was not performed. The continuous-weight hypothesis remains unconfirmed; no strategic causal claim is made.</dd>
         </div>}
+        <div className="rounded border border-[var(--border-1)] p-3">
+          <dt className="font-semibold">Guarded research attempts</dt>
+          {bridges ? <>
+            <dd className="mt-1 text-xs text-[var(--fg-muted)]">Historical attempt receipts; current serving health and last linked campaign iteration are separate.</dd>
+            {bridgeLatest && <dd className="mt-1 text-xs text-[var(--fg-muted)]">
+              Latest terminal observation {String(bridgeLatest.window_id).slice(-1).toUpperCase()} · {stamp(bridgeLatest.finished_at)}.
+            </dd>}
+            {bridges.map((row, index) => <dd key={bridgeIds[index]} className="mt-2">
+              <span className="font-medium">{bridgeIds[index].slice(-1).toUpperCase()}</span>: {guardedLabel(row)}.
+              {row.partial_prompt_receipts === 15 && <span className="block text-xs text-[var(--fg-muted)]">
+                A result/state-bound partial audit reports 15 prompt receipts; no empirical or scientific result was admitted.
+              </span>}
+              {row.terminal_status === "guard_recorded_final_bound" && <span className="block text-xs text-[var(--fg-muted)]">
+                This verifies a final record's presence, not acceptance of its scientific claim.
+              </span>}
+            </dd>)}
+          </> : <dd className="mt-1">Guarded attempt receipts unavailable or unbound; outcomes withheld.</dd>}
+        </div>
         <div className="rounded border border-[var(--border-1)] p-3">
           <dt className="font-semibold">Registered payoff jobs</dt>
           {payoffRows ? payoffRows.map((job, index) => <dd key={payoffJobs[index].job_id} className="mt-2">
