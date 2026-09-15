@@ -11,6 +11,8 @@ from orchestrator.research_campaign import (
     DEFAULT_CAMPAIGN_ID,
     DEFAULT_CAMPAIGN_MANIFEST,
     REPO_ROOT,
+    UTILITY_MECHANISM_CAMPAIGN_ID,
+    UTILITY_MECHANISM_CAMPAIGN_MANIFEST,
     CampaignError,
     available_topics,
     bind_topic,
@@ -61,6 +63,19 @@ def test_default_campaign_binds_question_topic_and_study_artifacts():
     assert link["topic_id"] == topic["topic_id"]
     assert classify_record({"campaign": link}, campaign) == "explicit_match"
     assert record_matches({"campaign": link}, campaign) is True
+
+
+def test_registered_utility_followon_is_prepared_without_pretend_studies():
+    campaign = load_campaign(UTILITY_MECHANISM_CAMPAIGN_ID)
+    assert campaign["_path"] == UTILITY_MECHANISM_CAMPAIGN_MANIFEST
+    assert campaign["status"] == "prepared"
+    assert campaign["study_manifests"] == []
+    topics = campaign["topic_policy"]["topics"]
+    assert len(topics) == 3
+    assert len({topic["text_sha256"] for topic in topics}) == 3
+    assert len(available_topics(campaign, [])) == 3
+    assert all(record_matches({"campaign": bind_topic(campaign, topic["text"])},
+                              campaign) for topic in topics)
 
 
 def test_membership_is_never_inferred_from_topic_or_time():

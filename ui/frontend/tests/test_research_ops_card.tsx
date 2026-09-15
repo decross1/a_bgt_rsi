@@ -147,6 +147,49 @@ describe("ResearchOpsCard", () => {
     expect(screen.queryByText(/Review admitted binary pilot/)).not.toBeInTheDocument();
   });
 
+  it("keeps the exhausted topic queue visible beside advisory pilot review and staged successor", () => {
+    const campaignId = "v2-known-opponent-utility-20260915";
+    const data = {
+      ...receipt(),
+      active_campaign: { campaign_id: campaignId, manifest_sha256: sha("a") },
+      campaign_queue: { status: "all_registered_topics_consumed",
+        eligible_count: 0, consumed_count: 3, eligible_topic_ids: [],
+        loop_source_sha256: sha("b") },
+      next_registered_campaign: null,
+      next_work: { code: "review_admitted_empirical_pilot",
+        campaign_id: campaignId, topic_id: null,
+        study_id: "known-opponent-utility-response-pilot-v1",
+        manifest_sha256: sha("a"), preregistration_sha256: sha("4"),
+        activation_required: false, pilot_admission_receipt_sha256: sha("5") },
+      empirical_pilot: { status: "recorded_admitted",
+        window_id: "qfn-followon-known-opponent-lab8h-a",
+        admission_receipt_sha256: sha("5"), pilot_run_sha256: sha("6"),
+        attempted_calls: 108, complete_episodes: 12,
+        current_source_replay: "not_performed" },
+    };
+    const { rerender } = show(data);
+    expect(screen.getByText(/Registered topic queue exhausted: 0 of 3 eligible/)).toBeInTheDocument();
+    expect(screen.getByText(/no further topic dispatch from this campaign/)).toBeInTheDocument();
+    expect(screen.getByText(/Review admitted binary pilot/)).toBeInTheDocument();
+    expect(screen.getByText(/already recorded pilot; it is not a new topic run/)).toBeInTheDocument();
+    expect(screen.queryByText(/Next registered campaign/)).not.toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data,
+      next_registered_campaign: {
+        campaign_id: "v2-utility-mechanism-followon-20260915",
+        manifest_sha256: sha("c"), registered_topic_count: 3,
+        activation_required: true,
+      } }} /></MemoryRouter>);
+    expect(screen.getByText(/Next registered campaign v2-utility-mechanism-followon-20260915 awaits activation/)).toBeInTheDocument();
+    expect(screen.getByText(/Active campaign v2-known-opponent-utility-20260915/)).toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data,
+      campaign_queue: { status: "eligible", eligible_count: 1,
+        consumed_count: 2, eligible_topic_ids: ["topic-known-third-001"],
+        loop_source_sha256: sha("b") } }} /></MemoryRouter>);
+    expect(screen.getByText(/Registered topic queue: 1 of 3 eligible; 2 used/)).toBeInTheDocument();
+    expect(screen.getByText(/Next eligible registered topic topic-known-third-001/)).toBeInTheDocument();
+    expect(screen.getByText(/Review admitted binary pilot/)).toBeInTheDocument();
+  });
+
   it("shows admitted binary-pilot behavior by utility without accepting a theory claim", () => {
     const admission = sha("5"), run = sha("6");
     const behavior = {
