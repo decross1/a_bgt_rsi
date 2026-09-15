@@ -147,8 +147,13 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _next_iteration_id(today: str | None = None) -> str:
-    """iter-YYYY-MM-DD-NNN, sequential within the day."""
+def _next_iteration_id(today: str | None = None, *, reserve: bool = True) -> str:
+    """Reserve a new daily ID before any cache write or model request.
+
+    A failed iteration has no loop-memory row but still owns its cache. Treat
+    those directories as occupied so a later run cannot overwrite evidence.
+    ``reserve=False`` previews the next ID for an external guarded preflight.
+    """
     if today is None:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     prefix = f"iter-{today}-"
@@ -170,8 +175,27 @@ def _next_iteration_id(today: str | None = None) -> str:
                     existing.append(n)
                 except ValueError:
                     pass
+    cache_root = iteration_cache.CACHE_ROOT
+    if cache_root.exists():
+        for path in cache_root.iterdir():
+            iid = path.name
+            if iid.startswith(prefix):
+                suffix = iid[len(prefix):]
+                if suffix.isdigit():
+                    existing.append(int(suffix))
     next_n = (max(existing) + 1) if existing else 1
-    return f"{prefix}{next_n:03d}"
+    if not reserve:
+        return f"{prefix}{next_n:03d}"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    while next_n <= 999:
+        iid = f"{prefix}{next_n:03d}"
+        try:
+            iteration_cache.cache_dir(iid).mkdir(exist_ok=False)
+        except FileExistsError:  # another allocator reserved this ID first
+            next_n += 1
+            continue
+        return iid
+    raise RuntimeError("daily iteration ID capacity is exhausted")
 
 
 def _record_turn(
@@ -1211,7 +1235,20 @@ def _run_iteration_impl(
                 tool_calls_made=tool_calls_made or ["(none)"],
                 parent_request_id=last_id,
             )
-        journal_entry_path = out["result"]["journal_entry_path"]
+        journal_result = out.get("result") if isinstance(out, dict) else None
+        journal_path = (journal_result.get("journal_entry_path")
+                        if isinstance(journal_result, dict) else None)
+        if (not isinstance(out, dict) or out.get("status") != "passed"
+                or not isinstance(journal_path, str) or not journal_path):
+            _steps_mark(runtime, active, iteration_id, "journal_writer", "failed")
+            runtime.log_event({
+                "event_type": "loop_v0_journal_fallback_failed",
+                "iteration_id": iteration_id,
+                "worker_status": out.get("status") if isinstance(out, dict) else None,
+                "worker_result_present": isinstance(journal_result, dict),
+            })
+            raise RuntimeError("journal_writer fallback returned no verified journal path")
+        journal_entry_path = journal_path
         # The journal DID get written (orchestrator-filled); the fallback
         # event above records the degraded path.
         _steps_mark(runtime, active, iteration_id, "journal_writer", "passed")

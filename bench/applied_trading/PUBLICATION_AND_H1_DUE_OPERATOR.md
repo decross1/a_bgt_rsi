@@ -1,6 +1,6 @@
 # One H1 Spot research sequence alongside model evaluation
 
-The public BTCUSDT archive, fixed 60-day reference score, five-minute capture
+The public BTCUSDT archive, fixed 60-day reference score, four-minute capture
 timer, H1 plan, and due evaluator are separate stages. Bounded capture and the
 offline due evaluator can coexist with model evaluation under independent
 locks and a 21 GiB available-memory preflight. Heavy historical acquisition
@@ -67,7 +67,7 @@ systemctl --user enable --now applied-h1-capture.timer
 
 If the saved `_scheduler/state.json` from the older smoke lineage exists, the
 manual bootstrap requires the exact raw SHA in `--abandon-state-sha256`; the
-wrapper archives it. The five-minute timer starts 30 seconds after the boundary
+wrapper archives it. The four-minute timer starts 30 seconds after the boundary
 and holds its own scheduler lock. It does not acquire model/weekly/coordinator
 leases because it uses no model or GPU. A pause marker, unreadable memory
 measurement, or less than 21 GiB available memory produces a zero-GET skip.
@@ -105,7 +105,7 @@ It labels `freeze_proof=local_exclusive_write_only` and
 Git/remote witness would be needed for a stronger preregistration claim. The
 H1 study remains a plumbing/diagnostic pilot either way.
 
-The due timer checks at minute 3 after each five-minute capture boundary and
+The separate due timer checks every five minutes at minute 3 or 8 and
 never makes a market GET. Before `forward_end + 1h hold + 10m exit reserve`,
 it is a no-op. After due, it retains its own worker lock and the same memory/pause
 preflight, scans at most 10,000 capture child names and selects at most 96 ordered
