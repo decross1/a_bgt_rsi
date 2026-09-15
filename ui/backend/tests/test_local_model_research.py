@@ -5,7 +5,12 @@ import os
 
 import pytest
 
-from backend.local_model_research import Reader, SourceError, project_local_research
+from backend.local_model_research import (
+    Reader,
+    SourceError,
+    _startup_evidence,
+    project_local_research,
+)
 
 
 def write(root, path, value):
@@ -274,3 +279,141 @@ def test_mia_and_nvidia_receipts_order_by_recorded_time_not_prefix(tmp_path, mon
 
     rows = project_local_research(tmp_path)["qualification_runs"]
     assert [row["id"] for row in rows] == ["qfn-c0-new", "qfn-mia-c0-old"]
+
+
+def startup_fixture(tmp_path, *, mia=False):
+    from bench.flash_next_ab import qualification as q
+    from bench.flash_next_ab.candidate_registry import MIA
+
+    name, image, served, memory = (
+        (MIA.container_name, MIA.image_id, MIA.served_name,
+         MIA.docker_memory_limit_bytes)
+        if mia else
+        (q.CONTAINER_NAME, q.IMAGE_ID, q.SERVED_MODEL,
+         q.DOCKER_MEMORY_LIMIT_BYTES)
+    )
+    run_id = "qfn-mia-c0-startup" if mia else "qfn-c0-startup"
+    container_id = "b" * 64
+    result = {
+        "schema": ("qwen-flash-next-qualification-result/v4" if mia else
+                   "qwen-flash-next-qualification-result/v3"),
+        "status": "failed",  # Later failure does not erase observed startup.
+        "started_at": "2026-09-15T05:10:26.151260+00:00",
+        "finished_at": "2026-09-15T05:33:37.178065+00:00",
+        "elapsed_seconds": 1390.9710280187428,
+        "ready_quiescence_started_at": "2026-09-15T05:25:46.770160+00:00",
+        "candidate_cgroup_path": f"/system.slice/docker-{container_id}.scope",
+        "candidate_cgroup_pid": 4102883,
+    }
+    readiness = {
+        "ready_at": "2026-09-15T05:25:46.760615+00:00",
+        "models": [served],
+        "container": {
+            "id": container_id, "name": name, "image": image,
+            "started_at": "2026-09-15T05:15:07.503726458Z",
+            "running": True, "oom_killed": False, "restart_count": 0,
+            "pid": 4102883,
+            "memory_limit_bytes": memory, "memory_swap_total_bytes": memory,
+        },
+    }
+    relative = f"qualification-runs/{run_id}/readiness.json"
+    return run_id, result, readiness, relative
+
+
+def test_failed_after_ready_has_hash_identified_startup_seconds(tmp_path):
+    run_id, result, readiness, relative = startup_fixture(tmp_path)
+    source = write(tmp_path, relative, readiness)
+    row = _startup_evidence(Reader(tmp_path), run_id, result)
+    assert row == {
+        "startup_seconds": pytest.approx(639.256889),
+        "startup_source_sha256": source["sha256"],
+        "startup_status": "recorded",
+    }
+
+
+def test_terminal_projection_keeps_startup_and_full_elapsed_distinct(tmp_path, monkeypatch):
+    from bench.flash_next_ab import harness
+
+    run_id, result, readiness, relative = startup_fixture(tmp_path)
+    result.update({
+        "run_id": run_id, "weekly_budget_debit": False,
+        "production_change_authorized": False,
+        "restoration": {"status": "verified"}, "probe_count": 3,
+        "challenger_gpu_seconds": 708.970585,
+        "min_mem_available_gib": 31.1554,
+    })
+    write(tmp_path, f"qualification-runs/{run_id}/result.json", result)
+    write(tmp_path, relative, readiness)
+    for name in ("plan.json", "launch-contract.snapshot.json"):
+        write(tmp_path, f"qualification-runs/{run_id}/{name}", {})
+
+    def admitted_source(**kwargs):
+        assert kwargs["require_passed"] is False
+        return {"qualification_receipt_sha256": hashlib.sha256(
+            kwargs["receipt_path"].read_bytes()).hexdigest()}
+
+    monkeypatch.setattr(harness, "validate_flash_qualification_files", admitted_source)
+    row = project_local_research(tmp_path)["qualification_runs"][0]
+    assert row["status"] == "failed"
+    assert row["startup_seconds"] == pytest.approx(639.256889)
+    assert row["qualification_elapsed_seconds"] == pytest.approx(1390.971028)
+    assert row["candidate_window_minutes"] == pytest.approx(708.970585 / 60)
+    assert row["startup_source_sha256"] == hashlib.sha256(
+        (tmp_path / relative).read_bytes()).hexdigest()
+    assert "readiness.json" not in json.dumps(row)
+
+
+def test_failed_before_ready_does_not_invent_a_startup_time(tmp_path):
+    run_id, result, _readiness, _relative = startup_fixture(tmp_path)
+    assert _startup_evidence(Reader(tmp_path), run_id, result) == {
+        "startup_seconds": None,
+        "startup_source_sha256": None,
+        "startup_status": "not_recorded",
+    }
+
+
+@pytest.mark.parametrize("mutation", [
+    "started_missing", "started_naive", "ready_before_start", "wrong_image",
+    "wrong_name", "wrong_models", "wrong_pid", "wrong_id",
+    "ready_too_early", "ready_after_run", "malformed_json",
+])
+def test_unbound_readiness_withholds_startup_seconds(tmp_path, mutation):
+    run_id, result, readiness, relative = startup_fixture(tmp_path)
+    container = readiness["container"]
+    if mutation == "started_missing":
+        del container["started_at"]
+    elif mutation == "started_naive":
+        container["started_at"] = "2026-09-15T05:15:07"
+    elif mutation == "ready_before_start":
+        readiness["ready_at"] = "2026-09-15T05:14:00+00:00"
+    elif mutation == "wrong_image":
+        container["image"] = "sha256:" + "0" * 64
+    elif mutation == "wrong_name":
+        container["name"] = "unregistered"
+    elif mutation == "wrong_models":
+        readiness["models"] = ["other-model"]
+    elif mutation == "wrong_pid":
+        container["pid"] += 1
+    elif mutation == "wrong_id":
+        container["id"] = "c" * 64
+    elif mutation == "ready_too_early":
+        readiness["ready_at"] = "2026-09-15T05:25:00+00:00"
+    elif mutation == "ready_after_run":
+        readiness["ready_at"] = "2026-09-15T05:34:00+00:00"
+    if mutation == "malformed_json":
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"{bad JSON")
+    else:
+        write(tmp_path, relative, readiness)
+    row = _startup_evidence(Reader(tmp_path), run_id, result)
+    assert row["startup_seconds"] is None
+    assert row["startup_status"] == "unavailable"
+
+
+def test_mia_readiness_uses_its_own_registered_image_and_model(tmp_path):
+    run_id, result, readiness, relative = startup_fixture(tmp_path, mia=True)
+    write(tmp_path, relative, readiness)
+    row = _startup_evidence(Reader(tmp_path), run_id, result)
+    assert row["startup_status"] == "recorded"
+    assert row["startup_seconds"] == pytest.approx(639.256889)

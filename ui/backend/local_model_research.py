@@ -118,6 +118,85 @@ def _time(value):
         return None
 
 
+def _datetime(value):
+    normalized = _time(value)
+    return datetime.fromisoformat(normalized) if normalized is not None else None
+
+
+def _startup_evidence(reader: Reader, run_id: str, result: dict):
+    """Record observed server start to first valid models response, if bound.
+
+    This is a stage measurement, so a later probe/serialization failure can
+    leave qualification failed while its earlier startup duration remains
+    measurable. It never says anything about request TTFT or decode speed.
+    """
+    absent = {"startup_seconds": None, "startup_source_sha256": None,
+              "startup_status": "not_recorded"}
+    if result.get("schema") not in {
+        "qwen-flash-next-qualification-result/v3",
+        "qwen-flash-next-qualification-result/v4",
+    }:
+        return absent
+    relative = f"qualification-runs/{run_id}/readiness.json"
+    try:
+        ready, digest = reader.read(relative)
+    except FileNotFoundError:
+        return absent
+    except SourceError:
+        return dict(absent, startup_status="unavailable")
+    try:
+        if result["schema"].endswith("/v4"):
+            from bench.flash_next_ab.candidate_registry import MIA
+            expected = (MIA.container_name, MIA.image_id, MIA.served_name,
+                        MIA.docker_memory_limit_bytes)
+        else:
+            from bench.flash_next_ab import qualification as q
+            expected = (q.CONTAINER_NAME, q.IMAGE_ID, q.SERVED_MODEL,
+                        q.DOCKER_MEMORY_LIMIT_BYTES)
+    except (ImportError, AttributeError):
+        return dict(absent, startup_status="unavailable")
+    container = ready.get("container")
+    if not isinstance(container, dict):
+        return dict(absent, startup_status="unavailable")
+    identifier = container.get("id")
+    started = _datetime(container.get("started_at"))
+    ready_at = _datetime(ready.get("ready_at"))
+    run_started = _datetime(result.get("started_at"))
+    run_finished = _datetime(result.get("finished_at"))
+    quiet_started = _datetime(result.get("ready_quiescence_started_at"))
+    elapsed = _number(result.get("elapsed_seconds"))
+    if (
+        not isinstance(identifier, str) or not SHA.fullmatch(identifier)
+        or container.get("name") != expected[0]
+        or container.get("image") != expected[1]
+        or ready.get("models") != [expected[2]]
+        or container.get("running") is not True
+        or container.get("oom_killed") is not False
+        or type(container.get("restart_count")) is not int
+        or container["restart_count"] != 0
+        or type(container.get("pid")) is not int
+        or container["pid"] <= 0
+        or container["pid"] != result.get("candidate_cgroup_pid")
+        or result.get("candidate_cgroup_path")
+           != f"/system.slice/docker-{identifier}.scope"
+        or container.get("memory_limit_bytes") != expected[3]
+        or container.get("memory_swap_total_bytes") != expected[3]
+        or any(time is None for time in
+               (started, ready_at, run_started, run_finished, quiet_started))
+        or elapsed is None
+    ):
+        return dict(absent, startup_status="unavailable")
+    duration = (ready_at - started).total_seconds()
+    if (
+        not run_started <= started <= ready_at <= quiet_started <= run_finished
+        or (quiet_started - ready_at).total_seconds() > 10
+        or not 0 < duration <= elapsed + 1
+    ):
+        return dict(absent, startup_status="unavailable")
+    return {"startup_seconds": duration, "startup_source_sha256": digest,
+            "startup_status": "recorded"}
+
+
 def _mia_variant(reader: Reader, run_id: str, state_or_result: dict):
     """Use code-owned v4 source identity; never infer variant from endpoint text."""
     if not run_id.startswith("qfn-mia-c0-"):
@@ -191,7 +270,9 @@ def _qualification(reader, run_id):
                 "finished_at": None, "candidate_window_minutes": None, "minimum_memory_gib": None,
                 "probe_count": None, "restoration": "unverified", "source_sha256": digest,
                 "model_started": None, "variant": variant,
-                "failure_class": None}
+                "failure_class": None, "startup_seconds": None,
+                "startup_source_sha256": None, "startup_status": "not_recorded",
+                "qualification_elapsed_seconds": None}
     if (row.get("schema") not in {
             "qwen-flash-next-qualification-result/v1",
             "qwen-flash-next-qualification-result/v2",
@@ -244,6 +325,8 @@ def _qualification(reader, run_id):
     except HarnessError as exc:
         raise SourceError("A qualification failed source validation.") from exc
     gpu_s = _number(row.get("challenger_gpu_seconds"))
+    total_s = _number(row.get("elapsed_seconds"))
+    startup = _startup_evidence(reader, run_id, row)
     return {"id": run_id, "status": row["status"], "phase": "complete",
             "finished_at": _time(row.get("finished_at")),
             "candidate_window_minutes": gpu_s / 60 if gpu_s is not None else None,
@@ -251,7 +334,8 @@ def _qualification(reader, run_id):
             "probe_count": _number(row.get("probe_count")), "restoration": restoration,
             "model_started": False if row.get("challenger_gpu_seconds_basis") == "not_started" and gpu_s == 0 else True if gpu_s is not None and gpu_s > 0 else None,
             "source_sha256": digest, "variant": variant,
-            "failure_class": failure_class}
+            "failure_class": failure_class,
+            "qualification_elapsed_seconds": total_s, **startup}
 
 
 def _comparison(reader, entry):

@@ -345,6 +345,10 @@ export interface LocalModelResearchProgress {
     minimum_memory_gib: number | null; probe_count: number | null;
     model_started: boolean | null;
     restoration: string; source_sha256: string;
+    startup_seconds?: number | null;
+    qualification_elapsed_seconds?: number | null;
+    startup_status?: "recorded" | "not_recorded" | "unavailable";
+    startup_source_sha256?: string | null;
     failure_class?: "experimental_startup_host_pageout_guardrail_abort" | "other_qualification_failure" | "restoration_unknown" | null;
     variant?: {
       id: string; repository: string; revision: string; served_model: string;

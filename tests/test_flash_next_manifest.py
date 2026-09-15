@@ -1,4 +1,5 @@
 import copy
+import json
 from collections import Counter
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from bench.flash_next_ab.manifest import (
     PlanError,
     build_plan,
+    canonical_json,
     make_arm_receipt,
     plan_fingerprints,
     policy_set,
@@ -67,6 +69,30 @@ def test_context_endpoint_arms_are_collapsed_but_substantive_variants_remain():
         for row in plan["cell_receipts"].values()
         if row["family"] == "role_effort"
     } == {"xhigh", "medium", "adaptive"}
+
+
+def test_full_plan_survives_canonical_json_without_changing_execution_order():
+    plan, _ = build_plan(arms())
+    saved = json.loads(canonical_json(plan))
+    assert list(saved["cell_receipts"]) != saved["declared_cells"]
+    assert validate_plan(saved) is saved
+    assert saved["declared_cells"] == plan["declared_cells"]
+    assert plan_fingerprints(saved) == plan_fingerprints(plan)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra", "duplicate_declaration"])
+def test_canonical_plan_still_requires_exact_unique_cell_coverage(mutation):
+    plan, _ = build_plan(arms())
+    saved = json.loads(canonical_json(plan))
+    first = saved["declared_cells"][0]
+    if mutation == "missing":
+        del saved["cell_receipts"][first]
+    elif mutation == "extra":
+        saved["cell_receipts"]["unexpected-cell"] = saved["cell_receipts"][first]
+    else:
+        saved["declared_cells"].append(first)
+    with pytest.raises(PlanError, match="declared cells and receipts differ"):
+        validate_plan(saved)
 
 
 def test_fixed_bundle_routes_and_gemma_effort_omission_are_explicit():

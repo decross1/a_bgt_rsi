@@ -44,7 +44,7 @@ RESIDENT_QUALIFICATION = RUNTIME_ROOT / "resident-qualification-v2.json"
 RESIDENT_ARTIFACTS = RUNTIME_ROOT / "resident-model-artifacts.json"
 
 WINDOW_SCHEMA = "flash-next-evaluation-window/v1"
-EXTENDED_PLAN_SCHEMA = "flash-next-extended-evaluation-plan/v2"
+EXTENDED_PLAN_SCHEMA = "flash-next-extended-evaluation-plan/v3"
 ATTEMPT_SCHEMA = "flash-next-extended-evaluation-harness-attempt/v1"
 RESULT_SCHEMA = "flash-next-extended-evaluation-result/v1"
 FULL_COHORT_BUDGET_SECONDS = MAX_RUNTIME_BUDGET_S
@@ -55,6 +55,40 @@ MIN_MEMORY_GIB = 20
 MAX_WINDOW_PLAN_BYTES = 2 * 1024 * 1024
 MAX_BENCHMARK_PLAN_BYTES = 8 * 1024 * 1024
 MAX_EVIDENCE_BYTES = 8 * 1024 * 1024
+MAX_EXTENDED_MEMORY_BYTES = 64 * 1024 * 1024
+MAX_EXTENDED_MEMORY_ROWS = 20_000
+EXTENDED_SERVING_PROFILE = {
+    "schema_version": "flash-next-extended-serving-profile/v1",
+    "profile_id": "spark-gb10-local-long-cohort-s1-20260915",
+    "minimum_mem_available_gib": MIN_MEMORY_GIB,
+    "candidate_cgroup_swap_current_bytes": 0,
+    "candidate_cgroup_oom_delta": 0,
+    "host_pswpout_5s_burst_bytes": 512 * 1024**2,
+    "host_pswpout_60s_burst_bytes": 2 * 1024**3,
+    "host_pswpout_total_action": "diagnostic_only",
+    "host_pswpin_and_psi_action": "diagnostic_only",
+    "fresh_ready_quiet_seconds": 60,
+    "memory_poll_seconds": 1,
+    "max_raw_memory_bytes": MAX_EXTENDED_MEMORY_BYTES,
+    "max_memory_rows": MAX_EXTENDED_MEMORY_ROWS,
+    "ui_health_observer": {
+        "poll_seconds": 5, "timeout_seconds": 2,
+        "consecutive_failures_before_abort": 2,
+        "failure_window_seconds": 30,
+        "failure_action": "operational_abort_not_model_fit_failure",
+    },
+}
+SOURCE_BUNDLE_MODULES = (
+    "qualification.py", "harness.py", "evaluation_window.py",
+    "extended_lifecycle.py", "extended_observer.py", "observer_admission.py",
+    "private_evidence.py", "extended_admission.py",
+    "resident_evaluation_window.py", "resident_admission.py",
+    "candidate_registry.py", "mia_candidate_integration.py",
+    "transport.py", "manifest.py", "compare.py", "adapters.py",
+)
+REGISTERED_CODE_ROOT = Path(
+    "/home/decross1/projects/a_bgt_rsi_worktrees/flash-next-ab-20260914"
+)
 
 WINDOW_KEYS = frozenset(
     {
@@ -104,6 +138,8 @@ EXTENDED_PLAN_KEYS = frozenset(
         "benchmark_plan_file_sha256",
         "prior_qualification_receipt_sha256",
         "prior_qualification_plan_sha256",
+        "candidate_variant_id",
+        "candidate_spec_sha256",
         "contract_sha256",
         "runtime_sha256",
         "model_artifact_sha256",
@@ -119,9 +155,14 @@ EXTENDED_PLAN_KEYS = frozenset(
         "setup_quiescence_seconds",
         "ready_quiescence_seconds",
         "paging_policy",
+        "extended_serving_profile",
+        "extended_serving_profile_sha256",
         "min_mem_available_gib",
         "resource_locks",
         "research_usage_journal",
+        "launcher_python_path",
+        "controller_source_bundle",
+        "controller_source_bundle_sha256",
         "weekly_budget_debit",
         "paid_api_allowed",
         "production_change_authorized",
@@ -251,12 +292,21 @@ def _qualification_paths(
     paths: dict[str, Path | None] = {}
     hashes: dict[str, str] = {}
     if cohort == "flash":
+        from .candidate_registry import MIA
+        from .qualification import IMAGE_ID, SERVED_MODEL, model_artifact_sha256
+
         receipt_ref = _exact_keys(qualification["receipt"], REFERENCE_KEYS, "receipt")
         receipt = Path(os.path.abspath(Path(receipt_ref["path"])))
+        mia_path = re.fullmatch(
+            r"qfn-mia-c0-[A-Za-z0-9][A-Za-z0-9._-]{0,79}", receipt.parent.name
+        ) is not None
+        nvidia_path = re.fullmatch(
+            r"qfn-c0-[A-Za-z0-9][A-Za-z0-9._-]{0,79}", receipt.parent.name
+        ) is not None
         if (
             receipt.name != "result.json"
             or receipt.parent.parent != QUALIFICATION_ROOT
-            or not re.fullmatch(r"qfn-c0-[A-Za-z0-9][A-Za-z0-9._-]{0,79}", receipt.parent.name)
+            or not (nvidia_path or mia_path)
         ):
             raise EvaluationWindowError("Flash qualification result path is outside the run root")
         expected = {
@@ -265,12 +315,47 @@ def _qualification_paths(
             "contract_snapshot": receipt.parent / "launch-contract.snapshot.json",
             "contract_raw": receipt.parent / "launch-contract.raw.json",
         }
+        documents = {}
         for name, expected_path in expected.items():
-            _, raw, path = _read_reference(
+            source_document, raw, path = _read_reference(
                 qualification[name], label=f"qualification.{name}", expected_path=expected_path
             )
+            documents[name] = source_document
             paths[name] = path
             hashes[name] = _sha256(raw)
+        result = documents["receipt"]
+        plan = documents["qualification_plan"]
+        contract = documents["contract_raw"]
+        registered = MIA if mia_path else None
+        variant = registered.spec_id if registered else "nvidia-nvfp4-fc694b54"
+        candidate = ({"id": registered.spec_id,
+                      "spec_sha256": registered.identity_sha256()}
+                     if registered else None)
+        image = registered.image_id if registered else IMAGE_ID
+        served_model = registered.served_name if registered else SERVED_MODEL
+        artifact = (registered.model_artifact_sha256() if registered
+                    else model_artifact_sha256())
+        if (
+            result.get("schema") != ("qwen-flash-next-qualification-result/v4"
+                                     if registered else "qwen-flash-next-qualification-result/v3")
+            or result.get("profile") != (registered.profile if registered else "C0-S1")
+            or plan.get("schema") != ("qwen-flash-next-qualification-plan/v4"
+                                   if registered else "qwen-flash-next-qualification-plan/v3")
+            or plan.get("candidate") != candidate
+            or (registered is not None and result.get("candidate") != candidate)
+            or plan.get("image_id") != image
+            or plan.get("served_model") != served_model
+            or plan.get("model_artifact_sha256") != artifact
+            or result.get("model_artifact_sha256") != artifact
+            or plan.get("contract_sha256") != hashes["contract_raw"]
+            or result.get("contract_sha256") != hashes["contract_raw"]
+            or contract.get("profile") != (registered.profile if registered else "C0-S1")
+            or (registered is not None and
+                contract.get("schema") != registered.contract_schema)
+        ):
+            raise EvaluationWindowError(
+                f"Flash {variant} qualification path and immutable candidate differ"
+            )
         _none_reference(qualification["resident_artifacts"], "qualification.resident_artifacts")
         paths["resident_artifacts"] = None
         return paths, hashes
@@ -424,6 +509,25 @@ def _evaluation_output(
     return output
 
 
+def frozen_controller_source_bundle() -> dict[str, dict[str, Any]]:
+    """Pin the complete local lifecycle, observer, admission, and transport code."""
+    # Offline consumers can import from the canonical checkout while checking
+    # the frozen worker's exact bytes in the one registered worktree.
+    module_root = REGISTERED_CODE_ROOT / "bench/flash_next_ab"
+    observed = {}
+    for filename in SOURCE_BUNDLE_MODULES:
+        source = module_root / filename
+        raw, normalized = _regular_bytes(
+            source, label=f"registered source {filename}", max_bytes=2_000_000
+        )
+        if normalized != source.absolute():
+            raise EvaluationWindowError(f"registered source {filename} changed path")
+        observed[filename] = {
+            "path": str(source), "sha256": _sha256(raw), "bytes": len(raw),
+        }
+    return observed
+
+
 def build_extended_evaluation_plan(
     window: FrozenEvaluationWindow,
     output_dir: str | Path,
@@ -431,6 +535,7 @@ def build_extended_evaluation_plan(
     must_be_absent: bool = False,
 ) -> dict[str, Any]:
     """Build the distinct lifecycle plan for a post-C0 Flash window."""
+    from .candidate_registry import MIA
     from .qualification import PAGING_POLICY
 
     if not isinstance(window, FrozenEvaluationWindow) or window.cohort != "flash":
@@ -452,10 +557,35 @@ def build_extended_evaluation_plan(
         if isinstance(qualification_plan, dict)
         else None
     )
+    mia = (
+        isinstance(qualification_plan, dict)
+        and qualification_plan.get("schema") == "qwen-flash-next-qualification-plan/v4"
+    )
+    candidate = qualification_plan.get("candidate") if mia else None
+    if mia:
+        expected_variant_id = MIA.spec_id
+        expected_spec_sha = MIA.identity_sha256()
+        policy = MIA.paging_policy()
+    else:
+        expected_variant_id = "nvidia-nvfp4-fc694b54"
+        expected_spec_sha = None
+        policy = PAGING_POLICY
     if (
         not isinstance(qualification_plan, dict)
         or qualification_plan.get("schema")
-        != "qwen-flash-next-qualification-plan/v3"
+        not in {"qwen-flash-next-qualification-plan/v3",
+                "qwen-flash-next-qualification-plan/v4"}
+        or (mia and (
+            summary.get("variant_id") != expected_variant_id
+            or candidate != {"id": expected_variant_id,
+                             "spec_sha256": expected_spec_sha}
+            or qualification_plan.get("image_id") != MIA.image_id
+            or qualification_plan.get("model_path") != str(MIA.model_path)
+            or qualification_plan.get("model_artifact_sha256")
+               != MIA.model_artifact_sha256()
+            or qualification_plan.get("served_model") != MIA.served_name
+        ))
+        or (not mia and qualification_plan.get("candidate") is not None)
         or summary.get("admission_eligible") is not True
         or not _digest(summary.get("qualification_receipt_sha256"))
         or not _digest(summary.get("qualification_plan_sha256"))
@@ -469,7 +599,7 @@ def build_extended_evaluation_plan(
         or qualification_plan.get("served_model") != summary.get("served_model")
         or qualification_plan.get("setup_quiescence_seconds") != 60
         or qualification_plan.get("ready_quiescence_seconds") != 60
-        or qualification_plan.get("paging_policy") != PAGING_POLICY
+        or qualification_plan.get("paging_policy") != policy
     ):
         raise EvaluationWindowError("prior C0 qualification identity is incomplete")
     docker_argv = qualification_plan.get("docker_create_argv")
@@ -489,6 +619,11 @@ def build_extended_evaluation_plan(
         raise EvaluationWindowError("prior C0 launch vector is malformed")
     deadline = window.effective_deadline_seconds
     reserve = window.document["safety"]["restoration_reserve_seconds"]
+    launcher = REGISTERED_CODE_ROOT / ".venv-chroma/bin/python"
+    if (not launcher.is_file() or launcher.resolve() != Path("/usr/bin/python3.12")
+            or launcher.is_dir()):
+        raise EvaluationWindowError("code-owned local research Python launcher changed")
+    source_bundle = frozen_controller_source_bundle()
     plan = {
         "schema_version": EXTENDED_PLAN_SCHEMA,
         "pair_id": window.pair_id,
@@ -504,6 +639,8 @@ def build_extended_evaluation_plan(
         "prior_qualification_plan_sha256": summary[
             "qualification_plan_sha256"
         ],
+        "candidate_variant_id": expected_variant_id,
+        "candidate_spec_sha256": expected_spec_sha,
         "contract_sha256": summary["contract_sha256"],
         "runtime_sha256": summary["runtime_sha256"],
         "model_artifact_sha256": summary["model_artifact_sha256"],
@@ -520,7 +657,12 @@ def build_extended_evaluation_plan(
         "restoration_reserve_seconds": reserve,
         "setup_quiescence_seconds": 60,
         "ready_quiescence_seconds": 60,
-        "paging_policy": json.loads(json.dumps(PAGING_POLICY)),
+        "paging_policy": json.loads(json.dumps(policy)),
+        "extended_serving_profile": json.loads(json.dumps(EXTENDED_SERVING_PROFILE)),
+        "extended_serving_profile_sha256": _sha256(
+            json.dumps(EXTENDED_SERVING_PROFILE, sort_keys=True,
+                       separators=(",", ":"), allow_nan=False).encode()
+        ),
         "min_mem_available_gib": MIN_MEMORY_GIB,
         "resource_locks": [
             ".weekly-upgrade-execution.lock",
@@ -528,6 +670,12 @@ def build_extended_evaluation_plan(
             ".weekly-upgrade-gpu.lock",
         ],
         "research_usage_journal": str(RESEARCH_LEDGER),
+        "launcher_python_path": str(launcher),
+        "controller_source_bundle": source_bundle,
+        "controller_source_bundle_sha256": _sha256(
+            json.dumps(source_bundle, sort_keys=True, separators=(",", ":"),
+                       allow_nan=False).encode()
+        ),
         "weekly_budget_debit": False,
         "paid_api_allowed": False,
         "production_change_authorized": False,

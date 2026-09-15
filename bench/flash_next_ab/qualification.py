@@ -122,6 +122,8 @@ def _failure_class(
 ) -> str | None:
     if status == "passed":
         return None
+    if status == "complete":
+        return None
     if status == "unknown":
         return "restoration_unknown"
     first = getattr(monitor, "failure", None)
@@ -148,9 +150,31 @@ def _failure_class(
             for reason in getattr(monitor, "violations", [])
         )
     )
+    extended_host_guard = (
+        isinstance(first, str)
+        and first.startswith("extended_serving host swap reached the ")
+        and isinstance(error, str) and error.endswith(first)
+        and restoration.get("status") == "verified"
+        and getattr(monitor, "candidate_cgroup_swap_peak_bytes", None) == 0
+        and getattr(monitor, "candidate_cgroup_oom_initial", None) == 0
+        and getattr(monitor, "candidate_cgroup_oom_final", None) == 0
+        and getattr(monitor, "candidate_cgroup_oom_kill_initial", None) == 0
+        and getattr(monitor, "candidate_cgroup_oom_kill_final", None) == 0
+        and getattr(monitor, "minimum_observed_gib", 0) >= MIN_MEMORY_GIB
+    )
+    ui_operational_abort = (
+        isinstance(first, str)
+        and first.startswith(("two UI health failures within 30 seconds", "UI observer failed:",
+                              "UI observer thread did not terminate"))
+        and restoration.get("status") == "verified"
+    )
     return (
         "experimental_startup_host_pageout_guardrail_abort"
-        if only_startup_guard else "other_qualification_failure"
+        if only_startup_guard else
+        "experimental_extended_host_pageout_guardrail_abort"
+        if extended_host_guard else
+        "operational_ui_responsiveness_abort"
+        if ui_operational_abort else "other_qualification_failure"
     )
 
 WEIGHT_FILES: dict[str, tuple[int, str]] = {
@@ -1060,7 +1084,8 @@ class MemoryMonitor:
         "setup": {"load", "restoration"},
         "load": {"ready", "restoration"},
         "ready": {"probes", "restoration"},
-        "probes": {"restoration"},
+        "probes": {"evaluation", "restoration"},
+        "evaluation": {"restoration"},
         "restoration": set(),
     }
 
@@ -1079,6 +1104,7 @@ class MemoryMonitor:
         paging_policy: dict[str, Any] | None = None,
         clock: Callable[[], float] | None = None,
         candidate_spec: CandidateSpec | None = None,
+        extended_serving_profile: dict[str, Any] | None = None,
     ):
         self.path = path
         self.ops = ops
@@ -1098,6 +1124,15 @@ class MemoryMonitor:
         )
         if self.paging_policy != expected_policy:
             raise QualificationError("memory monitor paging policy differs from the allowlist")
+        self.extended_serving_profile = None
+        if extended_serving_profile is not None:
+            from .evaluation_window import EXTENDED_SERVING_PROFILE
+
+            if extended_serving_profile != EXTENDED_SERVING_PROFILE:
+                raise QualificationError("extended serving profile is not registered")
+            self.extended_serving_profile = json.loads(canonical_json(
+                EXTENDED_SERVING_PROFILE
+            ))
         if os.sysconf("SC_PAGE_SIZE") != self.paging_policy["host_page_size_bytes"]:
             raise QualificationError("host page size differs from the paging contract")
         self.clock = clock or time.monotonic
@@ -1320,6 +1355,12 @@ class MemoryMonitor:
                 }
             )
 
+    def report_external_breach(self, reason: str) -> None:
+        """A registered independent operational observer can stop this exact ID."""
+        if self.extended_serving_profile is None or not isinstance(reason, str) or not reason:
+            raise QualificationError("external operational breach is not an extended window")
+        self._breach(reason)
+
     @staticmethod
     def _window_delta_pages(
         history: deque[tuple[float, int]], now: float, seconds: float
@@ -1340,6 +1381,8 @@ class MemoryMonitor:
             return "startup"
         if phase == "probes":
             return "serving"
+        if phase == "evaluation":
+            return "extended_serving"
         return phase
 
     def _gate_limits(self, gate: str) -> dict[str, int] | None:
@@ -1347,6 +1390,15 @@ class MemoryMonitor:
             return self.paging_policy["load"]
         if gate == "serving":
             return self.paging_policy["serving"]
+        if gate == "extended_serving" and self.extended_serving_profile is not None:
+            return {
+                "window_5s_breach_bytes": self.extended_serving_profile[
+                    "host_pswpout_5s_burst_bytes"
+                ],
+                "window_60s_breach_bytes": self.extended_serving_profile[
+                    "host_pswpout_60s_burst_bytes"
+                ],
+            }
         return None
 
     def _start_phase_locked(
@@ -1356,6 +1408,8 @@ class MemoryMonitor:
             raise QualificationError(
                 f"memory monitor phase transition {self._phase}->{phase} is invalid"
             )
+        if phase == "evaluation" and self.extended_serving_profile is None:
+            raise QualificationError("C0 memory monitor cannot enter an extended window")
         self._phase = phase
         self._phase_initial_pswpout = pages
         self._phase_started_at = observed_at
@@ -1791,7 +1845,8 @@ class MemoryMonitor:
                     breach_reasons.append(
                         f"{paging_gate} host swap reached the 60-second byte threshold"
                     )
-                if gate_delta_bytes >= limits["phase_total_breach_bytes"]:
+                if (paging_gate != "extended_serving" and
+                    gate_delta_bytes >= limits["phase_total_breach_bytes"]):
                     breach_reasons.append(
                         f"{paging_gate} host swap reached the gate-total byte threshold"
                     )
@@ -1928,6 +1983,17 @@ class MemoryMonitor:
             if self._phase == "restoration":
                 return
         self._sample_once(begin_phase="restoration")
+
+    def begin_evaluation(self) -> None:
+        """Start the separately registered long-serving rate gate after probes."""
+        with self._lock:
+            if self._phase != "probes" or self.extended_serving_profile is None:
+                raise QualificationError("long-serving phase requires validated probes")
+        if not self.ready_quiescence_passed:
+            raise QualificationError("long-serving phase lacks the fresh ready quiet proof")
+        self.check()
+        self._sample_once(begin_phase="evaluation")
+        self.check()
 
     def _loop(self) -> None:
         while not self._done.is_set():
@@ -2492,6 +2558,7 @@ def restore_exact(
     monitor: MemoryMonitor | None = None,
     diagnostic_path: Path | None = None,
     spec: CandidateSpec | None = None,
+    extended_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Best-effort exact-ID restoration; never re-create a resident."""
     runtime = _runtime_identity(spec)
@@ -2736,7 +2803,45 @@ def restore_exact(
         except Exception as exc:  # noqa: BLE001 - retain the sentinel on any removal uncertainty
             errors.append(f"sentinel removal: {type(exc).__name__}: {exc}")
     retained = _inspect_container(ops, runtime.container_name) is not None
-    return {
+    final_observation = None
+    if not errors and extended_plan is not None and candidate_id is not None:
+        try:
+            if len(restored_expectations) != len(RESIDENTS):
+                raise QualificationError("extended restoration has incomplete resident baselines")
+            final_residents = []
+            resident_health = []
+            for expected in restored_expectations:
+                _verify_exact_resident_state(ops, expected)
+                row = _inspect_container(ops, expected["id"])
+                if row is None:
+                    raise QualificationError("extended final resident disappeared")
+                final_residents.append(row)
+                health = next(
+                    item["health_url"] for item in RESIDENTS
+                    if item["name"] == expected["name"]
+                )
+                ops.http_bytes(health, timeout=_remaining_timeout(deadline, 2))
+                resident_health.append({"name": expected["name"], "healthy": True})
+            final_nara = _service_state(ops, timeout=_remaining_timeout(deadline, 5))
+            if final_nara["ActiveState"] != (
+                "active" if initial.get("nara_was_active") else "inactive"
+            ):
+                raise QualificationError("extended final Nara service changed")
+            sentinel_name = _inspect_container(ops, runtime.container_name)
+            sentinel_id = _inspect_container(ops, candidate_id)
+            if sentinel_name is not None or sentinel_id is not None:
+                raise QualificationError("extended candidate sentinel reappeared after removal")
+            final_observation = {
+                "observed_at": utc_now(),
+                "residents": final_residents,
+                "resident_health": resident_health,
+                "nara": final_nara,
+                "sentinel_by_name": sentinel_name,
+                "sentinel_by_id": sentinel_id,
+            }
+        except BaseException as exc:  # noqa: BLE001 - final exact proof is admission-critical
+            errors.append(f"extended final observation: {type(exc).__name__}: {exc}")
+    receipt = {
         "status": "verified" if not errors else "unknown",
         "verified_at": utc_now() if not errors else None,
         "errors": errors,
@@ -2750,6 +2855,9 @@ def restore_exact(
             for expected in restored_expectations
         },
     }
+    if extended_plan is not None:
+        receipt["final_observation"] = final_observation
+    return receipt
 
 
 def _signal_guard():
@@ -2778,12 +2886,60 @@ def execute_worker(
     monitor_factory=MemoryMonitor,
     ledger: Path = RESEARCH_LEDGER,
     spec: CandidateSpec | None = None,
+    evaluation_context: tuple[Any, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Execute one already-supervised window.  Tests inject all host effects."""
+    evaluation_window: Any = None
+    extended_plan: dict[str, Any] | None = None
+    if evaluation_context is not None:
+        from .evaluation_window import (
+            EXTENDED_SERVING_PROFILE,
+            REGISTERED_CODE_ROOT,
+            FrozenEvaluationWindow,
+            build_extended_evaluation_plan,
+            extended_plan_sha256,
+            frozen_controller_source_bundle,
+            load_evaluation_window,
+        )
+
+        if not isinstance(evaluation_context, tuple) or len(evaluation_context) != 2:
+            raise QualificationError("extended evaluation inputs are not frozen")
+        if ROOT != REGISTERED_CODE_ROOT:
+            raise QualificationError("extended worker was imported outside the registered worktree")
+        evaluation_window, extended_plan = evaluation_context
+        if (not isinstance(evaluation_window, FrozenEvaluationWindow)
+            or not isinstance(extended_plan, dict)
+            or evaluation_window.cohort != "flash"
+            or load_evaluation_window(
+                evaluation_window.source_path, expected_cohort="flash"
+            ) != evaluation_window
+            or build_extended_evaluation_plan(evaluation_window, output) != extended_plan
+            or plan != evaluation_window.qualification_plan
+            or extended_plan["extended_serving_profile"] != EXTENDED_SERVING_PROFILE
+            or extended_plan["candidate_spec_sha256"]
+               != (spec.identity_sha256() if spec is not None else None)
+            or extended_plan["candidate_variant_id"]
+               != (spec.spec_id if spec is not None else "nvidia-nvfp4-fc694b54")
+            or extended_plan["docker_create_argv"] != launch_argv(spec)
+            or extended_plan["image_id"] != _runtime_identity(spec).image_id
+            or extended_plan["model_artifact_sha256"]
+               != _runtime_identity(spec).model_artifact_sha256
+            or extended_plan["paging_policy"]
+               != (spec.paging_policy() if spec is not None else PAGING_POLICY)
+            or extended_plan["effective_invocation_deadline_seconds"] != 14_400
+            or extended_plan["restoration_reserve_seconds"] != 600
+            or extended_plan["controller_source_bundle"]
+               != frozen_controller_source_bundle()
+            or extended_plan["controller_source_bundle_sha256"]
+               != sha256(extended_plan["controller_source_bundle"])
+        ):
+            raise QualificationError("extended runtime differs from the qualified candidate")
+        _verified_contract_raw(contract, plan["contract_sha256"], spec=spec)
     if spec is not None:
         validate_contract(contract, spec=spec)
         expected_plan = plan_qualification(contract, plan["contract_sha256"],
-                                           output, spec=spec)
+                                           Path(plan["output_dir"]) if extended_plan
+                                           is not None else output, spec=spec)
         if plan != expected_plan:
             raise QualificationError("Mia worker plan differs from immutable registration")
     ops = ops or HostOps()
@@ -2794,15 +2950,22 @@ def execute_worker(
         from orchestrator.weekly_upgrade_trial import resource_probe as preflight_probe
 
     root = canonical_root(ROOT)
-    deadline_seconds = contract["safety"]["invocation_deadline_seconds"]
-    restore_reserve = contract["safety"]["restoration_reserve_seconds"]
+    deadline_seconds = (
+        extended_plan["effective_invocation_deadline_seconds"] if extended_plan
+        is not None else contract["safety"]["invocation_deadline_seconds"]
+    )
+    restore_reserve = (
+        extended_plan["restoration_reserve_seconds"] if extended_plan
+        is not None else contract["safety"]["restoration_reserve_seconds"]
+    )
     started_mono = time.monotonic()
     hard_deadline = started_mono + deadline_seconds
     work_deadline = hard_deadline - restore_reserve
     started_wall = datetime.now(timezone.utc)
     run_id = output.name
     state: dict[str, Any] = {
-        "schema": ("qwen-flash-next-qualification-state/v4" if spec is not None
+        "schema": ("flash-next-extended-evaluation-state/v2" if extended_plan
+                   is not None else "qwen-flash-next-qualification-state/v4" if spec is not None
                    else "qwen-flash-next-qualification-state/v3"),
         "run_id": run_id,
         "phase": "preflight",
@@ -2830,6 +2993,23 @@ def execute_worker(
     if spec is not None:
         state["candidate"] = plan["candidate"]
         state["model_artifact_sha256"] = runtime.model_artifact_sha256
+    if extended_plan is not None:
+        state.update(
+            pair_id=evaluation_window.pair_id,
+            window_plan_path=str(evaluation_window.source_path),
+            window_plan_sha256=evaluation_window.source_sha256,
+            extended_plan_sha256=extended_plan_sha256(extended_plan),
+            prior_qualification_receipt_sha256=extended_plan[
+                "prior_qualification_receipt_sha256"
+            ],
+            extended_serving_profile=extended_plan["extended_serving_profile"],
+            extended_serving_profile_sha256=extended_plan[
+                "extended_serving_profile_sha256"
+            ],
+            controller_source_bundle_sha256=extended_plan[
+                "controller_source_bundle_sha256"
+            ],
+        )
     state_path = output / "state.json"
 
     def write_state() -> None:
@@ -2837,24 +3017,27 @@ def execute_worker(
         _atomic_write(state_path, state)
 
     write_state()
-    _append_research_usage(
-        {
-            "schema": "local-model-research-usage/v1",
-            "event": "started",
-            "run_id": run_id,
-            "observed_at": utc_now(),
-            "contract_sha256": plan["contract_sha256"],
-            "invocation_ceiling_seconds": deadline_seconds,
-            "weekly_budget_debit": False,
-            "paid_api_calls": 0,
-        },
-        ledger,
-    )
+    started_usage = {
+        "schema": "local-model-research-usage/v1",
+        "event": "extended_started" if extended_plan is not None else "started",
+        "run_id": run_id,
+        "observed_at": utc_now(),
+        "contract_sha256": plan["contract_sha256"],
+        "invocation_ceiling_seconds": deadline_seconds,
+        "weekly_budget_debit": False,
+        "paid_api_calls": 0,
+    }
+    if extended_plan is not None:
+        started_usage["extended_plan_sha256"] = extended_plan_sha256(extended_plan)
+    _append_research_usage(started_usage, ledger)
 
     qualification_error: str | None = None
     failure_stage: str | None = None
     active_stage = "setup"
     probes: list[dict[str, Any]] = []
+    evaluation_attempt: dict[str, Any] | None = None
+    ui_observer: Any = None
+    ui_observer_summary: dict[str, Any] | None = None
     model_receipt: dict[str, Any] | None = None
     candidate_started_mono: float | None = None
     candidate_stopped_mono: float | None = None
@@ -2867,6 +3050,10 @@ def execute_worker(
     }
     if spec is not None:
         monitor_args["candidate_spec"] = spec
+    if extended_plan is not None:
+        monitor_args["extended_serving_profile"] = extended_plan[
+            "extended_serving_profile"
+        ]
     monitor = monitor_factory(output / "memory.jsonl", ops, **monitor_args)
     previous_signals = _signal_guard()
     restoration: dict[str, Any] = {
@@ -2877,6 +3064,16 @@ def execute_worker(
     }
     try:
         with resource_lease(root), monitor:
+            if extended_plan is not None:
+                from .evaluation_window import extended_plan_sha256
+                from .extended_observer import UIObserver
+
+                ui_observer = UIObserver(
+                    output, monitor=monitor, pair_id=evaluation_window.pair_id,
+                    extended_plan_sha256=extended_plan_sha256(extended_plan),
+                    profile=extended_plan["extended_serving_profile"],
+                )
+                ui_observer.start()
             try:
                 preflight = preflight_probe(root, idle=True)
                 if float(preflight.get("mem_available_gib", 0)) < runtime.min_memory_gib:
@@ -3031,6 +3228,11 @@ def execute_worker(
                 state["monitor_phase"] = "probes"
                 active_stage = "probes"
                 write_state()
+                # Three fixed probes may complete before the next background
+                # poll.  Persist one attributed serving-phase observation so
+                # sidecar and offline admission do not depend on timing.
+                monitor._sample_once()
+                monitor.check()
                 probes = _run_probes(
                     ops,
                     monitor,
@@ -3048,7 +3250,27 @@ def execute_worker(
                     or final_candidate.get("restart_count") != 0
                 ):
                     raise QualificationError("candidate OOM/restart/running-state gate failed")
-                state["phase"] = "qualification_passed"
+                if extended_plan is not None:
+                    from .evaluation_window import run_flash_after_probes
+
+                    monitor.begin_evaluation()
+                    state["phase"] = "evaluation"
+                    state["monitor_phase"] = "evaluation"
+                    active_stage = "evaluation"
+                    write_state()
+                    evaluation_attempt = run_flash_after_probes(
+                        evaluation_window,
+                        execution_plan=extended_plan,
+                        evaluation_output=output,
+                        work_deadline=work_deadline,
+                        monitor=monitor,
+                    )
+                    monitor.check()
+                    if evaluation_attempt.get("status") != "harness_complete_pending_restoration":
+                        raise QualificationError("extended harness did not finish before restoration")
+                    state["phase"] = "evaluation_complete_pending_restoration"
+                else:
+                    state["phase"] = "qualification_passed"
                 write_state()
             except BaseException as exc:  # noqa: BLE001 - signals and faults must enter finally
                 qualification_error = f"{type(exc).__name__}: {exc}"
@@ -3074,12 +3296,19 @@ def execute_worker(
                         deadline=hard_deadline,
                         monitor=monitor,
                         diagnostic_path=output / "candidate.log",
+                        **({"extended_plan": extended_plan} if extended_plan is not None else {}),
                         **({"spec": spec} if spec is not None else {}),
                     )
                     candidate_stopped_mono = restoration.get("candidate_stopped_monotonic")
                     restoration_completed_mono = restoration.get(
                         "restoration_completed_monotonic"
                     )
+                    if extended_plan is not None and restoration["status"] == "verified":
+                        # The completed-window reader binds a raw sample at
+                        # or after the exact restore timestamp, regardless
+                        # of the background thread's one-second scheduling.
+                        monitor._sample_once()
+                        monitor.check()
                 except BaseException as exc:  # noqa: BLE001 - restoration failures become durable unknown
                     if failure_stage is None:
                         failure_stage = "restoration"
@@ -3091,6 +3320,21 @@ def execute_worker(
                         "sentinel_retained": bool(state.get("candidate_id")),
                         "restoration_completed_monotonic": restoration_completed_mono,
                     }
+                finally:
+                    if ui_observer is not None:
+                        try:
+                            ui_observer_summary = ui_observer.stop()
+                            _atomic_write(output / "ui-observer-summary.json", ui_observer_summary)
+                            if ui_observer_summary["failed"]:
+                                qualification_error = qualification_error or (
+                                    "QualificationError: independent UI responsiveness failed"
+                                )
+                                failure_stage = failure_stage or "evaluation"
+                        except BaseException as observer_exc:  # noqa: BLE001 - exact restoration remains the priority
+                            qualification_error = qualification_error or (
+                                f"UI observer recovery failed: {type(observer_exc).__name__}"
+                            )
+                            failure_stage = failure_stage or "restoration"
     except BaseException as exc:  # noqa: BLE001 - lease/monitor failures must remain fail-closed
         if qualification_error is None:
             qualification_error = f"{type(exc).__name__}: {exc}"
@@ -3145,7 +3389,11 @@ def execute_worker(
         and not getattr(monitor, "violations", [])
         and all(
             phase in getattr(monitor, "phase_summaries", {})
-            for phase in ("load", "ready", "probes", "restoration")
+            for phase in (
+                ("load", "ready", "probes", "evaluation", "restoration")
+                if extended_plan is not None else
+                ("load", "ready", "probes", "restoration")
+            )
         )
         and not any(
             summary.get("threshold_breached") is True
@@ -3161,17 +3409,24 @@ def execute_worker(
         qualification_error = "QualificationError: candidate paging proof is incomplete"
         failure_stage = failure_stage or "probes"
     status = (
-        "passed"
+        ("complete" if extended_plan is not None else "passed")
         if qualification_error is None
         and restoration["status"] == "verified"
         and not monitor.failure
         and paging_proof_complete
+        and (extended_plan is None or ui_observer_summary is not None and
+             ui_observer_summary.get("joined") is True and
+             ui_observer_summary.get("failed") is False and
+             ui_observer_summary.get("ticks", 0) >= 2)
+        and (extended_plan is None or evaluation_attempt is not None and
+             evaluation_attempt.get("status") == "harness_complete_pending_restoration")
         else "failed"
         if restoration["status"] == "verified"
         else "unknown"
     )
     result = {
-        "schema": ("qwen-flash-next-qualification-result/v4" if spec is not None
+        "schema": ("flash-next-extended-evaluation-result/v2" if extended_plan
+                   is not None else "qwen-flash-next-qualification-result/v4" if spec is not None
                    else "qwen-flash-next-qualification-result/v3"),
         "run_id": run_id,
         "status": status,
@@ -3384,7 +3639,8 @@ def execute_worker(
         "production_change_authorized": False,
     }
     diagnostic_sha256, memory_log_sha256 = _write_cgroup_diagnostics(
-        output, state.get("candidate_id"), required=status == "passed",
+        output, state.get("candidate_id"), required=status in {"passed", "complete"},
+        extended_plan=extended_plan,
         **({"spec": spec} if spec is not None else {}),
     )
     result.update(
@@ -3401,29 +3657,79 @@ def execute_worker(
         result["model_verification_sha256"] = (
             sha256(model_receipt) if model_receipt is not None else None
         )
-    result["finished_at"] = utc_now()
+    if extended_plan is not None:
+        result.update(
+            pair_id=evaluation_window.pair_id,
+            window_plan_sha256=evaluation_window.source_sha256,
+            extended_plan_sha256=sha256(extended_plan),
+            extended_serving_profile=extended_plan["extended_serving_profile"],
+            extended_serving_profile_sha256=extended_plan[
+                "extended_serving_profile_sha256"
+            ],
+            controller_source_bundle_sha256=extended_plan[
+                "controller_source_bundle_sha256"
+            ],
+            candidate_variant_id=extended_plan["candidate_variant_id"],
+            candidate_spec_sha256=extended_plan["candidate_spec_sha256"],
+            prior_qualification_receipt_sha256=extended_plan[
+                "prior_qualification_receipt_sha256"
+            ],
+            benchmark_plan_file_sha256=extended_plan[
+                "benchmark_plan_file_sha256"
+            ],
+            benchmark_budget_seconds=extended_plan["benchmark_runtime_budget_seconds"],
+            effective_invocation_deadline_seconds=deadline_seconds,
+            ui_observer_log_sha256=(ui_observer_summary.get("observer_log_sha256")
+                                    if ui_observer_summary is not None else None),
+            harness_attempt_status=(evaluation_attempt.get("status")
+                                    if evaluation_attempt is not None else None),
+            harness_run_sha256=(evaluation_attempt.get("harness_run_sha256")
+                                if evaluation_attempt is not None else None),
+        )
+        from .harness import _read_regular_file
+
+        for source, key, limit in (
+            ("harness-attempt.json", "harness_attempt_sha256", 2_000_000),
+            ("probes.json", "probes_file_sha256", 2_000_000),
+            ("probe-attempts.json", "probe_attempts_sha256", 2_000_000),
+            ("readiness.json", "readiness_file_sha256", 2_000_000),
+            ("model-verification.json", "model_verification_file_sha256", 2_000_000),
+            ("ui-observer-summary.json", "ui_observer_summary_sha256", 2_000_000),
+        ):
+            path = output / source
+            if path.exists():
+                raw, observed = _read_regular_file(path, label=source, max_bytes=limit)
+                if observed != path.absolute():
+                    raise QualificationError(f"extended {source} is redirected")
+                result[key] = sha256(raw)
+            else:
+                result[key] = None
+    else:
+        result["finished_at"] = utc_now()
     state["phase"] = "complete"
     state["restoration"] = restoration
     state["result_status"] = status
     write_state()
-    _append_research_usage(
-        {
-            "schema": "local-model-research-usage/v1",
-            "event": "finished",
-            "run_id": run_id,
-            "observed_at": utc_now(),
-            "contract_sha256": plan["contract_sha256"],
-            "status": status,
-            "elapsed_seconds": elapsed,
-            "challenger_gpu_seconds": gpu_seconds,
-            "all_gpu_research_seconds": gpu_seconds,
-            "resident_downtime_seconds": resident_downtime,
-            "restoration_status": restoration["status"],
-            "weekly_budget_debit": False,
-            "paid_api_calls": 0,
-        },
-        ledger,
-    )
+    finished_usage = {
+        "schema": "local-model-research-usage/v1",
+        "event": "extended_finished" if extended_plan is not None else "finished",
+        "run_id": run_id,
+        "observed_at": utc_now(),
+        "contract_sha256": plan["contract_sha256"],
+        "status": status,
+        "elapsed_seconds": elapsed,
+        "challenger_gpu_seconds": gpu_seconds,
+        "all_gpu_research_seconds": gpu_seconds,
+        "resident_downtime_seconds": resident_downtime,
+        "restoration_status": restoration["status"],
+        "weekly_budget_debit": False,
+        "paid_api_calls": 0,
+    }
+    if extended_plan is not None:
+        finished_usage["extended_plan_sha256"] = sha256(extended_plan)
+    _append_research_usage(finished_usage, ledger)
+    if extended_plan is not None:
+        result["finished_at"] = utc_now()
     _atomic_write(output / "result.json", result)
     return result
 
@@ -3461,6 +3767,7 @@ def _read_bounded_run_json(path: Path, *, source: str) -> dict[str, Any]:
 def _write_cgroup_diagnostics(
     output: Path, candidate_id: str | None, *, required: bool,
     spec: CandidateSpec | None = None,
+    extended_plan: dict[str, Any] | None = None,
 ) -> tuple[str | None, str | None]:
     """Bind phase telemetry to the raw memory stream after the monitor closes."""
     runtime = _runtime_identity(spec)
@@ -3471,11 +3778,25 @@ def _write_cgroup_diagnostics(
     from .harness import _read_regular_file
 
     memory_file = output / "memory.jsonl"
+    extended_profile = (
+        extended_plan["extended_serving_profile"] if extended_plan is not None
+        else None
+    )
+    permitted_phases = (
+        {"setup", "load", "ready", "probes", "evaluation", "restoration"}
+        if extended_plan is not None else
+        {"setup", "load", "ready", "probes", "restoration"}
+    )
     raw, observed = _read_regular_file(
-        memory_file, label="C0-S1 raw memory", max_bytes=32 * 1024 * 1024
+        memory_file, label="extended raw memory" if extended_plan is not None
+        else "C0-S1 raw memory",
+        max_bytes=extended_profile["max_raw_memory_bytes"] if extended_profile
+        is not None else 32 * 1024 * 1024,
     )
     if observed != memory_file.absolute():
         raise QualificationError("C0-S1 raw memory redirected")
+    if extended_profile is not None and len(raw.splitlines()) > extended_profile["max_memory_rows"]:
+        raise QualificationError("extended memory sampling exceeded the finite row ceiling")
     phase_rows: dict[str, dict[str, Any]] = {}
     host_phase_rows: dict[str, dict[str, Any]] = {}
     attributed = 0
@@ -3483,9 +3804,7 @@ def _write_cgroup_diagnostics(
     for index, line in enumerate(raw.splitlines(), 1):
         row = _strict_json(line, source=f"C0-S1 memory line {index}")
         phase = row.get("monitor_phase")
-        if row.get("schema") == "qwen-flash-next-memory-sample/v3" and phase in {
-            "setup", "load", "ready", "probes", "restoration"
-        }:
+        if row.get("schema") == "qwen-flash-next-memory-sample/v3" and phase in permitted_phases:
             pswpin = row.get("pswpin_pages")
             psi = row.get("host_memory_psi_total_us")
             if (
@@ -3515,7 +3834,7 @@ def _write_cgroup_diagnostics(
             if required:
                 raise QualificationError("C0-S1 candidate diagnostic identity changed")
             continue
-        if phase not in {"load", "ready", "probes", "restoration"}:
+        if phase not in permitted_phases - {"setup"}:
             if required:
                 raise QualificationError("C0-S1 candidate diagnostic phase changed")
             continue
@@ -3542,14 +3861,16 @@ def _write_cgroup_diagnostics(
         phase_rows.setdefault(phase, {"first": evidence})["last"] = evidence
     if required and (
         attributed == 0
-        or not {"load", "ready", "probes"}.issubset(phase_rows)
-        or not {"setup", "load", "ready", "probes", "restoration"}.issubset(
+        or not ({"load", "ready", "probes", "evaluation"}
+                if extended_plan is not None else {"load", "ready", "probes"}).issubset(phase_rows)
+        or not permitted_phases.issubset(
             host_phase_rows
         )
     ):
         raise QualificationError("passed no-swap attempt lacks attributed phase snapshots")
     sidecar = {
-        "schema": ("qwen-flash-next-c0-mia-s1-cgroup-diagnostics/v1" if spec is not None
+        "schema": ("flash-next-extended-cgroup-diagnostics/v1" if extended_plan
+                   is not None else "qwen-flash-next-c0-mia-s1-cgroup-diagnostics/v1" if spec is not None
                    else "qwen-flash-next-c0-s1-cgroup-diagnostics/v1"),
         "candidate_id": candidate_id,
         "memory_log_sha256": sha256(raw),
@@ -3559,9 +3880,18 @@ def _write_cgroup_diagnostics(
         "registered_swap_max_bytes": 0,
         "phase_first_last": phase_rows,
         "phase_host_first_last": host_phase_rows,
-        "host_swap_action": "registered_startup_and_serving_byte_gates",
+        "host_swap_action": (
+            "registered_startup_and_extended_serving_rate_gates_host_total_diagnostic"
+            if extended_plan is not None else
+            "registered_startup_and_serving_byte_gates"
+        ),
         "diagnostics_finished_at": utc_now(),
     }
+    if extended_plan is not None:
+        sidecar["extended_plan_sha256"] = sha256(extended_plan)
+        sidecar["extended_serving_profile_sha256"] = extended_plan[
+            "extended_serving_profile_sha256"
+        ]
     if spec is not None:
         sidecar["candidate"] = {"id": spec.spec_id,
                                 "spec_sha256": spec.identity_sha256()}
@@ -3577,11 +3907,13 @@ def _write_cgroup_diagnostics(
 
 def _validated_recovery_state(
     output: Path, plan: dict[str, Any], *, spec: CandidateSpec | None = None,
+    extended_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     path = output / "state.json"
     state = _read_bounded_run_json(path, source="worker recovery state")
     if (
-        state.get("schema") != ("qwen-flash-next-qualification-state/v4" if spec is not None
+        state.get("schema") != ("flash-next-extended-evaluation-state/v2" if extended_plan
+                                is not None else "qwen-flash-next-qualification-state/v4" if spec is not None
                                 else "qwen-flash-next-qualification-state/v3")
         or state.get("run_id") != output.name
         or state.get("contract_sha256") != plan["contract_sha256"]
@@ -3596,6 +3928,21 @@ def _validated_recovery_state(
                                     "spec_sha256": spec.identity_sha256()}
     ):
         raise QualificationError("worker recovery Mia spec differs from plan")
+    if extended_plan is not None and (
+        state.get("pair_id") != extended_plan["pair_id"]
+        or state.get("window_plan_path") != extended_plan["window_plan_path"]
+        or state.get("window_plan_sha256") != extended_plan["window_plan_sha256"]
+        or state.get("extended_plan_sha256") != sha256(extended_plan)
+        or state.get("prior_qualification_receipt_sha256")
+           != extended_plan["prior_qualification_receipt_sha256"]
+        or state.get("extended_serving_profile")
+           != extended_plan["extended_serving_profile"]
+        or state.get("extended_serving_profile_sha256")
+           != extended_plan["extended_serving_profile_sha256"]
+        or state.get("controller_source_bundle_sha256")
+           != extended_plan["controller_source_bundle_sha256"]
+    ):
+        raise QualificationError("extended worker recovery source/profile changed")
     if (
         isinstance(state.get("worker_pid"), bool)
         or not isinstance(state.get("worker_pid"), int)
@@ -3607,7 +3954,9 @@ def _validated_recovery_state(
         or state.get("paging_policy") != (spec.paging_policy() if spec is not None
                                           else PAGING_POLICY)
         or state.get("monitor_phase")
-        not in {"setup", "load", "ready", "probes", "restoration"}
+        not in ({"setup", "load", "ready", "probes", "evaluation", "restoration"}
+                if extended_plan is not None else
+                {"setup", "load", "ready", "probes", "restoration"})
         or not isinstance(state.get("invocation_deadline_at"), str)
         or not isinstance(state.get("updated_at"), str)
     ):
@@ -3667,7 +4016,8 @@ def _validated_recovery_state(
 
 
 def _result_has_verified_restoration(
-    output: Path, plan: dict[str, Any], *, spec: CandidateSpec | None = None
+    output: Path, plan: dict[str, Any], *, spec: CandidateSpec | None = None,
+    extended_plan: dict[str, Any] | None = None,
 ) -> bool:
     path = output / "result.json"
     try:
@@ -3690,8 +4040,38 @@ def _result_has_verified_restoration(
         )
     except (KeyError, TypeError, ValueError):
         timestamps_sane = False
+    if extended_plan is not None and (
+        result.get("pair_id") != extended_plan["pair_id"]
+        or result.get("window_plan_sha256") != extended_plan["window_plan_sha256"]
+        or result.get("extended_plan_sha256") != sha256(extended_plan)
+        or result.get("candidate_variant_id") != extended_plan["candidate_variant_id"]
+        or result.get("candidate_spec_sha256")
+           != extended_plan["candidate_spec_sha256"]
+        or result.get("extended_serving_profile_sha256")
+           != extended_plan["extended_serving_profile_sha256"]
+        or result.get("controller_source_bundle_sha256")
+           != extended_plan["controller_source_bundle_sha256"]
+        or result.get("prior_qualification_receipt_sha256")
+           != extended_plan["prior_qualification_receipt_sha256"]
+        or result.get("benchmark_plan_file_sha256")
+           != extended_plan["benchmark_plan_file_sha256"]
+        or result.get("effective_invocation_deadline_seconds")
+           != extended_plan["effective_invocation_deadline_seconds"]
+        or result.get("status") not in {"complete", "failed", "unknown"}
+        or (result.get("status") == "complete" and
+            (result.get("harness_attempt_status")
+             != "harness_complete_pending_restoration"
+             or not isinstance(result.get("harness_run_sha256"), str)
+             or not isinstance(restoration, dict)
+             or not isinstance(restoration.get("final_observation"), dict)
+             or restoration["final_observation"].get("sentinel_by_name") is not None
+             or restoration["final_observation"].get("sentinel_by_id") is not None
+             or not isinstance(result.get("ui_observer_log_sha256"), str)))
+    ):
+        return False
     return bool(
-        result.get("schema") == ("qwen-flash-next-qualification-result/v4" if spec is not None
+        result.get("schema") == ("flash-next-extended-evaluation-result/v2" if extended_plan
+                                 is not None else "qwen-flash-next-qualification-result/v4" if spec is not None
                                  else "qwen-flash-next-qualification-result/v3")
         and result.get("run_id") == output.name
         and result.get("contract_sha256") == plan["contract_sha256"]
@@ -3712,11 +4092,13 @@ def supervisor_emergency_restore(
     deadline: float,
     ops: HostOps | None = None,
     spec: CandidateSpec | None = None,
+    extended_plan: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Recover a killed worker from its last durable exact-ID state."""
     ops = ops or HostOps()
     receipt: dict[str, Any] = {
-        "schema": ("qwen-flash-next-supervisor-recovery/v2" if spec is not None
+        "schema": ("flash-next-extended-supervisor-recovery/v1" if extended_plan
+                   is not None else "qwen-flash-next-supervisor-recovery/v2" if spec is not None
                    else "qwen-flash-next-supervisor-recovery/v1"),
         "run_id": output.name,
         "started_at": utc_now(),
@@ -3726,8 +4108,11 @@ def supervisor_emergency_restore(
     }
     if spec is not None:
         receipt["candidate"] = plan["candidate"]
+    if extended_plan is not None:
+        receipt["extended_plan_sha256"] = sha256(extended_plan)
     try:
-        state = _validated_recovery_state(output, plan, spec=spec)
+        state = _validated_recovery_state(output, plan, spec=spec,
+                                          extended_plan=extended_plan)
         root = canonical_root(ROOT)
         with resource_lease(root):
             restoration = restore_exact(
@@ -3735,6 +4120,7 @@ def supervisor_emergency_restore(
                 state,
                 deadline=deadline,
                 diagnostic_path=output / "candidate.supervisor.log",
+                **({"extended_plan": extended_plan} if extended_plan is not None else {}),
                 **({"spec": spec} if spec is not None else {}),
             )
         receipt["restoration"] = restoration
@@ -3750,11 +4136,14 @@ def supervisor_emergency_restore(
     _append_research_usage(
         {
             "schema": "local-model-research-usage/v1",
-            "event": "supervisor_recovery",
+            "event": "extended_supervisor_recovery" if extended_plan is not None
+            else "supervisor_recovery",
             "run_id": output.name,
             "observed_at": utc_now(),
             "contract_sha256": plan["contract_sha256"],
             "restoration_status": receipt["status"],
+            **({"extended_plan_sha256": sha256(extended_plan)}
+               if extended_plan is not None else {}),
             "weekly_budget_debit": False,
             "paid_api_calls": 0,
         }

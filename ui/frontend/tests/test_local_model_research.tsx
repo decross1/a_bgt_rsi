@@ -79,4 +79,39 @@ describe("local model research", () => {
     expect(screen.getByText("Variant unavailable")).toBeInTheDocument();
     expect(screen.queryByText("Mia NVFP4")).toBeNull();
   });
+  it("shows observed server startup separately from failed qualification and request speed", () => {
+    render(<LocalModelResearchPanel data={{ ...base, qualification_runs: [{
+      id: "qfn-c0-s1-recorded", status: "failed", phase: "complete",
+      finished_at: "2026-09-15T05:33:37+00:00",
+      candidate_window_minutes: 11.8, minimum_memory_gib: 31.1,
+      probe_count: 3, model_started: true, restoration: "verified",
+      source_sha256: "a".repeat(64),
+      startup_seconds: 639.256889, startup_status: "recorded",
+      startup_source_sha256: "b".repeat(64),
+      qualification_elapsed_seconds: 1390.971028,
+    }] }} />);
+    expect(screen.getByText("639.3 s")).toBeInTheDocument();
+    expect(screen.getByText("Full qualification: 1391.0 s")).toBeInTheDocument();
+    expect(screen.getByText("Container start → model endpoint ready")).toBeInTheDocument();
+    expect(screen.getByText(/Server startup measures container start/)).toHaveTextContent("separate from the full qualification window and from request latency");
+    expect(screen.getByText("Readiness SHA256")).toBeInTheDocument();
+    expect(screen.getByText("Result SHA256")).toBeInTheDocument();
+    expect(screen.getByText("failed")).toBeInTheDocument();
+  });
+  it("keeps missing or invalid startup evidence distinct from zero", () => {
+    const shared = {
+      status: "failed" as const, phase: "complete", finished_at: null,
+      candidate_window_minutes: null, minimum_memory_gib: null,
+      probe_count: 0, model_started: false, restoration: "verified",
+      source_sha256: "a".repeat(64), startup_seconds: null,
+      startup_source_sha256: null,
+    };
+    render(<LocalModelResearchPanel data={{ ...base, qualification_runs: [
+      { ...shared, id: "qfn-c0-before-ready", startup_status: "not_recorded" },
+      { ...shared, id: "qfn-c0-invalid-ready", startup_status: "unavailable" },
+    ] }} />);
+    expect(screen.getByText("Source unavailable")).toBeInTheDocument();
+    expect(screen.getAllByText("Not recorded").length).toBeGreaterThan(0);
+    expect(screen.queryByText("0.0 s")).toBeNull();
+  });
 });

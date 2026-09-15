@@ -110,6 +110,24 @@ must explicitly select `flash_endpoint_name="flash_next_mia"` and bind Mia's
 own successful qualification and runtime hashes. All seven Flash roles use
 that one checkpoint/runtime. NVIDIA plans retain their original route.
 
+The first actual Mia load, `qfn-mia-c0-20260915-0602`, **passed** on September 15.
+Its result SHA-256 is
+`01e5d094b27f0aea9c0464762ef36c0a99b46f18af0e2050369dfe1aab978fbc`;
+the qualified runtime SHA-256 is
+`439459a83ac0a961a969b1fc1108057c0e0f3a90c5facc8012238e6a5d13d12c`.
+All three exact probes and the fresh 60-second quiet interval passed, with
+durable response evidence. Minimum host MemAvailable was 36.3107 GiB;
+candidate swap/OOM and paging-limit violations were zero. Host startup pageout
+was 777,052,160 bytes, within the declared startup limits. The packed 26.82 GiB
+PLE mmap was confirmed in the runtime log. Exact original residents and Nara
+were restored at 06:24:14 UTC, and the supervisor exited zero without recovery.
+The strict shared admission validator passed after supervisor closure.
+
+This admits a bounded benchmark window, not production promotion or a claim
+of scientific/coding superiority. The preceding `qfn-mia-c0-20260915-0600`
+attempt failed before mutation because the coordinator held its resource lock;
+it is not a model-fit failure. Both immutable attempts remain recorded.
+
 ## Probe evidence and startup timing
 
 Each attempted probe now has a durable `probe-attempts.json` record. Bounded
@@ -124,6 +142,18 @@ window, TTFT, and decode/task performance separate. The first NVIDIA S1 run
 measured 639.26 seconds from container start to readiness, including 533 seconds
 reported by the shard loader; its full verification/restoration invocation was
 1,390.97 seconds. Those are startup observations, not steady-state throughput.
+
+The passed Mia run measured 610.46 seconds to server readiness: its runtime
+reported 486.02 seconds loading the model and 72.19 seconds initializing the
+engine (including 22.53 seconds compiling). The ready quiet interval added
+60.79 seconds, the three-probe phase took 5.25 seconds, and original-service
+restoration took 402.46 seconds. The whole invocation took 1,322.98 seconds.
+These are distinct, sometimes nested spans, not an exhaustive additive timing
+decomposition or an isolated NVMe benchmark. One cold run does not establish a
+repeatable startup advantage over NVIDIA. Independent API-health/frontend
+HTTP checks returned 200 in all 266 probes (maximum 26.6 ms); their scope does
+not include every Spark operation. Source hashes and probe timings are in
+the private research artifact `runtime/mia-c0-startup-breakdown.json`.
 
 ## Side-effect-free review
 
@@ -225,7 +255,7 @@ plan hashes, contiguous phase/gate counters and rolling windows, candidate
 cgroup identity, quiet intervals, and the final restoration sample. A broader
 local A/B requires:
 
-- `schema == "qwen-flash-next-qualification-result/v3"`;
+- the registered NVIDIA v3 or Mia v4 result/plan/contract bundle;
 - `status == "passed"`, `failure_stage == null`, `failure_class == null`, and no errors;
 - `restoration.status == "verified"`;
 - the registered contract, plan, and model-manifest hashes;

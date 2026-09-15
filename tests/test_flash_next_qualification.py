@@ -268,6 +268,12 @@ class FakeMonitor:
     def check(self):
         return None
 
+    def _sample_once(self):
+        # The real controller synchronously records the probe-phase gate so
+        # sub-second fixed probes cannot miss their attributed raw sample.
+        assert self.armed is not None and "probes" in self.phase_summaries
+        self.samples += 1
+
     def reader(self):
         return 64.0
 
