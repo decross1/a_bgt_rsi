@@ -174,7 +174,9 @@ def project_progress(*, publication_reader: Callable[[Path], dict] | None = None
             )
             reader = publication_reader
             if reader is None:
-                from bench.flash_next_ab.lab_eval_context_crossplan import read_publication
+                from bench.flash_next_ab.lab_eval_context_crossplan import (
+                    read_publication,
+                )
 
                 reader = read_publication
             shown = _project_report(reader(index))

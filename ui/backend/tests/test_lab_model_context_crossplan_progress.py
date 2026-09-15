@@ -115,7 +115,7 @@ def test_source_or_matched_count_drift_withholds_all_scores(tmp_path):
         source = _report()
         mutate(source)
         view = progress.project_progress(
-            publication_root=root, publication_reader=lambda _: source,
+            publication_root=root, publication_reader=lambda _, row=source: row,
         )
         assert view["status"] == "source_unavailable"
         assert view["by_capacity"] is None
