@@ -554,7 +554,10 @@ def _inspect_container(ops: HostOps, identity: str) -> dict[str, Any] | None:
         ["docker", "inspect", "--format", fields, identity], timeout=5, check=False
     )
     if result.returncode != 0:
-        return None
+        diagnostic = (result.stderr + "\n" + result.stdout).lower()
+        if "no such object" in diagnostic or "no such container" in diagnostic:
+            return None
+        raise QualificationError(f"Docker could not verify container identity: {identity}")
     row = _strict_json(result.stdout.encode(), source=f"docker inspect {identity}")
     row["name"] = str(row.get("name", "")).removeprefix("/")
     return row
@@ -697,12 +700,18 @@ class MemoryMonitor:
                 "oom_killed": candidate.get("oom_killed") if candidate else None,
                 "restart_count": candidate.get("restart_count") if candidate else None,
             }
-            if candidate is None or not candidate.get("running"):
-                self._breach("candidate disappeared or stopped while qualified runtime was armed")
-            elif candidate.get("oom_killed"):
-                self._breach("candidate container reports OOMKilled")
-            elif candidate.get("restart_count") != 0:
-                self._breach("candidate container restart count changed")
+            # Restoration can disarm and stop the container while this inspect
+            # is in flight.  Lifecycle evidence is actionable only if the same
+            # ID remains armed after the observation completes.
+            with self._lock:
+                still_armed = self._candidate_id == candidate_id
+            if still_armed:
+                if candidate is None or not candidate.get("running"):
+                    self._breach("candidate disappeared or stopped while qualified runtime was armed")
+                elif candidate.get("oom_killed"):
+                    self._breach("candidate container reports OOMKilled")
+                elif candidate.get("restart_count") != 0:
+                    self._breach("candidate container restart count changed")
         self._record(row)
         if available < self.minimum_gib:
             self._breach(

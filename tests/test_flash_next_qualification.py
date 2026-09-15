@@ -233,7 +233,11 @@ class FakeOps(q.HostOps):
             return q.CommandResult(0, self.candidate_id + "\n", "")
         if argv[:2] == ["docker", "inspect"]:
             row = self._container(argv[-1])
-            return q.CommandResult(0, json.dumps(row) + "\n", "") if row else q.CommandResult(1, "", "absent")
+            return (
+                q.CommandResult(0, json.dumps(row) + "\n", "")
+                if row
+                else q.CommandResult(1, "", f"Error: No such object: {argv[-1]}")
+            )
         if argv[:2] == ["docker", "stop"]:
             row = self._container(argv[-1])
             if row:
@@ -490,6 +494,46 @@ def test_monitor_rejects_oom_restart_and_swapout(
     assert monitor.cancel_event.is_set()
     assert expected in monitor.failure
     assert ("docker", "stop", "--time", "10", ops.candidate_id) in ops.log
+
+
+def test_monitor_ignores_a_stale_lifecycle_sample_after_disarm(tmp_path):
+    class DisarmDuringInspect(FakeOps):
+        monitor = None
+
+        def run(self, argv, *, timeout, check=True):
+            if argv[:2] == ["docker", "inspect"] and argv[-1] == self.candidate_id:
+                self.monitor.disarm()
+                self.containers[q.CONTAINER_NAME]["running"] = False
+            return super().run(argv, timeout=timeout, check=check)
+
+    ops = DisarmDuringInspect()
+    ops.containers[q.CONTAINER_NAME] = {
+        "id": ops.candidate_id, "name": q.CONTAINER_NAME, "image": q.IMAGE_ID,
+        "running": True, "pid": 200, "started_at": "now", "restart_count": 0,
+        "restart_policy": "no",
+    }
+    monitor = q.MemoryMonitor(
+        tmp_path / "race.jsonl", ops, reader=lambda: 64.0, swap_reader=lambda: 10
+    )
+    ops.monitor = monitor
+    monitor._stream = (tmp_path / "race.jsonl").open("xb")
+    monitor.initial_pswpout = 10
+    monitor.arm(ops.candidate_id)
+    monitor._sample_once()
+    monitor._stream.close()
+    assert not monitor.cancel_event.is_set()
+    assert monitor.failure is None
+
+
+def test_docker_inspect_operational_error_is_not_treated_as_absence():
+    class BrokenInspect(FakeOps):
+        def run(self, argv, *, timeout, check=True):
+            if argv[:2] == ["docker", "inspect"]:
+                return q.CommandResult(1, "", "permission denied")
+            return super().run(argv, timeout=timeout, check=check)
+
+    with pytest.raises(q.QualificationError, match="could not verify"):
+        q._inspect_container(BrokenInspect(), q.CONTAINER_NAME)
 
 
 def test_redirect_handler_refuses_even_another_loopback_url():
