@@ -12,6 +12,46 @@ const stamp = (v: unknown) => utc(v)
   : "Time unknown";
 const queues = new Set(["eligible", "all_registered_topics_consumed", "source_unknown", "unknown"]);
 const attempts = new Set(["succeeded", "fetch_failed", "embed_failed", "interrupted_unknown", "none", "unknown"]);
+const PILOT_ID = "qfn-followon-known-opponent-lab8h-a";
+const PAYOFF_SCHEMA = "registered-payoff-jobs-observation/v1";
+const payoffJobs = [
+  { job_id: "payoff-representation-a", panel_id: "payoff-representation-a",
+    not_before: "2026-09-15T19:00:00+00:00", expires_at: "2026-09-16T00:00:00+00:00",
+    role: "first_fresh_payoff_representation_diagnostic", label: "A · first fresh input" },
+  { job_id: "payoff-representation-b", panel_id: "payoff-representation-b",
+    not_before: "2026-09-16T03:30:00+00:00", expires_at: "2026-09-16T08:00:00+00:00",
+    role: "fresh_input_followup_not_same_prompt_reseed", label: "B · fresh-input follow-up" },
+] as const;
+const payoffStates = new Set(["not_due", "eligible_unprepared", "eligible_prepared", "prepared_unverified",
+  "attempt_reserved_or_recorded", "zero_call_refusal_retry_eligible", "zero_call_refusal_retry_prepared",
+  "expired_after_zero_call_refusal", "expired_unattempted", "admission_receipt_present_unverified",
+  "admitted_attempt_verified"]);
+const payoffRefusalCodes = new Set(["resource_lease_busy", "resource_probe_blocked", "availability_unknown"]);
+const payoffRefusalValid = (v: unknown) => v === null ||
+  (obj(v) && ((v.status === "receipt_present_unverified" && Object.keys(v).length === 1) ||
+    (Object.keys(v).sort().join() === "failure_code,receipt_sha256,refused_at" &&
+      typeof v.failure_code === "string" && payoffRefusalCodes.has(v.failure_code) &&
+      SHA.test(String(v.receipt_sha256)) && utc(v.refused_at))));
+const payoffRefusalText = (v: unknown) => {
+  if (!obj(v)) return null;
+  if (v.status === "receipt_present_unverified") return "Availability refusal receipt present; verification unavailable.";
+  if (v.failure_code === "resource_lease_busy") return "Last no-call availability refusal: coordinator lease busy at " + stamp(v.refused_at) + ".";
+  if (v.failure_code === "resource_probe_blocked") return "Last no-call availability refusal: resource probe blocked at " + stamp(v.refused_at) + ".";
+  return "Last no-call availability refusal: availability unknown at " + stamp(v.refused_at) + ".";
+};
+const payoffState = (state: string) => ({
+  not_due: "Not due",
+  eligible_unprepared: "In window; preparation absent",
+  eligible_prepared: "Prepared and eligible",
+  prepared_unverified: "Preparation unverified",
+  attempt_reserved_or_recorded: "Attempt reserved or recorded",
+  zero_call_refusal_retry_eligible: "Proven zero-call refusal; retry eligible",
+  zero_call_refusal_retry_prepared: "Proven zero-call refusal; retry prepared",
+  expired_after_zero_call_refusal: "Window expired after zero-call refusal",
+  expired_unattempted: "Window expired unattempted",
+  admission_receipt_present_unverified: "Admission receipt present; replay unverified",
+  admitted_attempt_verified: "Admitted attempt verified at last queue check",
+} as Record<string, string>)[state] ?? "State unknown";
 
 export function ResearchOpsCard({ data, failing = false }: { data: unknown; failing?: boolean }) {
   const observedMs = obj(data) && utc(data.observed_at) ? Date.parse(data.observed_at) : Number.NaN;
@@ -28,6 +68,23 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   const ingestion = obj(view?.ingestion) ? view.ingestion : null;
   const legacy = obj(view?.ingestion_legacy_log) ? view.ingestion_legacy_log : null;
   const empirical = obj(view?.empirical_pilot) ? view.empirical_pilot : null;
+  const payoff = obj(view?.payoff_jobs) ? view.payoff_jobs : null;
+  const payoffCheckedMs = payoff && utc(payoff.checked_at) ? Date.parse(String(payoff.checked_at)) : Number.NaN;
+  const payoffCheckFresh = Number.isFinite(payoffCheckedMs) &&
+    Date.now() - payoffCheckedMs >= 0 && Date.now() - payoffCheckedMs <= 360_000;
+  const payoffRows = payoff && payoff.schema_version === PAYOFF_SCHEMA &&
+    payoff.source_status === "available" && payoff.timer_activation === "not_verified" &&
+    payoff.comparison_eligible === false && SHA.test(String(payoff.queue_source_sha256)) &&
+    payoffCheckFresh && Array.isArray(payoff.jobs) && payoff.jobs.length === 2 &&
+    payoff.jobs.every((row: unknown, index: number) => {
+      const expected = payoffJobs[index];
+      return obj(row) && row.job_id === expected.job_id && row.panel_id === expected.panel_id &&
+        row.not_before === expected.not_before && row.expires_at === expected.expires_at &&
+        row.role === expected.role && typeof row.state === "string" && payoffStates.has(row.state) &&
+        (row.attempt_index === 0 || row.attempt_index === 1) &&
+        typeof row.prepared_window_present === "boolean" && row.comparison_eligible === false &&
+        payoffRefusalValid(row.last_availability_refusal);
+    }) ? payoff.jobs as Record<string, unknown>[] : null;
 
   const campaignId = campaign && ID.test(String(campaign.campaign_id)) && SHA.test(String(campaign.manifest_sha256)) ? String(campaign.campaign_id) : null;
   const queueStatus = queue && typeof queue.status === "string" && queues.has(queue.status) &&
@@ -42,12 +99,41 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
     (workCode === "run_preregistered_campaign_topic" ||
       workCode === "freeze_and_run_registered_empirical_study" ||
       workCode === "review_admitted_empirical_pilot");
-  const pilotAdmitted = empirical && empirical.status === "recorded_admitted" &&
+  const pilotRecorded = empirical && empirical.status === "recorded_admitted" &&
     ID.test(String(empirical.window_id)) && SHA.test(String(empirical.admission_receipt_sha256)) &&
     SHA.test(String(empirical.pilot_run_sha256)) && count(empirical.attempted_calls) &&
     empirical.attempted_calls <= 108 && count(empirical.complete_episodes) &&
-    empirical.complete_episodes <= 12 && empirical.current_source_replay === "not_performed" &&
+    empirical.complete_episodes <= 12 && empirical.current_source_replay === "not_performed";
+  const pilotAdmitted = pilotRecorded &&
     plannedWork?.pilot_admission_receipt_sha256 === empirical.admission_receipt_sha256;
+  const behavior = obj(empirical?.behavior_summary) ? empirical.behavior_summary : null;
+  const byUtility = obj(behavior?.by_utility) ? behavior.by_utility : null;
+  const own = obj(byUtility?.own_payoff) ? byUtility.own_payoff : null;
+  const joint = obj(byUtility?.joint_payoff) ? byUtility.joint_payoff : null;
+  const behaviorBound = pilotRecorded && empirical?.window_id === PILOT_ID && behavior &&
+    count(empirical.attempted_calls) && count(empirical.complete_episodes) &&
+    behavior.schema_version === "known-opponent-pilot-behavior/v1" &&
+    behavior.admission_receipt_sha256 === empirical.admission_receipt_sha256 &&
+    behavior.pilot_run_sha256 === empirical.pilot_run_sha256 &&
+    SHA.test(String(behavior.manifest_raw_sha256)) &&
+    behavior.current_source_replay === "not_performed" &&
+    behavior.theory_accepted === false && behavior.strategy_causal_claim === false &&
+    behavior.scheduled_action_calls === 96 && count(behavior.valid_action_calls) &&
+    behavior.valid_action_calls <= 96 && behavior.valid_action_calls <= empirical.attempted_calls &&
+    behavior.complete_episodes === empirical.complete_episodes &&
+    count(behavior.zero_regret_complete_episodes) &&
+    behavior.zero_regret_complete_episodes <= empirical.complete_episodes &&
+    behavior.comprehension_scheduled_episodes === 12 &&
+    count(behavior.comprehension_passed) &&
+    behavior.comprehension_passed <= empirical.complete_episodes &&
+    behavior.comprehension_prompt_forms === 2 && behavior.form_repetitions_each === 6 &&
+    byUtility && Object.keys(byUtility).sort().join() === "joint_payoff,own_payoff" &&
+    own && joint && count(own.complete) && count(joint.complete) &&
+    own.complete <= 6 && joint.complete <= 6 &&
+    count(own.zero_regret) && count(joint.zero_regret) &&
+    own.zero_regret <= own.complete && joint.zero_regret <= joint.complete &&
+    own.complete + joint.complete === empirical.complete_episodes &&
+    own.zero_regret + joint.zero_regret === behavior.zero_regret_complete_episodes;
   const successorWork = plannedWork && workCode === "activate_registered_successor" &&
     plannedWork.activation_required === true && nextId === plannedWork.campaign_id &&
     next?.manifest_sha256 === plannedWork.manifest_sha256;
@@ -113,8 +199,6 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Next campaign work</dt>
           <dd className="mt-1">{nextWork}</dd>
           {successorWork || registeredWork ? <dd className="mt-1 text-xs text-[var(--fg-muted)]">Registered next step; no task dispatch is implied.</dd> : null}
-          {pilotAdmitted && registeredWork && workCode === "review_admitted_empirical_pilot" &&
-            <dd className="mt-1 text-xs text-[var(--fg-muted)]">Recorded pilot: {String(empirical?.complete_episodes)} complete episodes, {String(empirical?.attempted_calls)} attempted calls. Current source replay was not performed; the continuous-weight hypothesis remains unconfirmed.</dd>}
           {campaignId && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Active campaign {campaignId}{consumed !== null ? ` · ${consumed} topics used` : ""}</dd>}
           {nextId && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Next registered campaign {nextId} awaits activation.</dd>}
           {queueStatus === "all_registered_topics_consumed" && gate?.other_actionable_work === "not_assessed" &&
@@ -141,6 +225,31 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
               ` HTTP ${(legacyObserved.http_codes_observed as string[]).join("/")}; ${legacyObserved.retry_count_observed} retries.`}
             {" "}No receipt-bound source result is established by this log.
           </dd>}
+        </div>
+        {pilotRecorded && <div className="rounded border border-[var(--border-1)] p-3">
+          <dt className="font-semibold">Recorded binary pilot</dt>
+          <dd className="mt-1">{String(empirical?.complete_episodes)} complete episodes, {String(empirical?.attempted_calls)} attempted calls</dd>
+          {behaviorBound && <dd className="mt-1 text-xs text-[var(--fg-muted)]">
+            Action syntax: {String(behavior?.valid_action_calls)}/96 scheduled actions valid. Zero regret: {String(behavior?.zero_regret_complete_episodes)}/{String(behavior?.complete_episodes)} complete episodes
+            {" "}({String(own?.zero_regret)}/{String(own?.complete)} own-payoff; {String(joint?.zero_regret)}/{String(joint?.complete)} joint-payoff).
+            Comprehension: {String(behavior?.comprehension_passed)}/12 episodes correct, using two prompt forms repeated six times each. These are descriptive checks, not 12 independent questions.
+          </dd>}
+          <dd className="mt-1 text-xs text-[var(--fg-muted)]">Current source replay was not performed. The continuous-weight hypothesis remains unconfirmed; no strategic causal claim is made.</dd>
+        </div>}
+        <div className="rounded border border-[var(--border-1)] p-3">
+          <dt className="font-semibold">Registered payoff jobs</dt>
+          {payoffRows ? payoffRows.map((job, index) => <dd key={payoffJobs[index].job_id} className="mt-2">
+            <span className="font-medium">{payoffJobs[index].label}</span>: {payoffState(String(job.state))}.
+            <span className="block text-xs text-[var(--fg-muted)]">Registered execution interval {stamp(job.not_before)}–{stamp(job.expires_at)}.</span>
+            {payoffRefusalText(job.last_availability_refusal) && <span className="block text-xs text-[var(--fg-muted)]">{payoffRefusalText(job.last_availability_refusal)}</span>}
+          </dd>) : <dd className="mt-1">
+            {payoff?.schema_version === PAYOFF_SCHEMA && payoff?.source_status === "package_unavailable" &&
+             payoff?.timer_activation === "not_verified" && payoffCheckFresh
+              ? "Payoff job package unavailable; queue readiness is unknown." :
+             "Payoff queue observation unavailable or stale; job readiness is unknown."}
+          </dd>}
+          {payoffRows && <dd className="mt-2 text-xs text-[var(--fg-muted)]">Last source-bound queue check {stamp(payoff?.checked_at)}. These are two finite empirical jobs, not automatically dispatched tasks.</dd>}
+          <dd className="mt-1 text-xs text-[var(--fg-muted)]">Timer activation is not verified by queue readiness; preparation alone does not establish execution.</dd>
         </div>
       </dl>}
     <div className="mt-3 flex flex-wrap gap-4 text-sm"><Link to="/cycles" className="text-[var(--accent)]">Trace history →</Link>
