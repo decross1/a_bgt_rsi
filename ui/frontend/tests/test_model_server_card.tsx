@@ -13,7 +13,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LiveCalls } from "../src/types/activity";
-import type { ServedModel } from "../src/api/http";
+import type { ModelRuntime, ServedModel } from "../src/api/http";
 import type { TelemetrySample } from "../src/types/schemas";
 
 const mocks = vi.hoisted(() => ({
@@ -136,6 +136,20 @@ function inventory(overrides: Partial<ServedModel> = {}): ServedModel {
     ...overrides,
   };
 }
+
+const selectedMia: NonNullable<ModelRuntime["candidate_variant"]> = {
+  spec_id: "mia-925d7be6-c0-s1",
+  spec_sha256: "dde4fe1f72cf91de92089a95748cee1f6a8204e351d517aa0ae46d8d27122857",
+  repository: "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4",
+  revision: "925d7be6c14c6c9442ef83e8f05b5a3c39304f69",
+  served_model: "qwen3.8-flash-next-mia",
+  image_id: "sha256:da68dd27a8ef1dadd0f380178a51f0a0671dc4235933ea1ae89fdaf66295ec72",
+  model_artifact_sha256: "a40ce50173dd3aff54da88503894967e5248bbb927f9e4a91eff5a6a7270c168",
+  profile: "C0-MIA-S1",
+  source: "registered_plan_and_controller_state",
+  image_evidence: "bound_live_container",
+  promotion_authorized: false,
+};
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -283,6 +297,27 @@ describe("ModelServerCard body states", () => {
 });
 
 describe("ModelServerCard dynamic endpoint inventory", () => {
+  it("recognizes observed Mia only from a controller-selected variant", () => {
+    render(<ModelServerCard title="qwen3.8-flash-next-mia"
+      servedModel="qwen3.8-flash-next-mia" endpointName="flash"
+      inventory={inventory({ model: "qwen3.8-flash-next-mia", identity_status: "mismatch" })}
+      selectedVariant={selectedMia} pick={() => null} samples={[]} accent="violet" />);
+    expect(screen.getByTestId("qwen3.8-flash-next-mia-status")).toHaveTextContent("online");
+    expect(screen.getByTestId("flash-selected-variant")).toHaveTextContent("Mia-AiLab");
+    expect(screen.getByTestId("flash-selected-variant")).toHaveTextContent("image matches");
+    expect(screen.queryByText(/Served identity does not match the configured model/)).toBeNull();
+  });
+
+  it("flags NVIDIA served under a trusted Mia window despite static inventory match", () => {
+    render(<ModelServerCard title="qwen3.8-flash-next"
+      servedModel="qwen3.8-flash-next" endpointName="flash"
+      inventory={inventory({ model: "qwen3.8-flash-next", identity_status: "match" })}
+      selectedVariant={selectedMia} pick={() => null} samples={[]} accent="violet" />);
+    const status = screen.getByTestId("qwen3.8-flash-next-status");
+    expect(status).toHaveTextContent("selected variant mismatch");
+    expect(status).toHaveClass("text-red-400");
+    expect(screen.getByTestId("flash-variant-mismatch")).toHaveTextContent("Expected qwen3.8-flash-next-mia");
+  });
   it("separates an online candidate identity from its evaluation-only role", () => {
     render(
       <ModelServerCard

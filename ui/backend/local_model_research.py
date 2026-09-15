@@ -118,6 +118,53 @@ def _time(value):
         return None
 
 
+def _mia_variant(reader: Reader, run_id: str, state_or_result: dict):
+    """Use code-owned v4 source identity; never infer variant from endpoint text."""
+    if not run_id.startswith("qfn-mia-c0-"):
+        return None
+    try:
+        from bench.flash_next_ab import qualification as q
+        from bench.flash_next_ab.candidate_registry import MIA
+        from bench.flash_next_ab.mia_candidate_integration import read_mia_contract
+
+        prefix = f"qualification-runs/{run_id}"
+        plan, _ = reader.read(f"{prefix}/plan.json")
+        contract, contract_sha = reader.read(f"{prefix}/launch-contract.raw.json")
+        snapshot, _ = reader.read(f"{prefix}/launch-contract.snapshot.json")
+        fixed_contract, fixed_sha, _ = read_mia_contract(MIA.contract_path, q)
+        expected = q.plan_qualification(
+            fixed_contract, fixed_sha, reader.root / prefix, spec=MIA
+        )
+        candidate = {"id": MIA.spec_id, "spec_sha256": MIA.identity_sha256()}
+    except Exception as exc:
+        raise SourceError("Mia registered variant sources are unavailable.") from exc
+    if (
+        plan != expected
+        or snapshot != contract
+        or contract != fixed_contract
+        or contract_sha != fixed_sha
+        or state_or_result.get("candidate") != candidate
+        or state_or_result.get("plan_sha256") != q.sha256(plan)
+        or state_or_result.get("contract_sha256") != contract_sha
+        or state_or_result.get("model_artifact_sha256") != MIA.model_artifact_sha256()
+        or plan.get("image_id") != MIA.image_id
+        or plan.get("served_model") != MIA.served_name
+        or plan.get("profile") != MIA.profile
+    ):
+        raise SourceError("Mia registered variant sources differ.")
+    return {
+        "id": MIA.spec_id,
+        "repository": MIA.repository,
+        "revision": MIA.revision,
+        "served_model": MIA.served_name,
+        "image_id": MIA.image_id,
+        "model_artifact_sha256": MIA.model_artifact_sha256(),
+        "spec_sha256": MIA.identity_sha256(),
+        "qualification_profile": MIA.profile,
+        "evidence_class": "REGISTERED_SOURCE_ONLY",
+    }
+
+
 def _qualification(reader, run_id):
     prefix = f"qualification-runs/{run_id}"
     try:
@@ -128,6 +175,7 @@ def _qualification(reader, run_id):
             "qwen-flash-next-qualification-state/v1",
             "qwen-flash-next-qualification-state/v2",
             "qwen-flash-next-qualification-state/v3",
+            "qwen-flash-next-qualification-state/v4",
         } or row.get("run_id") != run_id:
             raise SourceError("An in-progress qualification has an invalid identity.")
         phase = row.get("phase")
@@ -136,14 +184,19 @@ def _qualification(reader, run_id):
                          "complete", "supervisor_recovered", "recovery_unknown"}:
             raise SourceError("A qualification phase is not recognized.")
         # A state file can outlive a process. Never label it as currently running.
+        variant = _mia_variant(reader, run_id, row)
+        if (row.get("schema") == "qwen-flash-next-qualification-state/v4") != (variant is not None):
+            raise SourceError("An unfinished qualification variant differs.")
         return {"id": run_id, "status": "unfinished_receipt", "phase": phase,
                 "finished_at": None, "candidate_window_minutes": None, "minimum_memory_gib": None,
                 "probe_count": None, "restoration": "unverified", "source_sha256": digest,
-                "model_started": None}
+                "model_started": None, "variant": variant,
+                "failure_class": None}
     if (row.get("schema") not in {
             "qwen-flash-next-qualification-result/v1",
             "qwen-flash-next-qualification-result/v2",
             "qwen-flash-next-qualification-result/v3",
+            "qwen-flash-next-qualification-result/v4",
         }
             or row.get("run_id") != run_id or row.get("status") not in {"passed", "failed", "unknown"}
             or row.get("weekly_budget_debit") is not False
@@ -154,6 +207,15 @@ def _qualification(reader, run_id):
         raise SourceError("Qualification restoration is not recorded.")
     if row["status"] == "passed" and (restoration != "verified" or row.get("probe_count") != 3):
         raise SourceError("A passing qualification lacks verified restoration.")
+    failure_class = row.get("failure_class")
+    if failure_class not in {
+        None, "experimental_startup_host_pageout_guardrail_abort",
+        "other_qualification_failure", "restoration_unknown",
+    }:
+        raise SourceError("A qualification failure class is unsupported.")
+    variant = _mia_variant(reader, run_id, row)
+    if (row.get("schema") == "qwen-flash-next-qualification-result/v4") != (variant is not None):
+        raise SourceError("A terminal qualification variant differs.")
     from bench.flash_next_ab.harness import (
         HarnessError,
         validate_flash_qualification_files,
@@ -172,6 +234,13 @@ def _qualification(reader, run_id):
         )
         if validation["qualification_receipt_sha256"] != digest:
             raise SourceError("A qualification changed during source validation.")
+        if variant is not None:
+            if validation.get("variant_id") != variant["id"]:
+                raise SourceError("Mia source validator selected another variant.")
+            if row["status"] == "passed" and validation.get("admission_eligible") is not True:
+                raise SourceError("Mia passing qualification was not admitted.")
+            if validation.get("admission_eligible") is True:
+                variant = dict(variant, evidence_class="QUALIFICATION_ADMITTED")
     except HarnessError as exc:
         raise SourceError("A qualification failed source validation.") from exc
     gpu_s = _number(row.get("challenger_gpu_seconds"))
@@ -181,7 +250,8 @@ def _qualification(reader, run_id):
             "minimum_memory_gib": _number(row.get("min_mem_available_gib")),
             "probe_count": _number(row.get("probe_count")), "restoration": restoration,
             "model_started": False if row.get("challenger_gpu_seconds_basis") == "not_started" and gpu_s == 0 else True if gpu_s is not None and gpu_s > 0 else None,
-            "source_sha256": digest}
+            "source_sha256": digest, "variant": variant,
+            "failure_class": failure_class}
 
 
 def _comparison(reader, entry):
@@ -239,8 +309,31 @@ def _comparison(reader, entry):
             "families": families, "promotion_authorized": False}
 
 
+def _receipt_recorded_mtime(path: Path) -> int:
+    """Order variants by receipt publication, not their differing prefixes.
+
+    Metadata is used only for display order. Reader.read still performs the
+    bounded nofollow admission for every receipt that reaches the projection.
+    """
+    try:
+        directory = path.stat(follow_symlinks=False)
+    except OSError:
+        return 0
+    if not stat.S_ISDIR(directory.st_mode):
+        return directory.st_mtime_ns
+    times = [directory.st_mtime_ns]
+    for leaf in ("result.json", "state.json"):
+        try:
+            receipt = (path / leaf).stat(follow_symlinks=False)
+        except OSError:
+            continue
+        if stat.S_ISREG(receipt.st_mode):
+            times.append(receipt.st_mtime_ns)
+    return max(times)
+
+
 def project_local_research(root: Path | None = None):
-    result = {"schema_version": SCHEMA, "status": "unavailable", "candidate": "Qwen3.8 Flash-Next",
+    result = {"schema_version": SCHEMA, "status": "unavailable", "candidate": "Qwen3.8 Flash-Next candidates",
               "accounting": "Local model R&D is outside the weekly maintenance allowance. Usage is recorded separately.",
               "qualification_runs": [], "comparisons": [], "warnings": [], "promotion_authorized": False,
               "evidence_note": "Recorded runtime qualification and public development fixtures. These do not establish scientific validity or authorize a production change."}
@@ -257,16 +350,18 @@ def project_local_research(root: Path | None = None):
                 children.append(child)
                 if len(children) > 128:
                     raise SourceError("Qualification history exceeds the scan bound.")
-            children.sort(key=lambda p: p.name, reverse=True)
+            children.sort(
+                key=lambda p: (_receipt_recorded_mtime(p), p.name), reverse=True
+            )
             for child in children:
-                if not ID.fullmatch(child.name) or not child.name.startswith("qfn-c0-"):
+                if not ID.fullmatch(child.name) or not child.name.startswith(("qfn-c0-", "qfn-mia-c0-")):
                     continue
                 try:
                     result["qualification_runs"].append(_qualification(reader, child.name))
                 except (ValueError, FileNotFoundError, TypeError, AttributeError):
                     result["warnings"].append("A qualification receipt is unavailable or invalid; its result is withheld.")
                 if len(result["qualification_runs"]) == 12:
-                    result["warnings"].append("Showing the 12 latest qualification receipts.")
+                    result["warnings"].append("Showing the 12 most recently recorded qualification receipts.")
                     break
         try:
             index, _ = reader.read("evaluation/dashboard-index.json")

@@ -1,0 +1,201 @@
+{
+  "accounting": {
+    "class": "uncapped-local-model-research",
+    "journal_path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/runtime/research-usage.jsonl",
+    "paid_api_allowed": false,
+    "weekly_budget_debit": false
+  },
+  "contract_id": "qwen38-flash-next-c0-s1-20260915",
+  "image": {
+    "architecture": "arm64",
+    "id": "sha256:345bea72ff3bb548594d88f6a7661636c07cd3e7367f8e54b0e4a98494e5a48d"
+  },
+  "model": {
+    "artifact_sha256": "54e961084a2fca63b0dcd32d542eb340a7baa20224298b00030ffa7e59145063",
+    "container_path": "/models/qwen",
+    "files": {
+      ".gitattributes": {
+        "bytes": 1635,
+        "sha256": "fe81d528e7ee055bbcf6a310afe0f2808423a4a16d45225f29c285926abef08d"
+      },
+      "README.md": {
+        "bytes": 12109,
+        "sha256": "e3ed0cb89950ef0f41e8df344ba1cc15c67e1baf91e1cb5305a7344e58a8d975"
+      },
+      "chat_template.jinja": {
+        "bytes": 8952,
+        "sha256": "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041"
+      },
+      "config.json": {
+        "bytes": 30820,
+        "sha256": "deef67a61f3311faf051b23dc4192f442c7fee4f9cd2f38cbcbe4da55c763a80"
+      },
+      "generation_config.json": {
+        "bytes": 202,
+        "sha256": "e70c136c1b78ddc1fb0905bac8e733a4dc448d4f852a5dd75143fffc70be550e"
+      },
+      "hf_quant_config.json": {
+        "bytes": 23001,
+        "sha256": "331ad11d57c8bc374554579977198084e0d4d0933d5b3558f125f6f670aba0e8"
+      },
+      "merges.txt": {
+        "bytes": 3353259,
+        "sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d"
+      },
+      "model-00001-of-00010.safetensors": {
+        "bytes": 3115991696,
+        "sha256": "63fde954be6f08b49b876f4f70a0ad0bcfee71aff7b1faa33779b6b32feca2a2"
+      },
+      "model-00002-of-00010.safetensors": {
+        "bytes": 10005510304,
+        "sha256": "4dafaef62a908e49e0d92c7c2a3fa99f4d9651fdeeb0ca09f09a9b40095af4e0"
+      },
+      "model-00003-of-00010.safetensors": {
+        "bytes": 10005364728,
+        "sha256": "3218ddc129258e91a721a8e81329ca8f00588332ec721bd8d2cf7d20e324bf47"
+      },
+      "model-00004-of-00010.safetensors": {
+        "bytes": 10006060112,
+        "sha256": "55e2bdf6a3a1f6e65270787f65c63b2a2a56b308b54eb1fb318dfabc9b48b141"
+      },
+      "model-00005-of-00010.safetensors": {
+        "bytes": 10005362392,
+        "sha256": "d3c169d3694bfba846455d01e48f047d770f78d071c5a4d22f129389411d686e"
+      },
+      "model-00006-of-00010.safetensors": {
+        "bytes": 10005375328,
+        "sha256": "38f65a9d11090428e139cc60d0587e8e5433ea2ce79820883c583d7cfcc53130"
+      },
+      "model-00007-of-00010.safetensors": {
+        "bytes": 10005956544,
+        "sha256": "8cf3fa05c04cb2e060963b69bb01f7a7b9f43c58435fbe380836a0457a19cd3e"
+      },
+      "model-00008-of-00010.safetensors": {
+        "bytes": 10005375200,
+        "sha256": "53d1f80746aa0cc0a7c2f4836587002a8a4dd72c827432cd2e43abae3c3899e4"
+      },
+      "model-00009-of-00010.safetensors": {
+        "bytes": 5679113808,
+        "sha256": "eaff6a87ece6fbfd6ad0fbaa0a5cf9ff542f8076acba38e62410b1ed55e12cc3"
+      },
+      "model-00010-of-00010.safetensors": {
+        "bytes": 128587536,
+        "sha256": "0d49b0cf7c15bf9b5bd1e17403b36727315860a8f2a2e0f5a53655547084f640"
+      },
+      "model-fp8-mtp-ple.safetensors": {
+        "bytes": 53717551730,
+        "sha256": "3525520c8602d850003eb1960aec0b64291dae33b83f8b65dd639a451df78823"
+      },
+      "model.safetensors.index.json": {
+        "bytes": 31275518,
+        "sha256": "660414e8300728ba80062e6a3c81cb76a65e2ab136ac9e9ceb450ba0c51c3c0d"
+      },
+      "preprocessor_config.json": {
+        "bytes": 390,
+        "sha256": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516"
+      },
+      "processor_config.json": {
+        "bytes": 1191,
+        "sha256": "d89ef49ce9cd37fbf510158e13c1ef063d9286411c1ec9049932dbe0487143b1"
+      },
+      "tokenizer.json": {
+        "bytes": 12809320,
+        "sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3"
+      },
+      "tokenizer_config.json": {
+        "bytes": 17928,
+        "sha256": "b11349aafa7cdc6a320767cf7ceb29ed82f7eda5d65e8e0819e76f0ce947bf27"
+      },
+      "video_preprocessor_config.json": {
+        "bytes": 385,
+        "sha256": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13"
+      },
+      "vocab.json": {
+        "bytes": 6722759,
+        "sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+      }
+    },
+    "full_sha256_before_mutation": true,
+    "host_path": "/mnt/models/qwen3.8-flash-next-nvfp4-fc694b54",
+    "repository": "nvidia/Qwen3.8-Flash-Next-NVFP4",
+    "repository_total_bytes": 132734506847,
+    "revision": "fc694b54fb0174e0913e6adf86691ef85a4ead47",
+    "safetensors_total_bytes": 132680249378,
+    "served_name": "qwen3.8-flash-next",
+    "tensor_payload_bytes": 132639846394
+  },
+  "probe_set": "flash-next-minimal-v1",
+  "profile": "C0-S1",
+  "runtime": {
+    "async_scheduling": false,
+    "compile_cache_path": "/home/decross1/projects/a_bgt_rsi_runtime_candidates/flash-next-20260914/compile-cache-c0/qwen38-flash-next-d453-c0",
+    "container_name": "vllm-qwen-ab-flash-20260915",
+    "container_port": 8000,
+    "docker_memory_limit_bytes": 103079215104,
+    "docker_memory_swap_total_bytes": 103079215104,
+    "gpu_memory_utilization": 0.75,
+    "host_address": "127.0.0.1",
+    "host_port": 8012,
+    "kv_cache_dtype": "auto",
+    "kv_cache_memory_bytes": 2147483648,
+    "language_model_only": true,
+    "mamba_ssm_cache_dtype": "float32",
+    "max_model_len": 32768,
+    "max_num_batched_tokens": 4096,
+    "max_num_seqs": 1,
+    "mtp_speculative_tokens": 0,
+    "prefix_caching": false,
+    "qsa_exact_topk": true
+  },
+  "safety": {
+    "invocation_deadline_seconds": 3600,
+    "memory_poll_seconds": 1,
+    "min_mem_available_gib": 20,
+    "nara_service": "nara-daemon.service",
+    "paging_policy": {
+      "candidate_cgroup_oom_initial_max": 0,
+      "candidate_cgroup_oom_kill_initial_max": 0,
+      "candidate_cgroup_oom_kill_max_delta": 0,
+      "candidate_cgroup_oom_max_delta": 0,
+      "candidate_cgroup_swap_max_bytes": 0,
+      "host_page_size_bytes": 4096,
+      "load": {
+        "phase_total_breach_bytes": 4294967296,
+        "window_5s_breach_bytes": 536870912,
+        "window_60s_breach_bytes": 2147483648
+      },
+      "max_sample_gap_seconds": 10,
+      "ready_quiescence_seconds": 60,
+      "restoration_host_swap_action": "diagnostic_only",
+      "serving": {
+        "phase_total_breach_bytes": 134217728,
+        "window_5s_breach_bytes": 33554432,
+        "window_60s_breach_bytes": 67108864
+      },
+      "startup_gate_phases": [
+        "load",
+        "ready"
+      ]
+    },
+    "probe_timeout_seconds": 120,
+    "readiness_deadline_seconds": 1200,
+    "ready_quiescence_seconds": 60,
+    "resident_containers": [
+      {
+        "health_url": "http://127.0.0.1:8000/health",
+        "id": "fc61a80d6c2d07b551c5afdd566a7c82ee05ad40c014d69c428e299e49101374",
+        "image_id": "sha256:f023269abe06db3a1a7cd9e170a0f5bd2b333a19ef9cb99ed8df97a70345bc25",
+        "name": "vllm-gemma4"
+      },
+      {
+        "health_url": "http://127.0.0.1:8001/health",
+        "id": "bcb6cd87757279ff77f1460cab2f8ad6cf1a2e46d19dad165b07dccecfa509bb",
+        "image_id": "sha256:f023269abe06db3a1a7cd9e170a0f5bd2b333a19ef9cb99ed8df97a70345bc25",
+        "name": "vllm-qwen"
+      }
+    ],
+    "restoration_reserve_seconds": 600,
+    "setup_quiescence_seconds": 60
+  },
+  "schema": "qwen-flash-next-qualification/v3"
+}

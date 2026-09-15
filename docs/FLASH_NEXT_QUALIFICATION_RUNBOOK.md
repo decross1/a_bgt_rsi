@@ -1,6 +1,7 @@
-# Qwen3.8-Flash-Next C0-S1 qualification runbook
+# Qwen3.8-Flash-Next qualification runbook
 
-This runbook covers bounded GPU qualification of the exact C0-S1 runtime. The
+This runbook covers bounded GPU qualification of the NVIDIA C0-S1 and Mia
+C0-MIA-S1 runtimes. The
 owner has authorized local model A/B and optimization work; broader execution
 uses the separately reviewed evaluation window and frozen benchmark plan.
 Production adoption remains a separate decision. This controller uses the
@@ -8,11 +9,11 @@ existing canonical resource lease and
 restores the current containers by their captured IDs; it never removes or
 recreates a resident.
 
-## Frozen inputs
+## NVIDIA frozen inputs
 
-- Controller commit: `f01e35c7f3ce2e3896f37f6e86132edc76d27b15`.
+- Controller commit: `6349b27` (includes the probe recorder repair).
 - Controller SHA-256:
-  `de0ce4db5f788c6725ad701e46e7660bd66e2685dbbdb87119f3198784fb2afe`.
+  `5ddf210f8f55e2b6948c1de49cd84d0f6d08c725e717103b9dff6f57a7f59dce`.
 - External contract:
   `/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/runtime/launch-contract.c0.json`.
 - Contract SHA-256:
@@ -57,10 +58,72 @@ failure. Candidate swap/OOM, host reserve, ready quiet and serving gates stay
 unchanged. Continuous page-in and host PSI counters plus separate dashboard
 responsiveness observations support interpretation of a future paging burst.
 
+The first S1 attempt, `qfn-c0-s1-20260915-0511`, completed checkpoint loading,
+health/model identity checks, and its 60-second ready quiet interval. All three
+probe validators returned, but serializing their nested raw response bytes
+raised `TypeError: Object of type bytes is not JSON serializable`. Consequently
+no durable `probes.json` exists and the attempt remains **failed and ineligible
+for benchmark admission**. Do not reconstruct or retroactively approve its
+missing responses. Repair the recorder and repeat the fixed probes in a new
+qualification run.
+
+That attempt measured a minimum 31.4798 GiB MemAvailable, zero candidate swap
+or OOM, no paging-limit breach, and 638,627,840 bytes of startup host pageout.
+The original residents and Nara were restored at 05:33:37 UTC on September 15.
+Independent API-health/frontend HTTP observations all returned 200 (280 probes;
+maximum 45.5 ms). Those probes measure these two endpoints, not every Spark
+operation or the correctness of dashboard contents. The immutable analysis is
+`runtime/c0-s1-recorder-failure-analysis.json` in the research artifact directory.
+
 The owner's current authority permits a separately registered 12 GiB absolute
 reserve if needed; 20 GiB remains preferred and is still this S1 profile's
 mandatory floor. Local R&D has no weekly GPU-hour cap and is accounted separately
 from the 120-minute weekly maintenance allowance.
+
+## Mia single-Spark candidate
+
+The independently pinned Mia lane uses the same three fixed correctness/tool
+probes, 32,768 context, 2 GiB KV allocation, FP32 recurrent state, MTP0,
+20 GiB host floor, and zero candidate swap/OOM policy. Its v4 evidence binds
+the actual image, checkpoint, packed PLE table, and immutable CandidateSpec;
+the shared endpoint port alone never identifies a variant.
+
+- Recipe: `MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark`
+  at `d03809008834124e80223c3482f2ddb59577a48f`.
+- Checkpoint: `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4`
+  at `925d7be6c14c6c9442ef83e8f05b5a3c39304f69`.
+- Served name: `qwen3.8-flash-next-mia`; evaluation route: `flash_next_mia`.
+- Image: `sha256:da68dd27a8ef1dadd0f380178a51f0a0671dc4235933ea1ae89fdaf66295ec72`.
+- Fixed contract: the research root's `runtime/launch-contract.mia-c0.json`,
+  SHA-256 `ba5153b2047213aa93fb24b048da38cc2c90cc6576d9450a2088bd11afa01964`.
+- Spec SHA-256: `dde4fe1f72cf91de92089a95748cee1f6a8204e351d517aa0ae46d8d27122857`.
+- Docker argv SHA-256: `648baa0e0adfe7c2e98afa2013ab379bc797a3df495e3735ba991e88168bd051`.
+
+Use the same `--plan`/`--run` CLI below with that fixed Mia contract and a fresh
+`qfn-mia-c0-*` output directory. The shared controller selects the registered
+Mia path without changing NVIDIA globals. Prepare the user-owned
+`compile-cache-mia-c0` parent under the existing runtime-candidates directory
+before launching; the controller creates its specific child cache.
+
+Mia is an evaluation candidate, not a production change. A complete A/B plan
+must explicitly select `flash_endpoint_name="flash_next_mia"` and bind Mia's
+own successful qualification and runtime hashes. All seven Flash roles use
+that one checkpoint/runtime. NVIDIA plans retain their original route.
+
+## Probe evidence and startup timing
+
+Each attempted probe now has a durable `probe-attempts.json` record. Bounded
+raw SSE responses are saved separately under `private-probes/` with restrictive
+permissions; JSON records contain their hashes and relative paths. A wrong
+response or transport failure remains a failed qualification and retains its
+diagnostic output. This fixes the S1 recorder failure without weakening any
+correctness check or changing its historical failed result.
+
+Keep container-start-to-readiness, checkpoint-loading time, the full experiment
+window, TTFT, and decode/task performance separate. The first NVIDIA S1 run
+measured 639.26 seconds from container start to readiness, including 533 seconds
+reported by the shard loader; its full verification/restoration invocation was
+1,390.97 seconds. Those are startup observations, not steady-state throughput.
 
 ## Side-effect-free review
 
