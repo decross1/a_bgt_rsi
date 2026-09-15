@@ -65,6 +65,11 @@ FRESH_EVALUATOR_FILES = frozenset({
 EVALUATOR_FILES = {"primary": PRIMARY_EVALUATOR_FILES,
                    "context": CONTEXT_EVALUATOR_FILES,
                    "fresh": FRESH_EVALUATOR_FILES}
+CAP_RUN_ID = "qfn-ab-lab-diversity-cap-20260915-a.flash"
+CAP_AUDIT_PATH = ARTIFACT_ROOT / "mia-diversity-cap-paired-v1.failure-audit.json"
+CAP_AUDIT_SHA = "4a94d553dc47b7a55f297634b2e077ad3f7b8a5b9a485baf12a503bf1a8be1f0"
+CAP_AUDIT_SOURCE_PATH = ARTIFACT_ROOT / "mia-diversity-cap-paired-v1.failure-audit-source.py"
+CAP_AUDIT_SOURCE_SHA = "6cdb209f7da93c090757e41064a87b0fa3f5d433655f751edea53ce1417788b8"
 
 
 def _need(ok: bool, reason: str) -> None:
@@ -220,6 +225,111 @@ def _live_restored(state: dict, cohort: str) -> str:
     return "running" if wanted == "active" else "paused"
 
 
+def _cap_terminal_runtime(run_fd: int, run_path: Path, window_raw: bytes,
+                          state_raw: bytes, observed: datetime) -> dict[str, Any]:
+    """Only the frozen restored startup abort can report current residents."""
+    from bench.flash_next_ab import qualification as q
+    from bench.flash_next_ab.followon_profiles import MIA_MTP3_REDUCED47K_OPT as spec
+
+    from . import lab_diversity_cap_progress as cap
+
+    window = mr._strict_object(window_raw, "cap window")
+    state = mr._strict_object(state_raw, "cap state")
+    plan_raw = mr._read_path(cap.PLAN, maximum=2 * 1024 * 1024, label="cap plan")
+    plan = mr._strict_object(plan_raw, "cap plan")
+    _need(run_path == cap.OUTPUT and mr._sha256(window_raw) == cap.WINDOW_SHA and
+          mr._sha256(plan_raw) == cap.PLAN_SHA and
+          window.get("evaluation_plan") == {"path": str(cap.PLAN), "sha256": cap.PLAN_SHA} and
+          window.get("runtime_certificate") == {"path": str(PARENT_PATH),
+              "sha256": mr._sha256(mr._read_path(PARENT_PATH, maximum=8192,
+                                               label="cap qualified parent"))} and
+          window.get("candidate_spec_sha256") == SPEC_SHA == spec.identity_sha256(),
+          "cap exact plan, window, or parent changed")
+    cap._registered(plan, window)
+    controller = window["controller_sources"]
+    evaluator = plan["evaluator_source_bundle"]
+    _need(len(controller) == 45 and len(evaluator) == 16,
+          "cap source tuple length changed")
+    for name, ref in controller.items():
+        _need(isinstance(name, str) and not Path(name).is_absolute() and
+              ".." not in Path(name).parts and isinstance(ref, dict) and
+              ref == {"path": str(cap.CODE_ROOT / name), "sha256": ref.get("sha256")} and
+              mr.SHA256.fullmatch(str(ref.get("sha256", ""))),
+              "cap controller source reference changed")
+        raw = mr._read_path(cap.CODE_ROOT / name, maximum=8 * 1024 * 1024,
+                            label="cap controller source")
+        _need(mr._sha256(raw) == ref["sha256"], "cap controller source drift")
+    for name, digest in evaluator.items():
+        _need(isinstance(name, str) and not Path(name).is_absolute() and
+              ".." not in Path(name).parts and mr.SHA256.fullmatch(str(digest)),
+              "cap evaluator source reference changed")
+        raw = mr._read_path(cap.CODE_ROOT / name, maximum=8 * 1024 * 1024,
+                            label="cap evaluator source")
+        _need(mr._sha256(raw) == digest, "cap evaluator source drift")
+    audit_raw = mr._read_path(CAP_AUDIT_PATH, maximum=2 * 1024 * 1024,
+                              label="cap failure audit")
+    audit = mr._strict_object(audit_raw, "cap failure audit")
+    source_raw = mr._read_path(CAP_AUDIT_SOURCE_PATH, maximum=32 * 1024,
+                               label="cap failure audit source")
+    _need(mr._sha256(audit_raw) == CAP_AUDIT_SHA and
+          mr._sha256(source_raw) == CAP_AUDIT_SOURCE_SHA and
+          audit.get("schema") == "lab-mia-diversity-cap-startup-failure-audit/v1" and
+          audit.get("window_id") == window["window_id"] and
+          audit.get("status") == "closed_aborted_restored_no_evaluation" and
+          audit.get("audit_source") == {"path": str(CAP_AUDIT_SOURCE_PATH),
+              "sha256": CAP_AUDIT_SOURCE_SHA, "bytes": len(source_raw)} and
+          audit.get("registered", {}).get("controller_source_bundle_sha256") ==
+              mr._canonical_sha256(controller) and
+          audit.get("registered", {}).get("evaluator_source_bundle_sha256") ==
+              mr._canonical_sha256(evaluator) and
+          audit.get("evaluation", {}).get("issued_calls") == 0 and
+          audit.get("evaluation", {}).get("evaluation_run_present") is False and
+          audit.get("evaluation", {}).get("evaluation_directory_present") is False and
+          audit.get("terminal", {}).get("result_error_code") == "startup_host_swap_5s" and
+          audit.get("private_content_exported") is False and
+          cap._known_startup_failure() == "startup_host_swap_5s",
+          "cap archived no-evaluation abort proof changed")
+    for key, expected in (("result", cap.FAILED_RESULT_SHA),
+                          ("state", cap.FAILED_STATE_SHA),
+                          ("supervision", cap.FAILED_SUPERVISION_SHA),
+                          ("memory", cap.FAILED_MEMORY_SHA)):
+        ref = audit["raw_refs"][key]
+        _need(ref.get("sha256") == expected, "cap terminal audit raw ref differs")
+    result_raw = mr._read_fd(run_fd, "result.json", maximum=mr.MAX_RESULT_BYTES,
+                             label="cap result")
+    supervision_raw = mr._read_fd(run_fd, "supervision.json", maximum=mr.MAX_RESULT_BYTES,
+                                  label="cap supervision")
+    _need(mr._sha256(result_raw) == cap.FAILED_RESULT_SHA and
+          mr._sha256(state_raw) == cap.FAILED_STATE_SHA and
+          mr._sha256(supervision_raw) == cap.FAILED_SUPERVISION_SHA and
+          state.get("phase") == "aborted" and
+          state.get("restoration") == mr._strict_object(result_raw, "cap result").get("restoration") and
+          mr._parse_time(state.get("started_at"), "cap state start") <=
+              observed + timedelta(seconds=mr.MAX_CLOCK_SKEW_SECONDS),
+          "cap terminal state changed")
+    _need(mr.SHA256.fullmatch(str(state.get("candidate_id", ""))) and
+          _live_restored(state, "flash") == "running", "cap residents or Nara not live")
+    ops = q.HostOps()
+    _need(q._inspect_container(ops, state["candidate_id"]) is None and
+          q._inspect_container(ops, spec.container_name) is None,
+          "cap candidate sentinel currently present")
+    _need(mr._read_fd(run_fd, "state.json", maximum=mr.MAX_STATE_BYTES,
+                      label="cap state recheck") == state_raw,
+          "cap state changed during projection")
+    source_sha = mr._composite_sha256(window=cap.WINDOW_SHA, plan=cap.PLAN_SHA,
+        state=cap.FAILED_STATE_SHA, result=cap.FAILED_RESULT_SHA,
+        supervision=cap.FAILED_SUPERVISION_SHA, memory=cap.FAILED_MEMORY_SHA,
+        controller=mr._canonical_sha256(controller),
+        evaluator=mr._canonical_sha256(evaluator), audit=CAP_AUDIT_SHA,
+        audit_source=CAP_AUDIT_SOURCE_SHA)
+    return {"schema_version": mr.SCHEMA_VERSION, "observed_at": observed.isoformat(),
+            "mode": "resident", "mode_source": "lab_evaluation_state",
+            "mode_source_sha256": source_sha, "resident_services_expected": "online",
+            "nara_service_expected": "running", "run_id": CAP_RUN_ID,
+            "phase": "aborted", "candidate_variant": mr._variant_projection(spec),
+            "source_error": None}
+
+
 def project_lab_runtime(root: Path = WINDOW_ROOT, *, proc_root: Path = mr.PROC_ROOT,
                         boot_id_path: Path = mr.BOOT_ID_PATH,
                         observed: datetime) -> dict[str, Any]:
@@ -233,6 +343,8 @@ def project_lab_runtime(root: Path = WINDOW_ROOT, *, proc_root: Path = mr.PROC_R
         window = mr._strict_object(window_raw, "lab window registration")
         state = mr._strict_object(state_raw, "lab runtime state")
         cohort = "flash" if run_id.endswith(".flash") else "resident"
+        if run_id == CAP_RUN_ID:
+            return _cap_terminal_runtime(run_fd, run_path, window_raw, state_raw, observed)
         parent_raw = mr._read_path(PARENT_PATH, maximum=8192,
                                     label="lab runtime certificate")
         parent = mr._strict_object(parent_raw, "lab runtime certificate")
@@ -319,8 +431,12 @@ def project_lab_runtime(root: Path = WINDOW_ROOT, *, proc_root: Path = mr.PROC_R
                     _last_memory(run_path / "memory.jsonl", observed, state)
                     mode, residents, nara = "resident", "online", "paused"
                 else:
-                    from bench.flash_next_ab.followon_profiles import MIA_MTP3_REDUCED47K_OPT as spec
-                    from bench.flash_next_ab.evaluation_window import EXTENDED_SERVING_PROFILE
+                    from bench.flash_next_ab.evaluation_window import (
+                        EXTENDED_SERVING_PROFILE,
+                    )
+                    from bench.flash_next_ab.followon_profiles import (
+                        MIA_MTP3_REDUCED47K_OPT as spec,
+                    )
                     candidate_id = state.get("candidate_id")
                     pid = mr._nonnegative_integer(state.get("candidate_cgroup_pid"),
                                                    "lab candidate PID", positive=True)
@@ -357,7 +473,9 @@ def project_lab_runtime(root: Path = WINDOW_ROOT, *, proc_root: Path = mr.PROC_R
                           label="lab state recheck") == state_raw,
               "lab state changed during projection")
         if cohort == "flash":
-            from bench.flash_next_ab.followon_profiles import MIA_MTP3_REDUCED47K_OPT as spec
+            from bench.flash_next_ab.followon_profiles import (
+                MIA_MTP3_REDUCED47K_OPT as spec,
+            )
             variant = mr._variant_projection(spec, image_observed=image_observed)
         else:
             variant = None
@@ -383,7 +501,9 @@ def maybe_project_lab(qualification_root: Path, evaluation_root: Path,
     try:
         from .model_runtime_extended import _latest_slot_mtime as old_slot
         from .model_runtime_followon import _latest_slot_mtime as followon_flash_slot
-        from .model_runtime_resident_followon import latest_slot_mtime as followon_resident_slot
+        from .model_runtime_resident_followon import (
+            latest_slot_mtime as followon_resident_slot,
+        )
 
         lab = _slot(lab_root)
         older = max((x for x in (
