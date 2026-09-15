@@ -359,7 +359,6 @@ def _candidate_memory_is_bound(
     candidate_pid: int,
     candidate_start_ticks: int,
     memory_limit_bytes: int,
-    memory_swap_total_bytes: int,
 ) -> None:
     candidate = row.get("candidate")
     if not isinstance(candidate, dict):
@@ -374,8 +373,6 @@ def _candidate_memory_is_bound(
         or candidate.get("oom_killed") is not False
         or candidate.get("restart_count") != 0
         or candidate.get("pid") != candidate_pid
-        or candidate.get("memory_limit_bytes") != memory_limit_bytes
-        or candidate.get("memory_swap_total_bytes") != memory_swap_total_bytes
         or cgroup.get("path") != cgroup_path
         or cgroup.get("process_start_ticks") != candidate_start_ticks
         or cgroup.get("memory_max_bytes") != memory_limit_bytes
@@ -408,8 +405,6 @@ def _candidate_memory_is_bound(
         "memory_events_oom_kill",
     ):
         _nonnegative_integer(cgroup.get(key), f"candidate cgroup {key}")
-    for key in ("memory_limit_bytes", "memory_swap_total_bytes"):
-        _nonnegative_integer(candidate.get(key), f"candidate {key}", positive=True)
     tracked_stats = (
         "anon", "file", "shmem", "active_file", "inactive_file",
         "pgscan", "pgsteal",
@@ -452,7 +447,6 @@ def _latest_memory(
     paging_policy: dict[str, Any],
     candidate_identity: tuple[str, str, int, int] | None,
     memory_limit_bytes: int,
-    memory_swap_total_bytes: int,
 ) -> tuple[dict[str, Any], str]:
     raw = _read_fd(
         run_fd, "memory.jsonl", maximum=MAX_MEMORY_BYTES, label="memory gate"
@@ -616,7 +610,6 @@ def _latest_memory(
             candidate_pid=candidate_identity[2],
             candidate_start_ticks=candidate_identity[3],
             memory_limit_bytes=memory_limit_bytes,
-            memory_swap_total_bytes=memory_swap_total_bytes,
         )
     return row, _sha256(row_raw)
 
@@ -923,7 +916,6 @@ def project_model_runtime(
                 paging_policy=PAGING_POLICY,
                 candidate_identity=candidate_identity,
                 memory_limit_bytes=DOCKER_MEMORY_LIMIT_BYTES,
-                memory_swap_total_bytes=DOCKER_MEMORY_SWAP_TOTAL_BYTES,
             )
             if phase in CANDIDATE_PHASES:
                 nara_initially_active = _validate_initial(state)

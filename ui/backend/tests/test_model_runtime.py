@@ -194,8 +194,6 @@ def fixture(
             "oom_killed": False,
             "restart_count": 0,
             "pid": 300,
-            "memory_limit_bytes": q.DOCKER_MEMORY_LIMIT_BYTES,
-            "memory_swap_total_bytes": q.DOCKER_MEMORY_SWAP_TOTAL_BYTES,
             "cgroup": {
                 "path": f"/system.slice/docker-{CONTAINER}.scope",
                 "process_start_ticks": 4444,
@@ -440,21 +438,24 @@ def test_registered_c0_s0_profile_and_docker_swap_controls_are_required(tmp_path
     write_json(run / "state.json", state)
     assert project(root, proc, boot)["mode"] == "unknown"
 
-    root, run, proc, boot, state, _plan = fixture(tmp_path / "contract")
-    contract_path = run / "launch-contract.raw.json"
-    contract = json.loads(contract_path.read_text())
-    contract["runtime"]["docker_memory_swap_total_bytes"] += 4096
-    contract_path.write_text(json.dumps(contract), encoding="utf-8")
-    state["contract_sha256"] = hashlib.sha256(contract_path.read_bytes()).hexdigest()
-    write_json(run / "state.json", state)
-    assert project(root, proc, boot)["mode"] == "unknown"
+    for field in (
+        "docker_memory_limit_bytes", "docker_memory_swap_total_bytes"
+    ):
+        root, run, proc, boot, state, _plan = fixture(tmp_path / field)
+        contract_path = run / "launch-contract.raw.json"
+        contract = json.loads(contract_path.read_text())
+        contract["runtime"][field] += 4096
+        contract_path.write_text(json.dumps(contract), encoding="utf-8")
+        state["contract_sha256"] = hashlib.sha256(
+            contract_path.read_bytes()
+        ).hexdigest()
+        write_json(run / "state.json", state)
+        assert project(root, proc, boot)["mode"] == "unknown"
 
 
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("docker_memory_limit", 0),
-        ("docker_memory_swap_total", 0),
         ("cgroup_memory_max", 0),
         ("cgroup_swap_max", 4096),
         ("cgroup_memory_current", -1),
@@ -472,11 +473,7 @@ def test_candidate_mode_rejects_missing_or_drifted_no_swap_diagnostics(
     memory = json.loads(memory_path.read_text())
     candidate = memory["candidate"]
     cgroup = candidate["cgroup"]
-    if field == "docker_memory_limit":
-        candidate["memory_limit_bytes"] = value
-    elif field == "docker_memory_swap_total":
-        candidate["memory_swap_total_bytes"] = value
-    elif field == "cgroup_memory_max":
+    if field == "cgroup_memory_max":
         cgroup["memory_max_bytes"] = value
     elif field == "cgroup_swap_max":
         cgroup["memory_swap_max_bytes"] = value
