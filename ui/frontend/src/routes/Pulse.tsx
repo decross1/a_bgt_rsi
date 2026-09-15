@@ -900,6 +900,7 @@ export default function Pulse() {
             iterationTimes={iterationTimes}
             cycleTimes={cycleTimes}
             nowMs={now}
+            activityScope={researchScope === "active" ? "active_campaign" : "lab_history"}
           />
         </Card>
         {/* Hides itself entirely when the ledger has never been written (204)

@@ -13,6 +13,39 @@ const stamp = (v: unknown) => utc(v)
 const queues = new Set(["eligible", "all_registered_topics_consumed", "source_unknown", "unknown"]);
 const attempts = new Set(["succeeded", "fetch_failed", "embed_failed", "interrupted_unknown", "none", "unknown"]);
 const PILOT_ID = "qfn-followon-known-opponent-lab8h-a";
+const MIA_PILOT_ID = "qfn-followon-known-opponent-mia-lab8h-a";
+const MIA_PILOT_SCHEMA = "known-opponent-mia-ui-observation/v1";
+function pilotArm(value: unknown): Record<string, unknown> | null {
+  if (!obj(value) || value.scheduled_cells !== 12 || value.recorded_cells !== 12 ||
+      value.scheduled_action_calls !== 96 || !count(value.attempted_calls) ||
+      value.attempted_calls > 108 || !count(value.arithmetic_passed) ||
+      value.arithmetic_passed > 12 || !count(value.valid_action_calls) ||
+      value.valid_action_calls > 96 || value.valid_action_calls > value.attempted_calls ||
+      !count(value.complete_episodes) || value.complete_episodes > 12 ||
+      !count(value.zero_regret_complete_episodes) ||
+      value.zero_regret_complete_episodes > value.complete_episodes ||
+      !count(value.returned_sse_verified) ||
+      value.returned_sse_verified > value.attempted_calls ||
+      typeof value.evaluator_elapsed_s !== "number" ||
+      !Number.isFinite(value.evaluator_elapsed_s) ||
+      value.evaluator_elapsed_s < 0 || value.evaluator_elapsed_s > 960) return null;
+  const utility = obj(value.by_utility) ? value.by_utility : null;
+  const own = obj(utility?.own_payoff) ? utility.own_payoff : null;
+  const joint = obj(utility?.joint_payoff) ? utility.joint_payoff : null;
+  if (!utility || Object.keys(utility).sort().join() !== "joint_payoff,own_payoff" ||
+      !own || !joint || !count(own.complete) || own.complete > 6 ||
+      !count(joint.complete) || joint.complete > 6 ||
+      !count(own.zero_regret) || own.zero_regret > own.complete ||
+      !count(joint.zero_regret) || joint.zero_regret > joint.complete ||
+      own.complete + joint.complete !== value.complete_episodes ||
+      own.zero_regret + joint.zero_regret !== value.zero_regret_complete_episodes) return null;
+  return value;
+}
+function utilityRegret(arm: Record<string, unknown> | null, objective: "own_payoff" | "joint_payoff") {
+  const utility = obj(arm?.by_utility) ? arm.by_utility : null;
+  const row = obj(utility?.[objective]) ? utility[objective] : null;
+  return row ? `${String(row.zero_regret)}/${String(row.complete)}` : "unknown";
+}
 const BRIDGE_SCHEMA = "guarded-research-attempts-observation/v1";
 const bridgeIds = ["d", "c", "b", "a"].map(arm =>
   "qfn-followon-known-opponent-lab8h-bridge-" + arm);
@@ -152,6 +185,33 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   const ingestion = obj(view?.ingestion) ? view.ingestion : null;
   const legacy = obj(view?.ingestion_legacy_log) ? view.ingestion_legacy_log : null;
   const empirical = obj(view?.empirical_pilot) ? view.empirical_pilot : null;
+  const miaPilot = obj(view?.mia_known_opponent_pilot) ? view.mia_known_opponent_pilot : null;
+  const miaPending = miaPilot?.schema_version === MIA_PILOT_SCHEMA &&
+    miaPilot.window_id === MIA_PILOT_ID &&
+    miaPilot.status === "prepared_admission_pending" &&
+    SHA.test(String(miaPilot.window_raw_sha256)) &&
+    SHA.test(String(miaPilot.matched_gemma_admission_sha256)) &&
+    miaPilot.current_source_replay === "not_performed" &&
+    miaPilot.comparison_eligible === false &&
+    miaPilot.promotion_authorized === false &&
+    miaPilot.trading_claim_authorized === false &&
+    miaPilot.private_content_exported === false &&
+    miaPilot.arms === null;
+  const miaReportPending = miaPilot?.schema_version === MIA_PILOT_SCHEMA &&
+    miaPilot.window_id === MIA_PILOT_ID &&
+    miaPilot.status === "recorded_admission_report_pending" &&
+    SHA.test(String(miaPilot.window_raw_sha256)) &&
+    SHA.test(String(miaPilot.matched_gemma_admission_sha256)) &&
+    SHA.test(String(miaPilot.mia_admission_sha256)) &&
+    miaPilot.current_source_replay === "not_performed" &&
+    miaPilot.comparison_eligible === false &&
+    miaPilot.promotion_authorized === false &&
+    miaPilot.trading_claim_authorized === false &&
+    miaPilot.private_content_exported === false &&
+    miaPilot.arms === null;
+  const miaArms = obj(miaPilot?.arms) ? miaPilot.arms : null;
+  const miaGemma = pilotArm(miaArms?.gemma);
+  const miaFlash = pilotArm(miaArms?.mia);
   const payoff = obj(view?.payoff_jobs) ? view.payoff_jobs : null;
   const bridges = guardedRows(view?.guarded_research_attempts);
   const bridgeLatest = bridges?.find(row =>
@@ -232,6 +292,28 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
     own.zero_regret <= own.complete && joint.zero_regret <= joint.complete &&
     own.complete + joint.complete === empirical.complete_episodes &&
     own.zero_regret + joint.zero_regret === behavior.zero_regret_complete_episodes;
+  const miaAdmitted = pilotRecorded && behaviorBound && miaPilot &&
+    miaPilot.schema_version === MIA_PILOT_SCHEMA &&
+    miaPilot.window_id === MIA_PILOT_ID &&
+    miaPilot.status === "admitted_descriptive" &&
+    SHA.test(String(miaPilot.window_raw_sha256)) &&
+    SHA.test(String(miaPilot.report_raw_sha256)) &&
+    SHA.test(String(miaPilot.index_raw_sha256)) &&
+    SHA.test(String(miaPilot.report_source_sha256)) &&
+    SHA.test(String(miaPilot.mia_admission_sha256)) &&
+    miaPilot.matched_gemma_admission_sha256 === empirical?.admission_receipt_sha256 &&
+    miaPilot.current_source_replay === "not_performed" &&
+    miaPilot.comparison_eligible === false &&
+    miaPilot.promotion_authorized === false &&
+    miaPilot.trading_claim_authorized === false &&
+    miaPilot.private_content_exported === false &&
+    miaArms && Object.keys(miaArms).sort().join() === "gemma,mia" &&
+    miaGemma && miaFlash &&
+    miaGemma.attempted_calls === empirical?.attempted_calls &&
+    miaGemma.valid_action_calls === behavior?.valid_action_calls &&
+    miaGemma.complete_episodes === behavior?.complete_episodes &&
+    miaGemma.zero_regret_complete_episodes === behavior?.zero_regret_complete_episodes &&
+    miaGemma.arithmetic_passed === behavior?.comprehension_passed;
   const successorWork = plannedWork && workCode === "activate_registered_successor" &&
     plannedWork.activation_required === true && nextId === plannedWork.campaign_id &&
     next?.manifest_sha256 === plannedWork.manifest_sha256;
@@ -346,6 +428,40 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
           </dd>}
           <dd className="mt-1 text-xs text-[var(--fg-muted)]">Current source replay was not performed. The continuous-weight hypothesis remains unconfirmed; no strategic causal claim is made.</dd>
         </div>}
+        <div className="rounded border border-[var(--border-1)] p-3">
+          <dt className="font-semibold">Matched known-opponent pilot · optimized Flash</dt>
+          {miaAdmitted ? <dd className="mt-2 overflow-x-auto">
+            <table className="w-full text-left text-xs" aria-label="Descriptive matched known-opponent pilot arms">
+              <thead><tr>
+                <th scope="col" className="pr-3">Arm</th><th scope="col" className="pr-3">Calls</th>
+                <th scope="col" className="pr-3">Valid actions</th>
+                <th scope="col" className="pr-3">Complete episodes</th>
+                <th scope="col" className="pr-3">Own-payoff zero regret</th>
+                <th scope="col" className="pr-3">Joint-payoff zero regret</th>
+                <th scope="col" className="pr-3">Arithmetic comprehension</th>
+                <th scope="col">Evaluation time</th>
+              </tr></thead>
+              <tbody>{([{"label": "Resident Gemma", "arm": miaGemma},
+                {"label": "Optimized Flash Mia · MTP3", "arm": miaFlash}]).map(({label, arm}) => <tr key={label}>
+                  <th scope="row" className="pr-3 font-medium">{label}</th>
+                  <td className="pr-3">{String(arm?.attempted_calls)}/108</td>
+                  <td className="pr-3">{String(arm?.valid_action_calls)}/96</td>
+                  <td className="pr-3">{String(arm?.complete_episodes)}/12</td>
+                  <td className="pr-3">{utilityRegret(arm, "own_payoff")}</td>
+                  <td className="pr-3">{utilityRegret(arm, "joint_payoff")}</td>
+                  <td className="pr-3">{String(arm?.arithmetic_passed)}/12</td>
+                  <td>{Number(arm?.evaluator_elapsed_s).toFixed(1)} s</td>
+                </tr>)}</tbody>
+            </table>
+          </dd> : <dd className="mt-1">{miaPending
+            ? "Registered Mia window prepared; restored-window admission and descriptive comparison are pending."
+            : miaReportPending
+            ? "Archived Mia admission receipt recorded; descriptive comparison source verification is pending. Outcome counts remain withheld."
+            : "Mia matched-pilot preparation or admission is unavailable; outcome counts withheld."}</dd>}
+          <dd className="mt-1 text-xs text-[var(--fg-muted)]">{miaAdmitted
+            ? "Both arms used the same fixed tasks, policy and initial seed. Later calls followed each arm's actual prior actions, so this is a descriptive serial comparison, not independent trials or a causal model ranking. This short eight-round pilot does not test context capacity. Evaluation time excludes model setup and restoration. Zero regret is counted only among complete eight-action episodes; incomplete episodes have unknown full-horizon regret. Arithmetic comprehension uses two prompt forms repeated six times each. Private response replay ran at publication; this dashboard hashes archived refs and rederives public counts, without current-source or private replay on each poll."
+            : "The existing resident pilot is a separate arm. Preparation is not an executed call or a model score."}</dd>
+        </div>
         <div className="rounded border border-[var(--border-1)] p-3">
           <dt className="font-semibold">Guarded research attempts</dt>
           {bridges ? <>
