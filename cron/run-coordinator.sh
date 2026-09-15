@@ -92,6 +92,13 @@ if [ -z "${SEMANTIC_SCHOLAR_API_KEY:-}" ]; then
   log "WARN: search will be BLIND this cycle (ml_intern_zero_papers expected)."
 fi
 
+# Read-only next-work proposal. A consumed campaign topic queue is not proof
+# that promotions/escalations are empty, so this does not bypass the existing
+# coordinator planner or D-049/budget/pause gates. Broken source stays unknown.
+log "research-next-work (public source-bound plan follows)"
+"$PYTHON" -m orchestrator.research_ops_status --plan \
+  || log "WARN: research-next-work source unavailable; existing dispatch path retained"
+
 # The cycle. env -u MOCK_LLM (rule 10: a stubbed embedder makes the cycle
 # meaningless); NARA_SKEPTIC=1 arms the vllm-qwen skeptic seam in the critic.
 # NARA_DEBATE=1 (2026-08-16) replaces the single-shot attack with the D-065

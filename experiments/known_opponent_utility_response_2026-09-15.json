@@ -1,0 +1,35 @@
+{
+  "schema_version": "known-opponent-utility-response-study/v1",
+  "campaign_id": "v2-known-opponent-utility-20260915",
+  "study_id": "known-opponent-utility-response-pilot-v1",
+  "phase": "llm_pilot",
+  "claim_scope": "local_model_behavior_under_disclosed_script_not_theory_novelty",
+  "primary_question": "Do local model agents select utility-consistent actions across disclosed eight-round public-goods scripts under their declared own-payoff or joint-payoff objective?",
+  "opponent_regimes": ["all-retain", "all-contribute", "grim-trigger"],
+  "declared_objectives": ["own_payoff", "joint_payoff"],
+  "focal_seat_blocks": 2,
+  "scheduled_episodes": 12,
+  "scheduled_calls_per_episode": 9,
+  "source_controls": {
+    "optimal_control_path": "bench/agentic_game_theory/optimal_control.py",
+    "optimal_control_sha256": "0f3462795f874a27549f1d13498faeadd8d8bc12444ab2edd57b9cdff93d8c80",
+    "earlier_calibration_path": "experiments/agentic_game_theory_v2_calibration_2026-09-14.json",
+    "earlier_calibration_sha256": "fb061db71c586c91448f263e7e0f37630fbe9ff2781844f1647dda1d08b2c406",
+    "earlier_best_response_prereg_sha256": "12338ee3a7fc176afaa037e1f0ad8a9ea17ca2f4672d7266a1e462638f20d6cd"
+  },
+  "execution_modules": {
+    "producer_path": "experiments/known_opponent_utility/pilot.py",
+    "producer_sha256": "867008f5d66294be186307d0935f3306fa9aab1d82d462ddbc47a34bdaefde74",
+    "manifest_schema_path": "experiments/known_opponent_utility/manifest.schema.json",
+    "manifest_schema_sha256": "46894939539b6ee500f5028efe04568fc190734d6d071d17feff41d9af285bf3",
+    "independent_admission_path": "experiments/known_opponent_utility/admission.py",
+    "independent_admission_sha256": "a7594e3dab223fdf035708ca6a55fc78a0c328a3e6a46e70ee2fabf8e65dd120",
+    "experiment_outcome_bridge_path": "experiments/known_opponent_utility/loop_bridge.py",
+    "experiment_outcome_bridge_sha256": "aeaa4e12175df83d381e4d8e5bba8d3c3b418c5f473d512a79c562e5c81e75c9"
+  },
+  "execution_status": "protocol_registered_requires_exact_run_manifest_before_calls",
+  "existing_outcomes_reused": false,
+  "scientific_novelty_claimed": false,
+  "model_calls_observed": 0,
+  "external_h1_result_imported": false
+}
