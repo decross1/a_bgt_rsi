@@ -18,6 +18,7 @@ import type {
   LadderResponse,
   LoopAlert,
   TelemetrySample,
+  VllmSample,
   WorkloadHint,
 } from "../types/schemas";
 import {
@@ -92,9 +93,39 @@ export interface ServedModel {
   url: string;
   model: string | null;
   error: string | null;
+  probed_at?: string;
+  configured_model?: string;
+  configured_max_context_tokens?: number;
+  observed_max_context_tokens?: number | null;
+  deployment_role?: "production_resident" | "research_candidate";
+  benchmark_cohort?: "resident" | "flash";
+  promotion_authorized?: false;
+  models_endpoint_status?: "available" | "unreachable" | "invalid_response";
+  service_status?: "online" | "offline" | "unknown";
+  identity_status?: "match" | "mismatch" | "unknown";
+  metrics_endpoint_status?: "available" | "unreachable" | "invalid_response";
+  activity_status?: "busy" | "idle" | "unknown";
+  metrics?: VllmSample | null;
+  metrics_error?: string | null;
 }
 export const getServedModels = () =>
   getJSON<Record<string, ServedModel>>("/api/served_models");
+
+export interface ModelRuntime {
+  schema_version: "model-runtime/v1";
+  observed_at: string;
+  mode: "resident" | "candidate_research" | "transitioning" | "unknown";
+  mode_source: "qualification_state" | "none";
+  mode_source_sha256: string | null;
+  resident_services_expected: "online" | "stopped" | "unknown";
+  nara_service_expected: "running" | "paused" | "unknown";
+  run_id: string | null;
+  phase: string | null;
+  source_error: string | null;
+}
+
+export const getModelRuntime = () =>
+  getJSON<ModelRuntime>("/api/model_runtime");
 
 export const getRecentTelemetry = (limit = 300) =>
   getJSON<{ samples: TelemetrySample[] }>(`/api/telemetry/recent?limit=${limit}`);

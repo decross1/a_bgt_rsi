@@ -97,6 +97,18 @@ vi.mock("../src/api/http", () => ({
     gemma: { url: "http://localhost:8000", model: "gemma-4-26b-a4b", error: null },
     qwen: { url: "http://localhost:8001", model: "qwen3.6-27b-nvfp4-mtp", error: null },
   }),
+  getModelRuntime: vi.fn().mockResolvedValue({
+    schema_version: "model-runtime/v1",
+    observed_at: new Date().toISOString(),
+    mode: "unknown",
+    mode_source: "none",
+    mode_source_sha256: null,
+    resident_services_expected: "unknown",
+    nara_service_expected: "unknown",
+    run_id: null,
+    phase: null,
+    source_error: null,
+  }),
   getWorkloadHint: vi.fn().mockResolvedValue({
     available: false,
     sample_size: 0,
@@ -173,10 +185,33 @@ vi.mock("../src/api/activity", () => ({
 }));
 
 import Pulse, { stripMonitorChurn } from "../src/routes/Pulse";
-import { getLabTodo } from "../src/api/http";
+import { getLabTodo, type ServedModel } from "../src/api/http";
 import type { MonitorResponse } from "../src/types/activity";
 
 const baselineTelemetry = D.samples;
+
+function modelInventoryRow(overrides: Partial<ServedModel> = {}): ServedModel {
+  return {
+    url: "http://127.0.0.1:8000",
+    model: "model",
+    error: null,
+    probed_at: new Date().toISOString(),
+    configured_model: "model",
+    configured_max_context_tokens: 16384,
+    observed_max_context_tokens: 16384,
+    deployment_role: "production_resident",
+    benchmark_cohort: "resident",
+    promotion_authorized: false,
+    models_endpoint_status: "available",
+    service_status: "online",
+    identity_status: "match",
+    metrics_endpoint_status: "available",
+    activity_status: "idle",
+    metrics: D.samples[0].vllm,
+    metrics_error: null,
+    ...overrides,
+  };
+}
 
 afterEach(() => {
   D.samples = baselineTelemetry.map((sample) => ({
@@ -487,6 +522,237 @@ describe("Pulse (/)", () => {
       </MemoryRouter>,
     );
     expect(await screen.findAllByText("unknown")).toHaveLength(2);
+  });
+
+  it("renders every configured endpoint from the dynamic inventory without promoting the candidate", async () => {
+    const http = await import("../src/api/http");
+    (http.getServedModels as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      gemma: modelInventoryRow({ model: "gemma-live", configured_model: "gemma-live" }),
+      qwen: modelInventoryRow({ url: "http://127.0.0.1:8001", model: "qwen-live", configured_model: "qwen-live" }),
+      flash: modelInventoryRow({
+        url: "http://127.0.0.1:8012",
+        model: null,
+        configured_model: "qwen3.8-flash-next",
+        deployment_role: "research_candidate",
+        benchmark_cohort: "flash",
+        service_status: "offline",
+        models_endpoint_status: "unreachable",
+        identity_status: "unknown",
+        metrics_endpoint_status: "unreachable",
+        activity_status: "unknown",
+        metrics: null,
+      }),
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+
+    expect(await screen.findByText("3 configured endpoints")).toBeInTheDocument();
+    expect(screen.getByText("2 online")).toBeInTheDocument();
+    expect(screen.getByText("gemma-live")).toBeInTheDocument();
+    expect(screen.getByText("qwen-live")).toBeInTheDocument();
+    expect(screen.getByText("qwen3.8-flash-next")).toBeInTheDocument();
+    expect(screen.getByTestId("flash-inventory")).toHaveTextContent("Research candidate");
+    expect(screen.getByTestId("flash-inventory")).toHaveTextContent("Evaluation only");
+    expect(screen.getByTestId("flash-inventory")).toHaveTextContent(":8012");
+    expect(screen.getByTestId("unobserved-flash-status")).toHaveTextContent("not serving");
+  });
+
+  it("does not present a partial inventory response as a complete model catalog", async () => {
+    const http = await import("../src/api/http");
+    (http.getServedModels as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      gemma: modelInventoryRow({ model: "gemma-live", configured_model: "gemma-live" }),
+      qwen: modelInventoryRow({ model: "qwen-live", configured_model: "qwen-live" }),
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+
+    expect(await screen.findByTestId("model-inventory-legacy")).toHaveTextContent(
+      "Detailed endpoint inventory is unavailable",
+    );
+    expect(screen.queryByText("3 configured endpoints")).toBeNull();
+    expect(screen.queryByText("2 configured endpoints")).toBeNull();
+  });
+
+  it("labels a controller-bound candidate window without claiming the lab is healthy", async () => {
+    const http = await import("../src/api/http");
+    D.connected = false;
+    D.samples = D.samples.map((sample) => ({
+      ...sample,
+      vllm: null,
+      read_errors: { psutil: "unavailable" },
+    }));
+    (http.getServedModels as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      gemma: modelInventoryRow({
+        model: null,
+        configured_model: "gemma-4-26b-a4b",
+        service_status: "offline",
+        models_endpoint_status: "unreachable",
+        identity_status: "unknown",
+        metrics_endpoint_status: "unreachable",
+        activity_status: "unknown",
+        metrics: null,
+      }),
+      qwen: modelInventoryRow({
+        url: "http://127.0.0.1:8001",
+        model: null,
+        configured_model: "qwen3.8-27b-nvfp4-mtp",
+        service_status: "offline",
+        models_endpoint_status: "unreachable",
+        identity_status: "unknown",
+        metrics_endpoint_status: "unreachable",
+        activity_status: "unknown",
+        metrics: null,
+      }),
+      flash: modelInventoryRow({
+        url: "http://127.0.0.1:8012",
+        model: null,
+        configured_model: "qwen3.8-flash-next",
+        deployment_role: "research_candidate",
+        benchmark_cohort: "flash",
+        service_status: "offline",
+        models_endpoint_status: "unreachable",
+        identity_status: "unknown",
+        metrics_endpoint_status: "unreachable",
+        activity_status: "unknown",
+        metrics: null,
+      }),
+    });
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1",
+      observed_at: new Date().toISOString(),
+      mode: "candidate_research",
+      mode_source: "qualification_state",
+      mode_source_sha256: "a".repeat(64),
+      resident_services_expected: "stopped",
+      nara_service_expected: "paused",
+      run_id: "qfn-c0-001",
+      phase: "readiness",
+      source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "research"),
+    );
+    const verdict = screen.getByTestId("health-verdict");
+    expect(verdict).toHaveTextContent("RESEARCH WINDOW");
+    expect(verdict).toHaveTextContent("Resident model services are expected to be stopped");
+    expect(verdict).toHaveTextContent("During this phase Nara is expected paused");
+    expect(screen.getByTestId("runtime-observability-warning")).toHaveTextContent(
+      "telemetry disconnected",
+    );
+    expect(screen.getByTestId("runtime-observability-warning")).toHaveTextContent(
+      "read errors: psutil",
+    );
+    expect(screen.getByTestId("unobserved-gemma-status")).toHaveTextContent(
+      "offline · expected during research",
+    );
+    expect(screen.getByTestId("unobserved-qwen-status")).toHaveTextContent(
+      "offline · expected during research",
+    );
+    expect(screen.getByTestId("unobserved-flash-status")).toHaveTextContent("starting");
+    expect(screen.getByTestId("unobserved-flash-status")).not.toHaveClass("text-red-400");
+    expect(verdict).not.toHaveTextContent(/HEALTHY|all systems nominal|DOWN/);
+  });
+
+  it("labels controller setup as preparation without implying model services changed", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1",
+      observed_at: new Date().toISOString(),
+      mode: "transitioning",
+      mode_source: "qualification_state",
+      mode_source_sha256: "c".repeat(64),
+      resident_services_expected: "unknown",
+      nara_service_expected: "unknown",
+      run_id: "qfn-c0-setup",
+      phase: "model_verification",
+      source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "transitioning"),
+    );
+    expect(screen.getByRole("heading", { name: "Preparing research window" })).toBeInTheDocument();
+    expect(screen.getByTestId("health-verdict")).toHaveTextContent("PREPARING");
+    expect(screen.getByTestId("health-verdict")).toHaveTextContent(
+      "model services have not been changed in this phase",
+    );
+    expect(screen.getByTestId("health-verdict")).not.toHaveTextContent(
+      "Model runtime transition is recorded",
+    );
+  });
+
+  it("does not trust a runtime receipt that carries a source error", async () => {
+    const http = await import("../src/api/http");
+    D.samples = D.samples.map((sample) => ({ ...sample, vllm: null }));
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1",
+      observed_at: new Date().toISOString(),
+      mode: "candidate_research",
+      mode_source: "qualification_state",
+      mode_source_sha256: "d".repeat(64),
+      resident_services_expected: "stopped",
+      nara_service_expected: "paused",
+      run_id: "qfn-c0-error",
+      phase: "probes",
+      source_error: "projection failed",
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "down"),
+    );
+    expect(screen.getByTestId("health-verdict")).not.toHaveTextContent("RESEARCH WINDOW");
+  });
+
+  it("does not excuse a resident outage from an unbound runtime payload", async () => {
+    const http = await import("../src/api/http");
+    D.samples = D.samples.map((sample) => ({ ...sample, vllm: null }));
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1",
+      observed_at: new Date().toISOString(),
+      mode: "candidate_research",
+      mode_source: "none",
+      mode_source_sha256: null,
+      resident_services_expected: "stopped",
+      nara_service_expected: "paused",
+      run_id: null,
+      phase: null,
+      source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "down"),
+    );
+    const verdict = screen.getByTestId("health-verdict");
+    expect(verdict).toHaveAttribute("data-level", "down");
+    expect(verdict).toHaveTextContent("Gemma model server unreachable");
+  });
+
+  it("expires a formerly bound research-window receipt instead of retaining planned-stop semantics", async () => {
+    const http = await import("../src/api/http");
+    D.samples = D.samples.map((sample) => ({ ...sample, vllm: null }));
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1",
+      observed_at: new Date(Date.now() - 60_000).toISOString(),
+      mode: "candidate_research",
+      mode_source: "qualification_state",
+      mode_source_sha256: "b".repeat(64),
+      resident_services_expected: "stopped",
+      nara_service_expected: "paused",
+      run_id: "qfn-c0-stale",
+      phase: "probes",
+      source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "down"),
+    );
+    const verdict = screen.getByTestId("health-verdict");
+    expect(verdict).toHaveAttribute("data-level", "down");
+    expect(verdict).not.toHaveTextContent("RESEARCH WINDOW");
   });
 });
 
