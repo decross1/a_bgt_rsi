@@ -41,11 +41,22 @@ def initial():
     }
 
 
-def fixture(tmp_path, *, phase="readiness", memory_age_s=1, schema=None):
+def fixture(
+    tmp_path,
+    *,
+    phase="readiness",
+    memory_age_s=1,
+    memory_available_gib=31,
+    memory_floor_gib=20,
+    schema=None,
+):
     root = tmp_path / "qualification-runs"
     run = root / RUN_ID
     run.mkdir(parents=True)
-    plan = {"invocation_deadline_seconds": 3600}
+    plan = {
+        "invocation_deadline_seconds": 3600,
+        "min_mem_available_gib": memory_floor_gib,
+    }
     contract_raw = b'{"fixed":"contract"}'
     (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
     (run / "launch-contract.raw.json").write_bytes(contract_raw)
@@ -71,7 +82,7 @@ def fixture(tmp_path, *, phase="readiness", memory_age_s=1, schema=None):
         "schema": "qwen-flash-next-memory-sample/v2",
         "observed_at": (NOW - timedelta(seconds=memory_age_s)).isoformat(),
         "monitor_phase": "mutation",
-        "mem_available_gib": 31,
+        "mem_available_gib": memory_available_gib,
         "mutation_pswpout_delta_pages": 0,
     }
     (run / "memory.jsonl").write_text(json.dumps(memory) + "\n", encoding="utf-8")
@@ -148,6 +159,23 @@ def test_stale_memory_or_reused_pid_fails_unknown(tmp_path):
     root, _run, proc, boot, _state, _plan = fixture(tmp_path / "pid")
     stat_path = proc / str(PID) / "stat"
     stat_path.write_text(stat_path.read_text().replace(str(TICKS), "123"))
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+
+def test_memory_gate_uses_the_registered_plan_floor(tmp_path):
+    root, _run, proc, boot, _state, _plan = fixture(
+        tmp_path / "at-floor", memory_available_gib=20
+    )
+    assert project(root, proc, boot)["mode"] == "candidate_research"
+
+    root, _run, proc, boot, _state, _plan = fixture(
+        tmp_path / "below-floor", memory_available_gib=19.999
+    )
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+    root, _run, proc, boot, _state, _plan = fixture(
+        tmp_path / "bad-floor", memory_floor_gib=float("inf")
+    )
     assert project(root, proc, boot)["mode"] == "unknown"
 
 

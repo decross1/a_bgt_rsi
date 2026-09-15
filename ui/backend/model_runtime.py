@@ -330,8 +330,9 @@ def _validate_process(
         raise RuntimeSourceError("worker command differs from the allowlist")
 
 
-def _latest_memory(run_fd: int, now: datetime, *, mutation: bool
-                   ) -> tuple[dict[str, Any], str]:
+def _latest_memory(
+    run_fd: int, now: datetime, *, floor_gib: float, mutation: bool
+) -> tuple[dict[str, Any], str]:
     raw = _read_fd(
         run_fd, "memory.jsonl", maximum=MAX_MEMORY_BYTES, label="memory gate"
     )
@@ -344,12 +345,16 @@ def _latest_memory(run_fd: int, now: datetime, *, mutation: bool
     age = (now - observed_at).total_seconds()
     available = row.get("mem_available_gib")
     if (
-        age < -MAX_CLOCK_SKEW_SECONDS
+        isinstance(floor_gib, bool)
+        or not isinstance(floor_gib, (int, float))
+        or not math.isfinite(floor_gib)
+        or floor_gib <= 0
+        or age < -MAX_CLOCK_SKEW_SECONDS
         or age > MAX_MEMORY_AGE_SECONDS
         or isinstance(available, bool)
         or not isinstance(available, (int, float))
         or not math.isfinite(available)
-        or available < 30
+        or available < floor_gib
     ):
         raise RuntimeSourceError("memory gate sample is stale or below its floor")
     if row.get("schema") != MEMORY_SCHEMA:
@@ -547,6 +552,7 @@ def project_model_runtime(
             _, memory_sha = _latest_memory(
                 run_fd,
                 observed,
+                floor_gib=plan.get("min_mem_available_gib"),
                 mutation=phase in CANDIDATE_PHASES or phase in TRANSITION_PHASES,
             )
             if phase in CANDIDATE_PHASES:
