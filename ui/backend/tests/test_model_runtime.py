@@ -50,11 +50,18 @@ def result_receipt(state, plan, restoration):
         "contract_sha256": state["contract_sha256"],
         "plan_sha256": canonical_sha(plan),
         "status": "failed",
-        "profile": "C0-S0",
+        "profile": "C0-S1",
         "docker_memory_limit_bytes": q.DOCKER_MEMORY_LIMIT_BYTES,
         "docker_memory_swap_total_bytes": q.DOCKER_MEMORY_SWAP_TOTAL_BYTES,
         "cgroup_diagnostics_sha256": None,
         "memory_log_sha256": None,
+        "failure_class": "other_qualification_failure",
+        "pswpin_initial_pages": 7,
+        "pswpin_final_pages": 7,
+        "pswpin_delta_pages": 0,
+        "host_memory_psi_initial_us": {"some": 100, "full": 10},
+        "host_memory_psi_final_us": {"some": 100, "full": 10},
+        "host_memory_psi_delta_us": {"some": 0, "full": 0},
         "restoration": restoration,
     }
 
@@ -73,14 +80,14 @@ def fixture(
     run = root / RUN_ID
     run.mkdir(parents=True)
     plan = {
-        "profile": "C0-S0",
+        "profile": "C0-S1",
         "invocation_deadline_seconds": 3600,
         "min_mem_available_gib": memory_floor_gib,
         "ready_quiescence_seconds": 60,
         "paging_policy": q.PAGING_POLICY,
     }
     contract_raw = json.dumps({
-        "profile": "C0-S0",
+        "profile": "C0-S1",
         "runtime": {
             "docker_memory_limit_bytes": q.DOCKER_MEMORY_LIMIT_BYTES,
             "docker_memory_swap_total_bytes": q.DOCKER_MEMORY_SWAP_TOTAL_BYTES,
@@ -169,6 +176,10 @@ def fixture(
         "host_page_size_bytes": 4096,
         "pswpout_pages": 10,
         "pswpout_delta_pages": 0,
+        "pswpin_pages": 7,
+        "pswpin_delta_pages": 0,
+        "host_memory_psi_total_us": {"some": 100, "full": 10},
+        "host_memory_psi_delta_us": {"some": 0, "full": 0},
         "paging_gate": {
             "setup": "setup",
             "load": "startup",
@@ -430,7 +441,7 @@ def test_candidate_mode_requires_matching_live_cgroup_evidence(tmp_path):
     assert project(root, proc, boot)["mode"] == "unknown"
 
 
-def test_registered_c0_s0_profile_and_docker_swap_controls_are_required(tmp_path):
+def test_registered_c0_s1_profile_and_docker_swap_controls_are_required(tmp_path):
     root, run, proc, boot, state, plan = fixture(tmp_path / "plan")
     plan["profile"] = "C0-legacy"
     write_json(run / "plan.json", plan)
@@ -502,9 +513,72 @@ def test_registered_v3_memory_reader_accepts_more_than_legacy_four_megabytes(tmp
 
 
 @pytest.mark.parametrize(
+    "field",
+    [
+        "pswpin_pages", "pswpin_delta_pages",
+        "host_memory_psi_total_us", "host_memory_psi_delta_us",
+    ],
+)
+def test_s1_raw_pagein_and_pressure_diagnostics_are_required(tmp_path, field):
+    root, run, proc, boot, _state, _plan = fixture(tmp_path)
+    memory_path = run / "memory.jsonl"
+    sample = json.loads(memory_path.read_text())
+    del sample[field]
+    memory_path.write_text(json.dumps(sample) + "\n", encoding="utf-8")
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+
+def test_s1_pagein_and_pressure_are_monotonic_across_the_full_bounded_log(tmp_path):
+    root, run, proc, boot, _state, _plan = fixture(tmp_path)
+    memory_path = run / "memory.jsonl"
+    final = json.loads(memory_path.read_text())
+    earlier = json.loads(json.dumps(final))
+    earlier["pswpin_pages"] = 8
+    earlier["pswpin_delta_pages"] = 1
+    earlier["host_memory_psi_total_us"]["some"] = 101
+    earlier["host_memory_psi_delta_us"]["some"] = 1
+    memory_path.write_text(
+        json.dumps(earlier) + "\n" + json.dumps(final) + "\n", encoding="utf-8"
+    )
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+    earlier = json.loads(json.dumps(final))
+    later = json.loads(json.dumps(final))
+    later["pswpin_pages"] = 8
+    later["pswpin_delta_pages"] = 0  # Raw counter rose without its delta.
+    memory_path.write_text(
+        json.dumps(earlier) + "\n" + json.dumps(later) + "\n", encoding="utf-8"
+    )
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+    memory_path.write_text("{malformed}\n" + json.dumps(final) + "\n")
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+
+def test_s1_pagein_and_pressure_magnitude_is_diagnostic_not_a_new_hard_gate(
+    tmp_path,
+):
+    root, run, proc, boot, _state, _plan = fixture(tmp_path)
+    memory_path = run / "memory.jsonl"
+    first = json.loads(memory_path.read_text())
+    later = json.loads(json.dumps(first))
+    later["pswpin_pages"] = 100_000
+    later["pswpin_delta_pages"] = 100_000 - first["pswpin_pages"]
+    later["host_memory_psi_total_us"] = {"some": 1_000_000, "full": 100_000}
+    later["host_memory_psi_delta_us"] = {
+        "some": 1_000_000 - first["host_memory_psi_total_us"]["some"],
+        "full": 100_000 - first["host_memory_psi_total_us"]["full"],
+    }
+    memory_path.write_text(
+        json.dumps(first) + "\n" + json.dumps(later) + "\n", encoding="utf-8"
+    )
+    assert project(root, proc, boot)["mode"] == "candidate_research"
+
+
+@pytest.mark.parametrize(
     "field", ["profile", "docker_memory_limit_bytes", "memory_log_sha256"]
 )
-def test_terminal_c0_s0_receipt_profile_and_paired_hashes_are_bound(tmp_path, field):
+def test_terminal_c0_s1_receipt_profile_and_paired_hashes_are_bound(tmp_path, field):
     root, run, proc, boot, state, plan = fixture(tmp_path, phase="complete")
     restoration = {
         "status": "verified", "errors": [], "sentinel_retained": False,
@@ -519,6 +593,31 @@ def test_terminal_c0_s0_receipt_profile_and_paired_hashes_are_bound(tmp_path, fi
         receipt[field] += 4096
     else:
         receipt[field] = "d" * 64  # One diagnostic hash without its memory partner.
+    write_json(run / "result.json", receipt)
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["failure_class", "pswpin_delta_pages", "host_memory_psi_delta_us"],
+)
+def test_terminal_s1_failure_class_and_raw_channel_identities_are_bound(
+    tmp_path, field
+):
+    root, run, proc, boot, state, plan = fixture(tmp_path, phase="complete")
+    restoration = {
+        "status": "verified", "errors": [], "sentinel_retained": False,
+        "verified_at": NOW.isoformat(),
+    }
+    state["restoration"] = restoration
+    write_json(run / "state.json", state)
+    receipt = result_receipt(state, plan, restoration)
+    if field == "failure_class":
+        receipt[field] = "model_fitness_rejected"  # Not a registered claim.
+    elif field == "pswpin_delta_pages":
+        receipt[field] = 1
+    else:
+        receipt[field]["some"] = 1
     write_json(run / "result.json", receipt)
     assert project(root, proc, boot)["mode"] == "unknown"
 

@@ -78,9 +78,12 @@ KV_CACHE_MEMORY_BYTES = 2 * 1024**3
 # registered diagnostic profile; actual full-load fit still needs a new C0.
 DOCKER_MEMORY_LIMIT_BYTES = 96 * 1024**3
 DOCKER_MEMORY_SWAP_TOTAL_BYTES = DOCKER_MEMORY_LIMIT_BYTES
-LOAD_SWAP_5S_BREACH_BYTES = 128 * 1024**2
-LOAD_SWAP_60S_BREACH_BYTES = 256 * 1024**2
-LOAD_SWAP_TOTAL_BREACH_BYTES = 512 * 1024**2
+# Exploratory cold-load pageout guardrails, distinct from a hardware-fit claim.
+# Candidate-attributed swap remains exactly zero, the host floor remains 20 GiB,
+# and ready/serving gates remain unchanged from the observed S0 failure.
+LOAD_SWAP_5S_BREACH_BYTES = 512 * 1024**2
+LOAD_SWAP_60S_BREACH_BYTES = 2 * 1024**3
+LOAD_SWAP_TOTAL_BREACH_BYTES = 4 * 1024**3
 SERVING_SWAP_5S_BREACH_BYTES = 32 * 1024**2
 SERVING_SWAP_60S_BREACH_BYTES = 64 * 1024**2
 SERVING_SWAP_TOTAL_BREACH_BYTES = 128 * 1024**2
@@ -109,6 +112,43 @@ PAGING_POLICY = {
 FAILURE_STAGES = frozenset(
     {"setup", "candidate_start", "readiness", "probes", "evaluation", "restoration", "unknown"}
 )
+
+
+def _failure_class(
+    status: str, error: str | None, restoration: dict[str, Any], monitor: Any
+) -> str | None:
+    if status == "passed":
+        return None
+    if status == "unknown":
+        return "restoration_unknown"
+    first = getattr(monitor, "failure", None)
+    only_startup_guard = (
+        isinstance(first, str)
+        and first.startswith("startup host swap reached the ")
+        and isinstance(error, str)
+        and error.endswith(first)
+        and restoration.get("status") == "verified"
+        and getattr(monitor, "emergency_stop_at", None) is not None
+        and getattr(monitor, "candidate_cgroup_samples", 0) > 0
+        and getattr(monitor, "candidate_cgroup_swap_peak_bytes", None) == 0
+        and getattr(monitor, "candidate_cgroup_oom_initial", None) == 0
+        and getattr(monitor, "candidate_cgroup_oom_final", None) == 0
+        and getattr(monitor, "candidate_cgroup_oom_kill_initial", None) == 0
+        and getattr(monitor, "candidate_cgroup_oom_kill_final", None) == 0
+        and getattr(monitor, "minimum_observed_gib", 0) >= MIN_MEMORY_GIB
+        and all(
+            isinstance(reason, str)
+            and (
+                reason.startswith("startup host swap reached the ")
+                or reason == "candidate disappeared or stopped while qualified runtime was armed"
+            )
+            for reason in getattr(monitor, "violations", [])
+        )
+    )
+    return (
+        "experimental_startup_host_pageout_guardrail_abort"
+        if only_startup_guard else "other_qualification_failure"
+    )
 
 WEIGHT_FILES: dict[str, tuple[int, str]] = {
     "model-00001-of-00010.safetensors": (3115991696, "63fde954be6f08b49b876f4f70a0ad0bcfee71aff7b1faa33779b6b32feca2a2"),
@@ -330,8 +370,8 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
     )
     if (
         value["schema"] != "qwen-flash-next-qualification/v3"
-        or value["contract_id"] != "qwen38-flash-next-c0-s0-20260915"
-        or value["profile"] != "C0-S0"
+        or value["contract_id"] != "qwen38-flash-next-c0-s1-20260915"
+        or value["profile"] != "C0-S1"
         or value["probe_set"] != "flash-next-minimal-v1"
     ):
         raise QualificationError("contract identity is not registered")
@@ -540,7 +580,7 @@ def plan_qualification(
         "schema": "qwen-flash-next-qualification-plan/v3",
         "contract_id": contract["contract_id"],
         "contract_sha256": contract_sha256,
-        "profile": "C0-S0",
+        "profile": "C0-S1",
         "image_id": IMAGE_ID,
         "model_artifact_sha256": model_artifact_sha256(),
         "model_path": str(MODEL_PATH),
@@ -717,6 +757,37 @@ def _pswpout_pages() -> int:
     if not match:
         raise QualificationError("host pswpout is unavailable")
     return int(match[1])
+
+
+def _pswpin_pages() -> int:
+    match = re.search(
+        r"^pswpin\s+(\d+)$", Path("/proc/vmstat").read_text(), re.MULTILINE
+    )
+    if not match:
+        raise QualificationError("host pswpin is unavailable")
+    return int(match[1])
+
+
+def _host_memory_psi_totals() -> dict[str, int]:
+    """Kernel stall microseconds: diagnostic evidence, no arbitrary PSI gate."""
+    raw = _bounded_nofollow_bytes(Path("/proc/pressure/memory"), max_bytes=1024)
+    try:
+        lines = raw.decode("ascii").splitlines()
+    except UnicodeDecodeError as exc:
+        raise QualificationError("host memory PSI is malformed") from exc
+    totals: dict[str, int] = {}
+    pattern = re.compile(
+        r"^(some|full) avg10=\d+\.\d{2} avg60=\d+\.\d{2} "
+        r"avg300=\d+\.\d{2} total=(\d+)$"
+    )
+    for line in lines:
+        match = pattern.fullmatch(line)
+        if match is None or match[1] in totals:
+            raise QualificationError("host memory PSI has an unexpected shape")
+        totals[match[1]] = int(match[2])
+    if set(totals) != {"some", "full"}:
+        raise QualificationError("host memory PSI stall counters are incomplete")
+    return totals
 
 
 def _bounded_nofollow_bytes(
@@ -904,6 +975,8 @@ class MemoryMonitor:
         interval_s: float = 1,
         reader: Callable[[], float] = _available_gib,
         swap_reader: Callable[[], int] = _pswpout_pages,
+        swapin_reader: Callable[[], int] = _pswpin_pages,
+        psi_reader: Callable[[], dict[str, int]] = _host_memory_psi_totals,
         cgroup_reader: Callable[[str, int], dict[str, Any]] = _candidate_cgroup_snapshot,
         paging_policy: dict[str, Any] | None = None,
         clock: Callable[[], float] | None = None,
@@ -914,6 +987,8 @@ class MemoryMonitor:
         self.interval_s = interval_s
         self.reader = reader
         self.swap_reader = swap_reader
+        self.swapin_reader = swapin_reader
+        self.psi_reader = psi_reader
         self.cgroup_reader = cgroup_reader
         self.paging_policy = json.loads(
             canonical_json(paging_policy if paging_policy is not None else PAGING_POLICY)
@@ -955,6 +1030,10 @@ class MemoryMonitor:
         self.samples = 0
         self.initial_pswpout: int | None = None
         self.final_pswpout: int | None = None
+        self.initial_pswpin: int | None = None
+        self.final_pswpin: int | None = None
+        self.initial_host_psi_totals: dict[str, int] | None = None
+        self.final_host_psi_totals: dict[str, int] | None = None
         self.mutation_initial_pswpout: int | None = None
         self.mutation_final_pswpout: int | None = None
         self.mutation_window_started_at: str | None = None
@@ -1252,6 +1331,16 @@ class MemoryMonitor:
             pswpout = self.swap_reader()
             if isinstance(pswpout, bool) or not isinstance(pswpout, int) or pswpout < 0:
                 raise ValueError("invalid pswpout")
+            pswpin = self.swapin_reader()
+            if isinstance(pswpin, bool) or not isinstance(pswpin, int) or pswpin < 0:
+                raise ValueError("invalid pswpin")
+            host_psi = self.psi_reader()
+            if (
+                not isinstance(host_psi, dict)
+                or set(host_psi) != {"some", "full"}
+                or any(type(value) is not int or value < 0 for value in host_psi.values())
+            ):
+                raise ValueError("invalid host memory PSI totals")
             raw_mono = self.clock()
             if (
                 isinstance(raw_mono, bool)
@@ -1277,6 +1366,10 @@ class MemoryMonitor:
                 if self.initial_pswpout is None:
                     self.initial_pswpout = pswpout
                     self.final_pswpout = pswpout
+                    self.initial_pswpin = pswpin
+                    self.final_pswpin = pswpin
+                    self.initial_host_psi_totals = dict(host_psi)
+                    self.final_host_psi_totals = dict(host_psi)
                     self._phase_initial_pswpout = pswpout
                     self._phase_started_at = observed_at
                     self._phase_started_mono = observed_mono
@@ -1300,6 +1393,16 @@ class MemoryMonitor:
                     raise QualificationError("memory monitor prior counter is absent")
                 if pswpout < previous_pswpout:
                     raise ValueError("pswpout decreased during one boot")
+                if (
+                    self.final_pswpin is None
+                    or self.final_host_psi_totals is None
+                    or pswpin < self.final_pswpin
+                    or any(
+                        host_psi[key] < self.final_host_psi_totals[key]
+                        for key in ("some", "full")
+                    )
+                ):
+                    raise ValueError("host pswpin or memory PSI counter decreased")
                 if begin_phase is not None:
                     if begin_phase == "load" and (
                         not self.setup_quiescence_passed
@@ -1355,6 +1458,8 @@ class MemoryMonitor:
             self.samples += 1
             self.minimum_observed_gib = min(self.minimum_observed_gib, available)
             self.final_pswpout = pswpout
+            self.final_pswpin = pswpin
+            self.final_host_psi_totals = dict(host_psi)
             if self.mutation_initial_pswpout is not None:
                 self.mutation_final_pswpout = pswpout
                 self.mutation_final_sample_at = observed_at
@@ -1424,6 +1529,13 @@ class MemoryMonitor:
                 "host_page_size_bytes": page_size,
                 "pswpout_pages": pswpout,
                 "pswpout_delta_pages": pswpout - self.initial_pswpout,
+                "pswpin_pages": pswpin,
+                "pswpin_delta_pages": pswpin - self.initial_pswpin,
+                "host_memory_psi_total_us": dict(host_psi),
+                "host_memory_psi_delta_us": {
+                    key: host_psi[key] - self.initial_host_psi_totals[key]
+                    for key in ("some", "full")
+                },
                 "phase_initial_pswpout_pages": phase_initial,
                 "phase_pswpout_delta_pages": phase_delta_pages,
                 "phase_pswpout_delta_bytes": phase_delta_bytes,
@@ -2726,6 +2838,9 @@ def execute_worker(
         "status": status,
         "failure_stage": failure_stage,
         "qualification_error": qualification_error or monitor.failure,
+        "failure_class": _failure_class(
+            status, qualification_error or monitor.failure, restoration, monitor
+        ),
         "restoration": restoration,
         "contract_sha256": plan["contract_sha256"],
         "plan_sha256": sha256(plan),
@@ -2757,6 +2872,30 @@ def execute_worker(
             monitor.final_pswpout - monitor.initial_pswpout
             if getattr(monitor, "initial_pswpout", None) is not None
             and getattr(monitor, "final_pswpout", None) is not None
+            else None
+        ),
+        "pswpin_initial_pages": getattr(monitor, "initial_pswpin", None),
+        "pswpin_final_pages": getattr(monitor, "final_pswpin", None),
+        "pswpin_delta_pages": (
+            monitor.final_pswpin - monitor.initial_pswpin
+            if getattr(monitor, "initial_pswpin", None) is not None
+            and getattr(monitor, "final_pswpin", None) is not None
+            else None
+        ),
+        "host_memory_psi_initial_us": getattr(
+            monitor, "initial_host_psi_totals", None
+        ),
+        "host_memory_psi_final_us": getattr(
+            monitor, "final_host_psi_totals", None
+        ),
+        "host_memory_psi_delta_us": (
+            {
+                key: monitor.final_host_psi_totals[key]
+                - monitor.initial_host_psi_totals[key]
+                for key in ("some", "full")
+            }
+            if getattr(monitor, "initial_host_psi_totals", None) is not None
+            and getattr(monitor, "final_host_psi_totals", None) is not None
             else None
         ),
         "setup_pswpout_initial_pages": getattr(monitor, "initial_pswpout", None),
@@ -2909,7 +3048,7 @@ def execute_worker(
         output, state.get("candidate_id"), required=status == "passed"
     )
     result.update(
-        profile="C0-S0",
+        profile="C0-S1",
         docker_memory_limit_bytes=DOCKER_MEMORY_LIMIT_BYTES,
         docker_memory_swap_total_bytes=DOCKER_MEMORY_SWAP_TOTAL_BYTES,
         cgroup_diagnostics_sha256=diagnostic_sha256,
@@ -2984,27 +3123,52 @@ def _write_cgroup_diagnostics(
 
     memory_file = output / "memory.jsonl"
     raw, observed = _read_regular_file(
-        memory_file, label="C0-S0 raw memory", max_bytes=32 * 1024 * 1024
+        memory_file, label="C0-S1 raw memory", max_bytes=32 * 1024 * 1024
     )
     if observed != memory_file.absolute():
-        raise QualificationError("C0-S0 raw memory redirected")
+        raise QualificationError("C0-S1 raw memory redirected")
     phase_rows: dict[str, dict[str, Any]] = {}
+    host_phase_rows: dict[str, dict[str, Any]] = {}
     attributed = 0
     max_current = 0
     for index, line in enumerate(raw.splitlines(), 1):
-        row = _strict_json(line, source=f"C0-S0 memory line {index}")
+        row = _strict_json(line, source=f"C0-S1 memory line {index}")
+        phase = row.get("monitor_phase")
+        if row.get("schema") == "qwen-flash-next-memory-sample/v3" and phase in {
+            "setup", "load", "ready", "probes", "restoration"
+        }:
+            pswpin = row.get("pswpin_pages")
+            psi = row.get("host_memory_psi_total_us")
+            if (
+                type(pswpin) is not int or pswpin < 0
+                or not isinstance(psi, dict) or set(psi) != {"some", "full"}
+                or any(type(value) is not int or value < 0 for value in psi.values())
+            ):
+                if required:
+                    raise QualificationError("C0-S1 raw host paging/PSI diagnostic is malformed")
+                continue
+            host_observation = {
+                "observed_at": row.get("observed_at"),
+                "host_meminfo_kib": row.get("host_meminfo_kib"),
+                "mem_available_gib": row.get("mem_available_gib"),
+                "host_pswpout_pages": row.get("pswpout_pages"),
+                "host_pswpin_pages": pswpin,
+                "host_memory_psi_total_us": psi,
+            }
+            host_phase_rows.setdefault(phase, {"first": host_observation})[
+                "last"
+            ] = host_observation
         candidate = row.get("candidate")
         if not isinstance(candidate, dict) or candidate.get("armed") is not True:
             continue
         cgroup = candidate.get("cgroup")
         if not isinstance(cgroup, dict) or candidate.get("id") != candidate_id:
             if required:
-                raise QualificationError("C0-S0 candidate diagnostic identity changed")
+                raise QualificationError("C0-S1 candidate diagnostic identity changed")
             continue
-        phase = row.get("monitor_phase")
         if phase not in {"load", "ready", "probes", "restoration"}:
             if required:
-                raise QualificationError("C0-S0 candidate diagnostic phase changed")
+                raise QualificationError("C0-S1 candidate diagnostic phase changed")
             continue
         attributed += 1
         current = cgroup.get("memory_current_bytes")
@@ -3014,7 +3178,7 @@ def _write_cgroup_diagnostics(
             or current < 0
         ):
             if required:
-                raise QualificationError("C0-S0 candidate memory.current is malformed")
+                raise QualificationError("C0-S1 candidate memory.current is malformed")
             continue
         max_current = max(max_current, current)
         evidence = {
@@ -3023,12 +3187,20 @@ def _write_cgroup_diagnostics(
             "candidate_cgroup": cgroup,
             "mem_available_gib": row.get("mem_available_gib"),
             "host_pswpout_pages": row.get("pswpout_pages"),
+            "host_pswpin_pages": row.get("pswpin_pages"),
+            "host_memory_psi_total_us": row.get("host_memory_psi_total_us"),
         }
         phase_rows.setdefault(phase, {"first": evidence})["last"] = evidence
-    if required and (attributed == 0 or not {"load", "ready", "probes"}.issubset(phase_rows)):
+    if required and (
+        attributed == 0
+        or not {"load", "ready", "probes"}.issubset(phase_rows)
+        or not {"setup", "load", "ready", "probes", "restoration"}.issubset(
+            host_phase_rows
+        )
+    ):
         raise QualificationError("passed no-swap attempt lacks attributed phase snapshots")
     sidecar = {
-        "schema": "qwen-flash-next-c0-s0-cgroup-diagnostics/v1",
+        "schema": "qwen-flash-next-c0-s1-cgroup-diagnostics/v1",
         "candidate_id": candidate_id,
         "memory_log_sha256": sha256(raw),
         "attributed_samples": attributed,
@@ -3036,16 +3208,17 @@ def _write_cgroup_diagnostics(
         "registered_memory_max_bytes": DOCKER_MEMORY_LIMIT_BYTES,
         "registered_swap_max_bytes": 0,
         "phase_first_last": phase_rows,
+        "phase_host_first_last": host_phase_rows,
         "host_swap_action": "registered_startup_and_serving_byte_gates",
         "diagnostics_finished_at": utc_now(),
     }
     sidecar_file = output / "cgroup-diagnostics.json"
     _atomic_write(sidecar_file, sidecar)
     sidecar_raw, observed_sidecar = _read_regular_file(
-        sidecar_file, label="C0-S0 diagnostic sidecar", max_bytes=2 * 1024 * 1024
+        sidecar_file, label="C0-S1 diagnostic sidecar", max_bytes=2 * 1024 * 1024
     )
     if observed_sidecar != sidecar_file.absolute():
-        raise QualificationError("C0-S0 diagnostic sidecar redirected")
+        raise QualificationError("C0-S1 diagnostic sidecar redirected")
     return sha256(sidecar_raw), sha256(raw)
 
 

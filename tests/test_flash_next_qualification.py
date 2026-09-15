@@ -11,6 +11,7 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,8 +21,8 @@ from bench.flash_next_ab import qualification as q
 def contract():
     return {
         "schema": "qwen-flash-next-qualification/v3",
-        "contract_id": "qwen38-flash-next-c0-s0-20260915",
-        "profile": "C0-S0",
+        "contract_id": "qwen38-flash-next-c0-s1-20260915",
+        "profile": "C0-S1",
         "image": {"id": q.IMAGE_ID, "architecture": "arm64"},
         "model": {
             "repository": q.MODEL_REPOSITORY,
@@ -874,7 +875,7 @@ def test_small_host_swap_is_diagnostic_but_registered_load_threshold_stops(tmp_p
 
 def test_startup_total_gate_is_cumulative_across_load_and_ready(tmp_path):
     page_size = q.HOST_PAGE_SIZE_BYTES
-    four_mib_pages = 4 * 1024**2 // page_size
+    thirty_two_mib_pages = 32 * 1024**2 // page_size
     pages = [10]
     clock = [100.0]
     monitor = q.MemoryMonitor(
@@ -893,22 +894,22 @@ def test_startup_total_gate_is_cumulative_across_load_and_ready(tmp_path):
 
     for _ in range(75):
         clock[0] += 1
-        pages[0] += four_mib_pages
+        pages[0] += thirty_two_mib_pages
         monitor._sample_once()
     monitor._sample_once(begin_phase="ready")
-    assert monitor.phase_summaries["load"]["pswpout_delta_bytes"] == 300 * 1024**2
+    assert monitor.phase_summaries["load"]["pswpout_delta_bytes"] == 2400 * 1024**2
     assert not monitor.cancel_event.is_set()
 
     final = None
     for _ in range(53):
         clock[0] += 1
-        pages[0] += four_mib_pages
+        pages[0] += thirty_two_mib_pages
         final = monitor._sample_once()
     monitor._stream.close()
 
     assert final is not None
     assert final["paging_gate"] == "startup"
-    assert final["phase_pswpout_delta_bytes"] == 212 * 1024**2
+    assert final["phase_pswpout_delta_bytes"] == 1696 * 1024**2
     assert final["gate_pswpout_delta_bytes"] == q.LOAD_SWAP_TOTAL_BREACH_BYTES
     assert final["host_swap_60s_bytes"] < q.LOAD_SWAP_60S_BREACH_BYTES
     assert monitor.cancel_event.is_set()
@@ -916,7 +917,7 @@ def test_startup_total_gate_is_cumulative_across_load_and_ready(tmp_path):
 
 
 def test_startup_rolling_gate_spans_the_load_to_ready_boundary(tmp_path):
-    seventy_mib_pages = 70 * 1024**2 // q.HOST_PAGE_SIZE_BYTES
+    three_hundred_mib_pages = 300 * 1024**2 // q.HOST_PAGE_SIZE_BYTES
     pages = [10]
     clock = [100.0]
     monitor = q.MemoryMonitor(
@@ -933,17 +934,17 @@ def test_startup_rolling_gate_spans_the_load_to_ready_boundary(tmp_path):
     monitor.setup_quiescence_final_pswpout = pages[0]
     monitor.begin_mutation_window()
     clock[0] += 1
-    pages[0] += seventy_mib_pages
+    pages[0] += three_hundred_mib_pages
     monitor._sample_once()
     clock[0] += 1
-    pages[0] += seventy_mib_pages
+    pages[0] += three_hundred_mib_pages
     ready = monitor._sample_once(begin_phase="ready")
     monitor._stream.close()
 
     assert ready["paging_gate"] == "startup"
-    assert ready["phase_pswpout_delta_bytes"] == 70 * 1024**2
-    assert ready["gate_pswpout_delta_bytes"] == 140 * 1024**2
-    assert ready["host_swap_5s_bytes"] == 140 * 1024**2
+    assert ready["phase_pswpout_delta_bytes"] == 300 * 1024**2
+    assert ready["gate_pswpout_delta_bytes"] == 600 * 1024**2
+    assert ready["host_swap_5s_bytes"] == 600 * 1024**2
     assert monitor.cancel_event.is_set()
     assert "startup host swap reached the 5-second" in monitor.failure
 
@@ -1312,10 +1313,12 @@ def test_live_swap_limit_drift_stops_only_the_exact_candidate(tmp_path):
 
 
 def test_cgroup_sidecar_binds_raw_phase_telemetry_without_forging_a_pass(tmp_path):
-    output = tmp_path / "qfn-c0-s0-sidecar"
+    output = tmp_path / "qfn-c0-s1-sidecar"
     output.mkdir()
     rows = []
-    for ordinal, phase in enumerate(("load", "ready", "probes"), 1):
+    for ordinal, phase in enumerate(
+        ("setup", "load", "ready", "probes", "restoration"), 1
+    ):
         cgroup = {
             **clean_cgroup(FakeOps.candidate_id, 200),
             "memory_current_bytes": ordinal * 1024,
@@ -1329,10 +1332,18 @@ def test_cgroup_sidecar_binds_raw_phase_telemetry_without_forging_a_pass(tmp_pat
             "schema": "qwen-flash-next-memory-sample/v3",
             "observed_at": f"2026-09-15T00:00:0{ordinal}+00:00",
             "monitor_phase": phase,
-            "candidate": {"id": FakeOps.candidate_id, "armed": True, "cgroup": cgroup},
+            "candidate": (
+                {"id": FakeOps.candidate_id, "armed": True, "cgroup": cgroup}
+                if phase in {"load", "ready", "probes"} else None
+            ),
             "mem_available_gib": 36.0,
             "host_meminfo_kib": {"MemFree": 1024, "Cached": 2048},
             "pswpout_pages": 123 + ordinal,
+            "pswpin_pages": 120 + ordinal,
+            "host_memory_psi_total_us": {
+                "some": 1000 + ordinal * 10,
+                "full": 500 + ordinal * 5,
+            },
         })
     raw = b"".join(q.canonical_json(row) + b"\n" for row in rows)
     (output / "memory.jsonl").write_bytes(raw)
@@ -1343,8 +1354,10 @@ def test_cgroup_sidecar_binds_raw_phase_telemetry_without_forging_a_pass(tmp_pat
     sidecar = json.loads(sidecar_raw)
     assert diagnostic_sha == q.sha256(sidecar_raw)
     assert memory_sha == q.sha256(raw) == sidecar["memory_log_sha256"]
-    assert sidecar["maximum_memory_current_bytes"] == 3072
-    assert sidecar["phase_first_last"]["probes"]["last"]["candidate_cgroup"]["selected_memory_stat"]["anon"] == 1536
+    assert sidecar["maximum_memory_current_bytes"] == 4096
+    assert sidecar["phase_first_last"]["probes"]["last"]["candidate_cgroup"]["selected_memory_stat"]["anon"] == 2048
+    assert sidecar["phase_host_first_last"]["ready"]["last"]["host_pswpin_pages"] == 123
+    assert sidecar["phase_host_first_last"]["restoration"]["last"]["host_memory_psi_total_us"]["full"] == 525
     assert sidecar["registered_memory_max_bytes"] == q.DOCKER_MEMORY_LIMIT_BYTES
     assert sidecar["registered_swap_max_bytes"] == 0
 
@@ -1354,6 +1367,88 @@ def test_cgroup_sidecar_binds_raw_phase_telemetry_without_forging_a_pass(tmp_pat
     )
     with pytest.raises(q.QualificationError, match="diagnostic identity changed"):
         q._write_cgroup_diagnostics(output, FakeOps.candidate_id, required=True)
+
+
+def test_s1_monitor_records_monotonic_pageins_and_kernel_psi_stalls(tmp_path):
+    pageins = iter((100, 103))
+    pressures = iter((
+        {"some": 1000, "full": 500},
+        {"some": 1060, "full": 520},
+    ))
+    monitor = q.MemoryMonitor(
+        tmp_path / "s1-host.jsonl", FakeOps(), reader=lambda: 64.0,
+        swap_reader=lambda: 10, swapin_reader=lambda: next(pageins),
+        psi_reader=lambda: next(pressures), cgroup_reader=clean_cgroup,
+    )
+    monitor._stream = (tmp_path / "s1-host.jsonl").open("xb")
+    first = monitor._sample_once()
+    second = monitor._sample_once()
+    monitor._stream.close()
+    assert first["pswpin_pages"] == 100
+    assert second["pswpin_delta_pages"] == 3
+    assert second["host_memory_psi_delta_us"] == {"some": 60, "full": 20}
+    assert monitor.final_host_psi_totals == {"some": 1060, "full": 520}
+
+
+@pytest.mark.parametrize("source", ("pageins", "memory_psi"))
+def test_s1_monitor_refuses_counter_rollback_even_if_above_initial(tmp_path, source):
+    pageins = iter((100, 104, 103)) if source == "pageins" else iter((100, 104, 105))
+    psi = iter((
+        {"some": 1000, "full": 500},
+        {"some": 1100, "full": 600},
+        {"some": 1090 if source == "memory_psi" else 1200, "full": 700},
+    ))
+    monitor = q.MemoryMonitor(
+        tmp_path / "rollback.jsonl", FakeOps(), reader=lambda: 64.0,
+        swap_reader=lambda: 10, swapin_reader=lambda: next(pageins),
+        psi_reader=lambda: next(psi), cgroup_reader=clean_cgroup,
+    )
+    monitor._stream = (tmp_path / "rollback.jsonl").open("xb")
+    monitor._sample_once()
+    monitor._sample_once()
+    with pytest.raises(ValueError, match="pswpin or memory PSI counter decreased"):
+        monitor._sample_once()
+    monitor._stream.close()
+
+
+def test_kernel_memory_psi_reader_requires_both_bounded_stall_totals(monkeypatch):
+    readings = iter((
+        (
+            b"some avg10=0.00 avg60=0.00 avg300=0.02 total=1000\n"
+            b"full avg10=0.00 avg60=0.00 avg300=0.02 total=400\n"
+        ),
+        b"some avg10=0.00 avg60=0.00 avg300=0.00 total=1000\n",
+    ))
+
+    def pressure(path, *, max_bytes, dir_fd=None):
+        assert path == Path("/proc/pressure/memory")
+        assert max_bytes == 1024 and dir_fd is None
+        return next(readings)
+
+    monkeypatch.setattr(q, "_bounded_nofollow_bytes", pressure)
+    assert q._host_memory_psi_totals() == {"some": 1000, "full": 400}
+    with pytest.raises(q.QualificationError, match="incomplete"):
+        q._host_memory_psi_totals()
+
+
+def test_s1_avoids_claiming_hardware_fit_failure_for_host_pageout_guard():
+    first = "startup host swap reached the 5-second byte threshold"
+    monitor = SimpleNamespace(
+        failure=first, emergency_stop_at=123.0,
+        candidate_cgroup_samples=2, candidate_cgroup_swap_peak_bytes=0,
+        candidate_cgroup_oom_initial=0, candidate_cgroup_oom_final=0,
+        candidate_cgroup_oom_kill_initial=0, candidate_cgroup_oom_kill_final=0,
+        minimum_observed_gib=31.0, violations=[first],
+    )
+    restoration = {"status": "verified"}
+    assert q._failure_class(
+        "failed", "QualificationError: " + first, restoration, monitor
+    ) == "experimental_startup_host_pageout_guardrail_abort"
+    monitor.candidate_cgroup_oom_final = 1
+    assert q._failure_class(
+        "failed", "QualificationError: " + first, restoration, monitor
+    ) == "other_qualification_failure"
+    assert q._failure_class("unknown", None, {"status": "unknown"}, monitor) == "restoration_unknown"
 
 
 def test_cgroup_snapshot_reads_local_events_between_stable_pid_checks(monkeypatch):
