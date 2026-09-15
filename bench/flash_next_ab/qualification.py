@@ -1084,7 +1084,12 @@ def _capture_initial_state(ops: HostOps, preflight: dict[str, Any]) -> dict[str,
             or row["image"] != expected["image_id"]
             or row["name"] != expected["name"]
             or row["restart_policy"] != "unless-stopped"
-            or not row["running"]
+            or row.get("running") is not True
+            or row.get("oom_killed") is not False
+            or row.get("state_error") != ""
+            or isinstance(row.get("restart_count"), bool)
+            or not isinstance(row.get("restart_count"), int)
+            or row["restart_count"] < 0
             or row["id"] not in expected_runtime
         ):
             raise QualificationError(f"resident identity/state drift: {expected['name']}")
@@ -1219,8 +1224,30 @@ def _run_probes(
     return results
 
 
+def _verify_exact_resident_state(
+    ops: HostOps, expected: dict[str, Any]
+) -> dict[str, Any]:
+    row = _inspect_container(ops, expected["id"])
+    if (
+        row is None
+        or row.get("id") != expected["id"]
+        or row.get("name") != expected["name"]
+        or row.get("image") != expected["image"]
+        or row.get("restart_policy") != expected["restart_policy"]
+        or row.get("running") is not True
+        or row.get("oom_killed") is not False
+        or row.get("restart_count") != expected["restart_count"]
+    ):
+        raise QualificationError(
+            f"resident final state differs from its capture: {expected['name']}"
+        )
+    return row
+
+
 def _wait_resident_restore(ops: HostOps, initial: dict[str, Any], deadline: float) -> None:
-    pending = {row["name"]: row for row in initial["residents"] if row["running"]}
+    pending = {row["name"]: row for row in initial["residents"]}
+    if not pending or any(row.get("running") is not True for row in pending.values()):
+        raise QualificationError("resident capture does not prove an initially running state")
     last_error = "not probed"
     while pending and time.monotonic() < deadline:
         for expected in list(pending.values()):
@@ -1232,9 +1259,11 @@ def _wait_resident_restore(ops: HostOps, initial: dict[str, Any], deadline: floa
             health = next(item["health_url"] for item in RESIDENTS if item["name"] == expected["name"])
             try:
                 ops.http_bytes(health, timeout=min(2, max(0.1, deadline - time.monotonic())))
-                pending.pop(expected["name"])
             except Exception as exc:  # noqa: BLE001 - bounded health poll records its final error
                 last_error = f"{type(exc).__name__}: {exc}"
+                continue
+            _verify_exact_resident_state(ops, expected)
+            pending.pop(expected["name"])
         if pending:
             time.sleep(min(2, max(0, deadline - time.monotonic())))
     if pending:
@@ -1360,8 +1389,11 @@ def restore_exact(
             if not isinstance(expected, dict):
                 errors.append(f"resident {registered['name']}: initial identity is absent")
                 break
-            if not expected.get("running"):
-                continue
+            if expected.get("running") is not True:
+                errors.append(
+                    f"resident {registered['name']}: capture does not prove it was running"
+                )
+                break
             try:
                 row = _inspect_container(ops, expected["name"])
                 if row is None or row.get("id") != expected["id"] or row.get("image") != expected["image"]:
@@ -1390,6 +1422,19 @@ def restore_exact(
                     )
                     break
 
+        # Health alone is not sufficient: an unless-stopped resident may OOM,
+        # restart, and answer between polls.  Recheck both residents before
+        # bringing Nara back into the restored runtime.
+        if not errors:
+            for expected, _ in pending:
+                try:
+                    _verify_exact_resident_state(ops, expected)
+                except Exception as exc:  # noqa: BLE001 - preserve exact final-state failure
+                    errors.append(
+                        f"resident {expected.get('name')}: {type(exc).__name__}: {exc}"
+                    )
+                    break
+
         if not errors:
             try:
                 service = _service_state(
@@ -1412,6 +1457,19 @@ def restore_exact(
                 errors.append(f"Nara: {type(exc).__name__}: {exc}")
         elif initial.get("nara_was_active"):
             errors.append("Nara restoration withheld until resident health is verified")
+
+        # Bind the final resident state after the Nara transition to the exact
+        # pre-window image, restart policy, OOM flag, and restart count before
+        # declaring restoration verified or removing the watchdog sentinel.
+        if not errors:
+            for expected, _ in pending:
+                try:
+                    _verify_exact_resident_state(ops, expected)
+                except Exception as exc:  # noqa: BLE001 - preserve exact final-state failure
+                    errors.append(
+                        f"resident {expected.get('name')}: {type(exc).__name__}: {exc}"
+                    )
+                    break
 
     # The stopped candidate is also the watchdog sentinel.  Remove it only
     # after every pre-existing runtime and Nara state is positively verified.
@@ -1883,13 +1941,28 @@ def _worker_command(contract_path: Path, output: Path) -> list[str]:
     ]
 
 
+def _read_bounded_run_json(path: Path, *, source: str) -> dict[str, Any]:
+    """Read one run receipt without following any path component or FIFO."""
+    from .harness import HarnessError, _read_regular_file
+
+    try:
+        raw, normalized = _read_regular_file(
+            path,
+            label=source,
+            max_bytes=4 * 1024 * 1024,
+        )
+    except HarnessError as exc:
+        raise QualificationError(str(exc)) from exc
+    if normalized != path.absolute():
+        raise QualificationError(f"{source} path changed")
+    return _strict_json(raw, source=source)
+
+
 def _validated_recovery_state(
     output: Path, plan: dict[str, Any]
 ) -> dict[str, Any]:
     path = output / "state.json"
-    if path.is_symlink() or not path.is_file() or path.resolve().parent != output.resolve():
-        raise QualificationError("worker state is absent or redirected")
-    state = _strict_json(path.read_bytes(), source="worker recovery state")
+    state = _read_bounded_run_json(path, source="worker recovery state")
     if (
         state.get("schema") != "qwen-flash-next-qualification-state/v2"
         or state.get("run_id") != output.name
@@ -1927,7 +2000,13 @@ def _validated_recovery_state(
                 row is None
                 or row.get("id") != expected["id"]
                 or row.get("image") != expected["image_id"]
-                or not isinstance(row.get("running"), bool)
+                or row.get("running") is not True
+                or row.get("oom_killed") is not False
+                or row.get("state_error") != ""
+                or row.get("restart_policy") != "unless-stopped"
+                or isinstance(row.get("restart_count"), bool)
+                or not isinstance(row.get("restart_count"), int)
+                or row["restart_count"] < 0
             ):
                 raise QualificationError("worker recovery resident identity is untrusted")
     return state
@@ -1935,19 +2014,36 @@ def _validated_recovery_state(
 
 def _result_has_verified_restoration(output: Path, plan: dict[str, Any]) -> bool:
     path = output / "result.json"
-    if path.is_symlink() or not path.is_file():
-        return False
     try:
-        result = _strict_json(path.read_bytes(), source="worker result")
+        result = _read_bounded_run_json(path, source="worker result")
     except QualificationError:
         return False
+    restoration = result.get("restoration")
+    try:
+        started_at = datetime.fromisoformat(result["started_at"])
+        verified_at = datetime.fromisoformat(restoration["verified_at"])
+        finished_at = datetime.fromisoformat(result["finished_at"])
+        timestamps_sane = (
+            started_at.tzinfo is not None
+            and verified_at.tzinfo is not None
+            and finished_at.tzinfo is not None
+            and started_at
+            <= verified_at
+            <= finished_at
+            <= datetime.now(timezone.utc) + timedelta(minutes=5)
+        )
+    except (KeyError, TypeError, ValueError):
+        timestamps_sane = False
     return bool(
         result.get("schema") == "qwen-flash-next-qualification-result/v2"
         and result.get("run_id") == output.name
         and result.get("contract_sha256") == plan["contract_sha256"]
         and result.get("plan_sha256") == sha256(plan)
-        and isinstance(result.get("restoration"), dict)
-        and result["restoration"].get("status") == "verified"
+        and isinstance(restoration, dict)
+        and restoration.get("status") == "verified"
+        and restoration.get("errors") == []
+        and restoration.get("sentinel_retained") is False
+        and timestamps_sane
     )
 
 

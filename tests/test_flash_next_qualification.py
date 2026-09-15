@@ -280,6 +280,9 @@ class FakeOps(q.HostOps):
                 "running": True,
                 "pid": 100,
                 "started_at": "before",
+                "finished_at": "",
+                "oom_killed": False,
+                "state_error": "",
                 "restart_count": 0,
                 "restart_policy": "unless-stopped",
             }
@@ -740,3 +743,119 @@ def test_supervisor_can_restore_a_killed_worker_from_durable_exact_ids(
     assert all(ops.containers[row["name"]]["running"] for row in q.RESIDENTS)
     assert ops.nara_active is True
     assert usage[0]["event"] == "supervisor_recovery"
+
+
+def test_recovery_state_requires_every_captured_resident_to_be_running(tmp_path):
+    output = tmp_path / "qfn-c0-recovery-stopped-capture"
+    output.mkdir()
+    ops = FakeOps()
+    recovery_plan = plan()
+    residents = [dict(ops.containers[row["name"]]) for row in q.RESIDENTS]
+    residents[0]["running"] = False
+    state = {
+        "schema": "qwen-flash-next-qualification-state/v2",
+        "run_id": output.name,
+        "phase": "readiness",
+        "plan_sha256": q.sha256(recovery_plan),
+        "contract_sha256": recovery_plan["contract_sha256"],
+        "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+        "worker_pid": 123,
+        "worker_start_ticks": 456,
+        "started_at": "2026-09-15T00:00:00+00:00",
+        "updated_at": "2026-09-15T00:00:01+00:00",
+        "invocation_deadline_at": "2026-09-15T01:00:00+00:00",
+        "memory_log_relpath": "memory.jsonl",
+        "candidate_id": None,
+        "initial": {
+            "residents": residents,
+            "nara_was_active": True,
+        },
+    }
+    q._atomic_write(output / "state.json", state)
+
+    with pytest.raises(q.QualificationError, match="resident identity is untrusted"):
+        q._validated_recovery_state(output, recovery_plan)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        (lambda value: value["restoration"].update(errors=["unrestored"]), False),
+        (lambda value: value["restoration"].update(sentinel_retained=True), False),
+        (lambda value: value["restoration"].update(verified_at="not-a-time"), False),
+        (lambda value: None, True),
+    ],
+)
+def test_supervisor_trusts_only_a_clean_time_bound_restoration_result(
+    tmp_path, mutation, expected
+):
+    output = tmp_path / "qfn-c0-result-restoration"
+    output.mkdir()
+    recovery_plan = plan()
+    result = {
+        "schema": "qwen-flash-next-qualification-result/v2",
+        "run_id": output.name,
+        "contract_sha256": recovery_plan["contract_sha256"],
+        "plan_sha256": q.sha256(recovery_plan),
+        "started_at": "2026-09-15T00:00:00+00:00",
+        "finished_at": "2026-09-15T00:02:00+00:00",
+        "restoration": {
+            "status": "verified",
+            "verified_at": "2026-09-15T00:01:59+00:00",
+            "errors": [],
+            "sentinel_retained": False,
+        },
+    }
+    mutation(result)
+    q._atomic_write(output / "result.json", result)
+
+    assert q._result_has_verified_restoration(output, recovery_plan) is expected
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("oom_killed", True),
+        ("restart_count", 1),
+        ("restart_policy", "always"),
+        ("image", "sha256:" + "0" * 64),
+        ("running", False),
+    ],
+)
+def test_restore_rejects_resident_drift_after_health(field, value):
+    class DriftAfterHealth(FakeOps):
+        def http_bytes(self, url, *, timeout):
+            raw = super().http_bytes(url, timeout=timeout)
+            if url == q.RESIDENTS[0]["health_url"]:
+                self.containers[q.RESIDENTS[0]["name"]][field] = value
+            return raw
+
+    ops = DriftAfterHealth()
+    ops.nara_active = False
+    ops.containers[q.CONTAINER_NAME] = {
+        "id": ops.candidate_id,
+        "name": q.CONTAINER_NAME,
+        "image": q.IMAGE_ID,
+        "running": True,
+        "pid": 200,
+        "started_at": "now",
+        "restart_count": 0,
+        "restart_policy": "no",
+    }
+    initial = {
+        "residents": [dict(ops.containers[row["name"]]) for row in q.RESIDENTS],
+        "nara_was_active": True,
+    }
+    for row in q.RESIDENTS:
+        ops.containers[row["name"]]["running"] = False
+
+    restored = q.restore_exact(
+        ops,
+        {"candidate_id": ops.candidate_id, "initial": initial},
+        deadline=time.monotonic() + 30,
+    )
+
+    assert restored["status"] == "unknown"
+    assert restored["sentinel_retained"] is True
+    assert "final state differs" in " ".join(restored["errors"])
+    assert ops.nara_active is False
