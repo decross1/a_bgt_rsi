@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://a-bgt-rsi.local/schema/frontier_call.schema.json",
   "title": "LOOP_V1 frontier-call ledger row",
-  "description": "One row of run_state/frontier_calls.jsonl, appended by agent_wrapper.frontier_cli.invoke_frontier BEFORE every return (real, mock, and every error path). The writer is the source of truth for this shape: it always writes the eight required fields, with verdict always null at that layer (the review layer owns verdicts). candidate_id and reasoning_digest are declared per LOOP_V1 P2 for the review layer's rows (the frontier-vs-local calibration join key and digest) but are OPTIONAL here because frontier_cli does not write them. Append-only ledger; rows are never edited.",
+  "description": "One row of run_state/frontier_calls.jsonl, appended by agent_wrapper.frontier_cli.invoke_frontier BEFORE every return (real, mock, and every error path). The original eight fields remain required for old immutable rows. New rows also record an optional resolved binary path and closed failure code; verdict remains null at this layer (the review layer owns verdicts). candidate_id and reasoning_digest are optional review-layer fields. Append-only ledger; rows are never edited.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -29,7 +29,17 @@
     "cli_version": {
       "type": "string",
       "minLength": 1,
-      "description": "Output of `<cli> --version` (memoized per process); 'unknown' when the probe fails; 'mock' under MOCK_LLM."
+      "description": "Output of the selected `<cli> --version` (memoized by resolved binary path); 'unknown' when the probe fails; 'mock' under MOCK_LLM."
+    },
+    "resolved_binary_path": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "description": "Real path of the selected executable on new rows; null when absent or under MOCK_LLM. Optional for old immutable rows. An invalid explicit pin stays authoritative and records its attempted path."
+    },
+    "failure_code": {
+      "type": ["string", "null"],
+      "enum": ["timeout", "launch_error", "nonzero_exit", "cli_reported_error", "unparseable_output", null],
+      "description": "Closed non-secret error category on new rows; null on success/mock. Optional for old immutable rows. Raw stderr and CLI response text are never written to the ledger."
     },
     "role": {
       "type": "string",

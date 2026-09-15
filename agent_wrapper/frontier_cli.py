@@ -4,7 +4,8 @@ Public interface
 ----------------
 invoke_frontier(vendor, prompt, *, timeout_s, role, ledger_path=None) ->
     {"text": str, "vendor": str, "cli_version": str, "duration_ms": int,
-     "exit_code": int, "error": str | None}
+     "exit_code": int, "error": str | None, "failure_code": str | None,
+     "resolved_binary_path": str | None}
 
 What it does
 ------------
@@ -27,8 +28,9 @@ What it does
 5. Every call (including every error path and the mock path) appends one row
    to the ledger BEFORE returning:
    ``{timestamp, vendor, cli_version, role, verdict, duration_ms, exit_code,
-   prompt_sha256}`` with ``verdict`` always null at this layer (the review
-   layer owns verdicts). Default ledger: ``run_state/frontier_calls.jsonl``.
+   prompt_sha256, resolved_binary_path, failure_code}`` with ``verdict`` always
+   null at this layer (the review layer owns verdicts). Default ledger:
+   ``run_state/frontier_calls.jsonl``. Old rows keep their original shape.
 
 This module never writes loop_memory or the brain (annotate-only firewall,
 D-061); it only appends the frontier-call ledger.
@@ -38,6 +40,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -58,8 +61,11 @@ _VENDOR_BINARIES = {"claude": "claude", "codex": "codex"}
 # the minimal PATH misses it: on 2026-08-18T06:00Z the first cron-context
 # frontier screen resolved a stale root install of claude (2.1.143, exit 1)
 # and no codex at all (exit 127). Resolution order: explicit env pin >
-# known user install > bare name (interactive PATH).
+# known user install > current ~/.local/bin install > PATH. An explicit pin
+# stays authoritative even if it is missing: a bad pin is a typed launch
+# failure, not permission to silently select a different executable.
 _USER_NPM_BIN = Path.home() / ".npm-global" / "bin"
+_USER_LOCAL_BIN = Path.home() / ".local" / "bin"
 
 
 def _resolve_binary(vendor: str) -> str:
@@ -70,7 +76,18 @@ def _resolve_binary(vendor: str) -> str:
     local = _USER_NPM_BIN / name
     if local.is_file() and os.access(local, os.X_OK):
         return str(local)
-    return name
+    local = _USER_LOCAL_BIN / name
+    if local.is_file() and os.access(local, os.X_OK):
+        return str(local)
+    return shutil.which(name) or name
+
+
+def _binary_path(binary: str) -> Optional[str]:
+    """Path actually selected for the subprocess, or null when unavailable."""
+    if os.path.sep in binary:
+        return str(Path(binary).resolve(strict=False))
+    found = shutil.which(binary)
+    return str(Path(found).resolve(strict=False)) if found else None
 
 # Codex model + reasoning effort are pinned HERE, not inherited from the
 # machine-global ~/.codex/config.toml. On 2026-08-16 that config's
@@ -93,11 +110,9 @@ CODEX_REASONING_EFFORT = os.environ.get("FRONTIER_CODEX_EFFORT", "max")
 # machine's auth.json. See _ensure_codex_home.
 CODEX_HOME_DIR = REPO_ROOT / "run_state" / "codex_home"
 
-# Cap on stderr text carried into an error message.
-_STDERR_TAIL_CHARS = 500
-
-# Memoized `<cli> --version` output per vendor (one probe per process).
-_version_cache: Dict[str, str] = {}
+# Memoized `<cli> --version` output per selected binary. An env override can
+# change during a process; vendor-only caching would mislabel the new binary.
+_version_cache: Dict[tuple[str, str], str] = {}
 
 
 def _now_utc_iso() -> str:
@@ -146,13 +161,13 @@ def _ensure_codex_home() -> Optional[Path]:
     return CODEX_HOME_DIR
 
 
-def _build_cmd(vendor: str, prompt: str) -> List[str]:
+def _build_cmd(vendor: str, prompt: str, *, binary: Optional[str] = None) -> List[str]:
     if vendor == "claude":
-        return [_resolve_binary("claude"), "-p", "--output-format", "json",
+        return [binary or _resolve_binary("claude"), "-p", "--output-format", "json",
                 prompt]
     if vendor == "codex":
         return [
-            _resolve_binary("codex"), "exec", "--skip-git-repo-check",
+            binary or _resolve_binary("codex"), "exec", "--skip-git-repo-check",
             "--sandbox", "read-only",
             "-m", CODEX_MODEL,
             "-c", f"model_reasoning_effort={CODEX_REASONING_EFFORT}",
@@ -164,21 +179,29 @@ def _build_cmd(vendor: str, prompt: str) -> List[str]:
     )
 
 
-def _cli_version(vendor: str) -> str:
-    """Probe `<cli> --version` once per process; 'unknown' on any failure."""
-    if vendor in _version_cache:
-        return _version_cache[vendor]
+def _cli_version(vendor: str, binary: Optional[str] = None,
+                 resolved_binary_path: Optional[str] = None) -> str:
+    """Probe the selected binary once per process; unknown on any failure."""
+    binary = binary or _resolve_binary(vendor)
+    cache_key = (vendor, resolved_binary_path or binary)
+    if cache_key in _version_cache:
+        return _version_cache[cache_key]
     try:
         proc = subprocess.run(
-            [_resolve_binary(vendor), "--version"],
+            [binary, "--version"],
             capture_output=True, text=True, timeout=15,
             env=_spawn_env(vendor),
         )
-        version = proc.stdout.strip() or "unknown"
+        version = proc.stdout.strip()[:120] if proc.returncode == 0 else "unknown"
+        version = version or "unknown"
     except (OSError, subprocess.SubprocessError):
         version = "unknown"
-    _version_cache[vendor] = version
+    _version_cache[cache_key] = version
     return version
+
+
+class CLIReportedError(ValueError):
+    """The Claude JSON response itself marked the call as an error."""
 
 
 def _parse_claude_stdout(stdout: str) -> str:
@@ -188,7 +211,7 @@ def _parse_claude_stdout(stdout: str) -> str:
     if not isinstance(obj, dict):
         raise ValueError(f"expected JSON object, got {type(obj).__name__}")
     if obj.get("is_error"):
-        raise ValueError(f"claude reported is_error: {obj.get('result')!r}")
+        raise CLIReportedError("claude reported is_error")
     result = obj.get("result")
     if not isinstance(result, str) or not result.strip():
         raise ValueError("claude JSON has no non-empty string 'result' field")
@@ -248,13 +271,15 @@ def invoke_frontier(
     failures (timeout, nonzero exit, missing binary, unparseable output) —
     those return a result with ``error`` set. Raises ValueError only for an
     unknown ``vendor`` (caller bug, fail-closed)."""
-    _build_cmd(vendor, "")  # vendor validation (raises ValueError early)
+    if vendor not in _VENDOR_BINARIES:
+        _build_cmd(vendor, "")  # vendor validation (raises ValueError early)
     ledger = Path(ledger_path) if ledger_path is not None else DEFAULT_LEDGER
     prompt_sha256 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
 
     def _finish(
         text: str, cli_version: str, duration_ms: int, exit_code: int,
-        error: Optional[str],
+        error: Optional[str], failure_code: Optional[str],
+        resolved_binary_path: Optional[str],
     ) -> Dict[str, Any]:
         # Ledger row is written BEFORE the result is returned — every call,
         # including errors and mocks, lands in the calibration dataset.
@@ -267,6 +292,8 @@ def invoke_frontier(
             "duration_ms": duration_ms,
             "exit_code": exit_code,
             "prompt_sha256": prompt_sha256,
+            "resolved_binary_path": resolved_binary_path,
+            "failure_code": failure_code,
         })
         return {
             "text": text,
@@ -275,14 +302,18 @@ def invoke_frontier(
             "duration_ms": duration_ms,
             "exit_code": exit_code,
             "error": error,
+            "resolved_binary_path": resolved_binary_path,
+            "failure_code": failure_code,
         }
 
     if os.environ.get("MOCK_LLM"):
         stub = f"MOCK_FRONTIER[{vendor}/{role}] sha256={prompt_sha256[:16]}"
-        return _finish(stub, "mock", 0, 0, None)
+        return _finish(stub, "mock", 0, 0, None, None, None)
 
-    cli_version = _cli_version(vendor)
-    cmd = _build_cmd(vendor, prompt)
+    binary = _resolve_binary(vendor)
+    resolved_binary_path = _binary_path(binary)
+    cli_version = _cli_version(vendor, binary, resolved_binary_path)
+    cmd = _build_cmd(vendor, prompt, binary=binary)
     t0 = time.perf_counter()
     try:
         proc = subprocess.run(
@@ -293,29 +324,37 @@ def invoke_frontier(
         duration_ms = int((time.perf_counter() - t0) * 1000)
         return _finish(
             "", cli_version, duration_ms, -1,
-            f"timeout after {timeout_s}s",
+            f"timeout after {timeout_s}s", "timeout", resolved_binary_path,
         )
     except OSError as exc:  # binary missing / not executable
         duration_ms = int((time.perf_counter() - t0) * 1000)
         return _finish(
             "", cli_version, duration_ms, 127,
-            f"launch failed: {exc}",
+            f"launch failed: {type(exc).__name__}", "launch_error",
+            resolved_binary_path,
         )
     duration_ms = int((time.perf_counter() - t0) * 1000)
 
     if proc.returncode != 0:
-        stderr_tail = (proc.stderr or "").strip()[-_STDERR_TAIL_CHARS:]
         return _finish(
             "", cli_version, duration_ms, proc.returncode,
-            f"nonzero exit {proc.returncode}: {stderr_tail}",
+            f"nonzero exit {proc.returncode}", "nonzero_exit",
+            resolved_binary_path,
         )
 
     parser = _parse_claude_stdout if vendor == "claude" else _parse_codex_stdout
     try:
         text = parser(proc.stdout or "")
+    except CLIReportedError as exc:
+        return _finish(
+            "", cli_version, duration_ms, proc.returncode,
+            str(exc), "cli_reported_error", resolved_binary_path,
+        )
     except (ValueError, json.JSONDecodeError) as exc:
         return _finish(
             "", cli_version, duration_ms, proc.returncode,
-            f"unparseable output: {exc}",
+            f"unparseable output: {type(exc).__name__}",
+            "unparseable_output", resolved_binary_path,
         )
-    return _finish(text, cli_version, duration_ms, proc.returncode, None)
+    return _finish(text, cli_version, duration_ms, proc.returncode, None,
+                   None, resolved_binary_path)
