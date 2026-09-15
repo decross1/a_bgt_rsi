@@ -1,8 +1,8 @@
 [Unit]
-Description=Five-minute BTCUSDT Spot public research capture cadence
+Description=Two-minute BTCUSDT Spot public research capture cadence
 
 [Timer]
-OnCalendar=*-*-* *:0/5:30
+OnCalendar=*-*-* *:0/2:30
 AccuracySec=10s
 RandomizedDelaySec=0
 Persistent=false
