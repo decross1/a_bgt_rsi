@@ -58,7 +58,8 @@ env -u MOCK_LLM .venv-chroma/bin/python \
 Verify the three hashes above and inspect the complete `docker_create_argv`.
 The vector must use port 8012, `--restart=no`, the image ID rather than a tag,
 a read-only model bind, 32,768 maximum context, one sequence, 2 GiB explicit KV,
-BF16 KV, explicit `--gpu-memory-utilization 0.75`, FP32 recurrent state,
+KV dtype `auto` (record the resolved runtime dtype when observable), explicit
+`--gpu-memory-utilization 0.75`, FP32 recurrent state,
 exact top-k, MTP0, prefix cache off, and async
 scheduling off. It must contain no remote URL, host network, privileged mode,
 arbitrary extra argument, or API key.
