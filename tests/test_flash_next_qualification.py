@@ -829,6 +829,62 @@ def test_monitor_rejects_counter_decrease_even_when_still_above_initial(tmp_path
     monitor._stream.close()
 
 
+def test_monitor_rejects_a_live_sample_gap_over_registered_limit(tmp_path):
+    clock = [100.0]
+    monitor = q.MemoryMonitor(
+        tmp_path / "gap.jsonl",
+        FakeOps(),
+        reader=lambda: 64.0,
+        swap_reader=lambda: 10,
+        cgroup_reader=clean_cgroup,
+        clock=lambda: clock[0],
+    )
+    monitor._stream = (tmp_path / "gap.jsonl").open("xb")
+    first = monitor._sample_once()
+    clock[0] += q.MAX_SAMPLE_GAP_SECONDS + 0.001
+    second = monitor._sample_once()
+    monitor._stream.close()
+    assert first["sample_gap_seconds"] == 0
+    assert second["sample_gap_seconds"] > q.MAX_SAMPLE_GAP_SECONDS
+    assert monitor.cancel_event.is_set()
+    assert "sample-gap" in monitor.failure
+
+
+def test_check_stops_an_armed_candidate_when_monitor_sample_is_stale(tmp_path):
+    clock = [100.0]
+    ops = FakeOps()
+    ops.containers[q.CONTAINER_NAME] = {
+        "id": ops.candidate_id,
+        "name": q.CONTAINER_NAME,
+        "image": q.IMAGE_ID,
+        "running": True,
+        "pid": 200,
+        "started_at": "now",
+        "oom_killed": False,
+        "restart_count": 0,
+        "restart_policy": "no",
+    }
+    monitor = q.MemoryMonitor(
+        tmp_path / "stale.jsonl",
+        ops,
+        reader=lambda: 64.0,
+        swap_reader=lambda: 10,
+        cgroup_reader=clean_cgroup,
+        clock=lambda: clock[0],
+    )
+    monitor._stream = (tmp_path / "stale.jsonl").open("xb")
+    monitor._sample_once()
+    monitor.setup_quiescence_passed = True
+    monitor.setup_quiescence_final_pswpout = 10
+    monitor.begin_mutation_window()
+    monitor.arm(ops.candidate_id)
+    clock[0] += q.MAX_SAMPLE_GAP_SECONDS + 0.001
+    with pytest.raises(q.QualificationError, match="stale"):
+        monitor.check()
+    monitor._stream.close()
+    assert ("docker", "stop", "--time", "10", ops.candidate_id) in ops.log
+
+
 def test_setup_quiescence_records_a_full_sixty_second_sample_span(
     monkeypatch, tmp_path
 ):

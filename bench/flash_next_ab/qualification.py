@@ -69,6 +69,7 @@ MAX_INVOCATION_SECONDS = 3600
 DEFAULT_RESTORE_RESERVE_SECONDS = 600
 SETUP_QUIESCENCE_SECONDS = 60
 READY_QUIESCENCE_SECONDS = 60
+MAX_SAMPLE_GAP_SECONDS = 10
 HOST_PORT = 8012
 HOST_PAGE_SIZE_BYTES = 4096
 LOAD_SWAP_5S_BREACH_BYTES = 128 * 1024**2
@@ -95,6 +96,7 @@ PAGING_POLICY = {
     "candidate_cgroup_oom_kill_initial_max": 0,
     "candidate_cgroup_oom_kill_max_delta": 0,
     "ready_quiescence_seconds": READY_QUIESCENCE_SECONDS,
+    "max_sample_gap_seconds": MAX_SAMPLE_GAP_SECONDS,
     "restoration_host_swap_action": "diagnostic_only",
 }
 FAILURE_STAGES = frozenset(
@@ -860,6 +862,7 @@ class MemoryMonitor:
         self._record_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._monitor_started_mono: float | None = None
+        self._last_sample_mono: float | None = None
         self._phase = "setup"
         self._phase_initial_pswpout: int | None = None
         self._phase_started_at: str | None = None
@@ -1134,7 +1137,23 @@ class MemoryMonitor:
             pswpout = self.swap_reader()
             if isinstance(pswpout, bool) or not isinstance(pswpout, int) or pswpout < 0:
                 raise ValueError("invalid pswpout")
-            observed_mono = self.clock()
+            raw_mono = self.clock()
+            if (
+                isinstance(raw_mono, bool)
+                or not isinstance(raw_mono, (int, float))
+                or not math.isfinite(float(raw_mono))
+                or raw_mono < 0
+            ):
+                raise ValueError("invalid monotonic sample time")
+            observed_mono = float(raw_mono)
+            sample_gap_seconds = (
+                observed_mono - self._last_sample_mono
+                if self._last_sample_mono is not None
+                else 0.0
+            )
+            if sample_gap_seconds < 0:
+                raise ValueError("monotonic sample time decreased")
+            self._last_sample_mono = observed_mono
             observed_at = utc_now()
             if self._monitor_started_mono is None:
                 self._monitor_started_mono = observed_mono
@@ -1262,6 +1281,7 @@ class MemoryMonitor:
                 "observed_at": observed_at,
                 "elapsed_monotonic_seconds": observed_mono
                 - self._monitor_started_mono,
+                "sample_gap_seconds": sample_gap_seconds,
                 "monitor_phase": phase,
                 "setup_quiescence_active": setup_active,
                 "ready_quiescence_active": ready_active,
@@ -1278,6 +1298,8 @@ class MemoryMonitor:
                 "transition_to": None,
             }
             breach_reasons: list[str] = []
+            if sample_gap_seconds > self.paging_policy["max_sample_gap_seconds"]:
+                breach_reasons.append("memory monitor exceeded the sample-gap limit")
             if candidate_id:
                 candidate = _inspect_container(self.ops, candidate_id)
                 candidate_row: dict[str, Any] = {
@@ -1527,6 +1549,22 @@ class MemoryMonitor:
             self._done.wait(self.interval_s)
 
     def check(self) -> None:
+        raw_mono = self.clock()
+        if (
+            isinstance(raw_mono, bool)
+            or not isinstance(raw_mono, (int, float))
+            or not math.isfinite(float(raw_mono))
+            or raw_mono < 0
+        ):
+            self._breach("memory monitor clock is invalid")
+        elif self._last_sample_mono is not None:
+            if float(raw_mono) < self._last_sample_mono:
+                self._breach("memory monitor clock decreased")
+            elif (
+                float(raw_mono) - self._last_sample_mono
+                > self.paging_policy["max_sample_gap_seconds"]
+            ):
+                self._breach("memory monitor is stale beyond the sample-gap limit")
         if self.cancel_event.is_set():
             raise QualificationError(self.failure or "memory gate canceled the qualification")
 
