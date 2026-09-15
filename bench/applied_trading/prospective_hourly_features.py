@@ -22,7 +22,7 @@ from .public_spot_capture import CaptureError, strict_json
 SCHEMA = "applied-trial-prospective-h1-features/v1"
 SOURCE_ID = "binance-spot-public"
 MAX_BATCHES = 96
-MAX_TRADES = 250_000
+MAX_TRADES = 500_000
 MAX_DEPTH_AGE_S = 300
 MINUTE_OFFSET = 5
 

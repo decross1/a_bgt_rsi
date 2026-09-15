@@ -110,4 +110,43 @@ describe("recorded follow-on studies", () => {
     expect(screen.getByText(/2 could not be rerun/)).toBeInTheDocument();
     expect(screen.queryByText(/private completion/)).not.toBeInTheDocument();
   });
+
+  it("shows the closed four-task coding diagnostic with its own grader replay", () => {
+    const row = admitted.windows[0];
+    const group = row.blocks[0].groups[0];
+    const family = (passed: number) => ({
+      declared: 2, producer_passed: passed, replayed: 2,
+      replayed_passed: passed, producer_consistent: 2,
+      producer_inconsistent: 0, grader_unavailable: 0,
+    });
+    const block = {
+      ...row.blocks[0], block_id: "coding-temp1-0", kind: "coding_temp1_medium",
+      attempted: 4, passed: 1, timeouts: 0,
+      groups: [
+        { ...group, condition: ["temp1_medium", "portfolio"],
+          declared: 2, attempted: 2, passed: 1, timeouts: 0 },
+        { ...group, condition: ["temp1_medium", "historical"],
+          declared: 2, attempted: 2, passed: 0, timeouts: 0 },
+      ],
+      grader_replay: {
+        schema: "flash-followon-coding-temp1-grader-replay/v1" as const,
+        run_sha256: row.blocks[0].run_sha256,
+        replay_receipt_sha256: "f".repeat(64),
+        source_replay_status: "available" as const,
+        raw_private_calls_verified: 4, declared: 4, replayed: 4,
+        producer_consistent: 4, producer_inconsistent: 0,
+        grader_unavailable: 0,
+        by_family: { portfolio: family(1), historical: family(0) },
+        comparison_eligible: false as const,
+      },
+    };
+    render(<FollowonResultsPanel data={{ ...admitted,
+      windows: [{ ...row, cohort: "flash", routes: ["flash_next_mia"],
+        blocks: [block] }],
+    }} />);
+    expect(screen.getAllByText("Coding sampling diagnostic")).toHaveLength(2);
+    expect(screen.getByText(/4 of 4 recorded grades reproduced/)).toBeInTheDocument();
+    expect(screen.getByText(/Sampling, reasoning effort, output cap, and timeout changed together/)).toBeInTheDocument();
+    expect(screen.queryByText(/private completion/)).not.toBeInTheDocument();
+  });
 });

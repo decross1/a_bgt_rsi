@@ -10,6 +10,7 @@ import pytest
 from backend import followon_results_progress as projection
 from backend.followon_results_progress import (
     SourceError,
+    _coding_replay,
     _repair_replay,
     project_followon_results,
 )
@@ -167,6 +168,41 @@ def test_selected_repair_replay_projects_only_bound_numeric_counts():
     assert projected["grader_unavailable"] == 2
     assert "private_completion" not in projected
     assert "private_content_exported" not in projected
+
+
+def test_coding_diagnostic_replay_projects_four_original_grades_only():
+    families = {
+        "portfolio": {"declared": 2, "producer_passed": 1,
+                      "replayed": 2, "replayed_passed": 1,
+                      "producer_consistent": 2,
+                      "producer_inconsistent": 0, "grader_unavailable": 0},
+        "historical": {"declared": 2, "producer_passed": 0,
+                       "replayed": 2, "replayed_passed": 0,
+                       "producer_consistent": 2,
+                       "producer_inconsistent": 0, "grader_unavailable": 0},
+    }
+    replay = {
+        "schema": "flash-followon-coding-temp1-grader-replay/v1",
+        "run_sha256": "e" * 64, "replay_receipt_sha256": "f" * 64,
+        "source_replay_status": "available",
+        "raw_private_calls_verified": 4, "declared": 4,
+        "replayed": 4, "producer_consistent": 4,
+        "producer_inconsistent": 0, "grader_unavailable": 0,
+        "by_family": families,
+        "comparison_eligible": False, "private_content_exported": False,
+        "private_completion": "must never cross the UI boundary",
+    }
+    block = {"kind": "coding_temp1_medium", "run_sha256": "e" * 64,
+             "attempted": 4, "passed": 1, "grader_replay": replay}
+    projected = _coding_replay(block, "flash")
+    assert projected["producer_consistent"] == 4
+    assert set(projected["by_family"]) == {"portfolio", "historical"}
+    assert "private_completion" not in projected
+    wrong = {**replay, "declared": 3}
+    with pytest.raises(SourceError):
+        _coding_replay({**block, "grader_replay": wrong}, "flash")
+    with pytest.raises(SourceError):
+        _coding_replay(block, "resident")
 
 
 @pytest.mark.parametrize("change", [

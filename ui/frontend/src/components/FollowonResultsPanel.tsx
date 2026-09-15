@@ -40,7 +40,7 @@ export function FollowonResultsPanel({ data }: { data?: FollowonResultsProgress 
   return <section className="research-pipeline local-model-research" aria-labelledby="followon-heading">
     <header className="research-pipeline-head"><div>
       <p className="benchmark-eyebrow">Local model research</p>
-      <h2 id="followon-heading">Follow-on thinking, validity, and context studies</h2>
+      <h2 id="followon-heading">Follow-on model studies</h2>
       <p>Each block is reported after its supervised window closes and the recorded service state is restored.</p>
     </div><span className="benchmark-chip benchmark-chip--info">Descriptive studies</span></header>
     {windows.length === 0
@@ -67,7 +67,7 @@ export function FollowonResultsPanel({ data }: { data?: FollowonResultsProgress 
                   <th scope="col">Recorded wall</th><th scope="col">Request latency</th>
                   <th scope="col">First token</th><th scope="col">Context input</th></tr></thead>
                 <tbody>{window.blocks.flatMap(block => block.groups.map((group, index) =>
-                  <tr key={`${block.block_id}-${index}`}><th scope="row"><strong>{words(block.kind)}</strong>
+                  <tr key={`${block.block_id}-${index}`}><th scope="row"><strong>{block.kind === "coding_temp1_medium" ? "Coding sampling diagnostic" : words(block.kind)}</strong>
                     <span>{group.condition.map(words).join(" · ")}</span></th>
                     <td>{block.passed === null ? "Timing only" : `${group.passed} / ${group.declared}`}</td><td>{group.attempted}</td>
                     <td>{group.timeouts}</td><td>{group.errors}</td>
@@ -95,6 +95,22 @@ export function FollowonResultsPanel({ data }: { data?: FollowonResultsProgress 
                     : `${replay.producer_consistent} of ${replay.declared} recorded grades reproduced; ${replay.grader_unavailable} could not be rerun; ${replay.producer_inconsistent} differed. This check was recorded at report publication.`}
               </p>;
             })}
+            {window.blocks.filter(block => block.kind === "coding_temp1_medium").map(block => {
+              const replay = block.grader_replay;
+              const bound = replay?.schema === "flash-followon-coding-temp1-grader-replay/v1" &&
+                replay.run_sha256 === block.run_sha256 &&
+                SHA256.test(replay.replay_receipt_sha256) &&
+                replay.comparison_eligible === false;
+              return <p key={`${block.block_id}-coding-grade-check`} className="benchmark-evidence-note">
+                <strong>Coding diagnostic grade check:</strong>{" "}
+                {!bound || !replay
+                  ? "Not recorded for this restored window. The table shows recorded producer grades only."
+                  : replay.source_replay_status === "unavailable"
+                    ? `Original grader replay unavailable for ${replay.declared} attempted coding tasks; recorded grades are shown separately.`
+                    : `${replay.producer_consistent} of ${replay.declared} recorded grades reproduced; ${replay.grader_unavailable} could not be rerun; ${replay.producer_inconsistent} differed. This check was recorded at report publication.`}
+                {" "}Sampling, reasoning effort, output cap, and timeout changed together relative to the original pair in this prospective four-task panel.
+              </p>;
+            })}
             <details className="benchmark-provenance"><summary>Recorded sources</summary><dl>
               <dt>Admission SHA256</dt><dd>{window.admission_sha256}</dd>
               <dt>Recorded controller code SHA256</dt><dd>{window.recorded_controller_source_bundle_sha256}</dd>
@@ -111,6 +127,6 @@ export function FollowonResultsPanel({ data }: { data?: FollowonResultsProgress 
       </aside>}
     <p className="benchmark-evidence-note">These block counts include timeouts in the planned denominator.
       Request latency and first-token timing are shown only when recorded by the transport.
-      Shared blocks describe this selected study; they are separate from the original paired benchmark and do not authorize promotion.</p>
+      These independent follow-on counts are separate from the original paired benchmark and do not authorize promotion.</p>
   </section>;
 }
