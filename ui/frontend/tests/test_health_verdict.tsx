@@ -158,6 +158,6 @@ describe("HealthVerdict component", () => {
   it("renders HEALTHY with the nominal headline", () => {
     render(<HealthVerdict {...base()} />);
     expect(screen.getByText("HEALTHY")).toBeInTheDocument();
-    expect(screen.getByText("all systems nominal")).toBeInTheDocument();
+    expect(screen.getByText("telemetry fresh; Gemma metrics present")).toBeInTheDocument();
   });
 });

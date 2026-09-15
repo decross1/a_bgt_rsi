@@ -668,7 +668,7 @@ describe("Pulse (/)", () => {
     );
     expect(screen.getByTestId("unobserved-flash-status")).toHaveTextContent("starting");
     expect(screen.getByTestId("unobserved-flash-status")).not.toHaveClass("text-red-400");
-    expect(verdict).not.toHaveTextContent(/HEALTHY|all systems nominal|DOWN/);
+    expect(verdict).not.toHaveTextContent(/HEALTHY|telemetry fresh; Gemma metrics present|DOWN/);
   });
 
   it("labels controller setup as preparation without implying model services changed", async () => {
@@ -1014,7 +1014,7 @@ describe("Pulse telemetry evidence boundary", () => {
     expect(verdict).toHaveAttribute("data-level", "unknown");
     expect(verdict).toHaveTextContent("UNKNOWN");
     expect(verdict).toHaveTextContent(connected ? "Awaiting telemetry" : "Telemetry disconnected");
-    expect(verdict).not.toHaveTextContent(/DOWN|unreachable|all systems nominal/);
+    expect(verdict).not.toHaveTextContent(/DOWN|unreachable|telemetry fresh; Gemma metrics present/);
     expect(screen.getByTestId("gemma-4-26b-a4b-status")).toHaveTextContent("unknown");
     expect(screen.getByTestId("qwen3.6-27b-nvfp4-mtp-status")).toHaveTextContent("unknown");
     expect(page).toHaveTextContent(
