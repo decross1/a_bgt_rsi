@@ -12,6 +12,7 @@ import json
 import math
 import os
 import stat
+import subprocess
 import sys
 from fractions import Fraction
 from pathlib import Path
@@ -30,6 +31,7 @@ REPORT_PATH = MIA_OUTPUT / "descriptive-comparison.json"
 INDEX_PATH = MIA_OUTPUT / "descriptive-comparison-index.json"
 ARCHIVED_SOURCE_PATH = MIA_OUTPUT / "descriptive-comparison-source.py"
 GEMMA_OUTPUT = ARTIFACT_ROOT / "known-opponent-utility/qfn-followon-known-opponent-lab8h-a"
+GEMMA_CODE_ROOT = Path("/home/decross1/projects/a_bgt_rsi")
 SCHEMA = "known-opponent-mia-gemma-descriptive-comparison/v1"
 INDEX_SCHEMA = "known-opponent-mia-gemma-comparison-index/v1"
 
@@ -237,19 +239,52 @@ def _matching(gemma: dict, mia: dict) -> dict:
     }
 
 
+def _replay_historical_gemma() -> dict:
+    """Replay the old pilot in its registered root, isolated from Mia imports."""
+    code = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "from experiments.known_opponent_utility import admission\n"
+        "result = admission.validate_pilot(Path(sys.argv[1]))\n"
+        "print(json.dumps(result, sort_keys=True, separators=(',', ':'), allow_nan=False))\n"
+    )
+    try:
+        child = subprocess.run(
+            [sys.executable, "-c", code, str(GEMMA_OUTPUT / "pilot")],
+            cwd=GEMMA_CODE_ROOT,
+            env={**os.environ, "PYTHONPATH": str(GEMMA_CODE_ROOT)},
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ComparisonError("registered Gemma replay was unavailable") from exc
+    _must(child.returncode == 0 and len(child.stdout) <= 32_000,
+          "registered Gemma replay did not pass")
+    try:
+        replay = json.loads(child.stdout,
+                            parse_constant=lambda _: (_ for _ in ()).throw(ValueError("nonfinite")))
+    except (UnicodeError, ValueError) as exc:
+        raise ComparisonError("registered Gemma replay output is malformed") from exc
+    _must(isinstance(replay, dict) and
+          child.stdout.encode() == _canonical(replay) + b"\n",
+          "registered Gemma replay output differs from content-free producer")
+    return replay
+
+
 def build_report() -> dict:
     """Admit both parents and raw game evidence before projecting public counts."""
-    admission, mia_controller = _registered_modules()
+    _, mia_controller = _registered_modules()
     mia_gate = mia_controller.validate_completed(MIA_WINDOW)
     mia_admission, mia_admission_raw = _object(MIA_OUTPUT / "admission.json")
     _must(mia_admission == mia_gate and mia_gate["comparison_eligible"] is False,
           "recorded Mia admission differs from independent terminal replay")
     gemma_refs, gemma_manifest = mia_controller._gemma_reference()
+    _must(gemma_manifest.get("source_root") == str(GEMMA_CODE_ROOT),
+          "Gemma replay root differs from its frozen manifest")
     gemma_admission, gemma_admission_raw = _object(GEMMA_OUTPUT / "admission.json")
     _must(_sha(gemma_admission_raw) == mia_controller.GEMMA_ADMISSION_SHA256
           and gemma_admission["comparison_eligible"] is False,
           "recorded Gemma admission differs from pinned receipt")
-    gemma_replay = admission.validate_pilot(GEMMA_OUTPUT / "pilot")
+    gemma_replay = _replay_historical_gemma()
     _must(gemma_replay == gemma_admission["pilot_validation"]
           and gemma_replay["admission_eligible"] is True,
           "Gemma private-response replay differs from admitted result")
