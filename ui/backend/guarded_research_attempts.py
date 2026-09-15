@@ -1,4 +1,4 @@
-"""Bounded public history of the three registered guarded research bridges.
+"""Bounded public history of the four fixed guarded research bridge IDs.
 
 These attempts are operational observations. A terminal guard result is not a
 productive loop iteration or an admitted empirical/scientific result.
@@ -24,20 +24,26 @@ CAMPAIGN_ID = "v2-known-opponent-utility-20260915"
 CAMPAIGN_MANIFEST_SHA256 = "c0b09e366bf7b8ffe7af58bf7b00e4c0fb7f33eb83a5111f2a465c12fc0be4f7"
 PILOT_RUN_SHA256 = "70763bd0c9a685722a3d01a5412abfbed1bebcf2eb0c7707578709115521c4be"
 IDS = tuple(
-    f"qfn-followon-known-opponent-lab8h-bridge-{arm}" for arm in "cba"
+    f"qfn-followon-known-opponent-lab8h-bridge-{arm}" for arm in "dcba"
 )
 ARCHIVED_SHA256 = {
-    IDS[2]: {
+    IDS[3]: {
         "plan": "bfd11c6c37a48a9f5749074b8b5714208820ec8ab14ae50988ced8b49c4ab0dd",
         "state": "f72e70f0c05e9d5edf92dc37885ce7cf855fe26a691d30834e0f884a6afb1188",
         "result": "223b4f6b072e2fe7260ffd29188471c1204705ab818a82f90d221083f3736b7b",
         "parent": "145ff9d3503ac9c5f058873b03e3a0032bd1071119655f4e57cab4195eafbfd1",
     },
-    IDS[1]: {
+    IDS[2]: {
         "plan": "9ce380db7ed95eb6bf8f5708e428878d1acfe5061667e23fd604fc50c2a05fc7",
         "state": "915c96d940ef593d6cc96ebda44e120194b0a3f2fbcc12cac1803e61a9c17ea6",
         "result": "38c5556c149035a3f0d737fa83889d163b04b7524c8bfd19d8eac38a4b88006a",
         "parent": "44421db82785611b06b8610fd7cd734189ef545730a6457a8eeae5ab2357a0e0",
+    },
+    IDS[1]: {
+        "plan": "0960ae7b4d4f4bc188491dae2f136e6a71d1fbff49c71cb495abbe93e0a6dfa7",
+        "state": "55b25826e88ebc66a9bcbb786d0b03a441572896e8182f7fc9df80f71c2f365d",
+        "result": "1a92fbdedcb97c3241107244e4d58fd9e4d2a2660eb1569b62fa0973f80b8668",
+        "parent": "9c1a9a5b7f1d8c22f52ed2ef28ab41e1764ff9285d51326617db188a5e35a22b",
     },
 }
 SHA = re.compile(r"[0-9a-f]{64}\Z")
@@ -116,7 +122,7 @@ def _parent_restoration(root: Path, window_id: str, *, plan_sha: str,
 
 def _partial_audit(root: Path, window_id: str, *, plan_sha: str,
                    state_sha: str, result_sha: str) -> tuple[int | None, str | None]:
-    if window_id != IDS[1]:
+    if window_id != IDS[2]:
         return None, None
     path = root / f"{window_id}.partial-prompt-audit.json"
     if not path.is_file() or path.is_symlink():
@@ -177,13 +183,16 @@ def _final_record(repo_root: Path, iteration: dict, plan: dict, *,
     if len(matches) != 1:
         return None
     row = matches[0]
+    seed = row.get("seed")
     campaign = row.get("campaign")
     critique = row.get("critique")
     novelty = row.get("novelty")
     journal = row.get("journal_entry_path")
     row_started, row_ended = _utc(row.get("started_at")), _utc(row.get("ended_at"))
     plan_recorded = _utc(plan.get("recorded_at"))
-    if (not isinstance(campaign, dict)
+    if (not isinstance(seed, dict)
+            or seed.get("source") != "known_opponent_utility_bridge"
+            or not isinstance(campaign, dict)
             or campaign.get("campaign_id") != CAMPAIGN_ID
             or campaign.get("campaign_manifest_sha256") !=
             plan.get("campaign_manifest_sha256")
