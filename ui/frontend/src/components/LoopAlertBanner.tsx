@@ -162,6 +162,7 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
   const reasons = level === "ok" ? [] : reasonsOf(alert);
   const gate = gateOf(alert);
   const vendorOnlyAmber = level === "amber" && gate === null &&
+    stale === null && !tsUnreadable &&
     reasons.length === 1 && frontierVendorReason(reasons[0]) !== null;
   const tone = showRed
     ? "border-red-800 bg-red-950/60 text-red-200"
@@ -194,8 +195,8 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
       {reasons.length > 0 && (
         <ul className="mt-1 list-disc space-y-0.5 pl-5" data-testid="loop-alert-reasons">
           {reasons.map((r, i) => (
-            <li key={i} title={frontierVendorReason(r) === null ? undefined : r}>
-              {displayReason(r)}
+            <li key={i} title={vendorOnlyAmber ? r : undefined}>
+              {vendorOnlyAmber ? displayReason(r) : r}
             </li>
           ))}
         </ul>
