@@ -123,7 +123,7 @@ describe("ResearchInspector", () => {
       expect(within(card).getByTestId("evidence-delta")).toHaveTextContent("not supplied in the received projection");
       expect(within(card).getByText("Dated engineering proposal · 2026-09-07 · not adopted protocol")).toBeVisible();
       expect(within(card).getByText("Stage requirement (generic), not a claim-specific accepted test")).toBeVisible();
-      expect(within(card).getByRole("link", { name: `Open full dossier for ${claim.id}` })).toHaveAttribute("href", `/dossier/${claim.id}`);
+      expect(within(card).getByRole("link", { name: `Open source-history dossier for ${claim.id}` })).toHaveAttribute("href", `/dossier/${claim.id}?research_scope=all`);
       expect(card).toHaveTextContent(`Exact recorded retrieval reason ${index + 1}`);
       expect(card).toHaveTextContent("Recorded producer review · direction not inferred");
       expect(card).toHaveTextContent([
@@ -215,7 +215,7 @@ describe("ResearchInspector", () => {
     expect(screen.getAllByTestId(/^research-claim-summary-/)).toHaveLength(3);
     expect(screen.queryByTestId("research-selected-detail")).not.toBeInTheDocument();
     expect(screen.queryByTestId("research-other-histories")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Open full dossier for iter-other/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Open source-history dossier for iter-other/ })).not.toBeInTheDocument();
 
     const pinnedSummary = screen.getByRole("button", {
       name: "Inspect exact claim record cl-iter-2026-08-16-003, iteration iter-2026-08-16-003: Spectral gap → transient Gini variance",
@@ -246,13 +246,13 @@ describe("ResearchInspector", () => {
     }));
     const selectedHistory = screen.getByTestId("research-selected-history-detail");
     expect(selectedHistory).toHaveTextContent("Pinned synthetic negative history");
-    expect(within(selectedHistory).getByRole("link", { name: "Open full dossier for iter-other-077" })).toBeVisible();
+    expect(within(selectedHistory).getByRole("link", { name: "Open source-history dossier for iter-other-077" })).toBeVisible();
     expect(pinnedSummary).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByTestId("research-selected-detail")).toHaveTextContent(claims[0].claim);
 
     fireEvent.click(historyDisclosure);
     expect(screen.queryByTestId("research-other-histories")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Open full dossier for iter-other-077" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open source-history dossier for iter-other-077" })).not.toBeInTheDocument();
   });
 
   it("keeps shared-iteration summaries distinct by source record identity", () => {

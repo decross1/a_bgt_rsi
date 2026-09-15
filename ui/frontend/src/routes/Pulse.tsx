@@ -52,11 +52,13 @@ import ModelServerCard, {
 import NaraPromptForm from "../components/NaraPromptForm";
 import NowBoard from "../components/NowBoard";
 import OweCard from "../components/OweCard";
+import ResearchScopeBar from "../components/ResearchScopeBar";
 import { getActivityMonitor } from "../api/activity";
 import { getCoordinatorCycles, getHealth, getIterations, getServedModels } from "../api/http";
 import { usePolled } from "../api/pollhub";
 import { useTelemetryStream } from "../hooks/useTelemetryStream";
 import { useNow } from "../time";
+import { researchScopedHref, useResearchScope, type ResearchScope } from "../researchScope";
 import type { LiveCalls, MonitorResponse } from "../types/activity";
 import type {
   CoordinatorCycle,
@@ -170,8 +172,8 @@ function ModelEvidenceCard({
 // clause, so ask the backend for the timestamp column, not the full record
 // (the full payload measured 3.4 MB / 2.9 s per poll on 2026-08-18; an older
 // backend binary ignores the params and still answers with the full rows).
-const fetchIterationTimes = () =>
-  getIterations({ fields: "iteration_id,ended_at", limit: 1000 });
+const fetchIterationTimes = (scope: ResearchScope) =>
+  getIterations({ fields: "iteration_id,ended_at", limit: 1000 }, scope);
 
 // CHURN-STRIP (adversarial-review residual fix 2, 2026-08-18):
 // /api/activity/monitor stamps a fresh top-level `generated_at` on EVERY
@@ -196,6 +198,7 @@ const fetchMonitor = () => getActivityMonitor(1).then(stripMonitorChurn);
 import DevelopmentNotice from "../components/DevelopmentNotice";
 
 export default function Pulse() {
+  const researchScope = useResearchScope();
   const { samples, connected } = useTelemetryStream();
   const [launchOpen, setLaunchOpen] = useState(false);
   const [requestsOpen, setRequestsOpen] = useState(false);
@@ -236,22 +239,29 @@ export default function Pulse() {
   // The two event histories behind the sparkgrid. Both fail quiet: an
   // unreachable endpoint leaves the grid empty (an honest "no evidence of
   // activity"), never a fabricated one.
-  const cyclesPoll = usePolled("cycles", getCoordinatorCycles, {
+  const cyclesPoll = usePolled(`cycles:${researchScope}`, getCoordinatorCycles, {
     intervalMs: 60000,
     initialDelayMs: 200,
+    enabled: researchScope === "all",
   });
-  const iterationsPoll = usePolled("iterations", fetchIterationTimes, {
+  const iterationsPoll = usePolled(
+    `iterations:${researchScope}`,
+    () => fetchIterationTimes(researchScope),
+    {
     intervalMs: 60000,
     initialDelayMs: 300,
-  });
+    },
+  );
   const cycles: CoordinatorCycle[] | null = useMemo(
     () =>
-      cyclesPoll.data === undefined
+      researchScope !== "all"
+        ? []
+        : cyclesPoll.data === undefined
         ? null
         : Array.isArray(cyclesPoll.data?.cycles)
           ? cyclesPoll.data.cycles
           : [],
-    [cyclesPoll.data],
+    [cyclesPoll.data, researchScope],
   );
   const cyclesLoaded = cycles !== null;
   // Pulse took over LastCycleLine's poll, so it also inherits its duty to be
@@ -259,7 +269,7 @@ export default function Pulse() {
   // not render an empty slot that reads as "the loop has done nothing".
   // (With SWR, "failed" only blanks the line when NO payload ever landed;
   // once data exists a failing refetch keeps showing it.)
-  const cyclesFailed = cyclesPoll.failing && !cyclesLoaded;
+  const cyclesFailed = researchScope === "all" && cyclesPoll.failing && !cyclesLoaded;
   const iterations: IterationRecord[] = useMemo(
     () =>
       Array.isArray(iterationsPoll.data?.iterations)
@@ -426,10 +436,11 @@ export default function Pulse() {
           <p className="mt-2 text-sm text-[var(--fg-muted)]">Find the next useful decision. Keep research evidence and runtime activity separate.</p>
         </div>
         <div className="flex flex-wrap gap-3 text-sm">
-          <Link to="/ladder" className="rounded-md border border-[var(--border-2)] bg-[var(--surface-1)] px-4 py-2 text-[var(--accent)]">Explore research</Link>
+          <Link to={researchScopedHref("/ladder", researchScope)} className="rounded-md border border-[var(--border-2)] bg-[var(--surface-1)] px-4 py-2 text-[var(--accent)]">Explore research</Link>
           <Link to="/development" className="rounded-md border border-[var(--border-2)] bg-[var(--surface-1)] px-4 py-2 text-[var(--accent)]">Review delivery and readiness</Link>
         </div>
       </header>
+      <ResearchScopeBar />
       {/* ── 0 · identity bar ────────────────────────────────────────────── */}
       <div
         style={{
@@ -481,7 +492,7 @@ export default function Pulse() {
       {/* id: LabTodo's blocked-on-you line points back UP at this hero rather
           than restating the same work as a second list. OweCard (2026-08-18)
           keeps OweStrip's pins and adds per-row expand + triage/age chips. */}
-      <DevelopmentNotice />
+      {researchScope === "all" && <DevelopmentNotice />}
       <div id="what-you-owe" ref={heroRef} className="mt-4">
         <details data-testid="pulse-human-requests" open={requestsOpen}
           onToggle={(event) => setRequestsOpen(event.currentTarget.open)}
@@ -496,7 +507,7 @@ export default function Pulse() {
       {/* The human's queue is the hero; what Nara and the PI advance on their
           own sits directly under it, quieter. */}
       <div id="lab-queue" ref={labQueueRef} style={{ marginTop: "var(--space-4)" }}>
-        {queueRequested ? <LabTodo /> : <Card testId="pulse-queue-not-read">
+        {queueRequested ? <LabTodo researchScope={researchScope} /> : <Card testId="pulse-queue-not-read">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h2 className="text-base font-medium">Lab queue</h2>
               <p className="mt-1 text-sm text-[var(--fg-muted)]">The queue has not been loaded in this view. Its contents and freshness are unknown.</p>
@@ -529,7 +540,10 @@ export default function Pulse() {
           gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
         }}
       >
-        <Card title="Lab activity" testId="pulse-lab-activity">
+        <Card
+          title={researchScope === "active" ? "Campaign activity" : "Lab activity · history"}
+          testId="pulse-lab-activity"
+        >
           <LabSparkgrid
             iterationTimes={iterationTimes}
             cycleTimes={cycleTimes}
@@ -554,9 +568,9 @@ export default function Pulse() {
           gap: "var(--space-4)",
         }}
       >
-        {cyclesLoaded ? (
+        {researchScope === "all" && cyclesLoaded ? (
           <LastCycleLine initial={cycles} />
-        ) : cyclesFailed ? (
+        ) : researchScope === "all" && cyclesFailed ? (
           <div
             data-testid="pulse-cycles-unavailable"
             style={{ fontSize: "var(--text-meta)", color: "var(--status-warn)" }}
@@ -564,6 +578,10 @@ export default function Pulse() {
             /api/coordinator/cycles unreachable — the loop's last cycle is
             UNKNOWN, not absent.
           </div>
+        ) : researchScope === "active" ? (
+          <p className="text-xs text-[var(--fg-muted)]" data-testid="pulse-cycle-history-boundary">
+            Coordinator cycle history is retained in All research history; this view does not mix it into the current campaign.
+          </p>
         ) : null}
 
         <HealthStrip samples={cleanSamples} />

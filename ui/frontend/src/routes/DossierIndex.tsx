@@ -21,6 +21,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { getHumanTodo, getIterations } from "../api/http";
+import ResearchScopeBar from "../components/ResearchScopeBar";
+import {
+  researchScopedHref,
+  useResearchScope,
+  type ResearchScope,
+  type ResearchScopeMetadata,
+} from "../researchScope";
 import { ageLabel, clearsLadderBar, evidenceLevelOf } from "../ladderBar";
 import {
   Badge,
@@ -153,7 +160,8 @@ function ItemRow({
   return (
     <li data-testid={`dossier-row-${id}`}>
       <Link
-        to={`/dossier/${encodeURIComponent(id)}`}
+        to={researchScopedHref(`/dossier/${encodeURIComponent(id)}`, "all")}
+        aria-label={`${title} · source history`}
         className={`flex flex-wrap items-baseline gap-2 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-zinc-600 ${nested ? "ml-3" : ""}`}
       >
         <span className="text-zinc-200">{title}</span>
@@ -164,6 +172,9 @@ function ItemRow({
         )}
         <span className="text-[10px] uppercase tracking-wide text-zinc-600">
           {kind}
+        </span>
+        <span className="rounded border border-zinc-700 px-1 py-0.5 text-[9px] uppercase tracking-wide text-zinc-500">
+          source history
         </span>
         {item.deferred === true && (
           <span
@@ -241,7 +252,8 @@ function IterationRow({ row }: { row: IterationRecord }) {
   return (
     <li data-testid={`dossier-iter-${id}`}>
       <Link
-        to={`/dossier/${encodeURIComponent(id)}`}
+        to={researchScopedHref(`/dossier/${encodeURIComponent(id)}`, "all")}
+        aria-label={`Open ${id} · source history`}
         className="block rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-zinc-600"
       >
         <div className="flex flex-wrap items-baseline gap-2">
@@ -255,6 +267,9 @@ function IterationRow({ row }: { row: IterationRecord }) {
             tone={toneFor(NOVELTY_TONE, row.novelty?.class, "bg-zinc-800 text-zinc-400")}
           />
           <Badge text={row.gate_status} tone={toneFor(GATE_TONE, row.gate_status, "")} />
+          <span className="rounded border border-zinc-700 px-1 py-0.5 text-[9px] uppercase tracking-wide text-zinc-500">
+            source history
+          </span>
           <span className="ml-auto font-mono text-[10px] text-zinc-500">
             {shortTimestamp(row.ended_at)}
           </span>
@@ -310,13 +325,21 @@ export default function DossierIndex({
   todoPollMs = 10000,
   iterPollMs = 30000,
 }: Props) {
+  const researchScope = useResearchScope();
   const [todoItems, setTodoItems] = useState<HumanTodoItem[]>(
     safeItems(items),
   );
   const [todoLoaded, setTodoLoaded] = useState(items !== undefined);
   const [todoError, setTodoError] = useState<string | null>(null);
+  const [todoDataScope, setTodoDataScope] = useState<ResearchScope | null>(
+    items !== undefined ? researchScope : null,
+  );
+  const [todoScopeInfo, setTodoScopeInfo] = useState<ResearchScopeMetadata | null>(null);
   const [iterRows, setIterRows] = useState<IterationRecord[]>(
     Array.isArray(iterations) ? iterations : [],
+  );
+  const [iterationDataScope, setIterationDataScope] = useState<ResearchScope | null>(
+    iterations !== undefined ? researchScope : null,
   );
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -325,19 +348,25 @@ export default function DossierIndex({
   useEffect(() => {
     if (items !== undefined) {
       setTodoItems(safeItems(items));
+      setTodoDataScope(researchScope);
       return;
     }
     let active = true;
     const load = () =>
-      getHumanTodo()
+      getHumanTodo(researchScope)
         .then((r) => {
           if (!active) return;
           setTodoItems(safeItems(r?.items));
+          setTodoScopeInfo(r?.research_scope ?? null);
+          setTodoDataScope(researchScope);
           setTodoLoaded(true);
           setTodoError(null);
         })
         .catch((e) => {
-          if (active) setTodoError(String(e));
+          if (!active) return;
+          setTodoDataScope(researchScope);
+          setTodoLoaded(true);
+          setTodoError(String(e));
         });
     load();
     const id = setInterval(load, Math.max(1000, todoPollMs));
@@ -345,21 +374,23 @@ export default function DossierIndex({
       active = false;
       clearInterval(id);
     };
-  }, [items, todoPollMs]);
+  }, [items, researchScope, todoPollMs]);
 
   // /api/loop_v0/iterations — the resolved history (30s poll; failures leave
   // the section empty-quiet — the todo feed is the load-bearing one).
   useEffect(() => {
     if (iterations !== undefined) {
       setIterRows(Array.isArray(iterations) ? iterations : []);
+      setIterationDataScope(researchScope);
       return;
     }
     let active = true;
     const load = () =>
-      getIterations()
+      getIterations(undefined, researchScope)
         .then((r) => {
           if (!active) return;
           setIterRows(Array.isArray(r?.iterations) ? r.iterations : []);
+          setIterationDataScope(researchScope);
         })
         .catch(() => {
           /* history feed down → the section just stays empty */
@@ -370,14 +401,22 @@ export default function DossierIndex({
       active = false;
       clearInterval(id);
     };
-  }, [iterations, iterPollMs]);
+  }, [iterations, iterPollMs, researchScope]);
+
+  // Withhold the prior scope synchronously if the URL changes through browser
+  // history or an external client-side navigation. The visible scope switch
+  // itself performs a full document load, clearing these states entirely.
+  const scopedTodoItems = todoDataScope === researchScope ? todoItems : [];
+  const scopedIterRows = iterationDataScope === researchScope ? iterRows : [];
+  const scopedTodoLoaded = todoDataScope === researchScope && todoLoaded;
+  const scopedTodoError = todoDataScope === researchScope ? todoError : null;
 
   // --- the three sections ---
-  const owe = todoItems.filter((it) => isBlockingKind(asText(it.kind)));
-  const clearedBar = todoItems.filter(
+  const owe = scopedTodoItems.filter((it) => isBlockingKind(asText(it.kind)));
+  const clearedBar = scopedTodoItems.filter(
     (it) => isFinding(it) && clearsLadderBar(it),
   );
-  const everythingElseItems = todoItems.filter(
+  const everythingElseItems = scopedTodoItems.filter(
     (it) =>
       !isBlockingKind(asText(it.kind)) &&
       !(isFinding(it) && clearsLadderBar(it)),
@@ -397,11 +436,11 @@ export default function DossierIndex({
         );
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [todoItems, q],
+    [scopedTodoItems, q],
   );
   const visibleIters = useMemo(
     () =>
-      iterRows.filter((row) => {
+      scopedIterRows.filter((row) => {
         if (row === null || typeof row !== "object" || Array.isArray(row)) {
           return false;
         }
@@ -413,7 +452,7 @@ export default function DossierIndex({
           id.toLowerCase().includes(q)
         );
       }),
-    [iterRows, q],
+    [scopedIterRows, q],
   );
   const elseCells = useMemo(() => buildCells(visibleElse), [visibleElse]);
 
@@ -425,7 +464,7 @@ export default function DossierIndex({
       return next;
     });
 
-  const endpointMissing = todoError !== null && /\b404\b/.test(todoError);
+  const endpointMissing = scopedTodoError !== null && /\b404\b/.test(scopedTodoError);
   const nowMs = Date.now();
 
   return (
@@ -435,20 +474,34 @@ export default function DossierIndex({
           /dossier · what deserves your attention
         </h1>
         <p className="mt-0.5 text-[11px] text-zinc-500">
-          Owe-first: blocking decisions, then findings that cleared the L4
-          evidence bar, then everything else. Each row opens its full dossier —
-          the journey, the interrogation, and the verdict forms.
+          {researchScope === "active"
+            ? "Current-campaign decisions and explicitly linked records, with global safety gates retained."
+            : "Preserved decisions and records across research history."}{" "}
+          Each row opens its full dossier — the journey, the interrogation, and the verdict forms.
         </p>
       </header>
 
-      {todoError &&
+      <ResearchScopeBar fetchMetadata={items === undefined && iterations === undefined} />
+
+      {researchScope === "active" && todoScopeInfo !== null && (
+        <p className="mb-3 text-xs text-zinc-500" data-testid="dossier-scope-coverage">
+          {typeof todoScopeInfo.omitted_historical_items === "number"
+            ? `${todoScopeInfo.omitted_historical_items} historical queue item${todoScopeInfo.omitted_historical_items === 1 ? "" : "s"} omitted. `
+            : "Historical queue omissions were not reported. "}
+          {todoScopeInfo.global_safety_gates_retained === true
+            ? "Global safety gates remain visible."
+            : "Global safety-gate retention was not reported."}
+        </p>
+      )}
+
+      {scopedTodoError &&
         (endpointMissing ? (
           <div className="mb-3 text-xs text-amber-400" data-testid="dossier-error">
             /api/human_todo returned 404 — the queue is UNKNOWN, not empty.
           </div>
         ) : (
           <div className="mb-3 text-xs text-red-400" data-testid="dossier-error">
-            {todoError}
+            {scopedTodoError}
           </div>
         ))}
 
@@ -460,9 +513,11 @@ export default function DossierIndex({
           count={owe.length}
           testid="dossier-owe-count"
         />
-        {todoLoaded && !todoError && owe.length === 0 && (
+        {scopedTodoLoaded && !scopedTodoError && owe.length === 0 && (
           <div className="mt-2 text-sm text-zinc-500" data-testid="dossier-owe-empty">
-            You owe nothing — the loop is unblocked.
+            {researchScope === "active"
+              ? "No current-campaign requests or global safety gates are recorded in this view. This does not establish that the wider loop is unblocked."
+              : "No recorded requests in this view. This does not establish that the loop is unblocked."}
           </div>
         )}
         {owe.length > 0 && (
@@ -485,12 +540,14 @@ export default function DossierIndex({
           count={clearedBar.length}
           testid="dossier-cleared-count"
         />
-        {todoLoaded && !todoError && clearedBar.length === 0 && (
+        {scopedTodoLoaded && !scopedTodoError && clearedBar.length === 0 && (
           <div
             className="mt-2 text-sm text-zinc-500"
             data-testid="dossier-cleared-empty"
           >
-            Nothing cleared L4 this week.
+            {researchScope === "active"
+              ? "No current-campaign finding has cleared L4."
+              : "Nothing cleared L4 this week."}
           </div>
         )}
         {clearedBar.length > 0 && (
@@ -529,7 +586,9 @@ export default function DossierIndex({
           >
             {q !== ""
               ? "no dossiers match — adjust the search."
-              : "nothing else pending."}
+              : researchScope === "active"
+                ? "No other current-campaign records are recorded."
+                : "nothing else pending."}
           </div>
         ) : (
           <>

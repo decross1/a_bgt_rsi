@@ -1292,7 +1292,7 @@ describe("PipelineJourney — ABSORBED links + lazy journal", () => {
     );
     const exp = within(links).getByTestId("journey-experiment-link");
     expect(exp.getAttribute("href")).toBe(
-      "/experiments/exp003_vickrey_rediscovery",
+      "/experiments/exp003_vickrey_rediscovery?research_scope=all",
     );
   });
 

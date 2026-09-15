@@ -29,6 +29,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
+from .research_scope import ResearchScope, ScopeName
 
 # Default to the worktree root's experiments/ dir (git-tracked, populated).
 # ``parents[2]`` from ui/backend/experiments.py == the worktree root.
@@ -599,7 +600,7 @@ def register(
 
         return payload
 
-    def _research_experiment(exp_id: str, bridges: dict[str, list[dict]]) -> dict:
+    def _research_experiment(exp_id: str, bridges: dict[str, list[dict]], summary: dict | None = None) -> dict:
         """Build one research-page experiment entry: probe flags + verdict +
         bridge. The dir may be ABSENT (e.g. a design-only tier entry) — then
         has_results_dir is false and verdict is null. ``bridges`` is read ONCE
@@ -607,11 +608,15 @@ def register(
         Nothing is fabricated."""
         results_dir = experiments_dir / exp_id / "results"
         probe = _probe(results_dir)
-        verdict = (
-            _experiment_verdict(results_dir)
-            if probe["has_results_dir"]
-            else None
-        )
+        if summary is not None:
+            # The active view trusts only the exact admitted JSON snapshot.
+            # Historical markdown has no campaign provenance and cannot
+            # override this verdict or trigger a second unbounded read.
+            headline = _derive_headline(summary)
+            verdict = None if headline is None else {
+                "text": headline.get("verdict"), "tone": headline.get("tone")}
+        else:
+            verdict = _experiment_verdict(results_dir) if probe["has_results_dir"] else None
         return {
             "id": exp_id,
             "title": _title_from_id(exp_id),
@@ -621,23 +626,51 @@ def register(
         }
 
     @research_router.get("")
-    def research():
+    def research(research_scope: ScopeName = "all"):
+        scope = ResearchScope(research_scope, loop_memory_path.parent.parent, loop_memory_path.parent)
         if not experiments_dir.is_dir():
             return {
                 "available": False,
+                **({"research_scope": scope.metadata()} if research_scope == "active" else {}),
                 "reason": "experiments dir absent",
                 "tiers": [],
                 "untiered": [],
             }
         # Parse the loop_memory bridge ONCE per request, not once per experiment.
-        bridges = _read_loop_memory_bridges(loop_memory_path)
+        if research_scope == "active":
+            bridges: dict[str, list[dict]] = {}
+            for row in scope.iterations():
+                outcome = row.get("experiment_outcome")
+                if not isinstance(outcome, dict):
+                    continue
+                exp_id = outcome.get("experiment_id")
+                if isinstance(exp_id, str) and exp_id:
+                    bridges.setdefault(exp_id, []).append({
+                        "iteration_id": row["iteration_id"],
+                        **{key: outcome.get(key) for key in ("metric", "value", "trials")},
+                    })
+        else:
+            bridges = _read_loop_memory_bridges(loop_memory_path)
+
+        def scoped_experiment(exp_id: str) -> dict | None:
+            if research_scope == "all":
+                return _research_experiment(exp_id, bridges)
+            summary = scope.experiment_summary(experiments_dir / exp_id / "results")
+            if summary is None:
+                return None
+            # A summary naming a different experiment cannot donate results.
+            if "experiment_id" in summary and summary["experiment_id"] != exp_id:
+                return None
+            return _research_experiment(exp_id, bridges, summary)
         tiered_ids: set[str] = set()
         tiers_out = []
         for tier in _TIER_MAP:
             experiments = []
             for exp_id in tier["experiment_ids"]:
                 tiered_ids.add(exp_id)
-                experiments.append(_research_experiment(exp_id, bridges))
+                entry = scoped_experiment(exp_id)
+                if entry is not None:
+                    experiments.append(entry)
             tiers_out.append({
                 "tier": tier["tier"],
                 "label": tier["label"],
@@ -653,9 +686,12 @@ def register(
                 continue
             if child.name in tiered_ids:
                 continue
-            untiered.append(_research_experiment(child.name, bridges))
+            entry = scoped_experiment(child.name)
+            if entry is not None:
+                untiered.append(entry)
         return {
             "available": True,
+            **({"research_scope": scope.metadata()} if research_scope == "active" else {}),
             "tiers": tiers_out,
             "untiered": untiered,
         }

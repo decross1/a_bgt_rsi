@@ -51,6 +51,15 @@ const STATE_GATE_ITEM: HumanTodoItem = {
   title: "State-file gate: D-049 scheduled cycles await ratification",
 };
 
+function pathIs(url: string, pathname: string): boolean {
+  return new URL(url).pathname === pathname;
+}
+
+const EMPTY_HISTORY_QUEUE = {
+  items: [],
+  counts: {},
+};
+
 function jsonResponse(status: number, body: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -64,7 +73,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", async (url: unknown) => {
     const u = String(url);
     if (u.endsWith("/api/todo/concurrency")) return jsonResponse(200, { active: false });
-    if (u.endsWith("/api/human_todo")) return jsonResponse(200, { items: [], counts: {} });
+    if (pathIs(u, "/api/human_todo")) return jsonResponse(200, EMPTY_HISTORY_QUEUE);
     // LIVE attest capability so the self-gating forms (gate_verdict /
     // finding_review / bubble_ack / defer) render their form testids.
     if (u.endsWith("/api/attest/available"))
@@ -123,6 +132,27 @@ const FINDING_KEYED = [
   "spawn-topic-form",
   "abstain-form",
 ] as const;
+
+describe("DossierReader — source-history boundary", () => {
+  it("does not present an old direct bookmark as current-campaign evidence", () => {
+    renderReader("iter-old-history", []);
+    expect(screen.getByTestId("dossier-history-boundary")).toHaveTextContent(
+      /Source-library history/,
+    );
+    expect(screen.getByRole("link", { name: "All research history" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "Current campaign" })).toHaveAttribute(
+      "href",
+      "/dossier",
+    );
+    expect(screen.getByRole("link", { name: "← dossiers" })).toHaveAttribute(
+      "href",
+      "/dossier?research_scope=all",
+    );
+  });
+});
 
 // The interrogation surfaces: the section, its reveal button, the revealed
 // wrapper, and the two chat panes.
@@ -529,7 +559,7 @@ describe("DossierReader — R2 tutor summary is trimmed to claim + evidence refs
     vi.stubGlobal("fetch", async (url: unknown) => {
       const u = String(url);
       if (u.endsWith("/api/todo/concurrency")) return jsonResponse(200, { active: false });
-      if (u.endsWith("/api/human_todo")) return jsonResponse(200, { items: [], counts: {} });
+      if (pathIs(u, "/api/human_todo")) return jsonResponse(200, EMPTY_HISTORY_QUEUE);
       if (u.endsWith("/api/attest/available"))
         return jsonResponse(200, { available: true, actions: { finding_review: true, defer: true } });
       if (u.includes("/api/finding/"))
@@ -598,7 +628,7 @@ describe("DossierReader — R2 the journey opens COLLAPSED under the sticky step
     vi.stubGlobal("fetch", async (url: unknown) => {
       const u = String(url);
       if (u.endsWith("/api/todo/concurrency")) return jsonResponse(200, { active: false });
-      if (u.endsWith("/api/human_todo")) return jsonResponse(200, { items: [], counts: {} });
+      if (pathIs(u, "/api/human_todo")) return jsonResponse(200, EMPTY_HISTORY_QUEUE);
       if (u.endsWith("/api/attest/available"))
         return jsonResponse(200, { available: true, actions: { gate_verdict: true, defer: true } });
       if (u.includes("/journey"))

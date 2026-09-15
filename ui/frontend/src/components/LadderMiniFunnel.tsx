@@ -21,6 +21,7 @@ import { getLadder } from "../api/http";
 import { usePolled } from "../api/pollhub";
 import { isVersionSkew404 } from "./EndpointMissingNote";
 import type { LadderResponse } from "../types/schemas";
+import { researchScopedHref, useResearchScope } from "../researchScope";
 
 const LADDER_ENDPOINT = "/api/ladder";
 const RUNGS = ["L0", "L1", "L2", "L3", "L4", "L5"] as const;
@@ -41,14 +42,19 @@ function LadderMiniFunnel({
   initial,
   pollMs = 60000,
 }: LadderMiniFunnelProps) {
+  const researchScope = useResearchScope();
   // pollhub (perf 2026-08-18): in-flight-guarded (measured 61 s under a
   // strangled backend — the old bare setInterval would happily stack such
   // reads), change-detected, SWR. Fixture injection short-circuits the hub.
-  const poll = usePolled<LadderResponse | null>("ladder", getLadder, {
+  const poll = usePolled<LadderResponse | null>(
+    `ladder:${researchScope}`,
+    () => getLadder(researchScope),
+    {
     intervalMs: pollMs,
     initialDelayMs: 350,
     enabled: initial === undefined,
-  });
+    },
+  );
   const data: LadderResponse | null =
     initial !== undefined ? initial : (poll.data ?? null);
   // null payload = 204: the ledger has never been written. Nothing to show.
@@ -182,7 +188,7 @@ function LadderMiniFunnel({
             refresh failing — stale
           </span>
         )}
-        <Link to="/ladder" style={{ marginLeft: "auto", color: "var(--accent)" }}>
+        <Link to={researchScopedHref("/ladder", researchScope)} style={{ marginLeft: "auto", color: "var(--accent)" }}>
           ladder →
         </Link>
       </div>

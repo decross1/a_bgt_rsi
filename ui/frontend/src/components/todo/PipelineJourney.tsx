@@ -61,6 +61,7 @@
 // never colors a station either.
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { researchScopedHref, useResearchScope } from "../../researchScope";
 import type {
   FindingDetail,
   HumanTodoItem,
@@ -356,6 +357,7 @@ function VerdictHeader({ row }: { row: IterationRecord }) {
 // fetch is GUARDED: a 404/older backend, a missing mock, or a malformed body
 // all degrade to "no cycle link" — never a red state inside the journey.
 function JourneyLinks({ row }: { row: IterationRecord }) {
+  const researchScope = useResearchScope();
   const iterationId = asText(row.iteration_id);
 
   const [cycleRunId, setCycleRunId] = useState<string | null>(null);
@@ -419,7 +421,7 @@ function JourneyLinks({ row }: { row: IterationRecord }) {
         {expId && (
           <Link
             data-testid="journey-experiment-link"
-            to={`/experiments/${encodeURIComponent(expId)}`}
+            to={researchScopedHref(`/experiments/${encodeURIComponent(expId)}`, "all")}
             className="text-sky-300 underline hover:text-sky-200"
           >
             experiment {expId}
@@ -428,7 +430,7 @@ function JourneyLinks({ row }: { row: IterationRecord }) {
         {cycleRunId !== null && (
           <Link
             data-testid="journey-cycle-link"
-            to="/cycles"
+            to={researchScopedHref("/cycles", researchScope)}
             className="text-sky-300 underline hover:text-sky-200"
           >
             coordinator cycle {cycleRunId || "(unnamed run)"}

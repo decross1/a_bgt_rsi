@@ -31,6 +31,7 @@ from .ladder import register as register_ladder
 from .loop_alert import register as register_loop_alert
 from .loop_v0 import register as register_loop_v0
 from .model_io import register as register_model_io
+from .research_scope import register as register_research_scope
 from .served_models import register as register_served_models
 from .tailer import JsonlTailer
 from .todo_cockpit import register as register_todo_cockpit
@@ -217,6 +218,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     register_activity(app, logs_dir=logs_dir, telemetry_file=telemetry_file)
     register_experiments(app)
     register_weekly_upgrade_progress(app)
+    register_research_scope(app, repo_root=Path(loop_v0_repo), memory_dir=Path(coordinator_memory))
 
     register_loop_v0(
         app,

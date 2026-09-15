@@ -36,6 +36,10 @@ interface RecordedCall {
   body: Record<string, unknown> | null;
 }
 
+function pathIs(url: string, pathname: string): boolean {
+  return new URL(url).pathname === pathname;
+}
+
 function jsonResponse(status: number, body: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -140,7 +144,10 @@ const FINDING_ENVELOPE_IN_REVIEW = {
   },
 };
 
-const EMPTY_QUEUE = { items: [], counts: {} };
+const EMPTY_QUEUE = {
+  items: [],
+  counts: {},
+};
 
 // Multi-line stderr that MUST surface verbatim (synthetic, argparse-shaped).
 const STDERR_VERBATIM =
@@ -203,7 +210,7 @@ describe("GateVerdictForm", () => {
       if (u.endsWith("/api/attest/gate_verdict") && init?.method === "POST") {
         return jsonResponse(200, GATE_ROW);
       }
-      if (u.endsWith("/api/human_todo")) return jsonResponse(200, EMPTY_QUEUE);
+      if (pathIs(u, "/api/human_todo")) return jsonResponse(200, EMPTY_QUEUE);
       return undefined;
     });
     render(<GateVerdictForm iterationId="iter-2026-06-09-001" />);
@@ -221,7 +228,7 @@ describe("GateVerdictForm", () => {
 
     // Sequence: POST first, THEN the confirmation re-poll of /api/human_todo.
     const postIndex = calls.findIndex((c) => c.url.endsWith("/api/attest/gate_verdict"));
-    const repollIndex = calls.findIndex((c) => c.url.endsWith("/api/human_todo"));
+    const repollIndex = calls.findIndex((c) => pathIs(c.url, "/api/human_todo"));
     expect(postIndex).toBeGreaterThan(-1);
     expect(repollIndex).toBeGreaterThan(postIndex);
     expect(calls[postIndex].body).toEqual({
@@ -237,7 +244,7 @@ describe("GateVerdictForm", () => {
       if (u.endsWith("/api/attest/gate_verdict") && init?.method === "POST") {
         return jsonResponse(502, { rc: 2, stderr: STDERR_VERBATIM });
       }
-      if (u.endsWith("/api/human_todo")) return jsonResponse(200, EMPTY_QUEUE);
+      if (pathIs(u, "/api/human_todo")) return jsonResponse(200, EMPTY_QUEUE);
       return undefined;
     });
     render(<GateVerdictForm iterationId="iter-2026-06-09-001" />);
@@ -253,7 +260,7 @@ describe("GateVerdictForm", () => {
     expect(screen.getByText(/cli failed \(rc 2\)/i)).toBeInTheDocument();
 
     // A failed POST is not a write — there is nothing to confirm; no re-poll.
-    expect(calls.some((c) => c.url.endsWith("/api/human_todo"))).toBe(false);
+    expect(calls.some((c) => pathIs(c.url, "/api/human_todo"))).toBe(false);
   });
 
   it("degrades to the quiet CLI-fallback note when the handshake says unavailable", async () => {
@@ -327,7 +334,7 @@ describe("FindingReviewForm", () => {
       if (u.endsWith("/api/attest/finding_review") && init?.method === "POST") {
         return jsonResponse(200, FINDING_ENVELOPE_VALIDATED);
       }
-      if (u.endsWith("/api/human_todo")) return jsonResponse(200, EMPTY_QUEUE);
+      if (pathIs(u, "/api/human_todo")) return jsonResponse(200, EMPTY_QUEUE);
       return undefined;
     });
     render(<FindingReviewForm findingId="sf-001" />);
@@ -356,7 +363,7 @@ describe("FindingReviewForm", () => {
       if (u.endsWith("/api/attest/finding_review") && init?.method === "POST") {
         return jsonResponse(200, FINDING_ENVELOPE_IN_REVIEW);
       }
-      if (u.endsWith("/api/human_todo")) {
+      if (pathIs(u, "/api/human_todo")) {
         // Re-poll: the finding is STILL in the queue (status in_review).
         return jsonResponse(200, {
           items: [
@@ -392,7 +399,7 @@ describe("BubbleAckForm", () => {
       if (u.endsWith("/api/attest/bubble_ack") && init?.method === "POST") {
         return jsonResponse(200, ACK_ROW);
       }
-      if (u.endsWith("/api/human_todo")) return jsonResponse(200, EMPTY_QUEUE);
+      if (pathIs(u, "/api/human_todo")) return jsonResponse(200, EMPTY_QUEUE);
       return undefined;
     });
     render(<BubbleAckForm bubbleRunId="coord-2026-06-08-003" />);
@@ -421,7 +428,7 @@ describe("DeferForm", () => {
       if (u.endsWith("/api/attest/defer") && init?.method === "POST") {
         return jsonResponse(200, DEFER_ROW);
       }
-      if (u.endsWith("/api/human_todo")) {
+      if (pathIs(u, "/api/human_todo")) {
         // A deferral assigns, it does not resolve: the item is STILL listed,
         // now carrying its additive deferred tag.
         return jsonResponse(200, {
@@ -483,7 +490,7 @@ describe("DeferForm", () => {
       if (u.endsWith("/api/attest/defer") && init?.method === "POST") {
         return jsonResponse(200, { ...DEFER_ROW, ref_id: "gate-week1-7", kind: "state_gate" });
       }
-      if (u.endsWith("/api/human_todo")) return jsonResponse(200, EMPTY_QUEUE);
+      if (pathIs(u, "/api/human_todo")) return jsonResponse(200, EMPTY_QUEUE);
       return undefined;
     });
     render(<DeferForm kind="state_file_gate" refId="gate-week1-7" />);

@@ -120,10 +120,10 @@ describe("DossierIndex — owe-first sectioning", () => {
     renderIndex([GATE, L4_FINDING], [ITER_ROW]);
     const gateRow = screen.getByTestId("dossier-row-iter-2026-06-14-002");
     const link = within(gateRow).getByRole("link");
-    expect(link.getAttribute("href")).toBe("/dossier/iter-2026-06-14-002");
+    expect(link.getAttribute("href")).toBe("/dossier/iter-2026-06-14-002?research_scope=all");
     const iterRow = screen.getByTestId("dossier-iter-iter-2026-06-10-001");
     expect(within(iterRow).getByRole("link").getAttribute("href")).toBe(
-      "/dossier/iter-2026-06-10-001",
+      "/dossier/iter-2026-06-10-001?research_scope=all",
     );
     // The verdict fence: no verdict-shaped buttons exist on the picker.
     for (const re of [/valid/i, /invalid/i, /sign[\s_-]?off/i, /abstain/i]) {
@@ -146,27 +146,27 @@ describe("DossierIndex — owe-first sectioning", () => {
 });
 
 describe("DossierIndex — honest empty states", () => {
-  it("no cleared-bar findings → 'Nothing cleared L4 this week.'", () => {
+  it("no cleared-bar findings names the empty current campaign", () => {
     renderIndex([GATE, LEGACY_FINDING_A]);
     expect(screen.getByTestId("dossier-cleared-empty")).toHaveTextContent(
-      "Nothing cleared L4 this week.",
+      "No current-campaign finding has cleared L4.",
     );
   });
 
-  it("nothing owed → the unblocked line; empty else → its own quiet line", () => {
+  it("an empty scoped queue never claims the wider loop is unblocked", () => {
     renderIndex([]);
     expect(screen.getByTestId("dossier-owe-empty")).toHaveTextContent(
-      /You owe nothing/,
+      /does not establish that the wider loop is unblocked/,
     );
     expect(screen.getByTestId("dossier-else-empty")).toHaveTextContent(
-      /nothing else pending/,
+      /No other current-campaign records are recorded/,
     );
   });
 
   it("a 404 todo feed reads queue UNKNOWN — never a calm empty state", async () => {
     vi.stubGlobal("fetch", async (url: unknown) => {
       const u = String(url);
-      if (u.endsWith("/api/human_todo")) {
+      if (new URL(u).pathname === "/api/human_todo") {
         return {
           ok: false,
           status: 404,

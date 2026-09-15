@@ -1,3 +1,5 @@
+import type { ResearchScopeMetadata } from "../researchScope";
+
 // TypeScript mirrors of the backend's JSON responses. Call-log payload
 // fields are deliberately left open (`raw`) so a future schema addition
 // does not break the inspector.
@@ -395,6 +397,7 @@ export interface IterationRecord {
 
 export interface IterationsResponse {
   iterations: IterationRecord[];
+  research_scope?: ResearchScopeMetadata;
 }
 
 // GET /api/iteration/{iteration_id}/journey — the full pipeline journey for one
@@ -514,6 +517,7 @@ export interface HumanTodoResponse {
   // Per-kind item counts (e.g. {"gate_verdict": 11}); the panel's total badge
   // is derived from `items` so a counts/items drift can't mislead.
   counts: Record<string, number>;
+  research_scope?: ResearchScopeMetadata;
 }
 
 // --- FINDING DETAIL (GET /api/finding/{finding_id}) ---
@@ -644,6 +648,7 @@ export interface LadderResponse {
   agenda?: LadderAgendaItem[];
   // Per-rung "next test owed" labels (workers/evidence_ladder wording).
   next_owed?: Record<string, string>;
+  research_scope?: ResearchScopeMetadata;
   [key: string]: unknown;
 }
 
@@ -700,5 +705,6 @@ export interface LabTodoResponse {
   agenda?: LadderAgendaItem[];
   refine_candidates?: LabTodoRefineCandidate[];
   generated_at?: string | null;
+  research_scope?: ResearchScopeMetadata;
   [key: string]: unknown;
 }

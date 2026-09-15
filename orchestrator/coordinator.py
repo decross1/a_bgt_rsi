@@ -1591,7 +1591,9 @@ def _coordinator_cycle(
 
     _charge_daily_ledger(run_id, spent, by_class=cycle_by_class)
     bubbles = _collect_bubble_up(validated, executed=executed)
-    bubble_receipts = _persist_bubble_up(bubbles, run_id=run_id)
+    bubble_receipts = _persist_bubble_up(
+        bubbles, run_id=run_id, campaign=campaign,
+    )
     report = {
         "run_id": run_id,
         "status": "executed",
@@ -1692,6 +1694,35 @@ _BUBBLE_FIELDS = (
 )
 
 
+def _bubble_campaign_link(
+    campaign: dict[str, Any] | None,
+) -> dict[str, str] | None:
+    """Project an unambiguous exact link from loader-validated cycle state.
+
+    Bubble requests are model-authored, so their payload is never a campaign
+    provenance source.  The current campaign has one preregistered topic and
+    can therefore supply one exact link.  A future multi-topic campaign stays
+    unlinked until the coordinator has a separate, validated topic-selection
+    binding for the bubble.
+    """
+    if campaign is None:
+        return None
+    try:
+        topics = campaign["topic_policy"]["topics"]
+        if not isinstance(topics, list):
+            raise TypeError("campaign topics are not a list")
+        if len(topics) != 1:
+            return None
+        topic = topics[0]
+        if not isinstance(topic, dict) or not isinstance(topic.get("text"), str):
+            raise TypeError("campaign topic is malformed")
+        from orchestrator.research_campaign import bind_topic
+
+        return bind_topic(campaign, topic["text"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("coordinator campaign context cannot bind bubble") from exc
+
+
 def _bubble_payload_from_request(request: dict[str, Any]) -> dict[str, Any]:
     if (not isinstance(request, dict)
             or set(request) != {"action", "args"}
@@ -1728,6 +1759,7 @@ def _receipt_evidence(bubble: dict[str, Any]) -> dict[str, Any]:
 
 def _prepare_bubble_append(
     bubble: dict[str, Any], *, run_id: str,
+    campaign: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     evidence = _receipt_evidence(bubble)
     evidence_present = any(
@@ -1768,6 +1800,9 @@ def _prepare_bubble_append(
     for key in ("question", "context", "kind", "allowed_actions"):
         if payload[key] is not None:
             row[key] = payload[key]
+    campaign_link = _bubble_campaign_link(campaign)
+    if campaign_link is not None:
+        row["campaign"] = campaign_link
     row.update(evidence)
     return row, evidence
 
@@ -1775,6 +1810,7 @@ def _prepare_bubble_append(
 def _persist_bubble_up(
     bubbles: list[dict[str, Any]], *, run_id: str,
     path: str | os.PathLike | None = None,
+    campaign: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Append selected bubbles and report the observed persistence boundary.
 
@@ -1787,6 +1823,8 @@ def _persist_bubble_up(
     entries are explicitly ``not_attempted``. This is not an atomic-batch or
     exactly-once claim. A non-newline existing tail refuses the batch before
     writing: it must not swallow the new row, and this helper never repairs it.
+    A loader-validated single-topic campaign adds its exact link outside the
+    model-authored request; malformed campaign context fails before append.
     path=None resolves to DEFAULT_COORDINATOR_BUBBLES at call time (patchable)."""
     if not bubbles:
         return []
@@ -1797,7 +1835,9 @@ def _persist_bubble_up(
     for index, bubble in enumerate(bubbles):
         raw_evidence = _receipt_evidence(bubble)
         try:
-            row, evidence = _prepare_bubble_append(bubble, run_id=run_id)
+            row, evidence = _prepare_bubble_append(
+                bubble, run_id=run_id, campaign=campaign,
+            )
             line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
         except Exception as exc:
             receipts.append({

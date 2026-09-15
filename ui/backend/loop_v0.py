@@ -28,6 +28,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException
 
+from .research_scope import ResearchScope, ScopeName, read_records
+
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -185,7 +187,7 @@ def register(
     # records spawns and /iterations still joins their status in.)
 
     @router.get("/iterations")
-    def iterations(fields: str | None = None, limit: int | None = None):
+    def iterations(fields: str | None = None, limit: int | None = None, research_scope: ScopeName = "all"):
         """All loop_memory rows, newest-first.
 
         ``fields`` (comma-separated) and ``limit`` are OPTIONAL projections
@@ -195,7 +197,9 @@ def register(
         actually has (absent keys are omitted, never invented as null).
         """
         _reap_processes()
-        rows = _read_jsonl(Path(loop_memory_path))
+        scope = ResearchScope(research_scope, Path(repo_root), Path(loop_memory_path).parent)
+        rows = (read_records(Path(loop_memory_path)) if research_scope == "active" else _read_jsonl(Path(loop_memory_path)))
+        rows = scope.records(rows, "iteration_id")
         rows.sort(key=lambda r: r.get("ended_at") or "", reverse=True)
         # Join in-memory process status by topic. The match is best-effort —
         # if the same topic was submitted twice since backend boot, we attach
@@ -224,7 +228,7 @@ def register(
             keep = {f.strip() for f in fields.split(",") if f.strip()}
             if keep:
                 rows = [{k: row[k] for k in keep if k in row} for row in rows]
-        return {"iterations": rows}
+        return {"iterations": rows, **({"research_scope": scope.metadata()} if research_scope == "active" else {})}
 
     @router.get("/journal/{iteration_id}")
     def journal(iteration_id: str):

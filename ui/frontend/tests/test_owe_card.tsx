@@ -93,7 +93,7 @@ describe("OweCard (collapsed default)", () => {
     const link = screen.getByRole("link", {
       name: /Record a gate verdict on iter-2026-06-05-004/,
     });
-    expect(link).toHaveAttribute("href", "/dossier/iter-2026-06-05-004");
+    expect(link).toHaveAttribute("href", "/dossier/iter-2026-06-05-004?research_scope=all");
   });
 
   it("falls back to kind-generic phrasing against an older backend", () => {
@@ -175,7 +175,7 @@ describe("OweCard (expanded)", () => {
     expect(detail).toHaveTextContent("orchestrator.gate_cli");
     expect(
       within(detail).getByRole("link", { name: "open dossier →" }),
-    ).toHaveAttribute("href", "/dossier/iter-2026-06-05-004");
+    ).toHaveAttribute("href", "/dossier/iter-2026-06-05-004?research_scope=all");
   });
 
   it("sections read in the polished order: DOING → VET → MEANS → WHY → RESOLVE", () => {
@@ -402,7 +402,7 @@ describe("OweCard (inherited OweStrip pins)", () => {
   it("empty owed queue is the designed, honest empty state", () => {
     renderCard([]);
     expect(screen.getByTestId("owe-empty")).toHaveTextContent(
-      "Nothing owed — the loop is unblocked.",
+      "No recorded requests in this view. This does not establish that the loop is unblocked.",
     );
   });
 
