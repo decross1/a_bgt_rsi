@@ -1,6 +1,6 @@
-# Qwen3.8-Flash-Next C0 qualification runbook
+# Qwen3.8-Flash-Next C0-S0 qualification runbook
 
-This runbook covers bounded GPU qualification of the exact C0 runtime. The
+This runbook covers bounded GPU qualification of the exact C0-S0 runtime. The
 owner has authorized local model A/B and optimization work; broader execution
 uses the separately reviewed evaluation window and frozen benchmark plan.
 Production adoption remains a separate decision. This controller uses the
@@ -10,13 +10,13 @@ recreates a resident.
 
 ## Frozen inputs
 
-- Controller commit: `75fead002b624cfa222aa24fb7b9f5954f559a6c`.
+- Controller commit: `199ed4c169b08515eb8cabe31088d5f169507389`.
 - Controller SHA-256:
-  `611362f8a98f3e22cd2a731e23edeffe7e133f46153ee45f2e70028fc6bba328`.
+  `bdfe772f9605e308bedeeeb09a5e89bbcb903c00cc16fd40ff37041e41b6d22d`.
 - External contract:
   `/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/runtime/launch-contract.c0.json`.
 - Contract SHA-256:
-  `792be64624d1863bc6088755b5fdc839503bdd134baa6b3f03124009b9292a1f`.
+  `e581639b1ce3e3c5db00b368b638cf95bfcd3d296bc529aa189d88e6e758758f`.
 - Image ID:
   `sha256:345bea72ff3bb548594d88f6a7661636c07cd3e7367f8e54b0e4a98494e5a48d`.
 - Model revision:
@@ -24,7 +24,7 @@ recreates a resident.
 - Model-manifest SHA-256:
   `54e961084a2fca63b0dcd32d542eb340a7baa20224298b00030ffa7e59145063`.
 - Docker argument-vector SHA-256:
-  `090b2ef066487b7b513064050e5e1ba58240d3dc33d71a8f993ed188b515f655`.
+  `6706701d2559144ccde83adfbbfa917365b4392067dc8f0d859cc2439ed93605`.
 
 The first invocation used contract SHA-256
 `3757f596d03bd3d386ac30d21b7b2397fbe0c4910b8fab95a5d1b72cd58486f1`
@@ -41,6 +41,15 @@ streams and verifies each file before its first runtime mutation. The 11
 safetensor files total 132,680,249,378 bytes; the whole pinned repository totals
 132,734,506,847 bytes. The model directory is mounted read-only.
 
+The preceding 32K C0 run, `qfn-c0-20260915-0407`, failed after four of eleven
+checkpoint shards: candidate swap reached 715,464,704 bytes and startup host
+paging exceeded its limits. Its minimum available memory was 31.1813 GiB;
+the 20 GiB floor was not breached. Both original services and Nara were
+restored and verified. The original contract is archived read-only as
+`launch-contract.c0.v7-792be64624d1863b.json`. C0-S0 tests whether disabling
+candidate swap can avoid that failure; it does not claim completed-runtime fit
+or weaken the previous paging criteria.
+
 ## Side-effect-free review
 
 Run the plan first from the Flash worktree. Choose a new output name even for a
@@ -56,7 +65,8 @@ env -u MOCK_LLM .venv-chroma/bin/python \
 ```
 
 Verify the three hashes above and inspect the complete `docker_create_argv`.
-The vector must use port 8012, `--restart=no`, the image ID rather than a tag,
+The vector must use port 8012, `--restart=no`, `--memory 103079215104`,
+`--memory-swap 103079215104`, the image ID rather than a tag,
 a read-only model bind, 32,768 maximum context, one sequence, 2 GiB explicit KV,
 KV dtype `auto` (record the resolved runtime dtype when observable), explicit
 `--gpu-memory-utilization 0.75`, FP32 recurrent state,
@@ -82,7 +92,7 @@ env -u MOCK_LLM .venv-chroma/bin/python \
   -m bench.flash_next_ab.qualification \
   --run \
   --contract /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/runtime/launch-contract.c0.json \
-  --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/qualification-runs/qfn-c0-20260915t0410z
+  --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/qualification-runs/qfn-c0-s0-20260915t0445z
 ```
 
 `--run` launches its worker in a separate process group. The preregistered
@@ -103,7 +113,8 @@ The guarded sequence is:
 4. recheck the idle queues and capture both resident IDs and the Nara user
    service state;
 5. create the stopped `vllm-qwen-ab-flash-20260915` container, which makes the
-   existing watchdog stand down, before stopping Nara or either resident;
+   existing watchdog stand down; verify its exact Docker memory and combined
+   memory/swap limits before stopping Nara or either resident;
 6. stop Nara only if it was active, then stop the two exact resident IDs;
 7. start the challenger and require `/health`, the exact `/v1/models` identity,
    a fresh 60-second interval without host swap growth, then two fixed exact
@@ -118,6 +129,11 @@ It stops the exact challenger on `MemAvailable < 20 GiB`, any candidate-cgroup
 swap or local OOM event, unexpected restart/stop, identity mismatch, stale
 sampling, or a paging-rate breach. Candidate attribution binds container ID,
 PID, process start ticks, and cgroup v2 membership before and after each read.
+The live cgroup must report `memory.max=103079215104` and `memory.swap.max=0`
+at binding and throughout the armed interval. This container-only setting
+does not change host VM settings. The 20 GiB host reserve remains independent
+of the container limit, because cgroup accounting is not a complete Spark
+physical-memory ledger.
 
 Host paging limits are cumulative across **load and ready together**: 128 MiB
 in 5 seconds, 256 MiB in 60 seconds, or 512 MiB total. During serving/probes the
@@ -143,6 +159,11 @@ local A/B requires:
   intervals, continuous startup/serving limits, and zero candidate swap/OOM;
 - `weekly_budget_debit == false`, `paid_api_calls == 0`, and
   `production_change_authorized == false`.
+
+C0-S0 additionally binds the raw memory-log hash and `cgroup-diagnostics.json`.
+Admission reconstructs its attributed phase snapshots and peak charged memory.
+Each sample records cgroup current/anon/file/reclaim/pressure and host memory
+diagnostics, so another failure can distinguish more possible causes.
 
 A claimed pass without its complete raw evidence cannot admit an evaluation.
 Older v1/v2 receipts remain historical evidence under their original rules;

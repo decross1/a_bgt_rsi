@@ -284,12 +284,18 @@ def _validate_memory_log(
     path: Path,
     result: dict[str, Any],
 ) -> None:
-    raw, _ = _read_regular_file(path, label="qualification memory log")
+    s0 = result.get("profile") == "C0-S0"
+    raw, _ = _read_regular_file(
+        path, label="qualification memory log",
+        max_bytes=32 * 1024 * 1024 if s0 else MAX_RECEIPT_BYTES,
+    )
     rows: list[dict[str, Any]] = []
     for index, line in enumerate(raw.splitlines()):
         if not line.strip():
             continue
         rows.append(_strict_object(line, f"qualification memory log line {index + 1}"))
+    if s0:
+        _validate_s0_diagnostics(path, raw, rows, result)
     samples = [row for row in rows if "mem_available_gib" in row]
     if len(samples) != result.get("memory_samples") or not samples:
         raise HarnessError("qualification memory sample count differs")
@@ -474,13 +480,77 @@ def _validate_memory_log(
         raise HarnessError("qualification final memory sample predates restoration")
 
 
+def _validate_s0_diagnostics(path, raw, rows, result):
+    """Independently reconstruct the no-swap profile's telemetry sidecar."""
+    from .qualification import DOCKER_MEMORY_LIMIT_BYTES, DOCKER_MEMORY_SWAP_TOTAL_BYTES
+
+    raw_sha = hashlib.sha256(raw).hexdigest()
+    if (result.get("memory_log_sha256") != raw_sha
+            or type(result.get("docker_memory_limit_bytes")) is not int
+            or result["docker_memory_limit_bytes"] != DOCKER_MEMORY_LIMIT_BYTES
+            or type(result.get("docker_memory_swap_total_bytes")) is not int
+            or result["docker_memory_swap_total_bytes"] != DOCKER_MEMORY_SWAP_TOTAL_BYTES):
+        raise HarnessError("S0 memory digest or registered limits differ")
+    sidecar, sidecar_sha, _ = _read_json_receipt(
+        path.parent / "cgroup-diagnostics.json", "S0 cgroup diagnostics"
+    )
+    if result.get("cgroup_diagnostics_sha256") != sidecar_sha:
+        raise HarnessError("S0 diagnostic digest differs")
+    phase_rows = {}
+    attributed = 0
+    maximum = 0
+    identity = None
+    for row in rows:
+        candidate = row.get("candidate")
+        if not isinstance(candidate, dict) or candidate.get("armed") is not True:
+            continue
+        cgroup = candidate.get("cgroup")
+        phase = row.get("monitor_phase")
+        if not isinstance(cgroup, dict) or phase not in {"load", "ready", "probes", "restoration"}:
+            raise HarnessError("S0 attributed diagnostic row is malformed")
+        if identity is None:
+            identity = candidate.get("id")
+        if candidate.get("id") != identity:
+            raise HarnessError("S0 diagnostic identity changed")
+        current = cgroup.get("memory_current_bytes")
+        if type(current) is not int or current < 0:
+            raise HarnessError("S0 memory.current is malformed")
+        attributed += 1
+        maximum = max(maximum, current)
+        observation = {
+            "observed_at": row.get("observed_at"),
+            "host_meminfo_kib": row.get("host_meminfo_kib"),
+            "candidate_cgroup": cgroup,
+            "mem_available_gib": row.get("mem_available_gib"),
+            "host_pswpout_pages": row.get("pswpout_pages"),
+        }
+        phase_rows.setdefault(phase, {"first": observation})["last"] = observation
+    expected = {
+        "schema": "qwen-flash-next-c0-s0-cgroup-diagnostics/v1",
+        "candidate_id": identity, "memory_log_sha256": raw_sha,
+        "attributed_samples": attributed, "maximum_memory_current_bytes": maximum,
+        "registered_memory_max_bytes": DOCKER_MEMORY_LIMIT_BYTES,
+        "registered_swap_max_bytes": 0, "phase_first_last": phase_rows,
+        "host_swap_action": "registered_startup_and_serving_byte_gates",
+        "diagnostics_finished_at": sidecar.get("diagnostics_finished_at"),
+    }
+    if sidecar != expected or not {"load", "ready", "probes"}.issubset(phase_rows):
+        raise HarnessError("S0 diagnostic summary differs from its raw evidence")
+    diagnostic_time = _utc_datetime(sidecar.get("diagnostics_finished_at"), "S0 diagnostic timestamp")
+    sample_times = [_utc_datetime(row.get("observed_at"), "S0 sample timestamp")
+                    for row in rows if "mem_available_gib" in row]
+    if (not sample_times or not max(sample_times) <= diagnostic_time
+            <= _utc_datetime(result.get("finished_at"), "S0 result completion")):
+        raise HarnessError("S0 diagnostic timestamp is outside result publication order")
+
+
 def _validate_memory_log_v3(
     rows: list[dict[str, Any]],
     samples: list[dict[str, Any]],
     result: dict[str, Any],
 ) -> None:
     """Reconstruct the v3 paging gate from raw evidence, not reported verdicts."""
-    from .qualification import PAGING_POLICY
+    from .qualification import DOCKER_MEMORY_LIMIT_BYTES, PAGING_POLICY
 
     def integer(value: Any, label: str, *, minimum: int = 0) -> int:
         if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
@@ -684,10 +754,15 @@ def _validate_memory_log_v3(
         "path": expected_path, "process_start_ticks": start_ticks,
         "memory_swap_current_bytes": 0, "memory_events_oom": 0, "memory_events_oom_kill": 0,
     }
+    if result.get("profile") == "C0-S0":
+        cgroup_values.update(memory_max_bytes=DOCKER_MEMORY_LIMIT_BYTES, memory_swap_max_bytes=0)
     if any(snapshot.get(key) != value for key, value in cgroup_values.items()):
         raise HarnessError("qualification candidate cgroup was not clean at bind")
     for key in ("memory_swap_current_bytes", "memory_events_oom", "memory_events_oom_kill"):
         integer(snapshot[key], f"bound cgroup {key}")
+    if result.get("profile") == "C0-S0":
+        for key in ("memory_max_bytes", "memory_swap_max_bytes"):
+            integer(snapshot.get(key), f"bound cgroup {key}")
     candidate_rows = []
     for row in samples:
         candidate = row.get("candidate")
@@ -737,6 +812,9 @@ def _validate_memory_log_v3(
             raise HarnessError("qualification candidate cgroup identity, swap, or OOM proof failed")
         for key in ("memory_swap_current_bytes", "memory_events_oom", "memory_events_oom_kill"):
             integer(cgroup[key], f"cgroup {key}")
+        if result.get("profile") == "C0-S0":
+            for key in ("memory_max_bytes", "memory_swap_max_bytes"):
+                integer(cgroup.get(key), f"cgroup {key}")
         integer(candidate["pid"], "candidate PID", minimum=1)
         integer(cgroup["process_start_ticks"], "candidate process start ticks", minimum=1)
     for key, value in {
@@ -941,6 +1019,8 @@ def validate_flash_qualification_files(
         failures.append(f"status={result.get('status')!r}")
     if result.get("qualification_error") is not None:
         failures.append("qualification_error is present")
+    if bundle_v3 and result.get("profile") != contract.get("profile"):
+        failures.append("v3 qualification result profile differs from its contract")
     if bundle_v3 and ("failure_stage" not in result or result["failure_stage"] is not None):
         failures.append("v3 qualification failure_stage is absent or non-null")
     restoration = result.get("restoration")
@@ -1014,6 +1094,8 @@ def validate_flash_qualification_files(
                 or container.get("name") != registered.CONTAINER_NAME
                 or container.get("running") is not True
                 or container.get("oom_killed") is not False
+                or container.get("memory_limit_bytes") != registered.DOCKER_MEMORY_LIMIT_BYTES
+                or container.get("memory_swap_total_bytes") != registered.DOCKER_MEMORY_SWAP_TOTAL_BYTES
                 or type(container.get("restart_count")) is not int
                 or container["restart_count"] != 0
                 or any(quiet.get(key) != result.get(f"ready_quiescence_{suffix}") for key, suffix in quiet_keys.items())

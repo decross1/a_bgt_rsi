@@ -74,6 +74,10 @@ HOST_PORT = 8012
 HOST_PAGE_SIZE_BYTES = 4096
 MAX_MODEL_LEN = 32768
 KV_CACHE_MEMORY_BYTES = 2 * 1024**3
+# The container owns at most 96 GiB of charged RAM and zero swap. This is a
+# registered diagnostic profile; actual full-load fit still needs a new C0.
+DOCKER_MEMORY_LIMIT_BYTES = 96 * 1024**3
+DOCKER_MEMORY_SWAP_TOTAL_BYTES = DOCKER_MEMORY_LIMIT_BYTES
 LOAD_SWAP_5S_BREACH_BYTES = 128 * 1024**2
 LOAD_SWAP_60S_BREACH_BYTES = 256 * 1024**2
 LOAD_SWAP_TOTAL_BREACH_BYTES = 512 * 1024**2
@@ -326,8 +330,8 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
     )
     if (
         value["schema"] != "qwen-flash-next-qualification/v3"
-        or value["contract_id"] != "qwen38-flash-next-c0-20260915"
-        or value["profile"] != "C0"
+        or value["contract_id"] != "qwen38-flash-next-c0-s0-20260915"
+        or value["profile"] != "C0-S0"
         or value["probe_set"] != "flash-next-minimal-v1"
     ):
         raise QualificationError("contract identity is not registered")
@@ -370,6 +374,8 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         "async_scheduling": False,
         "qsa_exact_topk": True,
         "language_model_only": True,
+        "docker_memory_limit_bytes": DOCKER_MEMORY_LIMIT_BYTES,
+        "docker_memory_swap_total_bytes": DOCKER_MEMORY_SWAP_TOTAL_BYTES,
     }
     if value["runtime"] != expected_runtime:
         raise QualificationError("runtime profile differs from the C0 allowlist")
@@ -467,6 +473,8 @@ def launch_argv() -> list[str]:
         "--name", CONTAINER_NAME,
         "--restart=no",
         "--gpus", "all",
+        "--memory", str(DOCKER_MEMORY_LIMIT_BYTES),
+        "--memory-swap", str(DOCKER_MEMORY_SWAP_TOTAL_BYTES),
         "--ipc=host",
         "-p", "127.0.0.1:8012:8000",
         "--tmpfs", "/tmp/vllm-prometheus:rw,size=256m",
@@ -532,7 +540,7 @@ def plan_qualification(
         "schema": "qwen-flash-next-qualification-plan/v3",
         "contract_id": contract["contract_id"],
         "contract_sha256": contract_sha256,
-        "profile": "C0",
+        "profile": "C0-S0",
         "image_id": IMAGE_ID,
         "model_artifact_sha256": model_artifact_sha256(),
         "model_path": str(MODEL_PATH),
@@ -569,6 +577,7 @@ def plan_qualification(
             "stop exact captured resident IDs without removal or recreation",
             "start candidate and continuously enforce 20 GiB MemAvailable",
             "hard-gate exact candidate cgroup swap, OOM events, restart, and exit",
+            "enforce Docker 96 GiB charged-RAM cap and zero candidate swap",
             "bound host swap by registered load and serving byte-rate limits",
             "require 60 seconds of zero host and candidate swap after /v1/models",
             "qualify three fixed probes under the serving paging gate",
@@ -641,6 +650,8 @@ def _inspect_container(ops: HostOps, identity: str) -> dict[str, Any] | None:
         '"started_at":{{json .State.StartedAt}},"finished_at":{{json .State.FinishedAt}},'
         '"oom_killed":{{json .State.OOMKilled}},"state_error":{{json .State.Error}},'
         '"restart_count":{{json .RestartCount}},'
+        '"memory_limit_bytes":{{json .HostConfig.Memory}},'
+        '"memory_swap_total_bytes":{{json .HostConfig.MemorySwap}},'
         '"restart_policy":{{json .HostConfig.RestartPolicy.Name}}}'
     )
     result = ops.run(
@@ -684,6 +695,19 @@ def _available_gib() -> float:
     if not match:
         raise QualificationError("MemAvailable is unavailable")
     return int(match[1]) / 1024**2
+
+
+def _host_meminfo_diagnostics() -> dict[str, int]:
+    """Raw host observations for attribution; safety still uses MemAvailable."""
+    raw = Path("/proc/meminfo").read_text()
+    values: dict[str, int] = {}
+    fields = ("MemFree", "Cached", "SwapCached", "AnonPages", "SwapFree", "MemAvailable")
+    for name in fields:
+        match = re.search(rf"^{name}:\s+(\d+) kB$", raw, re.MULTILINE)
+        if match is None:
+            raise QualificationError(f"host meminfo diagnostic {name} is unavailable")
+        values[name] = int(match[1])
+    return values
 
 
 def _pswpout_pages() -> int:
@@ -783,6 +807,48 @@ def _candidate_cgroup_snapshot(candidate_id: str, pid: int) -> dict[str, Any]:
         os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
     )
     try:
+        memory_max_bytes = _nonnegative_decimal(
+            _bounded_nofollow_bytes(Path("memory.max"), max_bytes=128, dir_fd=directory),
+            label="candidate cgroup memory.max",
+        )
+        memory_swap_max_bytes = _nonnegative_decimal(
+            _bounded_nofollow_bytes(Path("memory.swap.max"), max_bytes=128, dir_fd=directory),
+            label="candidate cgroup memory.swap.max",
+        )
+        memory_current_bytes = _nonnegative_decimal(
+            _bounded_nofollow_bytes(Path("memory.current"), max_bytes=128, dir_fd=directory),
+            label="candidate cgroup memory.current",
+        )
+        raw_stat = _bounded_nofollow_bytes(
+            Path("memory.stat"), max_bytes=8192, dir_fd=directory
+        )
+        try:
+            stat_lines = raw_stat.decode("ascii").splitlines()
+        except UnicodeDecodeError as exc:
+            raise QualificationError("candidate cgroup memory.stat is malformed") from exc
+        selected_stats: dict[str, int] = {}
+        tracked = {"anon", "file", "shmem", "active_file", "inactive_file", "pgscan", "pgsteal"}
+        for line in stat_lines:
+            fields = line.split()
+            if len(fields) != 2:
+                raise QualificationError("candidate cgroup memory.stat is malformed")
+            if fields[0] in tracked:
+                if fields[0] in selected_stats:
+                    raise QualificationError("candidate cgroup memory.stat has duplicates")
+                selected_stats[fields[0]] = _nonnegative_decimal(
+                    fields[1].encode(), label=f"candidate memory.stat {fields[0]}"
+                )
+        if set(selected_stats) != tracked:
+            raise QualificationError("candidate cgroup memory.stat lacks required counters")
+        raw_pressure = _bounded_nofollow_bytes(
+            Path("memory.pressure"), max_bytes=1024, dir_fd=directory
+        )
+        try:
+            memory_pressure = raw_pressure.decode("ascii").strip()
+        except UnicodeDecodeError as exc:
+            raise QualificationError("candidate cgroup memory.pressure is malformed") from exc
+        if len(memory_pressure.splitlines()) != 2:
+            raise QualificationError("candidate cgroup memory.pressure is incomplete")
         swap_current = _nonnegative_decimal(
             _bounded_nofollow_bytes(
                 Path("memory.swap.current"), max_bytes=128, dir_fd=directory
@@ -806,6 +872,12 @@ def _candidate_cgroup_snapshot(candidate_id: str, pid: int) -> dict[str, Any]:
     return {
         "path": expected_relpath,
         "process_start_ticks": process_start_ticks,
+        "memory_max_bytes": memory_max_bytes,
+        "memory_swap_max_bytes": memory_swap_max_bytes,
+        "memory_current_bytes": memory_current_bytes,
+        "selected_memory_stat": selected_stats,
+        "memory_pressure": memory_pressure,
+        "memory_events_local": events,
         "memory_swap_current_bytes": swap_current,
         "memory_events_oom": events["oom"],
         "memory_events_oom_kill": events["oom_kill"],
@@ -944,6 +1016,9 @@ class MemoryMonitor:
                 or candidate.get("running") is not True
                 or candidate.get("oom_killed") is not False
                 or candidate.get("restart_count") != 0
+                or candidate.get("memory_limit_bytes") != DOCKER_MEMORY_LIMIT_BYTES
+                or candidate.get("memory_swap_total_bytes")
+                != DOCKER_MEMORY_SWAP_TOTAL_BYTES
                 or isinstance(candidate.get("pid"), bool)
                 or not isinstance(candidate.get("pid"), int)
                 or candidate["pid"] <= 0
@@ -955,6 +1030,8 @@ class MemoryMonitor:
             numeric_snapshot = (
                 snapshot.get("process_start_ticks"),
                 snapshot.get("memory_swap_current_bytes"),
+                snapshot.get("memory_max_bytes"),
+                snapshot.get("memory_swap_max_bytes"),
                 snapshot.get("memory_events_oom"),
                 snapshot.get("memory_events_oom_kill"),
             )
@@ -968,6 +1045,8 @@ class MemoryMonitor:
                 or snapshot.get("process_start_ticks") == 0
                 or snapshot.get("memory_swap_current_bytes")
                 != self.paging_policy["candidate_cgroup_swap_max_bytes"]
+                or snapshot.get("memory_max_bytes") != DOCKER_MEMORY_LIMIT_BYTES
+                or snapshot.get("memory_swap_max_bytes") != 0
                 or snapshot.get("memory_events_oom")
                 > self.paging_policy["candidate_cgroup_oom_initial_max"]
                 or snapshot.get("memory_events_oom_kill")
@@ -1341,6 +1420,7 @@ class MemoryMonitor:
                 "ready_quiescence_active": ready_active,
                 "ready_quiescence_epoch": ready_epoch if ready_active else None,
                 "mem_available_gib": available,
+                "host_meminfo_kib": _host_meminfo_diagnostics(),
                 "host_page_size_bytes": page_size,
                 "pswpout_pages": pswpout,
                 "pswpout_delta_pages": pswpout - self.initial_pswpout,
@@ -1404,6 +1484,14 @@ class MemoryMonitor:
                             ):
                                 breach_reasons.append(
                                     "candidate process start identity changed"
+                                )
+                            if (
+                                snapshot.get("memory_max_bytes")
+                                != DOCKER_MEMORY_LIMIT_BYTES
+                                or snapshot.get("memory_swap_max_bytes") != 0
+                            ):
+                                breach_reasons.append(
+                                    "candidate cgroup 96 GiB/no-swap controls changed"
                                 )
                             swap_current = snapshot.get("memory_swap_current_bytes")
                             oom = snapshot.get("memory_events_oom")
@@ -2416,6 +2504,9 @@ def execute_worker(
                     or candidate.get("image") != IMAGE_ID
                     or candidate.get("running")
                     or candidate.get("restart_policy") not in {"", "no"}
+                    or candidate.get("memory_limit_bytes") != DOCKER_MEMORY_LIMIT_BYTES
+                    or candidate.get("memory_swap_total_bytes")
+                    != DOCKER_MEMORY_SWAP_TOTAL_BYTES
                 ):
                     raise QualificationError("created candidate differs from the launch contract")
 
@@ -2640,7 +2731,6 @@ def execute_worker(
         "plan_sha256": sha256(plan),
         "model_artifact_sha256": model_artifact_sha256(),
         "started_at": state["started_at"],
-        "finished_at": utc_now(),
         "elapsed_seconds": elapsed,
         "challenger_gpu_seconds": gpu_seconds,
         "all_gpu_research_seconds": gpu_seconds,
@@ -2815,6 +2905,17 @@ def execute_worker(
         "paid_api_calls": 0,
         "production_change_authorized": False,
     }
+    diagnostic_sha256, memory_log_sha256 = _write_cgroup_diagnostics(
+        output, state.get("candidate_id"), required=status == "passed"
+    )
+    result.update(
+        profile="C0-S0",
+        docker_memory_limit_bytes=DOCKER_MEMORY_LIMIT_BYTES,
+        docker_memory_swap_total_bytes=DOCKER_MEMORY_SWAP_TOTAL_BYTES,
+        cgroup_diagnostics_sha256=diagnostic_sha256,
+        memory_log_sha256=memory_log_sha256,
+    )
+    result["finished_at"] = utc_now()
     state["phase"] = "complete"
     state["restoration"] = restoration
     state["result_status"] = status
@@ -2869,6 +2970,83 @@ def _read_bounded_run_json(path: Path, *, source: str) -> dict[str, Any]:
     if normalized != path.absolute():
         raise QualificationError(f"{source} path changed")
     return _strict_json(raw, source=source)
+
+
+def _write_cgroup_diagnostics(
+    output: Path, candidate_id: str | None, *, required: bool
+) -> tuple[str | None, str | None]:
+    """Bind phase telemetry to the raw memory stream after the monitor closes."""
+    if candidate_id is None:
+        if required:
+            raise QualificationError("passed no-swap attempt has no candidate ID")
+        return None, None
+    from .harness import _read_regular_file
+
+    memory_file = output / "memory.jsonl"
+    raw, observed = _read_regular_file(
+        memory_file, label="C0-S0 raw memory", max_bytes=32 * 1024 * 1024
+    )
+    if observed != memory_file.absolute():
+        raise QualificationError("C0-S0 raw memory redirected")
+    phase_rows: dict[str, dict[str, Any]] = {}
+    attributed = 0
+    max_current = 0
+    for index, line in enumerate(raw.splitlines(), 1):
+        row = _strict_json(line, source=f"C0-S0 memory line {index}")
+        candidate = row.get("candidate")
+        if not isinstance(candidate, dict) or candidate.get("armed") is not True:
+            continue
+        cgroup = candidate.get("cgroup")
+        if not isinstance(cgroup, dict) or candidate.get("id") != candidate_id:
+            if required:
+                raise QualificationError("C0-S0 candidate diagnostic identity changed")
+            continue
+        phase = row.get("monitor_phase")
+        if phase not in {"load", "ready", "probes", "restoration"}:
+            if required:
+                raise QualificationError("C0-S0 candidate diagnostic phase changed")
+            continue
+        attributed += 1
+        current = cgroup.get("memory_current_bytes")
+        if (
+            isinstance(current, bool)
+            or not isinstance(current, int)
+            or current < 0
+        ):
+            if required:
+                raise QualificationError("C0-S0 candidate memory.current is malformed")
+            continue
+        max_current = max(max_current, current)
+        evidence = {
+            "observed_at": row.get("observed_at"),
+            "host_meminfo_kib": row.get("host_meminfo_kib"),
+            "candidate_cgroup": cgroup,
+            "mem_available_gib": row.get("mem_available_gib"),
+            "host_pswpout_pages": row.get("pswpout_pages"),
+        }
+        phase_rows.setdefault(phase, {"first": evidence})["last"] = evidence
+    if required and (attributed == 0 or not {"load", "ready", "probes"}.issubset(phase_rows)):
+        raise QualificationError("passed no-swap attempt lacks attributed phase snapshots")
+    sidecar = {
+        "schema": "qwen-flash-next-c0-s0-cgroup-diagnostics/v1",
+        "candidate_id": candidate_id,
+        "memory_log_sha256": sha256(raw),
+        "attributed_samples": attributed,
+        "maximum_memory_current_bytes": max_current,
+        "registered_memory_max_bytes": DOCKER_MEMORY_LIMIT_BYTES,
+        "registered_swap_max_bytes": 0,
+        "phase_first_last": phase_rows,
+        "host_swap_action": "registered_startup_and_serving_byte_gates",
+        "diagnostics_finished_at": utc_now(),
+    }
+    sidecar_file = output / "cgroup-diagnostics.json"
+    _atomic_write(sidecar_file, sidecar)
+    sidecar_raw, observed_sidecar = _read_regular_file(
+        sidecar_file, label="C0-S0 diagnostic sidecar", max_bytes=2 * 1024 * 1024
+    )
+    if observed_sidecar != sidecar_file.absolute():
+        raise QualificationError("C0-S0 diagnostic sidecar redirected")
+    return sha256(sidecar_raw), sha256(raw)
 
 
 def _validated_recovery_state(
