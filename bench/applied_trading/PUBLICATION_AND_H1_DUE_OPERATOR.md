@@ -1,9 +1,11 @@
-# One H1 Spot research sequence after the model program
+# One H1 Spot research sequence alongside model evaluation
 
 The public BTCUSDT archive, fixed 60-day reference score, five-minute capture
-timer, H1 plan, and due evaluator are separate stages. Run this sequence only
-after the model program closes with exact restoration. Dated execution receipts
-record which commands, publications, and services actually ran.
+timer, H1 plan, and due evaluator are separate stages. Bounded capture and the
+offline due evaluator can coexist with model evaluation under independent
+locks and a 21 GiB available-memory preflight. Heavy historical acquisition
+remains separately scheduled. Dated receipts record the exact source versions,
+publications, and services that ran; a changed source requires a new future plan.
 
 The historical study is trade-only, not L2. It tests a lagged signed-taker-flow
 feature beyond the same lagged return/volatility/volume baseline on a fixed
@@ -66,8 +68,11 @@ systemctl --user enable --now applied-h1-capture.timer
 If the saved `_scheduler/state.json` from the older smoke lineage exists, the
 manual bootstrap requires the exact raw SHA in `--abandon-state-sha256`; the
 wrapper archives it. The five-minute timer starts 30 seconds after the boundary
-and holds only bounded read-only research leases. A model/weekly/coordinator
-lease or pause marker produces a zero-GET skip. After a verified >15-minute
+and holds its own scheduler lock. It does not acquire model/weekly/coordinator
+leases because it uses no model or GPU. A pause marker, unreadable memory
+measurement, or less than 21 GiB available memory produces a zero-GET skip.
+This is a start-time check; systemd retains the 512 MiB capture and 1 GiB due
+worker caps, while the model controller continues its own continuous monitoring. After a verified >15-minute
 resource gap, it journals the missing interval and starts a **new** independent
 tail lineage; it does not stitch old and new cursors. Source/schema drift or an
 incomplete capture branch blocks. Choose the H1 start at least 90 minutes after
@@ -102,8 +107,8 @@ H1 study remains a plumbing/diagnostic pilot either way.
 
 The due timer checks at minute 3 after each five-minute capture boundary and
 never makes a market GET. Before `forward_end + 1h hold + 10m exit reserve`,
-it is a no-op. After due, it holds the same three read-only model/research
-leases, scans at most 10,000 capture child names and selects at most 96 ordered
+it is a no-op. After due, it retains its own worker lock and the same memory/pause
+preflight, scans at most 10,000 capture child names and selects at most 96 ordered
 batches from a fixed 90-minute lookback through the frozen exit horizon. It
 reruns source projection, exact GET/cursor/as-of feature admission and the
 unchanged REST quote driver. A quote must come from a GET **started** after
@@ -113,7 +118,7 @@ into a new study child, then an immutable result publication receipt. Unknown
 source/quote cells yield `closed_with_missing_evidence` and null paired
 all-scheduled returns. If the source is late it retries for at most 30 minutes
 after due; then it publishes `closed_missing_source` with all declared cells
-unknown and both scores null. Busy leases retry at the next timer tick; a final
+unknown and both scores null. Resource or operator-pause skips retry at the next timer tick; a final
 published result turns later ticks into cheap `already_closed` checks. No
 manual memory of the hold/exit horizon is required.
 

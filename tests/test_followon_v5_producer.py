@@ -163,6 +163,12 @@ def fake_lease(root):
 
 
 def test_full_mtp3_worker_and_supervisor_receipt_pass_actual_v5_gate(monkeypatch):
+    from bench.flash_next_ab.followon_dispatch import FOLLOWON_CODE_ROOT
+
+    monkeypatch.delenv("MOCK_LLM", raising=False)
+    # Host/process effects below are injected; replay the registered producer
+    # identity even when this test is collected in a maintenance worktree.
+    monkeypatch.setattr(q, "ROOT", FOLLOWON_CODE_ROOT)
     spec = MIA_MTP3
     old = json.loads(MIA.contract_path.read_bytes())
     contract = build_contract(old, spec)
