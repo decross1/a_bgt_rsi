@@ -43,6 +43,22 @@ def initial():
     }
 
 
+def result_receipt(state, plan, restoration):
+    return {
+        "schema": "qwen-flash-next-qualification-result/v3",
+        "run_id": RUN_ID,
+        "contract_sha256": state["contract_sha256"],
+        "plan_sha256": canonical_sha(plan),
+        "status": "failed",
+        "profile": "C0-S0",
+        "docker_memory_limit_bytes": q.DOCKER_MEMORY_LIMIT_BYTES,
+        "docker_memory_swap_total_bytes": q.DOCKER_MEMORY_SWAP_TOTAL_BYTES,
+        "cgroup_diagnostics_sha256": None,
+        "memory_log_sha256": None,
+        "restoration": restoration,
+    }
+
+
 def fixture(
     tmp_path,
     *,
@@ -57,12 +73,19 @@ def fixture(
     run = root / RUN_ID
     run.mkdir(parents=True)
     plan = {
+        "profile": "C0-S0",
         "invocation_deadline_seconds": 3600,
         "min_mem_available_gib": memory_floor_gib,
         "ready_quiescence_seconds": 60,
         "paging_policy": q.PAGING_POLICY,
     }
-    contract_raw = b'{"fixed":"contract"}'
+    contract_raw = json.dumps({
+        "profile": "C0-S0",
+        "runtime": {
+            "docker_memory_limit_bytes": q.DOCKER_MEMORY_LIMIT_BYTES,
+            "docker_memory_swap_total_bytes": q.DOCKER_MEMORY_SWAP_TOTAL_BYTES,
+        },
+    }).encode()
     (run / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
     (run / "launch-contract.raw.json").write_bytes(contract_raw)
     phase_monitors = {
@@ -135,6 +158,14 @@ def fixture(
         "ready_quiescence_active": phase == "ready_stabilization",
         "ready_quiescence_epoch": 1 if phase == "ready_stabilization" else None,
         "mem_available_gib": memory_available_gib,
+        "host_meminfo_kib": {
+            "MemFree": 1_000_000,
+            "Cached": 2_000_000,
+            "SwapCached": 0,
+            "AnonPages": 1_000_000,
+            "SwapFree": 500_000,
+            "MemAvailable": 3_000_000,
+        },
         "host_page_size_bytes": 4096,
         "pswpout_pages": 10,
         "pswpout_delta_pages": 0,
@@ -163,9 +194,23 @@ def fixture(
             "oom_killed": False,
             "restart_count": 0,
             "pid": 300,
+            "memory_limit_bytes": q.DOCKER_MEMORY_LIMIT_BYTES,
+            "memory_swap_total_bytes": q.DOCKER_MEMORY_SWAP_TOTAL_BYTES,
             "cgroup": {
                 "path": f"/system.slice/docker-{CONTAINER}.scope",
                 "process_start_ticks": 4444,
+                "memory_max_bytes": q.DOCKER_MEMORY_LIMIT_BYTES,
+                "memory_swap_max_bytes": 0,
+                "memory_current_bytes": 1024,
+                "selected_memory_stat": {
+                    "anon": 512, "file": 512, "shmem": 0,
+                    "active_file": 0, "inactive_file": 0,
+                    "pgscan": 0, "pgsteal": 0,
+                },
+                "memory_pressure": (
+                    "some avg10=0.00 total=0\nfull avg10=0.00 total=0"
+                ),
+                "memory_events_local": {"oom": 0, "oom_kill": 0},
                 "memory_swap_current_bytes": 0,
                 "memory_events_oom": 0,
                 "memory_events_oom_kill": 0,
@@ -321,13 +366,7 @@ def test_verified_terminal_receipt_returns_resident_mode_without_live_pid(tmp_pa
     state["restoration"] = restoration
     state["result_status"] = "failed"
     write_json(run / "state.json", state)
-    write_json(run / "result.json", {
-        "schema": "qwen-flash-next-qualification-result/v3",
-        "run_id": RUN_ID,
-        "contract_sha256": state["contract_sha256"],
-        "plan_sha256": canonical_sha(plan),
-        "restoration": restoration,
-    })
+    write_json(run / "result.json", result_receipt(state, plan, restoration))
     os.remove(proc / str(PID) / "stat")
     row = project(root, proc, boot)
     assert row["mode"] == "resident"
@@ -345,13 +384,7 @@ def test_terminal_status_string_cannot_hide_restore_errors(tmp_path):
     }
     state["restoration"] = restoration
     write_json(run / "state.json", state)
-    write_json(run / "result.json", {
-        "schema": "qwen-flash-next-qualification-result/v3",
-        "run_id": RUN_ID,
-        "contract_sha256": state["contract_sha256"],
-        "plan_sha256": canonical_sha(plan),
-        "restoration": restoration,
-    })
+    write_json(run / "result.json", result_receipt(state, plan, restoration))
     assert project(root, proc, boot)["mode"] == "unknown"
 
 
@@ -365,13 +398,7 @@ def test_newest_untrusted_state_blocks_fallback_to_an_old_resident_receipt(tmp_p
     }
     state["restoration"] = restoration
     write_json(run / "state.json", state)
-    write_json(run / "result.json", {
-        "schema": "qwen-flash-next-qualification-result/v3",
-        "run_id": RUN_ID,
-        "contract_sha256": state["contract_sha256"],
-        "plan_sha256": canonical_sha(plan),
-        "restoration": restoration,
-    })
+    write_json(run / "result.json", result_receipt(state, plan, restoration))
     old = NOW.timestamp() - 60
     os.utime(run / "state.json", (old, old))
 
@@ -402,6 +429,100 @@ def test_candidate_mode_requires_matching_live_cgroup_evidence(tmp_path):
     memory["candidate"]["armed"] = False
     memory["candidate"]["cgroup"] = None
     memory_path.write_text(json.dumps(memory) + "\n")
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+
+def test_registered_c0_s0_profile_and_docker_swap_controls_are_required(tmp_path):
+    root, run, proc, boot, state, plan = fixture(tmp_path / "plan")
+    plan["profile"] = "C0-legacy"
+    write_json(run / "plan.json", plan)
+    state["plan_sha256"] = canonical_sha(plan)
+    write_json(run / "state.json", state)
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+    root, run, proc, boot, state, _plan = fixture(tmp_path / "contract")
+    contract_path = run / "launch-contract.raw.json"
+    contract = json.loads(contract_path.read_text())
+    contract["runtime"]["docker_memory_swap_total_bytes"] += 4096
+    contract_path.write_text(json.dumps(contract), encoding="utf-8")
+    state["contract_sha256"] = hashlib.sha256(contract_path.read_bytes()).hexdigest()
+    write_json(run / "state.json", state)
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("docker_memory_limit", 0),
+        ("docker_memory_swap_total", 0),
+        ("cgroup_memory_max", 0),
+        ("cgroup_swap_max", 4096),
+        ("cgroup_memory_current", -1),
+        ("cgroup_stat_missing", None),
+        ("cgroup_pressure_missing", None),
+        ("cgroup_local_events_drift", 1),
+        ("host_meminfo_missing", None),
+    ],
+)
+def test_candidate_mode_rejects_missing_or_drifted_no_swap_diagnostics(
+    tmp_path, field, value
+):
+    root, run, proc, boot, _state, _plan = fixture(tmp_path)
+    memory_path = run / "memory.jsonl"
+    memory = json.loads(memory_path.read_text())
+    candidate = memory["candidate"]
+    cgroup = candidate["cgroup"]
+    if field == "docker_memory_limit":
+        candidate["memory_limit_bytes"] = value
+    elif field == "docker_memory_swap_total":
+        candidate["memory_swap_total_bytes"] = value
+    elif field == "cgroup_memory_max":
+        cgroup["memory_max_bytes"] = value
+    elif field == "cgroup_swap_max":
+        cgroup["memory_swap_max_bytes"] = value
+    elif field == "cgroup_memory_current":
+        cgroup["memory_current_bytes"] = value
+    elif field == "cgroup_stat_missing":
+        del cgroup["selected_memory_stat"]["anon"]
+    elif field == "cgroup_pressure_missing":
+        del cgroup["memory_pressure"]
+    elif field == "cgroup_local_events_drift":
+        cgroup["memory_events_local"]["oom"] = value
+    elif field == "host_meminfo_missing":
+        del memory["host_meminfo_kib"]["SwapFree"]
+    memory_path.write_text(json.dumps(memory) + "\n", encoding="utf-8")
+    assert project(root, proc, boot)["mode"] == "unknown"
+
+
+def test_registered_v3_memory_reader_accepts_more_than_legacy_four_megabytes(tmp_path):
+    root, run, proc, boot, _state, _plan = fixture(tmp_path)
+    memory_path = run / "memory.jsonl"
+    one_sample = memory_path.read_bytes()
+    copies = (5 * 1024 * 1024 // len(one_sample)) + 1
+    memory_path.write_bytes(one_sample * copies)
+    assert 4 * 1024 * 1024 < memory_path.stat().st_size < 32 * 1024 * 1024
+    assert project(root, proc, boot)["mode"] == "candidate_research"
+
+
+@pytest.mark.parametrize(
+    "field", ["profile", "docker_memory_limit_bytes", "memory_log_sha256"]
+)
+def test_terminal_c0_s0_receipt_profile_and_paired_hashes_are_bound(tmp_path, field):
+    root, run, proc, boot, state, plan = fixture(tmp_path, phase="complete")
+    restoration = {
+        "status": "verified", "errors": [], "sentinel_retained": False,
+        "verified_at": NOW.isoformat(),
+    }
+    state["restoration"] = restoration
+    write_json(run / "state.json", state)
+    receipt = result_receipt(state, plan, restoration)
+    if field == "profile":
+        receipt[field] = "C0-legacy"
+    elif field == "docker_memory_limit_bytes":
+        receipt[field] += 4096
+    else:
+        receipt[field] = "d" * 64  # One diagnostic hash without its memory partner.
+    write_json(run / "result.json", receipt)
     assert project(root, proc, boot)["mode"] == "unknown"
 
 

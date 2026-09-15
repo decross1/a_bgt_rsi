@@ -39,7 +39,7 @@ MAX_STATE_BYTES = 256 * 1024
 MAX_PLAN_BYTES = 2 * 1024 * 1024
 MAX_CONTRACT_BYTES = 4 * 1024 * 1024
 MAX_RESULT_BYTES = 2 * 1024 * 1024
-MAX_MEMORY_BYTES = 4 * 1024 * 1024
+MAX_MEMORY_BYTES = 32 * 1024 * 1024
 MAX_PROC_BYTES = 32 * 1024
 MAX_MEMORY_AGE_SECONDS = 5.0
 MAX_CLOCK_SKEW_SECONDS = 5.0
@@ -358,6 +358,8 @@ def _candidate_memory_is_bound(
     cgroup_path: str,
     candidate_pid: int,
     candidate_start_ticks: int,
+    memory_limit_bytes: int,
+    memory_swap_total_bytes: int,
 ) -> None:
     candidate = row.get("candidate")
     if not isinstance(candidate, dict):
@@ -372,8 +374,12 @@ def _candidate_memory_is_bound(
         or candidate.get("oom_killed") is not False
         or candidate.get("restart_count") != 0
         or candidate.get("pid") != candidate_pid
+        or candidate.get("memory_limit_bytes") != memory_limit_bytes
+        or candidate.get("memory_swap_total_bytes") != memory_swap_total_bytes
         or cgroup.get("path") != cgroup_path
         or cgroup.get("process_start_ticks") != candidate_start_ticks
+        or cgroup.get("memory_max_bytes") != memory_limit_bytes
+        or cgroup.get("memory_swap_max_bytes") != 0
         or cgroup.get("memory_swap_current_bytes") != 0
         or cgroup.get("memory_events_oom") != 0
         or cgroup.get("memory_events_oom_kill") != 0
@@ -395,10 +401,46 @@ def _candidate_memory_is_bound(
     )
     for key in (
         "memory_swap_current_bytes",
+        "memory_max_bytes",
+        "memory_swap_max_bytes",
+        "memory_current_bytes",
         "memory_events_oom",
         "memory_events_oom_kill",
     ):
         _nonnegative_integer(cgroup.get(key), f"candidate cgroup {key}")
+    for key in ("memory_limit_bytes", "memory_swap_total_bytes"):
+        _nonnegative_integer(candidate.get(key), f"candidate {key}", positive=True)
+    tracked_stats = (
+        "anon", "file", "shmem", "active_file", "inactive_file",
+        "pgscan", "pgsteal",
+    )
+    stats = cgroup.get("selected_memory_stat")
+    if not isinstance(stats, dict) or set(stats) != set(tracked_stats):
+        raise RuntimeSourceError("candidate memory.stat diagnostics are absent")
+    for key in tracked_stats:
+        _nonnegative_integer(stats[key], f"candidate memory.stat {key}")
+    pressure = cgroup.get("memory_pressure")
+    if (
+        not isinstance(pressure, str)
+        or len(pressure) > 1024
+        or len(pressure.splitlines()) != 2
+        or not pressure.splitlines()[0].startswith("some ")
+        or not pressure.splitlines()[1].startswith("full ")
+    ):
+        raise RuntimeSourceError("candidate memory pressure diagnostics are absent")
+    local_events = cgroup.get("memory_events_local")
+    if (
+        not isinstance(local_events, dict)
+        or not {"oom", "oom_kill"}.issubset(local_events)
+    ):
+        raise RuntimeSourceError("candidate local OOM diagnostics are absent")
+    for key, value in local_events.items():
+        _nonnegative_integer(value, f"candidate local memory event {key}")
+    if (
+        local_events["oom"] != cgroup["memory_events_oom"]
+        or local_events["oom_kill"] != cgroup["memory_events_oom_kill"]
+    ):
+        raise RuntimeSourceError("candidate local OOM aliases differ")
 
 
 def _latest_memory(
@@ -409,6 +451,8 @@ def _latest_memory(
     expected_phase: str,
     paging_policy: dict[str, Any],
     candidate_identity: tuple[str, str, int, int] | None,
+    memory_limit_bytes: int,
+    memory_swap_total_bytes: int,
 ) -> tuple[dict[str, Any], str]:
     raw = _read_fd(
         run_fd, "memory.jsonl", maximum=MAX_MEMORY_BYTES, label="memory gate"
@@ -439,6 +483,15 @@ def _latest_memory(
         or row.get("monitor_phase") != expected_phase
     ):
         raise RuntimeSourceError("memory gate sample schema is unsupported")
+    host_meminfo = row.get("host_meminfo_kib")
+    host_keys = (
+        "MemFree", "Cached", "SwapCached", "AnonPages",
+        "SwapFree", "MemAvailable",
+    )
+    if not isinstance(host_meminfo, dict) or set(host_meminfo) != set(host_keys):
+        raise RuntimeSourceError("host memory diagnostics are absent")
+    for key in host_keys:
+        _nonnegative_integer(host_meminfo[key], f"host meminfo {key}")
     elapsed = row.get("elapsed_monotonic_seconds")
     sample_gap = row.get("sample_gap_seconds")
     max_sample_gap = paging_policy.get("max_sample_gap_seconds")
@@ -562,6 +615,8 @@ def _latest_memory(
             cgroup_path=candidate_identity[1],
             candidate_pid=candidate_identity[2],
             candidate_start_ticks=candidate_identity[3],
+            memory_limit_bytes=memory_limit_bytes,
+            memory_swap_total_bytes=memory_swap_total_bytes,
         )
     return row, _sha256(row_raw)
 
@@ -621,6 +676,8 @@ def _terminal_restoration(
     *,
     started: datetime,
     observed: datetime,
+    memory_limit_bytes: int,
+    memory_swap_total_bytes: int,
     terminal_validator: Callable[[Path], None],
 ) -> str:
     restoration = state.get("restoration")
@@ -648,9 +705,22 @@ def _terminal_restoration(
             and receipt.get("run_id") == run_id
             and receipt.get("contract_sha256") == state["contract_sha256"]
             and receipt.get("plan_sha256") == _canonical_sha256(plan)
+            and receipt.get("profile") == plan.get("profile") == "C0-S0"
+            and receipt.get("docker_memory_limit_bytes") == memory_limit_bytes
+            and receipt.get("docker_memory_swap_total_bytes")
+            == memory_swap_total_bytes
+            and receipt.get("status") in {"passed", "failed", "unknown"}
             and isinstance(receipt.get("restoration"), dict)
             and receipt["restoration"] == restoration
         )
+        diagnostic_hash = receipt.get("cgroup_diagnostics_sha256")
+        memory_hash = receipt.get("memory_log_sha256")
+        valid = valid and bool(diagnostic_hash) == bool(memory_hash) and all(
+            value is None or (isinstance(value, str) and SHA256.fullmatch(value))
+            for value in (diagnostic_hash, memory_hash)
+        )
+        if receipt.get("status") == "passed":
+            valid = valid and bool(diagnostic_hash and memory_hash)
     else:
         valid = (
             receipt.get("schema") == "qwen-flash-next-supervisor-recovery/v1"
@@ -749,14 +819,25 @@ def project_model_runtime(
             raise RuntimeSourceError("runtime directory changed during admission")
         plan_validator(run_path, state, plan, contract, contract_sha)
         try:
-            from bench.flash_next_ab.qualification import PAGING_POLICY
+            from bench.flash_next_ab.qualification import (
+                DOCKER_MEMORY_LIMIT_BYTES,
+                DOCKER_MEMORY_SWAP_TOTAL_BYTES,
+                PAGING_POLICY,
+            )
         except Exception as exc:
             raise RuntimeSourceError("runtime paging allowlist is unavailable") from exc
         if (
             state.get("paging_policy") != PAGING_POLICY
             or plan.get("paging_policy") != PAGING_POLICY
+            or plan.get("profile") != "C0-S0"
+            or contract.get("profile") != "C0-S0"
+            or not isinstance(contract.get("runtime"), dict)
+            or contract["runtime"].get("docker_memory_limit_bytes")
+            != DOCKER_MEMORY_LIMIT_BYTES
+            or contract["runtime"].get("docker_memory_swap_total_bytes")
+            != DOCKER_MEMORY_SWAP_TOTAL_BYTES
         ):
-            raise RuntimeSourceError("runtime paging policy differs from its plan")
+            raise RuntimeSourceError("runtime profile or paging policy is unregistered")
 
         started = _parse_time(state.get("started_at"), "runtime started_at")
         updated = _parse_time(state.get("updated_at"), "runtime updated_at")
@@ -794,6 +875,8 @@ def project_model_runtime(
                 plan,
                 started=started,
                 observed=observed,
+                memory_limit_bytes=DOCKER_MEMORY_LIMIT_BYTES,
+                memory_swap_total_bytes=DOCKER_MEMORY_SWAP_TOTAL_BYTES,
                 terminal_validator=terminal_validator,
             )
             mode = "resident"
@@ -839,6 +922,8 @@ def project_model_runtime(
                 expected_phase=expected_monitor_phase,
                 paging_policy=PAGING_POLICY,
                 candidate_identity=candidate_identity,
+                memory_limit_bytes=DOCKER_MEMORY_LIMIT_BYTES,
+                memory_swap_total_bytes=DOCKER_MEMORY_SWAP_TOTAL_BYTES,
             )
             if phase in CANDIDATE_PHASES:
                 nara_initially_active = _validate_initial(state)
