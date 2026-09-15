@@ -1,0 +1,12 @@
+{
+  "recorded_at": "2026-09-15T23:12:45.608805+00:00",
+  "source_commit": "e9c4714a032faacf102007a9f6ce49b9ade56bbd",
+  "public_witness_commit": "8d579bc510cfd76fe10dcfd3117991910b8e6aa1",
+  "pull_request": "https://github.com/decross1/a_bgt_rsi/pull/52",
+  "pull_request_created_at": "2026-09-15T23:11:06Z",
+  "plan_sha256": "45a29a0f04f700b5a0c62bbe531b2a0d595f555026270237666059f493878d84",
+  "window_sha256": "e49b3f4d0872bb03f6ec35efcceab9f5b4ed784cd05608ab15f36336996d5e58",
+  "issued_calls_at_witness": 0,
+  "focused_tests_passed": 18,
+  "latest_safe_start": "2026-09-15T23:25:00Z"
+}
