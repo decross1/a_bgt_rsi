@@ -3007,21 +3007,47 @@ def execute_worker(
         _verified_contract_raw(contract, plan["contract_sha256"], spec=spec)
     if spec is not None:
         validate_contract(contract, spec=spec)
-        expected_plan = plan_qualification(contract, plan["contract_sha256"],
-                                           Path(plan["output_dir"]) if extended_plan
-                                           is not None else output, spec=spec)
-        if plan != expected_plan:
-            raise QualificationError("Mia worker plan differs from immutable registration")
-        if spec.contract_schema.endswith("/v5"):
-            from .followon_dispatch import (
-                FOLLOWON_CODE_ROOT,
-                frozen_followon_source_bundle,
+        historical_v5_followon = False
+        if followon_kind and evaluation_window.v5_parent is not None:
+            from .historical_v5_parent_bridge import (
+                OLD_ROOT,
+                OLD_SOURCE_BUNDLE_SHA256,
+                PARENT_PATH,
+                PARENT_SHA256,
+                QUALIFICATION_RUN_ID,
             )
-            if (ROOT != FOLLOWON_CODE_ROOT
-                or plan.get("registered_code_root") != str(FOLLOWON_CODE_ROOT)
-                or plan.get("followon_source_bundle") != frozen_followon_source_bundle()
-                or plan.get("followon_source_bundle_sha256") != sha256(plan["followon_source_bundle"])):
-                raise QualificationError("v5 worker source root or module bytes differ")
+            historical_v5_followon = (
+                evaluation_window.document.get("study_id")
+                    == "coding-temp1-medium-and-decode-v1"
+                and evaluation_window.document.get("v5_qualified_parent")
+                    == {"path": str(PARENT_PATH), "sha256": PARENT_SHA256}
+                and evaluation_window.v5_parent.pair_id == QUALIFICATION_RUN_ID
+                and evaluation_window.v5_parent.source_sha256 == PARENT_SHA256
+                and plan == evaluation_window.v5_parent.qualification_plan
+                and plan.get("registered_code_root") == str(OLD_ROOT)
+                and plan.get("followon_source_bundle_sha256")
+                    == OLD_SOURCE_BUNDLE_SHA256
+            )
+            if not historical_v5_followon:
+                raise QualificationError("historical v5 follow-on parent differs")
+        if not historical_v5_followon:
+            expected_plan = plan_qualification(
+                contract, plan["contract_sha256"],
+                Path(plan["output_dir"]) if extended_plan is not None else output,
+                spec=spec,
+            )
+            if plan != expected_plan:
+                raise QualificationError("Mia worker plan differs from immutable registration")
+            if spec.contract_schema.endswith("/v5"):
+                from .followon_dispatch import (
+                    FOLLOWON_CODE_ROOT,
+                    frozen_followon_source_bundle,
+                )
+                if (ROOT != FOLLOWON_CODE_ROOT
+                    or plan.get("registered_code_root") != str(FOLLOWON_CODE_ROOT)
+                    or plan.get("followon_source_bundle") != frozen_followon_source_bundle()
+                    or plan.get("followon_source_bundle_sha256") != sha256(plan["followon_source_bundle"])):
+                    raise QualificationError("v5 worker source root or module bytes differ")
     ops = ops or HostOps()
     runtime = _runtime_identity(spec)
     if os.environ.get("MOCK_LLM"):
