@@ -39,7 +39,9 @@
 // Reasons are producer-owned: non-string entries are dropped, a non-array
 // reasons renders no list. `initial` bypasses polling (fixture renders stay
 // deterministic — the HumanTodoPanel idiom); `nowMs` pins the staleness
-// clock for tests.
+// clock for tests. A recognized frontier-vendor streak is phrased as a
+// recorded CLI failure: alert.updated_at is the cycle timestamp, not the
+// vendor's last call time, so the banner does not assert present availability.
 import { getLoopAlert } from "../api/http";
 import { usePolled } from "../api/pollhub";
 import { ageLabel } from "../ladderBar";
@@ -54,6 +56,18 @@ function reasonsOf(alert: LoopAlert): string[] {
   return alert.reasons.filter(
     (r): r is string => typeof r === "string" && r.length > 0,
   );
+}
+
+function frontierVendorReason(reason: string): string | null {
+  if (reason === "frontier_vendor_down:claude") return "Claude";
+  if (reason === "frontier_vendor_down:codex") return "Codex";
+  return null;
+}
+
+function displayReason(reason: string): string {
+  const vendor = frontierVendorReason(reason);
+  return vendor === null ? reason :
+    `Last recorded ${vendor} CLI calls failed; this alert does not establish current availability.`;
 }
 
 // Staleness off updated_at. A MISSING/unparseable timestamp on a present flag
@@ -147,12 +161,15 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
 
   const reasons = level === "ok" ? [] : reasonsOf(alert);
   const gate = gateOf(alert);
+  const vendorOnlyAmber = level === "amber" && gate === null &&
+    reasons.length === 1 && frontierVendorReason(reasons[0]) !== null;
   const tone = showRed
     ? "border-red-800 bg-red-950/60 text-red-200"
     : "border-amber-800 bg-amber-950/50 text-amber-200";
   // A held loop is IDLE, not stalled. Saying "LOOP STALLED" over a gate the
   // producer named would be the same unexplained red the owner objected to.
-  const headline = gate ? `LOOP IDLE — ${gate.reason}` : showRed ? "LOOP STALLED" : "loop degraded";
+  const headline = gate ? `LOOP IDLE — ${gate.reason}` : showRed ? "LOOP STALLED"
+    : vendorOnlyAmber ? "Recorded frontier failures" : "loop degraded";
 
   return (
     <div
@@ -177,7 +194,9 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
       {reasons.length > 0 && (
         <ul className="mt-1 list-disc space-y-0.5 pl-5" data-testid="loop-alert-reasons">
           {reasons.map((r, i) => (
-            <li key={i}>{r}</li>
+            <li key={i} title={frontierVendorReason(r) === null ? undefined : r}>
+              {displayReason(r)}
+            </li>
           ))}
         </ul>
       )}
