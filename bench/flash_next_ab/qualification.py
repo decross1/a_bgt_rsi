@@ -1304,6 +1304,7 @@ class MemoryMonitor:
                 candidate = _inspect_container(self.ops, candidate_id)
                 candidate_row: dict[str, Any] = {
                     "id": candidate_id,
+                    "armed": None,
                     "running": candidate.get("running") if candidate else None,
                     "oom_killed": candidate.get("oom_killed") if candidate else None,
                     "restart_count": candidate.get("restart_count") if candidate else None,
@@ -1312,6 +1313,7 @@ class MemoryMonitor:
                 }
                 with self._lock:
                     still_armed = self._candidate_id == candidate_id
+                candidate_row["armed"] = still_armed
                 if still_armed:
                     if candidate is None or not candidate.get("running"):
                         breach_reasons.append(
@@ -1334,6 +1336,7 @@ class MemoryMonitor:
                             snapshot = None
                         with self._lock:
                             still_armed = self._candidate_id == candidate_id
+                        candidate_row["armed"] = still_armed
                         if still_armed and snapshot is not None:
                             candidate_row["cgroup"] = snapshot
                             if snapshot.get("path") != candidate_cgroup_path:

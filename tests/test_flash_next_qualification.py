@@ -1091,6 +1091,10 @@ def test_monitor_ignores_a_stale_lifecycle_sample_after_disarm(tmp_path):
     monitor._stream.close()
     assert not monitor.cancel_event.is_set()
     assert monitor.failure is None
+    rows = [json.loads(line) for line in (tmp_path / "race.jsonl").read_text().splitlines()]
+    candidate_rows = [row for row in rows if "candidate" in row]
+    assert candidate_rows[-1]["candidate"]["armed"] is False
+    assert candidate_rows[-1]["candidate"]["cgroup"] is None
 
 
 def test_docker_inspect_operational_error_is_not_treated_as_absence():
