@@ -24,6 +24,13 @@ WINDOW_SHA = "765768788240c6f25ded459c98534aa771b06cb9b2408c33d3c0c43ea8e44287"
 # The standalone receipt has no immutable index, so its final raw SHA is the
 # score-admission anchor. Prepared/live/failed states need no receipt.
 REPLAY_SHA: str | None = None
+# Freeze these four raw hashes only after the interrupted startup attempt has
+# sealed its terminal result, state, supervision and memory evidence. They
+# authorize one categorical incident note, never cap-quality numbers.
+FAILED_RESULT_SHA: str | None = "11c7686e6ed5d1c0f1c5ba79624674aee50f89c2dc5224d9008e070434403c7b"
+FAILED_STATE_SHA: str | None = "7e5dbf3f84881d5e4494ab7d98bd5d743f1c71dd30a0d28f374d970f52b839c7"
+FAILED_SUPERVISION_SHA: str | None = "836a359052974f05abe6deb3613bb095d9bb0bc0634110be27eb3c9eed8996aa"
+FAILED_MEMORY_SHA: str | None = "1251d7062ea4e70bb4598777495ad75faff46c8145d0e1ccbcf83c832d9bfdee"
 EVALUATOR_SHA = "b4144701927e6b1e012dddd5965de87e58b235b4d2e9b196e90c55404d395f98"
 CONTROLLER_SHA = "f8625250b6efbf6eb188615ef653ba057b7dd2e4ae9e8f71b6dc782ccc92fff0"
 VARIANT = "mia-925d7be6-mtp3-reduced47k-v2opt-v1"
@@ -118,6 +125,78 @@ def _terminal_status() -> str:
         return "awaiting_admission"
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         return "source_unavailable"
+
+
+def _known_startup_failure() -> str | None:
+    """Identify only the one archived host-paging startup abort."""
+    if any(value is None for value in (FAILED_RESULT_SHA, FAILED_STATE_SHA,
+                                        FAILED_SUPERVISION_SHA, FAILED_MEMORY_SHA)):
+        return None
+    if any(path.exists() or path.is_symlink() for path in (
+            OUTPUT / "evaluation/run.json", OUTPUT / "readiness.json",
+            OUTPUT / "probes.json", OUTPUT / "profile-canary.json")):
+        return None
+    try:
+        result, result_sha = _document(OUTPUT / "result.json", 2_000_000)
+        state, state_sha = _document(OUTPUT / "state.json", 2_000_000)
+        supervisor, supervisor_sha = _document(OUTPUT / "supervision.json", 2_000_000)
+        memory = _read_path(OUTPUT / "memory.jsonl", maximum=32_000_000,
+                            label="archived cap startup safety sample")
+        if (result_sha != FAILED_RESULT_SHA or state_sha != FAILED_STATE_SHA
+                or supervisor_sha != FAILED_SUPERVISION_SHA
+                or hashlib.sha256(memory).hexdigest() != FAILED_MEMORY_SHA):
+            return None
+        restoration = result.get("restoration")
+        if (result.get("schema") != "lab-model-window-result/v1"
+                or result.get("window_id") != "qfn-ab-lab-diversity-cap-20260915-a"
+                or result.get("window_sha256") != WINDOW_SHA
+                or result.get("status") != "aborted"
+                or result.get("evaluation_run_sha256") is not None
+                or not isinstance(result.get("error"), str) or not result["error"]
+                or state.get("phase") != "aborted"
+                or state.get("window_sha256") != WINDOW_SHA
+                or state.get("restoration") != restoration
+                or not isinstance(restoration, dict)
+                or restoration.get("status") != "verified"
+                or restoration.get("errors") != []
+                or restoration.get("diagnostic_errors") != []
+                or restoration.get("sentinel_retained") is not False
+                or supervisor.get("schema") != "lab-model-supervision/v1"
+                or supervisor.get("window_sha256") != WINDOW_SHA
+                or type(supervisor.get("returncode")) is not int
+                or supervisor["returncode"] == 0
+                or supervisor.get("interrupted") is not None
+                or supervisor.get("terminated_at_cutoff") is not False
+                or supervisor.get("emergency_restoration") is not None):
+            return None
+        lines = memory.splitlines()
+        if len(lines) > 15_000:
+            return None
+        samples = [json.loads(line) for line in lines if line]
+        if any(not isinstance(row, dict) for row in samples):
+            return None
+        if any(row.get("monitor_phase") == "evaluation" for row in samples):
+            return None
+        for row in samples:
+            candidate = row.get("candidate")
+            cgroup = candidate.get("cgroup") if isinstance(candidate, dict) else None
+            if (row.get("schema") == "qwen-flash-next-memory-sample/v3"
+                    and row.get("monitor_phase") == "load"
+                    and row.get("paging_gate") == "startup"
+                    and type(row.get("host_swap_5s_bytes")) is int
+                    and row["host_swap_5s_bytes"] >= 512 * 1024 * 1024
+                    and isinstance(candidate, dict)
+                    and candidate.get("armed") is True
+                    and candidate.get("oom_killed") is False
+                    and isinstance(cgroup, dict)
+                    and cgroup.get("memory_swap_current_bytes") == 0
+                    and cgroup.get("memory_swap_max_bytes") == 0
+                    and cgroup.get("memory_events_oom") == 0
+                    and cgroup.get("memory_events_oom_kill") == 0):
+                return "startup_host_swap_5s"
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return None
+    return None
 
 
 def _cap(value: object, cap: int) -> dict:
@@ -309,6 +388,7 @@ def project_progress(*, root: Path = ROOT) -> dict:
              "status": "source_unavailable", "window_id": "qfn-ab-lab-diversity-cap-20260915-a",
              "plan_raw_sha256": None, "window_raw_sha256": None,
              "replay_raw_sha256": None, "results": None,
+             "failure_reason_code": None,
              "original_primary_scores_changed": False, "private_content_exported": False,
              "promotion_authorized": False, "comparison_eligible": False}
     try:
@@ -318,6 +398,12 @@ def project_progress(*, root: Path = ROOT) -> dict:
             raise ValueError("registered plan/window raw differs")
         _registered(plan, window)
         entry.update(plan_raw_sha256=plan_sha, window_raw_sha256=window_sha)
+        terminal_status = _terminal_status() if root == ROOT else "prepared_unissued"
+        if terminal_status in {"incomplete_terminal", "source_unavailable"}:
+            entry["status"] = terminal_status
+            if terminal_status == "incomplete_terminal":
+                entry["failure_reason_code"] = _known_startup_failure()
+            return entry
         if replay_path.exists() or replay_path.is_symlink():
             if REPLAY_SHA is None:
                 entry["status"] = "awaiting_admission"
@@ -331,10 +417,8 @@ def project_progress(*, root: Path = ROOT) -> dict:
                 raise ValueError("fixture root cannot admit live cap scores")
             entry["results"] = _admitted(replay, plan)
             entry["status"] = "closed_replay_admitted"
-        elif root == ROOT:
-            entry["status"] = _terminal_status()
         else:
-            entry["status"] = "prepared_unissued"
+            entry["status"] = terminal_status
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         pass
     return entry
