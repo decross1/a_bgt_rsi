@@ -1,7 +1,8 @@
-"""UNAPPLIED REVIEW DRAFT: supervised incumbent cohort and Nara isolation.
+"""Supervise a qualified resident evaluation under Nara isolation.
 
-Requires prior resident qualification and frozen paired benchmark plan. This
-draft stays outside the imported worktree until Flash C0 exits and is reviewed.
+Original portfolio and new follow-on sources have distinct exact selectors.
+Every worker block remains inside the incumbent monitor and exact restoration
+path; the CLI never treats an incomplete window as comparable evidence.
 """
 from __future__ import annotations
 
@@ -76,7 +77,7 @@ def _registered_output(pair_id: str, output_dir: str | Path, *, absent: bool) ->
 
 
 def _sentinel_name(pair_id: str) -> str:
-    if re.fullmatch(r"qfn-ab-[a-z0-9][a-z0-9._-]{0,63}", pair_id) is None:
+    if re.fullmatch(r"(?:qfn-ab|qfn-followon)-[a-z0-9][a-z0-9._-]{0,63}", pair_id) is None:
         raise EvaluationWindowError("resident watchdog pair namespace is invalid")
     return f"vllm-qwen-ab-resident-{pair_id}"
 
@@ -602,7 +603,10 @@ def _result_restored(output: Path, plan: dict) -> bool:
     except Exception:  # noqa: BLE001 - supervisor treats any untrusted result as incomplete
         return False
     return bool(
-        result.get("schema") == "flash-next-resident-evaluation-result/v2"
+        result.get("schema") == (
+            "flash-followon-resident-result/v1"
+            if plan.get("evaluation_kind") == "followon"
+            else "flash-next-resident-evaluation-result/v2")
         and result.get("status") in {"complete", "failed"}
         and result.get("pair_id") == plan["pair_id"]
         and result.get("plan_sha256") == sha256(plan)
@@ -622,6 +626,12 @@ def _result_restored(output: Path, plan: dict) -> bool:
         and result["final_observation"].get("watchdog_sentinel_by_id") is None
         and result.get("weekly_budget_debit") is False
         and result.get("paid_api_calls") == 0
+        and (plan.get("evaluation_kind") != "followon"
+             or result.get("evaluation_kind") == "followon"
+             and result.get("qualified_parent_window")
+                == plan["qualified_parent_window"]
+             and result.get("followon_block_count")
+                == len(plan["followon_blocks"]))
     )
 
 
@@ -630,7 +640,9 @@ def _verified_result(output: Path, plan: dict) -> bool:
         result = _read_bounded_run_json(output / "result.json", source="incumbent window result")
     except Exception:  # noqa: BLE001 - an unreadable result cannot complete a window
         return False
-    run_sha = result.get("harness_run_sha256")
+    run_sha = (result.get("group_attempt_sha256")
+               if plan.get("evaluation_kind") == "followon"
+               else result.get("harness_run_sha256"))
     minimum = result.get("min_mem_available_gib")
     return bool(
         result.get("status") == "complete"
@@ -640,6 +652,9 @@ def _verified_result(output: Path, plan: dict) -> bool:
         and type(minimum) in {int, float} and math.isfinite(minimum)
         and minimum >= MIN_MEMORY_GIB
         and isinstance(run_sha, str) and re.fullmatch(r"[0-9a-f]{64}", run_sha)
+        and (plan.get("evaluation_kind") != "followon"
+             or result.get("group_attempt_status")
+                == "blocks_complete_pending_restoration")
     )
 
 
@@ -647,7 +662,10 @@ def _parent_recovery_state(output: Path, plan: dict) -> dict:
     state = _read_bounded_run_json(output / "state.json", source="resident emergency state")
     initial = state.get("initial")
     if (
-        state.get("schema") != "flash-next-resident-evaluation-state/v2"
+        state.get("schema") != (
+            "flash-followon-resident-state/v1"
+            if plan.get("evaluation_kind") == "followon"
+            else "flash-next-resident-evaluation-state/v2")
         or state.get("pair_id") != plan["pair_id"]
         or state.get("plan_sha256") != sha256(plan)
         or state.get("window_plan_sha256") != plan["window_plan_sha256"]
@@ -659,6 +677,13 @@ def _parent_recovery_state(output: Path, plan: dict) -> dict:
         or not isinstance(state.get("nara_stop_attempted"), bool)
     ):
         raise EvaluationWindowError("resident recovery state is not bound to the worker")
+    if plan.get("evaluation_kind") == "followon" and (
+        state.get("evaluation_kind") != "followon"
+        or state.get("qualified_parent_window")
+           != plan["qualified_parent_window"]
+        or state.get("followon_blocks") != plan["followon_blocks"]
+    ):
+        raise EvaluationWindowError("follow-on resident recovery source changed")
     sentinel = state.get("watchdog_sentinel_id")
     if sentinel is not None and re.fullmatch(r"[0-9a-f]{64}", str(sentinel)) is None:
         raise EvaluationWindowError("resident recovery sentinel ID is untrusted")
@@ -698,7 +723,9 @@ def supervisor_emergency_resident_restore(
     """Recover original Nara activity from a worker's durable exact IDs."""
     ops = ops or HostOps()
     receipt = {
-        "schema": "flash-next-resident-supervisor-recovery/v1",
+        "schema": ("flash-followon-resident-supervisor-recovery/v1"
+                   if plan.get("evaluation_kind") == "followon"
+                   else "flash-next-resident-supervisor-recovery/v1"),
         "pair_id": plan["pair_id"], "started_at": utc_now(),
         "status": "unknown", "restoration": None, "error": None,
     }
@@ -744,13 +771,20 @@ def supervisor_emergency_resident_restore(
 
 
 def _worker(window, plan: dict, output: Path) -> int:
-    if ROOT != REGISTERED_CODE_ROOT:
+    followon_kind = plan.get("evaluation_kind") == "followon"
+    if followon_kind:
+        from .followon_dispatch import FOLLOWON_CODE_ROOT
+        expected_root = FOLLOWON_CODE_ROOT
+    else:
+        expected_root = REGISTERED_CODE_ROOT
+    if ROOT != expected_root:
         raise EvaluationWindowError("resident worker was imported outside the registered worktree")
     hard_deadline = time.monotonic() + plan["effective_invocation_deadline_seconds"]
     cutoff = hard_deadline - plan["verification_reserve_seconds"]
     started_wall = datetime.now(timezone.utc)
     state = {
-        "schema": "flash-next-resident-evaluation-state/v2",
+        "schema": ("flash-followon-resident-state/v1" if followon_kind
+                   else "flash-next-resident-evaluation-state/v2"),
         "pair_id": window.pair_id,
         "phase": "preflight",
         "plan_sha256": sha256(plan),
@@ -769,6 +803,10 @@ def _worker(window, plan: dict, output: Path) -> int:
         "restoration": {"status": "not_started"},
         "monitor_memory_log_relpath": "resident-memory.jsonl",
     }
+    if followon_kind:
+        state["evaluation_kind"] = "followon"
+        state["qualified_parent_window"] = plan["qualified_parent_window"]
+        state["followon_blocks"] = plan["followon_blocks"]
     _atomic_json(output / "state.json", state)
     _append_usage({
         "schema": "local-model-research-usage/v1",
@@ -837,25 +875,45 @@ def _worker(window, plan: dict, output: Path) -> int:
                         raise EvaluationWindowError("full cohort exceeds the restoration cutoff")
                     state["phase"] = "evaluation"
                     _atomic_json(output / "state.json", state)
-                    run = run_harness(
-                        window.benchmark_plan, cohort="resident",
-                        output_dir=output / "harness",
-                        runtime_budget_s=window.runtime_budget_seconds,
-                        qualification_gate=_qualification_gate(window),
-                        cancel_event=monitor.cancel_event,
-                        run_id=f"{window.pair_id}-resident",
-                    )
-                    validate_run(run, "resident")
+                    if followon_kind:
+                        from .followon_admission import resident_callbacks
+                        from .followon_dispatch import run_group
+
+                        callbacks = resident_callbacks(
+                            window, state, monitor, ops, cutoff=cutoff
+                        )
+                        run = run_group(
+                            window.frozen, controller_callbacks=callbacks,
+                            work_cutoff_s=cutoff,
+                            cancel_event=monitor.cancel_event,
+                        )
+                    else:
+                        run = run_harness(
+                            window.benchmark_plan, cohort="resident",
+                            output_dir=output / "harness",
+                            runtime_budget_s=window.runtime_budget_seconds,
+                            qualification_gate=_qualification_gate(window),
+                            cancel_event=monitor.cancel_event,
+                            run_id=f"{window.pair_id}-resident",
+                        )
+                        validate_run(run, "resident")
                     monitor.check()
-                    if run.get("status") != "complete":
+                    expected_run_status = (
+                        "blocks_complete_pending_restoration" if followon_kind
+                        else "complete"
+                    )
+                    if run.get("status") != expected_run_status:
                         raise EvaluationWindowError(
-                            "full resident cohort aborted; individual call timeouts remain denominator cells"
+                            "registered resident block group did not finish before restoration"
                         )
                     raw, observed_path = _read_regular_file(
-                        output / "harness" / "run.json",
+                        (output / "group-attempt.json" if followon_kind
+                         else output / "harness" / "run.json"),
                         label="incumbent run", max_bytes=8_000_000,
                     )
-                    if observed_path != (output / "harness" / "run.json").absolute():
+                    expected_run_path = (output / "group-attempt.json" if followon_kind
+                                         else output / "harness" / "run.json")
+                    if observed_path != expected_run_path.absolute():
                         raise EvaluationWindowError("incumbent harness run was redirected")
                     run_sha = hashlib.sha256(raw).hexdigest()
                 except BaseException as exc:  # noqa: BLE001 - restoration must run for every mutation
@@ -937,14 +995,14 @@ def _worker(window, plan: dict, output: Path) -> int:
         if nara_stopped_mono is not None else 0.0
     )
     result = {
-        "schema": "flash-next-resident-evaluation-result/v2",
+        "schema": ("flash-followon-resident-result/v1" if followon_kind
+                   else "flash-next-resident-evaluation-result/v2"),
         "pair_id": window.pair_id,
         "status": status,
         "plan_sha256": sha256(plan),
         "window_plan_sha256": window.source_sha256,
         "benchmark_plan_file_sha256": window.benchmark_plan_file_sha256,
         "resident_qualification_receipt_sha256": plan["resident_qualification_receipt_sha256"],
-        "harness_run_sha256": run_sha,
         "exact_final_verification": restoration["status"] == "verified",
         "initial_observation": initial,
         "quiet_observation": state["quiet_observation"],
@@ -971,6 +1029,19 @@ def _worker(window, plan: dict, output: Path) -> int:
         "paid_api_calls": 0,
         "production_change_authorized": False,
     }
+    if followon_kind:
+        result.update(
+            evaluation_kind="followon",
+            qualified_parent_window=plan["qualified_parent_window"],
+            group_attempt_status=("blocks_complete_pending_restoration"
+                                  if status == "complete" else None),
+            group_attempt_sha256=run_sha,
+            followon_block_count=len(plan["followon_blocks"]),
+            followon_block_budget_total_seconds=plan[
+                "followon_block_budget_total_seconds"],
+        )
+    else:
+        result["harness_run_sha256"] = run_sha
     memory_file = output / "resident-memory.jsonl"
     if memory_file.exists():
         raw, observed_path = _read_regular_file(
@@ -997,7 +1068,12 @@ def _worker(window, plan: dict, output: Path) -> int:
 
 
 def _supervise(window, plan, output) -> int:
-    if ROOT != REGISTERED_CODE_ROOT:
+    if plan.get("evaluation_kind") == "followon":
+        from .followon_dispatch import FOLLOWON_CODE_ROOT
+        expected_root = FOLLOWON_CODE_ROOT
+    else:
+        expected_root = REGISTERED_CODE_ROOT
+    if ROOT != expected_root:
         raise EvaluationWindowError("resident supervisor was imported outside the registered worktree")
     output.mkdir(mode=0o700)
     _atomic_json(output / "plan.json", plan)
@@ -1053,7 +1129,9 @@ def _supervise(window, plan, output) -> int:
     if not _result_restored(output, plan):
         if proc.poll() is None:
             recovery = {
-                "schema": "flash-next-resident-supervisor-recovery/v1",
+                "schema": ("flash-followon-resident-supervisor-recovery/v1"
+                           if plan.get("evaluation_kind") == "followon"
+                           else "flash-next-resident-supervisor-recovery/v1"),
                 "status": "unknown", "error": "worker termination is not verified",
                 "restoration": None,
             }
@@ -1069,7 +1147,9 @@ def _supervise(window, plan, output) -> int:
         and worker_start_ticks is not None and elapsed <= WINDOW_DEADLINE_SECONDS
     )
     _atomic_json(output / "supervision.json", {
-        "schema": "flash-next-resident-supervision/v1",
+        "schema": ("flash-followon-resident-supervision/v1"
+                   if plan.get("evaluation_kind") == "followon"
+                   else "flash-next-resident-supervision/v1"),
         "pair_id": window.pair_id,
         "plan_sha256": sha256(plan),
         "command_sha256": sha256(command),
@@ -1101,9 +1181,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--eval-plan", required=True, type=Path)
     parser.add_argument("--output-dir", required=True, type=Path)
     args = parser.parse_args(argv)
-    window = load_evaluation_window(args.eval_plan, expected_cohort="resident")
-    output = _registered_output(window.pair_id, args.output_dir, absent=args.run)
-    plan = _resident_plan(window, output)
+    from .followon_selection import select_window
+
+    selected = select_window(args.eval_plan, cohort="resident")
+    if selected.kind == "followon":
+        from .followon_plans import load_execution, resident_plan
+
+        window = load_execution(args.eval_plan, cohort="resident")
+        output = Path(os.path.abspath(args.output_dir))
+        plan = resident_plan(window, output, must_be_absent=args.run)
+    else:
+        window = load_evaluation_window(args.eval_plan, expected_cohort="resident")
+        output = _registered_output(window.pair_id, args.output_dir, absent=args.run)
+        plan = _resident_plan(window, output)
     if args.plan:
         print(json.dumps(plan, sort_keys=True, indent=2, allow_nan=False))
         return 0

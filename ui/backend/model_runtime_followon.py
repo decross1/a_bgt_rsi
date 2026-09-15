@@ -1,4 +1,4 @@
-"""Read a registered supervised Flash A/B window as an operating mode.
+"""Read a registered grouped Flash follow-on window as an operating mode.
 
 This projection is operational evidence only. A live endpoint or an unfinished
 benchmark never establishes a comparative model gain.
@@ -6,6 +6,7 @@ benchmark never establishes a comparative model gain.
 from __future__ import annotations
 
 import os
+import re
 import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,13 +14,16 @@ from typing import Any
 
 from . import model_runtime as mr
 
-EVALUATION_RUN_ROOT = Path(
+FOLLOWON_RUN_ROOT = Path(
     "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/"
-    "qwen-flash-next-research/evaluation/runs"
+    "qwen-flash-next-research/evaluation/followon-runs"
 )
-EXTENDED_STATE_SCHEMA = "flash-next-extended-evaluation-state/v2"
-EXTENDED_RESULT_SCHEMA = "flash-next-extended-evaluation-result/v2"
-EXTENDED_PLAN_SCHEMA = "flash-next-extended-evaluation-plan/v3"
+FOLLOWON_STATE_SCHEMA = "flash-followon-flash-state/v1"
+FOLLOWON_RESULT_SCHEMA = "flash-followon-flash-result/v1"
+FOLLOWON_PLAN_SCHEMA = "flash-followon-flash-plan/v1"
+FOLLOWON_FLASH_RUN_ID = re.compile(
+    r"qfn-followon-[a-z0-9][a-z0-9._-]{0,63}\.flash\Z"
+)
 EXTENDED_PHASES = frozenset({
     "preflight", "model_verification", "setup_quiescence", "sentinel_create",
     "resident_stop", "candidate_start", "readiness", "ready_stabilization",
@@ -41,7 +45,7 @@ ACTIVE_PHASES = frozenset({
 TERMINAL_PHASES = frozenset({"complete", "supervisor_recovered", "recovery_unknown"})
 
 
-def _latest_slot_mtime(root: Path, *, extended: bool) -> int | None:
+def _latest_slot_mtime(root: Path) -> int | None:
     """Find direct-child source freshness, including an invalid newest state."""
     try:
         root_fd = os.open(root, mr._flags(directory=True))
@@ -58,11 +62,7 @@ def _latest_slot_mtime(root: Path, *, extended: bool) -> int | None:
                 if seen > mr.MAX_RUNS:
                     raise mr.RuntimeSourceError("runtime state root exceeds its scan bound")
                 name = entry.name
-                accepted = (
-                    mr.EXTENDED_FLASH_RUN_ID.fullmatch(name) if extended
-                    else (mr.RUN_ID.fullmatch(name) or mr.MIA_RUN_ID.fullmatch(name)
-                          or mr.MIA_PROFILE_RUN_ID.fullmatch(name))
-                )
+                accepted = FOLLOWON_FLASH_RUN_ID.fullmatch(name)
                 if not accepted:
                     continue
                 try:
@@ -142,37 +142,39 @@ def _candidate_identity(state: dict[str, Any]) -> tuple[str, str, int, int] | No
     )
 
 
-def project_extended_runtime(
-    evaluation_root: Path,
+def project_followon_runtime(
+    followon_root: Path,
     *,
     proc_root: Path,
     boot_id_path: Path,
     observed: datetime,
 ) -> dict[str, Any]:
-    """Admit one current pair-run phase from registered sources only."""
+    """Admit one current grouped-window phase from registered sources only."""
     observed = observed.astimezone(timezone.utc)
     observed_at = observed.isoformat()
     try:
         from bench.flash_next_ab import evaluation_window as ew
-        from bench.flash_next_ab.candidate_registry import MIA
+        from bench.flash_next_ab import followon_dispatch as grouped
+        from bench.flash_next_ab import followon_plans as fp
+        from bench.flash_next_ab.followon_profiles import SPECS_BY_ID
     except ImportError:
         return mr._unknown(observed_at, "extended runtime source is unavailable")
     run_fd = None
     try:
         run_fd, run_id, state_raw = mr._open_latest_run(
-            evaluation_root, namespace=mr.EXTENDED_FLASH_RUN_ID
+            followon_root, namespace=FOLLOWON_FLASH_RUN_ID
         )
         state = mr._strict_object(state_raw, "extended runtime state")
         pair_id = run_id.removesuffix(".flash")
         if (
-            state.get("schema") != EXTENDED_STATE_SCHEMA
+            state.get("schema") != FOLLOWON_STATE_SCHEMA
             or state.get("run_id") != run_id
             or state.get("pair_id") != pair_id
             or state.get("phase") not in EXTENDED_PHASES
             or state.get("memory_log_relpath") != "memory.jsonl"
         ):
             raise mr.RuntimeSourceError("extended runtime identity differs")
-        run_path = evaluation_root / run_id
+        run_path = followon_root / run_id
         path_details = os.stat(run_path, follow_symlinks=False)
         fd_details = os.fstat(run_fd)
         if (
@@ -181,9 +183,11 @@ def project_extended_runtime(
             != (fd_details.st_dev, fd_details.st_ino)
         ):
             raise mr.RuntimeSourceError("extended run directory changed")
-        registered_path = ew.WINDOW_PLAN_ROOT / f"{pair_id}.flash.window.json"
-        window = ew.load_evaluation_window(registered_path, expected_cohort="flash")
-        expected_plan = ew.build_extended_evaluation_plan(window, run_path)
+        registered_path = grouped.RESEARCH_ROOT / (
+            f"evaluation/followon-window-plans/{pair_id}.flash.json"
+        )
+        window = fp.load_execution(registered_path, cohort="flash")
+        expected_plan = fp.flash_plan(window, run_path)
         plan_raw = mr._read_fd(
             run_fd, "extended-plan.json", maximum=8 * 1024 * 1024,
             label="extended runtime plan",
@@ -203,12 +207,22 @@ def project_extended_runtime(
             run_fd, "launch-contract.snapshot.json", maximum=mr.MAX_CONTRACT_BYTES,
             label="extended contract snapshot",
         ), "extended contract snapshot")
+        source_snapshot = mr._strict_object(mr._read_fd(
+            run_fd, "controller-source-bundle.snapshot.json",
+            maximum=8 * 1024 * 1024, label="follow-on controller source snapshot",
+        ), "follow-on controller source snapshot")
         contract_sha = mr._sha256(contract_raw)
         candidate = plan.get("candidate_variant_id")
-        spec = MIA if candidate == MIA.spec_id else None
+        spec = SPECS_BY_ID.get(candidate)
+        if spec is None:
+            raise mr.RuntimeSourceError("follow-on candidate is not a registered spec")
         if (
             plan != expected_plan
-            or plan.get("schema_version") != EXTENDED_PLAN_SCHEMA
+            or plan.get("schema_version")
+               != (fp.V5_FLASH_PLAN_SCHEMA if window.v5_parent is not None
+                   else FOLLOWON_PLAN_SCHEMA)
+            or source_snapshot != plan.get("controller_source_bundle")
+            or source_snapshot != window.document["followon_source_bundle"]
             or prior != window.qualification_plan
             or state.get("plan_sha256") != mr._canonical_sha256(prior)
             or state.get("extended_plan_sha256") != mr._canonical_sha256(plan)
@@ -217,6 +231,15 @@ def project_extended_runtime(
             or plan.get("window_plan_sha256") != window.source_sha256
             or state.get("prior_qualification_receipt_sha256")
             != plan.get("prior_qualification_receipt_sha256")
+            or state.get("evaluation_kind") != "followon"
+            or state.get("qualified_parent_window")
+            != window.document["qualified_parent_window"]
+            or state.get("followon_blocks") != window.document["blocks"]
+            or (window.v5_parent is not None
+                and (plan.get("v5_qualified_parent")
+                     != window.document["v5_qualified_parent"]
+                     or state.get("v5_qualified_parent")
+                        != window.document["v5_qualified_parent"]))
             or state.get("controller_source_bundle_sha256")
             != plan.get("controller_source_bundle_sha256")
             or state.get("extended_serving_profile")
@@ -227,18 +250,28 @@ def project_extended_runtime(
             or plan.get("contract_sha256") != contract_sha
             or snapshot != contract
             or state.get("paging_policy") != prior.get("paging_policy")
-            or (spec is not None and (
-                state.get("candidate") != {"id": spec.spec_id,
+            or state.get("candidate") != {"id": spec.spec_id,
                                            "spec_sha256": spec.identity_sha256()}
-                or prior.get("image_id") != spec.image_id
-                or plan.get("candidate_spec_sha256") != spec.identity_sha256()
-                or plan.get("model_artifact_sha256") != spec.model_artifact_sha256()
-            ))
+            or state.get("model_artifact_sha256")
+            != spec.model_artifact_sha256()
+            or prior.get("image_id") != spec.image_id
+            or plan.get("candidate_spec_sha256") != spec.identity_sha256()
+            or plan.get("model_artifact_sha256") != spec.model_artifact_sha256()
         ):
             raise mr.RuntimeSourceError("extended runtime source differs from registration")
         profile = plan.get("extended_serving_profile")
         if profile != ew.EXTENDED_SERVING_PROFILE:
             raise mr.RuntimeSourceError("extended serving policy differs")
+        runtime_config = contract.get("runtime")
+        if (not isinstance(runtime_config, dict)
+                or runtime_config.get("max_model_len") != spec.max_model_len
+                or runtime_config.get("mtp_speculative_tokens")
+                    != getattr(spec, "mtp_speculative_tokens", 0)
+                or runtime_config.get("kv_cache_memory_bytes")
+                    != spec.kv_cache_memory_bytes):
+            raise mr.RuntimeSourceError(
+                "follow-on context or speculative-token profile differs"
+            )
         started = mr._parse_time(state.get("started_at"), "extended started_at")
         updated = mr._parse_time(state.get("updated_at"), "extended updated_at")
         deadline = mr._parse_time(state.get("invocation_deadline_at"), "extended deadline")
@@ -262,12 +295,14 @@ def project_extended_runtime(
             # Only terminal, fully supervised source sets may attest a
             # restored resident mode. Comparative scores have a separate pair
             # gate and are never inferred from this operational projection.
-            from bench.flash_next_ab.extended_admission import (
-                validate_completed_flash_window,
+            from bench.flash_next_ab.followon_completed_window_admission import (
+                validate_completed_window,
             )
 
-            proof = validate_completed_flash_window(registered_path, run_path)
-            if proof.get("pair_id") != pair_id or proof.get("cohort") != "flash":
+            proof = validate_completed_window(
+                registered_path, run_path, cohort="flash"
+            )
+            if proof.get("window_id") != pair_id or proof.get("cohort") != "flash":
                 raise mr.RuntimeSourceError("extended terminal source differs")
             mr._validate_initial(state)
             mode, residents, nara = "resident", "online", (
@@ -321,59 +356,78 @@ def project_extended_runtime(
             state=mr._sha256(state_raw), plan=mr._sha256(plan_raw),
             prior=mr._sha256(prior_raw), window=window.source_sha256,
             contract=contract_sha, memory=memory_sha or "",
-            terminal=terminal_sha or "", variant=spec.identity_sha256() if spec else "",
+            terminal=terminal_sha or "", variant=spec.identity_sha256(),
+            source_bundle=mr._canonical_sha256(source_snapshot),
         )
         if mr._read_fd(
             run_fd, "state.json", maximum=mr.MAX_STATE_BYTES,
             label="extended state recheck",
         ) != state_raw:
             raise mr.RuntimeSourceError("extended state changed during admission")
+        variant = mr._variant_projection(
+            spec, image_observed=memory_sha is not None and candidate_active
+            if phase not in TERMINAL_PHASES else False,
+        )
+        if variant is not None:
+            variant["configured_max_context_tokens"] = spec.max_model_len
+            variant["configured_mtp_speculative_tokens"] = (
+                getattr(spec, "mtp_speculative_tokens", 0)
+            )
+            variant["configured_kv_cache_memory_bytes"] = (
+                spec.kv_cache_memory_bytes
+            )
         return {
             "schema_version": mr.SCHEMA_VERSION, "observed_at": observed_at,
-            "mode": mode, "mode_source": "extended_evaluation_state",
+            "mode": mode, "mode_source": "followon_evaluation_state",
             "mode_source_sha256": source_sha,
             "resident_services_expected": residents, "nara_service_expected": nara,
             "run_id": run_id, "phase": phase,
-            "candidate_variant": mr._variant_projection(
-                spec, image_observed=memory_sha is not None and candidate_active
-                if phase not in TERMINAL_PHASES else False,
-            ),
+            "candidate_variant": variant,
             "source_error": None,
         }
     except (OSError, ImportError, mr.RuntimeSourceError, ew.EvaluationWindowError,
             ValueError, TypeError, AttributeError, UnicodeError, KeyError):
-        return mr._unknown(observed_at, "extended runtime state is absent, stale, or untrusted")
+        return mr._unknown(observed_at, "follow-on runtime state is absent, stale, or untrusted")
     finally:
         if run_fd is not None:
             os.close(run_fd)
 
 
-def maybe_project_extended(
+def maybe_project_followon(
     qualification_root: Path,
-    evaluation_root: Path,
+    original_evaluation_root: Path,
+    followon_root: Path,
     *,
     proc_root: Path,
     boot_id_path: Path,
     observed: datetime,
 ) -> dict[str, Any] | None:
-    """Prefer the newest controller state; a newer invalid state blocks fallback."""
+    """A newer invalid follow-on state blocks fallback to older controllers."""
     try:
-        current = _latest_slot_mtime(qualification_root, extended=False)
-        extended = _latest_slot_mtime(evaluation_root, extended=True)
-        if extended is None or (current is not None and extended < current):
+        from .model_runtime_extended import _latest_slot_mtime as old_slot
+
+        current = old_slot(qualification_root, extended=False)
+        original = old_slot(original_evaluation_root, extended=True)
+        followon = _latest_slot_mtime(followon_root)
+        older = max((item for item in (current, original) if item is not None),
+                    default=None)
+        if followon is None or (older is not None and followon < older):
             return None
-        if current is not None and extended == current:
+        if older is not None and followon == older:
             return mr._unknown(observed.isoformat(), "runtime states have ambiguous order")
-        projected = project_extended_runtime(
-            evaluation_root, proc_root=proc_root,
+        projected = project_followon_runtime(
+            followon_root, proc_root=proc_root,
             boot_id_path=boot_id_path, observed=observed,
         )
-        current_after = _latest_slot_mtime(qualification_root, extended=False)
-        extended_after = _latest_slot_mtime(evaluation_root, extended=True)
+        current_after = old_slot(qualification_root, extended=False)
+        original_after = old_slot(original_evaluation_root, extended=True)
+        followon_after = _latest_slot_mtime(followon_root)
+        older_after = max((item for item in (current_after, original_after)
+                           if item is not None), default=None)
         if (
-            extended_after is None
-            or (current_after is not None and extended_after <= current_after)
-            or extended_after != extended
+            followon_after is None
+            or (older_after is not None and followon_after <= older_after)
+            or followon_after != followon
         ):
             return mr._unknown(observed.isoformat(), "runtime state order changed during admission")
         return projected
@@ -381,4 +435,4 @@ def maybe_project_extended(
         return mr._unknown(observed.isoformat(), "runtime state order is unavailable")
 
 
-__all__ = ["EVALUATION_RUN_ROOT", "maybe_project_extended"]
+__all__ = ["FOLLOWON_RUN_ROOT", "maybe_project_followon"]

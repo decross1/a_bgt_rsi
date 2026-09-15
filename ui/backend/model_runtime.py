@@ -33,6 +33,9 @@ MEMORY_SCHEMA = "qwen-flash-next-memory-sample/v3"
 RESULT_SCHEMA = "qwen-flash-next-qualification-result/v3"
 RUN_ID = re.compile(r"qfn-c0-[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 MIA_RUN_ID = re.compile(r"qfn-mia-c0-[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
+MIA_PROFILE_RUN_ID = re.compile(
+    r"qfn-mia-(?:mtp[123]|ctx69632|mtp3-red47k)-[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z"
+)
 EXTENDED_FLASH_RUN_ID = re.compile(r"qfn-ab-[a-z0-9][a-z0-9._-]{0,63}\.flash\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 CONTAINER_ID = re.compile(r"[0-9a-f]{64}\Z")
@@ -203,6 +206,7 @@ def _open_latest_run(
             if not (
                 namespace.fullmatch(name) if namespace is not None
                 else RUN_ID.fullmatch(name) or MIA_RUN_ID.fullmatch(name)
+                     or MIA_PROFILE_RUN_ID.fullmatch(name)
             ):
                 continue
             try:
@@ -272,13 +276,27 @@ def _validate_registered_plan(
 
 def _mia_spec_for_run(run_id: str):
     """Select only the code-owned variant from the closed run-ID namespace."""
-    if not MIA_RUN_ID.fullmatch(run_id):
+    if not (MIA_RUN_ID.fullmatch(run_id)
+            or MIA_PROFILE_RUN_ID.fullmatch(run_id)):
         return None
     try:
-        from bench.flash_next_ab.candidate_registry import MIA
+        from bench.flash_next_ab.followon_profiles import REGISTERED_MIA_SPECS
+    except ImportError as exc:
+        if MIA_RUN_ID.fullmatch(run_id):
+            # This is the original immutable C0 spec, still valid while the
+            # additive v5 registry is being delivered. A v5 profile never
+            # falls back to the old Mia identity.
+            from bench.flash_next_ab.candidate_registry import MIA
+
+            return MIA
+        raise RuntimeSourceError("Mia profile registry is unavailable") from exc
     except Exception as exc:
         raise RuntimeSourceError("Mia candidate registry is unavailable") from exc
-    return MIA
+    matching = [spec for spec in REGISTERED_MIA_SPECS
+                if run_id.startswith(spec.run_id_prefix)]
+    if len(matching) != 1:
+        raise RuntimeSourceError("Mia run namespace does not select one code-owned spec")
+    return matching[0]
 
 
 def _validate_registered_mia_plan(
@@ -332,6 +350,11 @@ def _variant_projection(spec, *, image_observed: bool = False) -> dict[str, Any]
         "image_id": spec.image_id,
         "model_artifact_sha256": spec.model_artifact_sha256(),
         "profile": spec.profile,
+        "configured_max_context_tokens": spec.max_model_len,
+        "configured_mtp_speculative_tokens": getattr(
+            spec, "mtp_speculative_tokens", 0
+        ),
+        "configured_kv_cache_memory_bytes": spec.kv_cache_memory_bytes,
         "source": "registered_plan_and_controller_state",
         "image_evidence": (
             "bound_live_container" if image_observed else "registered_source_only"
@@ -940,7 +963,10 @@ def _terminal_restoration(
         terminal_validator(run_path)
         valid = (
             receipt.get("schema") == (
-                "qwen-flash-next-qualification-result/v4" if spec is not None else RESULT_SCHEMA
+                "qwen-flash-next-qualification-result/v5"
+                if spec is not None and spec.contract_schema.endswith("/v5")
+                else "qwen-flash-next-qualification-result/v4"
+                if spec is not None else RESULT_SCHEMA
             )
             and receipt.get("run_id") == run_id
             and receipt.get("contract_sha256") == state["contract_sha256"]
@@ -983,7 +1009,9 @@ def _terminal_restoration(
     else:
         valid = (
             receipt.get("schema") == (
-                "qwen-flash-next-supervisor-recovery/v2" if spec is not None
+                "qwen-flash-next-supervisor-recovery/v3"
+                if spec is not None and spec.contract_schema.endswith("/v5")
+                else "qwen-flash-next-supervisor-recovery/v2" if spec is not None
                 else "qwen-flash-next-supervisor-recovery/v1"
             )
             and receipt.get("run_id") == run_id
@@ -1049,6 +1077,19 @@ def project_model_runtime(
                 EVALUATION_RUN_ROOT,
                 maybe_project_extended,
             )
+            from .model_runtime_followon import (
+                FOLLOWON_RUN_ROOT,
+                maybe_project_followon,
+            )
+
+            followon = maybe_project_followon(
+                qualification_root, evaluation_root or EVALUATION_RUN_ROOT,
+                FOLLOWON_RUN_ROOT,
+                proc_root=proc_root, boot_id_path=boot_id_path,
+                observed=observed,
+            )
+            if followon is not None:
+                return followon
 
             extended = maybe_project_extended(
                 qualification_root,
@@ -1064,7 +1105,10 @@ def project_model_runtime(
         state = _strict_object(state_raw, "runtime state")
         if (
             state.get("schema") != (
-                "qwen-flash-next-qualification-state/v4" if spec is not None else STATE_SCHEMA
+                "qwen-flash-next-qualification-state/v5"
+                if spec is not None and spec.contract_schema.endswith("/v5")
+                else "qwen-flash-next-qualification-state/v4"
+                if spec is not None else STATE_SCHEMA
             )
             or state.get("run_id") != run_id
             or state.get("phase") not in PHASES
