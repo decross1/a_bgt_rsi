@@ -1,3 +1,5 @@
+import type { AppliedReferenceProgress } from "./appliedReference";
+
 export interface MarketCaptureBatch {
   id: string;
   status: string;
@@ -31,4 +33,5 @@ export interface AppliedMarketResearchProgress {
   batches: MarketCaptureBatch[];
   warnings: string[];
   stages: { id: string; label: string; status: string }[];
+  reference_studies?: AppliedReferenceProgress;
 }

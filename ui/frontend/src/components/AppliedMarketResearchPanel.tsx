@@ -1,4 +1,5 @@
 import type { AppliedMarketResearchProgress } from "../types/appliedMarketResearch";
+import { AppliedReferencePanel } from "./AppliedReferencePanel";
 
 const count = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0
   ? value.toLocaleString() : "Not recorded";
@@ -12,7 +13,7 @@ export function AppliedMarketResearchPanel({ data }: { data?: AppliedMarketResea
       <p className="benchmark-eyebrow">Game theory → empirical application</p>
       <h2 id="applied-market-research-heading">Market research pipeline</h2>
       <p>Test whether measured liquidity and signed flow improve hourly decisions over a matched momentum baseline.</p>
-    </div><span className="benchmark-chip benchmark-chip--info">Paper research</span></header>
+    </div><span className="benchmark-chip benchmark-chip--info">Reference research</span></header>
     <p>Public data → as-of features → matched tests → forward paper outcomes. Known theory can motivate an application without claiming a new theorem.</p>
     <div className="benchmark-table-wrap" role="region" tabIndex={0} aria-label="Market research stages, scroll horizontally">
       <table className="benchmark-table"><caption className="sr-only">Recorded market research stages</caption>
@@ -21,6 +22,7 @@ export function AppliedMarketResearchPanel({ data }: { data?: AppliedMarketResea
       </table>
     </div>
     <p><strong>Strategy result: not tested.</strong> Source collection and model benchmark scores do not establish a trading edge. Historical trade records do not prove executable order-book prices.</p>
+    <AppliedReferencePanel data={data.reference_studies} />
     {data.status === "not_started" ? <p className="benchmark-empty-inline">No collection batch has been recorded yet.</p>
       : data.status === "unavailable" ? <p className="benchmark-empty-inline">Collection evidence is unavailable or failed verification.</p> : null}
     {batches.length > 0 && <div className="benchmark-table-wrap" role="region" tabIndex={0} aria-label="Recent public-data captures, scroll horizontally">

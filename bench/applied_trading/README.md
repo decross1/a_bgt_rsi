@@ -39,3 +39,5 @@ COLLECTOR_SHA256=$(sha256sum bench/applied_trading/public_spot_capture.py | cut 
 # capture-receipt.json, observations.jsonl and quotes.jsonl:
 .venv-chroma/bin/python -m bench.applied_trading.paper_driver --trial-dir SEALED_ABSOLUTE_TRIAL_DIR --output-dir NEW_ABSOLUTE_PAPER_RESULT_DIR
 ```
+
+The fixed historical baseline and forward REST pilot use an immutable [publication and due-evaluation operator sequence](PUBLICATION_AND_H1_DUE_OPERATOR.md). That diagnostic remains reference-only and does not pass the strict paper driver gate.
