@@ -21,7 +21,7 @@ class _Resp:
     def __init__(self, payload):
         self._payload = payload
 
-    def read(self):
+    def read(self, _limit=None):
         return json.dumps(self._payload).encode("utf-8")
 
     def __enter__(self):

@@ -1,10 +1,9 @@
-// ModelServerCard — the ONE parameterized model-server panel (UI
-// simplification S1), replacing VllmPanel + QwenPanel. Both cards were the
-// same skeleton — status badge, "driving" sub-line, core Decode/KV rows,
-// internals disclosure, MTP tile — differing only in the sample block they
-// read (`pick`), the served-model name their DrivingLine attributes to, the
-// header accent, the Gemma-only workload-hint pill, and Qwen's tri-state
-// transient-drop banner. Those differences are now props.
+// ModelServerCard — the parameterized local-model endpoint panel. It began as
+// the shared Gemma/Qwen telemetry card and now also accepts the backend's
+// dynamic endpoint inventory, allowing a Flash research candidate (and future
+// registered endpoints) to use the same status/stat hierarchy. Configuration,
+// /v1/models identity, /metrics activity, and benchmark authority stay
+// visibly separate.
 //
 // Body states (LAST-GOOD RETENTION, adversarial-review residual fix 5,
 // 2026-08-18 — the badge + body used to key off the LATEST sample alone, so
@@ -32,6 +31,7 @@
 import { memo, type ReactNode } from "react";
 import { useNow } from "../time";
 import { getWorkloadHint } from "../api/http";
+import type { ServedModel } from "../api/http";
 import { usePolled } from "../api/pollhub";
 import { fmt, fmtRatioPct } from "../format";
 import { callerTagTone, drivingTags } from "../roles";
@@ -160,6 +160,7 @@ function regimeShortLabel(regime: WorkloadHint["regime"]): string {
 const ACCENT: Record<string, { header: string; border: string }> = {
   zinc: { header: "text-zinc-500", border: "border-zinc-800" },
   sky: { header: "text-sky-400", border: "border-sky-900/60" },
+  violet: { header: "text-violet-400", border: "border-violet-900/60" },
 };
 
 export interface ModelServerCardProps {
@@ -180,6 +181,17 @@ export interface ModelServerCardProps {
   workloadHint?: boolean;
   // Qwen-mode tri-state body (see file header). Default false = binary.
   transientDropBanner?: boolean;
+  // Dynamic endpoint inventory. When present, its independent /models and
+  // /metrics observations own the card's current status; websocket samples
+  // remain useful only for the resident sparklines. Optional for backward
+  // compatibility with an older backend and the focused card fixtures.
+  inventory?: ServedModel | null;
+  endpointName?: string;
+  // Context for an observed offline endpoint. Pulse supplies these only from
+  // either the immutable deployment role (candidate standby) or a fresh,
+  // controller-bound runtime receipt. The card never derives planned state
+  // from reachability itself.
+  serviceExpectation?: "expected_offline" | "starting" | "standby" | null;
 }
 
 function ModelServerCard({
@@ -191,9 +203,28 @@ function ModelServerCard({
   accent = "zinc",
   workloadHint = false,
   transientDropBanner = false,
+  inventory = null,
+  endpointName,
+  serviceExpectation = null,
 }: ModelServerCardProps) {
+  const inventoryAware =
+    inventory?.service_status === "online" ||
+    inventory?.service_status === "offline" ||
+    inventory?.service_status === "unknown";
+  const inventoryMetrics =
+    inventoryAware &&
+    inventory?.metrics_endpoint_status === "available" &&
+    inventory?.metrics != null &&
+    typeof inventory.metrics === "object" &&
+    !Array.isArray(inventory.metrics)
+      ? inventory.metrics
+      : null;
   const latest = samples[samples.length - 1] ?? null;
-  const latestBlock = latest ? (pick(latest) ?? null) : null;
+  const latestBlock = inventoryAware
+    ? inventoryMetrics
+    : latest
+      ? (pick(latest) ?? null)
+      : null;
   // LAST-GOOD RETENTION (residual fix 5): the newest sample that carried
   // this card's block, scanned from the tail. `missedScrapes` counts the
   // consecutive trailing samples WITHOUT it — the staleness the body and
@@ -212,7 +243,10 @@ function ModelServerCard({
     lastGoodIdx >= 0 ? samples.length - 1 - lastGoodIdx : samples.length;
   const anyBlock = lastGood != null;
   const retaining =
-    latestBlock == null && lastGood != null && missedScrapes < STALE_MISS_LIMIT;
+    !inventoryAware &&
+    latestBlock == null &&
+    lastGood != null &&
+    missedScrapes < STALE_MISS_LIMIT;
   // What the body renders: the live block, or the retained last-good one
   // while the miss run is still below the limit.
   const block = latestBlock ?? (retaining ? lastGood : null);
@@ -241,9 +275,14 @@ function ModelServerCard({
   // STALE_MISS_LIMIT. Tri-state mode still distinguishes "never any block"
   // (unreachable — expected while a server is unwired) from "had it, lost
   // it" (dropped).
-  const body =
-    block != null
-      ? "data"
+  const body = block != null
+    ? "data"
+    : inventoryAware
+      ? inventory?.service_status === "offline"
+        ? "offline"
+        : inventory?.service_status === "online"
+          ? "metrics-unavailable"
+          : "identity-unavailable"
       : transientDropBanner
         ? anyBlock
           ? "dropped"
@@ -253,7 +292,46 @@ function ModelServerCard({
   // reads as a down server — "● up" (latest sample has data), amber
   // "● stale" (retaining last-good data through a short miss run), red
   // "● down" (miss run at the limit, or no data ever).
-  const badge = latestBlock != null ? "up" : retaining ? "stale" : "down";
+  const badge = inventoryAware
+    ? inventory?.identity_status === "mismatch"
+      ? "mismatch"
+      : inventory?.service_status === "offline" && serviceExpectation === "expected_offline"
+        ? "expected-offline"
+        : inventory?.service_status === "offline" && serviceExpectation === "starting"
+          ? "starting"
+          : inventory?.service_status === "offline" && serviceExpectation === "standby"
+            ? "standby"
+      : inventory?.service_status === "online"
+        ? "online"
+        : inventory?.service_status === "offline"
+          ? "offline"
+          : "unknown"
+    : latestBlock != null
+      ? "up"
+      : retaining
+        ? "stale"
+        : "down";
+  const endpoint = (() => {
+    if (!inventory?.url) return "endpoint unknown";
+    try {
+      const parsed = new URL(inventory.url);
+      return parsed.port ? `:${parsed.port}` : parsed.host;
+    } catch {
+      return "endpoint unknown";
+    }
+  })();
+  const deploymentLabel =
+    inventory?.deployment_role === "production_resident"
+      ? "Production resident"
+      : inventory?.deployment_role === "research_candidate"
+        ? "Research candidate"
+        : "Role not recorded";
+  const activityLabel =
+    inventory?.activity_status === "busy"
+      ? "busy"
+      : inventory?.activity_status === "idle"
+        ? "idle"
+        : "activity unknown";
 
   return (
     <div className={`rounded border ${tone.border} bg-zinc-900/40 p-4`}>
@@ -263,23 +341,79 @@ function ModelServerCard({
         >
           {title}
         </h2>
+        {inventoryAware && inventory?.model == null && inventory?.configured_model && (
+          <span className="text-[10px] uppercase tracking-wide text-zinc-500">
+            configured
+          </span>
+        )}
         {/* Badge distinguishes 'down' from 'stale telemetry' (residual
             fix 5): a short scrape-miss run reads amber "● stale" while the
             body keeps the last-good data; hard-red "● down" is reserved for
             a miss run at the limit or a server that never reported. */}
         <span
           className={`ml-auto font-mono text-[11px] ${
-            badge === "up"
+            badge === "up" || badge === "online"
               ? "text-emerald-400"
-              : badge === "stale"
+              : badge === "stale" || badge === "unknown" || badge === "starting"
                 ? "text-amber-400"
+                : badge === "expected-offline" || badge === "standby"
+                  ? "text-zinc-500"
                 : "text-red-400"
           }`}
           data-testid={`${servedModel}-status`}
         >
-          {badge === "up" ? "● up" : badge === "stale" ? "● stale" : "● down"}
+          {badge === "up"
+            ? "● up"
+            : badge === "online"
+              ? "● online"
+              : badge === "stale"
+                ? "● stale"
+                : badge === "expected-offline"
+                  ? "● offline · expected during research"
+                  : badge === "starting"
+                    ? "● starting"
+                    : badge === "standby"
+                      ? "● not serving"
+                : badge === "mismatch"
+                  ? "● identity mismatch"
+                  : badge === "unknown"
+                    ? "● unknown"
+                    : badge === "offline"
+                      ? "● offline"
+                      : "● down"}
         </span>
       </div>
+      {inventoryAware && (
+        <div
+          className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-zinc-500"
+          data-testid={`${endpointName ?? servedModel}-inventory`}
+        >
+          <span className="font-medium text-zinc-400">{deploymentLabel}</span>
+          <span aria-hidden="true">·</span>
+          <span className="font-mono">
+            {endpointName ? `${endpointName} · ${endpoint}` : endpoint}
+          </span>
+          <span aria-hidden="true">·</span>
+          <span>{activityLabel}</span>
+          {inventory?.deployment_role === "research_candidate" &&
+            inventory.promotion_authorized === false && (
+              <span className="rounded border border-violet-800/60 px-1.5 py-0.5 text-violet-400">
+                Evaluation only
+              </span>
+            )}
+          {inventory?.probed_at && (
+            <span className="ml-auto">
+              probed <SampleAge iso={inventory.probed_at} /> ago
+            </span>
+          )}
+        </div>
+      )}
+      {inventoryAware && inventory?.identity_status === "mismatch" && (
+        <p className="mt-2 text-xs text-red-400">
+          Served identity does not match the configured model. Configured:{" "}
+          <span className="font-mono">{inventory.configured_model ?? "unknown"}</span>.
+        </p>
+      )}
       {/* Who is generating this backend's load right now — exact-match
           live-call groups only; absent when none. Rendered in EVERY body
           state: the derivation comes from the call log, not the sampler, so
@@ -308,6 +442,66 @@ function ModelServerCard({
           /metrics dropped — {missedScrapes} consecutive scrape
           {missedScrapes === 1 ? "" : "s"} without a reading.
         </div>
+      )}
+      {body === "offline" && (
+        <div className="mt-3 text-sm text-zinc-500">
+          {serviceExpectation === "expected_offline"
+            ? "This production resident is intentionally stopped for the controller-bound research window. Live metrics were not observed."
+            : serviceExpectation === "starting"
+              ? "The research candidate is starting; its model endpoint was not ready at the last probe. Live metrics were not observed."
+              : serviceExpectation === "standby"
+                ? "This optional research candidate is configured and is not currently serving. Live metrics were not observed."
+                : "Model endpoint was unreachable at the last probe. Live metrics were not observed."}
+        </div>
+      )}
+      {body === "metrics-unavailable" && (
+        <div className="mt-3 text-sm text-amber-400/80">
+          Model identity responded, but the metrics endpoint was not available at the last probe.
+        </div>
+      )}
+      {body === "identity-unavailable" && (
+        <div className="mt-3 text-sm text-amber-400/80">
+          Model endpoint state could not be established from the last probe.
+        </div>
+      )}
+      {inventoryAware && body !== "data" && (
+        <details className="mt-3 group" data-testid={`${servedModel}-details`}>
+          <summary className="cursor-pointer list-none text-[11px] uppercase tracking-wide text-zinc-500 hover:text-zinc-300">
+            <span className="group-open:hidden">show configuration ▸</span>
+            <span className="hidden group-open:inline">hide configuration ▾</span>
+          </summary>
+          <div className="mt-1">
+            <Row
+              label="Configured context"
+              value={
+                typeof inventory?.configured_max_context_tokens === "number"
+                  ? `${Math.round(inventory.configured_max_context_tokens / 1024)}K`
+                  : "n/a"
+              }
+            />
+            <Row
+              label="Server-advertised context"
+              value={
+                typeof inventory?.observed_max_context_tokens === "number"
+                  ? `${Math.round(inventory.observed_max_context_tokens / 1024)}K`
+                  : "n/a"
+              }
+            />
+            <Row
+              label="Model identity"
+              value={inventory?.identity_status ?? "unknown"}
+              valueClass={
+                inventory?.identity_status === "mismatch"
+                  ? "text-red-400"
+                  : "text-zinc-500"
+              }
+            />
+            <Row
+              label="Metrics endpoint"
+              value={inventory?.metrics_endpoint_status ?? "unknown"}
+            />
+          </div>
+        </details>
       )}
       {body === "data" && block != null && (
         <div className="mt-2">
@@ -387,6 +581,41 @@ function ModelServerCard({
               <span className="hidden group-open:inline">hide internals ▾</span>
             </summary>
             <div className="mt-1">
+              {inventoryAware && (
+                <>
+                  <Row
+                    label="Configured context"
+                    value={
+                      typeof inventory?.configured_max_context_tokens === "number"
+                        ? `${Math.round(inventory.configured_max_context_tokens / 1024)}K`
+                        : "n/a"
+                    }
+                  />
+                  <Row
+                    label="Server-advertised context"
+                    value={
+                      typeof inventory?.observed_max_context_tokens === "number"
+                        ? `${Math.round(inventory.observed_max_context_tokens / 1024)}K`
+                        : "n/a"
+                    }
+                  />
+                  <Row
+                    label="Model identity"
+                    value={inventory?.identity_status ?? "unknown"}
+                    valueClass={
+                      inventory?.identity_status === "mismatch"
+                        ? "text-red-400"
+                        : inventory?.identity_status === "match"
+                          ? "text-emerald-400"
+                          : "text-zinc-500"
+                    }
+                  />
+                  <Row
+                    label="Metrics endpoint"
+                    value={inventory?.metrics_endpoint_status ?? "unknown"}
+                  />
+                </>
+              )}
               <Row
                 label="Running requests"
                 value={fmt(block.running_requests)}

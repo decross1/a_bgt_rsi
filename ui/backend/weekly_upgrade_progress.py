@@ -37,6 +37,8 @@ if str(_REPOSITORY_ROOT) not in sys.path:
 
 from orchestrator.research_pipeline_progress import project_research_pipeline
 
+from .local_model_research import DEFAULT_RESEARCH_ROOT, project_local_research
+
 DEFAULT_CANONICAL_ROOT = Path("/home/decross1/projects/a_bgt_rsi")
 DEFAULT_UPGRADE_RUNS_ROOT = Path("/home/decross1/projects/a_bgt_rsi_upgrade_runs")
 DEFAULT_REVIEW_RUNS_ROOT = Path(
@@ -1630,6 +1632,7 @@ def compose_progress(
     canonical_root: Path = DEFAULT_CANONICAL_ROOT,
     upgrade_runs_root: Path = DEFAULT_UPGRADE_RUNS_ROOT,
     review_runs_root: Path = DEFAULT_REVIEW_RUNS_ROOT,
+    local_research_root: Path | None = None,
     now: Callable[[], datetime] | datetime | None = None,
 ) -> dict[str, Any]:
     current = _now(now)
@@ -1859,6 +1862,7 @@ def compose_progress(
             canonical_root=canonical,
             now=current,
         ),
+        "local_model_research": project_local_research(local_research_root),
     }
 
 
@@ -1868,6 +1872,7 @@ def register(
     canonical_root: Path = DEFAULT_CANONICAL_ROOT,
     upgrade_runs_root: Path = DEFAULT_UPGRADE_RUNS_ROOT,
     review_runs_root: Path = DEFAULT_REVIEW_RUNS_ROOT,
+    local_research_root: Path | None = DEFAULT_RESEARCH_ROOT,
     now: Callable[[], datetime] | datetime | None = None,
 ) -> None:
     """Register the progress endpoint with fully injectable read roots."""
@@ -1879,6 +1884,7 @@ def register(
             canonical_root=Path(canonical_root),
             upgrade_runs_root=Path(upgrade_runs_root),
             review_runs_root=Path(review_runs_root),
+            local_research_root=local_research_root,
             now=now,
         )
 

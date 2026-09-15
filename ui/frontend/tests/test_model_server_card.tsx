@@ -13,6 +13,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LiveCalls } from "../src/types/activity";
+import type { ServedModel } from "../src/api/http";
 import type { TelemetrySample } from "../src/types/schemas";
 
 const mocks = vi.hoisted(() => ({
@@ -111,6 +112,29 @@ function renderQwen(samples: TelemetrySample[], liveCalls?: LiveCalls | null) {
       transientDropBanner
     />,
   );
+}
+
+function inventory(overrides: Partial<ServedModel> = {}): ServedModel {
+  return {
+    url: "http://127.0.0.1:8012",
+    model: "qwen3.8-flash-next",
+    error: null,
+    probed_at: new Date().toISOString(),
+    configured_model: "qwen3.8-flash-next",
+    configured_max_context_tokens: 16384,
+    observed_max_context_tokens: 32768,
+    deployment_role: "research_candidate",
+    benchmark_cohort: "flash",
+    promotion_authorized: false,
+    models_endpoint_status: "available",
+    service_status: "online",
+    identity_status: "match",
+    metrics_endpoint_status: "available",
+    activity_status: "idle",
+    metrics: vllmBlock(null),
+    metrics_error: null,
+    ...overrides,
+  };
 }
 
 afterEach(() => {
@@ -255,6 +279,142 @@ describe("ModelServerCard body states", () => {
     }
     expect(screen.getByText("show internals ▸")).toBeInTheDocument();
     expect(screen.getByText("hide internals ▾")).toBeInTheDocument();
+  });
+});
+
+describe("ModelServerCard dynamic endpoint inventory", () => {
+  it("separates an online candidate identity from its evaluation-only role", () => {
+    render(
+      <ModelServerCard
+        title="qwen3.8-flash-next"
+        servedModel="qwen3.8-flash-next"
+        endpointName="flash"
+        inventory={inventory()}
+        pick={() => null}
+        samples={[]}
+        accent="violet"
+      />,
+    );
+    expect(screen.getByTestId("qwen3.8-flash-next-status")).toHaveTextContent("online");
+    expect(screen.getByTestId("flash-inventory")).toHaveTextContent("Research candidate");
+    expect(screen.getByTestId("flash-inventory")).toHaveTextContent("Evaluation only");
+    expect(screen.getByText("Decode tok/s")).toBeInTheDocument();
+    expect(screen.getByText("16K")).toBeInTheDocument();
+    expect(screen.getByText("32K")).toBeInTheDocument();
+    expect(screen.getByText("Server-advertised context")).toBeInTheDocument();
+  });
+
+  it("does not turn an unreachable configured candidate into a zero measurement", () => {
+    render(
+      <ModelServerCard
+        title="qwen3.8-flash-next"
+        servedModel="unobserved-flash"
+        endpointName="flash"
+        inventory={inventory({
+          model: null,
+          service_status: "offline",
+          models_endpoint_status: "unreachable",
+          identity_status: "unknown",
+          metrics_endpoint_status: "unreachable",
+          activity_status: "unknown",
+          metrics: null,
+        })}
+        pick={() => null}
+        samples={[]}
+        accent="violet"
+      />,
+    );
+    expect(screen.getByTestId("unobserved-flash-status")).toHaveTextContent("offline");
+    expect(screen.getByTestId("unobserved-flash-status")).toHaveClass("text-red-400");
+    expect(screen.getByText(/Live metrics were not observed/)).toBeInTheDocument();
+    expect(screen.queryByText("Decode tok/s")).toBeNull();
+    expect(screen.queryByText("0.0")).toBeNull();
+  });
+
+  it("shows an optional offline candidate as configured standby rather than an outage", () => {
+    render(
+      <ModelServerCard
+        title="qwen3.8-flash-next"
+        servedModel="unobserved-flash"
+        endpointName="flash"
+        inventory={inventory({
+          model: null,
+          service_status: "offline",
+          models_endpoint_status: "unreachable",
+          identity_status: "unknown",
+          metrics_endpoint_status: "unreachable",
+          activity_status: "unknown",
+          metrics: null,
+        })}
+        serviceExpectation="standby"
+        pick={() => null}
+        samples={[]}
+        accent="violet"
+      />,
+    );
+    const status = screen.getByTestId("unobserved-flash-status");
+    expect(status).toHaveTextContent("not serving");
+    expect(status.className).toContain("text-zinc-500");
+    expect(status.className).not.toContain("text-red-400");
+    expect(screen.getByText(/optional research candidate is configured/)).toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      expectation: "expected_offline" as const,
+      role: "production_resident" as const,
+      status: "offline · expected during research",
+      note: /intentionally stopped for the controller-bound research window/,
+    },
+    {
+      expectation: "starting" as const,
+      role: "research_candidate" as const,
+      status: "starting",
+      note: /model endpoint was not ready at the last probe/,
+    },
+  ])("explains controller-bound offline state as $status", ({ expectation, role, status, note }) => {
+    render(
+      <ModelServerCard
+        title="configured-model"
+        servedModel="unobserved-endpoint"
+        endpointName="endpoint"
+        inventory={inventory({
+          model: null,
+          deployment_role: role,
+          service_status: "offline",
+          models_endpoint_status: "unreachable",
+          identity_status: "unknown",
+          metrics_endpoint_status: "unreachable",
+          activity_status: "unknown",
+          metrics: null,
+        })}
+        serviceExpectation={expectation}
+        pick={() => null}
+        samples={[]}
+      />,
+    );
+    const badge = screen.getByTestId("unobserved-endpoint-status");
+    expect(badge).toHaveTextContent(status);
+    expect(badge.className).not.toContain("text-red-400");
+    expect(screen.getByText(note)).toBeInTheDocument();
+  });
+
+  it("makes a served/configured identity mismatch a red primary state", () => {
+    render(
+      <ModelServerCard
+        title="unexpected-model"
+        servedModel="unexpected-model"
+        endpointName="flash"
+        inventory={inventory({ model: "unexpected-model", identity_status: "mismatch" })}
+        pick={() => null}
+        samples={[]}
+        accent="violet"
+      />,
+    );
+    const status = screen.getByTestId("unexpected-model-status");
+    expect(status).toHaveTextContent("identity mismatch");
+    expect(status.className).toContain("text-red-400");
+    expect(screen.getByText(/Configured:/)).toHaveTextContent("qwen3.8-flash-next");
   });
 });
 
