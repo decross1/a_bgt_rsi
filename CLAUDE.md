@@ -18,6 +18,12 @@ Read [the operator guide](docs/v2/OPERATOR_GUIDE.md) and
 are evidence, not descriptions of the deployed system. Production state is
 established from launchers, receipts and live services.
 
+The owner removed the requirement for two concurrently resident models on
+2026-09-15. Apply [the model topology amendment](docs/MODEL_TOPOLOGY_POLICY.md):
+the current Gemma/Qwen pair is a baseline, and a single-primary candidate may
+serve all local roles. Critic quality and diversity are measured separately;
+older fixed-role or concurrent-residency rules cannot veto the experiment.
+
 Standing project maintenance authority applies to direct Codex sessions and
 their delegated engineers, including Git and PR delivery. The Claude workflow
 roles below organize that workflow; they do not revoke an owner's direct
@@ -247,11 +253,11 @@ These do not bend.
   cap 60, stall detector + loop_alert). The pause file
   (`run_state/pause_coordinator`) remains the human kill switch.
 - Fine-tuning / training runs — not in LOOP_V0.
-- Model roles are FIXED (G5 fix 2026-08-15 — the old "second model
-  excluded (D-033)" bullet was stale; D-033 was superseded in live
-  practice by D-035/D-041/D-044): **Gemma 4 26B-A4B-NVFP4 is the sole
-  generator/PI**; **Qwen (vllm-qwen) is the standing independent
-  skeptic**; **frontier CLIs (Claude Max / Codex) are falsifiers only**
+- The installed baseline uses **Gemma 4 26B-A4B-NVFP4 as generator/PI**
+  and **Qwen (vllm-qwen) as skeptic**. The owner superseded fixed roles
+  and required concurrent residency on 2026-09-15; see
+  [model topology policy](docs/MODEL_TOPOLOGY_POLICY.md).
+  **Frontier CLIs (Claude Max / Codex) are falsifiers only**
   (D-061) — veto/annotate, never generate, never write loop_memory or
   the brain. Reproducibility rule: any call a reader needs to reproduce
   a finding runs on pinned local weights.
