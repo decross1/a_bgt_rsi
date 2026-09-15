@@ -180,6 +180,17 @@ def test_invalid_critique_verdict_errors(cache, isolated_journal):
     assert any("critique.verdict" in e for e in out["errors"])
 
 
+def test_independent_debate_refuted_verdict_writes_journal(cache, isolated_journal):
+    """The schema admits a refuted skeptic/debate override of the critic."""
+    subs = _good_substructures()
+    subs["critique"] = {**subs["critique"], "verdict": "refuted"}
+    _stage_all(cache, "it-refuted", subs)
+    out = jw_mod.journal_writer(topic="t", iteration_id="it-refuted", nara_summary="s")
+    assert out["status"] == "passed"
+    assert out["result"]["journal_entry_path"] == "journal/iterations/001.md"
+    assert "`refuted`" in (isolated_journal / "001.md").read_text()
+
+
 def test_missing_hypothesis_text_errors(cache, isolated_journal):
     subs = _good_substructures()
     subs["hypothesis"] = {"candidates_considered": 1, "all_candidates": []}
