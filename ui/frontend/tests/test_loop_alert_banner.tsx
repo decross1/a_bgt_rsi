@@ -72,16 +72,29 @@ describe("LoopAlertBanner", () => {
     expect(screen.queryByText(/recently|last checked|currently unavailable/i)).not.toBeInTheDocument();
   });
 
-  it("keeps mixed, red and unknown vendor alerts in their original alert modes", () => {
+  it("keeps mixed, red, stale, gated and unknown vendor reasons verbatim", () => {
     const { rerender } = render(<LoopAlertBanner initial={{ level: "amber",
       reasons: ["frontier_vendor_down:claude", "loop_gated:budget"],
       updated_at: FRESH }} nowMs={NOW} />);
     expect(screen.getByText("loop degraded")).toBeInTheDocument();
     expect(screen.getByText("loop_gated:budget")).toBeInTheDocument();
-    expect(screen.getByText(/Last recorded Claude CLI calls failed/)).toBeInTheDocument();
+    expect(screen.getByText("frontier_vendor_down:claude")).toBeInTheDocument();
+    expect(screen.queryByText(/Last recorded Claude CLI calls failed/)).not.toBeInTheDocument();
     rerender(<LoopAlertBanner initial={{ level: "red",
       reasons: ["frontier_vendor_down:claude"], updated_at: FRESH }} nowMs={NOW} />);
     expect(screen.getByText("LOOP STALLED")).toBeInTheDocument();
+    expect(screen.getByText("frontier_vendor_down:claude")).toBeInTheDocument();
+    rerender(<LoopAlertBanner initial={{ level: "amber",
+      reasons: ["frontier_vendor_down:claude"], updated_at: STALE }} nowMs={NOW} />);
+    expect(screen.getByText("loop degraded")).toBeInTheDocument();
+    expect(screen.getByText("frontier_vendor_down:claude")).toBeInTheDocument();
+    expect(screen.getByTestId("loop-alert-stale")).toBeInTheDocument();
+    rerender(<LoopAlertBanner initial={{ level: "amber",
+      reasons: ["frontier_vendor_down:claude"], updated_at: FRESH,
+      gate: { reason: "paused", status: "paused", detail: "guard held",
+        first_gated_at: FRESH, consecutive: 1, age_s: 1 } }} nowMs={NOW} />);
+    expect(screen.getByText("LOOP IDLE — paused")).toBeInTheDocument();
+    expect(screen.getByText("frontier_vendor_down:claude")).toBeInTheDocument();
     rerender(<LoopAlertBanner initial={{ level: "amber",
       reasons: ["frontier_vendor_down:other"], updated_at: FRESH }} nowMs={NOW} />);
     expect(screen.getByText("loop degraded")).toBeInTheDocument();
