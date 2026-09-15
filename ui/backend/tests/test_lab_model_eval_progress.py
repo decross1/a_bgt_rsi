@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -40,18 +42,30 @@ def setup(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(progress, "_select_pair", lambda: (PAIR, {"resident": tmp_path / "resident.json",
                                                              "flash": tmp_path / "flash.json"},
                                                        [PAIR, "qfn-ab-lab-primary-20260915-a"]))
-    monkeypatch.setattr(progress, "_prepared", lambda pair, windows: (SHA, tmp_path / "plan.json"))
+    monkeypatch.setattr(progress, "_prepared", lambda pair, windows: (SHA, tmp_path / "plan.json",
+                                                                      ["cell-0", "cell-1"]))
     monkeypatch.setattr(progress, "PUBLICATION_ROOT", tmp_path)
 
 
 def test_prepared_pair_withholds_scores_and_keeps_prior_attempt(monkeypatch, tmp_path):
     setup(monkeypatch, tmp_path)
+    monkeypatch.setattr(progress, "_provisional", lambda *_: {
+        "resident": {"schema_version": progress.EXECUTION_SCHEMA,
+                     "cohort": "resident", "plan_raw_sha256": SHA,
+                     "status": "recorded_prefix", "recorded_cells": 1,
+                     "checkpoint_raw_sha256": SHA, "run_raw_sha256": None},
+        "flash": {"schema_version": progress.EXECUTION_SCHEMA,
+                  "cohort": "flash", "plan_raw_sha256": SHA,
+                  "status": "prepared", "recorded_cells": None,
+                  "checkpoint_raw_sha256": None, "run_raw_sha256": None}})
     row = progress.project_progress()
     assert row["status"] == "pending_admission"
     assert row["pair_id"] == PAIR
     assert row["registered_pair_ids"][-1].endswith("-a")
     assert row["cohorts"] is None
     assert row["grade_replay"] == "not_available"
+    assert row["provisional_execution"]["resident"]["recorded_cells"] == 1
+    assert row["provisional_execution"]["flash"]["status"] == "prepared"
 
 
 def test_admitted_report_projects_only_numeric_allowlist(monkeypatch, tmp_path):
@@ -104,3 +118,137 @@ def test_newest_exact_registered_pair_wins_and_old_attempt_is_retained(monkeypat
     (root / "qfn-ab-lab-primary-20260915-c.resident").symlink_to(root / f"{PAIR}.resident")
     selected, _, _ = progress._select_pair()
     assert selected == PAIR
+
+
+def _execution_fixture(monkeypatch, tmp_path):
+    output = tmp_path / "resident"
+    evaluation = output / "evaluation"
+    evaluation.mkdir(parents=True)
+    window_path = output / "window.json"
+    state_path, start_path = output / "state.json", output / "supervision-start.json"
+    checkpoint_path = evaluation / "checkpoint.json"
+    for path in (window_path, state_path, start_path, checkpoint_path):
+        path.write_text("{}", encoding="utf-8")
+    observed = datetime.now(timezone.utc)
+    started = observed - timedelta(seconds=30)
+    supervised = started - timedelta(seconds=1)
+    argv = ["/registered/python", "-m", "bench.flash_next_ab.lab_window",
+            "--worker", "--window", str(window_path)]
+    rows = {
+        window_path: {"wall_s": 6000, "window_id": PAIR},
+        state_path: {"phase": "evaluation", "window_sha256": SHA,
+                     "boot_id": "registered-boot", "worker_pid": 42,
+                     "worker_start_ticks": 99, "started_at": started.isoformat()},
+        start_path: {"window_sha256": SHA, "boot_id": "registered-boot",
+                     "worker_pid": 42, "worker_start_ticks": 99, "pid": 42,
+                     "started_at": supervised.isoformat(), "argv": argv},
+        checkpoint_path: {"schema_version": progress.CHECKPOINT_SCHEMA,
+                          "run_id": "lab-eval-resident-0123456789abcdef",
+                          "cohort": "resident", "plan_raw_sha256": SHA,
+                          "recorded_cells": ["cell-0", "cell-1"],
+                          "elapsed_s": 10.0,
+                          "promotion_authorized": False},
+    }
+    monkeypatch.setattr(progress, "_read_object", lambda path, **kwargs: (rows[path], SHA))
+    monkeypatch.setattr(progress.runtime, "_worker", lambda *_: None)
+    return window_path, checkpoint_path, state_path, start_path, rows, observed
+
+
+def test_current_checkpoint_projects_only_frozen_ordered_prefix(monkeypatch, tmp_path):
+    window, checkpoint, _, _, rows, observed = _execution_fixture(monkeypatch, tmp_path)
+    os.utime(checkpoint, None)
+    row = progress._provisional_cohort("resident", window, SHA,
+                                       ["cell-0", "cell-1", "cell-2"], observed)
+    assert row == {"schema_version": progress.EXECUTION_SCHEMA,
+                   "cohort": "resident", "plan_raw_sha256": SHA,
+                   "status": "recorded_prefix", "recorded_cells": 2,
+                   "checkpoint_raw_sha256": SHA, "run_raw_sha256": None}
+    for tamper in ({"recorded_cells": ["cell-1", "cell-0"]},
+                   {"recorded_cells": ["cell-0", "cell-0"]},
+                   {"plan_raw_sha256": "b" * 64},
+                   {"cohort": "flash"},
+                   {"elapsed_s": float("inf")},
+                   {"schema_version": "other-checkpoint/v1"}):
+        rows[checkpoint].update(tamper)
+        assert progress._provisional_cohort("resident", window, SHA,
+                                             ["cell-0", "cell-1", "cell-2"],
+                                             observed)["status"] == "unverified"
+        rows[checkpoint].update({"schema_version": progress.CHECKPOINT_SCHEMA,
+                                 "cohort": "resident", "plan_raw_sha256": SHA,
+                                 "recorded_cells": ["cell-0", "cell-1"],
+                                 "elapsed_s": 10.0})
+    rows[window.parent / "state.json"]["phase"] = "restoration"
+    assert progress._provisional_cohort("resident", window, SHA,
+                                         ["cell-0", "cell-1", "cell-2"],
+                                         observed)["status"] == "unverified"
+
+
+def test_stale_checkpoint_or_preflight_refusal_has_no_execution_count(monkeypatch, tmp_path):
+    window, checkpoint, state, start, _, observed = _execution_fixture(monkeypatch, tmp_path)
+    old = (observed - timedelta(seconds=60)).timestamp()
+    os.utime(checkpoint, (old, old))
+    assert progress._provisional_cohort("resident", window, SHA,
+                                         ["cell-0", "cell-1"], observed)["status"] == "unverified"
+    state.unlink()
+    assert progress._provisional_cohort("resident", window, SHA,
+                                         ["cell-0", "cell-1"], observed)["status"] == "unverified"
+    start.unlink()
+    assert progress._provisional_cohort("resident", window, SHA,
+                                         ["cell-0", "cell-1"], observed)["status"] == "prepared"
+    (window.parent / "supervision-reservation.json").write_text("{}", encoding="utf-8")
+    assert progress._provisional_cohort("resident", window, SHA,
+                                         ["cell-0", "cell-1"], observed)["status"] == "unverified"
+    (window.parent / "supervision-reservation.json").unlink()
+    state.symlink_to(window.parent / "missing-state.json")
+    assert progress._provisional_cohort("resident", window, SHA,
+                                         ["cell-0", "cell-1"], observed)["status"] == "unverified"
+
+
+def test_bound_terminal_run_without_checkpoint_only_awaits_admission(monkeypatch, tmp_path):
+    window, checkpoint, state, _, rows, observed = _execution_fixture(monkeypatch, tmp_path)
+    checkpoint.unlink()
+    run_path = window.parent / "evaluation/run.json"
+    run_path.write_text("{}", encoding="utf-8")
+    declared = ["cell-" + str(index) for index in range(126)]
+    rows[run_path] = {"schema_version": progress.RUN_SCHEMA, "run_id":
+                      "lab-eval-resident-0123456789abcdef", "cohort": "resident",
+                      "status": "complete", "plan_raw_sha256": SHA,
+                      "declared_cells": declared,
+                      "outcomes": [{"cell_id": cell} for cell in declared],
+                      "promotion_authorized": False, "private_response": "never exported"}
+    row = progress._provisional_cohort("resident", window, SHA, declared, observed)
+    assert row == {"schema_version": progress.EXECUTION_SCHEMA,
+                   "cohort": "resident", "plan_raw_sha256": SHA,
+                   "status": "awaiting_verification", "recorded_cells": None,
+                   "checkpoint_raw_sha256": None, "run_raw_sha256": SHA}
+    assert "private_response" not in str(row)
+    rows[run_path]["declared_cells"] = list(reversed(declared))
+    assert progress._provisional_cohort("resident", window, SHA,
+                                        declared, observed)["status"] == "unverified"
+    rows[run_path]["declared_cells"] = declared
+    rows[state]["phase"] = "complete"
+    rows[state]["restoration"] = {"status": "verified", "errors": [],
+                                  "sentinel_retained": False}
+    result_path, supervision_path = (window.parent / "result.json",
+                                     window.parent / "supervision.json")
+    result_path.write_text("{}", encoding="utf-8")
+    supervision_path.write_text("{}", encoding="utf-8")
+    rows[result_path] = {"schema": "lab-model-window-result/v1",
+                         "status": "complete", "window_id": PAIR, "cohort": "resident",
+                         "window_sha256": SHA, "evaluation_run_sha256": SHA,
+                         "restoration": {"status": "verified", "errors": [],
+                                         "sentinel_retained": False}}
+    rows[supervision_path] = {"schema": "lab-model-supervision/v1",
+                              "window_sha256": SHA, "returncode": 0,
+                              "interrupted": None, "emergency_restoration": None,
+                              "terminated_at_cutoff": False}
+    assert progress._provisional_cohort("resident", window, SHA,
+                                        declared, observed)["status"] == "awaiting_verification"
+    rows[supervision_path]["terminated_at_cutoff"] = True
+    assert progress._provisional_cohort("resident", window, SHA,
+                                        declared, observed)["status"] == "unverified"
+    rows[supervision_path]["terminated_at_cutoff"] = False
+    rows[result_path]["restoration"]["sentinel_retained"] = True
+    rows[state]["restoration"]["sentinel_retained"] = True
+    assert progress._provisional_cohort("resident", window, SHA,
+                                        declared, observed)["status"] == "unverified"

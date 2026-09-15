@@ -11,6 +11,9 @@ type CohortRow = { variant_id: string; declared: number; attempted: number; pass
   configured_context_tokens_by_endpoint: Record<string, number>;
   measured_prompt_tokens_max_by_endpoint: Record<string, number | null> };
 type Admitted = { resident: CohortRow; flash: CohortRow };
+type ExecutionRow = { status: "prepared" | "live_no_checkpoint" | "recorded_prefix" |
+  "awaiting_verification" | "unverified"; recorded_cells: number | null };
+type Provisional = { resident: ExecutionRow; flash: ExecutionRow };
 
 const whole = (value: unknown, max = 126): value is number =>
   typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= max;
@@ -64,6 +67,43 @@ function admitted(data: unknown): Admitted | null {
   return rows as Admitted;
 }
 
+function provisional(data: unknown): Provisional | null {
+  if (!object(data) || data.schema_version !== "lab-model-eval-progress/v1" ||
+      typeof data.pair_id !== "string" || !PAIR.test(data.pair_id) ||
+      data.status !== "pending_admission" || data.source_status !== "prepared_sources_verified" ||
+      data.grade_replay !== "not_available" || data.cohorts !== null ||
+      data.denominator !== 126 || data.promotion_authorized !== false ||
+      typeof data.plan_raw_sha256 !== "string" || !SHA.test(data.plan_raw_sha256) ||
+      !object(data.provisional_execution) ||
+      Object.keys(data.provisional_execution).sort().join() !== "flash,resident") return null;
+  const rows = data.provisional_execution as Record<Cohort, unknown>;
+  for (const cohort of ["resident", "flash"] as const) {
+    const row = rows[cohort];
+    if (!object(row) || row.schema_version !== "lab-model-eval-execution/v1" ||
+        row.cohort !== cohort || row.plan_raw_sha256 !== data.plan_raw_sha256 ||
+        !["prepared", "live_no_checkpoint", "recorded_prefix",
+      "awaiting_verification", "unverified"].includes(String(row.status))) return null;
+    if (row.status === "recorded_prefix") {
+      if (!whole(row.recorded_cells) || typeof row.checkpoint_raw_sha256 !== "string" ||
+          !SHA.test(row.checkpoint_raw_sha256) || row.run_raw_sha256 !== null) return null;
+    } else if (row.status === "awaiting_verification") {
+      if (row.recorded_cells !== null || row.checkpoint_raw_sha256 !== null ||
+          typeof row.run_raw_sha256 !== "string" || !SHA.test(row.run_raw_sha256)) return null;
+    } else if (row.recorded_cells !== null || row.checkpoint_raw_sha256 !== null ||
+               row.run_raw_sha256 !== null) return null;
+  }
+  return rows as Provisional;
+}
+
+const executionLabel = (cohort: Cohort, row: ExecutionRow) => {
+  const name = cohort === "resident" ? "Resident" : "Flash";
+  if (row.status === "recorded_prefix") return name + ": " + row.recorded_cells + "/126 cells recorded in the active window";
+  if (row.status === "awaiting_verification") return name + ": recorded run awaiting verification";
+  if (row.status === "live_no_checkpoint") return name + ": evaluation starting";
+  if (row.status === "prepared") return name + ": prepared";
+  return name + ": execution record unverified";
+};
+
 const labels: Record<(typeof FAMILIES)[number], string> = {
   objective: "Objective decisions", topic: "Topic output", portfolio: "Portfolio tasks",
   diversity: "Diversity repeats", role_effort: "Role and effort", historical: "Historical repairs",
@@ -84,6 +124,7 @@ export function LabModelEvaluationPanel({ data, pollingFailed = false }: {
     data.source_status === "prepared_sources_verified" && data.denominator === 126 &&
     data.promotion_authorized === false && typeof data.plan_raw_sha256 === "string" &&
     SHA.test(data.plan_raw_sha256);
+  const execution = !pollingFailed && prepared ? provisional(data) : null;
   const pairIds = object(data) && Array.isArray(data.registered_pair_ids)
     ? data.registered_pair_ids.filter((id): id is string => typeof id === "string" && PAIR.test(id))
     : [];
@@ -128,7 +169,13 @@ export function LabModelEvaluationPanel({ data, pollingFailed = false }: {
                 : `${proof[cohort].measured_prompt_tokens_max_by_endpoint[route].toLocaleString()} tokens`}</td></tr>))}</tbody>
       </table></div>
       <p className="benchmark-evidence-note">Configured context is a server ceiling. Largest prompt use does not establish long-context answer quality; the separate context study must close before that claim. Task-run throughput includes time spent on failures, repeats, and grading. The 126 tasks are reused development fixtures, and model, runtime, and policies differ between bundles.</p>
-    </> : prepared ? <p className="benchmark-empty-inline">A source-bound 126-task paired plan is frozen. The model windows are underway or awaiting completed admission; pass counts, throughput, and supported context are pending.</p>
+    </> : prepared ? <>
+      <p className="benchmark-empty-inline">A source-bound 126-task paired plan is frozen. The model windows are underway or awaiting completed admission; pass counts, throughput, and supported context are pending.</p>
+      {execution && <div role="status" aria-label="Provisional paired evaluation execution">
+        <p>{executionLabel("resident", execution.resident)} · {executionLabel("flash", execution.flash)}</p>
+        <p className="benchmark-evidence-note">These are durable execution records from the current frozen plan and do not show whether the current request is progressing. A recorded cell may be a failed or skipped task; no grade, comparison, or model promotion is inferred before completed admission.</p>
+      </div>}
+    </>
       : <p className="benchmark-empty-inline">No current-source-admitted optimized pair is available. Scores are withheld when publication or source proof is missing. The earlier original pair and restored follow-on studies remain separate below.</p>}
   </section>;
 }
