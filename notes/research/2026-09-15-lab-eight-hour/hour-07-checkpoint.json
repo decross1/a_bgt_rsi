@@ -1,0 +1,52 @@
+{
+  "recorded_at": "2026-09-15T23:09:46.730045+00:00",
+  "checkpoint_hour": 7,
+  "original_started_at": "2026-09-15T16:09:45Z",
+  "deadline": "2026-09-16T00:09:45Z",
+  "core_goal": "complete_at_21:28",
+  "first_stretch_goal": "complete_at_23:04",
+  "active_stretch_goal": "fresh_native_payoff_tool_diagnostic",
+  "delivery": {
+    "pr": 51,
+    "canonical_head": "b12bab8",
+    "core_tests_passed": 3552,
+    "core_skipped": 5,
+    "deployment_receipt_sha256": "cb5922df4e81bd0c37980c811758392b2bff6c390d1ae7ef85b5ea295064dc54"
+  },
+  "cap_diagnostic": {
+    "status": "aborted_before_evaluation",
+    "issued_calls": 0,
+    "scheduled_calls": 40,
+    "reason": "startup_host_swap_5s",
+    "host_pageout_5s_bytes": 550780928,
+    "threshold_bytes": 536870912,
+    "candidate_oom_killed": false,
+    "restoration": "verified",
+    "failure_audit_sha256": "4a94d553dc47b7a55f297634b2e077ad3f7b8a5b9a485baf12a503bf1a8be1f0"
+  },
+  "ordinary_research": {
+    "completed": [
+      "iter-2026-09-15-007",
+      "iter-2026-09-15-008"
+    ],
+    "scientific_gate": "pending",
+    "23_00_coordinator": "running_observed_23:08"
+  },
+  "independent_frontier_review": {
+    "provider": "Claude subscription",
+    "completed": true,
+    "paid_api": false,
+    "verdict": "procedural retention supported; next controlled tool diagnostic recommended"
+  },
+  "next_experiment": {
+    "status": "reviewed_source_not_yet_frozen_or_issued",
+    "pairs": 6,
+    "conditions": 12,
+    "maximum_model_calls": 18,
+    "focused_tests_passed": 18,
+    "latest_safe_start": "2026-09-15T23:25:00Z",
+    "wait_for": "final_root_checks_and_ordinary_coordinator_idle"
+  },
+  "model_decision": "retain_incumbent_existing_caller_policy",
+  "next_checkpoint": "2026-09-16T00:09:45Z"
+}
