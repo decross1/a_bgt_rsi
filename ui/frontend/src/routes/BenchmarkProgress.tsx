@@ -12,6 +12,7 @@ import {
 } from "../api/pollhub";
 import { SkeletonCard } from "../design/Skeleton";
 import { LocalModelResearchPanel } from "../components/LocalModelResearchPanel";
+import { FollowonResultsPanel } from "../components/FollowonResultsPanel";
 import { AppliedMarketResearchPanel } from "../components/AppliedMarketResearchPanel";
 import type {
   BenchmarkArm,
@@ -429,6 +430,7 @@ export default function BenchmarkProgress({ initial }: Props) {
     {(summaryMissing || rows<BenchmarkProgressWarning>(data.warnings).length > 0) && <aside className="benchmark-warnings" aria-label="Data qualifications">{summaryMissing && <p><strong>Progress summary</strong> · The response shape is incomplete. Missing values are withheld rather than inferred as zero.</p>}{rows<BenchmarkProgressWarning>(data.warnings).map((warning, index) => <p key={`${String(warning.code)}-${index}`}><strong>{text(warning.scope, "Record")}</strong> · {text(warning.detail, "An unspecified source qualification was recorded.")}</p>)}</aside>}
 
     <LocalModelResearchPanel data={data.local_model_research} />
+    <FollowonResultsPanel data={data.local_followon_results} />
     <ResearchPipelinePanel pipeline={data.research_pipeline} />
     <AppliedMarketResearchPanel data={data.applied_market_research} />
 
