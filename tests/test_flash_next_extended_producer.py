@@ -291,6 +291,11 @@ def test_real_mia_flash_controller_harness_and_completion_gate(
 ):
     """126 real frozen cells; a first-byte timeout remains a denominator failure."""
     window, extended_plan, output, journal = frozen_inputs(tmp_path, monkeypatch)
+    # This test replays the immutable original pair producer from the distinct
+    # follow-on checkout. Bind its simulated worker to the original registered
+    # source root; production execution still refuses any other checkout.
+    monkeypatch.setattr(q, "ROOT", ew.REGISTERED_CODE_ROOT)
+    monkeypatch.setattr(lifecycle, "ROOT", ew.REGISTERED_CODE_ROOT)
     clock = Clock()
     # Worker started_at comes from actual wall time; place synthetic observed
     # wall instants just after it, preserving the 120s virtual quiet proof.
