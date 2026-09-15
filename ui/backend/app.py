@@ -28,6 +28,7 @@ from .human_todo import register as register_human_todo
 from .iteration_journey import register as register_iteration_journey
 from .lab_channel_seam import register as register_lab_channel_seam
 from .lab_model_context_crossplan_progress import register as register_lab_model_context_crossplan_progress
+from .lab_diversity_cap_progress import register as register_lab_diversity_cap_progress
 from .lab_model_eval_progress import register as register_lab_model_eval_progress
 from .lab_model_supplement_progress import register as register_lab_model_supplement_progress
 from .lab_todo import register as register_lab_todo
@@ -229,6 +230,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     register_lab_model_eval_progress(app)
     register_lab_model_supplement_progress(app)
     register_lab_model_context_crossplan_progress(app)
+    register_lab_diversity_cap_progress(app)
 
     register_loop_v0(
         app,
