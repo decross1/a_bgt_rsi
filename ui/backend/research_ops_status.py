@@ -14,6 +14,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
+from .guarded_research_attempts import project_attempts
+
 DEFAULT_REPO = Path("/home/decross1/projects/a_bgt_rsi")
 PILOT_ROOT = Path("/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/"
                   "lab-eight-hour/known-opponent-utility")
@@ -372,6 +374,12 @@ def register(app, *, repo_root: Path = DEFAULT_REPO,
         if projector is not None:
             return view
         enriched = _enrich(view, pilot_root, repo_root)
-        return {**enriched, "payoff_jobs": _payoff_jobs(repo_root)}
+        return {
+            **enriched,
+            "payoff_jobs": _payoff_jobs(repo_root),
+            "guarded_research_attempts": project_attempts(
+                producer_view=enriched, repo_root=repo_root,
+            ),
+        }
 
     app.include_router(router)
