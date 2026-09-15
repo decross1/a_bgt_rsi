@@ -109,8 +109,8 @@ def gate(_plan, _cohort):
 def registered_contract(version=3):
     contract = {
         "schema": f"qwen-flash-next-qualification/v{version}",
-        "contract_id": "qwen38-flash-next-c0-20260915",
-        "profile": "C0",
+        "contract_id": "qwen38-flash-next-c0-s0-20260915" if version == 3 else "qwen38-flash-next-c0-20260915",
+        "profile": "C0-S0" if version == 3 else "C0",
         "image": {"id": q.IMAGE_ID, "architecture": "arm64"},
         "model": {
             "repository": q.MODEL_REPOSITORY,
@@ -143,6 +143,8 @@ def registered_contract(version=3):
             "async_scheduling": False,
             "qsa_exact_topk": True,
             "language_model_only": True,
+            "docker_memory_limit_bytes": q.DOCKER_MEMORY_LIMIT_BYTES,
+            "docker_memory_swap_total_bytes": q.DOCKER_MEMORY_SWAP_TOTAL_BYTES,
         },
         "safety": {
             "resident_containers": [dict(row) for row in q.RESIDENTS],
@@ -365,6 +367,8 @@ def passing_flash_receipts(tmp_path, version=3):
             "container": {
                 "id": "c" * 64, "pid": 123, "image": q.IMAGE_ID, "name": q.CONTAINER_NAME,
                 "running": True, "oom_killed": False, "restart_count": 0,
+                "memory_limit_bytes": q.DOCKER_MEMORY_LIMIT_BYTES,
+                "memory_swap_total_bytes": q.DOCKER_MEMORY_SWAP_TOTAL_BYTES,
             },
             "stabilization": {key: result[f"ready_quiescence_{key}"] for key in (
                 "required_seconds", "passed", "started_at", "completed_at", "duration_seconds",
@@ -384,10 +388,17 @@ def v3_monitor_proof(path):
     candidate = {
         "id": cid, "name": q.CONTAINER_NAME, "image": q.IMAGE_ID,
         "running": True, "oom_killed": False, "restart_count": 0, "pid": 123,
+        "memory_limit_bytes": q.DOCKER_MEMORY_LIMIT_BYTES,
+        "memory_swap_total_bytes": q.DOCKER_MEMORY_SWAP_TOTAL_BYTES,
     }
     cgroup = {
         "path": f"/system.slice/docker-{cid}.scope", "process_start_ticks": 12345,
         "memory_swap_current_bytes": 0, "memory_events_oom": 0, "memory_events_oom_kill": 0,
+        "memory_max_bytes": q.DOCKER_MEMORY_LIMIT_BYTES, "memory_swap_max_bytes": 0,
+        "memory_current_bytes": 5 * 1024**3,
+        "selected_memory_stat": {k: 0 for k in ("anon", "file", "shmem", "active_file", "inactive_file", "pgscan", "pgsteal")},
+        "memory_pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+        "memory_events_local": {"oom": 0, "oom_kill": 0},
     }
     def sleep(seconds):
         now[0] += seconds
@@ -449,6 +460,11 @@ def v3_monitor_proof(path):
                 result[f"{phase}_quiescence_{name}"] = getattr(monitor, f"{phase}_quiescence_{name}")
             for name in ("initial_pswpout", "final_pswpout"):
                 result[f"{phase}_quiescence_{name}_pages"] = getattr(monitor, f"{phase}_quiescence_{name}")
+        sidecar_sha, memory_sha = q._write_cgroup_diagnostics(path.parent, cid, required=True)
+        result.update(profile="C0-S0", docker_memory_limit_bytes=q.DOCKER_MEMORY_LIMIT_BYTES,
+                      docker_memory_swap_total_bytes=q.DOCKER_MEMORY_SWAP_TOTAL_BYTES,
+                      cgroup_diagnostics_sha256=sidecar_sha, memory_log_sha256=memory_sha,
+                      finished_at=q.utc_now())
         return result
 
 
@@ -483,6 +499,45 @@ def test_run_receipt_passes_the_independent_comparator_contract(tmp_path):
     assert hashlib.sha256(stream_path.read_bytes()).hexdigest() == descriptor["raw_stream"]["sha256"]
     assert stat.S_IMODE(metadata_path.stat().st_mode) == 0o600
     assert stat.S_IMODE(metadata_path.parent.parent.stat().st_mode) == 0o700
+
+
+@pytest.mark.parametrize("corruption", ["missing_profile", "memory_limit", "swap_limit", "sidecar_peak", "missing_sidecar", "memory_digest", "early_sidecar", "future_sidecar"])
+def test_s0_requires_effective_no_swap_controls_and_bound_diagnostics(tmp_path, corruption):
+    receipt, plan, contract = passing_flash_receipts(tmp_path)
+    directory = receipt.parent
+    result = json.loads(receipt.read_text())
+    if corruption == "missing_profile":
+        del result["profile"]
+    elif corruption in {"memory_limit", "swap_limit"}:
+        rows = [json.loads(line) for line in (directory / "memory.jsonl").read_text().splitlines()]
+        key = "memory_max_bytes" if corruption == "memory_limit" else "memory_swap_max_bytes"
+        for row in rows:
+            candidate = row.get("candidate")
+            if isinstance(candidate, dict) and isinstance(candidate.get("cgroup"), dict):
+                candidate["cgroup"][key] = 64 * 1024**3 if key == "memory_max_bytes" else 1024**3
+        (directory / "memory.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
+        # Re-seal internally consistent diagnostics: admission must still reject
+        # actual kernel controls that differ from the registered launch.
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(q, "utc_now", lambda: result["finished_at"])
+            sidecar_sha, memory_sha = q._write_cgroup_diagnostics(directory, "c" * 64, required=True)
+        result.update(cgroup_diagnostics_sha256=sidecar_sha, memory_log_sha256=memory_sha)
+    elif corruption in {"sidecar_peak", "early_sidecar", "future_sidecar"}:
+        sidecar = directory / "cgroup-diagnostics.json"
+        value = json.loads(sidecar.read_text())
+        if corruption == "sidecar_peak":
+            value["maximum_memory_current_bytes"] += 1
+        else:
+            value["diagnostics_finished_at"] = "2025-09-16T00:00:00+00:00" if corruption == "early_sidecar" else "2027-09-16T00:00:00+00:00"
+        write_json(sidecar, value)
+        result["cgroup_diagnostics_sha256"] = hashlib.sha256(sidecar.read_bytes()).hexdigest()
+    elif corruption == "missing_sidecar":
+        (directory / "cgroup-diagnostics.json").unlink()
+    else:
+        result["memory_log_sha256"] = "0" * 64
+    write_json(receipt, result)
+    with pytest.raises(HarnessError):
+        validate_flash_qualification_files(receipt, plan, contract, require_passed=True)
 
 
 def test_gate_failure_precedes_filesystem_or_model_activity(tmp_path):
