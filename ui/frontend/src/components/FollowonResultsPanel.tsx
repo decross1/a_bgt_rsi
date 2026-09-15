@@ -69,7 +69,7 @@ export function FollowonResultsPanel({ data }: { data?: FollowonResultsProgress 
                 <tbody>{window.blocks.flatMap(block => block.groups.map((group, index) =>
                   <tr key={`${block.block_id}-${index}`}><th scope="row"><strong>{words(block.kind)}</strong>
                     <span>{group.condition.map(words).join(" · ")}</span></th>
-                    <td>{group.passed} / {group.declared}</td><td>{group.attempted}</td>
+                    <td>{block.passed === null ? "Timing only" : `${group.passed} / ${group.declared}`}</td><td>{group.attempted}</td>
                     <td>{group.timeouts}</td><td>{group.errors}</td>
                     <td>{block.kind === "context" ? `${group.supported} / ${group.declared}` : "—"}</td>
                     <td>{number(group.wall_seconds)} s</td>

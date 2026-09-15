@@ -59,4 +59,21 @@ describe("recorded follow-on studies", () => {
     expect(screen.getByText(/No restored follow-on window/)).toBeInTheDocument();
     expect(screen.queryByText("1 / 2")).not.toBeInTheDocument();
   });
+
+  it("labels a decode timing block without inventing a task pass rate", () => {
+    const row = admitted.windows[0];
+    const timing = {
+      ...row.blocks[0], block_id: "decode-17", kind: "mtp_decode_timing",
+      attempted: 3, passed: null, timeouts: 0,
+      groups: [{ ...row.blocks[0].groups[0],
+        condition: ["fixed_decode_512"], declared: 3, attempted: 3,
+        passed: 0, timeouts: 0, errors: 0,
+      }],
+    };
+    render(<FollowonResultsPanel data={{
+      ...admitted, windows: [{ ...row, blocks: [timing] }],
+    }} />);
+    expect(screen.getByText("Timing only")).toBeInTheDocument();
+    expect(screen.queryByText("0 / 3")).not.toBeInTheDocument();
+  });
 });
