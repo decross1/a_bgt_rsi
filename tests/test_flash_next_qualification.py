@@ -468,6 +468,62 @@ class FakeOps(q.HostOps):
         return {**base, "content": answer, "tool_calls": [], "finish_reason": "stop"}
 
 
+class StreamingProbeOps(FakeOps):
+    """Use transport's real streaming accumulator/private bytes return shape."""
+
+    def __init__(self, *, failed_probe=None, transport_error=None):
+        super().__init__()
+        self.failed_probe = failed_probe
+        self.transport_error = transport_error
+
+    def complete(self, endpoint, messages, **kwargs):
+        from bench.flash_next_ab import transport
+
+        ordinal = len([entry for entry in self.log if entry[0] == "COMPLETE"])
+        if self.transport_error == ordinal:
+            raw = b'data: {"id":"partial","model":"qwen3.8-flash-next"}\n\n'
+            accumulator = transport.StreamAccumulator(q.SERVED_MODEL)
+            error = TimeoutError("synthetic private partial stream")
+            error.private_evidence = transport._private_response_evidence(
+                accumulator, raw, response_bytes=len(raw)
+            )
+            raise error
+        result = super().complete(endpoint, messages, **kwargs)
+        if self.failed_probe == ordinal:
+            result["content"] = "incorrect"
+        accumulator = transport.StreamAccumulator(q.SERVED_MODEL)
+        delta = {"content": result["content"]}
+        if result["tool_calls"]:
+            delta["tool_calls"] = [{"index": 0, **result["tool_calls"][0]}]
+        response_id = f"cmpl-fixed-probe-{ordinal}"
+        chunks = [
+            {"id": response_id, "model": q.SERVED_MODEL,
+             "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
+            {"id": response_id, "model": q.SERVED_MODEL,
+             "choices": [{"index": 0, "delta": {},
+                          "finish_reason": result["finish_reason"]}]},
+            {"id": response_id, "model": q.SERVED_MODEL,
+             "choices": [], "usage": result["usage"]},
+        ]
+        raw = b"".join(
+            b"data: " + json.dumps(chunk, sort_keys=True).encode() + b"\n\n"
+            for chunk in chunks
+        ) + b"data: [DONE]\n\n"
+        for chunk in chunks:
+            accumulator.accept(json.dumps(chunk))
+        accumulator.accept("[DONE]")
+        return {
+            **result,
+            "response_id": response_id,
+            "response_stream_sha256": q.sha256(raw),
+            "response_bytes": len(raw),
+            "stream_events": accumulator.events,
+            "private_evidence": transport._private_response_evidence(
+                accumulator, raw, response_bytes=len(raw)
+            ),
+        }
+
+
 def clean_cgroup(candidate_id, pid, *, swap=0, oom=0, oom_kill=0):
     assert candidate_id == FakeOps.candidate_id
     assert pid == 200
@@ -579,6 +635,7 @@ def test_success_creates_sentinel_first_and_restores_exact_ids(monkeypatch, tmp_
     assert all(ops.containers[row["name"]]["running"] for row in q.RESIDENTS)
     assert ops.nara_active is True
 
+
     create = next(i for i, row in enumerate(ops.log) if row[:2] == ("docker", "create"))
     nara_stop = next(i for i, row in enumerate(ops.log) if row[:4] == ("systemctl", "--user", "stop", q.NARA_SERVICE))
     resident_stops = [
@@ -617,6 +674,58 @@ def test_success_creates_sentinel_first_and_restores_exact_ids(monkeypatch, tmp_
     assert state["schema"] == "qwen-flash-next-qualification-state/v3"
     assert state["worker_pid"] > 0 and state["worker_start_ticks"] > 0
     assert state["memory_log_relpath"] == "memory.jsonl"
+
+
+def test_real_streaming_private_bytes_are_persisted_without_entering_probes_json(
+    monkeypatch, tmp_path
+):
+    result, _ops, _usage, output = prepare_execution(
+        monkeypatch, tmp_path, ops=StreamingProbeOps()
+    )
+    assert result["status"] == "passed"
+    attempts = json.loads((output / "probe-attempts.json").read_bytes())
+    assert [row["status"] for row in attempts["results"]] == ["passed"] * 3
+    public = json.loads((output / "probes.json").read_bytes())
+    assert [row["probe_id"] for row in public["results"]] == [
+        "exact_literal", "exact_arithmetic", "exact_tool_call"
+    ]
+    for attempt, probe in zip(attempts["results"], public["results"], strict=True):
+        assert attempt["response"] == probe
+        assert "private_evidence" not in probe
+        private = attempt["private_response"]
+        path = output / private["private_stream_relpath"]
+        raw = path.read_bytes()
+        assert q.sha256(raw) == private["response_stream_sha256"] == probe["response_stream_sha256"]
+        assert path.stat().st_mode & 0o077 == 0
+    assert (output / "private-probes").stat().st_mode & 0o077 == 0
+
+
+def test_wrong_streaming_probe_is_saved_before_strict_failure(monkeypatch, tmp_path):
+    result, _ops, _usage, output = prepare_execution(
+        monkeypatch, tmp_path, ops=StreamingProbeOps(failed_probe=1)
+    )
+    assert result["status"] == "failed"
+    assert result["probe_count"] == 0
+    assert result["restoration"]["status"] == "verified"
+    assert not (output / "probes.json").exists()
+    attempts = json.loads((output / "probe-attempts.json").read_bytes())["results"]
+    assert [row["status"] for row in attempts] == ["passed", "failed"]
+    assert attempts[1]["response"]["content"] == "incorrect"
+    assert q.sha256((output / attempts[1]["private_response"]["private_stream_relpath"]).read_bytes()) == attempts[1]["private_response"]["response_stream_sha256"]
+
+
+def test_transport_error_attempt_retains_partial_private_stream(monkeypatch, tmp_path):
+    result, _ops, _usage, output = prepare_execution(
+        monkeypatch, tmp_path, ops=StreamingProbeOps(transport_error=1)
+    )
+    assert result["status"] == "failed"
+    assert result["restoration"]["status"] == "verified"
+    assert not (output / "probes.json").exists()
+    attempts = json.loads((output / "probe-attempts.json").read_bytes())["results"]
+    assert [row["status"] for row in attempts] == ["passed", "transport_error"]
+    assert attempts[1]["error_type"] == "TimeoutError"
+    raw = (output / attempts[1]["private_response"]["private_stream_relpath"]).read_bytes()
+    assert q.sha256(raw) == attempts[1]["private_response"]["response_stream_sha256"]
 
 
 def test_finished_usage_is_durable_before_result_publication(monkeypatch, tmp_path):

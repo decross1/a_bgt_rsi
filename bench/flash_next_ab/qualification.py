@@ -2027,8 +2027,47 @@ def _wait_candidate_ready(
     raise QualificationError(f"candidate readiness deadline expired ({last_error})")
 
 
+def _probe_private_response(
+    output: Path, probe_id: str, evidence: dict[str, Any]
+) -> dict[str, Any]:
+    """Keep the bounded SSE bytes private and expose only their digest."""
+    from bench.flash_next_ab.transport import MAX_RESPONSE_BYTES
+
+    raw = evidence.get("raw_response_stream")
+    if not isinstance(raw, bytes) or len(raw) > MAX_RESPONSE_BYTES:
+        raise QualificationError(f"private probe stream is malformed: {probe_id}")
+    if evidence.get("response_stream_sha256") != sha256(raw):
+        raise QualificationError(f"private probe stream digest differs: {probe_id}")
+    private = output / "private-probes"
+    private.mkdir(mode=0o700, exist_ok=True)
+    if private.is_symlink() or private.stat().st_mode & 0o077:
+        raise QualificationError("private probe directory permissions differ")
+    path = private / f"{probe_id}.sse"
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(private, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    return {
+        "response_stream_sha256": sha256(raw),
+        "response_stream_bytes": len(raw),
+        "private_stream_relpath": f"private-probes/{probe_id}.sse",
+    }
+
+
 def _run_probes(
-    ops: HostOps, monitor: MemoryMonitor, *, timeout_s: int
+    ops: HostOps, monitor: MemoryMonitor, *, timeout_s: int, output: Path
 ) -> list[dict[str, Any]]:
     from bench.flash_next_ab.transport import LocalEndpoint
 
@@ -2050,26 +2089,80 @@ def _run_probes(
             "expected": "703",
         },
     ]
-    results = []
+    results: list[dict[str, Any]] = []
+    attempts: list[dict[str, Any]] = []
+
+    def attempt(probe_id: str, messages: list[dict[str, str]], max_tokens: int,
+                seed: int, tools: list[dict[str, Any]] | None = None
+                ) -> dict[str, Any]:
+        row: dict[str, Any] = {
+            "probe_id": probe_id, "status": "started", "started_at": utc_now()
+        }
+        attempts.append(row)
+        _atomic_write(output / "probe-attempts.json", {
+            "schema": "qwen-flash-next-probe-attempts/v1",
+            "probe_set": "flash-next-minimal-v1", "results": attempts,
+        })
+        try:
+            monitor.check()
+            result = ops.complete(
+                endpoint, messages, policy=policy, max_tokens=max_tokens,
+                timeout_s=timeout_s, seed=seed, tools=tools,
+                cancel_event=monitor.cancel_event,
+            )
+        except Exception as exc:  # every attempted probe has a durable outcome
+            attached = getattr(exc, "private_evidence", None)
+            if isinstance(attached, dict):
+                row["private_response"] = _probe_private_response(
+                    output, probe_id, attached
+                )
+            row.update({"status": "transport_error", "error_type": type(exc).__name__,
+                        "finished_at": utc_now()})
+            _atomic_write(output / "probe-attempts.json", {
+                "schema": "qwen-flash-next-probe-attempts/v1",
+                "probe_set": "flash-next-minimal-v1", "results": attempts,
+            })
+            raise
+        if not isinstance(result, dict):
+            row.update({"status": "malformed_response", "finished_at": utc_now()})
+            _atomic_write(output / "probe-attempts.json", {
+                "schema": "qwen-flash-next-probe-attempts/v1",
+                "probe_set": "flash-next-minimal-v1", "results": attempts,
+            })
+            raise QualificationError(f"fixed probe response is malformed: {probe_id}")
+        evidence = result.get("private_evidence")
+        if evidence is not None:
+            if not isinstance(evidence, dict):
+                raise QualificationError(f"private probe evidence is malformed: {probe_id}")
+            row["private_response"] = _probe_private_response(output, probe_id, evidence)
+            if result.get("response_stream_sha256") != row["private_response"]["response_stream_sha256"]:
+                raise QualificationError(f"public and private probe stream digests differ: {probe_id}")
+            result = {key: value for key, value in result.items() if key != "private_evidence"}
+        public = {"probe_id": probe_id, **result}
+        row["response"] = public
+        row["finished_at"] = utc_now()
+        return public
+
+    def record(status: str) -> None:
+        attempts[-1]["status"] = status
+        _atomic_write(output / "probe-attempts.json", {
+            "schema": "qwen-flash-next-probe-attempts/v1",
+            "probe_set": "flash-next-minimal-v1", "results": attempts,
+        })
+
     for ordinal, spec in enumerate(specifications):
-        monitor.check()
-        result = ops.complete(
-            endpoint,
-            spec["messages"],
-            policy=policy,
-            max_tokens=spec["max_tokens"],
-            timeout_s=timeout_s,
-            seed=17 + ordinal,
-            cancel_event=monitor.cancel_event,
+        result = attempt(spec["id"], spec["messages"], spec["max_tokens"], 17 + ordinal)
+        valid = (
+            result.get("response_model") == SERVED_MODEL
+            and isinstance(result.get("content"), str)
+            and result["content"].strip() == spec["expected"]
+            and not result.get("tool_calls")
+            and result.get("finish_reason") == "stop"
         )
-        if (
-            result.get("response_model") != SERVED_MODEL
-            or result.get("content", "").strip() != spec["expected"]
-            or result.get("tool_calls")
-            or result.get("finish_reason") != "stop"
-        ):
+        record("passed" if valid else "failed")
+        if not valid:
             raise QualificationError(f"fixed probe failed: {spec['id']}")
-        results.append({"probe_id": spec["id"], **result})
+        results.append(result)
 
     tools = [{
         "type": "function",
@@ -2087,16 +2180,10 @@ def _run_probes(
             },
         },
     }]
-    monitor.check()
-    result = ops.complete(
-        endpoint,
+    result = attempt(
+        "exact_tool_call",
         [{"role": "user", "content": "Call record_probe exactly once with label flash-next and value 703. Do not answer in text."}],
-        policy=policy,
-        max_tokens=128,
-        timeout_s=timeout_s,
-        seed=19,
-        tools=tools,
-        cancel_event=monitor.cancel_event,
+        128, 19, tools,
     )
     calls = result.get("tool_calls")
     valid = False
@@ -2109,13 +2196,15 @@ def _run_probes(
         valid = (
             function.get("name") == "record_probe"
             and arguments == {"label": "flash-next", "value": 703}
-            and not result.get("content", "").strip()
+            and isinstance(result.get("content"), str)
+            and not result["content"].strip()
             and result.get("finish_reason") == "tool_calls"
             and result.get("response_model") == SERVED_MODEL
         )
+    record("passed" if valid else "failed")
     if not valid:
         raise QualificationError("fixed tool-call probe failed")
-    results.append({"probe_id": "exact_tool_call", **result})
+    results.append(result)
     return results
 
 
@@ -2701,6 +2790,7 @@ def execute_worker(
                     ops,
                     monitor,
                     timeout_s=contract["safety"]["probe_timeout_seconds"],
+                    output=output,
                 )
                 _atomic_write(output / "probes.json", {"probe_set": plan["probe_set"], "results": probes})
                 monitor.check()
