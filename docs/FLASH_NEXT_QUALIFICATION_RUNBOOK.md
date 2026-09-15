@@ -10,13 +10,14 @@ recreates a resident.
 
 - Controller commits: `29dbb0c41b61c675d7caca3cce2468a6ad7720b9`,
   followed by race hardening commit
-  `e1595bfbb48cdac6c71ee21a00b09017483ce011`.
+  `e1595bfbb48cdac6c71ee21a00b09017483ce011`, and owned-cache remediation
+  commit `8c2949c`.
 - Controller SHA-256:
-  `a8ef83e79a1ba809dae7b3d80be680eb30504ac98c41352edf074cc9a0bd0bd4`.
+  `6e87b504169ac2bfb21d4d2cceea70975d562751a5520b9283557d8aef1d5318`.
 - External contract:
   `/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-14/qwen-flash-next-research/runtime/launch-contract.c0.json`.
 - Contract SHA-256:
-  `3757f596d03bd3d386ac30d21b7b2397fbe0c4910b8fab95a5d1b72cd58486f1`.
+  `1e3efd13b39f2b44a95e4c4e2486ff58289d290d0a73d2ebd4f30607ae217eb0`.
 - Image ID:
   `sha256:345bea72ff3bb548594d88f6a7661636c07cd3e7367f8e54b0e4a98494e5a48d`.
 - Model revision:
@@ -24,7 +25,17 @@ recreates a resident.
 - Model-manifest SHA-256:
   `54e961084a2fca63b0dcd32d542eb340a7baa20224298b00030ffa7e59145063`.
 - Docker argument-vector SHA-256:
-  `744d465e7e561cdf73e199e5994973918c2a5d9e3e46d5d891225701b3e826ec`.
+  `a06fdb8e91fedc4de22409a425ed4c0432b652a07752572a4c8b3849c4b595ca`.
+
+The first invocation used contract SHA-256
+`3757f596d03bd3d386ac30d21b7b2397fbe0c4910b8fab95a5d1b72cd58486f1`
+and failed before mutation because `/mnt/vllm-cache` was not writable. Its
+byte-identical contract is preserved read-only as
+`launch-contract.c0.v1-3757f596d03bd3d3.json`. The current contract mounts a
+dedicated cache below the pre-created, user-owned
+`/home/decross1/projects/a_bgt_rsi_runtime_candidates/flash-next-20260914/compile-cache-c0`
+parent. The controller refuses an absent, redirected, or differently owned
+parent.
 
 The model manifest covers all 25 top-level repository files. The controller
 streams and verifies each file before its first runtime mutation. The 11
