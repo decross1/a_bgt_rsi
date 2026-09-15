@@ -109,6 +109,9 @@ const MIA_VARIANT = {
   profile: "C0-MIA-S1",
 } as const;
 
+const isExtendedFlashRunId = (value: unknown): value is string =>
+  typeof value === "string" && /^qfn-ab-[a-z0-9][a-z0-9._-]{0,63}\.flash$/.test(value);
+
 function isRegisteredMiaVariant(value: ModelRuntime["candidate_variant"]): boolean {
   if (!value) return false;
   return Object.entries(MIA_VARIANT).every(([key, expected]) =>
@@ -153,7 +156,8 @@ function isModelRuntime(value: unknown): value is ModelRuntime {
     ["resident", "candidate_research", "transitioning", "unknown"].includes(
       String(row.mode),
     ) &&
-    ["qualification_state", "none"].includes(String(row.mode_source)) &&
+    ["qualification_state", "extended_evaluation_state", "none"].includes(String(row.mode_source)) &&
+    (row.mode_source !== "extended_evaluation_state" || isExtendedFlashRunId(row.run_id)) &&
     ["online", "stopped", "unknown"].includes(
       String(row.resident_services_expected),
     ) &&
@@ -540,7 +544,8 @@ export default function Pulse() {
   const runtimeObservedMs = modelRuntime ? Date.parse(modelRuntime.observed_at) : Number.NaN;
   const runtimeAgeMs = Number.isFinite(runtimeObservedMs) ? now - runtimeObservedMs : Number.NaN;
   const boundRuntimeMode =
-    modelRuntime?.mode_source === "qualification_state" &&
+    (modelRuntime?.mode_source === "qualification_state" ||
+      (modelRuntime?.mode_source === "extended_evaluation_state" && isExtendedFlashRunId(modelRuntime.run_id))) &&
     typeof modelRuntime.mode_source_sha256 === "string" &&
     /^[0-9a-f]{64}$/.test(modelRuntime.mode_source_sha256) &&
     typeof modelRuntime.run_id === "string" &&
@@ -558,7 +563,8 @@ export default function Pulse() {
     modelRuntime.resident_services_expected === "stopped";
   const selectedMiaVariant = boundRuntimeMode &&
     isRegisteredMiaVariant(modelRuntime?.candidate_variant) &&
-    modelRuntime?.run_id?.startsWith("qfn-mia-c0-") &&
+    (modelRuntime?.run_id?.startsWith("qfn-mia-c0-") ||
+      (modelRuntime?.mode_source === "extended_evaluation_state" && isExtendedFlashRunId(modelRuntime.run_id))) &&
     modelRuntime?.mode !== "resident"
       ? modelRuntime?.candidate_variant ?? null
       : null;

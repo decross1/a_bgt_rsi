@@ -705,6 +705,83 @@ describe("Pulse (/)", () => {
     expect(screen.getByTestId("health-verdict")).not.toHaveTextContent("RESEARCH WINDOW");
   });
 
+  it("shows the controller-bound Mia variant during an extended evaluation window", async () => {
+    const http = await import("../src/api/http");
+    D.samples = D.samples.map((sample) => ({ ...sample, vllm: null }));
+    const inventoryMock = http.getServedModels as unknown as ReturnType<typeof vi.fn>;
+    inventoryMock.mockReset().mockResolvedValue({
+      gemma: { url: "http://localhost:8000", model: "gemma-4-26b-a4b", error: null },
+      qwen: { url: "http://localhost:8001", model: "qwen3.8-27b-nvfp4-mtp", error: null },
+    });
+    inventoryMock.mockResolvedValueOnce({
+      gemma: modelInventoryRow({ model: null, deployment_role: "production_resident",
+        service_status: "offline", models_endpoint_status: "unreachable", metrics_endpoint_status: "unreachable",
+        activity_status: "unknown", identity_status: "unknown", metrics: null }),
+      qwen: modelInventoryRow({ model: null, deployment_role: "production_resident",
+        service_status: "offline", models_endpoint_status: "unreachable", metrics_endpoint_status: "unreachable",
+        activity_status: "unknown", identity_status: "unknown", metrics: null }),
+      flash: modelInventoryRow({ url: "http://127.0.0.1:8012", model: "qwen3.8-flash-next-mia",
+        configured_model: "qwen3.8-flash-next", deployment_role: "research_candidate",
+        benchmark_cohort: "flash", service_status: "online", identity_status: "match" }),
+    });
+    const runtimeMock = http.getModelRuntime as unknown as ReturnType<typeof vi.fn>;
+    runtimeMock.mockReset().mockResolvedValue({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "unknown", mode_source: "none", mode_source_sha256: null,
+      resident_services_expected: "unknown", nara_service_expected: "unknown",
+      run_id: null, phase: null, source_error: null,
+    });
+    runtimeMock.mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "candidate_research", mode_source: "extended_evaluation_state",
+      mode_source_sha256: "a".repeat(64), resident_services_expected: "stopped",
+      nara_service_expected: "paused", run_id: "qfn-ab-mia-control.flash",
+      phase: "evaluation", source_error: null,
+      candidate_variant: {
+        spec_id: "mia-925d7be6-c0-s1",
+        spec_sha256: "dde4fe1f72cf91de92089a95748cee1f6a8204e351d517aa0ae46d8d27122857",
+        repository: "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4",
+        revision: "925d7be6c14c6c9442ef83e8f05b5a3c39304f69",
+        served_model: "qwen3.8-flash-next-mia",
+        image_id: "sha256:da68dd27a8ef1dadd0f380178a51f0a0671dc4235933ea1ae89fdaf66295ec72",
+        model_artifact_sha256: "a40ce50173dd3aff54da88503894967e5248bbb927f9e4a91eff5a6a7270c168",
+        profile: "C0-MIA-S1", source: "registered_plan_and_controller_state",
+        image_evidence: "bound_live_container", promotion_authorized: false,
+      },
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() =>
+      expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "research"),
+    );
+    expect(screen.getByRole("heading", { name: "Mia candidate research window" })).toBeInTheDocument();
+    expect(screen.getByText("Mia-AiLab/Qwen3.8-Flash-Next-NVFP4")).toBeInTheDocument();
+    expect(screen.getByTestId("flash-selected-variant")).toHaveTextContent("live cgroup-bind receipt");
+  });
+
+  it("rejects an extended mode claim with a qualification or malformed pair ID", async () => {
+    const http = await import("../src/api/http");
+    D.samples = D.samples.map((sample) => ({ ...sample, vllm: null }));
+    const runtimeMock = http.getModelRuntime as unknown as ReturnType<typeof vi.fn>;
+    runtimeMock.mockReset().mockResolvedValue({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "unknown", mode_source: "none", mode_source_sha256: null,
+      resident_services_expected: "unknown", nara_service_expected: "unknown",
+      run_id: null, phase: null, source_error: null,
+    });
+    runtimeMock.mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "candidate_research", mode_source: "extended_evaluation_state",
+      mode_source_sha256: "a".repeat(64), resident_services_expected: "stopped",
+      nara_service_expected: "paused", run_id: "qfn-mia-c0-old",
+      phase: "evaluation", source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() =>
+      expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "down"),
+    );
+    expect(screen.getByTestId("health-verdict")).not.toHaveTextContent("RESEARCH WINDOW");
+  });
+
   it("does not excuse a resident outage from an unbound runtime payload", async () => {
     const http = await import("../src/api/http");
     D.samples = D.samples.map((sample) => ({ ...sample, vllm: null }));
