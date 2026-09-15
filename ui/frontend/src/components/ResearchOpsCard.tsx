@@ -53,6 +53,8 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
     next?.manifest_sha256 === plannedWork.manifest_sha256;
   const linked = iteration && iteration.kind === "campaign_iteration_recorded" && ID.test(String(iteration.iteration_id)) &&
     ID.test(String(iteration.topic_id)) && utc(iteration.at) && SHA.test(String(iteration.loop_source_sha256)) ? iteration : null;
+  const linkedGate = linked && ["pending", "blocked", "passed", "failed"].includes(String(linked.gate_status))
+    ? String(linked.gate_status) : "unknown";
   const boundCycle = cycle && ID.test(String(cycle.run_id)) && utc(cycle.at) && SHA.test(String(cycle.raw_row_sha256)) &&
     SHA.test(String(cycle.cycles_source_sha256)) && count(cycle.planned_count) && count(cycle.dispatched_count) &&
     count(cycle.outcome_count) && (cycle.action_code === "noop" || cycle.action_code === "actions_planned") &&
@@ -121,6 +123,7 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Last linked campaign iteration</dt>
           <dd className="mt-1">{linked ? `${String(linked.iteration_id)} · ${stamp(linked.at)}` : "No linked iteration verified in this observation"}</dd>
           {linked && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Topic {String(linked.topic_id)}</dd>}
+          {linked && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Review gate: {linkedGate}. A linked iteration does not itself establish an accepted finding.</dd>}
         </div>
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Latest coordinator cycle</dt>
           <dd className="mt-1">{boundCycle ? `${boundCycle.action_code === "noop" ? "No-op plan" : "Plan recorded"} · ${String(boundCycle.planned_count)} planned · ${String(boundCycle.dispatched_count)} dispatched` : "No bound coordinator check"}</dd>
