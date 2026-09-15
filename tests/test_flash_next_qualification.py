@@ -1311,6 +1311,51 @@ def test_live_swap_limit_drift_stops_only_the_exact_candidate(tmp_path):
     monitor._stream.close()
 
 
+def test_cgroup_sidecar_binds_raw_phase_telemetry_without_forging_a_pass(tmp_path):
+    output = tmp_path / "qfn-c0-s0-sidecar"
+    output.mkdir()
+    rows = []
+    for ordinal, phase in enumerate(("load", "ready", "probes"), 1):
+        cgroup = {
+            **clean_cgroup(FakeOps.candidate_id, 200),
+            "memory_current_bytes": ordinal * 1024,
+            "selected_memory_stat": {
+                "anon": ordinal * 512, "file": ordinal * 512,
+                "shmem": 0, "active_file": 0, "inactive_file": 0,
+                "pgscan": ordinal, "pgsteal": ordinal,
+            },
+        }
+        rows.append({
+            "schema": "qwen-flash-next-memory-sample/v3",
+            "observed_at": f"2026-09-15T00:00:0{ordinal}+00:00",
+            "monitor_phase": phase,
+            "candidate": {"id": FakeOps.candidate_id, "armed": True, "cgroup": cgroup},
+            "mem_available_gib": 36.0,
+            "host_meminfo_kib": {"MemFree": 1024, "Cached": 2048},
+            "pswpout_pages": 123 + ordinal,
+        })
+    raw = b"".join(q.canonical_json(row) + b"\n" for row in rows)
+    (output / "memory.jsonl").write_bytes(raw)
+    diagnostic_sha, memory_sha = q._write_cgroup_diagnostics(
+        output, FakeOps.candidate_id, required=True
+    )
+    sidecar_raw = (output / "cgroup-diagnostics.json").read_bytes()
+    sidecar = json.loads(sidecar_raw)
+    assert diagnostic_sha == q.sha256(sidecar_raw)
+    assert memory_sha == q.sha256(raw) == sidecar["memory_log_sha256"]
+    assert sidecar["maximum_memory_current_bytes"] == 3072
+    assert sidecar["phase_first_last"]["probes"]["last"]["candidate_cgroup"]["selected_memory_stat"]["anon"] == 1536
+    assert sidecar["registered_memory_max_bytes"] == q.DOCKER_MEMORY_LIMIT_BYTES
+    assert sidecar["registered_swap_max_bytes"] == 0
+
+    rows[1]["candidate"]["id"] = "b" * 64
+    (output / "memory.jsonl").write_bytes(
+        b"".join(q.canonical_json(row) + b"\n" for row in rows)
+    )
+    with pytest.raises(q.QualificationError, match="diagnostic identity changed"):
+        q._write_cgroup_diagnostics(output, FakeOps.candidate_id, required=True)
+
+
 def test_cgroup_snapshot_reads_local_events_between_stable_pid_checks(monkeypatch):
     ticks = iter([12345, 12345])
     reads = []
