@@ -57,7 +57,11 @@ MODEL_REVISION = "fc694b54fb0174e0913e6adf86691ef85a4ead47"
 MODEL_REPOSITORY = "nvidia/Qwen3.8-Flash-Next-NVFP4"
 SERVED_MODEL = "qwen3.8-flash-next"
 CONTAINER_NAME = "vllm-qwen-ab-flash-20260915"
-COMPILE_CACHE = Path("/mnt/vllm-cache/qwen38-flash-next-d453-c0")
+COMPILE_CACHE_PARENT = Path(
+    "/home/decross1/projects/a_bgt_rsi_runtime_candidates/"
+    "flash-next-20260914/compile-cache-c0"
+)
+COMPILE_CACHE = COMPILE_CACHE_PARENT / "qwen38-flash-next-d453-c0"
 NARA_SERVICE = "nara-daemon.service"
 MIN_MEMORY_GIB = 30
 MAX_INVOCATION_SECONDS = 3600
@@ -840,12 +844,17 @@ def _append_research_usage(row: dict[str, Any], ledger: Path = RESEARCH_LEDGER) 
 
 def _ensure_compile_cache() -> None:
     parent = COMPILE_CACHE.parent
-    if parent.exists() and (parent.is_symlink() or not parent.is_dir()):
-        raise QualificationError("compile-cache parent is redirected")
-    if not parent.exists():
-        if parent.parent != Path("/mnt") or Path("/mnt").is_symlink():
-            raise QualificationError("compile-cache parent is outside the allowlist")
-        parent.mkdir(mode=0o755)
+    if parent != COMPILE_CACHE_PARENT:
+        raise QualificationError("compile-cache parent is outside the allowlist")
+    if (
+        not parent.exists()
+        or parent.is_symlink()
+        or not parent.is_dir()
+        or parent.resolve() != parent
+    ):
+        raise QualificationError("compile-cache parent is absent or redirected")
+    if parent.stat().st_uid != os.getuid():
+        raise QualificationError("compile-cache parent is not owned by the invoking account")
     if COMPILE_CACHE.exists() and (COMPILE_CACHE.is_symlink() or not COMPILE_CACHE.is_dir()):
         raise QualificationError("compile-cache path is redirected")
     COMPILE_CACHE.mkdir(mode=0o755, exist_ok=True)

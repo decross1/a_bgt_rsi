@@ -149,6 +149,35 @@ def test_controller_does_not_import_or_construct_weekly_budget_ledger():
     assert "BudgetLedger" not in calls
 
 
+def test_compile_cache_is_created_only_below_owned_registered_parent(
+    monkeypatch, tmp_path
+):
+    parent = tmp_path / "compile-cache-c0"
+    child = parent / "qwen38-flash-next-d453-c0"
+    monkeypatch.setattr(q, "COMPILE_CACHE_PARENT", parent)
+    monkeypatch.setattr(q, "COMPILE_CACHE", child)
+
+    with pytest.raises(q.QualificationError, match="absent or redirected"):
+        q._ensure_compile_cache()
+
+    parent.mkdir()
+    q._ensure_compile_cache()
+    assert child.is_dir()
+    assert not child.is_symlink()
+
+
+def test_compile_cache_rejects_redirected_registered_parent(monkeypatch, tmp_path):
+    target = tmp_path / "target"
+    target.mkdir()
+    parent = tmp_path / "compile-cache-c0"
+    parent.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(q, "COMPILE_CACHE_PARENT", parent)
+    monkeypatch.setattr(q, "COMPILE_CACHE", parent / "qwen38-flash-next-d453-c0")
+
+    with pytest.raises(q.QualificationError, match="absent or redirected"):
+        q._ensure_compile_cache()
+
+
 class FakeMonitor:
     failure = None
     emergency_stop_at = None
