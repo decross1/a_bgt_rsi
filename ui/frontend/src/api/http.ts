@@ -154,6 +154,9 @@ export const getLabModelEvalProgress = () =>
 export const getLabModelSupplementProgress = () =>
   getJSON<unknown>("/api/lab_model_supplement_progress");
 
+export const getLabModelContextCrossplanProgress = () =>
+  getJSON<unknown>("/api/lab_model_context_crossplan_progress");
+
 export const getRecentTelemetry = (limit = 300) =>
   getJSON<{ samples: TelemetrySample[] }>(`/api/telemetry/recent?limit=${limit}`);
 
