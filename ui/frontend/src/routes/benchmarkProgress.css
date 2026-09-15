@@ -150,6 +150,7 @@
 .benchmark-table tbody th { min-width:160px; font-weight:var(--weight-normal); }
 .benchmark-table tbody th strong,.benchmark-table tbody th span { display:block; }
 .benchmark-table tbody th span,.benchmark-table td small { margin-top:2px; color:var(--fg-muted); font-size:10px; font-weight:var(--weight-normal); }
+.benchmark-table td small { display:block; }
 .benchmark-empty-inline,.benchmark-filter-empty { margin:0; padding:var(--space-5); color:var(--fg-muted); border-top:1px solid var(--border-1); }
 .benchmark-details { padding:var(--space-3) var(--space-4); }
 .benchmark-details>summary { width:fit-content; color:var(--accent); font-size:var(--text-ui); cursor:pointer; }
