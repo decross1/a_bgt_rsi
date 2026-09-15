@@ -60,6 +60,32 @@ def test_running_and_aborted_stages_still_withhold_scores(prepared):
     assert projected["results"] is None
 
 
+def test_fixed_closed_no_call_receipt_requires_absence_of_worker_sources(prepared, monkeypatch):
+    root, output, _plan = prepared
+    archived = json.loads((p.OUTPUT / "not-issued.json").read_bytes())
+    archived["window_sha256"] = p.WINDOW_SHA
+    (output / "not-issued.json").write_bytes(json.dumps(
+        archived, sort_keys=True, separators=(",", ":"),
+    ).encode() + b"\n")
+    monkeypatch.setattr(p, "NONEXECUTION_SHA", p._document(output / "not-issued.json", 8_000)[1])
+    row = p.project_progress(root)
+    assert row["status"] == "closed_unissued"
+    assert row["nonexecution_raw_sha256"] == p.NONEXECUTION_SHA
+    assert row["results"] is None
+    (output / "supervision-reservation.json").write_bytes(b"{}\n")
+    assert p.project_progress(root)["status"] == "source_unavailable"
+
+
+def test_resealed_nonexecution_count_is_not_a_closed_no_call_receipt(prepared, monkeypatch):
+    root, output, _plan = prepared
+    archived = json.loads((p.OUTPUT / "not-issued.json").read_bytes())
+    archived["window_sha256"] = p.WINDOW_SHA
+    archived["issued_model_calls"] = 1
+    (output / "not-issued.json").write_bytes(json.dumps(archived).encode() + b"\n")
+    monkeypatch.setattr(p, "NONEXECUTION_SHA", p._document(output / "not-issued.json", 8_000)[1])
+    assert p.project_progress(root)["status"] == "source_unavailable"
+
+
 def _public_run(plan: dict):
     slots = []
     outcomes = []
