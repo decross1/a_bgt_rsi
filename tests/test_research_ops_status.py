@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from datetime import datetime, timezone
@@ -149,6 +150,98 @@ def test_one_new_iteration_proposes_empirical_study_with_two_topics_still_queued
     assert x["next_work"]["study_id"] == "known-opponent-utility-response-pilot-v1"
     assert x["next_work"]["preregistration_sha256"] == campaign[
         "study_manifests"][0]["preregistration_sha256"]
+
+
+def test_recorded_pilot_admission_changes_next_work_without_science_claim(tmp_path):
+    root = _root(tmp_path, KNOWN_OPPONENT_CAMPAIGN_ID)
+    campaign = load_campaign(KNOWN_OPPONENT_CAMPAIGN_ID, repo_root=root)
+    first = campaign["topic_policy"]["topics"][0]
+    _rows(root, "memory/loop_memory.jsonl", [{
+        "iteration_id": "iter-new-001", "ended_at": "2026-09-15T16:25:00Z",
+        "campaign": bind_topic(campaign, first["text"]), "gate_status": "pending",
+    }])
+    pilot_root = tmp_path / "pilot-root"
+    child = pilot_root / "qfn-followon-known-opponent-lab8h-a"
+    child.mkdir(parents=True)
+
+    def raw(relative, value):
+        path = child / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(value, sort_keys=True).encode() + b"\n"
+        path.write_bytes(payload)
+        return hashlib.sha256(payload).hexdigest()
+
+    policy = {"temperature": 0.0, "top_p": 1.0, "top_k": 64,
+              "enable_thinking": False}
+    endpoint = {"name": "resident_gemma"}
+    manifest_sha = "a" * 64
+    frozen_manifest_raw_sha = raw("manifest.snapshot.json", {
+        "schema": "known-opponent-utility-response-pilot/v1",
+        "campaign_id": KNOWN_OPPONENT_CAMPAIGN_ID,
+        "study_id": "known-opponent-utility-response-pilot-v1",
+        "source_root": str(root), "policy": policy, "endpoint": endpoint,
+        "manifest_sha256": manifest_sha,
+    })
+    (child / "pilot").mkdir()
+    (child / "pilot/manifest.json").write_bytes((child / "manifest.snapshot.json").read_bytes())
+    window_sha = raw("window.json", {
+        "schema": "known-opponent-resident-study-window/v1",
+        "window_id": child.name, "output_dir": str(child), "code_root": str(root),
+        "policy": policy, "endpoint": endpoint,
+        "manifest": {"path": str(child / "manifest.snapshot.json"),
+                     "sha256": frozen_manifest_raw_sha},
+    })
+    run_sha = raw("pilot/run.json", {
+        "schema": "known-opponent-utility-response-pilot-run/v1", "status": "complete",
+        "scheduled_calls": 108, "attempted_calls": 108, "manifest_sha256": manifest_sha,
+    })
+    result_sha = raw("result.json", {
+        "schema": "known-opponent-resident-study-result/v1",
+        "status": "observed_restored", "window_sha256": window_sha,
+        "pilot_run_sha256": run_sha,
+        "restoration": {"status": "verified", "sentinel_retained": False},
+        "error": None, "finished_at": "2026-09-15T17:20:00Z",
+    })
+    supervision_sha = raw("supervision.json", {
+        "schema": "known-opponent-resident-study-supervision/v1",
+        "window_sha256": window_sha, "returncode": 0,
+        "terminated_at_cutoff": False, "interrupted": None,
+        "emergency_restoration": None,
+    })
+    validation = {
+        "schema": "known-opponent-utility-response-validation/v1",
+        "status": "admitted_empirical_pilot", "admission_eligible": True,
+        "study_id": "known-opponent-utility-response-pilot-v1",
+        "campaign_id": KNOWN_OPPONENT_CAMPAIGN_ID,
+        "run_sha256": run_sha, "manifest_sha256": manifest_sha,
+        "attempted_calls": 108, "complete_episodes": 12,
+    }
+    admission_sha = raw("admission.json", {
+        "schema": "known-opponent-resident-study-admission/v1", "window_id": child.name,
+        "window_sha256": window_sha, "result_sha256": result_sha,
+        "supervision_sha256": supervision_sha, "pilot_run_sha256": run_sha,
+        "pilot_validation": validation, "comparison_eligible": False,
+        "promotion_authorized": False, "trading_claim_authorized": False,
+    })
+    observed = datetime(2026, 9, 15, 17, 30, tzinfo=timezone.utc)
+    x = project_research_ops_status(repo_root=root, pilot_root=pilot_root,
+                                    observed_at=observed)
+    assert x["campaign_queue"]["eligible_count"] == 2
+    assert x["empirical_pilot"]["status"] == "recorded_admitted"
+    assert x["empirical_pilot"]["admission_receipt_sha256"] == admission_sha
+    assert x["empirical_pilot"]["current_source_replay"] == "not_performed"
+    assert x["next_work"]["code"] == "review_admitted_empirical_pilot"
+    assert x["next_work"]["pilot_admission_receipt_sha256"] == admission_sha
+    assert x["next_work"]["preregistration_sha256"] == campaign[
+        "study_manifests"][0]["preregistration_sha256"]
+    assert "continuous" not in json.dumps(x)
+
+    # A changed public run cannot inherit the recorded terminal gate.
+    (child / "pilot/run.json").write_text("{}\n")
+    x = project_research_ops_status(repo_root=root, pilot_root=pilot_root,
+                                    observed_at=observed)
+    assert x["empirical_pilot"]["status"] == "source_unknown"
+    assert x["next_work"]["code"] == "freeze_and_run_registered_empirical_study"
 
 
 def test_new_campaign_refuses_execution_source_drift(tmp_path):
