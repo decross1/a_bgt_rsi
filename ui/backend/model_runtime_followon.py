@@ -402,32 +402,53 @@ def maybe_project_followon(
     boot_id_path: Path,
     observed: datetime,
 ) -> dict[str, Any] | None:
-    """A newer invalid follow-on state blocks fallback to older controllers."""
+    """A newer invalid Flash or resident state blocks older-controller fallback."""
     try:
         from .model_runtime_extended import _latest_slot_mtime as old_slot
+        from .model_runtime_resident_followon import (
+            latest_slot_mtime as resident_slot,
+        )
+        from .model_runtime_resident_followon import (
+            project_resident_runtime,
+        )
 
         current = old_slot(qualification_root, extended=False)
         original = old_slot(original_evaluation_root, extended=True)
-        followon = _latest_slot_mtime(followon_root)
+        flash = _latest_slot_mtime(followon_root)
+        resident = resident_slot(followon_root)
+        followon = max((item for item in (flash, resident) if item is not None),
+                       default=None)
         older = max((item for item in (current, original) if item is not None),
                     default=None)
         if followon is None or (older is not None and followon < older):
             return None
-        if older is not None and followon == older:
+        if ((older is not None and followon == older)
+                or (flash is not None and resident is not None
+                    and flash == resident)):
             return mr._unknown(observed.isoformat(), "runtime states have ambiguous order")
-        projected = project_followon_runtime(
-            followon_root, proc_root=proc_root,
-            boot_id_path=boot_id_path, observed=observed,
+        projected = (
+            project_resident_runtime(
+                followon_root, proc_root=proc_root,
+                boot_id_path=boot_id_path, observed=observed,
+            ) if resident is not None and (flash is None or resident > flash)
+            else project_followon_runtime(
+                followon_root, proc_root=proc_root,
+                boot_id_path=boot_id_path, observed=observed,
+            )
         )
         current_after = old_slot(qualification_root, extended=False)
         original_after = old_slot(original_evaluation_root, extended=True)
-        followon_after = _latest_slot_mtime(followon_root)
+        flash_after = _latest_slot_mtime(followon_root)
+        resident_after = resident_slot(followon_root)
+        followon_after = max((item for item in (flash_after, resident_after)
+                              if item is not None), default=None)
         older_after = max((item for item in (current_after, original_after)
                            if item is not None), default=None)
         if (
             followon_after is None
             or (older_after is not None and followon_after <= older_after)
             or followon_after != followon
+            or flash_after != flash or resident_after != resident
         ):
             return mr._unknown(observed.isoformat(), "runtime state order changed during admission")
         return projected

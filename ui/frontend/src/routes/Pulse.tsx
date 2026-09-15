@@ -139,6 +139,8 @@ const isExtendedFlashRunId = (value: unknown): value is string =>
   typeof value === "string" && /^qfn-ab-[a-z0-9][a-z0-9._-]{0,63}\.flash$/.test(value);
 const isFollowonFlashRunId = (value: unknown): value is string =>
   typeof value === "string" && /^qfn-followon-[a-z0-9][a-z0-9._-]{0,63}\.flash$/.test(value);
+const isFollowonResidentRunId = (value: unknown): value is string =>
+  typeof value === "string" && /^qfn-followon-[a-z0-9][a-z0-9._-]{0,63}\.resident$/.test(value);
 const isMiaProfileRunId = (value: unknown): value is string =>
   typeof value === "string" && /^qfn-mia-(?:mtp[123]|ctx69632|mtp3-red47k)-[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(value);
 const positiveInteger = (value: unknown) =>
@@ -211,9 +213,10 @@ function isModelRuntime(value: unknown): value is ModelRuntime {
     ["resident", "candidate_research", "transitioning", "unknown"].includes(
       String(row.mode),
     ) &&
-    ["qualification_state", "extended_evaluation_state", "followon_evaluation_state", "none"].includes(String(row.mode_source)) &&
+    ["qualification_state", "extended_evaluation_state", "followon_evaluation_state", "followon_resident_state", "none"].includes(String(row.mode_source)) &&
     (row.mode_source !== "extended_evaluation_state" || isExtendedFlashRunId(row.run_id)) &&
     (row.mode_source !== "followon_evaluation_state" || isFollowonFlashRunId(row.run_id)) &&
+    (row.mode_source !== "followon_resident_state" || isFollowonResidentRunId(row.run_id)) &&
     ["online", "stopped", "unknown"].includes(
       String(row.resident_services_expected),
     ) &&
@@ -599,7 +602,9 @@ export default function Pulse() {
   const runtimeAgeMs = Number.isFinite(runtimeObservedMs) ? now - runtimeObservedMs : Number.NaN;
   const boundRuntimeMode =
     (modelRuntime?.mode_source === "qualification_state" ||
-      (modelRuntime?.mode_source === "extended_evaluation_state" && isExtendedFlashRunId(modelRuntime.run_id))) &&
+      (modelRuntime?.mode_source === "extended_evaluation_state" && isExtendedFlashRunId(modelRuntime.run_id)) ||
+      (modelRuntime?.mode_source === "followon_evaluation_state" && isFollowonFlashRunId(modelRuntime.run_id)) ||
+      (modelRuntime?.mode_source === "followon_resident_state" && isFollowonResidentRunId(modelRuntime.run_id))) &&
     typeof modelRuntime.mode_source_sha256 === "string" &&
     /^[0-9a-f]{64}$/.test(modelRuntime.mode_source_sha256) &&
     typeof modelRuntime.run_id === "string" &&
@@ -615,6 +620,12 @@ export default function Pulse() {
     modelRuntime?.mode === "candidate_research" &&
     boundRuntimeMode &&
     modelRuntime.resident_services_expected === "stopped";
+  const residentResearchWindow =
+    modelRuntime?.mode_source === "followon_resident_state" &&
+    modelRuntime.mode === "resident" && boundRuntimeMode &&
+    modelRuntime.phase === "evaluation" &&
+    modelRuntime.resident_services_expected === "online" &&
+    modelRuntime.nara_service_expected === "paused";
   const selectedMiaVariant = boundRuntimeMode &&
     isRegisteredMiaVariant(modelRuntime?.candidate_variant, modelRuntime?.mode_source) &&
     (modelRuntime?.run_id?.startsWith("qfn-mia-c0-") ||
@@ -652,7 +663,9 @@ export default function Pulse() {
     readErrors.length > 0 ? `read errors: ${readErrors.join(", ")}` : null,
   ].filter((value): value is string => value != null);
   const runtimeModeLabel =
-    residentRuntime
+    residentResearchWindow
+      ? "Resident research window"
+      : residentRuntime
       ? "Resident serving"
       : candidateResearchWindow
         ? selectedMiaVariant ? "Mia candidate research window" : "Candidate research window"
@@ -662,7 +675,9 @@ export default function Pulse() {
             : "Runtime transition"
           : "Operating mode unverified";
   const runtimeModeNote =
-    residentRuntime
+    residentResearchWindow
+      ? "Controller state expects Gemma and Qwen online while Nara is paused for this supervised research arm. Live endpoint and service observations remain separate."
+      : residentRuntime
       ? "Controller state expects the production resident services online."
       : candidateResearchWindow
         ? candidateEndpointStarting
@@ -721,7 +736,22 @@ export default function Pulse() {
         </span>
         <span>backend-reported revision {health?.version ?? "unknown"}</span>
         <span style={{ marginLeft: "auto" }}>
-          {candidateResearchWindow ? (
+          {residentResearchWindow ? (
+            <div
+              data-testid="health-verdict"
+              data-level="research"
+              className="flex flex-wrap items-center gap-2 text-[var(--fg-muted)]"
+            >
+              <span className="font-semibold text-[var(--accent)]">RESEARCH WINDOW</span>
+              <span>Resident models are expected online while Nara is paused for this research arm.</span>
+              <span>Live model and Nara status remain separately observed.</span>
+              {runtimeObservabilityIssues.length > 0 && (
+                <span className="text-[var(--status-warn)]" data-testid="runtime-observability-warning">
+                  Observability: {runtimeObservabilityIssues.join("; ")}.
+                </span>
+              )}
+            </div>
+          ) : candidateResearchWindow ? (
             <div
               data-testid="health-verdict"
               data-level="research"

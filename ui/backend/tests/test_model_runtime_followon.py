@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from backend import model_runtime as mr
 from backend import model_runtime_extended as old
 from backend import model_runtime_followon as followon
+from backend import model_runtime_resident_followon as resident
 
 NOW = datetime(2026, 9, 15, 10, 0, tzinfo=timezone.utc)
 
@@ -56,6 +57,44 @@ def test_equal_runtime_state_order_is_unknown(monkeypatch, tmp_path):
     )
     assert projected is not None
     assert projected["mode"] == "unknown"
+
+
+def test_active_resident_followon_outranks_completed_first_flash_pair(monkeypatch, tmp_path):
+    roots = [tmp_path / name for name in ("qualification", "evaluation", "followon")]
+    monkeypatch.setattr(old, "_latest_slot_mtime", lambda *_args, **_kw: 10)
+    monkeypatch.setattr(followon, "_latest_slot_mtime", lambda *_args: 20)
+    monkeypatch.setattr(resident, "latest_slot_mtime", lambda *_args: 30)
+    selected = {
+        "mode": "resident", "mode_source": "followon_resident_state",
+        "nara_service_expected": "paused", "candidate_variant": None,
+        "run_id": "qfn-followon-c0-pilot-20260915-a.resident",
+    }
+    monkeypatch.setattr(resident, "project_resident_runtime",
+                        lambda *_args, **_kw: selected)
+    monkeypatch.setattr(followon, "project_followon_runtime",
+                        lambda *_args, **_kw: (_ for _ in ()).throw(
+                            AssertionError("completed Flash state won over live resident")
+                        ))
+    assert followon.maybe_project_followon(
+        *roots, proc_root=tmp_path / "proc", boot_id_path=tmp_path / "boot",
+        observed=NOW,
+    ) == selected
+
+
+def test_invalid_newer_resident_state_blocks_old_flash_fallback(monkeypatch, tmp_path):
+    roots = [tmp_path / name for name in ("qualification", "evaluation", "followon")]
+    monkeypatch.setattr(old, "_latest_slot_mtime", lambda *_args, **_kw: 10)
+    monkeypatch.setattr(followon, "_latest_slot_mtime", lambda *_args: 20)
+    monkeypatch.setattr(resident, "latest_slot_mtime", lambda *_args: 30)
+    monkeypatch.setattr(resident, "project_resident_runtime",
+                        lambda *_args, **_kw: (_ for _ in ()).throw(
+                            mr.RuntimeSourceError("invalid resident proof")
+                        ))
+    result = followon.maybe_project_followon(
+        *roots, proc_root=tmp_path / "proc", boot_id_path=tmp_path / "boot",
+        observed=NOW,
+    )
+    assert result["mode"] == "unknown"
 
 
 def test_candidate_cgroup_identity_requires_exact_docker_path():
