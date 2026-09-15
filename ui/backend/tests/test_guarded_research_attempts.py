@@ -260,6 +260,7 @@ def test_future_d_guard_record_does_not_claim_final_record_until_loop_and_journa
     (repo / journal).write_text("# Recorded iteration\n", encoding="utf-8")
     memory = {
         "iteration_id": "iter-2026-09-15-006",
+        "seed": {"source": "known_opponent_utility_bridge"},
         "started_at": "2026-09-15T20:21:00+00:00",
         "ended_at": "2026-09-15T20:22:00+00:00",
         "campaign": {
@@ -287,6 +288,13 @@ def test_future_d_guard_record_does_not_claim_final_record_until_loop_and_journa
     )
     assert unresolved_parent["attempts"][0]["terminal_status"] == "source_unavailable"
     emergency.unlink()
+    memory["seed"]["source"] = "coordinator"
+    _write(repo / "memory/loop_memory.jsonl", memory)
+    wrong_source = attempts.project_attempts(
+        producer_view=_view(), root=root, repo_root=repo, now=NOW,
+    )
+    assert wrong_source["attempts"][0]["terminal_status"] == "guard_recorded_final_unverified"
+    memory["seed"]["source"] = "known_opponent_utility_bridge"
     memory["experiment_outcome"] = {"experiment_id": "different-evidence"}
     _write(repo / "memory/loop_memory.jsonl", memory)
     drifted = attempts.project_attempts(

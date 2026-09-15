@@ -183,13 +183,16 @@ def _final_record(repo_root: Path, iteration: dict, plan: dict, *,
     if len(matches) != 1:
         return None
     row = matches[0]
+    seed = row.get("seed")
     campaign = row.get("campaign")
     critique = row.get("critique")
     novelty = row.get("novelty")
     journal = row.get("journal_entry_path")
     row_started, row_ended = _utc(row.get("started_at")), _utc(row.get("ended_at"))
     plan_recorded = _utc(plan.get("recorded_at"))
-    if (not isinstance(campaign, dict)
+    if (not isinstance(seed, dict)
+            or seed.get("source") != "known_opponent_utility_bridge"
+            or not isinstance(campaign, dict)
             or campaign.get("campaign_id") != CAMPAIGN_ID
             or campaign.get("campaign_manifest_sha256") !=
             plan.get("campaign_manifest_sha256")
