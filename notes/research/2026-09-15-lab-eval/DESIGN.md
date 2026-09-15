@@ -7,11 +7,13 @@ portfolio under new, explicit role policies and output caps. The original
 MTP0 run, manifests, scores, and grader code remain immutable. Neither bundle
 is promoted by this evaluation.
 
-The resident routes Qwen to science generation, evidence, and selected critics;
-Gemma handles topic, coding, tools, historical repairs, and original context.
-Flash uses its single registered Mia endpoint for every role. Qwen and Flash
-have explicit thinking-off or medium controls, with xhigh only for the
-current-critic calls. Gemma uses explicit thinking off; its template does not
+The resident routes Qwen to science generation, evidence, selected critics,
+and every role-effort arm; Gemma handles topic, coding, objective tools,
+historical repairs, and original context. Flash uses its single registered Mia
+endpoint for every role. Qwen and Flash have explicit thinking-off, medium,
+and xhigh controls. In the role-effort family, adaptive evidence/execution may
+escalate medium to xhigh only after a public format or uncertainty signal.
+Gemma uses explicit thinking off; its template does not
 support the same reasoning-effort labels. The suite therefore measures whole
 model/runtime/policy bundles, not a causal effect of one model weight change.
 
@@ -22,7 +24,7 @@ model/runtime/policy bundles, not a causal effect of one model weight change.
 | Context | 4 | Gemma/Mia off; 2,048 tokens, 100 s |
 | Portfolio | 16 | Science/evidence medium 6,144 tokens/120 s; coding off 8,192/240 s |
 | Diversity | 12 | Exploration medium up to 60 s; control off at registered cap |
-| Role effort | 16 | Qwen/Mia critic medium/xhigh; registered caps and timeouts |
+| Role effort | 16 | Qwen/Mia medium/xhigh for all roles, including conditional adaptive retry; registered caps and timeouts |
 | Historical coding | 6 | Gemma/Mia off, 8,192 tokens/240 s |
 
 The exact sum of all possible call timeouts is 9,740 s **per cohort**;
