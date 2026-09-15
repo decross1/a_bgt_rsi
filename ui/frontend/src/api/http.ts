@@ -115,7 +115,7 @@ export interface ModelRuntime {
   schema_version: "model-runtime/v1";
   observed_at: string;
   mode: "resident" | "candidate_research" | "transitioning" | "unknown";
-  mode_source: "qualification_state" | "extended_evaluation_state" | "followon_evaluation_state" | "none";
+  mode_source: "qualification_state" | "extended_evaluation_state" | "followon_evaluation_state" | "followon_resident_state" | "none";
   mode_source_sha256: string | null;
   resident_services_expected: "online" | "stopped" | "unknown";
   nara_service_expected: "running" | "paused" | "unknown";

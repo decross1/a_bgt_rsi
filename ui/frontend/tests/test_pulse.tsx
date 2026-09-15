@@ -682,6 +682,26 @@ describe("Pulse (/)", () => {
     );
   });
 
+  it("shows an admitted active resident follow-on arm with Nara paused", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "resident", mode_source: "followon_resident_state",
+      mode_source_sha256: "a".repeat(64),
+      resident_services_expected: "online", nara_service_expected: "paused",
+      run_id: "qfn-followon-c0-pilot-20260915-a.resident",
+      phase: "evaluation", candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Resident research window" })).toBeInTheDocument(),
+    );
+    const verdict = screen.getByTestId("health-verdict");
+    expect(verdict).toHaveAttribute("data-level", "research");
+    expect(verdict).toHaveTextContent("Nara is paused for this research arm");
+    expect(verdict).not.toHaveTextContent("Mia candidate");
+  });
+
   it("does not trust a runtime receipt that carries a source error", async () => {
     const http = await import("../src/api/http");
     D.samples = D.samples.map((sample) => ({ ...sample, vllm: null }));
