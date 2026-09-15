@@ -599,7 +599,10 @@ export default function Pulse() {
             ? "historical-stale"
             : "current";
   const runtimeObservedMs = modelRuntime ? Date.parse(modelRuntime.observed_at) : Number.NaN;
-  const runtimeAgeMs = Number.isFinite(runtimeObservedMs) ? now - runtimeObservedMs : Number.NaN;
+  // A runtime response can arrive after the last 5 s UI clock tick. Read the
+  // current time at this render so a fresh bound receipt is not misclassified
+  // as future-dated until the next tick; the tick still refreshes stale UI.
+  const runtimeAgeMs = Number.isFinite(runtimeObservedMs) ? Date.now() - runtimeObservedMs : Number.NaN;
   const boundRuntimeMode =
     (modelRuntime?.mode_source === "qualification_state" ||
       (modelRuntime?.mode_source === "extended_evaluation_state" && isExtendedFlashRunId(modelRuntime.run_id)) ||

@@ -702,6 +702,82 @@ describe("Pulse (/)", () => {
     expect(verdict).not.toHaveTextContent("Mia candidate");
   });
 
+  it("accepts a fresh restored resident receipt that arrives after the UI clock tick", async () => {
+    const http = await import("../src/api/http");
+    let publish!: (value: unknown) => void;
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise(resolve => { publish = resolve; }),
+    );
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(http.getModelRuntime).toHaveBeenCalled());
+    // The component sampled its 5 s clock on the initial render. The server
+    // receipt is timestamped only when the delayed poll settles.
+    await new Promise(resolve => setTimeout(resolve, 120));
+    publish({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "resident", mode_source: "followon_evaluation_state",
+      mode_source_sha256: "9".repeat(64),
+      resident_services_expected: "online", nara_service_expected: "running",
+      run_id: "qfn-followon-coding-temp1-20260915-b.flash",
+      phase: "complete", source_error: null,
+      candidate_variant: {
+        spec_id: "mia-925d7be6-mtp3-reduced47k-v2opt-v1",
+        spec_sha256: "e71d3134f407cad3c288c21f9485c27352676dbb7de647c5b567777256702a50",
+        repository: "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4",
+        revision: "925d7be6c14c6c9442ef83e8f05b5a3c39304f69",
+        served_model: "qwen3.8-flash-next-mia",
+        image_id: "sha256:29eab5a29b765eef8b6405bbe0f2d385fc1e7b5e3c7ae18ae70382a68a0a2201",
+        model_artifact_sha256: "a40ce50173dd3aff54da88503894967e5248bbb927f9e4a91eff5a6a7270c168",
+        profile: "MIA-MTP3-REDUCED47K-V2-FULL4-MODE0-32K",
+        configured_max_context_tokens: 32768,
+        configured_mtp_speculative_tokens: 3,
+        configured_kv_cache_memory_bytes: 2147483648,
+        source: "registered_plan_and_controller_state",
+        image_evidence: "registered_source_only",
+        promotion_authorized: false,
+      },
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Resident serving" })).toBeInTheDocument(),
+      { timeout: 900 },
+    );
+  });
+
+  it("withholds resident mode from a stale follow-on receipt", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1",
+      observed_at: new Date(Date.now() - 60_000).toISOString(),
+      mode: "resident", mode_source: "followon_evaluation_state",
+      mode_source_sha256: "9".repeat(64),
+      resident_services_expected: "online", nara_service_expected: "running",
+      run_id: "qfn-followon-coding-temp1-20260915-b.flash",
+      phase: "complete", candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(http.getModelRuntime).toHaveBeenCalled());
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(screen.getByRole("heading", { name: "Operating mode unverified" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Resident serving" })).not.toBeInTheDocument();
+  });
+
+  it("withholds resident mode when the follow-on source SHA is absent", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "resident", mode_source: "followon_evaluation_state",
+      mode_source_sha256: null,
+      resident_services_expected: "online", nara_service_expected: "running",
+      run_id: "qfn-followon-coding-temp1-20260915-b.flash",
+      phase: "complete", candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(http.getModelRuntime).toHaveBeenCalled());
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(screen.getByRole("heading", { name: "Operating mode unverified" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Resident serving" })).not.toBeInTheDocument();
+  });
+
   it("does not trust a runtime receipt that carries a source error", async () => {
     const http = await import("../src/api/http");
     D.samples = D.samples.map((sample) => ({ ...sample, vllm: null }));

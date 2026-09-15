@@ -172,6 +172,16 @@
       "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/overnight-research/quote-abstain-c-content-diagnostic-policy-correction.json",
       "sha256": "9b1f3b08e47a8c120618ab0ce13f0de7d452ad1dd501cb8b2fabf766b62bb59a",
       "bytes": 753
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/applied-trading-public-data/captures/_scheduler/ticks/20260915T145534.492870Z-f4afedc4.json",
+      "sha256": "60c0beefdcf735cd33c09826e760f23bbe84350dde09e1226980cdbe830b90bd",
+      "bytes": 981
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/applied-trading-public-data/captures/spot-BTCUSDT-20260915T145534Z/capture-batch.json",
+      "sha256": "a18cae0dfc35a0344717c93f000c95bb3604fea556cf43259406cb6469c59f7d",
+      "bytes": 1396
     }
   ],
   "implementation_pull_request": "https://github.com/decross1/a_bgt_rsi/pull/37",
