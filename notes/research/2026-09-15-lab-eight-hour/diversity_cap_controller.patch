@@ -1,0 +1,50 @@
+diff --git a/bench/flash_next_ab/lab_window.py b/bench/flash_next_ab/lab_window.py
+index 1749f12..984a4b2 100644
+--- a/bench/flash_next_ab/lab_window.py
++++ b/bench/flash_next_ab/lab_window.py
+@@ -44,8 +44,10 @@ EVALUATORS = {
+     "primary": ("lab_eval_plan", "lab_eval_runner"),
+     "context": ("lab_eval_context", "lab_eval_context"),
+     "fresh": ("lab_eval_fresh", "lab_eval_fresh"),
++    "diversity_cap": ("lab_eval_diversity_cap", "lab_eval_diversity_cap"),
+ }
+-MAX_EVALUATOR_BUDGET_S = {"primary": 10_430, "context": 6000, "fresh": 1800}
++MAX_EVALUATOR_BUDGET_S = {"primary": 10_430, "context": 6000, "fresh": 1800,
++                          "diversity_cap": 2200}
+ 
+ 
+ def _evaluator(kind: str, *, runner: bool = False):
+@@ -85,7 +87,12 @@ def _process_identity(pid: int) -> dict:
+ 
+ def _source_bundle() -> dict:
+     names = {"bench/flash_next_ab/" + name for name in FOLLOWON_SOURCE_MODULES}
+-    names |= {"bench/flash_next_ab/lab_window.py", "orchestrator/weekly_upgrade_trial.py"}
++    names |= {"bench/flash_next_ab/lab_window.py",
++              "bench/flash_next_ab/lab_eval_diversity_cap.py",
++              "bench/flash_next_ab/lab_eval_plan.py",
++              "bench/flash_next_ab/lab_eval_runner.py",
++              "bench/flash_next_ab/lab_eval_replay.py",
++              "orchestrator/weekly_upgrade_trial.py"}
+     return {name: {"path": str(CODE_ROOT / name),
+                    "sha256": _sha(_raw(CODE_ROOT / name))}
+             for name in sorted(names)}
+@@ -95,6 +102,9 @@ def prepare(plan_path: Path, *, cohort: str, window_id: str,
+             runtime_budget_s: int, wall_s: int, kind: str = "primary") -> Path:
+     plan_path = plan_path.absolute()
+     _evaluator(kind).load_plan(plan_path)
++    if kind == "diversity_cap":
++        _must(cohort == "flash" and runtime_budget_s == 2200 and wall_s == 4500,
++              "prospective diversity-cap window uses the exact Flash budget")
+     _must(plan_path.is_relative_to(ARTIFACT_ROOT), "evaluation plan is outside lab artifacts")
+     _must(cohort in {"resident", "flash"}, "unknown cohort")
+     _must(re.fullmatch(r"qfn-ab-[a-z0-9][a-z0-9._-]{0,63}", window_id) is not None,
+@@ -155,6 +165,9 @@ def load_window(path: Path) -> tuple[dict, object]:
+     _must(document["restoration_reserve_s"] == RESTORE_S
+           and document["minimum_mem_available_gib"] == 20
+           and document["promotion_authorized"] is False, "window authority changed")
++    if document["evaluation_kind"] == "diversity_cap":
++        _must(document["cohort"] == "flash" and document["runtime_budget_s"] == 2200
++              and document["wall_s"] == 4500, "diversity-cap window budget changed")
+     minimum_setup = 1500 if document["cohort"] == "flash" else 60
+     _must(type(document["runtime_budget_s"]) is int
+           and 60 <= document["runtime_budget_s"] <= MAX_EVALUATOR_BUDGET_S[document["evaluation_kind"]]
