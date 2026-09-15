@@ -39,7 +39,7 @@ def _view() -> dict:
 
 def _receipt(root: Path, arm: str, *, status: str, started: str,
              finished: str) -> tuple[Path, str, str, str]:
-    window_id = attempts.IDS["cba".index(arm)]
+    window_id = attempts.IDS["dcba".index(arm)]
     child = root / window_id
     plan = {
         "schema": "guarded-empirical-research-bridge/v1",
@@ -67,7 +67,7 @@ def _receipt(root: Path, arm: str, *, status: str, started: str,
         "scientific_admission_by_this_guard": False,
         "child_returncode": 1 if status == "incomplete" else 0,
         "iteration": None if status == "incomplete" else {
-            "iteration_id": "iter-2026-09-15-005", "campaign_id": CAMPAIGN,
+            "iteration_id": "iter-2026-09-15-006", "campaign_id": CAMPAIGN,
             "pilot_run_sha256": PILOT_SHA, "critic_verdict": "refuted",
             "novelty_class": "empirical",
         },
@@ -100,7 +100,7 @@ def _b_audit(root: Path, *, plan_sha: str, state_sha: str, result_sha: str) -> N
     }
     audit = {
         "schema": "bridge-b-empirical-prompt-chronology/v1",
-        "window_id": attempts.IDS[1],
+        "window_id": attempts.IDS[2],
         "evidence_status": "partial_restored_unadmitted",
         "scientific_result": "not_recorded_or_admitted",
         "private_content_exported": False,
@@ -115,7 +115,7 @@ def _b_audit(root: Path, *, plan_sha: str, state_sha: str, result_sha: str) -> N
         },
         "raw_private_prompt": "must not leave the API",
     }
-    _write(root / f"{attempts.IDS[1]}.partial-prompt-audit.json", audit)
+    _write(root / f"{attempts.IDS[2]}.partial-prompt-audit.json", audit)
 
 
 def _root(tmp_path: Path) -> tuple[Path, Path]:
@@ -136,18 +136,25 @@ def _root(tmp_path: Path) -> tuple[Path, Path]:
         finished="2026-09-15T19:39:29+00:00",
     )
     _b_audit(root, plan_sha=b_plan, state_sha=b_state, result_sha=b_result)
+    _receipt(
+        root, "c", status="incomplete",
+        started="2026-09-15T20:14:21+00:00",
+        finished="2026-09-15T20:17:46+00:00",
+    )
     return root, repo
 
 
-def test_fixed_a_b_history_preserves_parent_restoration_disagreement(tmp_path):
+def test_fixed_a_b_c_history_preserves_parent_restoration_disagreement(tmp_path):
     root, repo = _root(tmp_path)
     view = attempts.project_attempts(
         producer_view=_view(), root=root, repo_root=repo, now=NOW,
     )
     assert view["latest_terminal_window_id"] == attempts.IDS[1]
-    c, b, a = view["attempts"]
-    assert c["terminal_status"] == "no_terminal_receipt"
-    assert b["terminal_status"] == a["terminal_status"] == "incomplete"
+    d, c, b, a = view["attempts"]
+    assert d["terminal_status"] == "no_terminal_receipt"
+    assert c["terminal_status"] == b["terminal_status"] == a["terminal_status"] == "incomplete"
+    assert c["restoration_status"] == "guard_and_parent_verified"
+    assert c["final_record_status"] == "absent"
     assert b["restoration_status"] == "guard_and_parent_verified"
     assert a["restoration_status"] == "guard_verified_parent_unverified"
     assert b["partial_prompt_receipts"] == 15
@@ -160,16 +167,16 @@ def test_fixed_a_b_history_preserves_parent_restoration_disagreement(tmp_path):
 
 def test_tampered_terminal_source_withholds_the_attempt_without_hiding_others(tmp_path):
     root, repo = _root(tmp_path)
-    b = root / attempts.IDS[1] / "state.json"
+    b = root / attempts.IDS[2] / "state.json"
     state = json.loads(b.read_text())
     state["restoration"]["sentinel_retained"] = True
     _write(b, state)
     view = attempts.project_attempts(
         producer_view=_view(), root=root, repo_root=repo, now=NOW,
     )
-    assert view["attempts"][1]["terminal_status"] == "source_unavailable"
-    assert view["attempts"][2]["terminal_status"] == "incomplete"
-    assert view["latest_terminal_window_id"] == attempts.IDS[2]
+    assert view["attempts"][2]["terminal_status"] == "source_unavailable"
+    assert view["attempts"][1]["terminal_status"] == "incomplete"
+    assert view["latest_terminal_window_id"] == attempts.IDS[1]
 
 
 def test_registered_b_partial_count_requires_immutable_archived_audit_hash(
@@ -182,9 +189,9 @@ def test_registered_b_partial_count_requires_immutable_archived_audit_hash(
     view = attempts.project_attempts(
         producer_view=_view(), root=root, repo_root=repo, now=NOW,
     )
-    assert view["attempts"][1]["terminal_status"] == "incomplete"
-    assert view["attempts"][1]["partial_prompt_receipts"] is None
-    assert view["attempts"][1]["partial_audit_raw_sha256"] is None
+    assert view["attempts"][2]["terminal_status"] == "incomplete"
+    assert view["attempts"][2]["partial_prompt_receipts"] is None
+    assert view["attempts"][2]["partial_audit_raw_sha256"] is None
 
 
 def test_archived_bridge_history_survives_later_campaign_activation(
@@ -201,15 +208,15 @@ def test_archived_bridge_history_survives_later_campaign_activation(
     view = attempts.project_attempts(
         producer_view=changed, root=root, repo_root=repo, now=NOW,
     )
-    assert view["attempts"][1]["terminal_status"] == "incomplete"
     assert view["attempts"][2]["terminal_status"] == "incomplete"
+    assert view["attempts"][3]["terminal_status"] == "incomplete"
     assert view["latest_terminal_window_id"] == attempts.IDS[1]
 
 
 def test_registered_terminal_receipt_rejects_resealed_harmless_field(
         tmp_path, monkeypatch):
     root, repo = _root(tmp_path)
-    b_id = attempts.IDS[1]
+    b_id = attempts.IDS[2]
     child = root / b_id
     registered = {
         key: hashlib.sha256(path.read_bytes()).hexdigest()
@@ -226,35 +233,35 @@ def test_registered_terminal_receipt_rejects_resealed_harmless_field(
     valid = attempts.project_attempts(
         producer_view=_view(), root=root, repo_root=repo, now=NOW,
     )
-    assert valid["attempts"][1]["terminal_status"] == "incomplete"
+    assert valid["attempts"][2]["terminal_status"] == "incomplete"
     result = json.loads((child / "result.json").read_text())
     result["harmless_public_note"] = "resealed"
     _write(child / "result.json", result)
     rejected = attempts.project_attempts(
         producer_view=_view(), root=root, repo_root=repo, now=NOW,
     )
-    assert rejected["attempts"][1]["terminal_status"] == "source_unavailable"
+    assert rejected["attempts"][2]["terminal_status"] == "source_unavailable"
 
 
-def test_c_guard_record_does_not_claim_final_record_until_loop_and_journal_bind(tmp_path):
+def test_future_d_guard_record_does_not_claim_final_record_until_loop_and_journal_bind(tmp_path):
     root, repo = _root(tmp_path)
     _receipt(
-        root, "c", status="recorded_restored",
-        started="2026-09-15T20:10:00+00:00",
-        finished="2026-09-15T20:13:00+00:00",
+        root, "d", status="recorded_restored",
+        started="2026-09-15T20:20:00+00:00",
+        finished="2026-09-15T20:23:00+00:00",
     )
     pending = attempts.project_attempts(
         producer_view=_view(), root=root, repo_root=repo, now=NOW,
     )
     assert pending["attempts"][0]["terminal_status"] == "guard_recorded_final_unverified"
     assert pending["attempts"][0]["final_record_status"] == "unverified"
-    journal = "journal/iterations/397.md"
+    journal = "journal/iterations/398.md"
     (repo / journal).parent.mkdir(parents=True)
     (repo / journal).write_text("# Recorded iteration\n", encoding="utf-8")
     memory = {
-        "iteration_id": "iter-2026-09-15-005",
-        "started_at": "2026-09-15T20:11:00+00:00",
-        "ended_at": "2026-09-15T20:12:00+00:00",
+        "iteration_id": "iter-2026-09-15-006",
+        "started_at": "2026-09-15T20:21:00+00:00",
+        "ended_at": "2026-09-15T20:22:00+00:00",
         "campaign": {
             "campaign_id": CAMPAIGN, "campaign_manifest_sha256": SHA,
             "topic_id": "topic-known-retain-utility-001",
