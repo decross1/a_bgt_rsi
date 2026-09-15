@@ -237,6 +237,7 @@ describe("Pulse (/)", () => {
 
     // 1 — healthy? The composed hero, healthy off the fixture stream.
     expect(screen.getByTestId("health-verdict")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View model evidence" })).toHaveAttribute("href", "/benchmarks");
 
     // The ONE now-card: registry board + headline strip. Zero registered
     // runs + no calls + quiet GPU = an honest IDLE, never a blank.
