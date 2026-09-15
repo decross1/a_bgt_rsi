@@ -83,6 +83,32 @@ def test_incomplete_predecessor_blocks_before_any_get(tmp_path, monkeypatch):
             bootstrap_warmup=warmup, max_pages=1, root=tmp_path)
 
 
+def test_registered_32_page_boundary_accepts_32_and_rejects_33_before_get(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(public_spot_capture, "_fetch", _fake_fetch)
+    warmup, prior, accepted = (_path(tmp_path, minute)
+                               for minute in ("10", "11", "12"))
+    public_spot_capture.capture_once(warmup, symbol="BTCUSDT", from_id=None,
+                                     max_pages=1)
+    public_spot_capture.capture_once(prior, symbol="BTCUSDT", from_id=51,
+                                     max_pages=1)
+    report = hourly_capture.run_once(previous_batch=prior,
+                                     bootstrap_warmup=warmup,
+                                     output_dir=accepted, max_pages=32,
+                                     root=tmp_path)
+    assert report["status"] == "continued_complete"
+    batch = json.loads((accepted / "capture-batch.json").read_bytes())
+    assert batch["requested_max_pages"] == 32
+    assert hourly_capture.run_once.__kwdefaults__["max_pages"] == 32
+    def no_get(*_args, **_kwargs):
+        raise AssertionError("33-page request issued a GET")
+    monkeypatch.setattr(public_spot_capture, "_fetch", no_get)
+    with pytest.raises(public_spot_capture.CaptureError, match="1..32"):
+        hourly_capture.run_once(previous_batch=accepted,
+                                output_dir=_path(tmp_path, "13"),
+                                max_pages=33, root=tmp_path)
+
+
 def test_missing_historical_collector_code_cannot_donate_a_cursor(tmp_path, monkeypatch):
     monkeypatch.setattr(public_spot_capture, "_fetch", _fake_fetch)
     warmup, prior, output = (_path(tmp_path, minute)

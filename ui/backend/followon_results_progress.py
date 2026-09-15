@@ -1,6 +1,6 @@
 """Bounded projection of recorded, restored follow-on reports.
 
-Off-tree review copy until the paired measurement restores. Each visible score
+Each visible score
 requires an immutable publication index, archived completed-window gate, and
 unchanged raw window/result/block/report bytes. Current source replay is a
 separate explicit operation; polling never touches private SSE or model APIs.
@@ -24,10 +24,10 @@ CHILD = re.compile(r"(qfn-followon-[a-z0-9][a-z0-9._-]{0,63})\.(resident|flash)\
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 KINDS = frozenset({
     "thinking", "market_canaries", "context", "selected_repair",
-    "mtp0_controls", "mtp_decode_timing",
+    "mtp0_controls", "mtp_decode_timing", "coding_temp1_medium",
 })
 MAX_CHILDREN = 64
-MAX_WINDOWS = 4
+MAX_WINDOWS = 6
 MAX_BLOCKS = 16
 MAX_GROUPS = 64
 CONDITION = re.compile(r"[A-Za-z0-9_]{1,32}\Z")
@@ -119,6 +119,67 @@ def _repair_replay(block: dict, cohort: str) -> dict | None:
             "comparison_eligible": False}
 
 
+def _coding_replay(block: dict, cohort: str) -> dict | None:
+    """Project the four-task diagnostic's independent grade counts only."""
+    value = block.get("grader_replay")
+    if value is None:
+        return None
+    _require(cohort == "flash" and block["kind"] == "coding_temp1_medium"
+             and isinstance(value, dict)
+             and value.get("schema")
+                == "flash-followon-coding-temp1-grader-replay/v1"
+             and value.get("run_sha256") == block["run_sha256"]
+             and _sha(value.get("replay_receipt_sha256"))
+             and value.get("source_replay_status") in {"available", "unavailable"}
+             and value.get("comparison_eligible") is False
+             and value.get("private_content_exported") is False,
+             "published coding grader replay is unbound")
+    counts = ("raw_private_calls_verified", "declared", "replayed",
+              "producer_consistent", "producer_inconsistent",
+              "grader_unavailable")
+    _require(all(_integer(value.get(key), ceiling=4) for key in counts)
+             and block["attempted"] == value["declared"]
+                == value["raw_private_calls_verified"] == 4
+             and value["replayed"] + value["grader_unavailable"] == 4
+             and value["producer_consistent"]
+                + value["producer_inconsistent"] == value["replayed"],
+             "published coding replay denominator differs")
+    family_counts = ("declared", "producer_passed", "replayed",
+                     "replayed_passed", "producer_consistent",
+                     "producer_inconsistent", "grader_unavailable")
+    families = value.get("by_family")
+    _require(isinstance(families, dict)
+             and set(families) == {"portfolio", "historical"}
+             and all(isinstance(row, dict)
+                     and row.get("declared") == 2
+                     and all(_integer(row.get(key), ceiling=2)
+                             for key in family_counts)
+                     and row["replayed"] + row["grader_unavailable"] == 2
+                     and row["producer_consistent"]
+                        + row["producer_inconsistent"] == row["replayed"]
+                     and row["producer_passed"] <= 2
+                     and row["replayed_passed"] <= row["replayed"]
+                     for row in families.values())
+             and sum(row["producer_passed"] for row in families.values())
+                == block["passed"]
+             and sum(row["replayed"] for row in families.values())
+                == value["replayed"]
+             and sum(row["producer_consistent"] for row in families.values())
+                == value["producer_consistent"]
+             and sum(row["producer_inconsistent"] for row in families.values())
+                == value["producer_inconsistent"]
+             and sum(row["grader_unavailable"] for row in families.values())
+                == value["grader_unavailable"],
+             "published coding replay family counts differ")
+    return {"schema": value["schema"], "run_sha256": value["run_sha256"],
+            "replay_receipt_sha256": value["replay_receipt_sha256"],
+            "source_replay_status": value["source_replay_status"],
+            **{key: value[key] for key in counts},
+            "by_family": {family: {key: row[key] for key in family_counts}
+                          for family, row in sorted(families.items())},
+            "comparison_eligible": False}
+
+
 def _public_blocks(report: dict, cohort: str) -> list[dict]:
     """Return only fixed numeric/categorical fields from a published report."""
     blocks = report.get("blocks")
@@ -177,11 +238,14 @@ def _public_blocks(report: dict, cohort: str) -> list[dict]:
                 "mean_first_token_seconds", "actual_input_tokens_min",
                 "actual_input_tokens_max",
             )})
+        replay = (_coding_replay(block, cohort)
+                  if block["kind"] == "coding_temp1_medium"
+                  else _repair_replay(block, cohort))
         projected.append({key: block[key] for key in (
             "block_id", "kind", "run_sha256", "attempted", "passed",
             "timeouts",
         )} | {"groups": visible_groups,
-             "grader_replay": _repair_replay(block, cohort)})
+             "grader_replay": replay})
     return projected
 
 
@@ -489,7 +553,7 @@ def project_followon_results(root: Path | None = DEFAULT_RESEARCH_ROOT) -> dict:
                 )
         if len(indexed) > MAX_WINDOWS:
             result["warnings"].append(
-                "Showing the four latest recorded follow-on windows."
+                "Showing the six latest recorded follow-on windows."
             )
         result["status"] = "partial" if result["warnings"] else "available"
     except (SourceError, OSError, ValueError, TypeError):
