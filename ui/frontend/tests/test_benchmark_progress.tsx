@@ -169,7 +169,7 @@ describe("Benchmark Progress", () => {
     const bridge = screen.getByRole("complementary", { name: "Separate local-model evidence" });
     expect(bridge).toHaveTextContent("objective tasks passed 12/24 with Flash versus 2/24 with residents");
     expect(bridge).toHaveTextContent("topic output passed 13/48 versus 47/48");
-    expect(within(bridge).getByRole("link", { name: "View paired evidence" })).toHaveAttribute("href", "#local-model-research-heading");
+    expect(within(bridge).getByRole("link", { name: "View original paired evidence" })).toHaveAttribute("href", "#local-model-research-heading");
     expect(bridge).toHaveTextContent("does not establish a primary-model replacement");
   });
 

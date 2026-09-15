@@ -1,0 +1,68 @@
+{
+  "campaign": {
+    "campaign_id": "v2-utility-mechanism-followon-20260915",
+    "campaign_manifest_sha256": "2ecf817d0b78a2568cc1096759831a3fe625b1de59d3865a23cefb9052047b3c",
+    "research_question_id": "rq-bounded-utility-mechanism-001",
+    "research_question_sha256": "f5bcf39224ab74383c27925dc9c79d842f9d9d66fe86f5833a32013720b26efe",
+    "schema_version": "research-campaign-link/v1",
+    "topic_id": "topic-binary-grim-lookahead-001",
+    "topic_sha256": "885a2e210af225df88a307b263568e8bbe4f5eac443946b220cc21f91ba97092"
+  },
+  "canonical_head_at_review": "b12bab8e87d1bc337d249bcebb76f577d12335a2",
+  "canonical_repo_root": "/home/decross1/projects/a_bgt_rsi",
+  "current_source_sha256_at_review": {
+    "orchestrator/coordinator.py": "c6ac1d35de61de54417afd1b23f0dfdae52b4263e9b8dc52224291cce6926796",
+    "orchestrator/coordinator_cycle_log.py": "5f4667559af9f5bf9b85759c220b948d91e3cebf0a2a5c03535900312def49e7",
+    "orchestrator/nara.py": "c80e1d7862a89c6554b321e9d394174041c77682db1c762665fb431933291982",
+    "workers/journal_writer.py": "cda3008d71c1a03d3838e4de3adda69eea007ff150ed91c1cc465d4e93f25026"
+  },
+  "cycle": {
+    "dispatched_iteration_id": "iter-2026-09-15-009",
+    "last_row_raw_sha256": "e45724ae4f3d09447569d1473a55809bbbd5b5beca96e7faa681002277e74f12",
+    "outcome_action": "run_loop_iteration",
+    "outcome_status": "passed",
+    "relpath": "run_state/coordinator_cycles.jsonl",
+    "run_id": "coordinator_ef20b022",
+    "status": "executed",
+    "topic_source": "campaign_preregistered"
+  },
+  "journal": {
+    "raw_sha256": "849b6dd57886f7e33e1ac7038a7b6db8cb6ec5bc61f6a8bf56bfc233641d820a",
+    "relpath": "journal/iterations/401.md"
+  },
+  "limits": [
+    "content-free fields review only",
+    "science gate pending; no promotion claim",
+    "source hashes recorded at review, not a pre-execution source freeze"
+  ],
+  "loop": {
+    "critique_verdict": "undecidable",
+    "ended_at": "2026-09-15T23:24:18.713964Z",
+    "gate_status": "pending",
+    "iteration_id": "iter-2026-09-15-009",
+    "last_row_raw_sha256": "466536bb22612da85eda0f94a3d4652d52d3a520e37b50887c96975233f788ee",
+    "novelty_class": "novel",
+    "redteam_verdict": "fatal_flaw",
+    "relpath": "memory/loop_memory.jsonl",
+    "seed_source": "coordinator",
+    "skeptic_verdict": "inconclusive",
+    "started_at": "2026-09-15T23:00:09.602813Z",
+    "tool_names": [
+      "hypothesize",
+      "novelty_classify",
+      "retrieve_literature",
+      "retrieve_literature",
+      "novelty_classify",
+      "critic_loop_v0",
+      "journal_writer"
+    ]
+  },
+  "manifest": {
+    "raw_sha256": "2ecf817d0b78a2568cc1096759831a3fe625b1de59d3865a23cefb9052047b3c",
+    "relpath": "experiments/research_campaign_v2_utility_mechanism_followon_20260915.json"
+  },
+  "mode": "read_only_fields_and_raw_hashes",
+  "reviewed_at": "2026-09-15T23:28:10.698963+00:00",
+  "row_hash_encoding": "exact JSONL row bytes excluding line terminator",
+  "schema": "ordinary-successor-cycle-content-free-review/v1"
+}
