@@ -26,4 +26,4 @@ Eight-hour deadline is 2026-09-16 00:09:45 UTC. At 2026-09-15 21:30 UTC, about 1
 - Evaluator SHA-256: `b4144701927e6b1e012dddd5965de87e58b235b4d2e9b196e90c55404d395f98`.
 - Isolated controller SHA-256: `f8625250b6efbf6eb188615ef653ba057b7dd2e4ae9e8f71b6dc782ccc92fff0`.
 
-The controller extension is kept in the isolated branch and archived as [a patch](../notes/research/2026-09-15-lab-eight-hour/diversity_cap_controller.patch). The frozen original controller stays unchanged. Run all study commands from the isolated checkout with `/home/decross1/projects/a_bgt_rsi/.venv-chroma/bin/python`; its exact path is part of terminal admission.
+The controller extension is kept in the isolated branch and archived as [a patch](../notes/research/2026-09-15-lab-eight-hour/diversity_cap_controller.patch). The patch uses zero context and can be checked with `git apply --check --unidiff-zero`; apply it only in a new isolated checkout. The frozen original controller stays unchanged. Run all study commands from the isolated checkout with `/home/decross1/projects/a_bgt_rsi/.venv-chroma/bin/python`; its exact path is part of terminal admission.
