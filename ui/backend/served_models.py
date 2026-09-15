@@ -195,6 +195,7 @@ def _probe_metrics(
         target, timeout=timeout, opener=opener, limit=MAX_METRICS_BYTES
     )
     if raw is None:
+        accumulator.reset()
         return {
             "metrics_endpoint_status": endpoint_status,
             "metrics": None,
@@ -204,6 +205,7 @@ def _probe_metrics(
         text = raw.decode("utf-8")
         metrics, error = accumulator.observe(text, now=metric_clock())
     except (UnicodeError, ValueError, TypeError) as exc:
+        accumulator.reset()
         metrics, error = None, f"{type(exc).__name__}: {exc}"
     if metrics is None:
         return {

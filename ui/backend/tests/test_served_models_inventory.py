@@ -6,8 +6,14 @@ import json
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sampler.sources.vllm_metrics import VllmMetricsAccumulator
 
-from backend.served_models import DEFAULT_ENDPOINTS, REGISTERED_MODELS, register
+from backend.served_models import (
+    DEFAULT_ENDPOINTS,
+    REGISTERED_MODELS,
+    _probe_metrics,
+    register,
+)
 
 
 class Response:
@@ -143,6 +149,27 @@ def test_metrics_failure_does_not_turn_a_serving_model_offline():
     assert body["activity_status"] == "unknown"
     assert body["metrics"] is None
     assert "missing core gauges" in body["metrics_error"]
+
+
+@pytest.mark.parametrize("failure", [OSError("offline"), b"\xff", b"x" * 2_000_001])
+def test_inventory_metrics_reprime_after_transport_or_encoding_failure(failure):
+    url = "http://f:8012"
+    accumulator = VllmMetricsAccumulator()
+
+    def read(value, now):
+        return _probe_metrics(
+            url, timeout=0.1, opener=opener_for({url + "/metrics": value}),
+            accumulator=accumulator, metric_clock=lambda: now,
+        )
+
+    def sample(count):
+        return metrics(extra=f"vllm:generation_tokens_total {count}\n")
+
+    read(sample(10), 1)
+    assert read(sample(20), 2)["metrics"]["tokens_per_sec_decode"] == 10
+    assert read(failure, 3)["metrics"] is None
+    assert read(sample(40), 4)["metrics"]["tokens_per_sec_decode"] is None
+    assert read(sample(50), 5)["metrics"]["tokens_per_sec_decode"] == 10
 
 
 def test_nonfinite_optional_metrics_are_withheld_without_breaking_json():

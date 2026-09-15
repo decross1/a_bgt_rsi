@@ -92,6 +92,11 @@ class VllmMetricsAccumulator:
         self._rate_prev = {}   # key -> (monotonic_ts, value)
         self._delta_prev = {}  # key -> value
 
+    def reset(self):
+        """Withhold interval metrics across an unavailable/rejected scrape."""
+        self._rate_prev.clear()
+        self._delta_prev.clear()
+
     def _rate(self, key, value, now):
         """Per-second rate of a counter. None while priming or after a reset."""
         if value is None:
@@ -134,9 +139,11 @@ class VllmMetricsAccumulator:
                    (("running", running), ("waiting", waiting), ("cache", cache))
                    if val is None]
         if missing:
+            self.reset()
             return None, f"vllm /metrics missing core gauges: {missing}"
         if any(not math.isfinite(value) or value < 0
                for value in (running, waiting, cache)):
+            self.reset()
             return None, "vllm /metrics has invalid core gauges"
 
         tps = self._rate(
@@ -195,7 +202,9 @@ class VllmMetricsReader:
         try:
             resp = requests.get(self.url, timeout=self.timeout)
         except requests.RequestException as exc:
+            self.accumulator.reset()
             return None, f"vllm /metrics unreachable: {exc}"
         if resp.status_code != 200:
+            self.accumulator.reset()
             return None, f"vllm /metrics HTTP {resp.status_code}"
         return self.accumulator.observe(resp.text)

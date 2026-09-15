@@ -1,4 +1,6 @@
 """Counter rates are finite, interval-local, and reset-safe."""
+import pytest
+
 from sampler.sources.vllm_metrics import VllmMetricsAccumulator
 
 
@@ -61,3 +63,36 @@ def test_invalid_core_gauge_rejects_only_that_metrics_snapshot():
     )
     assert sample is None
     assert error == "vllm /metrics has invalid core gauges"
+
+
+@pytest.mark.parametrize("bad_snapshot", [
+    "", ("vllm:num_requests_running NaN\n"
+         "vllm:num_requests_waiting 0\n"
+         "vllm:kv_cache_usage_perc 0\n"),
+])
+def test_rejected_snapshot_reprimes_every_interval_counter(bad_snapshot):
+    accumulator = VllmMetricsAccumulator()
+
+    def complete(count):
+        return snapshot(count, prefix=(
+            f"vllm:prefix_cache_queries_total {count}\n"
+            f"vllm:prefix_cache_hits_total {count}\n"
+        ), spec=(
+            f"vllm:spec_decode_num_draft_tokens_total {count}\n"
+            f"vllm:spec_decode_num_accepted_tokens_total {count}\n"
+        ))
+
+    accumulator.observe(complete(100), now=10)
+    before, _ = accumulator.observe(complete(120), now=12)
+    assert before["tokens_per_sec_decode"] == 10
+    assert before["mtp_acceptance_rate"] == 1
+    assert accumulator.observe(bad_snapshot, now=13)[0] is None
+    after, error = accumulator.observe(complete(140), now=14)
+    assert error is None
+    for metric in ("tokens_per_sec_decode", "gpu_prefix_cache_hit_rate",
+                   "mtp_acceptance_rate", "mtp_draft_tokens", "mtp_accepted_tokens"):
+        assert after[metric] is None
+    recovered, _ = accumulator.observe(complete(160), now=16)
+    assert recovered["tokens_per_sec_decode"] == 10
+    assert recovered["gpu_prefix_cache_hit_rate"] == 1
+    assert recovered["mtp_draft_tokens"] == 20
