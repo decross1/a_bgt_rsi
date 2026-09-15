@@ -12,7 +12,8 @@ const receipt = () => ({
   next_registered_campaign: { campaign_id: "next-campaign", manifest_sha256: sha("c"),
     registered_topic_count: 12, activation_required: true },
   last_productive: { kind: "campaign_iteration_recorded", iteration_id: "iter-001",
-    topic_id: "topic-001", at: new Date().toISOString(), loop_source_sha256: sha("b") },
+    topic_id: "topic-001", at: new Date().toISOString(), gate_status: "pending",
+    loop_source_sha256: sha("b") },
   last_cycle: { run_id: "cycle-001", at: new Date().toISOString(), action_code: "noop",
     planned_count: 0, dispatched_count: 0, outcome_count: 1,
     raw_row_sha256: sha("d"), cycles_source_sha256: sha("e") },
@@ -32,6 +33,8 @@ describe("ResearchOpsCard", () => {
     expect(screen.getByText(/Other useful research actions have not been assessed/)).toBeInTheDocument();
     expect(screen.getByText(/Next registered campaign next-campaign awaits activation/)).toBeInTheDocument();
     expect(screen.getByText(/iter-001/)).toBeInTheDocument();
+    expect(screen.getByText(/Review gate: pending/)).toBeInTheDocument();
+    expect(screen.getByText(/does not itself establish an accepted finding/)).toBeInTheDocument();
     expect(screen.getByText(/No-op plan · 0 planned · 0 dispatched/)).toBeInTheDocument();
     expect(screen.getByText(/Today's coordinator allowance: 3\/60 used/)).toBeInTheDocument();
     expect(screen.getByText("Source attempt status unknown")).toBeInTheDocument();
