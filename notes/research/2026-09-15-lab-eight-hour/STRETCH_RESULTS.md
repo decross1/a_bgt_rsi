@@ -36,6 +36,12 @@ Artifact directory: `/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/l
 
 The publisher independently replays private evidence once. Dashboard polling checks bound public bytes and rederives the displayed counts; it does not continuously replay private streams. Scientific novelty, promotion and trading claims remain false.
 
-## Next registered diagnostic
+## Paired cap diagnostic: startup abort, quality unmeasured
 
-The [paired output-cap experiment](../../../experiments/PREREG_flash_diversity_cap_2026-09-15.md) holds generator timeouts at sixty seconds and varies the output cap between 384 and 1,536. It contains five task pairs and forty scheduled requests. Preparation is not execution; its result will be appended only after independently verified closure. It cannot rewrite the original primary-panel grades.
+The [paired output-cap experiment](../../../experiments/PREREG_flash_diversity_cap_2026-09-15.md) was launched at 22:29:12 UTC after the second ordinary research iteration completed. It held generator timeouts at sixty seconds and planned 384 versus 1,536 output tokens across five reused task pairs and forty requests. No evaluation calls were issued.
+
+During loading, the host-wide five-second pageout counter reached 550,780,928 bytes (525.27 MiB), crossing the registered 512 MiB threshold. Available memory at that sample was 37.75 GiB; candidate cgroup swap and OOM counters were zero. The monitor stopped the exact candidate container. This is a startup paging-guard failure, not a candidate out-of-memory diagnosis or a model-quality result. Host-wide pageout cannot be attributed solely to the candidate from these counters.
+
+The supervisor closed with status `aborted` at 22:42:01 UTC after verified restoration of the original resident models and Nara, with no restoration errors or emergency parent recovery. The whole supervised attempt took 769.25 seconds. All original primary and game scores remain unchanged. The larger-cap quality question remains open; no safety threshold was relaxed and this attempt was not overwritten or retried.
+
+The [independent failure audit](mia-diversity-cap-paired-v1.failure-audit.json), SHA `4a94d553dc47b7a55f297634b2e077ad3f7b8a5b9a485baf12a503bf1a8be1f0`, binds the fixed plan/window, all 61 registered source references, terminal receipts, memory samples and logs. It verifies the absence of an evaluation directory, evaluation-phase samples and an evaluation-run hash. Dashboard counts remain withheld and identify this specific archived startup failure.
