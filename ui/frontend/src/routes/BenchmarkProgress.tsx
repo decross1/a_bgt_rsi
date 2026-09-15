@@ -11,6 +11,7 @@ import {
   usePollActivity,
 } from "../api/pollhub";
 import { SkeletonCard } from "../design/Skeleton";
+import { LocalModelResearchPanel } from "../components/LocalModelResearchPanel";
 import type {
   BenchmarkArm,
   BenchmarkComparisonPoint,
@@ -426,6 +427,7 @@ export default function BenchmarkProgress({ initial }: Props) {
 
     {(summaryMissing || rows<BenchmarkProgressWarning>(data.warnings).length > 0) && <aside className="benchmark-warnings" aria-label="Data qualifications">{summaryMissing && <p><strong>Progress summary</strong> · The response shape is incomplete. Missing values are withheld rather than inferred as zero.</p>}{rows<BenchmarkProgressWarning>(data.warnings).map((warning, index) => <p key={`${String(warning.code)}-${index}`}><strong>{text(warning.scope, "Record")}</strong> · {text(warning.detail, "An unspecified source qualification was recorded.")}</p>)}</aside>}
 
+    <LocalModelResearchPanel data={data.local_model_research} />
     <ResearchPipelinePanel pipeline={data.research_pipeline} />
 
     {weeks.length === 0 ? <section className="benchmark-source-empty" role="status"><h2>{benchmarkSourcesUnavailable ? "Benchmark sources unavailable" : "No measured weeks yet"}</h2><p>{benchmarkSourcesUnavailable ? "Trial and evaluation sources were unavailable when this projection was generated. No benchmark history or zero result is inferred." : "The source is available, but it has not recorded a benchmark week. Missing history is not a zero score."}</p></section> : <>

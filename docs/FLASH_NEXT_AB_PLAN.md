@@ -22,14 +22,45 @@ one 128GB Spark. A fully resident checkpoint does not fit. Initial qualification
 keeps memory/precision controls conservative and tests speculation separately.
 External one-Spark speed reports are hypotheses until locally reproduced.
 
-The 120-minute weekly limit remains in force. A separate one-time evaluation
-allowance was asked about; a pending question grants no additional runtime.
-Downloads and CPU-only runtime preparation proceed independently. Every live
-trial must have a finite reservation and restoration procedure. The current
-models and serving pins remain the rollback baseline.
+On 2026-09-15 the owner explicitly exempted local model research and A/B testing
+from the normal weekly maintenance compute allowance: “For these type of things
+you have free budget - this is a local llm, not running a real pipeline.”
+Record this research usage separately; do not debit or enlarge the existing
+120-minute weekly maintenance ledger. This authorization applies to local model
+R&D, not paid frontier APIs or production research. Every invocation still has
+a finite preregistered deadline, hardware limits and a restoration procedure.
+The current models and serving pins remain the rollback baseline.
 
 Sequence: research and artifact hashes; audit/build immutable challenger;
 qualify memory and protocol; reserve and run paired current/Flash cohort;
 extend through registered families and context/stability tests; publish exact
 coverage, failures, uncertainty and a retain/adopt-for-trial verdict. Unsupported
 or unimplemented external benchmark suites remain explicitly not run.
+
+## Viewing the evidence
+
+Benchmark Progress (`/benchmarks`) includes a separate **Local model research**
+section. It shows recorded Flash runtime qualifications and paired benchmark
+results. These entries do not debit the weekly allowance, extend historical
+score series, or increase the weekly comparable-transition count.
+
+Qualification receipts are read from the isolated research artifact directory.
+An unfinished receipt does not prove that its process is still running. A
+qualification pass establishes only its fixed runtime/protocol checks.
+
+After paired execution, an operator exports `evaluation/dashboard-index.json`
+with schema `flash-next-dashboard-index/v1` and a `comparisons` array. Each entry
+contains an `id` and `resident`/`flash` references with an artifact-relative
+`path` and raw-file `sha256`. A `qualifications` object supplies the resident
+`receipt` and `artifacts` paths, and the Flash `receipt`, `plan`, and `contract`
+paths. The same qualification validators that admit execution must accept those
+sources and bind their hashes to the run arms. The dashboard verifies both run source hashes and the
+run contracts before deriving family counts. It does not expose model responses
+or machine-local paths. It reads at most four indexed comparisons and twelve
+qualification receipts, with an explicit truncation notice.
+
+Incomplete comparisons retain attempt counts and withhold success rates,
+throughput and deltas. Throughput is successful **task runs** per hour including
+failed attempts and grading, not a count of distinct tasks. Topic output protocol
+is not a judgment of scientific topic quality. Full reports retain task-level
+uncertainty and the difference between bundle effects and model-weight effects.
