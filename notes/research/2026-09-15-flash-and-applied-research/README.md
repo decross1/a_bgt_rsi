@@ -311,3 +311,9 @@ state was archived by exact SHA acknowledgement, and the new lineage makes
 no continuity claim across the interruption. Future study outcomes are not
 known tonight. Source-bound final integration and restart receipts are under
 `a_bgt_rsi_v2_artifacts/2026-09-15/overnight-final-results-integration/`.
+
+The first full five-minute interval after the capacity recovery closed at
+14:55:48 UTC with **17/17 successful public GETs (15 trade pages)**, verified
+request accounting, no cursor gap and a complete successor in the new lineage.
+This directly exercises collection beyond the previous eight-page ceiling;
+it does not guarantee later intervals or future outcome admission.
