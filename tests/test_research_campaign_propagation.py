@@ -199,6 +199,45 @@ def test_active_pointer_admits_only_available_exact_seed(tmp_path, monkeypatch):
     assert suggestion["campaign"] == campaigns.bind_topic(campaign, topic)
 
 
+def test_executed_campaign_bubble_persists_loader_derived_link(
+    tmp_path, monkeypatch,
+):
+    campaign = _activate(tmp_path, monkeypatch)
+    paths = _paths(tmp_path)
+    bubbles_path = tmp_path / "coordinator_bubbles.jsonl"
+    plan = [{
+        "action": "bubble_up",
+        "args": {
+            "question": "Should the campaign continue this line of inquiry?",
+            "kind": "A",
+            "allowed_actions": ["sign_off", "reject"],
+        },
+    }]
+    monkeypatch.setattr(
+        coord,
+        "call_sync",
+        lambda *a, **k: {"completion": json.dumps(plan), "request_id": "r"},
+    )
+    monkeypatch.setattr(coord, "DEFAULT_COORDINATOR_BUBBLES", bubbles_path)
+    monkeypatch.setattr(
+        coord.coordinator_cycle_log, "emit_health_signals", lambda _report: [],
+    )
+
+    report = coord.coordinator_cycle(
+        budget=1,
+        dry_run=False,
+        execute_handlers={"bubble_up": coord.handle_bubble_up},
+        **paths,
+    )
+
+    assert report["status"] == "executed"
+    assert report["bubble_receipts"][0]["status"] == "persisted"
+    row = json.loads(bubbles_path.read_text())
+    topic = campaign["topic_policy"]["topics"][0]["text"]
+    assert row["campaign"] == campaigns.bind_topic(campaign, topic)
+    assert "campaign" not in row["request"]["args"]
+
+
 def test_env_cannot_activate_campaign_without_pointer(tmp_path, monkeypatch):
     paths = _paths(tmp_path)
     missing = tmp_path / "missing-activation.json"

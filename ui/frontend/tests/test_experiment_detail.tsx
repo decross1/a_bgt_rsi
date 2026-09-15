@@ -40,6 +40,25 @@ function renderDetail(initial: typeof DETAIL_JSON_FIXTURE) {
 }
 
 describe("ExperimentDetail", () => {
+  it("always labels the unscoped detail as source-library history", () => {
+    renderDetail(DETAIL_JSON_FIXTURE);
+    expect(screen.getByTestId("experiment-history-boundary")).toHaveTextContent(
+      /Source-library history/,
+    );
+    expect(screen.getByRole("link", { name: "All research history" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "Current campaign" })).toHaveAttribute(
+      "href",
+      "/experiments",
+    );
+    expect(screen.getByRole("link", { name: "← experiments" })).toHaveAttribute(
+      "href",
+      "/experiments?research_scope=all",
+    );
+  });
+
   it("renders per-opponent table + coop chart for json shape", () => {
     renderDetail(DETAIL_JSON_FIXTURE);
     expect(screen.getByTestId("opponent-table")).toBeInTheDocument();

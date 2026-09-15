@@ -11,6 +11,7 @@ import type {
   ResearchClaimEntry,
 } from "./researchContext";
 import type { FamilyRecord, ThesisFamily, ThesisModel } from "./thesisModel";
+import { researchScopedHref } from "../../researchScope";
 
 const FAMILY_OPTION_LIMIT = 40;
 const CLAIM_LIMIT = 3;
@@ -180,8 +181,8 @@ function ClaimContext({ context, onBack }: { context?: ResearchClaimContext; onB
       </section>
 
       {dossierId !== null && (
-        <Link className="research-canvas__dossier" to={`/dossier/${dossierId}`} aria-label={`Open full dossier for ${dossierId}`}>
-          Open full dossier ↗
+        <Link className="research-canvas__dossier" to={researchScopedHref(`/dossier/${dossierId}`, "all")} aria-label={`Open source-history dossier for ${dossierId}`}>
+          Open source-history dossier ↗
         </Link>
       )}
 

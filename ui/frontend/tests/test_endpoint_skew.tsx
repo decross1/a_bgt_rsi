@@ -85,7 +85,7 @@ describe("HttpError (api/http)", () => {
       "fetch",
       vi.fn().mockResolvedValue({ status: 204, ok: false } as Response),
     );
-    await expect(getLadder()).resolves.toBeNull();
+    await expect(getLadder("all")).resolves.toBeNull();
   });
 });
 

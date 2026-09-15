@@ -87,6 +87,8 @@ def test_daily_ledger_blocks_execute_but_not_dry_run(tmp_path, monkeypatch):
 
 
 def test_executed_cycle_charges_ledger(tmp_path, monkeypatch):
+    # This fixture tests charging, not wall-clock admission at UTC midnight.
+    monkeypatch.setattr(co, "BUDGET_PACING", False)
     ledger = tmp_path / "coordinator_budget.jsonl"
     monkeypatch.setattr(co, "BUDGET_LEDGER_PATH", ledger)
     monkeypatch.setattr(co, "PAUSE_PATH", tmp_path / "absent")

@@ -35,6 +35,7 @@ import AbstainForm from "../components/todo/AbstainForm";
 import ChatPane from "../components/todo/ChatPane";
 import TutorPanel from "../components/todo/TutorPanel";
 import PipelineJourney from "../components/todo/PipelineJourney";
+import ResearchScopeBar from "../components/ResearchScopeBar";
 
 import RungGlyph, { rungIndex } from "../design/RungGlyph";
 
@@ -42,6 +43,7 @@ import { getCockpitAvailability, COCKPIT_UNAVAILABLE } from "../api/todo";
 import { getHumanTodo } from "../api/http";
 import type { CockpitAvailability, CockpitActions } from "../types/todo";
 import type { HumanTodoItem } from "../types/schemas";
+import { researchScopedHref } from "../researchScope";
 
 // --- defensive guards (lifted VERBATIM from the retired routes/Todo.tsx) ----
 // The `availability` + `items` PROPS bypass the fetch path's coercion
@@ -169,7 +171,7 @@ export default function DossierReader({ availability, items }: Props) {
       return;
     }
     let live = true;
-    getHumanTodo()
+    getHumanTodo("all")
       .then((resp) => {
         if (!live) return;
         setQueue(safeItems(resp?.items));
@@ -234,7 +236,7 @@ export default function DossierReader({ availability, items }: Props) {
       <div className="page-prose" data-testid="dossier-reader">
         <div data-testid="dossier-no-id" className="text-[11px] text-zinc-500">
           no dossier id — pick one from{" "}
-          <Link to="/dossier" className="text-sky-300 underline">
+          <Link to={researchScopedHref("/dossier", "all")} className="text-sky-300 underline">
             the index
           </Link>
           .
@@ -257,7 +259,7 @@ export default function DossierReader({ availability, items }: Props) {
       <header className="mt-3" data-testid="dossier-header">
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
           <Link
-            to="/dossier"
+            to={researchScopedHref("/dossier", "all")}
             className="text-[10px] uppercase tracking-wide text-zinc-600 hover:text-zinc-400"
           >
             ← dossiers
@@ -316,6 +318,17 @@ export default function DossierReader({ availability, items }: Props) {
           </div>
         )}
       </header>
+
+      <ResearchScopeBar
+        fetchMetadata={items === undefined}
+        className="mt-4"
+        scopeOverride="all"
+        activeTarget="/dossier"
+        allTarget={`/dossier/${encodeURIComponent(dossierId)}`}
+      />
+      <p className="mt-3 rounded border border-zinc-800 bg-zinc-900/40 p-3 text-xs text-zinc-400" data-testid="dossier-history-boundary">
+        Source-library history. This detail endpoint reads the preserved dossier and does not establish active-campaign membership. Current campaign returns to the scoped record library.
+      </p>
 
       <div className="mt-3 space-y-3">
         {/* the trimmed tutor OVERVIEW (finding/iteration families only — the

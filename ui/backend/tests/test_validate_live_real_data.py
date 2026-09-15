@@ -163,6 +163,7 @@ def test_live_cycle_provenance_snapshot(client):
     whatever errored rows exist. An empty errored cohort is the honest
     post-purge state, never a fabricated expectation of failure."""
     known_topic_sources = {
+        "campaign_preregistered",  # V2 exact immutable campaign topic
         "agenda",  # D-060 agenda-first (idea-ledger agenda items lead)
         "finding_followup",  # queued human follow-up topics
         "coordinator_propose",  # P4 machine-mined rows (never human-masked)
@@ -185,6 +186,10 @@ def test_live_cycle_provenance_snapshot(client):
                 "topic_source")
             continue
         assert c["topic_source"] in known_topic_sources
+        if c["topic_source"] == "campaign_preregistered":
+            from orchestrator.research_campaign import load_campaign, record_matches
+            assert isinstance(c.get("campaign"), dict)
+            assert record_matches(c, load_campaign(c["campaign"]["campaign_id"]))
     errored = [
         o for c in cycles for o in c["outcomes"] if o.get("status") == "errored"
     ]

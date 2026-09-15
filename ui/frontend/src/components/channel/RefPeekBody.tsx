@@ -18,6 +18,7 @@ import RungGlyph from "../../design/RungGlyph";
 import { SkeletonRows } from "../../design/Skeleton";
 import { asText } from "../ladder/ladderModel";
 import { getFindingDetail, getIterationJourney, getLadder } from "../../api/http";
+import { researchScopedHref } from "../../researchScope";
 import type { ChannelRef } from "./channelModel";
 import type { LadderCluster } from "../../types/schemas";
 
@@ -76,15 +77,15 @@ function clusterSummary(id: string, cluster: LadderCluster): Found {
     lines,
     level: cluster.evidence_level,
     killed,
-    to: "/ladder",
-    toLabel: "open the ladder",
+    to: researchScopedHref("/ladder", "all"),
+    toLabel: "open all research history",
   };
 }
 
 async function loadRef(refItem: ChannelRef): Promise<PeekState> {
   const { id, kind } = refItem;
   if (kind === "cluster") {
-    const resp = await getLadder();
+    const resp = await getLadder("all");
     if (resp === null) {
       return {
         status: "missing",
@@ -117,8 +118,8 @@ async function loadRef(refItem: ChannelRef): Promise<PeekState> {
       lines,
       level: null,
       killed: false,
-      to: `/dossier/${id}`,
-      toLabel: "open the dossier",
+      to: researchScopedHref(`/dossier/${id}`, "all"),
+      toLabel: "open source-history dossier",
     };
   }
   const journey = await getIterationJourney(id);
@@ -139,8 +140,8 @@ async function loadRef(refItem: ChannelRef): Promise<PeekState> {
     lines,
     level: null,
     killed: false,
-    to: `/dossier/${id}`,
-    toLabel: "open the dossier",
+    to: researchScopedHref(`/dossier/${id}`, "all"),
+    toLabel: "open source-history dossier",
   };
 }
 

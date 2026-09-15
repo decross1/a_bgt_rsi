@@ -5,6 +5,12 @@ import type {
   ExperimentDetail,
   ResearchResponse,
 } from "../types/experiments";
+import {
+  browserResearchScope,
+  scopedResearchApiPath,
+  type ResearchScope,
+} from "../researchScope";
+import { admitScopedResearchPayload } from "./researchScope";
 
 const API_PORT = import.meta.env.VITE_API_PORT ?? "8700";
 const API_BASE = `http://${window.location.hostname}:${API_PORT}`;
@@ -33,4 +39,7 @@ export const getExperimentDetail = (expId: string) =>
     `/api/experiments/${encodeURIComponent(expId)}`,
   );
 
-export const getResearch = () => getJSON<ResearchResponse>("/api/research");
+export const getResearch = (
+  scope: ResearchScope = browserResearchScope(),
+) => getJSON<ResearchResponse>(scopedResearchApiPath("/api/research", scope))
+  .then((value) => admitScopedResearchPayload(value, scope));

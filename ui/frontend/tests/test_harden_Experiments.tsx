@@ -98,7 +98,7 @@ describe("Experiments hardening r1 — partial/legacy/malformed rows", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     // initial is passed (not undefined) so both effects bail — fully network-free.
-    render(<MemoryRouter>{node}</MemoryRouter>);
+    render(<MemoryRouter initialEntries={["/experiments?research_scope=all"]}>{node}</MemoryRouter>);
     const calls = {
       error: errSpy.mock.calls.map((c) => String(c[0])),
       warn: warnSpy.mock.calls.map((c) => String(c[0])),
@@ -258,7 +258,7 @@ describe("Experiments hardening r2 — malformed value TYPES", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     // `initial` is passed (not undefined) so both effects bail — network-free.
-    const { container } = render(<MemoryRouter>{node}</MemoryRouter>);
+    const { container } = render(<MemoryRouter initialEntries={["/experiments?research_scope=all"]}>{node}</MemoryRouter>);
     const calls = {
       error: errSpy.mock.calls.map((c) => String(c[0])),
       warn: warnSpy.mock.calls.map((c) => String(c[0])),
@@ -374,7 +374,7 @@ describe("Experiments hardening r3 — scale + content", () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     // `initial` is passed (not undefined) so both effects bail — network-free.
-    const { container } = render(<MemoryRouter>{node}</MemoryRouter>);
+    const { container } = render(<MemoryRouter initialEntries={["/experiments?research_scope=all"]}>{node}</MemoryRouter>);
     const calls = {
       error: errSpy.mock.calls.map((c) => String(c[0])),
       warn: warnSpy.mock.calls.map((c) => String(c[0])),
@@ -538,7 +538,7 @@ describe("Experiments hardening r4 — unknown/forward-compat verdict tone enum"
   function renderQuietly(node: React.ReactElement) {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const { container } = render(<MemoryRouter>{node}</MemoryRouter>);
+    const { container } = render(<MemoryRouter initialEntries={["/experiments?research_scope=all"]}>{node}</MemoryRouter>);
     const calls = {
       error: errSpy.mock.calls.map((c) => String(c[0])),
       warn: warnSpy.mock.calls.map((c) => String(c[0])),
