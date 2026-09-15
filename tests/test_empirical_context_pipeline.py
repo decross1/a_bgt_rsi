@@ -6,13 +6,22 @@ prompt. They never call a model or use operator private evidence.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from agent_wrapper.wrapper import get_run_id
-from orchestrator import active_run, empirical_context, nara, research_campaign
+from orchestrator import (
+    active_run,
+    empirical_context,
+    nara,
+    novelty_skeptic,
+    research_campaign,
+    restate_skeptic,
+)
 from orchestrator.subagent import SubAgentResult
 from workers import critic_loop_v0 as critic
+from workers import debate
 
 OUTCOME = {
     "experiment_id": "known-opponent-utility-response-pilot-v1",
@@ -155,3 +164,123 @@ def test_tampered_empirical_cache_refuses_critic_model(cache, monkeypatch):
     result = critic.critic_loop_v0("hypothesis", "iter-tamper")
     assert result["status"] == "error"
     assert any("empirical context cache is untrusted" in e for e in result["errors"])
+
+
+def test_active_debate_challenger_and_defender_see_same_note(monkeypatch):
+    monkeypatch.delenv("MOCK_LLM", raising=False)
+    queries = []
+    monkeypatch.setattr(debate, "query_top_k", lambda text, **_kw: (
+        queries.append(text) or {
+            "status": "passed", "result": {"neighbors": [
+                {"doc_id": "own-1", "title": "T", "chunk_text": "fresh evidence"},
+            ]},
+        }
+    ))
+    prompts = []
+
+    def _turn_stub(**kwargs):
+        prompts.append(kwargs)
+        return {
+            "text": "OBJECT: source coverage is limited" if kwargs["role"] == "challenger"
+                    else "REBUT: the claim is narrower",
+            "backend": "fake", "model": "fake", "wall_seconds": 0.01,
+        }
+
+    monkeypatch.setattr(debate, "_subagent_turn", _turn_stub)
+    entry = empirical_context.build(OUTCOME)
+    debate.debate("original hypothesis", None, iteration_id="iter-debate",
+                  empirical_entry=entry, max_rounds=1)
+    assert queries == ["original hypothesis"]
+    assert [row["role"] for row in prompts] == ["challenger", "defender"]
+    for row in prompts:
+        assert entry["outcome_sha256"] in row["user_prompt"]
+        assert OUTCOME["value"]["run_sha256"] in row["user_prompt"]
+        assert "does not establish theoretical novelty" in row["user_prompt"]
+
+
+def test_single_attack_and_restate_judge_see_outcome_without_query_drift(monkeypatch):
+    monkeypatch.delenv("MOCK_LLM", raising=False)
+    backend = SimpleNamespace(name="fake", model_version="fake/0")
+    entry = empirical_context.build(OUTCOME)
+    attack_query = []
+    attack_calls = []
+    monkeypatch.setattr(novelty_skeptic, "get_backend", lambda _name: backend)
+    monkeypatch.setattr(novelty_skeptic, "query_top_k", lambda text, **_kw: (
+        attack_query.append(text) or {
+            "status": "passed", "result": {"neighbors": [
+                {"doc_id": "own-1", "title": "T", "chunk_text": "fresh evidence"},
+            ]},
+        }
+    ))
+
+    def _attack_call(messages, **kwargs):
+        attack_calls.append((messages, kwargs))
+        return {"completion": json.dumps({
+            "attack_verdict": "survives_attack", "rationale": "limited",
+            "contradicting_doc_id": None,
+        })}
+
+    monkeypatch.setattr(novelty_skeptic, "call_sync", _attack_call)
+    novelty_skeptic.attack("original hypothesis", empirical_entry=entry)
+    assert attack_query == ["original hypothesis"]
+    assert entry["outcome_sha256"] in attack_calls[0][0][1]["content"]
+
+    restate_query = []
+    restate_calls = []
+    monkeypatch.setattr(restate_skeptic, "get_backend", lambda _name: backend)
+    monkeypatch.setattr(restate_skeptic, "query_top_k", lambda text, **_kw: (
+        restate_query.append(text) or {
+            "status": "passed", "result": {"neighbors": [
+                {"doc_id": "own-2", "title": "T", "chunk_text": "prior art"},
+            ]},
+        }
+    ))
+
+    def _restate_call(messages, **kwargs):
+        restate_calls.append((messages, kwargs))
+        if kwargs["caller_tag"] == "restate_canonicalize":
+            return {"completion": json.dumps({
+                "canonical_statement": "canonical hypothesis",
+            })}
+        return {"completion": json.dumps({
+            "restate_verdict": "not_restated", "rationale": "different",
+            "restating_doc_id": None,
+        })}
+
+    monkeypatch.setattr(restate_skeptic, "call_sync", _restate_call)
+    restate_skeptic.restate_attack("original hypothesis", empirical_entry=entry)
+    assert restate_query == ["canonical hypothesis"]
+    assert entry["outcome_sha256"] not in restate_calls[0][0][1]["content"]
+    assert entry["outcome_sha256"] in restate_calls[1][0][1]["content"]
+
+
+def test_critic_forwards_cached_context_to_active_debate(cache, monkeypatch):
+    entry = empirical_context.build(OUTCOME)
+    cache.write_entry("iter-active", "empirical_context", entry)
+    cache.write_entry("iter-active", "retrieval", {
+        "status": "passed", "result": {"k": 1, "neighbors": [
+            {"doc_id": "doc-1", "title": "T", "chunk_text": "fresh evidence"},
+        ], "relevance": {"category": "ok", "low_confidence": False}},
+    })
+    monkeypatch.setenv("NARA_SKEPTIC", "1")
+    monkeypatch.setenv("NARA_DEBATE", "1")
+    monkeypatch.setenv("NARA_RESTATE_SKEPTIC", "0")
+    monkeypatch.setattr(critic, "run_subagent", lambda **_kw: SubAgentResult(
+        status="passed", result={
+            "verdict": "survives", "rationale": "limited source",
+            "contradicting_paper_id": None,
+        }, errors=[], wrapper_call_ids=["critic-test"], turns_used=1,
+        wall_seconds=0.1, output_tokens_used=20,
+    ))
+    captured = []
+    monkeypatch.setattr(debate, "debate", lambda claim, evidence, **kwargs: (
+        captured.append((claim, evidence, kwargs)) or {
+            "verdict": "survives_debate", "rounds": 1, "transcript": [],
+            "stop_reason": "challenger_conceded",
+        }
+    ))
+    critic.critic_loop_v0("original hypothesis", "iter-active")
+    assert len(captured) == 1
+    assert captured[0][0] == "original hypothesis"
+    assert captured[0][1] is None
+    assert captured[0][2]["empirical_entry"] == entry

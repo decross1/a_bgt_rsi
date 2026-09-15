@@ -271,7 +271,8 @@ def _configured_skeptic_backend() -> str:
 
 
 def _run_single_attack(
-    result: dict, hypothesis_text: str, iteration_id: str | None
+    result: dict, hypothesis_text: str, iteration_id: str | None,
+    empirical_entry: dict | None = None,
 ) -> tuple[bool, str | None, str | None]:
     """The single-shot skeptic exchange (D-041/D-044 attack()).
 
@@ -298,7 +299,10 @@ def _run_single_attack(
         return (False, None, None)
     t0 = time.perf_counter()
     try:
-        out = attack(hypothesis_text, iteration_id=iteration_id) or {}
+        kwargs = {"iteration_id": iteration_id}
+        if empirical_entry is not None:
+            kwargs["empirical_entry"] = empirical_entry
+        out = attack(hypothesis_text, **kwargs) or {}
     except Exception as exc:  # a skeptic crash is recorded, never fatal
         result["skeptic_verdict"] = f"error: {type(exc).__name__}: {exc}"[:200]
         result["skeptic_backend"] = _configured_skeptic_backend()
@@ -347,7 +351,8 @@ def _run_single_attack(
 
 
 def _run_debate_exchange(
-    result: dict, hypothesis_text: str, iteration_id: str | None
+    result: dict, hypothesis_text: str, iteration_id: str | None,
+    empirical_entry: dict | None = None,
 ) -> tuple[bool, str | None, str | None]:
     """The NARA_DEBATE=1 variant of the skeptic exchange (D-065).
 
@@ -371,9 +376,10 @@ def _run_debate_exchange(
         return (False, None, None)
     debate_started = time.perf_counter()
     try:
-        out = debate_mod.debate(
-            hypothesis_text, None, iteration_id=iteration_id
-        ) or {}
+        kwargs = {"iteration_id": iteration_id}
+        if empirical_entry is not None:
+            kwargs["empirical_entry"] = empirical_entry
+        out = debate_mod.debate(hypothesis_text, None, **kwargs) or {}
     except Exception as exc:  # a debate crash is recorded, never fatal
         result["skeptic_elapsed_wall_seconds"] = round(
             time.perf_counter() - debate_started, 3
@@ -477,7 +483,8 @@ def _run_debate_exchange(
 
 
 def _maybe_run_skeptic(
-    result: dict, hypothesis_text: str, iteration_id: str | None
+    result: dict, hypothesis_text: str, iteration_id: str | None,
+    empirical_entry: dict | None = None,
 ) -> None:
     """Optional adversarial second-channel check (β skeptic-gate seam, D-041).
 
@@ -507,11 +514,11 @@ def _maybe_run_skeptic(
         return
     if os.environ.get("NARA_DEBATE", "0") == "1":
         ran, override_reason, disposition = _run_debate_exchange(
-            result, hypothesis_text, iteration_id
+            result, hypothesis_text, iteration_id, empirical_entry
         )
     else:
         ran, override_reason, disposition = _run_single_attack(
-            result, hypothesis_text, iteration_id
+            result, hypothesis_text, iteration_id, empirical_entry
         )
     if not ran:
         return
@@ -532,6 +539,7 @@ def _maybe_run_restate_skeptic(
     iteration_id: str | None,
     novelty_class: str | None,
     novelty_top_id: str | None,
+    empirical_entry: dict | None = None,
 ) -> None:
     """Optional restatement-skeptic check (residual-2 seam).
 
@@ -561,10 +569,11 @@ def _maybe_run_restate_skeptic(
         return
     t0 = time.perf_counter()
     try:
-        out = restate_attack(
-            hypothesis_text, iteration_id=iteration_id,
-            novelty_top_neighbor_id=novelty_top_id,
-        ) or {}
+        kwargs = {"iteration_id": iteration_id,
+                  "novelty_top_neighbor_id": novelty_top_id}
+        if empirical_entry is not None:
+            kwargs["empirical_entry"] = empirical_entry
+        out = restate_attack(hypothesis_text, **kwargs) or {}
     except Exception as exc:  # a skeptic crash is recorded, never fatal
         result["restate_verdict"] = f"error: {type(exc).__name__}: {exc}"[:200]
         result["restate_backend"] = _configured_skeptic_backend()
@@ -746,10 +755,11 @@ def critic_loop_v0(
     )
 
     empirical_note = ""
+    empirical_entry = None
     if iteration_cache.has_entry(iteration_id, "empirical_context"):
         try:
-            cached = iteration_cache.read_entry(iteration_id, "empirical_context")
-            empirical_note = "\n\n" + empirical_context.note(cached)
+            empirical_entry = iteration_cache.read_entry(iteration_id, "empirical_context")
+            empirical_note = "\n\n" + empirical_context.note(empirical_entry)
         except (KeyError, ValueError) as exc:
             return {
                 "status": "error",
@@ -850,13 +860,14 @@ def critic_loop_v0(
         if not rel_low and rel.get("category") in (None, "ok"):
             _maybe_run_restate_skeptic(
                 validated, hypothesis_text, iteration_id,
-                novelty_class, novelty_top_id,
+                novelty_class, novelty_top_id, empirical_entry,
             )
 
         # β skeptic-gate seam (D-041): independent-retrieval attack on a
         # clean 'survives'. No-op unless NARA_SKEPTIC=1 and the module exists.
         if validated.get("verdict") == "survives" and not rel_low:
-            _maybe_run_skeptic(validated, hypothesis_text, iteration_id)
+            _maybe_run_skeptic(validated, hypothesis_text, iteration_id,
+                               empirical_entry)
 
         # Novelty/critic consistency check: a final 'survives' on a
         # hypothesis novelty called a rediscovery is flagged, never flipped
