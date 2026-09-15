@@ -53,6 +53,26 @@ describe("ResearchOpsCard", () => {
     expect(screen.queryByText(/Last receipt-bound success: not verified/)).not.toBeInTheDocument();
   });
 
+  it("prioritizes the registered successor and labels the legacy fetch failure as log-only", () => {
+    const data = {
+      ...receipt(),
+      next_work: { code: "activate_registered_successor", campaign_id: "next-campaign",
+        topic_id: null, study_id: null, manifest_sha256: sha("c"),
+        preregistration_sha256: null, activation_required: true },
+      ingestion_legacy_log: { status: "fetch_failed_log_observed",
+        started_at: new Date().toISOString(), log_sha256: sha("3"),
+        http_codes_observed: ["429", "503"], retry_count_observed: 6,
+        receipt_bound: false },
+    };
+    show(data);
+    expect(screen.getByText("Activate registered successor next-campaign")).toBeInTheDocument();
+    expect(screen.getByText(/Registered next step; no task dispatch is implied/)).toBeInTheDocument();
+    expect(screen.getByText(/Legacy log observed a failed fetch/)).toBeInTheDocument();
+    expect(screen.getByText(/HTTP 429\/503; 6 retries/)).toBeInTheDocument();
+    expect(screen.getByText("Source attempt status unknown")).toBeInTheDocument();
+    expect(screen.queryByText("Latest source attempt succeeded")).not.toBeInTheDocument();
+  });
+
   it("withholds current work on stale, wrong-schema, or failed reads", () => {
     const stale = { ...receipt(), observed_at: new Date(Date.now() - 10 * 60_000).toISOString() };
     const { rerender } = show(stale);

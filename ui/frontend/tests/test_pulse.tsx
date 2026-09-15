@@ -720,6 +720,38 @@ describe("Pulse (/)", () => {
     expect(verdict).not.toHaveTextContent("Mia candidate");
   });
 
+  it("labels a fresh bound lab resident evaluation as active without turning its plan into a score", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "resident", mode_source: "lab_evaluation_state",
+      mode_source_sha256: "a".repeat(64),
+      resident_services_expected: "online", nara_service_expected: "paused",
+      run_id: "qfn-ab-lab-primary-20260915-a.resident", phase: "evaluation",
+      candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Resident model evaluation active" })).toBeInTheDocument());
+    expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "research");
+    expect(screen.getByTestId("health-verdict")).toHaveTextContent("Nara is paused");
+  });
+
+  it("withholds a lab operating-mode claim with an unbound source", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "candidate_research", mode_source: "lab_evaluation_state",
+      mode_source_sha256: "unbound", resident_services_expected: "stopped",
+      nara_service_expected: "paused", run_id: "qfn-ab-lab-primary-20260915-a.flash",
+      phase: "evaluation", candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(http.getModelRuntime).toHaveBeenCalled());
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(screen.getByRole("heading", { name: "Operating mode unverified" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Mia model evaluation active" })).not.toBeInTheDocument();
+  });
+
   it("accepts a fresh restored resident receipt that arrives after the UI clock tick", async () => {
     const http = await import("../src/api/http");
     let publish!: (value: unknown) => void;

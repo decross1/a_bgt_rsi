@@ -1066,6 +1066,7 @@ def project_model_runtime(
     qualification_root: Path = QUALIFICATION_ROOT,
     *,
     evaluation_root: Path | None = None,
+    lab_root: Path | None = None,
     proc_root: Path = PROC_ROOT,
     boot_id_path: Path = BOOT_ID_PATH,
     now: Callable[[], datetime] | None = None,
@@ -1086,6 +1087,16 @@ def project_model_runtime(
                 FOLLOWON_RUN_ROOT,
                 maybe_project_followon,
             )
+            from .model_runtime_lab import WINDOW_ROOT as LAB_WINDOW_ROOT, maybe_project_lab
+
+            lab = maybe_project_lab(
+                qualification_root, evaluation_root or EVALUATION_RUN_ROOT,
+                FOLLOWON_RUN_ROOT, lab_root=lab_root or LAB_WINDOW_ROOT,
+                proc_root=proc_root, boot_id_path=boot_id_path,
+                observed=observed,
+            )
+            if lab is not None:
+                return lab
 
             followon = maybe_project_followon(
                 qualification_root, evaluation_root or EVALUATION_RUN_ROOT,
