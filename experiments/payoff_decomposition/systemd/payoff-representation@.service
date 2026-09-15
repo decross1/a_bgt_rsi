@@ -1,0 +1,9 @@
+[Unit]
+Description=Registered known-opponent payoff representation job %i
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/decross1/projects/a_bgt_rsi
+ExecStart=/home/decross1/projects/a_bgt_rsi/.venv-chroma/bin/python -m experiments.payoff_decomposition.queue --dispatch --job-id %i
+TimeoutStartSec=1860
+Restart=no

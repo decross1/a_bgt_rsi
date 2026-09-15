@@ -25,6 +25,23 @@ const receipt = () => ({
     last_success_pointer_sha256: null as string | null },
 });
 const show = (data: unknown, failing = false) => render(<MemoryRouter><ResearchOpsCard data={data} failing={failing} /></MemoryRouter>);
+const payoffObservation = () => ({
+  schema_version: "registered-payoff-jobs-observation/v1", source_status: "available",
+  checked_at: new Date().toISOString(), queue_source_sha256: sha("9"),
+  timer_activation: "not_verified", comparison_eligible: false,
+  jobs: [
+    { job_id: "payoff-representation-a", panel_id: "payoff-representation-a",
+      not_before: "2026-09-15T19:00:00+00:00", expires_at: "2026-09-16T00:00:00+00:00",
+      role: "first_fresh_payoff_representation_diagnostic", state: "eligible_prepared",
+      attempt_index: 0, prepared_window_present: true, last_availability_refusal: null,
+      comparison_eligible: false },
+    { job_id: "payoff-representation-b", panel_id: "payoff-representation-b",
+      not_before: "2026-09-16T03:30:00+00:00", expires_at: "2026-09-16T08:00:00+00:00",
+      role: "fresh_input_followup_not_same_prompt_reseed", state: "not_due",
+      attempt_index: 0, prepared_window_present: false, last_availability_refusal: null,
+      comparison_eligible: false },
+  ],
+});
 
 describe("ResearchOpsCard", () => {
   it("separates exhausted campaign topics, recorded iterations, no-op plans, dispatch, and unknown ingestion", () => {
@@ -94,6 +111,98 @@ describe("ResearchOpsCard", () => {
     rerender(<MemoryRouter><ResearchOpsCard data={{ ...data,
       empirical_pilot: { ...data.empirical_pilot, admission_receipt_sha256: sha("7") } }} /></MemoryRouter>);
     expect(screen.queryByText(/Review admitted binary pilot/)).not.toBeInTheDocument();
+  });
+
+  it("shows admitted binary-pilot behavior by utility without accepting a theory claim", () => {
+    const admission = sha("5"), run = sha("6");
+    const behavior = {
+      schema_version: "known-opponent-pilot-behavior/v1",
+      admission_receipt_sha256: admission, pilot_run_sha256: run,
+      manifest_raw_sha256: sha("7"), scheduled_action_calls: 96,
+      valid_action_calls: 96, complete_episodes: 12,
+      zero_regret_complete_episodes: 3, comprehension_passed: 0,
+      comprehension_scheduled_episodes: 12, comprehension_prompt_forms: 2,
+      form_repetitions_each: 6,
+      by_utility: { own_payoff: { complete: 6, zero_regret: 3 },
+        joint_payoff: { complete: 6, zero_regret: 0 } },
+      current_source_replay: "not_performed", theory_accepted: false,
+      strategy_causal_claim: false,
+    };
+    const data = {
+      ...receipt(),
+      next_work: { code: "review_admitted_empirical_pilot", campaign_id: "v2-campaign",
+        topic_id: null, study_id: "known-opponent-utility-response-pilot-v1",
+        manifest_sha256: sha("a"), preregistration_sha256: sha("4"),
+        activation_required: false, pilot_admission_receipt_sha256: admission },
+      empirical_pilot: { status: "recorded_admitted",
+        window_id: "qfn-followon-known-opponent-lab8h-a",
+        admission_receipt_sha256: admission, pilot_run_sha256: run,
+        attempted_calls: 108, complete_episodes: 12,
+        current_source_replay: "not_performed", behavior_summary: behavior },
+    };
+    const { rerender } = show(data);
+    expect(screen.getByText(/Action syntax: 96\/96 scheduled actions valid/)).toBeInTheDocument();
+    expect(screen.getByText(/Zero regret: 3\/12 complete episodes/)).toBeInTheDocument();
+    expect(screen.getByText(/3\/6 own-payoff; 0\/6 joint-payoff/)).toBeInTheDocument();
+    expect(screen.getByText(/Comprehension: 0\/12 episodes correct/)).toBeInTheDocument();
+    expect(screen.getByText(/two prompt forms repeated six times each/)).toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, next_work: {
+      ...data.next_work, code: "run_preregistered_campaign_topic",
+      topic_id: "next-topic", pilot_admission_receipt_sha256: null,
+    } }} /></MemoryRouter>);
+    expect(screen.getByText(/Action syntax: 96\/96/)).toBeInTheDocument();
+    expect(screen.queryByText(/Review admitted binary pilot/)).not.toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, empirical_pilot: {
+      ...data.empirical_pilot, behavior_summary: { ...behavior,
+        zero_regret_complete_episodes: 13 } } }} /></MemoryRouter>);
+    expect(screen.queryByText(/Action syntax: 96\/96/)).not.toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, empirical_pilot: {
+      ...data.empirical_pilot, behavior_summary: { ...behavior,
+        admission_receipt_sha256: sha("8") } } }} /></MemoryRouter>);
+    expect(screen.queryByText(/Action syntax: 96\/96/)).not.toBeInTheDocument();
+  });
+
+  it("shows the two registered payoff job windows without claiming timer activation or dispatch", () => {
+    show({ ...receipt(), next_work: { code: "run_preregistered_campaign_topic",
+      topic_id: "unrelated-topic" }, payoff_jobs: payoffObservation() });
+    expect(screen.getByText("Registered payoff jobs")).toBeInTheDocument();
+    expect(screen.getByText("A · first fresh input")).toBeInTheDocument();
+    expect(screen.getByText(/Prepared and eligible/)).toBeInTheDocument();
+    expect(screen.getByText("B · fresh-input follow-up")).toBeInTheDocument();
+    expect(screen.getByText(/Not due/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Registered execution interval/)).toHaveLength(2);
+    expect(screen.getByText(/Last source-bound queue check/)).toBeInTheDocument();
+    expect(screen.getByText(/Timer activation is not verified/)).toBeInTheDocument();
+    expect(screen.getByText(/preparation alone does not establish execution/)).toBeInTheDocument();
+    expect(screen.queryByText(/timer enabled/i)).not.toBeInTheDocument();
+  });
+
+  it("withholds payoff readiness when a row, source hash, or check time is unbound", () => {
+    const observation = payoffObservation();
+    const data = { ...receipt(), payoff_jobs: observation };
+    const { rerender } = show(data);
+    expect(screen.getByText(/Prepared and eligible/)).toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, payoff_jobs: {
+      ...observation, jobs: [{ ...observation.jobs[0], state: "admitted_attempt_verified",
+        comparison_eligible: true }, observation.jobs[1]] } }} /></MemoryRouter>);
+    expect(screen.queryByText(/Admitted attempt verified/)).not.toBeInTheDocument();
+    expect(screen.getByText(/queue observation unavailable or stale/)).toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, payoff_jobs: {
+      ...observation, queue_source_sha256: "unbound" } }} /></MemoryRouter>);
+    expect(screen.queryByText(/Prepared and eligible/)).not.toBeInTheDocument();
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, payoff_jobs: {
+      ...observation, checked_at: new Date(Date.now() - 10 * 60_000).toISOString() } }} /></MemoryRouter>);
+    expect(screen.queryByText(/Prepared and eligible/)).not.toBeInTheDocument();
+  });
+
+  it("labels an unavailable payoff package instead of inventing a prepared job", () => {
+    show({ ...receipt(), payoff_jobs: {
+      schema_version: "registered-payoff-jobs-observation/v1",
+      source_status: "package_unavailable", checked_at: new Date().toISOString(),
+      queue_source_sha256: null, jobs: null, timer_activation: "not_verified",
+      comparison_eligible: false } });
+    expect(screen.getByText(/Payoff job package unavailable/)).toBeInTheDocument();
+    expect(screen.queryByText(/Prepared and eligible/)).not.toBeInTheDocument();
   });
 
   it("withholds current work on stale, wrong-schema, or failed reads", () => {

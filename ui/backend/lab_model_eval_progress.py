@@ -24,6 +24,8 @@ SCHEMA = "lab-model-eval-progress/v1"
 CHECKPOINT_SCHEMA = "lab-model-eval-checkpoint/v1"
 RUN_SCHEMA = "lab-model-eval-run/v1"
 EXECUTION_SCHEMA = "lab-model-eval-execution/v1"
+SETUP_PHASES = frozenset({"preflight", "candidate_create", "resident_stop",
+                          "candidate_start", "probes"})
 FAMILIES = frozenset({"objective", "topic", "portfolio", "diversity",
                       "role_effort", "historical", "context"})
 
@@ -153,6 +155,10 @@ def _provisional_cohort(cohort: str, window_path: Path, plan_sha: str,
             supervised > observed + timedelta(seconds=20) or
             (phase not in ("complete", "aborted") and
              observed - supervised > timedelta(seconds=window["wall_s"]))):
+        return row
+    if phase in (SETUP_PHASES if cohort == "flash" else {"preflight"}):
+        runtime._worker(state, start, window_path, mr.PROC_ROOT, mr.BOOT_ID_PATH)
+        row["status"] = "setup"
         return row
     if phase == "evaluation":
         runtime._worker(state, start, window_path, mr.PROC_ROOT, mr.BOOT_ID_PATH)
