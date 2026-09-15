@@ -1,6 +1,7 @@
 """The newest bound controller state owns Pulse mode during a Flash pair run."""
 from __future__ import annotations
 
+import builtins
 import hashlib
 import json
 import os
@@ -109,6 +110,23 @@ def test_redirected_registered_pair_child_is_untrusted(tmp_path):
     projection = selected(qroot, eroot)
     assert projection["mode"] == "unknown"
     assert projection["mode_source"] == "none"
+
+
+def test_missing_bench_source_returns_unknown_instead_of_raising(tmp_path, monkeypatch):
+    original_import = builtins.__import__
+
+    def missing_source(name, *args, **kwargs):
+        if name == "bench.flash_next_ab":
+            raise ImportError("producer source unavailable")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_source)
+    row = extended.project_extended_runtime(
+        tmp_path / "evaluation-runs", proc_root=tmp_path / "proc",
+        boot_id_path=tmp_path / "boot", observed=NOW,
+    )
+    assert row["mode"] == "unknown"
+    assert row["mode_source"] == "none"
 
 
 def active_sources(tmp_path, monkeypatch, *, mutate=None):

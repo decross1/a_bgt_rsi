@@ -1270,7 +1270,7 @@ def project_model_runtime(
             ),
             "source_error": None,
         }
-    except (OSError, RuntimeSourceError, ValueError, TypeError, AttributeError):
+    except (OSError, ImportError, RuntimeSourceError, ValueError, TypeError, AttributeError):
         return _unknown(observed_at, "runtime state is absent, stale, or untrusted")
     finally:
         if run_fd is not None:

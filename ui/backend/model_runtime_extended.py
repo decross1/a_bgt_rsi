@@ -149,11 +149,13 @@ def project_extended_runtime(
     observed: datetime,
 ) -> dict[str, Any]:
     """Admit one current pair-run phase from registered sources only."""
-    from bench.flash_next_ab import evaluation_window as ew
-    from bench.flash_next_ab.candidate_registry import MIA
-
     observed = observed.astimezone(timezone.utc)
     observed_at = observed.isoformat()
+    try:
+        from bench.flash_next_ab import evaluation_window as ew
+        from bench.flash_next_ab.candidate_registry import MIA
+    except ImportError:
+        return mr._unknown(observed_at, "extended runtime source is unavailable")
     run_fd = None
     try:
         run_fd, run_id, state_raw = mr._open_latest_run(
