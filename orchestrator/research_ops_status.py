@@ -44,6 +44,10 @@ INGESTION_CODES = frozenset({
 LEGACY_LOG = Path("/home/decross1/cron-daily-arxiv.log")
 MAX_LEGACY_LOG_BYTES = 1_000_000
 LEGACY_START_RE = re.compile(r"^\[daily-arxiv\] ([0-9T:-]+Z) start$", re.MULTILINE)
+PILOT_ROOT = Path("/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/"
+                  "lab-eight-hour/known-opponent-utility")
+PILOT_WINDOW_RE = re.compile(r"^qfn-followon-known-opponent-[a-z0-9][a-z0-9._-]{0,47}$")
+MAX_PILOT_WINDOWS = 16
 
 
 def _sha(raw: bytes) -> str:
@@ -243,9 +247,116 @@ def _legacy_ingestion_log(path: Path, observed: datetime) -> dict:
     return out
 
 
+def _pilot_admission(root: Path, repo_root: Path, observed: datetime) -> dict:
+    """Read an archived public gate receipt and its exact raw public refs.
+
+    This does not replay private SSE or assert a new scientific hypothesis.
+    Missing publication stays pending; malformed published proof stays unknown.
+    """
+    out = {"status": "not_published", "window_id": None,
+           "admission_receipt_sha256": None, "pilot_run_sha256": None,
+           "attempted_calls": None, "complete_episodes": None,
+           "current_source_replay": "not_performed"}
+    if not root.exists():
+        return out
+    try:
+        if root.is_symlink() or not root.is_dir() or root.resolve() != root:
+            raise ValueError("pilot root redirected")
+        children = list(root.iterdir())
+        if len(children) > MAX_PILOT_WINDOWS:
+            raise ValueError("pilot window scan exceeds cap")
+        admitted = []
+        for child in children:
+            if child.is_symlink() or not child.is_dir() or not PILOT_WINDOW_RE.fullmatch(child.name):
+                raise ValueError("pilot window path is not registered")
+            receipt_path = child / "admission.json"
+            if not os.path.lexists(receipt_path):
+                continue
+            receipt_raw = ingestion._read_regular(receipt_path, 16_384)
+            receipt = _json(receipt_raw)
+            window_raw = ingestion._read_regular(child / "window.json", 2_000_000)
+            manifest_raw = ingestion._read_regular(child / "manifest.snapshot.json", 1_000_000)
+            pilot_manifest_raw = ingestion._read_regular(child / "pilot/manifest.json", 1_000_000)
+            result_raw = ingestion._read_regular(child / "result.json", 16_384)
+            supervision_raw = ingestion._read_regular(child / "supervision.json", 16_384)
+            run_raw = ingestion._read_regular(child / "pilot/run.json", 1_000_000)
+            window, manifest, result, supervision, run = map(
+                _json, (window_raw, manifest_raw, result_raw, supervision_raw, run_raw))
+            validation = receipt.get("pilot_validation")
+            finished = _time(result.get("finished_at"))
+            if (receipt.get("schema") != "known-opponent-resident-study-admission/v1"
+                    or receipt.get("window_id") != child.name
+                    or receipt.get("window_sha256") != _sha(window_raw)
+                    or receipt.get("result_sha256") != _sha(result_raw)
+                    or receipt.get("supervision_sha256") != _sha(supervision_raw)
+                    or receipt.get("pilot_run_sha256") != _sha(run_raw)
+                    or receipt.get("comparison_eligible") is not False
+                    or receipt.get("promotion_authorized") is not False
+                    or receipt.get("trading_claim_authorized") is not False
+                    or window.get("schema") != "known-opponent-resident-study-window/v1"
+                    or window.get("window_id") != child.name
+                    or window.get("output_dir") != str(child)
+                    or window.get("code_root") != str(repo_root)
+                    or window.get("manifest") != {"path": str(child / "manifest.snapshot.json"),
+                                                   "sha256": _sha(manifest_raw)}
+                    or pilot_manifest_raw != manifest_raw
+                    or window.get("policy") != {"temperature": 0.0, "top_p": 1.0,
+                                                "top_k": 64, "enable_thinking": False}
+                    or window.get("endpoint", {}).get("name") != "resident_gemma"
+                    or manifest.get("schema") != "known-opponent-utility-response-pilot/v1"
+                    or manifest.get("campaign_id") != KNOWN_OPPONENT_CAMPAIGN_ID
+                    or manifest.get("study_id") != "known-opponent-utility-response-pilot-v1"
+                    or manifest.get("source_root") != str(repo_root)
+                    or manifest.get("policy") != window.get("policy")
+                    or manifest.get("endpoint") != window.get("endpoint")
+                    or result.get("schema") != "known-opponent-resident-study-result/v1"
+                    or result.get("status") != "observed_restored"
+                    or result.get("window_sha256") != _sha(window_raw)
+                    or result.get("pilot_run_sha256") != _sha(run_raw)
+                    or result.get("restoration", {}).get("status") != "verified"
+                    or result.get("restoration", {}).get("sentinel_retained") is not False
+                    or result.get("error") is not None
+                    or supervision.get("schema") != "known-opponent-resident-study-supervision/v1"
+                    or supervision.get("window_sha256") != _sha(window_raw)
+                    or supervision.get("returncode") != 0
+                    or supervision.get("terminated_at_cutoff") is not False
+                    or supervision.get("interrupted") is not None
+                    or supervision.get("emergency_restoration") is not None
+                    or run.get("schema") != "known-opponent-utility-response-pilot-run/v1"
+                    or run.get("status") not in {"complete", "completed_schedule_with_unknown_actions"}
+                    or run.get("scheduled_calls") != 108
+                    or not isinstance(validation, dict)
+                    or validation.get("schema") != "known-opponent-utility-response-validation/v1"
+                    or validation.get("status") != "admitted_empirical_pilot"
+                    or validation.get("admission_eligible") is not True
+                    or validation.get("study_id") != "known-opponent-utility-response-pilot-v1"
+                    or validation.get("campaign_id") != KNOWN_OPPONENT_CAMPAIGN_ID
+                    or validation.get("run_sha256") != _sha(run_raw)
+                    or validation.get("manifest_sha256") != run.get("manifest_sha256")
+                    or validation.get("manifest_sha256") != manifest.get("manifest_sha256")
+                    or type(validation.get("attempted_calls")) is not int
+                    or validation["attempted_calls"] != run.get("attempted_calls")
+                    or type(validation.get("complete_episodes")) is not int
+                    or finished is None or finished > observed):
+                raise ValueError("pilot recorded admission or raw public refs drifted")
+            admitted.append((finished, child.name, _sha(receipt_raw), validation))
+        if admitted:
+            finished, window_id, receipt_sha, validation = max(admitted)
+            out.update(status="recorded_admitted", window_id=window_id,
+                       admission_receipt_sha256=receipt_sha,
+                       pilot_run_sha256=validation["run_sha256"],
+                       attempted_calls=validation["attempted_calls"],
+                       complete_episodes=validation["complete_episodes"])
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, UnicodeError,
+            ingestion.IngestionError):
+        out["status"] = "source_unknown"
+    return out
+
+
 def project_research_ops_status(
     *, repo_root: Path = PROJECT_ROOT, ingestion_root: Path | None = None,
-    legacy_ingestion_log: Path = LEGACY_LOG, observed_at: datetime | None = None,
+    legacy_ingestion_log: Path = LEGACY_LOG, pilot_root: Path = PILOT_ROOT,
+    observed_at: datetime | None = None,
 ) -> dict:
     """Return one bounded public status without dispatching work."""
     observed = observed_at or datetime.now(timezone.utc)
@@ -274,6 +385,7 @@ def project_research_ops_status(
         "ingestion": _ingestion(ingestion_root or repo_root / "run_state" / "arxiv_ingestion",
                                 observed),
         "ingestion_legacy_log": _legacy_ingestion_log(legacy_ingestion_log, observed),
+        "empirical_pilot": _pilot_admission(pilot_root, repo_root, observed),
     }
     try:
         campaign = load_active_campaign(repo_root=repo_root, env_campaign_id="",
@@ -302,12 +414,15 @@ def project_research_ops_status(
             if campaign["campaign_id"] == KNOWN_OPPONENT_CAMPAIGN_ID and consumed_count >= 1:
                 study = campaign["study_manifests"][0]
                 out["next_work"] = {
-                    "code": "freeze_and_run_registered_empirical_study",
+                    "code": ("review_admitted_empirical_pilot"
+                             if out["empirical_pilot"]["status"] == "recorded_admitted"
+                             else "freeze_and_run_registered_empirical_study"),
                     "campaign_id": campaign["campaign_id"],
                     "topic_id": None, "study_id": study["study_id"],
                     "manifest_sha256": campaign["_manifest_sha256"],
                     "preregistration_sha256": study["preregistration_sha256"],
                     "activation_required": False,
+                    "pilot_admission_receipt_sha256": out["empirical_pilot"]["admission_receipt_sha256"],
                 }
             elif eligible_ids:
                 out["next_work"] = {
