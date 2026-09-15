@@ -107,7 +107,7 @@ def gate(_plan, _cohort):
 
 def registered_contract():
     return {
-        "schema": "qwen-flash-next-qualification/v1",
+        "schema": "qwen-flash-next-qualification/v2",
         "contract_id": "qwen38-flash-next-c0-20260915",
         "profile": "C0",
         "image": {"id": q.IMAGE_ID, "architecture": "arm64"},
@@ -149,6 +149,7 @@ def registered_contract():
             "invocation_deadline_seconds": 3600,
             "readiness_deadline_seconds": 1200,
             "restoration_reserve_seconds": 600,
+            "setup_quiescence_seconds": 60,
             "memory_poll_seconds": 1,
             "probe_timeout_seconds": 120,
         },
@@ -177,7 +178,7 @@ def passing_flash_receipts(tmp_path):
     contract_sha256 = sha256_file(raw_contract_path)
     launch = q.launch_argv()
     qualification_plan = {
-        "schema": "qwen-flash-next-qualification-plan/v1",
+        "schema": "qwen-flash-next-qualification-plan/v2",
         "contract_id": contract["contract_id"],
         "contract_sha256": contract_sha256,
         "profile": "C0",
@@ -188,6 +189,7 @@ def passing_flash_receipts(tmp_path):
         "docker_create_argv_sha256": q.sha256(launch),
         "probe_set": contract["probe_set"],
         "min_mem_available_gib": 30,
+        "setup_quiescence_seconds": 60,
         "weekly_budget_debit": False,
         "paid_api_allowed": False,
         "production_change_authorized": False,
@@ -247,30 +249,58 @@ def passing_flash_receipts(tmp_path):
             "verified_files": q.expected_model_files(),
         },
     )
+    def memory_row(
+        observed_at, *, pages, phase="setup", quiet=False, available=40.0
+    ):
+        return {
+            "schema": "qwen-flash-next-memory-sample/v2",
+            "observed_at": observed_at,
+            "monitor_phase": phase,
+            "setup_quiescence_active": quiet,
+            "mem_available_gib": available,
+            "pswpout_pages": pages,
+            "pswpout_delta_pages": pages - 10,
+            "setup_pswpout_delta_pages": 2 if phase == "mutation" else pages - 10,
+            "mutation_pswpout_delta_pages": 0 if phase == "mutation" else None,
+        }
+
     memory_rows = [
-        {
-            "observed_at": "one",
-            "mem_available_gib": 40.0,
-            "pswpout_pages": 10,
-            "pswpout_delta_pages": 0,
-        },
-        {
-            "observed_at": "two",
-            "mem_available_gib": 39.0,
-            "pswpout_pages": 10,
-            "pswpout_delta_pages": 0,
-        },
+        memory_row("2026-09-15T23:59:59+00:00", pages=10),
+        *[
+            memory_row(
+                f"2026-09-16T00:{second // 60:02d}:{second % 60:02d}+00:00",
+                pages=12,
+                quiet=True,
+            )
+            for second in range(61)
+        ],
+        memory_row("2026-09-16T00:01:00.500000+00:00", pages=12),
+        *[
+            memory_row(
+                f"2026-09-16T00:01:{second:02d}+00:00",
+                pages=12,
+                phase="mutation",
+            )
+            for second in range(1, 60, 5)
+        ],
+        memory_row(
+            "2026-09-16T00:02:00+00:00",
+            pages=12,
+            phase="mutation",
+            available=39.0,
+        ),
     ]
     (tmp_path / "memory.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in memory_rows)
     )
     result = {
-        "schema": "qwen-flash-next-qualification-result/v1",
+        "schema": "qwen-flash-next-qualification-result/v2",
         "run_id": "qfn-c0-test",
         "status": "passed",
         "qualification_error": None,
         "restoration": {
             "status": "verified",
+            "verified_at": "2026-09-16T00:01:59+00:00",
             "errors": [],
             "sentinel_retained": False,
             "no_mutation_verified": False,
@@ -282,11 +312,27 @@ def passing_flash_receipts(tmp_path):
         "challenger_gpu_seconds": 5.0,
         "all_gpu_research_seconds": 5.0,
         "resident_downtime_seconds": 6.0,
-        "memory_samples": 2,
+        "memory_samples": len(memory_rows),
         "min_mem_available_gib": 39.0,
         "pswpout_initial_pages": 10,
-        "pswpout_final_pages": 10,
-        "pswpout_delta_pages": 0,
+        "pswpout_final_pages": 12,
+        "pswpout_delta_pages": 2,
+        "setup_pswpout_initial_pages": 10,
+        "setup_pswpout_final_pages": 12,
+        "setup_pswpout_delta_pages": 2,
+        "setup_quiescence_required_seconds": 60,
+        "setup_quiescence_passed": True,
+        "setup_quiescence_started_at": "2026-09-16T00:00:00+00:00",
+        "setup_quiescence_completed_at": "2026-09-16T00:01:00+00:00",
+        "setup_quiescence_duration_seconds": 60.0,
+        "setup_quiescence_initial_pswpout_pages": 12,
+        "setup_quiescence_final_pswpout_pages": 12,
+        "setup_quiescence_samples": 61,
+        "mutation_window_started_at": "2026-09-16T00:01:01+00:00",
+        "mutation_pswpout_initial_pages": 12,
+        "mutation_pswpout_final_pages": 12,
+        "mutation_pswpout_delta_pages": 0,
+        "mutation_final_sample_at": "2026-09-16T00:02:00+00:00",
         "probe_count": 3,
         "weekly_budget_debit": False,
         "paid_api_calls": 0,
@@ -457,6 +503,9 @@ def test_passing_flash_qualification_is_crossbound_to_registered_arm(tmp_path):
         contract_path,
         require_passed=True,
     )
+    assert summary["pswpout_delta_pages"] == 2
+    assert summary["setup_pswpout_delta_pages"] == 2
+    assert summary["mutation_pswpout_delta_pages"] == 0
     flash = make_arm_receipt(
         "flash",
         qualification_receipt_sha256=summary["qualification_receipt_sha256"],
@@ -476,6 +525,49 @@ def test_passing_flash_qualification_is_crossbound_to_registered_arm(tmp_path):
         )["admission_eligible"]
         is True
     )
+
+
+def test_flash_admission_rejects_swap_inside_the_mutation_window(tmp_path):
+    receipt_path, qualification_plan_path, contract_path = passing_flash_receipts(
+        tmp_path
+    )
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "memory.jsonl").read_text().splitlines()
+    ]
+    rows[-1]["pswpout_pages"] = 13
+    rows[-1]["pswpout_delta_pages"] = 3
+    rows[-1]["mutation_pswpout_delta_pages"] = 1
+    (tmp_path / "memory.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows)
+    )
+    result = json.loads(receipt_path.read_text())
+    result["pswpout_final_pages"] = 13
+    result["pswpout_delta_pages"] = 3
+    result["mutation_pswpout_final_pages"] = 13
+    result["mutation_pswpout_delta_pages"] = 1
+    write_json(receipt_path, result)
+
+    summary = validate_flash_qualification_files(
+        receipt_path, qualification_plan_path, contract_path
+    )
+    assert summary["admission_eligible"] is False
+    assert any("mutation" in reason for reason in summary["admission_failures"])
+
+
+def test_flash_admission_rejects_a_claimed_short_quiescence(tmp_path):
+    receipt_path, qualification_plan_path, contract_path = passing_flash_receipts(
+        tmp_path
+    )
+    result = json.loads(receipt_path.read_text())
+    result["setup_quiescence_duration_seconds"] = 59.999
+    write_json(receipt_path, result)
+
+    summary = validate_flash_qualification_files(
+        receipt_path, qualification_plan_path, contract_path
+    )
+    assert summary["admission_eligible"] is False
+    assert any("quiescence" in reason for reason in summary["admission_failures"])
 
 
 def test_flash_admission_rejects_a_sub_30_gib_contract(tmp_path):

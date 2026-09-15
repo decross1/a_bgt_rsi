@@ -19,7 +19,7 @@ from bench.flash_next_ab import qualification as q
 
 def contract():
     return {
-        "schema": "qwen-flash-next-qualification/v1",
+        "schema": "qwen-flash-next-qualification/v2",
         "contract_id": "qwen38-flash-next-c0-20260915",
         "profile": "C0",
         "image": {"id": q.IMAGE_ID, "architecture": "arm64"},
@@ -61,6 +61,7 @@ def contract():
             "invocation_deadline_seconds": 3600,
             "readiness_deadline_seconds": 1200,
             "restoration_reserve_seconds": 600,
+            "setup_quiescence_seconds": 60,
             "memory_poll_seconds": 1,
             "probe_timeout_seconds": 120,
         },
@@ -95,6 +96,7 @@ def plan():
         (("runtime", "kv_cache_memory_bytes"), 0),
         (("safety", "min_mem_available_gib"), 29),
         (("safety", "invocation_deadline_seconds"), 3601),
+        (("safety", "setup_quiescence_seconds"), 59),
         (("accounting", "weekly_budget_debit"), True),
         (("accounting", "paid_api_allowed"), True),
     ],
@@ -204,6 +206,19 @@ class FakeMonitor:
         self.ops = ops
         self.cancel_event = threading.Event()
         self.armed = None
+        self.initial_pswpout = 10
+        self.final_pswpout = 10
+        self.mutation_initial_pswpout = None
+        self.mutation_final_pswpout = None
+        self.mutation_window_started_at = None
+        self.mutation_final_sample_at = None
+        self.setup_quiescence_passed = False
+        self.setup_quiescence_started_at = None
+        self.setup_quiescence_completed_at = None
+        self.setup_quiescence_duration_seconds = None
+        self.setup_quiescence_initial_pswpout = None
+        self.setup_quiescence_final_pswpout = None
+        self.setup_quiescence_samples = 0
 
     def __enter__(self):
         self.path.write_text("")
@@ -217,6 +232,24 @@ class FakeMonitor:
 
     def reader(self):
         return 64.0
+
+    def require_setup_quiescence(self, *, duration_s, deadline):
+        assert duration_s == 60
+        assert deadline > time.monotonic()
+        self.setup_quiescence_passed = True
+        self.setup_quiescence_started_at = "2026-09-15T00:00:00+00:00"
+        self.setup_quiescence_completed_at = "2026-09-15T00:01:00+00:00"
+        self.setup_quiescence_duration_seconds = 60.0
+        self.setup_quiescence_initial_pswpout = 10
+        self.setup_quiescence_final_pswpout = 10
+        self.setup_quiescence_samples = 61
+
+    def begin_mutation_window(self):
+        assert self.setup_quiescence_passed
+        self.mutation_initial_pswpout = 10
+        self.mutation_final_pswpout = 10
+        self.mutation_window_started_at = "2026-09-15T00:01:01+00:00"
+        self.mutation_final_sample_at = "2026-09-15T00:02:00+00:00"
 
     def arm(self, candidate_id):
         self.armed = candidate_id
@@ -418,6 +451,12 @@ def test_success_creates_sentinel_first_and_restores_exact_ids(monkeypatch, tmp_
         "monotonic_resident_stop_to_restoration_completion_upper_bound"
     )
     assert result["failure_stage"] is None
+    assert result["setup_quiescence_passed"] is True
+    assert result["mutation_pswpout_delta_pages"] == 0
+    state = json.loads((output / "state.json").read_text())
+    assert state["schema"] == "qwen-flash-next-qualification-state/v2"
+    assert state["worker_pid"] > 0 and state["worker_start_ticks"] > 0
+    assert state["memory_log_relpath"] == "memory.jsonl"
 
 
 def test_initially_inactive_nara_is_never_stopped_or_started(monkeypatch, tmp_path):
@@ -542,18 +581,68 @@ def test_monitor_rejects_oom_restart_and_swapout(
         "oom_killed": oom_killed, "restart_count": restart_count,
         "restart_policy": "no",
     }
+    swap_values = iter([10, swap_after])
     monitor = q.MemoryMonitor(
         tmp_path / "monitor.jsonl", ops, reader=lambda: 64.0,
-        swap_reader=lambda: swap_after,
+        swap_reader=lambda: next(swap_values),
     )
     monitor._stream = (tmp_path / "monitor.jsonl").open("xb")
     monitor.initial_pswpout = 10
+    monitor.final_pswpout = 10
+    monitor.setup_quiescence_passed = True
+    monitor.setup_quiescence_final_pswpout = 10
+    monitor.begin_mutation_window()
     monitor.arm(ops.candidate_id)
     monitor._sample_once()
     monitor._stream.close()
     assert monitor.cancel_event.is_set()
     assert expected in monitor.failure
     assert ("docker", "stop", "--time", "10", ops.candidate_id) in ops.log
+
+
+def test_monitor_records_setup_swap_but_rejects_gap_churn_before_mutation(tmp_path):
+    values = iter([11, 12])
+    ops = FakeOps()
+    monitor = q.MemoryMonitor(
+        tmp_path / "setup-swap.jsonl",
+        ops,
+        reader=lambda: 64.0,
+        swap_reader=lambda: next(values),
+    )
+    monitor._stream = (tmp_path / "setup-swap.jsonl").open("xb")
+    monitor.initial_pswpout = 10
+    monitor.final_pswpout = 10
+    row = monitor._sample_once()
+    assert row["monitor_phase"] == "setup"
+    assert row["setup_pswpout_delta_pages"] == 1
+    assert not monitor.cancel_event.is_set()
+    monitor.setup_quiescence_passed = True
+    monitor.setup_quiescence_final_pswpout = 11
+    with pytest.raises(q.QualificationError, match="changed after setup quiescence"):
+        monitor.begin_mutation_window()
+    monitor._stream.close()
+
+
+def test_setup_quiescence_records_a_full_sixty_second_sample_span(
+    monkeypatch, tmp_path
+):
+    clock = [100.0]
+    monkeypatch.setattr(q.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(q.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    monitor = q.MemoryMonitor(
+        tmp_path / "quiet.jsonl",
+        FakeOps(),
+        reader=lambda: 64.0,
+        swap_reader=lambda: 10,
+    )
+    monitor._stream = (tmp_path / "quiet.jsonl").open("xb")
+    monitor.initial_pswpout = 10
+    monitor.final_pswpout = 10
+    monitor.require_setup_quiescence(duration_s=60, deadline=161.0)
+    monitor._stream.close()
+    assert monitor.setup_quiescence_passed is True
+    assert monitor.setup_quiescence_duration_seconds == 60.0
+    assert monitor.setup_quiescence_samples >= 2
 
 
 def test_monitor_ignores_a_stale_lifecycle_sample_after_disarm(tmp_path):
@@ -623,12 +712,18 @@ def test_supervisor_can_restore_a_killed_worker_from_durable_exact_ids(
         ops.containers[row["name"]]["running"] = False
     recovery_plan = plan()
     state = {
-        "schema": "qwen-flash-next-qualification-state/v1",
+        "schema": "qwen-flash-next-qualification-state/v2",
         "run_id": output.name,
         "phase": "readiness",
         "plan_sha256": q.sha256(recovery_plan),
         "contract_sha256": recovery_plan["contract_sha256"],
         "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+        "worker_pid": 123,
+        "worker_start_ticks": 456,
+        "started_at": "2026-09-15T00:00:00+00:00",
+        "updated_at": "2026-09-15T00:00:01+00:00",
+        "invocation_deadline_at": "2026-09-15T01:00:00+00:00",
+        "memory_log_relpath": "memory.jsonl",
         "candidate_id": ops.candidate_id,
         "initial": initial,
     }

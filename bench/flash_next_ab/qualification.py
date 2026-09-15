@@ -30,7 +30,7 @@ import urllib.request
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +66,7 @@ NARA_SERVICE = "nara-daemon.service"
 MIN_MEMORY_GIB = 30
 MAX_INVOCATION_SECONDS = 3600
 DEFAULT_RESTORE_RESERVE_SECONDS = 600
+SETUP_QUIESCENCE_SECONDS = 60
 HOST_PORT = 8012
 FAILURE_STAGES = frozenset(
     {"setup", "candidate_start", "readiness", "probes", "evaluation", "restoration", "unknown"}
@@ -173,6 +174,22 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _self_start_ticks() -> int:
+    """Return this process's Linux start time from /proc/self/stat field 22."""
+    raw = Path("/proc/self/stat").read_text()
+    closing = raw.rfind(")")
+    if closing < 0:
+        raise QualificationError("worker process start identity is unavailable")
+    fields_from_three = raw[closing + 1 :].split()
+    try:
+        value = int(fields_from_three[19])
+    except (IndexError, ValueError) as exc:
+        raise QualificationError("worker process start identity is malformed") from exc
+    if value <= 0:
+        raise QualificationError("worker process start identity is invalid")
+    return value
+
+
 def canonical_json(value: Any) -> bytes:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -274,7 +291,7 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         "contract",
     )
     if (
-        value["schema"] != "qwen-flash-next-qualification/v1"
+        value["schema"] != "qwen-flash-next-qualification/v2"
         or value["contract_id"] != "qwen38-flash-next-c0-20260915"
         or value["profile"] != "C0"
         or value["probe_set"] != "flash-next-minimal-v1"
@@ -332,6 +349,7 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
             "invocation_deadline_seconds",
             "readiness_deadline_seconds",
             "restoration_reserve_seconds",
+            "setup_quiescence_seconds",
             "memory_poll_seconds",
             "probe_timeout_seconds",
         },
@@ -345,6 +363,7 @@ def validate_contract(value: dict[str, Any]) -> dict[str, Any]:
         safety["resident_containers"] != expected_residents
         or safety["nara_service"] != NARA_SERVICE
         or safety["min_mem_available_gib"] != MIN_MEMORY_GIB
+        or safety["setup_quiescence_seconds"] != SETUP_QUIESCENCE_SECONDS
         or safety["memory_poll_seconds"] != 1
     ):
         raise QualificationError("safety identity or 30 GiB gate differs from the allowlist")
@@ -468,7 +487,7 @@ def plan_qualification(
     output = _validate_output(output, must_be_absent=False)
     command = launch_argv()
     return {
-        "schema": "qwen-flash-next-qualification-plan/v1",
+        "schema": "qwen-flash-next-qualification-plan/v2",
         "contract_id": contract["contract_id"],
         "contract_sha256": contract_sha256,
         "profile": "C0",
@@ -492,12 +511,14 @@ def plan_qualification(
         "invocation_deadline_seconds": contract["safety"]["invocation_deadline_seconds"],
         "readiness_deadline_seconds": contract["safety"]["readiness_deadline_seconds"],
         "restoration_reserve_seconds": contract["safety"]["restoration_reserve_seconds"],
+        "setup_quiescence_seconds": contract["safety"]["setup_quiescence_seconds"],
         "research_usage_journal": str(RESEARCH_LEDGER),
         "weekly_budget_debit": False,
         "paid_api_allowed": False,
         "production_change_authorized": False,
         "actions": [
             "verify all model bytes and exact image before mutations",
+            "require 60 seconds of unchanged setup pswpout before the mutation baseline",
             "acquire canonical resource lease and require idle resident queues",
             "create stopped A/B sentinel before any resident stop",
             "stop Nara only when initially active",
@@ -628,7 +649,13 @@ def _pswpout_pages() -> int:
 
 
 class MemoryMonitor:
-    """One-second hard gate with an emergency exact-ID candidate stop."""
+    """One-second memory gate with phase-separated swap accounting.
+
+    Setup I/O may expose unrelated or pre-existing host swap churn.  It is
+    retained in the receipt, then followed by a fixed quiet interval.  The
+    zero-swap safety gate begins immediately before the first Docker mutation
+    and remains active through the final post-restoration sample.
+    """
 
     def __init__(
         self,
@@ -650,6 +677,8 @@ class MemoryMonitor:
         self._done = threading.Event()
         self._candidate_id: str | None = None
         self._lock = threading.Lock()
+        self._sample_lock = threading.Lock()
+        self._record_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self.minimum_observed_gib = math.inf
         self.failure: str | None = None
@@ -657,11 +686,24 @@ class MemoryMonitor:
         self.samples = 0
         self.initial_pswpout: int | None = None
         self.final_pswpout: int | None = None
+        self.mutation_initial_pswpout: int | None = None
+        self.mutation_final_pswpout: int | None = None
+        self.mutation_window_started_at: str | None = None
+        self.mutation_final_sample_at: str | None = None
+        self.setup_quiescence_started_at: str | None = None
+        self.setup_quiescence_completed_at: str | None = None
+        self.setup_quiescence_duration_seconds: float | None = None
+        self.setup_quiescence_initial_pswpout: int | None = None
+        self.setup_quiescence_final_pswpout: int | None = None
+        self.setup_quiescence_samples = 0
+        self.setup_quiescence_passed = False
+        self._setup_quiescence_active = False
 
     def __enter__(self):
         self._stream = self.path.open("xb")
-        self.initial_pswpout = self.swap_reader()
-        self.final_pswpout = self.initial_pswpout
+        # Establish and record the total-window baseline in one observation so
+        # the receipt does not infer an unlogged counter value.
+        self._sample_once()
         self._thread = threading.Thread(target=self._loop, name="flash-next-mem-gate", daemon=True)
         self._thread.start()
         return self
@@ -675,8 +717,9 @@ class MemoryMonitor:
             self._candidate_id = None
 
     def _record(self, row: dict[str, Any]) -> None:
-        self._stream.write(canonical_json(row) + b"\n")
-        self._stream.flush()
+        with self._record_lock:
+            self._stream.write(canonical_json(row) + b"\n")
+            self._stream.flush()
 
     def _breach(self, reason: str) -> None:
         if self.cancel_event.is_set():
@@ -699,53 +742,184 @@ class MemoryMonitor:
                 }
             )
 
-    def _sample_once(self) -> None:
-        available = float(self.reader())
-        if not math.isfinite(available) or available < 0:
-            raise ValueError("invalid MemAvailable")
-        self.samples += 1
-        self.minimum_observed_gib = min(self.minimum_observed_gib, available)
-        pswpout = self.swap_reader()
-        if isinstance(pswpout, bool) or not isinstance(pswpout, int) or pswpout < 0:
-            raise ValueError("invalid pswpout")
-        self.final_pswpout = pswpout
-        row = {
-            "observed_at": utc_now(),
-            "mem_available_gib": available,
-            "pswpout_pages": pswpout,
-            "pswpout_delta_pages": pswpout - int(self.initial_pswpout),
-        }
-        with self._lock:
-            candidate_id = self._candidate_id
-        if candidate_id:
-            candidate = _inspect_container(self.ops, candidate_id)
-            row["candidate"] = {
-                "id": candidate_id,
-                "running": candidate.get("running") if candidate else None,
-                "oom_killed": candidate.get("oom_killed") if candidate else None,
-                "restart_count": candidate.get("restart_count") if candidate else None,
-            }
-            # Restoration can disarm and stop the container while this inspect
-            # is in flight.  Lifecycle evidence is actionable only if the same
-            # ID remains armed after the observation completes.
+    def _sample_once(
+        self,
+        *,
+        begin_mutation: bool = False,
+        begin_quiescence: bool = False,
+        end_quiescence: bool = False,
+    ) -> dict[str, Any]:
+        with self._sample_lock:
+            if begin_quiescence and end_quiescence:
+                raise QualificationError("setup quiescence markers overlap")
             with self._lock:
-                still_armed = self._candidate_id == candidate_id
-            if still_armed:
-                if candidate is None or not candidate.get("running"):
-                    self._breach("candidate disappeared or stopped while qualified runtime was armed")
-                elif candidate.get("oom_killed"):
-                    self._breach("candidate container reports OOMKilled")
-                elif candidate.get("restart_count") != 0:
-                    self._breach("candidate container restart count changed")
-        self._record(row)
-        if available < self.minimum_gib:
-            self._breach(
-                f"MemAvailable {available:.3f} GiB fell below {self.minimum_gib} GiB"
+                if begin_quiescence:
+                    if self._setup_quiescence_active:
+                        raise QualificationError("setup quiescence was already active")
+                    self._setup_quiescence_active = True
+            available = float(self.reader())
+            if not math.isfinite(available) or available < 0:
+                raise ValueError("invalid MemAvailable")
+            pswpout = self.swap_reader()
+            if isinstance(pswpout, bool) or not isinstance(pswpout, int) or pswpout < 0:
+                raise ValueError("invalid pswpout")
+            observed_at = utc_now()
+            with self._lock:
+                if begin_mutation:
+                    if self.mutation_initial_pswpout is not None:
+                        raise QualificationError("mutation swap baseline was already established")
+                    if (
+                        not self.setup_quiescence_passed
+                        or self.setup_quiescence_final_pswpout is None
+                        or pswpout != self.setup_quiescence_final_pswpout
+                    ):
+                        raise QualificationError(
+                            "host pswpout changed after setup quiescence"
+                        )
+                    self.mutation_initial_pswpout = pswpout
+                    self.mutation_final_pswpout = pswpout
+                    self.mutation_window_started_at = observed_at
+                mutation_initial = self.mutation_initial_pswpout
+                quiescence_active = self._setup_quiescence_active
+                candidate_id = self._candidate_id
+            if self.initial_pswpout is None:
+                self.initial_pswpout = pswpout
+                self.final_pswpout = pswpout
+            if pswpout < self.initial_pswpout:
+                raise ValueError("pswpout decreased during one boot")
+
+            self.samples += 1
+            self.minimum_observed_gib = min(self.minimum_observed_gib, available)
+            self.final_pswpout = pswpout
+            setup_final = (
+                mutation_initial if mutation_initial is not None else pswpout
             )
-        if pswpout > int(self.initial_pswpout):
-            self._breach(
-                f"host pswpout increased by {pswpout - int(self.initial_pswpout)} pages"
+            mutation_delta = (
+                pswpout - mutation_initial if mutation_initial is not None else None
             )
+            if mutation_delta is not None and mutation_delta < 0:
+                raise ValueError("pswpout fell below the mutation baseline")
+            if mutation_initial is not None:
+                self.mutation_final_pswpout = pswpout
+                self.mutation_final_sample_at = observed_at
+            if quiescence_active:
+                self.setup_quiescence_samples += 1
+            row = {
+                "schema": "qwen-flash-next-memory-sample/v2",
+                "observed_at": observed_at,
+                "monitor_phase": (
+                    "mutation" if mutation_initial is not None else "setup"
+                ),
+                "setup_quiescence_active": quiescence_active,
+                "mem_available_gib": available,
+                "pswpout_pages": pswpout,
+                "pswpout_delta_pages": pswpout - self.initial_pswpout,
+                "setup_pswpout_delta_pages": setup_final - self.initial_pswpout,
+                "mutation_pswpout_delta_pages": mutation_delta,
+            }
+            if candidate_id:
+                candidate = _inspect_container(self.ops, candidate_id)
+                row["candidate"] = {
+                    "id": candidate_id,
+                    "running": candidate.get("running") if candidate else None,
+                    "oom_killed": candidate.get("oom_killed") if candidate else None,
+                    "restart_count": candidate.get("restart_count") if candidate else None,
+                }
+                # Restoration can disarm and stop the container while this
+                # inspect is in flight.  Act only if the same ID remains armed.
+                with self._lock:
+                    still_armed = self._candidate_id == candidate_id
+                if still_armed:
+                    if candidate is None or not candidate.get("running"):
+                        self._breach(
+                            "candidate disappeared or stopped while qualified runtime was armed"
+                        )
+                    elif candidate.get("oom_killed"):
+                        self._breach("candidate container reports OOMKilled")
+                    elif candidate.get("restart_count") != 0:
+                        self._breach("candidate container restart count changed")
+            self._record(row)
+            if available < self.minimum_gib:
+                self._breach(
+                    f"MemAvailable {available:.3f} GiB fell below {self.minimum_gib} GiB"
+                )
+            if mutation_delta is not None and mutation_delta > 0:
+                self._breach(
+                    f"mutation-window pswpout increased by {mutation_delta} pages"
+                )
+            if end_quiescence:
+                with self._lock:
+                    if not self._setup_quiescence_active:
+                        raise QualificationError("setup quiescence was not active")
+                    self._setup_quiescence_active = False
+            return row
+
+    def require_setup_quiescence(self, *, duration_s: int, deadline: float) -> None:
+        """Require one fixed quiet interval without forgiving prior setup I/O."""
+        if duration_s != SETUP_QUIESCENCE_SECONDS:
+            raise QualificationError("setup quiescence duration is not registered")
+        requested_mono = time.monotonic()
+        if requested_mono + duration_s > deadline:
+            raise QualificationError("setup quiescence would consume the work deadline")
+        with self._lock:
+            if self.mutation_initial_pswpout is not None:
+                raise QualificationError("setup quiescence began after mutation baseline")
+        first: dict[str, Any] | None = None
+        last: dict[str, Any] | None = None
+        try:
+            first = self._sample_once(begin_quiescence=True)
+            self.setup_quiescence_started_at = first["observed_at"]
+            self.setup_quiescence_initial_pswpout = first["pswpout_pages"]
+            started_mono = time.monotonic()
+            if started_mono + duration_s > deadline:
+                raise QualificationError(
+                    "setup quiescence would consume the work deadline"
+                )
+            end = started_mono + duration_s
+            while time.monotonic() < end:
+                self.check()
+                time.sleep(min(self.interval_s, max(0.0, end - time.monotonic())))
+                if time.monotonic() >= end:
+                    break
+                last = self._sample_once()
+                if last["pswpout_pages"] != first["pswpout_pages"]:
+                    raise QualificationError(
+                        "host pswpout changed during the 60-second setup quiescence"
+                    )
+            last = self._sample_once(end_quiescence=True)
+            if last["pswpout_pages"] != first["pswpout_pages"]:
+                raise QualificationError(
+                    "host pswpout changed during the 60-second setup quiescence"
+                )
+            self.check()
+            self.setup_quiescence_completed_at = last["observed_at"]
+            self.setup_quiescence_final_pswpout = last["pswpout_pages"]
+            self.setup_quiescence_duration_seconds = max(
+                0.0, time.monotonic() - started_mono
+            )
+            self.setup_quiescence_passed = (
+                self.setup_quiescence_duration_seconds >= duration_s
+                and self.setup_quiescence_initial_pswpout
+                == self.setup_quiescence_final_pswpout
+            )
+            if not self.setup_quiescence_passed:
+                raise QualificationError("setup quiescence proof is incomplete")
+        finally:
+            if last is not None and self.setup_quiescence_completed_at is None:
+                self.setup_quiescence_completed_at = last["observed_at"]
+                self.setup_quiescence_final_pswpout = last["pswpout_pages"]
+                self.setup_quiescence_duration_seconds = max(
+                    0.0, time.monotonic() - requested_mono
+                )
+            with self._lock:
+                self._setup_quiescence_active = False
+
+    def begin_mutation_window(self) -> None:
+        if not self.setup_quiescence_passed:
+            raise QualificationError("mutation baseline requires setup quiescence proof")
+        self.check()
+        self._sample_once(begin_mutation=True)
+        self.check()
 
     def _loop(self) -> None:
         while not self._done.is_set():
@@ -763,6 +937,14 @@ class MemoryMonitor:
         self._done.set()
         if self._thread is not None:
             self._thread.join(timeout=max(2, self.interval_s + 1))
+        try:
+            # This sample is deliberately after restoration, while the
+            # mutation baseline is still active.
+            self._sample_once()
+        except BaseException as monitor_exc:  # noqa: BLE001 - final evidence is fail-closed
+            self._breach(
+                f"memory monitor failed: {type(monitor_exc).__name__}: {monitor_exc}"
+            )
         self._stream.flush()
         os.fsync(self._stream.fileno())
         self._stream.close()
@@ -1295,21 +1477,34 @@ def execute_worker(
     started_mono = time.monotonic()
     hard_deadline = started_mono + deadline_seconds
     work_deadline = hard_deadline - restore_reserve
+    started_wall = datetime.now(timezone.utc)
     run_id = output.name
     state: dict[str, Any] = {
-        "schema": "qwen-flash-next-qualification-state/v1",
+        "schema": "qwen-flash-next-qualification-state/v2",
         "run_id": run_id,
         "phase": "preflight",
         "plan_sha256": sha256(plan),
         "contract_sha256": plan["contract_sha256"],
         "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
-        "started_at": utc_now(),
+        "worker_pid": os.getpid(),
+        "worker_start_ticks": _self_start_ticks(),
+        "started_at": started_wall.isoformat(),
+        "updated_at": started_wall.isoformat(),
+        "invocation_deadline_at": (
+            started_wall + timedelta(seconds=deadline_seconds)
+        ).isoformat(),
+        "memory_log_relpath": "memory.jsonl",
         "candidate_id": None,
         "initial": None,
         "restoration": {"status": "not_started"},
     }
     state_path = output / "state.json"
-    _atomic_write(state_path, state)
+
+    def write_state() -> None:
+        state["updated_at"] = utc_now()
+        _atomic_write(state_path, state)
+
+    write_state()
     _append_research_usage(
         {
             "schema": "local-model-research-usage/v1",
@@ -1356,7 +1551,7 @@ def execute_worker(
                 _assert_port_free()
 
                 state["phase"] = "model_verification"
-                _atomic_write(state_path, state)
+                write_state()
                 model_receipt = verify_model(contract, monitor)
                 _atomic_write(output / "model-verification.json", model_receipt)
                 image = ops.run(
@@ -1368,6 +1563,13 @@ def execute_worker(
                 _ensure_compile_cache()
                 monitor.check()
 
+                state["phase"] = "setup_quiescence"
+                write_state()
+                monitor.require_setup_quiescence(
+                    duration_s=contract["safety"]["setup_quiescence_seconds"],
+                    deadline=work_deadline,
+                )
+
                 # Hashing 123.6 GiB can span more than one scheduling instant.
                 # Re-probe idle queues and capture identities immediately before
                 # the first mutation while the canonical lease is still held.
@@ -1376,14 +1578,17 @@ def execute_worker(
                     raise QualificationError("pre-mutation memory gate failed")
                 initial = _capture_initial_state(ops, preflight)
                 state["initial"] = initial
-                _atomic_write(state_path, state)
+                write_state()
 
+                monitor.begin_mutation_window()
+                state["mutation_window_started_at"] = monitor.mutation_window_started_at
                 state["phase"] = "sentinel_create"
-                _atomic_write(state_path, state)
+                write_state()
+                monitor.check()
                 created = ops.run(plan["docker_create_argv"], timeout=30).stdout.strip()
                 if re.fullmatch(r"[0-9a-f]{64}", created):
                     state["candidate_id"] = created
-                    _atomic_write(state_path, state)
+                    write_state()
                 else:
                     # A created sentinel must remain recoverable even if Docker's
                     # stdout was malformed or unexpectedly decorated.
@@ -1392,7 +1597,7 @@ def execute_worker(
                         r"[0-9a-f]{64}", str(recovered.get("id", ""))
                     ):
                         state["candidate_id"] = recovered["id"]
-                        _atomic_write(state_path, state)
+                        write_state()
                     raise QualificationError("docker create did not return an exact container ID")
                 candidate = _inspect_container(ops, CONTAINER_NAME)
                 if (
@@ -1410,7 +1615,7 @@ def execute_worker(
                         raise QualificationError("Nara stop was not verified")
 
                 state["phase"] = "resident_stop"
-                _atomic_write(state_path, state)
+                write_state()
                 resident_stopped_mono = time.monotonic()
                 for resident in initial["residents"]:
                     if resident["running"]:
@@ -1424,18 +1629,18 @@ def execute_worker(
 
                 state["phase"] = "candidate_start"
                 active_stage = "candidate_start"
-                _atomic_write(state_path, state)
+                write_state()
                 monitor.check()
                 candidate_started_mono = time.monotonic()
                 state["candidate_gpu_start_attempt_monotonic"] = candidate_started_mono
-                _atomic_write(state_path, state)
+                write_state()
                 ops.run(["docker", "start", created], timeout=30)
                 monitor.arm(created)
                 monitor.check()
                 state["candidate_gpu_started_monotonic_upper_bound"] = candidate_started_mono
                 state["phase"] = "readiness"
                 active_stage = "readiness"
-                _atomic_write(state_path, state)
+                write_state()
                 readiness_deadline = min(
                     work_deadline,
                     time.monotonic() + contract["safety"]["readiness_deadline_seconds"],
@@ -1447,7 +1652,7 @@ def execute_worker(
 
                 state["phase"] = "probes"
                 active_stage = "probes"
-                _atomic_write(state_path, state)
+                write_state()
                 probes = _run_probes(
                     ops,
                     monitor,
@@ -1464,7 +1669,7 @@ def execute_worker(
                 ):
                     raise QualificationError("candidate OOM/restart/running-state gate failed")
                 state["phase"] = "qualification_passed"
-                _atomic_write(state_path, state)
+                write_state()
             except BaseException as exc:  # noqa: BLE001 - signals and faults must enter finally
                 qualification_error = f"{type(exc).__name__}: {exc}"
                 failure_stage = active_stage if active_stage in FAILURE_STAGES else "unknown"
@@ -1472,7 +1677,7 @@ def execute_worker(
                 try:
                     active_stage = "restoration"
                     state["phase"] = "restoring"
-                    _atomic_write(state_path, state)
+                    write_state()
                     restoration = restore_exact(
                         ops,
                         state,
@@ -1536,7 +1741,7 @@ def execute_worker(
         else "unknown"
     )
     result = {
-        "schema": "qwen-flash-next-qualification-result/v1",
+        "schema": "qwen-flash-next-qualification-result/v2",
         "run_id": run_id,
         "status": status,
         "failure_stage": failure_stage,
@@ -1575,6 +1780,65 @@ def execute_worker(
             and getattr(monitor, "final_pswpout", None) is not None
             else None
         ),
+        "setup_pswpout_initial_pages": getattr(monitor, "initial_pswpout", None),
+        "setup_pswpout_final_pages": (
+            monitor.mutation_initial_pswpout
+            if getattr(monitor, "mutation_initial_pswpout", None) is not None
+            else getattr(monitor, "final_pswpout", None)
+        ),
+        "setup_pswpout_delta_pages": (
+            (
+                monitor.mutation_initial_pswpout
+                if getattr(monitor, "mutation_initial_pswpout", None) is not None
+                else monitor.final_pswpout
+            )
+            - monitor.initial_pswpout
+            if getattr(monitor, "initial_pswpout", None) is not None
+            and getattr(monitor, "final_pswpout", None) is not None
+            else None
+        ),
+        "setup_quiescence_required_seconds": contract["safety"][
+            "setup_quiescence_seconds"
+        ],
+        "setup_quiescence_passed": getattr(
+            monitor, "setup_quiescence_passed", False
+        ),
+        "setup_quiescence_started_at": getattr(
+            monitor, "setup_quiescence_started_at", None
+        ),
+        "setup_quiescence_completed_at": getattr(
+            monitor, "setup_quiescence_completed_at", None
+        ),
+        "setup_quiescence_duration_seconds": getattr(
+            monitor, "setup_quiescence_duration_seconds", None
+        ),
+        "setup_quiescence_initial_pswpout_pages": getattr(
+            monitor, "setup_quiescence_initial_pswpout", None
+        ),
+        "setup_quiescence_final_pswpout_pages": getattr(
+            monitor, "setup_quiescence_final_pswpout", None
+        ),
+        "setup_quiescence_samples": getattr(
+            monitor, "setup_quiescence_samples", 0
+        ),
+        "mutation_window_started_at": getattr(
+            monitor, "mutation_window_started_at", None
+        ),
+        "mutation_pswpout_initial_pages": getattr(
+            monitor, "mutation_initial_pswpout", None
+        ),
+        "mutation_pswpout_final_pages": getattr(
+            monitor, "mutation_final_pswpout", None
+        ),
+        "mutation_pswpout_delta_pages": (
+            monitor.mutation_final_pswpout - monitor.mutation_initial_pswpout
+            if getattr(monitor, "mutation_initial_pswpout", None) is not None
+            and getattr(monitor, "mutation_final_pswpout", None) is not None
+            else None
+        ),
+        "mutation_final_sample_at": getattr(
+            monitor, "mutation_final_sample_at", None
+        ),
         "probe_count": len(probes),
         "weekly_budget_debit": False,
         "paid_api_calls": 0,
@@ -1583,7 +1847,7 @@ def execute_worker(
     state["phase"] = "complete"
     state["restoration"] = restoration
     state["result_status"] = status
-    _atomic_write(state_path, state)
+    write_state()
     _atomic_write(output / "result.json", result)
     _append_research_usage(
         {
@@ -1627,13 +1891,25 @@ def _validated_recovery_state(
         raise QualificationError("worker state is absent or redirected")
     state = _strict_json(path.read_bytes(), source="worker recovery state")
     if (
-        state.get("schema") != "qwen-flash-next-qualification-state/v1"
+        state.get("schema") != "qwen-flash-next-qualification-state/v2"
         or state.get("run_id") != output.name
         or state.get("contract_sha256") != plan["contract_sha256"]
         or state.get("plan_sha256") != sha256(plan)
         or state.get("boot_id") != Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     ):
         raise QualificationError("worker recovery state is not bound to this run and boot")
+    if (
+        isinstance(state.get("worker_pid"), bool)
+        or not isinstance(state.get("worker_pid"), int)
+        or state["worker_pid"] <= 0
+        or isinstance(state.get("worker_start_ticks"), bool)
+        or not isinstance(state.get("worker_start_ticks"), int)
+        or state["worker_start_ticks"] <= 0
+        or state.get("memory_log_relpath") != "memory.jsonl"
+        or not isinstance(state.get("invocation_deadline_at"), str)
+        or not isinstance(state.get("updated_at"), str)
+    ):
+        raise QualificationError("worker recovery process identity is invalid")
     candidate_id = state.get("candidate_id")
     if candidate_id is not None and not re.fullmatch(r"[0-9a-f]{64}", str(candidate_id)):
         raise QualificationError("worker recovery candidate ID is invalid")
@@ -1666,7 +1942,7 @@ def _result_has_verified_restoration(output: Path, plan: dict[str, Any]) -> bool
     except QualificationError:
         return False
     return bool(
-        result.get("schema") == "qwen-flash-next-qualification-result/v1"
+        result.get("schema") == "qwen-flash-next-qualification-result/v2"
         and result.get("run_id") == output.name
         and result.get("contract_sha256") == plan["contract_sha256"]
         and result.get("plan_sha256") == sha256(plan)
@@ -1706,6 +1982,7 @@ def supervisor_emergency_restore(
         receipt["status"] = restoration["status"]
         state["phase"] = "supervisor_recovered" if restoration["status"] == "verified" else "recovery_unknown"
         state["restoration"] = restoration
+        state["updated_at"] = utc_now()
         _atomic_write(output / "state.json", state)
     except BaseException as exc:  # noqa: BLE001 - emergency recovery always emits a receipt
         receipt["error"] = f"{type(exc).__name__}: {exc}"

@@ -10,6 +10,8 @@ import stat
 import time
 import uuid
 from collections.abc import Callable
+from datetime import datetime, timezone
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +66,18 @@ QualificationGate = Callable[[dict[str, Any], str], None]
 
 class HarnessError(RuntimeError):
     """The run cannot start or cannot preserve its frozen contract."""
+
+
+def _utc_datetime(value: Any, label: str) -> datetime:
+    if not isinstance(value, str):
+        raise HarnessError(f"{label} is not a timestamp")
+    try:
+        observed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise HarnessError(f"{label} is not a timestamp") from exc
+    if observed.tzinfo is None or observed.utcoffset() is None:
+        raise HarnessError(f"{label} has no timezone")
+    return observed.astimezone(timezone.utc)
 
 
 def _strict_object(raw: bytes, source: str) -> dict[str, Any]:
@@ -269,23 +283,24 @@ def _validate_memory_log(
     result: dict[str, Any],
 ) -> None:
     raw, _ = _read_regular_file(path, label="qualification memory log")
-    rows = []
+    rows: list[dict[str, Any]] = []
     for index, line in enumerate(raw.splitlines()):
         if not line.strip():
             continue
         rows.append(_strict_object(line, f"qualification memory log line {index + 1}"))
-    if len(rows) != result.get("memory_samples") or not rows:
+    samples = [row for row in rows if "mem_available_gib" in row]
+    if len(samples) != result.get("memory_samples") or not samples:
         raise HarnessError("qualification memory sample count differs")
     observed_min = min(
         _finite_number(row.get("mem_available_gib"), "memory MemAvailable")
-        for row in rows
+        for row in samples
     )
     reported_min = _finite_number(
         result.get("min_mem_available_gib"), "reported minimum MemAvailable"
     )
     if abs(observed_min - reported_min) > 1e-9:
         raise HarnessError("qualification minimum MemAvailable differs from its log")
-    for row in rows:
+    for row in samples:
         delta = row.get("pswpout_delta_pages")
         pages = row.get("pswpout_pages")
         if (
@@ -298,12 +313,160 @@ def _validate_memory_log(
         ):
             raise HarnessError("qualification swap evidence is malformed")
     if (
-        result.get("pswpout_initial_pages") != rows[0]["pswpout_pages"]
-        or result.get("pswpout_final_pages") != rows[-1]["pswpout_pages"]
+        result.get("pswpout_initial_pages") != samples[0]["pswpout_pages"]
+        or result.get("pswpout_final_pages") != samples[-1]["pswpout_pages"]
         or result.get("pswpout_delta_pages")
-        != rows[-1]["pswpout_pages"] - rows[0]["pswpout_pages"]
+        != samples[-1]["pswpout_pages"] - samples[0]["pswpout_pages"]
     ):
         raise HarnessError("qualification swap summary differs from its log")
+    if result.get("schema") == "qwen-flash-next-qualification-result/v1":
+        return
+
+    if result.get("schema") != "qwen-flash-next-qualification-result/v2":
+        raise HarnessError("unsupported qualification memory schema")
+
+    def nonnegative_int(value: Any, label: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise HarnessError(f"{label} is malformed")
+        return value
+
+    parsed_times: list[datetime] = []
+    phases: list[str] = []
+    prior_pages: int | None = None
+    total_initial = nonnegative_int(
+        samples[0].get("pswpout_pages"), "qualification initial pswpout"
+    )
+    mutation_initial: int | None = None
+    for index, row in enumerate(samples):
+        if row.get("schema") != "qwen-flash-next-memory-sample/v2":
+            raise HarnessError("qualification v2 memory row has the wrong schema")
+        phase = row.get("monitor_phase")
+        if phase not in {"setup", "mutation"}:
+            raise HarnessError("qualification memory phase is malformed")
+        if not isinstance(row.get("setup_quiescence_active"), bool):
+            raise HarnessError("qualification quiescence marker is malformed")
+        pages = nonnegative_int(row.get("pswpout_pages"), "qualification pswpout")
+        if prior_pages is not None and pages < prior_pages:
+            raise HarnessError("qualification pswpout counter decreased")
+        prior_pages = pages
+        parsed_times.append(
+            _utc_datetime(row.get("observed_at"), "qualification memory timestamp")
+        )
+        if index and parsed_times[-1] < parsed_times[-2]:
+            raise HarnessError("qualification memory timestamps decreased")
+        total_delta = nonnegative_int(
+            row.get("pswpout_delta_pages"), "qualification total pswpout delta"
+        )
+        setup_delta = nonnegative_int(
+            row.get("setup_pswpout_delta_pages"),
+            "qualification setup pswpout delta",
+        )
+        if total_delta != pages - total_initial:
+            raise HarnessError("qualification total pswpout delta differs from raw counter")
+        if phase == "setup":
+            if row.get("mutation_pswpout_delta_pages") is not None:
+                raise HarnessError("setup memory row contains a mutation delta")
+            if setup_delta != pages - total_initial:
+                raise HarnessError("setup pswpout delta differs from raw counter")
+        else:
+            if mutation_initial is None:
+                mutation_initial = pages
+            mutation_delta = nonnegative_int(
+                row.get("mutation_pswpout_delta_pages"),
+                "qualification mutation pswpout delta",
+            )
+            if setup_delta != mutation_initial - total_initial:
+                raise HarnessError("mutation row changed the setup pswpout delta")
+            if mutation_delta != pages - mutation_initial:
+                raise HarnessError("mutation pswpout delta differs from raw counter")
+        phases.append(phase)
+
+    mutation_indexes = [index for index, phase in enumerate(phases) if phase == "mutation"]
+    if not mutation_indexes or mutation_indexes[0] == 0:
+        raise HarnessError("qualification memory log lacks a setup-to-mutation boundary")
+    boundary = mutation_indexes[0]
+    if phases != ["setup"] * boundary + ["mutation"] * (len(phases) - boundary):
+        raise HarnessError("qualification memory phases are not contiguous")
+    if mutation_initial is None:
+        raise HarnessError("qualification mutation baseline is absent")
+
+    active_indexes = [
+        index
+        for index, row in enumerate(samples)
+        if row["setup_quiescence_active"]
+    ]
+    if not active_indexes:
+        raise HarnessError("qualification setup quiescence samples are absent")
+    if active_indexes != list(range(active_indexes[0], active_indexes[-1] + 1)):
+        raise HarnessError("qualification setup quiescence samples are not contiguous")
+    if active_indexes[-1] >= boundary:
+        raise HarnessError("qualification setup quiescence crossed the mutation boundary")
+    quiet_rows = [samples[index] for index in active_indexes]
+    quiet_times = [parsed_times[index] for index in active_indexes]
+    quiet_pages = [row["pswpout_pages"] for row in quiet_rows]
+    required = nonnegative_int(
+        result.get("setup_quiescence_required_seconds"),
+        "qualification setup quiescence requirement",
+    )
+    duration = _finite_number(
+        result.get("setup_quiescence_duration_seconds"),
+        "qualification setup quiescence duration",
+    )
+    if (
+        required != 60
+        or duration < required
+        or result.get("setup_quiescence_passed") is not True
+        or result.get("setup_quiescence_started_at") != quiet_rows[0]["observed_at"]
+        or result.get("setup_quiescence_completed_at")
+        != quiet_rows[-1]["observed_at"]
+        or result.get("setup_quiescence_initial_pswpout_pages") != quiet_pages[0]
+        or result.get("setup_quiescence_final_pswpout_pages") != quiet_pages[-1]
+        or result.get("setup_quiescence_samples") != len(quiet_rows)
+        or any(pages != quiet_pages[0] for pages in quiet_pages)
+    ):
+        raise HarnessError("qualification setup quiescence proof differs from raw samples")
+    if (quiet_times[-1] - quiet_times[0]).total_seconds() < required:
+        raise HarnessError("qualification setup quiescence timestamps span under 60 seconds")
+    if any(
+        (later - earlier).total_seconds() > 2.5
+        for earlier, later in pairwise(quiet_times)
+    ):
+        raise HarnessError("qualification setup quiescence has a memory-sample gap")
+    if mutation_initial != quiet_pages[-1]:
+        raise HarnessError("qualification mutation baseline differs from quiet setup counter")
+
+    first_mutation = samples[boundary]
+    last_mutation = samples[-1]
+    if (
+        result.get("setup_pswpout_initial_pages") != total_initial
+        or result.get("setup_pswpout_final_pages") != mutation_initial
+        or result.get("setup_pswpout_delta_pages") != mutation_initial - total_initial
+        or result.get("mutation_window_started_at")
+        != first_mutation["observed_at"]
+        or result.get("mutation_pswpout_initial_pages") != mutation_initial
+        or result.get("mutation_pswpout_final_pages")
+        != last_mutation["pswpout_pages"]
+        or result.get("mutation_pswpout_delta_pages")
+        != last_mutation["pswpout_pages"] - mutation_initial
+        or result.get("mutation_final_sample_at") != last_mutation["observed_at"]
+    ):
+        raise HarnessError("qualification phase swap summary differs from its log")
+    if any(row["mutation_pswpout_delta_pages"] != 0 for row in samples[boundary:]):
+        raise HarnessError("qualification mutation window contains swap-out")
+    mutation_times = parsed_times[boundary:]
+    if any(
+        (later - earlier).total_seconds() > 10
+        for earlier, later in pairwise(mutation_times)
+    ):
+        raise HarnessError("qualification mutation window has a memory-sample gap")
+    restoration = result.get("restoration")
+    if not isinstance(restoration, dict):
+        raise HarnessError("qualification restoration evidence is malformed")
+    restoration_at = _utc_datetime(
+        restoration.get("verified_at"), "qualification restoration timestamp"
+    )
+    if parsed_times[-1] < restoration_at:
+        raise HarnessError("qualification final memory sample predates restoration")
 
 
 def validate_flash_qualification_files(
@@ -329,12 +492,24 @@ def validate_flash_qualification_files(
     contract, contract_snapshot_sha256, contract_file = _read_json_receipt(
         contract_snapshot_path, "Flash qualification contract snapshot"
     )
-    if result.get("schema") != "qwen-flash-next-qualification-result/v1":
+    result_schema = result.get("schema")
+    plan_schema = qualification_plan.get("schema")
+    contract_schema = contract.get("schema")
+    supported_bundles = {
+        (
+            "qwen-flash-next-qualification-result/v1",
+            "qwen-flash-next-qualification-plan/v1",
+            "qwen-flash-next-qualification/v1",
+        ),
+        (
+            "qwen-flash-next-qualification-result/v2",
+            "qwen-flash-next-qualification-plan/v2",
+            "qwen-flash-next-qualification/v2",
+        ),
+    }
+    if (result_schema, plan_schema, contract_schema) not in supported_bundles:
         raise HarnessError("unsupported Flash qualification result schema")
-    if qualification_plan.get("schema") != "qwen-flash-next-qualification-plan/v1":
-        raise HarnessError("unsupported Flash qualification plan schema")
-    if contract.get("schema") != "qwen-flash-next-qualification/v1":
-        raise HarnessError("unsupported Flash qualification contract schema")
+    bundle_v2 = result_schema == "qwen-flash-next-qualification-result/v2"
     if result.get("plan_sha256") != _qualification_sha256(qualification_plan):
         raise HarnessError("Flash qualification result does not bind its plan")
     # The controller binds the original byte-for-byte external contract.  Its
@@ -406,6 +581,11 @@ def validate_flash_qualification_files(
         or qualification_plan.get("contract_id") != contract.get("contract_id")
         or qualification_plan.get("min_mem_available_gib")
         != safety.get("min_mem_available_gib")
+        or (
+            bundle_v2
+            and qualification_plan.get("setup_quiescence_seconds")
+            != safety.get("setup_quiescence_seconds")
+        )
         or qualification_plan.get("docker_create_argv_sha256")
         != _qualification_sha256(qualification_plan.get("docker_create_argv"))
     ):
@@ -420,6 +600,10 @@ def validate_flash_qualification_files(
         raise HarnessError("Flash qualification contract authorizes a forbidden side effect")
 
     registration_failures = []
+    if not bundle_v2:
+        registration_failures.append(
+            "legacy qualification schema is historical and cannot admit calls"
+        )
     if raw_contract_failure is not None:
         registration_failures.append("exact raw external contract is absent")
     try:
@@ -463,7 +647,10 @@ def validate_flash_qualification_files(
             failures.append("minimum MemAvailable fell below the contract")
     if result.get("probe_count") != 3:
         failures.append("three fixed probes did not return")
-    if result.get("pswpout_delta_pages") != 0:
+    if bundle_v2:
+        if result.get("mutation_pswpout_delta_pages") != 0:
+            failures.append("host swap-out increased during the mutation window")
+    elif result.get("pswpout_delta_pages") != 0:
         failures.append("host swap-out increased")
     if result.get("weekly_budget_debit") is not False:
         failures.append("weekly maintenance budget was debited")
@@ -532,6 +719,10 @@ def validate_flash_qualification_files(
         "min_mem_available_gib": minimum_observed,
         "probe_count": result.get("probe_count"),
         "pswpout_delta_pages": result.get("pswpout_delta_pages"),
+        "setup_pswpout_delta_pages": result.get("setup_pswpout_delta_pages"),
+        "mutation_pswpout_delta_pages": result.get(
+            "mutation_pswpout_delta_pages"
+        ),
         "restoration_status": (
             restoration.get("status") if isinstance(restoration, dict) else None
         ),
