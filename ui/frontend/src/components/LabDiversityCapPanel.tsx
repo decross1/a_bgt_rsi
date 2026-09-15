@@ -17,7 +17,8 @@ type Cap = { cap_tokens: number; condition_cells: number; generator_calls: numbe
   underlying_objective_success: number; creditable_protocol_pass: number };
 type Result = { caps: Record<string, Cap>; paired_task_protocol_differences: Record<string, number>;
   recorded_evaluator_elapsed_s: number; source_replay: "publication_time_only" };
-type View = { status: string; results: Result | null; replay_raw_sha256: string | null };
+type View = { status: string; results: Result | null; replay_raw_sha256: string | null;
+  failure_reason_code: "startup_host_swap_5s" | null };
 
 function cap(value: unknown, tokens: number): Cap | null {
   if (!object(value) || value.cap_tokens !== tokens || value.condition_cells !== 5 ||
@@ -62,19 +63,28 @@ function view(data: unknown): View | null {
       data.comparison_eligible !== false) return null;
   const status = data.status;
   if (status === "closed_replay_admitted") {
+    if (data.failure_reason_code !== null) return null;
     if (!SHA.test(String(data.plan_raw_sha256)) ||
         !SHA.test(String(data.window_raw_sha256)) ||
         !SHA.test(String(data.replay_raw_sha256))) return null;
     const results = result(data.results);
-    return results ? { status, results, replay_raw_sha256: String(data.replay_raw_sha256) } : null;
+    return results ? { status, results, replay_raw_sha256: String(data.replay_raw_sha256),
+      failure_reason_code: null } : null;
   }
+  const failure = data.failure_reason_code;
+  if (status === "incomplete_terminal" ? failure !== null &&
+      failure !== "startup_host_swap_5s" : failure !== null) return null;
   return ["prepared_unissued", "execution_pending", "awaiting_admission",
     "incomplete_terminal", "source_unavailable"].includes(String(status)) &&
     data.results === null && data.replay_raw_sha256 === null
-    ? { status: String(status), results: null, replay_raw_sha256: null } : null;
+    ? { status: String(status), results: null, replay_raw_sha256: null,
+        failure_reason_code: failure as "startup_host_swap_5s" | null } : null;
 }
 
-const pending = (status: string) => status === "prepared_unissued"
+const pending = (status: string, failure: string | null) =>
+  status === "incomplete_terminal" && failure === "startup_host_swap_5s"
+    ? "Startup host-paging guard stopped this attempt before evaluation; no cap-quality result."
+    : status === "prepared_unissued"
   ? "Frozen plan and window are prepared; no cap-study result has been admitted."
   : status === "execution_pending"
     ? "The cap window has begun or is being checked; results are withheld."
@@ -97,7 +107,7 @@ export function LabDiversityCapPanel({ data, pollingFailed = false }: {
       <p>Five reused diversity tasks, paired across two cap conditions. Each condition budgets three generator calls at 60 seconds and one selector at 20 seconds. This does not rescore the original 126 cells.</p>
     </div><span className="benchmark-chip benchmark-chip--info">Development diagnostic</span></header>
     {!scores ? <p className="benchmark-empty-inline">{current
-      ? pending(current.status) : "Cap observation unavailable; all diagnostic counts are withheld."}</p> : <>
+      ? pending(current.status, current.failure_reason_code) : "Cap observation unavailable; all diagnostic counts are withheld."}</p> : <>
       <p className="benchmark-empty-inline">Exact closed-window replay admitted 40 private call streams and the unchanged diversity grader at publication. This page hashes archived public refs; it does not replay private streams on each poll.</p>
       <div className="benchmark-table-wrap" role="region" tabIndex={0}
         aria-label="Mia diversity cap results, scroll horizontally"><table className="benchmark-table">
