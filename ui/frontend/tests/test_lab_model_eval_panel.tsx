@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { LabModelEvaluationPanel } from "../src/components/LabModelEvaluationPanel";
+import BenchmarkProgress from "../src/routes/BenchmarkProgress";
 
 const sha = "a".repeat(64);
 const pair = "qfn-ab-lab-primary-20260915-b";
@@ -59,5 +60,14 @@ describe("paired lab model publication", () => {
     expect(screen.queryByText("24 / 24")).not.toBeInTheDocument();
     rerender(<LabModelEvaluationPanel data={{ ...admitted, grade_replay: "not_available" }} />);
     expect(screen.queryByText("24 / 24")).not.toBeInTheDocument();
+  });
+
+  it("keeps independent lab status visible when weekly history is unavailable", () => {
+    render(<BenchmarkProgress initial={null} initialLab={{ ...admitted,
+      status: "pending_admission", source_status: "prepared_sources_verified",
+      grade_replay: "not_available", cohorts: null }} />);
+    expect(screen.getByText("Unable to load benchmark history")).toBeInTheDocument();
+    expect(screen.getByText("Optimized bundle paired evaluation")).toBeInTheDocument();
+    expect(screen.getByText(/source-bound 126-task paired plan is frozen/)).toBeInTheDocument();
   });
 });

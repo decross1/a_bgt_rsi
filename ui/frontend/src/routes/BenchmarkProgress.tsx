@@ -34,6 +34,8 @@ import "./benchmarkProgress.css";
 interface Props {
   /** A test/story seam. `undefined` uses the live endpoint; null is a real empty source. */
   initial?: BenchmarkProgressResponse | null;
+  /** Independent lab publication seam; weekly history may be unavailable. */
+  initialLab?: unknown;
 }
 
 type FamilyFilter = "all" | "measured" | "comparable" | "incomplete";
@@ -333,7 +335,7 @@ function WeekButton({ week, selected, onSelect }: { week: BenchmarkWeek; selecte
   </button>;
 }
 
-export default function BenchmarkProgress({ initial }: Props) {
+export default function BenchmarkProgress({ initial, initialLab }: Props) {
   const live = initial === undefined;
   const poll = usePolled(BENCHMARK_PROGRESS_POLL_KEY, getBenchmarkProgress, {
     intervalMs: 60_000,
@@ -348,6 +350,8 @@ export default function BenchmarkProgress({ initial }: Props) {
   });
   const refreshing = usePollActivity(BENCHMARK_PROGRESS_POLL_KEY);
   const data = initial === undefined ? poll.data : initial;
+  const labData = initialLab === undefined ? labPoll.data : initialLab;
+  const showLab = live || initialLab !== undefined;
   const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FamilyFilter>("all");
@@ -371,6 +375,7 @@ export default function BenchmarkProgress({ initial }: Props) {
     return <section className="page-full benchmark-progress" aria-labelledby="benchmark-progress-title">
       <header className="benchmark-page-head"><div><p className="benchmark-eyebrow">Operations</p><h1 id="benchmark-progress-title">Benchmark Progress</h1><p>Review decisions and benchmark results, week by week.</p></div></header>
       <SkeletonCard lines={7} />
+      {showLab && <LabModelEvaluationPanel data={labData} pollingFailed={labPoll.failing} />}
     </section>;
   }
 
@@ -381,6 +386,7 @@ export default function BenchmarkProgress({ initial }: Props) {
         <p>{poll.failing ? `The latest read failed: ${String(poll.error)}. Missing history is withheld rather than shown as zero.` : "The weekly upgrade sources have not produced a progress record yet."}</p>
         {live && <button type="button" onClick={() => refreshPoll(BENCHMARK_PROGRESS_POLL_KEY)}>Retry</button>}
       </section>
+      {showLab && <LabModelEvaluationPanel data={labData} pollingFailed={labPoll.failing} />}
     </section>;
   }
 
@@ -464,7 +470,7 @@ export default function BenchmarkProgress({ initial }: Props) {
     {(summaryMissing || rows<BenchmarkProgressWarning>(data.warnings).length > 0) && <aside className="benchmark-warnings" aria-label="Data qualifications">{summaryMissing && <p><strong>Progress summary</strong> · The response shape is incomplete. Missing values are withheld rather than inferred as zero.</p>}{rows<BenchmarkProgressWarning>(data.warnings).map((warning, index) => <p key={`${String(warning.code)}-${index}`}><strong>{text(warning.scope, "Record")}</strong> · {text(warning.detail, "An unspecified source qualification was recorded.")}</p>)}</aside>}
 
     <LocalModelResearchPanel data={data.local_model_research} />
-    {live && <LabModelEvaluationPanel data={labPoll.data} pollingFailed={labPoll.failing} />}
+    {showLab && <LabModelEvaluationPanel data={labData} pollingFailed={labPoll.failing} />}
     <FollowonResultsPanel data={data.local_followon_results} />
     <ResearchPipelinePanel pipeline={data.research_pipeline} />
     <AppliedMarketResearchPanel data={data.applied_market_research} />
