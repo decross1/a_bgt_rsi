@@ -15,7 +15,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PLAN_SCHEMA = "flash-next-ab-plan/v1"
 RUN_SCHEMA = "flash-next-ab-run/v1"
-SUITE_ID = "flash-next-role-bundle-development-ab-v1-2026-09-15"
+SUITE_ID = "flash-next-role-bundle-development-ab-v2-2026-09-15"
 COHORTS = ("resident", "flash")
 ROLES = (
     "generator",
@@ -121,10 +121,11 @@ def resolved_policy(policy_id: str, endpoint_name: str) -> dict[str, Any]:
     if policy_id not in bases:
         raise PlanError(f"unknown logical policy {policy_id!r}")
     policy = dict(bases[policy_id])
-    # Qwen/Flash model defaults use top_k=20 while resident Gemma defaults to
-    # 64.  Send one explicit value so sampled cells do not silently measure
-    # that generation-config difference.
-    policy["top_k"] = 20
+    # This is a deployable-bundle comparison. Preserve each endpoint's native
+    # top-k explicitly rather than changing incumbent Gemma's sampling. The
+    # policy difference is recorded in every route hash, not attributed to
+    # model weights. A matched-top-k sensitivity trial needs a separate plan.
+    policy["top_k"] = 64 if endpoint_name == "resident_gemma" else 20
     if endpoint_name == "resident_gemma":
         policy.pop("reasoning_effort", None)
     elif endpoint_name not in {"resident_qwen", "flash_next"}:

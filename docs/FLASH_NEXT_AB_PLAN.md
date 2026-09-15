@@ -10,6 +10,12 @@ resources permit. Same-checkpoint author and critic are explicitly correlated;
 they do not inherit the current different-checkpoint meaning of independent
 scientific qualification. Evaluation outputs never write production findings.
 
+The primary development suite preserves explicit native `top_k` values:
+Gemma 64, resident Qwen 20, Flash 20. This is a deployable system comparison
+with an intentional policy difference, not a weights-only experiment. The
+superseded common-20 draft was archived before either cohort ran; a matched
+top-k sensitivity comparison needs its own preregistration and suite identity.
+
 Freeze weights, runtime image/source/patches, tokenizer, tool/reasoning controls,
 role routing, fixture/grader identity, repetitions, caps, seed and stopping rules
 before execution. Measure successes including failed and timed-out attempts,
@@ -30,6 +36,13 @@ Record this research usage separately; do not debit or enlarge the existing
 R&D, not paid frontier APIs or production research. Every invocation still has
 a finite preregistered deadline, hardware limits and a restoration procedure.
 The current models and serving pins remain the rollback baseline.
+
+The owner subsequently set the Flash research reserve to 20 GB. These isolated
+experiments use a conservative 20 GiB `MemAvailable` floor. Earlier failures
+under the 30 GiB floor remain unchanged; the ordinary production contract is
+not rewritten by this research exception. Record setup, candidate execution,
+and restoration memory/paging evidence so load behavior and rollback behavior
+can be assessed separately.
 
 Sequence: research and artifact hashes; audit/build immutable challenger;
 qualify memory and protocol; reserve and run paired current/Flash cohort;
