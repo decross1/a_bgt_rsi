@@ -143,6 +143,11 @@ export interface ModelRuntime {
 export const getModelRuntime = () =>
   getJSON<ModelRuntime>("/api/model_runtime");
 
+// Source-bound, content-free campaign operations and ingestion receipts.
+// Unknown fields stay unknown in the Now card when an older backend lacks it.
+export const getResearchOpsStatus = () =>
+  getJSON<unknown>("/api/research_ops_status");
+
 export const getRecentTelemetry = (limit = 300) =>
   getJSON<{ samples: TelemetrySample[] }>(`/api/telemetry/recent?limit=${limit}`);
 
