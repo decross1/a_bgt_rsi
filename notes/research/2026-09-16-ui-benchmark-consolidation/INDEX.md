@@ -54,6 +54,7 @@ Hourly checkpoints and final results will be added as the work progresses.
 - [First hourly checkpoint](checkpoint-01.md)
 - [Second hourly checkpoint](checkpoint-02.md)
 - [Third hourly checkpoint](checkpoint-03.md)
+- [Fourth hourly checkpoint](checkpoint-04.md)
 - [UI audit and verification](UI_AUDIT.md)
 - [Integration review](INTEGRATION_REVIEW.md)
 - [Dossier and benchmark follow-up review](FOLLOWUP_REVIEW.md)
