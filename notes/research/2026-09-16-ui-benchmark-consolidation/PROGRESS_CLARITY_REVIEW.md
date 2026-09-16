@@ -16,19 +16,29 @@ the end of its eligibility window, not its completion time. Both remain
 and no comparison or promotion authority. A missing, malformed, future-dated,
 or cross-hash-mismatched receipt withholds this projection.
 
-The latest authoritative coordinator receipt at 06:03 UTC records a completed
+The authoritative coordinator receipt at 06:03 UTC records a completed
 `promote_findings` action with zero promoted findings. The status projection
 therefore reports `promoted_count:0` and `substantive_progress:false`. This is a
 successful zero-yield operation, not research progress. Current campaign
 records 007, 008, and 009 still have no typed attached experiment outcome, and
 coordinator prose or an unlinked diagnostic cannot supply that missing join.
 
+The subsequent 07:00 UTC attempt records `no_valid_plan`, with empty plan,
+outcome, promoted-finding, and bubble result collections. All three planner attempts
+offered a topic identifier where the campaign requires an exact preregistered
+seed. The projection now displays that latest unsuccessful attempt as “No valid
+plan; no actions dispatched,” with its own timestamp and source hashes. It does
+not substitute the older executed cycle or describe the failed attempt as an
+absent coordinator check. Malformed or contradictory receipts remain unknown.
+The planner and campaign admission contract are unchanged by this display fix.
+
 The frontend contract keeps these boundaries visible. Current-campaign state,
 unlinked apparatus diagnostics, and preserved history remain separate cohorts.
 A terminal diagnostic may be shown as source-bound instrumentation, while the
 thesis and next agenda remain unchanged until an exact campaign/study/outcome
-join exists. A fresh sole `loop_stalled` alert says the latest coordinator pass
-made no research progress; stale, mixed, or gated alerts retain their recorded
+join exists. A fresh sole `loop_stalled` alert says the recorded coordinator pass
+made no research progress; it does not call that older alert the latest attempt.
+Stale, mixed, or gated alerts retain their recorded
 detail instead of being rewritten as a current conclusion.
 
 Trace history was already bounded to 20 visible cards, but three source topics
@@ -89,7 +99,7 @@ helped confirm density, while conclusions above come from current source,
 bounded live read-only API payloads, and receipt files. Fresh deployed desktop,
 narrow, theme, keyboard, and error-state captures belong to the UI validation
 owner and are not claimed here. Receipt admission proves the recorded chain,
-not scientific validity. Zero promotions describe the latest bound coordinator
+not scientific validity. Zero promotions describe the bound coordinator
 action, not every possible activity outside that record. No historical result
 was rescored, no unlinked study was converted into thesis evidence, and no
 runtime or model change was authorized by this review.

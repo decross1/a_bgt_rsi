@@ -14,9 +14,10 @@ const receipt = () => ({
   last_productive: { kind: "campaign_iteration_recorded", iteration_id: "iter-001",
     topic_id: "topic-001", at: new Date().toISOString(), gate_status: "pending",
     loop_source_sha256: sha("b") },
-  last_cycle: { run_id: "cycle-001", at: new Date().toISOString(), action_code: "noop",
+  last_cycle: { run_id: "cycle-001", at: new Date().toISOString(), terminal_status: "executed",
+    action_code: "noop",
     planned_count: 0, dispatched_count: 0, outcome_count: 1,
-    action_kind: "noop", promoted_count: 0, substantive_progress: false,
+    action_kind: "noop" as string | null, promoted_count: 0, substantive_progress: false,
     raw_row_sha256: sha("d"), cycles_source_sha256: sha("e") },
   budget: { source_status: "available", spent_today: 3, daily_cap: 60,
     paced_allowance: 44, ledger_sha256: sha("f") },
@@ -144,6 +145,25 @@ describe("ResearchOpsCard", () => {
     } }} /></MemoryRouter>);
     expect(screen.queryByText(/0 findings promoted/)).not.toBeInTheDocument();
     expect(screen.getByText(/Plan recorded · 1 planned · 1 dispatched/)).toBeInTheDocument();
+  });
+
+  it("shows a source-bound latest no-plan cycle without falling back to older progress", () => {
+    const data = receipt();
+    data.last_cycle = { ...data.last_cycle, terminal_status: "no_valid_plan",
+      action_code: "no_valid_plan", planned_count: 0, dispatched_count: 0,
+      outcome_count: 0, action_kind: null, promoted_count: 0,
+      substantive_progress: false };
+    const { rerender } = show(data);
+    expect(screen.getByText(/No valid plan; no actions dispatched/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "view trace" })).toHaveAttribute("href", "/cycles");
+    expect(screen.getByText(/cycle-001/)).toBeInTheDocument();
+    expect(screen.queryByText(/Promotion check completed/)).not.toBeInTheDocument();
+
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, last_cycle: {
+      ...data.last_cycle, outcome_count: 1,
+    } }} /></MemoryRouter>);
+    expect(screen.queryByText(/No valid plan; no actions dispatched/)).not.toBeInTheDocument();
+    expect(screen.getByText("No bound coordinator check")).toBeInTheDocument();
   });
 
   it("prioritizes the registered successor and labels the legacy fetch failure as log-only", () => {

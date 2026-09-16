@@ -545,9 +545,13 @@ def project_research_ops_status(
         row, row_sha = cycles[-1]
         when = _time(row.get("timestamp"))
         plan, outcomes = row.get("plan"), row.get("outcomes")
-        if (when is not None and when <= observed and row.get("status") == "executed"
-                and ID_RE.fullmatch(str(row.get("run_id")))
-                and isinstance(plan, list) and isinstance(outcomes, list)
+        common_valid = (
+            when is not None and when <= observed
+            and isinstance(row.get("run_id"), str)
+            and ID_RE.fullmatch(row["run_id"]) is not None
+            and isinstance(plan, list) and isinstance(outcomes, list)
+        )
+        if (common_valid and row.get("status") == "executed"
                 and len(plan) <= 6 and len(outcomes) <= 6):
             planned = [x.get("action") for x in plan if isinstance(x, dict)
                        and x.get("action") != "noop"]
@@ -556,10 +560,31 @@ def project_research_ops_status(
             noop = len(plan) == 1 and isinstance(plan[0], dict) and plan[0].get("action") == "noop"
             out["last_cycle"] = {
                 "run_id": row["run_id"], "at": _stamp(when),
+                "terminal_status": "executed",
                 "action_code": "noop" if noop else "actions_planned",
                 "planned_count": len(planned), "dispatched_count": len(dispatched),
                 "outcome_count": len(outcomes),
                 **_cycle_progress(row, plan, outcomes),
+                "raw_row_sha256": row_sha,
+                "cycles_source_sha256": cycle_proof["sha256"],
+            }
+        elif (common_valid and row.get("status") == "no_valid_plan"
+              and plan == [] and outcomes == []
+              and row.get("promoted_finding_ids") == []
+              and row.get("bubble_run_ids") == []
+              and "dispatched_iteration_id" not in row):
+            # A rejected plan is a terminal coordinator observation, not an
+            # executed cycle and not research progress.  Project the newest
+            # row itself so callers never relabel an older executed cycle as
+            # the latest coordinator result.
+            out["last_cycle"] = {
+                "run_id": row["run_id"], "at": _stamp(when),
+                "terminal_status": "no_valid_plan",
+                "action_code": "no_valid_plan",
+                "planned_count": 0, "dispatched_count": 0,
+                "outcome_count": 0,
+                "action_kind": None, "promoted_count": 0,
+                "substantive_progress": False,
                 "raw_row_sha256": row_sha,
                 "cycles_source_sha256": cycle_proof["sha256"],
             }
