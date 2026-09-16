@@ -68,6 +68,10 @@ describe("LoopAlertBanner", () => {
       "Last recorded Claude CLI calls failed; this alert does not establish current availability.",
     );
     expect(reason).toHaveAttribute("title", "frontier_vendor_down:claude");
+    expect(screen.getByTestId("loop-alert-banner").tagName).toBe("DETAILS");
+    expect(screen.getByTestId("loop-alert-banner")).toHaveAttribute("role", "status");
+    expect(screen.getByTestId("loop-alert-banner")).not.toHaveAttribute("open");
+    expect(screen.getByRole("link", { hidden: true, name: "Operations" })).toHaveAttribute("href", "/ops");
     expect(screen.queryByText("loop degraded")).not.toBeInTheDocument();
     expect(screen.queryByText(/recently|last checked|currently unavailable/i)).not.toBeInTheDocument();
   });

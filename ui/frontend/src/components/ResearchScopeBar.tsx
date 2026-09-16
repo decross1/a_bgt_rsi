@@ -21,9 +21,14 @@ interface ResearchScopeBarProps {
   scopeOverride?: ResearchScope;
   activeTarget?: string;
   allTarget?: string;
+  activeHrefOverride?: string;
+  allHrefOverride?: string;
   /** Route-specific boundary text can replace the generic archive note while
    * staying inside the single scope panel. */
   historyExplanation?: string;
+  /** Detail readers lead with their source-bound overview, so campaign
+   * context stays to one compact identity line above it. */
+  compact?: boolean;
 }
 
 export default function ResearchScopeBar({
@@ -33,7 +38,10 @@ export default function ResearchScopeBar({
   scopeOverride,
   activeTarget,
   allTarget,
+  activeHrefOverride,
+  allHrefOverride,
   historyExplanation,
+  compact = false,
 }: ResearchScopeBarProps) {
   const location = useLocation();
   const routeScope = useResearchScope();
@@ -76,27 +84,28 @@ export default function ResearchScopeBar({
     };
   }, [fetchMetadata, initialMetadata, scope]);
 
-  const activeHref = activeTarget === undefined
+  const activeHref = activeHrefOverride ?? (activeTarget === undefined
     ? currentPageScopeHref(
       location.pathname,
       location.search,
       location.hash,
       "active",
     )
-    : researchScopedHref(activeTarget, "active");
-  const allHref = allTarget === undefined
+    : researchScopedHref(activeTarget, "active"));
+  const allHref = allHrefOverride ?? (allTarget === undefined
     ? currentPageScopeHref(
       location.pathname,
       location.search,
       location.hash,
       "all",
     )
-    : researchScopedHref(allTarget, "all");
+    : researchScopedHref(allTarget, "all"));
 
   return (
     <section
       aria-label="Research scope"
       className={`research-scope-bar ${className}`.trim()}
+      data-compact={compact ? "true" : "false"}
       data-mode={scope}
       data-testid="research-scope-bar"
     >
@@ -144,10 +153,14 @@ export default function ResearchScopeBar({
         <div className="research-scope-bar__campaign" data-testid="research-scope-campaign">
           <div>
             <strong>{metadata.campaign.title}</strong>
-            <p>{metadata.campaign.research_question}</p>
-            <p className="research-scope-bar__execution-note">
-              Current identifies the campaign pointer. It does not establish queued or running work; execution state is reported separately in the Lab queue.
-            </p>
+            {compact ? <p className="research-scope-bar__execution-note">
+              Campaign context for the exact record below. Human-action requests and execution remain separate.
+            </p> : <>
+              <p>{metadata.campaign.research_question}</p>
+              <p className="research-scope-bar__execution-note">
+                Current identifies the campaign pointer. It does not establish queued or running work; execution state is reported separately in the Lab queue.
+              </p>
+            </>}
           </div>
           <code title={metadata.campaign.manifest_sha256}>{metadata.campaign.campaign_id}</code>
         </div>

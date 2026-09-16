@@ -56,6 +56,29 @@ function warningText(value: unknown): string[] {
   });
 }
 
+interface ReleaseOptionView {
+  version: string;
+  label: string;
+  active: boolean;
+  selected: boolean;
+  href: string;
+}
+
+function releaseOptions(value: unknown): ReleaseOptionView[] {
+  return asRows(value).flatMap((row) => {
+    const version = asText(row.version, "");
+    if (version === "" || version.length > 64) return [];
+    const expectedHref = `/benchmarks?release=${encodeURIComponent(version)}`;
+    return [{
+      version,
+      label: asText(row.label, `Release ${version}`),
+      active: row.active === true,
+      selected: row.selected === true,
+      href: typeof row.href === "string" && row.href === expectedHref ? row.href : expectedHref,
+    }];
+  });
+}
+
 function comparisonRows(value: unknown): Record<string, unknown>[] {
   return asRows(value);
 }
@@ -171,7 +194,7 @@ function executionPolicy(value: unknown): { summary: string; detail: string[] } 
         ? `temperature ${temperature}`
         : null,
       topP !== null && topP > 0 && topP <= 1 ? `top-p ${topP}` : null,
-      reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "xhigh"
+      reasoningEffort === "low" || reasoningEffort === "medium" || reasoningEffort === "high" || reasoningEffort === "xhigh"
         ? `reasoning ${reasoningEffort}`
         : null,
     ].filter((item): item is string => item !== null);
@@ -223,6 +246,99 @@ function BenchmarkHistoryTable({ rows }: { rows: Record<string, unknown>[] }) {
   </div>;
 }
 
+interface MeasurementReviewView {
+  status: "commissioning_only" | "unavailable";
+  title: string;
+  summary: string;
+  interpretation: string | null;
+  nextAction: string | null;
+  affectedTaskIds: string[];
+  sourcePath: string | null;
+  reviewedAt: string | null;
+}
+
+function measurementReviewView(value: unknown): MeasurementReviewView | null {
+  if (!isRecord(value)) return null;
+  if (value.status !== "commissioning_only" && value.status !== "unavailable") return null;
+  if (value.comparative_quality_allowed !== false) return null;
+  const affectedTaskIds = Array.isArray(value.affected_task_ids)
+    ? value.affected_task_ids.filter((item): item is string => typeof item === "string" && item.trim() !== "").slice(0, 24)
+    : [];
+  return {
+    status: value.status,
+    title: asText(value.title, "Measurement review required"),
+    summary: asText(value.summary, "This release is not eligible for comparative quality interpretation."),
+    interpretation: typeof value.interpretation === "string" && value.interpretation.trim() !== "" ? value.interpretation : null,
+    nextAction: typeof value.next_action === "string" && value.next_action.trim() !== "" ? value.next_action : null,
+    affectedTaskIds,
+    sourcePath: typeof value.source_path === "string" && value.source_path.trim() !== "" ? value.source_path : null,
+    reviewedAt: typeof value.reviewed_at === "string" && value.reviewed_at.trim() !== "" ? value.reviewed_at : null,
+  };
+}
+
+function MeasurementReviewNotice({ review }: { review: MeasurementReviewView }) {
+  return <aside className="benchmark-measurement-review" aria-labelledby="benchmark-measurement-review-title" data-testid="benchmark-measurement-review">
+    <div>
+      <span className="benchmark-chip benchmark-chip--warn">{label(review.status)}</span>
+      <h3 id="benchmark-measurement-review-title">{review.title}</h3>
+    </div>
+    <p>{review.summary}</p>
+    {review.interpretation !== null && <p><strong>Interpretation:</strong> {review.interpretation}</p>}
+    {review.nextAction !== null && <p><strong>Next:</strong> {review.nextAction}</p>}
+    {(review.affectedTaskIds.length > 0 || review.sourcePath !== null) && <details>
+      <summary>{review.affectedTaskIds.length} affected task{review.affectedTaskIds.length === 1 ? "" : "s"} and review provenance</summary>
+      {review.affectedTaskIds.length > 0 && <ul>{review.affectedTaskIds.map((taskId) => <li key={taskId}><code>{taskId}</code></li>)}</ul>}
+      {review.sourcePath !== null && <p>Review source: <code>{review.sourcePath}</code>{review.reviewedAt === null ? "" : ` · reviewed ${dateLabel(review.reviewedAt)}`}</p>}
+    </details>}
+  </aside>;
+}
+
+function ReferenceResults({
+  row,
+  diagnosticOnly,
+}: {
+  row: Record<string, unknown>;
+  diagnosticOnly: boolean;
+}) {
+  const results = asRows(row.results);
+  const policy = executionPolicy(row.policy);
+  const wall = asFinite(row.wall_seconds);
+  const calls = asNumber(row.model_calls);
+  const finished = row.finished_at ?? row.started_at;
+  const admission = asText(row.admission_status, "unknown");
+  return <section className="benchmark-program-section benchmark-reference" aria-labelledby="benchmark-reference-heading">
+    <div className="benchmark-program-section-head">
+      <div>
+        <p className="benchmark-eyebrow">Admitted reference</p>
+        <h3 id="benchmark-reference-heading">{asText(row.label ?? row.arm_id, "Reference arm")}</h3>
+      </div>
+      <span className={`benchmark-chip benchmark-chip--${statusTone(admission)}`}>{label(admission)}</span>
+    </div>
+    <div className="benchmark-reference-meta" aria-label="Reference evaluation context">
+      <span><small>Window</small><strong>{dateLabel(finished)} · {asText(row.week, "week not reported")}</strong></span>
+      <span><small>Evaluation wall</small><strong>{wall === null ? "Not reported" : `${wall.toFixed(1)} s`}</strong></span>
+      <span><small>Model calls</small><strong>{calls ?? "Not reported"}</strong></span>
+      <span><small>Policy</small><strong>{policy.summary}</strong></span>
+    </div>
+    {policy.detail.length > 0 && <p className="benchmark-reference-policy">{policy.detail.join(" · ")}</p>}
+    <p className="benchmark-reference-boundary">{diagnosticOnly
+      ? "These receipt-bound counts are recorded diagnostics. The measurement review does not admit them as trusted quality scores or evidence for a comparative quality claim."
+      : "Each construct stays separate. These small-sample canary signals are descriptive, not benchmark proof or an automatic winner decision."}</p>
+    {results.length === 0 ? <p>No construct results are recorded for this admitted reference.</p> : <div className="benchmark-table-wrap" role="region" tabIndex={0} aria-label="Admitted reference construct results, scroll horizontally">
+      <table className="benchmark-table benchmark-reference-table" data-testid="benchmark-reference-results">
+        <caption className="sr-only">Per-construct admitted reference {diagnosticOnly ? "diagnostics" : "results"}</caption>
+        <thead><tr><th scope="col">Construct</th><th scope="col">Layer</th><th scope="col">Successful units</th><th scope="col">{diagnosticOnly ? "Recorded diagnostic" : "Result"}</th></tr></thead>
+        <tbody>{results.map((result, index) => <tr key={`${asText(result.construct, "construct")}-${index}`}>
+          <th scope="row"><strong>{label(result.construct)}</strong></th>
+          <td>{label(result.domain)}<small>{label(result.panel)}</small></td>
+          <td>{asNumber(result.successful_units) ?? "—"} / {asNumber(result.planned_units) ?? "—"}</td>
+          <td><strong>{metricValue(result.value, result.unit)}</strong><small>{label(result.metric)}</small></td>
+        </tr>)}</tbody>
+      </table>
+    </div>}
+  </section>;
+}
+
 function releasePresentation(status: string): { tone: "ok" | "warn" | "idle"; summary: string } {
   if (status === "frozen") {
     return {
@@ -250,9 +366,14 @@ function releasePresentation(status: string): { tone: "ok" | "warn" | "idle"; su
 
 export default function BenchmarkProgramOverview({
   initial,
+  release: requestedRelease,
 }: {
   initial?: BenchmarkProgramResponse | null;
+  release?: string | null;
 }) {
+  const selectedRelease = typeof requestedRelease === "string" && requestedRelease.trim() !== ""
+    ? requestedRelease.trim()
+    : null;
   const [data, setData] = useState<BenchmarkProgramResponse | null>(initial ?? null);
   const [loaded, setLoaded] = useState(initial !== undefined);
   const [error, setError] = useState<string | null>(null);
@@ -264,7 +385,7 @@ export default function BenchmarkProgramOverview({
     const refresh = () => {
       if (inFlight) return;
       inFlight = true;
-      getBenchmarkProgram().then((value) => {
+      getBenchmarkProgram(selectedRelease).then((value) => {
         if (!current) return;
         setData(value);
         setLoaded(true);
@@ -283,9 +404,10 @@ export default function BenchmarkProgramOverview({
       current = false;
       window.clearInterval(interval);
     };
-  }, [initial]);
+  }, [initial, selectedRelease]);
 
   const categories = useMemo(() => categoryRows(data?.design?.categories), [data?.design?.categories]);
+  const releases = releaseOptions(data?.available_releases);
   const layers = data?.layers && isRecord(data.layers)
     ? (["model", "system", "runtime", "applied"] as const).map((id) => ({ id, value: data.layers?.[id] as BenchmarkProgramLayer | null | undefined }))
     : [];
@@ -319,56 +441,105 @@ export default function BenchmarkProgramOverview({
     </section>;
   }
 
-  const baselineMissing = data.comparison?.baseline == null;
   const releaseStatus = asText(data.release?.status, "status unknown");
   const release = releasePresentation(releaseStatus);
   const capabilityUnits = asNumber(data.design?.capability_units_per_arm);
   const systemMissions = asNumber(data.design?.system_missions_per_arm);
   const callsPerArm = asNumber(data.design?.model_calls_per_arm);
   const pairedCap = asNumber(data.design?.paired_model_call_cap);
+  const completedCalls = asNumber(data.progress?.completed_calls);
+  const totalCalls = asNumber(data.progress?.total_calls);
+  const reportedBaseline = isRecord(data.comparison?.baseline) ? data.comparison.baseline : null;
+  const isAdmittedReference = (row: Record<string, unknown> | null): row is Record<string, unknown> =>
+    row !== null
+    && row.role === "reference"
+    && row.admission_status === "admitted"
+    && asRows(row.results).length > 0;
+  const historyReference = history.find((row) => isAdmittedReference(row)) ?? null;
+  const reference = isAdmittedReference(reportedBaseline) ? reportedBaseline : historyReference;
+  const baselineMissing = reference === null;
+  const review = measurementReviewView(data.measurement_review);
+  const reviewPayloadPresent = data.measurement_review !== undefined && data.measurement_review !== null;
+  const measurementReviewRequired = review !== null || data.comparison?.status === "measurement_review_required";
+  const comparisonGaps = history.filter((row) => asRows(row.results).length === 0);
 
-  return <section className="benchmark-hero" data-testid="benchmark-program" aria-labelledby="benchmark-program-heading">
-    <div className="benchmark-outcome">
-      <span className={`benchmark-chip benchmark-chip--${release.tone}`}>{label(releaseStatus)}</span>
-      <p className="benchmark-eyebrow">Versioned benchmark · version {asText(data.release?.version)}</p>
-      <h2 id="benchmark-program-heading">Fixed regression canary</h2>
-      <p>{release.summary}</p>
-      <dl className="benchmark-summary-grid">
+  return <section className="benchmark-hero benchmark-program-overview" data-testid="benchmark-program" aria-labelledby="benchmark-program-heading">
+    <header className="benchmark-program-head">
+      <div className="benchmark-program-title">
+        <div className="benchmark-program-release">
+          <span className={`benchmark-chip benchmark-chip--${release.tone}`}>{label(releaseStatus)}</span>
+          <p className="benchmark-eyebrow">Versioned benchmark · v{asText(data.release?.version)}</p>
+        </div>
+        {releases.length > 1 && <nav className="benchmark-release-selector" aria-label="Benchmark release">
+          {releases.map((option) => <a
+            key={option.version}
+            href={option.href}
+            aria-current={option.selected ? "page" : undefined}
+            title={option.label}
+          >v{option.version}{option.active ? " · active" : ""}</a>)}
+        </nav>}
+        <h2 id="benchmark-program-heading">Fixed regression canary</h2>
+        <p>{release.summary}</p>
+      </div>
+      <dl className="benchmark-program-status" aria-label="Release and run status">
+        <div><dt>Run</dt><dd>{label(data.progress?.status)}</dd>{progressPhase !== null && <small data-testid="benchmark-program-phase">Phase: {label(progressPhase)}{progressRunId === null ? "" : ` · ${progressRunId}`}</small>}</div>
+        <div><dt>Coverage</dt><dd>{completed === null || total === null ? "Not reported" : `${completed} / ${total}`}</dd><small>{completed === null || total === null ? "Completion counts unavailable" : `${completed} of ${total} registered units`}{completedCalls === null || totalCalls === null ? "" : ` · ${completedCalls} / ${totalCalls} calls`}</small></div>
+        <div><dt>Comparison</dt><dd>{label(data.comparison?.status)}</dd><small>{baselineMissing ? "No admitted reference" : `${arms.length} registered arms · ${matched.length} matched rows`}</small></div>
+        <div><dt>Review date</dt><dd>{dateLabel(data.release?.expires_at)}</dd><small>Generated {dateLabel(data.generated_at)}</small></div>
+      </dl>
+    </header>
+
+    {meterValue !== null && total !== null && <div className="benchmark-budget-track benchmark-program-meter" role="meter" aria-label="Stable benchmark registered units completed" aria-valuemin={0} aria-valuemax={total} aria-valuenow={meterValue}><span style={{ width: `${(meterValue / total) * 100}%` }} /></div>}
+
+    <div className="benchmark-program-next">
+      <p><strong>Next:</strong> {asText(data.progress?.next_action, "No next action reported")}</p>
+      {blockers.map((blocker) => <p key={blocker}><strong>Boundary:</strong> {blocker}</p>)}
+    </div>
+
+    {review !== null && <MeasurementReviewNotice review={review} />}
+    {reviewPayloadPresent && review === null && <aside className="benchmark-measurement-review" role="status">
+      <h3>Measurement review metadata unavailable</h3>
+      <p>The review payload is not internally admissible. Comparative quality interpretation and matched changes are withheld.</p>
+    </aside>}
+
+    {error !== null && <p className="benchmark-stale" role="status">The latest stable-program refresh failed: {error}. Showing the last successful projection.</p>}
+    {warnings.length > 0 && <aside className="benchmark-warnings" aria-label="Stable benchmark qualifications">{warnings.map((warning, index) => <p key={`${warning}-${index}`}>{warning}</p>)}</aside>}
+
+    {reference !== null ? <ReferenceResults row={reference} diagnosticOnly={measurementReviewRequired} /> : <section className="benchmark-program-section benchmark-reference" aria-labelledby="benchmark-reference-heading">
+      <p className="benchmark-eyebrow">Admitted reference</p>
+      <h3 id="benchmark-reference-heading">Baseline not established</h3>
+      <p>A prospective admitted run is required before any construct result, delta, or trend can be shown.{history.length ? ` ${history.length} registered attempt${history.length === 1 ? " is" : "s are"} retained in run history with pending or withheld gaps.` : ""}</p>
+    </section>}
+
+    <section className="benchmark-program-section benchmark-matched" aria-labelledby="benchmark-matched-heading">
+      <div className="benchmark-program-section-head">
+        <div><p className="benchmark-eyebrow">Candidate versus reference</p><h3 id="benchmark-matched-heading">Matched changes</h3></div>
+        <span className={`benchmark-chip benchmark-chip--${matched.length > 0 && !measurementReviewRequired ? "ok" : "idle"}`}>{matched.length > 0 && !measurementReviewRequired ? `${matched.length} recorded` : "none admitted"}</span>
+      </div>
+      {measurementReviewRequired ? <p>Matched quality changes are withheld while this release is under measurement review. Historical receipt counts remain visible only as recorded diagnostics.</p>
+        : baselineMissing ? <p>No baseline is admitted, so matched scores and deltas are withheld.</p>
+        : matched.length > 0 ? <><p>These small matched constructs are descriptive canary signals, not benchmark proof or an automatic winner decision.</p><MatchedResultsTable rows={matched} /></>
+        : <><p>No matched candidate result is admitted. No winner, upgrade, or trend is inferred.</p>{comparisonGaps.length > 0 && <ul className="benchmark-comparison-gaps">{comparisonGaps.map((row, index) => <li key={`${asText(row.arm_id, "arm")}-${index}`}><strong>{asText(row.label ?? row.arm_id, `Arm ${index + 1}`)}</strong><span>{gapLabel(row.admission_status, row.observed_terminal_status)}</span></li>)}</ul>}</>}
+    </section>
+
+    <details className="benchmark-details benchmark-run-history-details">
+      <summary>Run history · {history.length} registered arm{history.length === 1 ? "" : "s"}</summary>
+      <p>Each construct remains separate. The program does not compute an across-construct score.</p>
+      <BenchmarkHistoryTable rows={history} />
+    </details>
+
+    <details className="benchmark-details benchmark-definition-details">
+      <summary>Definition, evidence layers and provenance</summary>
+      <dl className="benchmark-summary-grid benchmark-definition-summary">
         <div><dt>Capability units / arm</dt><dd>{capabilityUnits ?? "—"}</dd><small>{categories.length ? categories.map((item) => `${item.label} ${item.count ?? "—"}`).join(" · ") : "Category counts not reported"}</small></div>
         <div><dt>Harness workflows / arm</dt><dd>{systemMissions ?? "—"}</dd><small>SYSTEM harness work, separate from capability units</small></div>
         <div><dt>Call ceiling</dt><dd>{callsPerArm ?? "—"} / arm</dd><small>{pairedCap === null ? "Paired ceiling not reported" : `${pairedCap} paired calls maximum`}</small></div>
-        <div><dt>Definition expires</dt><dd>{dateLabel(data.release?.expires_at)}</dd><small>Generated {dateLabel(data.generated_at)}</small></div>
+        <div><dt>Definition SHA-256</dt><dd className="benchmark-definition-hash">{asText(data.release?.definition_sha256)}</dd><small>Public witness {data.release?.public_witness == null ? "not recorded" : "recorded by the program API"}</small></div>
       </dl>
-    </div>
-
-    <div className="benchmark-outcome">
-      <p className="benchmark-eyebrow">Prospective run</p>
-      <h2>{label(data.progress?.status)}</h2>
-      {progressPhase !== null && <p data-testid="benchmark-program-phase"><strong>Phase:</strong> {label(progressPhase)}{progressRunId === null ? "" : ` · ${progressRunId}`}</p>}
-      <p>{completed === null || total === null ? "Completion counts are not reported." : `${completed} of ${total} registered units recorded across capability tasks and harness workflows.`}</p>
-      {meterValue !== null && total !== null && <div className="benchmark-budget-track" role="meter" aria-label="Stable benchmark registered units completed" aria-valuemin={0} aria-valuemax={total} aria-valuenow={meterValue}><span style={{ width: `${(meterValue / total) * 100}%` }} /></div>}
-      <p><strong>Next:</strong> {asText(data.progress?.next_action, "No next action reported")}</p>
-      {blockers.map((blocker) => <p key={blocker}><strong>Blocker:</strong> {blocker}</p>)}
-      <p><strong>Matched comparison:</strong> {baselineMissing
-        ? `Baseline not established. A prospective admitted run is required before any delta or trend can be shown.${history.length ? ` ${history.length} registered attempt${history.length === 1 ? " is" : "s are"} visible below with pending or withheld gaps.` : ""}`
-        : `${label(data.comparison?.status)} · ${arms.length} arms · ${matched.length} matched result rows.`}</p>
-    </div>
-
-    {layers.length > 0 && <dl className="benchmark-summary-grid" aria-label="Benchmark evidence layers">
-      {layers.map(({ id, value }) => <div key={id}><dt>{id}</dt><dd>{label(value?.status)}</dd><small>{asText(value?.summary, "No layer summary reported")}</small></div>)}
-    </dl>}
-
-    {error !== null && <p className="benchmark-stale" role="status">The latest stable-program refresh failed: {error}. Showing the last successful projection.</p>}
-
-    {warnings.length > 0 && <aside className="benchmark-warnings" aria-label="Stable benchmark qualifications">{warnings.map((warning, index) => <p key={`${warning}-${index}`}>{warning}</p>)}</aside>}
-
-    <details className="benchmark-details">
-      <summary>Definition and comparison evidence</summary>
       <div className="benchmark-details-grid">
-        <section><h3>Panel definition</h3>{categories.length ? <ul>{categories.map((item) => <li key={item.id}><strong>{item.label}</strong> · {item.count ?? "count unavailable"}{item.detail ? ` · ${item.detail}` : ""}</li>)}</ul> : <p>Category detail is not reported.</p>}<p>Definition SHA-256: <code>{asText(data.release?.definition_sha256)}</code></p><p>Public witness: {data.release?.public_witness == null ? "not recorded" : "recorded by the program API"}</p></section>
-        <section><h3>Matched canary signals</h3>{baselineMissing ? <p>No baseline is admitted. Scores and deltas are withheld.</p> : matched.length ? <><p>These small matched constructs are descriptive canary signals, not benchmark proof or an automatic winner decision.</p><MatchedResultsTable rows={matched} /></> : <p>No matched result rows are recorded.</p>}</section>
+        <section><h3>Panel definition</h3>{categories.length ? <ul>{categories.map((item) => <li key={item.id}><strong>{item.label}</strong> · {item.count ?? "count unavailable"}{item.detail ? ` · ${item.detail}` : ""}</li>)}</ul> : <p>Category detail is not reported.</p>}</section>
+        <section><h3>Evidence layers</h3>{layers.length > 0 ? <dl className="benchmark-layer-list">{layers.map(({ id, value }) => <div key={id}><dt>{id}</dt><dd><strong>{label(value?.status)}</strong><span>{asText(value?.summary, "No layer summary reported")}</span></dd></div>)}</dl> : <p>Evidence layers are not reported.</p>}</section>
       </div>
-      <section><h3>Versioned run history</h3><p>Each construct remains separate. The program does not compute an across-construct score.</p><BenchmarkHistoryTable rows={history} /></section>
       <p className="benchmark-footnote">Source: <code>{BENCHMARK_PROGRAM_ENDPOINT}</code> · schema {data.schema_version}</p>
     </details>
   </section>;

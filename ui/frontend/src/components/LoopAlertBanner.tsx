@@ -172,6 +172,20 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
   const headline = gate ? `LOOP IDLE — ${gate.reason}` : showRed ? "LOOP STALLED"
     : vendorOnlyAmber ? "Recorded frontier failures" : "loop degraded";
 
+  // A fresh coordinator flag about historical vendor calls is useful context,
+  // but it is not evidence that today's local research is blocked. Keep its
+  // details available without making every route lead with an outage banner.
+  if (vendorOnlyAmber && !refreshFailing) {
+    return <details data-testid="loop-alert-banner" data-level="amber" role="status"
+      className={`border-b px-6 py-2 text-xs ${tone}`}>
+      <summary className="cursor-pointer font-medium">Recorded frontier failures</summary>
+      <p className="mt-2" data-testid="loop-alert-reasons" title={reasons[0]}>{displayReason(reasons[0])}</p>
+      <p className="mt-1 text-[11px]">Review call history in <a className="underline" href="/ops">Operations</a>.
+        <span className="ml-2 opacity-70">Source: run_state/loop_alert.json</span>
+      </p>
+    </details>;
+  }
+
   return (
     <div
       data-testid="loop-alert-banner"

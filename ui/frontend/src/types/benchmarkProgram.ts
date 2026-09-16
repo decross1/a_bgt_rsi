@@ -62,6 +62,8 @@ export interface BenchmarkProgramResponse {
   generated_at?: string | null;
   release?: BenchmarkProgramRelease | null;
   design?: BenchmarkProgramDesign | null;
+  measurement_review?: unknown | null;
+  available_releases?: unknown;
   progress?: BenchmarkProgramProgress | null;
   comparison?: BenchmarkProgramComparison | null;
   layers?: {

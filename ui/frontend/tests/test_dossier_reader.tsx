@@ -60,6 +60,26 @@ const EMPTY_HISTORY_QUEUE = {
   counts: {},
 };
 
+const ALL_SCOPE = {
+  mode: "all",
+  status: "all_research",
+  campaign: null,
+  history_preserved: true,
+} as const;
+
+const ACTIVE_SCOPE = {
+  mode: "active",
+  status: "active",
+  campaign: {
+    campaign_id: "campaign-current",
+    title: "Current verified campaign",
+    research_question: "Which source-bound claim survives review?",
+    manifest_sha256: "a".repeat(64),
+    activated_at: "2026-09-15T00:00:00Z",
+  },
+  history_preserved: true,
+} as const;
+
 function jsonResponse(status: number, body: unknown): Response {
   return {
     ok: status >= 200 && status < 300,
@@ -89,8 +109,15 @@ beforeEach(() => {
     // Finding detail and journey self-fetches degrade in place (found:false).
     if (u.includes("/api/finding/"))
       return jsonResponse(200, { found: false, finding_id: "x" });
-    if (u.includes("/journey"))
-      return jsonResponse(200, { found: false, iteration_id: "x", iteration: null });
+    if (u.includes("/journey")) {
+      const scope = new URL(u, "http://dossier.test").searchParams.get("research_scope");
+      return jsonResponse(200, {
+        found: false,
+        iteration_id: "x",
+        iteration: null,
+        research_scope: scope === "active" ? ACTIVE_SCOPE : ALL_SCOPE,
+      });
+    }
     if (u.endsWith("/api/coordinator/cycles")) return jsonResponse(200, { cycles: [] });
     if (u.includes("/api/todo/"))
       return jsonResponse(200, { status: "stub", would_run: ["<read-only>"] });
@@ -110,9 +137,10 @@ function renderReader(
   id: string,
   items: HumanTodoItem[],
   availability: CockpitAvailability = AVAILABILITY_LIVE,
+  search = "",
 ) {
   return render(
-    <MemoryRouter initialEntries={[`/dossier/${encodeURIComponent(id)}`]}>
+    <MemoryRouter initialEntries={[`/dossier/${encodeURIComponent(id)}${search}`]}>
       <Routes>
         <Route
           path="/dossier/:id"
@@ -145,7 +173,7 @@ describe("DossierReader — source-history boundary", () => {
     );
     expect(screen.getByRole("link", { name: "Current campaign" })).toHaveAttribute(
       "href",
-      "/dossier",
+      "/dossier/iter-old-history?research_scope=active",
     );
     expect(screen.getByRole("link", { name: "← dossiers" })).toHaveAttribute(
       "href",
@@ -154,6 +182,81 @@ describe("DossierReader — source-history boundary", () => {
     expect(screen.getByTestId("dossier-gate-not-requested")).toHaveTextContent(
       /not listed as a gate-verdict request/i,
     );
+    expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
+    expect(screen.queryByTestId("dossier-gate-cli")).toBeNull();
+    expect(screen.queryByTestId("defer-form")).toBeNull();
+  });
+
+  it("admits an exact current-campaign journey without relabeling it as archive", async () => {
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/todo/concurrency")) return jsonResponse(200, { active: false });
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, { available: true, actions: {} });
+      if (u.includes("/journey")) return jsonResponse(200, {
+        found: true,
+        iteration_id: "iter-current",
+        iteration: {
+          iteration_id: "iter-current",
+          hypothesis: { text: "A verified current-campaign question." },
+          experiment_outcome: null,
+          gate_status: "pending",
+        },
+        research_scope: ACTIVE_SCOPE,
+      });
+      if (u.endsWith("/api/coordinator/cycles")) return jsonResponse(200, { cycles: [] });
+      return jsonResponse(404, {});
+    });
+
+    renderReader("iter-current", [], AVAILABILITY_LIVE, "?research_scope=active");
+
+    expect(screen.getByRole("link", { name: "Current campaign" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "← dossiers" })).toHaveAttribute(
+      "href",
+      "/dossier",
+    );
+    expect(screen.queryByText(/Source-library history/)).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("journey-overview")).toHaveTextContent(
+      "A verified current-campaign question.",
+    ));
+    expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
+  });
+
+  it("uses the typed active queue and withholds a verdict for a current-view miss", async () => {
+    const fetchMock = vi.fn(async (url: unknown) => {
+      const u = String(url);
+      if (u.endsWith("/api/todo/concurrency")) return jsonResponse(200, { active: false });
+      if (pathIs(u, "/api/human_todo")) return jsonResponse(200, {
+        items: [],
+        counts: {},
+        research_scope: ACTIVE_SCOPE,
+      });
+      if (u.endsWith("/api/attest/available")) return jsonResponse(200, { available: true, actions: { gate_verdict: true, defer: true } });
+      if (u.includes("/journey")) return jsonResponse(200, {
+        found: false,
+        iteration_id: "iter-history-only",
+        iteration: null,
+        research_scope: ACTIVE_SCOPE,
+      });
+      if (u.endsWith("/api/coordinator/cycles")) return jsonResponse(200, { cycles: [] });
+      return jsonResponse(404, {});
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={["/dossier/iter-history-only?research_scope=active"]}>
+        <Routes><Route path="/dossier/:id" element={<DossierReader availability={AVAILABILITY_LIVE} />} /></Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => {
+      const parsed = new URL(String(url), "http://dossier.test");
+      return parsed.pathname === "/api/human_todo"
+        && parsed.searchParams.get("research_scope") === "active";
+    })).toBe(true));
+    expect(screen.getByTestId("dossier-gate-not-requested")).toBeInTheDocument();
     expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
     expect(screen.queryByTestId("dossier-gate-cli")).toBeNull();
     expect(screen.queryByTestId("defer-form")).toBeNull();
@@ -336,7 +439,7 @@ describe("DossierReader — prefix fallback for ids NOT in the live queue", () =
   it("an unqueued iter-* record stays readable but cannot create a gate action from its prefix", () => {
     renderReader("iter-2026-06-10-001", []);
     expect(screen.getByTestId("dossier-kind")).toHaveTextContent(
-      "iteration history",
+      "iteration record",
     );
     expect(screen.getByTestId("dossier-gate-not-requested")).toHaveTextContent(
       /pending stage alone does not establish an actionable request/i,
@@ -593,6 +696,7 @@ describe("DossierReader — one source-bound overview", () => {
         return jsonResponse(200, {
           found: true,
           iteration_id: "iter-2026-06-14-002",
+          research_scope: ALL_SCOPE,
           iteration: {
             iteration_id: "iter-2026-06-14-002",
             ended_at: "2026-06-14T09:40:00Z",
@@ -663,6 +767,7 @@ describe("DossierReader — R2 the journey opens COLLAPSED under the sticky step
         return jsonResponse(200, {
           found: true,
           iteration_id: GATE_VERDICT_ITEM.id,
+          research_scope: ALL_SCOPE,
           iteration: {
             iteration_id: GATE_VERDICT_ITEM.id,
             started_at: "2026-06-14T09:00:00Z",

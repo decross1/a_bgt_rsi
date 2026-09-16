@@ -26,7 +26,10 @@ import {
   scopedResearchApiPath,
   type ResearchScope,
 } from "../researchScope";
-import { admitScopedResearchPayload } from "./researchScope";
+import {
+  admitResearchScopeMetadata,
+  admitScopedResearchPayload,
+} from "./researchScope";
 
 // Port defaults to 8700; VITE_API_PORT lets a worktree preview point at a
 // backend on another port without disturbing a primary instance on 8700.
@@ -194,10 +197,18 @@ export const getIterations = (
 
 // The full pipeline journey for one iteration (PipelineJourney, S2 reframe).
 // Unknown id -> {found:false} at 200, so the journey view degrades in place.
-export const getIterationJourney = (iterationId: string) =>
-  getJSON<IterationJourneyResponse>(
-    `/api/iteration/${encodeURIComponent(iterationId)}/journey`,
-  );
+export const getIterationJourney = (
+  iterationId: string,
+  scope?: ResearchScope,
+) => {
+  const path = `/api/iteration/${encodeURIComponent(iterationId)}/journey`;
+  return getJSON<IterationJourneyResponse>(
+    scope === undefined ? path : scopedResearchApiPath(path, scope),
+  ).then((value) => {
+    if (scope !== undefined) admitResearchScopeMetadata(value.research_scope, scope);
+    return value;
+  });
+};
 
 export const getJournalEntry = (iterationId: string) =>
   getJSON<JournalResponse>(

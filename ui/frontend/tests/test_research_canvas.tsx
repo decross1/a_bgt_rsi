@@ -53,10 +53,14 @@ function liquidModel(): ThesisModel {
   return buildThesisFamilies(clusters, rows);
 }
 
-function renderCanvas(model: ThesisModel, nextOwed: Record<string, string> = { L1: "experiment_outcome with trials >= 30" }) {
+function renderCanvas(
+  model: ThesisModel,
+  nextOwed: Record<string, string> = { L1: "experiment_outcome with trials >= 30" },
+  researchScope: "active" | "all" = "active",
+) {
   return render(
     <MemoryRouter>
-      <ResearchCanvas model={model} nextOwed={nextOwed} />
+      <ResearchCanvas model={model} nextOwed={nextOwed} researchScope={researchScope} />
     </MemoryRouter>,
   );
 }
@@ -144,7 +148,7 @@ describe("ResearchCanvas", () => {
     expect(context).toHaveTextContent("No experiment outcome is recorded. Recorded red-team criticism");
     expect(context).toHaveTextContent("The action table cannot identify the claimed response");
     expect(context).not.toHaveTextContent("A conflicting model summary");
-    expect(loadJourney).toHaveBeenCalledWith("iter-hydrate");
+    expect(loadJourney).toHaveBeenCalledWith("iter-hydrate", "active");
   });
 
   it("rejects a mismatched journey response and refetches when the selected record changes", async () => {
@@ -185,7 +189,7 @@ describe("ResearchCanvas", () => {
   });
 
   it("leads with the three exact source-bound Liquid Democracy claims and truthful selected context", () => {
-    renderCanvas(liquidModel());
+    renderCanvas(liquidModel(), { L1: "experiment_outcome with trials >= 30" }, "all");
 
     expect(screen.getByTestId("research-canvas-family-select")).toHaveDisplayValue(
       "Liquid democracy — collection · 3 records",
@@ -441,7 +445,7 @@ describe("ResearchCanvas", () => {
     result.rerender(<MemoryRouter><ResearchCanvas model={buildThesisFamilies([{ ...cluster, members: ["iter-b", "iter-a"] }], iterations)} nextOwed={{}} /></MemoryRouter>);
     expect(screen.getByRole("button", { name: /iteration iter-b:/ })).toBe(button);
     expect(button).toHaveAttribute("aria-pressed", "true");
-    expect(within(screen.getByTestId("research-canvas-context")).getByRole("link", { name: /Open source-history dossier/ })).toHaveAttribute("href", "/dossier/iter-b?research_scope=all");
+    expect(within(screen.getByTestId("research-canvas-context")).getByRole("link", { name: /Open current-campaign dossier/ })).toHaveAttribute("href", "/dossier/iter-b?research_scope=active");
   });
 
 });

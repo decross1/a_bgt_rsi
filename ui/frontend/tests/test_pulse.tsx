@@ -3,7 +3,7 @@
 // two ModelServerCards + the launch disclosure. Route-level smoke against
 // mocked feeds: every surface mounts, the owed row links into the dossier
 // reader, and the render stays console-clean (the route-sweep bar).
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import CommandPalette from "../src/design/CommandPalette";
@@ -203,6 +203,7 @@ vi.mock("../src/api/activity", () => ({
 
 import Pulse, { stripMonitorChurn } from "../src/routes/Pulse";
 import { getLabTodo, type ServedModel } from "../src/api/http";
+import { refreshPoll } from "../src/api/pollhub";
 import type { MonitorResponse } from "../src/types/activity";
 
 const baselineTelemetry = D.samples;
@@ -775,6 +776,74 @@ describe("Pulse (/)", () => {
     expect(verdict).toHaveTextContent("Phase: unverified");
     expect(verdict).toHaveTextContent("Runtime expectations are unknown");
     expect(verdict).not.toHaveTextContent("Resident models are expected online");
+  });
+
+  it("retains a failed stable benchmark warning across a refresh failure until a verified successor arrives", async () => {
+    const http = await import("../src/api/http");
+    const getRuntime = http.getModelRuntime as unknown as ReturnType<typeof vi.fn>;
+    getRuntime
+      .mockResolvedValueOnce({
+        schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+        mode: "unknown", mode_source: "stable_benchmark_state",
+        mode_source_sha256: null,
+        resident_services_expected: "unknown", nara_service_expected: "unknown",
+        run_id: null, phase: null, candidate_variant: null,
+        source_error: "stable release selection could not be verified",
+      })
+      .mockRejectedValueOnce(new Error("runtime endpoint unavailable"))
+      .mockResolvedValueOnce({
+        schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+        mode: "resident", mode_source: "stable_benchmark_state",
+        mode_source_sha256: "b".repeat(64),
+        resident_services_expected: "online", nara_service_expected: "running",
+        run_id: "stable-benchmark-20260916-a.resident", phase: "complete",
+        candidate_variant: null, source_error: null,
+      });
+
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await screen.findByRole("heading", { name: "Stable benchmark lifecycle needs review" });
+
+    await act(async () => {
+      refreshPoll("model_runtime");
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(getRuntime).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("health-verdict")).toHaveTextContent("BENCHMARK NEEDS REVIEW");
+    expect(screen.getByTestId("health-verdict")).toHaveTextContent("Last observed phase: unverified");
+    expect(screen.getByTestId("health-verdict")).toHaveTextContent("Current runtime expectations remain unknown");
+    expect(screen.getByTestId("runtime-observability-warning")).toHaveTextContent("runtime projection refresh failed");
+    expect(screen.getByText(/The last stable benchmark projection could not verify/)).toBeInTheDocument();
+
+    await act(async () => {
+      refreshPoll("model_runtime");
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(getRuntime).toHaveBeenCalledTimes(3));
+    expect(await screen.findByRole("heading", { name: "Stable benchmark lifecycle complete" })).toBeInTheDocument();
+    expect(screen.getByTestId("health-verdict")).toHaveTextContent("BENCHMARK COMPLETE");
+    expect(screen.getByTestId("health-verdict")).toHaveTextContent("Phase: complete");
+    expect(screen.getByTestId("health-verdict")).not.toHaveTextContent("BENCHMARK NEEDS REVIEW");
+    expect(screen.queryByText(/The last stable benchmark projection could not verify/)).toBeNull();
+  });
+
+  it("keeps an aged fail-closed benchmark projection visible as last observed", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1",
+      observed_at: new Date(Date.now() - 60_000).toISOString(),
+      mode: "unknown", mode_source: "stable_benchmark_state",
+      mode_source_sha256: null,
+      resident_services_expected: "unknown", nara_service_expected: "unknown",
+      run_id: null, phase: null, candidate_variant: null,
+      source_error: "stable release selection could not be verified",
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await screen.findByRole("heading", { name: "Stable benchmark lifecycle needs review" });
+    const verdict = screen.getByTestId("health-verdict");
+    expect(verdict).toHaveTextContent("BENCHMARK NEEDS REVIEW");
+    expect(verdict).toHaveTextContent("Last observed phase: unverified");
+    expect(verdict).toHaveTextContent("Current runtime expectations remain unknown");
+    expect(screen.getByTestId("runtime-observability-warning")).toHaveTextContent("runtime projection stale");
   });
 
   it("names a registered recovery-unknown phase without treating it as a resident claim", async () => {

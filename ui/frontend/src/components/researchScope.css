@@ -119,6 +119,15 @@
   font-size: var(--text-meta);
 }
 
+.research-scope-bar[data-compact="true"] .research-scope-bar__campaign {
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.research-scope-bar[data-compact="true"] .research-scope-bar__campaign strong {
+  font-size: var(--text-ui);
+}
+
 @media (max-width: 620px) {
   .research-scope-bar {
     padding: var(--space-3);

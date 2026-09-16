@@ -1,7 +1,8 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import BenchmarkProgramOverview from "../src/components/BenchmarkProgramOverview";
+import { getBenchmarkProgram } from "../src/api/benchmarkProgram";
 import type { BenchmarkProgramResponse } from "../src/types/benchmarkProgram";
 
 function program(status: "draft" | "frozen" | "review_required"): BenchmarkProgramResponse {
@@ -24,6 +25,8 @@ function program(status: "draft" | "frozen" | "review_required"): BenchmarkProgr
 }
 
 describe("BenchmarkProgramOverview", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("shows the narrow fixed canary design and withholds a missing baseline", () => {
     render(<BenchmarkProgramOverview initial={program("frozen")} />);
     expect(screen.getByRole("heading", { name: "Fixed regression canary" })).toBeInTheDocument();
@@ -98,6 +101,7 @@ describe("BenchmarkProgramOverview", () => {
         comparison_id: "canary-2026-w38",
         arm_id: "resident",
         label: "Resident reference",
+        role: "reference",
         admission_status: "admitted",
         observed_terminal_status: "complete",
         results: [{
@@ -142,6 +146,10 @@ describe("BenchmarkProgramOverview", () => {
     expect(within(table).getByText(/candidate wins 1/)).toBeInTheDocument();
     expect(within(table).getByText(/interval not available/)).toBeInTheDocument();
     expect(screen.getByText(/descriptive canary signals, not benchmark proof/i)).toBeInTheDocument();
+    const reference = screen.getByTestId("benchmark-reference-results");
+    expect(within(reference).getByText("quantitative inference")).toBeInTheDocument();
+    expect(within(reference).getByText("1 / 2")).toBeInTheDocument();
+    expect(within(reference.closest("section") as HTMLElement).getByText(/1 registered route/)).toBeInTheDocument();
     const history = screen.getByTestId("benchmark-run-history");
     expect(within(history).getByText("Resident reference")).toBeInTheDocument();
     expect(within(history).getByText("quantitative inference")).toBeInTheDocument();
@@ -151,5 +159,119 @@ describe("BenchmarkProgramOverview", () => {
     expect(within(history).getByText("Flash candidate")).toBeInTheDocument();
     expect(within(history).getByText(/explicitly unissued/)).toBeInTheDocument();
     expect(screen.getByText(/does not compute an across-construct score/i)).toBeInTheDocument();
+  });
+
+  it("labels a reviewed baseline as diagnostics and withholds comparative quality", () => {
+    const reviewed = program("frozen");
+    const reference = {
+      comparison_id: "canary-reviewed",
+      arm_id: "resident",
+      label: "Resident commissioning run",
+      role: "reference",
+      admission_status: "admitted",
+      observed_terminal_status: "complete",
+      results: [{
+        construct: "science_evidence",
+        domain: "science_evidence",
+        panel: "model_capability",
+        successful_units: 2,
+        planned_units: 4,
+        metric: "objective_success",
+        unit: "percent",
+        value: 50,
+      }],
+      wall_seconds: 120,
+      model_calls: 21,
+    };
+    reviewed.measurement_review = {
+      status: "commissioning_only",
+      title: "Commissioning measurement review",
+      summary: "Four task contracts limit quality interpretation.",
+      interpretation: "Keep receipt evidence, but do not compare model quality.",
+      next_action: "Publish a corrected prospective release.",
+      affected_task_ids: ["SCI-RCT-001", "TOOL-NOCALL-001"],
+      comparative_quality_allowed: false,
+      source_path: "docs/benchmarks/measurement_reviews/review.json",
+      reviewed_at: "2026-09-16T06:00:00Z",
+    };
+    reviewed.comparison = {
+      status: "measurement_review_required",
+      baseline: reference,
+      history: [reference],
+      matched_results: [{ construct: "science_evidence", baseline_value: 50, candidate_value: 75 }],
+    };
+
+    render(<BenchmarkProgramOverview initial={reviewed} />);
+
+    expect(screen.getByTestId("benchmark-measurement-review")).toHaveTextContent(
+      "Four task contracts limit quality interpretation.",
+    );
+    expect(screen.getByTestId("benchmark-reference-results")).toHaveTextContent(
+      "Recorded diagnostic",
+    );
+    expect(screen.getByText(/does not admit them as trusted quality scores/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("benchmark-matched-results")).toBeNull();
+    expect(screen.getByText(/Matched quality changes are withheld/i)).toBeInTheDocument();
+  });
+
+  it("does not promote an admitted candidate when the reference is still absent", () => {
+    const candidateFirst = program("frozen");
+    candidateFirst.comparison = {
+      status: "awaiting_reference",
+      baseline: null,
+      history: [{
+        comparison_id: "canary-candidate-first",
+        arm_id: "candidate",
+        label: "Candidate completed first",
+        role: "candidate",
+        admission_status: "admitted",
+        observed_terminal_status: "complete",
+        results: [{
+          construct: "science_evidence",
+          domain: "science_evidence",
+          panel: "model_capability",
+          successful_units: 4,
+          planned_units: 4,
+          metric: "objective_success",
+          unit: "percent",
+          value: 100,
+        }],
+      }],
+      matched_results: [],
+    };
+
+    render(<BenchmarkProgramOverview initial={candidateFirst} />);
+
+    expect(screen.getByRole("heading", { name: "Baseline not established" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Candidate completed first" })).toBeNull();
+    expect(screen.queryByTestId("benchmark-reference-results")).toBeNull();
+    expect(screen.getByText(/No baseline is admitted/)).toBeInTheDocument();
+  });
+
+  it("shows a compact selector only when the catalog has multiple releases", () => {
+    const catalogued = program("frozen");
+    catalogued.available_releases = [
+      { version: "1.0.0", label: "Commissioning archive", active: false, selected: true, href: "/benchmarks?release=1.0.0" },
+      { version: "1.1.0", label: "Corrected active release", active: true, selected: false, href: "/benchmarks?release=1.1.0" },
+    ];
+    render(<BenchmarkProgramOverview initial={catalogued} release="1.0.0" />);
+    const selector = screen.getByRole("navigation", { name: "Benchmark release" });
+    expect(within(selector).getByRole("link", { name: /v1.0.0/ })).toHaveAttribute("aria-current", "page");
+    expect(within(selector).getByRole("link", { name: /v1.1.0 · active/ })).toHaveAttribute("href", "/benchmarks?release=1.1.0");
+  });
+
+  it("requests an exact release and rejects a mismatched response without fallback", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(program("frozen")), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getBenchmarkProgram("1.1.0")).rejects.toThrow(
+      /requested 1.1.0, received 1.0.0/,
+    );
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      "/api/benchmark_program?release=1.1.0",
+    );
   });
 });
