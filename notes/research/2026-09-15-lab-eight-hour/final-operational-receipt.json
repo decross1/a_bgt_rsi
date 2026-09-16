@@ -1,0 +1,124 @@
+{
+  "schema": "lab-eight-hour-final-operational-receipt/v1",
+  "recorded_at": "2026-09-16T00:02:34.423769+00:00",
+  "window_start": "2026-09-15T16:09:45+00:00",
+  "window_deadline": "2026-09-16T00:09:45+00:00",
+  "observation_scope": "Post-PR53 services and evidence; host-memory UI patch is validated separately for PR54 integration.",
+  "canonical_head_at_observation": "b02da76fa6cb57a0192f8ab12082024840aa13a1",
+  "deployment_receipt_sha256": "ab037cd903265988934c5186e53012b86fff1f06d86853cd7df0e6e7e0597bd6",
+  "production_decision": "retain_existing_Gemma_32K_Qwen_16K_per_caller_policy",
+  "unchanged_unrelated_dirty_paths": 8,
+  "unchanged_frozen_payoff_b_sources": 19,
+  "payoff_b_window_sha256": "e17ad5faed16a79d1a4ffd1f858f750d525e8a1d3d84c46fa017c0f02f657f60",
+  "source_refs": {
+    "FINAL_INTEGRITY_AUDIT.md": "2a50c6f056367d87a725ac18d5c55ec81d2f466a584d0943d4d3754299dab40d",
+    "H1_CAPTURE_HANDOFF.md": "fb83e21f323f7d6fb6cc975d35068120db53e799ab888afadca4c7c79ddd3093",
+    "h1-four-minute-capture-handoff.json": "e96f609d13b038d43fca52100ef20a1a67f11803a7f5127fe2c7de9fd5b75762",
+    "NEXT_RUNS.md": "b6a13d658ff4e2cb15f0f174b0283a410c803ea3d0b1fa0de97956ab6ec4ae87",
+    "midnight-coordinator-observation.json": "f9896ccb6bdcba69af7d4a0ca207ebe9f10855ec8022a4e17ca34693f49bc31e"
+  },
+  "api_observations": {
+    "health": {
+      "raw_sha256": "198e638c1d27d4821568d4879ae3245e236a168f9cbd1399620e2538faff8113",
+      "value": {
+        "ok": true,
+        "hostname": "spark-7eeb",
+        "telemetry_last_seen": "2026-09-16T00:02:34.141+00:00",
+        "version": "b02da76"
+      }
+    },
+    "model_runtime": {
+      "raw_sha256": "d527a3561d21a23c8ee21c5db8dc7df26e0e51a2ce47f6cef16328497ae04abe",
+      "value": {
+        "schema_version": "model-runtime/v1",
+        "observed_at": "2026-09-16T00:02:34.249988+00:00",
+        "mode": "resident",
+        "mode_source": "lab_evaluation_state",
+        "mode_source_sha256": "98b2a2c675282fd214780ceb52c24162ad1f7cd09f7979c0e93f0c101b885af2",
+        "resident_services_expected": "online",
+        "nara_service_expected": "running",
+        "run_id": "qfn-ab-lab-diversity-cap-20260915-a.flash",
+        "phase": "aborted",
+        "candidate_variant": {
+          "spec_id": "mia-925d7be6-mtp3-reduced47k-v2opt-v1",
+          "spec_sha256": "e71d3134f407cad3c288c21f9485c27352676dbb7de647c5b567777256702a50",
+          "repository": "Mia-AiLab/Qwen3.8-Flash-Next-NVFP4",
+          "revision": "925d7be6c14c6c9442ef83e8f05b5a3c39304f69",
+          "served_model": "qwen3.8-flash-next-mia",
+          "image_id": "sha256:29eab5a29b765eef8b6405bbe0f2d385fc1e7b5e3c7ae18ae70382a68a0a2201",
+          "model_artifact_sha256": "a40ce50173dd3aff54da88503894967e5248bbb927f9e4a91eff5a6a7270c168",
+          "profile": "MIA-MTP3-REDUCED47K-V2-FULL4-MODE0-32K",
+          "configured_max_context_tokens": 32768,
+          "configured_mtp_speculative_tokens": 3,
+          "configured_kv_cache_memory_bytes": 2147483648,
+          "source": "registered_plan_and_controller_state",
+          "image_evidence": "registered_source_only",
+          "promotion_authorized": false
+        },
+        "source_error": null
+      }
+    },
+    "payoff_tool_study_progress": {
+      "raw_sha256": "4d25aeaaf11889d4d272d96aac5f4865295f856224a2a40700e970f40d4a217e",
+      "value": {
+        "schema_version": "payoff-tool-study-ui-progress/v1",
+        "observed_at": "2026-09-16T00:02:34.397618+00:00",
+        "window_id": "qfn-followon-payoff-tool-20260915-a",
+        "status": "closed_unissued",
+        "plan_raw_sha256": "45a29a0f04f700b5a0c62bbe531b2a0d595f555026270237666059f493878d84",
+        "window_raw_sha256": "e49b3f4d0872bb03f6ec35efcceab9f5b4ed784cd05608ab15f36336996d5e58",
+        "admission_raw_sha256": null,
+        "nonexecution_raw_sha256": "95341e159bdb32c82acc3b8165e8c7025ea22391ba26a5383209cecffbaf2259",
+        "results": null,
+        "private_content_exported": false,
+        "comparison_eligible": false,
+        "promotion_authorized": false,
+        "trading_claim_authorized": false
+      }
+    },
+    "lab_diversity_cap_progress": {
+      "raw_sha256": "7f03eaa889d72f02fddcc1ef60c9f21f13446e2b6f54f86741d6a71bb3848a89",
+      "value": {
+        "schema_version": "lab-diversity-cap-ui-progress/v1",
+        "observed_at": "2026-09-16T00:02:34.399974+00:00",
+        "status": "incomplete_terminal",
+        "window_id": "qfn-ab-lab-diversity-cap-20260915-a",
+        "plan_raw_sha256": "f1250b9c1965f9be99790153f63263c4240ed88aca44fc535abb7d8130c90f45",
+        "window_raw_sha256": "765768788240c6f25ded459c98534aa771b06cb9b2408c33d3c0c43ea8e44287",
+        "replay_raw_sha256": null,
+        "results": null,
+        "failure_reason_code": "startup_host_swap_5s",
+        "original_primary_scores_changed": false,
+        "private_content_exported": false,
+        "promotion_authorized": false,
+        "comparison_eligible": false
+      }
+    }
+  },
+  "timers_limited_metadata": "NextElapseUSecRealtime=Wed 2026-09-16 00:04:30 UTC\nId=applied-h1-capture.timer\nActiveState=active\nUnitFileState=enabled\n\nNextElapseUSecRealtime=Wed 2026-09-16 00:03:30 UTC\nId=applied-h1-rest-due@h1-btcusdt-rest-20260916-4min.timer\nActiveState=active\nUnitFileState=enabled\n\nNextElapseUSecRealtime=Wed 2026-09-16 03:35:00 UTC\nId=payoff-representation-b.timer\nActiveState=active\nUnitFileState=enabled\n",
+  "nara_limited_metadata": "MainPID=1554920\nId=nara-daemon.service\nActiveState=active\nSubState=running\n",
+  "validation": {
+    "core_passed": 3570,
+    "core_skipped": 5,
+    "existing_backend_passed": 1164,
+    "focused_mode_passed": 10,
+    "frontend_files": 107,
+    "frontend_passed": 1648,
+    "host_memory_focused_passed": 43,
+    "typescript_and_vite": "passed",
+    "independent_review": "passed"
+  },
+  "resident_mode_screenshot_sha256": "0353023633a13ce70663b5497a6d95c3ae8a9f9ea952a6c02fe21321659c628b",
+  "browser_session_closed": true,
+  "pending_measurements": [
+    "native_payoff_tool_benefit",
+    "Flash_384_vs_1536_output_cap",
+    "Qwen_32K_and_quality_tested_64K",
+    "H1_September16_forward_outcome",
+    "payoff_representation_B"
+  ],
+  "new_scientific_findings_promoted": 0,
+  "real_trades": 0,
+  "paid_frontier_api_calls": 0,
+  "private_content_exported": false
+}

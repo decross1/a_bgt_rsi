@@ -1,0 +1,5 @@
+# Midnight coordinator observation
+
+The 2026-09-16 00:00 UTC cron attempt ended with `rc=0` and a **`daily_budget_paced` pre-planning refusal**. Its requested cycle budget was 6, the new-day ledger spend was 0, and the elapsed-share allowance was 3 of the 60-unit daily cap. The refusal row is raw SHA-256 `5e6e1ddd6ebb32d816e478de32e812e2f9aba3915ba7a074134c2a2be25c5422`; no new coordinator-cycle row appeared, and iteration 009 remained the last completed cycle. The exact nine-line cron slice and status-line hashes are in the [content-free receipt](midnight-coordinator-observation.json).
+
+Separately, the public source-bound next-work row showed the active successor campaign's **3/3 exact topics consumed** and zero eligible topics. That queue exhaustion did not cause the midnight budget refusal, which occurred before planning. Nara's daemon remained active/running with zero restarts at 00:01 UTC. This is an operational gate observation, not a model call, scientific finding, or payoff result.
