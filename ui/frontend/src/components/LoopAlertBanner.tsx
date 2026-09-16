@@ -7,7 +7,8 @@
 //     surface exists to catch, so staleness renders amber EVEN over "ok".
 //
 // Render contract:
-//   red        -> red banner "LOOP STALLED" + every reason, verbatim.
+//   red        -> red banner with every reason. A fresh sole loop_stalled
+//                 names a recorded coordinator cycle, not a current outage.
 //   amber      -> amber banner "loop degraded" + reasons.
 //   ok & fresh -> nothing (the calm state is invisible; no reassurance chrome).
 //   stale      -> amber "no cycle telemetry since <ts>" appended (or alone,
@@ -167,10 +168,29 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
   const tone = showRed
     ? "border-red-800 bg-red-950/60 text-red-200"
     : "border-amber-800 bg-amber-950/50 text-amber-200";
+  const cycleOnlyStall = showRed && gate === null && stale === null &&
+    !tsUnreadable && !refreshFailing && reasons.length === 1 &&
+    reasons[0] === "loop_stalled";
   // A held loop is IDLE, not stalled. Saying "LOOP STALLED" over a gate the
   // producer named would be the same unexplained red the owner objected to.
   const headline = gate ? `LOOP IDLE — ${gate.reason}` : showRed ? "LOOP STALLED"
     : vendorOnlyAmber ? "Recorded frontier failures" : "loop degraded";
+
+  // A completed cycle with no substantive activity is a real progress warning.
+  // It does not establish that today's models or benchmark execution stopped.
+  // Keep the warning visible and red; collapse only its source metadata.
+  if (cycleOnlyStall) {
+    return <div data-testid="loop-alert-banner" data-level="red" role="alert"
+      className={`flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b px-6 py-2 text-xs ${tone}`}>
+      <span className="font-medium" title="loop_stalled">Recorded coordinator cycle: no research progress</span>
+      <a className="underline" href="/cycles">View cycle details</a>
+      <details className="text-[11px] opacity-80">
+        <summary className="cursor-pointer">Alert source</summary>
+        <p className="mt-1" data-testid="loop-alert-reasons">The recorded coordinator cycle advanced no research records.</p>
+        <p>run_state/loop_alert.json · loop_stalled · {alert.updated_at}</p>
+      </details>
+    </div>;
+  }
 
   // A fresh coordinator flag about historical vendor calls is useful context,
   // but it is not evidence that today's local research is blocked. Keep its
@@ -198,6 +218,9 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
         <span className={showRed ? "text-red-400/70" : "text-amber-400/70"}>
           run_state/loop_alert.json
         </span>
+        {reasons.includes("loop_stalled") && (
+          <a className="ml-auto underline" href="/cycles">View cycle details</a>
+        )}
       </div>
       {gate !== null && (
         <div className="mt-1" data-testid="loop-alert-gate">
@@ -209,8 +232,10 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
       {reasons.length > 0 && (
         <ul className="mt-1 list-disc space-y-0.5 pl-5" data-testid="loop-alert-reasons">
           {reasons.map((r, i) => (
-            <li key={i} title={vendorOnlyAmber ? r : undefined}>
-              {vendorOnlyAmber ? displayReason(r) : r}
+            <li key={i} title={vendorOnlyAmber || r === "loop_stalled" ? r : undefined}>
+              {r === "loop_stalled"
+                ? "The last coordinator cycle advanced no research records."
+                : vendorOnlyAmber ? displayReason(r) : r}
             </li>
           ))}
         </ul>

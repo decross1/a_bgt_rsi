@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Component, lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BrowserRouter,
   Navigate,
@@ -11,23 +11,42 @@ import LoopAlertBanner from "./components/LoopAlertBanner";
 import CommandPalette from "./design/CommandPalette";
 import "./design/primitives.css";
 import "./design/AtlasShell.css";
-import Channel from "./routes/Channel";
-import Cycles from "./routes/Cycles";
-import DossierIndex from "./routes/DossierIndex";
-import DossierReader from "./routes/DossierReader";
-import ExperimentDetail from "./routes/ExperimentDetail";
-import Experiments from "./routes/Experiments";
-import Inspector from "./routes/Inspector";
-import Ladder from "./routes/Ladder";
-import ModelIO from "./routes/ModelIO";
-import Pulse from "./routes/Pulse";
-import Development from "./routes/Development";
-import BenchmarkProgress from "./routes/BenchmarkProgress";
 import {
   researchScopeFromSearch,
   researchScopedHref,
   type ResearchScope,
 } from "./researchScope";
+
+// Each page loads on demand; the shell and current operational alert stay usable
+// while a route loads, or when a stale client cannot fetch a newly deployed chunk.
+const Channel = lazy(() => import("./routes/Channel"));
+const Cycles = lazy(() => import("./routes/Cycles"));
+const DossierIndex = lazy(() => import("./routes/DossierIndex"));
+const DossierReader = lazy(() => import("./routes/DossierReader"));
+const ExperimentDetail = lazy(() => import("./routes/ExperimentDetail"));
+const Experiments = lazy(() => import("./routes/Experiments"));
+const Inspector = lazy(() => import("./routes/Inspector"));
+const Ladder = lazy(() => import("./routes/Ladder"));
+const ModelIO = lazy(() => import("./routes/ModelIO"));
+const Pulse = lazy(() => import("./routes/Pulse"));
+const Development = lazy(() => import("./routes/Development"));
+const BenchmarkProgress = lazy(() => import("./routes/BenchmarkProgress"));
+
+class PageBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    return this.state.failed ? <section className="p-6" role="alert" aria-labelledby="page-error-heading">
+      <h1 id="page-error-heading" className="text-xl font-semibold">This page could not be loaded</h1>
+      <p className="mt-2">Reload to try again, or use the navigation to open another view.</p>
+      <button type="button" className="mt-3 underline" onClick={() => window.location.reload()}>Reload page</button>
+    </section> : this.props.children;
+  }
+}
 
 type Theme = "light" | "dark";
 type NavGroupId = "now" | "research" | "benchmarks" | "operations";
@@ -377,6 +396,8 @@ function AtlasApp() {
 
         <main className="atlas-main" data-testid="atlas-main">
           <LoopAlertBanner />
+          <PageBoundary key={pathname}>
+          <Suspense fallback={<p className="p-6" role="status">Loading page…</p>}>
           <Routes>
             <Route path="/" element={<Pulse />} />
             <Route path="/development" element={<Development />} />
@@ -396,6 +417,8 @@ function AtlasApp() {
             <Route path="/chain/req/:requestId" element={<Inspector />} />
             <Route path="*" element={<section aria-labelledby="missing-route-heading"><h1 id="missing-route-heading">Page not found</h1><p>This address is unrecognized or retired. Use the navigation or command palette to find an existing record.</p><a href="/">Return to Now</a></section>} />
           </Routes>
+          </Suspense>
+          </PageBoundary>
         </main>
       </div>
 

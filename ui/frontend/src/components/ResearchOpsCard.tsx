@@ -131,6 +131,84 @@ function guardedLabel(row: Record<string, unknown>): string {
   }
 }
 const PAYOFF_SCHEMA = "registered-payoff-jobs-observation/v1";
+const PAYOFF_DIAGNOSTIC_SCHEMA = "registered-payoff-terminal-diagnostic/v1";
+type PayoffViewCounts = {
+  attempted: number;
+  returned: number;
+  strict_shape_valid: number;
+  focal_correct: number;
+  total_correct: number;
+  both_correct: number;
+};
+type PayoffTerminalDiagnostic = {
+  finished_at: string;
+  attempted_calls: number;
+  summary: Omit<PayoffViewCounts, "attempted" | "returned">;
+  by_view: { seat_table: PayoffViewCounts; word_list: PayoffViewCounts };
+};
+const payoffSummaryKeys = ["both_correct", "focal_correct", "strict_shape_valid", "total_correct"];
+const payoffViewKeys = ["attempted", "both_correct", "focal_correct", "returned", "strict_shape_valid", "total_correct"];
+function payoffViewCounts(value: unknown, attemptedCalls: number): PayoffViewCounts | null {
+  if (!obj(value) || Object.keys(value).sort().join() !== payoffViewKeys.join()) return null;
+  const attempted = value.attempted;
+  const returned = value.returned;
+  const strictShape = value.strict_shape_valid;
+  const focal = value.focal_correct;
+  const total = value.total_correct;
+  const both = value.both_correct;
+  if (!count(attempted) || !count(returned) || !count(strictShape) || !count(focal) ||
+      !count(total) || !count(both) || attempted > attemptedCalls || returned > attempted ||
+      strictShape > returned || focal > strictShape || total > strictShape ||
+      both > focal || both > total) return null;
+  return { attempted, returned, strict_shape_valid: strictShape,
+    focal_correct: focal, total_correct: total, both_correct: both };
+}
+function payoffTerminalDiagnostic(
+  value: unknown, notBefore: string, expiresAt: string,
+): PayoffTerminalDiagnostic | null {
+  if (!obj(value) ||
+      Object.keys(value).sort().join() !== [
+        "admission_receipt_sha256", "attempted_calls", "by_view", "campaign_link",
+        "claim_scope", "comparison_eligible", "dispatch_result_sha256", "finished_at",
+        "job_admission_receipt_sha256", "promotion_authorized", "schema_version",
+        "scientific_novelty_claimed", "status", "summary", "thesis_credit",
+      ].join() ||
+      value.schema_version !== PAYOFF_DIAGNOSTIC_SCHEMA || value.status !== "admitted_diagnostic" ||
+      value.attempted_calls !== 12 || !utc(value.finished_at) ||
+      Date.parse(value.finished_at) < Date.parse(notBefore) ||
+      Date.parse(value.finished_at) > Date.parse(expiresAt) ||
+      !SHA.test(String(value.admission_receipt_sha256)) ||
+      !SHA.test(String(value.job_admission_receipt_sha256)) ||
+      !SHA.test(String(value.dispatch_result_sha256)) ||
+      value.claim_scope !== "instrument_only_unlinked" || value.campaign_link !== null ||
+      value.thesis_credit !== false || value.promotion_authorized !== false ||
+      value.comparison_eligible !== false || value.scientific_novelty_claimed !== false) return null;
+  const summary = value.summary;
+  const byView = value.by_view;
+  if (!obj(summary) || Object.keys(summary).sort().join() !== payoffSummaryKeys.join() ||
+      !payoffSummaryKeys.every(key => count(summary[key]) && summary[key] <= 12) ||
+      !obj(byView) || Object.keys(byView).sort().join() !== "seat_table,word_list") return null;
+  const strictShape = summary.strict_shape_valid;
+  const focal = summary.focal_correct;
+  const total = summary.total_correct;
+  const both = summary.both_correct;
+  if (!count(strictShape) || !count(focal) || !count(total) || !count(both) ||
+      focal > strictShape || total > strictShape || both > focal || both > total) return null;
+  const seatTable = payoffViewCounts(byView.seat_table, 12);
+  const wordList = payoffViewCounts(byView.word_list, 12);
+  if (!seatTable || !wordList || seatTable.attempted !== 6 || wordList.attempted !== 6 ||
+      seatTable.returned !== 6 || wordList.returned !== 6 ||
+      seatTable.attempted + wordList.attempted !== 12 ||
+      seatTable.returned + wordList.returned !== 12 ||
+      payoffSummaryKeys.some(key => seatTable[key as keyof PayoffViewCounts] +
+        wordList[key as keyof PayoffViewCounts] !== summary[key])) return null;
+  return {
+    finished_at: value.finished_at,
+    attempted_calls: value.attempted_calls,
+    summary: summary as PayoffTerminalDiagnostic["summary"],
+    by_view: { seat_table: seatTable, word_list: wordList },
+  };
+}
 const payoffJobs = [
   { job_id: "payoff-representation-a", panel_id: "payoff-representation-a",
     not_before: "2026-09-15T19:00:00+00:00", expires_at: "2026-09-16T00:00:00+00:00",
@@ -226,8 +304,10 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
     payoffCheckFresh && Array.isArray(payoff.jobs) && payoff.jobs.length === 2 &&
     payoff.jobs.every((row: unknown, index: number) => {
       const expected = payoffJobs[index];
+      const eligibility = obj(row) && obj(row.eligibility_window) ? row.eligibility_window : null;
       return obj(row) && row.job_id === expected.job_id && row.panel_id === expected.panel_id &&
         row.not_before === expected.not_before && row.expires_at === expected.expires_at &&
+        eligibility?.not_before === expected.not_before && eligibility.expires_at === expected.expires_at &&
         row.role === expected.role && typeof row.state === "string" && payoffStates.has(row.state) &&
         (row.attempt_index === 0 || row.attempt_index === 1) &&
         typeof row.prepared_window_present === "boolean" && row.comparison_eligible === false &&
@@ -321,10 +401,24 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
     ID.test(String(iteration.topic_id)) && utc(iteration.at) && SHA.test(String(iteration.loop_source_sha256)) ? iteration : null;
   const linkedGate = linked && ["pending", "blocked", "passed", "failed"].includes(String(linked.gate_status))
     ? String(linked.gate_status) : "unknown";
-  const boundCycle = cycle && ID.test(String(cycle.run_id)) && utc(cycle.at) && SHA.test(String(cycle.raw_row_sha256)) &&
+  const cycleReceiptBound = cycle && ID.test(String(cycle.run_id)) && utc(cycle.at) && SHA.test(String(cycle.raw_row_sha256)) &&
     SHA.test(String(cycle.cycles_source_sha256)) && count(cycle.planned_count) && count(cycle.dispatched_count) &&
-    count(cycle.outcome_count) && (cycle.action_code === "noop" || cycle.action_code === "actions_planned") &&
-    cycle.dispatched_count <= cycle.planned_count ? cycle : null;
+    count(cycle.outcome_count) ? cycle : null;
+  const executedCycle = cycleReceiptBound && cycleReceiptBound.terminal_status === "executed" &&
+    (cycleReceiptBound.action_code === "noop" || cycleReceiptBound.action_code === "actions_planned") &&
+    Number(cycleReceiptBound.dispatched_count) <= Number(cycleReceiptBound.planned_count)
+    ? cycleReceiptBound : null;
+  const noValidPlanCycle = cycleReceiptBound && cycleReceiptBound.terminal_status === "no_valid_plan" &&
+    cycleReceiptBound.action_code === "no_valid_plan" && cycleReceiptBound.planned_count === 0 &&
+    cycleReceiptBound.dispatched_count === 0 && cycleReceiptBound.outcome_count === 0 &&
+    cycleReceiptBound.action_kind === null && cycleReceiptBound.promoted_count === 0 &&
+    cycleReceiptBound.substantive_progress === false &&
+    (cycleReceiptBound.dispatched_iteration_id === undefined ||
+      cycleReceiptBound.dispatched_iteration_id === null) ? cycleReceiptBound : null;
+  const zeroPromotionCycle = executedCycle && executedCycle.action_code === "actions_planned" &&
+    executedCycle.planned_count === 1 && executedCycle.dispatched_count === 1 &&
+    executedCycle.outcome_count === 1 && executedCycle.action_kind === "promote_findings" &&
+    executedCycle.promoted_count === 0 && executedCycle.substantive_progress === false;
   const budgetBound = budget && budget.source_status === "available" && count(budget.spent_today) &&
     count(budget.daily_cap) && count(budget.paced_allowance) && SHA.test(String(budget.ledger_sha256));
   const ingestionBound = ingestion?.source_status === "available";
@@ -372,6 +466,16 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   else if (attempt === "embed_failed") ingestionText = "Latest source embedding failed";
   else if (attempt === "interrupted_unknown") ingestionText = "Latest source attempt stopped; result unknown";
   else if (attempt === "none") ingestionText = "No receipt-bound source attempt yet";
+  const payoffDiagnostics = payoffRows?.map(job => job.state === "admitted_attempt_verified"
+    ? payoffTerminalDiagnostic(
+        job.terminal_diagnostic, String(job.not_before), String(job.expires_at),
+      )
+    : null) ?? null;
+  const latestPayoffDiagnostic = payoffDiagnostics?.reduce<PayoffTerminalDiagnostic | null>(
+    (latest, item) => !item ? latest : !latest || Date.parse(item.finished_at) > Date.parse(latest.finished_at)
+      ? item : latest,
+    null,
+  ) ?? null;
 
   return <section data-testid="research-ops-card" aria-labelledby="research-ops-heading"
     className="mb-4 rounded-lg border border-[var(--border-1)] bg-[var(--surface-1)] p-4">
@@ -383,7 +487,8 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
       <span className="rounded border border-[var(--border-2)] px-2 py-1 text-xs">{view ? "Recorded observation" : "Current observation unavailable"}</span>
     </div>
     {!view ? <p className="mt-4 text-sm text-[var(--fg-muted)]">Current research operations and ingestion are unknown. System health and historical traces remain separate.</p>
-      : <dl className="mt-4 grid gap-3 text-sm md:grid-cols-2">
+      : <>
+      <dl className="mt-4 grid gap-3 text-sm md:grid-cols-2">
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Campaign queue and next registered step</dt>
           <dd className="mt-1">{queueLine}</dd>
           {firstEligible && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Next eligible registered topic {firstEligible}; eligibility does not establish dispatch.</dd>}
@@ -402,8 +507,12 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
           {linked && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Review gate: {linkedGate}. A linked iteration does not itself establish an accepted finding.</dd>}
         </div>
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Latest coordinator cycle</dt>
-          <dd className="mt-1">{boundCycle ? `${boundCycle.action_code === "noop" ? "No-op plan" : "Plan recorded"} · ${String(boundCycle.planned_count)} planned · ${String(boundCycle.dispatched_count)} dispatched` : "No bound coordinator check"}</dd>
-          {boundCycle && <dd className="mt-1 text-xs text-[var(--fg-muted)]">{stamp(boundCycle.at)} · {String(boundCycle.run_id)}</dd>}
+          <dd className="mt-1">{noValidPlanCycle
+            ? <>No valid plan; no actions dispatched · <Link to="/cycles" className="text-[var(--accent)]">view trace</Link></>
+            : zeroPromotionCycle
+            ? <>Promotion check completed · 0 findings promoted · no research record advanced · <Link to="/cycles" className="text-[var(--accent)]">view trace</Link></>
+            : executedCycle ? `${executedCycle.action_code === "noop" ? "No-op plan" : "Plan recorded"} · ${String(executedCycle.planned_count)} planned · ${String(executedCycle.dispatched_count)} dispatched` : "No bound coordinator check"}</dd>
+          {(noValidPlanCycle || executedCycle) && <dd className="mt-1 text-xs text-[var(--fg-muted)]">{stamp((noValidPlanCycle || executedCycle)?.at)} · {String((noValidPlanCycle || executedCycle)?.run_id)}</dd>}
           {budgetBound && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Today's coordinator allowance: {String(budget.spent_today)}/{String(budget.daily_cap)} used; {String(budget.paced_allowance)} paced so far.</dd>}
         </div>
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Source ingestion</dt>
@@ -418,6 +527,13 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
             {" "}No receipt-bound source result is established by this log.
           </dd>}
         </div>
+      </dl>
+      <details className="mt-3 rounded border border-[var(--border-1)] p-3 text-sm" data-testid="recorded-diagnostic-studies">
+        <summary className="cursor-pointer font-semibold text-[var(--accent)]">
+          Recorded diagnostic studies{latestPayoffDiagnostic ? ` · latest payoff completed ${stamp(latestPayoffDiagnostic.finished_at)}` : ""}
+        </summary>
+        <p className="mt-2 text-xs text-[var(--fg-muted)]">Recorded diagnostic and attempt receipts remain separate from current campaign membership and execution.</p>
+        <dl className="mt-3 grid gap-3 md:grid-cols-2">
         {pilotRecorded && <div className="rounded border border-[var(--border-1)] p-3">
           <dt className="font-semibold">Recorded binary pilot</dt>
           <dd className="mt-1">{String(empirical?.complete_episodes)} complete episodes, {String(empirical?.attempted_calls)} attempted calls</dd>
@@ -482,11 +598,24 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
         </div>
         <div className="rounded border border-[var(--border-1)] p-3">
           <dt className="font-semibold">Registered payoff jobs</dt>
-          {payoffRows ? payoffRows.map((job, index) => <dd key={payoffJobs[index].job_id} className="mt-2">
-            <span className="font-medium">{payoffJobs[index].label}</span>: {payoffState(String(job.state))}.
-            <span className="block text-xs text-[var(--fg-muted)]">Registered execution interval {stamp(job.not_before)}–{stamp(job.expires_at)}.</span>
-            {payoffRefusalText(job.last_availability_refusal) && <span className="block text-xs text-[var(--fg-muted)]">{payoffRefusalText(job.last_availability_refusal)}</span>}
-          </dd>) : <dd className="mt-1">
+          {payoffRows ? payoffRows.map((job, index) => {
+            const diagnostic = payoffDiagnostics?.[index] ?? null;
+            return <dd key={payoffJobs[index].job_id} className="mt-2">
+              <span className="font-medium">{payoffJobs[index].label}</span>: {payoffState(String(job.state))}.
+              <span className="block text-xs text-[var(--fg-muted)]">Eligibility window {stamp(job.not_before)}–{stamp(job.expires_at)}.</span>
+              {payoffRefusalText(job.last_availability_refusal) && <span className="block text-xs text-[var(--fg-muted)]">{payoffRefusalText(job.last_availability_refusal)}</span>}
+              {diagnostic && <div className="mt-1 text-xs text-[var(--fg-muted)]" data-testid={`payoff-terminal-${payoffJobs[index].job_id}`}>
+                Completed {stamp(diagnostic.finished_at)} · {diagnostic.attempted_calls} calls attempted.
+                <span className="block">Strict shape {diagnostic.summary.strict_shape_valid}/{diagnostic.attempted_calls} · focal payoff {diagnostic.summary.focal_correct}/{diagnostic.attempted_calls} · total payoff {diagnostic.summary.total_correct}/{diagnostic.attempted_calls} · both {diagnostic.summary.both_correct}/{diagnostic.attempted_calls}.</span>
+                <span className="block">Instrument-only diagnostic · unlinked to the active campaign.</span>
+                <details className="mt-1">
+                  <summary className="cursor-pointer text-[var(--accent)]">Per-view breakdown and evidence boundary</summary>
+                  <span className="mt-1 block">Seat table: {diagnostic.by_view.seat_table.strict_shape_valid}/{diagnostic.by_view.seat_table.attempted} strict shape, {diagnostic.by_view.seat_table.focal_correct} focal, {diagnostic.by_view.seat_table.total_correct} total, {diagnostic.by_view.seat_table.both_correct} both. Word list: {diagnostic.by_view.word_list.strict_shape_valid}/{diagnostic.by_view.word_list.attempted} strict shape, {diagnostic.by_view.word_list.focal_correct} focal, {diagnostic.by_view.word_list.total_correct} total, {diagnostic.by_view.word_list.both_correct} both.</span>
+                  <span className="block">This receipt grants no thesis credit, promotion, comparison, or scientific novelty claim.</span>
+                </details>
+              </div>}
+            </dd>;
+          }) : <dd className="mt-1">
             {payoff?.schema_version === PAYOFF_SCHEMA && payoff?.source_status === "package_unavailable" &&
              payoff?.timer_activation === "not_verified" && payoffCheckFresh
               ? "Payoff job package unavailable; queue readiness is unknown." :
@@ -495,8 +624,10 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
           {payoffRows && <dd className="mt-2 text-xs text-[var(--fg-muted)]">Last source-bound queue check {stamp(payoff?.checked_at)}. These are two finite empirical jobs, not automatically dispatched tasks.</dd>}
           <dd className="mt-1 text-xs text-[var(--fg-muted)]">Timer activation is not verified by queue readiness; preparation alone does not establish execution.</dd>
         </div>
-      </dl>}
+        </dl>
+      </details>
+      </>}
     <div className="mt-3 flex flex-wrap gap-4 text-sm"><Link to="/cycles" className="text-[var(--accent)]">Trace history →</Link>
-      <Link to="/benchmarks" className="text-[var(--accent)]">Research follow-through →</Link></div>
+      <Link to="/benchmarks" className="text-[var(--accent)]">Benchmark results →</Link></div>
   </section>;
 }

@@ -166,7 +166,7 @@ function ItemRow({
         aria-label={`${title} · source history`}
         className={`flex flex-wrap items-baseline gap-2 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-zinc-600 ${nested ? "ml-3" : ""}`}
       >
-        <span className="text-zinc-200">{title}</span>
+        <span className="line-clamp-3 w-full break-words font-medium text-zinc-200" title={title}>{title}</span>
         {level && (
           <span className="rounded bg-emerald-950 px-1 py-0.5 text-[10px] text-emerald-400">
             {level}
@@ -175,18 +175,15 @@ function ItemRow({
         <span className="text-[10px] uppercase tracking-wide text-zinc-600">
           {kind}
         </span>
-        <span className="rounded border border-zinc-700 px-1 py-0.5 text-[9px] uppercase tracking-wide text-zinc-500">
-          source history
-        </span>
         {item.deferred === true && (
           <span
             data-testid="todo-deferred-tag"
-            className="rounded bg-sky-950 px-1.5 py-0.5 text-[10px] text-sky-400"
+            className="max-w-full rounded bg-sky-950 px-1.5 py-0.5 text-[10px] text-sky-400"
             title={deferralBits.join(" · ") || undefined}
           >
             deferred to dev session
             {deferralBits.length > 0 && (
-              <span className="text-sky-600"> · {deferralBits.join(" · ")}</span>
+              <span className="line-clamp-1 text-sky-600">{deferralBits.join(" · ")}</span>
             )}
           </span>
         )}
@@ -260,7 +257,7 @@ function IterationRow({ row }: { row: IterationRecord }) {
         className="block rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-zinc-600"
       >
         <div className="flex flex-wrap items-baseline gap-2">
-          <span className="font-medium text-zinc-200">{displayTitle}</span>
+          <span className="line-clamp-3 w-full break-words font-medium text-zinc-200" title={displayTitle}>{displayTitle}</span>
           <span className="font-mono text-[10px] text-zinc-500">{id}</span>
           <Badge
             text={row.critique?.verdict}
@@ -271,9 +268,6 @@ function IterationRow({ row }: { row: IterationRecord }) {
             tone={toneFor(NOVELTY_TONE, row.novelty?.class, "bg-zinc-800 text-zinc-400")}
           />
           <Badge text={row.gate_status} tone={toneFor(GATE_TONE, row.gate_status, "")} />
-          <span className="rounded border border-zinc-700 px-1 py-0.5 text-[9px] uppercase tracking-wide text-zinc-500">
-            source history
-          </span>
           <span className="ml-auto font-mono text-[10px] text-zinc-500">
             {shortTimestamp(row.ended_at)}
           </span>
@@ -484,13 +478,13 @@ export default function DossierIndex({
     <div className="mx-auto max-w-5xl p-5" data-testid="dossier-index">
       <header className="mb-3">
         <h1 className="text-sm font-semibold uppercase tracking-wide text-zinc-300">
-          /dossier · what deserves your attention
+          {researchScope === "active" ? "Campaign records" : "Record archive"}
         </h1>
         <p className="mt-0.5 text-[11px] text-zinc-500">
           {researchScope === "active"
             ? "Current-campaign decisions and explicitly linked records, with global safety gates retained."
             : "Preserved decisions and records across research history."}{" "}
-          Each row opens its full dossier — the journey, the interrogation, and the verdict forms.
+          Each row opens its full dossier, with evidence, review history, and available actions.
         </p>
       </header>
 
@@ -560,7 +554,7 @@ export default function DossierIndex({
           >
             {researchScope === "active"
               ? "No current-campaign finding has cleared L4."
-              : "Nothing cleared L4 this week."}
+              : "No L4/L5 findings are recorded in this view."}
           </div>
         )}
         {clearedBar.length > 0 && (
@@ -578,7 +572,7 @@ export default function DossierIndex({
         className="mt-3 rounded border border-zinc-800 bg-zinc-900/40 p-4"
       >
         <SectionHeader
-          title="everything else"
+          title="other records"
           hint="below-bar findings · bubbles · stale runs · resolved iterations"
           count={visibleElse.length + visibleIters.length}
           testid="dossier-else-count"

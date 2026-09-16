@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const routeFailures = vi.hoisted(() => ({ inspector: false }));
+
 vi.mock("../src/components/LoopAlertBanner", () => ({
   default: () => <div data-testid="loop-alert-banner" />,
 }));
@@ -18,7 +20,10 @@ vi.mock("../src/routes/Cycles", () => ({ default: () => <div data-testid="route-
 vi.mock("../src/routes/Experiments", () => ({ default: () => <div data-testid="route-experiments" /> }));
 vi.mock("../src/routes/ExperimentDetail", () => ({ default: () => <div data-testid="route-experiment-detail" /> }));
 vi.mock("../src/routes/ModelIO", () => ({ default: () => <div data-testid="route-model-io" /> }));
-vi.mock("../src/routes/Inspector", () => ({ default: () => <div data-testid="route-inspector" /> }));
+vi.mock("../src/routes/Inspector", () => ({ default: () => {
+  if (routeFailures.inspector) throw new Error("Page unavailable");
+  return <div data-testid="route-inspector" />;
+} }));
 
 import App from "../src/App";
 
@@ -73,6 +78,7 @@ function useViewport(narrow: boolean) {
 }
 
 beforeEach(() => {
+  routeFailures.inspector = false;
   useViewport(false);
   window.localStorage.clear();
   document.documentElement.removeAttribute("data-theme");
@@ -106,10 +112,10 @@ describe("Atlas shell route preservation", () => {
     ["/experiments/exp-1", "route-experiment-detail"],
     ["/model-io", "route-model-io"],
     ["/chain/req/request-1", "route-inspector"],
-  ])("keeps %s on its existing surface", (path, testId) => {
+  ])("keeps %s on its existing surface", async (path, testId) => {
     window.history.replaceState({}, "", path);
     render(<App />);
-    expect(screen.getByTestId(testId)).toBeInTheDocument();
+    expect(await screen.findByTestId(testId)).toBeInTheDocument();
     expect(within(screen.getByTestId("atlas-main")).getByTestId("loop-alert-banner")).toBeInTheDocument();
   });
 
@@ -124,6 +130,19 @@ describe("Atlas shell route preservation", () => {
     await waitFor(() => expect(screen.getByTestId(testId)).toBeInTheDocument());
     expect(window.location.pathname).toBe(to);
   });
+});
+
+it("contains a failed page and recovers through navigation without losing the shell", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  routeFailures.inspector = true;
+  window.history.replaceState({}, "", "/chain/req/broken-page");
+  render(<App />);
+  expect(await screen.findByRole("heading", { name: "This page could not be loaded" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reload page" })).toBeInTheDocument();
+  expect(screen.getByTestId("loop-alert-banner")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("link", { name: "Now" }));
+  expect(await screen.findByTestId("route-pulse")).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "This page could not be loaded" })).toBeNull();
 });
 
 describe("Atlas navigation grouping", () => {

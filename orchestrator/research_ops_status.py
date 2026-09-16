@@ -38,6 +38,7 @@ MAX_CYCLE_BYTES = 8 * 1024 * 1024
 MAX_BUDGET_BYTES = 2 * 1024 * 1024
 MAX_ROWS = 50_000
 ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$")
+CYCLE_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 INGESTION_CODES = frozenset({
     "arxiv_http_429_retry_exhausted", "arxiv_http_503_retry_exhausted",
     "fetch_timeout", "embed_timeout", "fetch_error", "embed_error",
@@ -50,6 +51,7 @@ PILOT_ROOT = Path("/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-15/"
                   "lab-eight-hour/known-opponent-utility")
 PILOT_WINDOW_RE = re.compile(r"^qfn-followon-known-opponent-[a-z0-9][a-z0-9._-]{0,47}$")
 MAX_PILOT_WINDOWS = 16
+MAX_CYCLE_LINK_IDS = 64
 
 
 def _sha(raw: bytes) -> str:
@@ -355,6 +357,65 @@ def _pilot_admission(root: Path, repo_root: Path, observed: datetime) -> dict:
     return out
 
 
+def _cycle_link_ids(value: object) -> list[str] | None:
+    if (not isinstance(value, list) or len(value) > MAX_CYCLE_LINK_IDS or
+            any(not isinstance(item, str) or not ID_RE.fullmatch(item) for item in value) or
+            len(set(value)) != len(value)):
+        return None
+    return value
+
+
+def _cycle_progress(row: dict, plan: list, outcomes: list) -> dict:
+    """Return bounded receipt-derived progress, or explicit unknowns on drift."""
+    unknown = {"action_kind": None, "promoted_count": None,
+               "substantive_progress": None}
+    if len(plan) != 1 or len(outcomes) != 1:
+        return unknown
+    planned, outcome = plan[0], outcomes[0]
+    if not isinstance(planned, dict) or not isinstance(outcome, dict):
+        return unknown
+    action = planned.get("action")
+    step_id = planned.get("step_id")
+    digest = planned.get("request_digest")
+    if (action not in coordinator.ACTIVITY_CLASS_OF or outcome.get("action") != action or
+            outcome.get("status") not in {"passed", "skipped", "errored"} or
+            not isinstance(step_id, str) or not ID_RE.fullmatch(step_id) or
+            outcome.get("step_id") != step_id or
+            not isinstance(digest, str) or not CYCLE_DIGEST_RE.fullmatch(digest) or
+            outcome.get("request_digest") != digest):
+        return unknown
+    promoted = _cycle_link_ids(row.get("promoted_finding_ids"))
+    bubbles = _cycle_link_ids(row.get("bubble_run_ids"))
+    dispatched = row.get("dispatched_iteration_id")
+    if (promoted is None or bubbles is None or
+            (dispatched is not None and
+             (not isinstance(dispatched, str) or not ID_RE.fullmatch(dispatched)))):
+        return unknown
+    passed = outcome["status"] == "passed"
+    if action == "promote_findings":
+        if bubbles or dispatched is not None or (promoted and not passed):
+            return unknown
+        substantive = passed and bool(promoted)
+    elif action == "bubble_up":
+        if promoted or dispatched is not None or (bubbles and not passed):
+            return unknown
+        substantive = passed and bool(bubbles)
+    elif action == "run_loop_iteration":
+        if promoted or bubbles or (dispatched is not None and not passed):
+            return unknown
+        substantive = passed and dispatched is not None
+    elif action == "noop":
+        if promoted or bubbles or dispatched is not None:
+            return unknown
+        substantive = False
+    else:
+        if promoted or bubbles or dispatched is not None:
+            return unknown
+        substantive = passed
+    return {"action_kind": action, "promoted_count": len(promoted),
+            "substantive_progress": substantive}
+
+
 def project_research_ops_status(
     *, repo_root: Path = PROJECT_ROOT, ingestion_root: Path | None = None,
     legacy_ingestion_log: Path = LEGACY_LOG, pilot_root: Path = PILOT_ROOT,
@@ -484,9 +545,13 @@ def project_research_ops_status(
         row, row_sha = cycles[-1]
         when = _time(row.get("timestamp"))
         plan, outcomes = row.get("plan"), row.get("outcomes")
-        if (when is not None and when <= observed and row.get("status") == "executed"
-                and ID_RE.fullmatch(str(row.get("run_id")))
-                and isinstance(plan, list) and isinstance(outcomes, list)
+        common_valid = (
+            when is not None and when <= observed
+            and isinstance(row.get("run_id"), str)
+            and ID_RE.fullmatch(row["run_id"]) is not None
+            and isinstance(plan, list) and isinstance(outcomes, list)
+        )
+        if (common_valid and row.get("status") == "executed"
                 and len(plan) <= 6 and len(outcomes) <= 6):
             planned = [x.get("action") for x in plan if isinstance(x, dict)
                        and x.get("action") != "noop"]
@@ -495,9 +560,31 @@ def project_research_ops_status(
             noop = len(plan) == 1 and isinstance(plan[0], dict) and plan[0].get("action") == "noop"
             out["last_cycle"] = {
                 "run_id": row["run_id"], "at": _stamp(when),
+                "terminal_status": "executed",
                 "action_code": "noop" if noop else "actions_planned",
                 "planned_count": len(planned), "dispatched_count": len(dispatched),
                 "outcome_count": len(outcomes),
+                **_cycle_progress(row, plan, outcomes),
+                "raw_row_sha256": row_sha,
+                "cycles_source_sha256": cycle_proof["sha256"],
+            }
+        elif (common_valid and row.get("status") == "no_valid_plan"
+              and plan == [] and outcomes == []
+              and row.get("promoted_finding_ids") == []
+              and row.get("bubble_run_ids") == []
+              and "dispatched_iteration_id" not in row):
+            # A rejected plan is a terminal coordinator observation, not an
+            # executed cycle and not research progress.  Project the newest
+            # row itself so callers never relabel an older executed cycle as
+            # the latest coordinator result.
+            out["last_cycle"] = {
+                "run_id": row["run_id"], "at": _stamp(when),
+                "terminal_status": "no_valid_plan",
+                "action_code": "no_valid_plan",
+                "planned_count": 0, "dispatched_count": 0,
+                "outcome_count": 0,
+                "action_kind": None, "promoted_count": 0,
+                "substantive_progress": False,
                 "raw_row_sha256": row_sha,
                 "cycles_source_sha256": cycle_proof["sha256"],
             }

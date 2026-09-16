@@ -79,4 +79,30 @@ describe("CoordinatorCycleCard", () => {
       "1 finding promoted",
     );
   });
+
+  it("uses an exact iteration label while preserving the full recorded topic and provenance", () => {
+    const rawTopic =
+      "Prior local-model instrument observation: 12/12 pilot episodes complete. " +
+      "Source: /home/research/artifacts/payoff/admission.json, raw SHA-256 " +
+      `${"a".repeat(64)}. Against the same disclosed opponent, test whether a ` +
+      "local LLM agent chooses oracle-consistent actions more often when it " +
+      "computes exact focal and pooled payoffs correctly.";
+    const cycle = {
+      ...CLEAN_CYCLE,
+      topic: rawTopic,
+      dispatched_iteration_id: "iter-2026-09-15-007",
+    };
+
+    render(<CoordinatorCycleCard cycle={cycle} />);
+
+    expect(screen.getByTestId("coordinator-topic-title")).toHaveTextContent(
+      "Payoff arithmetic and strategic consistency",
+    );
+    const provenance = screen.getByTestId("coordinator-topic-provenance");
+    expect(provenance).not.toHaveAttribute("open");
+    expect(within(provenance).getByText(rawTopic)).toBeInTheDocument();
+    expect(
+      within(provenance).getByText("Full recorded topic and provenance"),
+    ).toBeInTheDocument();
+  });
 });

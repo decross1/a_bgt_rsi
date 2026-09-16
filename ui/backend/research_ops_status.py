@@ -25,6 +25,7 @@ BEHAVIOR_SCHEMA = "known-opponent-pilot-behavior/v1"
 SHA = re.compile(r"[0-9a-f]{64}\Z")
 REGRET = re.compile(r"[0-9]{1,9}\Z")
 PAYOFF_SCHEMA = "registered-payoff-jobs-observation/v1"
+PAYOFF_DIAGNOSTIC_SCHEMA = "registered-payoff-terminal-diagnostic/v1"
 PAYOFF_QUEUE_SOURCE_SHA256 = (
     "15d52ddb0683e9c3d0a0cddc1a79a794e26d4621e01e2009b97d9250b6d5c033"
 )
@@ -273,6 +274,152 @@ def _payoff_refusal(value: object, *, attempt: str, registered: dict,
             "receipt_sha256": value["receipt_sha256"]}
 
 
+def _payoff_counts(value: object, *, maximum: int, returned: bool = False) -> dict | None:
+    keys = {"attempted", "strict_shape_valid", "focal_correct", "total_correct",
+            "both_correct"}
+    if returned:
+        keys.add("returned")
+    if not isinstance(value, dict) or set(value) != keys:
+        return None
+    if not all(_count(value[key], maximum) for key in keys):
+        return None
+    attempted = value["attempted"]
+    returned_count = value["returned"] if returned else attempted
+    if (any(value[key] > attempted for key in keys - {"attempted"}) or
+            value["strict_shape_valid"] > returned_count or
+            value["focal_correct"] > value["strict_shape_valid"] or
+            value["total_correct"] > value["strict_shape_valid"] or
+            value["both_correct"] > value["focal_correct"] or
+            value["both_correct"] > value["total_correct"]):
+        return None
+    return {key: value[key] for key in sorted(keys)}
+
+
+def _payoff_terminal_diagnostic(*, queue_module, payoff_root: Path, job_id: str,
+                                attempt_index: int, observed: datetime) -> dict | None:
+    """Project only a fully replayed, immutable instrument-only terminal receipt."""
+    attempt = job_id if attempt_index == 0 else job_id + "-r1"
+    output = payoff_root / attempt
+    try:
+        replay = queue_module.validate_dispatch(job_id)
+        if not isinstance(replay, dict):
+            return None
+        job_receipt, job_receipt_sha = _read(output / "job-admission.json", 128_000)
+        dispatch, dispatch_sha = _read(output / "dispatch-result.json", 128_000)
+        admission, admission_sha = _read(output / "admission.json", 128_000)
+        reservation, reservation_sha = _read(output / "dispatch-reservation.json", 128_000)
+        window_sha = replay.get("window_sha256")
+        study_validation = admission.get("study_validation")
+        if (replay != job_receipt or
+                replay.get("schema") != "known-opponent-payoff-job-validation/v1" or
+                replay.get("job_id") != job_id or
+                replay.get("panel_id") != PAYOFF_JOBS[job_id]["panel_id"] or
+                replay.get("attempt_index") != attempt_index or
+                replay.get("status") != "admitted_diagnostic" or
+                replay.get("comparison_eligible") is not False or
+                replay.get("scientific_novelty_claimed") is not False or
+                not SHA.fullmatch(str(window_sha or "")) or
+                replay.get("reservation_sha256") != reservation_sha or
+                replay.get("dispatch_result_sha256") != dispatch_sha or
+                replay.get("admission_receipt_sha256") != admission_sha or
+                reservation.get("schema") != "known-opponent-payoff-job-dispatch/v1" or
+                reservation.get("job_id") != job_id or
+                reservation.get("attempt_index") != attempt_index or
+                reservation.get("window_sha256") != window_sha or
+                reservation.get("not_before") != PAYOFF_JOBS[job_id]["not_before"] or
+                reservation.get("expires_at") != PAYOFF_JOBS[job_id]["expires_at"] or
+                reservation.get("comparison_eligible") is not False or
+                dispatch.get("schema") != "known-opponent-payoff-job-dispatch-result/v1" or
+                dispatch.get("job_id") != job_id or
+                dispatch.get("attempt_index") != attempt_index or
+                dispatch.get("window_sha256") != window_sha or
+                dispatch.get("reservation_sha256") != reservation_sha or
+                dispatch.get("admission_receipt_sha256") != admission_sha or
+                dispatch.get("status") != "admitted_diagnostic" or
+                dispatch.get("supervisor_returncode") != 0 or
+                dispatch.get("admission_error_code") is not None or
+                dispatch.get("comparison_eligible") is not False or
+                admission.get("schema") != "known-opponent-payoff-resident-admission/v1" or
+                admission.get("window_sha256") != window_sha or
+                admission.get("comparison_eligible") is not False or
+                admission.get("promotion_authorized") is not False or
+                admission.get("trading_claim_authorized") is not False or
+                not isinstance(study_validation, dict) or
+                study_validation.get("schema") !=
+                "known-opponent-payoff-decomposition-validation/v1" or
+                study_validation.get("status") != "admitted_diagnostic" or
+                study_validation.get("study_id") !=
+                "known-opponent-payoff-representation-v1" or
+                study_validation.get("panel_id") != PAYOFF_JOBS[job_id]["panel_id"] or
+                study_validation.get("scheduled_calls") != 12 or
+                study_validation.get("returned_sse_verified") != 12 or
+                study_validation.get("admission_eligible") is not True or
+                study_validation.get("private_content_exported") is not False or
+                study_validation.get("comparison_eligible") is not False or
+                study_validation.get("scientific_novelty_claimed") is not False):
+            return None
+        reserved = datetime.fromisoformat(str(reservation.get("reserved_at", "")).replace(
+            "Z", "+00:00"))
+        finished = datetime.fromisoformat(str(dispatch.get("finished_at", "")).replace(
+            "Z", "+00:00"))
+        not_before = datetime.fromisoformat(PAYOFF_JOBS[job_id]["not_before"])
+        expires_at = datetime.fromisoformat(PAYOFF_JOBS[job_id]["expires_at"])
+        if (reserved.tzinfo != timezone.utc or finished.tzinfo != timezone.utc or
+                not not_before <= reserved <= finished <= expires_at or finished > observed):
+            return None
+        attempted = replay.get("attempted_calls")
+        summary = replay.get("summary")
+        if (not _count(attempted, 12) or attempted != 12 or not isinstance(summary, dict) or
+                set(summary) != {"strict_shape_valid", "focal_correct", "total_correct",
+                                 "both_correct"} or
+                not all(_count(summary[key], attempted) for key in summary) or
+                summary["focal_correct"] > summary["strict_shape_valid"] or
+                summary["total_correct"] > summary["strict_shape_valid"] or
+                summary["both_correct"] > summary["focal_correct"] or
+                summary["both_correct"] > summary["total_correct"] or
+                study_validation.get("attempted_calls") != attempted or
+                study_validation.get("summary") != summary or
+                study_validation.get("by_view") != replay.get("by_view")):
+            return None
+        by_view_raw = replay.get("by_view")
+        if not isinstance(by_view_raw, dict) or set(by_view_raw) != {"seat_table", "word_list"}:
+            return None
+        by_view = {
+            name: _payoff_counts(by_view_raw[name], maximum=attempted, returned=True)
+            for name in ("seat_table", "word_list")
+        }
+        if (any(row is None for row in by_view.values()) or
+                sum(row["attempted"] for row in by_view.values()) != attempted or
+                sum(row["returned"] for row in by_view.values()) != attempted or
+                any(row["attempted"] != 6 or row["returned"] != 6
+                    for row in by_view.values()) or
+                any(sum(row[key] for row in by_view.values()) != summary[key]
+                    for key in summary)):
+            return None
+        # Keep this projection bounded and content-free. Full replay remains in the
+        # producer gate; only exact public denominators and receipt identities leave it.
+        return {
+            "schema_version": PAYOFF_DIAGNOSTIC_SCHEMA,
+            "status": "admitted_diagnostic",
+            "finished_at": dispatch["finished_at"],
+            "attempted_calls": attempted,
+            "summary": {key: summary[key] for key in (
+                "strict_shape_valid", "focal_correct", "total_correct", "both_correct")},
+            "by_view": by_view,
+            "admission_receipt_sha256": admission_sha,
+            "job_admission_receipt_sha256": job_receipt_sha,
+            "dispatch_result_sha256": dispatch_sha,
+            "claim_scope": "instrument_only_unlinked",
+            "campaign_link": None,
+            "thesis_credit": False,
+            "promotion_authorized": False,
+            "comparison_eligible": False,
+            "scientific_novelty_claimed": False,
+        }
+    except (AttributeError, KeyError, OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
 def _payoff_jobs(repo_root: Path, *, payoff_root: Path = PAYOFF_ROOT,
                  now: datetime | None = None, queue_module=None,
                  expected_source_sha256: str | None = PAYOFF_QUEUE_SOURCE_SHA256) -> dict:
@@ -338,12 +485,21 @@ def _payoff_jobs(repo_root: Path, *, payoff_root: Path = PAYOFF_ROOT,
                                           fingerprint=fingerprint, observed=observed)
                 if refusal is not None and row["window_path"] is None:
                     return _payoff_unknown("source_unknown", checked_at)
+                terminal = (_payoff_terminal_diagnostic(
+                    queue_module=queue_module, payoff_root=payoff_root, job_id=job_id,
+                    attempt_index=row["attempt_index"], observed=observed,
+                ) if row["state"] == "admitted_attempt_verified" else None)
                 rows.append({"job_id": job_id, "panel_id": registered["panel_id"],
                              "not_before": registered["not_before"],
                              "expires_at": registered["expires_at"], "role": registered["role"],
+                             "eligibility_window": {
+                                 "not_before": registered["not_before"],
+                                 "expires_at": registered["expires_at"],
+                             },
                              "state": row["state"], "attempt_index": row["attempt_index"],
                              "prepared_window_present": row["window_path"] is not None,
                              "last_availability_refusal": refusal,
+                             "terminal_diagnostic": terminal,
                              "comparison_eligible": False})
             projection = {"schema_version": PAYOFF_SCHEMA, "source_status": "available",
                           "checked_at": checked_at, "queue_source_sha256": source_sha,
