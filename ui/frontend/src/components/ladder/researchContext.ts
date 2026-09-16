@@ -4,6 +4,11 @@ import type {
   RecordedIteration,
   ThesisFamily,
 } from "./thesisModel";
+import {
+  collectionDisplayTitle,
+  iterationDisplayTitle,
+  iterationQuestion,
+} from "../../researchLabels";
 
 interface ExactClaimNote {
   clusterId: string;
@@ -47,6 +52,7 @@ export interface ResearchClaimContext {
   evidenceValidity: string;
   executionMode: string;
   evidenceDelta: string;
+  learning: string;
   provenanceFields: ResearchEvidenceLine[];
   supportingEvidence: ResearchEvidenceLine[];
   limitingEvidence: ResearchEvidenceLine[];
@@ -262,7 +268,17 @@ function contextFor(
   const sourceEndedAt = asText(source.ended_at) ?? "unknown";
   const recordedEventAt = asText(record.cluster.last_event_ts) ?? exact?.recordedLevelAt ?? "unknown";
   const iterationId = iteration?.id ?? "iteration unavailable";
-  const hypothesis = iteration?.hypothesis ?? "No exact hypothesis text is available in the received iteration source.";
+  const collectionTitle = record.iterations.length > 1
+    ? collectionDisplayTitle(record.iterations.map((entry) => entry.source))
+    : null;
+  const useIterationTitle = iteration !== undefined && (
+    record.title === record.id
+    || /^cl-iter-[A-Za-z0-9._:-]+$/.test(record.title)
+    || collectionTitle === record.title
+  );
+  const hypothesis = iteration === undefined
+    ? "No exact hypothesis text is available in the received iteration source."
+    : iterationQuestion(iteration.source) ?? iteration.hypothesis ?? "No exact hypothesis text is available in the received iteration source.";
   const topic = iteration?.topic ?? (record.topics.join("; ") || "Recorded topic unavailable");
   const stageRequirement = nextOwed[stage];
 
@@ -285,6 +301,19 @@ function contextFor(
   });
   const evidenceDelta = "Not established — evidence validity is not established in this view. "
     + provenanceFields.map(({ label, text }) => `${label}: ${text}.`).join(" ");
+  const recordedSummary = asText(source.nara_summary);
+  const criticRationale = asText(asRecord(source.critique)?.rationale);
+  const redteamCritique = asText(asRecord(source.redteam)?.critique);
+  const outcomeRecorded = asRecord(source.experiment_outcome) !== null;
+  const noOutcome = outcomeRecorded ? "" : "No experiment outcome is recorded. ";
+  const learning = exact?.proposedDecision
+    ?? (redteamCritique !== null
+      ? `${noOutcome}Recorded red-team criticism: ${redteamCritique}`
+      : criticRationale !== null
+        ? `${noOutcome}Recorded critic assessment: ${criticRationale}`
+        : recordedSummary !== null
+          ? `${noOutcome}Recorded model summary (not accepted scientific learning): ${recordedSummary}`
+          : `${noOutcome}No explicit learning synthesis is supplied in this record.`);
 
   return {
     key: `${record.key}:${iterationId}:${index}`,
@@ -293,7 +322,9 @@ function contextFor(
     iterationId,
     hypothesis,
     topic,
-    shortLabel: exact?.shortLabel ?? record.title,
+    shortLabel: exact?.shortLabel
+      ?? (useIterationTitle ? iterationDisplayTitle(iteration.source) : null)
+      ?? record.title,
     summary: exact?.summary ?? "Context derived only from the selected record and its received iteration source.",
     sourceEndedAt,
     recordedEventAt,
@@ -302,7 +333,9 @@ function contextFor(
     rawRowHash: exact?.rawRowHash,
     sourceLine: exact?.sourceLine,
     isPinnedExactClaim: exact !== undefined,
-    claimStanding: `${status} · ${stage}${gate === null ? " · iteration gate unknown" : ` · iteration gate ${gate}`}`,
+    claimStanding: `${status} · ${stage}${gate === null
+      ? " · recorded gate stage unknown"
+      : ` · recorded gate stage ${gate} · no human-action request inferred`}`,
     applicationFit: application ?? (exact === undefined
       ? "Unmapped — explicit application fit is not supplied in the received projection."
       : "Unmapped — the 2026-09-07 source assessment identified no suitable application or market, and this received projection supplies no explicit mapping."),
@@ -311,6 +344,7 @@ function contextFor(
       ? "Unknown — an execution-mode field is not supplied in the received projection."
       : `Recorded source: ${execution}`,
     evidenceDelta,
+    learning,
     provenanceFields: provenanceFields.filter((field) => field.raw !== null).map(({ label, raw }) => ({ label, text: raw! })),
     supportingEvidence: evidence.supporting,
     limitingEvidence: evidence.limiting,

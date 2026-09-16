@@ -1,37 +1,10 @@
-"""Live-data validation of the coordinator (autonomy-observability) endpoints.
+"""Optional read-only integration checks against the canonical cycle ledger.
 
-Unlike ``test_coordinator.py`` (which points every path at ``tmp_path`` and is
-side-effect-free), this module validates the **merged backend against the REAL
-on-disk apparatus data** — the files the dashboard actually renders. It builds
-the app with no overrides, so ``create_app()`` reads the primary checkout via
-the hardcoded ``DEFAULT_COORDINATOR_*`` defaults (``_PRIMARY_REPO``), exactly as
-the served UI does. The stale :8700 server is pre-merge and 404s on these
-routes; this in-process app is the post-merge surface under test.
-
-It is read-only: it never writes ``run_state/`` or ``memory/``. The assertions
-key off what is actually on disk (via the backend's own ``_read_jsonl``) so the
-test states the live truth without re-hardcoding a row count that would rot when
-the apparatus appends another cycle:
-
-- ``/cycles`` must return the real ``coordinator_cycles.jsonl`` rows newest-first,
-  and **every** row must carry the keys ``CoordinatorCycle`` reads (the frontend
-  type). An ``errored`` outcome must carry a non-empty ``error`` string so the
-  failed-dispatch row is never silent — asserted over whatever errored rows the
-  live cohort holds. (2026-06-09 snapshot: 13 rows, 2 errored ``RuntimeError:
-  boom`` outcomes; the 2026-06-10 D-048 purge removed those, so an EMPTY errored
-  cohort is the honest live state, not a miss. All rows remain
-  ``topic_source="arxiv_pick"`` / ``agent="coordinator"``.)
-- ``/findings``, ``/bubbles``, ``/health_signals`` are shape-correct
-  (``{key: [...]}``) and, while their (gitignored) files are absent, return an
-  empty list — the clean empty state the panels render.
-- ``/active`` returns 204 when no cycle is in flight (its file is absent), so the
-  Activity panel shows the clean idle state, not a crash.
-
-If the real ``coordinator_cycles.jsonl`` is ever absent (e.g. the data dir
-moves), the cycle-shape tests skip rather than false-fail — the file is
-gitignored and not guaranteed to exist in every checkout. The absent-file
-endpoints are asserted conditionally on the file's live presence, so a later
-EMIT write does not turn this into a flaky red.
+The in-process app uses the same default data paths as the deployed backend.
+Assertions follow the current action/provenance contract, without pinning row
+counts, historical topic sources or a single latest study. No research data is
+written. Clean checkouts skip checks that require the gitignored live ledger;
+isolated source/error cases remain covered by test_coordinator.py.
 """
 from __future__ import annotations
 
@@ -174,24 +147,33 @@ def test_live_cycle_provenance_snapshot(client):
     # A cycle that never got to choose a topic has no topic_source, and that
     # is the honest value: the 2026-08-16 ledger carries nine
     # daily_budget_exhausted rows written before the refusal was moved out of
-    # the cycle log. A topicless cycle may also record an explicit no-op when
-    # an existing iteration is awaiting its human gate. In either case it
-    # must not plan or report a topic-dependent research action.
+    # the cycle log. A topicless cycle may record a no-op or a generic human
+    # escalation about existing pending gates. Neither starts topic-dependent
+    # research. Validate the escalation's actual action contract.
     for c in cycles:
         if c["topic_source"] is None:
             assert c.get("topic") is None
             for step in c.get("plan") or []:
-                assert step.get("action") == "noop", (
+                assert step.get("action") in {"noop", "bubble_up"}, (
                     f"cycle {c.get('run_id')} planned {step.get('action')!r} "
                     "without a topic_source"
                 )
-                reason = step.get("args", {}).get("reason")
-                assert isinstance(reason, str) and reason.strip()
+                args = step.get("args", {})
+                if step["action"] == "noop":
+                    reason = args.get("reason")
+                    assert isinstance(reason, str) and reason.strip()
+                else:
+                    from orchestrator.coordinator_actions import validate_bubble_up_args
+                    validate_bubble_up_args(**{key: args.get(key) for key in
+                                               ("finding_ids", "question", "kind", "allowed_actions")})
             for outcome in c.get("outcomes") or []:
-                assert outcome.get("action") == "noop", (
+                assert outcome.get("action") in {"noop", "bubble_up"}, (
                     f"cycle {c.get('run_id')} reported "
                     f"{outcome.get('action')!r} without a topic_source"
                 )
+                if outcome.get("action") == "bubble_up":
+                    assert any(outcome.get("request") == {"action": step["action"], "args": step["args"]}
+                               for step in c.get("plan") or [] if step.get("action") == "bubble_up")
             continue
         assert c["topic_source"] in known_topic_sources
         if c["topic_source"] == "campaign_preregistered":

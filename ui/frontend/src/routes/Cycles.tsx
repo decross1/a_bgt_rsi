@@ -28,6 +28,7 @@ import type { CoordinatorActiveRun, CoordinatorCycle } from "../types/schemas";
 // first) matches the polled-sort contract and the existing hardening tests.
 type Range = "all" | "today" | "week";
 type Direction = "newest" | "oldest";
+const PAGE_SIZE = 20;
 
 // True when `cycle`'s timestamp falls inside the selected window. "all" keeps
 // everything (incl. NaN/unparseable timestamps); "today"/"week" key off the
@@ -114,6 +115,7 @@ export default function Cycles({
   // Defaults keep the unfiltered, newest-first view (the polled-sort contract).
   const [range, setRange] = useState<Range>("all");
   const [direction, setDirection] = useState<Direction>("newest");
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   // Live clock for the date buckets; only consulted when range !== "all", so the
   // default view never depends on the tick.
   const now = useNow(60_000);
@@ -123,7 +125,7 @@ export default function Cycles({
   // apply the time-range bucket and the sort direction — both composed HERE
   // rather than in the poll effect, so flipping a control re-derives the view
   // without re-fetching and the polled sort stays the single source of order.
-  const renderable = cycles
+  const renderable = [...cycles]
     .filter(isRenderableCycle)
     .filter((c) => inRange(c, range, now))
     .sort((a, b) => {
@@ -134,6 +136,11 @@ export default function Cycles({
   const rangeCaption =
     range === "today" ? "today" : range === "week" ? "this week" : "all";
   const dirCaption = direction === "newest" ? "newest first" : "oldest first";
+  const visibleCycles = renderable.slice(0, visibleCount);
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [range, direction]);
 
   useEffect(() => {
     if (initial !== undefined) return;
@@ -233,7 +240,9 @@ export default function Cycles({
           >
             {direction === "newest" ? "newest first" : "oldest first"}
           </button>
-          <span className="text-[11px] text-zinc-500">{renderable.length}</span>
+          <span className="text-[11px] text-zinc-500">
+            {visibleCycles.length} of {renderable.length}
+          </span>
         </div>
       </div>
       <p className="mt-1 text-xs text-zinc-500">
@@ -256,7 +265,7 @@ export default function Cycles({
 
       {renderable.length > 0 && (
         <div className="mt-4 space-y-4">
-          {renderable.map((cycle, i) => (
+          {visibleCycles.map((cycle, i) => (
             // Key must be unique. `run_id` is producer-owned in an append-only
             // JSONL, so it is NOT guaranteed unique across rows — a retry/re-emit
             // or a legacy collision can write the SAME run_id twice, and at scale
@@ -273,6 +282,16 @@ export default function Cycles({
             />
           ))}
         </div>
+      )}
+      {visibleCycles.length < renderable.length && (
+        <button
+          type="button"
+          className="mt-4 rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-300 hover:border-zinc-700"
+          data-testid="cycles-show-older"
+          onClick={() => setVisibleCount((count) => Math.min(count + PAGE_SIZE, renderable.length))}
+        >
+          Show {Math.min(PAGE_SIZE, renderable.length - visibleCycles.length)} older cycles
+        </button>
       )}
     </div>
   );

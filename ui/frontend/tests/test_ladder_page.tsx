@@ -16,6 +16,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import type { LadderResponse } from "../src/types/schemas";
+import type { ResearchApplicationAgendaResponse } from "../src/types/researchApplicationAgenda";
 
 // Module-mock api/http so the SKEW case can reject with a status-carrying
 // error through the production isVersionSkew404 path. Individual tests that
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   getLadder: vi.fn(),
   getIdeas: vi.fn(),
   getIterations: vi.fn().mockResolvedValue({ iterations: [] }),
+  getIterationJourney: vi.fn().mockResolvedValue({ found: false, iteration_id: "missing", iteration: null }),
   getHealth: vi.fn().mockResolvedValue({
     ok: true,
     hostname: "spark",
@@ -35,6 +37,7 @@ vi.mock("../src/api/http", () => ({
   getLadder: mocks.getLadder,
   getIdeas: mocks.getIdeas,
   getIterations: mocks.getIterations,
+  getIterationJourney: mocks.getIterationJourney,
   getHealth: mocks.getHealth,
 }));
 
@@ -862,6 +865,44 @@ describe("collection-first command palette", () => {
 
 
 describe("focused Research workspace", () => {
+  const applicationAgenda: ResearchApplicationAgendaResponse = {
+    schema_version: "research-application-agenda/v1",
+    generated_at: "2026-09-16T04:00:00Z",
+    available: true,
+    source_sha256: "a".repeat(64),
+    warnings: [],
+    agenda: {
+      schema_version: "research-application-agenda/v1",
+      agenda_id: "agenda-test",
+      recorded_at: "2026-09-16T04:00:00Z",
+      status: "proposed_research_agenda",
+      owner_direction: "Options preferred to investigate.",
+      selection_rule: "Mechanism first.",
+      horizon: "One month.",
+      research_question: "Which measured behavior transfers?",
+      execution_authorized: false,
+      data_entitlement_verified: false,
+      lanes: [{
+        id: "options", label: "Options", priority: "preferred", status: "proposed",
+        mechanism: "Inventory constraints.", test: "Run a preregistered test.",
+        requirements: [], kill_condition: "Stop without identified data.", source_ids: [],
+      }],
+      next_agenda: [],
+      history_policy: "Historical studies stay separate.",
+      sources: [],
+    },
+  };
+
+  it("puts the current thesis before the proposed application agenda", () => {
+    render(<MemoryRouter><Ladder initial={FIXTURE} initialApplicationAgenda={applicationAgenda} /></MemoryRouter>);
+    const canvas = screen.getByTestId("research-canvas");
+    const agenda = screen.getByTestId("research-application-agenda");
+    expect(canvas.compareDocumentPosition(agenda) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(agenda).getByText("not yet preregistered")).toBeVisible();
+    expect(within(agenda).queryByText("execution not authorized")).toBeNull();
+    expect(within(agenda).queryByText("data entitlement unverified")).toBeNull();
+  });
+
   it("leads with one canvas and discloses retained counts, filters and views", () => {
     render(<MemoryRouter><Ladder initial={FIXTURE} /></MemoryRouter>);
     expect(screen.getByTestId("research-canvas")).toBeVisible();

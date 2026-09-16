@@ -55,6 +55,39 @@ def test_candidate_process_must_still_be_in_exact_cgroup(tmp_path: Path):
         lab._candidate_process(4321, 12345, group, proc)
 
 
+def test_closure_worker_uses_its_explicit_frozen_root(tmp_path: Path):
+    proc, boot, window, state, start = _process(tmp_path)
+    cwd = proc / "4321" / "cwd"
+    cwd.unlink()
+    closure_root = tmp_path / "frozen-cap-code"
+    cwd.symlink_to(closure_root, target_is_directory=True)
+    with pytest.raises(RuntimeSourceError):
+        lab._worker(state, start, window, proc, boot)
+    lab._worker(state, start, window, proc, boot, code_root=closure_root)
+
+
+def test_closure_rehashes_exact_controller_and_evaluator_inventory(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(lab, "CAP_CLOSURE_CODE_ROOT", tmp_path)
+    controller, evaluator = {}, {}
+    for index in range(45):
+        name = f"source/module_{index}.py"
+        path = tmp_path / name
+        path.parent.mkdir(exist_ok=True)
+        raw = f"registered source {index}".encode()
+        path.write_bytes(raw)
+        digest = hashlib.sha256(raw).hexdigest()
+        controller[name] = {"path": str(path), "sha256": digest}
+        if index < 16:
+            evaluator[name] = digest
+    monkeypatch.setattr(lab, "CAP_CLOSURE_CONTROLLER_SHA", lab.mr._canonical_sha256(controller))
+    monkeypatch.setattr(lab, "CAP_CLOSURE_EVALUATOR_SHA", lab.mr._canonical_sha256(evaluator))
+    window, plan = {"controller_sources": controller}, {"evaluator_source_bundle": evaluator}
+    lab._closure_sources(window, plan)
+    (tmp_path / "source/module_44.py").write_text("drift")
+    with pytest.raises(RuntimeSourceError, match="source drift"):
+        lab._closure_sources(window, plan)
+
+
 def test_evaluator_bundle_is_exact_and_rehashed(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(lab, "CODE_ROOT", tmp_path)
     refs = {}

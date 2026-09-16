@@ -328,29 +328,6 @@
   background-color: var(--fg-muted);
 }
 
-:root:not([data-theme="dark"]) .atlas-main [data-testid="activity-graph"] .react-flow.dark {
-  --xy-background-color: var(--surface-2);
-  --xy-background-pattern-dots-color-default: var(--border-2);
-  --xy-edge-stroke-default: var(--fg-muted);
-  --xy-edge-stroke-selected-default: var(--fg);
-  --xy-node-color-default: var(--fg);
-  --xy-node-background-color-default: var(--surface-1);
-  --xy-controls-button-background-color-default: var(--surface-1);
-  --xy-controls-button-background-color-hover-default: var(--surface-2);
-  --xy-controls-button-color-default: var(--fg);
-  --xy-controls-button-color-hover-default: var(--fg);
-  --xy-controls-button-border-color-default: var(--border-1);
-}
-
-:root:not([data-theme="dark"]) .atlas-main [data-testid="activity-graph"] .react-flow__background {
-  --xy-background-color-props: var(--surface-2) !important;
-  --xy-background-pattern-color-props: var(--border-2) !important;
-}
-
-:root:not([data-theme="dark"]) .atlas-main [data-testid="activity-graph"] .react-flow__edge-path {
-  stroke: var(--fg-muted) !important;
-}
-
 :root:not([data-theme="dark"]) .atlas-main .recharts-default-tooltip :where(
   .recharts-tooltip-label,
   .recharts-tooltip-item

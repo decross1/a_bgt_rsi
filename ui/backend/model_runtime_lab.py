@@ -26,8 +26,10 @@ PHASES = PREPARING | ACTIVE | TERMINAL
 RESIDENT_PHASES = frozenset({"preflight", "evaluation", "restoration", "complete", "aborted"})
 PLAN_SCHEMAS = {"primary": "lab-model-eval-plan/v1",
                 "context": "lab-model-context-plan/v1",
-                "fresh": "lab-model-fresh-plan/v1"}
-KIND_BUDGET_CAPS = {"primary": 10_430, "context": 6_000, "fresh": 1_800}
+                "fresh": "lab-model-fresh-plan/v1",
+                "diversity_cap": "lab-mia-diversity-cap-plan/v1"}
+KIND_BUDGET_CAPS = {"primary": 10_430, "context": 6_000, "fresh": 1_800,
+                    "diversity_cap": 2_200}
 PRIMARY_EVALUATOR_FILES = frozenset({
     "bench/flash_next_ab/lab_eval_plan.py", "bench/flash_next_ab/lab_eval_runner.py",
     "bench/flash_next_ab/lab_eval_replay.py", "bench/flash_next_ab/adapters.py",
@@ -70,6 +72,13 @@ CAP_AUDIT_PATH = ARTIFACT_ROOT / "mia-diversity-cap-paired-v1.failure-audit.json
 CAP_AUDIT_SHA = "4a94d553dc47b7a55f297634b2e077ad3f7b8a5b9a485baf12a503bf1a8be1f0"
 CAP_AUDIT_SOURCE_PATH = ARTIFACT_ROOT / "mia-diversity-cap-paired-v1.failure-audit-source.py"
 CAP_AUDIT_SOURCE_SHA = "6cdb209f7da93c090757e41064a87b0fa3f5d433655f751edea53ce1417788b8"
+CAP_CLOSURE_RUN_ID = "qfn-ab-lab-diversity-cap-closure-20260916-b.flash"
+CAP_CLOSURE_WINDOW_SHA = "cb2e98c4c70d9017cc9a15997f6f687d1ed3b74479879dd127bc7dc763b2cc98"
+CAP_CLOSURE_CODE_ROOT = Path("/home/decross1/projects/a_bgt_rsi_worktrees/lab-diversity-cap-20260915")
+CAP_CLOSURE_PLAN = ARTIFACT_ROOT / "mia-diversity-cap-paired-v1.plan.json"
+CAP_CLOSURE_PLAN_SHA = "f1250b9c1965f9be99790153f63263c4240ed88aca44fc535abb7d8130c90f45"
+CAP_CLOSURE_CONTROLLER_SHA = "7d4cfb46cc44f6c6caaa0acdf5841c4c3e97c574913541a8c53b7b3b78d01ef4"
+CAP_CLOSURE_EVALUATOR_SHA = "0587561d874d531069f54e1c632beef206368f76fe26c8aa2b4adea9e8392181"
 
 
 def _need(ok: bool, reason: str) -> None:
@@ -150,7 +159,7 @@ def _evaluator_sources(plan: dict, kind: str) -> str:
 
 
 def _worker(state: dict, start: dict, window_path: Path, proc_root: Path,
-            boot_id_path: Path) -> None:
+            boot_id_path: Path, *, code_root: Path | None = None) -> None:
     pid = mr._nonnegative_integer(state.get("worker_pid"), "lab worker PID", positive=True)
     ticks = mr._nonnegative_integer(state.get("worker_start_ticks"), "lab worker ticks", positive=True)
     boot = mr._read_path(boot_id_path, maximum=256, label="current boot ID").decode("ascii").strip()
@@ -184,7 +193,33 @@ def _worker(state: dict, start: dict, window_path: Path, proc_root: Path,
         cwd = os.readlink(proc_root / str(pid) / "cwd")
     except OSError as exc:
         raise mr.RuntimeSourceError("lab worker source cwd unavailable") from exc
-    _need(cwd == str(CODE_ROOT), "lab worker runs outside registered code root")
+    _need(cwd == str(code_root or CODE_ROOT), "lab worker runs outside registered code root")
+
+
+def _closure_sources(window: dict, plan: dict) -> tuple[str, str]:
+    """Rehash the published closure's exact frozen sources, without grading."""
+    controller = window.get("controller_sources")
+    evaluator = plan.get("evaluator_source_bundle")
+    _need(isinstance(controller, dict) and len(controller) == 45 and
+          mr._canonical_sha256(controller) == CAP_CLOSURE_CONTROLLER_SHA and
+          isinstance(evaluator, dict) and len(evaluator) == 16 and
+          mr._canonical_sha256(evaluator) == CAP_CLOSURE_EVALUATOR_SHA,
+          "cap closure source inventory differs")
+    for name, ref in controller.items():
+        _need(isinstance(name, str) and not Path(name).is_absolute() and
+              ".." not in Path(name).parts and isinstance(ref, dict) and
+              ref.get("path") == str(CAP_CLOSURE_CODE_ROOT / name),
+              "cap closure controller path differs")
+        raw = mr._read_path(CAP_CLOSURE_CODE_ROOT / name, maximum=8 * 1024 * 1024,
+                            label="cap closure controller")
+        _need(mr._sha256(raw) == ref.get("sha256"), "cap closure controller source drift")
+    for name, digest in evaluator.items():
+        _need(isinstance(name, str) and not Path(name).is_absolute() and
+              ".." not in Path(name).parts, "cap closure evaluator path differs")
+        raw = mr._read_path(CAP_CLOSURE_CODE_ROOT / name, maximum=8 * 1024 * 1024,
+                            label="cap closure evaluator")
+        _need(mr._sha256(raw) == digest, "cap closure evaluator source drift")
+    return CAP_CLOSURE_CONTROLLER_SHA, CAP_CLOSURE_EVALUATOR_SHA
 
 
 def _candidate_process(pid: int, ticks: int, cgroup_path: str, proc_root: Path) -> None:
@@ -345,6 +380,13 @@ def project_lab_runtime(root: Path = WINDOW_ROOT, *, proc_root: Path = mr.PROC_R
         cohort = "flash" if run_id.endswith(".flash") else "resident"
         if run_id == CAP_RUN_ID:
             return _cap_terminal_runtime(run_fd, run_path, window_raw, state_raw, observed)
+        closure = run_id == CAP_CLOSURE_RUN_ID
+        if closure or window.get("evaluation_kind") == "diversity_cap":
+            _need(closure and mr._sha256(window_raw) == CAP_CLOSURE_WINDOW_SHA and
+                  window.get("evaluation_plan") == {"path": str(CAP_CLOSURE_PLAN),
+                                                     "sha256": CAP_CLOSURE_PLAN_SHA},
+                  "cap closure is not the published window")
+        code_root = CAP_CLOSURE_CODE_ROOT if closure else CODE_ROOT
         parent_raw = mr._read_path(PARENT_PATH, maximum=8192,
                                     label="lab runtime certificate")
         parent = mr._strict_object(parent_raw, "lab runtime certificate")
@@ -352,7 +394,7 @@ def project_lab_runtime(root: Path = WINDOW_ROOT, *, proc_root: Path = mr.PROC_R
               window.get("output_dir") == str(run_path) and
               window.get("window_id") + "." + cohort == run_id and
               window.get("cohort") == cohort and window.get("evaluation_kind") in PLAN_SCHEMAS and
-              window.get("code_root") == str(CODE_ROOT) and
+              window.get("code_root") == str(code_root) and
               window.get("runtime_certificate") == {"path": str(PARENT_PATH),
                   "sha256": mr._sha256(parent_raw)} and
               parent.get("schema_version") == "flash-followon-qualified-v5-parent/v1" and
@@ -370,7 +412,7 @@ def project_lab_runtime(root: Path = WINDOW_ROOT, *, proc_root: Path = mr.PROC_R
               <= window["wall_s"] <= 14400 and
               window.get("promotion_authorized") is False,
               "lab window registration or runtime certificate differs")
-        bundle_sha = _sources(window)
+        bundle_sha = None if closure else _sources(window)
         plan_ref = window.get("evaluation_plan")
         _need(isinstance(plan_ref, dict) and isinstance(plan_ref.get("path"), str)
               and Path(plan_ref["path"]).is_relative_to(ARTIFACT_ROOT),
@@ -381,7 +423,10 @@ def project_lab_runtime(root: Path = WINDOW_ROOT, *, proc_root: Path = mr.PROC_R
         _need(mr._sha256(plan_raw) == plan_ref.get("sha256") and
               plan.get("schema_version") == PLAN_SCHEMAS[window["evaluation_kind"]],
               "lab evaluation plan source differs")
-        evaluator_sha = _evaluator_sources(plan, window["evaluation_kind"])
+        if closure:
+            bundle_sha, evaluator_sha = _closure_sources(window, plan)
+        else:
+            evaluator_sha = _evaluator_sources(plan, window["evaluation_kind"])
         phase = state.get("phase")
         _need(phase in (PHASES if cohort == "flash" else RESIDENT_PHASES) and
               state.get("window_sha256") == mr._sha256(window_raw) and
@@ -416,12 +461,21 @@ def project_lab_runtime(root: Path = WINDOW_ROOT, *, proc_root: Path = mr.PROC_R
             terminal_sha = mr._composite_sha256(result=mr._sha256(result_raw),
                                                  supervision=mr._sha256(supervision_raw))
             nara = _live_restored(state, cohort)
+            if closure:
+                from bench.flash_next_ab import qualification as q
+                from bench.flash_next_ab.followon_profiles import MIA_MTP3_REDUCED47K_OPT as spec
+                ops = q.HostOps()
+                _need(q._inspect_container(ops, spec.container_name) is None,
+                      "cap closure candidate is still present after restoration")
             mode, residents = "resident", "online"
         else:
             start_raw = mr._read_fd(run_fd, "supervision-start.json", maximum=8192,
                                     label="lab worker supervision start")
             start = mr._strict_object(start_raw, "lab worker supervision start")
-            _worker(state, start, window_path, proc_root, boot_id_path)
+            if closure:
+                _worker(state, start, window_path, proc_root, boot_id_path, code_root=code_root)
+            else:
+                _worker(state, start, window_path, proc_root, boot_id_path)
             if (observed - mr._parse_time(start.get("started_at"), "lab worker start")
                     > timedelta(seconds=window["wall_s"])):
                 raise mr.RuntimeSourceError("lab window wall deadline expired")

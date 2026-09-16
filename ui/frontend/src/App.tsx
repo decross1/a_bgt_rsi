@@ -17,7 +17,6 @@ import DossierIndex from "./routes/DossierIndex";
 import DossierReader from "./routes/DossierReader";
 import ExperimentDetail from "./routes/ExperimentDetail";
 import Experiments from "./routes/Experiments";
-import Graph from "./routes/Graph";
 import Inspector from "./routes/Inspector";
 import Ladder from "./routes/Ladder";
 import ModelIO from "./routes/ModelIO";
@@ -31,7 +30,7 @@ import {
 } from "./researchScope";
 
 type Theme = "light" | "dark";
-type NavGroupId = "now" | "research" | "operations";
+type NavGroupId = "now" | "research" | "benchmarks" | "operations";
 
 const THEME_STORAGE_KEY = "oracle-lab-theme";
 const NARROW_NAV_QUERY = "(max-width: 760px)";
@@ -53,7 +52,7 @@ function focusableElements(container: HTMLElement): HTMLElement[] {
 const NAV_GROUPS: {
   id: NavGroupId;
   label: string;
-  links: { to: string; label: string; end?: boolean; primary?: boolean }[];
+  links: { to: string; label: string; end?: boolean; primary?: boolean; archive?: boolean }[];
 }[] = [
   {
     id: "now",
@@ -65,16 +64,20 @@ const NAV_GROUPS: {
     label: "Research",
     links: [
       { to: "/ladder", label: "Research", primary: true },
-      { to: "/dossier", label: "Record library" },
-      { to: "/experiments", label: "Evaluations" },
+      { to: "/dossier", label: "Archive · records", archive: true },
+      { to: "/experiments", label: "Archive · evaluations", archive: true },
     ],
+  },
+  {
+    id: "benchmarks",
+    label: "Benchmarks",
+    links: [{ to: "/benchmarks", label: "Benchmarks", primary: true }],
   },
   {
     id: "operations",
     label: "Operations",
     links: [
       { to: "/development", label: "Operations", primary: true },
-      { to: "/benchmarks", label: "Benchmark progress" },
       { to: "/channel", label: "Conversation" },
       { to: "/model-io", label: "Calls" },
       { to: "/cycles", label: "Trace history" },
@@ -109,10 +112,10 @@ function groupForPath(pathname: string): NavGroupId | null {
   ) {
     return "research";
   }
+  if (pathname.startsWith("/benchmarks")) return "benchmarks";
   if (
     pathname === "/coordinator" ||
     pathname.startsWith("/development") ||
-    pathname.startsWith("/benchmarks") ||
     pathname.startsWith("/channel") ||
     pathname.startsWith("/model-io") ||
     pathname.startsWith("/cycles") ||
@@ -162,7 +165,9 @@ function AtlasNavigation({
                 end={link.end ?? false}
                 key={link.to}
                 onClick={onNavigate}
-                to={researchScopedHref(link.to, researchScope)}
+                to={group.id === "research"
+                  ? researchScopedHref(link.to, link.archive ? "all" : researchScope)
+                  : link.to}
               >
                 {link.label}
               </NavLink>
@@ -384,7 +389,7 @@ function AtlasApp() {
             <Route path="/channel" element={<Channel />} />
             <Route path="/cycles" element={<Cycles />} />
             <Route path="/coordinator" element={<LegacyRedirect to="/cycles" />} />
-            <Route path="/graph" element={<Graph />} />
+            <Route path="/graph" element={<LegacyRedirect to="/cycles" />} />
             <Route path="/experiments" element={<Experiments />} />
             <Route path="/experiments/:expId" element={<ExperimentDetail />} />
             <Route path="/model-io" element={<ModelIO />} />

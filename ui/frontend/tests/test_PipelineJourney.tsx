@@ -341,6 +341,28 @@ describe("PipelineJourney — the STEPPER draws 8 stations colored by real outco
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("PipelineJourney — sections are COLLAPSED to one verdict line by default", () => {
+  it("distinguishes a queued gate request from a read-only iteration-history stage", () => {
+    const literature = { ...FULL_ITER, experiment_outcome: null };
+    const queued = render(
+      <PipelineJourney item={iterItem("x")} journey={journeyOf(literature)} />,
+    );
+    expect(screen.getByTestId("journey-overview")).toHaveTextContent(
+      /A gate-verdict request is queued; recorded gate stage: pending/i,
+    );
+    queued.unmount();
+
+    render(
+      <PipelineJourney
+        item={{ kind: "iteration_history", id: "x" }}
+        journey={journeyOf(literature)}
+      />,
+    );
+    expect(screen.getByTestId("journey-overview")).toHaveTextContent(
+      /record alone does not establish a human-action request/i,
+    );
+    expect(screen.getByTestId("journey-loaded")).toBeInTheDocument();
+  });
+
   it("no section body is mounted until the human expands it", () => {
     render(<PipelineJourney item={iterItem("x")} journey={journeyOf(FULL_ITER)} />);
     for (const k of STATION_KEYS) {
@@ -354,9 +376,9 @@ describe("PipelineJourney — sections are COLLAPSED to one verdict line by defa
     expect(
       screen.queryByText("no prior asymmetric-thinning result in retrieval."),
     ).toBeNull();
-    expect(
-      screen.queryByText("Order books thin asymmetrically before resolution."),
-    ).toBeNull();
+    expect(screen.getByTestId("journey-overview")).toHaveTextContent(
+      "Order books thin asymmetrically before resolution.",
+    );
   });
 
   it("the collapsed line states the step's outcome — the 15-second read", () => {

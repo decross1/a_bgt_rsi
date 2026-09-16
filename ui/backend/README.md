@@ -1,59 +1,86 @@
-# Backend
+# UI backend
 
-FastAPI service that reads the apparatus's JSONL logs and serves the
-dashboard and chain inspector. Read-only — it never writes anything.
-See `ui_plan.md` §5.2.
+FastAPI serves the lab's research, benchmark and operations projections on
+port 8700. Most routes read bounded files or incremental log indexes. Human
+actions use explicit POST seams which validate capabilities and call the
+canonical writer; the service is not wholly read-only.
 
-## Run
+Start from the repository root:
 
-```sh
-pip install -r ui/requirements-ui.txt
-ui/backend/run.sh                              # serves on :8700
-curl -s localhost:8700/api/health
+```bash
+ui/scripts/ui-services.sh status
+curl -fsS http://127.0.0.1:8700/api/health
 ```
 
-## Endpoints
+For development, `ui/backend/run.sh` runs the backend directly. Production UI
+processes are managed by `ui/scripts/ui-services.sh`; `ensure` starts missing
+components, while `start` restarts all three. Follow the targeted recovery
+instructions in [the operator guide](../../docs/v2/OPERATOR_GUIDE.md) when
+only the backend needs to adopt changed code.
 
-| Endpoint | Returns |
-|---|---|
-| `GET /api/health` | `{ok, telemetry_last_seen, version}` |
-| `GET /api/chain/{task_id}` | full causal tree for a task (404 if unknown) |
-| `GET /api/recent_tasks?limit=50` | recent orchestrator dispatches, latest first |
+## Product boundaries
 
-(The week1-state passthrough endpoint was retired in UI simplification S3
-— nothing rendered it.)
+| Surface | Principal read endpoints | Meaning |
+| --- | --- | --- |
+| Now / Operations | `/api/health`, `/api/research_ops_status`, `/api/served_models` | Current process and recorded execution state |
+| Research | `/api/ladder`, `/api/research_scope`, `/api/iteration/{id}/journey` | Scoped claims, exact-record evidence and pending actions |
+| Application agenda | `/api/research_application_agenda` | Authored proposed direction, never completed study evidence |
+| Research archive | `/api/research`, `/api/experiments/{id}`, `/api/loop_v0/iterations` | Historical records and observed outcomes |
+| Benchmark program | `/api/benchmark_program` | Versioned core, freeze, run admission and comparable results |
+| Benchmark evidence catalog | `/api/weekly_upgrade/progress` and registered study projections | Historical diagnostics, budgets, runtime qualification and evidence limits |
+| Calls / traces | Model I/O routes, `/api/chain_by_request/{id}`, coordinator routes | Attributable requests and recorded causal links |
 
-`WS /api/live` is build step 6.4 and is not implemented yet.
+`app.py` is the route-registration inventory. `/openapi.json` contains the
+running service's full HTTP schema. `/api/health.version` identifies the commit
+loaded at process start, not merely the current checkout HEAD. `/api/live` is
+an implemented WebSocket for live updates.
 
-## Data sources
+The application includes explicit human-action routes under `/api/attest`,
+`/api/todo`, `/api/channel`, and LOOP_V0. Their presence does not grant a GET
+projection authority to execute a model, accept a finding, schedule a study,
+or deploy a model. See [the human writeback contract](../../docs/human_writeback_contract.md).
 
-- **Call log** — `logs/day*.jsonl` + `logs/exp*.jsonl` (there is no single
-  `calls.jsonl`; see `ui_plan.md` §4.2). Indexed by `request_id`.
-- **Orchestrator** — `logs/orchestrator.jsonl`, indexed by `task_id`.
-- **Telemetry** — `ui/logs/telemetry.jsonl` (for `/api/health`).
+## Sources and provenance
 
-All are tailed incrementally by byte offset (`tailer.py`) — files are
-never re-slurped, so `/api/chain` stays fast during active runs.
+Operational logs and mutable research state normally live in the canonical
+checkout, even when server code is in a worktree. Route modules declare their
+own roots and injectable test paths. Do not assume one universal `calls.jsonl`,
+one common study schema, or that a file's presence proves success.
 
-Paths are overridable by env var: `UI_LOGS_DIR`, `UI_TELEMETRY_FILE`,
-`UI_STATE_FILE`.
+Model/study projections validate registered source identities, terminal
+receipts and interpretation limits. Missing evidence is distinct from measured
+failure. Benchmarks are not scientific thesis validation; data collection is
+not a profitable strategy. Existing projections remain available to inspect
+older evidence when the main page changes.
 
-## Fixtures
+`benchmark_program.py` declares the active program artifact root.
+`benchmark_history.py` reads at most 32 registered arm directories and bounded
+regular JSON documents; redirected paths, conflicting hashes and future run
+receipts withhold scores. `comparison.history` is the canonical dated series,
+while `comparison.arms` contains compact references. Same-cohort paired deltas
+remain descriptive family or mechanism results. Neither endpoint imports or
+executes a model-generated repair during a GET.
 
-The apparatus's day-2 call schema and day-6 orchestrator schema do not
-exist yet. Generate synthetic logs with known chains to develop against:
+Selected research detail is loaded on demand. Large list/archive views use
+bounded windows, and the frontend must keep active-campaign and all-history
+scope explicit. Never join unrelated records by topic text alone.
 
-```sh
-cd ui && python3 -m backend.tests.fixtures.gen /tmp/fixture_logs
-UI_LOGS_DIR=/tmp/fixture_logs ui/backend/run.sh
+## Verification
+
+From the repository root:
+
+```bash
+PYTHONPATH=ui:. .venv-chroma/bin/python -m pytest -q ui/backend/tests
 ```
 
-The generator (`tests/fixtures/gen.py`) only commits to the structural
-fields `ui_plan.md` §4.2 marks stable; payload fields are plausible
-placeholders. Swap to real logs when days 2 and 6 land.
+Test roots and transport doubles should isolate reads/writes from live
+research. A passing unit test does not replace a fresh browser check of changed
+routes, an exact-record drill-down, and a live health check after deployment.
+Historical fixture generators under `ui/backend/tests/fixtures/` are
+development aids rather than the current production schema.
 
-## Tests
-
-```sh
-pytest ui/backend/tests
-```
+For frontend cleanup, run `node ui/scripts/component-inventory.mjs` from the
+repository root. It reports import reachability and unresolved edges without
+deleting anything. Confirm routing, dynamic entrypoints and external usage
+before removing a candidate. The September 16 cleanup also removed the graph
+libraries after their final production consumers were retired.

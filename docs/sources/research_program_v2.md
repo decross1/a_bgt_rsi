@@ -2,6 +2,15 @@
 
 A 2–5 year meta-scientific project on AI-augmented independent research.
 
+**Current application direction, 2026-09-16.** The owner now prefers investigating
+options while keeping prediction markets and justified crypto available. Choose
+the game-theoretic mechanism and observable evidence before selecting a venue.
+The dated arc below preserves the original orientation; its Polymarket-first
+language is superseded by the [current application agenda](../v2/APPLICATION_RESEARCH_AGENDA.md).
+Current runtime and evidence contracts live in [LOOP_V2](../../LOOP_V2.md), and
+the active campaign is resolved from its activation receipt rather than this
+long-term planning document.
+
 ## The Research Program
 
 **Central question.** Can a well-designed at-home research loop, run by an independent researcher with modest hardware, produce findings at the productive edge of a research field — not through recursive self-improvement of models, but through amplifying a single human's ability to explore, evaluate, and contribute?

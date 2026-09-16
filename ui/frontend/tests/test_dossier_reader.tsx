@@ -13,8 +13,8 @@
 //   - the CHAT panes NEVER expose a disposition (the verdict fence);
 //   - the forms render UNCONDITIONALLY (no resolution-locked element;
 //     calibration is opt-in and gates nothing);
-//   - an id NOT in the live queue resolves its kind from the sf-*/iter-*
-//     prefix (the index's resolved-history rows).
+//   - a preserved iter-* id NOT in the human-action queue stays readable and
+//     interrogable, but exposes no verdict, CLI, or defer mutation.
 //
 // Network is stubbed by URL (mirrors the retired suite). The attest capability
 // probe answers LIVE so the self-gating forms actually render their testids —
@@ -86,7 +86,7 @@ beforeEach(() => {
           defer: true,
         },
       });
-    // The tutor + journey self-fetches degrade in place (found:false).
+    // Finding detail and journey self-fetches degrade in place (found:false).
     if (u.includes("/api/finding/"))
       return jsonResponse(200, { found: false, finding_id: "x" });
     if (u.includes("/journey"))
@@ -136,7 +136,7 @@ const FINDING_KEYED = [
 describe("DossierReader — source-history boundary", () => {
   it("does not present an old direct bookmark as current-campaign evidence", () => {
     renderReader("iter-old-history", []);
-    expect(screen.getByTestId("dossier-history-boundary")).toHaveTextContent(
+    expect(screen.getByTestId("research-scope-history")).toHaveTextContent(
       /Source-library history/,
     );
     expect(screen.getByRole("link", { name: "All research history" })).toHaveAttribute(
@@ -151,6 +151,12 @@ describe("DossierReader — source-history boundary", () => {
       "href",
       "/dossier?research_scope=all",
     );
+    expect(screen.getByTestId("dossier-gate-not-requested")).toHaveTextContent(
+      /not listed as a gate-verdict request/i,
+    );
+    expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
+    expect(screen.queryByTestId("dossier-gate-cli")).toBeNull();
+    expect(screen.queryByTestId("defer-form")).toBeNull();
   });
 });
 
@@ -327,13 +333,19 @@ describe("DossierReader — prefix fallback for ids NOT in the live queue", () =
     expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
   });
 
-  it("an iter-* id resolves as an ITERATION dossier (queue miss — the resolved history rows)", async () => {
+  it("an unqueued iter-* record stays readable but cannot create a gate action from its prefix", () => {
     renderReader("iter-2026-06-10-001", []);
-    expect(screen.getByTestId("dossier-kind")).toHaveTextContent("gate_verdict");
-    await waitFor(() =>
-      expect(screen.getByTestId("gate-verdict-form")).toBeInTheDocument(),
+    expect(screen.getByTestId("dossier-kind")).toHaveTextContent(
+      "iteration history",
     );
+    expect(screen.getByTestId("dossier-gate-not-requested")).toHaveTextContent(
+      /pending stage alone does not establish an actionable request/i,
+    );
+    expect(screen.queryByTestId("gate-verdict-form")).toBeNull();
+    expect(screen.queryByTestId("dossier-gate-cli")).toBeNull();
+    expect(screen.queryByTestId("defer-form")).toBeNull();
     for (const id of FINDING_KEYED) expect(screen.queryByTestId(id)).toBeNull();
+    expectAuxRevealableTrioHidden();
   });
 
   it("an unprefixed unknown id degrades honestly: unknown kind, defer-less, no keyed family", () => {
@@ -483,9 +495,9 @@ describe("DossierReader — header + spine", () => {
     );
     // The journey spine mounts (its own suite owns the internals).
     expect(screen.getByTestId("pipeline-journey")).toBeInTheDocument();
-    // The tutor overview mounts pre-reveal (the trimmed TutorPanel).
-    expect(screen.getByTestId("tutor-panel")).toBeInTheDocument();
-    expect(screen.queryByTestId("tutor-considerations")).toBeNull();
+    // One journey owns both the concise overview and the expandable record.
+    expect(screen.getAllByTestId("pipeline-journey")).toHaveLength(1);
+    expect(screen.queryByTestId("tutor-panel")).toBeNull();
   });
 
   it("the deferred sky chip renders on a deferred dossier", () => {
@@ -552,9 +564,9 @@ describe("DossierReader — R2 header block (id · kind · rung · title · age)
   });
 });
 
-describe("DossierReader — R2 tutor summary is trimmed to claim + evidence refs", () => {
-  // The reader's TutorPanel self-fetches; feed it a REAL finding detail so the
-  // loaded (not the "unavailable") branch is what gets asserted.
+describe("DossierReader — one source-bound overview", () => {
+  // Feed the consolidated journey a finding detail and its exact source
+  // iteration. It owns the overview as well as the expandable station record.
   function stubFindingDetail() {
     vi.stubGlobal("fetch", async (url: unknown) => {
       const u = String(url);
@@ -578,47 +590,63 @@ describe("DossierReader — R2 tutor summary is trimmed to claim + evidence refs
           },
         });
       if (u.includes("/journey"))
-        return jsonResponse(200, { found: false, iteration_id: "x", iteration: null });
+        return jsonResponse(200, {
+          found: true,
+          iteration_id: "iter-2026-06-14-002",
+          iteration: {
+            iteration_id: "iter-2026-06-14-002",
+            ended_at: "2026-06-14T09:40:00Z",
+            hypothesis: { text: "Does second-price payment remove profitable shading?" },
+            critique: { verdict: "survives", rationale: "No counter-example was recorded." },
+            gate_status: "pending",
+            journal_entry_path: "journal/iterations/002.md",
+          },
+        });
       if (u.endsWith("/api/coordinator/cycles")) return jsonResponse(200, { cycles: [] });
       return jsonResponse(404, {});
     });
   }
 
-  it("keeps the claim + evidence refs; DROPS the prose dump", async () => {
+  it("keeps one question, outcome boundary, learning, next step, and evidence refs", async () => {
     stubFindingDetail();
     renderReader(FINDING_REVIEW_ITEM.id, [FINDING_REVIEW_ITEM]);
     await waitFor(() =>
-      expect(screen.getByTestId("tutor-overview")).toBeInTheDocument(),
+      expect(screen.getByTestId("journey-overview")).toBeInTheDocument(),
     );
-    const tutor = screen.getByTestId("tutor-panel");
-    // KEPT — the claim and the read-only evidence refs.
-    expect(tutor).toHaveTextContent(
+    const overview = screen.getByTestId("journey-overview");
+    expect(overview).toHaveTextContent(
       "Bidders stop shading once the payment rule is second-price.",
     );
-    expect(within(tutor).getByTestId("tutor-evidence")).toHaveTextContent(
+    expect(within(overview).getByTestId("journey-overview-evidence")).toHaveTextContent(
       "journal/iterations/002.md",
+    );
+    expect(overview).toHaveTextContent("No experiment outcome is recorded");
+    expect(overview).toHaveTextContent("Recorded critic assessment");
+    expect(overview).toHaveTextContent("No source-recorded next experiment is attached");
+    expect(overview).toHaveTextContent(
+      /record alone does not establish a human-action request/i,
     );
     // DROPPED — the prose dump. The source iteration IS the journey below.
     expect(screen.queryByTestId("tutor-source-iteration")).toBeNull();
     expect(screen.queryByTestId("tutor-outcome-effects")).toBeNull();
-    expect(tutor).not.toHaveTextContent(
+    expect(overview).not.toHaveTextContent(
       "A counter-example auction where shading still pays.",
     );
-    expect(tutor).not.toHaveTextContent(
+    expect(overview).not.toHaveTextContent(
       "It is the whole basis for the truthful-bidding claim.",
     );
   });
 
-  it("the tutor FENCE NOTE still renders in the compact variant (the fence is not a style)", async () => {
+  it("qualifies model and producer text as provenance rather than a conclusion", async () => {
     stubFindingDetail();
     renderReader(FINDING_REVIEW_ITEM.id, [FINDING_REVIEW_ITEM]);
     await waitFor(() =>
-      expect(screen.getByTestId("tutor-overview")).toBeInTheDocument(),
+      expect(screen.getByTestId("journey-overview")).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("tutor-fence-note")).toHaveTextContent(/D-053/);
-    expect(screen.getByTestId("tutor-fence-note")).toHaveTextContent(
-      /it never recommends/i,
+    expect(screen.getByTestId("journey-overview")).toHaveTextContent(
+      /producer reviews and model summaries are provenance, not accepted scientific conclusions/i,
     );
+    expect(screen.queryByTestId("tutor-panel")).toBeNull();
   });
 });
 
@@ -654,7 +682,7 @@ describe("DossierReader — R2 the journey opens COLLAPSED under the sticky step
     });
   }
 
-  it("the stepper renders 8 stations and NO section body is mounted", async () => {
+  it("the overview is visible while all 8 detailed station bodies stay unmounted", async () => {
     stubJourney();
     renderReader(GATE_VERDICT_ITEM.id, [GATE_VERDICT_ITEM]);
     await waitFor(() =>
@@ -674,11 +702,15 @@ describe("DossierReader — R2 the journey opens COLLAPSED under the sticky step
       expect(within(stepper).getByTestId(`stepper-station-${k}`)).toBeInTheDocument();
       expect(screen.queryByTestId(`journey-body-${k}`)).toBeNull();
     }
-    // The prose is genuinely absent from the page, not merely hidden.
-    expect(
-      screen.queryByText("A long hypothesis paragraph the reader should not dump."),
-    ).toBeNull();
-    expect(screen.queryByText("a critic paragraph")).toBeNull();
+    // The concise overview intentionally surfaces the question and strongest
+    // recorded criticism once; the detailed station bodies remain absent.
+    expect(screen.getByTestId("journey-overview")).toHaveTextContent(
+      "A long hypothesis paragraph the reader should not dump.",
+    );
+    expect(screen.getByTestId("journey-overview")).toHaveTextContent("a critic paragraph");
+    expect(screen.getByTestId("journey-overview")).toHaveTextContent(
+      /gate-verdict request is queued/i,
+    );
   });
 
   it("expanding a section reveals its prose and leaves the FENCE untouched", async () => {

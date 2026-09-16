@@ -11,7 +11,7 @@
 // by name across rounds — `renderQuietly` x4 with differing bodies,
 // `MALFORMED_CYCLES` x2 with differing bodies) are lexically isolated and never
 // clash. Every it()/test() case and assertion is preserved verbatim.
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import Experiments from "../src/routes/Experiments";
@@ -120,14 +120,15 @@ describe("Experiments hardening r1 — partial/legacy/malformed rows", () => {
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });
 
-  it("renders on malformed coordinator cycles (missing timestamp/run_id)", () => {
+  it("ignores deprecated coordinator-cycle input without disturbing the archive", () => {
     const { error, warn } = renderQuietly(
       <Experiments
         initial={MALFORMED_RESEARCH}
         initialCoordinatorCycles={MALFORMED_CYCLES}
       />,
     );
-    expect(screen.getByTestId("coordinator-cycles-section")).toBeInTheDocument();
+    expect(screen.getByTestId("experiments-page")).toBeInTheDocument();
+    expect(screen.queryByTestId("coordinator-cycles-section")).toBeNull();
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });
@@ -295,16 +296,15 @@ describe("Experiments hardening r2 — malformed value TYPES", () => {
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });
 
-  it("renders on coordinator cycles with a numeric timestamp / object run_id", () => {
+  it("ignores malformed deprecated cycle rows without logging", () => {
     const { error, warn } = renderQuietly(
       <Experiments
         initial={MALFORMED_TYPES}
         initialCoordinatorCycles={MALFORMED_CYCLES}
       />,
     );
-    expect(screen.getByTestId("coordinator-cycles-section")).toBeInTheDocument();
-    // The null cycle element was dropped; the one real cycle still rendered.
-    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(1);
+    expect(screen.getByTestId("experiments-page")).toBeInTheDocument();
+    expect(screen.queryByTestId("coordinator-cycle-card")).toBeNull();
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });
@@ -411,7 +411,7 @@ describe("Experiments hardening r3 — scale + content", () => {
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });
 
-  it("renders 1000+ experiment cards and 1000+ coordinator cycles", () => {
+  it("bounds 1000+ evaluation records and ignores duplicated cycle history", () => {
     const exps = Array.from({ length: 1200 }, (_, i) => ({
       id: `exp${i}`,
       title: `title ${i}`,
@@ -441,8 +441,11 @@ describe("Experiments hardening r3 — scale + content", () => {
       <Experiments initial={big} initialCoordinatorCycles={cycles} />,
     );
     expect(screen.getByTestId("experiments-page")).toBeInTheDocument();
-    // All 1200 cycle cards rendered (no row silently dropped at scale).
-    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(1200);
+    expect(screen.getAllByTestId(/^research-card-/)).toHaveLength(40);
+    expect(screen.getByTestId("experiments-page-count")).toHaveTextContent("Showing 40 of 1200");
+    fireEvent.click(screen.getByTestId("experiments-show-more"));
+    expect(screen.getAllByTestId(/^research-card-/)).toHaveLength(80);
+    expect(screen.queryByTestId("coordinator-cycle-card")).toBeNull();
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });

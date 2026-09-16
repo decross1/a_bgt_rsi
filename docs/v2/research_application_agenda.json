@@ -1,0 +1,60 @@
+{
+  "schema_version": "research-application-agenda/v1",
+  "agenda_id": "mechanism-led-applications-20260916",
+  "recorded_at": "2026-09-16T04:00:10Z",
+  "status": "proposed_research_agenda",
+  "owner_direction": "Game theory and agent behavior, with options as the preferred application to investigate; prediction markets and justified crypto remain alternatives.",
+  "selection_rule": "Choose an observable strategic mechanism first, then the venue and data that can test it.",
+  "horizon": "One month to a reproducible research result and an honest paper-evaluation decision.",
+  "research_question": "When do bounded agents respond correctly to incentives, information and risk constraints, and which measured behavior transfers to a market mechanism?",
+  "execution_authorized": false,
+  "data_entitlement_verified": false,
+  "lanes": [
+    {
+      "id": "options",
+      "label": "Options",
+      "priority": "preferred_to_investigate",
+      "status": "data_and_identification_review",
+      "mechanism": "Inventory and hedging constraints interacting with demand and asymmetric information.",
+      "test": "Test a preregistered change in spreads or relative option prices against observable demand or risk proxies, after conditioning on contract and underlying state.",
+      "requirements": ["Time-aligned option and underlying quotes", "Contract, expiry, strike and option type", "Declared IV/Greek method and data entitlement", "Observable treatment, costs and a chronological holdout"],
+      "kill_condition": "The proposed mechanism requires unobserved dealer inventories, disappears after spread and execution costs, or cannot be separated from ordinary risk exposure.",
+      "source_ids": ["demand_option_pricing", "cboe_option_intervals"]
+    },
+    {
+      "id": "prediction_markets",
+      "label": "Prediction markets",
+      "priority": "alternative_if_mechanism_fits",
+      "status": "data_and_identification_review",
+      "mechanism": "Belief aggregation, incentive-compatible reporting and strategic reactions to public information.",
+      "test": "Compare preregistered calibrated forecasts with the contemporaneous market baseline on strictly future resolved events.",
+      "requirements": ["As-of forecasts and quotes", "Exact resolution rules and settled outcomes", "Historical/live coverage and cutoff audit", "Brier or log score separate from executable returns"],
+      "kill_condition": "The gain requires information available only after the decision, settlement selection, or treating quoted probability improvement as realized trading profit.",
+      "source_ids": ["prediction_prices", "kalshi_history"]
+    },
+    {
+      "id": "crypto",
+      "label": "Crypto where justified",
+      "priority": "mechanism_dependent",
+      "status": "no_default_asset_selected",
+      "mechanism": "Venue-specific liquidity, funding or strategic participation, when the research identifies a testable mechanism.",
+      "test": "Name the venue, asset, mechanism and observable intervention before registering a study.",
+      "requirements": ["Mechanism-specific venue and instrument choice", "As-of source coverage", "Realistic fees, funding and execution assumptions", "A frozen future evaluation"],
+      "kill_condition": "The asset was selected only because a collector already exists, or spot-data results are claimed to transfer to derivatives without validation.",
+      "source_ids": []
+    }
+  ],
+  "next_agenda": [
+    {"id": "mechanism", "label": "Select the mechanism", "status": "proposed", "deliverable": "One falsifiable hypothesis with observed variables, alternatives and an explicit rejection test."},
+    {"id": "data", "label": "Prove the data can answer it", "status": "proposed", "deliverable": "A small entitlement-checked sample, as-of joins, missingness audit and cost model."},
+    {"id": "experiment", "label": "Freeze the experiment", "status": "proposed", "deliverable": "A registered baseline, chronological split, primary metric and stop conditions before outcomes are inspected."},
+    {"id": "transfer", "label": "Test transfer and decide", "status": "proposed", "deliverable": "A reproducible result, independent critique and a supported paper-study or no-go decision."}
+  ],
+  "history_policy": "Existing BTC collection and H1 receipts remain historical method evidence. They do not choose the next asset or establish an options result.",
+  "sources": [
+    {"id": "demand_option_pricing", "title": "Garleanu, Pedersen and Poteshman: Demand-Based Option Pricing", "url": "https://www.nber.org/papers/w11843", "accessed_at": "2026-09-16"},
+    {"id": "cboe_option_intervals", "title": "Cboe Option Quote Intervals: fields and coverage", "url": "https://datashop.cboe.com/option-quote-intervals", "accessed_at": "2026-09-16"},
+    {"id": "prediction_prices", "title": "Wolfers and Zitzewitz: Interpreting Prediction Market Prices as Probabilities", "url": "https://www.nber.org/papers/w12200", "accessed_at": "2026-09-16"},
+    {"id": "kalshi_history", "title": "Kalshi historical data API", "url": "https://docs.kalshi.com/getting_started/historical_data", "accessed_at": "2026-09-16"}
+  ]
+}

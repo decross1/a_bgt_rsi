@@ -3,15 +3,13 @@
 // + one-line description. Each experiment is a vettable card: id + title, a
 // verdict chip (YES/ok=emerald, NO/bad=red, warn=amber, none=zinc), and BRIDGE
 // badges naming the loop iteration(s) it bridged into. Nothing is fabricated:
-// an absent verdict reads "no verdict"; an applied design-only entry reads
-// "design-only — not run"; an empty bridge reads "not yet bridged into the
+// an absent verdict reads "no verdict"; an absent indexed result stays
+// explicitly unknown; an empty bridge reads "not yet bridged into the
 // loop". An untiered section appears only when an on-disk dir is unmapped.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import CoordinatorCycleCard from "../components/CoordinatorCycleCard";
 import ResearchScopeBar from "../components/ResearchScopeBar";
 import { getResearch } from "../api/experiments";
-import { getCoordinatorCycles } from "../api/http";
 import { fmt } from "../format";
 import {
   researchScopedHref,
@@ -25,18 +23,16 @@ import type {
   ResearchTier,
   ResearchVerdict,
 } from "../types/experiments";
-import type { CoordinatorCycle } from "../types/schemas";
 
 interface Props {
   initial?: ResearchResponse | null;
-  // Coordinator cycles rendered as auditable units (plan → outcome → evidence).
-  // Injected for tests; otherwise fetched alongside the research index. Gated on
-  // the research `initial` so a static render stays network-free.
-  initialCoordinatorCycles?: CoordinatorCycle[];
+  /** Retained as a no-op compatibility seam for older fixture callers. */
+  initialCoordinatorCycles?: unknown[];
 }
 
 const CARD =
   "block rounded border border-zinc-800 bg-zinc-900/40 p-4 hover:border-zinc-700";
+const ARCHIVE_PAGE_SIZE = 40;
 
 // The /api/research payload is producer-owned (backend walks experiments/*/
 // results/ heterogeneously; a legacy/partial/malformed row — or a future EMIT
@@ -190,25 +186,15 @@ function BridgeRow({ exp }: { exp: ResearchExperiment }) {
   );
 }
 
-function ResearchCard({
-  exp,
-  tier,
-}: {
-  exp: ResearchExperiment;
-  tier?: string;
-}) {
-  // Not-run: nothing was produced — no readable summary, no derived verdict,
-  // and no bridge. This covers both an ABSENT results dir and a PRESENT-but-
-  // empty one (e.g. applied/exp007's .gitkeep-only dir), without ever guessing
-  // a result that isn't there. The applied tier is CFTC-gated design-only, so
-  // its copy says so; other no-result dirs just haven't run yet.
-  const notRun =
+function ResearchCard({ exp }: { exp: ResearchExperiment }) {
+  // The index only knows whether indexed result artifacts are present. It must
+  // not turn their absence into a claim that the evaluation never ran; the
+  // source detail can contain evidence that an older index omitted.
+  const resultUnknown =
     !exp.verdict &&
     asArray(exp.bridge).length === 0 &&
     !exp.has_summary_json &&
     !exp.has_summary_md;
-  const notRunCopy =
-    tier === "applied" ? "design-only — not run" : "no results yet — not run";
   // `id`/`title` are producer scalars but a malformed row could carry an object
   // there; rendered as a React child that throws "Objects are not valid as a
   // React child" and unwinds the whole grid. Coerce to a string (empty string
@@ -230,8 +216,8 @@ function ResearchCard({
         </span>
       </div>
 
-      {notRun && (
-        <div className="mt-2 text-xs text-amber-400/90">{notRunCopy}</div>
+      {resultUnknown && (
+        <div className="mt-2 text-xs text-amber-400/90">No result summary in this index · open the source record to verify status</div>
       )}
 
       <div className="mt-2 text-[9px] uppercase tracking-wide text-zinc-600">
@@ -243,7 +229,13 @@ function ResearchCard({
   );
 }
 
-function TierSection({ tier }: { tier: ResearchTier }) {
+function TierSection({
+  tier,
+  experiments: suppliedExperiments,
+}: {
+  tier: ResearchTier;
+  experiments?: ResearchExperiment[];
+}) {
   // A legacy/truncated tier row may carry no `experiments` array OR a non-array
   // there; `asArray` coerces both so the section renders its "no experiments"
   // state rather than crashing on `.length`/`.map`. A non-object experiment
@@ -251,7 +243,7 @@ function TierSection({ tier }: { tier: ResearchTier }) {
   // `description` are coerced for rendering as React children: an object there
   // throws "Objects are not valid as a React child". The tier id also anchors
   // the testid/key, so an absent/object id falls back to "untiered".
-  const experiments = asArray<unknown>(tier.experiments).filter(
+  const experiments = suppliedExperiments ?? asArray<unknown>(tier.experiments).filter(
     (e): e is ResearchExperiment => typeof e === "object" && e !== null,
   );
   const tierId = asText(tier.tier) ?? "untiered";
@@ -275,7 +267,6 @@ function TierSection({ tier }: { tier: ResearchTier }) {
             <ResearchCard
               key={asText(exp.id) ?? `exp-${i}`}
               exp={exp}
-              tier={tierId}
             />
           ))}
         </div>
@@ -284,16 +275,14 @@ function TierSection({ tier }: { tier: ResearchTier }) {
   );
 }
 
-export default function Experiments({ initial, initialCoordinatorCycles }: Props) {
+export default function Experiments({ initial }: Props) {
   const researchScope = useResearchScope();
   const [data, setData] = useState<ResearchResponse | null>(initial ?? null);
   const [dataScope, setDataScope] = useState<ResearchScope | null>(
     initial !== undefined ? researchScope : null,
   );
   const [error, setError] = useState<string | null>(null);
-  const [cycles, setCycles] = useState<CoordinatorCycle[]>(
-    initialCoordinatorCycles ?? [],
-  );
+  const [visibleCount, setVisibleCount] = useState(ARCHIVE_PAGE_SIZE);
 
   useEffect(() => {
     if (initial !== undefined) {
@@ -312,31 +301,6 @@ export default function Experiments({ initial, initialCoordinatorCycles }: Props
         if (!active) return;
         setDataScope(researchScope);
         setError(String(e));
-      });
-    return () => {
-      active = false;
-    };
-  }, [initial, researchScope]);
-
-  useEffect(() => {
-    // Static-render gate: when the research index is injected (test mode), do
-    // not self-fetch the coordinator cycles either — use whatever was injected.
-    if (initial !== undefined) return;
-    if (researchScope !== "all") {
-      setCycles([]);
-      return;
-    }
-    let active = true;
-    getCoordinatorCycles()
-      .then((r) => {
-        if (!active) return;
-        const sorted = [...r.cycles].sort((a, b) =>
-          (b.timestamp ?? "").localeCompare(a.timestamp ?? ""),
-        );
-        setCycles(sorted);
-      })
-      .catch(() => {
-        /* coordinator cycles are optional context here; never block the index */
       });
     return () => {
       active = false;
@@ -369,21 +333,33 @@ export default function Experiments({ initial, initialCoordinatorCycles }: Props
     (tier) =>
       researchScope === "all" || asArray(tier.experiments).length > 0,
   );
-  // `cycles` is React state (CoordinatorCycle[]); the live fetch path is
-  // .catch-guarded, but an injected `initialCoordinatorCycles` could be a
-  // non-array or carry a null/non-object element. Coerce to an array and drop
-  // non-object rows so the key access (`cycle.run_id`) and CoordinatorCycleCard
-  // never receive a null/scalar that would crash this list.
-  const cycleList = asArray<CoordinatorCycle>(cycles).filter(
-    (c): c is CoordinatorCycle => typeof c === "object" && c !== null,
-  );
-  const showCoordinatorHistory =
-    researchScope === "all" || initialCoordinatorCycles !== undefined;
+  useEffect(() => {
+    setVisibleCount(ARCHIVE_PAGE_SIZE);
+  }, [researchScope, scopedData]);
 
+  const boundedArchive = useMemo(() => {
+    let remaining = visibleCount;
+    const boundedTiers = visibleTiers.flatMap((tier) => {
+      const experiments = asArray<unknown>(tier.experiments).filter(
+        (entry): entry is ResearchExperiment => typeof entry === "object" && entry !== null,
+      );
+      const shown = experiments.slice(0, Math.max(0, remaining));
+      remaining -= shown.length;
+      // Preserve genuinely empty tier headings in the all-history archive, but
+      // do not render a false empty state for a tier whose rows are merely on a
+      // later page.
+      return shown.length > 0 || experiments.length === 0
+        ? [{ tier, experiments: shown }]
+        : [];
+    });
+    const boundedUntiered = untiered.slice(0, Math.max(0, remaining));
+    return { tiers: boundedTiers, untiered: boundedUntiered };
+  }, [untiered, visibleCount, visibleTiers]);
+  const shownExperiments = Math.min(nExperiments, visibleCount);
   return (
     <div className="mx-auto max-w-7xl p-5" data-testid="experiments-page">
       <div className="flex items-baseline gap-3">
-        <h1 className="text-base font-semibold text-zinc-100">Research</h1>
+        <h1 className="text-base font-semibold text-zinc-100">Evaluation archive</h1>
         <span className="text-[10px] text-zinc-600">/api/research</span>
       </div>
       <p className="mt-1 text-xs text-zinc-500">
@@ -413,11 +389,11 @@ export default function Experiments({ initial, initialCoordinatorCycles }: Props
               No experiment summary is explicitly linked to the current campaign. This is an empty campaign view, not a missing history archive.
             </div>
           )}
-          {visibleTiers.map((tier, i) => (
-              <TierSection key={asText(tier.tier) ?? `tier-${i}`} tier={tier} />
+          {boundedArchive.tiers.map(({ tier, experiments }, i) => (
+              <TierSection key={asText(tier.tier) ?? `tier-${i}`} tier={tier} experiments={experiments} />
           ))}
 
-          {untiered.length > 0 && (
+          {boundedArchive.untiered.length > 0 && (
             <section data-testid="tier-section-untiered" className="mt-6">
               <div className="flex items-baseline gap-2">
                 <h2 className="text-sm font-semibold text-zinc-100">Untiered</h2>
@@ -426,7 +402,7 @@ export default function Experiments({ initial, initialCoordinatorCycles }: Props
                 On-disk experiment dirs not mapped to a sandbox tier.
               </p>
               <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-2">
-                {untiered.map((exp, i) => (
+                {boundedArchive.untiered.map((exp, i) => (
                   <ResearchCard key={asText(exp.id) ?? `exp-${i}`} exp={exp} />
                 ))}
               </div>
@@ -439,49 +415,18 @@ export default function Experiments({ initial, initialCoordinatorCycles }: Props
         <div className="mt-4 text-sm text-zinc-500">Loading…</div>
       )}
 
-      {/* Coordinator cycles as auditable units. Each card carries the verdict's
-          plan → outcome → evidence chain (incl. an errored dispatch as an
-          explicit row), so a coordinator-driven result can be trusted or
-          doubted alongside the hand-run experiments above. */}
-      {showCoordinatorHistory && <section className="mt-8" data-testid="coordinator-cycles-section">
-        <div className="flex items-baseline gap-2">
-          <h2 className="text-sm font-semibold text-zinc-100">
-            Coordinator cycles · history
-          </h2>
-          <span className="font-mono text-[10px] text-zinc-600">
-            /api/coordinator/cycles
-          </span>
-          <span className="ml-auto text-[11px] text-zinc-500">
-            {cycleList.length}
-          </span>
-        </div>
-        <p className="mt-1 text-xs text-zinc-500">
-          Autonomous cycles as auditable units: the plan, each action's outcome,
-          the linked iteration, and the findings/bubbles it produced.
-        </p>
-        {cycleList.length === 0 ? (
-          <div
-            className="mt-3 text-xs text-zinc-600"
-            data-testid="coordinator-cycles-empty"
-          >
-            No coordinator cycles yet.
-          </div>
-        ) : (
-          <div className="mt-3 space-y-4">
-            {cycleList.map((cycle, i) => (
-              // `run_id` is the producer's join key; fall back to the index so a
-              // legacy row missing it doesn't collide into a duplicate-key warn.
-              <CoordinatorCycleCard
-                key={cycle.run_id ?? `cycle-${i}`}
-                cycle={cycle}
-              />
-            ))}
-          </div>
-        )}
-      </section>}
-
       <div className="mt-6 text-[11px] text-zinc-600">
-        {fmt(nExperiments)} experiment(s) across {fmt(visibleTiers.length)} visible tier(s).
+        <span data-testid="experiments-page-count">Showing {fmt(shownExperiments)} of {fmt(nExperiments)} evaluation record(s) across {fmt(visibleTiers.length)} tier(s).</span>
+        {shownExperiments < nExperiments && (
+          <button
+            type="button"
+            data-testid="experiments-show-more"
+            className="ml-3 rounded border border-zinc-800 px-2 py-1 text-sky-300 hover:border-zinc-600"
+            onClick={() => setVisibleCount((count) => count + ARCHIVE_PAGE_SIZE)}
+          >
+            Show {fmt(Math.min(ARCHIVE_PAGE_SIZE, nExperiments - shownExperiments))} more
+          </button>
+        )}
       </div>
     </div>
   );

@@ -42,6 +42,15 @@ TASKS = (
 )
 SCHEMA = "lab-diversity-cap-ui-progress/v1"
 REPLAY_SCHEMA = "lab-mia-diversity-cap-replay/v1"
+CLOSURE_WINDOW_ID = "qfn-ab-lab-diversity-cap-closure-20260916-b"
+CLOSURE_WINDOW_SHA = "cb2e98c4c70d9017cc9a15997f6f687d1ed3b74479879dd127bc7dc763b2cc98"
+CLOSURE_OUTPUT = ROOT / "model-windows" / f"{CLOSURE_WINDOW_ID}.flash"
+CLOSURE_FAILURE_HASHES = (
+    "f55f7cf926549017254004c555c19fd4d4d0021002d4e4635b0947af4dc3d59b",
+    "bb248a4af21bef2604d0b1557066ca040242df92f138cc7026d7cf0dfe5073e1",
+    "82fdd25f26a205770d051559d9afc1b78e6d07424b88bd8ae4e492606c18e9a5",
+    "7952cea197c8db15ab805de6ee8a1561389761f103a0697a86abe1905c6fdb8c",
+)
 
 
 def _document(path: Path, ceiling: int) -> tuple[dict, str]:
@@ -64,7 +73,9 @@ def _seconds(value: object) -> float:
     return float(value)
 
 
-def _registered(plan: dict, window: dict) -> None:
+def _registered(plan: dict, window: dict, *, window_id: str = "qfn-ab-lab-diversity-cap-20260915-a",
+                output: Path | None = None) -> None:
+    output = OUTPUT if output is None else output
     evaluator = "bench/flash_next_ab/lab_eval_diversity_cap.py"
     controller = "bench/flash_next_ab/lab_window.py"
     sources = window.get("controller_sources")
@@ -82,11 +93,11 @@ def _registered(plan: dict, window: dict) -> None:
             or not isinstance(refs, dict) or len(refs) != 16
             or refs.get(evaluator) != EVALUATOR_SHA
             or window.get("schema") != "lab-model-window/v1"
-            or window.get("window_id") != "qfn-ab-lab-diversity-cap-20260915-a"
+            or window.get("window_id") != window_id
             or window.get("evaluation_kind") != "diversity_cap"
             or window.get("cohort") != "flash"
             or window.get("code_root") != str(CODE_ROOT)
-            or window.get("output_dir") != str(OUTPUT)
+            or window.get("output_dir") != str(output)
             or window.get("evaluation_plan") != {"path": str(PLAN), "sha256": PLAN_SHA}
             or window.get("candidate_spec_id") != VARIANT
             or window.get("runtime_budget_s") != 2200
@@ -127,34 +138,38 @@ def _terminal_status() -> str:
         return "source_unavailable"
 
 
-def _known_startup_failure() -> str | None:
-    """Identify only the one archived host-paging startup abort."""
-    if any(value is None for value in (FAILED_RESULT_SHA, FAILED_STATE_SHA,
-                                        FAILED_SUPERVISION_SHA, FAILED_MEMORY_SHA)):
+def _known_startup_failure(*, output: Path | None = None,
+                           window_id: str = "qfn-ab-lab-diversity-cap-20260915-a",
+                           window_sha: str | None = None,
+                           failure_hashes: tuple | None = None) -> str | None:
+    """Identify a registered archived abort; never infer a quality outcome."""
+    output = OUTPUT if output is None else output
+    window_sha = WINDOW_SHA if window_sha is None else window_sha
+    expected = failure_hashes or (FAILED_RESULT_SHA, FAILED_STATE_SHA,
+                                  FAILED_SUPERVISION_SHA, FAILED_MEMORY_SHA)
+    if len(expected) != 4 or any(value is None for value in expected):
         return None
     if any(path.exists() or path.is_symlink() for path in (
-            OUTPUT / "evaluation/run.json", OUTPUT / "readiness.json",
-            OUTPUT / "probes.json", OUTPUT / "profile-canary.json")):
+            output / "evaluation/run.json", output / "readiness.json",
+            output / "probes.json", output / "profile-canary.json")):
         return None
     try:
-        result, result_sha = _document(OUTPUT / "result.json", 2_000_000)
-        state, state_sha = _document(OUTPUT / "state.json", 2_000_000)
-        supervisor, supervisor_sha = _document(OUTPUT / "supervision.json", 2_000_000)
-        memory = _read_path(OUTPUT / "memory.jsonl", maximum=32_000_000,
+        result, result_sha = _document(output / "result.json", 2_000_000)
+        state, state_sha = _document(output / "state.json", 2_000_000)
+        supervisor, supervisor_sha = _document(output / "supervision.json", 2_000_000)
+        memory = _read_path(output / "memory.jsonl", maximum=32_000_000,
                             label="archived cap startup safety sample")
-        if (result_sha != FAILED_RESULT_SHA or state_sha != FAILED_STATE_SHA
-                or supervisor_sha != FAILED_SUPERVISION_SHA
-                or hashlib.sha256(memory).hexdigest() != FAILED_MEMORY_SHA):
+        if (result_sha, state_sha, supervisor_sha, hashlib.sha256(memory).hexdigest()) != expected:
             return None
         restoration = result.get("restoration")
         if (result.get("schema") != "lab-model-window-result/v1"
-                or result.get("window_id") != "qfn-ab-lab-diversity-cap-20260915-a"
-                or result.get("window_sha256") != WINDOW_SHA
+                or result.get("window_id") != window_id
+                or result.get("window_sha256") != window_sha
                 or result.get("status") != "aborted"
                 or result.get("evaluation_run_sha256") is not None
                 or not isinstance(result.get("error"), str) or not result["error"]
                 or state.get("phase") != "aborted"
-                or state.get("window_sha256") != WINDOW_SHA
+                or state.get("window_sha256") != window_sha
                 or state.get("restoration") != restoration
                 or not isinstance(restoration, dict)
                 or restoration.get("status") != "verified"
@@ -162,7 +177,7 @@ def _known_startup_failure() -> str | None:
                 or restoration.get("diagnostic_errors") != []
                 or restoration.get("sentinel_retained") is not False
                 or supervisor.get("schema") != "lab-model-supervision/v1"
-                or supervisor.get("window_sha256") != WINDOW_SHA
+                or supervisor.get("window_sha256") != window_sha
                 or type(supervisor.get("returncode")) is not int
                 or supervisor["returncode"] == 0
                 or supervisor.get("interrupted") is not None
@@ -376,7 +391,7 @@ def _admitted(replay: dict, plan: dict) -> dict:
             "source_replay": "publication_time_only"}
 
 
-def project_progress(*, root: Path = ROOT) -> dict:
+def _legacy_progress(*, root: Path = ROOT) -> dict:
     """Project only exact fixed source refs; do not replay private streams per poll."""
     # `root` is a fixture seam. Production paths are literal children of ROOT.
     plan_path = root / PLAN.name
@@ -422,6 +437,52 @@ def project_progress(*, root: Path = ROOT) -> dict:
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         pass
     return entry
+
+
+def _closure_progress() -> dict:
+    entry = {"schema_version": SCHEMA, "observed_at": datetime.now(timezone.utc).isoformat(),
+             "status": "source_unavailable", "window_id": CLOSURE_WINDOW_ID,
+             "plan_raw_sha256": None, "window_raw_sha256": None,
+             "replay_raw_sha256": None, "results": None, "failure_reason_code": None,
+             "issued_calls": None, "restoration_verified": None,
+             "original_primary_scores_changed": False, "private_content_exported": False,
+             "promotion_authorized": False, "comparison_eligible": False}
+    try:
+        plan, plan_sha = _document(PLAN, 2_000_000)
+        window, window_sha = _document(CLOSURE_OUTPUT / "window.json", 2_000_000)
+        if plan_sha != PLAN_SHA or window_sha != CLOSURE_WINDOW_SHA:
+            raise ValueError("closure plan/window bytes differ")
+        _registered(plan, window, window_id=CLOSURE_WINDOW_ID, output=CLOSURE_OUTPUT)
+        entry.update(plan_raw_sha256=plan_sha, window_raw_sha256=window_sha)
+        reason = _known_startup_failure(
+            output=CLOSURE_OUTPUT, window_id=CLOSURE_WINDOW_ID,
+            window_sha=CLOSURE_WINDOW_SHA, failure_hashes=CLOSURE_FAILURE_HASHES)
+        if reason:
+            entry.update(status="incomplete_terminal", failure_reason_code=reason,
+                         issued_calls=0, restoration_verified=True)
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        pass
+    return entry
+
+
+def project_progress(*, root: Path = ROOT) -> dict:
+    """One diagnostic with an explicit attempt history, never another score panel."""
+    legacy = _legacy_progress(root=root)
+    # Preserve the original fixture seam and archived admission tests. Only the
+    # fixed production root can inspect the separately registered closure.
+    if root != ROOT:
+        return legacy
+    closure = _closure_progress()
+    attempts = []
+    for entry in (legacy, closure):
+        known_abort = entry.get("failure_reason_code") == "startup_host_swap_5s"
+        attempts.append({
+            "window_id": entry["window_id"], "status": entry["status"],
+            "failure_reason_code": entry["failure_reason_code"],
+            "issued_calls": 0 if known_abort else None,
+            "restoration_verified": True if known_abort else None,
+        })
+    return {**closure, "attempts": attempts}
 
 
 def register(app, *, projector: Callable[[], dict] = project_progress) -> None:

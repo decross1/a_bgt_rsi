@@ -364,6 +364,7 @@ vi.mock("../src/api/http", () => ({
     version: "test",
   }),
   getIterations: vi.fn().mockResolvedValue({ iterations: D.REAL_ITERATIONS }),
+  getIterationJourney: vi.fn().mockResolvedValue({ found: false, iteration_id: "missing", iteration: null }),
   getJournalEntry: vi.fn().mockResolvedValue({
     iteration_id: "iter-2026-06-09-002",
     path: "journal/iterations/065.md",
@@ -421,7 +422,6 @@ vi.mock("../src/api/experiments", () => ({
 // pick up the mocked modules).
 import Cycles from "../src/routes/Cycles";
 import Experiments from "../src/routes/Experiments";
-import Graph from "../src/routes/Graph";
 import Ladder from "../src/routes/Ladder";
 import Pulse from "../src/routes/Pulse";
 import DossierIndex from "../src/routes/DossierIndex";
@@ -468,12 +468,6 @@ describe("routes render against real data without console errors", () => {
 
   it("Experiments: real /api/research + real coordinator cycles", async () => {
     const { error, warn } = await renderRouteQuietly(<Experiments />);
-    expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
-    expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
-  });
-
-  it("Graph (S3 thin page): real empty graph renders console-clean", async () => {
-    const { error, warn } = await renderRouteQuietly(<Graph />);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });

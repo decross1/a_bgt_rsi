@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 
 import pytest
 
@@ -11,7 +12,7 @@ from bench.flash_next_ab import qualification as q
 
 
 @pytest.fixture
-def archived_cap():
+def archived_cap(monkeypatch):
     """Optional host archive integration; clean checkouts remain testable."""
     required = (cap.PLAN, cap.WINDOW, cap.OUTPUT / "state.json",
                 cap.OUTPUT / "result.json", cap.OUTPUT / "supervision.json",
@@ -20,6 +21,10 @@ def archived_cap():
                 cap.CODE_ROOT / "bench/flash_next_ab/lab_window.py")
     if any(not path.is_file() for path in required):
         pytest.skip("archived cap public evidence absent in this checkout")
+    # Validate the named archived attempt even after a newer study exists.
+    actual = lab.mr._open_latest_run
+    monkeypatch.setattr(lab.mr, "_open_latest_run", lambda root, **_kwargs:
+                        actual(root, namespace=re.compile(re.escape(lab.CAP_RUN_ID))))
 
 
 def _closed(monkeypatch, archived_cap):

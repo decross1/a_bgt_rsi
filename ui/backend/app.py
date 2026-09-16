@@ -1,7 +1,8 @@
 """FastAPI app for the dashboard + chain inspector.
 
-Read-only over the apparatus: it reads the JSONL logs and run_state, and
-never writes anything. LOOP_V0 endpoints live in `loop_v0.py`.
+Read projections over JSONL logs and run_state, plus narrow, capability-checked
+human-action endpoints. GET projections never execute research or model calls.
+LOOP_V0 endpoints live in `loop_v0.py`.
 """
 import asyncio
 import json
@@ -16,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .activity import register as register_activity
 from .applied_data_collection import register as register_applied_data_collection
 from .attest import register as register_attest
+from .benchmark_program import register as register_benchmark_program
 from .chain import LogStore, build_chain_by_request_id
 from .chat_seam import register as register_chat_seam
 from .coordinator import register as register_coordinator
@@ -41,6 +43,7 @@ from .loop_alert import register as register_loop_alert
 from .loop_v0 import register as register_loop_v0
 from .model_io import register as register_model_io
 from .payoff_tool_study_progress import register as register_payoff_tool_study_progress
+from .research_application_agenda import register as register_research_application_agenda
 from .research_ops_status import register as register_research_ops_status
 from .research_scope import register as register_research_scope
 from .served_models import register as register_served_models
@@ -229,7 +232,9 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
     register_activity(app, logs_dir=logs_dir, telemetry_file=telemetry_file)
     register_experiments(app)
     register_weekly_upgrade_progress(app)
+    register_benchmark_program(app)
     register_applied_data_collection(app)
+    register_research_application_agenda(app)
     register_research_scope(app, repo_root=Path(loop_v0_repo), memory_dir=Path(coordinator_memory))
     register_research_ops_status(app, repo_root=Path(loop_v0_repo))
     register_lab_model_eval_progress(app)

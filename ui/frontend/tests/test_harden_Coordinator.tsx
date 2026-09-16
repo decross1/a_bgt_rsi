@@ -458,6 +458,8 @@ describe("Coordinator hardening — r3: scale + content", () => {
     };
     const { error, warn } = await renderPollingQuietly();
 
+    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(20);
+    fireEvent.click(screen.getByRole("button", { name: /Show 5 older cycles/i }));
     expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(25);
     expect(
       error.some((m) => m.includes("same key")),
@@ -475,8 +477,9 @@ describe("Coordinator hardening — r3: scale + content", () => {
     const rows: CoordinatorCycle[] = Array.from({ length: 1000 }, (_, i) =>
       mk({ run_id: `coordinator_${i}`, topic: `bulk-${i}` }),
     );
-    rows.push(
+    rows.unshift(
       mk({
+        timestamp: "9999-12-31T23:59:59Z",
         run_id: "coordinator_unicode",
         // RTL override (U+202E/U+202C) + Arabic + emoji + HTML-looking text +
         // newlines + a tab — no injection, just hostile-looking content. React
@@ -485,15 +488,15 @@ describe("Coordinator hardening — r3: scale + content", () => {
           "مرحبا بالعالم ‮evil-reversed‬ 🚀🔥 <script>alert('x')</script>\nsecond line\tafter-tab",
       }),
     );
-    rows.push(mk({ run_id: "coordinator_long", topic: longString }));
+    rows.unshift(mk({ timestamp: "9999-12-31T23:59:58Z", run_id: "coordinator_long", topic: longString }));
     RESPONSE = { cycles: rows };
 
     const { error, warn } = await renderPollingQuietly();
 
-    // All rows rendered (1000 bulk + the two content rows).
-    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(1002);
+    // The history is bounded while the hostile content remains renderable.
+    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(20);
     // The header count reflects the renderable total, not NaN.
-    expect(screen.getByText("1002")).toBeInTheDocument();
+    expect(screen.getByText("20 of 1002")).toBeInTheDocument();
     // The 5k string is present verbatim somewhere in the page.
     expect(screen.getByText(longString)).toBeInTheDocument();
     // The page never surfaces a literal "NaN" in the narrative.
