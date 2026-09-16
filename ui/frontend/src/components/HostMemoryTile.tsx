@@ -10,8 +10,8 @@
 // — never a fabricated number.
 //
 // POLL DISCIPLINE mirrors HumanTodoPanel/SurfacedFindingsPanel: an `initial`
-// prop pins the render (fixtures/tests NEVER fetch), otherwise it polls
-// /api/telemetry/recent so it stands alone without parent wiring.
+// prop supplies the parent telemetry series (without fetching); otherwise it
+// polls /api/telemetry/recent so it stands alone without parent wiring.
 import { useEffect, useState } from "react";
 import { getRecentTelemetry } from "../api/http";
 import { fmt } from "../format";
@@ -72,7 +72,12 @@ export default function HostMemoryTile({
     };
   }, [initial, pollMs]);
 
-  const { values, latestGiB } = hostMemSeries(samples);
+  // HealthStrip supplies `initial` on every render. Read the current prop
+  // directly: state seeded from the first (often empty) stream snapshot would
+  // otherwise keep this tile unavailable after fresh samples arrive.
+  const { values, latestGiB } = hostMemSeries(
+    initial !== undefined ? initial : samples,
+  );
   const available = latestGiB != null;
 
   return (

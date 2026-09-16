@@ -114,6 +114,19 @@ describe("hostMemSeries — malformed / edge inputs degrade, never throw", () =>
 // === Component render: initial prop (no fetch) ==========================
 
 describe("HostMemoryTile — render with a malformed `initial` prop", () => {
+  it("uses a fresh parent sample after mounting with an empty stream", () => {
+    const spy = watchConsole();
+    const { rerender } = render(<HostMemoryTile initial={[]} />);
+    expect(screen.getByText("host telemetry unavailable")).toBeInTheDocument();
+    rerender(<HostMemoryTile initial={[goodSample(8192)]} />);
+    expect(screen.getByText("8.0")).toBeInTheDocument();
+    expect(screen.getByText("used")).toBeInTheDocument();
+    expect(screen.queryByText("host telemetry unavailable")).toBeNull();
+    expect(getRecentTelemetry).not.toHaveBeenCalled();
+    expect(spy.error).not.toHaveBeenCalled();
+    expect(spy.warn).not.toHaveBeenCalled();
+  });
+
   it("a valid initial renders the latest GiB with the 'used' note (valid path unchanged)", () => {
     const spy = watchConsole();
     render(<HostMemoryTile initial={[goodSample(8192)]} />);
