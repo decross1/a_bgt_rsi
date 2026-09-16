@@ -12,7 +12,7 @@
 // state. Detailed evidence remains collapsed until the reader opens it.
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { researchScopedHref, useResearchScope } from "../../researchScope";
+import { researchScopedHref, useResearchScope, type ResearchScope } from "../../researchScope";
 import type {
   FindingDetail,
   HumanTodoItem,
@@ -716,6 +716,9 @@ interface Props {
   /** Injected journey — when provided, wins and SUPPRESSES the self-fetch.
    *  Test-injection / preview override (mirrors TutorPanel's `detail`). */
   journey?: IterationJourneyResponse;
+  /** An explicit detail scope binds the journey read. Omission preserves the
+   * legacy unscoped contract for embedded/fixture callers. */
+  journeyScope?: ResearchScope;
   /** Injected finding detail (finding_review family) — when provided, wins and
    *  SUPPRESSES the getFindingDetail self-fetch. */
   detail?: FindingDetail;
@@ -729,7 +732,7 @@ function familyOf(kind: unknown): "iteration" | "finding" | "other" {
   return "other";
 }
 
-export default function PipelineJourney({ item, journey, detail }: Props) {
+export default function PipelineJourney({ item, journey, journeyScope, detail }: Props) {
   const itemObj = asRecord(item);
   const kind = itemObj?.kind;
   const family = familyOf(kind);
@@ -797,7 +800,10 @@ export default function PipelineJourney({ item, journey, detail }: Props) {
     let live = true;
     setFetchedJourney(null);
     setJourneyFailed(false);
-    getIterationJourney(sourceIterId)
+    const request = journeyScope === undefined
+      ? getIterationJourney(sourceIterId)
+      : getIterationJourney(sourceIterId, journeyScope);
+    request
       .then((j) => {
         if (live) setFetchedJourney(j);
       })
@@ -807,7 +813,7 @@ export default function PipelineJourney({ item, journey, detail }: Props) {
     return () => {
       live = false;
     };
-  }, [family, journey, sourceIterId]);
+  }, [family, journey, journeyScope, sourceIterId]);
 
   const resolvedJourney: IterationJourneyResponse | null =
     journey !== undefined ? journey : fetchedJourney;

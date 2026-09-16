@@ -359,6 +359,7 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
   const [archiveOpen, setArchiveOpen] = useState(
     () => new URLSearchParams(window.location.search).get("view") === "evidence",
   );
+  const requestedProgramRelease = new URLSearchParams(window.location.search).get("release");
   const programInitial = initialProgram === undefined && initial !== undefined ? null : initialProgram;
   const poll = usePolled(BENCHMARK_PROGRESS_POLL_KEY, getBenchmarkProgress, {
     intervalMs: 60_000,
@@ -430,7 +431,7 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
   if (data === undefined && !poll.failing) {
     return <section className="page-full benchmark-progress" aria-labelledby="benchmark-progress-title">
       <header className="benchmark-page-head"><div><p className="benchmark-eyebrow">Benchmarks</p><h1 id="benchmark-progress-title">Benchmark Progress</h1><p>Versioned panel status, matched comparisons, and historical evidence.</p></div></header>
-      <BenchmarkProgramOverview initial={programInitial} />
+      <BenchmarkProgramOverview key={requestedProgramRelease ?? "active"} initial={programInitial} release={requestedProgramRelease} />
       <SkeletonCard lines={7} />
       {showLab && <LabModelEvaluationPanel data={labData} pollingFailed={labPoll.failing} />}
       {showSupplement && <LabModelSupplementPanel data={supplementData} pollingFailed={supplementPoll.failing} />}
@@ -443,7 +444,7 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
   if (data == null) {
     return <section className="page-full benchmark-progress" aria-labelledby="benchmark-progress-title">
       <header className="benchmark-page-head"><div><p className="benchmark-eyebrow">Benchmarks</p><h1 id="benchmark-progress-title">Benchmark Progress</h1><p>Versioned panel status, matched comparisons, and historical evidence.</p></div></header>
-      <BenchmarkProgramOverview initial={programInitial} />
+      <BenchmarkProgramOverview key={requestedProgramRelease ?? "active"} initial={programInitial} release={requestedProgramRelease} />
       <section className="benchmark-source-empty" role="status"><h2>Unable to load benchmark history</h2>
         <p>{poll.failing ? `The latest read failed: ${String(poll.error)}. Missing history is withheld rather than shown as zero.` : "The weekly upgrade sources have not produced a progress record yet."}</p>
         {live && <button type="button" onClick={() => refreshPoll(BENCHMARK_PROGRESS_POLL_KEY)}>Retry</button>}
@@ -498,7 +499,7 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
       {live && <button type="button" className="benchmark-refresh" disabled={refreshing} onClick={() => refreshPoll(BENCHMARK_PROGRESS_POLL_KEY)}>{refreshing ? "Refreshing…" : "Refresh records"}</button>}
     </header>
 
-    <BenchmarkProgramOverview initial={programInitial} />
+    <BenchmarkProgramOverview key={requestedProgramRelease ?? "active"} initial={programInitial} release={requestedProgramRelease} />
 
     {poll.failing && <p className="benchmark-stale" role="status">Refresh failed: {String(poll.error)}. Showing the last successful snapshot; current state is unknown.</p>}
 

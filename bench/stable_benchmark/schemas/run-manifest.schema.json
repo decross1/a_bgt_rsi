@@ -7,7 +7,7 @@
   "properties": {
     "schema_version": {"const": "stable-benchmark-run-manifest/v1"},
     "suite_id": {"type": "string"},
-    "release": {"const": "1.0.0"},
+    "release": {"enum": ["1.0.0", "1.1.0"]},
     "definition_sha256": {"$ref": "#/$defs/sha256"},
     "comparison_id": {"type": "string"},
     "arm": {

@@ -147,14 +147,15 @@ def test_live_cycle_provenance_snapshot(client):
     # A cycle that never got to choose a topic has no topic_source, and that
     # is the honest value: the 2026-08-16 ledger carries nine
     # daily_budget_exhausted rows written before the refusal was moved out of
-    # the cycle log. A topicless cycle may record a no-op or a generic human
-    # escalation about existing pending gates. Neither starts topic-dependent
-    # research. Validate the escalation's actual action contract.
+    # the cycle log. Topicless cycles may inspect existing promotion candidates
+    # or escalate existing pending gates; neither dispatches new topic-dependent
+    # research. Validate those actual action contracts rather than a stale list
+    # of actions observed in one snapshot.
     for c in cycles:
         if c["topic_source"] is None:
             assert c.get("topic") is None
             for step in c.get("plan") or []:
-                assert step.get("action") in {"noop", "bubble_up"}, (
+                assert step.get("action") in {"noop", "bubble_up", "promote_findings"}, (
                     f"cycle {c.get('run_id')} planned {step.get('action')!r} "
                     "without a topic_source"
                 )
@@ -162,18 +163,24 @@ def test_live_cycle_provenance_snapshot(client):
                 if step["action"] == "noop":
                     reason = args.get("reason")
                     assert isinstance(reason, str) and reason.strip()
+                elif step["action"] == "promote_findings":
+                    assert set(args) <= {"max_candidates"}
+                    if "max_candidates" in args:
+                        assert type(args["max_candidates"]) is int
+                        assert args["max_candidates"] >= 1
                 else:
                     from orchestrator.coordinator_actions import validate_bubble_up_args
                     validate_bubble_up_args(**{key: args.get(key) for key in
                                                ("finding_ids", "question", "kind", "allowed_actions")})
             for outcome in c.get("outcomes") or []:
-                assert outcome.get("action") in {"noop", "bubble_up"}, (
+                assert outcome.get("action") in {"noop", "bubble_up", "promote_findings"}, (
                     f"cycle {c.get('run_id')} reported "
                     f"{outcome.get('action')!r} without a topic_source"
                 )
-                if outcome.get("action") == "bubble_up":
+                if outcome.get("action") in {"bubble_up", "promote_findings"}:
                     assert any(outcome.get("request") == {"action": step["action"], "args": step["args"]}
-                               for step in c.get("plan") or [] if step.get("action") == "bubble_up")
+                               for step in c.get("plan") or []
+                               if step.get("action") == outcome["action"])
             continue
         assert c["topic_source"] in known_topic_sources
         if c["topic_source"] == "campaign_preregistered":

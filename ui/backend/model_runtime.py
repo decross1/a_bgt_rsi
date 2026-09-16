@@ -1079,15 +1079,29 @@ def project_model_runtime(
     run_fd = None
     try:
         if qualification_root == QUALIFICATION_ROOT and evaluation_root is None and lab_root is None:
-            from .benchmark_program import DEFAULT_ROOT, REPO
-            from .model_runtime_stable import project_active_stable_runtime
+            from .benchmark_program import REPO
+            from .benchmark_catalog import read_catalog
+            from .model_runtime_stable import _unknown as stable_unknown, project_active_stable_runtime
 
-            stable = project_active_stable_runtime(
-                repo=REPO, program_root=DEFAULT_ROOT, proc_root=proc_root,
-                boot_id_path=boot_id_path, observed=observed,
-            )
-            if stable is not None:
-                return stable
+            try:
+                catalog = read_catalog(REPO)
+            except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
+                return stable_unknown(observed, "Benchmark release selection is unavailable or invalid; inspect its catalog.")
+            # Changing the active measurement release cannot end an older
+            # runtime window. Every registered release must prove restoration
+            # before ordinary resident-mode fallback is permitted.
+            stable_states = []
+            for entry in sorted(catalog["releases"], key=lambda row: row["version"] != catalog["active_release"]):
+                stable = project_active_stable_runtime(
+                    repo=REPO, program_root=Path(entry["root"]), proc_root=proc_root,
+                    boot_id_path=boot_id_path, observed=observed,
+                )
+                if stable is not None:
+                    stable_states.append(stable)
+            if len(stable_states) > 1:
+                return stable_unknown(observed, "Multiple benchmark releases have unresolved runtime windows; inspect restoration receipts.")
+            if stable_states:
+                return stable_states[0]
         if evaluation_root is not None or qualification_root == QUALIFICATION_ROOT:
             from .model_runtime_extended import (
                 EVALUATION_RUN_ROOT,

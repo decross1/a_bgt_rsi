@@ -677,7 +677,7 @@ export default function Pulse() {
     boundRuntimeMode &&
     modelRuntime.resident_services_expected === "online" &&
     modelRuntime.candidate_variant === null;
-  const stableBenchmarkUnverified =
+  const stableBenchmarkUnknownPayload =
     modelRuntime?.mode_source === "stable_benchmark_state" &&
     modelRuntime.mode === "unknown" &&
     modelRuntime.mode_source_sha256 === null &&
@@ -685,11 +685,21 @@ export default function Pulse() {
     modelRuntime.nara_service_expected === "unknown" &&
     modelRuntime.candidate_variant === null &&
     typeof modelRuntime.source_error === "string" &&
-    modelRuntime.source_error.length > 0 &&
+    modelRuntime.source_error.length > 0;
+  const stableBenchmarkUnknownCurrent =
+    stableBenchmarkUnknownPayload &&
     Number.isFinite(runtimeAgeMs) &&
     runtimeAgeMs >= 0 &&
     runtimeAgeMs <= 20_000 &&
     !runtimePoll.failing;
+  // pollhub deliberately retains the last good payload after a failed read.
+  // A fail-closed stable-benchmark projection must remain visible while that
+  // retained payload ages; otherwise a network failure would make the warning
+  // disappear. The copy below distinguishes a fresh unknown projection from
+  // a last-observed one, and any later verified payload replaces it normally.
+  const stableBenchmarkUnverified = stableBenchmarkUnknownPayload;
+  const stableBenchmarkUnknownLastObserved =
+    stableBenchmarkUnverified && !stableBenchmarkUnknownCurrent;
   const stableBenchmarkVisible = stableBenchmarkRuntime || stableBenchmarkUnverified;
   const stableBenchmarkPhase = stableBenchmarkVisible
     ? STABLE_BENCHMARK_PHASES.has(modelRuntime?.phase ?? "") ? modelRuntime?.phase ?? "unverified" : "unverified"
@@ -732,6 +742,8 @@ export default function Pulse() {
     cleanSamples.length === 0 ? "no telemetry received" : null,
     cleanSamples.length > 0 && telemetryTimeUnknown ? "telemetry time unknown" : null,
     cleanSamples.length > 0 && telemetryStale ? "telemetry stale" : null,
+    runtimePoll.failing ? "runtime projection refresh failed" : null,
+    Number.isFinite(runtimeAgeMs) && runtimeAgeMs > 20_000 ? "runtime projection stale" : null,
     readErrors.length > 0 ? `read errors: ${readErrors.join(", ")}` : null,
   ].filter((value): value is string => value != null);
   const runtimeModeLabel =
@@ -759,7 +771,9 @@ export default function Pulse() {
           : "Operating mode unverified";
   const runtimeModeNote =
     stableBenchmarkUnverified
-      ? `The stable benchmark projector could not verify the current ${(stableBenchmarkPhase ?? "unknown").replaceAll("_", " ")} lifecycle state. Endpoint observations remain independent.`
+      ? stableBenchmarkUnknownLastObserved
+        ? `The last stable benchmark projection could not verify the ${(stableBenchmarkPhase ?? "unknown").replaceAll("_", " ")} lifecycle state. The current lifecycle state is unknown because no fresh verified projection is available. Endpoint observations remain independent.`
+        : `The stable benchmark projector could not verify the current ${(stableBenchmarkPhase ?? "unknown").replaceAll("_", " ")} lifecycle state. Endpoint observations remain independent.`
       : stableBenchmarkRuntime
       ? `Source-bound stable benchmark phase: ${(stableBenchmarkPhase ?? "unknown").replaceAll("_", " ")}. Resident services are expected online and Nara is expected ${modelRuntime.nara_service_expected}; this lifecycle state does not establish a benchmark score.`
       : residentResearchWindow
@@ -833,9 +847,11 @@ export default function Pulse() {
               <span className={`font-semibold ${stableBenchmarkProblem ? "text-[var(--status-warn)]" : "text-[var(--accent)]"}`}>
                 {stableBenchmarkProblem ? "BENCHMARK NEEDS REVIEW" : stableBenchmarkPreparing ? "BENCHMARK PREPARING" : stableBenchmarkRecovering ? "BENCHMARK RESTORATION" : stableBenchmarkPhase === "complete" ? "BENCHMARK COMPLETE" : "BENCHMARK RUN"}
               </span>
-              <span>Phase: {(stableBenchmarkPhase ?? "unknown").replaceAll("_", " ")}.</span>
+              <span>{stableBenchmarkUnknownLastObserved ? "Last observed phase" : "Phase"}: {(stableBenchmarkPhase ?? "unknown").replaceAll("_", " ")}.</span>
               {stableBenchmarkUnverified
-                ? <span>Runtime expectations are unknown until the lifecycle source verifies again.</span>
+                ? <span>{stableBenchmarkUnknownLastObserved
+                    ? "Current runtime expectations remain unknown; no fresh verified lifecycle projection is available."
+                    : "Runtime expectations are unknown until the lifecycle source verifies again."}</span>
                 : <span>Resident models are expected online; Nara is expected {modelRuntime?.nara_service_expected}.</span>}
               <Link to="/benchmarks" className="text-[var(--accent)]">View benchmark progress →</Link>
               {runtimeObservabilityIssues.length > 0 && (

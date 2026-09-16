@@ -408,6 +408,7 @@ export interface IterationJourneyResponse {
   found: boolean;
   iteration_id: string;
   iteration?: IterationRecord | null;
+  research_scope?: ResearchScopeMetadata;
 }
 
 export interface JournalResponse {

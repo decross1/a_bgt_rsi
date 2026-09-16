@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getResearch } from "../src/api/experiments";
 import {
   getHumanTodo,
+  getIterationJourney,
   getIterations,
   getLabTodo,
   getLadder,
@@ -17,6 +18,7 @@ import ResearchScopeBar from "../src/components/ResearchScopeBar";
 import DossierIndex from "../src/routes/DossierIndex";
 import Experiments from "../src/routes/Experiments";
 import {
+  explicitResearchScopedHref,
   researchScopedHref,
   researchScopeFromSearch,
   scopedResearchApiPath,
@@ -80,6 +82,9 @@ describe("research scope URL and identity boundary", () => {
         "active",
       ),
     ).toBe("/dossier/iter-1?tab=trace#source");
+    expect(explicitResearchScopedHref("/dossier/iter-1#source", "active")).toBe(
+      "/dossier/iter-1?research_scope=active#source",
+    );
   });
 
   it("admits only the requested, internally coherent metadata", () => {
@@ -119,6 +124,21 @@ describe("research scope URL and identity boundary", () => {
     );
   });
 
+  it("keeps campaign identity compact when a detail page owns the source overview", () => {
+    render(
+      <MemoryRouter initialEntries={["/dossier/iter-current?research_scope=active"]}>
+        <ResearchScopeBar fetchMetadata={false} initialMetadata={ACTIVE_SCOPE} compact />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("research-scope-campaign")).toHaveTextContent(
+      "V2 behavior campaign",
+    );
+    expect(screen.getByTestId("research-scope-campaign")).toHaveTextContent(
+      /Campaign context for the exact record below/i,
+    );
+    expect(screen.queryByText(CAMPAIGN.research_question)).toBeNull();
+  });
+
   it("fetches the scope identity explicitly and fails closed on malformed identity", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(ACTIVE_SCOPE))
@@ -132,6 +152,29 @@ describe("research scope URL and identity boundary", () => {
     await expect(getResearchScope("active")).rejects.toThrow(
       "Research scope integrity error",
     );
+  });
+
+  it("requires scope metadata for explicit journey reads while preserving the legacy unscoped call", async () => {
+    const journey = {
+      found: true,
+      iteration_id: "iter-current",
+      iteration: { iteration_id: "iter-current" },
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ ...journey, research_scope: ACTIVE_SCOPE }))
+      .mockResolvedValueOnce(jsonResponse(journey))
+      .mockResolvedValueOnce(jsonResponse(journey));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getIterationJourney("iter-current", "active")).resolves.toMatchObject(journey);
+    expect(new URL(String(fetchMock.mock.calls[0][0]), "http://research.test").searchParams.get("research_scope")).toBe("active");
+
+    await expect(getIterationJourney("iter-current", "active")).rejects.toThrow(
+      "Research scope integrity error",
+    );
+
+    await expect(getIterationJourney("iter-current")).resolves.toMatchObject(journey);
+    expect(new URL(String(fetchMock.mock.calls[2][0]), "http://research.test").searchParams.has("research_scope")).toBe(false);
   });
 });
 

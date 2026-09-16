@@ -66,7 +66,7 @@ def _empty_projection(now: datetime) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA,
         "generated_at": now.isoformat().replace("+00:00", "Z"),
-        "release": None, "design": None,
+        "release": None, "design": None, "measurement_review": None,
         "progress": {"status": "unavailable", "completed_units": None,
                      "total_units": None, "completed_calls": None,
                      "total_calls": None, "blockers": [], "next_action": None},
@@ -83,16 +83,24 @@ def _empty_projection(now: datetime) -> dict[str, Any]:
     }
 
 
-def compose_program(*, root: Path = DEFAULT_ROOT, repo: Path = REPO,
-                    now: datetime | None = None) -> dict[str, Any]:
+def compose_program(*, root: Path | None = None, repo: Path = REPO,
+                    now: datetime | None = None,
+                    include_runtime: bool = True, release: str | None = None) -> dict[str, Any]:
     current = now or datetime.now(timezone.utc)
     if current.tzinfo is None:
         raise ValueError("benchmark projection clock must be timezone-aware")
     current = current.astimezone(timezone.utc)
     result = _empty_projection(current)
-    published_path = root / "definition.published.json"
-    draft_path = repo / "bench/stable_benchmark/definition.draft.json"
     try:
+        catalog_entry = None
+        if root is None:
+            from .benchmark_catalog import select_program
+            root, catalog_entry, options = select_program(repo, release)
+            result["available_releases"] = options
+        elif release is not None:
+            raise ValueError("explicit artifact roots cannot select another release")
+        published_path = root / "definition.published.json"
+        draft_path = repo / "bench/stable_benchmark/definition.draft.json"
         # A redirected or invalid published artifact must not fall back to a
         # reassuring draft or an older result.
         if published_path.exists() or published_path.is_symlink():
@@ -108,6 +116,11 @@ def compose_program(*, root: Path = DEFAULT_ROOT, repo: Path = REPO,
             draft = make_draft()
             loaded = LoadedDocument(draft, hashlib.sha256(canonical_json(draft)).hexdigest())
         definition = loaded.document
+        if catalog_entry is not None and (
+                loaded.raw_sha256 != catalog_entry["definition_sha256"]
+                or definition["suite_id"] != catalog_entry["suite_id"]
+                or definition["release"] != catalog_entry["version"]):
+            raise ValueError("published definition differs from the release catalog")
         freeze = definition["freeze"]
         if (freeze["published_at"] is not None and
                 datetime.fromisoformat(freeze["published_at"].replace("Z", "+00:00")) > current):
@@ -163,11 +176,71 @@ def compose_program(*, root: Path = DEFAULT_ROOT, repo: Path = REPO,
         )
         if freeze["status"] == "published":
             _attach_history(result, root, loaded, current, repo=repo)
-            _attach_active_window(result, root=root, repo=repo, now=current)
+            _attach_measurement_review(
+                result, loaded, repo=repo, now=current,
+                expected_sha256=(catalog_entry["measurement_review_sha256"]
+                                 if catalog_entry is not None else None),
+            )
+            if include_runtime:
+                _attach_active_window(result, root=root, repo=repo, now=current)
     except (OSError, ValueError, TypeError, KeyError, AttributeError, RecursionError):
         result["warnings"].append("Benchmark definition is unavailable or invalid; scores are withheld.")
         result["comparison"]["status"] = "withheld_invalid_definition"
     return result
+
+
+def _attach_measurement_review(result: dict, definition, *, repo: Path, now: datetime,
+                               expected_sha256: str | None = None) -> None:
+    """A source-controlled review can restrict claims, never change a score."""
+    from .benchmark_history import read_document
+
+    relative = Path("docs/benchmarks/measurement_reviews") / f"{definition.raw_sha256}.json"
+    path = repo / relative
+    if expected_sha256 is None and not path.exists() and not path.is_symlink():
+        return
+    fields = {"schema_version", "suite_id", "release", "definition_sha256", "reviewed_at",
+              "status", "title", "summary", "affected_task_ids", "interpretation", "next_action"}
+    try:
+        review, digest = read_document(path, limit=16_384)
+        if expected_sha256 is not None and digest != expected_sha256:
+            raise ValueError("measurement review differs from its catalog binding")
+        if (set(review) != fields or review["schema_version"] != "benchmark-measurement-review/v1"
+                or review["suite_id"] != definition.document["suite_id"]
+                or review["release"] != definition.document["release"]
+                or review["definition_sha256"] != definition.raw_sha256
+                or review["status"] != "commissioning_only"):
+            raise ValueError("measurement review does not bind this release")
+        for key in ("title", "summary", "interpretation", "next_action"):
+            if not isinstance(review[key], str) or not 1 <= len(review[key]) <= 2_000:
+                raise ValueError("measurement review text is invalid")
+        timestamp = review["reviewed_at"]
+        if not isinstance(timestamp, str) or len(timestamp) > 40:
+            raise ValueError("measurement review timestamp is invalid")
+        reviewed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        published = datetime.fromisoformat(definition.document["freeze"]["published_at"].replace("Z", "+00:00"))
+        if reviewed.tzinfo is None or not published <= reviewed <= now:
+            raise ValueError("measurement review time is outside publication/current bounds")
+        affected = review["affected_task_ids"]
+        task_ids = {task["id"] for task in definition.document["tasks"]}
+        if (not isinstance(affected, list) or not 1 <= len(affected) <= len(task_ids)
+                or any(not isinstance(item, str) or item not in task_ids for item in affected)
+                or len(set(affected)) != len(affected)):
+            raise ValueError("measurement review task IDs are invalid")
+        result["measurement_review"] = {**review, "source_path": str(relative), "source_sha256": digest,
+                                        "comparative_quality_allowed": False}
+    except (OSError, ValueError, TypeError, KeyError, RecursionError):
+        result["measurement_review"] = {
+            "status": "unavailable", "title": "Measurement review unavailable",
+            "summary": "A review exists but cannot be verified. Treat recorded grader outputs as diagnostic only.",
+            "affected_task_ids": [], "comparative_quality_allowed": False,
+            "source_path": str(relative), "source_sha256": None,
+        }
+        result["warnings"].append("The benchmark measurement review is invalid; comparative claims are withheld.")
+    result["comparison"]["status"] = "measurement_review_required"
+    result["comparison"]["matched_results"] = []
+    result["progress"]["blockers"].append(
+        "This release is commissioning evidence; use a prospectively corrected release for quality comparisons.")
+    result["progress"]["next_action"] = "Read the measurement review; retain this run without retrospective rescoring."
 
 
 def _attach_active_window(result: dict, *, root: Path, repo: Path, now: datetime) -> None:
@@ -248,11 +321,11 @@ def _attach_history(result: dict, root: Path, definition, now: datetime, *, repo
         result["warnings"].append("Run-history artifacts are unavailable or invalid; no new scores are admitted.")
 
 
-def register(app, *, root: Path = DEFAULT_ROOT, repo: Path = REPO) -> None:
+def register(app, *, root: Path | None = None, repo: Path = REPO) -> None:
     router = APIRouter()
 
     @router.get("/api/benchmark_program")
-    def benchmark_program():
-        return compose_program(root=root, repo=repo)
+    def benchmark_program(release: str | None = None):
+        return compose_program(root=root, repo=repo, release=release)
 
     app.include_router(router)

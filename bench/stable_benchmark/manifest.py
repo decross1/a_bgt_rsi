@@ -19,13 +19,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .fixtures import REVIEW_AT, draft_definition
-
+from .fixtures import CODE_SANDBOX_CONTRACT, REVIEW_AT, draft_definition
 
 DEFINITION_SCHEMA = "stable-benchmark-definition/v1"
 RUN_MANIFEST_SCHEMA = "stable-benchmark-run-manifest/v1"
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,95}\Z")
+SUPPORTED_RELEASE_SUITES = {
+    "1.0.0": "a-bgt-rsi-stable-1.0.0",
+    "1.1.0": "a-bgt-rsi-stable-1.1.0",
+}
 
 
 class ManifestError(ValueError):
@@ -163,6 +166,48 @@ def _validate_tool(tool: Any, where: str) -> None:
             raise ManifestError(f"{where}.fixtures[{index}].arguments must be an object")
 
 
+def _validate_corrected_release_contract(tasks: list[dict[str, Any]]) -> None:
+    """Pin the prospective fixes without changing historical 1.0 validation."""
+    indexed = {task["id"]: task for task in tasks}
+    if any(
+        task.get("provenance", {}).get("origin")
+        != "prospective_contract_correction_2026-09-16"
+        or task.get("provenance", {}).get("predecessor_task_ids") != [task["id"]]
+        or task.get("provenance", {}).get("predecessor_suite_id")
+        != "a-bgt-rsi-stable-1.0.0"
+        or task.get("provenance", {}).get("predecessor_release") != "1.0.0"
+        for task in tasks
+    ):
+        raise ManifestError("release 1.1 predecessor lineage differs")
+    support = indexed.get("EVID-SUPPORT-001")
+    abstain = indexed.get("EVID-ABSTAIN-001")
+    if (
+        support is None
+        or support.get("grader", {}).get("expected", {}).get("citations")
+        != ["DOC-A", "DOC-B", "DOC-C"]
+        or "every factual qualifier" not in support.get("prompt", "")
+        or "bare document IDs" not in support.get("prompt", "")
+        or "citations (a JSON array of bare document ID strings)"
+        not in support.get("prompt", "")
+    ):
+        raise ManifestError("release 1.1 evidence-support contract differs")
+    if (
+        abstain is None
+        or abstain.get("grader", {}).get("expected", {}).get("citations") != ["DOC-E"]
+        or "document that states the denominator is absent is sufficient"
+        not in abstain.get("prompt", "")
+        or "bare document IDs" not in abstain.get("prompt", "")
+        or "citations (a JSON array of bare document ID strings)"
+        not in abstain.get("prompt", "")
+    ):
+        raise ManifestError("release 1.1 evidence-abstention contract differs")
+    code_tasks = [task for task in tasks if task.get("mode") == "code"]
+    if len(code_tasks) != 4 or any(
+        CODE_SANDBOX_CONTRACT not in task.get("prompt", "") for task in code_tasks
+    ):
+        raise ManifestError("release 1.1 code sandbox disclosure differs")
+
+
 def validate_definition(document: Any, *, require_published: bool = False) -> dict[str, Any]:
     if not isinstance(document, dict):
         raise ManifestError("definition must be an object")
@@ -176,8 +221,13 @@ def validate_definition(document: Any, *, require_published: bool = False) -> di
     if document["schema_version"] != DEFINITION_SCHEMA:
         raise ManifestError("definition schema version differs")
     _identifier(document["suite_id"], "suite_id")
-    if document["release"] != "1.0.0" or document["baseline_status"] != "not_started":
-        raise ManifestError("release or initial baseline status differs")
+    release = document["release"]
+    if (
+        release not in SUPPORTED_RELEASE_SUITES
+        or document["suite_id"] != SUPPORTED_RELEASE_SUITES[release]
+        or document["baseline_status"] != "not_started"
+    ):
+        raise ManifestError("release, suite, or initial baseline status differs")
     freeze = document["freeze"]
     if not isinstance(freeze, dict) or set(freeze) != {
         "status", "published_at", "review_at", "expiry_action", "witness"
@@ -248,7 +298,9 @@ def validate_definition(document: Any, *, require_published: bool = False) -> di
     system = [task for task in tasks if task["panel"] == "system_micro_workflow"]
     if len(capability) != 18 or len(system) != 3:
         raise ManifestError("panel task counts differ")
-    if set(task["construct"] for task in capability if task["domain"] == "strategic_behavior") != {
+    if release == "1.1.0":
+        _validate_corrected_release_contract(tasks)
+    if {task["construct"] for task in capability if task["domain"] == "strategic_behavior"} != {
         "public_goods", "vickrey_auction", "cournot", "proper_scoring_reporting"
     }:
         raise ManifestError("strategic mechanisms differ")
@@ -571,8 +623,18 @@ def make_draft() -> dict[str, Any]:
 
 
 __all__ = [
-    "LoadedDocument", "ManifestError", "bind_run_manifest", "canonical_json",
-    "load_definition", "load_run_manifest", "make_draft", "publish_definition",
-    "sha256_json", "validate_arm", "validate_definition", "validate_run_manifest",
-    "validate_harness_identity", "write_document",
+    "LoadedDocument",
+    "ManifestError",
+    "bind_run_manifest",
+    "canonical_json",
+    "load_definition",
+    "load_run_manifest",
+    "make_draft",
+    "publish_definition",
+    "sha256_json",
+    "validate_arm",
+    "validate_definition",
+    "validate_harness_identity",
+    "validate_run_manifest",
+    "write_document",
 ]

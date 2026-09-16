@@ -11,7 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from backend import experiments, human_todo, lab_todo, ladder, loop_v0, research_scope
+from backend import experiments, human_todo, iteration_journey, lab_todo, ladder, loop_v0, research_scope
 from orchestrator.research_campaign import bind_topic, load_campaign
 
 REPO = Path(__file__).resolve().parents[3]
@@ -65,6 +65,7 @@ def setup(tmp_path, monkeypatch):
     write_rows(root / "memory/loop_memory.jsonl", [old, current])
     app = FastAPI()
     research_scope.register(app, repo_root=root, memory_dir=root / "memory")
+    iteration_journey.register(app, repo_root=root, memory_dir=root / "memory")
     loop_v0.register(
         app,
         repo_root=root,
@@ -117,6 +118,30 @@ def test_duplicate_cross_history_id_cannot_borrow_campaign_membership(setup):
         client.get("/api/loop_v0/iterations?research_scope=active").json()["iterations"]
         == []
     )
+    detail = client.get("/api/iteration/iter-current/journey?research_scope=active")
+    assert detail.status_code == 200
+    assert detail.json()["found"] is False
+    assert detail.json()["research_scope"]["status"] == "active"
+    assert client.get("/api/iteration/iter-current/journey?research_scope=all").json()["found"] is True
+
+
+def test_journey_preserves_exact_campaign_scope_and_explicit_archive_access(setup):
+    root, client, current, old = setup
+    before = (root / "memory/loop_memory.jsonl").read_bytes()
+    active = client.get("/api/iteration/iter-current/journey?research_scope=active").json()
+    assert active["found"] is True
+    assert active["iteration"] == current
+    assert active["research_scope"]["campaign"]["campaign_id"] == current["campaign"]["campaign_id"]
+    hidden = client.get("/api/iteration/iter-old/journey?research_scope=active").json()
+    assert hidden["found"] is False
+    assert "iteration" not in hidden
+    archive = client.get("/api/iteration/iter-old/journey?research_scope=all").json()
+    assert archive["iteration"] == old
+    assert archive["research_scope"]["status"] == "all_research"
+    legacy = client.get("/api/iteration/iter-old/journey").json()
+    assert legacy["iteration"] == old
+    assert "research_scope" not in legacy
+    assert (root / "memory/loop_memory.jsonl").read_bytes() == before
 
 
 @pytest.mark.parametrize("damage", ["bad_hash", "bad_json", "symlink"])
@@ -133,6 +158,8 @@ def test_bad_activation_fails_closed_and_history_stays_readable(setup, damage):
         path.unlink()
         path.symlink_to(root / "absent")
     assert client.get("/api/research_scope").status_code == 503
+    assert client.get("/api/iteration/iter-current/journey?research_scope=active").status_code == 503
+    assert client.get("/api/iteration/iter-current/journey?research_scope=all").json()["found"] is True
     assert (
         client.get("/api/loop_v0/iterations?research_scope=active").status_code == 503
     )
@@ -154,6 +181,7 @@ def test_no_active_campaign_is_not_implicit_all_history(setup):
         client.get("/api/loop_v0/iterations?research_scope=active").json()["iterations"]
         == []
     )
+    assert client.get("/api/iteration/iter-current/journey?research_scope=active").json()["found"] is False
 
 
 @pytest.mark.parametrize("damage", ["malformed", "symlink", "oversized"])
@@ -172,6 +200,7 @@ def test_broken_campaign_source_is_not_zero(setup, monkeypatch, damage):
     assert (
         client.get("/api/loop_v0/iterations?research_scope=active").status_code == 503
     )
+    assert client.get("/api/iteration/iter-current/journey?research_scope=active").status_code == 503
 
 
 def test_scoped_todo_preserves_global_safety_gate_and_omitted_count(setup):

@@ -270,6 +270,12 @@ def _select_attempt(
             registration = rv.load_registration(path)
         except rv.ReceiptVerificationError as exc:
             raise StableRuntimeError("stable registration is invalid") from exc
+        if registration.document["definition"]["path"] != str(program_root / "definition.published.json"):
+            selected_digest = _read_hash(program_root / "definition.published.json", maximum=2_000_000,
+                                         label="selected benchmark definition")
+            _require(registration.document["definition"]["sha256"] != selected_digest,
+                     "selected release registration points outside its program root")
+            continue  # Another frozen release has its own attempt series.
         reference = _program_layout(registration, program_root)
         lifecycle = reference["lifecycle"]
         receipt_dir = Path(lifecycle["receipt_directory"])
