@@ -1078,6 +1078,16 @@ def project_model_runtime(
     observed_at = observed.isoformat()
     run_fd = None
     try:
+        if qualification_root == QUALIFICATION_ROOT and evaluation_root is None and lab_root is None:
+            from .benchmark_program import DEFAULT_ROOT, REPO
+            from .model_runtime_stable import project_active_stable_runtime
+
+            stable = project_active_stable_runtime(
+                repo=REPO, program_root=DEFAULT_ROOT, proc_root=proc_root,
+                boot_id_path=boot_id_path, observed=observed,
+            )
+            if stable is not None:
+                return stable
         if evaluation_root is not None or qualification_root == QUALIFICATION_ROOT:
             from .model_runtime_extended import (
                 EVALUATION_RUN_ROOT,

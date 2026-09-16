@@ -108,6 +108,10 @@
   line-height: 1.45;
 }
 
+.research-scope-bar__campaign .research-scope-bar__execution-note {
+  font-size: var(--text-meta);
+}
+
 .research-scope-bar__campaign code {
   max-width: 260px;
   overflow-wrap: anywhere;

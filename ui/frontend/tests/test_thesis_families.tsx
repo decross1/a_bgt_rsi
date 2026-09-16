@@ -11,6 +11,7 @@ import ThesisFamilies from "../src/components/ladder/ThesisFamilies";
 
 vi.mock("../src/api/http", () => ({
   getLadder: vi.fn(), getIterations: vi.fn(), getIdeas: vi.fn(),
+  getIterationJourney: vi.fn().mockResolvedValue({ found: false, iteration_id: "missing", iteration: null }),
 }));
 
 const topics = [
@@ -227,7 +228,7 @@ describe("Ladder collection flow and source lifecycle", () => {
     fireEvent.click(within(inspector).getByRole("button", { name: "Show 3 recorded entries" }));
     for (const row of rows) {
       fireEvent.click(within(inspector).getByRole("button", {
-        name: `Inspect recorded entry record cl-${row.iteration_id}, iteration ${row.iteration_id}: cl-${row.iteration_id}`,
+        name: `Inspect recorded entry record cl-${row.iteration_id}, iteration ${row.iteration_id}: ${row.hypothesis.text}`,
       }));
       expect(inspector).toHaveTextContent(row.hypothesis.text);
     }

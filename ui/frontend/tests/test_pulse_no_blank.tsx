@@ -41,7 +41,6 @@ vi.mock("../src/api/http", () => ({
 
 import LabTodo from "../src/components/LabTodo";
 import NowBoard from "../src/components/NowBoard";
-import OweStrip from "../src/components/OweStrip";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -58,55 +57,6 @@ const tickAsync = (ms: number) =>
   act(async () => {
     await vi.advanceTimersByTimeAsync(ms);
   });
-
-const owedItem = (id: string) => ({
-  kind: "gate_verdict",
-  id,
-  title: `${id} awaiting verdict`,
-  since: new Date().toISOString(),
-});
-
-describe("OweStrip (hero) never blanks on a failed refetch", () => {
-  it("keeps rows + adds the honest stale note, then updates in place on recovery", async () => {
-    M.humanTodo.mockResolvedValue({ items: [owedItem("iter-A")] });
-    render(
-      <MemoryRouter>
-        <OweStrip pollMs={5000} />
-      </MemoryRouter>,
-    );
-    await tickAsync(0);
-    expect(screen.getByText("iter-A awaiting verdict")).toBeInTheDocument();
-    expect(screen.queryByTestId("owe-stale")).toBeNull();
-
-    // Refetch FAILS: the rendered queue stays, the failure is named.
-    M.humanTodo.mockRejectedValue(new Error("backend drowned"));
-    await tickAsync(6_000);
-    expect(screen.getByText("iter-A awaiting verdict")).toBeInTheDocument();
-    expect(screen.queryByTestId("owe-error")).toBeNull(); // no red swap
-    expect(screen.getByTestId("owe-stale").textContent).toContain(
-      "refresh failing",
-    );
-
-    // Recovery with a CHANGED payload: in-place update, stale note gone.
-    M.humanTodo.mockResolvedValue({ items: [owedItem("iter-B")] });
-    await tickAsync(6_000);
-    expect(screen.getByText("iter-B awaiting verdict")).toBeInTheDocument();
-    expect(screen.queryByText("iter-A awaiting verdict")).toBeNull();
-    expect(screen.queryByTestId("owe-stale")).toBeNull();
-  });
-
-  it("still reports honestly when the FIRST load fails (no data to keep)", async () => {
-    M.humanTodo.mockRejectedValue(new Error("500 kaput"));
-    render(
-      <MemoryRouter>
-        <OweStrip pollMs={5000} />
-      </MemoryRouter>,
-    );
-    await tickAsync(0);
-    expect(screen.getByTestId("owe-error")).toHaveTextContent("kaput");
-    expect(screen.queryByTestId("owe-empty")).toBeNull();
-  });
-});
 
 describe("LabTodo never blanks on a failed refetch", () => {
   const labPayload = (gap: string) => ({

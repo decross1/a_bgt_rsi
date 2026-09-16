@@ -11,7 +11,9 @@ import type {
   ResearchClaimEntry,
 } from "./researchContext";
 import type { FamilyRecord, ThesisFamily, ThesisModel } from "./thesisModel";
-import { researchScopedHref } from "../../researchScope";
+import type { RecordedIteration } from "./thesisModel";
+import { researchScopedHref, type ResearchScope } from "../../researchScope";
+import type { IterationJourneyResponse, IterationRecord } from "../../types/schemas";
 
 const FAMILY_OPTION_LIMIT = 40;
 const CLAIM_LIMIT = 3;
@@ -93,11 +95,13 @@ function evidenceHeadline(context: ResearchClaimContext): string {
 }
 
 function nextTestText(context: ResearchClaimContext): string {
-  if (context.proposedTest !== undefined) return context.proposedTest;
+  const withQueueBoundary = (text: string) =>
+    `${text.trim().replace(/[.\s]+$/, "")}. This research view does not establish a queued human action.`;
+  if (context.proposedTest !== undefined) return withQueueBoundary(context.proposedTest);
   if (context.stageRequirement !== undefined) {
-    return `No claim-specific accepted test is supplied. Generic stage requirement: ${context.stageRequirement}`;
+    return withQueueBoundary(`No claim-specific accepted test is supplied. Generic stage requirement: ${context.stageRequirement}`);
   }
-  return "No claim-specific next test is supplied in this projection.";
+  return withQueueBoundary("No claim-specific next test is supplied in this projection");
 }
 
 function EvidenceLines({
@@ -125,7 +129,17 @@ function EvidenceLines({
   );
 }
 
-function ClaimContext({ context, onBack }: { context?: ResearchClaimContext; onBack: () => void }) {
+type JourneyState = "projection" | "loading" | "loaded" | "missing" | "error";
+
+function ClaimContext({
+  context,
+  journeyState,
+  onBack,
+}: {
+  context?: ResearchClaimContext;
+  journeyState: JourneyState;
+  onBack: () => void;
+}) {
   if (context === undefined) {
     return (
       <aside className="research-canvas__context" data-testid="research-canvas-context">
@@ -164,19 +178,42 @@ function ClaimContext({ context, onBack }: { context?: ResearchClaimContext; onB
         {context.claimStanding}
       </div>
 
+      <p className="research-canvas__provenance" data-testid="research-canvas-journey-state" aria-live="polite">
+        {journeyState === "loaded"
+          ? `Exact iteration journey loaded · ${context.iterationId}`
+          : journeyState === "loading"
+            ? `Loading exact iteration journey · ${context.iterationId}`
+            : journeyState === "missing"
+              ? `Exact iteration journey is unavailable · showing the scoped index projection for ${context.iterationId}`
+              : journeyState === "error"
+                ? `Exact iteration journey could not be read · showing the scoped index projection for ${context.iterationId}`
+                : `Scoped index projection · exact journey not requested for ${context.iterationId}`}
+      </p>
+
       <section className="research-canvas__context-section">
-        <h4 style={LABEL}>Evidence now</h4>
+        <h4 style={LABEL}>Evidence and criticism</h4>
         <p data-testid="research-canvas-evidence-state" style={{ margin: "var(--space-2) 0 0", color: "var(--fg)", lineHeight: 1.45 }}>
           {evidenceHeadline(context)}
+        </p>
+        {context.rawOutcome[0] !== undefined && <p style={{ ...META, marginTop: "var(--space-2)" }}>
+          {context.rawOutcome[0].label}: {context.rawOutcome[0].text}
+        </p>}
+        {context.limitingEvidence[0] !== undefined && <p style={{ ...META, marginTop: "var(--space-2)" }}>
+          {context.limitingEvidence[0].label}: {context.limitingEvidence[0].text}
+        </p>}
+      </section>
+
+      <section className="research-canvas__context-section">
+        <h4 style={LABEL}>Learning</h4>
+        <p style={{ margin: "var(--space-2) 0 0", color: "var(--fg)", lineHeight: 1.45 }}>
+          {context.learning}
         </p>
       </section>
 
       <section className="research-canvas__context-section">
-        <h4 style={LABEL}>Next test</h4>
+        <h4 style={LABEL}>Next agenda</h4>
         <p style={{ margin: "var(--space-2) 0 0", color: "var(--fg)", lineHeight: 1.45 }}>
-          {context.proposedTest === undefined
-            ? "No claim-specific accepted test is supplied."
-            : "Model and measurement decisions come first. The dated proposal remains unadopted."}
+          {nextTestText(context)}
         </p>
       </section>
 
@@ -229,7 +266,8 @@ function ClaimContext({ context, onBack }: { context?: ResearchClaimContext; onB
   );
 }
 
-function orderEntries(entries: ResearchClaimEntry[]): ResearchClaimEntry[] {
+function orderEntries(entries: ResearchClaimEntry[], scope: ResearchScope): ResearchClaimEntry[] {
+  if (scope === "active") return entries;
   const pinned: ResearchClaimEntry[] = [];
   const other: ResearchClaimEntry[] = [];
   for (const entry of entries) (entry.isPinnedExactClaim ? pinned : other).push(entry);
@@ -239,9 +277,13 @@ function orderEntries(entries: ResearchClaimEntry[]): ResearchClaimEntry[] {
 export default function ResearchCanvas({
   model,
   nextOwed,
+  researchScope = "active",
+  loadJourney,
 }: {
   model: ThesisModel;
   nextOwed: Record<string, string>;
+  researchScope?: ResearchScope;
+  loadJourney?: (iterationId: string) => Promise<IterationJourneyResponse>;
 }) {
   const rootRef = useRef<HTMLElement>(null);
   const previousMobile = useRef(false);
@@ -256,7 +298,7 @@ export default function ResearchCanvas({
       searchText: [label, family.id, family.basis, ...family.topicLabels].join(" ").toLowerCase(),
     };
   }), [model.families]);
-  const preferred = familyOptions.find((option) => option.family.id === "collection:liquid-democracy") ?? familyOptions[0];
+  const preferred = familyOptions[0];
   // A null choice follows the best family in the latest source snapshot. This
   // lets separately arriving Ladder/topic payloads promote the real collection
   // without pinning a transient first record. An explicit user choice is kept
@@ -284,13 +326,85 @@ export default function ResearchCanvas({
     () => selectedFamily === undefined ? [] : researchEntriesForFamily(selectedFamily),
     [selectedFamily],
   );
-  const orderedEntries = useMemo(() => orderEntries(entries), [entries]);
+  const orderedEntries = useMemo(() => orderEntries(entries, researchScope), [entries, researchScope]);
   const visibleEntries = useMemo(() => orderedEntries.slice(0, CLAIM_LIMIT), [orderedEntries]);
   const visibleContexts = useMemo(
     () => visibleEntries.map((entry) => researchContextForEntry(entry, nextOwed)),
     [visibleEntries, nextOwed],
   );
   const activeContext = visibleContexts.find((context) => chosenClaim?.familyId === selectedFamily?.id && claimKey(context) === chosenClaim.key) ?? visibleContexts[0];
+  const activeEntry = activeContext === undefined
+    ? undefined
+    : visibleEntries.find((entry) => entry.record.key === activeContext.record.key && entry.iteration?.id === activeContext.iterationId);
+  const requestSerial = useRef(0);
+  const [journey, setJourney] = useState<{
+    key: string;
+    state: JourneyState;
+    iteration?: IterationRecord;
+  }>({ key: "", state: "projection" });
+  const journeyKey = activeEntry?.iteration?.id === undefined
+    ? ""
+    : JSON.stringify([
+      researchScope,
+      activeEntry.record.key,
+      activeEntry.iteration.id,
+      activeEntry.record.cluster.last_event_ts ?? null,
+      activeEntry.record.cluster.status ?? null,
+      activeEntry.record.cluster.evidence_level ?? null,
+      activeEntry.iteration.source.ended_at ?? null,
+    ]);
+
+  useEffect(() => {
+    const iterationId = activeEntry?.iteration?.id;
+    const serial = ++requestSerial.current;
+    if (loadJourney === undefined || iterationId === undefined) {
+      setJourney({ key: journeyKey, state: "projection" });
+      return;
+    }
+    setJourney({ key: journeyKey, state: "loading" });
+    loadJourney(iterationId).then((response) => {
+      if (requestSerial.current !== serial) return;
+      if (
+        response?.found !== true
+        || response.iteration_id !== iterationId
+        || response.iteration?.iteration_id !== iterationId
+      ) {
+        setJourney({ key: journeyKey, state: "missing" });
+        return;
+      }
+      setJourney({ key: journeyKey, state: "loaded", iteration: response.iteration });
+    }).catch(() => {
+      if (requestSerial.current === serial) setJourney({ key: journeyKey, state: "error" });
+    });
+    return () => {
+      if (requestSerial.current === serial) requestSerial.current += 1;
+    };
+  }, [activeEntry?.iteration?.id, activeEntry?.record.key, journeyKey, loadJourney, researchScope]);
+
+  const hydratedContext = useMemo(() => {
+    if (activeEntry === undefined || journey.key !== journeyKey || journey.state !== "loaded" || journey.iteration === undefined) {
+      return activeContext;
+    }
+    const row = journey.iteration;
+    const base = activeEntry.iteration;
+    const topic = typeof row.seed?.topic === "string" && row.seed.topic.trim() !== ""
+      ? row.seed.topic
+      : base?.topic ?? "Recorded topic unavailable";
+    const hypothesis = typeof row.hypothesis?.text === "string" && row.hypothesis.text.trim() !== ""
+      ? row.hypothesis.text
+      : base?.hypothesis;
+    const iteration: RecordedIteration = {
+      id: row.iteration_id,
+      topic,
+      ...(hypothesis === undefined ? {} : { hypothesis }),
+      paperText: base?.paperText ?? [],
+      evidenceText: base?.evidenceText ?? [],
+      source: row as unknown as Readonly<Record<string, unknown>>,
+    };
+    return researchContextForEntry({ ...activeEntry, iteration }, nextOwed);
+  }, [activeContext, activeEntry, journey, journeyKey, nextOwed]);
+  const displayedContext = hydratedContext;
+  const displayedJourneyState = journey.key === journeyKey ? journey.state : "loading";
 
   const chooseFamily = (key: string) => {
     setChosenFamilyKey(key);
@@ -321,7 +435,7 @@ export default function ResearchCanvas({
     } else if (wasContext) {
       rootRef.current?.querySelector<HTMLButtonElement>('.research-canvas__claim[aria-pressed="true"]')?.focus();
     }
-  }, [mobileContext, activeContext?.key]);
+  }, [mobileContext, displayedContext?.key]);
 
   if (preferred === undefined) {
     return (
@@ -359,6 +473,7 @@ export default function ResearchCanvas({
         .research-canvas__context { min-width: 0; padding: var(--space-6); border-left: 1px solid var(--border-1); background: var(--surface-2); overflow-wrap: anywhere; }
         .research-canvas__back { display: none; margin: 0 0 var(--space-5); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-2); border-radius: var(--radius-control); background: var(--surface-1); color: var(--accent); cursor: pointer; font: inherit; }
         .research-canvas__standing { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-4); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-1); border-radius: var(--radius-pill); color: var(--fg-muted); font-size: var(--text-meta); }
+        .research-canvas__provenance { margin: var(--space-3) 0 0; color: var(--fg-muted); font-family: var(--font-mono); font-size: var(--text-meta); line-height: 1.4; }
         .research-canvas__status-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--status-warn); }
         .research-canvas__context-section { margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--border-1); }
         .research-canvas__dossier { display: inline-block; margin-top: var(--space-5); color: var(--accent); font-weight: var(--weight-semibold); text-decoration: none; }
@@ -469,7 +584,7 @@ export default function ResearchCanvas({
 
         </section>
 
-        <ClaimContext context={activeContext} onBack={() => setMobileContext(false)} />
+        <ClaimContext context={displayedContext} journeyState={displayedJourneyState} onBack={() => setMobileContext(false)} />
       </div>
     </section>
   );

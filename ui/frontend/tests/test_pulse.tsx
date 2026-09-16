@@ -3,7 +3,7 @@
 // two ModelServerCards + the launch disclosure. Route-level smoke against
 // mocked feeds: every surface mounts, the owed row links into the dossier
 // reader, and the render stays console-clean (the route-sweep bar).
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import CommandPalette from "../src/design/CommandPalette";
@@ -734,6 +734,82 @@ describe("Pulse (/)", () => {
     await waitFor(() => expect(screen.getByRole("heading", { name: "Resident model evaluation active" })).toBeInTheDocument());
     expect(screen.getByTestId("health-verdict")).toHaveAttribute("data-level", "research");
     expect(screen.getByTestId("health-verdict")).toHaveTextContent("Nara is paused");
+  });
+
+  it("shows a source-bound stable benchmark resident phase without a candidate claim", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "resident", mode_source: "stable_benchmark_state",
+      mode_source_sha256: "b".repeat(64),
+      resident_services_expected: "online", nara_service_expected: "paused",
+      run_id: "stable-benchmark-20260916-a.resident", phase: "evaluation",
+      candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Stable benchmark resident arm active" })).toBeInTheDocument());
+    const verdict = screen.getByTestId("health-verdict");
+    expect(verdict).toHaveAttribute("data-level", "research");
+    expect(verdict).toHaveTextContent("BENCHMARK RUN");
+    expect(verdict).toHaveTextContent("Phase: evaluation");
+    expect(verdict).toHaveTextContent("Nara is expected paused");
+    expect(within(verdict).getByRole("link", { name: /View benchmark progress/ })).toHaveAttribute("href", "/benchmarks");
+    expect(screen.queryByText(/Mia candidate/)).toBeNull();
+  });
+
+  it("shows a fail-closed stable benchmark lifecycle without inferring runtime expectations", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "unknown", mode_source: "stable_benchmark_state",
+      mode_source_sha256: null,
+      resident_services_expected: "unknown", nara_service_expected: "unknown",
+      run_id: null, phase: "unexpected_phase",
+      candidate_variant: null, source_error: "stable restoration proof is unavailable",
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(http.getModelRuntime).toHaveBeenCalled());
+    await screen.findByRole("heading", { name: "Stable benchmark lifecycle needs review" });
+    const verdict = screen.getByTestId("health-verdict");
+    expect(verdict).toHaveTextContent("BENCHMARK NEEDS REVIEW");
+    expect(verdict).toHaveTextContent("Phase: unverified");
+    expect(verdict).toHaveTextContent("Runtime expectations are unknown");
+    expect(verdict).not.toHaveTextContent("Resident models are expected online");
+  });
+
+  it("names a registered recovery-unknown phase without treating it as a resident claim", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "unknown", mode_source: "stable_benchmark_state",
+      mode_source_sha256: null,
+      resident_services_expected: "unknown", nara_service_expected: "unknown",
+      run_id: "stable-benchmark-20260916-a.resident", phase: "recovery_unknown",
+      candidate_variant: null, source_error: "stable restoration proof is unavailable",
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(http.getModelRuntime).toHaveBeenCalled());
+    await screen.findByRole("heading", { name: "Stable benchmark lifecycle needs review" });
+    const verdict = screen.getByTestId("health-verdict");
+    expect(verdict).toHaveTextContent("Phase: recovery unknown");
+    expect(verdict).toHaveTextContent("Runtime expectations are unknown");
+    expect(screen.queryByText("Resident serving")).toBeNull();
+  });
+
+  it("rejects an unregistered stable benchmark run identity", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "resident", mode_source: "stable_benchmark_state",
+      mode_source_sha256: "b".repeat(64),
+      resident_services_expected: "online", nara_service_expected: "paused",
+      run_id: "qfn-lookalike.resident", phase: "evaluation",
+      candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(http.getModelRuntime).toHaveBeenCalled());
+    expect(await screen.findByRole("heading", { name: "Operating mode unverified" })).toBeInTheDocument();
+    expect(screen.queryByText("BENCHMARK RUN")).toBeNull();
   });
 
   it("withholds a lab operating-mode claim with an unbound source", async () => {

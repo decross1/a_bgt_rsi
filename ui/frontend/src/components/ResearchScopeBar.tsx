@@ -21,6 +21,9 @@ interface ResearchScopeBarProps {
   scopeOverride?: ResearchScope;
   activeTarget?: string;
   allTarget?: string;
+  /** Route-specific boundary text can replace the generic archive note while
+   * staying inside the single scope panel. */
+  historyExplanation?: string;
 }
 
 export default function ResearchScopeBar({
@@ -30,6 +33,7 @@ export default function ResearchScopeBar({
   scopeOverride,
   activeTarget,
   allTarget,
+  historyExplanation,
 }: ResearchScopeBarProps) {
   const location = useLocation();
   const routeScope = useResearchScope();
@@ -141,6 +145,9 @@ export default function ResearchScopeBar({
           <div>
             <strong>{metadata.campaign.title}</strong>
             <p>{metadata.campaign.research_question}</p>
+            <p className="research-scope-bar__execution-note">
+              Current identifies the campaign pointer. It does not establish queued or running work; execution state is reported separately in the Lab queue.
+            </p>
           </div>
           <code title={metadata.campaign.manifest_sha256}>{metadata.campaign.campaign_id}</code>
         </div>
@@ -152,14 +159,17 @@ export default function ResearchScopeBar({
       )}
       {!loading && error === null && metadata?.mode === "all" && (
         <p className="research-scope-bar__status" data-testid="research-scope-history">
-          Showing preserved v0/v1 and campaign records. This view keeps their recorded identity and does not make them current.
+          {historyExplanation ?? "Showing preserved v0/v1 and campaign records. This view keeps their recorded identity and does not make them current."}
         </p>
       )}
       {!fetchMetadata && metadata === null && (
-        <p className="research-scope-bar__status">
+        <p
+          className="research-scope-bar__status"
+          data-testid={scope === "all" ? "research-scope-history" : undefined}
+        >
           {scope === "active"
             ? "Current-campaign fixture view."
-            : "All-history fixture view."}
+            : historyExplanation ?? "All-history fixture view."}
         </p>
       )}
     </section>

@@ -39,6 +39,7 @@ import {
   toneFor,
 } from "../components/chips";
 import type { HumanTodoItem, IterationRecord } from "../types/schemas";
+import { iterationDisplayTitle } from "../researchLabels";
 
 // --- coercion (the Todo.tsx safeItems idiom, ported) -------------------------
 
@@ -96,6 +97,7 @@ function isFinding(item: HumanTodoItem): boolean {
 // FUTURE: once the idea-ledger cluster_id join reaches /api/human_todo rows,
 // key on cluster_id instead of this frontend stem heuristic (S3 follow-on).
 const STEM_WORDS = 6;
+const ARCHIVE_PAGE_SIZE = 40;
 function titleStem(title: string): string {
   const norm = title.toLowerCase().replace(/\s+/g, " ").trim();
   if (norm === "") return "";
@@ -249,15 +251,17 @@ function ClusterRow({
 function IterationRow({ row }: { row: IterationRecord }) {
   const id = typeof row.iteration_id === "string" ? row.iteration_id : "";
   if (id.length === 0) return null;
+  const displayTitle = iterationDisplayTitle(row) ?? seedTopic(row) ?? "Recorded iteration";
   return (
     <li data-testid={`dossier-iter-${id}`}>
       <Link
         to={researchScopedHref(`/dossier/${encodeURIComponent(id)}`, "all")}
-        aria-label={`Open ${id} · source history`}
+        aria-label={`Open ${displayTitle} · ${id} · source history`}
         className="block rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs hover:border-zinc-600"
       >
         <div className="flex flex-wrap items-baseline gap-2">
-          <span className="font-mono text-zinc-200">{id}</span>
+          <span className="font-medium text-zinc-200">{displayTitle}</span>
+          <span className="font-mono text-[10px] text-zinc-500">{id}</span>
           <Badge
             text={row.critique?.verdict}
             tone={toneFor(VERDICT_TONE, row.critique?.verdict, "bg-zinc-800 text-zinc-400")}
@@ -274,7 +278,7 @@ function IterationRow({ row }: { row: IterationRecord }) {
             {shortTimestamp(row.ended_at)}
           </span>
         </div>
-        {seedTopic(row) && (
+        {seedTopic(row) && seedTopic(row) !== displayTitle && (
           <div className="mt-1 truncate text-xs text-zinc-300" title={seedTopic(row)}>
             {seedTopic(row)}
           </div>
@@ -343,6 +347,7 @@ export default function DossierIndex({
   );
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [archiveLimit, setArchiveLimit] = useState(ARCHIVE_PAGE_SIZE);
 
   // /api/human_todo — the owe + findings feed (10s poll; the OweStrip idiom).
   useEffect(() => {
@@ -455,6 +460,14 @@ export default function DossierIndex({
     [scopedIterRows, q],
   );
   const elseCells = useMemo(() => buildCells(visibleElse), [visibleElse]);
+  const visibleArchiveUnits = elseCells.length + visibleIters.length;
+  const shownElseCells = elseCells.slice(0, archiveLimit);
+  const remainingIterationSlots = Math.max(0, archiveLimit - shownElseCells.length);
+  const shownIters = visibleIters.slice(0, remainingIterationSlots);
+
+  useEffect(() => {
+    setArchiveLimit(ARCHIVE_PAGE_SIZE);
+  }, [q, researchScope]);
 
   const toggleCluster = (key: string) =>
     setExpanded((prev) => {
@@ -592,9 +605,9 @@ export default function DossierIndex({
           </div>
         ) : (
           <>
-            {elseCells.length > 0 && (
+            {shownElseCells.length > 0 && (
               <ul className="mt-2 space-y-1.5">
-                {elseCells.map((cell) =>
+                {shownElseCells.map((cell) =>
                   cell.type === "single" ? (
                     <ItemRow key={cell.item.id} item={cell.item} nowMs={nowMs} />
                   ) : (
@@ -610,13 +623,13 @@ export default function DossierIndex({
                 )}
               </ul>
             )}
-            {visibleIters.length > 0 && (
+            {shownIters.length > 0 && (
               <div className="mt-3" data-testid="dossier-iterations">
                 <h3 className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
                   resolved iterations
                 </h3>
                 <ul className="mt-1 space-y-1.5">
-                  {visibleIters.map((row, i) => (
+                  {shownIters.map((row, i) => (
                     <IterationRow
                       key={`${typeof row.iteration_id === "string" ? row.iteration_id : "iter"}-${i}`}
                       row={row}
@@ -624,6 +637,16 @@ export default function DossierIndex({
                   ))}
                 </ul>
               </div>
+            )}
+            {archiveLimit < visibleArchiveUnits && (
+              <button
+                type="button"
+                className="mt-3 rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-300 hover:border-zinc-700"
+                data-testid="dossier-show-more"
+                onClick={() => setArchiveLimit((limit) => Math.min(limit + ARCHIVE_PAGE_SIZE, visibleArchiveUnits))}
+              >
+                Show {Math.min(ARCHIVE_PAGE_SIZE, visibleArchiveUnits - archiveLimit)} more records
+              </button>
             )}
           </>
         )}

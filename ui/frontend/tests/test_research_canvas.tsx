@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
@@ -62,6 +62,128 @@ function renderCanvas(model: ThesisModel, nextOwed: Record<string, string> = { L
 }
 
 describe("ResearchCanvas", () => {
+  it("uses each current iteration question for its member card while retaining the collection title", () => {
+    const currentRows = [
+      {
+        iteration_id: "iter-2026-09-15-007",
+        seed: { topic: "payoff arithmetic" },
+        hypothesis: { text: JSON.stringify({ chosen: "Exact focal and pooled payoffs should imply oracle-consistent actions in every seat." }) },
+        gate_status: "pending",
+      },
+      {
+        iteration_id: "iter-2026-09-15-008",
+        seed: { topic: "seat-indexed action tables" },
+        hypothesis: { text: "A seat-indexed action table is more strategically consistent than a word-list representation." },
+        gate_status: "pending",
+      },
+      {
+        iteration_id: "iter-2026-09-15-009",
+        seed: { topic: "future retaliation" },
+        hypothesis: { text: "Future retaliation changes attention under a joint-payoff objective." },
+        gate_status: "pending",
+      },
+    ];
+    const model = buildThesisFamilies([{
+      cluster_id: "cl-iter-2026-09-15-007",
+      stem: "cl-iter-2026-09-15-007",
+      status: "open",
+      evidence_level: "L1",
+      members: currentRows.map((row) => row.iteration_id),
+    }], currentRows);
+
+    renderCanvas(model);
+
+    expect(screen.getByRole("heading", { level: 2 })).toHaveTextContent(
+      "Strategic consistency: arithmetic, action tables, and retaliation",
+    );
+    const cards = screen.getAllByRole("button", { name: /Select recorded entry/ });
+    expect(cards).toHaveLength(3);
+    expect(cards[0]).toHaveTextContent("Payoff arithmetic and strategic consistency");
+    expect(cards[1]).toHaveTextContent("Seat-indexed action tables");
+    expect(cards[2]).toHaveTextContent("Future retaliation and joint payoff");
+    expect(screen.getByTestId("research-canvas-standing")).toHaveTextContent(
+      /recorded gate stage pending · no human-action request inferred/i,
+    );
+    expect(
+      screen.getAllByText(/This research view does not establish a queued human action/i),
+    ).not.toHaveLength(0);
+  });
+
+  it("hydrates only the exact selected iteration and prioritizes recorded criticism", async () => {
+    const model = buildThesisFamilies([{
+      cluster_id: "cl-hydrate",
+      stem: "Thin index title",
+      status: "open",
+      evidence_level: "L1",
+      members: ["iter-hydrate"],
+      last_event_ts: "2026-09-16T04:00:00Z",
+    }], [{
+      iteration_id: "iter-hydrate",
+      ended_at: "2026-09-16T03:00:00Z",
+      seed: { topic: "Thin topic" },
+      hypothesis: { text: "Thin hypothesis." },
+    }]);
+    const loadJourney = vi.fn().mockResolvedValue({
+      found: true,
+      iteration_id: "iter-hydrate",
+      iteration: {
+        iteration_id: "iter-hydrate",
+        ended_at: "2026-09-16T04:01:00Z",
+        seed: { topic: "Hydrated topic" },
+        hypothesis: { text: "Hydrated exact question." },
+        redteam: { verdict: "fatal_flaw", critique: "The action table cannot identify the claimed response." },
+        nara_summary: "A conflicting model summary.",
+        experiment_outcome: null,
+        gate_status: "pending",
+      },
+    });
+    render(<MemoryRouter><ResearchCanvas model={model} nextOwed={{}} loadJourney={loadJourney} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("research-canvas-journey-state")).toHaveTextContent("Exact iteration journey loaded"));
+    const context = screen.getByTestId("research-canvas-context");
+    expect(context).toHaveTextContent("Hydrated exact question");
+    expect(context).toHaveTextContent("No experiment outcome is recorded. Recorded red-team criticism");
+    expect(context).toHaveTextContent("The action table cannot identify the claimed response");
+    expect(context).not.toHaveTextContent("A conflicting model summary");
+    expect(loadJourney).toHaveBeenCalledWith("iter-hydrate");
+  });
+
+  it("rejects a mismatched journey response and refetches when the selected record changes", async () => {
+    const row = {
+      iteration_id: "iter-refresh",
+      ended_at: "2026-09-16T03:00:00Z",
+      seed: { topic: "Refresh topic" },
+      hypothesis: { text: "Refresh question." },
+    };
+    const cluster: LadderCluster = {
+      cluster_id: "cl-refresh",
+      stem: "Refresh question",
+      status: "open",
+      evidence_level: "L1",
+      members: ["iter-refresh"],
+      last_event_ts: "2026-09-16T04:00:00Z",
+    };
+    const loadJourney = vi.fn().mockResolvedValue({
+      found: true,
+      iteration_id: "iter-wrong",
+      iteration: { ...row, iteration_id: "iter-wrong", hypothesis: { text: "Wrong stale question." } },
+    });
+    const result = render(<MemoryRouter><ResearchCanvas model={buildThesisFamilies([cluster], [row])} nextOwed={{}} loadJourney={loadJourney} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId("research-canvas-journey-state")).toHaveTextContent("unavailable"));
+    expect(screen.getByTestId("research-canvas-context")).not.toHaveTextContent("Wrong stale question");
+
+    loadJourney.mockResolvedValue({
+      found: true,
+      iteration_id: "iter-refresh",
+      iteration: { ...row, ended_at: "2026-09-16T04:05:00Z", hypothesis: { text: "Fresh exact question." } },
+    });
+    await act(async () => {
+      result.rerender(<MemoryRouter><ResearchCanvas model={buildThesisFamilies([{ ...cluster, last_event_ts: "2026-09-16T04:05:00Z" }], [row])} nextOwed={{}} loadJourney={loadJourney} /></MemoryRouter>);
+    });
+    await waitFor(() => expect(screen.getByTestId("research-canvas-journey-state")).toHaveTextContent("loaded"));
+    expect(screen.getByTestId("research-canvas-context")).toHaveTextContent("Fresh exact question");
+    expect(loadJourney).toHaveBeenCalledTimes(2);
+  });
+
   it("leads with the three exact source-bound Liquid Democracy claims and truthful selected context", () => {
     renderCanvas(liquidModel());
 

@@ -1,0 +1,126 @@
+{
+  "schema": "flash-cap-closure-result/v1",
+  "generated_at": "2026-09-16T04:39:58Z",
+  "window": {
+    "window_id": "qfn-ab-lab-diversity-cap-closure-20260916-b",
+    "cohort": "flash",
+    "evaluation_kind": "diversity_cap",
+    "window_sha256": "cb2e98c4c70d9017cc9a15997f6f687d1ed3b74479879dd127bc7dc763b2cc98",
+    "plan_sha256": "f1250b9c1965f9be99790153f63263c4240ed88aca44fc535abb7d8130c90f45",
+    "controller_source_bundle_sha256": "7d4cfb46cc44f6c6caaa0acdf5841c4c3e97c574913541a8c53b7b3b78d01ef4",
+    "source_head": "e77a89257efaa6933efee8b4a50ca7241f7d853e",
+    "candidate_spec_id": "mia-925d7be6-mtp3-reduced47k-v2opt-v1"
+  },
+  "terminal_outcome": {
+    "status": "aborted",
+    "classification": "runtime_gate_startup_host_pageout",
+    "error": "QualificationError: startup host swap reached the 5-second byte threshold",
+    "candidate_ready": false,
+    "profile_canaries_run": false,
+    "evaluator_admitted": false,
+    "issued_model_calls": 0,
+    "returned_model_calls": 0,
+    "quality_result_available": false,
+    "numeric_quality_counts": null,
+    "promotion_authorized": false,
+    "retry_authorized": false,
+    "third_cap_attempt_allowed": false
+  },
+  "startup_breach": {
+    "observed_at": "2026-09-16T04:31:27.837310+00:00",
+    "monitor_phase": "load",
+    "paging_gate": "startup",
+    "host_pageout_5s_threshold_bytes": 536870912,
+    "host_pageout_5s_observed_bytes": 562221056,
+    "host_pageout_60s_observed_bytes": 562221056,
+    "startup_gate_pageout_observed_bytes": 562221056,
+    "threshold_excess_bytes": 25350144,
+    "mem_available_gib_at_breach": 36.554019927978516,
+    "minimum_mem_available_gib": 30.16657257080078,
+    "sample_gap_seconds": 1.0144832795485854,
+    "candidate_cgroup_memory_current_bytes": 38140022784,
+    "candidate_cgroup_memory_max_bytes": 103079215104,
+    "candidate_cgroup_swap_current_bytes": 0,
+    "candidate_cgroup_swap_max_bytes": 0,
+    "candidate_oom_events": 0,
+    "candidate_oom_kill_events": 0,
+    "candidate_restart_count": 0,
+    "candidate_oom_killed": false,
+    "interpretation": "The fixed host-startup paging guard stopped the lifecycle before readiness. This is not a candidate OOM and carries no quality score."
+  },
+  "evidence_absence": {
+    "readiness_json": "absent",
+    "probes_json": "absent",
+    "admission_ready_proof_json": "absent",
+    "evaluation_directory": "absent",
+    "evaluation_run_json": "absent",
+    "evaluation_run_sha256": null
+  },
+  "supervision": {
+    "started_at": "2026-09-16T04:25:07.068553+00:00",
+    "finished_at": "2026-09-16T04:38:24.375040+00:00",
+    "elapsed_seconds": 797.3044668901712,
+    "returncode": 1,
+    "terminated_at_cutoff": false,
+    "interrupted": null,
+    "emergency_restoration": null
+  },
+  "restoration": {
+    "status": "verified",
+    "verified_at": "2026-09-16T04:38:23.910257+00:00",
+    "elapsed_seconds": 404.28374858479947,
+    "errors": [],
+    "diagnostic_errors": [],
+    "resident_restart_baselines": {
+      "vllm-gemma4": 0,
+      "vllm-qwen": 0
+    },
+    "candidate_absent_after_restore": true,
+    "port_8012_free_after_restore": true,
+    "nara_active_after_restore": true
+  },
+  "post_restoration_probe": {
+    "observed_at": "2026-09-16T04:39:58Z",
+    "mem_available_gib": 38.17055892944336,
+    "queues": [
+      {
+        "running": 0.0,
+        "waiting": 0.0
+      },
+      {
+        "running": 0.0,
+        "waiting": 0.0
+      }
+    ],
+    "resident_runtime_ids": [
+      "fc61a80d6c2d07b551c5afdd566a7c82ee05ad40c014d69c428e299e49101374",
+      "bcb6cd87757279ff77f1460cab2f8ad6cf1a2e46d19dad165b07dccecfa509bb"
+    ],
+    "resident_restart_counts": [
+      0,
+      0
+    ]
+  },
+  "raw_receipts": {
+    "supervision_reservation_sha256": "c73516461cb325c1bacef1f15a0f64472aedf3123bfa9a255858ded5e5793b70",
+    "supervision_start_sha256": "7a7c2066c25a83003e9cfa218339bd96746032987ce50de73749b49a273c1188",
+    "model_verification_sha256": "7f56aa5b70dade5b18890920c4d4f5b23ba03749b3515edcc61fc7f177a07f85",
+    "candidate_log_sha256": "a9aa03e9c66aa8829803fbfe2f5986d6d0646d40dc1b642889f711a32ea053ca",
+    "controller_log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "memory_jsonl_sha256": "7952cea197c8db15ab805de6ee8a1561389761f103a0697a86abe1905c6fdb8c",
+    "state_json_sha256": "bb248a4af21bef2604d0b1557066ca040242df92f138cc7026d7cf0dfe5073e1",
+    "result_json_sha256": "f55f7cf926549017254004c555c19fd4d4d0021002d4e4635b0947af4dc3d59b",
+    "supervision_json_sha256": "82fdd25f26a205770d051559d9afc1b78e6d07424b88bd8ae4e492606c18e9a5"
+  },
+  "protected_payoff_b_sources": {
+    "source_count": 19,
+    "post_window_source_map_sha256": "298bfbbf89561e3abe79e18b21ae31956f3f5d4f0be232f06435ee8fa5bd1f49",
+    "unchanged": true
+  },
+  "decision": {
+    "production_policy": "retain_existing_gemma_32k_and_qwen_16k_per_caller_policies",
+    "flash_disposition": "close_until_sunday_review",
+    "stable_benchmark_today": "resident_only_baseline; Flash arm remains unissued for runtime-gate reason",
+    "claim_limit": "Repeated startup paging failure is runtime qualification evidence. It is not a scored loss and cannot revise the historical quality findings."
+  }
+}

@@ -1,0 +1,1141 @@
+{
+  "all_canonical_bench_files": [
+    "bench/.gitkeep",
+    "bench/agentic_game_theory/__init__.py",
+    "bench/agentic_game_theory/calibration.py",
+    "bench/agentic_game_theory/known_opponent_comparison.py",
+    "bench/agentic_game_theory/optimal_control.py",
+    "bench/applied_trading/30_DAY_EXECUTION.md",
+    "bench/applied_trading/H1_STRATEGIC_TRANSFER.md",
+    "bench/applied_trading/OPERATIONS_60_DAY_AND_TIMER.md",
+    "bench/applied_trading/PUBLICATION_AND_H1_DUE_OPERATOR.md",
+    "bench/applied_trading/README.md",
+    "bench/applied_trading/REST_REFERENCE_OPERATOR.md",
+    "bench/applied_trading/__init__.py",
+    "bench/applied_trading/acquire_fixed_60.sh",
+    "bench/applied_trading/capture_tick.py",
+    "bench/applied_trading/collection_projection.py",
+    "bench/applied_trading/h1_pilot_lifecycle.py",
+    "bench/applied_trading/h1_topic_transfer.json",
+    "bench/applied_trading/hourly_capture.py",
+    "bench/applied_trading/paper_driver.py",
+    "bench/applied_trading/projection.py",
+    "bench/applied_trading/prospective_hourly_features.py",
+    "bench/applied_trading/public_archive_adapter.py",
+    "bench/applied_trading/public_spot_capture.py",
+    "bench/applied_trading/publication_index.py",
+    "bench/applied_trading/rest_reference_driver.py",
+    "bench/applied_trading/systemd/applied-h1-capture.service",
+    "bench/applied_trading/systemd/applied-h1-capture.timer",
+    "bench/applied_trading/systemd/applied-h1-rest-due@.service",
+    "bench/applied_trading/systemd/applied-h1-rest-due@.timer",
+    "bench/applied_trading/trade_only_baseline.py",
+    "bench/applied_trading/trial_contract.py",
+    "bench/control_baseline.csv",
+    "bench/critic_cal/__init__.py",
+    "bench/critic_cal/audit_overrides.py",
+    "bench/critic_cal/build_manifest.py",
+    "bench/critic_cal/driver.py",
+    "bench/critic_cal/manifest.jsonl",
+    "bench/critic_cal/manifest_meta.json",
+    "bench/critic_cal/runs/calls_production_20260819T062316Z.jsonl",
+    "bench/critic_cal/runs/override_audit_2026-08-19.json",
+    "bench/critic_cal/runs/production_20260819T062140Z.json",
+    "bench/critic_eval/__init__.py",
+    "bench/critic_eval/day9_run.jsonl",
+    "bench/critic_eval/qwen_ab.py",
+    "bench/critic_eval/run_day9.py",
+    "bench/critic_eval/runs/stage3a_qwen3.6-27b-nvfp4-mtp_20260817T101456Z.json",
+    "bench/critic_eval/runs/stage3a_qwen3.8-27b-nvfp4-mtp_20260815T063602Z.json",
+    "bench/critic_eval/runs/stage3a_qwen3.8-27b-nvfp4-mtp_20260815T083124Z.json",
+    "bench/critic_eval/runs/stage3a_qwen3.8-27b-nvfp4-mtp_20260816T203420Z.json",
+    "bench/critic_eval/runs/stage3a_qwen3.8-27b-nvfp4-mtp_20260817T093138Z.json",
+    "bench/critic_eval/stage3a_driver.py",
+    "bench/day1.csv",
+    "bench/day3_needle.json",
+    "bench/debate_eval/adoption_20260816.json",
+    "bench/flash_next_ab/MTP_DECODE_TIMING_PROTOCOL.json",
+    "bench/flash_next_ab/MTP_PARITY_PROTOCOL.json",
+    "bench/flash_next_ab/__init__.py",
+    "bench/flash_next_ab/adapters.py",
+    "bench/flash_next_ab/candidate_registry.py",
+    "bench/flash_next_ab/compare.py",
+    "bench/flash_next_ab/evaluation_window.py",
+    "bench/flash_next_ab/extended_admission.py",
+    "bench/flash_next_ab/extended_lifecycle.py",
+    "bench/flash_next_ab/extended_observer.py",
+    "bench/flash_next_ab/followon_admission.py",
+    "bench/flash_next_ab/followon_canaries.py",
+    "bench/flash_next_ab/followon_completed_window_admission.py",
+    "bench/flash_next_ab/followon_context.py",
+    "bench/flash_next_ab/followon_context_packs.py",
+    "bench/flash_next_ab/followon_dispatch.py",
+    "bench/flash_next_ab/followon_market_canaries.py",
+    "bench/flash_next_ab/followon_native_packet.py",
+    "bench/flash_next_ab/followon_plans.py",
+    "bench/flash_next_ab/followon_prepare.py",
+    "bench/flash_next_ab/followon_profiles.py",
+    "bench/flash_next_ab/followon_projection.py",
+    "bench/flash_next_ab/followon_qualification_admission.py",
+    "bench/flash_next_ab/followon_repair_prepare.py",
+    "bench/flash_next_ab/followon_selected_repair.py",
+    "bench/flash_next_ab/followon_selection.py",
+    "bench/flash_next_ab/followon_thinking.py",
+    "bench/flash_next_ab/followon_timing.py",
+    "bench/flash_next_ab/followon_v5_parent.py",
+    "bench/flash_next_ab/harness.py",
+    "bench/flash_next_ab/image_build/.ruff.toml",
+    "bench/flash_next_ab/image_build/Dockerfile.mia-reduced47k-draft",
+    "bench/flash_next_ab/image_build/README.md",
+    "bench/flash_next_ab/image_build/build_reduced_overlay.py",
+    "bench/flash_next_ab/image_build/patch_mtp_draft_vocab.py",
+    "bench/flash_next_ab/image_build/source-audit/mtp.current-c0.py",
+    "bench/flash_next_ab/lab_eval_context.py",
+    "bench/flash_next_ab/lab_eval_context_crossplan.py",
+    "bench/flash_next_ab/lab_eval_context_packs.py",
+    "bench/flash_next_ab/lab_eval_context_qwen.py",
+    "bench/flash_next_ab/lab_eval_diversity_cap.py",
+    "bench/flash_next_ab/lab_eval_fresh.py",
+    "bench/flash_next_ab/lab_eval_plan.py",
+    "bench/flash_next_ab/lab_eval_replay.py",
+    "bench/flash_next_ab/lab_eval_report.py",
+    "bench/flash_next_ab/lab_eval_runner.py",
+    "bench/flash_next_ab/lab_eval_supplement_report.py",
+    "bench/flash_next_ab/lab_window.py",
+    "bench/flash_next_ab/manifest.py",
+    "bench/flash_next_ab/mia_candidate_integration.py",
+    "bench/flash_next_ab/mtp0_controls.py",
+    "bench/flash_next_ab/mtp_decode_diagnostic.py",
+    "bench/flash_next_ab/observer_admission.py",
+    "bench/flash_next_ab/pair_publication.py",
+    "bench/flash_next_ab/prepare_followon_contracts.py",
+    "bench/flash_next_ab/private_evidence.py",
+    "bench/flash_next_ab/qualification.py",
+    "bench/flash_next_ab/reduced_profile_literal.py",
+    "bench/flash_next_ab/resident_admission.py",
+    "bench/flash_next_ab/resident_evaluation_window.py",
+    "bench/flash_next_ab/transport.py",
+    "bench/fp8_ab/__init__.py",
+    "bench/fp8_ab/driver.py",
+    "bench/fp8_ab/runs/toolprobe_winB_36fp8_20260817T070536Z.json",
+    "bench/fp8_ab/runs/toolprobe_winB_36fp8_probe2_20260817T082752Z.json",
+    "bench/fp8_ab/runs/toolprobe_winB_38fp8_20260817T082036Z.json",
+    "bench/fp8_ab/runs/winA_36nvfp4_evalruntime_20260817T053941Z.json",
+    "bench/fp8_ab/runs/winB_36fp8_20260817T070434Z.json",
+    "bench/fp8_ab/runs/winB_38fp8_20260817T081730Z.json",
+    "bench/fp8_ab/tool_probe.py",
+    "bench/judge_cal/README.md",
+    "bench/judge_cal/build_set.py",
+    "bench/judge_cal/set_v2.jsonl",
+    "bench/mtp.csv",
+    "bench/payoff_tool_study/controller.py",
+    "bench/payoff_tool_study/runner.py",
+    "bench/qwen_ab_3bcd/__init__.py",
+    "bench/qwen_ab_3bcd/restate_battery.py",
+    "bench/qwen_ab_3bcd/runs/3b_qwen36_20260818T015313Z.json",
+    "bench/qwen_ab_3bcd/runs/3b_qwen38_20260818T023233Z.json",
+    "bench/qwen_ab_3bcd/runs/3c_qwen3.6-27b-nvfp4-mtp_20260818T020154Z.json",
+    "bench/qwen_ab_3bcd/runs/3c_qwen3.8-27b-nvfp4-mtp_20260818T024312Z.json",
+    "bench/qwen_ab_3bcd/runs/3d_qwen3.6-27b-nvfp4-mtp_20260818T021114Z.json",
+    "bench/qwen_ab_3bcd/runs/3d_qwen3.8-27b-nvfp4-mtp_20260818T025057Z.json",
+    "bench/qwen_ab_3bcd/runs/qwen3.6-27b-nvfp4-mtp.calls.jsonl",
+    "bench/qwen_ab_3bcd/runs/qwen3.8-27b-nvfp4-mtp.calls.jsonl",
+    "bench/qwen_ab_3bcd/runs/qwen36.calls.jsonl",
+    "bench/qwen_ab_3bcd/runs/qwen38.calls.jsonl",
+    "bench/qwen_ab_3bcd/runs/sessions/sf-iter-2026-07-15-001/fs-874475f0444f.jsonl",
+    "bench/qwen_ab_3bcd/runs/sessions/sf-iter-2026-07-15-001/fs-e156d493faef.jsonl",
+    "bench/qwen_ab_3bcd/runs/sessions/sf-iter-2026-07-30-001/fs-1ee7cc28ba28.jsonl",
+    "bench/qwen_ab_3bcd/runs/sessions/sf-iter-2026-07-30-001/fs-e7ecc94e86ae.jsonl",
+    "bench/qwen_ab_3bcd/runs/sessions/sf-iter-2026-08-04-001/fs-582cbd77e9a8.jsonl",
+    "bench/qwen_ab_3bcd/runs/sessions/sf-iter-2026-08-04-001/fs-ba70ce43bbcc.jsonl",
+    "bench/qwen_ab_3bcd/twovoice_battery.py",
+    "bench/qwen_ab_3bcd/vote_battery.py",
+    "bench/readjudication/__init__.py",
+    "bench/readjudication/build_manifest.py",
+    "bench/readjudication/driver.py",
+    "bench/readjudication/manifest.jsonl",
+    "bench/readjudication/old_prompt.txt",
+    "bench/readjudication/runs/calls_new_20260819T052650Z.jsonl",
+    "bench/readjudication/runs/calls_old_20260819T054009Z.jsonl",
+    "bench/readjudication/runs/new_20260819T051107Z.json",
+    "bench/readjudication/runs/old_20260819T052824Z.json",
+    "bench/readjudication/runs/pair_20260819T054038Z.json",
+    "bench/readjudication/runs/pair_corrected_20260819T054320Z.json",
+    "bench/redteam_cal/__init__.py",
+    "bench/redteam_cal/build_fixtures.py",
+    "bench/redteam_cal/driver.py",
+    "bench/redteam_cal/fixtures.jsonl",
+    "bench/redteam_cal/revised_prompt.txt",
+    "bench/redteam_cal/runs/calls_gemma-current_20260818T060320Z.jsonl",
+    "bench/redteam_cal/runs/calls_gemma-current_20260818T061029Z.jsonl",
+    "bench/redteam_cal/runs/calls_gemma-revised_20260818T060543Z.jsonl",
+    "bench/redteam_cal/runs/calls_gemma-revised_20260818T061254Z.jsonl",
+    "bench/redteam_cal/runs/calls_qwen38_20260818T063735Z.jsonl",
+    "bench/redteam_cal/runs/gemma-current_20260818T060805Z.json",
+    "bench/redteam_cal/runs/gemma-revised_20260818T061029Z.json",
+    "bench/redteam_cal/runs/qwen38_20260818T061255Z.json",
+    "bench/tests/test_flash_market_canaries.py",
+    "bench/tests/test_flash_pair_publication.py",
+    "bench/tests/test_followon_timing.py",
+    "bench/weekly_upgrade_context/__init__.py",
+    "bench/weekly_upgrade_context/generate_packs.py",
+    "bench/weekly_upgrade_context/measure_tokens.py",
+    "bench/weekly_upgrade_context/packs.json",
+    "bench/weekly_upgrade_context/preflight.py",
+    "bench/weekly_upgrade_context/token_counts.json",
+    "bench/weekly_upgrade_diversity/__init__.py",
+    "bench/weekly_upgrade_diversity/graders.py",
+    "bench/weekly_upgrade_diversity/manifest.py",
+    "bench/weekly_upgrade_diversity/receipt.py",
+    "bench/weekly_upgrade_diversity/runner.py",
+    "bench/weekly_upgrade_effort/__init__.py",
+    "bench/weekly_upgrade_effort/manifest.py",
+    "bench/weekly_upgrade_effort/receipt.py",
+    "bench/weekly_upgrade_effort/runner.py",
+    "bench/weekly_upgrade_eval/README.md",
+    "bench/weekly_upgrade_eval/__init__.py",
+    "bench/weekly_upgrade_eval/fixtures.json",
+    "bench/weekly_upgrade_eval/manifest.py",
+    "bench/weekly_upgrade_eval/repeats.py",
+    "bench/weekly_upgrade_eval/runner.py",
+    "bench/weekly_upgrade_eval/sources.json",
+    "bench/weekly_upgrade_eval/stats.py",
+    "bench/weekly_upgrade_eval/structured_output.py",
+    "bench/weekly_upgrade_eval/topic_scope.py",
+    "bench/weekly_upgrade_historical/README.md",
+    "bench/weekly_upgrade_historical/__init__.py",
+    "bench/weekly_upgrade_historical/grader_assets.py",
+    "bench/weekly_upgrade_historical/manifest.py",
+    "bench/weekly_upgrade_historical/receipt.py",
+    "bench/weekly_upgrade_historical/runner.py",
+    "bench/weekly_upgrade_historical/sandbox.py",
+    "bench/weekly_upgrade_portfolio/__init__.py",
+    "bench/weekly_upgrade_portfolio/code_sandbox.py",
+    "bench/weekly_upgrade_portfolio/graders.py",
+    "bench/weekly_upgrade_portfolio/manifest.py",
+    "bench/weekly_upgrade_portfolio/runner.py",
+    "bench/weekly_upgrade_portfolio/tasks/code_delegation/starter.py",
+    "bench/weekly_upgrade_portfolio/tasks/code_regret/starter.py"
+  ],
+  "api_surfaces": [
+    {
+      "kind": "aggregate_read_only",
+      "path": "/api/weekly_upgrade/progress",
+      "projects": [
+        "weekly history",
+        "local_model_research",
+        "local_followon_results",
+        "research_pipeline",
+        "applied_market_research"
+      ],
+      "source": "ui/backend/weekly_upgrade_progress.py"
+    },
+    {
+      "kind": "read_only",
+      "path": "/api/lab_model_eval_progress",
+      "projects": [
+        "Flash/resident primary lab evaluation"
+      ],
+      "source": "ui/backend/lab_model_eval_progress.py"
+    },
+    {
+      "kind": "read_only",
+      "path": "/api/lab_model_supplement_progress",
+      "projects": [
+        "fresh science and repair supplement"
+      ],
+      "source": "ui/backend/lab_model_supplement_progress.py"
+    },
+    {
+      "kind": "read_only",
+      "path": "/api/lab_model_context_crossplan_progress",
+      "projects": [
+        "Qwen/Flash matched context cross-plan"
+      ],
+      "source": "ui/backend/lab_model_context_crossplan_progress.py"
+    },
+    {
+      "kind": "read_only",
+      "path": "/api/lab_diversity_cap_progress",
+      "projects": [
+        "Flash output-cap development diagnostic"
+      ],
+      "source": "ui/backend/lab_diversity_cap_progress.py"
+    },
+    {
+      "kind": "read_only",
+      "path": "/api/payoff_tool_study_progress",
+      "projects": [
+        "payoff tool arithmetic study"
+      ],
+      "source": "ui/backend/payoff_tool_study_progress.py"
+    },
+    {
+      "kind": "read_only_get_post_rejected",
+      "path": "/api/applied_data_collection",
+      "projects": [
+        "applied capture",
+        "reference studies"
+      ],
+      "source": "ui/backend/applied_data_collection.py"
+    },
+    {
+      "kind": "read_only",
+      "path": "/api/research_ops_status",
+      "projects": [
+        "research operations",
+        "Mia utility pilot projection"
+      ],
+      "source": "ui/backend/research_ops_status.py"
+    },
+    {
+      "kind": "new_generic_read_only",
+      "path": "/api/benchmark_program",
+      "projects": [
+        "stable release registry",
+        "bounded run history"
+      ],
+      "source": "ui/backend/benchmark_program.py",
+      "status": "new in consolidation worktree"
+    }
+  ],
+  "canonical_repository": "/home/decross1/projects/a_bgt_rsi",
+  "external_candidates": [
+    {
+      "disposition": "extended scientific-replication rotation only after per-task license/oracle/ARM pilot",
+      "license": "code MIT; most tasks CC BY 4.0; IDs 3,32,46,53,54,84 retain upstream licenses",
+      "name": "ScienceAgentBench",
+      "pin": "c26e151ed601ba109dc4d35e057ff8e73fec469d",
+      "scale_cost": "102 tasks; official containerized pass about 30 minutes with 8 threads; some grading paths require API",
+      "version_note": "verified split announced 2026-04-30"
+    },
+    {
+      "disposition": "rare research diagnostic, not weekly core",
+      "license": "MIT code; downloaded capsules retain their own content terms",
+      "name": "CORE-Bench",
+      "pin": "e32a2980e72fe6eb04ee04eb749458f570625663",
+      "scale_cost": "270 tasks/90 papers; local Docker uses privileged Docker-in-Docker for medium tier; official Azure examples use E2as_v5 and T4 VMs",
+      "version_note": "legacy harness is no longer actively maintained; official README recommends HAL"
+    },
+    {
+      "disposition": "out of one-Spark weekly envelope; rare external research audit only",
+      "license": "MIT repository; paper/dataset content needs its own review",
+      "name": "PaperBench",
+      "pin": "51052cede8cc608f95bb00346635e03759013e5a",
+      "scale_cost": "20 papers; official setup 12-hour rollout on one A10; paper estimates $400 API/paper plus $66 grading, about $9,320 for one full 20-paper run",
+      "version_note": "frontier-evals current HEAD checked 2026-09-16"
+    },
+    {
+      "disposition": "monthly/triggered fixed edition after five-oracle and ARM pilot",
+      "license": "repository Apache-2.0; audit selected task payloads for embedded upstream licenses",
+      "name": "Terminal-Bench",
+      "pin": "452bf305c6daa62fc59061d22133a7cbc7c1572e",
+      "scale_cost": "container tasks; official instructions require oracle 5x; ARM compatibility must be demonstrated locally",
+      "version_note": "v4.0.0 released 2026-08-26; tasks changed/removed from v3"
+    },
+    {
+      "disposition": "reject for stable core; 27.6% audit found 59.4% of audited hard cases materially flawed plus contamination",
+      "license": "mixed upstream repositories",
+      "name": "SWE-bench Verified",
+      "pin": "500-task 2024 release; no new local pin selected",
+      "scale_cost": "large containerized repo repair",
+      "version_note": "OpenAI stopped using it for frontier reporting in 2026"
+    },
+    {
+      "disposition": "reject until independently repaired; automated pipeline flagged 27.4% and humans 34.1% broken (~30% estimate)",
+      "license": "mixed public/private repository terms",
+      "name": "SWE-bench Pro",
+      "pin": "no local pin selected",
+      "scale_cost": "large containerized repo repair",
+      "version_note": "OpenAI audit published 2026-07-08"
+    },
+    {
+      "disposition": "fixed non-live, locally oracle-validated tool subset only; label as project rotation",
+      "license": "Apache-2.0 repository; live data is mutable",
+      "name": "BFCL V4",
+      "pin": "f7cf735 (official leaderboard reproduction pin); bfcl-eval==2025.12.17",
+      "scale_cost": "5,088 scored plus 5,218 non-scoring entries in full V4 composition",
+      "version_note": "leaderboard last updated 2026-04-12"
+    },
+    {
+      "disposition": "separate agent/tool rotation only; pin task split, simulator, trials, and domain version",
+      "license": "MIT",
+      "name": "tau-bench",
+      "pin": "v1.0.1 peeled commit fc0055dc4e0a316c3f83133267fbd6faaa770992; HEAD 2174a603f6d014ef94473ffa95957f6ce27100db",
+      "scale_cost": "full domains with 4+ trials recommended; model user-simulator adds calls/cost",
+      "version_note": "v1 task/grading revisions and simulator-dependent multi-trial protocol"
+    },
+    {
+      "disposition": "pin commit plus selected game configs and scripted opponents before rotation",
+      "license": "MIT",
+      "name": "TextArena",
+      "pin": "6dfb577c01d0337fe03b05adce84c5ae1878eca1",
+      "scale_cost": "game-dependent, often multi-turn and opponent-dependent",
+      "version_note": "README announces v0.6.9/100 games; no matching git tag observed"
+    },
+    {
+      "disposition": "strategic extended rotation candidate; freeze opponents, seeds, utilities, and parser",
+      "license": "MIT repository",
+      "name": "GTBench",
+      "pin": "b75e1d7068d6935208810affa78b436072d08051",
+      "scale_cost": "multi-game and LLM-vs-LLM rollouts",
+      "version_note": "NeurIPS 2024, 10-game taxonomy"
+    },
+    {
+      "disposition": "research sandbox only until oracle, parser, payoff, and maturity audit",
+      "license": "BSD-3-Clause",
+      "name": "KantBench/OpenEnv",
+      "pin": "5d9419f194c282de3082e1850d150b77b062f8fb",
+      "scale_cost": "configurable multi-agent rollouts; local cost depends on selected games/rounds",
+      "version_note": "99+ configurable games; very new repository at audit"
+    }
+  ],
+  "families": [
+    {
+      "disposition": "retain verbatim; no stable baseline conversion",
+      "id": "legacy-standalone-runtime",
+      "integrity_max": "I0",
+      "lineage": "early-local-runtime",
+      "role": "archive_runtime",
+      "sources": [
+        "bench/control_baseline.csv",
+        "bench/day1.csv",
+        "bench/day3_needle.json",
+        "bench/mtp.csv"
+      ]
+    },
+    {
+      "disposition": "diagnostic/calibration records; never merge denominators",
+      "id": "qwen-ab-and-critic",
+      "integrity_max": "I1-I2 mixed",
+      "lineage": "resident-role-and-grader-calibration",
+      "role": "calibration_archive",
+      "sources": [
+        "bench/qwen_ab_3bcd",
+        "bench/critic_eval",
+        "bench/critic_cal",
+        "bench/judge_cal",
+        "bench/readjudication",
+        "bench/redteam_cal",
+        "bench/debate_eval"
+      ]
+    },
+    {
+      "disposition": "runtime gate and engineering diagnosis only",
+      "id": "quantization-runtime",
+      "integrity_max": "I2",
+      "lineage": "local-runtime-quantization-mtp",
+      "role": "runtime_diagnostic",
+      "sources": [
+        "bench/fp8_ab",
+        "bench/flash_next_ab/mtp0_controls.py",
+        "bench/flash_next_ab/mtp_decode_diagnostic.py"
+      ]
+    },
+    {
+      "disposition": "preserve original manifests/results; selected concepts rewritten as fresh v1 tasks, never rescored",
+      "id": "weekly-core-development",
+      "integrity_max": "I2-I3 mixed",
+      "lineage": "weekly-upgrade",
+      "role": "diagnostic_development",
+      "sources": [
+        "bench/weekly_upgrade_eval",
+        "bench/weekly_upgrade_portfolio",
+        "bench/weekly_upgrade_historical",
+        "bench/weekly_upgrade_effort"
+      ]
+    },
+    {
+      "disposition": "capacity/runtime evidence separate from capability score",
+      "id": "context-capability",
+      "integrity_max": "I3 on admitted windows",
+      "lineage": "weekly-context-capability",
+      "role": "runtime_diagnostic",
+      "sources": [
+        "bench/weekly_upgrade_context",
+        "bench/flash_next_ab/lab_eval_context.py",
+        "bench/flash_next_ab/lab_eval_context_crossplan.py",
+        "bench/flash_next_ab/lab_eval_context_qwen.py"
+      ]
+    },
+    {
+      "disposition": "reused fixtures; label cap closure diagnostic_development, not holdout",
+      "id": "diversity-and-cap",
+      "integrity_max": "I3 for completed development runs; I2 terminal for aborted closure",
+      "lineage": "flash-diversity-output-budget-20260915",
+      "role": "diagnostic_development",
+      "sources": [
+        "bench/weekly_upgrade_diversity",
+        "bench/flash_next_ab/lab_eval_diversity_cap.py"
+      ]
+    },
+    {
+      "disposition": "retain historical gate verdict; no conversion to stable-v1 baseline",
+      "id": "flash-primary-supplement",
+      "integrity_max": "I3 on admitted primary/supplement windows",
+      "lineage": "flash-next-lab",
+      "role": "diagnostic_development",
+      "sources": [
+        "bench/flash_next_ab"
+      ]
+    },
+    {
+      "disposition": "report episode/action denominators and mechanism-specific regret only",
+      "id": "strategic-known-opponent",
+      "integrity_max": "I2-I3 mixed",
+      "lineage": "agentic-game-theory-known-opponent",
+      "role": "empirical_diagnostic",
+      "sources": [
+        "bench/agentic_game_theory"
+      ]
+    },
+    {
+      "disposition": "zero-call unissued is visible; future run requires a new window ID",
+      "id": "payoff-tool-arithmetic",
+      "integrity_max": "I2 terminal-unissued",
+      "lineage": "payoff-tool-arithmetic",
+      "role": "empirical_diagnostic",
+      "sources": [
+        "bench/payoff_tool_study"
+      ]
+    },
+    {
+      "disposition": "separate from model benchmark; paper observation only; no trading authority",
+      "id": "applied-market-research",
+      "integrity_max": "I2 source-bound captures",
+      "lineage": "applied-market-data",
+      "role": "empirical_applied",
+      "sources": [
+        "bench/applied_trading"
+      ]
+    },
+    {
+      "disposition": "new unpublished 18+3 regression canary; baseline remains null until fresh admitted run",
+      "id": "stable-benchmark-v1",
+      "integrity_max": "target I3 per run and I4 after repeated comparable windows",
+      "lineage": "a-bgt-rsi-stable-1.0.0",
+      "role": "stable_core",
+      "sources": [
+        "bench/stable_benchmark"
+      ]
+    }
+  ],
+  "generated_at": "2026-09-16T04:44:44.882817Z",
+  "implementation_worktree": "/home/decross1/projects/a_bgt_rsi_worktrees/ui-benchmark-consolidation-20260916",
+  "integrity_levels": [
+    {
+      "level": "I0",
+      "name": "recorded_only",
+      "requirements": "result/CSV/JSON exists; denominator or source identity may be incomplete"
+    },
+    {
+      "level": "I1",
+      "name": "registered",
+      "requirements": "manifest or protocol fixes question, arms, and denominator before execution"
+    },
+    {
+      "level": "I2",
+      "name": "source_bound_complete",
+      "requirements": "manifest/source/runtime identities, raw evidence, explicit attempted/planned counts, and terminal state are bound"
+    },
+    {
+      "level": "I3",
+      "name": "independently_replayed_admitted",
+      "requirements": "objective replay plus external lifecycle/resource/restoration admission; no invalid or partial cells scored"
+    },
+    {
+      "level": "I4",
+      "name": "repeated_comparable",
+      "requirements": "same published definition repeated across eligible windows with no task/grader/policy drift"
+    }
+  ],
+  "new_stable_package": {
+    "calls_per_arm_ceiling": 29,
+    "files": [
+      "bench/stable_benchmark/__init__.py",
+      "bench/stable_benchmark/admission.py",
+      "bench/stable_benchmark/comparison.py",
+      "bench/stable_benchmark/definition.draft.json",
+      "bench/stable_benchmark/fixtures.py",
+      "bench/stable_benchmark/graders.py",
+      "bench/stable_benchmark/manifest.py",
+      "bench/stable_benchmark/projection.py",
+      "bench/stable_benchmark/receipt_verification.py",
+      "bench/stable_benchmark/replay.py",
+      "bench/stable_benchmark/runner.py",
+      "bench/stable_benchmark/schemas/definition.schema.json",
+      "bench/stable_benchmark/schemas/registration.schema.json",
+      "bench/stable_benchmark/schemas/replay-admission.schema.json",
+      "bench/stable_benchmark/schemas/run-manifest.schema.json",
+      "bench/stable_benchmark/schemas/run-receipt.schema.json",
+      "bench/stable_benchmark/supervised_window.py"
+    ],
+    "historical_baseline": null,
+    "status": "draft_unpublished",
+    "units": 21
+  },
+  "overlap_lineages": [
+    {
+      "id": "weekly-upgrade",
+      "members": [
+        "weekly_upgrade_eval",
+        "weekly_upgrade_portfolio",
+        "weekly_upgrade_historical",
+        "weekly_upgrade_context",
+        "weekly_upgrade_effort",
+        "weekly_upgrade_diversity"
+      ],
+      "overlap": "roles/topics/game/evidence/code concepts recur; repeated parameterizations and conditions are not independent tasks"
+    },
+    {
+      "id": "flash-next-lab",
+      "members": [
+        "flash_next_ab primary",
+        "fresh supplement",
+        "context",
+        "diversity cap",
+        "follow-ons"
+      ],
+      "overlap": "one aggregator package projects many windows; files/modules are not independent benchmarks"
+    },
+    {
+      "id": "flash-diversity-output-budget-20260915",
+      "members": [
+        "weekly_upgrade_diversity five game task lineages",
+        "384-token primary observations",
+        "384-vs-1536 closure"
+      ],
+      "overlap": "the five closure tasks are reused development fixtures; role is diagnostic_development"
+    },
+    {
+      "id": "weekly-context-capability",
+      "members": [
+        "weekly_upgrade_context",
+        "Gemma36",
+        "Qwen24",
+        "Mia36",
+        "Qwen-Mia cross-plan"
+      ],
+      "overlap": "cells repeat controlled packs/bands; counts are capacity cells, not independent scientific tasks"
+    },
+    {
+      "id": "resident-calibration",
+      "members": [
+        "qwen_ab_3bcd",
+        "critic_eval",
+        "critic_cal",
+        "judge_cal",
+        "readjudication",
+        "redteam_cal",
+        "debate_eval"
+      ],
+      "overlap": "model/prompt/judge calibration batteries have different graders and cannot be pooled"
+    },
+    {
+      "id": "strategic-utility",
+      "members": [
+        "agentic_game_theory",
+        "weekly game science",
+        "portfolio strategic tasks",
+        "diversity tasks",
+        "payoff_tool_study"
+      ],
+      "overlap": "mechanisms, task prompts, utility objectives, and tool conditions recur; report by mechanism and independent episode/task lineage"
+    },
+    {
+      "id": "applied-market-data",
+      "members": [
+        "applied_trading captures",
+        "reference studies",
+        "UI applied research"
+      ],
+      "overlap": "data availability and paper outcomes are applied evidence, not benchmark task success"
+    }
+  ],
+  "packages": [
+    {
+      "file_count": 4,
+      "files": [
+        "bench/agentic_game_theory/__init__.py",
+        "bench/agentic_game_theory/calibration.py",
+        "bench/agentic_game_theory/known_opponent_comparison.py",
+        "bench/agentic_game_theory/optimal_control.py"
+      ],
+      "lineage": "agentic-game-theory-known-opponent",
+      "package": "bench/agentic_game_theory",
+      "recommended_role": "empirical_diagnostic",
+      "summary": "Finite known-opponent controls, calibration, and best-response oracle; keep as applied game-behavior evidence."
+    },
+    {
+      "file_count": 26,
+      "files": [
+        "bench/applied_trading/30_DAY_EXECUTION.md",
+        "bench/applied_trading/H1_STRATEGIC_TRANSFER.md",
+        "bench/applied_trading/OPERATIONS_60_DAY_AND_TIMER.md",
+        "bench/applied_trading/PUBLICATION_AND_H1_DUE_OPERATOR.md",
+        "bench/applied_trading/README.md",
+        "bench/applied_trading/REST_REFERENCE_OPERATOR.md",
+        "bench/applied_trading/__init__.py",
+        "bench/applied_trading/acquire_fixed_60.sh",
+        "bench/applied_trading/capture_tick.py",
+        "bench/applied_trading/collection_projection.py",
+        "bench/applied_trading/h1_pilot_lifecycle.py",
+        "bench/applied_trading/h1_topic_transfer.json",
+        "bench/applied_trading/hourly_capture.py",
+        "bench/applied_trading/paper_driver.py",
+        "bench/applied_trading/projection.py",
+        "bench/applied_trading/prospective_hourly_features.py",
+        "bench/applied_trading/public_archive_adapter.py",
+        "bench/applied_trading/public_spot_capture.py",
+        "bench/applied_trading/publication_index.py",
+        "bench/applied_trading/rest_reference_driver.py",
+        "bench/applied_trading/systemd/applied-h1-capture.service",
+        "bench/applied_trading/systemd/applied-h1-capture.timer",
+        "bench/applied_trading/systemd/applied-h1-rest-due@.service",
+        "bench/applied_trading/systemd/applied-h1-rest-due@.timer",
+        "bench/applied_trading/trade_only_baseline.py",
+        "bench/applied_trading/trial_contract.py"
+      ],
+      "lineage": "applied-market-data",
+      "package": "bench/applied_trading",
+      "recommended_role": "empirical_applied",
+      "summary": "Public/paper market capture and trial contracts; evidence lane, never model benchmark or live-trading authorization."
+    },
+    {
+      "file_count": 9,
+      "files": [
+        "bench/critic_cal/__init__.py",
+        "bench/critic_cal/audit_overrides.py",
+        "bench/critic_cal/build_manifest.py",
+        "bench/critic_cal/driver.py",
+        "bench/critic_cal/manifest.jsonl",
+        "bench/critic_cal/manifest_meta.json",
+        "bench/critic_cal/runs/calls_production_20260819T062316Z.jsonl",
+        "bench/critic_cal/runs/override_audit_2026-08-19.json",
+        "bench/critic_cal/runs/production_20260819T062140Z.json"
+      ],
+      "lineage": "critic-calibration",
+      "package": "bench/critic_cal",
+      "recommended_role": "calibration_archive",
+      "summary": "Critic override/calibration manifests and historical runs."
+    },
+    {
+      "file_count": 10,
+      "files": [
+        "bench/critic_eval/__init__.py",
+        "bench/critic_eval/day9_run.jsonl",
+        "bench/critic_eval/qwen_ab.py",
+        "bench/critic_eval/run_day9.py",
+        "bench/critic_eval/runs/stage3a_qwen3.6-27b-nvfp4-mtp_20260817T101456Z.json",
+        "bench/critic_eval/runs/stage3a_qwen3.8-27b-nvfp4-mtp_20260815T063602Z.json",
+        "bench/critic_eval/runs/stage3a_qwen3.8-27b-nvfp4-mtp_20260815T083124Z.json",
+        "bench/critic_eval/runs/stage3a_qwen3.8-27b-nvfp4-mtp_20260816T203420Z.json",
+        "bench/critic_eval/runs/stage3a_qwen3.8-27b-nvfp4-mtp_20260817T093138Z.json",
+        "bench/critic_eval/stage3a_driver.py"
+      ],
+      "lineage": "critic-model-evaluation",
+      "package": "bench/critic_eval",
+      "recommended_role": "calibration_archive",
+      "summary": "Qwen critic stage evaluations and day-nine records."
+    },
+    {
+      "file_count": 1,
+      "files": [
+        "bench/debate_eval/adoption_20260816.json"
+      ],
+      "lineage": "debate-adoption",
+      "package": "bench/debate_eval",
+      "recommended_role": "calibration_archive",
+      "summary": "Recorded adoption decision only; not a reusable benchmark harness."
+    },
+    {
+      "file_count": 61,
+      "files": [
+        "bench/flash_next_ab/MTP_DECODE_TIMING_PROTOCOL.json",
+        "bench/flash_next_ab/MTP_PARITY_PROTOCOL.json",
+        "bench/flash_next_ab/__init__.py",
+        "bench/flash_next_ab/adapters.py",
+        "bench/flash_next_ab/candidate_registry.py",
+        "bench/flash_next_ab/compare.py",
+        "bench/flash_next_ab/evaluation_window.py",
+        "bench/flash_next_ab/extended_admission.py",
+        "bench/flash_next_ab/extended_lifecycle.py",
+        "bench/flash_next_ab/extended_observer.py",
+        "bench/flash_next_ab/followon_admission.py",
+        "bench/flash_next_ab/followon_canaries.py",
+        "bench/flash_next_ab/followon_completed_window_admission.py",
+        "bench/flash_next_ab/followon_context.py",
+        "bench/flash_next_ab/followon_context_packs.py",
+        "bench/flash_next_ab/followon_dispatch.py",
+        "bench/flash_next_ab/followon_market_canaries.py",
+        "bench/flash_next_ab/followon_native_packet.py",
+        "bench/flash_next_ab/followon_plans.py",
+        "bench/flash_next_ab/followon_prepare.py",
+        "bench/flash_next_ab/followon_profiles.py",
+        "bench/flash_next_ab/followon_projection.py",
+        "bench/flash_next_ab/followon_qualification_admission.py",
+        "bench/flash_next_ab/followon_repair_prepare.py",
+        "bench/flash_next_ab/followon_selected_repair.py",
+        "bench/flash_next_ab/followon_selection.py",
+        "bench/flash_next_ab/followon_thinking.py",
+        "bench/flash_next_ab/followon_timing.py",
+        "bench/flash_next_ab/followon_v5_parent.py",
+        "bench/flash_next_ab/harness.py",
+        "bench/flash_next_ab/image_build/.ruff.toml",
+        "bench/flash_next_ab/image_build/Dockerfile.mia-reduced47k-draft",
+        "bench/flash_next_ab/image_build/README.md",
+        "bench/flash_next_ab/image_build/build_reduced_overlay.py",
+        "bench/flash_next_ab/image_build/patch_mtp_draft_vocab.py",
+        "bench/flash_next_ab/image_build/source-audit/mtp.current-c0.py",
+        "bench/flash_next_ab/lab_eval_context.py",
+        "bench/flash_next_ab/lab_eval_context_crossplan.py",
+        "bench/flash_next_ab/lab_eval_context_packs.py",
+        "bench/flash_next_ab/lab_eval_context_qwen.py",
+        "bench/flash_next_ab/lab_eval_diversity_cap.py",
+        "bench/flash_next_ab/lab_eval_fresh.py",
+        "bench/flash_next_ab/lab_eval_plan.py",
+        "bench/flash_next_ab/lab_eval_replay.py",
+        "bench/flash_next_ab/lab_eval_report.py",
+        "bench/flash_next_ab/lab_eval_runner.py",
+        "bench/flash_next_ab/lab_eval_supplement_report.py",
+        "bench/flash_next_ab/lab_window.py",
+        "bench/flash_next_ab/manifest.py",
+        "bench/flash_next_ab/mia_candidate_integration.py",
+        "bench/flash_next_ab/mtp0_controls.py",
+        "bench/flash_next_ab/mtp_decode_diagnostic.py",
+        "bench/flash_next_ab/observer_admission.py",
+        "bench/flash_next_ab/pair_publication.py",
+        "bench/flash_next_ab/prepare_followon_contracts.py",
+        "bench/flash_next_ab/private_evidence.py",
+        "bench/flash_next_ab/qualification.py",
+        "bench/flash_next_ab/reduced_profile_literal.py",
+        "bench/flash_next_ab/resident_admission.py",
+        "bench/flash_next_ab/resident_evaluation_window.py",
+        "bench/flash_next_ab/transport.py"
+      ],
+      "lineage": "flash-next-lab",
+      "package": "bench/flash_next_ab",
+      "recommended_role": "diagnostic_development",
+      "summary": "Qualification, primary/supplement/context/diversity/follow-on plans and admissions; aggregator package, not 61 independent benchmarks."
+    },
+    {
+      "file_count": 9,
+      "files": [
+        "bench/fp8_ab/__init__.py",
+        "bench/fp8_ab/driver.py",
+        "bench/fp8_ab/runs/toolprobe_winB_36fp8_20260817T070536Z.json",
+        "bench/fp8_ab/runs/toolprobe_winB_36fp8_probe2_20260817T082752Z.json",
+        "bench/fp8_ab/runs/toolprobe_winB_38fp8_20260817T082036Z.json",
+        "bench/fp8_ab/runs/winA_36nvfp4_evalruntime_20260817T053941Z.json",
+        "bench/fp8_ab/runs/winB_36fp8_20260817T070434Z.json",
+        "bench/fp8_ab/runs/winB_38fp8_20260817T081730Z.json",
+        "bench/fp8_ab/tool_probe.py"
+      ],
+      "lineage": "quantization-runtime",
+      "package": "bench/fp8_ab",
+      "recommended_role": "runtime_diagnostic",
+      "summary": "FP8/NVFP4 execution and tool-probe comparisons."
+    },
+    {
+      "file_count": 3,
+      "files": [
+        "bench/judge_cal/README.md",
+        "bench/judge_cal/build_set.py",
+        "bench/judge_cal/set_v2.jsonl"
+      ],
+      "lineage": "judge-calibration",
+      "package": "bench/judge_cal",
+      "recommended_role": "calibration_archive",
+      "summary": "Judge-set construction and fixture asset."
+    },
+    {
+      "file_count": 2,
+      "files": [
+        "bench/payoff_tool_study/controller.py",
+        "bench/payoff_tool_study/runner.py"
+      ],
+      "lineage": "payoff-tool-arithmetic",
+      "package": "bench/payoff_tool_study",
+      "recommended_role": "empirical_diagnostic",
+      "summary": "Prospective calculator/tool arithmetic study; final 2026-09-15 instrument was unissued."
+    },
+    {
+      "file_count": 20,
+      "files": [
+        "bench/qwen_ab_3bcd/__init__.py",
+        "bench/qwen_ab_3bcd/restate_battery.py",
+        "bench/qwen_ab_3bcd/runs/3b_qwen36_20260818T015313Z.json",
+        "bench/qwen_ab_3bcd/runs/3b_qwen38_20260818T023233Z.json",
+        "bench/qwen_ab_3bcd/runs/3c_qwen3.6-27b-nvfp4-mtp_20260818T020154Z.json",
+        "bench/qwen_ab_3bcd/runs/3c_qwen3.8-27b-nvfp4-mtp_20260818T024312Z.json",
+        "bench/qwen_ab_3bcd/runs/3d_qwen3.6-27b-nvfp4-mtp_20260818T021114Z.json",
+        "bench/qwen_ab_3bcd/runs/3d_qwen3.8-27b-nvfp4-mtp_20260818T025057Z.json",
+        "bench/qwen_ab_3bcd/runs/qwen3.6-27b-nvfp4-mtp.calls.jsonl",
+        "bench/qwen_ab_3bcd/runs/qwen3.8-27b-nvfp4-mtp.calls.jsonl",
+        "bench/qwen_ab_3bcd/runs/qwen36.calls.jsonl",
+        "bench/qwen_ab_3bcd/runs/qwen38.calls.jsonl",
+        "bench/qwen_ab_3bcd/runs/sessions/sf-iter-2026-07-15-001/fs-874475f0444f.jsonl",
+        "bench/qwen_ab_3bcd/runs/sessions/sf-iter-2026-07-15-001/fs-e156d493faef.jsonl",
+        "bench/qwen_ab_3bcd/runs/sessions/sf-iter-2026-07-30-001/fs-1ee7cc28ba28.jsonl",
+        "bench/qwen_ab_3bcd/runs/sessions/sf-iter-2026-07-30-001/fs-e7ecc94e86ae.jsonl",
+        "bench/qwen_ab_3bcd/runs/sessions/sf-iter-2026-08-04-001/fs-582cbd77e9a8.jsonl",
+        "bench/qwen_ab_3bcd/runs/sessions/sf-iter-2026-08-04-001/fs-ba70ce43bbcc.jsonl",
+        "bench/qwen_ab_3bcd/twovoice_battery.py",
+        "bench/qwen_ab_3bcd/vote_battery.py"
+      ],
+      "lineage": "qwen-3.6-3.8-ab",
+      "package": "bench/qwen_ab_3bcd",
+      "recommended_role": "diagnostic_development",
+      "summary": "Role, restatement, two-voice, and vote batteries for Qwen variants."
+    },
+    {
+      "file_count": 11,
+      "files": [
+        "bench/readjudication/__init__.py",
+        "bench/readjudication/build_manifest.py",
+        "bench/readjudication/driver.py",
+        "bench/readjudication/manifest.jsonl",
+        "bench/readjudication/old_prompt.txt",
+        "bench/readjudication/runs/calls_new_20260819T052650Z.jsonl",
+        "bench/readjudication/runs/calls_old_20260819T054009Z.jsonl",
+        "bench/readjudication/runs/new_20260819T051107Z.json",
+        "bench/readjudication/runs/old_20260819T052824Z.json",
+        "bench/readjudication/runs/pair_20260819T054038Z.json",
+        "bench/readjudication/runs/pair_corrected_20260819T054320Z.json"
+      ],
+      "lineage": "readjudication",
+      "package": "bench/readjudication",
+      "recommended_role": "calibration_archive",
+      "summary": "Old/new prompt readjudication and corrected pair records."
+    },
+    {
+      "file_count": 13,
+      "files": [
+        "bench/redteam_cal/__init__.py",
+        "bench/redteam_cal/build_fixtures.py",
+        "bench/redteam_cal/driver.py",
+        "bench/redteam_cal/fixtures.jsonl",
+        "bench/redteam_cal/revised_prompt.txt",
+        "bench/redteam_cal/runs/calls_gemma-current_20260818T060320Z.jsonl",
+        "bench/redteam_cal/runs/calls_gemma-current_20260818T061029Z.jsonl",
+        "bench/redteam_cal/runs/calls_gemma-revised_20260818T060543Z.jsonl",
+        "bench/redteam_cal/runs/calls_gemma-revised_20260818T061254Z.jsonl",
+        "bench/redteam_cal/runs/calls_qwen38_20260818T063735Z.jsonl",
+        "bench/redteam_cal/runs/gemma-current_20260818T060805Z.json",
+        "bench/redteam_cal/runs/gemma-revised_20260818T061029Z.json",
+        "bench/redteam_cal/runs/qwen38_20260818T061255Z.json"
+      ],
+      "lineage": "redteam-calibration",
+      "package": "bench/redteam_cal",
+      "recommended_role": "calibration_archive",
+      "summary": "Red-team prompt and model calibration records."
+    },
+    {
+      "file_count": 3,
+      "files": [
+        "bench/tests/test_flash_market_canaries.py",
+        "bench/tests/test_flash_pair_publication.py",
+        "bench/tests/test_followon_timing.py"
+      ],
+      "lineage": "bench-test-support",
+      "package": "bench/tests",
+      "recommended_role": "support",
+      "summary": "Tests located under bench; not an independent benchmark family."
+    },
+    {
+      "file_count": 6,
+      "files": [
+        "bench/weekly_upgrade_context/__init__.py",
+        "bench/weekly_upgrade_context/generate_packs.py",
+        "bench/weekly_upgrade_context/measure_tokens.py",
+        "bench/weekly_upgrade_context/packs.json",
+        "bench/weekly_upgrade_context/preflight.py",
+        "bench/weekly_upgrade_context/token_counts.json"
+      ],
+      "lineage": "weekly-upgrade-context",
+      "package": "bench/weekly_upgrade_context",
+      "recommended_role": "runtime_diagnostic",
+      "summary": "Controlled capacity/token packs and preflight measurement."
+    },
+    {
+      "file_count": 5,
+      "files": [
+        "bench/weekly_upgrade_diversity/__init__.py",
+        "bench/weekly_upgrade_diversity/graders.py",
+        "bench/weekly_upgrade_diversity/manifest.py",
+        "bench/weekly_upgrade_diversity/receipt.py",
+        "bench/weekly_upgrade_diversity/runner.py"
+      ],
+      "lineage": "weekly-upgrade-diversity",
+      "package": "bench/weekly_upgrade_diversity",
+      "recommended_role": "diagnostic_development",
+      "summary": "Repeated game-theory proposal/selection tasks; includes the output-cap diagnostic lineage."
+    },
+    {
+      "file_count": 4,
+      "files": [
+        "bench/weekly_upgrade_effort/__init__.py",
+        "bench/weekly_upgrade_effort/manifest.py",
+        "bench/weekly_upgrade_effort/receipt.py",
+        "bench/weekly_upgrade_effort/runner.py"
+      ],
+      "lineage": "weekly-upgrade-effort",
+      "package": "bench/weekly_upgrade_effort",
+      "recommended_role": "diagnostic_development",
+      "summary": "Small role/reasoning-effort pilot."
+    },
+    {
+      "file_count": 10,
+      "files": [
+        "bench/weekly_upgrade_eval/README.md",
+        "bench/weekly_upgrade_eval/__init__.py",
+        "bench/weekly_upgrade_eval/fixtures.json",
+        "bench/weekly_upgrade_eval/manifest.py",
+        "bench/weekly_upgrade_eval/repeats.py",
+        "bench/weekly_upgrade_eval/runner.py",
+        "bench/weekly_upgrade_eval/sources.json",
+        "bench/weekly_upgrade_eval/stats.py",
+        "bench/weekly_upgrade_eval/structured_output.py",
+        "bench/weekly_upgrade_eval/topic_scope.py"
+      ],
+      "lineage": "weekly-upgrade-core",
+      "package": "bench/weekly_upgrade_eval",
+      "recommended_role": "diagnostic_development",
+      "summary": "General weekly fixtures, topics, role tasks, repetitions, and statistics."
+    },
+    {
+      "file_count": 7,
+      "files": [
+        "bench/weekly_upgrade_historical/README.md",
+        "bench/weekly_upgrade_historical/__init__.py",
+        "bench/weekly_upgrade_historical/grader_assets.py",
+        "bench/weekly_upgrade_historical/manifest.py",
+        "bench/weekly_upgrade_historical/receipt.py",
+        "bench/weekly_upgrade_historical/runner.py",
+        "bench/weekly_upgrade_historical/sandbox.py"
+      ],
+      "lineage": "weekly-upgrade-repair",
+      "package": "bench/weekly_upgrade_historical",
+      "recommended_role": "diagnostic_development",
+      "summary": "Historical repository repair panel; public fixtures are contamination-exposed and stay outside the new core."
+    },
+    {
+      "file_count": 7,
+      "files": [
+        "bench/weekly_upgrade_portfolio/__init__.py",
+        "bench/weekly_upgrade_portfolio/code_sandbox.py",
+        "bench/weekly_upgrade_portfolio/graders.py",
+        "bench/weekly_upgrade_portfolio/manifest.py",
+        "bench/weekly_upgrade_portfolio/runner.py",
+        "bench/weekly_upgrade_portfolio/tasks/code_delegation/starter.py",
+        "bench/weekly_upgrade_portfolio/tasks/code_regret/starter.py"
+      ],
+      "lineage": "weekly-upgrade-portfolio",
+      "package": "bench/weekly_upgrade_portfolio",
+      "recommended_role": "diagnostic_development",
+      "summary": "Portfolio of delegation, sortition, social-choice, coordination, evidence, Simpson, and code tasks."
+    }
+  ],
+  "release_policy": {
+    "current_window": "resident baseline only; Flash unissued after runtime admission failure",
+    "expiry_action": "review_required",
+    "historical_rescoring": false,
+    "publication_start": "external_witness_timestamp_not_yet_set",
+    "release": "1.0.0",
+    "review_at": "2026-10-14T00:00:00Z",
+    "weekly_core": "18 capability + 3 actor-tool-critic micro-workflows"
+  },
+  "schema_version": "benchmark-inventory/v1",
+  "scope": "all canonical bench packages/files plus benchmark-facing API/UI surfaces and the new unpublished stable package",
+  "standalone_bench_assets": [
+    {
+      "integrity": "I0_recorded_only",
+      "path": "bench/control_baseline.csv",
+      "recommended_role": "runtime_or_legacy_archive"
+    },
+    {
+      "integrity": "I0_recorded_only",
+      "path": "bench/day1.csv",
+      "recommended_role": "runtime_or_legacy_archive"
+    },
+    {
+      "integrity": "I0_recorded_only",
+      "path": "bench/day3_needle.json",
+      "recommended_role": "runtime_or_legacy_archive"
+    },
+    {
+      "integrity": "I0_recorded_only",
+      "path": "bench/mtp.csv",
+      "recommended_role": "runtime_or_legacy_archive"
+    }
+  ],
+  "ui_surfaces": [
+    {
+      "component": "BenchmarkProgress weekly summary/timeline/family cards",
+      "data_source": "/api/weekly_upgrade/progress",
+      "disposition": "retain as historical/operational view",
+      "source": "ui/frontend/src/routes/BenchmarkProgress.tsx"
+    },
+    {
+      "component": "LocalModelResearchPanel",
+      "data_source": "embedded weekly projection",
+      "disposition": "historical lineage",
+      "source": "ui/frontend/src/components/LocalModelResearchPanel.tsx"
+    },
+    {
+      "component": "LabModelEvaluationPanel",
+      "data_source": "/api/lab_model_eval_progress",
+      "disposition": "diagnostic lineage",
+      "source": "ui/frontend/src/components/LabModelEvaluationPanel.tsx"
+    },
+    {
+      "component": "LabModelSupplementPanel",
+      "data_source": "/api/lab_model_supplement_progress",
+      "disposition": "diagnostic lineage",
+      "source": "ui/frontend/src/components/LabModelSupplementPanel.tsx"
+    },
+    {
+      "component": "LabContextCrossplanPanel",
+      "data_source": "/api/lab_model_context_crossplan_progress",
+      "disposition": "runtime/context lineage",
+      "source": "ui/frontend/src/components/LabContextCrossplanPanel.tsx"
+    },
+    {
+      "component": "LabDiversityCapPanel",
+      "data_source": "/api/lab_diversity_cap_progress",
+      "disposition": "diagnostic_development lineage",
+      "source": "ui/frontend/src/components/LabDiversityCapPanel.tsx"
+    },
+    {
+      "component": "PayoffToolStudyPanel",
+      "data_source": "/api/payoff_tool_study_progress",
+      "disposition": "empirical diagnostic lineage",
+      "source": "ui/frontend/src/components/PayoffToolStudyPanel.tsx"
+    },
+    {
+      "component": "FollowonResultsPanel",
+      "data_source": "embedded weekly projection",
+      "disposition": "historical follow-on lineage",
+      "source": "ui/frontend/src/components/FollowonResultsPanel.tsx"
+    },
+    {
+      "component": "ResearchPipelinePanel (inline)",
+      "data_source": "embedded weekly projection",
+      "disposition": "orchestrator/funnel evidence, separate layer",
+      "source": "ui/frontend/src/routes/BenchmarkProgress.tsx"
+    },
+    {
+      "component": "AppliedMarketResearchPanel",
+      "data_source": "embedded weekly projection",
+      "disposition": "applied empirical evidence, separate layer",
+      "source": "ui/frontend/src/components/AppliedMarketResearchPanel.tsx"
+    },
+    {
+      "component": "BenchmarkProgramOverview",
+      "data_source": "/api/benchmark_program",
+      "disposition": "new generic stable-release/run-history surface",
+      "source": "ui/frontend/src/components/BenchmarkProgramOverview.tsx",
+      "status": "new in consolidation worktree"
+    }
+  ]
+}

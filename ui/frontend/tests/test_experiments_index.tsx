@@ -1,9 +1,8 @@
 // Research index tests. Render the tier-grouped view from fixtures (network
 // bypassed via `initial`) and assert the honest per-tier states: the three
 // tier sections render in spectrum order; a YES verdict chip is emerald and a
-// NO is red; a bridge badge names its iteration_id + metric; the applied
-// design-only entry shows its "not run" state; an empty bridge reads "not yet
-// bridged".
+// NO is red; a bridge badge names its iteration_id + metric; an indexed result
+// with no summary stays honestly unknown; an empty bridge reads "not yet bridged".
 import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import Experiments from "../src/routes/Experiments";
@@ -11,20 +10,12 @@ import {
   RESEARCH_FIXTURE,
   RESEARCH_UNAVAILABLE,
 } from "../src/fixtures/experiments";
-import { COORDINATOR_CYCLES_FIXTURE } from "../src/fixtures/coordinator";
-import type { CoordinatorCycle } from "../src/types/schemas";
 import { describe, expect, it } from "vitest";
 
-function renderPage(
-  initial: typeof RESEARCH_FIXTURE,
-  coordinatorCycles: CoordinatorCycle[] = [],
-) {
+function renderPage(initial: typeof RESEARCH_FIXTURE) {
   return render(
     <MemoryRouter initialEntries={["/experiments?research_scope=all"]}>
-      <Experiments
-        initial={initial}
-        initialCoordinatorCycles={coordinatorCycles}
-      />
+      <Experiments initial={initial} />
     </MemoryRouter>,
   );
 }
@@ -76,10 +67,10 @@ describe("Research index (tier-grouped)", () => {
     expect(bridge).toHaveTextContent("designer_mean_efficiency");
   });
 
-  it("shows the applied design-only entry's not-run state + no verdict", () => {
+  it("keeps a summary-less applied record unknown + no verdict", () => {
     renderPage(RESEARCH_FIXTURE);
     const card = screen.getByTestId("research-card-exp007_polymarket");
-    expect(card).toHaveTextContent("design-only — not run");
+    expect(card).toHaveTextContent("No result summary in this index");
     expect(
       within(card).getByTestId("verdict-exp007_polymarket"),
     ).toHaveTextContent("no verdict");
@@ -107,24 +98,9 @@ describe("Research index (tier-grouped)", () => {
     ).toHaveTextContent(/not available/);
   });
 
-  it("renders coordinator cycles as auditable units (incl. the errored one)", () => {
-    renderPage(RESEARCH_FIXTURE, COORDINATOR_CYCLES_FIXTURE);
-    const section = within(screen.getByTestId("coordinator-cycles-section"));
-    // One card per cycle.
-    expect(section.getAllByTestId("coordinator-cycle-card")).toHaveLength(
-      COORDINATOR_CYCLES_FIXTURE.length,
-    );
-    // The failed dispatch's plan→outcome chain is visible (the errored action
-    // with its error string), so a coordinator verdict can be doubted here.
-    expect(
-      section.getByTestId("coordinator-action-error-run_loop_iteration"),
-    ).toHaveTextContent(/not a valid SeedSource/i);
-  });
-
-  it("shows an empty coordinator-cycles state when there are none", () => {
+  it("does not duplicate coordinator trace history in the evaluation archive", () => {
     renderPage(RESEARCH_FIXTURE);
-    expect(
-      screen.getByTestId("coordinator-cycles-empty"),
-    ).toHaveTextContent(/No coordinator cycles yet/i);
+    expect(screen.queryByTestId("coordinator-cycles-section")).toBeNull();
+    expect(screen.queryByTestId("coordinator-cycle-card")).toBeNull();
   });
 });

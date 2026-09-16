@@ -39,6 +39,7 @@ describe("CommandPalette — open/close", () => {
     openPalette();
     expect(screen.getByTestId("command-palette")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Go to…")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Search commands" })).toBeInTheDocument();
   });
 
   it("Ctrl+K works too (non-mac), and a second press toggles closed", () => {
@@ -113,19 +114,18 @@ describe("CommandPalette — navigation entries", () => {
     for (const label of [
       "Now overview",
       "Research workspace",
-      "Record library",
+      "Research archive · records",
       "Operations delivery",
-      "Benchmark progress",
       "Conversation",
       "Calls",
       "Trace history",
-      "Evaluations",
-      "Recorded trace map",
+      "Research archive · evaluations",
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
-    for (const group of ["Now", "Research", "Operations"]) {
-      expect(screen.getByText(group)).toBeInTheDocument();
+    expect(screen.getAllByText("Benchmarks")).toHaveLength(2);
+    for (const group of ["Now", "Research", "Benchmarks", "Operations"]) {
+      expect(screen.getAllByText(group).length).toBeGreaterThan(0);
     }
   });
 
@@ -142,7 +142,7 @@ describe("CommandPalette — navigation entries", () => {
     openPalette();
     const input = screen.getByPlaceholderText("Go to…");
     fireEvent.change(input, { target: { value: "chan" } });
-    expect(screen.queryByText("Evaluations")).not.toBeInTheDocument();
+    expect(screen.queryByText("Research archive · evaluations")).not.toBeInTheDocument();
     fireEvent.keyDown(input, { key: "Enter" });
     expect(screen.getByTestId("location")).toHaveTextContent("/channel");
   });

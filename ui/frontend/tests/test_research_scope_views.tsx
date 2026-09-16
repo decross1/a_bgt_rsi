@@ -114,6 +114,9 @@ describe("research scope URL and identity boundary", () => {
     expect(screen.getByTestId("research-scope-campaign")).toHaveTextContent(
       "V2 behavior campaign",
     );
+    expect(screen.getByTestId("research-scope-campaign")).toHaveTextContent(
+      "does not establish queued or running work",
+    );
   });
 
   it("fetches the scope identity explicitly and fails closed on malformed identity", async () => {

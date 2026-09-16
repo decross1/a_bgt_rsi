@@ -20,9 +20,21 @@ ARCHIVED_RESIDENT = Path(
 
 @pytest.fixture
 def prepared(monkeypatch, tmp_path: Path):
+    # The production controller remains locked to its frozen worktree. These
+    # host-free tests register only this imported checkout and temporary output
+    # root, so linked maintenance worktrees exercise the same source guards.
+    monkeypatch.setattr(c, "REGISTERED_ROOT", c.CODE_ROOT)
     monkeypatch.setattr(c, "OUTPUT_ROOT", tmp_path)
     path = c.prepare("qfn-followon-payoff-tool-testfixture-a")
     return path
+
+
+def test_unregistered_checkout_refuses_before_preparing_artifacts(monkeypatch, tmp_path):
+    monkeypatch.setattr(c, "REGISTERED_ROOT", tmp_path / "different-checkout")
+    monkeypatch.setattr(c, "OUTPUT_ROOT", tmp_path / "output")
+    with pytest.raises(c.PayoffToolControllerError, match="code root or window ID"):
+        c.prepare("qfn-followon-payoff-tool-testfixture-a")
+    assert not c.OUTPUT_ROOT.exists()
 
 
 def test_real_plan_constructor_and_controller_load_have_eighteen_slots(prepared):

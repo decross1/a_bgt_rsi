@@ -15,7 +15,6 @@ vi.mock("../src/routes/DossierIndex", () => ({ default: () => <div data-testid="
 vi.mock("../src/routes/DossierReader", () => ({ default: () => <div data-testid="route-dossier-reader" /> }));
 vi.mock("../src/routes/Channel", () => ({ default: () => <div data-testid="route-channel" /> }));
 vi.mock("../src/routes/Cycles", () => ({ default: () => <div data-testid="route-cycles" /> }));
-vi.mock("../src/routes/Graph", () => ({ default: () => <div data-testid="route-graph" /> }));
 vi.mock("../src/routes/Experiments", () => ({ default: () => <div data-testid="route-experiments" /> }));
 vi.mock("../src/routes/ExperimentDetail", () => ({ default: () => <div data-testid="route-experiment-detail" /> }));
 vi.mock("../src/routes/ModelIO", () => ({ default: () => <div data-testid="route-model-io" /> }));
@@ -103,7 +102,6 @@ describe("Atlas shell route preservation", () => {
     ["/dossier/claim-1", "route-dossier-reader"],
     ["/channel", "route-channel"],
     ["/cycles", "route-cycles"],
-    ["/graph", "route-graph"],
     ["/experiments", "route-experiments"],
     ["/experiments/exp-1", "route-experiment-detail"],
     ["/model-io", "route-model-io"],
@@ -119,6 +117,7 @@ describe("Atlas shell route preservation", () => {
     ["/ideas", "/ladder", "route-ladder"],
     ["/todo", "/dossier", "route-dossier-index"],
     ["/coordinator", "/cycles", "route-cycles"],
+    ["/graph", "/cycles", "route-cycles"],
   ])("retains the %s redirect", async (from, to, testId) => {
     window.history.replaceState({}, "", from);
     render(<App />);
@@ -134,7 +133,7 @@ describe("Atlas navigation grouping", () => {
     ["/dossier/claim-1", "research"],
     ["/experiments/exp-1", "research"],
     ["/development", "operations"],
-    ["/benchmarks", "operations"],
+    ["/benchmarks", "benchmarks"],
     ["/channel", "operations"],
     ["/model-io", "operations"],
     ["/cycles", "operations"],
@@ -143,7 +142,7 @@ describe("Atlas navigation grouping", () => {
   ])("selects %s inside the %s group", (path, selected) => {
     window.history.replaceState({}, "", path);
     render(<App />);
-    for (const group of ["now", "research", "operations"]) {
+    for (const group of ["now", "research", "benchmarks", "operations"]) {
       expect(screen.getByTestId(`nav-group-${group}`)).toHaveAttribute(
         "data-selected",
         group === selected ? "true" : "false",
@@ -151,25 +150,25 @@ describe("Atlas navigation grouping", () => {
     }
   });
 
-  it("leads with three primary destinations and reveals context only for the current journey", () => {
+  it("leads with four primary destinations and reveals context only for the current journey", () => {
     render(<App />);
     const nav = screen.getByRole("navigation", { name: "Lab workspace" });
-    for (const [name, href] of [["Now", "/"], ["Research", "/ladder"], ["Operations", "/development"]]) {
+    for (const [name, href] of [["Now", "/"], ["Research", "/ladder"], ["Benchmarks", "/benchmarks"], ["Operations", "/development"]]) {
       expect(within(nav).getByRole("link", { name })).toHaveAttribute("href", href);
     }
-    expect(within(nav).getAllByRole("link")).toHaveLength(3);
+    expect(within(nav).getAllByRole("link")).toHaveLength(4);
     fireEvent.click(within(nav).getByRole("link", { name: "Research" }));
-    expect(within(nav).getByRole("link", { name: "Record library" })).toHaveAttribute("href", "/dossier");
-    expect(within(nav).getByRole("link", { name: "Evaluations" })).toHaveAttribute("href", "/experiments");
+    expect(within(nav).getByRole("link", { name: "Archive · records" })).toHaveAttribute("href", "/dossier?research_scope=all");
+    expect(within(nav).getByRole("link", { name: "Archive · evaluations" })).toHaveAttribute("href", "/experiments?research_scope=all");
     expect(within(nav).queryByRole("link", { name: "Calls" })).not.toBeInTheDocument();
     fireEvent.click(within(nav).getByRole("link", { name: "Operations" }));
-    for (const [name, href] of [["Benchmark progress", "/benchmarks"], ["Conversation", "/channel"], ["Calls", "/model-io"], ["Trace history", "/cycles"]]) {
+    for (const [name, href] of [["Conversation", "/channel"], ["Calls", "/model-io"], ["Trace history", "/cycles"]]) {
       expect(within(nav).getByRole("link", { name })).toHaveAttribute("href", href);
     }
     expect(screen.getByRole("link", { name: /brain/ })).toHaveAttribute("href", `http://${window.location.hostname}:5180/dashboard.html`);
   });
 
-  it.each([["/ideas", "/ladder"], ["/todo", "/dossier"], ["/coordinator", "/cycles"]])("preserves query and hash across legacy %s", async (from, to) => {
+  it.each([["/ideas", "/ladder"], ["/todo", "/dossier"], ["/coordinator", "/cycles"], ["/graph", "/cycles"]])("preserves query and hash across legacy %s", async (from, to) => {
     window.history.replaceState({}, "", `${from}?selection=exact%2Fid#evidence`);
     render(<App />);
     await waitFor(() => expect(window.location.pathname).toBe(to));
@@ -338,10 +337,6 @@ describe("Atlas light-theme source compatibility", () => {
     expect(shell).toContain('[stroke="#38bdf8"]');
     expect(shell).toContain('[stroke="#52525b"]');
     expect(shell).toContain('[stroke="#71717a"]');
-    expect(shell).toContain(".react-flow__edge-path");
-    expect(shell).toContain('[data-testid="activity-graph"] .react-flow.dark');
-    expect(shell).toContain("--xy-background-color: var(--surface-2)");
-    expect(shell).toContain("--xy-background-pattern-color-props: var(--border-2)");
     expect(shell).toContain('[class~="bg-emerald-500/70"]');
     expect(shell).toContain('[class~="bg-red-500/70"]');
 

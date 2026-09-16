@@ -109,20 +109,23 @@ def test_incomplete_terminal_is_distinct_from_admission_pending(tmp_path, monkey
     assert cap._terminal_status() == "incomplete_terminal"
 
 
+@pytest.mark.parametrize("closure", [False, True])
 def test_only_sha_bound_pre_evaluation_host_paging_abort_gets_closed_code(
-        tmp_path, monkeypatch) -> None:
+        tmp_path, monkeypatch, closure) -> None:
     monkeypatch.setattr(cap, "OUTPUT", tmp_path)
+    window_id = cap.CLOSURE_WINDOW_ID if closure else "qfn-ab-lab-diversity-cap-20260915-a"
+    window_sha = cap.CLOSURE_WINDOW_SHA if closure else cap.WINDOW_SHA
     restoration = {"status": "verified", "errors": [], "diagnostic_errors": [],
                    "sentinel_retained": False}
     result = {"schema": "lab-model-window-result/v1",
-              "window_id": "qfn-ab-lab-diversity-cap-20260915-a",
-              "window_sha256": cap.WINDOW_SHA, "status": "aborted",
+              "window_id": window_id,
+              "window_sha256": window_sha, "status": "aborted",
               "evaluation_run_sha256": None, "error": "synthetic private failure detail",
               "restoration": restoration}
-    state = {"window_sha256": cap.WINDOW_SHA, "phase": "aborted",
+    state = {"window_sha256": window_sha, "phase": "aborted",
              "restoration": restoration}
     supervisor = {"schema": "lab-model-supervision/v1",
-                  "window_sha256": cap.WINDOW_SHA, "returncode": 1,
+                  "window_sha256": window_sha, "returncode": 1,
                   "interrupted": None, "terminated_at_cutoff": False,
                   "emergency_restoration": None}
     memory = [{"schema": "qwen-flash-next-memory-sample/v3",
@@ -143,14 +146,18 @@ def test_only_sha_bound_pre_evaluation_host_paging_abort_gets_closed_code(
                       ("FAILED_MEMORY_SHA", "memory.jsonl")):
         monkeypatch.setattr(cap, key,
                             hashlib.sha256((tmp_path / name).read_bytes()).hexdigest())
-    assert cap._known_startup_failure() == "startup_host_swap_5s"
+    arguments = ({"output": tmp_path, "window_id": window_id, "window_sha": window_sha,
+                  "failure_hashes": (cap.FAILED_RESULT_SHA, cap.FAILED_STATE_SHA,
+                                     cap.FAILED_SUPERVISION_SHA, cap.FAILED_MEMORY_SHA)}
+                 if closure else {})
+    assert cap._known_startup_failure(**arguments) == "startup_host_swap_5s"
     (tmp_path / "evaluation").mkdir()
     (tmp_path / "evaluation/run.json").write_text("{}")
-    assert cap._known_startup_failure() is None
+    assert cap._known_startup_failure(**arguments) is None
     (tmp_path / "evaluation/run.json").unlink()
     (tmp_path / "memory.jsonl").write_text(json.dumps({**memory[0],
         "host_swap_5s_bytes": 1}) + "\n")
-    assert cap._known_startup_failure() is None
+    assert cap._known_startup_failure(**arguments) is None
 
 
 def test_cap_count_relations_and_nonfinite_time_rejected() -> None:

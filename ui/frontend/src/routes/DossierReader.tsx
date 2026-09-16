@@ -2,8 +2,7 @@
 // product"). One dossier, read top to bottom:
 //
 //   ConcurrencyWarning → header (id · kind · title · deferred tag) → the
-//   trimmed TutorPanel overview → the PipelineJourney SPINE (which absorbed
-//   the retired IterationDetailModal's unique sections) → optional blind
+//   PipelineJourney's single source-bound overview + expandable SPINE → optional blind
 //   CalibrationCapture (pre-reveal) → the REVEAL FENCE → ChatPane ×2
 //   (mode=tutor + mode=two_voice) → the kind-gated DISPOSITION FOOTER.
 //
@@ -33,7 +32,6 @@ import AuthorizeFixForm from "../components/todo/AuthorizeFixForm";
 import SpawnTopicForm from "../components/todo/SpawnTopicForm";
 import AbstainForm from "../components/todo/AbstainForm";
 import ChatPane from "../components/todo/ChatPane";
-import TutorPanel from "../components/todo/TutorPanel";
 import PipelineJourney from "../components/todo/PipelineJourney";
 import ResearchScopeBar from "../components/ResearchScopeBar";
 
@@ -95,8 +93,7 @@ function asText(value: unknown): string {
 
 // The U5 kind-gate families (the Todo.tsx classifyKind, extended with the
 // bubble family the reader also disposes): the EXACT producer enum values
-// only; anything else — including hostile non-string kinds — is "other" and
-// renders NEITHER keyed family, only the kind-agnostic DeferForm.
+// only; anything else — including hostile non-string kinds — is "other".
 type KindClass = "iteration" | "finding" | "bubble" | "other";
 function classifyKind(kind: unknown): KindClass {
   if (kind === "gate_verdict") return "iteration";
@@ -160,9 +157,10 @@ export default function DossierReader({ availability, items }: Props) {
     };
   }, [availability]);
 
-  // The live queue — the reader resolves this dossier's KIND (and title /
-  // deferred tag) from it. One fetch; an id not in the queue (a resolved
-  // iteration, a legacy finding) falls back to its prefix.
+  // The human-action queue — the reader resolves this dossier's actionable
+  // KIND (and title / deferred tag) from it. An id prefix can keep a preserved
+  // record readable, but it never establishes queue membership or permission
+  // to mutate that record.
   const [queue, setQueue] = useState<HumanTodoItem[]>(safeItems(items));
   const [queueLoaded, setQueueLoaded] = useState(items !== undefined);
   useEffect(() => {
@@ -193,15 +191,25 @@ export default function DossierReader({ availability, items }: Props) {
       ? item.kind
       : kindFromPrefix(dossierId);
   const kindClass = classifyKind(resolvedKind);
+  const queuedIterationRequest =
+    kindClass === "iteration" && item?.kind === "gate_verdict";
+  const displayKind =
+    item === null && dossierId.startsWith("iter-")
+      ? "iteration history"
+      : resolvedKind;
   const title = item !== null ? asText(item.title) : "";
   // How long this has been waiting (the queue row's `since`). Coarse and
   // computed once per render — no live clock for a days-scale number.
   const age = item !== null ? ageText(item.since, Date.now()) : "";
 
   // The journey item PipelineJourney replays: the live queue item when
-  // present, else a synthesized pointer carrying the resolved kind.
+  // present, else a synthesized read-only history pointer. The latter keeps
+  // the journey readable without turning an iter-* prefix into a queue action.
   const journeyItem: HumanTodoItem =
-    item ?? ({ id: dossierId, kind: resolvedKind ?? "unknown" } as HumanTodoItem);
+    item ?? ({
+      id: dossierId,
+      kind: dossierId.startsWith("iter-") ? "iteration_history" : resolvedKind ?? "unknown",
+    } as HumanTodoItem);
 
   // Calibration + reveal are PER-ID Sets (flag-2, lifted from Todo.tsx): a
   // recorded calibration is never re-prompted and a reveal sticks, even as
@@ -275,12 +283,12 @@ export default function DossierReader({ availability, items }: Props) {
               <RungGlyph level={item?.evidence_level} />
             </span>
           ) : null}
-          {resolvedKind !== null ? (
+          {displayKind !== null ? (
             <span
               data-testid="dossier-kind"
               className="text-[10px] uppercase tracking-wide text-zinc-500"
             >
-              {resolvedKind}
+              {displayKind}
             </span>
           ) : (
             <span
@@ -290,7 +298,12 @@ export default function DossierReader({ availability, items }: Props) {
               unknown kind
             </span>
           )}
-          {item === null && queueLoaded && (
+          {item === null && queueLoaded && dossierId.startsWith("iter-") && (
+            <span className="text-[10px] text-zinc-600">
+              preserved record — no human-action request is inferred
+            </span>
+          )}
+          {item === null && queueLoaded && !dossierId.startsWith("iter-") && (
             <span className="text-[10px] text-zinc-600">
               not in the live queue — kind read from the id
             </span>
@@ -325,28 +338,13 @@ export default function DossierReader({ availability, items }: Props) {
         scopeOverride="all"
         activeTarget="/dossier"
         allTarget={`/dossier/${encodeURIComponent(dossierId)}`}
+        historyExplanation="Source-library history. This preserved dossier keeps its recorded identity and does not establish current-campaign membership; Current campaign returns to the scoped record library."
       />
-      <p className="mt-3 rounded border border-zinc-800 bg-zinc-900/40 p-3 text-xs text-zinc-400" data-testid="dossier-history-boundary">
-        Source-library history. This detail endpoint reads the preserved dossier and does not establish active-campaign membership. Current campaign returns to the scoped record library.
-      </p>
 
       <div className="mt-3 space-y-3">
-        {/* the trimmed tutor OVERVIEW (finding/iteration families only — the
-            tutor teaches a claim or an iteration; bubbles/gates have none).
-            R2: `compact` cuts it to the claim + evidence refs — the prose it
-            used to dump is either the journey below or on the forms. */}
-        {interrogable && (
-          <TutorPanel
-            key={`tutor-${dossierId}`}
-            findingId={dossierId}
-            title={title.length > 0 ? title : undefined}
-            kind={kindClass === "iteration" ? "iteration" : "finding"}
-            compact
-          />
-        )}
-
-        {/* the JOURNEY SPINE — read-only pipeline context, the prediction
-            basis (absorbed the retired detail modal's sections). */}
+        {/* One exact-source overview and journey. PipelineJourney resolves the
+            detail once and leads with question, observed state, recorded
+            criticism/learning status, and the next source-backed step. */}
         <PipelineJourney key={`journey-${dossierId}`} item={journeyItem} />
 
         {/* OPTIONAL blind calibration — opt-in; recorded once per id and
@@ -398,12 +396,11 @@ export default function DossierReader({ availability, items }: Props) {
           </div>
         )}
 
-        {/* the DISPOSITION FOOTER — kind-gated, UNCONDITIONAL (no calibration
-            prerequisite). The U5 kind-gate: an ITERATION id keys ONLY
-            GateVerdictForm; a FINDING id ONLY the finding-keyed set; a bubble
-            ONLY its ack; every kind gets the blessed DeferForm. */}
+        {/* The disposition footer follows typed human-action queue membership.
+            A preserved iter-* id remains readable and interrogable, but its
+            prefix alone never enables a verdict, defer, or CLI mutation. */}
         <div data-testid="resolution-forms" className="space-y-2">
-          {kindClass === "iteration" && (
+          {queuedIterationRequest && (
             <>
               {/* the blessed gate-verdict form: valid = sign off, invalid =
                   reject. The ONLY iteration-keyed disposition. */}
@@ -423,6 +420,18 @@ export default function DossierReader({ availability, items }: Props) {
                 </code>
               </details>
             </>
+          )}
+
+          {kindClass === "iteration" && !queuedIterationRequest && (
+            <div
+              data-testid="dossier-gate-not-requested"
+              className="rounded border border-amber-900/60 bg-amber-950/20 px-3 py-2 text-[11px] leading-5 text-amber-300"
+            >
+              This preserved iteration is not listed as a gate-verdict request
+              by the human-action queue. A recorded pending stage alone does
+              not establish an actionable request, so verdict and defer
+              controls are withheld.
+            </div>
           )}
 
           {kindClass === "finding" && (
@@ -449,10 +458,12 @@ export default function DossierReader({ availability, items }: Props) {
 
           {kindClass === "bubble" && <BubbleAckForm bubbleRunId={dossierId} />}
 
-          {/* refine, defer to a dev session (blessed). Kind-aware — renders
-              nothing for an unknown kind; the one in-UI action even for the
-              "other" kinds. */}
-          <DeferForm kind={resolvedKind ?? "unknown"} refId={dossierId} />
+          {/* Defer is valid only for a real queue kind. In particular, a
+              history-only iteration cannot falsely confirm that it left a
+              queue it never occupied. */}
+          {(kindClass !== "iteration" || queuedIterationRequest) && (
+            <DeferForm kind={resolvedKind ?? "unknown"} refId={dossierId} />
+          )}
         </div>
       </div>
     </div>
