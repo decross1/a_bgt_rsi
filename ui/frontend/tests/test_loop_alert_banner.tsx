@@ -255,14 +255,17 @@ describe("LoopAlertBanner", () => {
     ).toBeInTheDocument();
   });
 
-  it("a sole fresh stall keeps a red warning scoped to the last coordinator cycle", () => {
+  it("a sole fresh stall keeps a red warning scoped to its recorded coordinator cycle", () => {
     render(
       <LoopAlertBanner
         initial={{ level: "red", reasons: ["loop_stalled"], updated_at: FRESH }}
         nowMs={NOW}
       />,
     );
-    expect(screen.getByText("Last coordinator cycle: no research progress")).toBeInTheDocument();
+    expect(screen.getByText("Recorded coordinator cycle: no research progress")).toBeInTheDocument();
+    expect(screen.getByTestId("loop-alert-reasons")).toHaveTextContent(
+      "The recorded coordinator cycle advanced no research records.",
+    );
     expect(screen.getByTestId("loop-alert-banner")).toHaveAttribute("data-level", "red");
     expect(screen.getByTestId("loop-alert-banner")).toHaveAttribute("role", "alert");
     expect(screen.getByRole("link", { name: "View cycle details" })).toHaveAttribute("href", "/cycles");
@@ -282,7 +285,7 @@ describe("LoopAlertBanner", () => {
         />,
       );
       expect(screen.queryByTestId("loop-alert-gate")).toBeNull();
-      expect(screen.getByText("Last coordinator cycle: no research progress")).toBeInTheDocument();
+      expect(screen.getByText("Recorded coordinator cycle: no research progress")).toBeInTheDocument();
     }
   });
 

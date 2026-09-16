@@ -8,7 +8,7 @@
 //
 // Render contract:
 //   red        -> red banner with every reason. A fresh sole loop_stalled
-//                 names the last coordinator cycle, not a current outage.
+//                 names a recorded coordinator cycle, not a current outage.
 //   amber      -> amber banner "loop degraded" + reasons.
 //   ok & fresh -> nothing (the calm state is invisible; no reassurance chrome).
 //   stale      -> amber "no cycle telemetry since <ts>" appended (or alone,
@@ -182,11 +182,11 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
   if (cycleOnlyStall) {
     return <div data-testid="loop-alert-banner" data-level="red" role="alert"
       className={`flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b px-6 py-2 text-xs ${tone}`}>
-      <span className="font-medium" title="loop_stalled">Last coordinator cycle: no research progress</span>
+      <span className="font-medium" title="loop_stalled">Recorded coordinator cycle: no research progress</span>
       <a className="underline" href="/cycles">View cycle details</a>
       <details className="text-[11px] opacity-80">
         <summary className="cursor-pointer">Alert source</summary>
-        <p className="mt-1" data-testid="loop-alert-reasons">The last coordinator cycle advanced no research records.</p>
+        <p className="mt-1" data-testid="loop-alert-reasons">The recorded coordinator cycle advanced no research records.</p>
         <p>run_state/loop_alert.json · loop_stalled · {alert.updated_at}</p>
       </details>
     </div>;

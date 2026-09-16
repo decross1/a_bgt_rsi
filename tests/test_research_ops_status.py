@@ -102,6 +102,7 @@ def test_exact_link_consumes_topic_but_does_not_claim_global_no_work(tmp_path):
     assert x["dispatch_gate"]["other_actionable_work"] == "not_assessed"
     assert x["last_productive"]["iteration_id"] == "iter-2026-09-15-001"
     assert x["last_productive"]["kind"] == "campaign_iteration_recorded"
+    assert x["last_cycle"]["terminal_status"] == "executed"
     assert x["last_cycle"]["action_code"] == "noop"
     assert x["budget"]["spent_today"] == 3
     assert x["next_registered_campaign"]["registered_topic_count"] == 3
@@ -125,6 +126,7 @@ def test_zero_promotion_receipt_is_not_substantive_progress(tmp_path):
     }
     _rows(root, "run_state/coordinator_cycles.jsonl", [row])
     cycle = project_research_ops_status(repo_root=root, observed_at=NOW)["last_cycle"]
+    assert cycle["terminal_status"] == "executed"
     assert cycle["action_code"] == "actions_planned"
     assert cycle["action_kind"] == "promote_findings"
     assert cycle["promoted_count"] == 0
@@ -155,6 +157,75 @@ def test_cycle_progress_withholds_on_mismatched_receipt_binding(tmp_path):
     assert cycle["action_kind"] is None
     assert cycle["promoted_count"] is None
     assert cycle["substantive_progress"] is None
+
+
+def test_newest_no_valid_plan_is_bound_terminal_with_zero_dispatch(tmp_path):
+    root = _root(tmp_path)
+    earlier = {
+        "timestamp": "2026-09-15T15:00:00Z", "run_id": "coordinator_earlier",
+        "status": "executed",
+        "plan": [{"action": "noop", "args": {"reason": "nothing queued"}}],
+        "outcomes": [{"action": "noop", "status": "passed"}],
+        "promoted_finding_ids": [], "bubble_run_ids": [],
+    }
+    latest = {
+        "timestamp": "2026-09-15T16:00:00Z", "run_id": "coordinator_latest",
+        "status": "no_valid_plan", "plan": [], "outcomes": [],
+        "promoted_finding_ids": [], "bubble_run_ids": [],
+    }
+    _rows(root, "run_state/coordinator_cycles.jsonl", [earlier, latest])
+
+    cycle = project_research_ops_status(repo_root=root, observed_at=NOW)["last_cycle"]
+
+    assert cycle == {
+        "run_id": "coordinator_latest", "at": "2026-09-15T16:00:00Z",
+        "terminal_status": "no_valid_plan", "action_code": "no_valid_plan",
+        "planned_count": 0, "dispatched_count": 0, "outcome_count": 0,
+        "action_kind": None, "promoted_count": 0, "substantive_progress": False,
+        "raw_row_sha256": hashlib.sha256(
+            json.dumps(latest, sort_keys=True).encode("utf-8")
+        ).hexdigest(),
+        "cycles_source_sha256": hashlib.sha256(
+            (root / "run_state/coordinator_cycles.jsonl").read_bytes()
+        ).hexdigest(),
+    }
+
+
+@pytest.mark.parametrize(
+    "contradiction",
+    [
+        "plan", "outcomes", "promoted", "bubbles", "dispatched",
+        "bad_run_id", "missing_run_id",
+    ],
+)
+def test_no_valid_plan_with_contradictory_or_malformed_evidence_is_withheld(
+    tmp_path, contradiction,
+):
+    root = _root(tmp_path)
+    row = {
+        "timestamp": "2026-09-15T16:00:00Z", "run_id": "coordinator_latest",
+        "status": "no_valid_plan", "plan": [], "outcomes": [],
+        "promoted_finding_ids": [], "bubble_run_ids": [],
+    }
+    if contradiction == "plan":
+        row["plan"] = [{"action": "noop", "args": {}}]
+    elif contradiction == "outcomes":
+        row["outcomes"] = [{"action": "noop", "status": "passed"}]
+    elif contradiction == "promoted":
+        row["promoted_finding_ids"] = ["finding-contradiction"]
+    elif contradiction == "bubbles":
+        row["bubble_run_ids"] = ["bubble-contradiction"]
+    elif contradiction == "dispatched":
+        row["dispatched_iteration_id"] = "iteration-contradiction"
+    elif contradiction == "bad_run_id":
+        row["run_id"] = "not a bounded id"
+    else:
+        del row["run_id"]
+    _rows(root, "run_state/coordinator_cycles.jsonl", [row])
+
+    assert project_research_ops_status(
+        repo_root=root, observed_at=NOW,
+    )["last_cycle"] is None
 
 
 def test_unlinked_text_does_not_consume_and_broken_loop_is_unknown(tmp_path):

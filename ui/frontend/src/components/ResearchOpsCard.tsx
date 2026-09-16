@@ -401,14 +401,24 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
     ID.test(String(iteration.topic_id)) && utc(iteration.at) && SHA.test(String(iteration.loop_source_sha256)) ? iteration : null;
   const linkedGate = linked && ["pending", "blocked", "passed", "failed"].includes(String(linked.gate_status))
     ? String(linked.gate_status) : "unknown";
-  const boundCycle = cycle && ID.test(String(cycle.run_id)) && utc(cycle.at) && SHA.test(String(cycle.raw_row_sha256)) &&
+  const cycleReceiptBound = cycle && ID.test(String(cycle.run_id)) && utc(cycle.at) && SHA.test(String(cycle.raw_row_sha256)) &&
     SHA.test(String(cycle.cycles_source_sha256)) && count(cycle.planned_count) && count(cycle.dispatched_count) &&
-    count(cycle.outcome_count) && (cycle.action_code === "noop" || cycle.action_code === "actions_planned") &&
-    cycle.dispatched_count <= cycle.planned_count ? cycle : null;
-  const zeroPromotionCycle = boundCycle && boundCycle.action_code === "actions_planned" &&
-    boundCycle.planned_count === 1 && boundCycle.dispatched_count === 1 &&
-    boundCycle.outcome_count === 1 && boundCycle.action_kind === "promote_findings" &&
-    boundCycle.promoted_count === 0 && boundCycle.substantive_progress === false;
+    count(cycle.outcome_count) ? cycle : null;
+  const executedCycle = cycleReceiptBound && cycleReceiptBound.terminal_status === "executed" &&
+    (cycleReceiptBound.action_code === "noop" || cycleReceiptBound.action_code === "actions_planned") &&
+    Number(cycleReceiptBound.dispatched_count) <= Number(cycleReceiptBound.planned_count)
+    ? cycleReceiptBound : null;
+  const noValidPlanCycle = cycleReceiptBound && cycleReceiptBound.terminal_status === "no_valid_plan" &&
+    cycleReceiptBound.action_code === "no_valid_plan" && cycleReceiptBound.planned_count === 0 &&
+    cycleReceiptBound.dispatched_count === 0 && cycleReceiptBound.outcome_count === 0 &&
+    cycleReceiptBound.action_kind === null && cycleReceiptBound.promoted_count === 0 &&
+    cycleReceiptBound.substantive_progress === false &&
+    (cycleReceiptBound.dispatched_iteration_id === undefined ||
+      cycleReceiptBound.dispatched_iteration_id === null) ? cycleReceiptBound : null;
+  const zeroPromotionCycle = executedCycle && executedCycle.action_code === "actions_planned" &&
+    executedCycle.planned_count === 1 && executedCycle.dispatched_count === 1 &&
+    executedCycle.outcome_count === 1 && executedCycle.action_kind === "promote_findings" &&
+    executedCycle.promoted_count === 0 && executedCycle.substantive_progress === false;
   const budgetBound = budget && budget.source_status === "available" && count(budget.spent_today) &&
     count(budget.daily_cap) && count(budget.paced_allowance) && SHA.test(String(budget.ledger_sha256));
   const ingestionBound = ingestion?.source_status === "available";
@@ -497,10 +507,12 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
           {linked && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Review gate: {linkedGate}. A linked iteration does not itself establish an accepted finding.</dd>}
         </div>
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Latest coordinator cycle</dt>
-          <dd className="mt-1">{zeroPromotionCycle
+          <dd className="mt-1">{noValidPlanCycle
+            ? <>No valid plan; no actions dispatched · <Link to="/cycles" className="text-[var(--accent)]">view trace</Link></>
+            : zeroPromotionCycle
             ? <>Promotion check completed · 0 findings promoted · no research record advanced · <Link to="/cycles" className="text-[var(--accent)]">view trace</Link></>
-            : boundCycle ? `${boundCycle.action_code === "noop" ? "No-op plan" : "Plan recorded"} · ${String(boundCycle.planned_count)} planned · ${String(boundCycle.dispatched_count)} dispatched` : "No bound coordinator check"}</dd>
-          {boundCycle && <dd className="mt-1 text-xs text-[var(--fg-muted)]">{stamp(boundCycle.at)} · {String(boundCycle.run_id)}</dd>}
+            : executedCycle ? `${executedCycle.action_code === "noop" ? "No-op plan" : "Plan recorded"} · ${String(executedCycle.planned_count)} planned · ${String(executedCycle.dispatched_count)} dispatched` : "No bound coordinator check"}</dd>
+          {(noValidPlanCycle || executedCycle) && <dd className="mt-1 text-xs text-[var(--fg-muted)]">{stamp((noValidPlanCycle || executedCycle)?.at)} · {String((noValidPlanCycle || executedCycle)?.run_id)}</dd>}
           {budgetBound && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Today's coordinator allowance: {String(budget.spent_today)}/{String(budget.daily_cap)} used; {String(budget.paced_allowance)} paced so far.</dd>}
         </div>
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Source ingestion</dt>
