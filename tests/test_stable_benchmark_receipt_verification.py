@@ -17,6 +17,7 @@ from bench.stable_benchmark import (
     run_arm,
     write_unissued_receipt,
 )
+from bench.stable_benchmark import supervised_window as window
 from bench.stable_benchmark.admission import admission_source_hashes
 from bench.stable_benchmark.manifest import canonical_json, write_document
 from bench.stable_benchmark.receipt_verification import (
@@ -30,8 +31,6 @@ from bench.stable_benchmark.runner import (
     InvocationResult,
     execution_source_hashes,
 )
-from bench.stable_benchmark import supervised_window as window
-
 
 ZERO = "0" * 64
 ONE = "1" * 64
@@ -112,6 +111,11 @@ def _registration_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(window, "DEFINITION_PATH", program / "definition.published.json")
     monkeypatch.setattr(window, "MANIFEST_ROOT", program / "manifests")
     monkeypatch.setattr(window, "RUN_ROOT", program / "runs")
+    monkeypatch.setattr(
+        window,
+        "REGISTERED_PROGRAM_ROOTS",
+        {"1.0.0": program, "1.1.0": program},
+    )
     monkeypatch.setattr(window, "WINDOW_ROOT", lifecycle_root)
 
     definition_document = publish_definition(

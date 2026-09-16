@@ -16,14 +16,13 @@ from bench.stable_benchmark import (
     publish_definition,
     run_arm,
 )
+from bench.stable_benchmark import supervised_window as window
 from bench.stable_benchmark.manifest import write_document
 from bench.stable_benchmark.runner import (
     InvocationRequest,
     InvocationResult,
     execution_source_hashes,
 )
-from bench.stable_benchmark import supervised_window as window
-
 
 ZERO = "0" * 64
 ONE = "1" * 64
@@ -87,6 +86,11 @@ def _registered_documents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(window, "DEFINITION_PATH", program / "definition.published.json")
     monkeypatch.setattr(window, "MANIFEST_ROOT", program / "manifests")
     monkeypatch.setattr(window, "RUN_ROOT", program / "runs")
+    monkeypatch.setattr(
+        window,
+        "REGISTERED_PROGRAM_ROOTS",
+        {"1.0.0": program, "1.1.0": program},
+    )
     monkeypatch.setattr(window, "WINDOW_ROOT", tmp_path / "windows")
     definition_document = publish_definition(
         make_draft(),
@@ -150,6 +154,58 @@ def test_plan_binds_registered_paths_sources_and_production_routes(
     bad_manifest = type(manifest)(bad, manifest.raw_sha256, manifest.path)
     with pytest.raises(window.StableWindowError, match="unused or missing route"):
         window.validate_resident_arm(bad_manifest, _identities())
+
+
+def test_program_artifact_root_is_bound_to_the_definition_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    legacy = tmp_path / "stable-benchmark"
+    corrected = tmp_path / "stable-benchmark-v1_1"
+    monkeypatch.setattr(
+        window,
+        "REGISTERED_PROGRAM_ROOTS",
+        {"1.0.0": legacy, "1.1.0": corrected},
+    )
+    definition_document = publish_definition(
+        make_draft(),
+        published_at="2026-09-16T06:30:00Z",
+        witness={"kind": "preregistration_receipt", "ref": "test-v1-1", "sha256": ONE},
+    )
+    definition_path = corrected / "definition.published.json"
+    write_document(definition_path, definition_document)
+    definition = load_definition(definition_path, require_published=True)
+    manifest_document = bind_run_manifest(
+        definition,
+        arm=_arm(),
+        comparison_id="stable-corrected-v1-1",
+        harness_identity={
+            "scaffold_id": "stable-benchmark-runner-v1",
+            "transport_contract": "injected-supervised-endpoint/v1",
+            "source_sha256": execution_source_hashes(),
+        },
+    )
+    manifest_path = corrected / "manifests/stable-corrected-v1-1.resident-stack-v1.json"
+    write_document(manifest_path, manifest_document)
+    loaded_definition, loaded_manifest = window._load_inputs(manifest_path)
+    _, run_dir, comparison_root = window._registered_paths(
+        loaded_definition, loaded_manifest
+    )
+    assert run_dir == corrected / "runs/stable-corrected-v1-1/resident-stack-v1"
+    assert comparison_root == corrected / "runs/stable-corrected-v1-1"
+
+    crossed_definition = legacy / "definition.published.json"
+    crossed_manifest = legacy / "manifests/stable-corrected-v1-1.resident-stack-v1.json"
+    write_document(crossed_definition, definition_document)
+    write_document(crossed_manifest, manifest_document)
+    with pytest.raises(window.StableWindowError, match="definition is outside"):
+        window._load_inputs(crossed_manifest)
+
+    outside = (
+        tmp_path / "unregistered/manifests/stable-corrected-v1-1.resident-stack-v1.json"
+    )
+    write_document(outside, manifest_document)
+    with pytest.raises(window.StableWindowError, match="registered stable-program root"):
+        window._load_inputs(outside)
 
 
 class _FakeMonitor:

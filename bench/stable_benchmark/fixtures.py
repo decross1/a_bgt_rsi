@@ -1,8 +1,9 @@
-"""Fresh public synthetic fixtures for stable benchmark release 1.0.0.
+"""Prospectively corrected public fixtures for stable benchmark release 1.1.0.
 
-These fixtures deliberately have no predecessor score.  They may be rendered
-into a draft definition without side effects; publication is a separate,
-witnessed operation in :mod:`bench.stable_benchmark.manifest`.
+Each task preserves its release-1.0.0 lineage, while the corrected contracts
+make scores across the two releases non-comparable.  The fixtures may be
+rendered into a draft definition without side effects; publication is a
+separate, witnessed operation in :mod:`bench.stable_benchmark.manifest`.
 """
 
 from __future__ import annotations
@@ -10,14 +11,30 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-
-RELEASE = "1.0.0"
-SUITE_ID = "a-bgt-rsi-stable-1.0.0"
+RELEASE = "1.1.0"
+SUITE_ID = "a-bgt-rsi-stable-1.1.0"
 REVIEW_AT = "2026-10-14T00:00:00Z"
 
 SYSTEM = (
     "Follow the response contract exactly. Return one JSON object without "
     "Markdown fences, commentary, or hidden-reasoning tags."
+)
+
+CODE_SANDBOX_CONTRACT = (
+    "Sandbox contract: the UTF-8 source must be at most 65536 bytes. The top "
+    "level may contain only the requested function and optional string "
+    "docstrings; decorators and names beginning with '_' are forbidden. "
+    "Async functions, await, classes, delete, global, imports, lambda, nonlocal, "
+    "try, with, yield, and yield from are forbidden. Calls are limited to these "
+    "safe builtins: ValueError, NotImplementedError, abs, all, any, bool, dict, "
+    "enumerate, float, int, isinstance, len, list, max, min, range, set, sorted, "
+    "str, sum, tuple, and zip. All attribute access, including method calls, is "
+    "limited to these names: add, append, get, items, keys, startswith, and "
+    "values. The function runs in a fresh "
+    "isolated process with a 256 MiB address-space limit, 32-file-descriptor "
+    "limit, no network or host-write access, and 2-second per-case CPU and "
+    "wall-clock limits. Encoded arguments and each captured output stream are "
+    "limited to 131072 bytes; the function must not mutate its input arguments."
 )
 
 
@@ -50,8 +67,10 @@ def _task(
             "max_model_calls": max_model_calls,
         },
         "provenance": {
-            "origin": "new_public_synthetic_2026-09-16",
-            "predecessor_task_ids": [],
+            "origin": "prospective_contract_correction_2026-09-16",
+            "predecessor_task_ids": [task_id],
+            "predecessor_suite_id": "a-bgt-rsi-stable-1.0.0",
+            "predecessor_release": "1.0.0",
             "contamination_resistant": False,
             "claim_scope": "fixed_public_small_panel",
             "uncertainty_cluster": task_id,
@@ -124,17 +143,21 @@ def _science_tasks() -> list[dict[str, Any]]:
                 "[DOC-C] The treated success rate exceeded the control success rate.\n"
                 "Decide whether the narrow claim 'the observed 30-day success rate was "
                 "higher in the randomized treatment arm' is supported. Cite the minimal "
-                "sufficient source set and omit sources that are merely contextual. Return "
+                "sufficient source set needed to establish every factual qualifier in the "
+                "claim and omit sources that are merely contextual. In citations, use bare "
+                "document IDs without the surrounding label brackets (for example, "
+                "\"DOC-A\"). Return "
                 "exactly decision ('supported' or 'abstain'), reason_code (one of "
                 "'randomized_observed_rate_higher', 'not_randomized', or "
-                "'observed_rate_not_higher'), and citations."
+                "'observed_rate_not_higher'), and citations (a JSON array of bare "
+                "document ID strings)."
             ),
             {
                 "kind": "evidence_attribution",
                 "expected": {
                     "decision": "supported",
                     "reason_code": "randomized_observed_rate_higher",
-                    "citations": ["DOC-A", "DOC-C"],
+                    "citations": ["DOC-A", "DOC-B", "DOC-C"],
                 },
             },
             max_tokens=512,
@@ -151,16 +174,21 @@ def _science_tasks() -> list[dict[str, Any]]:
                 "[DOC-E] The archive does not state how many participants were observed "
                 "or assigned.\n"
                 "Decide whether the claim 'the outcome rate was 60%' can be established. "
-                "Cite the minimal sufficient source set. Return exactly decision "
+                "Cite only the minimal sufficient source set needed to justify the "
+                "reason_code; the document that states the denominator is absent is "
+                "sufficient for missing_denominator. In citations, use bare document IDs "
+                "without the surrounding label brackets (for example, \"DOC-E\"). Return "
+                "exactly decision "
                 "('supported' or 'abstain'), reason_code (one of 'missing_denominator', "
-                "'complete_rate_evidence', or 'numerator_missing'), and citations."
+                "'complete_rate_evidence', or 'numerator_missing'), and citations (a JSON "
+                "array of bare document ID strings)."
             ),
             {
                 "kind": "evidence_abstention",
                 "expected": {
                     "decision": "abstain",
                     "reason_code": "missing_denominator",
-                    "citations": ["DOC-D", "DOC-E"],
+                    "citations": ["DOC-E"],
                 },
             },
             max_tokens=512,
@@ -184,7 +212,7 @@ def _code_task(
         (
             f"Repair the function below. {specification}\n\n{starter}\n\n"
             "Return exactly {\"source\": \"<complete Python function source>\"}. "
-            "The source must define only the requested function and must not import modules."
+            + CODE_SANDBOX_CONTRACT
         ),
         {"kind": "code_function", "function": function, "cases": cases},
         max_tokens=1536,
@@ -508,8 +536,10 @@ def _mission(
         # small enough for the one-Spark weekly envelope.
         "resource": {"max_tokens_per_call": 1536, "episode_timeout_s": 120, "max_model_calls": 2},
         "provenance": {
-            "origin": "new_public_synthetic_2026-09-16",
-            "predecessor_task_ids": [],
+            "origin": "prospective_contract_correction_2026-09-16",
+            "predecessor_task_ids": [mission_id],
+            "predecessor_suite_id": "a-bgt-rsi-stable-1.0.0",
+            "predecessor_release": "1.0.0",
             "contamination_resistant": False,
             "claim_scope": "actor_tool_critic_micro_workflow_only",
             "uncertainty_cluster": construct,
@@ -610,11 +640,11 @@ def draft_definition() -> dict[str, Any]:
         "schema_version": "stable-benchmark-definition/v1",
         "suite_id": SUITE_ID,
         "release": RELEASE,
-        "description": "Small fixed public regression canary for model, system, and runtime progress on one Spark.",
+        "description": "Prospectively corrected fixed public regression canary for model, system, and runtime progress on one Spark.",
         "baseline_status": "not_started",
         "historical_comparability": {
             "comparable": False,
-            "reason": "fresh fixtures and contracts; historical development runs are archival predecessors only",
+            "reason": "release 1.1.0 corrects disclosed task contracts prospectively; release 1.0.0 scores remain immutable historical commissioning evidence and are not converted or rescored",
         },
         "freeze": {
             "status": "draft",

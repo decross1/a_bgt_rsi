@@ -23,17 +23,11 @@ import signal
 import stat
 import subprocess
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
-
-from orchestrator.weekly_upgrade_trial import (
-    MIN_MEMORY_GIB as PREFLIGHT_MIN_MEMORY_GIB,
-    canonical_root,
-    resource_lease,
-    resource_probe,
-)
+from typing import Any
 
 from agent_wrapper.generation_policy import resolve_generation_policy
 from bench.flash_next_ab.harness import validate_resident_qualification_files
@@ -49,12 +43,22 @@ from bench.flash_next_ab.qualification import (
 )
 from bench.flash_next_ab.resident_evaluation_window import (
     MIN_MEMORY_GIB as MONITOR_MIN_MEMORY_GIB,
+)
+from bench.flash_next_ab.resident_evaluation_window import (
     ResidentSafetyMonitor,
     _create_sentinel,
     _read_exact_residents,
     _sentinel_name,
     _verify_sentinel,
     restore_resident_window,
+)
+from orchestrator.weekly_upgrade_trial import (
+    MIN_MEMORY_GIB as PREFLIGHT_MIN_MEMORY_GIB,
+)
+from orchestrator.weekly_upgrade_trial import (
+    canonical_root,
+    resource_lease,
+    resource_probe,
 )
 
 from .admission import SUPERVISOR_FINAL_SCHEMA, admit_replay
@@ -74,12 +78,20 @@ from .runner import (
     write_unissued_receipt,
 )
 
-
 CODE_ROOT = Path(__file__).resolve().parents[2]
 PROGRAM_ROOT = Path(
     "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-16/"
     "ui-benchmark-eight-hour/stable-benchmark"
 )
+CORRECTED_PROGRAM_ROOT = Path(
+    "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-16/"
+    "ui-benchmark-eight-hour/stable-benchmark-v1_1"
+)
+REGISTERED_PROGRAM_ROOTS = {
+    "1.0.0": PROGRAM_ROOT,
+    "1.1.0": CORRECTED_PROGRAM_ROOT,
+}
+# Legacy aliases remain for readers of the immutable 1.0 controller contract.
 DEFINITION_PATH = PROGRAM_ROOT / "definition.published.json"
 MANIFEST_ROOT = PROGRAM_ROOT / "manifests"
 RUN_ROOT = PROGRAM_ROOT / "runs"
@@ -333,12 +345,19 @@ def _registered_paths(
     definition: LoadedDocument,
     run_manifest: LoadedDocument,
 ) -> tuple[Path, Path, Path]:
-    if definition.path != DEFINITION_PATH.absolute():
+    program_root = REGISTERED_PROGRAM_ROOTS.get(definition.document.get("release"))
+    if program_root is None:
+        raise StableWindowError("definition release has no registered stable-program root")
+    program_root = program_root.absolute()
+    definition_path = program_root / "definition.published.json"
+    manifest_root = program_root / "manifests"
+    run_root = program_root / "runs"
+    if definition.path != definition_path:
         raise StableWindowError("definition is outside the registered stable-program path")
     arm_id = run_manifest.document["arm"]["id"]
     comparison_id = run_manifest.document["comparison_id"]
-    manifest_path = MANIFEST_ROOT / f"{comparison_id}.{arm_id}.json"
-    run_dir = RUN_ROOT / comparison_id / arm_id
+    manifest_path = manifest_root / f"{comparison_id}.{arm_id}.json"
+    run_dir = run_root / comparison_id / arm_id
     if run_manifest.path != manifest_path.absolute():
         raise StableWindowError("run manifest is outside its exact registered path")
     if run_dir.exists():
@@ -346,7 +365,7 @@ def _registered_paths(
     for item in (comparison_id, arm_id):
         if re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,95}", item) is None:
             raise StableWindowError("comparison or arm ID is unsafe")
-    return manifest_path, run_dir, RUN_ROOT / comparison_id
+    return manifest_path, run_dir, run_root / comparison_id
 
 
 def _resident_certificate() -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
@@ -485,8 +504,17 @@ def build_plan(
 
 
 def _load_inputs(run_manifest_path: Path) -> tuple[LoadedDocument, LoadedDocument]:
-    definition = load_definition(DEFINITION_PATH, require_published=True)
-    manifest = load_run_manifest(run_manifest_path, definition)
+    manifest_path = run_manifest_path.expanduser().absolute()
+    if manifest_path.parent.name != "manifests":
+        raise StableWindowError("run manifest is outside a registered manifest directory")
+    program_root = manifest_path.parent.parent
+    registered_roots = {path.absolute() for path in REGISTERED_PROGRAM_ROOTS.values()}
+    if program_root not in registered_roots:
+        raise StableWindowError("run manifest is outside a registered stable-program root")
+    definition = load_definition(
+        program_root / "definition.published.json", require_published=True
+    )
+    manifest = load_run_manifest(manifest_path, definition)
     _registered_paths(definition, manifest)
     return definition, manifest
 

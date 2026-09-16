@@ -10,8 +10,8 @@
   ],
   "properties": {
     "schema_version": {"const": "stable-benchmark-definition/v1"},
-    "suite_id": {"const": "a-bgt-rsi-stable-1.0.0"},
-    "release": {"const": "1.0.0"},
+    "suite_id": {"enum": ["a-bgt-rsi-stable-1.0.0", "a-bgt-rsi-stable-1.1.0"]},
+    "release": {"enum": ["1.0.0", "1.1.0"]},
     "description": {"type": "string", "minLength": 1},
     "baseline_status": {"const": "not_started"},
     "historical_comparability": {
@@ -64,7 +64,31 @@
               "max_model_calls": {"type": "integer", "minimum": 1, "maximum": 3}
             }
           },
-          "provenance": {"type": "object"}
+          "provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "origin", "predecessor_task_ids", "contamination_resistant",
+              "claim_scope", "uncertainty_cluster"
+            ],
+            "properties": {
+              "origin": {"type": "string", "minLength": 1},
+              "predecessor_task_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "uniqueItems": true
+              },
+              "predecessor_suite_id": {"const": "a-bgt-rsi-stable-1.0.0"},
+              "predecessor_release": {"const": "1.0.0"},
+              "contamination_resistant": {"type": "boolean"},
+              "claim_scope": {"type": "string", "minLength": 1},
+              "uncertainty_cluster": {"type": "string", "minLength": 1}
+            },
+            "dependentRequired": {
+              "predecessor_suite_id": ["predecessor_release"],
+              "predecessor_release": ["predecessor_suite_id"]
+            }
+          }
         }
       }
     },
@@ -111,5 +135,19 @@
       }
     },
     "external_rotations": {"type": "object"}
-  }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "suite_id": {"const": "a-bgt-rsi-stable-1.0.0"},
+        "release": {"const": "1.0.0"}
+      }
+    },
+    {
+      "properties": {
+        "suite_id": {"const": "a-bgt-rsi-stable-1.1.0"},
+        "release": {"const": "1.1.0"}
+      }
+    }
+  ]
 }
