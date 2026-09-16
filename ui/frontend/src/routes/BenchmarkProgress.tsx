@@ -18,6 +18,7 @@ import { LabContextCrossplanPanel } from "../components/LabContextCrossplanPanel
 import { LabDiversityCapPanel } from "../components/LabDiversityCapPanel";
 import { PayoffToolStudyPanel } from "../components/PayoffToolStudyPanel";
 import { FollowonResultsPanel } from "../components/FollowonResultsPanel";
+import BenchmarkProgramOverview from "../components/BenchmarkProgramOverview";
 import { AppliedMarketResearchPanel } from "../components/AppliedMarketResearchPanel";
 import { getLabDiversityCapProgress, getLabModelContextCrossplanProgress, getLabModelEvalProgress,
   getPayoffToolStudyProgress,
@@ -35,6 +36,7 @@ import type {
   ResearchPipelineSource,
   ResearchPipelineStage,
 } from "../types/benchmarkProgress";
+import type { BenchmarkProgramResponse } from "../types/benchmarkProgram";
 import "./benchmarkProgress.css";
 
 interface Props {
@@ -50,6 +52,8 @@ interface Props {
   initialCap?: unknown;
   /** Fresh six-pair native payoff-tool instrument, independent of model scores. */
   initialPayoffTool?: unknown;
+  /** Versioned stable-program projection. */
+  initialProgram?: BenchmarkProgramResponse | null;
 }
 
 type FamilyFilter = "all" | "measured" | "comparable" | "incomplete";
@@ -169,7 +173,7 @@ function HashList({ label, value }: { label: string; value: unknown }) {
   return <div className="benchmark-provenance-row"><dt>{label}</dt><dd>{hashes.length ? hashes.map((hash) => <span key={hash} title={hash}>{hash}</span>) : <Missing label="Not recorded" />}</dd></div>;
 }
 
-function ResearchPipelinePanel({ pipeline }: { pipeline?: ResearchPipelineProgress }) {
+export function ResearchPipelinePanel({ pipeline }: { pipeline?: ResearchPipelineProgress }) {
   if (!record(pipeline)) {
     return <section className="research-pipeline research-pipeline--unavailable" aria-labelledby="research-pipeline-heading">
       <header className="research-pipeline-head"><div><p className="benchmark-eyebrow">Research system</p><h2 id="research-pipeline-heading">Research follow-through</h2></div><StatusChip value="Unavailable" tone="warn" /></header>
@@ -350,8 +354,12 @@ function WeekButton({ week, selected, onSelect }: { week: BenchmarkWeek; selecte
 }
 
 export default function BenchmarkProgress({ initial, initialLab, initialSupplement,
-  initialCrossplan, initialCap, initialPayoffTool }: Props) {
+  initialCrossplan, initialCap, initialPayoffTool, initialProgram }: Props) {
   const live = initial === undefined;
+  const [archiveOpen, setArchiveOpen] = useState(
+    () => new URLSearchParams(window.location.search).get("view") === "evidence",
+  );
+  const programInitial = initialProgram === undefined && initial !== undefined ? null : initialProgram;
   const poll = usePolled(BENCHMARK_PROGRESS_POLL_KEY, getBenchmarkProgress, {
     intervalMs: 60_000,
     deadlineMs: 16_000,
@@ -360,32 +368,32 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
   const labPoll = usePolled("lab-model-eval:progress", getLabModelEvalProgress, {
     intervalMs: 90_000,
     deadlineMs: 20_000,
-    enabled: live,
+    enabled: live && archiveOpen,
     initialDelayMs: 2500,
   });
   const supplementPoll = usePolled("lab-model-supplement:progress", getLabModelSupplementProgress, {
     intervalMs: 120_000,
     deadlineMs: 20_000,
-    enabled: live,
+    enabled: live && archiveOpen,
     initialDelayMs: 5000,
   });
   const crossplanPoll = usePolled("lab-context-crossplan:progress",
     getLabModelContextCrossplanProgress, {
       intervalMs: 150_000,
       deadlineMs: 20_000,
-      enabled: live,
+      enabled: live && archiveOpen,
       initialDelayMs: 6500,
     });
   const capPoll = usePolled("lab-diversity-cap:progress", getLabDiversityCapProgress, {
     intervalMs: 180_000,
     deadlineMs: 20_000,
-    enabled: live,
+    enabled: live && archiveOpen,
     initialDelayMs: 8000,
   });
   const payoffToolPoll = usePolled("payoff-tool-study:progress", getPayoffToolStudyProgress, {
     intervalMs: 180_000,
     deadlineMs: 20_000,
-    enabled: live,
+    enabled: live && archiveOpen,
     initialDelayMs: 9500,
   });
   const refreshing = usePollActivity(BENCHMARK_PROGRESS_POLL_KEY);
@@ -395,11 +403,11 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
   const crossplanData = initialCrossplan === undefined ? crossplanPoll.data : initialCrossplan;
   const capData = initialCap === undefined ? capPoll.data : initialCap;
   const payoffToolData = initialPayoffTool === undefined ? payoffToolPoll.data : initialPayoffTool;
-  const showLab = live || initialLab !== undefined;
-  const showSupplement = live || initialSupplement !== undefined;
-  const showCrossplan = live || initialCrossplan !== undefined;
-  const showCap = live || initialCap !== undefined;
-  const showPayoffTool = live || initialPayoffTool !== undefined;
+  const showLab = (live && archiveOpen) || initialLab !== undefined;
+  const showSupplement = (live && archiveOpen) || initialSupplement !== undefined;
+  const showCrossplan = (live && archiveOpen) || initialCrossplan !== undefined;
+  const showCap = (live && archiveOpen) || initialCap !== undefined;
+  const showPayoffTool = (live && archiveOpen) || initialPayoffTool !== undefined;
   const [selectedWeek, setSelectedWeek] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FamilyFilter>("all");
@@ -421,7 +429,8 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
 
   if (data === undefined && !poll.failing) {
     return <section className="page-full benchmark-progress" aria-labelledby="benchmark-progress-title">
-      <header className="benchmark-page-head"><div><p className="benchmark-eyebrow">Operations</p><h1 id="benchmark-progress-title">Benchmark Progress</h1><p>Review decisions and benchmark results, week by week.</p></div></header>
+      <header className="benchmark-page-head"><div><p className="benchmark-eyebrow">Benchmarks</p><h1 id="benchmark-progress-title">Benchmark Progress</h1><p>Versioned panel status, matched comparisons, and historical evidence.</p></div></header>
+      <BenchmarkProgramOverview initial={programInitial} />
       <SkeletonCard lines={7} />
       {showLab && <LabModelEvaluationPanel data={labData} pollingFailed={labPoll.failing} />}
       {showSupplement && <LabModelSupplementPanel data={supplementData} pollingFailed={supplementPoll.failing} />}
@@ -433,7 +442,8 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
 
   if (data == null) {
     return <section className="page-full benchmark-progress" aria-labelledby="benchmark-progress-title">
-      <header className="benchmark-page-head"><div><p className="benchmark-eyebrow">Operations</p><h1 id="benchmark-progress-title">Benchmark Progress</h1><p>Review decisions and benchmark results, week by week.</p></div></header>
+      <header className="benchmark-page-head"><div><p className="benchmark-eyebrow">Benchmarks</p><h1 id="benchmark-progress-title">Benchmark Progress</h1><p>Versioned panel status, matched comparisons, and historical evidence.</p></div></header>
+      <BenchmarkProgramOverview initial={programInitial} />
       <section className="benchmark-source-empty" role="status"><h2>Unable to load benchmark history</h2>
         <p>{poll.failing ? `The latest read failed: ${String(poll.error)}. Missing history is withheld rather than shown as zero.` : "The weekly upgrade sources have not produced a progress record yet."}</p>
         {live && <button type="button" onClick={() => refreshPoll(BENCHMARK_PROGRESS_POLL_KEY)}>Retry</button>}
@@ -483,20 +493,31 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
 
   return <section className="page-full benchmark-progress" aria-labelledby="benchmark-progress-title">
     <header className="benchmark-page-head">
-      <div><p className="benchmark-eyebrow">Operations</p><h1 id="benchmark-progress-title">Benchmark Progress</h1>
-        <p>Review decisions and benchmark results, week by week.</p></div>
+      <div><p className="benchmark-eyebrow">Benchmarks</p><h1 id="benchmark-progress-title">Benchmark Progress</h1>
+        <p>Versioned panel status, matched comparisons, and historical evidence.</p></div>
       {live && <button type="button" className="benchmark-refresh" disabled={refreshing} onClick={() => refreshPoll(BENCHMARK_PROGRESS_POLL_KEY)}>{refreshing ? "Refreshing…" : "Refresh records"}</button>}
     </header>
 
+    <BenchmarkProgramOverview initial={programInitial} />
+
     {poll.failing && <p className="benchmark-stale" role="status">Refresh failed: {String(poll.error)}. Showing the last successful snapshot; current state is unknown.</p>}
 
-    <section className="benchmark-mode-strip" aria-label="Recorded automation state">
+    <section className="benchmark-mode-strip" aria-label="Historical weekly schedule and budget">
       <div><span className="benchmark-status-dot" aria-hidden="true" /><span><small>Recorded automation mode</small><strong>{humanize(automation.mode)}</strong></span></div>
       <div><small>Schedule</small><strong>{text(automation.schedule)}</strong></div>
-      <div><small>Activated</small><strong>{fmtTimestamp(automation.activated_at)}</strong></div>
-      <div><small>Automatic promotion</small><strong>{automation.promotion_enabled === null ? "Not reported" : automation.promotion_enabled ? "Enabled" : "Disabled"}</strong></div>
-      <div><small>Projection generated</small><strong>{fmtTimestamp(data.generated_at)}</strong></div>
+      <div><small>Weekly allowance</small><strong>{finite(budget?.charged_minutes) ? `${fmtNumber(budget.charged_minutes, 1)} min charged` : "Not reported"}</strong></div>
+      <div><small>Remaining</small><strong>{finite(budget?.remaining_minutes) ? `${fmtNumber(budget.remaining_minutes, 1)} min` : "Not reported"}</strong></div>
+      <div><small>Latest historical week</small><strong>{text(summary.latest_week)}</strong></div>
     </section>
+
+    <details
+      className="benchmark-details"
+      data-testid="benchmark-evidence-catalog"
+      open={archiveOpen}
+      onToggle={(event) => setArchiveOpen(event.currentTarget.open)}
+    >
+      <summary>Historical evidence catalog · weekly records and development diagnostics</summary>
+      <div className="mt-4">
 
     <section className="benchmark-hero" aria-labelledby="benchmark-outcome-heading">
       <div className="benchmark-outcome"><StatusChip value={upgradeLabel} tone={upgradeTone} />
@@ -525,16 +546,23 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
 
     {(summaryMissing || rows<BenchmarkProgressWarning>(data.warnings).length > 0) && <aside className="benchmark-warnings" aria-label="Data qualifications">{summaryMissing && <p><strong>Progress summary</strong> · The response shape is incomplete. Missing values are withheld rather than inferred as zero.</p>}{rows<BenchmarkProgressWarning>(data.warnings).map((warning, index) => <p key={`${String(warning.code)}-${index}`}><strong>{text(warning.scope, "Record")}</strong> · {text(warning.detail, "An unspecified source qualification was recorded.")}</p>)}</aside>}
 
-    <LocalModelResearchPanel data={data.local_model_research} />
-    {showLab && <LabModelEvaluationPanel data={labData} pollingFailed={labPoll.failing} />}
-    {showSupplement && <LabModelSupplementPanel data={supplementData} pollingFailed={supplementPoll.failing} />}
-    {showCrossplan && <LabContextCrossplanPanel data={crossplanData} pollingFailed={crossplanPoll.failing} />}
-    {showCap && <LabDiversityCapPanel data={capData} pollingFailed={capPoll.failing} />}
-    {showPayoffTool && <PayoffToolStudyPanel data={payoffToolData} pollingFailed={payoffToolPoll.failing} />}
-    <FollowonResultsPanel data={data.local_followon_results} />
-    <ResearchPipelinePanel pipeline={data.research_pipeline} />
-    <AppliedMarketResearchPanel data={data.applied_market_research} />
+    <div id="models">
+      <LocalModelResearchPanel data={data.local_model_research} />
+      {showLab && <LabModelEvaluationPanel data={labData} pollingFailed={labPoll.failing} />}
+      <FollowonResultsPanel data={data.local_followon_results} />
+    </div>
+    <div id="diagnostics">
+      {showSupplement && <LabModelSupplementPanel data={supplementData} pollingFailed={supplementPoll.failing} />}
+      {showCrossplan && <LabContextCrossplanPanel data={crossplanData} pollingFailed={crossplanPoll.failing} />}
+      {showCap && <LabDiversityCapPanel data={capData} pollingFailed={capPoll.failing} />}
+      {showPayoffTool && <PayoffToolStudyPanel data={payoffToolData} pollingFailed={payoffToolPoll.failing} />}
+    </div>
+    <div id="research-archive-evidence">
+      <ResearchPipelinePanel pipeline={data.research_pipeline} />
+      <AppliedMarketResearchPanel data={data.applied_market_research} />
+    </div>
 
+    <div id="weekly">
     {weeks.length === 0 ? <section className="benchmark-source-empty" role="status"><h2>{benchmarkSourcesUnavailable ? "Benchmark sources unavailable" : "No measured weeks yet"}</h2><p>{benchmarkSourcesUnavailable ? "Trial and evaluation sources were unavailable when this projection was generated. No benchmark history or zero result is inferred." : "The source is available, but it has not recorded a benchmark week. Missing history is not a zero score."}</p></section> : <>
       <section className="benchmark-week-section" aria-labelledby="benchmark-week-heading"><div className="benchmark-section-heading"><div><p className="benchmark-eyebrow">Timeline</p><h2 id="benchmark-week-heading">Recorded weeks</h2></div>
         <label>Selected week<select value={week?.week ?? ""} onChange={(event) => setSelectedWeek(event.target.value)}>{weeks.map((entry) => <option key={entry.week} value={entry.week}>{entry.week}</option>)}</select></label></div>
@@ -555,6 +583,9 @@ export default function BenchmarkProgress({ initial, initialLab, initialSuppleme
             : <div className="benchmark-filter-empty" role="status"><strong>No matching benchmark families</strong><p>Change the search or filter. No zero results are inferred.</p></div>}
       </section>}
     </>}
+    </div>
+      </div>
+    </details>
 
     <footer className="benchmark-footnote">Source: <code>{BENCHMARK_PROGRESS_ENDPOINT}</code> · schema {text(data.schema_version)}. Hashes identify evidence; this page does not expose private filesystem paths.</footer>
   </section>;

@@ -1,8 +1,7 @@
 // Role-E cockpit interrogation surfaces — the leaf components the DOSSIER
 // READER mounts (originally the /todo cockpit's; the reader inherited them in
 // UI simplification S2). Exercised against the typed fixtures in
-// src/fixtures/todo (no network): ConcurrencyWarning, CalibrationCapture,
-// TutorPanel.
+// src/fixtures/todo (no network): ConcurrencyWarning and CalibrationCapture.
 //
 // What this asserts, per the work order:
 //   - ConcurrencyWarning: mid-flight => the warn/queue banner shows (naming the
@@ -10,11 +9,6 @@
 //   - CalibrationCapture: captures FIRST then fires onCaptured (the ordering
 //     contract the shell uses to then reveal the verdict); persists via the
 //     STUB postCalibration (writes nothing).
-//   - TutorPanel: exposes NO verdict affordance — the fence is visible and the
-//     component takes no verdict props. (The unweighted considerations section
-//     was TRIMMED in S2 — the reader keeps claim/provenance/evidence refs +
-//     the neutral outcome-effects line only.)
-//
 // The two-voice pane's coverage moved to tests/test_ChatPane.tsx when the
 // TutorChatPane + TwoVoiceChatPane pair merged into the mode-parameterized
 // ChatPane (S2).
@@ -26,7 +20,6 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ConcurrencyWarning from "../src/components/todo/ConcurrencyWarning";
 import CalibrationCapture from "../src/components/todo/CalibrationCapture";
-import TutorPanel from "../src/components/todo/TutorPanel";
 import {
   CONCURRENCY_IDLE,
   CONCURRENCY_MIDFLIGHT,
@@ -141,50 +134,6 @@ describe("CalibrationCapture", () => {
       confidence: 0.7,
     });
     expect(screen.getByTestId("calibration-captured")).toBeInTheDocument();
-  });
-});
-
-// --- TutorPanel ---
-
-describe("TutorPanel", () => {
-  it("renders the overview but exposes NO verdict affordance behind a visible fence", () => {
-    // U1 (2026-06-17): the tutor is now a real finding OVERVIEW, not a stub.
-    // Inject `detail` (the override) so we deterministically exercise the loaded
-    // state — the fence must hold WITH real content present (D-054), and the word
-    // "verdict" must appear ONLY in the fence note (critic_verdict is labelled
-    // "critic"; the mechanical outcome line avoids the word).
-    render(
-      <TutorPanel
-        findingId="sf-iter-x"
-        detail={{
-          found: true,
-          finding_id: "sf-iter-x",
-          title: "novel_on_02 over-gated",
-          claim: "the primary R0 gate over-gates novel_on_02",
-          what_would_change_it: "a re-run that clears the gate",
-          source_iteration_id: "iter-2026-05-27-006",
-          critic_verdict: "survives",
-        }}
-      />,
-    );
-    // The real overview renders (no longer a stub).
-    expect(screen.getByTestId("tutor-overview")).toBeInTheDocument();
-    // The fence is visible to the human, even alongside real content.
-    expect(screen.getByTestId("tutor-fence-note")).toHaveTextContent(
-      /does not affect your verdict/i,
-    );
-    // S2 TRIM: the unweighted pros/cons considerations section is GONE — the
-    // tutor teaches via claim/provenance/evidence + the neutral outcome line.
-    expect(screen.queryByTestId("tutor-considerations")).toBeNull();
-    // No verdict-shaped control: no valid/invalid/needs_revision buttons, no
-    // verdict-labelled inputs leak in through this teaching surface.
-    expect(screen.queryByRole("button", { name: /valid/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /invalid/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /needs_revision/i })).toBeNull();
-    // The word "verdict" appears ONLY in the fence note (single-match holds).
-    expect(screen.queryByText(/verdict/i)).toHaveTextContent(
-      /does not affect your verdict/i,
-    );
   });
 });
 

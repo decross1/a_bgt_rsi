@@ -55,6 +55,29 @@ describe("Mia diversity cap panel", () => {
     expect(screen.getByText(/Cap observation unavailable; all diagnostic counts are withheld/i)).toBeInTheDocument();
   });
 
+  it("shows the initial and closure attempts without inventing quality counts", () => {
+    render(<LabDiversityCapPanel data={{
+      ...base("incomplete_terminal"),
+      window_id: "qfn-ab-lab-diversity-cap-closure-20260916-b",
+      failure_reason_code: "startup_host_swap_5s",
+      attempts: [{
+        window_id: "qfn-ab-lab-diversity-cap-20260915-a", status: "incomplete_terminal",
+        failure_reason_code: "startup_host_swap_5s", issued_calls: 0,
+        restoration_verified: true,
+      }, {
+        window_id: "qfn-ab-lab-diversity-cap-closure-20260916-b", status: "incomplete_terminal",
+        failure_reason_code: "candidate_startup_guard", issued_calls: 0,
+        restoration_verified: true,
+      }],
+    }} />);
+    const history = screen.getByRole("region", { name: /cap attempt history/i });
+    expect(history).toHaveTextContent("Initial cap attempt");
+    expect(history).toHaveTextContent("Closure attempt");
+    expect(history).toHaveTextContent("0 calls");
+    expect(history).toHaveTextContent("Verified");
+    expect(screen.queryByRole("region", { name: /Mia diversity cap results/i })).not.toBeInTheDocument();
+  });
+
   it("shows admitted objective and protocol counts with recorded timing provenance", () => {
     render(<LabDiversityCapPanel data={base("closed_replay_admitted", results)} />);
     expect(screen.getByRole("region", { name: /Mia diversity cap results/i })).toBeInTheDocument();

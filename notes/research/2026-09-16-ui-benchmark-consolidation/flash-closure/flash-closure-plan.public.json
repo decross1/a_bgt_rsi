@@ -1,0 +1,215 @@
+{
+  "schema": "flash-closure-content-free-plan/v1",
+  "created_at": "2026-09-16T03:49:45Z",
+  "status": "draft_content_free_not_execution_authority",
+  "operational_availability": {
+    "agent_available": true,
+    "model_service_mutation_authorized_for_this_phase": false,
+    "inference_issued_by_this_phase": 0,
+    "estimated_preparation_minutes": 30,
+    "resource_window_owner": "root_coordinator"
+  },
+  "current_decision": {
+    "production_policy": "retain_gemma_32k_and_qwen_16k_existing_per_caller_policies",
+    "candidate": "mia_reduced47k_v2opt_mtp3_32k",
+    "candidate_status": "viable_challenger_not_promoted",
+    "primary_score_candidate": "101/126",
+    "primary_score_resident_b": "87/126",
+    "portfolio_candidate": "14/16",
+    "portfolio_resident_b": "16/16",
+    "portfolio_gate": "failed_10_percentage_point_non_regression_allowance",
+    "fresh_science_candidate": "5/6",
+    "fresh_science_resident": "6/6",
+    "fresh_repair_strict": "0/6_both",
+    "fresh_repair_predefined_framing_diagnostic": "6/6_both"
+  },
+  "remaining_flash_question": {
+    "question": "whether_a_1536_token_generator_cap_recovers_visible_finals_and_task_success_relative_to_384_at_equal_60_second_timeouts",
+    "historical_observation": "11_of_15_flash_diversity_generators_exhausted_384_tokens_in_reasoning_without_a_final_answer",
+    "prior_attempt": {
+      "window_id": "qfn-ab-lab-diversity-cap-20260915-a",
+      "terminal_outcome": "aborted",
+      "evaluation_calls_issued": 0,
+      "quality_status": "unmeasured",
+      "failure_class": "startup_host_pageout_guard",
+      "host_pageout_5s_bytes": 550780928,
+      "host_pageout_5s_limit_bytes": 536870912,
+      "candidate_cgroup_swap_bytes": 0,
+      "candidate_cgroup_oom_events": 0,
+      "candidate_cgroup_oom_kill_events": 0,
+      "restoration": "verified",
+      "failure_audit_sha256": "4a94d553dc47b7a55f297634b2e077ad3f7b8a5b9a485baf12a503bf1a8be1f0"
+    }
+  },
+  "proposed_final_panel": {
+    "panel_id": "mia-diversity-cap384-cap1536-five-reused-task-pairs-20260915-v1",
+    "role": "diagnostic_development",
+    "lineage_id": "flash-diversity-output-budget-20260915",
+    "proposed_window_id": "qfn-ab-lab-diversity-cap-closure-20260916-b",
+    "window_state": "prepared_unissued_hold_for_resource_coordination",
+    "window_sha256": "cb2e98c4c70d9017cc9a15997f6f687d1ed3b74479879dd127bc7dc763b2cc98",
+    "reuse_exact_frozen_plan": true,
+    "plan_sha256": "f1250b9c1965f9be99790153f63263c4240ed88aca44fc535abb7d8130c90f45",
+    "new_window_and_prestart_witness_required": true,
+    "claim_limit": "reused_five_task_development_cap_diagnostic_not_heldout",
+    "promotion_authorized": false,
+    "independent_unit_denominator": 5,
+    "condition_cells": 10,
+    "tasks": [
+      {
+        "task_id": "DIV1-GT-ASSURANCE-002",
+        "task_sha256": "a7416ef90e4f7a09dc6f20fda3ef13016a2fbc2a1eb2a4e11f628d66d2ab2e53"
+      },
+      {
+        "task_id": "DIV1-GT-CONDORCET-002",
+        "task_sha256": "ba1b084bba3a37d8e05074f93072c5e900b8c6fabe6906fc89a495e5025cecd5"
+      },
+      {
+        "task_id": "DIV1-GT-DELEGATION-002",
+        "task_sha256": "0adc034a4baca1c9c7b5697db357cc7e07e1adf9125051fe722ff59a3c7c9156"
+      },
+      {
+        "task_id": "DIV1-GT-COORDINATION-002",
+        "task_sha256": "152e2f25a7adccc34eb9ee68d2bc1bd153043512fa192964d34da78268ad1f5a"
+      },
+      {
+        "task_id": "DIV1-GT-COALITION-002",
+        "task_sha256": "85a54d23e7b6ea477c5bcc75cdc4f0dcc4d03e4b0a6cc0dc5b8c4c1cca20f4d0"
+      }
+    ],
+    "arms": [
+      {
+        "id": "cap384",
+        "generator_max_tokens": 384,
+        "generator_calls": 15,
+        "selector_calls": 5
+      },
+      {
+        "id": "cap1536",
+        "generator_max_tokens": 1536,
+        "generator_calls": 15,
+        "selector_calls": 5
+      }
+    ],
+    "shared_policy": {
+      "generator_timeout_seconds": 60,
+      "generator_seeds": [101, 211, 307],
+      "generator_profile": "explore_medium",
+      "selector_timeout_seconds": 20,
+      "selector_max_tokens": 128,
+      "selector_seed": 401,
+      "selector_profile": "deterministic_off",
+      "alternating_arm_order": true
+    },
+    "runtime": {
+      "candidate_spec_id": "mia-925d7be6-mtp3-reduced47k-v2opt-v1",
+      "candidate_spec_sha256": "e71d3134f407cad3c288c21f9485c27352676dbb7de647c5b567777256702a50",
+      "artifact_sha256": "a40ce50173dd3aff54da88503894967e5248bbb927f9e4a91eff5a6a7270c168",
+      "runtime_sha256": "cd2568e650bfd9fab72f573e81db15eb5f10c2822999b578b0e570615978931b",
+      "served_model": "qwen3.8-flash-next-mia",
+      "max_model_len": 32768,
+      "mtp_speculative_tokens": 3
+    },
+    "resource_envelope": {
+      "scheduled_model_calls": 40,
+      "maximum_output_tokens": 30080,
+      "evaluator_seconds": 2200,
+      "normal_supervised_wall_seconds": 4500,
+      "emergency_restoration_seconds": 600,
+      "worst_operational_seconds_approximate": 5100,
+      "local_benchmark_cost_usd": 0,
+      "paid_api_allowed": false,
+      "concurrent_model_required": false,
+      "candidate_container_memory_cap_gib": 96,
+      "kv_cache_gib": 2,
+      "admission_mem_available_gib": 30,
+      "live_mem_available_floor_gib": 20
+    },
+    "safety_gates": {
+      "threshold_relaxation_allowed": false,
+      "candidate_cgroup_swap_current_bytes": 0,
+      "candidate_cgroup_swap_max_bytes": 0,
+      "candidate_cgroup_oom_delta": 0,
+      "candidate_cgroup_oom_kill_delta": 0,
+      "setup_zero_pageout_seconds": 60,
+      "ready_zero_pageout_seconds": 60,
+      "startup_pageout_5s_limit_bytes": 536870912,
+      "startup_pageout_60s_limit_bytes": 2147483648,
+      "startup_pageout_total_limit_bytes": 4294967296,
+      "probe_pageout_5s_limit_bytes": 33554432,
+      "probe_pageout_60s_limit_bytes": 67108864,
+      "probe_pageout_total_limit_bytes": 134217728,
+      "evaluation_pageout_5s_limit_bytes": 536870912,
+      "evaluation_pageout_60s_limit_bytes": 2147483648
+    },
+    "terminal_rule": {
+      "maximum_new_attempts": 1,
+      "valid_requires": "all_40_call_receipts_raw_replay_exact_restoration_and_independent_admission",
+      "guard_or_runtime_breach": "aborted",
+      "partial_or_unreplayable_chain": "invalid",
+      "no_window_before_cutoff": "unissued",
+      "partial_scores_allowed": false,
+      "retry_after_terminal_state": false,
+      "benefit_signal": "cap1536_has_more_task_successes_and_more_visible_final_generators_with_no_additional_timeout_or_error",
+      "decision_effect": "diagnostic_only_production_retention_unchanged"
+    }
+  },
+  "fresh_portfolio_decision": {
+    "needed_to_sustain_current_retention": false,
+    "needed_before_future_promotion": true,
+    "include_in_this_closure": false,
+    "reason": "the_existing_registered_portfolio_gate_failed_and_the_cap_panel_cannot_repair_it"
+  },
+  "overnight_observations": {
+    "payoff_representation_b": {
+      "status": "admitted_diagnostic",
+      "started_at": "2026-09-16T03:35:02Z",
+      "finished_at": "2026-09-16T03:35:08Z",
+      "attempted_calls": 12,
+      "returned_calls": 12,
+      "strict_shape_valid": 12,
+      "focal_correct": 1,
+      "total_correct": 1,
+      "both_correct": 0,
+      "comparison_eligible": false,
+      "minimum_mem_available_gib": 34.82830810546875,
+      "window_sha256": "e17ad5faed16a79d1a4ffd1f858f750d525e8a1d3d84c46fa017c0f02f657f60",
+      "result_sha256": "863c5988401fdaeab003ce3448a15fe546775692a39b6836158adc5e40ecdd84",
+      "admission_sha256": "8df7cc2f796f7d767d4ba71ce40d58caf511fdd729923d80e5bae458eef9a9c5",
+      "job_admission_sha256": "10f2af251b400fca7250d25d3bfacb32c0ca44819917f0af86eac6b2af804cbd"
+    },
+    "h1_forward": {
+      "study_id": "h1-btcusdt-rest-20260916-4min",
+      "decision_interval": "2026-09-16T01:05:00Z/2026-09-16T03:05:00Z",
+      "earliest_source_evaluation": "2026-09-16T04:15:00Z",
+      "status_at_plan_time": "pending_not_yet_eligible",
+      "future_topic_default": "do_not_auto_focus_on_bitcoin"
+    }
+  },
+  "weekly_cadence": {
+    "cron_expression": "30 5 * * 0",
+    "timezone": "UTC",
+    "verified_mode": "review_only",
+    "evidence": "NARA_WEEKLY_UPGRADE_TRIAL_MANIFEST_is_explicitly_empty_and_the_script_adds_trial_manifest_only_when_nonempty"
+  },
+  "frozen_roots": [
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_worktrees/lab-eight-hour-20260915",
+      "head": "2f5f9f07a1658cbbcb7b1cad3a08ab89b10800ad"
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_worktrees/lab-diversity-cap-20260915",
+      "head": "e77a89257efaa6933efee8b4a50ca7241f7d853e"
+    },
+    {
+      "path": "/home/decross1/projects/a_bgt_rsi_worktrees/lab-payoff-tool-20260915",
+      "head": "a84f17d229d0b90376f6c48456db0a76dd9880f6"
+    }
+  ],
+  "host_read_only_baseline": {
+    "interval": "2026-09-16T03:52:20Z/2026-09-16T03:53:20Z",
+    "pswpout_bytes": 0,
+    "mem_available_start_kib": 36118244,
+    "mem_available_end_kib": 36129388
+  }
+}

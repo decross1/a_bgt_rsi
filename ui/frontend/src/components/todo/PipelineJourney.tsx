@@ -1,64 +1,15 @@
-// PipelineJourney — the dossier reader's read-only JOURNEY spine.
+// Read-only dossier spine for one exact iteration. The visible overview and
+// progressive disclosures draw conclusions only from that source-bound
+// journey; the separate disposition footer owns writes.
 //
-// R2 (2026-08-15, "the Dossier is WAY too much text") REBUILT the presentation
-// on progressive disclosure, WITHOUT touching a single seam:
-//   - a sticky SUBWAY-MAP stepper (JourneyStepper) over eight stations —
-//     hypothesis · retrieval · relevance · novelty · critic · red-team ·
-//     experiment · verdict — each node colored by that step's REAL outcome
-//     (journeyStations.stationsFor), the in-view section marked by scrollspy,
-//     a click scrolling to its section;
-//   - every section COLLAPSED to one verdict line by default (status glyph +
-//     label + the station summary + a chevron). Prose, quotes and raw evidence
-//     appear only on expand; expansion lives in component state (per section,
-//     never localStorage);
-//   - the heavy RAW EVIDENCE — retrieved chunk texts, the full critic and
-//     red-team prose, the experiment trial/results block — drills into the R0
-//     PeekPanel instead of inlining.
-// It still NEVER recommends and NEVER writes: the verdict path is the reader's
-// disposition footer, untouched by this file.
+// A gate-verdict item resolves directly by iteration ID. A finding-review item
+// first resolves its exact finding ID, then follows its source iteration. Live
+// responses must repeat those requested IDs before they can render. The
+// `journey` and `detail` props are explicit test seams and skip network reads.
 //
-// (Pre-R2 this surface was the same data behind a flat PipelineRibbon + eight
-// always-open sections. The ribbon's `data-reached` semantics survive on the
-// stepper stations; the sections kept their `journey-*` testids so every
-// absorbed-modal invariant reads 1:1.)
-//
-// ABSORBED from IterationDetailModal (UI simplification S2 — the modal died;
-// every unique section moved HERE, per the plan's absorption table):
-//   - the VERDICT HEADER badge row (full chip set, always visible — chips, not
-//     prose: it is the 15-second summary R2 is built around);
-//   - the override provenance for novelty / critique as VISIBLE text, now
-//     living in the novelty / critic sections (with the step it explains);
-//   - NoveltyAxesChip + the FULL evidence grid + the low-evidence detail;
-//   - the redteam adversarial detail; conditioning bullets (with hypothesis,
-//     which they primed); experiment extras; hypothesis.candidates_considered;
-//   - the LAZY journal disclosure + the links section.
-// GateVerdictForm is NOT absorbed — the reader's disposition footer owns the
-// forms (the verdict fence).
-//
-// TWO ITEM FAMILIES (both resolve to ONE iteration's journey):
-//   - gate_verdict (ITERATION): item.id IS an iteration_id. Self-fetch
-//     getIterationJourney(item.id) → render response.iteration.
-//   - finding_review (FINDING): item.id is a finding_id. Self-fetch
-//     getFindingDetail(item.id) → read source_iteration_id + the claim, then
-//     getIterationJourney(source_iteration_id) → render that iteration's journey
-//     with the finding claim surfaced at the top.
-//   - any other kind → a quiet "no pipeline journey for this item kind" note.
-//
-// INJECTION: the `journey` / `detail` props are the test-injection overrides
-// (mirrors TutorPanel's `detail` prop). When provided we render them directly
-// and DO NOT fetch — these tests never touch the network.
-//
-// ROBUSTNESS: every field is producer-owned JSONL parsed unchecked — the TS
-// types are a compile-time fiction. All scalars render through asText (string
-// trims / finite number / boolean stringifies; anything else — object, array,
-// NaN, null, undefined — drops by TYPEOF ALONE, no deref, so a raw object never
-// reaches React as a child). A missing / null / not-found journey degrades to a
-// legible "journey unavailable" state — never a throw, never a blank.
-//
-// The D-052 advisory (retrieval.relevance.topicality_advisory) is DARK by
-// default and surfaces here only as the raw value in a quiet zinc line — NEVER
-// with amber / low-evidence styling (it is non-gating; never cry wolf). It
-// never colors a station either.
+// Producer JSON is untrusted at this boundary. Typed scalar guards prevent raw
+// objects from reaching React, and missing records degrade to an unavailable
+// state. Detailed evidence remains collapsed until the reader opens it.
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { researchScopedHref, useResearchScope } from "../../researchScope";
@@ -85,7 +36,6 @@ import {
   overrideTooltip,
   processLabel,
   processTone,
-  seedTopic,
   shortTimestamp,
   toneFor,
 } from "../chips";
@@ -97,6 +47,7 @@ import TopicalityAdvisoryBadge from "../TopicalityAdvisoryBadge";
 import PeekPanel from "../../design/PeekPanel";
 import StatusDot from "../../design/StatusDot";
 import useDocTitles from "../../hooks/useDocTitles";
+import { iterationDisplayTitle, iterationQuestion } from "../../researchLabels";
 import DebateExchange from "./DebateExchange";
 import JourneyStepper from "./JourneyStepper";
 import {
@@ -305,7 +256,6 @@ function VerdictHeader({ row }: { row: IterationRecord }) {
   return (
     <div data-testid="journey-verdict-header" className="mt-1.5">
       <div className="flex flex-wrap items-baseline gap-2 text-xs">
-        <span className="font-mono text-zinc-100">{asText(row.iteration_id)}</span>
         <Badge
           text={row.novelty?.class}
           tone={toneFor(
@@ -344,11 +294,75 @@ function VerdictHeader({ row }: { row: IterationRecord }) {
           {shortTimestamp(row.ended_at)}
         </span>
       </div>
-      {seedTopic(row) && (
-        <div className="mt-1.5 text-sm text-zinc-200">{seedTopic(row)}</div>
-      )}
     </div>
   );
+}
+
+function concise(value: unknown, fallback: string): string {
+  const source = asText(value).replace(/\s+/g, " ");
+  if (source.length === 0) return fallback;
+  const sentence = source.match(/^.*?[.!?](?:\s|$)/)?.[0]?.trim() ?? source;
+  if (sentence.length <= 280) return sentence;
+  return `${sentence.slice(0, 277).replace(/\s+\S*$/, "")}…`;
+}
+
+function JourneyOverview({
+  row,
+  findingClaim,
+  findingEvidence,
+  humanActionRequested,
+}: {
+  row: IterationRecord;
+  findingClaim: string;
+  findingEvidence: string[];
+  humanActionRequested: boolean;
+}) {
+  const critique = asRecord(row.critique);
+  const redteam = asRecord(row.redteam);
+  const outcome = asRecord(row.experiment_outcome);
+  const question = findingClaim || iterationQuestion(row) || "No research question is recorded.";
+  const title = iterationDisplayTitle(row) ?? "Recorded research iteration";
+  const happened = outcome !== null
+    ? concise(outcome.summary, `An experiment outcome is recorded${asText(outcome.experiment_id) ? ` for ${asText(outcome.experiment_id)}` : ""}.`)
+    : `No experiment outcome is recorded. Critic: ${asText(critique?.verdict) || "not reported"}; red team: ${asText(redteam?.verdict) || "not reported"}; gate: ${asText(row.gate_status) || "not reported"}.`;
+  const learned = asText(redteam?.critique)
+    ? `Recorded red-team criticism: ${concise(redteam?.critique, "No criticism text recorded.")}`
+    : asText(critique?.rationale)
+      ? `Recorded critic assessment: ${concise(critique?.rationale, "No rationale recorded.")}`
+      : asText(row.nara_summary)
+        ? `Recorded model summary (not accepted scientific learning): ${concise(row.nara_summary, "No summary recorded.")}`
+        : "No source-recorded learning synthesis is available.";
+  const suggestedRevision = asText(redteam?.suggested_revision);
+  const gateStage = asText(row.gate_status) || "not reported";
+  const next = suggestedRevision
+    ? `Recorded red-team revision: ${concise(suggestedRevision, "No revision text recorded.")}`
+    : outcome === null
+      ? humanActionRequested
+        ? `No source-recorded next experiment is attached. A gate-verdict request is queued; recorded gate stage: ${gateStage}.`
+        : `No source-recorded next experiment is attached. Recorded gate stage: ${gateStage}; this record alone does not establish a human-action request.`
+      : humanActionRequested
+        ? `Review the recorded outcome for the queued gate-verdict request. Recorded gate stage: ${gateStage}.`
+        : `A recorded outcome is available for review. Recorded gate stage: ${gateStage}; this record alone does not establish a human-action request.`;
+  const evidenceRefs = Array.from(new Set([
+    ...findingEvidence,
+    asText(row.journal_entry_path),
+    asText(outcome?.results_path),
+  ].filter((value) => value.length > 0)));
+
+  return <section data-testid="journey-overview" className="mt-2 rounded border border-zinc-700/70 bg-zinc-900/50 p-3">
+    <div className="flex flex-wrap items-baseline gap-2">
+      <h1 className="m-0 text-[15px] font-semibold text-zinc-100">{title}</h1>
+      <code className="text-[10px] text-zinc-500">{asText(row.iteration_id)}</code>
+    </div>
+    <dl className="mt-3 grid gap-3">
+      <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Question</dt><dd data-testid={findingClaim ? "journey-finding-claim" : undefined} className="mt-0.5 text-xs leading-5 text-zinc-200">{question}</dd></div>
+      <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">What happened</dt><dd className="mt-0.5 text-xs leading-5 text-zinc-300">{happened}</dd></div>
+      <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">What the record supports learning</dt><dd className="mt-0.5 text-xs leading-5 text-zinc-300">{learned}</dd></div>
+      <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Next step</dt><dd className="mt-0.5 text-xs leading-5 text-zinc-300">{next}</dd></div>
+    </dl>
+    {evidenceRefs.length > 0 && <p data-testid="journey-overview-evidence" className="mt-3 break-words text-[10px] leading-4 text-zinc-500">Evidence refs: {evidenceRefs.join(" · ")}</p>}
+    <p className="mt-3 text-[10px] leading-4 text-zinc-500">Exact journey record · ended {shortTimestamp(row.ended_at)} · producer reviews and model summaries are provenance, not accepted scientific conclusions.</p>
+  </section>;
 }
 
 // The absorbed modal LINKS section — the lazy journal disclosure + the deep
@@ -707,10 +721,10 @@ interface Props {
   detail?: FindingDetail;
 }
 
-// Map an item.kind to a family. gate_verdict → iteration; finding_review →
-// finding; anything else → other (a quiet note).
+// Map an item.kind to a family. `iteration_history` is an internal, read-only
+// pointer used when a dossier has no typed human-action queue row.
 function familyOf(kind: unknown): "iteration" | "finding" | "other" {
-  if (kind === "gate_verdict") return "iteration";
+  if (kind === "gate_verdict" || kind === "iteration_history") return "iteration";
   if (kind === "finding_review") return "finding";
   return "other";
 }
@@ -748,10 +762,17 @@ export default function PipelineJourney({ item, journey, detail }: Props) {
   const resolvedDetail: FindingDetail | null =
     detail !== undefined ? detail : fetchedDetail;
   const detailObj = asRecord(resolvedDetail);
-  const detailUsable = detailObj !== null && detailObj.found === true;
+  const detailUsable =
+    detailObj !== null
+    && detailObj.found === true
+    && (detail !== undefined || asText(detailObj.finding_id) === itemId);
   const findingClaim = detailUsable
     ? asText(detailObj.claim) || asText(detailObj.title)
     : "";
+  const findingEvidenceObject = detailUsable ? asRecord(detailObj.evidence) : null;
+  const findingEvidence = findingEvidenceObject === null
+    ? []
+    : Object.values(findingEvidenceObject).map((value) => asText(value)).filter((value) => value.length > 0);
 
   // The iteration id whose journey we render. For the iteration family that is
   // item.id directly; for the finding family it is the resolved finding's
@@ -793,9 +814,17 @@ export default function PipelineJourney({ item, journey, detail }: Props) {
   const journeyObj = asRecord(resolvedJourney);
   // The iteration record: only when the response is found:true and carries an
   // object iteration block (a non-object iteration degrades to unavailable).
+  const journeyRow = journeyObj === null
+    ? null
+    : asRecord(journeyObj.iteration) as IterationRecord | null;
   const iterationRecord: IterationRecord | null =
-    journeyObj !== null && journeyObj.found === true
-      ? (asRecord(journeyObj.iteration) as IterationRecord | null)
+    journeyObj !== null
+    && journeyObj.found === true
+    && (journey !== undefined || (
+      asText(journeyObj.iteration_id) === sourceIterId
+      && asText(journeyRow?.iteration_id) === sourceIterId
+    ))
+      ? journeyRow
       : null;
 
   // ── R2 presentation state (component state only — NEVER localStorage) ──
@@ -942,6 +971,7 @@ export default function PipelineJourney({ item, journey, detail }: Props) {
     stations.find((s) => s.key === k) ?? stations[0];
 
   const hypothesis = asRecord(row.hypothesis);
+  const selectedHypothesis = iterationQuestion(row);
   const retrieval = asRecord(row.retrieval);
   const relevance = asRecord(retrieval?.relevance);
   const novelty = asRecord(row.novelty);
@@ -995,17 +1025,12 @@ export default function PipelineJourney({ item, journey, detail }: Props) {
 
   return chrome(
     <div data-testid="journey-loaded">
-      {family === "finding" && findingClaim.length > 0 ? (
-        <div
-          data-testid="journey-finding-claim"
-          className="mt-1 rounded border border-zinc-800/60 bg-zinc-950/40 px-1.5 py-1 text-[11px] font-medium text-zinc-200"
-        >
-          <span className="text-[10px] uppercase tracking-wide text-zinc-600">
-            finding claim{" "}
-          </span>
-          {findingClaim}
-        </div>
-      ) : null}
+      <JourneyOverview
+        row={row}
+        findingClaim={family === "finding" ? findingClaim : ""}
+        findingEvidence={family === "finding" ? findingEvidence : []}
+        humanActionRequested={kind === "gate_verdict"}
+      />
 
       {/* the absorbed modal VERDICT HEADER — the chip row stays visible; it is
           the 15-second read. */}
@@ -1027,8 +1052,8 @@ export default function PipelineJourney({ item, journey, detail }: Props) {
           onToggle={() => toggle("hypothesis")}
           registerRef={registerRef("hypothesis")}
         >
-          {asText(hypothesis?.text).length > 0 ? (
-            <p className="leading-relaxed">{asText(hypothesis?.text)}</p>
+          {selectedHypothesis !== null ? (
+            <p className="leading-relaxed">{selectedHypothesis}</p>
           ) : (
             <p className="text-zinc-500">no hypothesis text on this row</p>
           )}

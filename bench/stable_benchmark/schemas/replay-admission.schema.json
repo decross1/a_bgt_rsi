@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stable-benchmark-replay-admission/v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "terminal_status", "verified", "arm_id", "comparison_id", "run_receipt_sha256", "raw_evidence_log_sha256", "definition_sha256", "run_manifest_sha256", "replay_source_sha256", "outcomes", "mismatches", "admission_authorized"],
+      "properties": {
+        "schema_version": {"const": "stable-benchmark-replay-receipt/v1"},
+        "terminal_status": {"enum": ["verified", "invalid"]},
+        "verified": {"type": "boolean"},
+        "arm_id": {"type": "string"},
+        "comparison_id": {"type": "string"},
+        "run_receipt_sha256": {"$ref": "#/$defs/sha256"},
+        "raw_evidence_log_sha256": {"$ref": "#/$defs/sha256"},
+        "definition_sha256": {"$ref": "#/$defs/sha256"},
+        "run_manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "replay_source_sha256": {"type": "object"},
+        "outcomes": {"type": "array", "minItems": 21, "maxItems": 21},
+        "mismatches": {"type": "array", "items": {"type": "string"}},
+        "admission_authorized": {"const": false}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "generated_at", "admission_status", "admitted", "reasons", "definition_sha256", "run_manifest_sha256", "run_receipt_sha256", "replay_receipt_sha256", "supervisor_final_receipt_sha256", "admission_source_sha256", "arm_id", "comparison_id", "promotion_authorized"],
+      "properties": {
+        "schema_version": {"const": "stable-benchmark-admission-receipt/v1"},
+        "generated_at": {"type": "string"},
+        "admission_status": {"enum": ["admitted", "withheld"]},
+        "admitted": {"type": "boolean"},
+        "reasons": {"type": "array", "items": {"type": "string"}},
+        "definition_sha256": {"$ref": "#/$defs/sha256"},
+        "run_manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "run_receipt_sha256": {"$ref": "#/$defs/sha256"},
+        "replay_receipt_sha256": {"$ref": "#/$defs/sha256"},
+        "supervisor_final_receipt_sha256": {"$ref": "#/$defs/sha256"},
+        "admission_source_sha256": {"type": "object"},
+        "arm_id": {"type": "string"},
+        "comparison_id": {"type": "string"},
+        "promotion_authorized": {"const": false}
+      }
+    }
+  ],
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}

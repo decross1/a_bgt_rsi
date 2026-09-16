@@ -17,8 +17,45 @@ type Cap = { cap_tokens: number; condition_cells: number; generator_calls: numbe
   underlying_objective_success: number; creditable_protocol_pass: number };
 type Result = { caps: Record<string, Cap>; paired_task_protocol_differences: Record<string, number>;
   recorded_evaluator_elapsed_s: number; source_replay: "publication_time_only" };
+type Attempt = { id: string; status: string; failure_reason_code: string | null;
+  issued_calls: 0 | null; restoration_verified: boolean | null };
 type View = { status: string; results: Result | null; replay_raw_sha256: string | null;
-  failure_reason_code: "startup_host_swap_5s" | null };
+  failure_reason_code: string | null; attempts: Attempt[] };
+
+const WINDOW_IDS = new Set([
+  "qfn-ab-lab-diversity-cap-20260915-a",
+  "qfn-ab-lab-diversity-cap-closure-20260916-b",
+]);
+
+const boundedText = (value: unknown, max = 160): value is string =>
+  typeof value === "string" && value.length > 0 && value.length <= max;
+
+function attempts(value: unknown): Attempt[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > WINDOW_IDS.size) return null;
+  const parsed: Attempt[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!object(item)) return null;
+    const id = item.window_id;
+    if (!boundedText(id) || !WINDOW_IDS.has(id) ||
+        seen.has(id) || !boundedText(item.status, 80) ||
+        !(item.failure_reason_code === null || boundedText(item.failure_reason_code, 160)) ||
+        !(item.issued_calls === 0 || item.issued_calls === null) ||
+        !(typeof item.restoration_verified === "boolean" || item.restoration_verified === null)) {
+      return null;
+    }
+    seen.add(id);
+    parsed.push({
+      id,
+      status: item.status,
+      failure_reason_code: item.failure_reason_code,
+      issued_calls: item.issued_calls,
+      restoration_verified: item.restoration_verified,
+    } as Attempt);
+  }
+  return parsed;
+}
 
 function cap(value: unknown, tokens: number): Cap | null {
   if (!object(value) || value.cap_tokens !== tokens || value.condition_cells !== 5 ||
@@ -56,11 +93,13 @@ function result(value: unknown): Result | null {
 function view(data: unknown): View | null {
   if (!object(data) || data.schema_version !== "lab-diversity-cap-ui-progress/v1" ||
       !observed(data.observed_at) ||
-      data.window_id !== "qfn-ab-lab-diversity-cap-20260915-a" ||
+      !boundedText(data.window_id) || !WINDOW_IDS.has(data.window_id) ||
       data.original_primary_scores_changed !== false ||
       data.private_content_exported !== false ||
       data.promotion_authorized !== false ||
       data.comparison_eligible !== false) return null;
+  const attemptRows = attempts(data.attempts);
+  if (attemptRows === null) return null;
   const status = data.status;
   if (status === "closed_replay_admitted") {
     if (data.failure_reason_code !== null) return null;
@@ -69,7 +108,7 @@ function view(data: unknown): View | null {
         !SHA.test(String(data.replay_raw_sha256))) return null;
     const results = result(data.results);
     return results ? { status, results, replay_raw_sha256: String(data.replay_raw_sha256),
-      failure_reason_code: null } : null;
+      failure_reason_code: null, attempts: attemptRows } : null;
   }
   const failure = data.failure_reason_code;
   if (status === "incomplete_terminal" ? failure !== null &&
@@ -78,7 +117,8 @@ function view(data: unknown): View | null {
     "incomplete_terminal", "source_unavailable"].includes(String(status)) &&
     data.results === null && data.replay_raw_sha256 === null
     ? { status: String(status), results: null, replay_raw_sha256: null,
-        failure_reason_code: failure as "startup_host_swap_5s" | null } : null;
+        failure_reason_code: failure as "startup_host_swap_5s" | null,
+        attempts: attemptRows } : null;
 }
 
 const pending = (status: string, failure: string | null) =>
@@ -91,8 +131,32 @@ const pending = (status: string, failure: string | null) =>
     : status === "awaiting_admission"
       ? "A terminal run is awaiting independent raw-response and grade replay; results are withheld."
       : status === "incomplete_terminal"
-        ? "The window closed incomplete or failed; cap-quality counts are withheld."
+        ? `The window closed incomplete or failed; cap-quality counts are withheld.${failure ? ` Recorded reason: ${failure.replaceAll("_", " ")}.` : ""}`
         : "The exact cap source, window or replay is unavailable; cap-quality counts are withheld.";
+
+const attemptLabel = (id: string) => id === "qfn-ab-lab-diversity-cap-20260915-a"
+  ? "Initial cap attempt" : "Closure attempt";
+const readable = (value: string) => value.replaceAll("_", " ");
+
+function AttemptHistory({ rows }: { rows: Attempt[] }) {
+  if (rows.length === 0) return null;
+  return <div className="benchmark-table-wrap" role="region" tabIndex={0}
+    aria-label="Mia diversity cap attempt history, scroll horizontally">
+    <table className="benchmark-table">
+      <caption className="sr-only">Recorded cap diagnostic attempts</caption>
+      <thead><tr><th scope="col">Attempt</th><th scope="col">Terminal state</th>
+        <th scope="col">Issued calls</th><th scope="col">Restoration</th></tr></thead>
+      <tbody>{rows.map(row => <tr key={row.id}>
+        <th scope="row"><strong>{attemptLabel(row.id)}</strong><span>{row.id}</span></th>
+        <td>{readable(row.status)}<small>{row.failure_reason_code === null
+          ? "No failure reason recorded" : `Reason · ${readable(row.failure_reason_code)}`}</small></td>
+        <td>{row.issued_calls === 0 ? "0 calls" : "Not recorded"}</td>
+        <td>{row.restoration_verified === true ? "Verified" : row.restoration_verified === false
+          ? "Not verified" : "Not recorded"}</td>
+      </tr>)}</tbody>
+    </table>
+  </div>;
+}
 
 export function LabDiversityCapPanel({ data, pollingFailed = false }: {
   data: unknown; pollingFailed?: boolean;
@@ -106,6 +170,7 @@ export function LabDiversityCapPanel({ data, pollingFailed = false }: {
       <h2 id="lab-diversity-cap-heading">Mia proposal cap · 384 vs 1,536 tokens</h2>
       <p>Five reused diversity tasks, paired across two cap conditions. Each condition budgets three generator calls at 60 seconds and one selector at 20 seconds. This does not rescore the original 126 cells.</p>
     </div><span className="benchmark-chip benchmark-chip--info">Development diagnostic</span></header>
+    <AttemptHistory rows={current?.attempts ?? []} />
     {!scores ? <p className="benchmark-empty-inline">{current
       ? pending(current.status, current.failure_reason_code) : "Cap observation unavailable; all diagnostic counts are withheld."}</p> : <>
       <p className="benchmark-empty-inline">Exact closed-window replay admitted 40 private call streams and the unchanged diversity grader at publication. This page hashes archived public refs; it does not replay private streams on each poll.</p>

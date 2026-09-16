@@ -16,14 +16,16 @@ import { buildLadderModel, stemOf } from "../components/ladder/ladderModel";
 import { buildThesisFamilies } from "../components/ladder/thesisModel";
 import ThesisFamilies from "../components/ladder/ThesisFamilies";
 import ResearchCanvas from "../components/ladder/ResearchCanvas";
+import ResearchApplicationAgenda from "../components/ladder/ResearchApplicationAgenda";
 import { useLadderSources } from "../api/ladder";
 import Card from "../design/Card";
 import PeekPanel from "../design/PeekPanel";
 import { SkeletonCard } from "../design/Skeleton";
 import { registerPaletteActions } from "../design/CommandPalette";
-import { getIdeas } from "../api/http";
+import { getIdeas, getIterationJourney } from "../api/http";
 import { researchScopedHref, useResearchScope } from "../researchScope";
 import type { LadderCluster, LadderResponse } from "../types/schemas";
+import type { ResearchApplicationAgendaResponse } from "../types/researchApplicationAgenda";
 
 const LADDER_ENDPOINT = "/api/ladder";
 
@@ -77,6 +79,7 @@ interface Props {
   initial?: LadderResponse | null;
   initialIdeas?: string | null;
   initialIterations?: unknown[];
+  initialApplicationAgenda?: ResearchApplicationAgendaResponse | null;
   pollMs?: number;
 }
 
@@ -86,7 +89,7 @@ function receivedAt(at: number | null) {
   return at === null ? "not fetched in this view" : new Date(at).toISOString();
 }
 
-export default function Ladder({ initial, initialIdeas, initialIterations, pollMs = 30_000 }: Props) {
+export default function Ladder({ initial, initialIdeas, initialIterations, initialApplicationAgenda, pollMs = 30_000 }: Props) {
   const researchScope = useResearchScope();
   const source = useLadderSources({ initial, initialIterations, pollMs, researchScope });
   const { data, loaded, error } = source;
@@ -226,6 +229,10 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
         </>
       )}
 
+      {data == null && (
+        <ResearchApplicationAgenda initial={initialApplicationAgenda === undefined && initial !== undefined ? null : initialApplicationAgenda} />
+      )}
+
       {data != null && (
         <>
           {source.topicsError !== null && <p role="status" className="mb-3 text-sm text-[var(--status-warn)]">
@@ -234,7 +241,9 @@ export default function Ladder({ initial, initialIdeas, initialIterations, pollM
               : "Records remain individual until topic evidence is available."}
           </p>}
           {skew && <p role="status">The record endpoint is now unavailable. Showing last received records.</p>}
-          <div hidden={recordsOpen}><ResearchCanvas model={thesis} nextOwed={model.nextOwed} /></div>
+          <div hidden={recordsOpen}><ResearchCanvas model={thesis} nextOwed={model.nextOwed} researchScope={researchScope} loadJourney={initial === undefined && !recordsOpen ? getIterationJourney : undefined} /></div>
+
+          <ResearchApplicationAgenda initial={initialApplicationAgenda === undefined && initial !== undefined ? null : initialApplicationAgenda} />
 
           <details data-testid="research-records-disclosure" className="mt-6 border-t border-[var(--border-1)] pt-3"
             open={recordsOpen}>

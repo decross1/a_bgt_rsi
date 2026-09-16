@@ -1,6 +1,6 @@
 # Operator guide
 
-This guide covers the deployed local apparatus as of 2026-09-14. Start with
+This guide covers the local apparatus and the 2026-09-16 UI consolidation. Start with
 read-only checks. Restart only the component whose behavior requires it, and
 verify both the process and its public health/read-model boundary afterward.
 
@@ -14,19 +14,26 @@ intent:
 | Page | Route | Use it for |
 | --- | --- | --- |
 | Now | `/` | Health, alerts, active and recent work |
-| Research | `/ladder` | Evidence rungs, open claims, and next test owed |
-| Record library | `/dossier` | Search and inspect durable research records |
-| Evaluations | `/experiments` | Experiment execution and results |
+| Research | `/ladder` | Current questions, evidence, criticism, recorded learning, and the next research agenda |
+| Record library | `/dossier` | Search durable records; a dossier has one opening summary and an expandable pipeline |
+| Evaluations | `/experiments` | Experiment execution and results, with historical work explicitly scoped |
 | Operations | `/development` | Services, workers, runtime and maintenance state |
-| Benchmark progress | `/benchmarks` | Weekly evaluations and current research-pipeline funnel |
+| Benchmarks | `/benchmarks` | The frozen regression canary, admitted references, and comparable dated results |
 | Conversation | `/channel` | Attributable lab messages and bounded actions |
 | Calls | `/model-io` | Model requests, policies, usage, and terminal state |
 | Trace history | `/cycles` | Coordinator cycles and step-level outcomes |
-| Graph / request inspector | `/graph`, `/chain/req/:id` | Relationship and request-chain diagnosis |
+| Request inspector | `/chain/req/:id` | Request-chain diagnosis when the referenced call is available |
 
 The command palette and navigation use the same destinations. Legacy `/ideas`,
 `/todo`, and `/coordinator` links redirect to Research, Record library, and Trace
-history.
+history. The former disconnected graph at `/graph` redirects to Trace history.
+Cycles and the record library paginate instead of rendering their entire
+histories. Evaluations no longer embeds a second copy of the coordinator log.
+
+Iteration titles describe the source question; identifiers such as
+`iter-2026-09-15-007` remain available as secondary provenance. A descriptive
+title is not a claim that the hypothesis was validated. The dossier separates
+model commentary, observed execution, and measured scientific support.
 
 ## 2. Health check
 
@@ -74,11 +81,32 @@ a newly changed page does not by itself mean that page failed.
 
 ## 3. Read benchmark progression correctly
 
-Use `/benchmarks` to answer two different questions.
+Use `/benchmarks` for the current measurement program. Its initial release has
+18 capability units and three actor–tool–critic harness workflows per arm.
+The definition, task inputs, graders and resource ceilings are frozen together;
+the first review boundary is **2026-10-14 00:00 UTC**. This is a small regression
+canary, not a broad scientific-intelligence score or a full production-pipeline
+evaluation. Public benchmark suites are candidates for separately versioned
+extensions; the current core does not claim to have run them.
+
+Scores appear only after the run's raw replay and independent resource/recovery
+admission bind the same definition, manifest and receipt bytes. Missing,
+unissued, invalid and withheld attempts are gaps, not zero scores. A previous
+successful run must not make a newer failed attempt look complete.
+
+The dated history retains each arm's route, inference policy, source identity,
+wall time and per-construct result. Matched comparisons require the same frozen
+release and comparison cohort. Strategic mechanisms remain separate. There is
+no aggregate score across science, code, tool use and strategic behavior.
+Small-panel deltas are descriptive; a one-item win is not a population estimate.
+
+Open **Evidence archive** (`/benchmarks?view=evidence`) for the earlier Flash,
+context, cap, role, weekly and pipeline records. Historical results retain their
+original denominators; they are not retroactively inserted into the new core.
 
 ### Weekly apparatus evaluation
 
-The weekly section separates:
+The archived weekly section separates:
 
 - a review decision from a benchmark execution;
 - transport returns from objective task success;
@@ -117,6 +145,29 @@ without revealing private topic or model payloads.
 
 The funnel is an operational measurement. Scientific support for a thesis lives
 in the Research, Record library, and Evaluations pages.
+
+### Cadence and follow-through
+
+The existing hook is **Sunday at 05:30 UTC**, in review-only mode. A review
+report is not evidence that a benchmark ran. The empty trial-manifest setting
+does not authorize an automatic model switch. Normal weekly maintenance has
+120 Spark minutes; the owner's unrestricted local allowance for this one-time
+qualification session does not silently alter that recurring budget.
+
+At each review, inspect the newest admitted reference, new failure clusters and
+upstream evidence. Preregister one justified change, preserve the reference
+configuration, run matched tasks, and retain both successful and aborted
+receipts. A changed fixture, grader, inference policy or harness must be named
+in the comparison. Release expiry requires a recorded review before new runs.
+Most reviews should leave production unchanged.
+
+The application agenda in Research is proposed work, not an active trading
+strategy. It starts from game-theoretic mechanisms and data requirements:
+options are the preferred investigation, prediction markets an alternative,
+and crypto requires an explicit mechanism fit. See
+[the application research agenda](APPLICATION_RESEARCH_AGENDA.md). Completed
+Bitcoin reference studies remain historical evidence; their capture and polling
+timers were retired after closure on 2026-09-16. No order placement is enabled.
 
 ## 4. Pause and resume
 

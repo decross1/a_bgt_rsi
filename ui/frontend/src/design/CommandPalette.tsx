@@ -52,21 +52,21 @@ const ROUTES: {
   label: string;
   to: string;
   keywords: string[];
-  group: "Now" | "Research" | "Operations";
+  group: "Now" | "Research" | "Benchmarks" | "Operations";
+  archive?: boolean;
 }[] = [
   { id: "nav-pulse", label: "Now overview", to: "/", keywords: ["pulse", "home", "health", "owe"], group: "Now" },
   { id: "nav-ladder", label: "Research workspace", to: "/ladder", keywords: ["ladder", "ideas", "evidence", "rungs"], group: "Research" },
-  { id: "nav-dossier", label: "Record library", to: "/dossier", keywords: ["dossier", "reader", "findings", "todo"], group: "Research" },
-  { id: "nav-experiments", label: "Evaluations", to: "/experiments", keywords: ["experiments", "runs", "engine"], group: "Research" },
+  { id: "nav-dossier", label: "Research archive · records", to: "/dossier", keywords: ["dossier", "reader", "findings", "todo"], group: "Research", archive: true },
+  { id: "nav-experiments", label: "Research archive · evaluations", to: "/experiments", keywords: ["experiments", "runs", "engine"], group: "Research", archive: true },
   { id: "nav-development", label: "Operations delivery", to: "/development", keywords: ["development", "codex", "engineering", "readiness", "overnight"], group: "Operations" },
-  { id: "nav-benchmarks", label: "Benchmark progress", to: "/benchmarks", keywords: ["weekly", "performance", "quality", "upgrades", "scores"], group: "Operations" },
+  { id: "nav-benchmarks", label: "Benchmarks", to: "/benchmarks", keywords: ["weekly", "performance", "quality", "upgrades", "scores"], group: "Benchmarks" },
   { id: "nav-channel", label: "Conversation", to: "/channel", keywords: ["channel", "chat", "nara", "lab"], group: "Operations" },
   { id: "nav-model-io", label: "Calls", to: "/model-io", keywords: ["model i/o", "calls", "dispatch", "wrapper"], group: "Operations" },
   { id: "nav-cycles", label: "Trace history", to: "/cycles", keywords: ["cycles", "coordinator", "engine"], group: "Operations" },
-  { id: "nav-graph", label: "Recorded trace map", to: "/graph", keywords: ["graph", "chains", "engine", "flow"], group: "Operations" },
 ];
 
-const ROUTE_GROUPS = ["Now", "Research", "Operations"] as const;
+const ROUTE_GROUPS = ["Now", "Research", "Benchmarks", "Operations"] as const;
 
 type CommandPaletteProps = {
   fallbackFocusRef?: RefObject<HTMLElement | null>;
@@ -87,6 +87,9 @@ export default function CommandPalette({
   const navigate = useNavigate();
   const { search } = useLocation();
   const researchScope = researchScopeFromSearch(search);
+  const routeHref = (route: (typeof ROUTES)[number]) => route.group === "Research"
+    ? researchScopedHref(route.to, route.archive ? "all" : researchScope)
+    : route.to;
   const actions = useSyncExternalStore(subscribe, getSnapshot);
   const dialogRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
@@ -190,13 +193,13 @@ export default function CommandPalette({
         ref={dialogRef}
         role="dialog"
       >
-        <Command label="Command palette" filter={(value, search) => {
+        <Command label="Search commands" filter={(value, search) => {
           const query = search.trim().toLocaleLowerCase();
           // Match names and retained aliases directly. Fuzzy subsequences can
           // put "Research workspace" ahead of an exact "channel" alias.
           return value.toLocaleLowerCase().includes(query) ? 1 : 0;
         }}>
-          <Command.Input autoFocus placeholder="Go to…" />
+          <Command.Input autoFocus aria-label="Search commands" placeholder="Go to…" />
           <Command.List>
             <Command.Empty>No matches.</Command.Empty>
             {ROUTE_GROUPS.map((heading) => (
@@ -205,10 +208,10 @@ export default function CommandPalette({
                   <Command.Item
                     key={route.id}
                     value={`${route.label} ${route.keywords.join(" ")}`}
-                    onSelect={() => run(() => navigate(researchScopedHref(route.to, researchScope)))}
+                    onSelect={() => run(() => navigate(routeHref(route)))}
                   >
                     {route.label}
-                    <span className="dsn-palette-hint">{researchScopedHref(route.to, researchScope)}</span>
+                    <span className="dsn-palette-hint">{routeHref(route)}</span>
                   </Command.Item>
                 ))}
               </Command.Group>

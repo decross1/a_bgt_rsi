@@ -100,8 +100,8 @@ def test_assess_state_builds_snapshot(state_files):
     by_id = {f["iteration_id"]: f for f in snap["recent_findings"]}
     assert by_id["iter-2026-06-05-001"]["novelty"] == "novel"
     assert by_id["iter-2026-06-05-002"]["human_verdict"] == "valid"
-    # iter-001 has no human verdict + gate pending -> an open thread.
-    assert "iter-2026-06-05-001" in snap["open_threads"]
+    # Literature-only iter-001 remains visible but owes no experiment gate.
+    assert "iter-2026-06-05-001" not in snap["open_threads"]
     assert "iter-2026-06-05-002" not in snap["open_threads"]
     # surfaced finding with status "surfaced" -> pending review.
     assert any(s["finding_id"] == "sf-iter-2026-06-05-099"
@@ -116,6 +116,24 @@ def test_assess_state_builds_snapshot(state_files):
     assert not any("vote-ready" in g for g in snap["gaps"])
     # experiments discovered via tier_registry (real, read-only).
     assert isinstance(snap["experiments"], dict)
+
+
+@pytest.mark.parametrize("outcome", [None, {}, [], "completed", {"summary": "Measured result"}])
+def test_assessment_only_requests_gates_the_human_inbox_can_action(state_files, outcome):
+    """Pending literature records must not generate phantom review requests."""
+    from pathlib import Path
+    from ui.backend.human_todo import _gate_verdict_items
+
+    path = Path(state_files["loop_memory_path"])
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[0]["experiment_outcome"] = outcome
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    snap = coord.assess_state(**state_files)
+    owed = {item["id"] for item in _gate_verdict_items(path.parent)}
+    assert set(snap["open_threads"]) == owed
+    expected_gate = isinstance(outcome, dict) and bool(outcome)
+    assert bool(snap["open_threads"]) is expected_gate
+    assert len(snap["recent_findings"]) == 2
 
 
 def test_assess_state_active_run_in_flight(state_files, tmp_path):

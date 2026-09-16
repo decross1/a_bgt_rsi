@@ -147,6 +147,21 @@ const isLabRunId = (value: unknown): value is string =>
   typeof value === "string" && /^qfn-ab-[a-z0-9][a-z0-9._-]{0,63}\.(resident|flash)$/.test(value);
 const isLabFlashRunId = (value: unknown): value is string =>
   typeof value === "string" && /^qfn-ab-[a-z0-9][a-z0-9._-]{0,63}\.flash$/.test(value);
+const isStableBenchmarkRunId = (value: unknown): value is string =>
+  typeof value === "string" && /^stable-benchmark-[a-z0-9][a-z0-9._-]{0,47}\.resident$/.test(value);
+const isBoundedUntrustedRuntimeField = (value: unknown, maximum: number): value is string | null =>
+  value === null || typeof value === "string" && value.length <= maximum;
+const STABLE_BENCHMARK_PHASES = new Set([
+  "preflight",
+  "sentinel_created",
+  "nara_quiescing",
+  "evaluation",
+  "restoration",
+  "complete",
+  "failed",
+  "recovery_unknown",
+  "supervisor_recovered",
+]);
 const isMiaProfileRunId = (value: unknown): value is string =>
   typeof value === "string" && /^qfn-mia-(?:mtp[123]|ctx69632|mtp3-red47k)-[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(value);
 const positiveInteger = (value: unknown) =>
@@ -219,11 +234,24 @@ function isModelRuntime(value: unknown): value is ModelRuntime {
     ["resident", "candidate_research", "transitioning", "unknown"].includes(
       String(row.mode),
     ) &&
-    ["qualification_state", "extended_evaluation_state", "followon_evaluation_state", "followon_resident_state", "lab_evaluation_state", "none"].includes(String(row.mode_source)) &&
+    ["qualification_state", "extended_evaluation_state", "followon_evaluation_state", "followon_resident_state", "lab_evaluation_state", "stable_benchmark_state", "none"].includes(String(row.mode_source)) &&
     (row.mode_source !== "extended_evaluation_state" || isExtendedFlashRunId(row.run_id)) &&
     (row.mode_source !== "followon_evaluation_state" || isFollowonFlashRunId(row.run_id)) &&
     (row.mode_source !== "followon_resident_state" || isFollowonResidentRunId(row.run_id)) &&
     (row.mode_source !== "lab_evaluation_state" || isLabRunId(row.run_id)) &&
+    (row.mode_source !== "stable_benchmark_state" || row.candidate_variant === null && (
+      isStableBenchmarkRunId(row.run_id) &&
+        STABLE_BENCHMARK_PHASES.has(String(row.phase)) &&
+        row.mode === "resident" &&
+        row.resident_services_expected === "online" ||
+      row.mode === "unknown" &&
+        row.resident_services_expected === "unknown" &&
+        row.nara_service_expected === "unknown" &&
+        row.mode_source_sha256 === null &&
+        typeof row.source_error === "string" && row.source_error.length > 0 &&
+        isBoundedUntrustedRuntimeField(row.run_id, 96) &&
+        isBoundedUntrustedRuntimeField(row.phase, 64)
+    )) &&
     ["online", "stopped", "unknown"].includes(
       String(row.resident_services_expected),
     ) &&
@@ -619,7 +647,8 @@ export default function Pulse() {
       (modelRuntime?.mode_source === "extended_evaluation_state" && isExtendedFlashRunId(modelRuntime.run_id)) ||
       (modelRuntime?.mode_source === "followon_evaluation_state" && isFollowonFlashRunId(modelRuntime.run_id)) ||
       (modelRuntime?.mode_source === "followon_resident_state" && isFollowonResidentRunId(modelRuntime.run_id)) ||
-      (modelRuntime?.mode_source === "lab_evaluation_state" && isLabRunId(modelRuntime.run_id))) &&
+      (modelRuntime?.mode_source === "lab_evaluation_state" && isLabRunId(modelRuntime.run_id)) ||
+      (modelRuntime?.mode_source === "stable_benchmark_state" && isStableBenchmarkRunId(modelRuntime.run_id) && STABLE_BENCHMARK_PHASES.has(modelRuntime.phase ?? ""))) &&
     typeof modelRuntime.mode_source_sha256 === "string" &&
     /^[0-9a-f]{64}$/.test(modelRuntime.mode_source_sha256) &&
     typeof modelRuntime.run_id === "string" &&
@@ -642,6 +671,32 @@ export default function Pulse() {
     modelRuntime.phase === "evaluation" &&
     modelRuntime.resident_services_expected === "online" &&
     modelRuntime.nara_service_expected === "paused";
+  const stableBenchmarkRuntime =
+    modelRuntime?.mode_source === "stable_benchmark_state" &&
+    modelRuntime.mode === "resident" &&
+    boundRuntimeMode &&
+    modelRuntime.resident_services_expected === "online" &&
+    modelRuntime.candidate_variant === null;
+  const stableBenchmarkUnverified =
+    modelRuntime?.mode_source === "stable_benchmark_state" &&
+    modelRuntime.mode === "unknown" &&
+    modelRuntime.mode_source_sha256 === null &&
+    modelRuntime.resident_services_expected === "unknown" &&
+    modelRuntime.nara_service_expected === "unknown" &&
+    modelRuntime.candidate_variant === null &&
+    typeof modelRuntime.source_error === "string" &&
+    modelRuntime.source_error.length > 0 &&
+    Number.isFinite(runtimeAgeMs) &&
+    runtimeAgeMs >= 0 &&
+    runtimeAgeMs <= 20_000 &&
+    !runtimePoll.failing;
+  const stableBenchmarkVisible = stableBenchmarkRuntime || stableBenchmarkUnverified;
+  const stableBenchmarkPhase = stableBenchmarkVisible
+    ? STABLE_BENCHMARK_PHASES.has(modelRuntime?.phase ?? "") ? modelRuntime?.phase ?? "unverified" : "unverified"
+    : null;
+  const stableBenchmarkPreparing = stableBenchmarkPhase === "preflight" || stableBenchmarkPhase === "sentinel_created";
+  const stableBenchmarkRecovering = stableBenchmarkPhase === "restoration" || stableBenchmarkPhase === "supervisor_recovered";
+  const stableBenchmarkProblem = stableBenchmarkUnverified || stableBenchmarkPhase === "failed" || stableBenchmarkPhase === "recovery_unknown";
   const selectedMiaVariant = boundRuntimeMode &&
     isRegisteredMiaVariant(modelRuntime?.candidate_variant, modelRuntime?.mode_source) &&
     (modelRuntime?.run_id?.startsWith("qfn-mia-c0-") ||
@@ -680,7 +735,17 @@ export default function Pulse() {
     readErrors.length > 0 ? `read errors: ${readErrors.join(", ")}` : null,
   ].filter((value): value is string => value != null);
   const runtimeModeLabel =
-    residentResearchWindow
+    stableBenchmarkVisible
+      ? stableBenchmarkProblem
+        ? "Stable benchmark lifecycle needs review"
+        : stableBenchmarkPreparing
+          ? "Stable benchmark preparing"
+          : stableBenchmarkRecovering
+            ? "Stable benchmark restoration"
+            : stableBenchmarkPhase === "complete"
+              ? "Stable benchmark lifecycle complete"
+              : "Stable benchmark resident arm active"
+      : residentResearchWindow
       ? modelRuntime?.mode_source === "lab_evaluation_state" ? "Resident model evaluation active" : "Resident research window"
       : residentRuntime
       ? "Resident serving"
@@ -693,7 +758,11 @@ export default function Pulse() {
             : "Runtime transition"
           : "Operating mode unverified";
   const runtimeModeNote =
-    residentResearchWindow
+    stableBenchmarkUnverified
+      ? `The stable benchmark projector could not verify the current ${(stableBenchmarkPhase ?? "unknown").replaceAll("_", " ")} lifecycle state. Endpoint observations remain independent.`
+      : stableBenchmarkRuntime
+      ? `Source-bound stable benchmark phase: ${(stableBenchmarkPhase ?? "unknown").replaceAll("_", " ")}. Resident services are expected online and Nara is expected ${modelRuntime.nara_service_expected}; this lifecycle state does not establish a benchmark score.`
+      : residentResearchWindow
       ? "Controller state expects Gemma and Qwen online while Nara is paused for this supervised research arm. Live endpoint and service observations remain separate."
       : residentRuntime
       ? "Controller state expects the production resident services online."
@@ -755,7 +824,27 @@ export default function Pulse() {
         </span>
         <span>backend-reported revision {health?.version ?? "unknown"}</span>
         <span style={{ marginLeft: "auto" }}>
-          {residentResearchWindow ? (
+          {stableBenchmarkVisible ? (
+            <div
+              data-testid="health-verdict"
+              data-level={stableBenchmarkProblem ? "unknown" : stableBenchmarkPreparing || stableBenchmarkRecovering ? "transitioning" : "research"}
+              className="flex flex-wrap items-center gap-2 text-[var(--fg-muted)]"
+            >
+              <span className={`font-semibold ${stableBenchmarkProblem ? "text-[var(--status-warn)]" : "text-[var(--accent)]"}`}>
+                {stableBenchmarkProblem ? "BENCHMARK NEEDS REVIEW" : stableBenchmarkPreparing ? "BENCHMARK PREPARING" : stableBenchmarkRecovering ? "BENCHMARK RESTORATION" : stableBenchmarkPhase === "complete" ? "BENCHMARK COMPLETE" : "BENCHMARK RUN"}
+              </span>
+              <span>Phase: {(stableBenchmarkPhase ?? "unknown").replaceAll("_", " ")}.</span>
+              {stableBenchmarkUnverified
+                ? <span>Runtime expectations are unknown until the lifecycle source verifies again.</span>
+                : <span>Resident models are expected online; Nara is expected {modelRuntime?.nara_service_expected}.</span>}
+              <Link to="/benchmarks" className="text-[var(--accent)]">View benchmark progress →</Link>
+              {runtimeObservabilityIssues.length > 0 && (
+                <span className="text-[var(--status-warn)]" data-testid="runtime-observability-warning">
+                  Observability: {runtimeObservabilityIssues.join("; ")}.
+                </span>
+              )}
+            </div>
+          ) : residentResearchWindow ? (
             <div
               data-testid="health-verdict"
               data-level="research"

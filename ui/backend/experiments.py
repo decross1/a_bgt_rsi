@@ -90,8 +90,9 @@ _TIER_MAP: list[dict] = [
         "tier": "applied",
         "label": "Applied",
         "description": (
-            "Design-only paper forecasting — read-only market data scored "
-            "offline. CFTC-gated; not run (no live trading)."
+            "Empirical market and forecasting studies. Each record shows its "
+            "observed execution and evidence; an offline result does not "
+            "establish trading performance."
         ),
         "experiment_ids": [
             "exp007_polymarket",

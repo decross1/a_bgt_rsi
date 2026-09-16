@@ -3,6 +3,7 @@
 // seed.topic joins. Retrieval papers remain searchable evidence; they never
 // establish family membership.
 import type { LadderCluster } from "../../types/schemas";
+import { collectionDisplayTitle, iterationQuestion } from "../../researchLabels";
 
 const REPRESENTATION_TOPIC =
   "Representation in Peer Selection: A Liquid Democracy Perspective";
@@ -163,8 +164,7 @@ function parseIteration(
     return `Iteration "${id}" has no valid seed.topic`;
   }
 
-  const hypothesisBlock = isRecord(row.hypothesis) ? row.hypothesis : null;
-  const hypothesis = nonBlankText(hypothesisBlock?.text);
+  const hypothesis = iterationQuestion(row) ?? undefined;
 
   const paperText: string[] = [];
   const retrieval = isRecord(row.retrieval) ? row.retrieval : null;
@@ -293,6 +293,15 @@ function clusterIdentity(cluster: LadderCluster): { id: string; title: string } 
   return { id, title };
 }
 
+function evidenceTitle(
+  id: string,
+  title: string,
+  iterations: RecordedIteration[],
+): string {
+  if (title !== id && !/^cl-iter-[A-Za-z0-9._:-]+$/.test(title)) return title;
+  return collectionDisplayTitle(iterations.map((iteration) => iteration.source)) ?? title;
+}
+
 function buildFamilyRecord(
   cluster: LadderCluster,
   iterationIndex: Map<string, IterationIndexEntry>,
@@ -417,7 +426,7 @@ function buildFamilyRecord(
       id,
       key: id,
       hasUniqueSourceId: false,
-      title,
+      title: evidenceTitle(id, title, iterations),
       topics,
       iterations,
       association: "individual",
@@ -433,7 +442,7 @@ function buildFamilyRecord(
     id,
     key: id,
       hasUniqueSourceId: false,
-    title,
+    title: evidenceTitle(id, title, iterations),
     topics,
     iterations,
     association: curated ? "curated-topic-collection" : "exact-topic",

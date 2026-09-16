@@ -7,12 +7,8 @@
 // with that component in UI simplification S3 — the dossier index owns
 // iteration browsing now and paginates its own way.)
 //
-//   - The /cycles route is NOT DOM-bounded: it maps EVERY renderable cycle
-//     to a <CoordinatorCycleCard> with no pagination (`renderable.map(...)`),
-//     so 2000 cycles → 2000 cards. It still renders without throwing/hanging/
-//     logging (verified here), but the DOM grows O(N). That unbounded render
-//     stays a reported followup; this test PINS the current linear behavior
-//     so the audit is documented, not silently changed.
+//   - The /cycles route keeps the source total but mounts only a bounded first
+//     page until the reader explicitly asks for older cycles.
 //
 // jsdom note: there is no headless browser here, so "renders cleanly" = the
 // component/route mounts, the expected nodes exist, and console.error/warn (a
@@ -20,7 +16,7 @@
 // Timing uses a deliberately LOOSE ceiling: it is a hang/quadratic-blowup trip
 // wire, not a micro-benchmark — jsdom rendering thousands of React nodes is
 // inherently slow, and a tight bound would be flaky across machines/CI load.
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Cycles from "../src/routes/Cycles";
 import type { CoordinatorCycle } from "../src/types/schemas";
@@ -87,14 +83,7 @@ describe("perf-scale audit — large producer-owned lists render bounded & quiet
     vi.clearAllMocks();
   });
 
-  // /cycles route at 2000 cycles. AUDIT FINDING: this route is NOT
-  // DOM-bounded — it renders one card per cycle (no pagination). It still
-  // renders without throwing/hanging/logging at scale (proven here); the
-  // unbounded DOM growth is a reported followup, not fixed here (a pagination
-  // change would also break the harden suite's 1002→1002 cards assertion +
-  // need a route-owner edit). This test PINS the current linear behavior so
-  // the audit is documented, not silently changed.
-  it("Cycles route renders 2000 cycles without hang/crash (DOM grows O(N) — see followups)", () => {
+  it("Cycles route bounds a 2000-row history and expands it deliberately", () => {
     const { collect, restore } = spyConsole();
     const cycles = makeCycles(SCALE);
 
@@ -111,11 +100,11 @@ describe("perf-scale audit — large producer-owned lists render bounded & quiet
       screen.getByTestId("coordinator-page").textContent ?? "";
     expect(pageText).not.toMatch(/NaN/);
 
-    // Current (unbounded) contract: one card per cycle. If a future change adds
-    // pagination this assertion flips — that is the intended trigger to revisit
-    // the followup, not a silent regression.
     const cards = screen.getAllByTestId("coordinator-cycle-card");
-    expect(cards).toHaveLength(SCALE);
+    expect(cards).toHaveLength(20);
+    expect(screen.getByText(`20 of ${SCALE}`)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Show 20 older cycles/i }));
+    expect(screen.getAllByTestId("coordinator-cycle-card")).toHaveLength(40);
 
     // The render completed — it did not hang or blow the stack on 2000 cards.
     expect(elapsed).toBeLessThan(RENDER_CEILING_MS);

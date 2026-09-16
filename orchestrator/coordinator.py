@@ -595,7 +595,7 @@ def assess_state(
           "in_flight": {"active": bool, "run": {run_id, kind, label} | None},
           "recent_findings": [ {iteration_id, hypothesis, novelty, critic,
                                  experiment_outcome, gate_status, human_verdict} ],
-          "open_threads": [iteration_id, ...],   # recent, no human verdict yet
+          "open_threads": [iteration_id, ...],   # experiment-stage gates owed
           "gaps": [str, ...],                     # what's thin / worth doing
           "surfaced_pending": [ {finding_id, title, status} ],  # awaiting review
           "experiments": {tier: count, ...},
@@ -672,11 +672,15 @@ def assess_state(
             "gate_status": r.get("gate_status"),
             "human_verdict": human_verdict,
         })
-        # An "open thread" = a recent iteration with no human verdict yet —
+        # Match the human inbox contract: only experiment/applied-stage rows
+        # with a nonempty experiment_outcome owe a verdict. Literature-stage
+        # rows can carry legacy gate_status=pending without creating a gate.
+        # Reporting those as owed caused hourly review requests that the UI
+        # could not action. Keep them in recent_findings for research context.
         # EXCLUDING members of killed clusters (D-059: the ladder already
         # disposed of them; a gate verdict on a dead cluster's iteration is
         # not owed). Ledger absent -> no exclusion (fail-open).
-        if human_verdict is None and r.get("gate_status") == "pending":
+        if exp and human_verdict is None and r.get("gate_status") == "pending":
             if iid not in _killed_member_ids():
                 open_threads.append(iid)
 

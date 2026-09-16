@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stable-benchmark-comparison-registration/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "suite_id",
+    "release",
+    "comparison_id",
+    "registered_at",
+    "definition",
+    "arms"
+  ],
+  "properties": {
+    "schema_version": {"const": "stable-benchmark-comparison-registration/v1"},
+    "suite_id": {"$ref": "#/$defs/id"},
+    "release": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "comparison_id": {"$ref": "#/$defs/id"},
+    "registered_at": {"type": "string", "format": "date-time", "maxLength": 40},
+    "definition": {"$ref": "#/$defs/fileBinding"},
+    "arms": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {"$ref": "#/$defs/referenceArm"},
+        {"$ref": "#/$defs/candidateArm"}
+      ],
+      "items": false
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,95}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "absolutePath": {
+      "type": "string",
+      "pattern": "^/",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "fileBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/absolutePath"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "sourceMap": {
+      "type": "object",
+      "minProperties": 1,
+      "maxProperties": 128,
+      "propertyNames": {"type": "string", "minLength": 1, "maxLength": 320},
+      "additionalProperties": {"$ref": "#/$defs/sha256"}
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "window_id",
+        "window_plan_sha256",
+        "controller_source_sha256",
+        "worker_argv_sha256",
+        "receipt_directory"
+      ],
+      "properties": {
+        "window_id": {"$ref": "#/$defs/id"},
+        "window_plan_sha256": {"$ref": "#/$defs/sha256"},
+        "controller_source_sha256": {"$ref": "#/$defs/sourceMap"},
+        "worker_argv_sha256": {"$ref": "#/$defs/sha256"},
+        "receipt_directory": {"$ref": "#/$defs/absolutePath"}
+      }
+    },
+    "armBase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "arm_id",
+        "role",
+        "manifest",
+        "run_receipt_directory",
+        "execution_source_sha256",
+        "replay_source_sha256",
+        "admission_source_sha256",
+        "lifecycle"
+      ],
+      "properties": {
+        "arm_id": {"$ref": "#/$defs/id"},
+        "role": {"enum": ["reference", "candidate"]},
+        "manifest": {"$ref": "#/$defs/fileBinding"},
+        "run_receipt_directory": {"$ref": "#/$defs/absolutePath"},
+        "execution_source_sha256": {"$ref": "#/$defs/sourceMap"},
+        "replay_source_sha256": {"$ref": "#/$defs/sourceMap"},
+        "admission_source_sha256": {"$ref": "#/$defs/sourceMap"},
+        "lifecycle": {
+          "oneOf": [
+            {"$ref": "#/$defs/lifecycle"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "referenceArm": {
+      "allOf": [
+        {"$ref": "#/$defs/armBase"},
+        {
+          "properties": {
+            "role": {"const": "reference"},
+            "lifecycle": {"$ref": "#/$defs/lifecycle"}
+          }
+        }
+      ]
+    },
+    "candidateArm": {
+      "allOf": [
+        {"$ref": "#/$defs/armBase"},
+        {"properties": {"role": {"const": "candidate"}}}
+      ]
+    }
+  }
+}

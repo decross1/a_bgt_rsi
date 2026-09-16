@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stable-benchmark-run-receipt/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "terminal_status", "started_at", "finished_at", "elapsed_s", "definition_sha256", "run_manifest_sha256", "execution_gate_sha256", "execution_source_sha256", "arm_id", "comparison_id", "outcomes", "summary", "replay_status", "admission_status", "promotion_authorized"],
+  "properties": {
+    "schema_version": {"const": "stable-benchmark-run-receipt/v1"},
+    "run_id": {"type": "string"},
+    "terminal_status": {"enum": ["complete", "aborted", "unissued"]},
+    "started_at": {"type": ["string", "null"]},
+    "finished_at": {"type": "string"},
+    "elapsed_s": {"type": "number", "minimum": 0},
+    "definition_sha256": {"$ref": "#/$defs/sha256"},
+    "run_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "execution_gate_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "execution_source_sha256": {"type": "object"},
+    "arm_id": {"type": "string"},
+    "comparison_id": {"type": "string"},
+    "outcomes": {"type": "array", "minItems": 21, "maxItems": 21, "items": {"$ref": "#/$defs/outcome"}},
+    "summary": {"type": "object"},
+    "replay_status": {"enum": ["not_run", "not_applicable"]},
+    "admission_status": {"enum": ["not_evaluated", "withheld_unissued"]},
+    "promotion_authorized": {"const": false}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "outcome": {
+      "type": "object",
+      "required": ["task_id", "panel", "domain", "construct", "cell_status", "score_credit", "failure_code", "reason", "model_calls", "model_calls_exact", "duration_s", "grading_duration_s", "usage", "metrics", "raw_evidence_sha256"],
+      "properties": {
+        "cell_status": {"enum": ["passed", "failed", "abstained", "timeout", "transport_error", "invalid_output", "invalid", "skipped_budget", "unissued"]},
+        "score_credit": {"type": "boolean"},
+        "model_calls": {"type": "integer", "minimum": 0, "maximum": 3},
+        "model_calls_exact": {"type": "boolean"},
+        "grading_duration_s": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

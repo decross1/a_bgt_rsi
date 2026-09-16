@@ -335,6 +335,7 @@ vi.mock("../src/api/http", () => ({
     version: "test",
   }),
   getIterations: vi.fn().mockResolvedValue({ iterations: D.FC_ITERATIONS }),
+  getIterationJourney: vi.fn().mockResolvedValue({ found: false, iteration_id: "missing", iteration: null }),
   getJournalEntry: vi.fn().mockResolvedValue({
     iteration_id: "iter-2026-06-09-101",
     path: "journal/iterations/101.md",
@@ -440,7 +441,6 @@ vi.mock("../src/api/experiments", () => ({
 // Imported AFTER the mocks are declared (vi.mock is hoisted).
 import Cycles from "../src/routes/Cycles";
 import Experiments from "../src/routes/Experiments";
-import Graph from "../src/routes/Graph";
 import Ladder from "../src/routes/Ladder";
 import Pulse from "../src/routes/Pulse";
 import DossierIndex from "../src/routes/DossierIndex";
@@ -475,12 +475,6 @@ describe("routes survive the announced additive contract (undecidable / novelty_
     const { error, warn } = await renderRouteQuietly(
       <Cycles pollMs={1_000_000} />,
     );
-    expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
-    expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
-  });
-
-  it("Graph (S3 thin page): empty forward-compat graph renders console-clean", async () => {
-    const { error, warn } = await renderRouteQuietly(<Graph />);
     expect(error, `console.error: ${error.join(" | ")}`).toHaveLength(0);
     expect(warn, `console.warn: ${warn.join(" | ")}`).toHaveLength(0);
   });
