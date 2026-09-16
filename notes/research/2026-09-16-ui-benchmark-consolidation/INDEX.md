@@ -53,8 +53,14 @@ this work window, including under a different study identifier.
 Hourly checkpoints and final results will be added as the work progresses.
 - [First hourly checkpoint](checkpoint-01.md)
 - [Second hourly checkpoint](checkpoint-02.md)
+- [Third hourly checkpoint](checkpoint-03.md)
 - [UI audit and verification](UI_AUDIT.md)
 - [Integration review](INTEGRATION_REVIEW.md)
+- [Dossier and benchmark follow-up review](FOLLOWUP_REVIEW.md)
+- [Research-progress and page-loading review](PROGRESS_CLARITY_REVIEW.md)
+- [Resident commissioning findings](stable-benchmark/RESIDENT_REFERENCE.md)
+- [Corrected 1.1 resident baseline and failure mechanisms](stable-benchmark/RESIDENT_REFERENCE_V1_1.md)
+- [Task-by-task prompt–grader audit](stable-benchmark/RESIDENT_PROMPT_GRADER_AUDIT.md)
 - [Flash terminal receipt](flash-closure/flash-cap-closure-result.public.json)
 
 An absence of results here is not a successful execution. The Sunday 05:30 UTC

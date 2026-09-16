@@ -6,12 +6,13 @@ model agents. It runs on one NVIDIA DGX Spark and keeps the human researcher
 responsible for scientific validity, deployed runtime change, and scientific
 publication.
 
-> **V2 foundation — 2026-09-14:** explicit research campaigns, a verified v0/v1
-> archive, and measured benchmark follow-through now have implementation and
-> evidence contracts. The resident models and serving runtime remain the
-> established baseline. `/benchmarks` shows campaign activation and progress;
-> the separate canonical deployment receipt records adoption. A controlled model-game study is
-> separate work and has not been registered for execution.
+> **Current workspace — 2026-09-16:** Research follows the active campaign's
+> thesis, evidence, criticism, and next agenda. Preserved records remain in the
+> archive. Benchmarks uses frozen release **1.1.0**, with a verified resident
+> baseline and a review boundary of **October 14**. It is a small regression
+> canary; model comparisons and accepted research findings remain separate.
+> The resident Gemma/Qwen pair remains deployed. Flash's final startup diagnostic
+> stopped at its pageout guard before any stable-benchmark request.
 
 New contributors and agent sessions should begin with
 [`START_HERE.md`](START_HERE.md).
@@ -21,8 +22,8 @@ New contributors and agent sessions should begin with
 | Layer | Deployed state |
 | --- | --- |
 | Hardware | NVIDIA DGX Spark, GB10, 128 GB unified memory |
-| Generator / PI | Gemma 4 26B-A4B NVFP4 on `:8000` |
-| Independent skeptic / builder | Qwen3.8-27B NVFP4-MTP on `:8001` |
+| Generator / PI | Gemma 4 26B-A4B NVFP4 on `:8000`, 32K context |
+| Independent skeptic / builder | Qwen3.8-27B NVFP4-MTP on `:8001`, 16K context |
 | Serving | `vllm/vllm-openai:v0.21.0`, CUDA 13.0 |
 | Research scheduler | user service `nara-daemon.service`, with hourly cron as a gated backstop |
 | Observatory | React/Vite on `:5173`, FastAPI on `:8700`, local telemetry sampler |
@@ -59,7 +60,7 @@ On the Spark, open the local UI:
 
 - `http://127.0.0.1:5173/` — current state and triage
 - `http://127.0.0.1:5173/ladder` — research evidence and next test owed
-- `http://127.0.0.1:5173/benchmarks` — weekly benchmark and selected-campaign progress
+- `http://127.0.0.1:5173/benchmarks` — fixed benchmark, versioned baseline and comparable run history
 - `http://127.0.0.1:5173/development` — operational state
 - `http://127.0.0.1:5173/cycles` — coordinator trace history
 
@@ -73,6 +74,13 @@ curl -fsS http://127.0.0.1:8000/v1/models
 curl -fsS http://127.0.0.1:8001/v1/models
 curl -fsS http://127.0.0.1:8700/api/health
 ```
+
+To assess progress, use the same benchmark release and compare its individual
+science, code, tool, strategy, and harness rows. A new run needs a preregistered
+comparison and verified receipts; a runtime rejection or unissued arm has no
+quality score. The Sunday review reads this evidence without automatically
+starting another trial. See the [benchmark runbook](docs/benchmarks/stable_benchmark_v1.md)
+and [current resident findings](notes/research/2026-09-16-ui-benchmark-consolidation/stable-benchmark/RESIDENT_REFERENCE_V1_1.md).
 
 ## Documentation map
 
@@ -90,6 +98,8 @@ curl -fsS http://127.0.0.1:8700/api/health
 | [`docs/v2/research/PRODUCT_ARCHITECTURE_AUDIT.md`](docs/v2/research/PRODUCT_ARCHITECTURE_AUDIT.md) | Evidence behind the v2 product and data-model direction |
 | [`docs/v2/research/EXTERNAL_CONTEXT.md`](docs/v2/research/EXTERNAL_CONTEXT.md) | Bounded external research context for the next game-theory study |
 | [`docs/v2/RESEARCH_ARCHIVE.md`](docs/v2/RESEARCH_ARCHIVE.md) | Verified v0/v1 archive identity and retrieval instructions |
+| [`docs/benchmarks/stable_benchmark_v1.md`](docs/benchmarks/stable_benchmark_v1.md) | Fixed benchmark, comparison rules, review cadence, and next-run recipe |
+| [`notes/research/2026-09-16-ui-benchmark-consolidation/INDEX.md`](notes/research/2026-09-16-ui-benchmark-consolidation/INDEX.md) | UI audit, Flash closure, benchmark research, and delivery receipts |
 | [`LOOP_V1.md`](LOOP_V1.md), [`LOOP_V0.md`](LOOP_V0.md) | Historical build records; useful for provenance, not current orientation |
 | [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md) | Historical program background; its dated runtime claims are not current state |
 

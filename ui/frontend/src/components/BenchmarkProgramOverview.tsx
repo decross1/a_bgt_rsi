@@ -23,6 +23,38 @@ function label(value: unknown): string {
   return asText(value, "unknown").replaceAll("_", " ");
 }
 
+const constructPresentation: Record<string, { label: string; order: number }> = {
+  science_evidence: { label: "Evidence and quantitative reasoning", order: 10 },
+  functional_code_repair: { label: "Functional code repair", order: 20 },
+  deterministic_tool_use: { label: "Deterministic tool use", order: 30 },
+  public_goods: { label: "Public goods provision", order: 40 },
+  vickrey_auction: { label: "Vickrey auction", order: 41 },
+  cournot: { label: "Cournot quantity choice", order: 42 },
+  proper_scoring_reporting: { label: "Brier score and truthful reporting", order: 43 },
+  system_harness: { label: "Harness workflows", order: 50 },
+};
+
+function constructKey(row: Record<string, unknown>): string {
+  return asText(row.mechanism ?? row.construct ?? row.domain, "unknown");
+}
+
+function constructLabel(key: string): string {
+  const known = constructPresentation[key]?.label;
+  if (known) return known;
+  const fallback = label(key);
+  return fallback.charAt(0).toUpperCase() + fallback.slice(1);
+}
+
+function constructRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  return rows.map((row, index) => ({ row, index, key: constructKey(row) }))
+    .sort((left, right) => {
+      const leftOrder = constructPresentation[left.key]?.order ?? 1_000;
+      const rightOrder = constructPresentation[right.key]?.order ?? 1_000;
+      return leftOrder - rightOrder || left.key.localeCompare(right.key) || left.index - right.index;
+    })
+    .map(({ row }) => row);
+}
+
 function dateLabel(value: unknown): string {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return "Not reported";
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(value));
@@ -135,12 +167,12 @@ function MatchedResultsTable({ rows }: { rows: Record<string, unknown>[] }) {
     <table className="benchmark-table" data-testid="benchmark-matched-results">
       <caption className="sr-only">Matched fixed-canary result rows</caption>
       <thead><tr><th scope="col">Construct</th><th scope="col">Baseline</th><th scope="col">Candidate</th><th scope="col">Delta</th><th scope="col">Pairs</th><th scope="col">Discordance</th><th scope="col">Uncertainty</th><th scope="col">Run detail</th></tr></thead>
-      <tbody>{rows.map((row, index) => {
-        const construct = asText(row.construct ?? row.domain, `Construct ${index + 1}`);
+      <tbody>{constructRows(rows).map((row, index) => {
+        const construct = constructKey(row);
         const mechanism = asText(row.mechanism, "");
         const unit = row.unit;
         return <tr key={asText(row.id, `${construct}-${index}`)}>
-          <th scope="row"><strong>{label(construct)}</strong>{mechanism && mechanism !== construct && <span>{label(mechanism)}</span>}<small>{label(row.metric)}</small></th>
+          <th scope="row"><strong title={`Construct key: ${construct}`}>{constructLabel(construct)}</strong>{mechanism && mechanism !== construct && <span title={`Mechanism key: ${mechanism}`}>{constructLabel(mechanism)}</span>}<small>{label(row.metric)}</small></th>
           <td>{metricValue(row.baseline_value, unit)}</td>
           <td>{metricValue(row.candidate_value, unit)}</td>
           <td>{deltaValue(row.delta, unit)}</td>
@@ -223,7 +255,7 @@ function BenchmarkHistoryTable({ rows }: { rows: Record<string, unknown>[] }) {
       <caption className="sr-only">Dated arm and construct history for the fixed canary release</caption>
       <thead><tr><th scope="col">Arm</th><th scope="col">Date</th><th scope="col">Admission</th><th scope="col">Construct</th><th scope="col">Result</th><th scope="col">Run</th><th scope="col">Policy</th></tr></thead>
       {rows.map((row, armIndex) => {
-        const results = asRows(row.results);
+        const results = constructRows(asRows(row.results));
         const rendered = results.length > 0 ? results : [null];
         const policy = executionPolicy(row.policy);
         const admission = asText(row.admission_status, "unknown");
@@ -235,7 +267,7 @@ function BenchmarkHistoryTable({ rows }: { rows: Record<string, unknown>[] }) {
             {resultIndex === 0 && <th scope="rowgroup" rowSpan={rendered.length}><strong>{asText(row.label ?? row.arm_id, `Arm ${armIndex + 1}`)}</strong><span>{asText(row.comparison_id, "Comparison ID unavailable")} · {asText(row.arm_id, "Arm ID unavailable")}</span></th>}
             {resultIndex === 0 && <td rowSpan={rendered.length}>{dateLabel(finished)}<small>{asText(row.week, "Week not reported")}</small></td>}
             {resultIndex === 0 && <td rowSpan={rendered.length}><span className={`benchmark-chip benchmark-chip--${statusTone(admission)}`}>{label(admission)}</span><small>{label(row.observed_terminal_status)}</small></td>}
-            <td>{result === null ? <strong>Admission gap</strong> : <><strong>{label(result.construct)}</strong><small>{label(result.domain)} · {label(result.panel)}</small></>}</td>
+            <td>{result === null ? <strong>Admission gap</strong> : <><strong title={`Construct key: ${constructKey(result)}`}>{constructLabel(constructKey(result))}</strong><small>{label(result.domain)} · {label(result.panel)}</small></>}</td>
             <td>{result === null ? gapLabel(admission, row.observed_terminal_status) : <><strong>{metricValue(result.value, result.unit)}</strong><small>{asNumber(result.successful_units) ?? "—"} / {asNumber(result.planned_units) ?? "—"} units · {label(result.metric)}</small></>}</td>
             {resultIndex === 0 && <td rowSpan={rendered.length}>{wall === null ? "Evaluation wall not reported" : `${wall.toFixed(1)} s evaluation wall`}<small>{calls === null ? "Model calls not reported" : `${calls} model calls`}</small></td>}
             {resultIndex === 0 && <td rowSpan={rendered.length}><details><summary>{policy.summary}</summary>{policy.detail.length > 0 && <ul>{policy.detail.map((item) => <li key={item}>{item}</li>)}</ul>}</details></td>}
@@ -300,7 +332,7 @@ function ReferenceResults({
   row: Record<string, unknown>;
   diagnosticOnly: boolean;
 }) {
-  const results = asRows(row.results);
+  const results = constructRows(asRows(row.results));
   const policy = executionPolicy(row.policy);
   const wall = asFinite(row.wall_seconds);
   const calls = asNumber(row.model_calls);
@@ -328,12 +360,14 @@ function ReferenceResults({
       <table className="benchmark-table benchmark-reference-table" data-testid="benchmark-reference-results">
         <caption className="sr-only">Per-construct admitted reference {diagnosticOnly ? "diagnostics" : "results"}</caption>
         <thead><tr><th scope="col">Construct</th><th scope="col">Layer</th><th scope="col">Successful units</th><th scope="col">{diagnosticOnly ? "Recorded diagnostic" : "Result"}</th></tr></thead>
-        <tbody>{results.map((result, index) => <tr key={`${asText(result.construct, "construct")}-${index}`}>
-          <th scope="row"><strong>{label(result.construct)}</strong></th>
+        <tbody>{results.map((result, index) => {
+          const construct = constructKey(result);
+          return <tr key={`${construct}-${index}`}>
+          <th scope="row"><strong title={`Construct key: ${construct}`}>{constructLabel(construct)}</strong></th>
           <td>{label(result.domain)}<small>{label(result.panel)}</small></td>
           <td>{asNumber(result.successful_units) ?? "—"} / {asNumber(result.planned_units) ?? "—"}</td>
           <td><strong>{metricValue(result.value, result.unit)}</strong><small>{label(result.metric)}</small></td>
-        </tr>)}</tbody>
+        </tr>})}</tbody>
       </table>
     </div>}
   </section>;
@@ -458,6 +492,46 @@ export default function BenchmarkProgramOverview({
   const historyReference = history.find((row) => isAdmittedReference(row)) ?? null;
   const reference = isAdmittedReference(reportedBaseline) ? reportedBaseline : historyReference;
   const baselineMissing = reference === null;
+  const unitsPerArm = capabilityUnits !== null && systemMissions !== null
+    ? capabilityUnits + systemMissions
+    : null;
+  const currentComparisonId = asText(data.progress?.comparison_id, "");
+  const currentCohort = currentComparisonId === ""
+    ? []
+    : history.filter((row) => row.comparison_id === currentComparisonId);
+  const currentArms = currentComparisonId === ""
+    ? []
+    : arms.filter((row) => row.comparison_id === currentComparisonId);
+  const currentReferences = currentCohort.filter((row) => isAdmittedReference(row) &&
+    row.observed_terminal_status === "complete");
+  const currentUnissuedCandidates = currentCohort.filter((row) => row.role === "candidate" &&
+    row.admission_status === "not_evaluated" && row.observed_terminal_status === "unissued" &&
+    asRows(row.results).length === 0 && asNumber(row.model_calls) === 0);
+  const currentReference = currentReferences.length === 1 ? currentReferences[0] : null;
+  const currentUnissuedCandidate = currentUnissuedCandidates.length === 1
+    ? currentUnissuedCandidates[0]
+    : null;
+  const currentReferenceCompletedUnits = currentReference === null
+    ? null
+    : asNumber(currentReference.completed_units);
+  const currentReferenceArmId = currentReference === null ? "" : asText(currentReference.arm_id, "");
+  const currentCandidateArmId = currentUnissuedCandidate === null
+    ? ""
+    : asText(currentUnissuedCandidate.arm_id, "");
+  const currentArmIds = new Set(currentArms.map((row) => asText(row.arm_id, "")));
+  const terminalReferenceSplit = unitsPerArm !== null && unitsPerArm > 0 &&
+    currentCohort.length === 2 && currentReferenceCompletedUnits === unitsPerArm &&
+    currentUnissuedCandidate !== null && currentArms.length === 2 && currentArmIds.size === 2 &&
+    currentReferenceArmId !== "" && currentCandidateArmId !== "" &&
+    currentArmIds.has(currentReferenceArmId) && currentArmIds.has(currentCandidateArmId) &&
+    completed === unitsPerArm &&
+    total === unitsPerArm * 2 && data.progress?.status === "partial" &&
+    progressPhase === null && progressRunId === null && error === null;
+  const coverageDetail = completed === null || total === null
+    ? "Completion counts unavailable"
+    : terminalReferenceSplit
+      ? `Reference ${unitsPerArm}/${unitsPerArm} complete · candidate 0/${unitsPerArm} unissued${completedCalls === null || totalCalls === null ? "" : ` · ${completedCalls} / ${totalCalls} calls`}`
+      : `${completed} of ${total} registered units${completedCalls === null || totalCalls === null ? "" : ` · ${completedCalls} / ${totalCalls} calls`}`;
   const review = measurementReviewView(data.measurement_review);
   const reviewPayloadPresent = data.measurement_review !== undefined && data.measurement_review !== null;
   const measurementReviewRequired = review !== null || data.comparison?.status === "measurement_review_required";
@@ -482,14 +556,16 @@ export default function BenchmarkProgramOverview({
         <p>{release.summary}</p>
       </div>
       <dl className="benchmark-program-status" aria-label="Release and run status">
-        <div><dt>Run</dt><dd>{label(data.progress?.status)}</dd>{progressPhase !== null && <small data-testid="benchmark-program-phase">Phase: {label(progressPhase)}{progressRunId === null ? "" : ` · ${progressRunId}`}</small>}</div>
-        <div><dt>Coverage</dt><dd>{completed === null || total === null ? "Not reported" : `${completed} / ${total}`}</dd><small>{completed === null || total === null ? "Completion counts unavailable" : `${completed} of ${total} registered units`}{completedCalls === null || totalCalls === null ? "" : ` · ${completedCalls} / ${totalCalls} calls`}</small></div>
+        <div><dt>Run</dt><dd>{terminalReferenceSplit ? "Reference complete" : label(data.progress?.status)}</dd>{progressPhase !== null
+          ? <small data-testid="benchmark-program-phase">Phase: {label(progressPhase)}{progressRunId === null ? "" : ` · ${progressRunId}`}</small>
+          : terminalReferenceSplit ? <small>Cohort partial · candidate unissued</small> : null}</div>
+        <div><dt>Coverage</dt><dd>{completed === null || total === null ? "Not reported" : `${completed} / ${total}`}</dd><small>{coverageDetail}</small></div>
         <div><dt>Comparison</dt><dd>{label(data.comparison?.status)}</dd><small>{baselineMissing ? "No admitted reference" : `${arms.length} registered arms · ${matched.length} matched rows`}</small></div>
         <div><dt>Review date</dt><dd>{dateLabel(data.release?.expires_at)}</dd><small>Generated {dateLabel(data.generated_at)}</small></div>
       </dl>
     </header>
 
-    {meterValue !== null && total !== null && <div className="benchmark-budget-track benchmark-program-meter" role="meter" aria-label="Stable benchmark registered units completed" aria-valuemin={0} aria-valuemax={total} aria-valuenow={meterValue}><span style={{ width: `${(meterValue / total) * 100}%` }} /></div>}
+    {meterValue !== null && total !== null && <div className="benchmark-budget-track benchmark-program-meter" role="meter" aria-label="Stable benchmark registered units completed" aria-valuemin={0} aria-valuemax={total} aria-valuenow={meterValue} aria-valuetext={terminalReferenceSplit ? `Reference ${unitsPerArm} of ${unitsPerArm} complete; candidate 0 of ${unitsPerArm} unissued` : undefined}><span style={{ width: `${(meterValue / total) * 100}%` }} /></div>}
 
     <div className="benchmark-program-next">
       <p><strong>Next:</strong> {asText(data.progress?.next_action, "No next action reported")}</p>

@@ -12,6 +12,7 @@
 import { useId } from "react";
 import AgentBadge from "./AgentBadge";
 import SourceBadge from "./SourceBadge";
+import { iterationDisplayTitle } from "../researchLabels";
 import type {
   CoordinatorCycle,
   CoordinatorOutcome,
@@ -157,6 +158,20 @@ export default function CoordinatorCycleCard({
   // cards by run_id+index for exactly that reason), so a static id-from-run_id
   // would duplicate across cards; useId is unique per instance.
   const topic = asText(cycle.topic);
+  const dispatchedIterationId = asText(cycle.dispatched_iteration_id);
+  // Cycle topics are producer-owned and can contain a full preregistration,
+  // receipt path, and hash. Use the same source-derived iteration label as the
+  // research archive when an exact dispatched iteration is present; otherwise
+  // the helper produces a bounded excerpt from the topic itself. The exact
+  // recorded topic remains available below whenever the display label differs.
+  const topicTitle = topic === null
+    ? null
+    : iterationDisplayTitle({
+        iteration_id: dispatchedIterationId,
+        hypothesis: { text: topic },
+      }) ?? topic;
+  const hasTopicDisclosure =
+    topic !== null && topicTitle !== null && topicTitle !== topic;
   const topicId = useId();
 
   // Make the plan legible BEFORE it executes. A `status:"planned"` cycle (live
@@ -206,18 +221,31 @@ export default function CoordinatorCycleCard({
           {shortTimestamp(cycle.timestamp)}
         </span>
       </div>
-      {/* Topic as an <h3>: the card's accessible name + a heading a
-          screen-reader user can jump to (it was a bare <div>). Same classes →
-          identical visual; getByText(topic) still matches the text node. Only
-          rendered when there's a real topic string (a malformed row falls back
-          to the region's generic aria-label above). */}
-      {topic !== null && (
+      {/* The bounded topic title is the card's accessible name and a heading a
+          screen-reader user can jump to. A malformed topic falls back to the
+          region's generic aria-label; a longer source topic stays available in
+          the provenance disclosure instead of dominating the history scan. */}
+      {topicTitle !== null && (
         <h3
           id={topicId}
+          data-testid="coordinator-topic-title"
           className="mt-1 text-sm font-normal text-zinc-200"
         >
-          {topic}
+          {topicTitle}
         </h3>
+      )}
+      {hasTopicDisclosure && (
+        <details
+          data-testid="coordinator-topic-provenance"
+          className="mt-1 rounded border border-zinc-800/70 bg-zinc-950/30 px-2 py-1"
+        >
+          <summary className="cursor-pointer text-[10px] text-zinc-500">
+            Full recorded topic and provenance
+          </summary>
+          <p className="mt-1 whitespace-pre-wrap break-words text-xs leading-5 text-zinc-300">
+            {topic}
+          </p>
+        </details>
       )}
 
       {/* Plan — per-action status chips. Errored chips carry the error inline;
@@ -257,11 +285,11 @@ export default function CoordinatorCycleCard({
       {/* Footer — the join keys: dispatched iteration, promoted findings,
           bubbles. */}
       <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-zinc-500">
-        {asText(cycle.dispatched_iteration_id) && (
+        {dispatchedIterationId && (
           <span data-testid="coordinator-dispatched-iteration">
             dispatched{" "}
             <span className="font-mono text-zinc-300">
-              {asText(cycle.dispatched_iteration_id)}
+              {dispatchedIterationId}
             </span>
           </span>
         )}

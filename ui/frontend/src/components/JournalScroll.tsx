@@ -165,13 +165,11 @@ export default function JournalScroll({ iterationId, initial }: Props) {
         <h2 className="text-xs font-medium uppercase tracking-wide text-zinc-500">
           Journal entry
         </h2>
-        <span className="text-[10px] text-zinc-600">
-          /api/loop_v0/journal/{"{id}"}
-        </span>
         {data && (
-          <span className="ml-auto font-mono text-[10px] text-zinc-500">
-            {data.path}
-          </span>
+          <details className="ml-auto min-w-0 text-[10px] text-zinc-500">
+            <summary className="cursor-pointer">Source details</summary>
+            <p className="mt-1 break-all font-mono">{data.path}</p>
+          </details>
         )}
       </div>
 
