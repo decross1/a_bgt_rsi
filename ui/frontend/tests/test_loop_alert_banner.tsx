@@ -255,14 +255,17 @@ describe("LoopAlertBanner", () => {
     ).toBeInTheDocument();
   });
 
-  it("a real stall (no gate block) keeps the LOOP STALLED headline", () => {
+  it("a sole fresh stall keeps a red warning scoped to the last coordinator cycle", () => {
     render(
       <LoopAlertBanner
         initial={{ level: "red", reasons: ["loop_stalled"], updated_at: FRESH }}
         nowMs={NOW}
       />,
     );
-    expect(screen.getByText("LOOP STALLED")).toBeInTheDocument();
+    expect(screen.getByText("Last coordinator cycle: no research progress")).toBeInTheDocument();
+    expect(screen.getByTestId("loop-alert-banner")).toHaveAttribute("data-level", "red");
+    expect(screen.getByTestId("loop-alert-banner")).toHaveAttribute("role", "alert");
+    expect(screen.getByRole("link", { name: "View cycle details" })).toHaveAttribute("href", "/cycles");
     expect(screen.queryByTestId("loop-alert-gate")).toBeNull();
   });
 
@@ -279,7 +282,7 @@ describe("LoopAlertBanner", () => {
         />,
       );
       expect(screen.queryByTestId("loop-alert-gate")).toBeNull();
-      expect(screen.getByText("LOOP STALLED")).toBeInTheDocument();
+      expect(screen.getByText("Last coordinator cycle: no research progress")).toBeInTheDocument();
     }
   });
 

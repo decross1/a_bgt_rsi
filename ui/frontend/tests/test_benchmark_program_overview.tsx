@@ -147,12 +147,12 @@ describe("BenchmarkProgramOverview", () => {
     expect(within(table).getByText(/interval not available/)).toBeInTheDocument();
     expect(screen.getByText(/descriptive canary signals, not benchmark proof/i)).toBeInTheDocument();
     const reference = screen.getByTestId("benchmark-reference-results");
-    expect(within(reference).getByText("quantitative inference")).toBeInTheDocument();
+    expect(within(reference).getByText("Quantitative inference")).toBeInTheDocument();
     expect(within(reference).getByText("1 / 2")).toBeInTheDocument();
     expect(within(reference.closest("section") as HTMLElement).getByText(/1 registered route/)).toBeInTheDocument();
     const history = screen.getByTestId("benchmark-run-history");
     expect(within(history).getByText("Resident reference")).toBeInTheDocument();
-    expect(within(history).getByText("quantitative inference")).toBeInTheDocument();
+    expect(within(history).getByText("Quantitative inference")).toBeInTheDocument();
     expect(within(history).getByText("50.0%")).toBeInTheDocument();
     expect(within(history).getByText("91.2 s evaluation wall")).toBeInTheDocument();
     expect(within(history).getByText(/temperature 0.2 · top-p 0.95 · reasoning xhigh/)).toBeInTheDocument();
@@ -246,6 +246,124 @@ describe("BenchmarkProgramOverview", () => {
     expect(screen.queryByRole("heading", { name: "Candidate completed first" })).toBeNull();
     expect(screen.queryByTestId("benchmark-reference-results")).toBeNull();
     expect(screen.getByText(/No baseline is admitted/)).toBeInTheDocument();
+  });
+
+  it("explains terminal 21-of-42 coverage as a complete reference and unissued candidate", () => {
+    const terminal = program("frozen");
+    const reference = {
+      comparison_id: "canary-terminal",
+      arm_id: "resident",
+      label: "Resident reference",
+      role: "reference",
+      admission_status: "admitted",
+      observed_terminal_status: "complete",
+      completed_units: 21,
+      model_calls: 28,
+      results: [{ construct: "science_evidence", domain: "science_evidence",
+        panel: "model_capability", successful_units: 4, planned_units: 4,
+        metric: "objective_success", unit: "percent", value: 100 }],
+    };
+    const candidate = {
+      comparison_id: "canary-terminal",
+      arm_id: "flash-unissued",
+      label: "Flash candidate — unissued",
+      role: "candidate",
+      admission_status: "not_evaluated",
+      observed_terminal_status: "unissued",
+      completed_units: 0,
+      model_calls: 0,
+      results: [],
+    };
+    terminal.progress = { status: "partial", comparison_id: "canary-terminal",
+      completed_units: 21, total_units: 42,
+      completed_calls: 28, total_calls: 58, blockers: [], next_action: "Inspect the unissued arm." };
+    terminal.comparison = { status: "baseline_available", baseline: reference,
+      arms: [reference, candidate], history: [reference, candidate], matched_results: [] };
+
+    const rendered = render(<BenchmarkProgramOverview initial={terminal} />);
+
+    expect(screen.getByText("Reference complete")).toBeInTheDocument();
+    expect(screen.getByText("Cohort partial · candidate unissued")).toBeInTheDocument();
+    expect(screen.getByText("Reference 21/21 complete · candidate 0/21 unissued · 28 / 58 calls")).toBeInTheDocument();
+    expect(screen.getByRole("meter", { name: "Stable benchmark registered units completed" })).toHaveAttribute(
+      "aria-valuetext", "Reference 21 of 21 complete; candidate 0 of 21 unissued",
+    );
+    expect(screen.getAllByText(/This arm was explicitly unissued/)).toHaveLength(2);
+
+    rendered.unmount();
+    terminal.progress = { ...terminal.progress, phase: "evaluation",
+      run_id: "stable-benchmark-current.resident" };
+    render(<BenchmarkProgramOverview initial={terminal} />);
+    expect(screen.getByText("partial")).toBeInTheDocument();
+    expect(screen.queryByText("Reference complete")).toBeNull();
+    expect(screen.getByTestId("benchmark-program-phase")).toHaveTextContent("Phase: evaluation");
+  });
+
+  it("does not borrow an old unissued arm when the current cohort candidate is pending", () => {
+    const twoCohorts = program("frozen");
+    const result = { construct: "science_evidence", domain: "science_evidence",
+      panel: "model_capability", successful_units: 4, planned_units: 4,
+      metric: "objective_success", unit: "percent", value: 100 };
+    const oldReference = { comparison_id: "canary-old", arm_id: "resident-old",
+      label: "Old resident reference", role: "reference", admission_status: "admitted",
+      observed_terminal_status: "complete", completed_units: 21, model_calls: 28,
+      results: [result] };
+    const oldCandidate = { comparison_id: "canary-old", arm_id: "flash-old",
+      label: "Old Flash candidate", role: "candidate", admission_status: "not_evaluated",
+      observed_terminal_status: "unissued", completed_units: 0, model_calls: 0, results: [] };
+    const currentReference = { ...oldReference, comparison_id: "canary-current",
+      arm_id: "resident-current", label: "Current resident reference" };
+    const currentCandidate = { comparison_id: "canary-current", arm_id: "flash-current",
+      label: "Current Flash candidate", role: "candidate", admission_status: "awaiting_artifacts",
+      observed_terminal_status: "pending", completed_units: 0, model_calls: null, results: [] };
+    twoCohorts.progress = { status: "partial", comparison_id: "canary-current",
+      completed_units: 21, total_units: 42, completed_calls: null, total_calls: 58,
+      blockers: [], next_action: "Wait for the current candidate." };
+    twoCohorts.comparison = { status: "baseline_available", baseline: oldReference,
+      arms: [oldReference, oldCandidate, currentReference, currentCandidate],
+      history: [oldReference, oldCandidate, currentReference, currentCandidate], matched_results: [] };
+
+    render(<BenchmarkProgramOverview initial={twoCohorts} />);
+
+    expect(screen.getByText("partial")).toBeInTheDocument();
+    expect(screen.getByText("21 of 42 registered units")).toBeInTheDocument();
+    expect(screen.queryByText("Reference complete")).toBeNull();
+    expect(screen.queryByText("Cohort partial · candidate unissued")).toBeNull();
+    expect(screen.getByRole("meter", { name: "Stable benchmark registered units completed" }))
+      .not.toHaveAttribute("aria-valuetext");
+  });
+
+  it("uses human construct labels in the fixed product order while retaining raw keys", () => {
+    const labeled = program("frozen");
+    const keys = ["cournot", "deterministic_tool_use", "functional_code_repair",
+      "proper_scoring_reporting", "public_goods", "science_evidence", "system_harness",
+      "vickrey_auction"];
+    const reference = {
+      comparison_id: "canary-labels", arm_id: "resident", label: "Resident reference",
+      role: "reference", admission_status: "admitted", observed_terminal_status: "complete",
+      results: keys.map((construct) => ({ construct, domain: "model_capability",
+        panel: "model_capability", successful_units: 1, planned_units: 1,
+        metric: "objective_success", unit: "percent", value: 100 })),
+    };
+    labeled.comparison = { status: "baseline_available", baseline: reference,
+      history: [reference], matched_results: [] };
+
+    render(<BenchmarkProgramOverview initial={labeled} />);
+
+    const table = screen.getByTestId("benchmark-reference-results");
+    expect(within(table).getAllByRole("rowheader").map((cell) => cell.textContent)).toEqual([
+      "Evidence and quantitative reasoning",
+      "Functional code repair",
+      "Deterministic tool use",
+      "Public goods provision",
+      "Vickrey auction",
+      "Cournot quantity choice",
+      "Brier score and truthful reporting",
+      "Harness workflows",
+    ]);
+    expect(within(table).getByText("Cournot quantity choice")).toHaveAttribute(
+      "title", "Construct key: cournot",
+    );
   });
 
   it("shows a compact selector only when the catalog has multiple releases", () => {

@@ -111,6 +111,52 @@ def test_exact_link_consumes_topic_but_does_not_claim_global_no_work(tmp_path):
     assert "PRIVATE" not in json.dumps(x)
 
 
+def test_zero_promotion_receipt_is_not_substantive_progress(tmp_path):
+    root = _root(tmp_path)
+    digest = "sha256:" + "a" * 64
+    row = {
+        "timestamp": "2026-09-15T16:00:00Z", "run_id": "coordinator_test",
+        "status": "executed",
+        "plan": [{"action": "promote_findings", "args": {"max_candidates": 3},
+                  "step_id": "coordinator_test:step:0", "request_digest": digest}],
+        "outcomes": [{"action": "promote_findings", "status": "passed",
+                      "step_id": "coordinator_test:step:0", "request_digest": digest}],
+        "promoted_finding_ids": [], "bubble_run_ids": [],
+    }
+    _rows(root, "run_state/coordinator_cycles.jsonl", [row])
+    cycle = project_research_ops_status(repo_root=root, observed_at=NOW)["last_cycle"]
+    assert cycle["action_code"] == "actions_planned"
+    assert cycle["action_kind"] == "promote_findings"
+    assert cycle["promoted_count"] == 0
+    assert cycle["substantive_progress"] is False
+    assert cycle["planned_count"] == cycle["dispatched_count"] == 1
+
+    row["promoted_finding_ids"] = ["finding-exactly-promoted"]
+    _rows(root, "run_state/coordinator_cycles.jsonl", [row])
+    promoted = project_research_ops_status(repo_root=root, observed_at=NOW)["last_cycle"]
+    assert promoted["promoted_count"] == 1
+    assert promoted["substantive_progress"] is True
+
+
+def test_cycle_progress_withholds_on_mismatched_receipt_binding(tmp_path):
+    root = _root(tmp_path)
+    _rows(root, "run_state/coordinator_cycles.jsonl", [{
+        "timestamp": "2026-09-15T16:00:00Z", "run_id": "coordinator_test",
+        "status": "executed",
+        "plan": [{"action": "promote_findings", "args": {},
+                  "step_id": "coordinator_test:step:0",
+                  "request_digest": "sha256:" + "a" * 64}],
+        "outcomes": [{"action": "promote_findings", "status": "passed",
+                      "step_id": "coordinator_test:step:0",
+                      "request_digest": "sha256:" + "b" * 64}],
+        "promoted_finding_ids": ["finding-unbound"], "bubble_run_ids": [],
+    }])
+    cycle = project_research_ops_status(repo_root=root, observed_at=NOW)["last_cycle"]
+    assert cycle["action_kind"] is None
+    assert cycle["promoted_count"] is None
+    assert cycle["substantive_progress"] is None
+
+
 def test_unlinked_text_does_not_consume_and_broken_loop_is_unknown(tmp_path):
     root = _root(tmp_path)
     campaign = load_campaign(repo_root=root)

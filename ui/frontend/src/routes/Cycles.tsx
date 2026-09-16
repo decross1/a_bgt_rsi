@@ -216,7 +216,7 @@ export default function Cycles({
       <div className="flex items-baseline gap-3">
         <h1 className="text-base font-semibold text-zinc-100">Cycles</h1>
         <span className="text-[10px] text-zinc-600">
-          /api/coordinator/cycles · {rangeCaption} · {dirCaption}
+          {rangeCaption} · {dirCaption}
         </span>
         <div className="ml-auto flex items-baseline gap-2">
           <select

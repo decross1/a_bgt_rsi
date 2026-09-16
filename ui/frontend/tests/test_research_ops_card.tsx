@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 import { ResearchOpsCard } from "../src/components/ResearchOpsCard";
@@ -16,6 +16,7 @@ const receipt = () => ({
     loop_source_sha256: sha("b") },
   last_cycle: { run_id: "cycle-001", at: new Date().toISOString(), action_code: "noop",
     planned_count: 0, dispatched_count: 0, outcome_count: 1,
+    action_kind: "noop", promoted_count: 0, substantive_progress: false,
     raw_row_sha256: sha("d"), cycles_source_sha256: sha("e") },
   budget: { source_status: "available", spent_today: 3, daily_cap: 60,
     paced_allowance: 44, ledger_sha256: sha("f") },
@@ -25,22 +26,40 @@ const receipt = () => ({
     last_success_pointer_sha256: null as string | null },
 });
 const show = (data: unknown, failing = false) => render(<MemoryRouter><ResearchOpsCard data={data} failing={failing} /></MemoryRouter>);
-const payoffObservation = () => ({
+const payoffObservation = (): Record<string, unknown> & { jobs: Record<string, unknown>[] } => ({
   schema_version: "registered-payoff-jobs-observation/v1", source_status: "available",
   checked_at: new Date().toISOString(), queue_source_sha256: sha("9"),
   timer_activation: "not_verified", comparison_eligible: false,
   jobs: [
     { job_id: "payoff-representation-a", panel_id: "payoff-representation-a",
       not_before: "2026-09-15T19:00:00+00:00", expires_at: "2026-09-16T00:00:00+00:00",
+      eligibility_window: { not_before: "2026-09-15T19:00:00+00:00", expires_at: "2026-09-16T00:00:00+00:00" },
       role: "first_fresh_payoff_representation_diagnostic", state: "eligible_prepared",
       attempt_index: 0, prepared_window_present: true, last_availability_refusal: null,
-      comparison_eligible: false },
+      terminal_diagnostic: null, comparison_eligible: false },
     { job_id: "payoff-representation-b", panel_id: "payoff-representation-b",
       not_before: "2026-09-16T03:30:00+00:00", expires_at: "2026-09-16T08:00:00+00:00",
+      eligibility_window: { not_before: "2026-09-16T03:30:00+00:00", expires_at: "2026-09-16T08:00:00+00:00" },
       role: "fresh_input_followup_not_same_prompt_reseed", state: "not_due",
       attempt_index: 0, prepared_window_present: false, last_availability_refusal: null,
-      comparison_eligible: false },
+      terminal_diagnostic: null, comparison_eligible: false },
   ],
+});
+const payoffTerminal = () => ({
+  schema_version: "registered-payoff-terminal-diagnostic/v1",
+  status: "admitted_diagnostic", finished_at: "2026-09-16T03:35:08+00:00",
+  attempted_calls: 12,
+  summary: { strict_shape_valid: 12, focal_correct: 1, total_correct: 1, both_correct: 0 },
+  by_view: {
+    seat_table: { attempted: 6, returned: 6, strict_shape_valid: 6,
+      focal_correct: 0, total_correct: 1, both_correct: 0 },
+    word_list: { attempted: 6, returned: 6, strict_shape_valid: 6,
+      focal_correct: 1, total_correct: 0, both_correct: 0 },
+  },
+  admission_receipt_sha256: sha("1"), job_admission_receipt_sha256: sha("2"),
+  dispatch_result_sha256: sha("3"), claim_scope: "instrument_only_unlinked",
+  campaign_link: null, thesis_credit: false, promotion_authorized: false,
+  comparison_eligible: false, scientific_novelty_claimed: false,
 });
 const guardedObservation = () => {
   const base = (arm: string) => ({
@@ -90,6 +109,10 @@ describe("ResearchOpsCard", () => {
     expect(screen.getByText(/Today's coordinator allowance: 3\/60 used/)).toBeInTheDocument();
     expect(screen.getByText("Source attempt status unknown")).toBeInTheDocument();
     expect(screen.getByText(/Last receipt-bound success: not verified/)).toBeInTheDocument();
+    const diagnostics = screen.getByTestId("recorded-diagnostic-studies");
+    expect(diagnostics).not.toHaveAttribute("open");
+    expect(within(diagnostics).getByText("Registered payoff jobs")).toBeInTheDocument();
+    expect(diagnostics).not.toContainElement(screen.getByText("Latest coordinator cycle"));
   });
 
   it("shows an eligible topic and a receipt-bound source success without treating a plan as dispatch", () => {
@@ -105,6 +128,22 @@ describe("ResearchOpsCard", () => {
     expect(screen.getByText(/Plan recorded · 2 planned · 1 dispatched/)).toBeInTheDocument();
     expect(screen.getByText("Latest source attempt succeeded")).toBeInTheDocument();
     expect(screen.queryByText(/Last receipt-bound success: not verified/)).not.toBeInTheDocument();
+  });
+
+  it("states when a bound promotion check advanced no research record", () => {
+    const data = receipt();
+    data.last_cycle = { ...data.last_cycle, action_code: "actions_planned", planned_count: 1,
+      dispatched_count: 1, action_kind: "promote_findings", promoted_count: 0,
+      substantive_progress: false };
+    const { rerender } = show(data);
+    const line = screen.getByText(/Promotion check completed · 0 findings promoted/);
+    expect(line).toHaveTextContent("no research record advanced");
+    expect(screen.getByRole("link", { name: "view trace" })).toHaveAttribute("href", "/cycles");
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, last_cycle: {
+      ...data.last_cycle, promoted_count: 1,
+    } }} /></MemoryRouter>);
+    expect(screen.queryByText(/0 findings promoted/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Plan recorded · 1 planned · 1 dispatched/)).toBeInTheDocument();
   });
 
   it("prioritizes the registered successor and labels the legacy fetch failure as log-only", () => {
@@ -338,11 +377,58 @@ describe("ResearchOpsCard", () => {
     expect(screen.getByText(/Prepared and eligible/)).toBeInTheDocument();
     expect(screen.getByText("B · fresh-input follow-up")).toBeInTheDocument();
     expect(screen.getByText(/Not due/)).toBeInTheDocument();
-    expect(screen.getAllByText(/Registered execution interval/)).toHaveLength(2);
+    expect(screen.getAllByText(/Eligibility window/)).toHaveLength(2);
     expect(screen.getByText(/Last source-bound queue check/)).toBeInTheDocument();
     expect(screen.getByText(/Timer activation is not verified/)).toBeInTheDocument();
     expect(screen.getByText(/preparation alone does not establish execution/)).toBeInTheDocument();
     expect(screen.queryByText(/timer enabled/i)).not.toBeInTheDocument();
+  });
+
+  it("shows only a fully bounded terminal payoff diagnostic as instrument-only evidence", () => {
+    const observation = payoffObservation();
+    observation.jobs[1] = { ...observation.jobs[1], state: "admitted_attempt_verified",
+      prepared_window_present: true, terminal_diagnostic: payoffTerminal() };
+    const data = { ...receipt(), payoff_jobs: observation };
+    const { rerender } = show(data);
+    const diagnostic = screen.getByTestId("payoff-terminal-payoff-representation-b");
+    expect(diagnostic).toHaveTextContent("Completed Sep 16, 2026, 3:35 AM UTC · 12 calls attempted");
+    expect(diagnostic).toHaveTextContent("Strict shape 12/12 · focal payoff 1/12 · total payoff 1/12 · both 0/12");
+    expect(diagnostic).toHaveTextContent("Seat table: 6/6 strict shape, 0 focal, 1 total, 0 both");
+    expect(diagnostic).toHaveTextContent("Word list: 6/6 strict shape, 1 focal, 0 total, 0 both");
+    expect(diagnostic).toHaveTextContent("Instrument-only diagnostic · unlinked to the active campaign");
+    expect(screen.getByText("Per-view breakdown and evidence boundary")).toBeInTheDocument();
+    expect(diagnostic).toHaveTextContent("no thesis credit, promotion, comparison, or scientific novelty claim");
+    expect(screen.getByText(/Recorded diagnostic studies · latest payoff completed Sep 16, 2026, 3:35 AM UTC/)).toBeInTheDocument();
+
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, payoff_jobs: {
+      ...observation, jobs: [observation.jobs[0], { ...observation.jobs[1],
+        state: "eligible_prepared" }],
+    } }} /></MemoryRouter>);
+    expect(screen.queryByTestId("payoff-terminal-payoff-representation-b")).not.toBeInTheDocument();
+
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, payoff_jobs: {
+      ...observation, jobs: [observation.jobs[0], { ...observation.jobs[1],
+        terminal_diagnostic: { ...payoffTerminal(), campaign_link: "v2-campaign" } }],
+    } }} /></MemoryRouter>);
+    expect(screen.queryByTestId("payoff-terminal-payoff-representation-b")).not.toBeInTheDocument();
+    expect(screen.getByText(/Admitted attempt verified at last queue check/)).toBeInTheDocument();
+
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, payoff_jobs: {
+      ...observation, jobs: [observation.jobs[0], { ...observation.jobs[1],
+        terminal_diagnostic: { ...payoffTerminal(), summary: {
+          ...payoffTerminal().summary, focal_correct: 2,
+        } } }],
+    } }} /></MemoryRouter>);
+    expect(screen.queryByTestId("payoff-terminal-payoff-representation-b")).not.toBeInTheDocument();
+
+    const impossible = payoffTerminal();
+    impossible.summary.both_correct = 1;
+    impossible.by_view.seat_table.both_correct = 1;
+    rerender(<MemoryRouter><ResearchOpsCard data={{ ...data, payoff_jobs: {
+      ...observation, jobs: [observation.jobs[0], { ...observation.jobs[1],
+        terminal_diagnostic: impossible }],
+    } }} /></MemoryRouter>);
+    expect(screen.queryByTestId("payoff-terminal-payoff-representation-b")).not.toBeInTheDocument();
   });
 
   it("withholds payoff readiness when a row, source hash, or check time is unbound", () => {

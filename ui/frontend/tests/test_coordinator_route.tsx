@@ -21,6 +21,8 @@ describe("Cycles route", () => {
     );
 
     expect(screen.getByTestId("coordinator-page")).toBeInTheDocument();
+    expect(screen.queryByText(/\/api\/coordinator\/cycles/)).toBeNull();
+    expect(screen.getByText(/all · newest first/)).toBeInTheDocument();
 
     // One card per fixture cycle (the clean dispatch + the failed dispatch).
     const cards = screen.getAllByTestId("coordinator-cycle-card");

@@ -118,13 +118,13 @@ Run the fixed canary at most weekly for the resident stack and once for a materi
 
 The first extended tier should use fresh real-repository repair snapshots and a licensed, oracle-validated scientific-replication subset. Later rotations may add a pinned non-live BFCL subset, an ARM-qualified Terminal-Bench edition, or fixed game environments with scripted opponents. ScienceAgentBench, CORE-Bench, PaperBench, Terminal-Bench, BFCL, TextArena, GTBench, KantBench/OpenEnv, and tau-bench remain separate benchmark lineages. No adapted rotation inherits an upstream leaderboard name or score.
 
-## Initial resident-only window
+## Resident baselines and Flash disposition
 
 The September 16 initial window records a fresh resident baseline only. The Flash candidate failed the unchanged host pageout startup gate before any stable-suite model request, after the final permitted startup attempt. Its arm is written as `unissued` with all 21 units and zero model calls; it receives no score, replay admission, comparison delta, loss, or imputed value. A later Flash run requires a separately reviewed runtime qualification and remains bound to this release only while the definition is active.
 
 Historical 126-cell, supplement, context, diversity, payoff-tool, calibration, and applied-market records remain in their original lineages. They inform diagnostics and future task design, but they neither establish the v1 baseline nor get rescored under this definition. The existing 384-versus-1,536 Flash cap closure is a reused-fixture `diagnostic_development` study and stays outside the stable canary.
 
-The resident receipt chain is admitted with 21/21 units accounted, 27 model
+The original **1.0.0 commissioning** receipt chain is admitted with 21/21 units accounted, 27 model
 calls, and 139.951927 seconds of evaluator wall time. Here, `admitted` means the
 source-controlled registration, run, replay, supervision, resource, and
 restoration receipts verified. It does not by itself establish that every task
@@ -137,15 +137,27 @@ the original receipts and grader outputs immutable; use the
 for interpretation. Correcting a task or oracle
 starts a new release and never silently rescales v1.0.
 
+The corrected **1.1.0** resident run completed at 06:44:47 UTC on September 16:
+21/21 units accounted, 28 calls, 151.060931 seconds of evaluation, verified
+replay with no mismatches, and verified restoration. Its construct results are
+science/evidence 4/4, code 2/4, tools 1/4, public goods 2/2, Vickrey 1/2,
+Cournot 0/1, proper scoring 1/1, and system harness 2/3. These remain separate
+small-panel results, with no omnibus score or claim of improvement over 1.0.
+The candidate arm is unissued, so no matched comparison or model winner exists.
+The [resident reference report](../../notes/research/2026-09-16-ui-benchmark-consolidation/stable-benchmark/RESIDENT_REFERENCE_V1_1.md)
+binds the measurements and remaining failure classes to their exact receipts.
+
 ## Sunday report and next-run recipe
 
 The existing Sunday 05:30 UTC review owner adds a bounded `stable_benchmark`
 section to `cycle_report.json`. New provider-review receipts also copy the same
 section into `review/weekly_report.json`. This distinction matters for the first
 follow-up: September 20 is still ISO week `2026-W38`, whose provider review was
-already completed on September 14. The immutable provider report is not
-rewritten. The Sunday cycle report refreshes the stable benchmark observation
-without repeating either provider call.
+already completed on September 14. Its immutable cycle and provider reports
+are not rewritten. After the verified same-week no-op, the rolling
+`stable_benchmark_snapshot.json` refreshes the benchmark observation without
+repeating either provider call. This sidecar is a read-only projection of
+evidence, not a new benchmark result.
 
 The section contains the release/version/definition hash, publication and review
 times, the latest comparison cohort, receipt-admission states, construct or
@@ -159,10 +171,13 @@ evaluation.
 For v1.0, `next_run_preregistration.eligibility` is
 `corrected_release_required`: its commissioning review forbids a comparative
 quality claim, so rerunning unchanged v1.0 would not repair the four task
-contracts. A later active release that passes its measurement review may be
-prepared as a new comparison cohort only through this recipe:
+contracts. Active v1.1 reports `manual_preregistration_required`. Its catalog
+entry has no restrictive measurement notice (`measurement_review_sha256:null`);
+that absence is not a passed independent measurement review or a quality claim.
+A new comparison cohort may be prepared only through this recipe:
 
-1. Resolve the versioned measurement review. If the intended measurement needs
+1. Check the versioned measurement review and obey any recorded restriction.
+   If the intended measurement needs
    a prompt, oracle, grader, task, metric, or independent-unit change, publish a
    new semantic release. Do not edit release 1.0.0 or its receipts.
 2. Choose fresh comparison, run, and lifecycle window IDs. Build role-specific
