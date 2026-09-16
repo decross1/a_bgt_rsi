@@ -42,6 +42,10 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker, ValidationError
 
+from orchestrator.weekly_stable_benchmark_report import (
+    build_weekly_benchmark_snapshot,
+)
+
 SCHEMA_VERSION = "weekly-upgrade-v1"
 REPORT_VERSION = "weekly-upgrade-report-v1"
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema" / "weekly_upgrade.schema.json"
@@ -1306,6 +1310,9 @@ def build_snapshot(
         "operational_history": _operational_history(
             root, operational_history_root, moment,
         ),
+        "stable_benchmark": build_weekly_benchmark_snapshot(
+            repo=root, observed_at=moment,
+        ),
         "source_packet_sha256": _sha(packet),
         "sources": packet["sources"],
         "redaction": {
@@ -1495,8 +1502,13 @@ def _proposal_prompt(snapshot: dict, max_gpu_minutes: int) -> str:
         "An external claim is CLAIM_HUMAN_VERIFIED only when its exact claim, content "
         "hash, and evidence excerpt appear in snapshot.sources. Otherwise use "
         "UNVERIFIED with null content hash and excerpt. This is curated-source review, "
-        "not external discovery. Set execution_scope=EVALUATION_ONLY and "
-        "production_change_authorized=false; an ordinary bounded evaluation is already "
+        "not external discovery. "
+        "The stable_benchmark section is a read-only canary report and manual "
+        "preregistration recipe. It is not an executable weekly trial, a public "
+        "benchmark rotation, or permission to create another fixture panel. "
+        "Do not treat its unissued arms as losses. "
+        "Set execution_scope=EVALUATION_ONLY and production_change_authorized=false; "
+        "an ordinary bounded evaluation is already "
         "authorized, while deployment is outside this controller. "
         f"max_gpu_minutes must be <= {max_gpu_minutes}; max_frontier_calls must be 0. "
         "Copy these binding values exactly (do not compute them): "
@@ -1720,6 +1732,9 @@ def _make_report(
         "reason": reason,
         "reviewed_at": _iso(_utcnow()),
     }
+    stable_benchmark = manifest["snapshot"].get("stable_benchmark")
+    if stable_benchmark is not None:
+        report["stable_benchmark"] = stable_benchmark
     _validate("report", report)
     return report
 
@@ -1762,7 +1777,7 @@ def _load_completed_response(
 
 
 def _stable_snapshot_binding(snapshot: dict[str, Any]) -> dict[str, Any]:
-    """Exclude rolling telemetry/history timestamps while retaining causal inputs."""
+    """Exclude rolling telemetry/history/results while retaining causal inputs."""
     keys = (
         "schema_version", "week_id", "week_key_sha256", "repo_head",
         "dirty_path_count", "dirty_paths", "files", "evaluation_manifests",

@@ -312,6 +312,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         app,
         memory_dir=Path(coordinator_memory),
         iteration_cache_dir=Path(coordinator_run_state) / "iteration_cache",
+        repo_root=Path(loop_v0_repo),
     )
 
     # D-046 write-back seam: argv-exec of the blessed CLIs (runner defaults

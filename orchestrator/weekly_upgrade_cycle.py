@@ -34,6 +34,10 @@ from jsonschema import ValidationError
 from orchestrator import weekly_upgrade as review
 from orchestrator import weekly_upgrade_trial as trial
 from orchestrator.weekly_upgrade_budget import BudgetLedger
+from orchestrator.weekly_stable_benchmark_report import (
+    build_weekly_benchmark_snapshot,
+    inspect_weekly_review_context,
+)
 
 SCHEMA_VERSION = "weekly-upgrade-cycle/v1"
 PLAN_VERSION = "weekly-upgrade-cycle-plan/v1"
@@ -898,12 +902,67 @@ def _report(
             "weekly_review": review_report.get("status") if review_report else None,
             "trial": trial_result.get("status") if trial_result else None,
         },
+        # This observation is refreshed even when the provider review is an
+        # immutable same-week receipt. It performs no inference or runtime
+        # inspection and does not alter the review/trial no-replay contract.
+        "stable_benchmark": build_weekly_benchmark_snapshot(
+            repo=canonical_root, observed_at=now,
+        ),
         "production_change_authorized": False,
         "promotion_authorized": False,
         "recorded_at": _iso(now),
     }
     _write_json(cycle_dir / "cycle_report.json", result)
     return result
+
+
+def _immutable_week_noop(
+    *, canonical_root: Path, output_root: Path, repo_root: Path,
+    week_id: str, now: datetime,
+) -> dict[str, Any] | None:
+    """Return a no-call status for a verified terminal review from another context."""
+    lexical_output = output_root.expanduser().absolute()
+    if (not lexical_output.exists() or lexical_output.is_symlink()
+            or not lexical_output.is_dir() or lexical_output.resolve() != lexical_output):
+        return None
+    cycle_dir = lexical_output / week_id
+    context = inspect_weekly_review_context(cycle_dir, week_id=week_id)
+    if context["status"] != "terminal_immutable_review":
+        return None
+    claim_path = _weekly_claim_path(canonical_root, week_id)
+    if not claim_path.exists():
+        return None
+    claim = _read_json(claim_path)
+    expected_claim = {
+        "schema_version": "weekly-upgrade-cycle-claim/v1",
+        "week_id": week_id,
+        "output_root": str(lexical_output),
+        "cycle_dir": str(cycle_dir),
+        "cycle_plan_sha256": context["cycle_plan_sha256"],
+        "production_change_authorized": False,
+    }
+    if claim != expected_claim:
+        return None
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "mode": "cycle",
+        "week_id": week_id,
+        "status": "IMMUTABLE_WEEK_REVIEWED",
+        "reason": (
+            "This UTC ISO week already has a verified terminal provider review under "
+            "its original repository context. No source fetch, provider call, trial, "
+            "or receipt rewrite was attempted."
+        ),
+        "weekly_review_context": context,
+        "stable_benchmark": build_weekly_benchmark_snapshot(
+            repo=repo_root, observed_at=now,
+        ),
+        "automatic_execution": False,
+        "frontier_calls_repeated": False,
+        "production_change_authorized": False,
+        "promotion_authorized": False,
+        "recorded_at": _iso(now),
+    }
 
 
 def _existing_trial_is_recoverable(
@@ -955,6 +1014,17 @@ def run_cycle(
     canonical_root = trial.canonical_root(root)
     start = monotonic_fn()
     with owner_lock(canonical_root, inherited_lock_fd):
+        initial_moment = now_fn()
+        if initial_moment.tzinfo is None or initial_moment.utcoffset() is None:
+            raise CycleError("cycle clock must be timezone aware")
+        initial_moment = initial_moment.astimezone(timezone.utc)
+        initial_week_id, _, _ = _week(initial_moment)
+        immutable = _immutable_week_noop(
+            canonical_root=canonical_root, output_root=output_input,
+            repo_root=root, week_id=initial_week_id, now=initial_moment,
+        )
+        if immutable is not None:
+            return immutable
         ready = readiness_report(
             root, output_input, source_packet=source_packet, fetch_config=fetch_config,
             trial_manifest=trial_manifest, frontier_call_budget=frontier_call_budget,
@@ -983,7 +1053,19 @@ def run_cycle(
             max_gpu_minutes=max_gpu_minutes,
             frontier_selection=_frontier_selection(dict(os.environ)),
         )
-        _load_or_create(cycle_dir / "cycle_plan.json", plan)
+        plan_path = cycle_dir / "cycle_plan.json"
+        if plan_path.exists() and _read_json(plan_path) != plan:
+            context = inspect_weekly_review_context(cycle_dir, week_id=week_id)
+            recovery = context.get("recovery")
+            detail = (
+                recovery if isinstance(recovery, str)
+                else "Use the original cycle_plan repository context or wait for the next UTC ISO week."
+            )
+            raise CycleError(
+                "existing weekly cycle plan differs and is not a verified terminal "
+                f"review; no call repeated. {detail}"
+            )
+        _load_or_create(plan_path, plan)
         _load_or_create(
             _weekly_claim_path(canonical_root, week_id),
             {

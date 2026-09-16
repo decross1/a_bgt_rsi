@@ -9,6 +9,11 @@ gate_status, experiment_outcome.
   iteration. Unknown / malformed / pathological iteration_id =>
   ``{"found": false, "iteration_id": <arg>}`` at HTTP 200 (NOT 404 — the journey
   view degrades in place, never 404-blanks).
+- Explicit ``research_scope=active`` admits only a globally unique exact
+  campaign member from the bounded campaign source. ``research_scope=all``
+  preserves archive access. Both explicit modes include scope metadata;
+  omitted scope retains the legacy response shape. Invalid current-campaign
+  provenance returns 503 rather than silently falling back to history.
 
 The journey view is read-only: this endpoint WRITES NOTHING. It opens no file for
 writing; it only reads. It mirrors finding_detail.py: the same ``_read_jsonl``
@@ -46,6 +51,8 @@ import math
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+
+from .research_scope import ResearchScope, ScopeName
 
 
 # A loop_memory field is a scalar or a small nested block in every valid row. A
@@ -273,7 +280,8 @@ def _enriched_row(row: dict, cache_dir, iteration_id: str) -> dict:
     return out
 
 
-def register(app, *, memory_dir: Path, iteration_cache_dir: Path | None = None) -> APIRouter:
+def register(app, *, memory_dir: Path, iteration_cache_dir: Path | None = None,
+             repo_root: Path | None = None) -> APIRouter:
     """Attach the iteration-journey router. Reads loop_memory.jsonl from
     ``memory_dir`` (the same memory dir coordinator.register / finding_detail use,
     wired as ``register(app, memory_dir=Path(coordinator_memory))``). When
@@ -281,11 +289,12 @@ def register(app, *, memory_dir: Path, iteration_cache_dir: Path | None = None) 
     ``Path(coordinator_run_state) / "iteration_cache"``), the bounded cache join
     above fills neighbor chunk_text + critique.debate; None (the default, and
     every pre-join caller) disables the join entirely. Read-only:
-    writes nothing, ever."""
+    writes nothing, ever. ``repo_root`` binds explicit active-campaign reads to
+    the same activation/manifest source as the scoped research lists."""
     router = APIRouter(tags=["iteration_journey"])
 
     @router.get("/api/iteration/{iteration_id}/journey")
-    def iteration_journey(iteration_id: str):
+    def iteration_journey(iteration_id: str, research_scope: ScopeName | None = None):
         """The FULL loop_memory row for one iteration (the PipelineJourney).
         Unknown / malformed / pathological iteration_id => found:false at 200 (the
         journey view degrades in place, never 404-blanks). Never 500s on
@@ -296,12 +305,21 @@ def register(app, *, memory_dir: Path, iteration_cache_dir: Path | None = None) 
         if not _safe_iteration_id(iteration_id):
             return {"found": False, "iteration_id": iteration_id}
 
+        # Legacy callers retain the historical detail contract. Explicitly
+        # scoped clients receive the same provenance as the campaign lists.
+        # Active reads use their strict bounded source and global uniqueness
+        # rule, so an ID duplicated by an archived row cannot borrow membership.
+        scope = (ResearchScope(research_scope, repo_root or Path(__file__).resolve().parents[2], memory_dir)
+                 if research_scope is not None else None)
+        metadata = {"research_scope": scope.metadata()} if scope is not None else {}
+        rows = (scope.iterations() if research_scope == "active"
+                else _read_jsonl(Path(memory_dir) / "loop_memory.jsonl"))
         row = None
-        for candidate in _read_jsonl(Path(memory_dir) / "loop_memory.jsonl"):
+        for candidate in rows:
             if candidate.get("iteration_id") == iteration_id:
                 row = candidate  # last write wins, were an iteration_id duplicated
         if row is None:
-            return {"found": False, "iteration_id": iteration_id}
+            return {"found": False, "iteration_id": iteration_id, **metadata}
 
         # The whole row is surfaced as the IterationRecord. A single pathological
         # member (deep nest / huge int / non-finite float) would reach the
@@ -310,7 +328,7 @@ def register(app, *, memory_dir: Path, iteration_cache_dir: Path | None = None) 
         # null one member and keep the rest meaningful as a "journey"). A clean
         # row flows through untouched (never coerced).
         if _safe(row) is None:
-            return {"found": False, "iteration_id": iteration_id}
+            return {"found": False, "iteration_id": iteration_id, **metadata}
 
         # Bounded iteration-cache join (module docstring): fill neighbor
         # chunk_text + critique.debate from this ONE iteration's cache dir.
@@ -326,7 +344,7 @@ def register(app, *, memory_dir: Path, iteration_cache_dir: Path | None = None) 
             if enriched is not row and _safe(enriched) is not None:
                 row = enriched
 
-        return {"found": True, "iteration_id": iteration_id, "iteration": row}
+        return {"found": True, "iteration_id": iteration_id, "iteration": row, **metadata}
 
     app.include_router(router)
     return router

@@ -197,6 +197,51 @@ Use the fixed canary for regression detection and resource observability. Use fr
 
 This structure stops one-off panel accretion without discarding evidence. Every old result remains traceable, every new result has a fixed denominator and terminal state, and future benchmark additions enter through a versioned rotation or release review rather than another bespoke endpoint.
 
+## Dated follow-up — September 16, 2026
+
+The analysis above records the architecture and publication state before the
+first release 1.0.0 resident execution. That execution later completed with a
+receipt-admitted lifecycle, replay, resource guard, and restoration chain. A
+post-run prompt–grader audit then found four task-design defects: the two
+evidence citation oracles did not match their visible minimal-evidence
+contracts, and two otherwise ordinary code answers encountered sandbox
+restrictions that the prompts had not disclosed. The remaining observed
+serialization, token-cap, actor-output, and strategic-regret failures remain
+declared end-to-end observations of the frozen stack. The exact disposition is
+recorded in the [resident prompt–grader audit](../stable-benchmark/RESIDENT_PROMPT_GRADER_AUDIT.md)
+and the source-controlled [release 1.0.0 measurement review](../../../../docs/benchmarks/measurement_reviews/75de9dc0dc324a4559332f88ae6e5ae861ba0d6f683334d85395d082bbaf04df.json).
+
+Release 1.0.0 and its recorded numbers remain immutable commissioning
+evidence. They are not retrospectively rescored, converted into a corrected
+baseline, or used for comparative quality claims. Receipt admission establishes
+the integrity of the recorded execution chain; it does not repair a defective
+measurement contract.
+
+Prospective release 1.1.0 keeps the same ordered 21 task IDs, family
+denominators, role policies, strict JSON parser, tool transport, token ceilings,
+and October 14 review boundary. It binds every task to the same-ID 1.0.0
+predecessor while declaring the two releases non-comparable. Its bounded
+contract changes require DOC-A/B/C for the full randomized 30-day evidence
+claim, require DOC-E alone for the missing-denominator abstention, define
+citations as arrays of bare document IDs, and disclose the unchanged sandbox
+contract on all four code tasks, including banned syntax, allowed calls, all
+attribute access, isolation, resource limits, and non-mutation. A model-free
+preflight covers gold contracts for all 21 tasks and valid alternatives.
+
+The reviewed prospective draft is
+[`bench/stable_benchmark/definition.draft.json`](../../../../bench/stable_benchmark/definition.draft.json),
+with raw-file SHA-256
+`026cedcc23894600f95e542908bb6c19453f950eb63e62b9e6948f277662a9ed`.
+Its distinct artifact root is
+`ui-benchmark-eight-hour/stable-benchmark-v1_1`. At the time of this addendum,
+release 1.1.0 was still unexecuted. Publication and preregistration subsequently
+landed in [c840466](https://github.com/decross1/a_bgt_rsi/commit/c840466) at
+06:34 UTC, following frozen source 979f961. The published definition SHA-256 is
+`d2eb69d9c0fefc7b377cec6cb550f491979a5f137d38346dc99a607be5890006`.
+Supervised runtime admission must precede any model call. Any later 1.1.0 result
+begins a prospective series and cannot be matched against the 1.0.0
+commissioning outcomes.
+
 ## Sources
 
 [^1]: a_bgt_rsi project, [`notes/research/2026-09-15-lab-eight-hour/EIGHT_HOUR_RESULTS.md`](/home/decross1/projects/a_bgt_rsi/notes/research/2026-09-15-lab-eight-hour/EIGHT_HOUR_RESULTS.md), [`FINAL_INTEGRITY_AUDIT.md`](/home/decross1/projects/a_bgt_rsi/notes/research/2026-09-15-lab-eight-hour/FINAL_INTEGRITY_AUDIT.md), and [`NEXT_RUNS.md`](/home/decross1/projects/a_bgt_rsi/notes/research/2026-09-15-lab-eight-hour/NEXT_RUNS.md), September 15–16, 2026.

@@ -161,6 +161,21 @@ receipts. A changed fixture, grader, inference policy or harness must be named
 in the comparison. Release expiry requires a recorded review before new runs.
 Most reviews should leave production unchanged.
 
+The Sunday cycle report now carries a `stable_benchmark` section with the
+current frozen release, receipt-verified grader outputs, review boundary, and a
+manual next-run preregistration recipe. Receipt admission proves the registered
+execution/replay/supervision chain; consult the versioned measurement review
+before treating any row as a valid task measurement. The section never grants
+promotion authority. It also keeps the small canary separate from monthly or
+triggered public-benchmark rotations.
+
+Release 1.0.0 is currently `commissioning_only`; its
+[measurement review](../benchmarks/measurement_reviews/75de9dc0dc324a4559332f88ae6e5ae861ba0d6f683334d85395d082bbaf04df.json)
+records the task-contract defects corrected prospectively in release 1.1.0. The
+[active catalog](../benchmarks/program_catalog.json) selects 1.1.0; use the
+Benchmarks release selector to inspect the 1.0.0 archive. Keep its recorded
+numbers and receipts unchanged, and do not compare scores across releases.
+
 The application agenda in Research is proposed work, not an active trading
 strategy. It starts from game-theoretic mechanisms and data requirements:
 options are the preferred investigation, prediction markets an alternative,
@@ -309,6 +324,36 @@ manifest it performs the review lane only:
 3. obtain independent proposal and adversarial analysis;
 4. record a structured weekly decision and source provenance;
 5. stop without automatically rerunning benchmarks or promoting production.
+
+The read-only benchmark observation appears at:
+
+```text
+/home/decross1/projects/a_bgt_rsi_weekly_upgrade_runs/<ISO-WEEK>/cycle_report.json
+```
+
+For a newly created ISO-week review it is also copied into
+`review/weekly_report.json`. A completed provider review stays immutable. If the
+Sunday owner revisits the same ISO week, as it will on September 20 after the
+September 14 `2026-W38` review, `cycle_report.json` refreshes the benchmark
+observation while the two provider calls remain unrepeated. Check it with:
+
+```bash
+python3 - <<'PY'
+import json
+from pathlib import Path
+
+week = "2026-W38"
+path = Path("/home/decross1/projects/a_bgt_rsi_weekly_upgrade_runs") / week / "cycle_report.json"
+print(json.dumps(json.loads(path.read_text())["stable_benchmark"], indent=2))
+PY
+```
+
+`next_run_preregistration` is a recipe, not an action queue. It permits no paid
+API call, automatic scheduling, inference, or runtime change. Before the release
+review boundary, prepare a fresh comparison registration and lifecycle plan in
+source control. At the boundary, record an explicit unchanged-definition
+extension or publish a new semantic release. Task/oracle corrections require a
+new release; the original receipts remain visible under their original version.
 
 A trial runs only when its exact checked-in manifest is supplied and admitted by
 the controller. All trials share a hard 120-minute Spark allowance per UTC ISO

@@ -19,7 +19,7 @@
 // forms and vice versa. The footer renders UNCONDITIONALLY — calibration is
 // OPT-IN and gates nothing; the reveal fence only protects "blind if used".
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 
 import GateVerdictForm from "../components/GateVerdictForm";
 import FindingReviewForm from "../components/FindingReviewForm";
@@ -41,7 +41,11 @@ import { getCockpitAvailability, COCKPIT_UNAVAILABLE } from "../api/todo";
 import { getHumanTodo } from "../api/http";
 import type { CockpitAvailability, CockpitActions } from "../types/todo";
 import type { HumanTodoItem } from "../types/schemas";
-import { researchScopedHref } from "../researchScope";
+import {
+  explicitResearchScopedHref,
+  researchScopedHref,
+  type ResearchScope,
+} from "../researchScope";
 
 // --- defensive guards (lifted VERBATIM from the retired routes/Todo.tsx) ----
 // The `availability` + `items` PROPS bypass the fetch path's coercion
@@ -134,7 +138,12 @@ interface Props {
 
 export default function DossierReader({ availability, items }: Props) {
   const params = useParams<{ id: string }>();
+  const location = useLocation();
   const dossierId = asText(params.id);
+  const requestedScope: ResearchScope =
+    new URLSearchParams(location.search).get("research_scope") === "active"
+      ? "active"
+      : "all";
 
   // One capability fetch feeds every form's `available` prop (lifted VERBATIM
   // from Todo.tsx). The override wins (tests inject it); otherwise fetch once
@@ -161,29 +170,37 @@ export default function DossierReader({ availability, items }: Props) {
   // KIND (and title / deferred tag) from it. An id prefix can keep a preserved
   // record readable, but it never establishes queue membership or permission
   // to mutate that record.
-  const [queue, setQueue] = useState<HumanTodoItem[]>(safeItems(items));
-  const [queueLoaded, setQueueLoaded] = useState(items !== undefined);
+  const [queueState, setQueueState] = useState<{
+    scope: ResearchScope;
+    rows: HumanTodoItem[];
+    loaded: boolean;
+  }>({ scope: requestedScope, rows: safeItems(items), loaded: items !== undefined });
   useEffect(() => {
     if (items !== undefined) {
-      setQueue(safeItems(items));
+      setQueueState({ scope: requestedScope, rows: safeItems(items), loaded: true });
       return;
     }
     let live = true;
-    getHumanTodo("all")
+    setQueueState({ scope: requestedScope, rows: [], loaded: false });
+    getHumanTodo(requestedScope)
       .then((resp) => {
         if (!live) return;
-        setQueue(safeItems(resp?.items));
-        setQueueLoaded(true);
+        setQueueState({ scope: requestedScope, rows: safeItems(resp?.items), loaded: true });
       })
       .catch(() => {
         // Queue unreachable → prefix fallback still names the family; the
         // reader never blanks on a dead queue endpoint.
-        if (live) setQueueLoaded(true);
+        if (live) setQueueState({ scope: requestedScope, rows: [], loaded: true });
       });
     return () => {
       live = false;
     };
-  }, [items]);
+  }, [items, requestedScope]);
+
+  // A search-only navigation can change scope without remounting the reader.
+  // Never retain a row from the previous scope during that transition.
+  const queue = queueState.scope === requestedScope ? queueState.rows : [];
+  const queueLoaded = queueState.scope === requestedScope && queueState.loaded;
 
   const item = queue.find((it) => it.id === dossierId) ?? null;
   const resolvedKind: string | null =
@@ -195,7 +212,7 @@ export default function DossierReader({ availability, items }: Props) {
     kindClass === "iteration" && item?.kind === "gate_verdict";
   const displayKind =
     item === null && dossierId.startsWith("iter-")
-      ? "iteration history"
+      ? "iteration record"
       : resolvedKind;
   const title = item !== null ? asText(item.title) : "";
   // How long this has been waiting (the queue row's `since`). Coarse and
@@ -267,7 +284,7 @@ export default function DossierReader({ availability, items }: Props) {
       <header className="mt-3" data-testid="dossier-header">
         <div className="flex flex-wrap items-center gap-2 text-[11px]">
           <Link
-            to={researchScopedHref("/dossier", "all")}
+            to={researchScopedHref("/dossier", requestedScope)}
             className="text-[10px] uppercase tracking-wide text-zinc-600 hover:text-zinc-400"
           >
             ← dossiers
@@ -300,7 +317,7 @@ export default function DossierReader({ availability, items }: Props) {
           )}
           {item === null && queueLoaded && dossierId.startsWith("iter-") && (
             <span className="text-[10px] text-zinc-600">
-              preserved record — no human-action request is inferred
+              read-only record — no human-action request is inferred
             </span>
           )}
           {item === null && queueLoaded && !dossierId.startsWith("iter-") && (
@@ -333,19 +350,20 @@ export default function DossierReader({ availability, items }: Props) {
       </header>
 
       <ResearchScopeBar
+        compact
         fetchMetadata={items === undefined}
         className="mt-4"
-        scopeOverride="all"
-        activeTarget="/dossier"
-        allTarget={`/dossier/${encodeURIComponent(dossierId)}`}
-        historyExplanation="Source-library history. This preserved dossier keeps its recorded identity and does not establish current-campaign membership; Current campaign returns to the scoped record library."
+        scopeOverride={requestedScope}
+        activeHrefOverride={explicitResearchScopedHref(`/dossier/${encodeURIComponent(dossierId)}`, "active")}
+        allHrefOverride={explicitResearchScopedHref(`/dossier/${encodeURIComponent(dossierId)}`, "all")}
+        historyExplanation="Source-library history. This preserved dossier keeps its recorded identity and does not establish current-campaign membership; Current campaign checks this exact record against the active campaign."
       />
 
       <div className="mt-3 space-y-3">
         {/* One exact-source overview and journey. PipelineJourney resolves the
             detail once and leads with question, observed state, recorded
             criticism/learning status, and the next source-backed step. */}
-        <PipelineJourney key={`journey-${dossierId}`} item={journeyItem} />
+        <PipelineJourney key={`journey-${dossierId}-${requestedScope}`} item={journeyItem} journeyScope={requestedScope} />
 
         {/* OPTIONAL blind calibration — opt-in; recorded once per id and
             never re-prompted (flag-2). It does NOT gate the forms. */}

@@ -140,6 +140,21 @@ env -u MOCK_LLM WEEKLY_UPGRADE_OWNER_LOCK_FD=9 \
   "$TIMEOUT_BIN" --signal=TERM --kill-after=10s "${HARD_DEADLINE_S}s" \
   "$PYTHON" "${cycle_args[@]}" || rc=$?
 log "weekly upgrade cycle done rc=$rc"
+
+# Refresh a bounded rolling projection after the immutable cycle attempt. This
+# reads only source-controlled registrations and public receipts; it performs no
+# model/API call, runtime probe, replay, grading, scheduling, or ledger write.
+# Running it after the cycle lets the report identify an existing terminal
+# same-week review without modifying that review or its cycle receipt.
+snapshot_rc=0
+log "launch: read-only stable benchmark Sunday snapshot"
+"$TIMEOUT_BIN" --signal=TERM --kill-after=5s 60s \
+  "$PYTHON" -m orchestrator.weekly_stable_benchmark_report \
+  --repo-root "$REPO_ROOT" --output-root "$OUTPUT_ROOT" || snapshot_rc=$?
+log "stable benchmark Sunday snapshot done rc=$snapshot_rc"
+if (( rc == 0 && snapshot_rc != 0 )); then
+  rc=$snapshot_rc
+fi
 exit "$rc"
 
 # ---------------------------------------------------------------------------

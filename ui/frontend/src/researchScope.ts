@@ -59,6 +59,17 @@ export function researchScopedHref(
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+/** Detail routes need an explicit active/all identity because an old
+ * unqualified bookmark retains its historical meaning. */
+export function explicitResearchScopedHref(
+  target: string,
+  scope: ResearchScope,
+): string {
+  const url = new URL(target, "http://research-scope.local");
+  url.searchParams.set("research_scope", scope);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 export function currentPageScopeHref(
   pathname: string,
   search: string,

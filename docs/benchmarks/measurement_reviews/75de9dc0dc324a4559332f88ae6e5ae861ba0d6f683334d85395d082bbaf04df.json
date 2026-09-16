@@ -1,0 +1,18 @@
+{
+  "schema_version": "benchmark-measurement-review/v1",
+  "suite_id": "a-bgt-rsi-stable-1.0.0",
+  "release": "1.0.0",
+  "definition_sha256": "75de9dc0dc324a4559332f88ae6e5ae861ba0d6f683334d85395d082bbaf04df",
+  "reviewed_at": "2026-09-16T05:58:00Z",
+  "status": "commissioning_only",
+  "title": "Commissioning run: four task contracts need correction",
+  "summary": "Two evidence tasks have citation-oracle ambiguity, and two code answers were rejected by sandbox restrictions absent from the prompts. The execution and restoration receipts are valid; the recorded counts are not a trusted comparative quality baseline.",
+  "affected_task_ids": [
+    "EVID-SUPPORT-001",
+    "EVID-ABSTAIN-001",
+    "CODE-MERGE-001",
+    "CODE-WEIGHTED-MEDIAN-001"
+  ],
+  "interpretation": "Preserve every original outcome. Channel-marker leakage, empty-at-cap criticism, multiple JSON objects and positive game regret remain observed operational failures of this declared stack. They are separate from the four task-design defects.",
+  "next_action": "Publish a corrected prospective release with a complete 21-task contract preflight. Keep the same task families and October 14 review boundary; do not repair or rescore this run."
+}

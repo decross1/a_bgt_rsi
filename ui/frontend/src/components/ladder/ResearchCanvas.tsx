@@ -12,7 +12,7 @@ import type {
 } from "./researchContext";
 import type { FamilyRecord, ThesisFamily, ThesisModel } from "./thesisModel";
 import type { RecordedIteration } from "./thesisModel";
-import { researchScopedHref, type ResearchScope } from "../../researchScope";
+import { explicitResearchScopedHref, type ResearchScope } from "../../researchScope";
 import type { IterationJourneyResponse, IterationRecord } from "../../types/schemas";
 
 const FAMILY_OPTION_LIMIT = 40;
@@ -134,10 +134,12 @@ type JourneyState = "projection" | "loading" | "loaded" | "missing" | "error";
 function ClaimContext({
   context,
   journeyState,
+  researchScope,
   onBack,
 }: {
   context?: ResearchClaimContext;
   journeyState: JourneyState;
+  researchScope: ResearchScope;
   onBack: () => void;
 }) {
   if (context === undefined) {
@@ -218,8 +220,8 @@ function ClaimContext({
       </section>
 
       {dossierId !== null && (
-        <Link className="research-canvas__dossier" to={researchScopedHref(`/dossier/${dossierId}`, "all")} aria-label={`Open source-history dossier for ${dossierId}`}>
-          Open source-history dossier ↗
+        <Link className="research-canvas__dossier" to={explicitResearchScopedHref(`/dossier/${dossierId}`, researchScope)} aria-label={`Open ${researchScope === "active" ? "current-campaign" : "source-history"} dossier for ${dossierId}`}>
+          Open {researchScope === "active" ? "current-campaign" : "source-history"} dossier ↗
         </Link>
       )}
 
@@ -283,7 +285,7 @@ export default function ResearchCanvas({
   model: ThesisModel;
   nextOwed: Record<string, string>;
   researchScope?: ResearchScope;
-  loadJourney?: (iterationId: string) => Promise<IterationJourneyResponse>;
+  loadJourney?: (iterationId: string, scope: ResearchScope) => Promise<IterationJourneyResponse>;
 }) {
   const rootRef = useRef<HTMLElement>(null);
   const previousMobile = useRef(false);
@@ -362,7 +364,7 @@ export default function ResearchCanvas({
       return;
     }
     setJourney({ key: journeyKey, state: "loading" });
-    loadJourney(iterationId).then((response) => {
+    loadJourney(iterationId, researchScope).then((response) => {
       if (requestSerial.current !== serial) return;
       if (
         response?.found !== true
@@ -584,7 +586,7 @@ export default function ResearchCanvas({
 
         </section>
 
-        <ClaimContext context={displayedContext} journeyState={displayedJourneyState} onBack={() => setMobileContext(false)} />
+        <ClaimContext context={displayedContext} journeyState={displayedJourneyState} researchScope={researchScope} onBack={() => setMobileContext(false)} />
       </div>
     </section>
   );

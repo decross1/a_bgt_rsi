@@ -476,6 +476,76 @@ def test_no_attempted_registered_lifecycle_returns_none(
     assert _project(fixture) is None
 
 
+def test_unavailable_catalog_retains_benchmark_unknown_identity(monkeypatch):
+    from backend import benchmark_catalog, model_runtime
+
+    def unavailable(_repo):
+        raise ValueError("catalog missing")
+
+    monkeypatch.setattr(benchmark_catalog, "read_catalog", unavailable)
+    result = model_runtime.project_model_runtime(now=lambda: NOW)
+    assert result["mode"] == "unknown"
+    assert result["mode_source"] == "stable_benchmark_state"
+    assert result["comparison_id"] is None
+    assert "catalog" in result["source_error"]
+
+
+@pytest.mark.parametrize("active_unresolved", [False, True])
+def test_switching_release_does_not_hide_unresolved_historical_runtime(monkeypatch, tmp_path, active_unresolved):
+    from backend import benchmark_catalog, model_runtime
+
+    roots = {"1.0.0": tmp_path / "old", "1.1.0": tmp_path / "new"}
+    monkeypatch.setattr(benchmark_catalog, "read_catalog", lambda _repo: {
+        "active_release": "1.1.0",
+        "releases": [{"version": version, "root": str(root)} for version, root in roots.items()],
+    })
+
+    def project(**kwargs):
+        if kwargs["program_root"] == roots["1.0.0"]:
+            return stable._unknown(NOW, "Historical restoration is unverified", comparison_id="old-comparison")
+        return stable._unknown(NOW, "Current restoration is unverified") if active_unresolved else None
+
+    monkeypatch.setattr(stable, "project_active_stable_runtime", project)
+    result = model_runtime.project_model_runtime(now=lambda: NOW)
+    assert result["mode"] == "unknown"
+    assert result["mode_source"] == "stable_benchmark_state"
+    if active_unresolved:
+        assert "Multiple" in result["source_error"]
+    else:
+        assert result["comparison_id"] == "old-comparison"
+
+
+def test_other_release_registration_does_not_hide_active_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    fixture = _fixture(tmp_path, monkeypatch, phase="evaluation")
+    historical = json.loads(fixture["registration"].read_text())
+    historical["comparison_id"] = "historical-release"
+    historical["registered_at"] = NOW.isoformat().replace("+00:00", "Z")
+    historical["definition"] = {
+        "path": str(tmp_path / "historical" / "definition.published.json"),
+        "sha256": "d" * 64,
+    }
+    _write(fixture["registration"].with_name("historical-release.json"), historical)
+    projected = _project(fixture)
+    assert projected is not None
+    assert projected["mode"] == "resident", projected.get("source_error")
+    assert projected["comparison_id"] == "stable-comparison-a"
+
+
+def test_selected_definition_registered_at_wrong_path_remains_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    fixture = _fixture(tmp_path, monkeypatch, phase="evaluation")
+    misplaced = json.loads(fixture["registration"].read_text())
+    misplaced["comparison_id"] = "misplaced-selected-release"
+    misplaced["definition"]["path"] = str(tmp_path / "wrong" / "definition.published.json")
+    _write(fixture["registration"].with_name("misplaced-selected-release.json"), misplaced)
+    projected = _project(fixture)
+    assert projected is not None
+    assert projected["mode"] == "unknown"
+
+
 @pytest.mark.parametrize(
     ("phase", "nara"), (("preflight", "running"), ("evaluation", "paused"))
 )

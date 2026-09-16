@@ -1,6 +1,6 @@
 # Stable Benchmark v1
 
-The stable benchmark is one versioned program with a generic projection, not a new UI panel for every experiment. Release `1.0.0` starts with no baseline and no historical score conversion. It is a small regression canary, not evidence of broad scientific intelligence or a sufficient model-selection instrument. Its draft contains 18 model-capability units and three actor–tool–critic harness micro-workflows. The latter measure a narrow two-role scaffold; they do not establish whole-orchestrator, scheduler, research-funnel, or production success.
+The stable benchmark is one versioned program with a generic projection, not a new UI panel for every experiment. The current release is `1.1.0`, published and preregistered on September 16. Release `1.0.0` remains a commissioning archive with its original outcomes; no historical score is converted into the corrected series. It is a small regression canary, not evidence of broad scientific intelligence or a sufficient model-selection instrument. The frozen definition contains 18 model-capability units and three actor–tool–critic harness micro-workflows. The latter measure a narrow two-role scaffold; they do not establish whole-orchestrator, scheduler, research-funnel, or production success.
 
 ## Measurement layers
 
@@ -90,24 +90,13 @@ Strategic own-regret stays in its mechanism-specific row. Science, code, tool, a
 
 ## Registry and future releases
 
-A source-controlled registry should contain bounded release entries and one active pointer:
+The source-controlled [program catalog](program_catalog.json) contains at most eight release entries and one active pointer. Each entry binds a version, suite ID, fixed artifact root, published-definition SHA-256, label, and `measurement_review_sha256` (a required digest or explicit `null`). Missing or invalid catalog data withholds current-release claims. A required measurement notice that disappears or changes cannot restore comparative quality claims.
 
-```json
-{
-  "schema_version": "stable-benchmark-registry/v1",
-  "active_release": "1.0.0",
-  "releases": [{
-    "release": "1.0.0",
-    "definition_path": ".../definition.published.json",
-    "definition_sha256": "...",
-    "published_at": "...",
-    "review_at": "2026-10-14T00:00:00Z",
-    "status": "active"
-  }]
-}
-```
+The generic API uses `?release=1.0.0` for the commissioning archive and defaults to active release `1.1.0`. Different releases have separate run histories. Global model-state reporting checks unresolved windows across all registered releases, so changing the active measurement pointer cannot hide an unfinished older runtime window.
 
-Weekly comparisons append under `stable-benchmark/runs/<comparison_id>/<arm_id>/`; they do not create endpoints or frontend components. At review, an explicit release entry either extends unchanged bytes with a new witness or activates a new semantic version. Task, grader, independent-unit, or metric changes start a new comparison series. A score-preserving metadata correction may use a patch version only when byte-level replay proves unchanged outcomes.
+Release 1.1 was preregistered in [commit c840466](https://github.com/decross1/a_bgt_rsi/commit/c840466), after frozen causal source [979f961](https://github.com/decross1/a_bgt_rsi/commit/979f961), with definition SHA-256 `d2eb69d9c0fefc7b377cec6cb550f491979a5f137d38346dc99a607be5890006`. The two evidence contracts and shared code sandbox disclosure were corrected prospectively. The same 21 task lineages, strict response contract, policies, caps, and October 14 review boundary are retained. This is a fresh comparison series, not a new holdout.
+
+Weekly comparisons append under the selected release root at `runs/<comparison_id>/<arm_id>/`; they do not create endpoints or frontend components. At review, an explicit release entry either extends unchanged bytes with a new witness or activates a new semantic version. Task, grader, independent-unit, or metric changes start a new comparison series. A score-preserving metadata correction may use a patch version only when byte-level replay proves unchanged outcomes.
 
 Before inference, each comparison also receives a checked-in
 `docs/benchmarks/registrations/<comparison_id>.json`. It orders the reference
@@ -134,6 +123,82 @@ The first extended tier should use fresh real-repository repair snapshots and a 
 The September 16 initial window records a fresh resident baseline only. The Flash candidate failed the unchanged host pageout startup gate before any stable-suite model request, after the final permitted startup attempt. Its arm is written as `unissued` with all 21 units and zero model calls; it receives no score, replay admission, comparison delta, loss, or imputed value. A later Flash run requires a separately reviewed runtime qualification and remains bound to this release only while the definition is active.
 
 Historical 126-cell, supplement, context, diversity, payoff-tool, calibration, and applied-market records remain in their original lineages. They inform diagnostics and future task design, but they neither establish the v1 baseline nor get rescored under this definition. The existing 384-versus-1,536 Flash cap closure is a reused-fixture `diagnostic_development` study and stays outside the stable canary.
+
+The resident receipt chain is admitted with 21/21 units accounted, 27 model
+calls, and 139.951927 seconds of evaluator wall time. Here, `admitted` means the
+source-controlled registration, run, replay, supervision, resource, and
+restoration receipts verified. It does not by itself establish that every task
+contract was valid or authorize a promotion. A post-run measurement audit found
+four v1.0 task-design defects in the two evidence oracles and two code tasks with
+undisclosed sandbox constraints. The other channel-format and output-cap
+failures remain observed end-to-end failures under the declared contract. Keep
+the original receipts and grader outputs immutable; use the
+[source-controlled measurement review](measurement_reviews/75de9dc0dc324a4559332f88ae6e5ae861ba0d6f683334d85395d082bbaf04df.json)
+for interpretation. Correcting a task or oracle
+starts a new release and never silently rescales v1.0.
+
+## Sunday report and next-run recipe
+
+The existing Sunday 05:30 UTC review owner adds a bounded `stable_benchmark`
+section to `cycle_report.json`. New provider-review receipts also copy the same
+section into `review/weekly_report.json`. This distinction matters for the first
+follow-up: September 20 is still ISO week `2026-W38`, whose provider review was
+already completed on September 14. The immutable provider report is not
+rewritten. The Sunday cycle report refreshes the stable benchmark observation
+without repeating either provider call.
+
+The section contains the release/version/definition hash, publication and review
+times, the latest comparison cohort, receipt-admission states, construct or
+mechanism result rows, the bounded measurement-review notice, and a manual
+preregistration recipe. It omits model
+policies, private responses, grader inputs, and lifecycle payloads. It reads the
+generic verified projection with active-runtime inspection disabled. Reading or
+writing this report makes zero model or paid-API calls and never schedules an
+evaluation.
+
+For v1.0, `next_run_preregistration.eligibility` is
+`corrected_release_required`: its commissioning review forbids a comparative
+quality claim, so rerunning unchanged v1.0 would not repair the four task
+contracts. A later active release that passes its measurement review may be
+prepared as a new comparison cohort only through this recipe:
+
+1. Resolve the versioned measurement review. If the intended measurement needs
+   a prompt, oracle, grader, task, metric, or independent-unit change, publish a
+   new semantic release. Do not edit release 1.0.0 or its receipts.
+2. Choose fresh comparison, run, and lifecycle window IDs. Build role-specific
+   manifests with `bind_run_manifest()` from the published definition and the
+   exact frozen source checkout. Preserve the reference/candidate order. An arm
+   that will not run remains explicitly `unissued`; it is not a loss.
+3. Generate the prospective lifecycle plan without inference:
+
+   ```bash
+   python -m bench.stable_benchmark.supervised_window \
+     --plan \
+     --window-id '<new-window-id>' \
+     --run-manifest '<new-run-manifest.json>'
+   ```
+
+4. Before any model request, commit
+   `docs/benchmarks/registrations/<comparison_id>.json`. Bind the exact
+   definition and manifest bytes, historical execution/replay/admission source
+   maps, fixed receipt directories, lifecycle plan hash, worker argv hash, and
+   controller source map. Validate it with `load_registration()` from the
+   frozen checkout.
+5. Review runtime qualification, the 120-Spark-minute weekly budget, the
+   unchanged 30 GiB admission threshold, and restoration ownership. A candidate
+   needs its own qualified transport. The Sunday job does not perform this
+   review or launch the supervisor.
+6. If manually authorized after preregistration, run the supervisor once. Retain
+   terminal run, replay, supervision, admission, and unissued receipts in the
+   registered cohort. Inspect `/api/benchmark_program`; the next Sunday report
+   will read that same verified history.
+
+At or after the review boundary, the recipe changes to
+`explicit_release_review_required`. Record an unchanged-definition extension
+with a new witness or publish a new release before inference. The small canary
+remains separate from monthly or triggered public rotations; those rotations
+still require their own version, license, oracle, ARM/resource pilot, and result
+lineage.
 
 ## Public API projection
 

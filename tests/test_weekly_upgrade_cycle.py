@@ -156,6 +156,17 @@ def test_cycle_is_idempotent_after_terminal_review(tmp_path, monkeypatch):
     packet = _packet(tmp_path)
     output = tmp_path / "output"
     provider_runs = []
+    benchmark_observations = []
+
+    def stable_snapshot(**kwargs):
+        benchmark_observations.append(kwargs["observed_at"])
+        return {
+            "schema_version": "weekly-stable-benchmark-snapshot/v1",
+            "observed_at": kwargs["observed_at"].isoformat(),
+            "status": "available",
+        }
+
+    monkeypatch.setattr(cycle, "build_weekly_benchmark_snapshot", stable_snapshot)
 
     def fake_review(repo_root, review_dir, **kwargs):
         provider_runs.append(kwargs)
@@ -199,6 +210,9 @@ def test_cycle_is_idempotent_after_terminal_review(tmp_path, monkeypatch):
     assert first["usage"]["frontier"]["week_subscription_attempts"]["review_reserved"] == 2
     assert first["promotion_authorized"] is False
     assert provider_runs[0]["operational_history_root"] == output.resolve()
+    assert len(benchmark_observations) == 2
+    assert first["stable_benchmark"]["status"] == "available"
+    assert second["stable_benchmark"]["status"] == "available"
 
 
 def test_canonical_week_claim_prevents_review_replay_from_another_root(
@@ -234,6 +248,39 @@ def test_canonical_week_claim_prevents_review_replay_from_another_root(
         root / "run_state" / "weekly_upgrade" / "cycles" / "2026-W38.json"
     ).read_text())
     assert owner["output_root"] == str((tmp_path / "output-a").resolve())
+
+
+def test_terminal_review_from_original_context_is_clean_same_week_noop(
+    tmp_path, monkeypatch,
+):
+    from tests.test_weekly_stable_benchmark_report import _terminal_review
+
+    root = _repo(tmp_path, monkeypatch)
+    output = tmp_path / "output"
+    week_dir = _terminal_review(output)
+    plan = cycle._read_json(week_dir / "cycle_plan.json")
+    cycle._write_json(cycle._weekly_claim_path(root, "2026-W38"), {
+        "schema_version": "weekly-upgrade-cycle-claim/v1",
+        "week_id": "2026-W38", "output_root": str(output.resolve()),
+        "cycle_dir": str(week_dir), "cycle_plan_sha256": cycle._sha(plan),
+        "production_change_authorized": False,
+    })
+    probes = []
+
+    def probe(vendor):
+        probes.append(vendor)
+        raise AssertionError("terminal same-week no-op must not probe providers")
+
+    result = cycle.run_cycle(
+        root, output, source_packet=_packet(tmp_path), now_fn=lambda: NOW,
+        subscription_probe=probe,
+        review_fn=lambda *args, **kwargs: pytest.fail("review repeated"),
+    )
+    assert result["status"] == "IMMUTABLE_WEEK_REVIEWED"
+    assert result["weekly_review_context"]["review_status"] == "NO_CHANGE"
+    assert result["frontier_calls_repeated"] is False
+    assert result["automatic_execution"] is False
+    assert probes == []
 
 
 def test_cycle_deadline_blocks_before_source_or_review(tmp_path, monkeypatch):
@@ -375,10 +422,12 @@ def test_cron_hook_is_default_off_and_bounded_when_enabled(tmp_path):
         "NARA_WEEKLY_UPGRADE_OUTPUT_ROOT": str(tmp_path / "outputs"),
     })
     rows = calls.read_text().splitlines()
-    assert len(rows) == 2
-    assert "-m orchestrator.weekly_upgrade_cycle --run" in rows[-1]
-    assert "--frontier-call-budget 2" in rows[-1]
-    assert "--max-gpu-minutes 120" in rows[-1]
+    assert len(rows) == 3
+    assert "-m orchestrator.weekly_upgrade_cycle --run" in rows[-2]
+    assert "--frontier-call-budget 2" in rows[-2]
+    assert "--max-gpu-minutes 120" in rows[-2]
+    assert "-m orchestrator.weekly_stable_benchmark_report" in rows[-1]
+    assert "--output-root" in rows[-1]
     assert inherited.read_text().strip() == str(
         repo / "run_state" / ".frontier-agenda-cron.lock"
     )

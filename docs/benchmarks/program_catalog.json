@@ -1,0 +1,22 @@
+{
+  "schema_version": "stable-benchmark-catalog/v1",
+  "active_release": "1.1.0",
+  "releases": [
+    {
+      "version": "1.0.0",
+      "suite_id": "a-bgt-rsi-stable-1.0.0",
+      "root": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-16/ui-benchmark-eight-hour/stable-benchmark",
+      "definition_sha256": "75de9dc0dc324a4559332f88ae6e5ae861ba0d6f683334d85395d082bbaf04df",
+      "label": "1.0.0 \u2014 commissioning evidence",
+      "measurement_review_sha256": "76996fd37dddd7744e63497aec32038b8cc31b880371a1c20bee6579ad3584b2"
+    },
+    {
+      "version": "1.1.0",
+      "suite_id": "a-bgt-rsi-stable-1.1.0",
+      "root": "/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-16/ui-benchmark-eight-hour/stable-benchmark-v1_1",
+      "definition_sha256": "d2eb69d9c0fefc7b377cec6cb550f491979a5f137d38346dc99a607be5890006",
+      "measurement_review_sha256": null,
+      "label": "1.1.0 \u2014 corrected fixed canary"
+    }
+  ]
+}
