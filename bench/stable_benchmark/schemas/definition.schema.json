@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stable-benchmark-definition/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "suite_id", "release", "description", "baseline_status",
+    "historical_comparability", "freeze", "panels", "tasks", "resource_envelope",
+    "reporting", "external_rotations"
+  ],
+  "properties": {
+    "schema_version": {"const": "stable-benchmark-definition/v1"},
+    "suite_id": {"const": "a-bgt-rsi-stable-1.0.0"},
+    "release": {"const": "1.0.0"},
+    "description": {"type": "string", "minLength": 1},
+    "baseline_status": {"const": "not_started"},
+    "historical_comparability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["comparable", "reason"],
+      "properties": {
+        "comparable": {"const": false},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+    "freeze": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "published_at", "review_at", "expiry_action", "witness"],
+      "properties": {
+        "status": {"enum": ["draft", "published"]},
+        "published_at": {"type": ["string", "null"]},
+        "review_at": {"const": "2026-10-14T00:00:00Z"},
+        "expiry_action": {"const": "review_required"},
+        "witness": {"type": ["object", "null"]}
+      }
+    },
+    "panels": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "object"}},
+    "tasks": {
+      "type": "array",
+      "minItems": 21,
+      "maxItems": 21,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "panel", "domain", "construct", "mode", "system", "prompt", "grader", "tools", "resource", "provenance"],
+        "properties": {
+          "id": {"type": "string"},
+          "panel": {"enum": ["model_capability", "system_micro_workflow"]},
+          "domain": {"type": "string"},
+          "construct": {"type": "string"},
+          "mode": {"enum": ["chat", "code", "tools", "strategic", "system_mission"]},
+          "system": {"type": "string"},
+          "prompt": {"type": "string"},
+          "grader": {"type": "object"},
+          "tools": {"type": "array"},
+          "resource": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["max_tokens_per_call", "episode_timeout_s", "max_model_calls"],
+            "properties": {
+              "max_tokens_per_call": {"type": "integer", "minimum": 1},
+              "episode_timeout_s": {"type": "integer", "minimum": 1},
+              "max_model_calls": {"type": "integer", "minimum": 1, "maximum": 3}
+            }
+          },
+          "provenance": {"type": "object"}
+        }
+      }
+    },
+    "resource_envelope": {
+      "type": "object",
+      "required": ["max_model_calls_per_arm", "max_model_calls_paired", "max_output_tokens_per_arm", "max_episode_runtime_s_per_arm", "max_supervised_window_s", "paid_api_cost_usd", "execution"]
+    },
+    "reporting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "no_omnibus_score", "descriptive_family_counts",
+        "strategic_mechanism_counts", "family_count_interpretation",
+        "strategic_metrics", "strategic_grouping",
+        "strategic_regret_aggregation", "system_claim_scope",
+        "independent_unit", "uncertainty", "promotion_from_small_n"
+      ],
+      "properties": {
+        "no_omnibus_score": {"const": true},
+        "descriptive_family_counts": {
+          "const": {
+            "science_evidence": 4,
+            "functional_code_repair": 4,
+            "deterministic_tool_use": 4,
+            "system_harness": 3
+          }
+        },
+        "strategic_mechanism_counts": {
+          "const": {
+            "public_goods": 2,
+            "vickrey_auction": 2,
+            "cournot": 1,
+            "proper_scoring_reporting": 1
+          }
+        },
+        "family_count_interpretation": {"const": "binary_objective_completion_descriptive_canary_only"},
+        "strategic_metrics": {"type": "array"},
+        "strategic_grouping": {"const": "mechanism"},
+        "strategic_regret_aggregation": {"const": "within_mechanism_only"},
+        "system_claim_scope": {"type": "string", "minLength": 1},
+        "independent_unit": {"const": "task_or_episode"},
+        "uncertainty": {"type": "string", "minLength": 1},
+        "promotion_from_small_n": {"const": "never_automatic"}
+      }
+    },
+    "external_rotations": {"type": "object"}
+  }
+}

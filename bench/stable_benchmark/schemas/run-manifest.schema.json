@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stable-benchmark-run-manifest/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "suite_id", "release", "definition_sha256", "comparison_id", "arm", "harness_identity", "task_ids", "resource_envelope", "ordering", "admission_authorized"],
+  "properties": {
+    "schema_version": {"const": "stable-benchmark-run-manifest/v1"},
+    "suite_id": {"type": "string"},
+    "release": {"const": "1.0.0"},
+    "definition_sha256": {"$ref": "#/$defs/sha256"},
+    "comparison_id": {"type": "string"},
+    "arm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "seed", "routes", "role_map"],
+      "properties": {
+        "id": {"type": "string"},
+        "label": {"type": "string"},
+        "seed": {"type": "integer"},
+        "routes": {"type": "object", "minProperties": 1},
+        "role_map": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["capability", "system_actor", "system_critic"],
+          "properties": {
+            "capability": {"type": "string"},
+            "system_actor": {"type": "string"},
+            "system_critic": {"type": "string"}
+          }
+        }
+      }
+    },
+    "harness_identity": {"type": "object"},
+    "task_ids": {"type": "array", "minItems": 21, "maxItems": 21, "items": {"type": "string"}, "uniqueItems": true},
+    "resource_envelope": {"type": "object"},
+    "ordering": {"const": "frozen_definition_order"},
+    "admission_authorized": {"const": false}
+  },
+  "$defs": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+}
