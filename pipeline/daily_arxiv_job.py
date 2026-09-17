@@ -18,7 +18,7 @@ import sys
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -33,11 +33,18 @@ JITTER_SECONDS = 300
 FETCH_TIMEOUT_S = 1500
 EMBED_TIMEOUT_S = 900
 MAX_INPUT_BYTES = 16_000_000
+MAX_PROVENANCE_BYTES = 4096
+MAX_TERMINAL_BYTES = 8192
 MAX_PAPERS = 5000
 MAX_LOG_BYTES = 128_000
 MAX_RUNS_SCAN = 400
 SCHEMA = "arxiv-daily-ingestion-attempt/v1"
 LAST_SUCCESS_SCHEMA = "arxiv-daily-last-success/v1"
+FETCH_PROVENANCE_SCHEMA = "arxiv-fetch-provenance/v1"
+FETCH_ENDPOINTS = {
+    "arxiv_oai_pmh": "https://oaipmh.arxiv.org/oai",
+    "arxiv_search_api": "https://export.arxiv.org/api/query",
+}
 SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 RUN_RE = re.compile(r"^daily-arxiv-[0-9]{8}T[0-9]{6}Z-[0-9]+-[0-9a-f]{8}$")
 
@@ -144,17 +151,30 @@ def _execute(argv: list[str], timeout_s: int) -> CommandResult:
 def _failure_code(result: CommandResult, stage: str) -> str:
     if result.timed_out:
         return f"{stage}_timeout"
-    if stage == "fetch" and "HTTP 429" in result.stderr:
-        return "arxiv_http_429_retry_exhausted"
-    if stage == "fetch" and "HTTP 503" in result.stderr:
-        return "arxiv_http_503_retry_exhausted"
+    if stage == "fetch":
+        codes = re.findall(r"HTTP ([45][0-9]{2})\b", result.stderr)
+        if codes:
+            code = codes[-1]
+            suffix = "retry_exhausted" if code == "429" or code.startswith("5") else "error"
+            return f"arxiv_http_{code}_{suffix}"
+        if "network error" in result.stderr and "request failed after" in result.stderr:
+            return "arxiv_network_retry_exhausted"
     return f"{stage}_error"
 
 
 def _retry_observations(stderr: str) -> dict:
-    retries = [int(item) for item in re.findall(r"before retry ([1-6])\b", stderr)]
-    codes = sorted(set(re.findall(r"HTTP (429|503)\b", stderr)))
-    return {"retry_count_observed": max(retries, default=0), "http_codes_observed": codes}
+    retries = [int(item) for item in re.findall(r"before retry ([0-9]+)\b", stderr)]
+    codes = sorted(set(re.findall(r"HTTP ([45][0-9]{2})\b", stderr)))
+    attempted = []
+    for source in re.findall(r"source=(arxiv_oai_pmh|arxiv_search_api)\b", stderr):
+        if source not in attempted:
+            attempted.append(source)
+    return {
+        "retry_count_observed": max(retries, default=0),
+        "http_codes_observed": codes,
+        "network_error_count": stderr.count("network error"),
+        "sources_attempted": attempted,
+    }
 
 
 def _input_receipt(raw: bytes) -> dict:
@@ -178,6 +198,33 @@ def _input_receipt(raw: bytes) -> dict:
     return {"input_sha256": _sha(raw), "input_bytes": len(raw), "paper_count": len(lines)}
 
 
+def _fetch_provenance(raw: bytes, input_info: dict, started_at: datetime) -> dict:
+    """Validate the scraper sidecar before fetched rows may reach embedding."""
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise IngestionError("fetch provenance is malformed") from exc
+    source = value.get("source") if isinstance(value, dict) else None
+    expected_cutoff = (started_at.astimezone(timezone.utc).date()
+                       - timedelta(days=SINCE_DAYS)).isoformat()
+    fallback_from = value.get("fallback_from") if isinstance(value, dict) else None
+    if (
+        not isinstance(value, dict)
+        or value.get("schema") != FETCH_PROVENANCE_SCHEMA
+        or source not in FETCH_ENDPOINTS
+        or value.get("endpoint") != FETCH_ENDPOINTS.get(source)
+        or value.get("categories") != list(CATEGORIES)
+        or value.get("since_days") != SINCE_DAYS
+        or value.get("cutoff_date") != expected_cutoff
+        or value.get("paper_count") != input_info["paper_count"]
+        or value.get("complete") is not True
+        or (source == "arxiv_oai_pmh" and fallback_from is not None)
+        or (source == "arxiv_search_api" and fallback_from != "arxiv_oai_pmh")
+    ):
+        raise IngestionError("fetch provenance does not match this complete run")
+    return value
+
+
 def _last_success(root: Path) -> dict | None:
     path = root / "last-success.json"
     if not os.path.lexists(path):
@@ -194,6 +241,7 @@ def _last_success(root: Path) -> dict | None:
         or not RUN_RE.fullmatch(value["run_id"])
         or not SHA_RE.fullmatch(str(value.get("input_sha256")))
         or not SHA_RE.fullmatch(str(value.get("terminal_sha256")))
+        or value.get("fetch_source") not in FETCH_ENDPOINTS
         or value.get("cache_relpath") != f"cache/{value['input_sha256']}.jsonl"
     ):
         raise IngestionError("last-success pointer identity is malformed")
@@ -204,15 +252,27 @@ def _last_success(root: Path) -> dict | None:
     if info["paper_count"] != value.get("paper_count"):
         raise IngestionError("last-success cache paper count drifted")
     terminal = root / "runs" / value["run_id"] / "terminal.json"
-    terminal_raw = _read_regular(terminal, 8192)
+    terminal_raw = _read_regular(terminal, MAX_TERMINAL_BYTES)
     if _sha(terminal_raw) != value["terminal_sha256"]:
         raise IngestionError("last-success terminal SHA drifted")
     receipt = json.loads(terminal_raw)
     if (receipt.get("schema") != SCHEMA or receipt.get("run_id") != value["run_id"]
             or receipt.get("status") != "succeeded"
             or receipt.get("input_sha256") != value["input_sha256"]
-            or receipt.get("finished_at") != value.get("finished_at")):
+            or receipt.get("finished_at") != value.get("finished_at")
+            or not isinstance(receipt.get("fetch_provenance"), dict)
+            or receipt["fetch_provenance"].get("source") != value["fetch_source"]):
         raise IngestionError("last-success pointer differs from terminal receipt")
+    provenance_raw = _read_regular(
+        terminal.parent / "fetch-provenance.json", MAX_PROVENANCE_BYTES
+    )
+    try:
+        provenance = json.loads(provenance_raw)
+    except ValueError as exc:
+        raise IngestionError("last-success fetch provenance is malformed") from exc
+    if (_sha(provenance_raw) != receipt.get("fetch_provenance_sha256")
+            or provenance != receipt["fetch_provenance"]):
+        raise IngestionError("last-success fetch provenance drifted")
     return value
 
 
@@ -247,6 +307,7 @@ def run_job(
         "categories": list(CATEGORIES),
         "since_days": SINCE_DAYS,
         "jitter_seconds_max": JITTER_SECONDS,
+        "fetch_source_plan": ["arxiv_oai_pmh", "arxiv_search_api"],
         "mock_llm_unset": True,
         "sources": sources,
         "last_success_before_sha256": _sha(_canon(prior)) if prior else None,
@@ -254,15 +315,23 @@ def run_job(
     started_raw = _canon(started)
     _write_new(child / "started.json", started_raw)
     input_path = child / "papers.jsonl"
+    provenance_path = child / "fetch-provenance.json"
     fetch_argv = [
         python, str(SCRAPER), "--categories", ",".join(CATEGORIES),
         "--since-days", str(SINCE_DAYS), "--jitter-seconds", str(JITTER_SECONDS),
-        "--output", str(input_path),
+        "--output", str(input_path), "--provenance-output", str(provenance_path),
     ]
     status = "fetch_failed"
     failure_code: str | None = None
     input_info = {"input_sha256": None, "input_bytes": None, "paper_count": None}
-    fetch_detail = {"retry_count_observed": 0, "http_codes_observed": []}
+    fetch_detail = {
+        "retry_count_observed": 0,
+        "http_codes_observed": [],
+        "network_error_count": 0,
+        "sources_attempted": [],
+    }
+    fetch_provenance = None
+    fetch_provenance_sha256 = None
     embed_attempted = False
     try:
         fetch = executor(fetch_argv, FETCH_TIMEOUT_S)
@@ -271,7 +340,13 @@ def run_job(
             failure_code = _failure_code(fetch, "fetch")
         else:
             raw = _read_regular(input_path, MAX_INPUT_BYTES)
-            input_info = _input_receipt(raw)
+            candidate_info = _input_receipt(raw)
+            provenance_raw = _read_regular(provenance_path, MAX_PROVENANCE_BYTES)
+            fetch_provenance = _fetch_provenance(
+                provenance_raw, candidate_info, started_at
+            )
+            fetch_provenance_sha256 = _sha(provenance_raw)
+            input_info = candidate_info
             cache = state_root / "cache" / f"{input_info['input_sha256']}.jsonl"
             if os.path.lexists(cache):
                 if _sha(_read_regular(cache, MAX_INPUT_BYTES)) != input_info["input_sha256"]:
@@ -302,6 +377,8 @@ def run_job(
         "status": status,
         "failure_code": failure_code,
         "fetch": fetch_detail,
+        "fetch_provenance": fetch_provenance,
+        "fetch_provenance_sha256": fetch_provenance_sha256,
         **input_info,
         "cache_reused_as_fresh": False,
         "embed_attempted": embed_attempted,
@@ -316,6 +393,7 @@ def run_job(
             "finished_at": terminal["finished_at"],
             "input_sha256": input_info["input_sha256"],
             "paper_count": input_info["paper_count"],
+            "fetch_source": fetch_provenance["source"],
             "cache_relpath": f"cache/{input_info['input_sha256']}.jsonl",
             "terminal_sha256": _sha(terminal_raw),
         }
@@ -334,6 +412,7 @@ def main(argv: list[str] | None = None) -> int:
             "schema": SCHEMA, "categories": CATEGORIES, "since_days": SINCE_DAYS,
             "jitter_seconds_max": JITTER_SECONDS, "fetch_timeout_s": FETCH_TIMEOUT_S,
             "embed_timeout_s": EMBED_TIMEOUT_S, "cache_reused_as_fresh": False,
+            "fetch_source_plan": ("arxiv_oai_pmh", "arxiv_search_api"),
             "network_calls": 0, "model_calls": 0,
         }, sort_keys=True))
         return 0

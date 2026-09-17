@@ -493,6 +493,7 @@ def run_iteration(
     cross_tier_comparison: dict | None = None,
     campaign_id: str | None = None,
     campaign_manifest_sha256: str | None = None,
+    expected_campaign_link: dict[str, str] | None = None,
 ) -> dict:
     """Run one LOOP_V0 iteration. Returns the final iteration_record dict.
 
@@ -539,6 +540,8 @@ def run_iteration(
         raise CampaignError("research campaign changed after dispatch planning")
     if campaign is not None:
         campaign_link = bind_topic(campaign, topic)
+    if expected_campaign_link is not None and campaign_link != expected_campaign_link:
+        raise CampaignError("registered campaign topic changed after dispatch planning")
     context = (empirical_context.build(experiment_outcome)
                if experiment_outcome is not None else None)
     if log_path is _USE_DEFAULT_LOG:

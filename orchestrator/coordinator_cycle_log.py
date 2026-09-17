@@ -401,6 +401,9 @@ def cycle_row_from_report(
         "planner_attempts": report.get("attempts") or [],
     }
     campaign_context = state.get("campaign_context") or report.get("campaign_context")
+    for key in ("topic_replenishment", "campaign_test_debt", "plan_origin"):
+        if key in state:
+            out["planner_state"][key] = copy.deepcopy(state[key])
     if isinstance(campaign_context, dict):
         out["campaign_context"] = copy.deepcopy(campaign_context)
         out["planner_state"]["campaign_context"] = copy.deepcopy(campaign_context)

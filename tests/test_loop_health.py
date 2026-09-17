@@ -195,7 +195,12 @@ def _refusal(status, *, gate_reason=None, run_id="coordinator_9f92accc"):
 @pytest.mark.parametrize("status,reason", [
     ("daily_budget_paced", "budget"),
     ("daily_budget_exhausted", "budget"),
+    ("activity_budget_limited", "budget"),
     ("paused", "paused"),
+    ("daily_topic_limit", "daily_topics"),
+    ("queue_starved", "topic_source"),
+    ("topic_source_unavailable", "topic_source"),
+    ("topic_registration_refused", "topic_source"),
 ])
 def test_gate_reason_from_status(status, reason):
     assert lh.gate_reason(_refusal(status)) == reason
@@ -205,11 +210,14 @@ def test_gate_reason_enum_is_frozen_to_reasons_with_producers():
     """B2/NB1 (2026-08-19 review). Every reason the module will honor must
     have a live producer that REACHES emit_health_signals:
       budget -> coordinator.py's daily-budget gate,
-      paused -> coordinator.py's pause-file kill switch.
+      paused -> coordinator.py's pause-file kill switch,
+      daily_topics/topic_source -> coordinator.py's bounded queue holds.
     "lock"/"active_run" were deleted: flock contention is resolved in bash
     (cron Gate 1 -> exit 0, no Python) and in nara_daemon._run_pass (Gate 1
     -> "skipped:flock"), both of which return BEFORE any report exists."""
-    assert set(lh._GATE_REASONS) == {"budget", "paused"}
+    assert set(lh._GATE_REASONS) == {
+        "budget", "paused", "daily_topics", "topic_source",
+    }
     assert set(lh._GATE_REASON_BY_STATUS.values()) <= set(lh._GATE_REASONS)
     assert set(lh._GATE_LEVEL) == set(lh._GATE_REASONS)
     assert set(lh._GATE_DETAIL) == set(lh._GATE_REASONS)
@@ -245,6 +253,31 @@ def test_unrecognized_gate_reason_still_falls_back_to_a_known_status():
     assert lh.gate_reason(rep) == "budget"
 
 
+@pytest.mark.parametrize("report", [
+    _refusal("queue_starved", gate_reason="daily_topics"),
+    {**_refusal("daily_topic_limit", gate_reason="daily_topics"),
+     "plan": [{"name": "noop"}]},
+    {**_refusal("topic_source_unavailable", gate_reason="topic_source"),
+     "executed": [{"action": "noop", "status": "passed"}]},
+])
+def test_recognized_daily_gate_requires_matching_empty_hold_shape(report, capsys):
+    """A known label alone cannot buy exemption from the stall detector."""
+    assert lh.gate_reason(report) is None
+    assert "do not match that gate's refusal shape" in capsys.readouterr().err
+    out = lh.detect_stall(report, 0)
+    assert out is not None and out["signal"] == "loop_stalled"
+
+
+@pytest.mark.parametrize("status", [
+    "daily_topic_limit", "queue_starved", "topic_source_unavailable",
+    "topic_registration_refused",
+])
+def test_daily_gate_status_fallback_also_requires_empty_hold_shape(status):
+    report = {**_refusal(status),
+              "executed": [{"action": "noop", "status": "passed"}]}
+    assert lh.gate_reason(report) is None
+
+
 def test_gate_reason_none_for_a_real_cycle():
     assert lh.gate_reason(_report([{"action": "noop", "status": "passed"}])) is None
     assert lh.gate_reason({}) is None
@@ -253,6 +286,8 @@ def test_gate_reason_none_for_a_real_cycle():
 
 @pytest.mark.parametrize("status", [
     "daily_budget_paced", "daily_budget_exhausted", "paused",
+    "daily_topic_limit", "queue_starved", "topic_source_unavailable",
+    "topic_registration_refused",
 ])
 def test_gated_cycle_never_emits_loop_stalled(status):
     """THE regression pin. 2026-08-19T03:32:39Z: the daemon's heartbeat wake
@@ -266,7 +301,12 @@ def test_gated_cycle_never_emits_loop_stalled(status):
 @pytest.mark.parametrize("status,reason,level", [
     ("daily_budget_paced", "budget", "ok"),
     ("daily_budget_exhausted", "budget", "ok"),
+    ("activity_budget_limited", "budget", "ok"),
     ("paused", "paused", "amber"),
+    ("daily_topic_limit", "daily_topics", "ok"),
+    ("queue_starved", "topic_source", "amber"),
+    ("topic_source_unavailable", "topic_source", "amber"),
+    ("topic_registration_refused", "topic_source", "amber"),
 ])
 def test_detect_gated_signal_reason_and_level(status, reason, level):
     out = lh.detect_gated(_refusal(status))
@@ -349,6 +389,36 @@ def test_gate_continuity_never_downgrades_below_the_base_level():
                             "first_gated_at": T0.isoformat()})
     out = lh.gate_continuity(prev, gated, T0 + timedelta(minutes=10))
     assert out["level"] == "amber"
+
+
+@pytest.mark.parametrize("hours,level", [
+    (0, "ok"),
+    (25.9, "ok"),
+    (26, "amber"),
+    (47.9, "amber"),
+    (48, "red"),
+])
+def test_daily_topic_cap_uses_overnight_safe_continuity(hours, level):
+    gated = lh.detect_gated(_refusal("daily_topic_limit"))
+    prev = _flag_with_gate({"reason": "daily_topics", "consecutive": 3,
+                            "first_gated_at": T0.isoformat()})
+    out = lh.gate_continuity(prev, gated, T0 + timedelta(hours=hours))
+    assert out["level"] == level
+    assert out["age_s"] == int(hours * 3600)
+
+
+def test_topic_source_starts_amber_and_turns_red_at_existing_red_bar():
+    gated = lh.detect_gated(_refusal("queue_starved"))
+    first = lh.gate_continuity(None, gated, T0)
+    assert first["level"] == "amber"
+    prev = _flag_with_gate({"reason": "topic_source", "consecutive": 2,
+                            "first_gated_at": T0.isoformat()})
+    assert lh.gate_continuity(
+        prev, gated, T0 + timedelta(hours=11.9)
+    )["level"] == "amber"
+    assert lh.gate_continuity(
+        prev, gated, T0 + timedelta(hours=12)
+    )["level"] == "red"
 
 
 def test_gate_continuity_restarts_when_the_reason_changes():

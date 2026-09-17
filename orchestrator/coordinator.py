@@ -807,12 +807,14 @@ def assess_state(
     }
     if campaign_public is not None:
         result["campaign_context"] = campaign_public
-        from orchestrator.research_campaign import bind_topic
+        from orchestrator.research_campaign import all_topics, bind_topic
+        from orchestrator.daily_research import campaign_test_debt
 
         result["campaign_topic_links"] = [
             bind_topic(campaign, topic["text"])
-            for topic in campaign["topic_policy"]["topics"]
+            for topic in all_topics(campaign)
         ]
+        result["campaign_test_debt"] = campaign_test_debt(rows)
     return result
 
 
@@ -833,9 +835,10 @@ def _planner_system_prompt(
         campaign_rules = (
             "\nACTIVE RESEARCH CAMPAIGN — this plan is isolated to "
             f"{campaign_context.get('campaign_id')!r}. Only the reduced menu "
-            "shown above is admitted. For run_loop_iteration, copy one exact "
-            "campaign_preregistered topic from state.topic_suggestions; never "
-            "rewrite it. Legacy agenda, findings, and feedback are outside this "
+            "shown above is admitted. For run_loop_iteration, choose one exact "
+            "topic from state.topic_suggestions. You may copy its topic_id into "
+            "args.topic; the dispatcher resolves only currently available IDs "
+            "to registered text. Never rewrite a topic. Legacy agenda, findings, and feedback are outside this "
             "campaign. promote_findings is campaign-filtered by the dispatcher. "
             "A finding-id bubble may name only a finding in "
             "state.surfaced_pending. The campaign question is: "
@@ -986,6 +989,22 @@ def plan(
     return []
 
 
+def _resolve_campaign_topic_ids(raw_plan: list, state: dict) -> list:
+    """Resolve an available ID, never an invented/consumed or fuzzy topic."""
+    available = {item["topic_id"]: item["topic"]
+                 for item in state.get("topic_suggestions", [])
+                 if isinstance(item, dict) and isinstance(item.get("topic_id"), str)
+                 and isinstance(item.get("topic"), str)}
+    result = copy.deepcopy(raw_plan)
+    for item in result:
+        if (isinstance(item, dict) and item.get("action") == "run_loop_iteration"
+                and isinstance(item.get("args"), dict)):
+            topic = item["args"].get("topic")
+            if isinstance(topic, str) and topic in available:
+                item["args"]["topic"] = available[topic]
+    return result
+
+
 def _campaign_plan_errors(
     normalized: list[dict[str, Any]],
     *,
@@ -1005,7 +1024,7 @@ def _campaign_plan_errors(
         item.get("topic")
         for item in state.get("topic_suggestions") or []
         if isinstance(item, dict)
-        and item.get("source") == "campaign_preregistered"
+        and item.get("source") in {"campaign_preregistered", "campaign_registered"}
     }
     surfaced_ids = {
         item.get("finding_id")
@@ -1036,6 +1055,8 @@ def _campaign_plan_errors(
                 errors.append(
                     f"action[{index}]: campaign topic is not currently available"
                 )
+            else:
+                available.remove(topic)
         elif action == "bubble_up" and args.get("finding_ids"):
             outside = [fid for fid in args["finding_ids"] if fid not in surfaced_ids]
             if outside:
@@ -1166,6 +1187,7 @@ def handle_forecast_markets(
 def _default_execute_handlers(
     *, campaign_id: str | None = None,
     campaign_manifest_sha256: str | None = None,
+    expected_topic_links: dict[str, dict] | None = None,
 ) -> dict[str, Callable[..., Any]]:
     """The real dispatch table, resolved lazily so importing the coordinator
     pulls in nara / finding_promotion only when an --execute cycle runs."""
@@ -1174,11 +1196,14 @@ def _default_execute_handlers(
     from workers.mine_paper_gap import mine_paper_gap as _mine_paper_gap
 
     def _run_loop_iteration(*, topic: str) -> Any:
+        binding = ({"expected_campaign_link": expected_topic_links[topic]}
+                   if expected_topic_links and topic in expected_topic_links else {})
         return _run_iteration(
             topic,
             source="coordinator",
             campaign_id=campaign_id,
             campaign_manifest_sha256=campaign_manifest_sha256,
+            **binding,
         )
 
     def _promote(*, max_candidates: int | None = None) -> Any:
@@ -1403,6 +1428,20 @@ def coordinator_cycle(
         set_current_agent(None)
 
 
+def _record_queue_hold(run_id: str, state: dict, replenishment: dict) -> dict:
+    reason = ("daily_topics" if replenishment["status"] == "daily_topic_limit"
+              else "budget" if replenishment["status"] == "activity_budget_limited"
+              else "topic_source")
+    report = {
+        "run_id": run_id, "status": replenishment["status"],
+        "gate_reason": reason, "state": state,
+        "errors": [], "plan": [], "executed": [], "bubble_up": [], "attempts": [],
+    }
+    coordinator_cycle_log.write_coordinator_cycle(report)
+    coordinator_cycle_log.emit_health_signals(report)
+    return report
+
+
 def _coordinator_cycle(
     *,
     run_id: str,
@@ -1417,6 +1456,27 @@ def _coordinator_cycle(
     active_run_path: str | os.PathLike,
     campaign: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    replenishment = None
+    if (not dry_run and campaign is not None
+            and campaign["topic_policy"]["mode"] == "registered_exploratory"):
+        from orchestrator.daily_research import read_loop_rows, replenish
+        from orchestrator.research_campaign import campaign_context, load_active_campaign
+        from pipeline.daily_arxiv_job import IngestionError
+
+        try:
+            replenishment = replenish(campaign, read_loop_rows(Path(loop_memory_path)))
+        except (IngestionError, OSError) as exc:
+            replenishment = {"status": "topic_source_unavailable", "reason": type(exc).__name__}
+        if replenishment["status"] in {"topic_source_unavailable", "topic_registration_refused"}:
+            return _record_queue_hold(run_id, {
+                "campaign_context": campaign_context(campaign),
+                "topic_replenishment": replenishment,
+            }, replenishment)
+        refreshed = load_active_campaign()
+        if (refreshed is None or refreshed["campaign_id"] != campaign["campaign_id"]
+                or refreshed["_manifest_sha256"] != campaign["_manifest_sha256"]):
+            raise ValueError("active campaign changed during topic registration")
+        campaign = refreshed
     state = assess_state(
         loop_memory_path=loop_memory_path,
         surfaced_path=surfaced_path,
@@ -1427,6 +1487,11 @@ def _coordinator_cycle(
             campaign["_manifest_sha256"] if campaign is not None else None
         ),
     )
+    if replenishment is not None:
+        state["topic_replenishment"] = replenishment
+        if (not state.get("topic_suggestions")
+                and not any("vote-ready" in gap for gap in state.get("gaps", []))):
+            return _record_queue_hold(run_id, state, replenishment)
     _ts = (state.get("topic_suggestions") or [{}])[0]
     active_run.update_active_run(
         current_step="assess",
@@ -1445,16 +1510,32 @@ def _coordinator_cycle(
     extra_guidance: str | None = None
     validated: list[dict[str, Any]] | None = None
     raw_plan: list[dict[str, Any]] = []
+    daily_intake = (campaign is not None
+                    and campaign["topic_policy"]["mode"] == "registered_exploratory"
+                    and bool(state.get("topic_suggestions")))
+    state["plan_origin"] = "registered_daily_queue" if daily_intake else "model_planner"
+    if daily_intake and not dry_run:
+        activity = activity_class("run_loop_iteration")
+        if activity_budget_state()[activity]["remaining"] < 3:
+            return _record_queue_hold(run_id, state, {
+                "status": "activity_budget_limited", "reason": activity,
+            })
     for attempt in range(_MAX_REPLANS + 1):
-        raw_plan = plan(
-            state,
-            budget=budget,
-            backend=backend,
-            model=model,
-            extra_guidance=extra_guidance,
-            parent_request_id=run_id,
-        )
-        verdict = validate_plan(raw_plan, budget=budget)
+        if daily_intake:
+            # A routine daily intake has one exact eligible task. It still
+            # passes the ordinary action, campaign, budget and worker gates.
+            # Asking the planner to rediscover this fact caused repeated noops.
+            raw_plan = [{"action": "run_loop_iteration", "args": {
+                "topic": state["topic_suggestions"][0]["topic_id"],
+            }}]
+        else:
+            raw_plan = plan(
+                state, budget=budget, backend=backend, model=model,
+                extra_guidance=extra_guidance, parent_request_id=run_id,
+            )
+        selected_plan = (_resolve_campaign_topic_ids(raw_plan, state)
+                         if campaign is not None else raw_plan)
+        verdict = validate_plan(selected_plan, budget=budget)
         if verdict["ok"] and campaign is not None:
             campaign_errors = _campaign_plan_errors(
                 verdict["normalized"], campaign=campaign, state=state,
@@ -1465,14 +1546,15 @@ def _coordinator_cycle(
                     "errors": campaign_errors,
                     "normalized": [],
                 }
-        attempts.append({
-            "attempt": attempt,
-            "raw_plan": raw_plan,
-            "ok": verdict["ok"],
-            "errors": verdict["errors"],
-        })
+        if not daily_intake:
+            attempts.append({
+                "attempt": attempt, "raw_plan": raw_plan,
+                "ok": verdict["ok"], "errors": verdict["errors"],
+            })
         if verdict["ok"]:
             validated = verdict["normalized"]
+            break
+        if daily_intake:
             break
         # Append the validator errors as guidance for the next attempt.
         extra_guidance = "\n".join(f"- {e}" for e in verdict["errors"])
@@ -1482,7 +1564,7 @@ def _coordinator_cycle(
         report = {
             "run_id": run_id,
             "status": "no_valid_plan",
-            "errors": attempts[-1]["errors"] if attempts else ["no plan produced"],
+            "errors": verdict["errors"],
             "attempts": attempts,
             "state": state,
             "plan": [],
@@ -1527,6 +1609,9 @@ def _coordinator_cycle(
         campaign_manifest_sha256=(
             campaign["_manifest_sha256"] if campaign is not None else None
         ),
+        expected_topic_links={item["topic"]: item["campaign"]
+                              for item in state.get("topic_suggestions", [])
+                              if isinstance(item.get("campaign"), dict)},
     )
     executed: list[dict[str, Any]] = []
     spent = 0
@@ -1712,7 +1797,9 @@ def _bubble_campaign_link(
     if campaign is None:
         return None
     try:
-        topics = campaign["topic_policy"]["topics"]
+        from orchestrator.research_campaign import all_topics
+
+        topics = all_topics(campaign)
         if not isinstance(topics, list):
             raise TypeError("campaign topics are not a list")
         if len(topics) != 1:
