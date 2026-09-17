@@ -2,9 +2,8 @@
 """
 Unit tests for pipeline/arxiv_scraper.py.
 
-The scraper sources papers from the arXiv API (DECISIONS.md D-027). These
-tests run it against mocked arXiv Atom-feed responses (via unittest.mock --
-no real network) and assert:
+The scraper sources papers from official arXiv metadata interfaces
+(DECISIONS.md D-027). These tests use mocked XML responses only and assert:
 
   * exponential backoff fires on HTTP 503 (sleeps along _BACKOFF_SCHEDULE
     then fails);
@@ -13,7 +12,9 @@ no real network) and assert:
   * --jitter-seconds N inserts a random startup sleep in [0, N];
   * de-duplication on arxiv_id works, including across version suffixes;
   * the newest-first date window stops pagination and excludes old papers;
-  * a page-1 failure propagates; a later-page failure returns partial results;
+  * no failed later page is returned as a complete fresh result;
+  * OAI-PMH category-set results normalize and de-duplicate correctly;
+  * legacy API fallback has distinct source provenance;
   * entries lacking an arXiv id are dropped;
   * the JSONL written by main() is well-formed with all required fields.
 
@@ -69,6 +70,60 @@ def _feed(*entries):
             + "".join(entries) + '</feed>')
 
 
+def _paper(arxiv_id):
+    return {
+        "title": f"Paper {arxiv_id}",
+        "abstract": "An abstract.",
+        "authors": ["Ada Lovelace"],
+        "arxiv_id": arxiv_id,
+        "semantic_scholar_id": None,
+        "citation_count": 0,
+        "category": "cs.GT",
+        "publication_date": _IN_WINDOW,
+    }
+
+
+def _provenance(paper_count=1, source="arxiv_oai_pmh"):
+    fallback = None if source == "arxiv_oai_pmh" else "arxiv_oai_pmh"
+    endpoint = (arxiv_scraper._OAI_URL if source == "arxiv_oai_pmh"
+                else arxiv_scraper._API_URL)
+    return {
+        "schema": arxiv_scraper._PROVENANCE_SCHEMA,
+        "source": source,
+        "endpoint": endpoint,
+        "fallback_from": fallback,
+        "categories": ["cs.GT"],
+        "since_days": 7,
+        "cutoff_date": arxiv_scraper._cutoff_date(7),
+        "paper_count": paper_count,
+        "complete": True,
+    }
+
+
+def _oai_record(arxiv_id, created=_IN_WINDOW,
+                categories="cs.GT", title="An OAI Paper"):
+    return (
+        '<record><header><identifier>oai:arXiv.org:' + arxiv_id + '</identifier>'
+        f'<datestamp>{created}</datestamp></header><metadata>'
+        '<arXiv xmlns="http://arxiv.org/OAI/arXiv/">'
+        f'<id>{arxiv_id}</id><created>{created}</created>'
+        '<authors><author><keyname>Lovelace</keyname>'
+        '<forenames>Ada</forenames></author></authors>'
+        f'<title>{title}</title><categories>{categories}</categories>'
+        '<abstract>An OAI abstract.</abstract></arXiv></metadata></record>'
+    )
+
+
+def _oai_response(*records, token=""):
+    token_xml = f"<resumptionToken>{token}</resumptionToken>" if token else ""
+    return (
+        '<?xml version="1.0"?><OAI-PMH '
+        'xmlns="http://www.openarchives.org/OAI/2.0/">'
+        '<ListRecords>' + "".join(records) + token_xml
+        + '</ListRecords></OAI-PMH>'
+    )
+
+
 class _FakeResp:
     """Minimal context-manager stand-in for an http.client response."""
 
@@ -122,7 +177,7 @@ class ExponentialBackoffTest(unittest.TestCase):
         with mock.patch.object(arxiv_scraper.urllib.request, "urlopen",
                                side_effect=_http_error(400)), \
              mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
-            with self.assertRaises(urllib.error.HTTPError):
+            with self.assertRaises(arxiv_scraper.ArxivScraperError):
                 arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
 
         m_sleep.assert_not_called()
@@ -151,6 +206,16 @@ class ExponentialBackoffTest(unittest.TestCase):
 
         self.assertEqual([c.args[0] for c in m_sleep.call_args_list],
                          [arxiv_scraper._RETRY_AFTER_CAP_S])
+
+    def test_short_retry_after_still_respects_global_request_spacing(self):
+        retry_429 = _http_error(429, headers={"Retry-After": "1"})
+        feed = _feed(_entry("2605.00080"))
+        with mock.patch.object(arxiv_scraper.urllib.request, "urlopen",
+                               side_effect=[retry_429, _FakeResp(feed)]), \
+             mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
+            arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
+
+        m_sleep.assert_called_once_with(arxiv_scraper._REQUEST_SPACING_S)
 
     def test_retry_after_falls_back_when_missing_or_invalid(self):
         """Missing/garbage Retry-After leaves the static schedule in effect."""
@@ -211,9 +276,19 @@ class DedupAndNormalizeTest(unittest.TestCase):
 
         self.assertEqual(papers[0]["category"], "cs.MA")
 
+    def test_strategic_category_wins_over_cs_ma_cross_list(self):
+        feed = _feed(_entry("2605.30004", primary="cs.MA",
+                            categories=("cs.MA", "cs.GT")))
+        with mock.patch.object(arxiv_scraper, "_get_with_backoff",
+                               return_value=feed):
+            papers = arxiv_scraper.fetch_papers(["cs.MA", "cs.GT"],
+                                                since_days=7)
 
-class PartialResultsTest(unittest.TestCase):
-    """Page 1 failures still raise; later-page failures keep what we have."""
+        self.assertEqual(papers[0]["category"], "cs.GT")
+
+
+class CompleteResultsTest(unittest.TestCase):
+    """A failed page always invalidates that source's entire result."""
 
     def test_page1_failure_propagates(self):
         """If the very first page fails, the error propagates unchanged."""
@@ -223,8 +298,8 @@ class PartialResultsTest(unittest.TestCase):
             with self.assertRaises(arxiv_scraper.ArxivScraperError):
                 arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
 
-    def test_page2_failure_returns_partial_results(self):
-        """Page 1 succeeds with a full page; page 2 fails -- keep page 1."""
+    def test_page2_failure_does_not_return_partial_results(self):
+        """Page 1 succeeds but page 2 fails, so the source result fails."""
         # Force pagination: shrink _PAGE_SIZE so a 2-entry page-1 triggers
         # a page-2 fetch (the loop pages while len(entries) >= _PAGE_SIZE).
         feed_p1 = _feed(_entry("2605.10001"), _entry("2605.10002"))
@@ -233,22 +308,18 @@ class PartialResultsTest(unittest.TestCase):
              mock.patch.object(arxiv_scraper, "_get_with_backoff",
                                side_effect=[feed_p1, err]), \
              mock.patch.object(arxiv_scraper.time, "sleep"):
-            papers = arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
+            with self.assertRaises(arxiv_scraper.ArxivScraperError):
+                arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
 
-        self.assertEqual(sorted(p["arxiv_id"] for p in papers),
-                         ["2605.10001", "2605.10002"])
-
-    def test_page2_malformed_xml_returns_partial_results(self):
-        """Page 1 succeeds; page 2 returns garbage XML -- keep page 1."""
+    def test_page2_malformed_xml_does_not_return_partial_results(self):
+        """Page 1 succeeds but page 2 is malformed, so the result fails."""
         feed_p1 = _feed(_entry("2605.10003"), _entry("2605.10004"))
         with mock.patch.object(arxiv_scraper, "_PAGE_SIZE", 2), \
              mock.patch.object(arxiv_scraper, "_get_with_backoff",
                                side_effect=[feed_p1, "<not-xml>"]), \
              mock.patch.object(arxiv_scraper.time, "sleep"):
-            papers = arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
-
-        self.assertEqual(sorted(p["arxiv_id"] for p in papers),
-                         ["2605.10003", "2605.10004"])
+            with self.assertRaises(arxiv_scraper.ArxivScraperError):
+                arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
 
     def test_page1_malformed_xml_raises(self):
         """Page 1 garbage XML raises (no salvage possible)."""
@@ -258,19 +329,111 @@ class PartialResultsTest(unittest.TestCase):
                 arxiv_scraper.fetch_papers(["cs.GT"], since_days=7)
 
 
+class OaiSourceTest(unittest.TestCase):
+
+    def test_oai_category_sets_normalize_deduplicate_and_space_requests(self):
+        duplicate = _oai_record("2605.30001", categories="cs.MA cs.GT")
+        second = _oai_record("2605.30002", categories="econ.TH")
+        responses = [
+            _oai_response(duplicate),
+            _oai_response(duplicate),
+            _oai_response(second),
+        ]
+        with mock.patch.object(arxiv_scraper, "_get_url_with_backoff",
+                               side_effect=responses) as m_get, \
+             mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
+            papers = arxiv_scraper._fetch_oai_pmh(
+                ["cs.MA", "cs.GT", "econ.TH"], _OUT_OF_WINDOW
+            )
+
+        self.assertEqual([p["arxiv_id"] for p in papers],
+                         ["2605.30002", "2605.30001"])
+        self.assertEqual(papers[1]["authors"], ["Ada Lovelace"])
+        self.assertEqual(papers[1]["category"], "cs.GT")
+        self.assertEqual(m_get.call_count, 3)
+        self.assertEqual([call.args[0] for call in m_sleep.call_args_list],
+                         [arxiv_scraper._REQUEST_SPACING_S] * 2)
+        urls = [call.args[0] for call in m_get.call_args_list]
+        self.assertIn("set=cs%3Acs%3AMA", urls[0])
+        self.assertIn("set=cs%3Acs%3AGT", urls[1])
+        self.assertIn("set=econ%3Aecon%3ATH", urls[2])
+
+    def test_oai_resumption_token_is_exhausted_before_success(self):
+        first = _oai_response(_oai_record("2605.31001"), token="next token")
+        second = _oai_response(_oai_record("2605.31002"))
+        with mock.patch.object(arxiv_scraper, "_get_url_with_backoff",
+                               side_effect=[first, second]) as m_get, \
+             mock.patch.object(arxiv_scraper.time, "sleep"):
+            papers = arxiv_scraper._fetch_oai_pmh(["cs.GT"], _OUT_OF_WINDOW)
+
+        self.assertEqual(len(papers), 2)
+        self.assertIn("resumptionToken=next+token", m_get.call_args_list[1].args[0])
+
+    def test_oai_no_records_match_is_a_complete_empty_set(self):
+        body = ('<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/">'
+                '<error code="noRecordsMatch">none</error></OAI-PMH>')
+        papers, token = arxiv_scraper._parse_oai_page(
+            body, {"cs.GT"}, _IN_WINDOW
+        )
+        self.assertEqual((papers, token), ([], ""))
+
+    def test_oai_explicitly_deleted_record_is_skipped(self):
+        deleted = (
+            '<record><header status="deleted">'
+            '<identifier>oai:arXiv.org:2605.31998</identifier>'
+            f'<datestamp>{_IN_WINDOW}</datestamp></header></record>'
+        )
+        papers, token = arxiv_scraper._parse_oai_page(
+            _oai_response(deleted), {"cs.GT"}, _OUT_OF_WINDOW
+        )
+        self.assertEqual((papers, token), ([], ""))
+
+    def test_oai_nondeleted_record_without_metadata_fails_completeness(self):
+        malformed = (
+            '<record><header>'
+            '<identifier>oai:arXiv.org:2605.31999</identifier>'
+            f'<datestamp>{_IN_WINDOW}</datestamp></header></record>'
+        )
+        with self.assertRaisesRegex(
+            arxiv_scraper.ArxivScraperError,
+            "nondeleted record omitted metadata",
+        ):
+            arxiv_scraper._parse_oai_page(
+                _oai_response(malformed), {"cs.GT"}, _OUT_OF_WINDOW
+            )
+
+    def test_complete_search_fallback_has_distinct_provenance(self):
+        with mock.patch.object(
+            arxiv_scraper, "_fetch_oai_pmh",
+            side_effect=arxiv_scraper.ArxivScraperError("OAI unavailable"),
+        ), mock.patch.object(
+            arxiv_scraper, "_fetch_search_api", return_value=[_paper("2605.32001")]
+        ) as m_search, mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
+            papers, provenance = arxiv_scraper.fetch_papers_with_provenance(
+                ["cs.GT"], 7
+            )
+
+        self.assertEqual([paper["arxiv_id"] for paper in papers], ["2605.32001"])
+        self.assertEqual(provenance["source"], "arxiv_search_api")
+        self.assertEqual(provenance["fallback_from"], "arxiv_oai_pmh")
+        self.assertTrue(provenance["complete"])
+        m_search.assert_called_once()
+        m_sleep.assert_called_once_with(arxiv_scraper._REQUEST_SPACING_S)
+
+
 class JitterTest(unittest.TestCase):
 
     def test_jitter_seconds_sleeps_random_uniform(self):
         """--jitter-seconds N calls random.uniform(0, N) and sleeps that much."""
-        feed = _feed(_entry("2605.00099"))
         with tempfile.TemporaryDirectory() as tmp:
             out_path = os.path.join(tmp, "papers.jsonl")
             argv = ["--categories", "cs.GT",
                     "--since-days", "7",
                     "--jitter-seconds", "300",
                     "--output", out_path]
-            with mock.patch.object(arxiv_scraper, "_get_with_backoff",
-                                   return_value=feed), \
+            with mock.patch.object(arxiv_scraper, "fetch_papers_with_provenance",
+                                   return_value=([_paper("2605.00099")],
+                                                 _provenance())), \
                  mock.patch.object(arxiv_scraper.random, "uniform",
                                    return_value=42.5) as m_uniform, \
                  mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
@@ -283,14 +446,14 @@ class JitterTest(unittest.TestCase):
 
     def test_jitter_seconds_zero_is_no_op(self):
         """--jitter-seconds 0 (the default) does not sleep at startup."""
-        feed = _feed(_entry("2605.00100"))
         with tempfile.TemporaryDirectory() as tmp:
             out_path = os.path.join(tmp, "papers.jsonl")
             argv = ["--categories", "cs.GT",
                     "--since-days", "7",
                     "--output", out_path]
-            with mock.patch.object(arxiv_scraper, "_get_with_backoff",
-                                   return_value=feed), \
+            with mock.patch.object(arxiv_scraper, "fetch_papers_with_provenance",
+                                   return_value=([_paper("2605.00100")],
+                                                 _provenance())), \
                  mock.patch.object(arxiv_scraper.random, "uniform") as m_uniform, \
                  mock.patch.object(arxiv_scraper.time, "sleep") as m_sleep:
                 arxiv_scraper.main(argv)
@@ -303,17 +466,23 @@ class JsonlOutputTest(unittest.TestCase):
 
     def test_main_writes_well_formed_jsonl(self):
         """main() writes one valid JSON object per line with all fields."""
-        feed = _feed(_entry("2605.00010"), _entry("2605.00011"))
         with tempfile.TemporaryDirectory() as tmp:
             out_path = os.path.join(tmp, "papers.jsonl")
+            provenance_path = os.path.join(tmp, "provenance.json")
             argv = ["--categories", "cs.MA,cs.GT,econ.TH",
-                    "--since-days", "7", "--output", out_path]
-            with mock.patch.object(arxiv_scraper, "_get_with_backoff",
-                                   return_value=feed):
+                    "--since-days", "7", "--output", out_path,
+                    "--provenance-output", provenance_path]
+            provenance = _provenance(paper_count=2)
+            provenance["categories"] = ["cs.MA", "cs.GT", "econ.TH"]
+            with mock.patch.object(arxiv_scraper, "fetch_papers_with_provenance",
+                                   return_value=([_paper("2605.00010"),
+                                                  _paper("2605.00011")],
+                                                 provenance)):
                 rc = arxiv_scraper.main(argv)
 
             self.assertEqual(rc, 0)
             lines = Path(out_path).read_text(encoding="utf-8").splitlines()
+            written_provenance = json.loads(Path(provenance_path).read_text())
 
         self.assertEqual(len(lines), 2)
         for line in lines:
@@ -323,6 +492,7 @@ class JsonlOutputTest(unittest.TestCase):
             self.assertIsInstance(paper["authors"], list)
             self.assertTrue(paper["arxiv_id"])
             self.assertTrue(paper["abstract"])
+        self.assertEqual(written_provenance, provenance)
 
 
 if __name__ == "__main__":

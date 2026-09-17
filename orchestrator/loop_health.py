@@ -16,14 +16,15 @@ the cockpit / cron can poll.
     "severity": "stalled", ...}. Any activity on any axis -> None
     (conservative: no false red).
   - gate_reason(report) / detect_gated(report) — the cycle was HELD, not
-    stalled: a refusal by the daily-budget pacing gate or by the pause file.
+    stalled: a refusal by a bounded budget, pause, daily-topic, or verified-
+    source gate.
     A held cycle is DELIBERATELY idle and emits `loop_gated:<reason>`, never
     loop_stalled. The reason set is a FROZEN ENUM (_GATE_REASONS): only a
     reason with a live producer may suppress the stall path.
   - gate_continuity(prev_flag, gate, now) — ages a CONTINUOUSLY-gated loop
-    across wakes and escalates by that age (ok -> amber at 3h, -> red at
-    12h). A gate that never clears IS the loop not moving; without this a
-    refuse-every-cycle day writes a fresh "ok" every hour and looks perfect.
+    across wakes and escalates by that age. Most gates use 3h/12h; the daily
+    registration cap uses 26h/48h because it is expected to hold through the
+    next UTC reset.
   - write_alert_flag(path, level, reasons, gate=None, now=None) —
     run_state/loop_alert.json {"level": "red"|"amber"|"ok", "reasons": [...],
     "updated_at": iso} plus, when the cycle was held, an ADDITIVE
@@ -90,6 +91,12 @@ FRONTIER_DOWN_STREAK = 3
 #              gate_reason="paused" and (since this fix) calls
 #              emit_health_signals too, so the reason can actually reach a
 #              reader instead of dying in a `return`.
+#   "daily_topics" — the registered exploratory campaign has reached its
+#              three-registration UTC-day cap. Honored only on the exact
+#              empty daily_topic_limit refusal shape.
+#   "topic_source" — no current verified/unused literature source can be
+#              registered. Honored only on one of the exact empty source-hold
+#              statuses emitted before the planner runs.
 #
 # DELETED here, deliberately: "lock" and "active_run". Neither had a producer
 # anywhere in the repo — flock contention is resolved in bash
@@ -98,7 +105,16 @@ FRONTIER_DOWN_STREAK = 3
 # report object exists. A reason that cannot fire cannot be given tests that
 # pretend it does; if a future path ever constructs such a report, it lands
 # here WITH its producer.
-_GATE_REASONS = ("budget", "paused")
+_GATE_REASONS = ("budget", "paused", "daily_topics", "topic_source")
+
+_STRICT_EMPTY_GATE_STATUSES = {
+    "daily_topics": frozenset({"daily_topic_limit"}),
+    "topic_source": frozenset({
+        "queue_starved",
+        "topic_source_unavailable",
+        "topic_registration_refused",
+    }),
+}
 
 # Which gate held it, keyed off the refusal report's `status` (the
 # coordinator also sets an explicit `gate_reason`, preferred when present).
@@ -106,6 +122,11 @@ _GATE_REASON_BY_STATUS = {
     "paused": "paused",
     "daily_budget_exhausted": "budget",
     "daily_budget_paced": "budget",
+    "activity_budget_limited": "budget",
+    "daily_topic_limit": "daily_topics",
+    "queue_starved": "topic_source",
+    "topic_source_unavailable": "topic_source",
+    "topic_registration_refused": "topic_source",
 }
 
 # The BASE alert level a held cycle deserves, BY REASON — they are not the
@@ -119,6 +140,8 @@ _GATE_REASON_BY_STATUS = {
 _GATE_LEVEL = {
     "budget": "ok",
     "paused": "amber",
+    "daily_topics": "ok",
+    "topic_source": "amber",
 }
 
 _GATE_DETAIL = {
@@ -126,6 +149,10 @@ _GATE_DETAIL = {
                "(pacing/cap) — the loop is on its ration, not stuck"),
     "paused": ("the human kill switch is engaged (run_state/"
                "pause_coordinator) — the loop is halted on purpose"),
+    "daily_topics": ("the exploratory campaign reached its UTC-day topic "
+                     "registration cap — intake resumes after the daily reset"),
+    "topic_source": ("the exploratory campaign has no currently usable "
+                     "verified literature source — the planner was not called"),
 }
 
 # ── gate AGE escalation (2026-08-19 review, B1) ──────────────────────────
@@ -144,6 +171,8 @@ _GATE_DETAIL = {
 # the reason changes.
 GATE_AMBER_AFTER_S = 3 * 60 * 60    # 3h held: past any normal pacing gap
 GATE_RED_AFTER_S = 12 * 60 * 60     # 12h held: half a day without a cycle
+DAILY_TOPICS_AMBER_AFTER_S = 26 * 60 * 60
+DAILY_TOPICS_RED_AFTER_S = 48 * 60 * 60
 
 _LEVEL_RANK = {"ok": 0, "amber": 1, "red": 2}
 
@@ -254,11 +283,31 @@ def gate_reason(report: dict) -> str | None:
     _GATE_REASONS with its producer."""
     if not isinstance(report, dict):
         return None
+    def valid_shape(reason: str) -> bool:
+        statuses = _STRICT_EMPTY_GATE_STATUSES.get(reason)
+        if statuses is None:
+            return True
+        return (
+            report.get("status") in statuses
+            and report.get("plan") == []
+            and report.get("executed") == []
+        )
+
     explicit = report.get("gate_reason")
     if isinstance(explicit, str) and explicit.strip():
         reason = explicit.strip()
         if reason in _GATE_REASONS:
-            return reason
+            if valid_shape(reason):
+                return reason
+            print(
+                f"loop_health: report {report.get('run_id', 'unknown')} carries "
+                f"recognized gate_reason {reason!r} but its status/plan/"
+                "executed fields do not match that gate's refusal shape; NOT "
+                "honoring it as a gate — the cycle is judged by the normal "
+                "stall path.",
+                file=sys.stderr,
+            )
+            return None
         print(
             f"loop_health: report {report.get('run_id', 'unknown')} carries an "
             f"unrecognized gate_reason {reason!r} (known: "
@@ -267,7 +316,8 @@ def gate_reason(report: dict) -> str | None:
             "_GATE_REASONS together with its producer.",
             file=sys.stderr,
         )
-    return _GATE_REASON_BY_STATUS.get(str(report.get("status") or ""))
+    fallback = _GATE_REASON_BY_STATUS.get(str(report.get("status") or ""))
+    return fallback if fallback is not None and valid_shape(fallback) else None
 
 
 def detect_gated(report: dict) -> dict | None:
@@ -340,9 +390,13 @@ def gate_continuity(prev_flag: dict | None, gated: dict,
 
     age_s = max(0.0, (now - first).total_seconds())
     base = _GATE_LEVEL.get(reason, "amber")
-    if age_s >= GATE_RED_AFTER_S:
+    amber_after = (DAILY_TOPICS_AMBER_AFTER_S
+                   if reason == "daily_topics" else GATE_AMBER_AFTER_S)
+    red_after = (DAILY_TOPICS_RED_AFTER_S
+                 if reason == "daily_topics" else GATE_RED_AFTER_S)
+    if age_s >= red_after:
         level = worse(base, "red")
-    elif age_s >= GATE_AMBER_AFTER_S:
+    elif age_s >= amber_after:
         level = worse(base, "amber")
     else:
         level = base
@@ -370,7 +424,8 @@ def gate_escalation_reason(gate: dict) -> str | None:
         f"{gate['consecutive']} consecutive wake(s) since "
         f"{gate['first_gated_at']} — NO cycle has executed in that window. A "
         "gate that never clears is the loop not moving; check the gate's own "
-        "input (ledger/cap for budget, run_state/pause_coordinator for paused)"
+        "input (budget ledger, pause switch, daily allowance, or literature "
+        "source receipts)"
     )
 
 

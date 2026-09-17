@@ -63,6 +63,8 @@ FOLLOWUPS_PATH = REPO_ROOT / "memory" / "finding_followups.jsonl"
 IDEA_LEDGER_PATH = REPO_ROOT / "memory" / "idea_ledger.jsonl"
 FIX_QUEUE_PATH = REPO_ROOT / "memory" / "authorize_fix_queue.jsonl"
 PACKETS_PATH = REPO_ROOT / "run_state" / "packets.jsonl"
+INGESTION_PATH = REPO_ROOT / "run_state" / "arxiv_ingestion" / "last-success.json"
+CAMPAIGN_PATH = REPO_ROOT / "run_state" / "active_research_campaign.json"
 
 IDEAS_MD_PATH = REPO_ROOT / "memory" / "ideas.md"
 DAEMON_LOG_PATH = REPO_ROOT / "logs" / "nara-daemon.log"
@@ -116,6 +118,8 @@ def _watch_paths() -> dict[str, Path]:
         "idea_ledger": Path(IDEA_LEDGER_PATH),
         "authorize_fix_queue": Path(FIX_QUEUE_PATH),
         "packets": Path(PACKETS_PATH),
+        "fresh_literature": Path(INGESTION_PATH),
+        "active_campaign": Path(CAMPAIGN_PATH),
     }
 
 
@@ -226,11 +230,19 @@ def _agenda() -> list[dict]:
     def read() -> list[dict]:
         campaign_id = _active_campaign_id()
         if campaign_id is not None:
-            return list(
+            topics = list(
                 coordinator.assess_state(campaign_id=campaign_id).get(
                     "topic_suggestions",
                 ) or []
             )
+            if topics:
+                return topics
+            from orchestrator.daily_research import queue_candidates
+            from orchestrator.research_campaign import load_campaign
+
+            # Pure discovery wakes one gated coordinator pass. The pass holds
+            # the shared lock and registers provenance before any dispatch.
+            return queue_candidates(load_campaign(campaign_id))[:1]
         return idea_projection.agenda_topics(
             idea_ledger.load_state(IDEA_LEDGER_PATH),
         )

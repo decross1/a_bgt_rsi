@@ -39,7 +39,8 @@
         "research_question_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"},
         "research_question_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "topic_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{2,79}$"},
-        "topic_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        "topic_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "topic_registration_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
       }
     },
     "finding_id": {

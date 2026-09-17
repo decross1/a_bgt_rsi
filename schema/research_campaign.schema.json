@@ -78,7 +78,8 @@
         "selection": {
           "enum": [
             "team_proposed_within_owner_scope_2026-09-14",
-            "team_proposed_within_owner_scope_2026-09-15"
+            "team_proposed_within_owner_scope_2026-09-15",
+            "team_proposed_within_owner_scope_2026-09-17"
           ]
         }
       }
@@ -88,10 +89,11 @@
       "additionalProperties": false,
       "required": ["mode", "topics"],
       "properties": {
-        "mode": {"const": "preregistered_exact"},
+        "mode": {
+          "enum": ["preregistered_exact", "registered_exploratory"]
+        },
         "topics": {
           "type": "array",
-          "minItems": 1,
           "maxItems": 24,
           "items": {
             "type": "object",
@@ -105,7 +107,18 @@
             }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"mode": {"const": "preregistered_exact"}},
+            "required": ["mode"]
+          },
+          "then": {
+            "properties": {"topics": {"minItems": 1}}
+          }
+        }
+      ]
     },
     "study_manifests": {
       "type": "array",

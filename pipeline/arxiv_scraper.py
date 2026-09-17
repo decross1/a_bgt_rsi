@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""
-Day 5 arXiv pipeline -- stage 1 of 2: scrape recent abstracts.
+"""Day 5 arXiv pipeline -- stage 1 of 2: fetch recent abstracts.
 
-Pulls recent papers in the arXiv categories cs.MA / cs.GT / econ.TH straight
-from the public arXiv API (the export.arxiv.org Atom feed) and writes one
-JSON object per line to a JSONL file. Stage 2 (pipeline/embed_and_store.py)
-embeds and stores them.
+Pulls recent papers in the arXiv categories cs.MA / cs.GT / econ.TH from
+arXiv's public metadata interfaces and writes one JSON object per line to a
+JSONL file. Stage 2 (pipeline/embed_and_store.py) embeds and stores them.
 
 This is the "direct API + simple Python" fallback path the Day 5 plan
 describes (recovery_path for the ML-Intern attempt).
@@ -13,9 +11,9 @@ describes (recovery_path for the ML-Intern attempt).
 Source decision -- DECISIONS.md D-027, human-authorized 2026-05-21. The
 plan originally named the Semantic Scholar API, but S2 has no native
 arXiv-category filter and lags arXiv-ID indexing by weeks: a 7-day window
-yielded exactly 1 paper. The arXiv API has a native `cat:` filter and no
-indexing lag, so it is the source here. `semantic_scholar_id` and
-`citation_count` are not available from the arXiv API (citation_count is
+yielded exactly 1 paper. arXiv's OAI-PMH interface has native category sets
+and no indexing lag, so it is the primary source here. `semantic_scholar_id`
+and `citation_count` are not available from arXiv metadata (citation_count is
 ~0 for brand-new papers regardless); the per-paper schema keeps both keys
 (null / 0) so stage 2 is unchanged, and both can be backfilled later via
 the Semantic Scholar paper/batch endpoint if a use surfaces.
@@ -26,15 +24,18 @@ Usage:
         --since-days 7 \\
         --output /tmp/papers_day5.jsonl
 
-No API key required -- the arXiv API is public. Exponential backoff
-(5 -> 15 -> 30 -> 60 -> 120 -> 300s -> fail) is applied to HTTP 429,
-HTTP 5xx, and network errors -- arXiv rate-limits readily with 429s,
-and a 429 carrying a `Retry-After` header overrides the schedule for
-that attempt (capped at 600s). A polite delay separates successive
-page requests, per arXiv API etiquette. The cron driver passes
---jitter-seconds to decorrelate from the top-of-the-minute stampede.
-Results are sorted newest-first; pagination stops once papers fall
-outside the --since-days window.
+No API key is required. The primary source is arXiv's OAI-PMH interface,
+which is intended for incremental category-set harvesting. The legacy Atom
+search API is a fallback if a complete OAI-PMH harvest cannot be obtained.
+The two sources are never combined: any partial source result is discarded,
+so a failed page cannot be presented downstream as a fresh complete fetch.
+
+Requests are serial and at least three seconds apart, as required by arXiv's
+API terms. HTTP 429, HTTP 5xx, and network errors receive bounded exponential
+backoff; Retry-After overrides the schedule when present. The cron driver
+passes --jitter-seconds to decorrelate daily starts. A successful run can
+write a provenance sidecar naming the interface that supplied the complete
+result. Results are sorted newest-first.
 """
 import argparse
 import datetime as _dt
@@ -51,30 +52,36 @@ import xml.etree.ElementTree as ET
 
 log = logging.getLogger("arxiv_scraper")
 
-# arXiv API -- Atom-feed query endpoint. https avoids a 301 redirect hop.
+# Official arXiv metadata endpoints.
 _API_URL = "https://export.arxiv.org/api/query"
+_OAI_URL = "https://oaipmh.arxiv.org/oai"
+_SEARCH_SOURCE = "arxiv_search_api"
+_OAI_SOURCE = "arxiv_oai_pmh"
+_PROVENANCE_SCHEMA = "arxiv-fetch-provenance/v1"
+_CATEGORY_PRIORITY = ("cs.GT", "econ.TH", "cs.MA")
 
 # XML namespace prefixes in the arXiv Atom feed.
 _ATOM = "{http://www.w3.org/2005/Atom}"
 _ARXIV = "{http://arxiv.org/schemas/atom}"
+_OAI = "{http://www.openarchives.org/OAI/2.0/}"
+_OAI_ARXIV = "{http://arxiv.org/OAI/arXiv/}"
 
 # Descriptive User-Agent, per arXiv API etiquette.
 _USER_AGENT = "a_bgt_rsi-research-apparatus/1.0 (+arxiv-pipeline)"
 
-# Exponential backoff: sleep these seconds after successive failures,
-# then give up. ~9 min total wall-clock tolerance per request -- long
-# enough to ride out a top-of-the-minute throttle window from arXiv's
-# edge cache without abandoning the day's pull.
-_BACKOFF_SCHEDULE = (5, 15, 30, 60, 120, 300)
+# Bounded retry keeps enough time inside the outer daily-job timeout to try
+# the independent official fallback after one interface is unavailable.
+_BACKOFF_SCHEDULE = (5, 15, 30, 60)
 
 # Safety cap on a server-provided Retry-After (10 min). Prevents a
 # pathological header value from stalling the cron job for hours.
 _RETRY_AFTER_CAP_S = 600
 
-# Papers per page, and polite spacing between page requests -- 5s stays
-# clear of arXiv's 429 throttle (its guidance asks for a few seconds).
+# arXiv's API terms require no more than one request every three seconds
+# across OAI-PMH, RSS, and the legacy query API. This process is serial.
 _PAGE_SIZE = 100
-_REQUEST_SPACING_S = 5.0
+_REQUEST_SPACING_S = 3.0
+_REQUEST_TIMEOUT_S = 45
 
 # Safety cap on pagination so a bad response never loops forever.
 _MAX_PAGES = 30
@@ -104,57 +111,78 @@ def _parse_retry_after(headers):
     return seconds if seconds > 0 else None
 
 
-def _get_with_backoff(params):
-    """GET the arXiv API with exponential backoff on 429 / 5xx / network.
-
-    Retriable failures (HTTP 429, HTTP 5xx, network errors) sleep along
-    _BACKOFF_SCHEDULE across successive attempts and then raise
-    ArxivScraperError. A 429 carrying a Retry-After header overrides
-    the schedule for that attempt (capped at _RETRY_AFTER_CAP_S).
-    Non-retriable HTTP errors (4xx other than 429) raise immediately.
-    Returns the response body as Atom XML text.
-    """
-    url = _API_URL + "?" + urllib.parse.urlencode(params)
+def _get_url_with_backoff(url, source):
+    """GET one arXiv metadata URL with bounded, source-labelled retries."""
     request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     last_error = None
     retry_after = None  # server-suggested override for the next sleep
     for attempt in range(len(_BACKOFF_SCHEDULE) + 1):
         try:
-            with urllib.request.urlopen(request, timeout=60) as resp:
-                return resp.read().decode("utf-8")
+            with urllib.request.urlopen(request, timeout=_REQUEST_TIMEOUT_S) as resp:
+                try:
+                    return resp.read().decode("utf-8")
+                except UnicodeDecodeError as exc:
+                    raise ArxivScraperError(
+                        f"{source} returned non-UTF-8 metadata"
+                    ) from exc
         except urllib.error.HTTPError as exc:
             # 429 (rate limited) and 5xx are retriable; other 4xx are not.
             if exc.code != 429 and exc.code < 500:
-                raise  # will not fix itself -- surface immediately
+                raise ArxivScraperError(
+                    f"{source} returned non-retriable HTTP {exc.code}"
+                ) from exc
             last_error = exc
             retry_after = _parse_retry_after(exc.headers) if exc.code == 429 else None
             if retry_after is not None:
-                log.warning("arXiv API returned HTTP %s (Retry-After: %ss)",
-                            exc.code, retry_after)
+                log.warning("source=%s HTTP %s (Retry-After: %ss)",
+                            source, exc.code, retry_after)
             else:
-                log.warning("arXiv API returned HTTP %s", exc.code)
+                log.warning("source=%s HTTP %s", source, exc.code)
         except OSError as exc:  # URLError, TimeoutError, ConnectionError, ...
             last_error = exc
             retry_after = None
-            log.warning("network error contacting arXiv: %s", exc)
+            log.warning("source=%s network error: %s", source, exc)
 
         if attempt < len(_BACKOFF_SCHEDULE):
             if retry_after is not None:
-                delay = min(retry_after, _RETRY_AFTER_CAP_S)
+                delay = max(
+                    _REQUEST_SPACING_S,
+                    min(retry_after, _RETRY_AFTER_CAP_S),
+                )
             else:
                 delay = _BACKOFF_SCHEDULE[attempt]
-            log.warning("backing off %ss before retry %d", delay, attempt + 1)
+            log.warning("source=%s backing off %ss before retry %d",
+                        source, delay, attempt + 1)
             time.sleep(delay)
 
     raise ArxivScraperError(
-        f"arXiv API request failed after {len(_BACKOFF_SCHEDULE)} retries"
+        f"{source} request failed after {len(_BACKOFF_SCHEDULE)} retries"
     ) from last_error
+
+
+def _get_with_backoff(params):
+    """Compatibility wrapper for one legacy search-API page."""
+    url = _API_URL + "?" + urllib.parse.urlencode(params)
+    return _get_url_with_backoff(url, _SEARCH_SOURCE)
 
 
 def _text(node, tag):
     """Stripped text of the first <tag> child of node, or '' if absent."""
     child = node.find(tag)
     return (child.text or "").strip() if child is not None and child.text else ""
+
+
+def _matched_category(categories, target_categories):
+    """Choose strategic/economic targets before the broader cs.MA scope."""
+    # The curated-query compatibility path intentionally passes an empty
+    # target set: its query already selected the papers, so retain the Atom
+    # primary category (prepended by _normalize_entry) or first category.
+    if not target_categories:
+        return next(iter(categories), None)
+    for category in _CATEGORY_PRIORITY:
+        if category in target_categories and category in categories:
+            return category
+    return next((item for item in categories if item in target_categories), None)
 
 
 def _normalize_entry(entry, target_categories):
@@ -167,7 +195,7 @@ def _normalize_entry(entry, target_categories):
     # <id> is e.g. http://arxiv.org/abs/2605.15049v1 -- strip the URL
     # prefix and the trailing vN so arxiv_id is the stable dedup key.
     raw_id = _text(entry, _ATOM + "id")
-    if not raw_id:
+    if not raw_id or "/abs/" not in raw_id:
         return None
     arxiv_id = re.sub(r"v\d+$", "", raw_id.rsplit("/abs/", 1)[-1])
     if not arxiv_id:
@@ -179,7 +207,9 @@ def _normalize_entry(entry, target_categories):
     primary_term = primary.get("term") if primary is not None else None
     if primary_term:
         categories = [primary_term] + categories
-    matched = next((c for c in categories if c in target_categories), None)
+    matched = _matched_category(categories, target_categories)
+    if matched is None:
+        return None
 
     abstract = " ".join(_text(entry, _ATOM + "summary").split())
     published = _text(entry, _ATOM + "published")
@@ -192,58 +222,39 @@ def _normalize_entry(entry, target_categories):
         "arxiv_id": arxiv_id,
         "semantic_scholar_id": None,    # not provided by the arXiv API
         "citation_count": 0,            # not provided; ~0 for new papers
-        "category": matched or primary_term or "",
+        "category": matched,
         "publication_date": published[:10] if published else None,
     }
 
 
-def fetch_papers(categories, since_days):
-    """Fetch and de-duplicate recent papers across the given categories.
+def _cutoff_date(since_days):
+    return (_dt.datetime.now(_dt.timezone.utc)
+            - _dt.timedelta(days=since_days)).date().isoformat()
 
-    Queries the arXiv API for `cat:A OR cat:B OR ...` sorted newest-first,
-    pages until entries fall outside the since_days window, and dedups on
-    arxiv_id (first occurrence wins). Returns a list of dicts conforming
-    to the pipeline schema (see _normalize_entry).
 
-    Partial-result policy: if page 1 fails, the failure propagates -- there
-    is nothing to salvage and downstream cron should surface the error. If
-    a later page fails (network, exhausted backoff, malformed XML), the
-    papers already collected from earlier pages are returned with a warning
-    log entry. This avoids the all-or-nothing failure mode where a
-    successful page-1 pull is discarded because page-2 tripped a throttle.
-    """
-    cutoff = (_dt.datetime.now(_dt.timezone.utc)
-              - _dt.timedelta(days=since_days)).date().isoformat()
+def _fetch_search_api(categories, cutoff):
+    """Return one complete recent-paper result from the legacy Atom API."""
     targets = set(categories)
     search_query = " OR ".join(f"cat:{c}" for c in categories)
 
     seen = set()
     deduped = []
     for page in range(_MAX_PAGES):
-        try:
-            body = _get_with_backoff({
-                "search_query": search_query,
-                "sortBy": "submittedDate",
-                "sortOrder": "descending",
-                "start": page * _PAGE_SIZE,
-                "max_results": _PAGE_SIZE,
-            })
-        except ArxivScraperError:
-            if page == 0:
-                raise
-            log.warning("page %d failed after backoff; keeping %d papers "
-                        "fetched from earlier pages", page + 1, len(deduped))
-            break
+        if page:
+            time.sleep(_REQUEST_SPACING_S)
+        body = _get_with_backoff({
+            "search_query": search_query,
+            "sortBy": "submittedDate",
+            "sortOrder": "descending",
+            "start": page * _PAGE_SIZE,
+            "max_results": _PAGE_SIZE,
+        })
         try:
             root = ET.fromstring(body)
         except ET.ParseError as exc:
-            if page == 0:
-                raise ArxivScraperError(
-                    f"arXiv API returned unparseable XML: {exc}") from exc
-            log.warning("page %d returned unparseable XML (%s); keeping %d "
-                        "papers fetched from earlier pages",
-                        page + 1, exc, len(deduped))
-            break
+            raise ArxivScraperError(
+                f"{_SEARCH_SOURCE} returned unparseable XML: {exc}"
+            ) from exc
         entries = root.findall(_ATOM + "entry")
         if not entries:
             break
@@ -251,6 +262,12 @@ def fetch_papers(categories, since_days):
         kept = 0
         past_window = False
         for entry in entries:
+            raw_id = _text(entry, _ATOM + "id")
+            if "/api/errors#" in raw_id:
+                message = _text(entry, _ATOM + "summary") or "Atom error entry"
+                raise ArxivScraperError(
+                    f"{_SEARCH_SOURCE} returned an error entry: {message}"
+                )
             paper = _normalize_entry(entry, targets)
             if paper is None:
                 continue
@@ -268,13 +285,192 @@ def fetch_papers(categories, since_days):
                  page + 1, len(entries), kept)
         if past_window or len(entries) < _PAGE_SIZE:
             break
-        time.sleep(_REQUEST_SPACING_S)  # be polite between pages
     else:
-        log.warning("hit the %d-page pagination cap", _MAX_PAGES)
+        raise ArxivScraperError(
+            f"{_SEARCH_SOURCE} hit the {_MAX_PAGES}-page completeness cap"
+        )
 
+    deduped.sort(key=lambda paper: (
+        paper.get("publication_date") or "", paper["arxiv_id"]
+    ), reverse=True)
+    return deduped
+
+
+def fetch_papers(categories, since_days):
+    """Fetch a complete result from the legacy API (compatibility entrypoint)."""
+    deduped = _fetch_search_api(categories, _cutoff_date(since_days))
     log.info("fetched %d unique papers across %d categories within %d days",
              len(deduped), len(categories), since_days)
     return deduped
+
+
+def _oai_set_spec(category):
+    """Map cs.MA to arXiv's documented OAI set form cs:cs:MA."""
+    archive, separator, subject = category.partition(".")
+    if not separator or not archive or not subject:
+        raise ArxivScraperError(f"unsupported arXiv category for OAI: {category}")
+    return f"{archive}:{archive}:{subject}"
+
+
+def _normalize_oai_metadata(metadata, target_categories):
+    """Project one OAI arXiv metadata element onto the pipeline schema."""
+    arxiv_id = re.sub(r"v\d+$", "", _text(metadata, _OAI_ARXIV + "id"))
+    created = _text(metadata, _OAI_ARXIV + "created")
+    categories = _text(metadata, _OAI_ARXIV + "categories").split()
+    matched = _matched_category(categories, target_categories)
+    if not arxiv_id or not created or matched is None:
+        return None
+
+    authors = []
+    authors_node = metadata.find(_OAI_ARXIV + "authors")
+    if authors_node is not None:
+        for author in authors_node.findall(_OAI_ARXIV + "author"):
+            parts = [
+                _text(author, _OAI_ARXIV + "forenames"),
+                _text(author, _OAI_ARXIV + "keyname"),
+                _text(author, _OAI_ARXIV + "suffix"),
+            ]
+            name = " ".join(part for part in parts if part)
+            if name:
+                authors.append(name)
+
+    abstract = " ".join(_text(metadata, _OAI_ARXIV + "abstract").split())
+    return {
+        "title": " ".join(_text(metadata, _OAI_ARXIV + "title").split()),
+        "abstract": abstract or None,
+        "authors": authors,
+        "arxiv_id": arxiv_id,
+        "semantic_scholar_id": None,
+        "citation_count": 0,
+        "category": matched,
+        "publication_date": created[:10],
+    }
+
+
+def _parse_oai_page(body, targets, cutoff):
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError as exc:
+        raise ArxivScraperError(
+            f"{_OAI_SOURCE} returned unparseable XML: {exc}"
+        ) from exc
+
+    error = root.find(_OAI + "error")
+    if error is not None:
+        code = error.get("code") or "unknown"
+        message = " ".join((error.text or "").split())
+        if code == "noRecordsMatch":
+            return [], ""
+        raise ArxivScraperError(
+            f"{_OAI_SOURCE} returned OAI error {code}: {message}"
+        )
+    listing = root.find(_OAI + "ListRecords")
+    if listing is None:
+        raise ArxivScraperError(f"{_OAI_SOURCE} response omitted ListRecords")
+
+    papers = []
+    for record in listing.findall(_OAI + "record"):
+        header = record.find(_OAI + "header")
+        if header is None:
+            raise ArxivScraperError(
+                f"{_OAI_SOURCE} record omitted header"
+            )
+        metadata_wrapper = record.find(_OAI + "metadata")
+        if metadata_wrapper is None:
+            if header.get("status") == "deleted":
+                continue
+            raise ArxivScraperError(
+                f"{_OAI_SOURCE} nondeleted record omitted metadata"
+            )
+        metadata = metadata_wrapper.find(_OAI_ARXIV + "arXiv")
+        if metadata is None:
+            raise ArxivScraperError(
+                f"{_OAI_SOURCE} record omitted arXiv metadata"
+            )
+        paper = _normalize_oai_metadata(metadata, targets)
+        if paper is not None and paper["publication_date"] >= cutoff:
+            papers.append(paper)
+
+    token_node = listing.find(_OAI + "resumptionToken")
+    token = (token_node.text or "").strip() if token_node is not None else ""
+    return papers, token
+
+
+def _fetch_oai_pmh(categories, cutoff):
+    """Harvest complete category sets changed since cutoff via OAI-PMH."""
+    targets = set(categories)
+    seen = set()
+    deduped = []
+    request_count = 0
+
+    for category in categories:
+        token = None
+        for page in range(_MAX_PAGES):
+            if request_count:
+                time.sleep(_REQUEST_SPACING_S)
+            if token:
+                params = {"verb": "ListRecords", "resumptionToken": token}
+            else:
+                params = {
+                    "verb": "ListRecords",
+                    "from": cutoff,
+                    "metadataPrefix": "arXiv",
+                    "set": _oai_set_spec(category),
+                }
+            url = _OAI_URL + "?" + urllib.parse.urlencode(params)
+            body = _get_url_with_backoff(url, _OAI_SOURCE)
+            request_count += 1
+            papers, token = _parse_oai_page(body, targets, cutoff)
+            for paper in papers:
+                if paper["arxiv_id"] not in seen:
+                    seen.add(paper["arxiv_id"])
+                    deduped.append(paper)
+            log.info("OAI set %s page %d: %d in-window papers",
+                     category, page + 1, len(papers))
+            if not token:
+                break
+        else:
+            raise ArxivScraperError(
+                f"{_OAI_SOURCE} hit the {_MAX_PAGES}-page completeness cap"
+            )
+
+    deduped.sort(key=lambda paper: (
+        paper.get("publication_date") or "", paper["arxiv_id"]
+    ), reverse=True)
+    return deduped
+
+
+def fetch_papers_with_provenance(categories, since_days):
+    """Fetch one complete result and identify the official interface used."""
+    cutoff = _cutoff_date(since_days)
+    fallback_from = None
+    try:
+        papers = _fetch_oai_pmh(categories, cutoff)
+        source = _OAI_SOURCE
+        endpoint = _OAI_URL
+    except ArxivScraperError as exc:
+        fallback_from = _OAI_SOURCE
+        log.warning("source=%s failed; falling back to source=%s: %s",
+                    _OAI_SOURCE, _SEARCH_SOURCE, exc)
+        time.sleep(_REQUEST_SPACING_S)
+        papers = _fetch_search_api(categories, cutoff)
+        source = _SEARCH_SOURCE
+        endpoint = _API_URL
+
+    log.info("fetched %d unique papers across %d categories within %d days",
+             len(papers), len(categories), since_days)
+    provenance = {
+        "schema": _PROVENANCE_SCHEMA,
+        "source": source,
+        "endpoint": endpoint,
+        "fallback_from": fallback_from,
+        "categories": list(categories),
+        "since_days": since_days,
+        "cutoff_date": cutoff,
+        "paper_count": len(papers),
+        "complete": True,
+    }
+    return papers, provenance
 
 
 def write_jsonl(papers, output_path):
@@ -283,6 +479,13 @@ def write_jsonl(papers, output_path):
         for paper in papers:
             fh.write(json.dumps(paper, ensure_ascii=False) + "\n")
     log.info("wrote %d papers to %s", len(papers), output_path)
+
+
+def write_provenance(provenance, output_path):
+    """Write a compact source-provenance sidecar for the receipt producer."""
+    with open(output_path, "w", encoding="utf-8") as fh:
+        json.dump(provenance, fh, sort_keys=True, separators=(",", ":"))
+        fh.write("\n")
 
 
 def main(argv=None):
@@ -295,6 +498,8 @@ def main(argv=None):
                         help="how many days back to search (7 for first run, 1 for cron)")
     parser.add_argument("--output", required=True,
                         help="destination JSONL path")
+    parser.add_argument("--provenance-output",
+                        help="optional destination for fetch-source provenance JSON")
     parser.add_argument("--jitter-seconds", type=int, default=0,
                         help="random startup delay in [0, N] seconds, to "
                              "decorrelate cron fires from the top-of-the-"
@@ -314,8 +519,10 @@ def main(argv=None):
         log.info("jittering startup by %.1fs", delay)
         time.sleep(delay)
 
-    papers = fetch_papers(categories, args.since_days)
+    papers, provenance = fetch_papers_with_provenance(categories, args.since_days)
     write_jsonl(papers, args.output)
+    if args.provenance_output:
+        write_provenance(provenance, args.provenance_output)
     return 0
 
 

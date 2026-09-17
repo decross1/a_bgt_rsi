@@ -430,6 +430,20 @@ def test_ingestion_status_retains_last_success_but_shows_new_failed_attempt(tmp_
     def first_executor(argv, _timeout):
         if "--output" in argv:
             Path(argv[argv.index("--output") + 1]).write_bytes(paper)
+            provenance = {
+                "schema": job.FETCH_PROVENANCE_SCHEMA,
+                "source": "arxiv_oai_pmh",
+                "endpoint": job.FETCH_ENDPOINTS["arxiv_oai_pmh"],
+                "fallback_from": None,
+                "categories": list(job.CATEGORIES),
+                "since_days": job.SINCE_DAYS,
+                "cutoff_date": "2026-09-12",
+                "paper_count": 1,
+                "complete": True,
+            }
+            Path(argv[argv.index("--provenance-output") + 1]).write_bytes(
+                job._canon(provenance)
+            )
         return job.CommandResult(0, "")
 
     job.run_job(state_root=ingestion_root, executor=first_executor,

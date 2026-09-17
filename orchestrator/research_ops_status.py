@@ -20,10 +20,12 @@ from typing import Any
 
 from orchestrator import coordinator
 from orchestrator.research_campaign import (
+    DAILY_AGENTIC_GAME_THEORY_CAMPAIGN_ID,
     DEFAULT_CAMPAIGN_ID,
     KNOWN_OPPONENT_CAMPAIGN_ID,
     UTILITY_MECHANISM_CAMPAIGN_ID,
     CampaignError,
+    all_topics,
     available_topics,
     load_active_campaign,
     load_campaign,
@@ -465,15 +467,18 @@ def project_research_ops_status(
         rows, proof = _read_source(repo_root, "memory/loop_memory.jsonl", MAX_LOOP_BYTES)
         if proof["available"]:
             available = available_topics(campaign, [row for row, _sha_row in rows])
+            registered_count = len(all_topics(campaign))
+            ongoing = campaign["topic_policy"]["mode"] == "registered_exploratory"
             eligible_ids = [row["topic_id"] for row in available]
             out["campaign_queue"] = {
-                "status": "eligible" if eligible_ids else "all_registered_topics_consumed",
+                "status": ("eligible" if eligible_ids else "awaiting_daily_registration"
+                           if ongoing else "all_registered_topics_consumed"),
                 "eligible_count": len(eligible_ids),
-                "consumed_count": len(campaign["topic_policy"]["topics"]) - len(eligible_ids),
+                "consumed_count": registered_count - len(eligible_ids),
                 "eligible_topic_ids": eligible_ids[:24],
                 "loop_source_sha256": proof["sha256"],
             }
-            consumed_count = len(campaign["topic_policy"]["topics"]) - len(eligible_ids)
+            consumed_count = registered_count - len(eligible_ids)
             if campaign["campaign_id"] == KNOWN_OPPONENT_CAMPAIGN_ID and consumed_count >= 1:
                 study = campaign["study_manifests"][0]
                 out["next_work"] = {
@@ -496,8 +501,19 @@ def project_research_ops_status(
                     "preregistration_sha256": None,
                     "activation_required": False,
                 }
+            elif ongoing:
+                out["next_work"] = {
+                    "code": "register_verified_daily_topic",
+                    "campaign_id": campaign["campaign_id"],
+                    "manifest_sha256": campaign["_manifest_sha256"],
+                    "activation_required": False,
+                    "daily_registration_cap": 3,
+                }
             members = unique_matching_records(
                 [row for row, _sha_row in rows], campaign, identity_field="iteration_id")
+            from orchestrator.daily_research import campaign_test_debt
+
+            out["campaign_test_debt"] = campaign_test_debt(members)
             if members:
                 last = max(members, key=lambda item: _time(item.get("ended_at"))
                            or datetime.min.replace(tzinfo=timezone.utc))
@@ -516,6 +532,7 @@ def project_research_ops_status(
         successor_id = {
             DEFAULT_CAMPAIGN_ID: KNOWN_OPPONENT_CAMPAIGN_ID,
             KNOWN_OPPONENT_CAMPAIGN_ID: UTILITY_MECHANISM_CAMPAIGN_ID,
+            UTILITY_MECHANISM_CAMPAIGN_ID: DAILY_AGENTIC_GAME_THEORY_CAMPAIGN_ID,
         }.get(campaign["campaign_id"])
         if successor_id is not None:
             try:
@@ -523,7 +540,7 @@ def project_research_ops_status(
                 out["next_registered_campaign"] = {
                     "campaign_id": next_campaign["campaign_id"],
                     "manifest_sha256": next_campaign["_manifest_sha256"],
-                    "registered_topic_count": len(next_campaign["topic_policy"]["topics"]),
+                    "registered_topic_count": len(all_topics(next_campaign)),
                     "activation_required": True,
                 }
                 if (campaign["campaign_id"] != KNOWN_OPPONENT_CAMPAIGN_ID
@@ -568,7 +585,9 @@ def project_research_ops_status(
                 "raw_row_sha256": row_sha,
                 "cycles_source_sha256": cycle_proof["sha256"],
             }
-        elif (common_valid and row.get("status") == "no_valid_plan"
+        elif (common_valid and row.get("status") in {
+                "no_valid_plan", "queue_starved", "daily_topic_limit", "topic_source_unavailable",
+                "topic_registration_refused", "activity_budget_limited"}
               and plan == [] and outcomes == []
               and row.get("promoted_finding_ids") == []
               and row.get("bubble_run_ids") == []
@@ -579,8 +598,8 @@ def project_research_ops_status(
             # the latest coordinator result.
             out["last_cycle"] = {
                 "run_id": row["run_id"], "at": _stamp(when),
-                "terminal_status": "no_valid_plan",
-                "action_code": "no_valid_plan",
+                "terminal_status": row["status"],
+                "action_code": row["status"],
                 "planned_count": 0, "dispatched_count": 0,
                 "outcome_count": 0,
                 "action_kind": None, "promoted_count": 0,

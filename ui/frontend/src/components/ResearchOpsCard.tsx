@@ -10,7 +10,7 @@ const utc = (v: unknown): v is string => typeof v === "string" && v.length <= 48
 const stamp = (v: unknown) => utc(v)
   ? `${new Date(v).toLocaleString("en-US", { timeZone: "UTC", dateStyle: "medium", timeStyle: "short" })} UTC`
   : "Time unknown";
-const queues = new Set(["eligible", "all_registered_topics_consumed", "source_unknown", "unknown"]);
+const queues = new Set(["eligible", "all_registered_topics_consumed", "awaiting_daily_registration", "source_unknown", "unknown"]);
 const attempts = new Set(["succeeded", "fetch_failed", "embed_failed", "interrupted_unknown", "none", "unknown"]);
 const PILOT_ID = "qfn-followon-known-opponent-lab8h-a";
 const MIA_PILOT_ID = "qfn-followon-known-opponent-mia-lab8h-a";
@@ -320,7 +320,7 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   const eligible = queue && count(queue.eligible_count) ? queue.eligible_count : null;
   const consumed = queue && count(queue.consumed_count) ? queue.consumed_count : null;
   const registeredTotal = eligible !== null && consumed !== null &&
-    eligible + consumed > 0 && count(eligible + consumed)
+    count(eligible + consumed)
     ? eligible + consumed : null;
   const eligibleIds = queueStatus === "eligible" && queue && Array.isArray(queue.eligible_topic_ids) &&
     queue.eligible_topic_ids.length <= 24 &&
@@ -335,6 +335,7 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   const registeredWork = plannedWork && plannedWork.activation_required === false &&
     campaignId === plannedWork.campaign_id && campaign?.manifest_sha256 === plannedWork.manifest_sha256 &&
     (workCode === "run_preregistered_campaign_topic" ||
+      workCode === "register_verified_daily_topic" ||
       workCode === "freeze_and_run_registered_empirical_study" ||
       workCode === "review_admitted_empirical_pilot");
   const pilotRecorded = empirical && empirical.status === "recorded_admitted" &&
@@ -419,6 +420,17 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
     executedCycle.planned_count === 1 && executedCycle.dispatched_count === 1 &&
     executedCycle.outcome_count === 1 && executedCycle.action_kind === "promote_findings" &&
     executedCycle.promoted_count === 0 && executedCycle.substantive_progress === false;
+  const queueHeldCycle = cycleReceiptBound &&
+    ["queue_starved", "daily_topic_limit", "topic_source_unavailable", "topic_registration_refused", "activity_budget_limited"].includes(String(cycleReceiptBound.terminal_status)) &&
+    cycleReceiptBound.action_code === cycleReceiptBound.terminal_status &&
+    cycleReceiptBound.planned_count === 0 && cycleReceiptBound.dispatched_count === 0 &&
+    cycleReceiptBound.outcome_count === 0 && cycleReceiptBound.substantive_progress === false
+    ? cycleReceiptBound : null;
+  const testDebt = Array.isArray(view?.campaign_test_debt) && view.campaign_test_debt.length <= 24 &&
+    view.campaign_test_debt.every((item: unknown) => obj(item) && ID.test(String(item.iteration_id)) &&
+      ["L1", "L2"].includes(String(item.evidence_level)) && typeof item.next_test_owed === "string" &&
+      item.next_test_owed.length <= 160 && item.execution_status === "requires_registered_study")
+    ? view.campaign_test_debt as Record<string, unknown>[] : null;
   const budgetBound = budget && budget.source_status === "available" && count(budget.spent_today) &&
     count(budget.daily_cap) && count(budget.paced_allowance) && SHA.test(String(budget.ledger_sha256));
   const ingestionBound = ingestion?.source_status === "available";
@@ -446,14 +458,18 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
   else if (registeredWork && workCode === "run_preregistered_campaign_topic" &&
            ID.test(String(plannedWork.topic_id)) && eligible !== null && eligible > 0)
     nextWork = `Run registered topic ${String(plannedWork.topic_id)}`;
+  else if (registeredWork && workCode === "register_verified_daily_topic")
+    nextWork = "Waiting for an unused verified literature source and daily allowance; the next gated cycle can register a topic (up to 3 per UTC day).";
   else if (queueStatus === "eligible" && eligible !== null && eligible > 0)
     nextWork = `${eligible} registered topic${eligible === 1 ? "" : "s"} eligible`;
   else if (queueStatus === "all_registered_topics_consumed" && eligible === 0)
     nextWork = "All topics in this campaign have been used";
   else if (queueStatus === "source_unknown") nextWork = "Campaign queue source unverified";
   const queueLine = campaignId && registeredTotal !== null &&
-    (queueStatus === "eligible" || queueStatus === "all_registered_topics_consumed")
-    ? queueStatus === "all_registered_topics_consumed" && eligible === 0
+    (queueStatus === "eligible" || queueStatus === "all_registered_topics_consumed" || queueStatus === "awaiting_daily_registration")
+    ? queueStatus === "awaiting_daily_registration"
+      ? `Daily exploratory queue: ${registeredTotal} registered, ${consumed} used; awaiting the next source-backed registration.`
+      : queueStatus === "all_registered_topics_consumed" && eligible === 0
       ? "Registered topic queue exhausted: 0 of " + registeredTotal +
         " eligible; no further topic dispatch from this campaign."
       : "Registered topic queue: " + eligible + " of " + registeredTotal +
@@ -497,6 +513,13 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
           {registeredWork && workCode === "review_admitted_empirical_pilot" && pilotAdmitted &&
             <dd className="mt-1 text-xs text-[var(--fg-muted)]">This reviews an already recorded pilot; it is not a new topic run or an accepted scientific finding.</dd>}
           {campaignId && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Active campaign {campaignId}{consumed !== null ? ` · ${consumed} topics used` : ""}</dd>}
+          {testDebt && testDebt.length > 0 && <dd className="mt-2 text-xs text-[var(--fg-muted)]">
+            {testDebt.length} recorded candidate{testDebt.length === 1 ? " needs" : "s need"} a separately registered study to advance evidence.
+            {testDebt.slice(0, 3).map(item => <div key={String(item.iteration_id)}>
+              <Link to={`/dossier/${String(item.iteration_id)}?research_scope=active`} className="text-[var(--accent)]">{String(item.iteration_id)}</Link>
+              {` · ${String(item.evidence_level)} · next test: ${String(item.next_test_owed)}`}
+            </div>)}
+          </dd>}
           {nextId && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Next registered campaign {nextId} awaits activation.</dd>}
           {queueStatus === "all_registered_topics_consumed" && gate?.other_actionable_work === "not_assessed" &&
             <dd className="mt-1 text-xs text-[var(--fg-muted)]">Other useful research actions have not been assessed here.</dd>}
@@ -507,12 +530,22 @@ export function ResearchOpsCard({ data, failing = false }: { data: unknown; fail
           {linked && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Review gate: {linkedGate}. A linked iteration does not itself establish an accepted finding.</dd>}
         </div>
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Latest coordinator cycle</dt>
-          <dd className="mt-1">{noValidPlanCycle
+          <dd className="mt-1">{queueHeldCycle
+            ? queueHeldCycle.terminal_status === "queue_starved"
+              ? "No unused verified literature topic available; planner was not called."
+              : queueHeldCycle.terminal_status === "topic_source_unavailable"
+              ? "Literature source could not be verified; planner was not called."
+              : queueHeldCycle.terminal_status === "topic_registration_refused"
+              ? "Topic registration was refused; planner was not called."
+              : queueHeldCycle.terminal_status === "activity_budget_limited"
+              ? "Daily research activity allowance reached; planner was not called."
+              : "Daily topic allowance reached; planner was not called."
+            : noValidPlanCycle
             ? <>No valid plan; no actions dispatched · <Link to="/cycles" className="text-[var(--accent)]">view trace</Link></>
             : zeroPromotionCycle
             ? <>Promotion check completed · 0 findings promoted · no research record advanced · <Link to="/cycles" className="text-[var(--accent)]">view trace</Link></>
             : executedCycle ? `${executedCycle.action_code === "noop" ? "No-op plan" : "Plan recorded"} · ${String(executedCycle.planned_count)} planned · ${String(executedCycle.dispatched_count)} dispatched` : "No bound coordinator check"}</dd>
-          {(noValidPlanCycle || executedCycle) && <dd className="mt-1 text-xs text-[var(--fg-muted)]">{stamp((noValidPlanCycle || executedCycle)?.at)} · {String((noValidPlanCycle || executedCycle)?.run_id)}</dd>}
+          {(queueHeldCycle || noValidPlanCycle || executedCycle) && <dd className="mt-1 text-xs text-[var(--fg-muted)]">{stamp((queueHeldCycle || noValidPlanCycle || executedCycle)?.at)} · {String((queueHeldCycle || noValidPlanCycle || executedCycle)?.run_id)}</dd>}
           {budgetBound && <dd className="mt-1 text-xs text-[var(--fg-muted)]">Today's coordinator allowance: {String(budget.spent_today)}/{String(budget.daily_cap)} used; {String(budget.paced_allowance)} paced so far.</dd>}
         </div>
         <div className="rounded border border-[var(--border-1)] p-3"><dt className="font-semibold">Source ingestion</dt>
