@@ -213,8 +213,11 @@ def _ingestion(root: Path, observed: datetime) -> dict:
                 out["latest_attempt_status"] = row["status"]
                 out["latest_attempt_at"] = _stamp(finished)
                 out["latest_attempt_receipt_sha256"] = _sha(terminal_raw)
-                out["latest_failure_code"] = (
-                    failure if failure in INGESTION_CODES else "other_failure")
+                if failure is None:
+                    out["latest_failure_code"] = None
+                else:
+                    out["latest_failure_code"] = (
+                        failure if failure in INGESTION_CODES else "other_failure")
     except (OSError, ValueError, ingestion.IngestionError, UnicodeError):
         out["source_status"] = "unknown"
         out["latest_attempt_status"] = "unknown"

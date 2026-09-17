@@ -448,6 +448,12 @@ def test_ingestion_status_retains_last_success_but_shows_new_failed_attempt(tmp_
 
     job.run_job(state_root=ingestion_root, executor=first_executor,
                 now=lambda: first_at, python="/registered/python")
+    succeeded = project_research_ops_status(
+        repo_root=root, ingestion_root=ingestion_root, observed_at=NOW
+    )["ingestion"]
+    assert succeeded["latest_attempt_status"] == "succeeded"
+    assert succeeded["latest_failure_code"] is None
+
     job.run_job(state_root=ingestion_root, executor=lambda _a, _t: job.CommandResult(
         1, "HTTP 429 before retry 6"), now=lambda: failed_at,
         python="/registered/python")
@@ -460,6 +466,26 @@ def test_ingestion_status_retains_last_success_but_shows_new_failed_attempt(tmp_
     assert ingest["last_success_input_sha256"] == job._sha(paper)
     assert ingest["last_success_paper_count"] == 1
     assert ingest["latest_attempt_receipt_sha256"] != ingest["last_success_pointer_sha256"]
+
+
+def test_ingestion_status_maps_unknown_failure_code_to_other(tmp_path):
+    root = _root(tmp_path)
+    ingestion_root = tmp_path / "ingestion"
+    failed_at = datetime(2026, 9, 15, 3, 0, tzinfo=timezone.utc)
+
+    receipt = job.run_job(
+        state_root=ingestion_root,
+        executor=lambda _argv, _timeout: job.CommandResult(0, ""),
+        now=lambda: failed_at,
+        python="/registered/python",
+    )
+    assert receipt["failure_code"] == "FileNotFoundError"
+
+    ingest = project_research_ops_status(
+        repo_root=root, ingestion_root=ingestion_root, observed_at=NOW
+    )["ingestion"]
+    assert ingest["latest_attempt_status"] == "fetch_failed"
+    assert ingest["latest_failure_code"] == "other_failure"
 
 
 def test_legacy_cron_failure_is_visible_without_claiming_a_job_receipt(tmp_path):
