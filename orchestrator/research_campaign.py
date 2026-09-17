@@ -41,6 +41,12 @@ UTILITY_MECHANISM_CAMPAIGN_MANIFEST = (
     REPO_ROOT / "experiments"
     / "research_campaign_v2_utility_mechanism_followon_20260915.json"
 )
+DAILY_AGENTIC_GAME_THEORY_CAMPAIGN_ID = "v2-daily-agentic-game-theory-20260917"
+DAILY_AGENTIC_GAME_THEORY_CAMPAIGN_MANIFEST = (
+    REPO_ROOT
+    / "experiments"
+    / "research_campaign_daily_agentic_game_theory_20260917.json"
+)
 CAMPAIGN_MANIFESTS: Mapping[str, str] = {
     DEFAULT_CAMPAIGN_ID: (
         "experiments/research_campaign_v2_agentic_game_theory_20260914.json"
@@ -50,6 +56,9 @@ CAMPAIGN_MANIFESTS: Mapping[str, str] = {
     ),
     UTILITY_MECHANISM_CAMPAIGN_ID: (
         "experiments/research_campaign_v2_utility_mechanism_followon_20260915.json"
+    ),
+    DAILY_AGENTIC_GAME_THEORY_CAMPAIGN_ID: (
+        "experiments/research_campaign_daily_agentic_game_theory_20260917.json"
     ),
 }
 MAX_MANIFEST_BYTES = 128_000
@@ -67,6 +76,7 @@ LINK_FIELDS = frozenset(
         "topic_sha256",
     }
 )
+REGISTERED_LINK_FIELDS = LINK_FIELDS | {"topic_registration_sha256"}
 
 
 class CampaignError(ValueError):
@@ -271,6 +281,13 @@ def load_campaign(
     result = copy.deepcopy(value)
     result["_manifest_sha256"] = _sha256(data)
     result["_path"] = path
+    result["_repo_root"] = repo_root.resolve(strict=True)
+    from orchestrator.research_topic_registry import load_registered_topics
+
+    result["_registered_topics"] = load_registered_topics(
+        result,
+        repo_root=result["_repo_root"],
+    )
     return result
 
 
@@ -457,20 +474,42 @@ def campaign_context(campaign: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def all_topics(campaign: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return immutable-manifest topics plus validated runtime registrations."""
+    declared = campaign.get("topic_policy", {}).get("topics")
+    registered = campaign.get("_registered_topics", [])
+    if not isinstance(declared, list) or not isinstance(registered, list):
+        raise CampaignError("campaign topic registry is malformed")
+    topics = copy.deepcopy(declared) + copy.deepcopy(registered)
+    ids = [topic.get("topic_id") for topic in topics if isinstance(topic, dict)]
+    texts = [topic.get("text") for topic in topics if isinstance(topic, dict)]
+    hashes = [topic.get("text_sha256") for topic in topics if isinstance(topic, dict)]
+    if (
+        len(ids) != len(topics)
+        or len(ids) != len(set(ids))
+        or len(texts) != len(set(texts))
+        or len(hashes) != len(set(hashes))
+    ):
+        raise CampaignError("campaign topics are malformed or duplicated")
+    return topics
+
+
 def bind_topic(campaign: dict[str, Any], topic_text: str) -> dict[str, str]:
-    """Build an exact campaign link for a preregistered topic text."""
+    """Build an exact campaign link for one declared or registered topic."""
     if not isinstance(topic_text, str):
         raise CampaignError("campaign topic must be text")
     matches = [
         topic
-        for topic in campaign["topic_policy"]["topics"]
+        for topic in all_topics(campaign)
         if topic["text"] == topic_text
     ]
     if len(matches) != 1:
-        raise CampaignError("topic is not one exact preregistered campaign seed")
+        raise CampaignError(
+            "topic is not one exact preregistered or registered campaign seed"
+        )
     topic = matches[0]
     question = campaign["research_question"]
-    return {
+    link = {
         "schema_version": LINK_SCHEMA_VERSION,
         "campaign_id": campaign["campaign_id"],
         "campaign_manifest_sha256": campaign["_manifest_sha256"],
@@ -479,6 +518,12 @@ def bind_topic(campaign: dict[str, Any], topic_text: str) -> dict[str, str]:
         "topic_id": topic["topic_id"],
         "topic_sha256": topic["text_sha256"],
     }
+    registration_sha = topic.get("topic_registration_sha256")
+    if registration_sha is not None:
+        if not isinstance(registration_sha, str):
+            raise CampaignError("registered topic receipt digest is malformed")
+        link["topic_registration_sha256"] = registration_sha
+    return link
 
 
 def classify_record(record: Any, campaign: dict[str, Any]) -> str:
@@ -490,21 +535,34 @@ def classify_record(record: Any, campaign: dict[str, Any]) -> str:
         return "unlinked_legacy"
     if (
         not isinstance(link, dict)
-        or set(link) != LINK_FIELDS
+        or set(link) not in {LINK_FIELDS, REGISTERED_LINK_FIELDS}
         or not all(isinstance(value, str) for value in link.values())
     ):
         return "malformed_campaign_link"
     if link.get("campaign_id") != campaign["campaign_id"]:
         return "different_campaign"
-    expected = [
-        bind_topic(campaign, topic["text"])
-        for topic in campaign["topic_policy"]["topics"]
-    ]
-    return (
-        "explicit_match"
-        if any(link == expected_link for expected_link in expected)
-        else "campaign_link_mismatch"
+    matched_topic = next(
+        (
+            topic
+            for topic in all_topics(campaign)
+            if topic["topic_id"] == link.get("topic_id")
+            and link == bind_topic(campaign, topic["text"])
+        ),
+        None,
     )
+    if matched_topic is None:
+        return "campaign_link_mismatch"
+    if "topic_registration_sha256" in link and "started_at" in record:
+        try:
+            started_at = _timestamp(record["started_at"], where="record start")
+            registered_at = _timestamp(
+                matched_topic["registered_at"], where="topic registration"
+            )
+        except CampaignError:
+            return "malformed_record"
+        if started_at < registered_at:
+            return "campaign_link_mismatch"
+    return "explicit_match"
 
 
 def record_matches(record: Any, campaign: dict[str, Any]) -> bool:
@@ -549,18 +607,32 @@ def available_topics(
         for record in records
         if record_matches(record, campaign)
     }
-    return [
-        {
+    available: list[dict[str, Any]] = []
+    for topic in all_topics(campaign):
+        if topic["topic_id"] in completed:
+            continue
+        projection = {
             "topic": topic["text"],
-            "source": "campaign_preregistered",
+            "source": topic["source"],
             "campaign_id": campaign["campaign_id"],
             "topic_id": topic["topic_id"],
             "topic_sha256": topic["text_sha256"],
             "campaign": bind_topic(campaign, topic["text"]),
         }
-        for topic in campaign["topic_policy"]["topics"]
-        if topic["topic_id"] not in completed
-    ]
+        if topic["source"] == "campaign_registered":
+            projection.update(
+                {
+                    "topic_registration_sha256": topic[
+                        "topic_registration_sha256"
+                    ],
+                    "registration_source": copy.deepcopy(
+                        topic["registration_source"]
+                    ),
+                    "registered_at": topic["registered_at"],
+                }
+            )
+        available.append(projection)
+    return available
 
 
 __all__ = [
@@ -568,13 +640,17 @@ __all__ = [
     "DEFAULT_ACTIVATION_PATH",
     "DEFAULT_CAMPAIGN_ID",
     "DEFAULT_CAMPAIGN_MANIFEST",
+    "DAILY_AGENTIC_GAME_THEORY_CAMPAIGN_ID",
+    "DAILY_AGENTIC_GAME_THEORY_CAMPAIGN_MANIFEST",
     "KNOWN_OPPONENT_CAMPAIGN_ID",
     "KNOWN_OPPONENT_CAMPAIGN_MANIFEST",
     "LINK_FIELDS",
     "LINK_SCHEMA_VERSION",
+    "REGISTERED_LINK_FIELDS",
     "UTILITY_MECHANISM_CAMPAIGN_ID",
     "UTILITY_MECHANISM_CAMPAIGN_MANIFEST",
     "CampaignError",
+    "all_topics",
     "available_topics",
     "bind_topic",
     "campaign_context",

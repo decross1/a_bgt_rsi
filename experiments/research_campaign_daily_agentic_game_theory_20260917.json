@@ -1,0 +1,58 @@
+{
+  "schema_version": "research-campaign/v1",
+  "campaign_id": "v2-daily-agentic-game-theory-20260917",
+  "title": "Daily source-bound exploratory game-theory research",
+  "status": "prepared",
+  "opened_at": "2026-09-17T16:23:00Z",
+  "closed_at": null,
+  "scope": {
+    "domain": "game_theory_and_agent_behavior",
+    "subjects": [
+      "model agents",
+      "strategic decisions, incentives, mechanisms, and collective choice",
+      "recent source-bound game-theory literature"
+    ],
+    "claim_limits": [
+      "Runtime topic registrations are exploratory prompts, not preregistered empirical studies or validated scientific findings.",
+      "Each topic must remain bound to an exact verified literature source and immutable registration receipt.",
+      "Model-agent observations do not establish human behavior, a new equilibrium, causality, or a trading edge.",
+      "A proposed extension must distinguish the source paper’s claims from new hypotheses and specify a bounded disconfirming test."
+    ],
+    "shared_evidence": {
+      "literature": "cross_campaign_with_source_provenance",
+      "negative_memory": "cross_campaign_with_explicit_match_provenance",
+      "research_outcomes": "explicit_campaign_link_only"
+    }
+  },
+  "research_question": {
+    "question_id": "rq-daily-source-bound-game-theory-001",
+    "text": "Which source-grounded results in game theory motivate falsifiable, bounded questions about strategic behavior, incentives, mechanisms, or collective choice in model agents, and which analytical or scripted comparators would most directly disconfirm each proposed extension?",
+    "text_sha256": "6ac9418f519dd6f531eb9b89b4887bdce44bbb89898de63773d58c314645b7e1",
+    "selection": "team_proposed_within_owner_scope_2026-09-17"
+  },
+  "topic_policy": {
+    "mode": "registered_exploratory",
+    "topics": []
+  },
+  "study_manifests": [],
+  "legacy_policy": {
+    "missing_campaign_link": "unlinked_legacy",
+    "infer_from_timestamp": false,
+    "infer_from_topic_text": false
+  },
+  "campaign_actions": {
+    "admitted": [
+      "run_loop_iteration",
+      "promote_findings",
+      "bubble_up",
+      "noop"
+    ],
+    "deferred": [
+      "run_experiment",
+      "forecast_markets",
+      "mine_paper_gap",
+      "refine_idea",
+      "improve_system"
+    ]
+  }
+}

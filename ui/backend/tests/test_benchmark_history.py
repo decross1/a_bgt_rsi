@@ -4,8 +4,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from backend.benchmark_program import compose_program
 from backend.benchmark_history import matched_results
+from backend.benchmark_program import compose_program
 from bench.stable_benchmark.manifest import make_draft
 
 NOW = datetime(2026, 9, 17, tzinfo=timezone.utc)
@@ -13,6 +13,14 @@ NOW = datetime(2026, 9, 17, tzinfo=timezone.utc)
 
 def _fixture(tmp_path, monkeypatch):
     from backend import model_runtime_stable
+    from bench.stable_benchmark import admission, replay, runner, supervised_window
+
+    # The reader observes a frozen historical NOW. Synthetic producer receipts
+    # must use that same test timeline instead of today's wall clock, otherwise
+    # they become future evidence as soon as September 17 midnight passes.
+    for module, attribute in ((admission, "_utc_now"), (replay, "_utc_now"),
+                              (runner, "_utc_now"), (supervised_window, "utc_now")):
+        monkeypatch.setattr(module, attribute, lambda: "2026-09-16T06:00:00Z")
     # Runtime process/monitor verification has its own dedicated tests; this
     # fixture supplies a terminal public receipt chain without a live process.
     monkeypatch.setattr(model_runtime_stable, "project_active_stable_runtime", lambda **_: None)
@@ -22,6 +30,12 @@ def _fixture(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("stable_receipt_test_fixture", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    class ReceiptClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 9, 16, 6, tzinfo=timezone.utc).astimezone(tz)
+
+    monkeypatch.setattr(module, "datetime", ReceiptClock)
     definition, registration, lifecycle = module._registration_fixture(tmp_path, monkeypatch)
     return definition.path.parent, tmp_path / "repo", registration, lifecycle
 

@@ -27,6 +27,32 @@ const receipt = () => ({
     last_success_pointer_sha256: null as string | null },
 });
 const show = (data: unknown, failing = false) => render(<MemoryRouter><ResearchOpsCard data={data} failing={failing} /></MemoryRouter>);
+
+it("shows a replenishable daily queue without calling it an exhausted campaign", () => {
+  const data = { ...receipt(), next_registered_campaign: null,
+    campaign_queue: { status: "awaiting_daily_registration", eligible_count: 0,
+      consumed_count: 0, loop_source_sha256: sha("b") },
+    next_work: { code: "register_verified_daily_topic", campaign_id: "v2-campaign",
+      manifest_sha256: sha("a"), activation_required: false },
+  };
+  show(data);
+  expect(screen.getByText(/Daily exploratory queue: 0 registered/)).toBeInTheDocument();
+  expect(screen.getByText(/up to 3 per UTC day/)).toBeInTheDocument();
+  expect(screen.queryByText(/no further topic dispatch/)).not.toBeInTheDocument();
+});
+
+it.each([
+  ["queue_starved", /No unused verified literature topic/],
+  ["daily_topic_limit", /Daily topic allowance reached/],
+  ["topic_source_unavailable", /Literature source could not be verified/],
+])("shows %s as a no-planner outcome", (status, label) => {
+  const data = receipt();
+  data.last_cycle = { ...data.last_cycle, terminal_status: String(status),
+    action_code: String(status), action_kind: null, outcome_count: 0 };
+  show(data);
+  expect(screen.getByText(label as RegExp)).toBeInTheDocument();
+  expect(screen.queryByText(/Plan recorded/)).not.toBeInTheDocument();
+});
 const payoffObservation = (): Record<string, unknown> & { jobs: Record<string, unknown>[] } => ({
   schema_version: "registered-payoff-jobs-observation/v1", source_status: "available",
   checked_at: new Date().toISOString(), queue_source_sha256: sha("9"),

@@ -6,6 +6,9 @@ verify both the process and its public health/read-model boundary afterward.
 
 ## 1. Daily orientation
 
+For the ongoing source-bound exploratory queue, ingestion receipts, daily
+limits, and honest idle outcomes, see [Daily research operation](DAILY_RESEARCH_OPERATIONS.md).
+
 Open `http://127.0.0.1:5173/` on the Spark, or
 [the Spark observatory](http://spark-7eeb:5173/) from a device that can reach it.
 The sidebar groups the workspace by
