@@ -89,7 +89,7 @@ def test_fixed_registry_has_two_residents_and_one_unpromoted_candidate():
     }
     assert REGISTERED_MODELS["flash"] == {
         "url": "http://127.0.0.1:8012",
-        "configured_model": "qwen3.8-flash-next",
+        "configured_model": "qwen3.8-flash-next-mia",
         "configured_max_context_tokens": 32_768,
         "deployment_role": "research_candidate",
         "benchmark_cohort": "flash",
@@ -127,23 +127,24 @@ def test_inventory_preserves_legacy_fields_and_separates_idle_from_offline():
     assert body["flash"]["promotion_authorized"] is False
 
 
-def test_wrong_model_is_online_but_identity_mismatch():
+@pytest.mark.parametrize("served", ["other-model", "qwen3.8-flash-next"])
+def test_wrong_model_is_online_but_identity_mismatch(served):
     one = {"flash": "http://f:8012"}
     body = client({
-        "http://f:8012/v1/models": {"data": [{"id": "other-model"}]},
+        "http://f:8012/v1/models": {"data": [{"id": served}]},
         "http://f:8012/metrics": metrics(),
     }, endpoints=one).get("/api/served_models").json()["flash"]
     assert body["models_endpoint_status"] == "available"
     assert body["service_status"] == "online"
     assert body["identity_status"] == "mismatch"
-    assert body["model"] == "other-model"
+    assert body["model"] == served
 
 
 def test_metrics_failure_does_not_turn_a_serving_model_offline():
     one = {"flash": "http://f:8012"}
     body = client({
         "http://f:8012/v1/models": {
-            "data": [{"id": "qwen3.8-flash-next", "max_model_len": 16384}]
+            "data": [{"id": "qwen3.8-flash-next-mia", "max_model_len": 16384}]
         },
         "http://f:8012/metrics": "not prometheus core gauges\n",
     }, endpoints=one).get("/api/served_models").json()["flash"]
@@ -187,7 +188,7 @@ def test_nonfinite_optional_metrics_are_withheld_without_breaking_json():
         "vllm:spec_decode_num_draft_tokens_total +Inf\n"
     ))
     response = client({
-        "http://f:8012/v1/models": {"data": [{"id": "qwen3.8-flash-next"}]},
+        "http://f:8012/v1/models": {"data": [{"id": "qwen3.8-flash-next-mia"}]},
         "http://f:8012/metrics": malformed_optional,
     }, endpoints=one).get("/api/served_models")
     assert response.status_code == 200
@@ -202,7 +203,7 @@ def test_redirect_and_oversize_are_invalid_and_never_followed():
     one = {"flash": "http://f:8012"}
     body = client({
         "http://f:8012/v1/models": Response(
-            {"data": [{"id": "qwen3.8-flash-next"}]},
+            {"data": [{"id": "qwen3.8-flash-next-mia"}]},
             final_url="http://elsewhere/v1/models",
         ),
         "http://f:8012/metrics": b"x" * 2_000_001,
