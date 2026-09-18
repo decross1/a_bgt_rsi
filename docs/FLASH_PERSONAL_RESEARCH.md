@@ -121,6 +121,31 @@ The incumbent pair stays stopped across these serving changes.
 
 ## Resource policy and recovery
 
+### Make a personal request
+
+While the controller is ready, call the local endpoint with the supplied client:
+
+```bash
+env -u MOCK_LLM .venv-chroma/bin/python -m bench.flash_next_ab.personal_client \
+  --policy medium --prompt-file /absolute/path/to/question.txt \
+  --output-dir /absolute/path/to/a-new-answer-directory --print-final
+```
+
+Use `--policy off` for a short direct response. The output directory must be new
+or empty. Completed answers print in the terminal; raw requests, streams,
+separate reasoning/final channels, timing, usage and completion classifications
+are saved alongside them. A timeout or unfinished response exits nonzero.
+Input and output must fit the active 32K context; the medium policy allows up to
+16K output, so reduce `--max-output-tokens` when sending a long paper. The CLI
+checks the served model name but explicitly does not attest the active runtime
+profile; evaluation runners additionally bind the controller and container.
+
+This is an OpenAI-compatible local service; existing clients may use
+`http://127.0.0.1:8012/v1` and model `qwen3.8-flash-next-mia`. Set thinking effort
+explicitly rather than inheriting the checkpoint's `xhigh` default.
+
+### Resource limits
+
 This new diagnostic allows at most 1,800 seconds per startup. The preferred
 physical reserve remains 20 GiB; 12 GiB is only selectable as an explicit new
 session declaration. Candidate cgroup swap and OOM remain hard failures, as do

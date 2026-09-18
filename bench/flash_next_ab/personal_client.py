@@ -725,6 +725,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repeat", type=int, default=1)
     parser.add_argument("--vary-seed", action="store_true")
     parser.add_argument("--max-output-tokens", type=int)
+    parser.add_argument("--print-final", action="store_true",
+                        help="Print completed final answers as well as saving their receipts")
     parser.add_argument("--logprobs", action="store_true")
     parser.add_argument("--top-logprobs", type=int)
     return parser
@@ -765,6 +767,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             (json.dumps(receipt, indent=2, sort_keys=True, allow_nan=False) + "\n").encode(),
         )
         receipts.append(receipt)
+        if args.print_final and result.classification == "completed":
+            print(result.content, flush=True)
     summary = {
         "schema": "flash-personal-cli-run/v1",
         # The shared response route proves checkpoint identity, not which
