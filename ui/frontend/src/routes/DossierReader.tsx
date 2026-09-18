@@ -342,11 +342,16 @@ export default function DossierReader({ availability, items }: Props) {
             </span>
           )}
         </div>
-        {title.length > 0 && (
+        {title.length > 0 && (interrogable ? (
+          <details className="mt-2 text-xs text-zinc-400" data-testid="dossier-original-request">
+            <summary className="cursor-pointer">Original review request</summary>
+            <p className="mt-1 leading-5 text-zinc-300">{title}</p>
+          </details>
+        ) : (
           <div className="mt-1 text-[15px] font-[550] text-zinc-100">
             {title}
           </div>
-        )}
+        ))}
       </header>
 
       <ResearchScopeBar
