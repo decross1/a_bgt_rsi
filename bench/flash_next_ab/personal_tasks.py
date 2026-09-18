@@ -27,7 +27,11 @@ from typing import Any
 
 from bench.weekly_upgrade_historical.sandbox import DEFAULT_BWRAP, SandboxUnavailable
 
-PANEL_SCHEMA = "flash-personal-usability-panel/v1"
+PANEL_SCHEMA = "flash-personal-usability-panel/v2"
+FROZEN_V1_PANEL_SCHEMA = "flash-personal-usability-panel/v1"
+FROZEN_V1_MANIFEST_SHA256 = (
+    "97177e2a49f0abb883ab47b914a37590cf32bf0b2da6f8e037a74e88b8dedb10"
+)
 MAX_TASK_FILE_BYTES = 128 * 1024
 MAX_CHECK_OUTPUT_BYTES = 64 * 1024
 
@@ -351,7 +355,9 @@ CODING_TASKS = (
             "parse standard CSV (including quoted commas and CRLF), require exactly "
             "the order_id,status,amount header, sum only rows whose status is exactly "
             "paid using Decimal, return two decimal places, ignore empty physical "
-            "lines, and raise ValueError for an invalid paid amount or bad header."
+            "lines, and raise ValueError for an invalid paid amount or bad header. "
+            "Every paid amount must be a finite Decimal: NaN, Infinity, and "
+            "-Infinity are invalid even though Decimal can parse those spellings."
         ),
         files=(
             TaskFile("orders.py", '''from decimal import Decimal\n\n\ndef paid_total(csv_text):\n    total = Decimal("0")\n    for line in csv_text.strip().splitlines()[1:]:\n        order_id, status, amount = line.split(",")\n        if status == "paid":\n            total += Decimal(amount)\n    return str(total)\n''', True),
@@ -366,7 +372,9 @@ CODING_TASKS = (
             "Inspect intervals.py and its tests. merge_half_open must return sorted "
             "merged [start,end) integer pairs without mutating the input. Overlapping "
             "intervals merge, touching intervals such as [1,3) and [3,5) remain "
-            "separate, and bool endpoints or intervals with start>=end raise ValueError."
+            "separate. Every endpoint must have type int; bool and all other "
+            "noninteger endpoints, including finite floats such as 1.0, must raise "
+            "ValueError. Intervals with start>=end must also raise ValueError."
         ),
         files=(
             TaskFile("intervals.py", '''def merge_half_open(intervals):\n    result = []\n    for start, end in sorted(intervals):\n        if result and start <= result[-1][1]:\n            result[-1][1] = max(result[-1][1], end)\n        else:\n            result.append([start, end])\n    return result\n''', True),
@@ -473,7 +481,19 @@ def task_manifest() -> dict[str, Any]:
             ]
             row["grader"] = "out-of-process-semantic-check/v1"
         tasks.append(row)
-    document = {"schema": PANEL_SCHEMA, "policies": policies, "tasks": tasks}
+    document = {
+        "schema": PANEL_SCHEMA,
+        "lineage": {
+            "frozen_schema": FROZEN_V1_PANEL_SCHEMA,
+            "frozen_manifest_sha256": FROZEN_V1_MANIFEST_SHA256,
+            "clarifications": [
+                "code-csv-paid-total explicitly rejects nonfinite Decimal values",
+                "code-half-open-intervals explicitly rejects every non-int endpoint",
+            ],
+        },
+        "policies": policies,
+        "tasks": tasks,
+    }
     encoded = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
     document["manifest_sha256"] = hashlib.sha256(encoded).hexdigest()
     return document
@@ -1027,6 +1047,10 @@ class SandboxTools:
     def receipt(self) -> dict[str, Any]:
         return {
             "events": list(self.events),
+            "human_interventions": 0,
+            "tool_events": len(self.events),
+            # Backward-compatible alias. Historical receipts used
+            # ``interventions`` for model-initiated tool events.
             "interventions": len(self.events),
             "reads": sum(event["name"] == "read_file" for event in self.events),
             "writes": sum(event["name"] == "write_file" for event in self.events),
@@ -1037,6 +1061,8 @@ class SandboxTools:
 def summarize_attempts(attempts: Iterable[dict[str, Any]]) -> dict[str, Any]:
     """Aggregate the panel's practical usability axes without changing old grades."""
     rows = list(attempts)
+    tool_event_counts: list[int] = []
+    human_intervention_counts: list[int] = []
     allowed = {
         "passed", "representation_only_failure", "wrong_semantics", "no_final",
         "transport_error", "parser_error", "exhausted", "runner_error",
@@ -1049,10 +1075,32 @@ def summarize_attempts(attempts: Iterable[dict[str, Any]]) -> dict[str, Any]:
             row.get("elapsed_s", 0), (int, float)
         ) or not math.isfinite(float(row.get("elapsed_s", 0))) or row.get("elapsed_s", 0) < 0:
             raise ValueError("attempt elapsed time is invalid")
-        if isinstance(row.get("interventions", 0), bool) or not isinstance(
-            row.get("interventions", 0), int
-        ) or row.get("interventions", 0) < 0:
-            raise ValueError("attempt intervention count is invalid")
+        legacy_present = "interventions" in row
+        legacy_events = row.get("interventions")
+        explicit_present = "tool_events" in row
+        tool_events = row.get("tool_events", legacy_events if legacy_present else 0)
+        if (
+            isinstance(tool_events, bool)
+            or not isinstance(tool_events, int)
+            or tool_events < 0
+            or legacy_present
+            and (
+                isinstance(legacy_events, bool)
+                or not isinstance(legacy_events, int)
+                or legacy_events < 0
+                or explicit_present and legacy_events != tool_events
+            )
+        ):
+            raise ValueError("attempt tool event count is invalid")
+        human_interventions = row.get("human_interventions", 0)
+        if (
+            isinstance(human_interventions, bool)
+            or not isinstance(human_interventions, int)
+            or human_interventions < 0
+        ):
+            raise ValueError("attempt human intervention count is invalid")
+        tool_event_counts.append(tool_events)
+        human_intervention_counts.append(human_interventions)
     counts = {classification: 0 for classification in sorted(allowed)}
     for row in rows:
         counts[row["classification"]] += 1
@@ -1063,13 +1111,17 @@ def summarize_attempts(attempts: Iterable[dict[str, Any]]) -> dict[str, Any]:
         }
         for row in rows
     )
+    tool_event_count = sum(tool_event_counts)
     return {
         "attempts": len(rows),
         "completed": completed,
         "correct": counts["passed"],
         "completion_rate": completed / len(rows) if rows else 0.0,
         "correctness_rate": counts["passed"] / len(rows) if rows else 0.0,
-        "interventions": sum(row.get("interventions", 0) for row in rows),
+        "human_interventions": sum(human_intervention_counts),
+        "tool_events": tool_event_count,
+        # Backward-compatible alias for the v1 field name.
+        "interventions": tool_event_count,
         "exhausted": counts["exhausted"],
         "elapsed_s": sum(float(row.get("elapsed_s", 0.0)) for row in rows),
         "classifications": counts,

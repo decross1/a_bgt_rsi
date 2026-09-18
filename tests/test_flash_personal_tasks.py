@@ -4,6 +4,8 @@ import pytest
 
 from bench.flash_next_ab.personal_tasks import (
     CODING_TASKS,
+    FROZEN_V1_MANIFEST_SHA256,
+    FROZEN_V1_PANEL_SCHEMA,
     POLICIES,
     SCIENCE_TASKS,
     SandboxTools,
@@ -138,8 +140,17 @@ def expected_payoffs(row_strategy, column_strategy, row_payoffs, column_payoffs)
 
 def test_manifest_is_answer_free_five_plus_five_with_explicit_policies():
     manifest = task_manifest()
-    assert manifest["schema"] == "flash-personal-usability-panel/v1"
+    assert manifest["schema"] == "flash-personal-usability-panel/v2"
     assert len(manifest["manifest_sha256"]) == 64
+    assert manifest["manifest_sha256"] != FROZEN_V1_MANIFEST_SHA256
+    assert manifest["lineage"] == {
+        "frozen_schema": FROZEN_V1_PANEL_SCHEMA,
+        "frozen_manifest_sha256": FROZEN_V1_MANIFEST_SHA256,
+        "clarifications": [
+            "code-csv-paid-total explicitly rejects nonfinite Decimal values",
+            "code-half-open-intervals explicitly rejects every non-int endpoint",
+        ],
+    }
     assert [row["id"] for row in manifest["policies"]] == ["off", "medium"]
     assert manifest["policies"][0] == {
         "id": "off",
@@ -161,6 +172,13 @@ def test_manifest_is_answer_free_five_plus_five_with_explicit_policies():
     assert [row["kind"] for row in manifest["tasks"]].count("coding") == 5
     assert all("expected_json" not in row and "answer" not in row for row in manifest["tasks"])
     assert all(row["policy_ids"] == ["off", "medium"] for row in manifest["tasks"])
+    tasks = {row["id"]: row for row in manifest["tasks"]}
+    csv_prompt = tasks["code-csv-paid-total"]["messages"][-1]["content"]
+    assert "finite Decimal" in csv_prompt
+    assert "NaN, Infinity, and -Infinity" in csv_prompt
+    interval_prompt = tasks["code-half-open-intervals"]["messages"][-1]["content"]
+    assert "Every endpoint must have type int" in interval_prompt
+    assert "finite floats such as 1.0" in interval_prompt
 
 
 @pytest.mark.parametrize("task", SCIENCE_TASKS, ids=lambda task: task.id)
@@ -200,6 +218,9 @@ def test_each_coding_task_starts_broken_and_has_a_semantic_repair(tmp_path, task
     assert tools.receipt()["reads"] == 1
     assert tools.receipt()["writes"] == 1
     assert tools.receipt()["test_runs"] == 1
+    assert tools.receipt()["human_interventions"] == 0
+    assert tools.receipt()["tool_events"] == 4
+    assert tools.receipt()["interventions"] == 4
 
 
 def test_coding_tools_reject_escape_and_read_only_edits(tmp_path):
@@ -258,7 +279,10 @@ except OSError:
 
 def test_attempt_summary_keeps_failure_modes_and_usability_axes_separate():
     summary = summarize_attempts([
-        {"classification": "passed", "interventions": 3, "elapsed_s": 2.5},
+        {
+            "classification": "passed", "tool_events": 3,
+            "human_interventions": 0, "elapsed_s": 2.5,
+        },
         {"classification": "representation_only_failure", "interventions": 0, "elapsed_s": 1},
         {"classification": "wrong_semantics", "interventions": 2, "elapsed_s": 4},
         {"classification": "no_final", "interventions": 1, "elapsed_s": 5},
@@ -269,11 +293,19 @@ def test_attempt_summary_keeps_failure_modes_and_usability_axes_separate():
     assert summary["attempts"] == 7
     assert summary["completed"] == 3
     assert summary["correct"] == 1
+    assert summary["human_interventions"] == 0
+    assert summary["tool_events"] == 10
     assert summary["interventions"] == 10
     assert summary["exhausted"] == 1
     assert summary["elapsed_s"] == 23.25
     assert summary["classifications"]["representation_only_failure"] == 1
     assert summary["classifications"]["runner_error"] == 1
+
+    with pytest.raises(ValueError, match="tool event count"):
+        summarize_attempts([{
+            "classification": "passed", "tool_events": 1,
+            "interventions": 2, "elapsed_s": 0,
+        }])
 
 
 def test_policy_objects_match_the_two_declared_request_modes():
