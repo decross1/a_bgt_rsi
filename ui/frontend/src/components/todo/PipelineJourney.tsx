@@ -322,6 +322,9 @@ function JourneyOverview({
   const outcome = asRecord(row.experiment_outcome);
   const question = findingClaim || iterationQuestion(row) || "No research question is recorded.";
   const title = iterationDisplayTitle(row) ?? "Recorded research iteration";
+  // A short hypothesis can already be the entire heading. Keep the full
+  // question once, while retaining distinct finding claims and longer text.
+  const questionIsTitle = title.replace(/[.!?]+$/, "") === question.replace(/[.!?]+$/, "");
   const happened = outcome !== null
     ? concise(outcome.summary, `An experiment outcome is recorded${asText(outcome.experiment_id) ? ` for ${asText(outcome.experiment_id)}` : ""}.`)
     : `No experiment outcome is recorded. Critic: ${asText(critique?.verdict) || "not reported"}; red team: ${asText(redteam?.verdict) || "not reported"}; gate: ${asText(row.gate_status) || "not reported"}.`;
@@ -351,11 +354,11 @@ function JourneyOverview({
 
   return <section data-testid="journey-overview" className="mt-2 rounded border border-zinc-700/70 bg-zinc-900/50 p-3">
     <div className="flex flex-wrap items-baseline gap-2">
-      <h1 className="m-0 text-[15px] font-semibold text-zinc-100">{title}</h1>
+      <h1 data-testid={questionIsTitle && findingClaim ? "journey-finding-claim" : undefined} className="m-0 text-[15px] font-semibold text-zinc-100">{questionIsTitle ? question : title}</h1>
       <code className="text-[10px] text-zinc-500">{asText(row.iteration_id)}</code>
     </div>
     <dl className="mt-3 grid gap-3">
-      <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Question</dt><dd data-testid={findingClaim ? "journey-finding-claim" : undefined} className="mt-0.5 text-xs leading-5 text-zinc-200">{question}</dd></div>
+      {!questionIsTitle && <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Question</dt><dd data-testid={findingClaim ? "journey-finding-claim" : undefined} className="mt-0.5 text-xs leading-5 text-zinc-200">{question}</dd></div>}
       <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">What happened</dt><dd className="mt-0.5 text-xs leading-5 text-zinc-300">{happened}</dd></div>
       <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">What the record supports learning</dt><dd className="mt-0.5 text-xs leading-5 text-zinc-300">{learned}</dd></div>
       <div><dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Next step</dt><dd className="mt-0.5 text-xs leading-5 text-zinc-300">{next}</dd></div>
