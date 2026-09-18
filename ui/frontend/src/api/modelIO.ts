@@ -101,6 +101,60 @@ export interface ModelIODetailResponse {
   call: ModelIOCallDetail;
 }
 
+export type LocalModelTraceStatus =
+  | "streaming"
+  | "completed"
+  | "tool_call"
+  | "exhausted"
+  | "no_final"
+  | "repetition_aborted"
+  | "transport_error"
+  | "parser_error"
+  | "interrupted";
+
+export interface LocalModelToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+export interface LocalModelTrace {
+  schema: "local-model-trace/v1";
+  request_id: string;
+  model: string;
+  backend: string;
+  source: string;
+  started_at: string;
+  updated_at: string;
+  elapsed_s: number;
+  prompt_preview: string;
+  prompt_truncated: boolean;
+  status: LocalModelTraceStatus;
+  reasoning_content: string;
+  content: string;
+  tool_calls: LocalModelToolCall[];
+  usage: Record<string, unknown> | null;
+  usage_truncated?: boolean;
+  finish_reason: string | null;
+  error: string | null;
+  truncated: {
+    reasoning_content: boolean;
+    content: boolean;
+    tool_calls: boolean;
+  };
+  freshness: { state: "live" | "stale"; age_s: number };
+}
+
+export interface LocalModelTraceResponse {
+  schema_version: 1;
+  source: "logs/model_traces";
+  available: boolean;
+  traces: LocalModelTrace[];
+  skipped_files: number;
+  scan_truncated: boolean;
+  generated_at: string;
+}
+
 export interface DispatchTask {
   task_id: string;
   task_type: string | null;
@@ -144,6 +198,9 @@ export const getModelIODetail = (requestId: string) =>
   getJSON<ModelIODetailResponse>(
     `/api/model_io/${encodeURIComponent(requestId)}`,
   );
+
+export const getModelTraces = (limit = 4) =>
+  getJSON<LocalModelTraceResponse>(`/api/model_traces?limit=${limit}`);
 
 export const getDispatchTrace = (limit = 30) =>
   getJSON<DispatchTraceResponse>(`/api/dispatch_trace?limit=${limit}`);

@@ -45,9 +45,11 @@ import LabSparkgrid from "../components/LabSparkgrid";
 import LabTodo from "../components/LabTodo";
 import LadderMiniFunnel from "../components/LadderMiniFunnel";
 import LastCycleLine from "../components/LastCycleLine";
+import ModelActivityPanel from "../components/ModelActivityPanel";
 import ModelServerCard, {
   QWEN_SERVED_MODEL,
   VLLM_SERVED_MODEL,
+  type InventoryMetricPoint,
 } from "../components/ModelServerCard";
 import NaraPromptForm from "../components/NaraPromptForm";
 import NowBoard from "../components/NowBoard";
@@ -202,6 +204,57 @@ const MODEL_PRESENTATION: Record<
   qwen: { pick: pickQwen, accent: "sky", workloadHint: false, transientDropBanner: true },
   flash: { pick: pickNoTelemetry, accent: "violet", workloadHint: false, transientDropBanner: true },
 };
+
+const INVENTORY_HISTORY_LIMIT = 60;
+export interface InventoryHistoryBucket {
+  generation: string;
+  points: InventoryMetricPoint[];
+}
+export type InventoryHistory = Record<string, InventoryHistoryBucket>;
+
+/** Add each real /api/served_models probe once. A cache replay with the same
+ * probed_at cannot fabricate another point; an endpoint/model/runtime change
+ * starts a new series instead of joining unlike deployments. */
+export function appendInventoryHistory(
+  previous: InventoryHistory,
+  catalog: Array<[string, ServedModel]>,
+  generations: Record<string, string>,
+): InventoryHistory {
+  let next = previous;
+  for (const [key, row] of catalog) {
+    if (!isInventoryModel(row)) continue;
+    const probedAt = row.probed_at as string;
+    const generation = generations[key]
+      ?? `${key}\u0000${row.url}\u0000${row.model ?? row.configured_model}`;
+    const current = previous[key];
+    if (current?.generation === generation
+        && current.points.at(-1)?.timestamp === probedAt) {
+      continue;
+    }
+    const priorPoints = current?.generation === generation ? current.points : [];
+    const point: InventoryMetricPoint = {
+      timestamp: probedAt,
+      metrics: row.metrics ?? null,
+    };
+    if (next === previous) next = { ...previous };
+    next[key] = {
+      generation,
+      points: [...priorPoints, point].slice(-INVENTORY_HISTORY_LIMIT),
+    };
+  }
+  return next;
+}
+
+function useInventoryHistory(
+  catalog: Array<[string, ServedModel]>,
+  generations: Record<string, string>,
+): InventoryHistory {
+  const [history, setHistory] = useState<InventoryHistory>({});
+  useEffect(() => {
+    setHistory((previous) => appendInventoryHistory(previous, catalog, generations));
+  }, [catalog, generations]);
+  return history;
+}
 
 function isModelRuntime(value: unknown): value is ModelRuntime {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
@@ -717,6 +770,20 @@ export default function Pulse() {
     modelRuntime?.mode !== "resident"
       ? modelRuntime?.candidate_variant ?? null
       : null;
+  const inventoryGenerations = useMemo(
+    () => Object.fromEntries(modelCatalog.map(([key, row]) => [
+      key,
+      [
+        key,
+        row.url,
+        row.model ?? row.configured_model ?? "unobserved",
+        key === "flash" ? selectedMiaVariant?.spec_id ?? "unbound" : "resident",
+        modelRuntime?.run_id ?? "no-runtime-run",
+      ].join("\u0000"),
+    ])),
+    [modelCatalog, modelRuntime?.run_id, selectedMiaVariant?.spec_id],
+  );
+  const inventoryHistory = useInventoryHistory(modelCatalog, inventoryGenerations);
   const candidateEndpointStarting =
     candidateResearchWindow &&
     ["candidate_start", "readiness"].includes(modelRuntime.phase ?? "");
@@ -1149,6 +1216,8 @@ export default function Pulse() {
               inventory={row}
               serviceExpectation={serviceExpectation}
               selectedVariant={key === "flash" ? selectedMiaVariant : null}
+              inventorySamples={inventoryHistory[key]?.points ?? []}
+              inventoryRefreshFailed={servedModelsPoll.failing}
               pick={presentation.pick}
               samples={cleanSamples}
               liveCalls={liveCalls}
@@ -1191,6 +1260,7 @@ export default function Pulse() {
             />
           </>}
           </div>
+          <ModelActivityPanel />
         </section>
 
         {/* Launching an iteration is deliberate, not ambient — disclosed.
