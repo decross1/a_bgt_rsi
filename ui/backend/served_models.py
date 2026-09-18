@@ -37,7 +37,9 @@ MAX_MODELS_BYTES = 1_000_000
 MAX_METRICS_BYTES = 2_000_000
 
 # Deployment facts, not mutable UI configuration. Flash stays a research
-# candidate even while it is the only live server.
+# candidate even while it is the only live server. The default candidate is
+# the registered Mia checkpoint; a controller-selected alternate remains
+# separately identified by the runtime projection.
 REGISTERED_MODELS: dict[str, dict[str, Any]] = {
     "gemma": {
         "url": "http://127.0.0.1:8000",
@@ -55,7 +57,7 @@ REGISTERED_MODELS: dict[str, dict[str, Any]] = {
     },
     "flash": {
         "url": "http://127.0.0.1:8012",
-        "configured_model": "qwen3.8-flash-next",
+        "configured_model": "qwen3.8-flash-next-mia",
         "configured_max_context_tokens": 32_768,
         "deployment_role": "research_candidate",
         "benchmark_cohort": "flash",
