@@ -431,6 +431,30 @@ def stream_chat(
     repetition_guard = ExactRepetitionGuard()
     raw_response = bytearray()
     connection = None
+    trace = None
+    trace_status = "interrupted"
+    trace_error = None
+    if os.environ.get("LOCAL_MODEL_TRACE_DIR"):
+        # Optional UI telemetry is separate from immutable request/SSE evidence.
+        # The observer is disabled for timing comparisons unless explicitly opted in.
+        try:
+            from agent_wrapper.live_trace import start_trace
+
+            trace = start_trace(model=endpoint.served_model, backend=endpoint.name,
+                                source="flash-personal-client", messages=messages)
+        except ImportError:
+            pass
+
+    def publish_trace(*, force: bool = False) -> None:
+        if trace is not None:
+            trace.update(
+                reasoning_content="".join(accumulator.reasoning),
+                content="".join(accumulator.content),
+                tool_calls=[accumulator.tools[key] for key in sorted(accumulator.tools)],
+                usage=accumulator.usage, status=trace_status if force else "streaming",
+                finish_reason=accumulator.finish_reason, error=trace_error, force=force,
+            )
+
     try:
         remaining = _remaining(deadline, clock)
         connection = connection_factory("127.0.0.1", endpoint.validate(), timeout=remaining)
@@ -475,10 +499,12 @@ def stream_chat(
                 if payload is not None:
                     accumulator.accept(payload)
                     repetition_guard.observe(accumulator)
+            publish_trace()
             if accumulator.done and buffer.strip(b"\r\n"):
                 raise TransportError("bytes follow the terminal SSE marker")
         parsed = accumulator.result()
         classification = _successful_classification(parsed)
+        trace_status = classification
         return TurnResult(
             classification=classification,
             content=parsed["content"],
@@ -495,6 +521,7 @@ def stream_chat(
             response_bytes=bytes(raw_response),
         )
     except RepetitionAborted as exc:
+        trace_status, trace_error = "repetition_aborted", str(exc)
         return _failure_result(
             "repetition_aborted",
             accumulator=accumulator,
@@ -506,6 +533,7 @@ def stream_chat(
             error=exc,
         )
     except TransportError as exc:
+        trace_status, trace_error = "parser_error", str(exc)
         return _failure_result(
             "parser_error",
             accumulator=accumulator,
@@ -517,6 +545,7 @@ def stream_chat(
             error=exc,
         )
     except (OSError, TimeoutError, http.client.HTTPException) as exc:
+        trace_status, trace_error = "transport_error", str(exc)
         return _failure_result(
             "transport_error",
             accumulator=accumulator,
@@ -528,6 +557,7 @@ def stream_chat(
             error=exc,
         )
     finally:
+        publish_trace(force=True)
         if connection is not None:
             try:
                 connection.close()

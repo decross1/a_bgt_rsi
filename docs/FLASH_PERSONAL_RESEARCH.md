@@ -144,6 +144,17 @@ This is an OpenAI-compatible local service; existing clients may use
 `http://127.0.0.1:8012/v1` and model `qwen3.8-flash-next-mia`. Set thinking effort
 explicitly rather than inheriting the checkpoint's `xhigh` default.
 
+To expose this client's emitted stream in the Now dashboard, opt in with
+`LOCAL_MODEL_TRACE_DIR=/home/decross1/projects/a_bgt_rsi/logs/model_traces` on
+the client process. This requires the dashboard's `agent_wrapper.live_trace`
+module. The observer writes private local snapshots at most twice per second;
+it does not add fields to the model request or change grading. The UI separates
+the prompt preview, emitted reasoning, tool arguments, final answer and terminal
+status. It does not infer a trace for calls made by uninstrumented clients.
+Keep tracing off for matched speed tests unless every arm uses it and the
+measurement records that fact. The bounded UI view explicitly reports clipping;
+the original raw SSE artifacts remain the complete diagnostic record.
+
 ### Resource limits
 
 This new diagnostic allows at most 1,800 seconds per startup. The preferred

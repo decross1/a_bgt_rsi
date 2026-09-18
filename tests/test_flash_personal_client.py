@@ -104,6 +104,69 @@ def connection_factory(connection):
     return make
 
 
+def test_optional_live_trace_does_not_change_wire_or_raw_stream(tmp_path, monkeypatch):
+    chunks = sse(frame(delta={"reasoning_content": "Check the premise."}),
+                 frame(delta={"content": "The answer."}, finish="stop"),
+                 usage_frame(), "[DONE]")
+    policy = get_policy("off")
+    messages = [{"role": "user", "content": "Question"}]
+    monkeypatch.delenv("LOCAL_MODEL_TRACE_DIR", raising=False)
+    plain = stream_chat(MIA_MTP3_REDUCED47K_OPT, messages, policy, seed=7,
+                        connection_factory=connection_factory(FakeConnection(FakeResponse(chunks))))
+    monkeypatch.setenv("LOCAL_MODEL_TRACE_DIR", str(tmp_path))
+    observed = stream_chat(MIA_MTP3_REDUCED47K_OPT, messages, policy, seed=7,
+                           connection_factory=connection_factory(FakeConnection(FakeResponse(chunks))))
+    assert observed.request_bytes == plain.request_bytes
+    assert observed.response_bytes == plain.response_bytes
+    assert observed.classification == plain.classification == "completed"
+    rows = list(tmp_path.glob("*.json"))
+    assert len(rows) == 1
+    row = json.loads(rows[0].read_text())
+    assert row["status"] == "completed" and row["model"] == MODEL
+    assert row["reasoning_content"] == "Check the premise."
+    assert row["content"] == "The answer."
+
+
+def test_live_trace_transport_failure_is_terminal(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCAL_MODEL_TRACE_DIR", str(tmp_path))
+    result = stream_chat(MIA_MTP3_REDUCED47K_OPT, [{"role": "user", "content": "Q"}],
+                         get_policy("off"), seed=0,
+                         connection_factory=connection_factory(
+                             FakeConnection(FakeResponse([]), fail_connect=True)))
+    row = json.loads(next(tmp_path.glob("*.json")).read_text())
+    assert row["status"] == result.classification == "transport_error"
+    assert row["error"] == "connection refused"
+
+
+def test_live_reasoning_is_visible_before_final_answer(tmp_path, monkeypatch):
+    from agent_wrapper import live_trace
+
+    monkeypatch.setenv("LOCAL_MODEL_TRACE_DIR", str(tmp_path))
+    ticks = iter(range(100))
+    monkeypatch.setattr(live_trace.time, "monotonic", lambda: float(next(ticks)))
+    chunks = sse(frame(delta={"reasoning_content": "First step"}),
+                 frame(delta={"content": "Answer"}, finish="stop"),
+                 usage_frame(), "[DONE]")
+
+    class ObservedResponse(FakeResponse):
+        reads = 0
+
+        def read1(self, size):
+            if self.reads == 1:
+                row = json.loads(next(tmp_path.glob("*.json")).read_text())
+                assert row["status"] == "streaming"
+                assert row["reasoning_content"] == "First step"
+                assert row["content"] == ""
+            self.reads += 1
+            return super().read1(size)
+
+    response = ObservedResponse(chunks)
+    result = stream_chat(MIA_MTP3_REDUCED47K_OPT, [{"role": "user", "content": "Q"}],
+                         get_policy("off"), seed=0, clock=Clock(),
+                         connection_factory=connection_factory(FakeConnection(response)))
+    assert result.classification == "completed" and response.reads >= 2
+
+
 def sse(*rows):
     return [("data: " + row + "\n\n").encode() for row in rows]
 
