@@ -4,10 +4,13 @@ The September 18 owner handoffs reopen Flash for interactive scientific and
 programming work. The earlier closed benchmark windows and their grades are
 unchanged. Passing every autonomous role is not a prerequisite for personal use.
 
-The starting runtime is the already qualified Mia optimized MTP3 / reduced
+The default runtime is the already qualified Mia optimized MTP3 / reduced
 47,149-token draft vocabulary / V2 / FULL-decode bundle. It uses the existing
-immutable image, weights and packed disk-backed PLE. A new session measures its
-actual behavior; historical qualification is prior evidence, not a new result.
+immutable image, weights and packed disk-backed PLE. A separate child image adds
+the reviewed QSA FP8-KV implementation for a personal comparison. It has its own
+specification, contract, container name and compile cache and remains
+unqualified until a live run supplies evidence. Historical qualification is
+prior evidence, not a new result for either precision change.
 
 ## Start and inspect
 
@@ -16,7 +19,7 @@ From the prepared checkout:
 ```bash
 env -u MOCK_LLM .venv-chroma/bin/python -m bench.flash_next_ab.personal_session \
   --run --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/session-UNUSED \
-  --hours 4 --floor 20
+  --hours 4 --floor 20 --initial-profile mtp3-fp32-auto
 ```
 
 Use a fresh lowercase `session-*` directory. The supervisor retains the normal
@@ -38,16 +41,56 @@ an SSH forward to this loopback port.
 
 The controller's named arms are:
 
-| Arm | MTP | Recurrent state | KV request | Decode graph width |
-| --- | --- | --- | --- | --- |
-| `mtp3-fp32-auto` | 3 | FP32 | auto | 4 |
-| `mtp0-fp32-auto` | 0 | FP32 | auto | 1 |
-| `mtp3-bf16-auto` | 3 | BF16 | auto | 4 |
+| Arm | Candidate image | MTP | Recurrent state | KV request | Decode graph width |
+| --- | --- | --- | --- | --- | --- |
+| `mtp3-fp32-auto` | qualified parent | 3 | FP32 | auto | 4 |
+| `mtp0-fp32-auto` | qualified parent | 0 | FP32 | auto | 1 |
+| `mtp3-bf16-auto` | qualified parent | 3 | BF16 | auto | 4 |
+| `mtp3-bf16-child-auto` | QSA child | 3 | BF16 | auto | 4 |
+| `mtp3-bf16-child-fp8` | QSA child | 3 | BF16 | FP8 | 4 |
 
 The no-MTP graph width differs because a step produces one token instead of a
 target token plus three draft tokens. Report that difference. Read startup logs
-for the resolved KV precision. The installed image lacks the QSA FP8-KV path;
-testing FP8 requires the separately built and identified child runtime.
+for the resolved KV precision. The qualified parent lacks the QSA FP8-KV path;
+only the separately built child may receive `--kv-cache-dtype fp8`.
+
+`--initial-profile` fixes one candidate specification for the entire session.
+Profile commands may switch only among arms belonging to that same exact image;
+they cannot hot-switch between parent and child. To compare auto and FP8 KV in
+the child while holding BF16 recurrent state fixed, start a fresh second session:
+
+```bash
+env -u MOCK_LLM .venv-chroma/bin/python -m bench.flash_next_ab.personal_session \
+  --run --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/session-fp8-UNUSED \
+  --hours 4 --floor 20 --initial-profile mtp3-bf16-child-auto
+```
+
+After the child auto arm is ready and idle, switch within that session:
+
+```json
+{"id":"child-fp8-first","action":"profile","profile":"mtp3-bf16-child-fp8"}
+```
+
+The child specification is
+`mia-925d7be6-mtp3-reduced47k-v2opt-fp8qsa-v1`, identity SHA-256
+`f4b3efc23134878c1f8f29c8004c00b80c7d2f20b693840dd487808e61f671a4`,
+and immutable image
+`sha256:ba65a549de4dce8cab70f27c200e408b28470ea175fc8c301e27b4deb154fbed`.
+It retains model path `/mnt/models/qwen3.8-flash-next-mia-925d7be6` and model
+artifact SHA-256
+`a40ce50173dd3aff54da88503894967e5248bbb927f9e4a91eff5a6a7270c168`.
+Its dedicated compile cache is
+`/home/decross1/projects/a_bgt_rsi_runtime_candidates/flash-next-20260914/compile-cache-mia-c0/qwen38-flash-next-mia-mtp3-reduced47k-fp8qsa-v1`.
+The immutable launch contract is
+`/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/fp8-runtime-build/launch-contract.mia-mtp3-reduced47k-fp8qsa.json`
+(raw SHA-256
+`8a6f5252ccf1f46ce68586ce04ee0a022a12566ede38b6532469ba5e52dc6e4f`).
+The image build receipt at
+`/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/fp8-runtime-build/build-receipt.json`
+is 4,656 bytes with SHA-256
+`3a75a795ec167885794a55de29e1a39e537fb0e953508ea9475cfce450e36ebc`.
+The parent specification identity remains
+`e71d3134f407cad3c288c21f9485c27352676dbb7de647c5b567777256702a50`.
 
 Request policy changes do not restart the model. Use explicit thinking off for
 simple extraction/tool turns and explicit medium effort for substantive tasks.
@@ -55,6 +98,16 @@ Give reasoning calls enough output capacity and time, while counting exhaustion,
 repetition, parser errors and incorrect answers separately. Reasoning text alone
 is not successful completion. Historical strict grades are never overwritten by
 a new presentation adapter or practical coding harness.
+
+The frozen personal panel intentionally omits `presence_penalty`.
+[vLLM](https://docs.vllm.ai/en/stable/api/vllm/sampling_params/) therefore uses
+`0.0`: this matches Qwen's thinking-mode recommendation, while the panel's
+non-thinking arm is an experimental baseline rather than the
+[Qwen recommendation](https://huggingface.co/Qwen/Qwen3.8-Flash-Next#api-usage)
+of `1.5`. If direct-mode repetition appears, run `presence_penalty=1.5` as a
+separately named request-policy diagnostic with matched tasks and seeds. Qwen
+warns that higher values can cause language mixing and a small performance loss;
+do not fold that diagnostic into already recorded primary arms.
 
 Runtime changes use a fresh command ID in the session's `command.json`:
 

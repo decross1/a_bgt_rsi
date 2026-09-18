@@ -17,6 +17,7 @@ from bench.flash_next_ab.followon_profiles import (
     MIA_MTP1,
     MIA_MTP2,
     MIA_MTP3,
+    MIA_MTP3_REDUCED47K_FP8_QSA,
     MIA_MTP3_REDUCED47K_OPT,
     MTP_MODULE_SHA256,
     REGISTERED_MIA_SPECS,
@@ -144,6 +145,29 @@ def test_reduced_child_model_verification_hashes_vocab_before_mutation(monkeypat
     monkeypatch.setattr(q, "_hash_regular_file", wrong_vocab)
     with pytest.raises(q.QualificationError, match="reduced draft vocabulary"):
         q.verify_model(contract, spec=spec)
+
+
+def test_fp8_qsa_overlay_is_a_distinct_registered_child_of_optimized_parent():
+    parent = MIA_MTP3_REDUCED47K_OPT
+    child = MIA_MTP3_REDUCED47K_FP8_QSA
+    assert child in REGISTERED_MIA_SPECS
+    assert parent.identity_sha256() == (
+        "e71d3134f407cad3c288c21f9485c27352676dbb7de647c5b567777256702a50"
+    )
+    assert child.image_id == (
+        "sha256:ba65a549de4dce8cab70f27c200e408b28470ea175fc8c301e27b4deb154fbed"
+    )
+    assert child.image_id != parent.image_id
+    assert child.model_artifact_sha256() == parent.model_artifact_sha256()
+    assert child.model_path == parent.model_path
+    assert child.draft_vocab_sha256 == parent.draft_vocab_sha256
+    assert child.compile_cache != parent.compile_cache
+    assert child.container_name != parent.container_name
+    assert child.contract_path != parent.contract_path
+    assert child.image_build_receipt_sha256 == (
+        "3a75a795ec167885794a55de29e1a39e537fb0e953508ea9475cfce450e36ebc"
+    )
+    assert requires_profile_canary(child) is True
 
 
 def test_v5_plan_binds_current_registered_source_before_host_ops(monkeypatch):
