@@ -6,8 +6,10 @@ unchanged. Passing every autonomous role is not a prerequisite for personal use.
 
 **No Flash endpoint is currently claimed live.** Both final handover restarts
 met the kernel-allocation hard stop before readiness, after earlier successful
-serving sessions. Complete the coordinated host recovery in the results report
-before another unchanged launch. Keep the original pair as the available
+serving sessions. Complete a reviewed host-recovery experiment before another
+launch. The September 19 follow-up below considers both a coordinated reboot
+and a separately prepared non-reboot compaction trial; neither has run.
+Keep the original pair as the available
 fallback; no production routing cutover was made.
 
 The preferred recovery bundle is the pinned **NVIDIA/SGLang v5** setup: 32K
@@ -15,6 +17,12 @@ context, one request, FP32 recurrent state, BF16 KV, native NEXTN speculation
 and file-backed PLE. It completed the full earlier comparison and restoration,
 but its failed second start prevents a reliable current-host handover claim.
 See the [results and recovery plan](FLASH_PERSONAL_RESULTS_20260918.md).
+
+The follow-up service audit and read-only recovery checker are under
+`a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/service-recovery-audit-20260919/`.
+The audit found Docker/CDI and Nara/model startup-order gaps plus session-only
+helpers. Most core services have boot coverage; configuration is not proof
+that every application will return. No startup configuration was changed.
 
 ## Use a verified SGLang endpoint
 
@@ -288,8 +296,8 @@ The delivered controller also reads the kernel journal every 15 seconds during
 startup and serving for new host NVIDIA allocation faults or Xid errors. It saves
 that evidence separately and excludes earlier events from candidate attribution.
 That timestamp filter is not evidence that an earlier host fault is resolved.
-The unresolved same-boot allocation events in the final report require the
-coordinated clean-host recovery before another launch. Unreadable journal
+The unresolved same-boot allocation events in the final report require a
+reviewed recovery intervention before another unchanged launch. Unreadable journal
 evidence triggers recovery. This closes a gap exposed by the independent
 SGLang load; the historical Mia measurements used the earlier controller.
 The stop is conservative: a host kernel event alone does not prove which
