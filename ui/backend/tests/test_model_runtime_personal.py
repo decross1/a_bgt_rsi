@@ -65,12 +65,20 @@ def _mia(root: Path, proc_root: Path, *, phase="starting", age=1, cid=CID_A):
     _proc(proc_root, pid, ticks, argv, parent=parent)
 
 
-def _sglang(root: Path, proc_root: Path, *, phase="starting", age=1, ticks=654321):
-    pid = 42001
+def _sglang(
+    root: Path,
+    proc_root: Path,
+    *,
+    phase="starting",
+    age=1,
+    ticks=654321,
+    pid=42001,
+    cid=CID_B,
+):
     receipt_sha = "c" * 64
     nonce = "d" * 32
     launch = {
-        "cid": CID_B,
+        "cid": cid,
         "image": personal.SG_IMAGE,
         "model": personal.SG_MODEL,
         "model_sha": personal.SG_MODEL_REVISION,
@@ -83,7 +91,7 @@ def _sglang(root: Path, proc_root: Path, *, phase="starting", age=1, ticks=65432
     state = {
         "schema": "flash-sglang-session-state/v1",
         "phase": phase,
-        "candidate_id": CID_B,
+        "candidate_id": cid,
         "candidate_name": "qwen38fn-" + nonce,
         "candidate_stop_at_or_before": (NOW + timedelta(hours=2)).isoformat(),
         "guard_pid": pid,
@@ -110,7 +118,7 @@ def _sglang(root: Path, proc_root: Path, *, phase="starting", age=1, ticks=65432
         root / "heartbeat.json",
         {
             "at": (NOW - timedelta(seconds=age)).isoformat(),
-            "phase": "live", "candidate_id": CID_B,
+            "phase": "live", "candidate_id": cid,
             "passive_models_heartbeat": passive,
         },
     )
@@ -190,6 +198,76 @@ def test_verified_terminal_sessions_are_not_an_active_overlay(tmp_path):
     assert personal.maybe_project_personal(
         mia_root=mia, sglang_root=sg, proc_root=tmp_path / "proc", observed=NOW
     ) is None
+
+
+def test_bounded_sglang_discovery_selects_fresh_002_with_restored_001(tmp_path):
+    proc = tmp_path / "proc"
+    runtime = tmp_path / "runtime"
+    old = runtime / "session-s3-readiness-v5-001"
+    fresh = runtime / "session-s3-readiness-v5-002"
+    _write(
+        old / "state.json",
+        {
+            "schema": "flash-sglang-session-state/v1",
+            "phase": "restored",
+            "restoration": {"status": "verified"},
+        },
+    )
+    _sglang(fresh, proc, phase="ready")
+
+    row = personal.maybe_project_personal(
+        mia_root=tmp_path / "session-none",
+        sglang_base=runtime,
+        proc_root=proc,
+        observed=NOW,
+    )
+
+    assert row is not None
+    assert row["run_id"] == "session-s3-readiness-v5-002"
+    assert row["phase"] == "ready"
+    assert row["personal_endpoint"] == "sglang"
+    assert row["candidate_id"] == CID_B
+
+
+def test_two_live_discovered_sglang_sessions_fail_closed(tmp_path):
+    proc = tmp_path / "proc"
+    runtime = tmp_path / "runtime"
+    first = runtime / "session-s3-readiness-v5-001"
+    second = runtime / "session-s3-readiness-v5-002"
+    _sglang(first, proc, pid=42001, ticks=654321, cid=CID_B)
+    _sglang(second, proc, pid=42002, ticks=654322, cid="e" * 64)
+
+    row = personal.maybe_project_personal(
+        mia_root=tmp_path / "session-none",
+        sglang_base=runtime,
+        proc_root=proc,
+        observed=NOW,
+    )
+
+    assert row["mode"] == "unknown"
+    assert row["personal_endpoint"] is None
+    assert row["candidate_id"] is None
+    assert "multiple fixed personal sessions" in row["source_error"]
+
+
+def test_sglang_discovery_rejects_matching_symlink_and_caps_receipts(tmp_path):
+    runtime = tmp_path / "runtime"
+    target = tmp_path / "elsewhere"
+    runtime.mkdir()
+    target.mkdir()
+    (runtime / "session-s3-readiness-v5-001").symlink_to(
+        target, target_is_directory=True
+    )
+    roots, error = personal._discover_sglang_sessions(runtime)
+    assert roots == []
+    assert "not a regular directory" in error
+
+    (runtime / "session-s3-readiness-v5-001").unlink()
+    for number in range(personal.MAX_SGLANG_SESSIONS + 1):
+        (runtime / f"session-s3-readiness-v5-{number:03d}").mkdir()
+    roots, error = personal._discover_sglang_sessions(runtime)
+    assert roots == []
+    assert "too many fixed-root SGLang" in error
 
 
 def test_nonterminal_transition_does_not_fall_through_to_old_runtime(tmp_path):
