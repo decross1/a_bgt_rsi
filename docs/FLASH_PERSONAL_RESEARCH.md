@@ -4,35 +4,94 @@ The September 18 owner handoffs reopen Flash for interactive scientific and
 programming work. The earlier closed benchmark windows and their grades are
 unchanged. Passing every autonomous role is not a prerequisite for personal use.
 
-The controller's default profile is the already qualified Mia optimized MTP3 / reduced
-47,149-token draft vocabulary / V2 / FULL-decode bundle. It uses the existing
-immutable image, weights and packed disk-backed PLE. A separate child image adds
-the reviewed QSA FP8-KV implementation for a personal comparison. It has its own
-specification, contract, container name and compile cache. Live short controls
-and a three-turn paper screen now exist for both its ordinary-KV and FP8-KV
-profiles, but they do not transfer the parent's qualification or settle the
-final runtime selection. Historical qualification is prior evidence, not a new
-result for either precision change.
+**No Flash endpoint is currently claimed live.** Both final handover restarts
+met the kernel-allocation hard stop before readiness, after earlier successful
+serving sessions. Complete the coordinated host recovery in the results report
+before another unchanged launch. Keep the original pair as the available
+fallback; no production routing cutover was made.
 
-## Start and inspect
+The preferred recovery bundle is the pinned **NVIDIA/SGLang v5** setup: 32K
+context, one request, FP32 recurrent state, BF16 KV, native NEXTN speculation
+and file-backed PLE. It completed the full earlier comparison and restoration,
+but its failed second start prevents a reliable current-host handover claim.
+See the [results and recovery plan](FLASH_PERSONAL_RESULTS_20260918.md).
+
+## Use a verified SGLang endpoint
+
+When the monitored SGLang session is ready, use port **30080** and explicitly
+select the backend (the generic client's historical default remains Mia):
+
+```bash
+cd /home/decross1/projects/a_bgt_rsi
+env -u MOCK_LLM LOCAL_MODEL_TRACE_DIR=/home/decross1/projects/a_bgt_rsi/logs/model_traces \
+  .venv-chroma/bin/python -m bench.flash_next_ab.personal_client \
+  --backend sglang --policy medium --prompt-file /absolute/path/to/question.txt \
+  --max-output-tokens 4096 --output-dir /absolute/path/to/a-new-answer-directory \
+  --print-final
+```
+
+The served name is `nvidia/Qwen3.8-Flash-Next-NVFP4` at
+`http://127.0.0.1:30080/v1`. Off is available for routine testable work; medium
+is an explicit reasoning policy, not a correctness guarantee. The Now view
+shows the process-bound active session and emitted stream. Check the dated
+availability receipt in the results report: the service is a finite personal
+session, with the original pair and Nara intentionally paused until restoration.
+
+### Start or stop a guarded SGLang session
+
+After the coordinated recovery window and verified resident restoration,
+use a fresh numbered directory in the fixed v5 family. The following example
+uses `003`; choose an unused three-digit suffix and a future UTC restoration
+end time. Leave at least 20 minutes before the daily 03:00 UTC ingestion window.
+The controller reserves the final 15 minutes for restoration and retains the
+20 GiB memory floor and kernel fault checks. It uses the existing verified
+checkpoint receipt rather than downloading or rehashing the full model.
+
+```bash
+cd /home/decross1/projects/a_bgt_rsi
+.venv-chroma/bin/python \
+  /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/sglang-fallback-prep/sglang_session_s3_v5.py \
+  --run \
+  --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/sglang-fallback-prep/runtime/session-s3-readiness-v5-003 \
+  --receipt /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/sglang-fallback-prep/checkpoint-verification-bf16-20260918T2343Z/checkpoint-receipt.json \
+  --receipt-sha256 0489e1741832e6be63267cb1a04a1eb05736d27038fe924ac50cf02bce108287 \
+  --end-at REPLACE_WITH_FUTURE_UTC_TIME
+```
+
+Keep that controller running. To finish early, call the same pinned script with
+`--request-stop --output-dir <the-active-session-directory> --reason owner_finished`.
+Wait for `result.json` to report verified restoration and for the controller to
+exit; the stop request itself is not proof of recovery. The pinned script has
+SHA-256 `355d52f0311d8eff89d13b8c8a718fb3a0a6300084e6a6337a0e61fbd6fcd01e`.
+Use an SSH forward for remote access to the loopback model port.
+
+The remaining sections preserve the Mia comparison controls and recovery
+instructions. Starting Mia again is a new diagnostic; do not infer that its
+final failed startup was qualified for current use.
+
+## Mia comparison: start and inspect
 
 From the canonical checkout after this change is installed:
 
 ```bash
 cd /home/decross1/projects/a_bgt_rsi
 env -u MOCK_LLM .venv-chroma/bin/python -m bench.flash_next_ab.personal_session \
-  --run --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/session-UNUSED \
+  --run --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/session-example-001 \
   --hours 4 --floor 20 --initial-profile mtp3-fp32-auto
 ```
 
-Use a fresh lowercase `session-*` directory. The supervisor retains the normal
+Replace `session-example-001` with a fresh lowercase `session-*` directory. The supervisor retains the normal
 resource locks, records the original resident IDs and Nara state, verifies model
 files, pauses background callers and starts Flash. Do not run a second controller
 against an occupied lease. `state.json` is an observation; verify the supervisor
 PID/start identity and endpoint before interpreting a stale state as live work.
 Keep this controller running in its terminal and make requests from a second
-terminal once the live session reaches `phase: ready`. The measured parent
-cold start was about ten minutes; request latency after loading is separate.
+terminal once the live session reaches `phase: ready`. The historical parent
+container-start-to-ready interval was about ten minutes, excluding model/PLE
+checksum verification and resident shutdown. The final handover separately
+spent about three minutes on verification before launching its worker; do not
+treat the ten-minute value as total controller-to-ready time. Request latency
+after loading is separate.
 
 Daily ingestion starts at 03:00 UTC. Its BGE embedder currently defaults to CPU,
 but still shares the Spark's physical memory. Concurrent peak memory with Flash
@@ -87,7 +146,7 @@ the child while holding BF16 recurrent state fixed, start a fresh second session
 
 ```bash
 env -u MOCK_LLM .venv-chroma/bin/python -m bench.flash_next_ab.personal_session \
-  --run --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/session-fp8-UNUSED \
+  --run --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/session-fp8-example-001 \
   --hours 4 --floor 20 --initial-profile mtp3-bf16-child-auto
 ```
 
@@ -186,8 +245,10 @@ the original raw SSE artifacts remain the complete diagnostic record.
 
 ### Independently served NVIDIA/SGLang endpoint
 
-The September 19 comparison also serves the NVIDIA checkpoint through a
-separately monitored SGLang session. The same client can address that fixed
+The September 19 comparison also served the NVIDIA checkpoint through a
+separately monitored SGLang session. It is the preferred recovery bundle and must
+be started under its own controller; it is not concurrently resident with a
+Mia personal session. The same client can address that fixed
 loopback endpoint without labeling it as the Mia candidate:
 
 ```bash
@@ -225,8 +286,10 @@ worker heartbeats and retains a separate restoration allowance.
 
 The delivered controller also reads the kernel journal every 15 seconds during
 startup and serving for new host NVIDIA allocation faults or Xid errors. It saves
-that evidence separately and excludes events preceding this session; stale
-failures from earlier experiments do not reject a new run. Unreadable journal
+that evidence separately and excludes earlier events from candidate attribution.
+That timestamp filter is not evidence that an earlier host fault is resolved.
+The unresolved same-boot allocation events in the final report require the
+coordinated clean-host recovery before another launch. Unreadable journal
 evidence triggers recovery. This closes a gap exposed by the independent
 SGLang load; the historical Mia measurements used the earlier controller.
 The stop is conservative: a host kernel event alone does not prove which
@@ -236,16 +299,19 @@ Host pageout is recorded with host counters, process RSS/swap, candidate cgroup
 file/anonymous memory, and memory/I/O PSI. A PLE file fault is not anonymous
 swap-out. Host pageout alone does not identify a candidate OOM or a quality loss.
 The controller does not disable swap, drop caches or change host VM settings.
+A preexisting root cron drops caches every 30 minutes independently of the
+controller. Keep it unchanged for the proposed fresh-host comparison, record
+its actual journal timestamps, and retain it as a possible timing confound.
 
 To end the session and restore the original containers and Nara state, write
-an atomic command in that session's directory (replace `session-UNUSED`):
+an atomic command in that session's directory (replace `session-example-001`):
 
 ```bash
 python3 - <<'PY'
 import json, os, uuid
 from pathlib import Path
 
-session = Path('/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/session-UNUSED')
+session = Path('/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/session-example-001')
 command = {'id': f'owner-restore-{uuid.uuid4().hex}', 'action': 'restore'}
 temporary = session / f'.command-{uuid.uuid4().hex}.tmp'
 with temporary.open('x') as stream:
@@ -268,7 +334,9 @@ requests/responses and runtime observations live under
 `a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/`. The final report must
 name the actual useful profile and endpoint availability, ten practical task
 outcomes, MTP on/off results, startup diagnosis, precision tradeoffs, remaining
-failures, and the next concrete improvement. The in-progress
-[results report](FLASH_PERSONAL_RESULTS_20260918.md) records the completed Mia
-evidence; final runtime selection remains open until the independent SGLang
-comparison terminates. This guide does not claim model superiority.
+failures, and the next concrete improvement. The
+[results report](FLASH_PERSONAL_RESULTS_20260918.md) records both completed
+comparisons, the SGLang recovery profile, counterevidence and availability at
+handoff. The useful personal endpoint remains the unfinished goal; selecting a
+recovery profile does not establish live availability, general model superiority
+or a permanent change to autonomous lab routing.
