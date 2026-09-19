@@ -47,6 +47,11 @@ import Sparkline from "./Sparkline";
 export const VLLM_SERVED_MODEL = "gemma-4-26b-a4b";
 export const QWEN_SERVED_MODEL = "qwen3.6-27b-nvfp4-mtp";
 
+export interface InventoryMetricPoint {
+  timestamp: string;
+  metrics: VllmSample | null;
+}
+
 // How many CONSECUTIVE trailing samples may miss this card's block before
 // the body stops showing retained last-good data and degrades to its
 // no-data message (residual fix 5; the reviewer's pick of 3). Below the
@@ -195,6 +200,11 @@ export interface ModelServerCardProps {
   // An exact, controller-bound v4 plan/state selects Mia for this run. This
   // never follows /v1/models reachability alone and does not qualify a model.
   selectedVariant?: NonNullable<ModelRuntime["candidate_variant"]> | null;
+  // Browser-observed /api/served_models probes for this exact endpoint
+  // identity/runtime generation. Dynamic endpoints do not exist in the
+  // legacy websocket schema, so this is their genuine (session-local) trend.
+  inventorySamples?: InventoryMetricPoint[];
+  inventoryRefreshFailed?: boolean;
 }
 
 function ModelServerCard({
@@ -210,6 +220,8 @@ function ModelServerCard({
   endpointName,
   serviceExpectation = null,
   selectedVariant = null,
+  inventorySamples = [],
+  inventoryRefreshFailed = false,
 }: ModelServerCardProps) {
   const inventoryAware =
     inventory?.service_status === "online" ||
@@ -255,10 +267,15 @@ function ModelServerCard({
   // while the miss run is still below the limit.
   const block = latestBlock ?? (retaining ? lastGood : null);
   const series = (metric: (b: VllmSample) => number | null | undefined) =>
-    samples.map((s) => {
-      const b = pick(s);
-      return b == null ? null : metric(b);
-    });
+    inventoryAware
+      ? inventorySamples.map((sample) =>
+          sample.metrics == null ? null : metric(sample.metrics),
+        )
+      : samples.map((s) => {
+          const b = pick(s);
+          return b == null ? null : metric(b);
+        });
+  const inventoryGaps = inventorySamples.filter((sample) => sample.metrics == null).length;
 
   // pollhub (perf 2026-08-18): the hint endpoint measured 3.2s under load —
   // 30s cadence (was a bare 10s setInterval), in-flight-guarded, SWR (a
@@ -344,6 +361,26 @@ function ModelServerCard({
       : inventory?.activity_status === "idle"
         ? "idle"
         : "activity unknown";
+  const requestSeries = series(
+    (sample) => sample.running_requests + sample.waiting_requests,
+  );
+  const mtpValue = (() => {
+    if (selectedVariant?.configured_mtp_speculative_tokens === 0) {
+      return "disabled · configured depth 0";
+    }
+    if (block?.mtp_acceptance_rate != null) {
+      return `${fmtRatioPct(block.mtp_acceptance_rate, 1)} %`;
+    }
+    if (block?.mtp_draft_tokens === 0) {
+      return typeof selectedVariant?.configured_mtp_speculative_tokens === "number"
+        ? `no draft tokens observed · configured depth ${selectedVariant.configured_mtp_speculative_tokens}`
+        : "no draft tokens observed";
+    }
+    if (typeof selectedVariant?.configured_mtp_speculative_tokens === "number") {
+      return `configured depth ${selectedVariant.configured_mtp_speculative_tokens} · metric absent`;
+    }
+    return "metric not reported";
+  })();
 
   return (
     <div className={`rounded border ${tone.border} bg-zinc-900/40 p-4`}>
@@ -421,6 +458,11 @@ function ModelServerCard({
             </span>
           )}
         </div>
+      )}
+      {inventoryAware && inventoryRefreshFailed && (
+        <p className="mt-1 text-[11px] text-amber-400" data-testid={`${endpointName ?? servedModel}-inventory-stale`}>
+          Endpoint refresh failed; retained gauges were probed <SampleAge iso={inventory?.probed_at ?? null} /> ago.
+        </p>
       )}
       {selectedVariant && (
         <div className="mt-2 text-xs text-violet-300" data-testid={`${endpointName ?? servedModel}-selected-variant`}>
@@ -566,6 +608,27 @@ function ModelServerCard({
               ({missedScrapes} missed scrape{missedScrapes === 1 ? "" : "s"})
             </div>
           )}
+          {inventoryAware && (
+            <div
+              className="mb-1 flex items-center gap-2 border-b border-zinc-800/60 py-2 text-[11px]"
+              data-testid={`${endpointName ?? servedModel}-activity-ticker`}
+            >
+              <span className="text-zinc-500">Activity</span>
+              <Sparkline values={requestSeries} width={88} height={20} color="#a78bfa" />
+              <span className={`font-mono ${inventory?.activity_status === "busy" ? "text-emerald-400" : "text-zinc-400"}`}>
+                {inventory?.activity_status === "busy"
+                  ? `${fmt(block.running_requests)} running · ${fmt(block.waiting_requests)} queued`
+                  : inventory?.activity_status === "idle"
+                    ? "idle · 0 requests"
+                    : "request state unknown"}
+              </span>
+              <span className="ml-auto text-zinc-600">
+                {inventorySamples.length < 2
+                  ? "trend starts with this page"
+                  : `${inventorySamples.length} probes${inventoryGaps ? ` · ${inventoryGaps} gap${inventoryGaps === 1 ? "" : "s"}` : ""}`}
+              </span>
+            </div>
+          )}
           {/* Core health — always visible: decode tok/s and KV-cache
               headroom (red over 85%). Everything else is operator-grade
               detail behind the disclosure below. */}
@@ -686,11 +749,7 @@ function ModelServerCard({
               />
               <Row
                 label="MTP acceptance"
-                value={
-                  block.mtp_acceptance_rate == null
-                    ? "MTP off / metric absent"
-                    : `${fmtRatioPct(block.mtp_acceptance_rate, 1)} %`
-                }
+                value={mtpValue}
                 // Chosen heuristic (carried from VllmPanel): ≥50% draft-token
                 // acceptance reads as healthy MTP, below it as poor (decode
                 // tok/s then suffers). This threshold is ours, not a plan's —

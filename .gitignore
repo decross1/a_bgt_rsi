@@ -39,6 +39,9 @@ models/
 # git add specific files explicitly.
 logs/*.jsonl
 logs/*.log
+# Opt-in local stream snapshots may contain prompts, emitted reasoning and
+# answers. They are bounded operational data and must never be staged.
+logs/model_traces/
 bench/*.csv
 bench/*.json
 *.tmp

@@ -51,7 +51,9 @@ Read-only: nothing here writes to logs/ or run_state/.
 from __future__ import annotations
 
 import json
+import math
 import os
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -71,6 +73,30 @@ DEFAULT_SPAWN_LEDGER = _PRIMARY / "run_state" / "spawn.jsonl"
 
 CALLS_FILE = "calls.jsonl"
 ORCHESTRATOR_FILE = "orchestrator.jsonl"
+MODEL_TRACES_DIR = "model_traces"
+
+# Opt-in stream snapshots written atomically by agent_wrapper.live_trace.
+# The UI reader stays smaller than the writer's finite history and refuses
+# oversized or structurally invalid files rather than presenting partial text
+# as a current model stream.
+MODEL_TRACE_SCHEMA = "local-model-trace/v1"
+MODEL_TRACE_MAX_FILE_BYTES = 512 * 1024
+MODEL_TRACE_MAX_FILES_SCANNED = 512
+MODEL_TRACE_MAX_RETURNED = 8
+MODEL_TRACE_TEXT_BYTES = 128 * 1024
+MODEL_TRACE_STALE_SECONDS = 5.0
+MODEL_TRACE_CLOCK_SKEW_SECONDS = 5.0
+MODEL_TRACE_STATUSES = {
+    "streaming",
+    "completed",
+    "tool_call",
+    "exhausted",
+    "no_final",
+    "repetition_aborted",
+    "transport_error",
+    "parser_error",
+    "interrupted",
+}
 
 # The backward-scan byte bound: how far back from EOF a single request will
 # ever look. 16 MiB ≈ several days of main-log traffic at current rates;
@@ -198,6 +224,202 @@ def _passthrough_str(value) -> str | None:
     In particular `backend` stays None on pre-2026-06-10 rows; it is never
     guessed from the model name."""
     return value if isinstance(value, str) and value else None
+
+
+def _trace_string(row: dict, key: str, *, maximum: int,
+                  nullable: bool = False) -> str | None:
+    value = row.get(key)
+    if nullable and value is None:
+        return None
+    if not isinstance(value, str) or len(value) > maximum:
+        raise ValueError(f"invalid {key}")
+    return value
+
+
+def _trace_snapshot(raw: bytes, *, now: datetime) -> dict:
+    """Validate one local-model-trace/v1 snapshot and add read-time age.
+
+    The writer owns the emitted fields. This reader neither reconstructs a
+    missing channel nor interprets a terminal status as answer correctness.
+    """
+    if len(raw) > MODEL_TRACE_MAX_FILE_BYTES:
+        raise ValueError("trace snapshot exceeds byte bound")
+
+    def unique_object(pairs):
+        obj = {}
+        for key, value in pairs:
+            if key in obj:
+                raise ValueError("duplicate JSON key")
+            obj[key] = value
+        return obj
+
+    def reject_nonfinite(value):
+        raise ValueError(f"non-finite number: {value}")
+
+    row = json.loads(
+        raw.decode("utf-8"),
+        object_pairs_hook=unique_object,
+        parse_constant=reject_nonfinite,
+    )
+    if not isinstance(row, dict) or row.get("schema") != MODEL_TRACE_SCHEMA:
+        raise ValueError("wrong trace schema")
+    request_id = _trace_string(row, "request_id", maximum=32)
+    if len(request_id) != 32 or any(c not in "0123456789abcdef"
+                                    for c in request_id):
+        raise ValueError("invalid request_id")
+    for key in ("model", "backend", "source"):
+        if not _trace_string(row, key, maximum=256):
+            raise ValueError(f"empty {key}")
+    started_at = _trace_string(row, "started_at", maximum=64)
+    updated_at = _trace_string(row, "updated_at", maximum=64)
+    started = _parse_ts(started_at)
+    updated = _parse_ts(updated_at)
+    if started == _UNPARSEABLE or updated == _UNPARSEABLE or updated < started:
+        raise ValueError("invalid trace timestamps")
+    if (started - now).total_seconds() > MODEL_TRACE_CLOCK_SKEW_SECONDS \
+            or (updated - now).total_seconds() > MODEL_TRACE_CLOCK_SKEW_SECONDS:
+        raise ValueError("trace timestamp is in the future")
+    elapsed = row.get("elapsed_s")
+    if (isinstance(elapsed, bool) or not isinstance(elapsed, (int, float))
+            or not math.isfinite(elapsed) or elapsed < 0):
+        raise ValueError("invalid elapsed_s")
+    status_value = row.get("status")
+    if status_value not in MODEL_TRACE_STATUSES:
+        raise ValueError("invalid trace status")
+    for key, maximum in (
+        ("prompt_preview", 4096),
+        ("reasoning_content", MODEL_TRACE_TEXT_BYTES),
+        ("content", MODEL_TRACE_TEXT_BYTES),
+    ):
+        value = _trace_string(row, key, maximum=maximum)
+        if len(value.encode("utf-8")) > maximum:
+            raise ValueError(f"{key} exceeds byte bound")
+    if not isinstance(row.get("prompt_truncated"), bool):
+        raise TypeError("invalid prompt_truncated")
+    tools = row.get("tool_calls")
+    if not isinstance(tools, list) or len(tools) > 16:
+        raise ValueError("invalid tool_calls")
+    for tool in tools:
+        if not isinstance(tool, dict) or tool.get("type") != "function":
+            raise ValueError("invalid tool call")
+        function = tool.get("function")
+        if not isinstance(function, dict):
+            raise TypeError("invalid tool function")
+        _trace_string(tool, "id", maximum=256)
+        _trace_string(function, "name", maximum=256)
+        arguments = _trace_string(function, "arguments", maximum=4096)
+        if len(arguments.encode("utf-8")) > 4096:
+            raise ValueError("tool arguments exceed byte bound")
+    usage = row.get("usage")
+    if usage is not None and not isinstance(usage, dict):
+        raise ValueError("invalid usage")
+    if row.get("usage_truncated") is not None \
+            and not isinstance(row.get("usage_truncated"), bool):
+        raise ValueError("invalid usage_truncated")
+    _trace_string(row, "finish_reason", maximum=256, nullable=True)
+    _trace_string(row, "error", maximum=2048, nullable=True)
+    truncated = row.get("truncated")
+    if not isinstance(truncated, dict) or any(
+        not isinstance(truncated.get(key), bool)
+        for key in ("reasoning_content", "content", "tool_calls")
+    ):
+        raise ValueError("invalid truncated flags")
+    age = max(0.0, (now - updated).total_seconds())
+    return {
+        **row,
+        "freshness": {
+            "state": "live" if age <= MODEL_TRACE_STALE_SECONDS else "stale",
+            "age_s": age,
+        },
+    }
+
+
+def _read_trace_file(path: Path) -> bytes:
+    """Open one snapshot without following a replacement symlink.
+
+    The post-open fstat and MAX+1 read close the lstat/read race: a file that
+    grows or changes type after directory enumeration is still rejected.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) \
+        | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        info = os.fstat(descriptor)
+        if (not stat.S_ISREG(info.st_mode)
+                or info.st_size > MODEL_TRACE_MAX_FILE_BYTES):
+            raise ValueError("invalid trace file")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw = handle.read(MODEL_TRACE_MAX_FILE_BYTES + 1)
+        if len(raw) > MODEL_TRACE_MAX_FILE_BYTES:
+            raise ValueError("trace snapshot exceeds byte bound")
+        return raw
+    finally:
+        os.close(descriptor)
+
+
+def _read_model_traces(trace_dir: Path, *, limit: int,
+                       now: datetime) -> dict:
+    """Read newest valid snapshots from one real directory, with bounds."""
+    try:
+        directory_stat = trace_dir.lstat()
+        available = stat.S_ISDIR(directory_stat.st_mode) \
+            and not stat.S_ISLNK(directory_stat.st_mode)
+    except OSError:
+        available = False
+    if not available:
+        return {"available": False, "traces": [], "skipped_files": 0,
+                "scan_truncated": False}
+
+    candidates: list[tuple[int, Path]] = []
+    skipped = 0
+    scan_truncated = False
+    try:
+        with os.scandir(trace_dir) as entries:
+            for index, entry in enumerate(entries):
+                if index >= MODEL_TRACE_MAX_FILES_SCANNED:
+                    skipped += 1
+                    scan_truncated = True
+                    break
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                except OSError:
+                    skipped += 1
+                    continue
+                if (not entry.name.endswith(".json")
+                        or not stat.S_ISREG(info.st_mode)
+                        or info.st_size > MODEL_TRACE_MAX_FILE_BYTES):
+                    skipped += 1
+                    continue
+                candidates.append((info.st_mtime_ns, Path(entry.path)))
+    except OSError:
+        return {"available": False, "traces": [], "skipped_files": skipped,
+                "scan_truncated": False}
+
+    # Directory iteration order is not a freshness order. Once the bounded
+    # scan is exhausted, returning the files seen so far could hide a newer
+    # request and present an older one as current, so fail closed explicitly.
+    if scan_truncated:
+        return {"available": True, "traces": [], "skipped_files": skipped,
+                "scan_truncated": True}
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    traces: list[dict] = []
+    for _mtime, path in candidates:
+        if len(traces) >= limit:
+            break
+        try:
+            raw = _read_trace_file(path)
+            trace = _trace_snapshot(raw, now=now)
+            if path.stem != trace["request_id"]:
+                raise ValueError("trace filename/request mismatch")
+        except (OSError, UnicodeError, ValueError, TypeError,
+                json.JSONDecodeError):
+            skipped += 1
+            continue
+        traces.append(trace)
+    traces.sort(key=lambda row: _parse_ts(row["updated_at"]), reverse=True)
+    return {"available": True, "traces": traces,
+            "skipped_files": skipped, "scan_truncated": False}
 
 
 def _scan_backward(path: Path, max_scan_bytes: int,
@@ -628,7 +850,9 @@ def _matches(rec: dict, *, model: str | None, caller_tag: str | None,
 
 def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
              spawn_path: Path | None = None,
-             max_scan_bytes: int = DEFAULT_MAX_SCAN_BYTES) -> APIRouter:
+             model_trace_dir: Path | None = None,
+             max_scan_bytes: int = DEFAULT_MAX_SCAN_BYTES,
+             trace_clock=lambda: datetime.now(timezone.utc)) -> APIRouter:
     """Attach the Model I/O router (register-fn idiom, as activity/ladder).
 
     ``logs_dir`` carries both calls.jsonl and orchestrator.jsonl (the same
@@ -641,6 +865,11 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
     if spawn_path is None:
         spawn_path = _env_path("UI_SPAWN_LEDGER", DEFAULT_SPAWN_LEDGER)
     spawn_path = Path(spawn_path)
+    if model_trace_dir is None:
+        model_trace_dir = _env_path(
+            "UI_MODEL_TRACE_DIR", logs_dir / MODEL_TRACES_DIR
+        )
+    model_trace_dir = Path(model_trace_dir)
     calls_path = logs_dir / CALLS_FILE
     orch_path = logs_dir / ORCHESTRATOR_FILE
     router = APIRouter(prefix="/api", tags=["model_io"])
@@ -804,6 +1033,26 @@ def register(app, *, logs_dir: Path = DEFAULT_LOGS_DIR,
             detail=f"no call record for request_id {request_id!r} in the "
                    f"last {max_scan_bytes} bytes of {CALLS_FILE} (older rows "
                    "are outside the bounded scan window)")
+
+    @router.get("/model_traces")
+    def model_traces(limit: int = 4):
+        """Recent opt-in local stream snapshots, never inferred from load.
+
+        An absent directory means instrumentation is unavailable. An existing
+        empty directory means it is available but has observed no requests.
+        Malformed, symlinked and oversized files are skipped and counted.
+        """
+        capped = min(max(limit, 1), MODEL_TRACE_MAX_RETURNED)
+        now = trace_clock()
+        if not isinstance(now, datetime) or now.tzinfo is None:
+            raise RuntimeError("trace_clock must return an aware datetime")
+        result = _read_model_traces(model_trace_dir, limit=capped, now=now)
+        return {
+            "schema_version": 1,
+            "source": "logs/model_traces",
+            **result,
+            "generated_at": now.isoformat().replace("+00:00", "Z"),
+        }
 
     @router.get("/dispatch_trace")
     def dispatch_trace(limit: int = 30):
