@@ -156,9 +156,9 @@ afterEach(() => {
 });
 
 describe("ModelServerCard MTP tile (both parameterizations)", () => {
-  it("shows 'MTP off / metric absent' in gray when the rate is null", () => {
+  it("calls an absent rate unreported instead of claiming MTP is off", () => {
     renderGemma([gemmaSample(null)]);
-    const value = screen.getByText("MTP off / metric absent");
+    const value = screen.getByText("metric not reported");
     expect(value.className).toContain("text-zinc-600");
   });
 
@@ -297,6 +297,49 @@ describe("ModelServerCard body states", () => {
 });
 
 describe("ModelServerCard dynamic endpoint inventory", () => {
+  it("distinguishes configured MTP-off, no drafts, and an absent metric", () => {
+    const mia = { ...selectedMia, configured_mtp_speculative_tokens: 0 };
+    const first = render(<ModelServerCard title="qwen3.8-flash-next-mia"
+      servedModel="qwen3.8-flash-next-mia" endpointName="flash"
+      inventory={inventory({ model: "qwen3.8-flash-next-mia", identity_status: "mismatch" })}
+      selectedVariant={mia} pick={() => null} samples={[]} accent="violet" />);
+    expect(screen.getByText("disabled · configured depth 0")).toBeInTheDocument();
+    first.unmount();
+
+    render(<ModelServerCard title="qwen3.8-flash-next"
+      servedModel="qwen3.8-flash-next" endpointName="flash"
+      inventory={inventory({ metrics: { ...vllmBlock(null), mtp_draft_tokens: 0 } })}
+      pick={() => null} samples={[]} accent="violet" />);
+    expect(screen.getByText("no draft tokens observed")).toBeInTheDocument();
+  });
+
+  it("shows a deduplicated inventory trend with explicit metric gaps", () => {
+    render(<ModelServerCard title="qwen3.8-flash-next"
+      servedModel="qwen3.8-flash-next" endpointName="flash"
+      inventory={inventory({ activity_status: "busy" })}
+      inventorySamples={[
+        { timestamp: "2026-09-18T12:00:00Z", metrics: vllmBlock(null) },
+        { timestamp: "2026-09-18T12:00:30Z", metrics: null },
+        { timestamp: "2026-09-18T12:01:00Z", metrics: { ...vllmBlock(null), tokens_per_sec_decode: 81 } },
+      ]}
+      pick={() => null} samples={[]} accent="violet" />);
+    const ticker = screen.getByTestId("flash-activity-ticker");
+    expect(ticker).toHaveTextContent("1 running · 0 queued");
+    expect(ticker).toHaveTextContent("3 probes · 1 gap");
+    expect(ticker.querySelectorAll("circle")).toHaveLength(2);
+  });
+
+  it("marks retained inventory gauges when their refresh fails", () => {
+    render(<ModelServerCard title="qwen3.8-flash-next"
+      servedModel="qwen3.8-flash-next" endpointName="flash"
+      inventory={inventory()} inventoryRefreshFailed
+      inventorySamples={[{ timestamp: "2026-09-18T12:00:00Z", metrics: vllmBlock(null) }]}
+      pick={() => null} samples={[]} accent="violet" />);
+    expect(screen.getByTestId("flash-inventory-stale")).toHaveTextContent(
+      "Endpoint refresh failed; retained gauges were probed",
+    );
+  });
+
   it("recognizes observed Mia only from a controller-selected variant", () => {
     render(<ModelServerCard title="qwen3.8-flash-next-mia"
       servedModel="qwen3.8-flash-next-mia" endpointName="flash"
