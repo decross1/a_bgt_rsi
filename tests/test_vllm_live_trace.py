@@ -13,7 +13,7 @@ import pytest
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from agent_wrapper import wrapper as W
-from agent_wrapper.backends import qwen_vllm, vllm_openai
+from agent_wrapper.backends import qwen_vllm, vllm_openai, vllm_streaming
 from agent_wrapper.backends.qwen_vllm import VLLMQwenBackend
 from agent_wrapper.backends.vllm_openai import VLLMBackend
 from agent_wrapper.backends.vllm_streaming import StreamProtocolError
@@ -299,6 +299,146 @@ def test_async_wrapper_receives_existing_record_contract(monkeypatch, tmp_path):
     assert stream.closed
     assert events[-2:] == ["close", "lease-exit"]
     assert _trace_row(tmp_path)["status"] == "completed"
+
+
+@pytest.mark.parametrize(
+    ("delta", "expected_content", "expected_reasoning"),
+    [
+        ({"role": "assistant", "reasoning": "thinking only"}, None, "thinking only"),
+        ({"role": "assistant", "content": ""}, "", None),
+    ],
+)
+def test_stop_without_answer_is_no_final_but_preserves_completion(
+    monkeypatch, tmp_path, delta, expected_content, expected_reasoning,
+):
+    _enable(monkeypatch, tmp_path)
+    state = {"active": False}
+    events = []
+    stream = SyncStream([
+        _chunk(delta=delta),
+        _chunk(delta={}, finish="stop"),
+        _chunk(usage=_usage()),
+    ], state, events)
+    completions = SyncCompletions(stream, state, events)
+    monkeypatch.setattr(
+        W,
+        "_sync_client",
+        SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+    monkeypatch.setattr(vllm_openai, "local_inference", _lease(events, state))
+
+    response = VLLMBackend().create_chat(model=MODEL, messages=MESSAGES)
+
+    assert response.choices[0].finish_reason == "stop"
+    assert response.choices[0].message.content == expected_content
+    assert reasoning_text_from_message(response.choices[0].message) == expected_reasoning
+    trace = _trace_row(tmp_path)
+    assert trace["status"] == "no_final"
+    assert trace["finish_reason"] == "stop"
+
+
+def test_trace_publisher_throttles_before_materializing_accumulated_text(monkeypatch):
+    now = [10.0]
+    trace = MagicMock()
+    accumulator = vllm_streaming._Accumulator(MODEL)
+    materialize = MagicMock(wraps=accumulator.trace_fields)
+    monkeypatch.setattr(accumulator, "trace_fields", materialize)
+    publisher = vllm_streaming._TracePublisher(trace, clock=lambda: now[0])
+
+    for instant in (10.01, 10.20, 10.49):
+        now[0] = instant
+        publisher.publish(accumulator)
+    assert materialize.call_count == 0
+    assert trace.update.call_count == 0
+
+    now[0] = 10.50
+    publisher.publish(accumulator)
+    assert materialize.call_count == 1
+    trace.update.assert_called_once()
+
+    # Terminal snapshots bypass the interval but still materialize only once.
+    now[0] = 10.51
+    publisher.publish(accumulator, status="no_final", force=True)
+    assert materialize.call_count == 2
+    assert trace.update.call_count == 2
+    assert trace.update.call_args.kwargs["status"] == "no_final"
+    assert trace.update.call_args.kwargs["force"] is True
+
+
+def test_saved_mia_chunk_shape_reconstructs_supported_fields():
+    """Compact replay of the envelope seen in saved paper SSE receipts."""
+
+    common = {
+        "id": "chatcmpl-mia",
+        "created": 1_800_000_000,
+        "model": MODEL,
+        "object": "chat.completion.chunk",
+        "prompt_text": None,
+        "prompt_token_ids": None,
+    }
+    payloads = [
+        {
+            **common,
+            "choices": [{
+                "index": 0,
+                "delta": {"role": "assistant", "content": None},
+                "finish_reason": None,
+                "logprobs": None,
+                "stop_reason": None,
+                "token_ids": None,
+            }],
+            "usage": None,
+        },
+        {
+            **common,
+            "choices": [{
+                "index": 0,
+                "delta": {"reasoning": "inspect premise"},
+                "finish_reason": None,
+                "logprobs": None,
+                "stop_reason": None,
+                "token_ids": None,
+            }],
+            "usage": None,
+        },
+        {
+            **common,
+            "choices": [{
+                "index": 0,
+                "delta": {"content": "answer"},
+                "finish_reason": "stop",
+                "logprobs": None,
+                "stop_reason": None,
+                "token_ids": None,
+            }],
+            "usage": None,
+        },
+        {
+            **common,
+            "choices": [],
+            "usage": _usage(prompt=10, completion=3),
+            "system_fingerprint": "vllm-real-shape",
+        },
+    ]
+    accumulator = vllm_streaming._Accumulator(MODEL)
+    for payload in payloads:
+        accumulator.accept(ChatCompletionChunk.model_validate(payload))
+
+    response = accumulator.response()
+
+    assert response.choices[0].message.content == "answer"
+    assert reasoning_text_from_message(response.choices[0].message) == "inspect premise"
+    assert response.system_fingerprint == "vllm-real-shape"
+    assert response.usage.total_tokens == 13
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"n": 2}, {"logprobs": True}, {"top_logprobs": 2}],
+)
+def test_unsupported_lossy_request_shapes_fail_before_wire(kwargs):
+    with pytest.raises(StreamProtocolError):
+        vllm_streaming._request_kwargs(kwargs)
 
 
 def test_tool_loop_receives_reconstructed_turns(monkeypatch, tmp_path):

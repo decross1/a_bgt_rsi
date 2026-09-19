@@ -7,6 +7,10 @@ reconstructs that same completion object for existing callers.
 
 The disabled path lives in each backend and never calls this module's request
 helpers, so legacy request kwargs remain unchanged.
+
+The opt-in path deliberately supports the wrapper's current local-call shape:
+one text/tool choice without streamed logprobs or refusals. It fails closed on
+those unsupported response shapes instead of returning a lossy completion.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import AbstractContextManager
 from typing import Any
@@ -21,7 +26,7 @@ from typing import Any
 from openai.types.chat import ChatCompletion
 from pydantic import ValidationError
 
-from agent_wrapper.live_trace import start_trace
+from agent_wrapper.live_trace import WRITE_INTERVAL_S, start_trace
 
 _FINISH_REASONS = frozenset({"stop", "length", "tool_calls", "content_filter"})
 
@@ -68,6 +73,7 @@ class _Accumulator:
         self.content: list[str] = []
         self.reasoning: list[str] = []
         self.saw_content = False
+        self.saw_answer_text = False
         self.saw_reasoning = False
         self.tools: dict[int, dict[str, Any]] = {}
         self.finish_reason: str | None = None
@@ -144,12 +150,15 @@ class _Accumulator:
             raise StreamProtocolError("legacy function_call stream is unsupported")
         if getattr(delta, "refusal", None) is not None:
             raise StreamProtocolError("refusal stream is unsupported")
+        if getattr(choice, "logprobs", None) is not None:
+            raise StreamProtocolError("stream logprobs are unsupported")
 
         content = getattr(delta, "content", None)
         if content is not None:
             if not isinstance(content, str):
                 raise StreamProtocolError("stream content delta is not text")
             self.saw_content = True
+            self.saw_answer_text |= bool(content.strip())
             self.content.append(content)
         reasoning = _value(delta, "reasoning")
         reasoning_content = _value(delta, "reasoning_content")
@@ -266,6 +275,13 @@ class _Accumulator:
 def _request_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     if "stream" in kwargs or "stream_options" in kwargs:
         raise StreamProtocolError("caller-controlled streaming kwargs are unsupported")
+    if kwargs.get("n", 1) != 1:
+        raise StreamProtocolError("streaming adapter supports exactly one choice")
+    if (
+        kwargs.get("logprobs") not in (None, False)
+        or kwargs.get("top_logprobs") is not None
+    ):
+        raise StreamProtocolError("streaming adapter does not support requested logprobs")
     return {
         **kwargs,
         "stream": True,
@@ -273,13 +289,14 @@ def _request_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _terminal_status(finish_reason: str | None) -> str:
+def _terminal_status(accumulator: _Accumulator) -> str:
+    if accumulator.finish_reason == "stop":
+        return "completed" if accumulator.saw_answer_text else "no_final"
     return {
-        "stop": "completed",
         "tool_calls": "tool_call",
         "length": "exhausted",
         "content_filter": "no_final",
-    }.get(finish_reason, "parser_error")
+    }.get(accumulator.finish_reason, "parser_error")
 
 
 def _error_text(exc: BaseException) -> str:
@@ -298,15 +315,38 @@ def _begin_trace(*, model: str, backend: str, messages: list[Any]) -> Any:
         return None
 
 
-def _publish(trace: Any, accumulator: _Accumulator, *, status: str = "streaming",
-             error: str | None = None, force: bool = False) -> None:
-    if trace is None:
-        return
-    try:
-        trace.update(**accumulator.trace_fields(), status=status, error=error, force=force)
-    except Exception:  # noqa: BLE001 - trace telemetry is strictly best-effort
-        # Observability cannot turn a valid model response into a failed call.
-        return
+class _TracePublisher:
+    """Rate-limit before joining accumulated text into a trace snapshot."""
+
+    def __init__(self, trace: Any, *, clock: Callable[[], float] = time.monotonic) -> None:
+        self.trace = trace
+        self.clock = clock
+        # ``start_trace`` has already written the initial empty snapshot.
+        self.last_snapshot_at = clock() if trace is not None else 0.0
+
+    def publish(
+        self,
+        accumulator: _Accumulator,
+        *,
+        status: str = "streaming",
+        error: str | None = None,
+        force: bool = False,
+    ) -> None:
+        if self.trace is None:
+            return
+        now = self.clock()
+        if not force and now - self.last_snapshot_at < WRITE_INTERVAL_S:
+            return
+        self.last_snapshot_at = now
+        try:
+            self.trace.update(
+                **accumulator.trace_fields(),
+                status=status,
+                error=error,
+                force=force,
+            )
+        except Exception:  # noqa: BLE001 - telemetry cannot fail inference
+            return
 
 
 def complete_sync(
@@ -324,6 +364,7 @@ def complete_sync(
         raise StreamProtocolError("stream request messages are invalid")
     trace = _begin_trace(model=expected_model, backend=backend_name, messages=messages)
     accumulator = _Accumulator(expected_model)
+    publisher = _TracePublisher(trace)
     try:
         with lease_factory():
             stream = client.chat.completions.create(**_request_kwargs(kwargs))
@@ -333,7 +374,7 @@ def complete_sync(
                     raise StreamProtocolError("sync backend did not return a stream")
                 for chunk in stream:
                     accumulator.accept(chunk)
-                    _publish(trace, accumulator)
+                    publisher.publish(accumulator)
             except BaseException as exc:
                 primary_error = exc
                 raise
@@ -346,21 +387,26 @@ def complete_sync(
                         if primary_error is None:
                             raise
         response = accumulator.response()
-        _publish(
-            trace,
+        publisher.publish(
             accumulator,
-            status=_terminal_status(accumulator.finish_reason),
+            status=_terminal_status(accumulator),
             force=True,
         )
         return response
     except StreamProtocolError as exc:
-        _publish(trace, accumulator, status="parser_error", error=_error_text(exc), force=True)
+        publisher.publish(
+            accumulator, status="parser_error", error=_error_text(exc), force=True,
+        )
         raise
     except (KeyboardInterrupt, SystemExit) as exc:
-        _publish(trace, accumulator, status="interrupted", error=_error_text(exc), force=True)
+        publisher.publish(
+            accumulator, status="interrupted", error=_error_text(exc), force=True,
+        )
         raise
     except Exception as exc:
-        _publish(trace, accumulator, status="transport_error", error=_error_text(exc), force=True)
+        publisher.publish(
+            accumulator, status="transport_error", error=_error_text(exc), force=True,
+        )
         raise
 
 
@@ -388,6 +434,7 @@ async def complete_async(
         raise StreamProtocolError("stream request messages are invalid")
     trace = _begin_trace(model=expected_model, backend=backend_name, messages=messages)
     accumulator = _Accumulator(expected_model)
+    publisher = _TracePublisher(trace)
     try:
         with lease_factory():
             stream = await client.chat.completions.create(**_request_kwargs(kwargs))
@@ -397,7 +444,7 @@ async def complete_async(
                     raise StreamProtocolError("async backend did not return a stream")
                 async for chunk in stream:
                     accumulator.accept(chunk)
-                    _publish(trace, accumulator)
+                    publisher.publish(accumulator)
             except BaseException as exc:
                 primary_error = exc
                 raise
@@ -408,24 +455,31 @@ async def complete_async(
                     if primary_error is None:
                         raise
         response = accumulator.response()
-        _publish(
-            trace,
+        publisher.publish(
             accumulator,
-            status=_terminal_status(accumulator.finish_reason),
+            status=_terminal_status(accumulator),
             force=True,
         )
         return response
     except StreamProtocolError as exc:
-        _publish(trace, accumulator, status="parser_error", error=_error_text(exc), force=True)
+        publisher.publish(
+            accumulator, status="parser_error", error=_error_text(exc), force=True,
+        )
         raise
     except asyncio.CancelledError as exc:
-        _publish(trace, accumulator, status="interrupted", error=_error_text(exc), force=True)
+        publisher.publish(
+            accumulator, status="interrupted", error=_error_text(exc), force=True,
+        )
         raise
     except (KeyboardInterrupt, SystemExit) as exc:
-        _publish(trace, accumulator, status="interrupted", error=_error_text(exc), force=True)
+        publisher.publish(
+            accumulator, status="interrupted", error=_error_text(exc), force=True,
+        )
         raise
     except Exception as exc:
-        _publish(trace, accumulator, status="transport_error", error=_error_text(exc), force=True)
+        publisher.publish(
+            accumulator, status="transport_error", error=_error_text(exc), force=True,
+        )
         raise
 
 
