@@ -569,6 +569,29 @@ is in `final-mia-startup-failure-audit.md`,
 The benchmark-validity and subscription-critic questions remain deferred by
 the owner's instruction.
 
+### September 19 follow-up: reboot is not proven necessary
+
+At 06:27 UTC the responsive GPU reported `GPU Recovery Action: None`, with no
+new allocation/Xid messages since restoration. The earlier reboot recommendation
+is a proposed experiment, not proof that the hardware requires a reboot. A
+separately prepared compaction trial could test another recovery hypothesis;
+it has not been run and requires a root operation unavailable to this session
+without OS authentication. No driver-error or resource guard is relaxed.
+
+The subsequent system/user service audit found configured boot coverage for
+the main services, but two concrete ordering gaps: Docker can precede NVIDIA
+CDI generation, and Nara's user-unit `After=docker.service` does not order it
+after the system Docker daemon or model readiness. Active terminal sessions
+and several ad-hoc helpers do not automatically return. The audit's read-only
+checker passed 22 core process/HTTP/model-identity checks on the current boot;
+these are not proof of a future reboot or a functioning research pipeline.
+
+The new audit, recovery commands, privilege evidence and proposed alternative
+are in `service-recovery-audit-20260919/README.md` and `no-reboot-options.md`
+under the artifact root. This supplements the earlier clean-host plan and
+preserves all measured failures and raw grades. Neither recovery option nor
+any startup-configuration change was executed during that audit.
+
 ## Startup diagnosis
 
 The independent recipe initially needed 201.2 seconds to materialize 51.2 GB of
