@@ -39,11 +39,11 @@ It does not disable host swap or drop caches.
 
 | Probe | Result | Interpretation |
 |---|---|---|
-| Five science tasks × off/medium | 10/10 completed; machine-graded final objects passed | Explanatory prose had errors; not open-ended discovery |
+| Five science tasks × off/medium | 10/10 final structured objects passed the narrow machine grader | Manual audit found prose/proof defects; not ten wholly correct scientific responses or discovery |
 | Five file repairs × off/medium | 10/10 completed; 6/10 passed | Four validation failures, described below |
 | Clarified validation arm | 3/4 completed and passed | Separate task contract; one off-policy attempt exhausted tool turns |
-| Historical repository repair | Completed in 85.8 s | Generated patch passed focused checks and all 22 tests in the relevant repository test module |
-| Real paper + two continuation turns | 3/3 completed | Source-based calculations correct; experimental proposal only partial |
+| Historical repository repair | Completed in 85.8 s; 2 visible unit cases and 6 hidden scenario groups passed | Independent post-run loading of the exact generated module passed 22 tests in `tests/test_research_ops_status.py`; not the full repository suite |
+| Real paper + two continuation turns | 3/3 completed | Bounds 1.0 and 0.5 were correct; scope prose and proposed experiment were incomplete |
 | Historical delegation prompt, longer budget | Strict JSON and 4/4 behavioral cases passed | 524.1 s, including 12,038 reasoning tokens; excessive deliberation remains a practical problem |
 | Historical external-regret prompt, longer budget | Strict JSON and 5/5 behavioral cases passed | 72.4 s; no formatting adapter needed |
 
@@ -203,8 +203,9 @@ comfortably within 32K, but those preflight counts are not exact.
 The corrected continuation runner now serializes retained reasoning exactly
 as the pinned Mia chat template does for token counting, while leaving the
 generation messages unchanged. It checks generation usage against that count
-after every turn and stops on disagreement. CPU replay reproduced all six
-saved counts across both earlier paper conversations. All six subsequent
+after every turn and stops on disagreement. Offline CPU token-count
+reconstruction reproduced all six saved input-token counts across both earlier
+paper conversations. All six subsequent
 child-auto and FP8-KV paper calls also matched their live generation counts
 exactly and remained inside the configured 32K input-plus-output context.
 
@@ -384,3 +385,7 @@ are under the local artifact root
 `902eaf692e88270dee1ff60986e6f66406e89cd3c2b70d4320e3574febf754cc`;
 the FP8 paper audit SHA-256 is
 `dce98879e9af959c08278d3c1a02bd4353929bb424f16d36e48fb5f28629762e`.
+The additional `graph-acceptance-identity-audit.md` (SHA-256
+`02d9678656deb0fba4eb16e735a005db76e56f0afa074becf0f8a319b77d1be7`)
+records the graph-observability gap, incomplete workload-specific acceptance
+evidence, and the separation of runtime and evaluator identity.

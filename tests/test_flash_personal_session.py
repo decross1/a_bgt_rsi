@@ -1,4 +1,5 @@
 """Real guard and launch-policy regressions; no Docker or model calls."""
+import json
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -147,3 +148,80 @@ def test_recovery_uses_the_state_selected_child_spec(monkeypatch, tmp_path):
     assert observed['reconciled'] is child
     assert observed['spec'] is child
     assert observed['diagnostic_path'] == tmp_path / 'candidate-final.log'
+
+
+def kernel_monitor(tmp_path, *, stdout='', stderr='', returncode=0):
+    monitor = p.Monitor(tmp_path, {'at': '2026-09-19T01:59:29.250000+00:00'}, 20, p.SPEC)
+    monitor.ops = SimpleNamespace(run=lambda *a, **k: SimpleNamespace(
+        stdout=stdout, stderr=stderr, returncode=returncode,
+    ))
+    return monitor
+
+
+@pytest.mark.parametrize('message', [
+    'nvAssertFailedNoLog: Assertion failed: status == NV_OK @ mem_desc.c:1359: NV_ERR_NO_MEMORY',
+    'NVRM: Xid (PCI:0000:01:00): 31, MMU Fault',
+])
+def test_kernel_only_driver_fault_is_recorded_and_stops_candidate(tmp_path, message):
+    # Container logs, swap, and cgroup OOM counters can all be clear here.
+    assert p.hard_failure(sample(), 20, 0) is None
+    raw = json.dumps({'__REALTIME_TIMESTAMP': '1789783169251603', 'MESSAGE': message})
+    monitor = kernel_monitor(tmp_path, stdout=raw)
+    with pytest.raises(RuntimeError, match='kernel_driver_or_allocation_failure'):
+        monitor.check_kernel_faults()
+    assert json.loads((tmp_path / 'kernel-checks.jsonl').read_text())['stdout'] == raw
+
+
+def test_kernel_fault_before_session_in_same_second_is_not_reused(tmp_path):
+    raw = json.dumps({'__REALTIME_TIMESTAMP': '1789783169249999', 'MESSAGE': 'NV_ERR_NO_MEMORY'})
+    kernel_monitor(tmp_path, stdout=raw).check_kernel_faults()
+
+
+def test_no_matching_kernel_events_is_healthy(tmp_path):
+    kernel_monitor(tmp_path, returncode=1).check_kernel_faults()
+
+
+@pytest.mark.parametrize('response,reason', [
+    ({'returncode': 2}, 'unavailable'),
+    ({'stderr': 'You are not seeing messages from the system.'}, 'unavailable'),
+    ({'stdout': '{'}, 'malformed'),
+    ({'stdout': '{}'}, 'malformed'),
+])
+def test_unreadable_kernel_evidence_is_not_silently_healthy(tmp_path, response, reason):
+    with pytest.raises(RuntimeError, match='kernel_fault_evidence_' + reason):
+        kernel_monitor(tmp_path, **response).check_kernel_faults()
+
+
+@pytest.mark.parametrize('running', [True, False])
+def test_live_sampling_preserves_kernel_fault_even_if_container_exited(monkeypatch, tmp_path, running):
+    monitor = kernel_monitor(tmp_path)
+    monitor.state.update(phase='starting', candidate_id='a' * 64)
+    row = sample()
+    row['candidate']['running'] = running
+    row['candidate'].update(image=p.SPEC.image_id, name=p.SPEC.container_name, pid=123)
+    monkeypatch.setattr(p.q, '_available_gib', lambda: 36.55)
+    monkeypatch.setattr(p.q, '_pswpin_pages', lambda: 0)
+    monkeypatch.setattr(p.q, '_pswpout_pages', lambda: 0)
+    monkeypatch.setattr(p.q, '_host_meminfo_diagnostics', dict)
+    monkeypatch.setattr(p.q, '_inspect_container', lambda *_a: row['candidate'])
+    monkeypatch.setattr(p.q, '_candidate_cgroup_snapshot', lambda *_a: row['cgroup'])
+    monkeypatch.setattr(p, 'psi', lambda _kind: {'full': {'avg10': 0}})
+    monkeypatch.setattr(p, 'process_memory', list)
+
+    def run(argv, **_kwargs):
+        if argv[0] == 'docker':
+            return SimpleNamespace(returncode=0, stdout='Server running normally', stderr='')
+        assert argv[0] == 'journalctl'
+        return SimpleNamespace(returncode=0, stderr='', stdout=json.dumps({
+            '__REALTIME_TIMESTAMP': '1789783169251603', 'MESSAGE': 'NV_ERR_NO_MEMORY',
+        }))
+
+    monitor.ops = SimpleNamespace(run=run)
+    if not running:
+        # A terminal container failure forces collection even between periodic checks.
+        monitor.last_kernel_check = p.time.monotonic()
+    with pytest.raises(RuntimeError, match='kernel_driver_or_allocation_failure'):
+        monitor.sample()
+    assert (tmp_path / 'heartbeat.json').is_file()
+    assert (tmp_path / 'memory.jsonl').is_file()
+    assert (tmp_path / 'kernel-checks.jsonl').is_file()

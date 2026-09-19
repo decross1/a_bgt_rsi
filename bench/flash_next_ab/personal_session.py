@@ -20,6 +20,7 @@ import urllib.request
 import uuid
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from orchestrator.weekly_upgrade_trial import canonical_root, resource_lease
@@ -84,10 +85,12 @@ POLICY = {
     'memory_psi_full_avg10_percent': 25,
     'severe_pressure_duration_s': 30,
     'worker_heartbeat_max_age_s': 45,
+    'kernel_fault_poll_s': 15,
     'restoration_reserve_s': 900,
     'weekly_budget_debit': False,
 }
 FAULT = re.compile(r'CUDA out of memory|CUDA error:|illegal memory access|Segmentation fault|OutOfMemoryError')
+KERNEL_FAULT = re.compile(r'NV_ERR_NO_MEMORY|NVRM: Xid')
 
 
 def write(path: Path, value):
@@ -199,9 +202,38 @@ class Monitor:
         self.pressure_since = None
         self.last_attribution = 0.0
         self.last_log_check = 0.0
+        self.last_kernel_check = 0.0
+        self.session_started = datetime.fromisoformat(state['at']).astimezone(timezone.utc)
         self.last_ready_check = 0.0
         self.readiness_failures = 0
         self.history = deque(maxlen=40)
+
+    def check_kernel_faults(self):
+        """Catch driver faults even when the container logs remain healthy."""
+        result = self.ops.run([
+            'journalctl', '-k', '--since',
+            self.session_started.strftime('%Y-%m-%d %H:%M:%S UTC'),
+            '--no-pager', '--quiet', '-o', 'json', '--grep=' + KERNEL_FAULT.pattern,
+        ], timeout=10, check=False)
+        append(self.output / 'kernel-checks.jsonl', {
+            'at': q.utc_now(), 'session_started': self.state['at'],
+            'returncode': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr,
+        })
+        if result.returncode not in (0, 1) or result.stderr.strip():
+            raise RuntimeError('kernel_fault_evidence_unavailable')
+        try:
+            rows = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+            for row in rows:
+                # journalctl's second-resolution filter may include older events.
+                at_us = int(row['__REALTIME_TIMESTAMP'])
+                message = row['MESSAGE']
+                if not isinstance(message, str):
+                    raise TypeError('kernel message must be text')
+                if (at_us >= int(self.session_started.timestamp() * 1_000_000)
+                        and KERNEL_FAULT.search(message)):
+                    raise RuntimeError('kernel_driver_or_allocation_failure')
+        except (ValueError, KeyError, TypeError) as exc:
+            raise RuntimeError('kernel_fault_evidence_malformed') from exc
 
     def sample(self):
         start = time.monotonic()
@@ -236,6 +268,11 @@ class Monitor:
             row, self.floor, start-self.pressure_since if self.pressure_since else 0,
             self.spec,
         )
+        if (identity and self.state['phase'] in {'starting', 'ready'}
+                and (failure or start-self.last_kernel_check >= POLICY['kernel_fault_poll_s'])):
+            # Preserve a kernel fault even when it also made the container exit.
+            self.check_kernel_faults()
+            self.last_kernel_check = start
         if failure:
             raise RuntimeError(failure)
         if identity and self.state['phase'] in {'starting', 'ready'} and start-self.last_log_check >= 10:

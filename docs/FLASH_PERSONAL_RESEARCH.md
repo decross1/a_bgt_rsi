@@ -4,7 +4,7 @@ The September 18 owner handoffs reopen Flash for interactive scientific and
 programming work. The earlier closed benchmark windows and their grades are
 unchanged. Passing every autonomous role is not a prerequisite for personal use.
 
-The default runtime is the already qualified Mia optimized MTP3 / reduced
+The controller's default profile is the already qualified Mia optimized MTP3 / reduced
 47,149-token draft vocabulary / V2 / FULL-decode bundle. It uses the existing
 immutable image, weights and packed disk-backed PLE. A separate child image adds
 the reviewed QSA FP8-KV implementation for a personal comparison. It has its own
@@ -192,6 +192,15 @@ session declaration. Candidate cgroup swap and OOM remain hard failures, as do
 unexpected exits/restarts, changed memory limits, sustained severe memory PSI,
 driver/allocation errors and sustained unresponsiveness. The parent monitors
 worker heartbeats and retains a separate restoration allowance.
+
+The delivered controller also reads the kernel journal every 15 seconds during
+startup and serving for new host NVIDIA allocation faults or Xid errors. It saves
+that evidence separately and excludes events preceding this session; stale
+failures from earlier experiments do not reject a new run. Unreadable journal
+evidence triggers recovery. This closes a gap exposed by the independent
+SGLang load; the historical Mia measurements used the earlier controller.
+The stop is conservative: a host kernel event alone does not prove which
+process caused it.
 
 Host pageout is recorded with host counters, process RSS/swap, candidate cgroup
 file/anonymous memory, and memory/I/O PSI. A PLE file fault is not anonymous
