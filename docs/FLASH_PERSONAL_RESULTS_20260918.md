@@ -1,16 +1,20 @@
 # Flash personal research recovery — September 18, 2026
 
-**In progress.** The optimized Mia endpoint completed useful scientific and
-coding work. MTP, recurrent-state, child-image, and FP8-KV comparisons are
-complete. NVIDIA/SGLang is now serving and its matched practical comparison is
-in progress; this is not a final model selection or a production route change.
+**Comparison complete; reliable warm handover remains unfinished.** Both
+Flash bundles completed useful science/coding work and measured serving tests.
+However, the final Mia restart and then the exact previously successful
+SGLang restart both encountered fresh NVIDIA allocation faults before
+readiness. The guards restored the original pair. Flash is a viable candidate;
+this report does not claim a current live Flash endpoint, a completed model
+cutover, or a completed personal-serving goal. The next experiment concerns
+host allocation/restart reliability, not another benchmark panel.
 
 This recovery follows the owner's two September 18 handoffs. The existing
 Gemma/Qwen pair is the rollback configuration, not a required topology. Earlier
 benchmark grades remain unchanged. These are small development diagnostics,
 not a held-out demonstration that Flash is a superior scientist.
 
-## Observed working baseline
+## Mia comparison baseline
 
 | Setting | Observed value |
 |---|---|
@@ -23,7 +27,10 @@ not a held-out demonstration that Flash is a superior scientist.
 | PLE | Existing packed, file-backed table on local NVMe |
 | Session endpoint (while ready) | `http://127.0.0.1:8012/v1`, model `qwen3.8-flash-next-mia` |
 
-The first boot reached readiness in **603.5 seconds**. During 295 startup
+The first container-start-to-ready interval was **603.5 seconds**, excluding
+controller model/PLE verification and resident shutdown. The final handover
+spent a separate 183 seconds verifying model/PLE files, then about 39 seconds
+in transition and resident shutdown before container start. During 295 startup
 samples, minimum `MemAvailable` was **32.25 GiB** against the declared 20 GiB
 floor. Candidate cgroup swap and OOM events were zero. Host pageout totaled
 2,828.2 MiB; several already-running processes gained swap. Those observations
@@ -35,7 +42,48 @@ candidate OOM or failure to serve. The new diagnostic retains physical-memory,
 candidate-swap/OOM, sustained-pressure, identity, and responsiveness stops.
 It does not disable host swap or drop caches.
 
+## Speed against the resident pair
+
+The final resident replay completed six serial calls after verified restoration.
+The prompt, output cap of 512, seed 17 and temperature-zero policy match the
+saved Flash CSV controls. These are complete-bundle speed diagnostics: every
+output intentionally ends at its length cap, without a task-quality score.
+
+| Bundle | Median first generated token | Median full request | Three rates, tokens/sec | Median rate |
+|---|---:|---:|---:|---:|
+| Gemma 4 26B A4B | 0.291 s | 5.547 s | 53.33 / 92.30 / 95.61 | 92.30 |
+| Qwen 3.8 27B | 0.414 s | 25.880 s | 18.99 / 19.78 / 19.80 | 19.78 |
+| Mia Flash | 0.181 s | 11.790 s | 40.96 / 43.43 / 43.52 | 43.43 |
+| NVIDIA/SGLang Flash | 0.429 s | 12.166 s | 37.62 / 42.09 / 44.48 | 42.09 |
+
+Rates include first-token latency. Gemma's first request took 4.384 seconds
+before its first token, versus 0.291 and 0.106 on later calls; the first Qwen
+request took 1.543 seconds versus 0.414 and 0.334. These request-order effects
+are not measured model boot times. Three runs do not establish a steady-state
+distribution. Models, tokenizers and templates differ; Gemma uses 84 input
+tokens versus 78 for the others. Resident requests omit `top_k` rather than
+sending the Flash runtimes' `0`; thinking is disabled explicitly for Qwen and
+by the installed Gemma template's default. The raw streams and all six hashes
+were independently checked.
+
+This workload places Flash at about 2.2 times resident Qwen's rate and less
+than half Gemma's rate. It does not measure scientific intelligence. The saved
+matched context probes show Mia/Qwen first-token times of about 1.04–1.05 /
+1.33–1.46 seconds at 2K input, and 3.96–4.20 / 4.54–4.55 seconds at 8K input.
+At 2K both produced 62 tokens, with full times of 5.22–5.31 / 4.00–4.12 seconds:
+shorter first-token latency alone does not establish faster completion.
+The larger-context probes remain historical diagnostics, not an optimized
+64K qualification or isolated server prefill measurement.
+
+Evidence: `resident-csv-live-comparison.md` and
+`resident-csv-replay-live-20260919/` under the artifact root below; the result
+SHA-256 is `6ee1cc9c01b0cf41a1b892498d07ba07c6ae8b051f2e933c6128259da5e423a6`.
+
 ## Practical answers and repairs
+
+The following table records the Mia bundle's practical results. The
+matched SGLang replay is reported separately below so its raw grades, grader
+limitations, and runtime identity remain visible.
 
 | Probe | Result | Interpretation |
 |---|---|---|
@@ -293,8 +341,11 @@ contains the exact proposed suffix and the eight-call validation plan.
 ## Independent NVIDIA/SGLang serving comparison
 
 The v5 session reached admitted readiness on September 19 at **04:02:47 UTC**,
-770.3 seconds after controller start. Literal response, tool call, and retained
-reasoning/tokenizer checks passed. It serves
+770.3 seconds after controller start. This includes its controller preparation
+and uses a previously verified checkpoint; its timing origin differs from the
+Mia 603.5-second container-start interval. These are not matched end-to-end
+startup measurements. Literal response, tool call, and retained
+reasoning/tokenizer checks passed. During that session it served
 `nvidia/Qwen3.8-Flash-Next-NVFP4` on `http://127.0.0.1:30080/v1`, with 32,768 total
 context, one request, FP32 recurrent state, BF16 KV, and three native NEXTN steps
 (four draft tokens; the server reports the normalized `EAGLE` implementation).
@@ -306,11 +357,40 @@ the NVIDIA checkpoint revision is
 File-backed PLE remains on NVMe with a 4 GiB cache cap. The allocator uses
 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
 
-Through the 04:15 UTC observation window, available memory remained at least
+Through the completed v5-001 session, available memory remained at least
 **21.96 GiB**, above the unchanged 20 GiB floor, with zero candidate swap/OOM
 and no new NVIDIA allocation/Xid fault. This is an observed minimum for this
-run, not an indefinite guarantee. The exact final resource receipt remains
-with the session artifacts.
+run, not an indefinite guarantee. The controller stopped normally and verified
+exact restoration at 04:56:30 UTC; its final resource receipt remains with the
+session artifacts.
+
+The completed practical replay used the same 20 tasks, order, seed, policies,
+tools, graders, and sandbox contracts as the Mia panel. The intended initial
+wire difference was the served model identity. All 20 attempts completed for
+both bundles without transport, parser, missing-final, repetition, deadline,
+or runner failures, and neither received human intervention.
+
+| Matched practical evidence | Mia parent MTP3 | NVIDIA/SGLang NEXTN3 | Reading |
+|---|---:|---:|---|
+| Frozen panel grade | 16/20 | 16/20 | Tied headline score; the failures differ |
+| Science | 10/10 | 8/10 | Both SGLang Bayes answers have the correct posterior, payoff, action, source ID, and valid JSON; they use `Action`/`action` where the hidden answer requires `act`, although the public schema says only `decision: string`. The frozen `wrong_semantics` grades remain, but this is an undocumented lexical constraint rather than a math error. |
+| Coding | 6/10 | 8/10 | Both bundles accept nonfinite CSV amounts under the ambiguous v1 wording. SGLang correctly rejects float interval endpoints in both policies; Mia does not. |
+| Full panel elapsed | 864.25 s | 884.97 s | SGLang is 20.72 s, or 2.4%, slower. Its per-turn time includes a separate tokenizer HTTP preflight. |
+| Historical repository repair | Pass, 85.80 s | Pass, 42.37 s | Both produce the identical 667-byte patch and final source SHA-256 `28bf931aaf9893d6b9eae52e2de3a350b21d12b6c1506b4002b62ff40b827124`, passing 2 visible cases and 6 hidden scenario groups. The separately saved 22-test replay was run on the Mia artifact; the final bytes are identical. |
+| Panel plus repair | 950.06 s | 927.34 s | SGLang is 22.71 s, or 2.4%, faster overall and has the stronger result on this small coding panel. |
+
+A preexisting root cache-drop cron fired during both practical panels
+(22:00:07 UTC for Mia and 04:30:15 UTC for SGLang). Its effect was not isolated.
+Together with tokenizer preflight and different generated trajectories, this
+prevents treating the small elapsed-time difference as a causal runtime gain.
+
+SGLang's Shapley explanations also avoid the two incorrect cumulative totals
+in the Mia medium explanation. Raw usage must be read from the streams:
+SGLang places `reasoning_tokens` at the top level, while the frozen convenience
+projection expects the Mia-style nested field. The saved panel totals are
+9,943 SGLang reasoning tokens and 9,474 Mia reasoning tokens, not a null or
+zero SGLang count. SGLang used 56 model tool events and Mia 58; both had zero
+human interventions.
 
 | Existing matched request cohort | Mia parent MTP3 | NVIDIA/SGLang NEXTN3 |
 |---|---:|---:|
@@ -318,6 +398,7 @@ with the session artifacts.
 | Paper first turn, same frozen source | 51.34 s | 55.60 s |
 | All three paper turns | 92.70 s | 81.54 s |
 | Delegation code, strict JSON plus 4 executable cases | Pass, 524.06 s | Pass, 404.83 s |
+| External-regret code | Pass, 72.45 s | Completed in 538.81 s; frozen sandbox contract rejected; separate ordinary-Python diagnostic passed 5/5 |
 
 The CSV requests use the same explicit greedy policy; reaching the fixed cap
 is deliberate and is not a completed CSV-task success. Three repeats do not
@@ -339,11 +420,154 @@ caveat about LLM agents. Mia FP32 was stronger on source semantics in these
 sampled answers. Neither the three transport completions nor one conversation
 establishes scientific superiority.
 
-The remaining legacy task and replay of the existing practical panel/repair
-are separate from this interim table. The owner explicitly prioritized useful
-serving and completed work over every-fixture perfection. The known paper
-error is retained in the comparison rather than used to prevent the remaining
-practical evaluation. No new benchmark prompts or hidden answers were added.
+The regret response used 12,326 completion tokens, including 11,982 reasoning
+tokens, and took 7.44 times Mia's completion time. The frozen grader rejected
+its `try` statement before behavioral execution. A separate diagnostic permitting
+`try` alone passed the three arithmetic cases but failed both malformed-input
+cases because its exception handler referenced standard exception classes
+absent from the evaluator's builtins. With only those four safe exception classes
+also supplied, the same five isolated behavioral cases passed. The code is
+therefore correct on these cases under ordinary Python, while violating the
+original evaluator's restricted contract; its original rejection remains fixed.
+This is not an established arithmetic failure or a replacement benchmark grade.
+
+The longest individual legacy-task times are close, **524.06 seconds for Mia
+and 538.81 seconds for SGLang**. The material difference is pair-level completion
+and contract compliance: Mia passes both in 596.51 seconds total; SGLang takes
+943.65 seconds and has one compliant pass. For descriptive accounting only,
+panel, repair, paper, and both legacy tasks total 1,639.26 seconds for Mia and
+1,952.53 seconds for SGLang. These are heterogeneous tasks, not a benchmark
+score or a causal runtime comparison.
+
+### Unscored owner-client smoke
+
+The canonical SGLang client then ran one realistic coordination-game prompt
+under each reasoning policy. These were delivery smokes with no matched Mia
+call, no hidden grade, and no benchmark credit.
+
+The thinking-off response completed in 53.01 seconds and correctly identified
+the two pure equilibria, the symmetric mixed probability `2/3`, and the
+payoff-dominant equilibrium. It incorrectly called `(C,C)` risk-dominant. Its
+deviation loss at `(C,C)` used `4-0=4`; the deviator actually receives 3 when
+the other player stays at C, so the loss is `4-3=1`, below the loss 2 at
+`(D,D)`. It also called `(C,C)` the unique stable static equilibrium after
+having identified two pure equilibria.
+
+The medium-policy response took 90.59 seconds and corrected the equilibrium
+math: `(D,D)` is risk-dominant because the deviation losses are 2 versus 1.
+Its proposed experiment is still degenerate. Both policies start at `(C,C)`;
+copying the opponent preserves `(C,C)`, while frequency best response sees a
+C frequency of 1, chooses C, and also preserves `(C,C)`. Neither condition has
+randomness, so changing a seed cannot make 200 replications differ and the
+stated disconfirmation frequencies are not informative. The answer also says
+a one-shot agent *should* use the mixed strategy, overclaiming a unique choice
+when the game has two pure equilibria as well as the interior mixed one. Medium
+reasoning repaired the immediate dominance calculation but did not make the
+experiment sound.
+
+### Provisional preference before the final startup check
+
+The completed task review initially selected **Mia `mtp3-fp32-auto`**. The choice
+weights its stronger source fidelity on the paper, two compliant legacy-task
+passes, shorter time across that pair, and larger observed startup headroom.
+It is a practical selection for source-grounded research and coding, not a
+claim of universal model superiority.
+
+SGLang's counterevidence remains material: it passes both interval repairs
+that Mia misses, reproduces the identical repository repair in about half the
+time, completes the panel-plus-repair cohort 22.71 seconds faster, solves the
+delegation task faster, and shows useful subsecond first output on prefix-reused
+paper continuations. It remains a reviewed code-focused alternative rather
+than a failed candidate.
+
+The compared bundles change model artifact, checkpoint revision,
+quantization packaging, serving engine, and speculative implementation.
+Consequently, none of these differences is attributable to the runtime alone.
+The panel is one sample per task and policy, and the paper and legacy evidence
+are single conversations. Mia was the provisional preference on this workload-
+weighted evidence; the preserved SGLang artifacts support revisiting that
+choice if the owner's workload becomes predominantly bounded repair work.
+
+## Final operational finding
+
+The final Mia restart used the same pinned parent image, weights and
+`mtp3-fp32-auto` profile, with the newly delivered kernel monitor. At
+05:11:55–05:11:56 UTC on September 19, the host logged four fresh
+`NV_ERR_NO_MEMORY` errors from `_memdescAllocInternal`. The controller stopped
+before readiness and began exact resident restoration. No evaluation request
+was sent. Minimum observed available memory was 33.75 GiB. The last controller
+sample, after the fault, recorded 38.05 GiB; an independent fault-aligned sample
+recorded about 34.8 GiB. Candidate swap, container OOM events and restarts were
+zero. These facts do not establish the failing allocation's size, process,
+or whether the server might have recovered without intervention. They do
+establish failure of the declared driver-error gate. The earlier Mia task
+runs did not have this kernel monitor, so they cannot establish absence of
+comparable host-driver events.
+
+The next handover attempted **NVIDIA/SGLang v5**, which had
+completed its full comparison and owner calls without a kernel fault while its
+candidate monitor was armed, then verified exact restoration at 04:56:30 UTC.
+An independent journal audit found 22 allocation errors at 04:56:26–04:57:00
+during restoration and the subsequent resident replay. These precede the fresh
+candidate boundaries; they remain unresolved host evidence. Its known science defects
+remain visible above. The operational selection does not rewrite earlier
+machine grades or turn an allocation problem into a model-intelligence claim.
+
+| Preferred clean-host recovery bundle | Value |
+|---|---|
+| Model | `nvidia/Qwen3.8-Flash-Next-NVFP4@fc694b54fb0174e0913e6adf86691ef85a4ead47` |
+| Image | `sha256:2ee545cf877ae8497c123637e061b6e6313c624e30018f975969b1d554e27f56` |
+| Runtime | SGLang commit `84cf99860e3086ee0a458a71178343a8ac04fdab` |
+| Context / concurrency | 32,768 total tokens / one request |
+| Precision / PLE | NVFP4 weights, FP32 recurrent state, BF16 KV, file-backed PLE with 4 GiB resident cap |
+| Speculation | Native NEXTN, 3 steps / 4 draft tokens; runtime reports normalized EAGLE |
+| Allocator | `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` |
+| Resource policy | 20 GiB available-memory floor, zero candidate swap, fresh kernel-fault guard |
+| Endpoint while ready | `http://127.0.0.1:30080/v1`, model `nvidia/Qwen3.8-Flash-Next-NVFP4` |
+
+Fresh session `session-s3-readiness-v5-002` used the same pinned bundle and
+`expandable_segments:True`, but logged a fresh cluster of NVIDIA allocation
+errors at 05:22:51–05:22:52 UTC during loading. The guard stopped it before
+readiness, canaries, or an owner request and verified restoration of the exact
+original pair and Nara at **05:31:22 UTC**. Minimum observed available memory
+was **31.53 GiB**, with zero candidate swap. At 05:37 UTC, independent HTTP
+checks confirmed both resident identities online, the UI healthy and in
+resident mode, Flash offline, and Nara active.
+This second failure removes the basis for treating a runtime switch alone as
+a repeatable fix. Both failed requests counts are zero; no extra benchmark
+grade was awarded or removed.
+
+The host currently runs NVIDIA driver **580.142** and kernel
+**6.17.0-1018-nvidia**. A post-failure buddy allocator snapshot contains no large
+Normal-zone blocks at orders 11–13. This is consistent with fragmentation,
+but neither proves the requested allocation order nor establishes a cause.
+The existing reboot-required flag names AppArmor, not a pending NVIDIA driver.
+
+The recommended next experiment is one coordinated reboot with versions
+unchanged, followed by one identical guarded SGLang startup and a real owner
+request if ready. This distinguishes a fresh-host effect before adding a driver
+upgrade confound. Rebooting interrupts every service/session on the Spark and
+requires a coordinated owner-approved window. This coordinating session did
+not issue a reboot, driver installation, cache drop, swap change or compaction.
+A preexisting system root cron independently runs a global cache drop every
+30 minutes. The journal records its 05:00 invocation during Mia verification;
+neither the controller nor the model verifier issues that operation. The
+scheduled drop did not prevent the later failure. Preserve this host condition
+in the recovery record rather than assuming the machine had no cache drops.
+
+[NVIDIA's release notes](https://docs.nvidia.com/dgx/dgx-spark/release-notes.html)
+describe improved unified-memory OOM handling in the July release. A
+[first-hand vLLM report](https://github.com/vllm-project/vllm/issues/56824)
+shows similar allocation messages on a newer driver too, including messages
+that may reflect retries. Neither source proves our root cause or promises that
+an update fixes it. The declared kernel hard stop remains in force.
+
+The concrete local plan is `CONTROLLED_HOST_RECOVERY_PLAN.md`; startup evidence
+is in `final-mia-startup-failure-audit.md`,
+`shared-flash-restart-failure-audit.md`, `cache-drop-attribution-20260919.md`,
+`final-restored-health-20260919.json`, and the two final session directories.
+The benchmark-validity and subscription-critic questions remain deferred by
+the owner's instruction.
 
 ## Startup diagnosis
 
@@ -377,20 +601,19 @@ creation timestamp. Those controller fixes change neither request policies
 nor the historical grades. Failed attempts restored the exact resident pair
 and Nara; the first Mia restoration took 394.1 seconds.
 
-**Personal endpoint live at 04:15 UTC: NVIDIA/SGLang, comparison in progress.**
-Gemma, Qwen and Nara are intentionally paused while its controller owns the
-memory lease. The finite session stops the candidate by **11:45 UTC** and
-reserves restoration through **12:00 UTC** on September 19. Final selection
-and an owner-client handoff remain to be completed. The qualified Mia
-`mtp3-fp32-auto` parent remains an already demonstrated personal-use option.
+**Current handover: no Flash endpoint is claimed live.** Both final startups
+failed their driver-allocation gate, and exact restoration returns the original
+Gemma/Qwen services and Nara. SGLang v5 remains the preferred unchanged bundle
+for one clean-host recovery experiment; final selection remains conditional on
+actual readiness and a completed client/Now verification.
 
 See [personal session instructions](FLASH_PERSONAL_RESEARCH.md) for the client,
 explicit reasoning controls, session limits, and exact-ID rollback. Endpoint
-availability is tied to the live monitored session; this report does not imply
-an indefinitely deployed service. The controller pauses the autonomous lab
-while Flash owns memory and is configured and tested to restore the captured
-residents and caller state when the session ends. The first session completed
-verified exact-ID restoration at 00:13:42 UTC on September 19, without errors;
+availability must be taken from that handover receipt rather than this evidence
+report. The session controllers pause the autonomous lab while Flash owns
+memory and are configured and tested to restore the captured residents and
+caller state when a session ends. The first Mia session completed verified
+exact-ID restoration at 00:13:42 UTC on September 19, without errors;
 restoration took 394.1 seconds after the candidate stopped. The subsequent
 child/FP8 session also ended without an error and completed verified exact-ID
 restoration at 01:01:11 UTC; its restoration took 396.2 seconds.
@@ -403,6 +626,13 @@ are under the local artifact root
 `legacy-mtp0-fp32-auto/`, `controls-mtp3-bf16-child-auto/`,
 `controls-mtp3-bf16-child-fp8/`, `paper-mtp3-bf16-child-auto/`,
 `paper-mtp3-bf16-child-fp8/`, `session-fp8-b/`,
+`sglang-practical-v5-001/`, `sglang-screen-v5-001/`,
+`owner-sglang-client-smoke/`, `owner-sglang-science-medium/`,
+`sglang-practical-v5-vs-mia-independent-comparison.md`,
+`sglang-paper-v5-independent-audit.md`,
+`sglang-v5-legacy-practical-comparison.md`,
+`final-endpoint-selection-independent-view.md`,
+`final-personal-selection.json`,
 `controls-child-auto-vs-fp8-independent-audit.md`, and
 `paper-mtp3-bf16-child-fp8-independent-audit.md`. The control audit SHA-256 is
 `902eaf692e88270dee1ff60986e6f66406e89cd3c2b70d4320e3574febf754cc`;
@@ -412,3 +642,12 @@ The additional `graph-acceptance-identity-audit.md` (SHA-256
 `02d9678656deb0fba4eb16e735a005db76e56f0afa074becf0f8a319b77d1be7`)
 records the graph-observability gap, incomplete workload-specific acceptance
 evidence, and the separation of runtime and evaluator identity.
+The completed SGLang practical comparison audit SHA-256 is
+`3574916641c47ac04bcfe82071e8acad8c31cee9156341a9bc8f7f679d347e77`;
+the final selection record SHA-256 is
+`b1dddb340512054439355408372ec7700c4b7a655b0997ff139cb0e1a45ab989`.
+The raw owner-smoke summary SHA-256 values are
+`02ed8c91d9a8b3e60b94308140d5ef0a1e7f57a02913868d5d47140a30395f99`
+for thinking off and
+`fa381d72ba8dba9e38e4cc7339eef01632254227c5e17720fcf26cd16c126821`
+for medium.
