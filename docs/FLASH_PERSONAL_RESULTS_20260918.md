@@ -17,7 +17,7 @@ not a held-out demonstration that Flash is a superior scientist.
 | Checkpoint | `Mia-AiLab/Qwen3.8-Flash-Next-NVFP4@925d7be6c14c6c9442ef83e8f05b5a3c39304f69` |
 | Image | `sha256:29eab5a29b765eef8b6405bbe0f2d385fc1e7b5e3c7ae18ae70382a68a0a2201` |
 | Profile | `mtp3-fp32-auto`, `mia-925d7be6-mtp3-reduced47k-v2opt-v1` |
-| Serving | MTP3, 47,149-token draft vocabulary, V2 runner, FULL decode graphs, CUDA-graph capture size 4 |
+| Serving | MTP3, 47,149-token draft vocabulary, V2 runner; FULL decode graphs configured and captured at size 4; replay coverage unmeasured |
 | Precision | NVFP4 weights, FP32 recurrent state, auto/BF16 KV |
 | Capacity | 32,768 total context, one request, explicit 2 GiB KV allocation |
 | PLE | Existing packed, file-backed table on local NVMe |
@@ -157,6 +157,13 @@ of proposed draft tokens. Three short and three longer greedy
 first-token controls returned identical top-five logprobs within each prompt.
 They generated only the first token `3`, not the complete answer `323`, and do
 not establish full-trajectory determinism.
+
+The saved runtime logs confirm graph capture, but `cudagraph_metrics=False`
+and the saved metrics lack replay/fallback counters. They do not establish
+what fraction of generation actually replayed graphs. Exact speculative
+acceptance was captured across each complete control window, rather than
+separately for each workload. A later per-request metrics diagnostic can close
+those observability gaps without repeating the practical acceptance panel.
 
 MTP0 also repeated identical top-five probabilities within each prompt. Across
 the two serving bundles, probabilities and some secondary-token rankings
@@ -314,6 +321,25 @@ second attempt reached HTTP readiness at 01:45:21 UTC, retained at least
 22.70 GiB available memory with zero candidate swap/OOM, and completed verified
 restoration at 01:51:55 UTC. It issued no evaluation calls.
 
+The third attempt used the corrected recorder and installed-image lock. It
+failed during target weight loading on September 19: the kernel recorded seven
+new `NV_ERR_NO_MEMORY` events at 01:59:29–01:59:30 UTC. The guard stopped and
+removed the exact candidate and verified restoration of the original residents
+and Nara at 02:08:22 UTC, with no restoration errors. No readiness or generation
+canaries completed. Candidate swap and cgroup OOM counters remained zero;
+minimum observed host `MemAvailable` was 32.27 GiB. A driver allocation failure
+is a distinct failure class, even with those other counters clear. The earlier
+two successful HTTP starts mean this does not prove the bundle cannot fit.
+
+Inspection of the exact image and recorded launch environment found no
+expandable-segment allocator setting, whereas the Mia launcher sets
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`. A separately versioned,
+single-variable diagnostic is being prepared. This is an untested possible
+remedy; the evidence does not establish allocator fragmentation as the cause.
+The failed attempt did not capture global `MemFree` or `Cached`, so its host
+free/cache split cannot be reconstructed from cgroup-local file counters.
+The 20 GiB floor and driver-failure stop remain unchanged.
+
 The initial arm uses 32K/C1 and three native speculative steps; the only launch changes from
 the supplied one-step bring-up profile are three steps and four draft tokens.
 It inherits no qualification from the upstream release's different 262K/C2
@@ -321,7 +347,11 @@ configuration. A checkpoint and runtime change is a bundle comparison, not an
 isolated weight effect. Final runtime selection therefore remains in progress;
 the completed Mia evidence already supports bounded personal use.
 
-**Personal endpoint ready for use: yes, through a finite monitored session.**
+**Personal endpoint live at the last check: no (September 19, 02:10 UTC).**
+Both Flash candidates are stopped. Gemma and Qwen returned healthy model
+identities and Nara was active after the third SGLang attempt's restoration.
+Mia has demonstrated usable personal sessions; final delivery still requires
+starting and checking a fresh warm endpoint with an explicit availability window.
 The qualified `mtp3-fp32-auto` parent remains the conservative working baseline
 while final selection is open. A ready session serves
 `qwen3.8-flash-next-mia` on loopback port 8012; it does not change the lab's
