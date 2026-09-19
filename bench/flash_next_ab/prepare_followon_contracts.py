@@ -18,6 +18,7 @@ from bench.flash_next_ab.followon_profiles import (
     MIA_MTP1,
     MIA_MTP2,
     MIA_MTP3,
+    MIA_MTP3_REDUCED47K_FP8_QSA,
     MIA_MTP3_REDUCED47K_OPT,
     is_registered_spec,
 )
@@ -27,7 +28,7 @@ from bench.flash_next_ab.mia_candidate_integration import (
 )
 
 PROFILES = (MIA_MTP1, MIA_MTP2, MIA_MTP3, MIA_CTX69632,
-            MIA_MTP3_REDUCED47K_OPT)
+            MIA_MTP3_REDUCED47K_OPT, MIA_MTP3_REDUCED47K_FP8_QSA)
 
 
 def build_contract(original: dict, spec: CandidateSpec) -> dict:

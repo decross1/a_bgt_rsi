@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from bench.flash_next_ab.candidate_registry import MIA, CandidateSpec
+from bench.flash_next_ab.fp8_profile_literal import make_fp8_qsa_spec
 from bench.flash_next_ab.reduced_profile_literal import make_reduced_spec
 
 MTP_MODULE_SHA256 = "7735cee47d0d1e4776bebd30d907e4a62160409ce4ef2d65611559f8d58af431"
@@ -55,10 +56,12 @@ MIA_CTX69632 = replace(
 )
 
 MIA_MTP3_REDUCED47K_OPT = make_reduced_spec(MIA_MTP3)
+MIA_MTP3_REDUCED47K_FP8_QSA = make_fp8_qsa_spec(MIA_MTP3_REDUCED47K_OPT)
 
 REGISTERED_MIA_SPECS: tuple[CandidateSpec, ...] = (
     MIA, MIA_MTP1, MIA_MTP2, MIA_MTP3, MIA_CTX69632,
     MIA_MTP3_REDUCED47K_OPT,
+    MIA_MTP3_REDUCED47K_FP8_QSA,
 )
 SPECS_BY_CONTRACT_PATH: dict[Path, CandidateSpec] = {
     spec.contract_path: spec for spec in REGISTERED_MIA_SPECS
@@ -77,7 +80,7 @@ def requires_profile_canary(candidate: CandidateSpec | None) -> bool:
     """Only literal v5 Mia profiles require the extra post-probe canary."""
     return any(candidate is spec for spec in
                (MIA_MTP1, MIA_MTP2, MIA_MTP3, MIA_CTX69632,
-                MIA_MTP3_REDUCED47K_OPT))
+                MIA_MTP3_REDUCED47K_OPT, MIA_MTP3_REDUCED47K_FP8_QSA))
 
 
 def select_mia_contract(contract: dict) -> CandidateSpec:
