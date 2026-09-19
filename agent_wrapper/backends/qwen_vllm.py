@@ -12,6 +12,12 @@ from openai import AsyncOpenAI, OpenAI
 
 from agent_wrapper.upgrade_lease import local_inference
 
+from .vllm_streaming import (
+    complete_async,
+    complete_sync,
+    live_trace_stream_enabled,
+)
+
 
 class VLLMQwenBackend:
     def __init__(
@@ -65,6 +71,13 @@ class VLLMQwenBackend:
         client = self._sync
         if "timeout" in kwargs:
             client = client.with_options(max_retries=0)
+        if live_trace_stream_enabled():
+            return complete_sync(
+                client,
+                kwargs,
+                backend_name=self.name,
+                lease_factory=local_inference,
+            )
         with local_inference():
             return client.chat.completions.create(**kwargs)
 
@@ -72,5 +85,12 @@ class VLLMQwenBackend:
         client = self._async
         if "timeout" in kwargs:
             client = client.with_options(max_retries=0)
+        if live_trace_stream_enabled():
+            return await complete_async(
+                client,
+                kwargs,
+                backend_name=self.name,
+                lease_factory=local_inference,
+            )
         with local_inference():
             return await client.chat.completions.create(**kwargs)

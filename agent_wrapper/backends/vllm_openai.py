@@ -10,6 +10,12 @@ from typing import Any
 
 from agent_wrapper.upgrade_lease import local_inference
 
+from .vllm_streaming import (
+    complete_async,
+    complete_sync,
+    live_trace_stream_enabled,
+)
+
 
 class VLLMBackend:
     name = "vllm-gemma"
@@ -36,6 +42,13 @@ class VLLMBackend:
             # Budgeted eval calls must not multiply their declared timeout via
             # the SDK's automatic retries. Legacy calls keep client defaults.
             client = client.with_options(max_retries=0)
+        if live_trace_stream_enabled():
+            return complete_sync(
+                client,
+                kwargs,
+                backend_name=self.name,
+                lease_factory=local_inference,
+            )
         with local_inference():
             return client.chat.completions.create(**kwargs)
 
@@ -43,5 +56,12 @@ class VLLMBackend:
         client = self._w()._async_client
         if "timeout" in kwargs:
             client = client.with_options(max_retries=0)
+        if live_trace_stream_enabled():
+            return await complete_async(
+                client,
+                kwargs,
+                backend_name=self.name,
+                lease_factory=local_inference,
+            )
         with local_inference():
             return await client.chat.completions.create(**kwargs)
