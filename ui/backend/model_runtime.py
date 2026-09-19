@@ -1103,6 +1103,12 @@ def project_model_runtime(
     observed_at = observed.isoformat()
     run_fd = None
     try:
+        if (qualification_root == QUALIFICATION_ROOT and evaluation_root is None
+                and lab_root is None and now is None):
+            from .model_runtime_resident import project_permanent
+            permanent = project_permanent()
+            if permanent is not None:
+                return permanent
         # The fixed personal serving controller is operational state rather
         # than benchmark qualification.  Its live, process-bound projection
         # must outrank an older terminal lab receipt while it intentionally

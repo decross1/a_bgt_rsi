@@ -354,6 +354,8 @@ function ModelServerCard({
       ? "Production resident"
       : inventory?.deployment_role === "research_candidate"
         ? "Research candidate"
+        : inventory?.deployment_role === "rollback_available"
+          ? "Rollback available"
         : "Role not recorded";
   const activityLabel =
     inventory?.activity_status === "busy"

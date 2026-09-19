@@ -6,25 +6,27 @@ model agents. It runs on one NVIDIA DGX Spark and keeps the human researcher
 responsible for scientific validity, deployed runtime change, and scientific
 publication.
 
-> **Current workspace — 2026-09-16:** Research follows the active campaign's
+> **Current workspace — 2026-09-19:** Research follows the active campaign's
 > thesis, evidence, criticism, and next agenda. Preserved records remain in the
 > archive. Benchmarks uses frozen release **1.1.0**, with a verified resident
 > baseline and a review boundary of **October 14**. It is a small regression
 > canary; model comparisons and accepted research findings remain separate.
-> The resident Gemma/Qwen pair remains deployed. Flash's final startup diagnostic
-> stopped at its pageout guard before any stable-benchmark request.
+> The owner selected NVIDIA Flash-Next on SGLang as the permanent local model
+> and ended further benchmarking. Live readiness is shown in the Now dashboard;
+> selection alone does not mean a server is online. See the
+> [resident operating guide](docs/FLASH_RESIDENT.md).
 
 New contributors and agent sessions should begin with
 [`START_HERE.md`](START_HERE.md).
 
-## What is running
+## Selected deployment
 
-| Layer | Deployed state |
+| Layer | Configuration |
 | --- | --- |
 | Hardware | NVIDIA DGX Spark, GB10, 128 GB unified memory |
-| Generator / PI | Gemma 4 26B-A4B NVFP4 on `:8000`, 32K context |
-| Independent skeptic / builder | Qwen3.8-27B NVFP4-MTP on `:8001`, 16K context |
-| Serving | `vllm/vllm-openai:v0.21.0`, CUDA 13.0 |
+| Local generator, skeptic and builder | NVIDIA Qwen3.8-Flash-Next NVFP4 on `:30080`, 32K context, one running request; shared weights across roles |
+| Rollback options | Stopped Gemma 4 and Qwen3.8-27B containers |
+| Serving | Pinned SGLang NEXTN3 bundle, managed by `flash-resident.service`; live status is authoritative |
 | Research scheduler | user service `nara-daemon.service`, with hourly cron as a gated backstop |
 | Observatory | React/Vite on `:5173`, FastAPI on `:8700`, local telemetry sampler |
 | Weekly maintenance | Sunday 05:30 UTC, review-only, at most two subscription frontier calls and 120 Spark minutes per ISO week |
@@ -41,7 +43,7 @@ flowchart LR
     Q[Research question] --> T[Topic attempt]
     T --> I[Bounded iteration]
     I --> E[Evidence ladder L0-L3]
-    E --> S[Independent skeptic]
+    E --> S[Critique]
     S -->|survives| L4[L4 surfaced finding]
     S -->|fails| K[Rejected or refinement owed]
     L4 --> H{Human verdict}

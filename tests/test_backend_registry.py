@@ -1,10 +1,4 @@
-"""Backend registry surface.
-
-Verifies the additive multi-backend substrate: vllm-gemma stays the default,
-ollama-coder is registered, unknown names raise KeyError, and the vllm-gemma
-backend reads `wrapper._sync_client` lazily so existing `patch.object`-style
-mocks continue to flow through.
-"""
+"""Backend registry surface and explicit historical-resident bypasses."""
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +6,7 @@ import pytest
 from agent_wrapper import wrapper as W
 from agent_wrapper.backends import get_backend, list_backends
 from agent_wrapper.backends.ollama_openai import OllamaBackend
+from agent_wrapper.backends.sglang_flash import SGLangFlashBackend
 from agent_wrapper.backends.vllm_openai import VLLMBackend
 
 
@@ -25,14 +20,17 @@ class TestRegistry:
         assert "ollama-coder" in list_backends()
         assert isinstance(get_backend("ollama-coder"), OllamaBackend)
 
+    def test_permanent_flash_and_explicit_resident_aliases_are_registered(self):
+        assert isinstance(get_backend("sglang-flash"), SGLangFlashBackend)
+        assert isinstance(get_backend("resident-vllm-gemma"), VLLMBackend)
+        assert get_backend("resident-vllm-gemma").name == "resident-vllm-gemma"
+
     def test_unknown_backend_raises(self):
         with pytest.raises(KeyError, match="unknown backend"):
             get_backend("does-not-exist")
 
-    def test_default_backend_constant_is_vllm_gemma(self):
-        # Sanity: env-overridable, but the unset default must stay
-        # vllm-gemma so existing callers don't change behavior.
-        assert W.DEFAULT_BACKEND == "vllm-gemma"
+    def test_default_backend_constant_follows_committed_deployment(self):
+        assert W.DEFAULT_BACKEND == "sglang-flash"
 
 
 class TestVLLMBackendLazyLookup:
@@ -62,7 +60,7 @@ class TestCallSyncBackendKwarg:
     """call_sync routes through the named backend and stamps that backend's
     model_version + host_metadata into the record."""
 
-    def test_default_backend_path_stamps_module_provenance(self):
+    def test_explicit_resident_backend_stamps_historical_provenance(self):
         with patch.object(W, "_sync_client", MagicMock()) as mc:
             mc.chat.completions.create.return_value = MagicMock(
                 model="gemma-served",
@@ -70,9 +68,11 @@ class TestCallSyncBackendKwarg:
                 usage=MagicMock(prompt_tokens=1, completion_tokens=2),
             )
             rec = W.call_sync([{"role": "user", "content": "hi"}],
-                              caller_tag="t", log_path=None)
+                              caller_tag="t", log_path=None,
+                              backend="resident-vllm-gemma")
             assert rec["model_version"] == W.MODEL_VERSION
             assert rec["host_metadata"] == W.HOST_METADATA
+            assert rec["backend"] == "resident-vllm-gemma"
 
     def test_unknown_backend_kwarg_raises(self):
         with pytest.raises(KeyError):

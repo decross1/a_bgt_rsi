@@ -66,8 +66,10 @@ def fake_vllm(monkeypatch):
 
     Patches `agent_wrapper.wrapper._sync_client` since the SubAgent now
     routes through the backend registry (post D-035 multi-backend
-    substrate) — the default vllm-gemma backend reads _sync_client from
-    the wrapper module lazily, so patching it there flows through cleanly."""
+    substrate) — the resident vllm-gemma backend reads _sync_client from
+    the wrapper module lazily, so patching it there flows through cleanly.
+    The explicit resident override keeps these transport-unit tests off the
+    project production route."""
     calls: list[dict] = []
     scripts: list = []
 
@@ -83,6 +85,7 @@ def fake_vllm(monkeypatch):
 
     fake = SimpleNamespace(chat=_Chat())
     from agent_wrapper import wrapper as W
+    monkeypatch.setenv("WRAPPER_DEFAULT_BACKEND", "resident-vllm-gemma")
     monkeypatch.setattr(W, "_sync_client", fake)
     return SimpleNamespace(scripts=scripts, calls=calls)
 

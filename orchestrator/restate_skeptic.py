@@ -50,9 +50,9 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from agent_wrapper.backends import get_backend
 from agent_wrapper.cleanup import strip_channel_markup
-from agent_wrapper.wrapper import call_sync
+from agent_wrapper.backends import get_backend
+from agent_wrapper.wrapper import call_sync, resolve_backend_route
 from orchestrator import empirical_context, iteration_cache
 from orchestrator.chroma_query import query_top_k
 from workers.novelty_skeptic import _extract_json_object, _format_neighbors
@@ -64,7 +64,7 @@ ALLOWED_RESTATE_VERDICTS = ("restated", "not_restated", "inconclusive")
 # The skeptic's own retrieval depth — same figure as the D-044 attack().
 RESTATE_RETRIEVAL_K = 10
 
-# Both calls run on the independent backend (vllm-qwen by default), whose
+# Both calls run on the logical critic role (vllm-qwen by default), whose
 # hidden reasoning channel starves at 512/2048 (observed 2026-06-09) —
 # 3072 flat is the D-044 working figure, pinned for both calls.
 RESTATE_MAX_TOKENS = 3072
@@ -243,8 +243,9 @@ def restate_attack(
     # outcome. Unknown name -> inconclusive (fail-open), not coerced to
     # the default (rule 4 / explicit-fallback discipline).
     try:
-        resolved_be = get_backend(backend)
-    except KeyError as exc:
+        route = resolve_backend_route(backend, backend_lookup=get_backend)
+        resolved_be = route.backend
+    except (KeyError, RuntimeError, ValueError) as exc:
         return _result(
             "inconclusive",
             f"unknown skeptic backend: {exc}; restate attack not run",

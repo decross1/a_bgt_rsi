@@ -7,8 +7,9 @@ the generic D-044 refute attack — the refute prompt has no off-domain
 arm, so "the chunks contain no discussion of semantic entropy" reads as
 absence-of-contradiction instead of as the off-domain fingerprint it is
 (the iter-001 trap again). This module is the purpose-built fix: an
-ADVERSARIAL second domain judgment on an independent backend (vllm-qwen
-by default), framed as an attack on the primary judge's IN-DOMAIN call.
+ADVERSARIAL second domain judgment on the logical critic role (vllm-qwen
+by default), framed as an attack on the primary judge's IN-DOMAIN call. In
+the permanent topology this is a separate pass on the same Flash weights.
 
 attack_topicality() returns "on" | "off" | "unsure" | None:
   - None under MOCK_LLM, on empty input, on an unknown backend, on any
@@ -33,8 +34,7 @@ import os
 import re
 from typing import Any
 
-from agent_wrapper.backends import get_backend
-from agent_wrapper.wrapper import call_sync
+from agent_wrapper.wrapper import call_sync, resolve_backend_route
 
 logger = logging.getLogger("topicality_skeptic")
 
@@ -104,8 +104,8 @@ def attack_topicality(
         logger.warning("topicality_skeptic: empty hypothesis_text -> None")
         return None
     try:
-        get_backend(backend)
-    except KeyError as exc:
+        resolve_backend_route(backend)
+    except (KeyError, RuntimeError, ValueError) as exc:
         logger.warning("topicality_skeptic: unknown backend (%s) -> None", exc)
         return None
 

@@ -167,24 +167,24 @@ def test_provenance_fields_stamped(cache, monkeypatch):
     monkeypatch.setattr(ns_mod, "call_sync", _fake_call(completion))
     _stage(cache, "it-prov", _neighbors("a"), gemma_class="novel")
     out = ns_mod.novelty_skeptic("h", "it-prov")
-    # Default route is the gemma_persona plumbing backend.
-    assert out["result"]["skeptic_backend"] == "vllm-gemma"
+    # The permanent topology records the actual serving backend, not the
+    # historical logical critic label.
+    assert out["result"]["skeptic_backend"] == "sglang-flash"
     # model_version comes from the resolved backend, not the stub record.
     assert isinstance(out["result"]["skeptic_model_version"], str)
     assert out["result"]["skeptic_model_version"]
 
 
-def test_independent_backend_is_labelled(cache, monkeypatch):
-    # An independent route stamps its own registry name so a consumer can
-    # tell a real second opinion from a self-check.
+def test_legacy_critic_role_records_actual_flash_backend(cache, monkeypatch):
+    # The old Qwen label is now a critic role on the single Flash resident;
+    # provenance must not manufacture cross-model independence.
     completion = json.dumps({
         "skeptic_class": "rediscovery", "skeptic_rationale": "r", "skeptic_top_neighbor_id": None,
     })
     monkeypatch.setattr(ns_mod, "call_sync", _fake_call(completion))
     _stage(cache, "it-qwen", _neighbors("a"), gemma_class="novel")
     out = ns_mod.novelty_skeptic("h", "it-qwen", backend="vllm-qwen")
-    assert out["result"]["skeptic_backend"] == "vllm-qwen"
-    assert out["result"]["skeptic_backend"] != "vllm-gemma"  # not a self-check
+    assert out["result"]["skeptic_backend"] == "sglang-flash"
 
 
 def test_unknown_backend_errors_not_coerced(cache, monkeypatch):
@@ -317,7 +317,7 @@ def test_env_backend_override(cache, monkeypatch):
     _stage(cache, "it-env", _neighbors("a"), gemma_class="novel")
     out = ns_mod.novelty_skeptic("h", "it-env")
     assert captured["backend"] == "vllm-qwen"
-    assert out["result"]["skeptic_backend"] == "vllm-qwen"
+    assert out["result"]["skeptic_backend"] == "sglang-flash"
 
 
 # --- token starvation fix (D-041 step 1 prerequisite) ------------------------
@@ -418,7 +418,7 @@ def test_attack_refuted_parsing(no_mock, monkeypatch):
     assert out["contradicting_doc_id"] == "a1"
     # default backend resolves from NARA_SKEPTIC_BACKEND (vllm-qwen, the
     # 2026-06-09 ladder-validated step-1 backend)
-    assert out["backend"] == "vllm-qwen"
+    assert out["backend"] == "sglang-flash"
     assert isinstance(out["model"], str) and out["model"]
 
 
@@ -485,7 +485,7 @@ def test_attack_backend_selection_and_personas(no_mock, monkeypatch):
     assert cap1["backend"] == "ollama-coder"
     assert cap2["backend"] == "vllm-gemma"
     assert out1["backend"] == "ollama-coder"
-    assert out2["backend"] == "vllm-gemma"
+    assert out2["backend"] == "sglang-flash"
     sys1 = cap1["messages"][0]["content"]
     sys2 = cap2["messages"][0]["content"]
     assert sys1 != sys2

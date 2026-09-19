@@ -276,7 +276,7 @@ def _compose_row(role: str, model: dict[str, Any], metrics: dict[str, Any],
         "observed_max_context_tokens": model.get("observed_max_context_tokens"),
         "deployment_role": configured["deployment_role"],
         "benchmark_cohort": configured["benchmark_cohort"],
-        "promotion_authorized": False,
+        "promotion_authorized": configured.get("promotion_authorized", False),
         # Independent live observations.
         "models_endpoint_status": endpoint_status,
         "service_status": service_status,
@@ -330,6 +330,12 @@ def register(
         except (OSError, ValueError, TypeError, AttributeError):
             runtime = None
         if isinstance(runtime, dict):
+            if runtime.get("mode_source") == "permanent_deployment" and runtime.get("production_authorized") is True:
+                return ("sglang", runtime.get("candidate_id")), {
+                    **PERSONAL_FLASH_TARGETS["sglang"],
+                    "deployment_role": "production_resident",
+                    "promotion_authorized": True,
+                }
             endpoint = runtime.get("personal_endpoint")
             candidate_id = runtime.get("candidate_id")
             if (
@@ -408,6 +414,10 @@ def register(
                     )
                     for role in targets
                 }
+                if configured_flash.get("promotion_authorized") is True:
+                    for role in ("gemma", "qwen"):
+                        if role in configured_rows:
+                            configured_rows[role] = {**configured_rows[role], "deployment_role": "rollback_available"}
             else:
                 configured_rows = {role: REGISTERED_MODELS[role] for role in targets}
             now = clock()

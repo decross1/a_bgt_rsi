@@ -153,6 +153,12 @@ def wait_for_wake(heartbeat_s: float, *, poll_s: float = POLL_S) -> str:
 def _preflight_ok() -> bool:
     """Gate 4 — memory preflight via the SAME bash guard the cron sources.
     Non-zero return (refuse or fail-closed) -> False."""
+    from orchestrator.flash_resident import check_ready, selected
+    try:
+        if selected(REPO_ROOT):
+            return check_ready(REPO_ROOT)
+    except (OSError, ValueError, TypeError):
+        return False
     proc = subprocess.run(
         ["bash", "-c",
          f'source "{MEM_GUARD}" && preflight_mem_guard {MEM_NEED_GIB}'],

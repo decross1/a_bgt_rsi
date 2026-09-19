@@ -1,7 +1,7 @@
 """Bounded multi-turn adversarial debate (D-065).
 
 The single-shot skeptic exchange (orchestrator.novelty_skeptic.attack)
-asks one independent model for one verdict and stops. That is not a
+asks for one adversarial verdict and stops. That is not a
 research argument — the challenger never hears a rebuttal, the defender
 never answers an objection, and `subagent_turns_used: 1` is the honest
 record of it. This module runs the exchange the owner asked for: a real
@@ -9,10 +9,10 @@ back-and-forth, bounded, with every turn tagged by the model that
 produced it.
 
 Protocol, per round:
-  CHALLENGER (independent weights — vllm-qwen by default) attacks the
+  CHALLENGER (logical vllm-qwen critic role by default) attacks the
   claim, grounded in retrieved evidence, or concedes that the claim
   stands.
-  DEFENDER (the apparatus's own vllm-gemma) must either REBUT with a
+  DEFENDER (logical vllm-gemma generator role) must either REBUT with a
   specific counter-argument/counter-citation, or CONCEDE explicitly.
 
 Stop criteria, checked in this precedence order:
@@ -52,7 +52,7 @@ import os
 import re
 from typing import Any, Callable
 
-from agent_wrapper.backends import get_backend
+from agent_wrapper.wrapper import resolve_backend_route
 from orchestrator import empirical_context
 from orchestrator.chroma_query import query_top_k
 from orchestrator.subagent import SubAgentBudget, run_subagent
@@ -104,8 +104,7 @@ _CONCEDE_RE = re.compile(r"^\s*CONCEDE\b", re.IGNORECASE)
 
 CHALLENGER_SYSTEM_PROMPT = (
     "You are the CHALLENGER in a bounded adversarial debate inside the\n"
-    "a_bgt_rsi research apparatus — a DIFFERENT model from the one that\n"
-    "generated the claim and now defends it. Each round you attack the\n"
+    "a_bgt_rsi research apparatus. Each round you attack the\n"
     "claim with the strongest objection the retrieved evidence supports:\n"
     "a chunk that CONTRADICTS it, or a chunk it merely RESTATES.\n"
     "\n"
@@ -131,7 +130,7 @@ CHALLENGER_SYSTEM_PROMPT = (
 DEFENDER_SYSTEM_PROMPT = (
     "You are the DEFENDER in a bounded adversarial debate inside the\n"
     "a_bgt_rsi research apparatus. The claim below is the apparatus's own\n"
-    "hypothesis and a skeptic on different weights is attacking it.\n"
+    "hypothesis and an adversarial skeptic is attacking it.\n"
     "\n"
     "Each round you MUST do exactly one of:\n"
     "  (a) REBUT — answer the challenger's LATEST objection with a\n"
@@ -243,8 +242,9 @@ def _subagent_turn(
             "error": "MOCK_LLM set; refusing to spawn a real debate subagent",
         }
     try:
-        resolved_be = get_backend(backend)
-    except KeyError as exc:
+        route = resolve_backend_route(backend)
+        resolved_be = route.backend
+    except (KeyError, RuntimeError, ValueError) as exc:
         return {
             "text": "", "backend": backend, "model": None, "wall_seconds": 0.0,
             "error": f"unknown debate backend: {exc}",

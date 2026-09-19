@@ -197,6 +197,7 @@ def test_preflight_refusal_blocks_cycle(tmp_path, monkeypatch):
 
 
 def test_preflight_subprocess_reads_injected_meminfo(tmp_path, monkeypatch):
+    monkeypatch.setattr(nd, "REPO_ROOT", tmp_path)
     plenty = tmp_path / "meminfo.plenty"
     plenty.write_text("MemAvailable:  999999999 kB\n")
     scarce = tmp_path / "meminfo.scarce"

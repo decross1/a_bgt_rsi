@@ -127,3 +127,6 @@ run_state/weekly_upgrade_budget.jsonl
 run_state/weekly_upgrade/
 run_state/pause_weekly_upgrade
 run_state/weekly_upgrade_enabled
+run_state/flash_resident.json
+run_state/flash_resident.tmp
+run_state/maintenance_todos.json
