@@ -1,7 +1,7 @@
-"""Direct, evidence-preserving client for the registered warm Mia candidate.
+"""Direct, evidence-preserving client for the registered warm Flash endpoints.
 
-The endpoint is derived from a code-owned :class:`CandidateSpec`; callers
-cannot provide a URL.  Streaming keeps reasoning, final, tool, timing and usage
+The endpoint is a registered Mia specification or the fixed NVIDIA/SGLang
+endpoint; callers cannot provide a URL. Streaming keeps reasoning, final, tool, timing and usage
 channels separate.  The CLI is deliberately small and writes the exact request
 bytes and SSE bytes for local diagnostics.
 """
@@ -28,6 +28,7 @@ from .followon_profiles import (
 from .personal_tasks import RequestPolicy, get_policy
 from .transport import (
     MAX_RESPONSE_BYTES,
+    NVIDIA_ARTIFACT_SHA256,
     LocalEndpoint,
     StreamAccumulator,
     TransportError,
@@ -40,14 +41,22 @@ MAX_PROMPT_BYTES = 1024 * 1024
 REPETITION_MIN_BLOCK_CHARS = 512
 REPETITION_MAX_BLOCK_CHARS = 4096
 REPETITION_COPIES = 3
+SGLANG_ENDPOINT = LocalEndpoint(
+    "flash_next_sglang", "http://127.0.0.1:30080/v1",
+    "nvidia/Qwen3.8-Flash-Next-NVFP4", NVIDIA_ARTIFACT_SHA256,
+)
+PersonalTarget = CandidateSpec | LocalEndpoint
 
 
 class RepetitionAborted(RuntimeError):
     """Generation ended because one long block repeated exactly three times."""
 
 
-def endpoint_for_candidate(candidate: CandidateSpec) -> LocalEndpoint:
-    """Resolve only an object-identity registered Mia specification."""
+def endpoint_for_candidate(candidate: PersonalTarget) -> LocalEndpoint:
+    """Resolve only a registered Mia spec or the fixed NVIDIA endpoint object."""
+    if candidate is SGLANG_ENDPOINT:
+        candidate.validate()
+        return candidate
     if not isinstance(candidate, CandidateSpec) or not is_registered_spec(candidate):
         raise ValueError("personal client requires a registered CandidateSpec object")
     endpoint = LocalEndpoint(
@@ -61,7 +70,7 @@ def endpoint_for_candidate(candidate: CandidateSpec) -> LocalEndpoint:
 
 
 def build_request(
-    candidate: CandidateSpec,
+    candidate: PersonalTarget,
     messages: list[dict[str, Any]],
     policy: RequestPolicy,
     *,
@@ -280,6 +289,11 @@ class TurnResult:
 
     def receipt(self, *, include_channels: bool = True) -> dict[str, Any]:
         usage = self.usage
+        details = usage.get("completion_tokens_details") if usage else None
+        reasoning_tokens = details.get("reasoning_tokens") if isinstance(details, dict) else None
+        if reasoning_tokens is None and usage:
+            # SGLang reports this alongside completion_tokens; vLLM nests it.
+            reasoning_tokens = usage.get("reasoning_tokens")
         row: dict[str, Any] = {
             "schema": CLIENT_SCHEMA,
             "classification": self.classification,
@@ -290,11 +304,7 @@ class TurnResult:
             "prompt_tokens": usage.get("prompt_tokens") if usage else None,
             "completion_tokens": usage.get("completion_tokens") if usage else None,
             "total_tokens": usage.get("total_tokens") if usage else None,
-            "reasoning_tokens": (
-                usage.get("completion_tokens_details", {}).get("reasoning_tokens")
-                if usage and isinstance(usage.get("completion_tokens_details"), dict)
-                else None
-            ),
+            "reasoning_tokens": reasoning_tokens,
             "tool_call_count": len(self.tool_calls),
             "timing": self.timing,
             "elapsed_s": self.elapsed_s,
@@ -388,7 +398,7 @@ def _successful_classification(result: dict[str, Any]) -> str:
 
 
 def stream_chat(
-    candidate: CandidateSpec,
+    candidate: PersonalTarget,
     messages: list[dict[str, Any]],
     policy: RequestPolicy,
     *,
@@ -609,7 +619,7 @@ def _strict_arguments(raw: str) -> dict[str, Any]:
 
 
 def run_tool_loop(
-    candidate: CandidateSpec,
+    candidate: PersonalTarget,
     messages: list[dict[str, Any]],
     policy: RequestPolicy,
     *,
@@ -744,7 +754,8 @@ def _write_new(path: Path, raw: bytes) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Call the registered warm Mia endpoint")
+    parser = argparse.ArgumentParser(description="Call a registered warm Flash endpoint")
+    parser.add_argument("--backend", choices=("mia", "sglang"), default="mia")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--prompt")
     source.add_argument("--prompt-file")
@@ -770,6 +781,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not prompt.strip() or len(prompt.encode()) > MAX_PROMPT_BYTES:
         raise SystemExit("prompt must be nonempty and at most 1 MiB")
     policy = get_policy(args.policy)
+    target = SGLANG_ENDPOINT if args.backend == "sglang" else MIA_MTP3_REDUCED47K_OPT
     output = _output_dir(args.output_dir)
     messages = [
         {"role": "system", "content": args.system},
@@ -781,7 +793,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         attempt.mkdir(mode=0o700)
         seed = args.seed + index if args.vary_seed else args.seed
         result = stream_chat(
-            MIA_MTP3_REDUCED47K_OPT,
+            target,
             messages,
             policy,
             seed=seed,
@@ -803,7 +815,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "schema": "flash-personal-cli-run/v1",
         # The shared response route proves checkpoint identity, not which
         # registered launch profile the owner currently has active.
-        "requested_candidate_spec_id": MIA_MTP3_REDUCED47K_OPT.spec_id,
+        "requested_candidate_spec_id": None if args.backend == "sglang" else MIA_MTP3_REDUCED47K_OPT.spec_id,
+        "requested_backend": args.backend,
+        "requested_model": endpoint_for_candidate(target).served_model,
+        "requested_model_artifact_sha256": endpoint_for_candidate(target).artifact_sha256,
         "runtime_profile_verified": False,
         "policy": args.policy,
         "attempts": receipts,

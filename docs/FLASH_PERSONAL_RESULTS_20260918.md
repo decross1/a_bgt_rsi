@@ -2,8 +2,8 @@
 
 **In progress.** The optimized Mia endpoint completed useful scientific and
 coding work. MTP, recurrent-state, child-image, and FP8-KV comparisons are
-complete. The independent NVIDIA/SGLang comparison remains; this is not a final
-model selection or a production route change.
+complete. NVIDIA/SGLang is now serving and its matched practical comparison is
+in progress; this is not a final model selection or a production route change.
 
 This recovery follows the owner's two September 18 handoffs. The existing
 Gemma/Qwen pair is the rollback configuration, not a required topology. Earlier
@@ -290,76 +290,99 @@ policy, alternating arm order, and no retries. Record material source errors,
 completion, time, and tokens. The local `next-single-improvement.md` artifact
 contains the exact proposed suffix and the eight-call validation plan.
 
-## Remaining comparisons and use
+## Independent NVIDIA/SGLang serving comparison
 
-The independently reviewed NVIDIA/SGLang recipe and checkpoint reached a live
-HTTP server on the first local attempt, but the task comparison remains pending.
-The first start materialized 51.2 GB of file-backed PLE in 201.2 seconds. The
-server then reported 558.98 seconds loading weights and 617.69 seconds through
-tokenizer startup. These stages are startup costs, not decode measurements.
+The v5 session reached admitted readiness on September 19 at **04:02:47 UTC**,
+770.3 seconds after controller start. Literal response, tool call, and retained
+reasoning/tokenizer checks passed. It serves
+`nvidia/Qwen3.8-Flash-Next-NVFP4` on `http://127.0.0.1:30080/v1`, with 32,768 total
+context, one request, FP32 recurrent state, BF16 KV, and three native NEXTN steps
+(four draft tokens; the server reports the normalized `EAGLE` implementation).
+The image is
+`sha256:2ee545cf877ae8497c123637e061b6e6313c624e30018f975969b1d554e27f56`,
+the NVIDIA checkpoint revision is
+`fc694b54fb0174e0913e6adf86691ef85a4ead47`, and installed SGLang is
+`84cf99860e3086ee0a458a71178343a8ac04fdab`.
+File-backed PLE remains on NVMe with a 4 GiB cache cap. The allocator uses
+`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`.
 
-The local readiness controller incorrectly expected the requested `NEXTN` name
-in server metadata. The pinned SGLang source normalizes that name to `EAGLE`
-and uses the target model as the native draft; the observed metadata matched
-that behavior, including the same `/model` draft path and three steps/four
-draft tokens. No evaluation calls were issued before the exact source guard
-stopped this attempt for a controller correction. This is a controller
-metadata mismatch, not a quality or hardware rejection of the model. The
-corrected controller reached HTTP readiness on the second attempt, but another
-recorder error stopped it before task generation: the controller passed the
-source manifest to a helper that needed the runtime lock. The checkout also
-contains a newer runtime lock than the pinned image. These are evaluation
-plumbing failures, not evidence against the model's answer quality.
+Through the 04:15 UTC observation window, available memory remained at least
+**21.96 GiB**, above the unchanged 20 GiB floor, with zero candidate swap/OOM
+and no new NVIDIA allocation/Xid fault. This is an observed minimum for this
+run, not an indefinite guarantee. The exact final resource receipt remains
+with the session artifacts.
 
-A CPU-only inspection extracted the image's own runtime lock and verified all
-3,623 declared installed Python files, with zero missing or mismatched files.
-That lock has SHA-256
-`ac017ebaf18adf13637c63a713fd4e94a327edadc85e21aad8e35725a924325e`,
-installed SGLang commit `84cf99860e3086ee0a458a71178343a8ac04fdab`, and tree
-`4957f519e185bfa0388299d8fec3792f4f96102d`. The corrected recorder must bind
-that installed identity separately from the host-side helper checkout. The
-second attempt reached HTTP readiness at 01:45:21 UTC, retained at least
-22.70 GiB available memory with zero candidate swap/OOM, and completed verified
-restoration at 01:51:55 UTC. It issued no evaluation calls.
+| Existing matched request cohort | Mia parent MTP3 | NVIDIA/SGLang NEXTN3 |
+|---|---:|---:|
+| Three forced 512-token CSV calls, median completion/wall rate | 43.43 tok/s | 42.09 tok/s |
+| Paper first turn, same frozen source | 51.34 s | 55.60 s |
+| All three paper turns | 92.70 s | 81.54 s |
+| Delegation code, strict JSON plus 4 executable cases | Pass, 524.06 s | Pass, 404.83 s |
 
-The third attempt used the corrected recorder and installed-image lock. It
-failed during target weight loading on September 19: the kernel recorded seven
-new `NV_ERR_NO_MEMORY` events at 01:59:29–01:59:30 UTC. The guard stopped and
-removed the exact candidate and verified restoration of the original residents
-and Nara at 02:08:22 UTC, with no restoration errors. No readiness or generation
-canaries completed. Candidate swap and cgroup OOM counters remained zero;
-minimum observed host `MemAvailable` was 32.27 GiB. A driver allocation failure
-is a distinct failure class, even with those other counters clear. The earlier
-two successful HTTP starts mean this does not prove the bundle cannot fit.
+The CSV requests use the same explicit greedy policy; reaching the fixed cap
+is deliberate and is not a completed CSV-task success. Three repeats do not
+establish a material throughput difference. The SGLang paper first turn had
+15,293 input tokens and first emitted reasoning after **11.79 s**. This is
+request-to-output latency, not isolated GPU prefill time. Continuation first
+outputs arrived after 0.654 and 0.391 seconds. The complete conversation was
+12% faster, but generated histories diverged after the common first turn.
+The delegation answer used 8,808 completion tokens, including 8,410 reasoning
+tokens, versus Mia's 12,301/12,038; its 22.8% lower completion time is partly a
+shorter reasoning trajectory, not an isolated decode gain.
 
-Inspection of the exact image and recorded launch environment found no
-expandable-segment allocator setting, whereas the Mia launcher sets
-`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`. A separately versioned,
-single-variable diagnostic is being prepared. This is an untested possible
-remedy; the evidence does not establish allocator fragmentation as the cause.
-The failed attempt did not capture global `MemFree` or `Cached`, so its host
-free/cache split cannot be reconstructed from cgroup-local file counters.
-The 20 GiB floor and driver-failure stop remain unchanged.
+The independent source audit found SGLang paper turn 1 partial and turn 2
+materially wrong: it described the epsilon bound as closeness to a true Nash
+equilibrium instead of a bound on unilateral deviation gain at the specified
+strategy. Turn 2 also exceeded its 100-word limit. Turn 3 computed 0.5 and
+correctly rejected the proposed theorem-refutation claim, with an overbroad
+caveat about LLM agents. Mia FP32 was stronger on source semantics in these
+sampled answers. Neither the three transport completions nor one conversation
+establishes scientific superiority.
 
-The initial arm uses 32K/C1 and three native speculative steps; the only launch changes from
-the supplied one-step bring-up profile are three steps and four draft tokens.
-It inherits no qualification from the upstream release's different 262K/C2
-configuration. A checkpoint and runtime change is a bundle comparison, not an
-isolated weight effect. Final runtime selection therefore remains in progress;
-the completed Mia evidence already supports bounded personal use.
+The remaining legacy task and replay of the existing practical panel/repair
+are separate from this interim table. The owner explicitly prioritized useful
+serving and completed work over every-fixture perfection. The known paper
+error is retained in the comparison rather than used to prevent the remaining
+practical evaluation. No new benchmark prompts or hidden answers were added.
 
-**Personal endpoint live at the last check: no (September 19, 02:10 UTC).**
-Both Flash candidates are stopped. Gemma and Qwen returned healthy model
-identities and Nara was active after the third SGLang attempt's restoration.
-Mia has demonstrated usable personal sessions; final delivery still requires
-starting and checking a fresh warm endpoint with an explicit availability window.
-The qualified `mtp3-fp32-auto` parent remains the conservative working baseline
-while final selection is open. A ready session serves
-`qwen3.8-flash-next-mia` on loopback port 8012; it does not change the lab's
-normal routes. The main observed Mia limitations are occasional excessive
-reasoning without a final answer and substantive errors inside otherwise
-completed scientific prose. The next comparison is the pending SGLang bundle,
-not a prerequisite to using the working Mia endpoint.
+## Startup diagnosis
+
+The independent recipe initially needed 201.2 seconds to materialize 51.2 GB of
+file-backed PLE, then reported 558.98 seconds loading weights and 617.69 seconds
+through tokenizer startup. These are startup stages, not decode measurements.
+The NVIDIA artifact contains 132.7 GB of files; loading weights, initializing
+its sparse/recurrent paths, loading the speculative draft and warming the
+server are substantial work even when the live request fits comfortably.
+
+Earlier failed sessions remain preserved:
+
+| Attempt | Observed issue |
+|---|---|
+| S3-001 | Controller expected `NEXTN`; installed server correctly normalized it to `EAGLE` |
+| S3-002 | Recorder used the helper source manifest where the installed runtime lock was required |
+| S3-003 | Real kernel `NV_ERR_NO_MEMORY` during weight loading; no generation completed |
+| Allocator-v4 | Model loaded and literal output was correct; observer polled health before internal warmup finished |
+| Readiness-v5 | Corrected observer; ready, exact canaries passed, comparison requests completed |
+
+CPU inspection verified all 3,623 installed Python files against the image's
+own runtime lock, with zero mismatches. v4/v5 explicitly enable expandable
+allocator segments, but two successful loads do not prove allocator
+fragmentation caused the earlier driver failure. The failed run did not
+record global free/cache memory, so that attribution cannot be reconstructed.
+
+The installed `/health` handler can generate a token and reports 503 during
+startup. v5 waits for explicit startup health once, then uses passive
+`/v1/models` identity checks during serving, excluding the response's dynamic
+creation timestamp. Those controller fixes change neither request policies
+nor the historical grades. Failed attempts restored the exact resident pair
+and Nara; the first Mia restoration took 394.1 seconds.
+
+**Personal endpoint live at 04:15 UTC: NVIDIA/SGLang, comparison in progress.**
+Gemma, Qwen and Nara are intentionally paused while its controller owns the
+memory lease. The finite session stops the candidate by **11:45 UTC** and
+reserves restoration through **12:00 UTC** on September 19. Final selection
+and an owner-client handoff remain to be completed. The qualified Mia
+`mtp3-fp32-auto` parent remains an already demonstrated personal-use option.
 
 See [personal session instructions](FLASH_PERSONAL_RESEARCH.md) for the client,
 explicit reasoning controls, session limits, and exact-ID rollback. Endpoint
