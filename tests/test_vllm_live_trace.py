@@ -193,6 +193,61 @@ def test_disabled_path_preserves_exact_request_kwargs(monkeypatch, tmp_path):
     assert not list(tmp_path.glob("*.json"))
 
 
+@pytest.mark.parametrize(
+    "unsupported",
+    [{"n": 2}, {"logprobs": True, "top_logprobs": 2}],
+)
+def test_opt_in_unsupported_request_uses_original_nonstreaming_path(
+    monkeypatch, tmp_path, unsupported,
+):
+    _enable(monkeypatch, tmp_path)
+    state = {"active": False}
+    events = []
+    completions = SyncCompletions("original-response", state, events)
+    monkeypatch.setattr(
+        W,
+        "_sync_client",
+        SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+    monkeypatch.setattr(vllm_openai, "local_inference", _lease(events, state))
+    request = {"model": MODEL, "messages": MESSAGES, **unsupported}
+
+    response = VLLMBackend().create_chat(**request)
+
+    assert response == "original-response"
+    assert completions.calls == [request]
+    assert events == ["lease-enter", "create", "lease-exit"]
+    assert not list(tmp_path.glob("*.json"))
+
+
+@pytest.mark.parametrize("n", [None, 1])
+def test_opt_in_default_single_choice_values_use_streaming_path(
+    monkeypatch, tmp_path, n,
+):
+    _enable(monkeypatch, tmp_path)
+    state = {"active": False}
+    events = []
+    stream = SyncStream([
+        _chunk(delta={"content": "answer"}),
+        _chunk(delta={}, finish="stop"),
+        _chunk(usage=_usage()),
+    ], state, events)
+    completions = SyncCompletions(stream, state, events)
+    monkeypatch.setattr(
+        W,
+        "_sync_client",
+        SimpleNamespace(chat=SimpleNamespace(completions=completions)),
+    )
+    monkeypatch.setattr(vllm_openai, "local_inference", _lease(events, state))
+
+    response = VLLMBackend().create_chat(model=MODEL, messages=MESSAGES, n=n)
+
+    assert response.choices[0].message.content == "answer"
+    assert completions.calls[0]["n"] is n
+    assert completions.calls[0]["stream"] is True
+    assert _trace_row(tmp_path)["status"] == "completed"
+
+
 def test_sync_stream_reconstructs_tools_usage_and_holds_lease(
     monkeypatch, tmp_path,
 ):

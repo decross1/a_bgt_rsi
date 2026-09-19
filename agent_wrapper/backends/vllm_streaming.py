@@ -11,6 +11,8 @@ helpers, so legacy request kwargs remain unchanged.
 The opt-in path deliberately supports the wrapper's current local-call shape:
 one text/tool choice without streamed logprobs or refusals. It fails closed on
 those unsupported response shapes instead of returning a lossy completion.
+Backends leave valid requests outside that shape on their original nonstreaming
+path, so enabling telemetry does not make an existing call invalid.
 """
 
 from __future__ import annotations
@@ -41,6 +43,20 @@ def live_trace_stream_enabled() -> bool:
     return (
         os.environ.get("WRAPPER_LIVE_TRACE_STREAM") == "1"
         and bool(os.environ.get("LOCAL_MODEL_TRACE_DIR"))
+    )
+
+
+def live_trace_request_supported(kwargs: Mapping[str, Any]) -> bool:
+    """Whether a request can be reconstructed without changing its contract."""
+
+    if "stream" in kwargs or "stream_options" in kwargs:
+        return False
+    n = kwargs.get("n", 1)
+    if n is not None and (isinstance(n, bool) or not isinstance(n, int) or n != 1):
+        return False
+    return (
+        kwargs.get("logprobs") in (None, False)
+        and kwargs.get("top_logprobs") is None
     )
 
 
@@ -275,7 +291,8 @@ class _Accumulator:
 def _request_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     if "stream" in kwargs or "stream_options" in kwargs:
         raise StreamProtocolError("caller-controlled streaming kwargs are unsupported")
-    if kwargs.get("n", 1) != 1:
+    n = kwargs.get("n", 1)
+    if n is not None and (isinstance(n, bool) or not isinstance(n, int) or n != 1):
         raise StreamProtocolError("streaming adapter supports exactly one choice")
     if (
         kwargs.get("logprobs") not in (None, False)
@@ -487,5 +504,6 @@ __all__ = [
     "StreamProtocolError",
     "complete_async",
     "complete_sync",
+    "live_trace_request_supported",
     "live_trace_stream_enabled",
 ]
