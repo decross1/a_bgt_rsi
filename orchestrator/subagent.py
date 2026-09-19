@@ -47,6 +47,7 @@ from agent_wrapper.wrapper import (
     _emit,
     _project_for_log,
     get_run_id,
+    resolve_backend_route,
 )
 from orchestrator.runtime import append_run_log
 
@@ -280,9 +281,16 @@ def run_subagent(
     tools = tools or []
     tool_dispatch = tool_dispatch or {}
     tool_specs = [t["spec"] if "spec" in t else t for t in tools]
-    be = get_backend(backend or DEFAULT_BACKEND)
+    route = resolve_backend_route(backend, backend_lookup=get_backend)
+    be = route.backend
+    actual_model = route.model(model)
     policy = resolve_generation_policy(
-        profile, be.name, model or be.default_model, caller_tag=f"subagent.{name}")
+        profile,
+        be.name,
+        actual_model,
+        caller_tag=f"subagent.{name}",
+        default_role=route.generation_role,
+    )
     if log_path is _USE_DEFAULT_LOG:
         log_path = os.environ.get("LOOP_V0_CALLS_LOG", str(DEFAULT_CALLS_LOG_PATH))
 
@@ -353,7 +361,7 @@ def run_subagent(
         try:
             t0 = time.perf_counter()
             resp = be.create_chat(
-                model=model or be.default_model,
+                model=actual_model,
                 messages=openai_messages,
                 tools=tool_specs if tool_specs else None,
                 **(dict(policy.request_kwargs) if policy.metadata_enabled
@@ -386,7 +394,7 @@ def run_subagent(
             parent_request_id=last_id,
             log_path=log_path,
             model_version=be.model_version,
-            host_metadata=be.host_metadata,
+            host_metadata=route.host_metadata,
             backend_name=be.name,
             max_tokens=budget.max_tokens_per_turn,
             generation_policy=policy,
@@ -448,7 +456,8 @@ def run_subagent(
                     openai_messages.append(
                         {"role": "assistant", "content": text_content}
                     )
-                    if be.name == "vllm-qwen" and policy.preserve_tool_reasoning:
+                    if (be.name in {"vllm-qwen", "sglang-flash"}
+                            and policy.preserve_tool_reasoning):
                         reasoning = reasoning_text_from_message(msg)
                         if reasoning is not None:
                             openai_messages[-1]["reasoning"] = reasoning

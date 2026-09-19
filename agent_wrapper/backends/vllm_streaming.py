@@ -1,4 +1,4 @@
-"""Opt-in streaming adapter for the two local vLLM backends.
+"""Opt-in streaming adapter for local OpenAI-compatible model backends.
 
 The ordinary backend contract returns one OpenAI ``ChatCompletion`` object.
 When explicitly enabled, this module consumes the SDK's chunk stream while

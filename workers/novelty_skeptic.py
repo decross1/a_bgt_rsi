@@ -1,10 +1,8 @@
-"""Independent novelty skeptic — a second-opinion novelty class.
+"""Adversarial novelty skeptic — a second-pass novelty class.
 
 D-033 makes the apparatus single-model (Gemma) for novelty, mitigated
 ONLY by per-iteration human sampling. Beta removes the human from the
-loop, so without an independent second opinion the same weights would
-score their own novelty unchecked while "the apparatus is the
-contribution" rides on novelty validity. This worker gives a
+loop. This worker gives a separately prompted
 second-opinion novelty class on (hypothesis, retrieved neighbors,
 Gemma's own novelty verdict) plus an `agreement` flag.
 
@@ -16,18 +14,11 @@ the class against the closed enum (NEVER coerces), and returns the
 standard {status, result, errors, wrapper_request_id,
 parent_request_id} envelope.
 
-Backend selection (D-035 substrate) is a `backend=` kwarg, defaulting
-to `NOVELTY_SKEPTIC_BACKEND` env, falling back to "vllm-gemma" — the
-same `gemma_persona` route `critic_loop_v0` uses CRITIC_BACKEND for.
-
-  CAVEAT (load-bearing): the default "vllm-gemma" route is the SAME
-  weights as novelty_classify, so its agreement is a SELF-CHECK, NOT
-  independent corroboration. It is plumbing/CI/baseline only. The
-  `skeptic_backend` field is stamped into every result so no consumer
-  mistakes a gemma_persona agreement for an independent witness. The
-  actual D-033 mitigation requires an independent backend (vllm-qwen
-  on-box, behind the B1 memory guard with a logged fallback; or the
-  off-box anthropic route once credits/auth are cleared).
+Backend selection is a `backend=` kwarg, defaulting to
+`NOVELTY_SKEPTIC_BACKEND` and then the logical `vllm-qwen` critic role.
+Under the permanent single-Flash topology both legacy vLLM labels resolve to
+the same NVIDIA model. This is an adversarial self-check, not cross-model
+corroboration; `skeptic_backend` records the actual serving backend.
 
 Schema additions (under iteration_record.novelty, NOT wired this
 session — standalone-runnable):
@@ -44,9 +35,8 @@ import json
 import os
 from typing import Any
 
-from agent_wrapper.backends import get_backend
 from agent_wrapper.cleanup import strip_channel_markup
-from agent_wrapper.wrapper import DEFAULT_BACKEND, call_sync
+from agent_wrapper.wrapper import DEFAULT_BACKEND, call_sync, resolve_backend_route
 from orchestrator import iteration_cache
 
 
@@ -67,12 +57,10 @@ ALLOWED_CLASSES = ("novel", "rediscovery", "nonsense", "unclear")
 
 
 SKEPTIC_SYSTEM_PROMPT = (
-    "You are the NOVELTY_SKEPTIC in the a_bgt_rsi research apparatus — an\n"
-    "INDEPENDENT second opinion on a novelty judgment another model already\n"
-    "made. The apparatus generates hypotheses and scores their novelty with\n"
-    "ITS OWN weights; your job is to confirm or dissent against that\n"
-    "self-assessment so a single model does not grade its own novelty\n"
-    "unchecked.\n"
+    "You are the NOVELTY_SKEPTIC in the a_bgt_rsi research apparatus — a\n"
+    "separate adversarial pass on a novelty judgment already made. Confirm\n"
+    "or dissent against that self-assessment from the supplied evidence; do\n"
+    "not treat the earlier verdict as authority.\n"
     "\n"
     "You are given: a hypothesis, the top-K most semantically similar chunks\n"
     "from the apparatus's knowledge base (foundational textbooks and live\n"
@@ -217,11 +205,9 @@ def novelty_skeptic(
     novelty verdict (from the cached `novelty` entry) by `iteration_id`
     — reference-passing, mirroring novelty_classify/critic_loop_v0.
 
-    `backend` selects the D-035 backend; None -> NOVELTY_SKEPTIC_BACKEND
-    env -> DEFAULT_BACKEND ("vllm-gemma"). NOTE: the default is the SAME
-    weights as novelty_classify and is therefore a self-check, not an
-    independent witness — `skeptic_backend` in the result tells consumers
-    which it was.
+    `backend` selects a logical role or explicit experiment backend; None ->
+    NOVELTY_SKEPTIC_BACKEND -> "vllm-qwen". Under the permanent topology
+    this is the Flash critic role, and the result records the actual backend.
 
     Returns:
     ```
@@ -310,7 +296,9 @@ def novelty_skeptic(
         gemma_rationale = ""
 
     log_path = log_path or CALLS_LOG_PATH
-    backend_name = backend or os.environ.get("NOVELTY_SKEPTIC_BACKEND") or DEFAULT_BACKEND
+    backend_name = (
+        backend or os.environ.get("NOVELTY_SKEPTIC_BACKEND") or "vllm-qwen"
+    )
     valid_doc_ids = {n.get("doc_id") for n in neighbors if isinstance(n.get("doc_id"), str)}
 
     user_content = (
@@ -332,8 +320,12 @@ def novelty_skeptic(
     # known source). An unknown backend name is a hard error — not coerced
     # to the default, per rule 4 / explicit-fallback discipline.
     try:
-        resolved_be = get_backend(backend_name)
-    except KeyError as exc:
+        route = resolve_backend_route(backend_name)
+        # Validate an explicit model alias before retrieval/model work. The
+        # permanent route always records and sends the served NVIDIA identity.
+        route.model(model)
+        resolved_be = route.backend
+    except (KeyError, RuntimeError, ValueError) as exc:
         return {
             "status": "error",
             "result": None,

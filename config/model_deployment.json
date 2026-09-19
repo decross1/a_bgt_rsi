@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "topology": "single_flash",
+  "backend": "sglang-flash",
+  "model": "nvidia/Qwen3.8-Flash-Next-NVFP4",
+  "base_url": "http://127.0.0.1:30080/v1",
+  "context_length": 32768,
+  "max_running_requests": 1,
+  "production_authorized": true,
+  "selected_at": "2026-09-19",
+  "model_revision": "fc694b54fb0174e0913e6adf86691ef85a4ead47",
+  "image_id": "sha256:2ee545cf877ae8497c123637e061b6e6313c624e30018f975969b1d554e27f56",
+  "profile_sha256": "2d84e1dc107a48b9ef5967ebd4c7a9c288ec54ac6d5e8ae8d0d973fe82e1c84b",
+  "host_reserve_gib": 20,
+  "automated_benchmarks_enabled": false
+}

@@ -46,6 +46,7 @@ from agent_wrapper.wrapper import (
     _emit,
     _project_for_log,
     get_run_id,
+    resolve_backend_route,
     set_run_id,
 )
 from orchestrator import active_run, domain_anchor, empirical_context, iteration_cache
@@ -547,9 +548,15 @@ def run_iteration(
     if log_path is _USE_DEFAULT_LOG:
         log_path = _DEFAULT_LOG_PATH  # resolved at call time (patchable)
     runtime = runtime or PyRuntime()
-    be = get_backend(backend or DEFAULT_BACKEND)
+    route = resolve_backend_route(backend, backend_lookup=get_backend)
+    be = route.backend
     policy = resolve_generation_policy(
-        profile, be.name, be.default_model, caller_tag="nara.run_iteration")
+        profile,
+        be.name,
+        route.model(),
+        caller_tag="nara.run_iteration",
+        default_role=route.generation_role,
+    )
     iteration_id = _next_iteration_id()
     started_at = _utcnow_iso()
     active = _initial_active(
@@ -594,6 +601,7 @@ def run_iteration(
             empirical_entry=context,
             cross_tier_comparison=cross_tier_comparison,
             generation_policy=policy,
+            host_metadata=route.host_metadata,
             campaign_link=campaign_link,
         )
     finally:
@@ -617,6 +625,7 @@ def _run_iteration_impl(
     empirical_entry: dict | None,
     cross_tier_comparison: dict | None,
     generation_policy=None,
+    host_metadata: dict | None = None,
     campaign_link: dict[str, str] | None = None,
 ) -> dict:
     """The iteration chain body. Registration (state files, run_id, events)
@@ -746,7 +755,8 @@ def _run_iteration_impl(
             parent_request_id=last_id or parent_request_id,
             log_path=log_path,
             model_version=be.model_version,
-            host_metadata=be.host_metadata,
+            host_metadata=(host_metadata if host_metadata is not None
+                           else be.host_metadata),
             backend_name=be.name,
             max_tokens=1024,
             generation_policy=generation_policy,
@@ -810,7 +820,8 @@ def _run_iteration_impl(
                 "role": "assistant",
                 "content": text_content,
             })
-            if (be.name == "vllm-qwen" and generation_policy is not None
+            if (be.name in {"vllm-qwen", "sglang-flash"}
+                    and generation_policy is not None
                     and generation_policy.preserve_tool_reasoning):
                 reasoning = reasoning_text_from_message(msg)
                 if reasoning is not None:

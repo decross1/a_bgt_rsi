@@ -1,4 +1,4 @@
-"""Finding-promotion pipeline — multi-threshold gate + cross-model adversarial vote.
+"""Finding-promotion pipeline — multi-threshold gate + adversarial multi-vote.
 
 The loop produces many iterations; only a few are worth a human's scarce
 attention. This pipeline is the funnel:
@@ -9,10 +9,8 @@ attention. This pipeline is the funnel:
      a reason — never a silent drop. `max_candidates` is applied AFTER the
      gate, capping how many survivors pay for the expensive vote.
 
-  2. CROSS-MODEL ADVERSARIAL MULTI-VOTE (survivors only). n_skeptics
-     INDEPENDENT Qwen skeptics (a different model family than the Gemma
-     that generated the finding — the anti-D-036 lever against same-model
-     agreement) each attack the claim AND its evidence, LICENSED to use
+  2. ADVERSARIAL MULTI-VOTE (survivors only). n_skeptics separate critic
+     passes each attack the claim AND its evidence, LICENSED to use
      outside knowledge (NOT retrieval-bounded). A finding is promoted iff a
      quorum returned a verdict and only a minority refuted. Qwen failures
      (timeout / schema_mismatch / error) are counted and observable; they
@@ -45,8 +43,7 @@ from typing import Any
 
 import jsonschema
 
-from agent_wrapper.backends import get_backend
-from agent_wrapper.wrapper import DEFAULT_BACKEND, call_sync, set_run_id
+from agent_wrapper.wrapper import call_sync, resolve_backend_route, set_run_id
 from orchestrator import active_run
 from orchestrator.subagent import SubAgentBudget, run_subagent
 
@@ -226,14 +223,14 @@ def _passes_threshold(
     return False, f"evidence ladder {derived['level']} < L1 ({missing})"
 
 
-# ── 2. cross-model adversarial multi-vote ────────────────────────────
+# ── 2. adversarial multi-vote ───────────────────────────────────────
 
 
 SKEPTIC_SYSTEM_PROMPT = (
-    "You are an INDEPENDENT adversarial skeptic in the a_bgt_rsi research\n"
+    "You are an adversarial skeptic in the a_bgt_rsi research\n"
     "apparatus. A claim and its supporting evidence are presented to you.\n"
-    "They were produced by a DIFFERENT model; your job is to try to REFUTE\n"
-    "them, not to agree.\n"
+    "Your job is to try to REFUTE them, not to agree. Treat the prior\n"
+    "judgments as claims to test, not as authority.\n"
     "\n"
     "You are EXPLICITLY LICENSED TO USE YOUR OWN OUTSIDE KNOWLEDGE — known\n"
     "theorems, established results, standard methodology. You are NOT bound\n"
@@ -308,7 +305,7 @@ def _adversarial_vote(
     backend: str,
     parent_request_id: str | None,
 ) -> dict[str, Any]:
-    """Run n_skeptics independent Qwen skeptics. Returns a tally dict:
+    """Run n_skeptics adversarial critic passes. Returns a tally dict:
 
       {n_voting, n_refuted, adversarial_margin, survived, qwen_failures,
        refutation_summaries}
@@ -457,10 +454,10 @@ def _synthesize(
     """ONE cheap Gemma call for why_it_matters / what_would_change_it.
     Any failure -> deterministic fallback. Synthesis never blocks promotion."""
     fallback_why = (
-        f"Survived the cross-model adversarial vote: {claim[:200]}"
+        f"Survived the adversarial multi-vote: {claim[:200]}"
     )
     fallback_change = (
-        "A direct refutation surviving an independent adversarial replication, "
+        "A direct refutation surviving a separate adversarial replication, "
         "or a human 'invalid' verdict on the iteration."
     )
     user = (
@@ -685,7 +682,7 @@ def _promote_findings(
                 "stage": "threshold",
             })
 
-    resolved_be = get_backend(backend or DEFAULT_BACKEND)
+    resolved_be = resolve_backend_route(backend).backend
 
     # ── pass A2 (D-061, env-gated dark): frontier opposed-jobs veto ──
     # A veto is an attention filter, not evidence: it removes the candidate

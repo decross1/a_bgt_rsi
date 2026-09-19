@@ -4,16 +4,13 @@ The 068 review's central finding: novelty_classify and the critic reason
 over the SAME retrieved neighbor set, so their agreement is a shared
 blind spot, not corroboration. This module's `attack()` breaks that by
 doing its OWN literature retrieval (orchestrator.chroma_query.query_top_k
-with the default collections) and prompting an independent backend to
+with the default collections) and prompting a separate adversarial pass to
 REFUTE the hypothesis against that fresh evidence.
 
 Priority ladder (D-041, selected by `backend=`):
-  step 1 — "ollama-coder" (default): Qwen via the D-035 ollama route.
-            Genuinely different weights from Gemma -> a real second judge.
-  step 2 — "vllm-gemma": same weights as the apparatus, but under a
-            visibly ADVERSARIAL persona distinct from the critic's
-            methodological-critic persona, so it is not the same judge
-            run twice with the same framing.
+  Legacy `vllm-qwen` and `vllm-gemma` labels select critic/generator policy
+  roles on the permanent single-Flash resident. They do not establish model
+  independence. Explicit experiment backends remain separately addressable.
   step 3 — Claude via the Agent SDK: DESIGN ONLY this session
             (docs/skeptic_ladder.md); not wired here.
 
@@ -42,9 +39,9 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from agent_wrapper.backends import get_backend
 from agent_wrapper.cleanup import strip_channel_markup
-from agent_wrapper.wrapper import DEFAULT_BACKEND, call_sync
+from agent_wrapper.backends import get_backend
+from agent_wrapper.wrapper import DEFAULT_BACKEND, call_sync, resolve_backend_route
 from orchestrator import empirical_context
 from orchestrator.chroma_query import query_top_k
 from workers.novelty_skeptic import _extract_json_object, _format_neighbors
@@ -110,14 +107,11 @@ _ATTACK_TASK_BODY = (
     "equality). For the other verdicts it is null."
 )
 
-# Step 1 — independent weights (Qwen / ollama-coder). Plain skeptic
-# framing; independence comes from the different model.
+# Skeptic framing for the critic role or an explicit experiment backend.
 QWEN_ATTACK_PERSONA = (
-    "You are the INDEPENDENT SKEPTIC in the a_bgt_rsi research apparatus —\n"
-    "a different model from the one that generated and scored the\n"
-    "hypothesis below. The apparatus's own model judged this hypothesis\n"
-    "novel-and-surviving; your job is to attack that judgment with fresh\n"
-    "evidence it never saw."
+    "You are the ADVERSARIAL SKEPTIC in the a_bgt_rsi research apparatus.\n"
+    "The apparatus previously judged this hypothesis novel-and-surviving;\n"
+    "your job is to attack that judgment with a fresh evidence retrieval."
 ) + _ATTACK_TASK_BODY
 
 # Step 2 — same weights as the apparatus (vllm-gemma), so the persona
@@ -198,8 +192,9 @@ def attack(
     # outcome. Unknown name -> inconclusive (fail-closed), not coerced
     # to the default (rule 4 / explicit-fallback discipline).
     try:
-        resolved_be = get_backend(backend)
-    except KeyError as exc:
+        route = resolve_backend_route(backend, backend_lookup=get_backend)
+        resolved_be = route.backend
+    except (KeyError, RuntimeError, ValueError) as exc:
         return _result(
             "inconclusive", f"unknown skeptic backend: {exc}; attack not run",
             None, backend, "",

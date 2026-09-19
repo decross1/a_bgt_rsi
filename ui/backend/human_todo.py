@@ -786,6 +786,23 @@ def _state_gate_items(run_state_dir: Path) -> list[dict]:
     return items
 
 
+def _maintenance_items(run_state_dir: Path) -> list[dict]:
+    """Owner maintenance queue, independent of the retired week-1 plan."""
+    path = run_state_dir / "maintenance_todos.json"
+    try:
+        if path.is_symlink() or path.stat().st_size > 65536:
+            return []
+        rows = json.loads(path.read_text()).get("items", [])
+        return [
+            _item("state_gate", row["id"], row["title"], row.get("created_at", ""),
+                  row.get("detail", ""), row.get("next_action", "Review with the owner."))
+            for row in rows if isinstance(row, dict) and row.get("status") == "open"
+            and isinstance(row.get("id"), str) and isinstance(row.get("title"), str)
+        ]
+    except (OSError, ValueError, TypeError, AttributeError):
+        return []
+
+
 def _open_deferrals(memory_dir: Path, reader=_read_jsonl) -> dict[str, dict]:
     """Fold ``memory/dev_session_queue.jsonl`` by ``ref_id`` — LAST status
     wins (``defer`` appends ``status:"open"``, ``close`` appends
@@ -856,6 +873,7 @@ def register(
         items.extend(_bubble_ack_items(memory, reader))
         items.extend(_stale_active_run_items(run_state))
         items.extend(_state_gate_items(run_state))
+        items.extend(_maintenance_items(run_state))
         # D-046 additive fold: tag (never remove) items with open deferrals.
         items, omitted = scope.todo(items)
         _tag_deferred(items, memory, reader)

@@ -30,9 +30,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from agent_wrapper.backends import get_backend
 from agent_wrapper.cleanup import strip_channel_markup
-from agent_wrapper.wrapper import DEFAULT_BACKEND
+from agent_wrapper.wrapper import resolve_backend_route
 from orchestrator.subagent import (
     SubAgentBudget,
     SubAgentResult,
@@ -242,8 +241,9 @@ def redteam_critic(
 
     # Inherit the CRITIC_BACKEND env override if present (same operational
     # lever critic_loop_v0 uses), else the orchestrator default backend.
-    critic_backend = os.environ.get("CRITIC_BACKEND") or None
-    resolved_be = get_backend(critic_backend or DEFAULT_BACKEND)
+    critic_backend = os.environ.get("CRITIC_BACKEND") or "vllm-qwen"
+    route = resolve_backend_route(critic_backend)
+    resolved_be = route.backend
 
     sa_result: SubAgentResult = run_subagent(
         name="redteam_critic",

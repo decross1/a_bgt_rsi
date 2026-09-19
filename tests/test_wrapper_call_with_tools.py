@@ -39,6 +39,12 @@ SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema" / "calls.jsonl.s
 _VALIDATOR = Draft202012Validator(json.loads(SCHEMA_PATH.read_text()))
 
 
+def _call_with_tools(*args, **kwargs):
+    """Exercise the historical Gemma fixture through its explicit bypass."""
+    kwargs.setdefault("backend", "resident-vllm-gemma")
+    return W.call_with_tools(*args, **kwargs)
+
+
 def _mk_resp(*, content=None, tool_calls=None, prompt_tokens=10, completion_tokens=5):
     tcs = tool_calls or []
     msg = SimpleNamespace(content=content, tool_calls=tcs or None)
@@ -100,7 +106,7 @@ class SingleTurnTest(unittest.TestCase):
             mc.chat.completions.create.return_value = _mk_resp(
                 content="The PD matrix is (3,3),(0,5),(5,0),(1,1).")
             W.MEMORY_LOG.clear()
-            chain = W.call_with_tools(PD_MESSAGES, _tools(),
+            chain = _call_with_tools(PD_MESSAGES, _tools(),
                                       caller_tag="t/single")
         self.assertEqual(len(chain), 1)
         rec = chain[0]
@@ -119,7 +125,7 @@ class TwoTurnTest(unittest.TestCase):
                 _mk_resp(content="(3,3),(0,5),(5,0),(1,1)."),
             ]
             W.MEMORY_LOG.clear()
-            chain = W.call_with_tools(PD_MESSAGES, _tools(),
+            chain = _call_with_tools(PD_MESSAGES, _tools(),
                                       caller_tag="t/two_turn")
         self.assertEqual(len(chain), 2)
         first, second = chain
@@ -150,7 +156,7 @@ class TwoTurnTest(unittest.TestCase):
                 _mk_resp(content="done."),
             ]
             W.MEMORY_LOG.clear()
-            chain = W.call_with_tools(PD_MESSAGES, _tools(),
+            chain = _call_with_tools(PD_MESSAGES, _tools(),
                                       caller_tag="t/ctx",
                                       retrieval_context=ctx)
         for rec in chain:
@@ -165,7 +171,7 @@ class MalformedJsonTest(unittest.TestCase):
                 tool_calls=[_mk_tool_call(arguments=None)])
             W.MEMORY_LOG.clear()
             with self.assertRaises(W.ToolCallError) as cm:
-                W.call_with_tools(PD_MESSAGES, _tools(), caller_tag="t/null_args")
+                _call_with_tools(PD_MESSAGES, _tools(), caller_tag="t/null_args")
         self.assertEqual(cm.exception.failure_code, "tool_json")
         self.assertEqual(cm.exception.records, tuple(W.MEMORY_LOG))
         self.assertEqual(len(cm.exception.records), 1)
@@ -176,7 +182,7 @@ class MalformedJsonTest(unittest.TestCase):
                 tool_calls=[_mk_tool_call(arguments='{game_name: prisoners}')])
             W.MEMORY_LOG.clear()
             with self.assertRaises(W.ToolCallError) as cm:
-                W.call_with_tools(PD_MESSAGES, _tools(),
+                _call_with_tools(PD_MESSAGES, _tools(),
                                   caller_tag="t/bad_json")
         self.assertIn("malformed JSON", str(cm.exception))
         self.assertEqual(cm.exception.failure_code, "tool_json")
@@ -192,7 +198,7 @@ class SchemaViolationTest(unittest.TestCase):
                 tool_calls=[_mk_tool_call(arguments='{"game_name": "chicken"}')])
             W.MEMORY_LOG.clear()
             with self.assertRaises(W.ToolCallError) as cm:
-                W.call_with_tools(PD_MESSAGES, _tools(),
+                _call_with_tools(PD_MESSAGES, _tools(),
                                   caller_tag="t/bad_args")
         self.assertIn("failed schema validation", str(cm.exception))
         self.assertEqual(cm.exception.failure_code, "tool_schema")
@@ -206,7 +212,7 @@ class HallucinatedToolNameTest(unittest.TestCase):
                 tool_calls=[_mk_tool_call(name="who_dis")])
             W.MEMORY_LOG.clear()
             with self.assertRaises(W.ToolCallError) as cm:
-                W.call_with_tools(PD_MESSAGES, _tools(),
+                _call_with_tools(PD_MESSAGES, _tools(),
                                   caller_tag="t/hallucinated")
         self.assertIn("hallucinated tool name", str(cm.exception))
         self.assertEqual(cm.exception.failure_code, "tool_unknown")
@@ -221,7 +227,7 @@ class MaxDepthTest(unittest.TestCase):
                 tool_calls=[_mk_tool_call()])
             W.MEMORY_LOG.clear()
             with self.assertRaises(W.ToolCallError) as cm:
-                W.call_with_tools(PD_MESSAGES, _tools(),
+                _call_with_tools(PD_MESSAGES, _tools(),
                                   caller_tag="t/max_depth", max_depth=2)
         self.assertIn("max_depth", str(cm.exception))
         self.assertEqual(cm.exception.failure_code, "tool_depth")
@@ -234,7 +240,7 @@ class MaxDepthTest(unittest.TestCase):
 
     def test_zero_max_depth_rejected(self):
         with self.assertRaises(ValueError):
-            W.call_with_tools(PD_MESSAGES, _tools(), max_depth=0)
+            _call_with_tools(PD_MESSAGES, _tools(), max_depth=0)
 
 
 class FileRoundTripTest(unittest.TestCase):
@@ -249,7 +255,7 @@ class FileRoundTripTest(unittest.TestCase):
                                               delete=False) as f:
                 path = f.name
             try:
-                chain = W.call_with_tools(PD_MESSAGES, _tools(),
+                chain = _call_with_tools(PD_MESSAGES, _tools(),
                                           caller_tag="t/file",
                                           log_path=path)
                 self.assertEqual(len(chain), 2)

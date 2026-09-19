@@ -20,7 +20,9 @@
 
 [Unit]
 Description=Nara always-on daemon (D-063 Stage 2) — event-driven coordinator scheduler
-After=docker.service
+# Docker is a system unit, so a user-unit After=docker.service cannot order
+# it. Flash supervises device startup; Nara also checks its live readiness.
+After=flash-resident.service
 
 [Service]
 Type=simple

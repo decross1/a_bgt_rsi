@@ -100,9 +100,9 @@ export interface ServedModel {
   configured_model?: string;
   configured_max_context_tokens?: number;
   observed_max_context_tokens?: number | null;
-  deployment_role?: "production_resident" | "research_candidate";
+  deployment_role?: "production_resident" | "research_candidate" | "rollback_available";
   benchmark_cohort?: "resident" | "flash";
-  promotion_authorized?: false;
+  promotion_authorized?: boolean;
   models_endpoint_status?: "available" | "unreachable" | "invalid_response";
   service_status?: "online" | "offline" | "unknown";
   identity_status?: "match" | "mismatch" | "unknown";
@@ -118,7 +118,8 @@ export interface ModelRuntime {
   schema_version: "model-runtime/v1";
   observed_at: string;
   mode: "resident" | "candidate_research" | "transitioning" | "unknown";
-  mode_source: "qualification_state" | "extended_evaluation_state" | "followon_evaluation_state" | "followon_resident_state" | "lab_evaluation_state" | "stable_benchmark_state" | "personal_session_state" | "none";
+  mode_source: "qualification_state" | "extended_evaluation_state" | "followon_evaluation_state" | "followon_resident_state" | "lab_evaluation_state" | "stable_benchmark_state" | "personal_session_state" | "permanent_deployment" | "none";
+  production_authorized?: boolean;
   mode_source_sha256: string | null;
   resident_services_expected: "online" | "stopped" | "unknown";
   nara_service_expected: "running" | "paused" | "unknown";

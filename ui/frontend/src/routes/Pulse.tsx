@@ -339,7 +339,8 @@ export function isModelRuntime(value: unknown): value is ModelRuntime {
     ["resident", "candidate_research", "transitioning", "unknown"].includes(
       String(row.mode),
     ) &&
-    ["qualification_state", "extended_evaluation_state", "followon_evaluation_state", "followon_resident_state", "lab_evaluation_state", "stable_benchmark_state", "personal_session_state", "none"].includes(String(row.mode_source)) &&
+    ["qualification_state", "extended_evaluation_state", "followon_evaluation_state", "followon_resident_state", "lab_evaluation_state", "stable_benchmark_state", "personal_session_state", "permanent_deployment", "none"].includes(String(row.mode_source)) &&
+    (row.mode_source !== "permanent_deployment" || row.production_authorized === true && row.candidate_variant === null) &&
     personalValid &&
     (row.mode_source !== "extended_evaluation_state" || isExtendedFlashRunId(row.run_id)) &&
     (row.mode_source !== "followon_evaluation_state" || isFollowonFlashRunId(row.run_id)) &&
@@ -396,9 +397,9 @@ function isInventoryModel(row: ServedModel): boolean {
     row.configured_model.length > 0 &&
     positiveInteger(row.configured_max_context_tokens) &&
     (row.observed_max_context_tokens == null || positiveInteger(row.observed_max_context_tokens)) &&
-    ["production_resident", "research_candidate"].includes(String(row.deployment_role)) &&
+    ["production_resident", "research_candidate", "rollback_available"].includes(String(row.deployment_role)) &&
     ["resident", "flash"].includes(String(row.benchmark_cohort)) &&
-    row.promotion_authorized === false &&
+    (row.promotion_authorized === false || row.promotion_authorized === true && row.deployment_role === "production_resident") &&
     ["available", "unreachable", "invalid_response"].includes(String(row.models_endpoint_status)) &&
     ["online", "offline", "unknown"].includes(String(row.service_status)) &&
     ["match", "mismatch", "unknown"].includes(String(row.identity_status)) &&
@@ -890,7 +891,9 @@ export default function Pulse() {
     readErrors.length > 0 ? `read errors: ${readErrors.join(", ")}` : null,
   ].filter((value): value is string => value != null);
   const runtimeModeLabel =
-    stableBenchmarkVisible
+    modelRuntime?.mode_source === "permanent_deployment"
+      ? modelRuntime.phase === "ready" ? "Flash permanent resident" : `Flash resident: ${(modelRuntime.phase ?? "unknown").replaceAll("_", " ")}`
+    : stableBenchmarkVisible
       ? stableBenchmarkProblem
         ? "Stable benchmark lifecycle needs review"
         : stableBenchmarkPreparing
@@ -914,7 +917,9 @@ export default function Pulse() {
             : "Runtime transition"
           : "Operating mode unverified";
   const runtimeModeNote =
-    stableBenchmarkUnverified
+    modelRuntime?.mode_source === "permanent_deployment"
+      ? modelRuntime.source_error ?? "Flash is selected for local research. Gemma and Qwen 27B are retained as stopped rollback options. Live endpoint observations are shown below."
+    : stableBenchmarkUnverified
       ? stableBenchmarkUnknownLastObserved
         ? `The last stable benchmark projection could not verify the ${(stableBenchmarkPhase ?? "unknown").replaceAll("_", " ")} lifecycle state. The current lifecycle state is unknown because no fresh verified projection is available. Endpoint observations remain independent.`
         : `The stable benchmark projector could not verify the current ${(stableBenchmarkPhase ?? "unknown").replaceAll("_", " ")} lifecycle state. Endpoint observations remain independent.`
@@ -1294,6 +1299,7 @@ export default function Pulse() {
             const serviceExpectation =
               row.service_status !== "offline"
                 ? null
+                : row.deployment_role === "rollback_available" ? "expected_offline"
                 : row.deployment_role === "production_resident" && candidateResearchWindow
                   ? "expected_offline"
                   : row.deployment_role === "research_candidate" && candidateEndpointStarting

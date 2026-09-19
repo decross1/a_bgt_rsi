@@ -390,7 +390,7 @@ def test_default_challenger_builds_a_tagged_canonical_turn(live, monkeypatch):
     monkeypatch.setattr(dbt, "run_subagent", fake)
     turn = dbt._default_challenger("claim", "EVIDENCE BLOCK", [], "iter-1")
     assert turn["text"] == "OBJECT: doc-a says it [cites doc-a]"
-    assert turn["backend"] == "vllm-qwen"
+    assert turn["backend"] == "sglang-flash"
     assert turn["model"]
     assert turn["wall_seconds"] == 2.5
     assert "error" not in turn
@@ -424,7 +424,7 @@ def test_default_challenger_honors_the_skeptic_backend_env(live, monkeypatch):
     turn = dbt._default_challenger("claim", "ev", [], None)
     # The tag must be the backend that ACTUALLY ran, not the ladder default.
     assert seen["backend"] == "vllm-gemma"
-    assert turn["backend"] == "vllm-gemma"
+    assert turn["backend"] == "sglang-flash"
 
 
 @pytest.mark.parametrize("status,result", [
@@ -490,7 +490,10 @@ def test_end_to_end_with_stubbed_subagent_stays_bounded(live, monkeypatch):
     assert out["rounds"] == dbt.MAX_DEBATE_ROUNDS
     assert len(out["transcript"]) == 2 * dbt.MAX_DEBATE_ROUNDS
     assert all(t["backend"] and t["model"] for t in out["transcript"])
-    assert {t["backend"] for t in out["transcript"]} == {"vllm-qwen", "vllm-gemma"}
+    assert {t["backend"] for t in out["transcript"]} == {"sglang-flash"}
+    assert {t["model"] for t in out["transcript"]} == {
+        "nvidia/Qwen3.8-Flash-Next-NVFP4"
+    }
 
 
 # ── the wall must be able to spend the tokens (2026-08-16) ──────────────────

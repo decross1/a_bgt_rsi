@@ -755,7 +755,7 @@ def test_skeptic_tag_reflects_the_actual_backend(cache, monkeypatch, backend, mo
     # subagent_backend is a DIFFERENT field: it stays on the CRITIC's
     # backend whichever model ran the skeptic. Reading it as the skeptic's
     # tag is exactly the misreading D-065 closes.
-    assert out["result"]["subagent_backend"] == "vllm-gemma"
+    assert out["result"]["subagent_backend"] == "sglang-flash"
 
 
 def test_a_skeptic_verdict_is_never_untagged(cache, monkeypatch):

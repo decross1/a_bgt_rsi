@@ -1,5 +1,5 @@
 """
-Thin wrapper around vLLM's OpenAI-compatible API. Every model call writes
+Thin wrapper around local OpenAI-compatible APIs. Every model call writes
 exactly one schema-valid JSONL line (schema/calls.jsonl.schema.json).
 
 Public interface:
@@ -12,9 +12,10 @@ Two log modes (per call, via log_path):
   log_path=<file>  append-only  (production)
   log_path=None    in-memory    (tests) -- records collected in MEMORY_LOG
 
-Config is read from the environment so the same code serves any host:
-  VLLM_BASE_URL, VLLM_API_KEY, VLLM_MODEL, VLLM_MODEL_VERSION,
-  VLLM_IMAGE_TAG, CUDA_DRIVER.
+The permanent route is selected by ``config/model_deployment.json`` and bound
+to a fixed local SGLang endpoint and served identity. Historical vLLM
+environment variables remain available through explicit ``resident-vllm-*``
+experiment backends or the process-wide ``WRAPPER_DEFAULT_BACKEND`` bypass.
 
 Day 4 adds: call_with_tools with bounded recursion (max_depth=3). Malformed
 tool-call JSON is surfaced (ToolCallError) -- never silently retried; the
@@ -26,6 +27,8 @@ import math
 import os
 import time
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -37,7 +40,14 @@ from .backends import get_backend, register_backend
 from .backends.anthropic import AnthropicBackend
 from .backends.ollama_openai import OllamaBackend
 from .backends.qwen_vllm import VLLMQwenBackend
+from .backends.sglang_flash import SGLangFlashBackend
 from .backends.vllm_openai import VLLMBackend
+from .deployment import (
+    FLASH_BACKEND,
+    FLASH_MODEL,
+    FLASH_ROLE_ALIASES,
+    load_model_deployment,
+)
 from .generation_policy import (
     UNSET,
     build_policy_record_metadata,
@@ -89,18 +99,89 @@ def get_run_id():
 _sync_client = OpenAI(base_url=BASE_URL, api_key=os.environ.get("VLLM_API_KEY", "EMPTY"))
 _async_client = AsyncOpenAI(base_url=BASE_URL, api_key=os.environ.get("VLLM_API_KEY", "EMPTY"))
 
-# Backend registry. The vllm-gemma backend reads _sync_client/_async_client
-# from this module lazily so existing tests that patch those clients still
-# work unchanged. Ollama (coder tier) and anthropic (planner tier) register
-# alongside; the default remains vllm-gemma.
+# Backend registry. Historical vLLM adapters remain addressable under explicit
+# ``resident-vllm-*`` names. The committed deployment selects the production
+# default and the wrapper maps the two legacy role labels onto it.
 register_backend(VLLMBackend())
+register_backend(VLLMBackend(name="resident-vllm-gemma"))
 register_backend(OllamaBackend())
 register_backend(AnthropicBackend())
 # Second vLLM container on :8001, with vLLM-specific provenance. The earlier
 # adapter reused OllamaBackend and mislabeled these calls as Ollama even though
 # endpoint/model/request transport were already OpenAI-compatible vLLM.
 register_backend(VLLMQwenBackend())
-DEFAULT_BACKEND = os.environ.get("WRAPPER_DEFAULT_BACKEND", "vllm-gemma")
+register_backend(VLLMQwenBackend(name="resident-vllm-qwen"))
+register_backend(SGLangFlashBackend())
+
+_PROJECT_DEPLOYMENT = load_model_deployment(required=False)
+DEFAULT_BACKEND = os.environ.get(
+    "WRAPPER_DEFAULT_BACKEND",
+    (_PROJECT_DEPLOYMENT.backend if _PROJECT_DEPLOYMENT is not None
+     else "vllm-gemma"),
+)
+
+
+@dataclass(frozen=True)
+class BackendRoute:
+    """One resolved logical role and its actual serving backend."""
+
+    backend: object
+    requested_backend: str
+    generation_role: str | None = None
+
+    def model(self, requested_model: str | None = None) -> str:
+        if getattr(self.backend, "name", None) != FLASH_BACKEND:
+            return requested_model or self.backend.default_model
+        allowed_alias = {
+            "vllm-gemma": "gemma-4-26b-a4b",
+            "vllm-qwen": "qwen3.8-27b-nvfp4-mtp",
+        }.get(self.requested_backend)
+        if requested_model in {None, FLASH_MODEL, allowed_alias}:
+            return self.backend.default_model
+        raise ValueError(
+            f"the permanent {FLASH_BACKEND!r} route serves only "
+            f"{FLASH_MODEL!r}; use an explicit resident-vllm-* backend for "
+            "a resident experiment"
+        )
+
+    @property
+    def host_metadata(self) -> dict:
+        metadata = dict(self.backend.host_metadata)
+        if self.generation_role is not None:
+            metadata["requested_backend_role"] = self.requested_backend
+            metadata["generation_role"] = self.generation_role
+        return metadata
+
+
+def resolve_backend_route(
+    requested: str | None = None,
+    *,
+    backend_lookup: Callable[[str], object] | None = None,
+) -> BackendRoute:
+    """Resolve a logical role to its actual serving backend.
+
+    The two historical vLLM names are production role labels under the
+    single-Flash topology. An explicitly set WRAPPER_DEFAULT_BACKEND is a
+    process-wide test/experiment bypass. Per-call resident experiments use the
+    unambiguous ``resident-vllm-*`` registry names.
+    """
+
+    lookup = backend_lookup or get_backend
+    explicit_default = os.environ.get("WRAPPER_DEFAULT_BACKEND")
+    if explicit_default is not None:
+        name = requested or explicit_default
+        return BackendRoute(lookup(name), name)
+
+    if (_PROJECT_DEPLOYMENT is not None
+            and (requested is None or requested in FLASH_ROLE_ALIASES)):
+        role_label = requested or "vllm-gemma"
+        role = "critic" if role_label == "vllm-qwen" else "generator"
+        return BackendRoute(
+            lookup(_PROJECT_DEPLOYMENT.backend), role_label, role)
+
+    name = requested or DEFAULT_BACKEND
+    role = "generator" if name == FLASH_BACKEND else None
+    return BackendRoute(lookup(name), name, role)
 
 
 def _record(messages, params, resp, latency_ms, caller_tag, parent_request_id,
@@ -187,14 +268,17 @@ def _validate_request_timeout(request_timeout_s, backend_name):
             or not math.isfinite(float(request_timeout_s))
             or request_timeout_s <= 0):
         raise ValueError("request_timeout_s must be a positive finite number")
-    if backend_name not in {"vllm-gemma", "vllm-qwen", "ollama-coder"}:
+    if backend_name not in {
+        "vllm-gemma", "vllm-qwen", "resident-vllm-gemma",
+        "resident-vllm-qwen", "sglang-flash", "ollama-coder",
+    }:
         raise ValueError(
             f"request_timeout_s is not supported on backend {backend_name!r}")
     return request_timeout_s
 
 
 def _resolved_policy(be, model, caller_tag, profile, temperature, top_p, seed,
-                     reasoning_effort, extra_body):
+                     reasoning_effort, extra_body, default_role=None):
     return resolve_generation_policy(
         profile=profile,
         backend_name=be.name,
@@ -205,6 +289,7 @@ def _resolved_policy(be, model, caller_tag, profile, temperature, top_p, seed,
         seed=seed,
         reasoning_effort=reasoning_effort,
         extra_body=extra_body,
+        default_role=default_role,
     )
 
 
@@ -218,14 +303,17 @@ def call_sync(messages, *, temperature=UNSET, top_p=UNSET, seed=UNSET,
     generation; it is a request param, not one of the 14 logged schema fields.
 
     retrieval_context: see _record. Default None -> field absent from record.
-    backend: backend registry name (e.g. "vllm-gemma", "ollama-coder",
-        "anthropic"). Default None -> DEFAULT_BACKEND env, falling back to
-        "vllm-gemma" so existing callers are unaffected.
+    backend: backend registry name or legacy production role label. Under the
+        single-Flash deployment, None, "vllm-gemma", and "vllm-qwen" resolve
+        to the actual "sglang-flash" backend. Explicit resident experiments
+        use "resident-vllm-gemma" or "resident-vllm-qwen".
     """
-    be = get_backend(backend or DEFAULT_BACKEND)
+    route = resolve_backend_route(backend)
+    be = route.backend
+    request_model = route.model(model)
     resolved = _resolved_policy(
-        be, model, caller_tag, profile, temperature, top_p, seed,
-        reasoning_effort, extra_body)
+        be, request_model, caller_tag, profile, temperature, top_p, seed,
+        reasoning_effort, extra_body, route.generation_role)
     params = dict(resolved.logged_params)
     request_kwargs = dict(resolved.request_kwargs)
     timeout = _validate_request_timeout(request_timeout_s, be.name)
@@ -233,7 +321,7 @@ def call_sync(messages, *, temperature=UNSET, top_p=UNSET, seed=UNSET,
         request_kwargs["timeout"] = timeout
     t0 = time.perf_counter()
     resp = be.create_chat(
-        model=model or be.default_model, messages=messages,
+        model=request_model, messages=messages,
         max_tokens=max_tokens, **request_kwargs)
     latency_ms = (time.perf_counter() - t0) * 1000.0
     policy_metadata = build_policy_record_metadata(resolved, resp)
@@ -241,7 +329,7 @@ def call_sync(messages, *, temperature=UNSET, top_p=UNSET, seed=UNSET,
                         caller_tag, parent_request_id,
                         retrieval_context=retrieval_context,
                         model_version=be.model_version,
-                        host_metadata=be.host_metadata,
+                        host_metadata=route.host_metadata,
                         max_tokens=max_tokens,
                         backend_name=be.name,
                         policy_metadata=policy_metadata), log_path)
@@ -266,10 +354,12 @@ async def call_async(messages, *, temperature=UNSET, top_p=UNSET, seed=UNSET,
                      backend=None, profile=None, reasoning_effort=UNSET,
                      extra_body=UNSET, request_timeout_s=None):
     """Async chat completion (needed for OpenClaw on Day 6). Returns the record."""
-    be = get_backend(backend or DEFAULT_BACKEND)
+    route = resolve_backend_route(backend)
+    be = route.backend
+    request_model = route.model(model)
     resolved = _resolved_policy(
-        be, model, caller_tag, profile, temperature, top_p, seed,
-        reasoning_effort, extra_body)
+        be, request_model, caller_tag, profile, temperature, top_p, seed,
+        reasoning_effort, extra_body, route.generation_role)
     params = dict(resolved.logged_params)
     request_kwargs = dict(resolved.request_kwargs)
     timeout = _validate_request_timeout(request_timeout_s, be.name)
@@ -277,7 +367,7 @@ async def call_async(messages, *, temperature=UNSET, top_p=UNSET, seed=UNSET,
         request_kwargs["timeout"] = timeout
     t0 = time.perf_counter()
     resp = await be.create_chat_async(
-        model=model or be.default_model, messages=messages,
+        model=request_model, messages=messages,
         max_tokens=max_tokens, **request_kwargs)
     latency_ms = (time.perf_counter() - t0) * 1000.0
     policy_metadata = build_policy_record_metadata(resolved, resp)
@@ -285,7 +375,7 @@ async def call_async(messages, *, temperature=UNSET, top_p=UNSET, seed=UNSET,
                         caller_tag, parent_request_id,
                         retrieval_context=retrieval_context,
                         model_version=be.model_version,
-                        host_metadata=be.host_metadata,
+                        host_metadata=route.host_metadata,
                         max_tokens=max_tokens,
                         backend_name=be.name,
                         policy_metadata=policy_metadata), log_path)
@@ -382,7 +472,8 @@ def call_with_tools(messages, tools, *, temperature=UNSET, top_p=UNSET, seed=UNS
     max_depth: maximum number of tool-emitting turns (>=1). The final
         non-tool-emitting turn is always permitted on top, so the chain has
         at most max_depth+1 records.
-    backend: backend registry name; None -> DEFAULT_BACKEND.
+    backend: backend registry name or legacy production role label; see
+        ``call_sync``.
 
     Each turn:
       1. Send the current message stack with the `tools` parameter.
@@ -396,15 +487,17 @@ def call_with_tools(messages, tools, *, temperature=UNSET, top_p=UNSET, seed=UNS
     """
     if max_depth < 1:
         raise ValueError(f"max_depth must be >= 1, got {max_depth}")
-    be = get_backend(backend or DEFAULT_BACKEND)
+    route = resolve_backend_route(backend)
+    be = route.backend
+    request_model = route.model(model)
     tool_index = _index_tools(tools)
     tool_specs = [t["spec"] for t in tools]
     openai_messages = [dict(m) for m in messages]
     records = []
     last_id = parent_request_id
     resolved = _resolved_policy(
-        be, model, caller_tag, profile, temperature, top_p, seed,
-        reasoning_effort, extra_body)
+        be, request_model, caller_tag, profile, temperature, top_p, seed,
+        reasoning_effort, extra_body, route.generation_role)
     params = dict(resolved.logged_params)
     request_kwargs = dict(resolved.request_kwargs)
     timeout = _validate_request_timeout(request_timeout_s, be.name)
@@ -420,7 +513,7 @@ def call_with_tools(messages, tools, *, temperature=UNSET, top_p=UNSET, seed=UNS
             turn_kwargs["timeout"] = remaining
         t0 = time.perf_counter()
         resp = be.create_chat(
-            model=model or be.default_model,
+            model=request_model,
             messages=openai_messages,
             tools=tool_specs,
             max_tokens=max_tokens,
@@ -452,7 +545,7 @@ def call_with_tools(messages, tools, *, temperature=UNSET, top_p=UNSET, seed=UNS
                 "output_tokens": resp.usage.completion_tokens,
             },
             "latency_ms": latency_ms,
-            "host_metadata": dict(be.host_metadata),
+            "host_metadata": route.host_metadata,
             "caller_tag": caller_tag,
             "parent_request_id": last_id,
         }

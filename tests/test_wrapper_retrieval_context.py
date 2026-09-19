@@ -33,6 +33,16 @@ SCHEMA_PATH = Path(__file__).resolve().parent.parent / "schema" / "calls.jsonl.s
 _VALIDATOR = Draft202012Validator(json.loads(SCHEMA_PATH.read_text()))
 
 
+def _call_sync(*args, **kwargs):
+    kwargs.setdefault("backend", "resident-vllm-gemma")
+    return W.call_sync(*args, **kwargs)
+
+
+async def _call_async(*args, **kwargs):
+    kwargs.setdefault("backend", "resident-vllm-gemma")
+    return await W.call_async(*args, **kwargs)
+
+
 def _mock_response():
     """Shape vLLM/OpenAI response well enough for _record()."""
     return SimpleNamespace(
@@ -61,7 +71,7 @@ class SyncDefaultOmitsFieldTest(unittest.TestCase):
         with patch.object(W, "_sync_client", MagicMock()) as mock_client:
             mock_client.chat.completions.create.return_value = _mock_response()
             W.MEMORY_LOG.clear()
-            rec = W.call_sync(_msgs(), caller_tag="t/default")
+            rec = _call_sync(_msgs(), caller_tag="t/default")
         self.assertNotIn("retrieval_context", rec)
         _VALIDATOR.validate(rec)
 
@@ -69,7 +79,7 @@ class SyncDefaultOmitsFieldTest(unittest.TestCase):
         with patch.object(W, "_sync_client", MagicMock()) as mock_client:
             mock_client.chat.completions.create.return_value = _mock_response()
             W.MEMORY_LOG.clear()
-            rec = W.call_sync(_msgs(), caller_tag="t/none",
+            rec = _call_sync(_msgs(), caller_tag="t/none",
                               retrieval_context=None)
         self.assertNotIn("retrieval_context", rec)
         _VALIDATOR.validate(rec)
@@ -80,7 +90,7 @@ class SyncPopulatedListTest(unittest.TestCase):
         with patch.object(W, "_sync_client", MagicMock()) as mock_client:
             mock_client.chat.completions.create.return_value = _mock_response()
             W.MEMORY_LOG.clear()
-            rec = W.call_sync(_msgs(), caller_tag="t/populated",
+            rec = _call_sync(_msgs(), caller_tag="t/populated",
                               retrieval_context=_SAMPLE_CTX)
         self.assertEqual(rec["retrieval_context"], _SAMPLE_CTX)
         _VALIDATOR.validate(rec)
@@ -90,7 +100,7 @@ class SyncPopulatedListTest(unittest.TestCase):
         with patch.object(W, "_sync_client", MagicMock()) as mock_client:
             mock_client.chat.completions.create.return_value = _mock_response()
             W.MEMORY_LOG.clear()
-            rec = W.call_sync(_msgs(), caller_tag="t/empty",
+            rec = _call_sync(_msgs(), caller_tag="t/empty",
                               retrieval_context=[])
         self.assertEqual(rec["retrieval_context"], [])
         _VALIDATOR.validate(rec)
@@ -101,8 +111,9 @@ class AsyncPathTest(unittest.TestCase):
         with patch.object(W, "_async_client", MagicMock()) as mock_client:
             mock_client.chat.completions.create = AsyncMock(return_value=_mock_response())
             W.MEMORY_LOG.clear()
-            rec = asyncio.run(W.call_async(_msgs(), caller_tag="t/async/populated",
-                                            retrieval_context=_SAMPLE_CTX))
+            rec = asyncio.run(_call_async(
+                _msgs(), caller_tag="t/async/populated",
+                retrieval_context=_SAMPLE_CTX))
         self.assertEqual(rec["retrieval_context"], _SAMPLE_CTX)
         _VALIDATOR.validate(rec)
 
@@ -110,7 +121,8 @@ class AsyncPathTest(unittest.TestCase):
         with patch.object(W, "_async_client", MagicMock()) as mock_client:
             mock_client.chat.completions.create = AsyncMock(return_value=_mock_response())
             W.MEMORY_LOG.clear()
-            rec = asyncio.run(W.call_async(_msgs(), caller_tag="t/async/default"))
+            rec = asyncio.run(_call_async(
+                _msgs(), caller_tag="t/async/default"))
         self.assertNotIn("retrieval_context", rec)
         _VALIDATOR.validate(rec)
 
@@ -126,9 +138,9 @@ class FilePersistenceTest(unittest.TestCase):
             with tempfile.NamedTemporaryFile("w+", suffix=".jsonl", delete=False) as f:
                 path = f.name
             try:
-                W.call_sync(_msgs(), caller_tag="t/file/none", log_path=path)
-                W.call_sync(_msgs(), caller_tag="t/file/populated",
-                            retrieval_context=_SAMPLE_CTX, log_path=path)
+                _call_sync(_msgs(), caller_tag="t/file/none", log_path=path)
+                _call_sync(_msgs(), caller_tag="t/file/populated",
+                           retrieval_context=_SAMPLE_CTX, log_path=path)
                 lines = [json.loads(l) for l in Path(path).read_text().splitlines() if l]
                 self.assertEqual(len(lines), 2)
                 self.assertNotIn("retrieval_context", lines[0])
@@ -156,7 +168,7 @@ class LegacyCallersUnchangedTest(unittest.TestCase):
         with patch.object(W, "_sync_client", MagicMock()) as mock_client:
             mock_client.chat.completions.create.return_value = _mock_response()
             W.MEMORY_LOG.clear()
-            rec = W.call_sync(_msgs(), caller_tag="t/legacy")
+            rec = _call_sync(_msgs(), caller_tag="t/legacy")
         self.assertEqual(set(rec.keys()), self.LEGACY_KEYS)
 
 

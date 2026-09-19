@@ -1,0 +1,14 @@
+[Unit]
+Description=Permanent Qwen Flash-Next resident with memory and driver guard
+
+[Service]
+Type=simple
+WorkingDirectory=/home/decross1/projects/a_bgt_rsi
+ExecStart=/home/decross1/projects/a_bgt_rsi/.venv-chroma/bin/python -m orchestrator.flash_resident run
+ExecStopPost=/home/decross1/projects/a_bgt_rsi/.venv-chroma/bin/python -m orchestrator.flash_resident cleanup
+Restart=no
+TimeoutStopSec=900
+KillMode=mixed
+
+[Install]
+WantedBy=default.target
