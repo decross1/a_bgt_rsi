@@ -69,15 +69,39 @@ reconciliation of the old container's immutable environment before it is
 restarted. No legacy sandbox was revived. Detailed local evidence is in
 `flash-personal-recovery/cross-project-flash-migration-20260919.md`.
 
-## Owner follow-up: scoped reboot
+## Boot and recovery
 
-The owner will choose a reboot window. Do not reboot automatically. A pending
-maintenance task appears in the human todo queue. Before reboot, account for
-interactive Codex/Claude/SSH sessions and session-only services using the
-service audit under `flash-personal-recovery/service-recovery-audit-20260919`.
-After reboot, verify Docker/NVIDIA device readiness, the unchanged selected
-image/checkpoint, Flash endpoint identity, Nara, UI, Brain and remote access.
-Do not resume benchmarking. Normal `/v1/models` and health checks suffice.
+The owner completed the scoped reboot on 2026-09-19. Do not reboot automatically
+for future faults. Interactive Codex/Claude/Pi/SSH sessions still require an
+explicit reconnect/resume; enabled application services are checked separately.
+
+That boot exposed an ordering dependency: NVIDIA CDI refresh waited for
+`multi-user.target`, while Plymouth's boot-screen wait held that target. Flash
+exited before attempting any model load because `/var/run/cdi/nvidia.yaml`
+never appeared during its five-minute readiness wait. Docker and the NVIDIA
+driver were otherwise healthy. This is distinct from the earlier driver
+allocation failure and swap-limit incident.
+
+The installed [NVIDIA CDI service](../systemd/nvidia-cdi-refresh.service) now
+orders device-spec generation after module loading and NVIDIA persistence,
+and before Docker, without waiting for the desktop target. The vendor
+conditions, module check, generator, environment and capability set are retained.
+Use the full unit when applying this repair: dependency ordering cannot be
+removed by an empty `After=` assignment in a drop-in. The administrator repair
+backs up the prior unit and checks its expected hash before replacement.
+
+After a restart, verify Docker/NVIDIA readiness, the nonempty CDI spec and
+Docker GPU device resolution, then the unchanged Flash image/checkpoint,
+actual endpoint identity and reserve. Confirm Nara, UI, Brain, Sous and remote
+access separately. A running application process alone does not prove its
+model connection works. Do not resume benchmarking; use operational readiness
+and one short real response as appropriate.
+
+Repair receipts and the guarded first post-repair launch are under
+`flash-personal-recovery/post-reboot-20260919/`. Historical pre-reboot service
+checks targeted the old model pair; do not use that pair-specific checker as
+current Flash admission. The supported check remains
+`.venv-chroma/bin/python -m orchestrator.flash_resident check-ready`.
 
 A driver/allocation or resource fault stops Flash and latches its failure for
 the current boot, preventing a restart storm. A new boot admits one fresh
