@@ -22,8 +22,10 @@ _ENDPOINTS = {
     "resident_qwen": (8001, "qwen3.8-27b-nvfp4-mtp"),
     "flash_next": (8012, "qwen3.8-flash-next"),
     "flash_next_mia": (8012, "qwen3.8-flash-next-mia"),
+    "flash_next_sglang": (30080, "nvidia/Qwen3.8-Flash-Next-NVFP4"),
 }
 MIA_ARTIFACT_SHA256 = "a40ce50173dd3aff54da88503894967e5248bbb927f9e4a91eff5a6a7270c168"
+NVIDIA_ARTIFACT_SHA256 = "54e961084a2fca63b0dcd32d542eb340a7baa20224298b00030ffa7e59145063"
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 
@@ -107,6 +109,8 @@ class LocalEndpoint:
             raise ValueError("endpoint requires an immutable artifact SHA-256")
         if self.name == "flash_next_mia" and self.artifact_sha256 != MIA_ARTIFACT_SHA256:
             raise ValueError("Mia endpoint artifact differs from the registered checkpoint")
+        if self.name == "flash_next_sglang" and self.artifact_sha256 != NVIDIA_ARTIFACT_SHA256:
+            raise ValueError("SGLang endpoint artifact differs from the registered NVIDIA checkpoint")
         return port
 
 

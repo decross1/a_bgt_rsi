@@ -18,6 +18,7 @@ inject known-role targets and an opener, but no API request can supply a URL.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import urllib.error
@@ -68,6 +69,21 @@ REGISTERED_MODELS: dict[str, dict[str, Any]] = {
 # rather than environment-derived URLs, so startup configuration cannot turn
 # the backend into an SSRF proxy.
 DEFAULT_ENDPOINTS = {role: row["url"] for role, row in REGISTERED_MODELS.items()}
+
+# The active personal-session projection may select this second fixed Flash
+# endpoint.  Neither the HTTP request nor environment variables can add a URL.
+PERSONAL_FLASH_TARGETS: dict[str, dict[str, Any]] = {
+    "mia": {**REGISTERED_MODELS["flash"], "metrics_backend": "vllm"},
+    "sglang": {
+        "url": "http://127.0.0.1:30080",
+        "configured_model": "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        "configured_max_context_tokens": 32_768,
+        "deployment_role": "research_candidate",
+        "benchmark_cohort": "flash",
+        "metrics_backend": "sglang",
+    },
+}
+_CANDIDATE_ID = re.compile(r"[0-9a-f]{64}\Z")
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -223,8 +239,9 @@ def _probe_metrics(
 
 
 def _compose_row(role: str, model: dict[str, Any], metrics: dict[str, Any],
-                 stamp: str) -> dict[str, Any]:
-    configured = REGISTERED_MODELS[role]
+                 stamp: str, configured: dict[str, Any] | None = None
+                 ) -> dict[str, Any]:
+    configured = configured or REGISTERED_MODELS[role]
     endpoint_status = model["models_endpoint_status"]
     service_status = (
         "online" if endpoint_status == "available"
@@ -287,7 +304,8 @@ def register(
     ``endpoints`` is an in-process test seam limited to registered role names.
     The application calls this without it and always uses the fixed targets.
     """
-    targets = dict(DEFAULT_ENDPOINTS if endpoints is None else endpoints)
+    production_targets = endpoints is None
+    targets = dict(DEFAULT_ENDPOINTS if production_targets else endpoints)
     if not targets or any(role not in REGISTERED_MODELS for role in targets):
         raise ValueError("served-model targets must use registered roles")
     if endpoints is None and targets != DEFAULT_ENDPOINTS:
@@ -299,9 +317,40 @@ def register(
     runtime_cache: dict[str, Any] = {"at": None, "payload": None}
     runtime_lock = threading.Lock()
     accumulators = {role: VllmMetricsAccumulator() for role in targets}
+    selected_flash: dict[str, Any] = {
+        "signature": ("mia", None),
+        "configured": PERSONAL_FLASH_TARGETS["mia"],
+    }
 
-    def _probe_all() -> dict[str, Any]:
-        roles = list(targets.items())
+    def _flash_selection() -> tuple[tuple[str, str | None], dict[str, Any]]:
+        if not production_targets:
+            return ("injected", None), REGISTERED_MODELS["flash"]
+        try:
+            runtime = runtime_projector()
+        except (OSError, ValueError, TypeError, AttributeError):
+            runtime = None
+        if isinstance(runtime, dict):
+            endpoint = runtime.get("personal_endpoint")
+            candidate_id = runtime.get("candidate_id")
+            if (
+                runtime.get("mode_source") == "personal_session_state"
+                and runtime.get("mode") == "candidate_research"
+                and runtime.get("phase") in {"starting", "ready"}
+                and isinstance(endpoint, str)
+                and endpoint in PERSONAL_FLASH_TARGETS
+                and _CANDIDATE_ID.fullmatch(str(candidate_id or ""))
+            ):
+                return (endpoint, candidate_id), PERSONAL_FLASH_TARGETS[endpoint]
+        return ("mia", None), PERSONAL_FLASH_TARGETS["mia"]
+
+    def _probe_all(configured_rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        roles = [
+            (
+                role,
+                configured_rows[role]["url"] if production_targets else targets[role],
+            )
+            for role in targets
+        ]
         # Both paths for all roles share one parallel round: a down candidate
         # cannot add its two timeout ceilings serially to a dashboard request.
         with ThreadPoolExecutor(max_workers=max(1, 2 * len(roles))) as pool:
@@ -328,7 +377,10 @@ def register(
             }
         stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         return {
-            role: _compose_row(role, model_rows[role], metric_rows[role], stamp)
+            role: _compose_row(
+                role, model_rows[role], metric_rows[role], stamp,
+                configured_rows[role],
+            )
             for role, _ in roles
         }
 
@@ -337,6 +389,27 @@ def register(
         # Hold the lock through a cache miss so concurrent dashboard tabs share
         # one bounded probe round and one counter-accumulator observation.
         with lock:
+            if production_targets:
+                signature, configured_flash = _flash_selection()
+                if signature != selected_flash["signature"]:
+                    accumulators["flash"].reset()
+                    accumulators["flash"] = VllmMetricsAccumulator(
+                        backend=configured_flash["metrics_backend"]
+                    )
+                    selected_flash["signature"] = signature
+                    selected_flash["configured"] = configured_flash
+                    cache["at"] = None
+                    cache["payload"] = None
+                configured_rows = {
+                    role: (
+                        selected_flash["configured"]
+                        if role == "flash"
+                        else REGISTERED_MODELS[role]
+                    )
+                    for role in targets
+                }
+            else:
+                configured_rows = {role: REGISTERED_MODELS[role] for role in targets}
             now = clock()
             fresh = (
                 cache["payload"] is not None
@@ -345,7 +418,7 @@ def register(
             )
             if fresh:
                 return cache["payload"]
-            payload = _probe_all()
+            payload = _probe_all(configured_rows)
             cache["at"] = clock()
             cache["payload"] = payload
             return payload

@@ -184,6 +184,36 @@ Keep tracing off for matched speed tests unless every arm uses it and the
 measurement records that fact. The bounded UI view explicitly reports clipping;
 the original raw SSE artifacts remain the complete diagnostic record.
 
+### Independently served NVIDIA/SGLang endpoint
+
+The September 19 comparison also serves the NVIDIA checkpoint through a
+separately monitored SGLang session. The same client can address that fixed
+loopback endpoint without labeling it as the Mia candidate:
+
+```bash
+env -u MOCK_LLM .venv-chroma/bin/python -m bench.flash_next_ab.personal_client \
+  --backend sglang --policy medium --prompt-file /absolute/path/to/question.txt \
+  --max-output-tokens 8192 --output-dir /absolute/path/to/a-new-answer-directory \
+  --print-final
+```
+
+This selects `http://127.0.0.1:30080/v1` and the exact served name
+`nvidia/Qwen3.8-Flash-Next-NVFP4`. It does not start a server. The CLI records the
+requested endpoint/model and NVIDIA artifact identity, leaves the Mia candidate
+specification empty, and still sets `runtime_profile_verified=false`. Use the
+live controller receipts to establish serving precision and speculation.
+Both nested vLLM and top-level SGLang reasoning-token usage are preserved.
+The default `--backend mia` continues to use port 8012.
+
+The Now dashboard follows the process-bound personal session. It displays the
+actual Mia or SGLang endpoint on the existing Flash card, marks the resident pair
+as intentionally paused, and resets its activity history when the candidate
+changes. SGLang decode rates use differences in its decode-token counter;
+prefill tokens are excluded. Its KV metric describes the full KV pool, while
+prefix-hit and speculative-acceptance values describe the server's reporting
+window. Unavailable counters remain unavailable. This operational display is
+separate from model qualification or a change to the lab's normal routes.
+
 ### Resource limits
 
 This new diagnostic allows at most 1,800 seconds per startup. The preferred

@@ -1062,6 +1062,30 @@ def _unknown(observed_at: str, error: str) -> dict[str, Any]:
     }
 
 
+def _reconcile_personal_runtime(
+    personal: dict[str, Any], existing: dict[str, Any]
+) -> dict[str, Any]:
+    """Prefer personal state unless another source proves a live owner."""
+    if (
+        personal.get("mode") != "candidate_research"
+        or existing.get("mode") not in {"candidate_research", "transitioning"}
+    ):
+        return personal
+    conflict = dict(personal)
+    conflict.update(
+        mode="unknown",
+        mode_source_sha256=None,
+        resident_services_expected="unknown",
+        nara_service_expected="unknown",
+        run_id=None,
+        phase=None,
+        personal_endpoint=None,
+        candidate_id=None,
+        source_error="personal session conflicts with another live runtime owner",
+    )
+    return conflict
+
+
 def project_model_runtime(
     qualification_root: Path = QUALIFICATION_ROOT,
     *,
@@ -1072,16 +1096,53 @@ def project_model_runtime(
     now: Callable[[], datetime] | None = None,
     plan_validator: Callable[..., None] = _validate_registered_plan,
     terminal_validator: Callable[[Path], None] = _validate_complete_receipt,
+    _include_personal: bool = True,
 ) -> dict[str, Any]:
     """Project one bounded operating-mode record. Never raises."""
     observed = (now or (lambda: datetime.now(timezone.utc)))().astimezone(timezone.utc)
     observed_at = observed.isoformat()
     run_fd = None
     try:
+        # The fixed personal serving controller is operational state rather
+        # than benchmark qualification.  Its live, process-bound projection
+        # must outrank an older terminal lab receipt while it intentionally
+        # holds residents offline.  An injected clock is the unit-test seam;
+        # production calls use the real clock and the two code-owned roots.
+        if (
+            _include_personal
+            and qualification_root == QUALIFICATION_ROOT
+            and evaluation_root is None
+            and lab_root is None
+            and now is None
+        ):
+            from .model_runtime_personal import maybe_project_personal
+
+            personal = maybe_project_personal(
+                proc_root=proc_root,
+                observed=observed,
+            )
+            if personal is not None:
+                # Resolve the existing authoritative sources too. A validated
+                # concurrent candidate/transition is an ownership conflict;
+                # old resident/terminal or unknown history does not hide the
+                # process-bound personal session.
+                existing = project_model_runtime(
+                    qualification_root,
+                    evaluation_root=evaluation_root,
+                    lab_root=lab_root,
+                    proc_root=proc_root,
+                    boot_id_path=boot_id_path,
+                    now=lambda: observed,
+                    plan_validator=plan_validator,
+                    terminal_validator=terminal_validator,
+                    _include_personal=False,
+                )
+                return _reconcile_personal_runtime(personal, existing)
         if qualification_root == QUALIFICATION_ROOT and evaluation_root is None and lab_root is None:
-            from .benchmark_program import REPO
             from .benchmark_catalog import read_catalog
-            from .model_runtime_stable import _unknown as stable_unknown, project_active_stable_runtime
+            from .benchmark_program import REPO
+            from .model_runtime_stable import _unknown as stable_unknown
+            from .model_runtime_stable import project_active_stable_runtime
 
             try:
                 catalog = read_catalog(REPO)
@@ -1111,7 +1172,8 @@ def project_model_runtime(
                 FOLLOWON_RUN_ROOT,
                 maybe_project_followon,
             )
-            from .model_runtime_lab import WINDOW_ROOT as LAB_WINDOW_ROOT, maybe_project_lab
+            from .model_runtime_lab import WINDOW_ROOT as LAB_WINDOW_ROOT
+            from .model_runtime_lab import maybe_project_lab
 
             lab = maybe_project_lab(
                 qualification_root, evaluation_root or EVALUATION_RUN_ROOT,

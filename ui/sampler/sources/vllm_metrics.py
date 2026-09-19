@@ -7,6 +7,7 @@ across sample intervals and return None while priming or just after a
 counter reset (vLLM restart -> counters drop to zero).
 """
 import math
+import re
 import time
 
 import requests
@@ -79,6 +80,32 @@ def _fraction(value):
     return value if value is not None and value <= 1 else None
 
 
+def _sglang_decode_counter(text):
+    """Select the decode series; prefill tokens must not inflate decode rate."""
+    values = []
+    pattern = re.compile(
+        r'^sglang:realtime_tokens_total\{((?:[^"{}]|"(?:\\.|[^"\\])*")*)\}\s+(\S+)$'
+    )
+    labels_pattern = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:\\.|[^"\\])*)"')
+    for line in text.splitlines():
+        match = pattern.fullmatch(line.strip())
+        if not match:
+            continue
+        labels = dict(labels_pattern.findall(match[1]))
+        if labels.get("mode") != "decode":
+            continue
+        try:
+            value = _nonnegative(float(match[2]))
+        except ValueError:
+            return None
+        if value is None:
+            return None
+        values.append(value)
+    # The qualified Spark profile has one scheduler. Withhold an ambiguous
+    # multi-scheduler rate instead of guessing how its labels should aggregate.
+    return values[0] if len(values) == 1 else None
+
+
 class VllmMetricsAccumulator:
     """Interpret successive Prometheus snapshots from one vLLM endpoint.
 
@@ -88,7 +115,10 @@ class VllmMetricsAccumulator:
     two subtly different definitions of decode rate, counter reset, or idle.
     """
 
-    def __init__(self):
+    def __init__(self, *, backend="vllm"):
+        if backend not in {"vllm", "sglang"}:
+            raise ValueError("unsupported metrics backend")
+        self.backend = backend
         self._rate_prev = {}   # key -> (monotonic_ts, value)
         self._delta_prev = {}  # key -> value
 
@@ -131,6 +161,9 @@ class VllmMetricsAccumulator:
         """Return ``(sample, None)`` or ``(None, error)`` for one snapshot."""
         metrics = parse_prometheus(text)
         now = time.monotonic() if now is None else now
+
+        if self.backend == "sglang":
+            return self._observe_sglang(text, metrics, now)
 
         running = _first(metrics, _RUNNING)
         waiting = _first(metrics, _WAITING)
@@ -186,6 +219,29 @@ class VllmMetricsAccumulator:
             "mtp_acceptance_rate": accept_rate,
             "mtp_draft_tokens": draft_delta,
             "mtp_accepted_tokens": accepted_delta,
+        }, None
+
+    def _observe_sglang(self, text, metrics, now):
+        running = _nonnegative(metrics.get("sglang:num_running_reqs"))
+        waiting = _nonnegative(metrics.get("sglang:num_queue_reqs"))
+        cache = _fraction(metrics.get("sglang:full_token_usage"))
+        if any(value is None for value in (running, waiting, cache)):
+            self.reset()
+            return None, "sglang /metrics has missing or invalid core gauges"
+        return {
+            "running_requests": running,
+            "waiting_requests": waiting,
+            "gpu_cache_usage_pct": cache * 100.0,
+            # These gauges describe the server's reporting window.
+            "gpu_prefix_cache_hit_rate": _fraction(metrics.get("sglang:cache_hit_rate")),
+            "tokens_per_sec_decode": self._rate(
+                "sglang_decode_tokens", _sglang_decode_counter(text), now
+            ),
+            "mtp_acceptance_rate": _fraction(metrics.get("sglang:spec_accept_rate")),
+            # Accept length includes the target token; it cannot supply either
+            # of these accepted-draft/proposed-draft interval counts.
+            "mtp_draft_tokens": None,
+            "mtp_accepted_tokens": None,
         }, None
 
 
