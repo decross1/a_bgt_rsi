@@ -259,6 +259,29 @@ completion was 3/3; manual source fidelity was mixed, not 3/3. One sampled
 conversation cannot attribute these wording or semantic differences to KV
 dtype.
 
+## Next scientific improvement
+
+The highest-value next change is a compact source-verification contract. Ask
+the model to identify each important theorem, equilibrium, assumption, or
+derived number by its source anchor; preserve its scope and quantifiers; and
+show the calculation when applicable. For proposed experiments, require the
+mapping from observable measurements to the theoretical state, the comparator,
+and the specific extension claim that a failed result would reject. This
+should replace repetitive exposition within the existing answer budget.
+
+This recommendation follows the observed source-object, scope, and numerical
+consistency errors. The paper runs already used medium reasoning, and their
+completed but incorrect answers would not trigger a timeout or no-final
+fallback. Simply escalating every answer to more reasoning is therefore not
+supported by these results.
+
+The contract is **proposed, not a measured improvement**. At the next evaluation
+window, compare the current prompt against this suffix on four fresh,
+source-bound questions, with a frozen answer key, unchanged runtime and request
+policy, alternating arm order, and no retries. Record material source errors,
+completion, time, and tokens. The local `next-single-improvement.md` artifact
+contains the exact proposed suffix and the eight-call validation plan.
+
 ## Remaining comparisons and use
 
 The independently reviewed NVIDIA/SGLang recipe and checkpoint reached a live
@@ -274,7 +297,22 @@ that behavior, including the same `/model` draft path and three steps/four
 draft tokens. No evaluation calls were issued before the exact source guard
 stopped this attempt for a controller correction. This is a controller
 metadata mismatch, not a quality or hardware rejection of the model. The
-corrected controller will be tested with the same image, checkpoint and profile.
+corrected controller reached HTTP readiness on the second attempt, but another
+recorder error stopped it before task generation: the controller passed the
+source manifest to a helper that needed the runtime lock. The checkout also
+contains a newer runtime lock than the pinned image. These are evaluation
+plumbing failures, not evidence against the model's answer quality.
+
+A CPU-only inspection extracted the image's own runtime lock and verified all
+3,623 declared installed Python files, with zero missing or mismatched files.
+That lock has SHA-256
+`ac017ebaf18adf13637c63a713fd4e94a327edadc85e21aad8e35725a924325e`,
+installed SGLang commit `84cf99860e3086ee0a458a71178343a8ac04fdab`, and tree
+`4957f519e185bfa0388299d8fec3792f4f96102d`. The corrected recorder must bind
+that installed identity separately from the host-side helper checkout. The
+second attempt reached HTTP readiness at 01:45:21 UTC, retained at least
+22.70 GiB available memory with zero candidate swap/OOM, and completed verified
+restoration at 01:51:55 UTC. It issued no evaluation calls.
 
 The initial arm uses 32K/C1 and three native speculative steps; the only launch changes from
 the supplied one-step bring-up profile are three steps and four draft tokens.
