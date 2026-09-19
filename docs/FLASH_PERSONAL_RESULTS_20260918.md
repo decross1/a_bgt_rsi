@@ -1,9 +1,9 @@
 # Flash personal research recovery — September 18, 2026
 
 **In progress.** The optimized Mia endpoint completed useful scientific and
-coding work. MTP and recurrent-state comparisons are complete. The FP8-KV and
-independent NVIDIA/SGLang comparisons remain; this is not a final model
-selection or a production route change.
+coding work. MTP, recurrent-state, child-image, and FP8-KV comparisons are
+complete. The independent NVIDIA/SGLang comparison remains; this is not a final
+model selection or a production route change.
 
 This recovery follows the owner's two September 18 handoffs. The existing
 Gemma/Qwen pair is the rollback configuration, not a required topology. Earlier
@@ -67,6 +67,13 @@ repetition, or sandbox-runner failures in that panel. It used 69 generation
 turns and 28,066 completion tokens, including 9,474 reasoning tokens. Human
 interventions were zero. The historical receipt field `interventions=58`
 counts model-initiated tool calls, not human rescues.
+
+Across those 69 generation turns, median time to the first parsed SSE data event
+was 0.612 seconds and median time to the first emitted reasoning, final, or tool
+channel was 0.643 seconds. Neither is completed-answer latency. Across the 20
+full attempts, median elapsed time was 35.4 seconds, with a range of 18.3 to
+113.6 seconds; that measure includes generation, tools, and grading but excludes
+the 603.5-second cold start and panel setup.
 
 | Request policy | Machine-graded passes | Sum of attempt times | Graded passes / attempt-hour |
 |---|---:|---:|---:|
@@ -190,10 +197,11 @@ The corrected continuation runner now serializes retained reasoning exactly
 as the pinned Mia chat template does for token counting, while leaving the
 generation messages unchanged. It checks generation usage against that count
 after every turn and stops on disagreement. CPU replay reproduced all six
-saved counts across both earlier paper conversations. All three subsequent
-child-auto paper calls also matched their live generation counts exactly.
+saved counts across both earlier paper conversations. All six subsequent
+child-auto and FP8-KV paper calls also matched their live generation counts
+exactly and remained inside the configured 32K input-plus-output context.
 
-## FP8-capable image with ordinary KV
+## Child image with ordinary KV
 
 Before enabling FP8, the new image ran the same 18 controls with ordinary KV
 and BF16 recurrent state. Requests and launch arguments matched the parent
@@ -207,16 +215,69 @@ The first answer still incompletely specified the experimental construction,
 and the third overgeneralized how LLM agents relate to the paper's assumptions.
 These are three completed turns, not three wholly correct scientific answers.
 
+## FP8-KV comparison
+
+The FP8-KV arm completed the same 18 controls on the child image. All request
+files were byte-identical to child auto-KV, and the 95-entry launch argument
+arrays differed only where `--kv-cache-dtype auto` became `fp8`. The startup log
+independently resolved FP8 KV. Both arms retained MTP3, BF16 recurrent state,
+the fixed 2 GiB KV allocation, one request, and the configured 32,768-token
+context.
+
+| Workload | Child auto KV | Child FP8 KV | FP8 change |
+|---|---:|---:|---:|
+| Prose | 28.76 | 27.90 | -3.0% |
+| Scientific explanation | 32.90 | 31.05 | -5.6% |
+| Code generation | 33.32 | 33.74 | +1.3% |
+| Tool arguments | 24.87 | 24.65 | -0.9% |
+
+These are median completion tokens per total request second over three forced
+512-token repeats. The mixed changes do not establish a throughput advantage.
+FP8 reported 80,591 cache tokens versus 54,038 for auto KV under the same 2 GiB
+allocation, a 49.1% increase. That is cache-capacity evidence only: configured
+single-request context remained **32,768**, and neither 54K nor 80K context was
+tested. Draft acceptance in these windows was 53.56% with FP8 and 56.62% with
+auto KV, 3.07 percentage points lower with FP8. Sampled continuations differed,
+so this is descriptive rather than an isolated kernel-quality estimate.
+
+Both profiles selected `3` on every repeated short and long first-token probe,
+with identical top-five lists within each profile. FP8 changed logits and parts
+of the top-five lists across profiles. This does not establish full-trajectory
+or numerical equivalence. FP8 reached readiness in 678.7 seconds, but there is
+no matched clean auto-KV cold-start result for a startup comparison.
+
+The FP8 paper conversation completed all three turns in 55.4, 13.9, and 30.2
+seconds. The second answer correctly computed and interpreted the 1.0
+deviation-gain bound. The third correctly halved it to 0.5 and reached the right
+core theorem-scope conclusion, but categorically denied that an LLM could ever
+be embedded in the theorem's dynamics. The first answer made a material
+comparator error by labeling the original uniform-split equilibrium `γ₁*`
+as the zero-on-tie target. It also omitted bid zero from the full grid,
+abbreviated Assumption 1 below its policy-and-every-selector requirement, and
+did not map observed frequencies into the paper's Poincaré section. Transport
+completion was 3/3; manual source fidelity was mixed, not 3/3. One sampled
+conversation cannot attribute these wording or semantic differences to KV
+dtype.
+
 ## Remaining comparisons and use
 
-The separate FP8-KV-capable child is loading for its live comparison. An
-independently reviewed NVIDIA/SGLang recipe and checkpoint are acquired and
-prepared as a fallback. Its initial local arm will use 32K/C1 and three native
-speculative steps; the only launch changes from the supplied one-step bring-up
-profile are three steps and four draft tokens. It inherits no qualification
-from the upstream release's different 262K/C2 configuration and has no local
-quality result yet. A checkpoint
-and runtime change would be a bundle comparison, not an isolated weight effect.
+The independently reviewed NVIDIA/SGLang recipe and checkpoint are acquired and
+prepared as a fallback, but its local comparison remains pending. Its initial
+arm uses 32K/C1 and three native speculative steps; the only launch changes from
+the supplied one-step bring-up profile are three steps and four draft tokens.
+It inherits no qualification from the upstream release's different 262K/C2
+configuration. A checkpoint and runtime change is a bundle comparison, not an
+isolated weight effect. Final runtime selection therefore remains in progress;
+the completed Mia evidence already supports bounded personal use.
+
+**Personal endpoint ready for use: yes, through a finite monitored session.**
+The qualified `mtp3-fp32-auto` parent remains the conservative working baseline
+while final selection is open. A ready session serves
+`qwen3.8-flash-next-mia` on loopback port 8012; it does not change the lab's
+normal routes. The main observed Mia limitations are occasional excessive
+reasoning without a final answer and substantive errors inside otherwise
+completed scientific prose. The next comparison is the pending SGLang bundle,
+not a prerequisite to using the working Mia endpoint.
 
 See [personal session instructions](FLASH_PERSONAL_RESEARCH.md) for the client,
 explicit reasoning controls, session limits, and exact-ID rollback. Endpoint
@@ -226,11 +287,19 @@ while Flash owns memory and is configured and tested to restore the captured
 residents and caller state when the session ends. The first session completed
 verified exact-ID restoration at 00:13:42 UTC on September 19, without errors;
 restoration took 394.1 seconds after the candidate stopped. The subsequent
-precision session separately pauses those workloads while its candidate runs.
+child/FP8 session also ended without an error and completed verified exact-ID
+restoration at 01:01:11 UTC; its restoration took 396.2 seconds.
 
 Raw requests, streams, grades, runtime observations, and independent audits
 are under the local artifact root
 `a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/`, especially
 `panel-run-a/`, `clarified-contract-arm-run-a/`, `real-repo-repair-run-a/`,
 `paper-mtp3-fp32-auto/`, `legacy-mtp3-fp32-auto/`,
-`legacy-mtp0-fp32-auto/`, and `session-a/`.
+`legacy-mtp0-fp32-auto/`, `controls-mtp3-bf16-child-auto/`,
+`controls-mtp3-bf16-child-fp8/`, `paper-mtp3-bf16-child-auto/`,
+`paper-mtp3-bf16-child-fp8/`, `session-fp8-b/`,
+`controls-child-auto-vs-fp8-independent-audit.md`, and
+`paper-mtp3-bf16-child-fp8-independent-audit.md`. The control audit SHA-256 is
+`902eaf692e88270dee1ff60986e6f66406e89cd3c2b70d4320e3574febf754cc`;
+the FP8 paper audit SHA-256 is
+`dce98879e9af959c08278d3c1a02bd4353929bb424f16d36e48fb5f28629762e`.

@@ -8,9 +8,11 @@ The default runtime is the already qualified Mia optimized MTP3 / reduced
 47,149-token draft vocabulary / V2 / FULL-decode bundle. It uses the existing
 immutable image, weights and packed disk-backed PLE. A separate child image adds
 the reviewed QSA FP8-KV implementation for a personal comparison. It has its own
-specification, contract, container name and compile cache and remains
-unqualified until a live run supplies evidence. Historical qualification is
-prior evidence, not a new result for either precision change.
+specification, contract, container name and compile cache. Live short controls
+and a three-turn paper screen now exist for both its ordinary-KV and FP8-KV
+profiles, but they do not transfer the parent's qualification or settle the
+final runtime selection. Historical qualification is prior evidence, not a new
+result for either precision change.
 
 ## Start and inspect
 
@@ -63,6 +65,20 @@ The no-MTP graph width differs because a step produces one token instead of a
 target token plus three draft tokens. Report that difference. Read startup logs
 for the resolved KV precision. The qualified parent lacks the QSA FP8-KV path;
 only the separately built child may receive `--kv-cache-dtype fp8`.
+
+Every listed arm sets `VLLM_QSA_EXACT_TOPK=1`. In the checksum-bound local QSA
+source this masks blocks outside the visible range and uses `torch.topk` for the
+QSA block selector. “Exact” describes that selector operation; it does not mean
+dense-attention equivalence, deterministic end-to-end generation, or lossless
+speculation. The exact generated source and patch are identified in the local
+`flash-personal-recovery/runtime-audit.md`; the source patch
+`patch_qsa_exact_topk.py` has SHA-256
+`802f6564e514fe5a228738873570f9ce94c230f40d3a7c932cc5893e2147a010`.
+The child build receipt separately binds its combined QSA operations module as
+`625eb5c8e884c1ad4af730b14123d5f6d6afaf7afe550173aece8d7ec5a26470`;
+that module retains the same exact-selector path.
+The motivating persistent-top-k issue is
+[vLLM #54521](https://github.com/vllm-project/vllm/issues/54521).
 
 `--initial-profile` fixes one candidate specification for the entire session.
 Profile commands may switch only among arms belonging to that same exact image;
@@ -148,7 +164,10 @@ are saved alongside them. A timeout or unfinished response exits nonzero.
 Input and output must fit the active 32K context; the medium policy allows up to
 16K output, so reduce `--max-output-tokens` when sending a long paper. The CLI
 checks the served model name but explicitly does not attest the active runtime
-profile; evaluation runners additionally bind the controller and container.
+profile. Its summary currently names the parent candidate request and sets
+`runtime_profile_verified=false`; when calling a child profile, use the live
+session state and launch receipts as the runtime provenance. Evaluation runners
+bind the controller and container separately.
 
 This is an OpenAI-compatible local service; existing clients may use
 `http://127.0.0.1:8012/v1` and model `qwen3.8-flash-next-mia`. Set thinking effort
@@ -210,5 +229,7 @@ requests/responses and runtime observations live under
 `a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/`. The final report must
 name the actual useful profile and endpoint availability, ten practical task
 outcomes, MTP on/off results, startup diagnosis, precision tradeoffs, remaining
-failures, and the next concrete improvement. Until that report exists, this
-document describes the session tools and does not claim model superiority.
+failures, and the next concrete improvement. The in-progress
+[results report](FLASH_PERSONAL_RESULTS_20260918.md) records the completed Mia
+evidence; final runtime selection remains open until the independent SGLang
+comparison terminates. This guide does not claim model superiority.
