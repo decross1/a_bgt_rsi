@@ -1,7 +1,7 @@
 # Permanent local Flash resident
 
 The owner selected this deployment on 2026-09-19 and requested no further
-benchmarks. This selection uses the already measured SGLang v5 bundle; it is
+benchmarks. This selection uses the already measured SGLang model/runtime bundle; it is
 not a new claim of universal benchmark superiority. Prior comparisons remain
 in [the results report](FLASH_PERSONAL_RESULTS_20260918.md).
 
@@ -84,3 +84,31 @@ the current boot, preventing a restart storm. A new boot admits one fresh
 startup. Startup failures and the need for a reboot are reported separately
 from model capability. Neither a successful cold start nor a model selection
 guarantees a later cold start on the same fragmented host.
+
+## 2026-09-19 swap-limit persistence repair
+
+At 08:23 UTC, the resident guard stopped Flash after its leaf cgroup swap-limit
+read failed. The preceding 319 samples showed zero swap and no OOM; two systemd
+daemon reloads triggered by snapd occurred between the last good sample and
+failure. The failing raw token was not retained, so `max` is an inference,
+consistent with [Moby issue 51446](https://github.com/moby/moby/issues/51446).
+
+The v6 control helper uses a versioned v5 launch adapter that adds
+`--annotation 'org.systemd.property.MemorySwapMax=uint64 0'`. This records the
+zero-swap constraint in systemd as well as the kernel. The old adapter and helper
+remain frozen. Image, checkpoint, inference profile, memory guard and reserve
+are unchanged. Launch admission verifies the annotation and the exact container
+scope's persisted `MemorySwapMax=0`; the continuous kernel check remains active.
+
+A paired no-GPU check on this host showed that native equal memory/memory-swap
+flags produce kernel zero but systemd infinity, whereas the annotation produces
+zero in both. This mechanism is supported by the installed
+[runc systemd annotation contract](https://github.com/opencontainers/runc/blob/v1.3.4/docs/systemd.md).
+A deliberate system-manager reload test was unavailable without privileged
+access, so it is not claimed as tested. No privileged workaround was used.
+
+The existing same-boot fault latch remains in place. For this diagnosed repair,
+maintenance archives the exact fault state and verifies removal with the old
+helper before one supervised start with the repaired helper. This exception
+is recorded with the fault-state and new-helper hashes; it does not enable
+automatic retries after arbitrary faults or clear the pending reboot follow-up.

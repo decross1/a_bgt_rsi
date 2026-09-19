@@ -23,8 +23,8 @@ from datetime import datetime, timezone
 
 ROOT = Path(__file__).resolve().parents[1]
 PREP = Path('/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/sglang-fallback-prep')
-BUNDLE = PREP / 'sglang_session_s3_v5.py'
-BUNDLE_SHA = '355d52f0311d8eff89d13b8c8a718fb3a0a6300084e6a6337a0e61fbd6fcd01e'
+BUNDLE = PREP / 'sglang_session_s3_v6.py'
+BUNDLE_SHA = '0d1d66235adfea525729b3ac5140942d5e765be45b7badc0cebe456a68c289a9'
 RECEIPT = PREP / 'checkpoint-verification-bf16-20260918T2343Z/checkpoint-receipt.json'
 RECEIPT_SHA = '0489e1741832e6be63267cb1a04a1eb05736d27038fe924ac50cf02bce108287'
 MODEL = 'nvidia/Qwen3.8-Flash-Next-NVFP4'
