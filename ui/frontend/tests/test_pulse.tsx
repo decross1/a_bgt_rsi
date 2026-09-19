@@ -201,7 +201,11 @@ vi.mock("../src/api/activity", () => ({
   }),
 }));
 
-import Pulse, { stripMonitorChurn } from "../src/routes/Pulse";
+import Pulse, {
+  inventoryGenerationKey,
+  isModelRuntime,
+  stripMonitorChurn,
+} from "../src/routes/Pulse";
 import { getLabTodo, type ServedModel } from "../src/api/http";
 import { refreshPoll } from "../src/api/pollhub";
 import type { MonitorResponse } from "../src/types/activity";
@@ -670,6 +674,165 @@ describe("Pulse (/)", () => {
     expect(screen.getByTestId("unobserved-flash-status")).toHaveTextContent("starting");
     expect(screen.getByTestId("unobserved-flash-status")).not.toHaveClass("text-red-400");
     expect(verdict).not.toHaveTextContent(/HEALTHY|telemetry fresh; Gemma metrics present|DOWN/);
+  });
+
+  it.each(["starting", "ready"])("recognizes the current personal SGLang session during %s", async (phase) => {
+    const http = await import("../src/api/http");
+    const paused = {
+      model: null, service_status: "offline", models_endpoint_status: "unreachable",
+      identity_status: "unknown", metrics_endpoint_status: "unreachable",
+      activity_status: "unknown", metrics: null,
+    } as const;
+    (http.getServedModels as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      gemma: modelInventoryRow({ ...paused, configured_model: "gemma-4-26b-a4b" }),
+      qwen: modelInventoryRow({ ...paused, url: "http://127.0.0.1:8001", configured_model: "qwen3.8-27b-nvfp4-mtp" }),
+      flash: modelInventoryRow({
+        ...(phase === "starting" ? paused : {}),
+        url: "http://127.0.0.1:30080",
+        model: phase === "ready" ? "nvidia/Qwen3.8-Flash-Next-NVFP4" : null,
+        configured_model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        deployment_role: "research_candidate", benchmark_cohort: "flash",
+      }),
+    });
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "candidate_research", mode_source: "personal_session_state",
+      mode_source_sha256: "a".repeat(64), resident_services_expected: "stopped",
+      nara_service_expected: "paused", run_id: "session-s3-readiness-v5-001",
+      phase, personal_endpoint: "sglang", candidate_id: "b".repeat(64),
+      candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText("Personal Flash session active")).toBeInTheDocument());
+    expect(screen.getByTestId("unobserved-gemma-status")).toHaveTextContent("expected during research");
+    expect(screen.getByTestId("unobserved-qwen-status")).toHaveTextContent("expected during research");
+    expect(screen.queryByText("Resident serving")).not.toBeInTheDocument();
+    if (phase === "starting") {
+      expect(screen.getByTestId("unobserved-flash-status")).toHaveTextContent("starting");
+      expect(screen.getByText(/controller reports the starting phase/)).toBeInTheDocument();
+    } else {
+      expect(screen.getByTestId("nvidia/Qwen3.8-Flash-Next-NVFP4-status")).toHaveTextContent("online");
+      expect(screen.getByText(/controller reports the ready phase/)).toBeInTheDocument();
+      expect(screen.queryByText(/is available for research and coding/)).not.toBeInTheDocument();
+    }
+  });
+
+  it("keeps a ready personal endpoint visibly offline when the matching probe is offline", async () => {
+    const http = await import("../src/api/http");
+    const offline = {
+      model: null, service_status: "offline", models_endpoint_status: "unreachable",
+      identity_status: "unknown", metrics_endpoint_status: "unreachable",
+      activity_status: "unknown", metrics: null,
+    } as const;
+    (http.getServedModels as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      gemma: modelInventoryRow({ ...offline, configured_model: "gemma-4-26b-a4b" }),
+      qwen: modelInventoryRow({ ...offline, url: "http://127.0.0.1:8001", configured_model: "qwen3.8-27b-nvfp4-mtp" }),
+      flash: modelInventoryRow({
+        ...offline, url: "http://127.0.0.1:30080",
+        configured_model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+        deployment_role: "research_candidate", benchmark_cohort: "flash",
+      }),
+    });
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "candidate_research", mode_source: "personal_session_state",
+      mode_source_sha256: "a".repeat(64), resident_services_expected: "stopped",
+      nara_service_expected: "paused", run_id: "session-s3-readiness-v5-001",
+      phase: "ready", personal_endpoint: "sglang", candidate_id: "b".repeat(64),
+      candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText(/controller reports the ready phase/)).toBeInTheDocument());
+    expect(screen.getByTestId("unobserved-flash-status")).toHaveTextContent("offline");
+    expect(screen.queryByText(/is available for research and coding/)).not.toBeInTheDocument();
+  });
+
+  it("does not present retained Mia inventory as the selected personal SGLang endpoint", async () => {
+    const http = await import("../src/api/http");
+    (http.getServedModels as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      gemma: modelInventoryRow({ configured_model: "gemma-4-26b-a4b" }),
+      qwen: modelInventoryRow({ url: "http://127.0.0.1:8001", configured_model: "qwen3.8-27b-nvfp4-mtp" }),
+      flash: modelInventoryRow({
+        url: "http://127.0.0.1:8012", model: "qwen3.8-flash-next-mia",
+        configured_model: "qwen3.8-flash-next-mia",
+        deployment_role: "research_candidate", benchmark_cohort: "flash",
+      }),
+    });
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "candidate_research", mode_source: "personal_session_state",
+      mode_source_sha256: "a".repeat(64), resident_services_expected: "stopped",
+      nara_service_expected: "paused", run_id: "session-s3-readiness-v5-001",
+      phase: "ready", personal_endpoint: "sglang", candidate_id: "b".repeat(64),
+      candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    const awaiting = await screen.findByTestId("personal-flash-inventory-awaiting");
+    expect(awaiting).toHaveTextContent("Awaiting a matching endpoint probe");
+    expect(awaiting).toHaveTextContent("http://127.0.0.1:30080");
+    expect(awaiting).toHaveTextContent("qwen3.8-flash-next-mia");
+    expect(screen.queryByTestId("qwen3.8-flash-next-mia-status")).not.toBeInTheDocument();
+  });
+
+  it("requires complete active personal identity and accepts only the bounded unknown shape", () => {
+    const base = {
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode_source: "personal_session_state", candidate_variant: null,
+    };
+    expect(isModelRuntime({
+      ...base, mode: "candidate_research", mode_source_sha256: "a".repeat(64),
+      resident_services_expected: "stopped", nara_service_expected: "paused",
+      run_id: "session-s3-readiness-v5-001", phase: "ready",
+      personal_endpoint: null, candidate_id: null, source_error: null,
+    })).toBe(false);
+    expect(isModelRuntime({
+      ...base, mode: "unknown", mode_source_sha256: null,
+      resident_services_expected: "unknown", nara_service_expected: "unknown",
+      run_id: null, phase: null, personal_endpoint: null, candidate_id: null,
+      source_error: "personal session projection is ambiguous",
+    })).toBe(true);
+  });
+
+  it("renders a malformed active personal projection as unverified", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "candidate_research", mode_source: "personal_session_state",
+      mode_source_sha256: "a".repeat(64), resident_services_expected: "stopped",
+      nara_service_expected: "paused", run_id: "session-s3-readiness-v5-001",
+      phase: "ready", personal_endpoint: null, candidate_id: null,
+      candidate_variant: null, source_error: null,
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(http.getModelRuntime).toHaveBeenCalled());
+    expect(await screen.findByRole("heading", { name: "Operating mode unverified" })).toBeInTheDocument();
+    expect(screen.queryByText("Personal Flash session active")).not.toBeInTheDocument();
+  });
+
+  it("accepts a bounded unknown personal projection without claiming an active session", async () => {
+    const http = await import("../src/api/http");
+    (http.getModelRuntime as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      schema_version: "model-runtime/v1", observed_at: new Date().toISOString(),
+      mode: "unknown", mode_source: "personal_session_state",
+      mode_source_sha256: null, resident_services_expected: "unknown",
+      nara_service_expected: "unknown", run_id: null, phase: null,
+      personal_endpoint: null, candidate_id: null, candidate_variant: null,
+      source_error: "personal session projection is ambiguous",
+    });
+    render(<MemoryRouter><Pulse /></MemoryRouter>);
+    await waitFor(() => expect(http.getModelRuntime).toHaveBeenCalled());
+    expect(await screen.findByRole("heading", { name: "Operating mode unverified" })).toBeInTheDocument();
+    expect(screen.queryByText("Personal Flash session active")).not.toBeInTheDocument();
+  });
+
+  it("starts a new Flash graph generation when candidate identity changes", () => {
+    const row = modelInventoryRow({
+      url: "http://127.0.0.1:30080",
+      configured_model: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+    });
+    const first = inventoryGenerationKey("flash", row, null, "session-current", "a".repeat(64));
+    expect(inventoryGenerationKey("flash", row, null, "session-current", "a".repeat(64))).toBe(first);
+    expect(inventoryGenerationKey("flash", row, null, "session-current", "b".repeat(64))).not.toBe(first);
   });
 
   it("labels controller setup as preparation without implying model services changed", async () => {

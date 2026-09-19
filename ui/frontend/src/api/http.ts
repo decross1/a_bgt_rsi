@@ -118,12 +118,14 @@ export interface ModelRuntime {
   schema_version: "model-runtime/v1";
   observed_at: string;
   mode: "resident" | "candidate_research" | "transitioning" | "unknown";
-  mode_source: "qualification_state" | "extended_evaluation_state" | "followon_evaluation_state" | "followon_resident_state" | "lab_evaluation_state" | "stable_benchmark_state" | "none";
+  mode_source: "qualification_state" | "extended_evaluation_state" | "followon_evaluation_state" | "followon_resident_state" | "lab_evaluation_state" | "stable_benchmark_state" | "personal_session_state" | "none";
   mode_source_sha256: string | null;
   resident_services_expected: "online" | "stopped" | "unknown";
   nara_service_expected: "running" | "paused" | "unknown";
   run_id: string | null;
   phase: string | null;
+  personal_endpoint?: "mia" | "sglang" | null;
+  candidate_id?: string | null;
   candidate_variant?: {
     spec_id: string;
     spec_sha256: string;

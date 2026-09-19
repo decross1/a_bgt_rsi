@@ -204,6 +204,57 @@ def test_endpoint_comes_from_registered_candidate_identity_only():
         endpoint_for_candidate(dataclasses.replace(MIA_MTP3_REDUCED47K_OPT))
 
 
+def test_sglang_endpoint_uses_registered_nvidia_manifest_and_fixed_port():
+    from bench.flash_next_ab.qualification import model_artifact_sha256
+
+    target = personal_client.SGLANG_ENDPOINT
+    assert endpoint_for_candidate(target) is target
+    assert target.validate() == 30080
+    assert target.artifact_sha256 == model_artifact_sha256()
+    with pytest.raises(ValueError, match="registered"):
+        endpoint_for_candidate(dataclasses.replace(target))
+    with pytest.raises(ValueError, match="NVIDIA checkpoint"):
+        dataclasses.replace(target, artifact_sha256="a" * 64).validate()
+
+
+def test_sglang_stream_preserves_reasoning_and_final_without_mia_identity():
+    target = personal_client.SGLANG_ENDPOINT
+    chunks = [chunk.replace(MODEL.encode(), target.served_model.encode()) for chunk in sse(
+        frame(delta={"reasoning_content": "Check the game."}),
+        frame(delta={"content": "Two equilibria."}, finish="stop"),
+        usage_frame(), "[DONE]",
+    )]
+    connection = FakeConnection(FakeResponse(chunks))
+    result = stream_chat(
+        target, [{"role": "user", "content": "Analyze this game."}],
+        get_policy("medium"), seed=17, connection_factory=connection_factory(connection),
+    )
+    assert result.classification == "completed"
+    assert result.response_model == target.served_model
+    assert result.reasoning_content == "Check the game."
+    assert result.content == "Two equilibria."
+    body = json.loads(connection.request_body)
+    assert body["model"] == target.served_model
+    assert body["chat_template_kwargs"] == {"enable_thinking": True, "reasoning_effort": "medium"}
+
+
+def test_sglang_cli_does_not_claim_a_mia_runtime_spec(monkeypatch, tmp_path):
+    def fake_stream(target, *_args, **_kwargs):
+        assert target is personal_client.SGLANG_ENDPOINT
+        return dataclasses.replace(turn("completed", content="answer"), response_model=target.served_model)
+
+    monkeypatch.setattr(personal_client, "stream_chat", fake_stream)
+    assert personal_client.main([
+        "--backend", "sglang", "--prompt", "hello", "--policy", "off",
+        "--output-dir", str(tmp_path / "sglang"),
+    ]) == 0
+    summary = json.loads((tmp_path / "sglang/summary.json").read_text())
+    assert summary["requested_candidate_spec_id"] is None
+    assert summary["requested_backend"] == "sglang"
+    assert summary["requested_model"] == personal_client.SGLANG_ENDPOINT.served_model
+    assert summary["runtime_profile_verified"] is False
+
+
 @pytest.mark.parametrize(
     ("policy_id", "expected"),
     [
@@ -307,6 +358,26 @@ def test_stream_chat_captures_raw_sse_and_proper_token_counts():
     assert result.response_bytes == b"".join(chunks)
     assert connection.request_body == result.request_bytes
     assert connection.closed is True
+
+
+@pytest.mark.parametrize("usage,expected", [
+    ({"completion_tokens": 8, "reasoning_tokens": 5}, 5),
+    ({"completion_tokens": 8, "reasoning_tokens": 0}, 0),
+    ({"reasoning_tokens": 5, "completion_tokens_details": {"reasoning_tokens": 0}}, 0),
+    ({"reasoning_tokens": 5, "completion_tokens_details": None}, 5),
+    ({"completion_tokens": 8}, None),
+])
+def test_receipt_preserves_runtime_reasoning_usage(usage, expected):
+    usage = {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18, **usage}
+    chunks = sse(frame(delta={"content": "answer"}, finish="stop"),
+                 frame(choices=[], usage=usage), "[DONE]")
+    result = stream_chat(
+        MIA_MTP3_REDUCED47K_OPT, [{"role": "user", "content": "Q"}],
+        get_policy("off"), seed=17,
+        connection_factory=connection_factory(FakeConnection(FakeResponse(chunks))),
+    )
+    assert result.receipt()["reasoning_tokens"] == expected
+    assert result.receipt()["usage"] == usage
 
 
 def test_final_first_and_length_exhaustion_are_not_hidden_by_content():

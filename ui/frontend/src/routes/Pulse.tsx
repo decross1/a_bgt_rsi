@@ -102,6 +102,16 @@ const pickQwen = (s: TelemetrySample) => s.vllm_qwen;
 const pickNoTelemetry = (_s: TelemetrySample) => null;
 
 const MODEL_ORDER = ["gemma", "qwen", "flash"] as const;
+const PERSONAL_ENDPOINT = {
+  mia: {
+    url: "http://127.0.0.1:8012",
+    configuredModel: "qwen3.8-flash-next-mia",
+  },
+  sglang: {
+    url: "http://127.0.0.1:30080",
+    configuredModel: "nvidia/Qwen3.8-Flash-Next-NVFP4",
+  },
+} as const;
 const MIA_VARIANT = {
   spec_id: "mia-925d7be6-c0-s1",
   spec_sha256: "dde4fe1f72cf91de92089a95748cee1f6a8204e351d517aa0ae46d8d27122857",
@@ -151,6 +161,8 @@ const isLabFlashRunId = (value: unknown): value is string =>
   typeof value === "string" && /^qfn-ab-[a-z0-9][a-z0-9._-]{0,63}\.flash$/.test(value);
 const isStableBenchmarkRunId = (value: unknown): value is string =>
   typeof value === "string" && /^stable-benchmark-[a-z0-9][a-z0-9._-]{0,47}\.resident$/.test(value);
+const isPersonalSessionId = (value: unknown): value is string =>
+  typeof value === "string" && /^session-[a-z0-9][a-z0-9-]{0,63}$/.test(value);
 const isBoundedUntrustedRuntimeField = (value: unknown, maximum: number): value is string | null =>
   value === null || typeof value === "string" && value.length <= maximum;
 const STABLE_BENCHMARK_PHASES = new Set([
@@ -212,6 +224,24 @@ export interface InventoryHistoryBucket {
 }
 export type InventoryHistory = Record<string, InventoryHistoryBucket>;
 
+/** Bind a graph series to the deployed endpoint and controller identity. */
+export function inventoryGenerationKey(
+  key: string,
+  row: ServedModel,
+  selectedSpecId: string | null | undefined,
+  runtimeRunId: string | null | undefined,
+  candidateId: string | null | undefined,
+): string {
+  return [
+    key,
+    row.url,
+    row.model ?? row.configured_model ?? "unobserved",
+    key === "flash" ? selectedSpecId ?? "unbound" : "resident",
+    runtimeRunId ?? "no-runtime-run",
+    key === "flash" ? candidateId ?? "no-candidate" : "resident",
+  ].join("\u0000");
+}
+
 /** Add each real /api/served_models probe once. A cache replay with the same
  * probed_at cannot fabricate another point; an endpoint/model/runtime change
  * starts a new series instead of joining unlike deployments. */
@@ -256,7 +286,7 @@ function useInventoryHistory(
   return history;
 }
 
-function isModelRuntime(value: unknown): value is ModelRuntime {
+export function isModelRuntime(value: unknown): value is ModelRuntime {
   if (value == null || typeof value !== "object" || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
   const variant = row.candidate_variant;
@@ -281,13 +311,36 @@ function isModelRuntime(value: unknown): value is ModelRuntime {
         source.promotion_authorized === false;
     })()
   );
+  const personalValid = row.mode_source !== "personal_session_state" || (
+    row.candidate_variant === null && (
+      (row.mode === "candidate_research" &&
+        row.resident_services_expected === "stopped" &&
+        row.nara_service_expected === "paused" &&
+        isPersonalSessionId(row.run_id) &&
+        ["starting", "ready"].includes(String(row.phase)) &&
+        ["mia", "sglang"].includes(String(row.personal_endpoint)) &&
+        typeof row.candidate_id === "string" && /^[0-9a-f]{64}$/.test(row.candidate_id) &&
+        typeof row.mode_source_sha256 === "string" && /^[0-9a-f]{64}$/.test(row.mode_source_sha256) &&
+        row.source_error === null) ||
+      (row.mode === "unknown" &&
+        row.resident_services_expected === "unknown" &&
+        row.nara_service_expected === "unknown" &&
+        row.mode_source_sha256 === null &&
+        row.run_id === null &&
+        row.phase === null &&
+        row.personal_endpoint === null &&
+        row.candidate_id === null &&
+        typeof row.source_error === "string" && row.source_error.length > 0)
+    )
+  );
   return (
     row.schema_version === "model-runtime/v1" &&
     typeof row.observed_at === "string" &&
     ["resident", "candidate_research", "transitioning", "unknown"].includes(
       String(row.mode),
     ) &&
-    ["qualification_state", "extended_evaluation_state", "followon_evaluation_state", "followon_resident_state", "lab_evaluation_state", "stable_benchmark_state", "none"].includes(String(row.mode_source)) &&
+    ["qualification_state", "extended_evaluation_state", "followon_evaluation_state", "followon_resident_state", "lab_evaluation_state", "stable_benchmark_state", "personal_session_state", "none"].includes(String(row.mode_source)) &&
+    personalValid &&
     (row.mode_source !== "extended_evaluation_state" || isExtendedFlashRunId(row.run_id)) &&
     (row.mode_source !== "followon_evaluation_state" || isFollowonFlashRunId(row.run_id)) &&
     (row.mode_source !== "followon_resident_state" || isFollowonResidentRunId(row.run_id)) &&
@@ -701,6 +754,7 @@ export default function Pulse() {
       (modelRuntime?.mode_source === "followon_evaluation_state" && isFollowonFlashRunId(modelRuntime.run_id)) ||
       (modelRuntime?.mode_source === "followon_resident_state" && isFollowonResidentRunId(modelRuntime.run_id)) ||
       (modelRuntime?.mode_source === "lab_evaluation_state" && isLabRunId(modelRuntime.run_id)) ||
+      (modelRuntime?.mode_source === "personal_session_state" && isPersonalSessionId(modelRuntime.run_id)) ||
       (modelRuntime?.mode_source === "stable_benchmark_state" && isStableBenchmarkRunId(modelRuntime.run_id) && STABLE_BENCHMARK_PHASES.has(modelRuntime.phase ?? ""))) &&
     typeof modelRuntime.mode_source_sha256 === "string" &&
     /^[0-9a-f]{64}$/.test(modelRuntime.mode_source_sha256) &&
@@ -770,29 +824,48 @@ export default function Pulse() {
     modelRuntime?.mode !== "resident"
       ? modelRuntime?.candidate_variant ?? null
       : null;
+  const personalEndpointKey = candidateResearchWindow &&
+    modelRuntime?.mode_source === "personal_session_state" &&
+    (modelRuntime.personal_endpoint === "mia" || modelRuntime.personal_endpoint === "sglang")
+      ? modelRuntime.personal_endpoint
+      : null;
+  const personalEndpointContract = personalEndpointKey == null
+    ? null
+    : PERSONAL_ENDPOINT[personalEndpointKey];
+  const flashInventory = modelCatalog.find(([key]) => key === "flash")?.[1] ?? null;
+  const personalFlashInventoryMatches = personalEndpointContract == null || (
+    flashInventory?.url === personalEndpointContract.url &&
+    flashInventory.configured_model === personalEndpointContract.configuredModel
+  );
+  const historyCatalog = useMemo(
+    () => personalEndpointContract != null && !personalFlashInventoryMatches
+      ? modelCatalog.filter(([key]) => key !== "flash")
+      : modelCatalog,
+    [modelCatalog, personalEndpointContract, personalFlashInventoryMatches],
+  );
   const inventoryGenerations = useMemo(
     () => Object.fromEntries(modelCatalog.map(([key, row]) => [
       key,
-      [
+      inventoryGenerationKey(
         key,
-        row.url,
-        row.model ?? row.configured_model ?? "unobserved",
-        key === "flash" ? selectedMiaVariant?.spec_id ?? "unbound" : "resident",
-        modelRuntime?.run_id ?? "no-runtime-run",
-      ].join("\u0000"),
+        row,
+        selectedMiaVariant?.spec_id,
+        modelRuntime?.run_id,
+        modelRuntime?.candidate_id,
+      ),
     ])),
-    [modelCatalog, modelRuntime?.run_id, selectedMiaVariant?.spec_id],
+    [modelCatalog, modelRuntime?.candidate_id, modelRuntime?.run_id, selectedMiaVariant?.spec_id],
   );
-  const inventoryHistory = useInventoryHistory(modelCatalog, inventoryGenerations);
+  const inventoryHistory = useInventoryHistory(historyCatalog, inventoryGenerations);
   const candidateEndpointStarting =
     candidateResearchWindow &&
-    ["candidate_start", "readiness"].includes(modelRuntime.phase ?? "");
+    ["candidate_start", "readiness", "launching", "starting"].includes(modelRuntime.phase ?? "");
   const runtimeTransition =
     modelRuntime?.mode === "transitioning" &&
     boundRuntimeMode;
   const runtimePreparing =
     runtimeTransition &&
-    ["preflight", "model_verification", "setup_quiescence", "sentinel_create"].includes(
+    ["preflight", "model_verification", "setup_quiescence", "sentinel_create", "preparing", "prepared"].includes(
       modelRuntime.phase ?? "",
     );
   const residentRuntime =
@@ -800,6 +873,9 @@ export default function Pulse() {
     boundRuntimeMode &&
     modelRuntime.resident_services_expected === "online";
   const inventoryCatalog = modelCatalog.filter(([, row]) => isInventoryModel(row));
+  const inventoryStatusCatalog = personalEndpointContract != null && !personalFlashInventoryMatches
+    ? inventoryCatalog.filter(([key]) => key !== "flash")
+    : inventoryCatalog;
   const inventoryContractReady =
     MODEL_ORDER.every((key) =>
       inventoryCatalog.some(([endpointName]) => endpointName === key),
@@ -829,7 +905,8 @@ export default function Pulse() {
       : residentRuntime
       ? "Resident serving"
       : candidateResearchWindow
-        ? modelRuntime?.mode_source === "lab_evaluation_state" ? "Mia model evaluation active" :
+        ? modelRuntime?.mode_source === "personal_session_state" ? "Personal Flash session active" :
+          modelRuntime?.mode_source === "lab_evaluation_state" ? "Mia model evaluation active" :
           selectedMiaVariant ? "Mia candidate research window" : "Candidate research window"
         : runtimeTransition
           ? runtimePreparing
@@ -848,7 +925,9 @@ export default function Pulse() {
       : residentRuntime
       ? "Controller state expects the production resident services online."
       : candidateResearchWindow
-        ? candidateEndpointStarting
+        ? modelRuntime?.mode_source === "personal_session_state"
+          ? `Gemma, Qwen, and Nara are intentionally paused while the personal Flash controller ${candidateEndpointStarting ? "reports the starting phase" : "reports the ready phase"}. ${personalFlashInventoryMatches ? "The matching endpoint is observed independently below." : "Endpoint inventory has not yet refreshed to the selected personal endpoint."}`
+          : candidateEndpointStarting
           ? `Controller state expects residents stopped while ${selectedMiaVariant ? "the registered Mia variant" : "the research candidate"} endpoint starts. Promotion remains unauthorized.`
           : `Controller state expects residents stopped while ${selectedMiaVariant ? "the registered Mia variant" : "the research candidate"} is evaluated. Promotion remains unauthorized.`
         : runtimeTransition
@@ -1146,24 +1225,24 @@ export default function Pulse() {
                 {inventoryCatalog.length} configured endpoints
               </span>
               <span className="rounded border border-[var(--border-1)] px-2 py-1">
-                {inventoryCatalog.filter(([, row]) => row.service_status === "online").length} online
+                {inventoryStatusCatalog.filter(([, row]) => row.service_status === "online").length} online
               </span>
-              {inventoryCatalog.some(([, row]) => row.service_status === "offline") && (
+              {inventoryStatusCatalog.some(([, row]) => row.service_status === "offline") && (
                 <span className="rounded border border-[var(--border-1)] px-2 py-1">
-                  {inventoryCatalog.filter(([, row]) => row.service_status === "offline").length} offline
+                  {inventoryStatusCatalog.filter(([, row]) => row.service_status === "offline").length} offline
                 </span>
               )}
-              {inventoryCatalog.some(([, row]) => row.service_status === "unknown") && (
+              {inventoryStatusCatalog.some(([, row]) => row.service_status === "unknown") && (
                 <span className="rounded border border-[var(--border-1)] px-2 py-1">
-                  {inventoryCatalog.filter(([, row]) => row.service_status === "unknown").length} service unknown
+                  {inventoryStatusCatalog.filter(([, row]) => row.service_status === "unknown").length} service unknown
                 </span>
               )}
               <span className="rounded border border-[var(--border-1)] px-2 py-1">
-                {inventoryCatalog.filter(([, row]) => row.activity_status === "busy").length} busy
+                {inventoryStatusCatalog.filter(([, row]) => row.activity_status === "busy").length} busy
               </span>
-              {inventoryCatalog.some(([, row]) => row.activity_status === "unknown") && (
+              {inventoryStatusCatalog.some(([, row]) => row.activity_status === "unknown") && (
                 <span className="rounded border border-[var(--border-1)] px-2 py-1">
-                  {inventoryCatalog.filter(([, row]) => row.activity_status === "unknown").length} activity unknown
+                  {inventoryStatusCatalog.filter(([, row]) => row.activity_status === "unknown").length} activity unknown
                 </span>
               )}
             </div>
@@ -1192,6 +1271,20 @@ export default function Pulse() {
             }}
           >
           {inventoryContractReady ? inventoryCatalog.map(([key, row]) => {
+            if (key === "flash" && personalEndpointContract != null && !personalFlashInventoryMatches) {
+              return <div
+                key={key}
+                data-testid="personal-flash-inventory-awaiting"
+                className="rounded-lg border border-[var(--border-1)] bg-[var(--surface-1)] p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <h2 className="font-medium text-[var(--fg)]">{personalEndpointContract.configuredModel}</h2>
+                  <span className="text-xs text-[var(--fg-muted)]">● awaiting probe</span>
+                </div>
+                <p className="mt-2 text-sm text-[var(--fg-muted)]">Awaiting a matching endpoint probe for {personalEndpointContract.url}.</p>
+                <p className="mt-1 text-xs text-[var(--fg-muted)]">The retained inventory still describes {row.configured_model ?? row.model ?? "another endpoint"} at {row.url}.</p>
+              </div>;
+            }
             const presentation = MODEL_PRESENTATION[key] ?? MODEL_PRESENTATION.flash;
             const observedName = typeof row.model === "string" && row.model.trim() ? row.model : null;
             const configuredName = typeof row.configured_model === "string" && row.configured_model.trim()
