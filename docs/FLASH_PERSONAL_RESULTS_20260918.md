@@ -189,9 +189,13 @@ this approach close to the context limit.
 
 ## Remaining comparisons and use
 
-The separate FP8-KV-capable child still requires its live comparison. An
+The separate FP8-KV-capable child is loading for its live comparison. An
 independently reviewed NVIDIA/SGLang recipe and checkpoint are acquired and
-prepared as a fallback; it has no local quality result yet. A checkpoint
+prepared as a fallback. Its initial local arm will use 32K/C1 and three native
+speculative steps; the only launch changes from the supplied one-step bring-up
+profile are three steps and four draft tokens. It inherits no qualification
+from the upstream release's different 262K/C2 configuration and has no local
+quality result yet. A checkpoint
 and runtime change would be a bundle comparison, not an isolated weight effect.
 
 See [personal session instructions](FLASH_PERSONAL_RESEARCH.md) for the client,
@@ -199,8 +203,10 @@ explicit reasoning controls, session limits, and exact-ID rollback. Endpoint
 availability is tied to the live monitored session; this report does not imply
 an indefinitely deployed service. The controller pauses the autonomous lab
 while Flash owns memory and is configured and tested to restore the captured
-residents and caller state when the session ends. The live restoration receipt
-is still required before reporting that this session restored successfully.
+residents and caller state when the session ends. The first session completed
+verified exact-ID restoration at 00:13:42 UTC on September 19, without errors;
+restoration took 394.1 seconds after the candidate stopped. The subsequent
+precision session separately pauses those workloads while its candidate runs.
 
 Raw requests, streams, grades, runtime observations, and independent audits
 are under the local artifact root
