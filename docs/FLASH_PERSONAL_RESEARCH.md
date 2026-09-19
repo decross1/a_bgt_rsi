@@ -14,9 +14,10 @@ prior evidence, not a new result for either precision change.
 
 ## Start and inspect
 
-From the prepared checkout:
+From the canonical checkout after this change is installed:
 
 ```bash
+cd /home/decross1/projects/a_bgt_rsi
 env -u MOCK_LLM .venv-chroma/bin/python -m bench.flash_next_ab.personal_session \
   --run --output-dir /home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/session-UNUSED \
   --hours 4 --floor 20 --initial-profile mtp3-fp32-auto
@@ -27,9 +28,18 @@ resource locks, records the original resident IDs and Nara state, verifies model
 files, pauses background callers and starts Flash. Do not run a second controller
 against an occupied lease. `state.json` is an observation; verify the supervisor
 PID/start identity and endpoint before interpreting a stale state as live work.
+Keep this controller running in its terminal and make requests from a second
+terminal once the live session reaches `phase: ready`. The measured parent
+cold start was about ten minutes; request latency after loading is separate.
 
-The first session is scheduled to finish before the next 03:00 UTC embedding
-job. Longer sessions require coordinating that additional GPU caller too.
+Daily ingestion starts at 03:00 UTC. Its BGE embedder currently defaults to CPU,
+but still shares the Spark's physical memory. Concurrent peak memory with Flash
+has not been measured. Schedule restoration before that job: allow the existing
+15-minute restoration reserve plus five minutes of margin. A four-hour example
+is a session duration, not permission to overlap the ingestion window. The
+controller does not currently enforce this schedule boundary. After ingestion,
+wait for its new terminal receipt and process exit before starting a fresh
+session; a failed ingestion attempt must remain visibly failed.
 
 During a healthy warm session the OpenAI-compatible endpoint is
 `http://127.0.0.1:8012/v1`, served name `qwen3.8-flash-next-mia`. The controller
@@ -169,10 +179,23 @@ file/anonymous memory, and memory/I/O PSI. A PLE file fault is not anonymous
 swap-out. Host pageout alone does not identify a candidate OOM or a quality loss.
 The controller does not disable swap, drop caches or change host VM settings.
 
-To end the session and restore the original containers and Nara state, write:
+To end the session and restore the original containers and Nara state, write
+an atomic command in that session's directory (replace `session-UNUSED`):
 
-```json
-{"id":"owner-restore-1","action":"restore"}
+```bash
+python3 - <<'PY'
+import json, os, uuid
+from pathlib import Path
+
+session = Path('/home/decross1/projects/a_bgt_rsi_v2_artifacts/2026-09-18/flash-personal-recovery/session-UNUSED')
+command = {'id': f'owner-restore-{uuid.uuid4().hex}', 'action': 'restore'}
+temporary = session / f'.command-{uuid.uuid4().hex}.tmp'
+with temporary.open('x') as stream:
+    json.dump(command, stream)
+    stream.flush()
+    os.fsync(stream.fileno())
+os.replace(temporary, session / 'command.json')
+PY
 ```
 
 The session deadline also restores automatically. Read `result.json` and verify

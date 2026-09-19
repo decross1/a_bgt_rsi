@@ -1,8 +1,9 @@
 # Flash personal research recovery — September 18, 2026
 
 **In progress.** The optimized Mia endpoint completed useful scientific and
-coding work. Precision and MTP comparisons are still running; this is not a
-final model selection or a production route change.
+coding work. MTP and recurrent-state comparisons are complete. The FP8-KV and
+independent NVIDIA/SGLang comparisons remain; this is not a final model
+selection or a production route change.
 
 This recovery follows the owner's two September 18 handoffs. The existing
 Gemma/Qwen pair is the rollback configuration, not a required topology. Earlier
@@ -183,9 +184,28 @@ The audit also found that the Mia chat-tokenization endpoint undercounted
 retained reasoning in continuation history: the BF16 second and third calls
 reported 862 more input tokens in generation usage than in preflight. The
 earlier FP32 continuation has the same issue. All recorded requests still fit
-comfortably within 32K, but those preflight counts are not exact. Future
-continuation budgeting must account for the retained reasoning before using
-this approach close to the context limit.
+comfortably within 32K, but those preflight counts are not exact.
+
+The corrected continuation runner now serializes retained reasoning exactly
+as the pinned Mia chat template does for token counting, while leaving the
+generation messages unchanged. It checks generation usage against that count
+after every turn and stops on disagreement. CPU replay reproduced all six
+saved counts across both earlier paper conversations. All three subsequent
+child-auto paper calls also matched their live generation counts exactly.
+
+## FP8-capable image with ordinary KV
+
+Before enabling FP8, the new image ran the same 18 controls with ordinary KV
+and BF16 recurrent state. Requests and launch arguments matched the parent
+BF16 arm; the image changed. Median rates were 28.76 tok/s prose, 32.90 science,
+33.32 code, and 24.87 tool output. The small differences across three repeats
+are descriptive, not a demonstrated general speed gain from the image.
+
+Its paper conversation completed in 57.7, 13.3, and 27.4 seconds. The second
+answer correctly treated epsilon as a bound on unilateral deviation gain.
+The first answer still incompletely specified the experimental construction,
+and the third overgeneralized how LLM agents relate to the paper's assumptions.
+These are three completed turns, not three wholly correct scientific answers.
 
 ## Remaining comparisons and use
 
