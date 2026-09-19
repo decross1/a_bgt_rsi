@@ -261,9 +261,22 @@ dtype.
 
 ## Remaining comparisons and use
 
-The independently reviewed NVIDIA/SGLang recipe and checkpoint are acquired and
-prepared as a fallback, but its local comparison remains pending. Its initial
-arm uses 32K/C1 and three native speculative steps; the only launch changes from
+The independently reviewed NVIDIA/SGLang recipe and checkpoint reached a live
+HTTP server on the first local attempt, but the task comparison remains pending.
+The first start materialized 51.2 GB of file-backed PLE in 201.2 seconds. The
+server then reported 558.98 seconds loading weights and 617.69 seconds through
+tokenizer startup. These stages are startup costs, not decode measurements.
+
+The local readiness controller incorrectly expected the requested `NEXTN` name
+in server metadata. The pinned SGLang source normalizes that name to `EAGLE`
+and uses the target model as the native draft; the observed metadata matched
+that behavior, including the same `/model` draft path and three steps/four
+draft tokens. No evaluation calls were issued before the exact source guard
+stopped this attempt for a controller correction. This is a controller
+metadata mismatch, not a quality or hardware rejection of the model. The
+corrected controller will be tested with the same image, checkpoint and profile.
+
+The initial arm uses 32K/C1 and three native speculative steps; the only launch changes from
 the supplied one-step bring-up profile are three steps and four draft tokens.
 It inherits no qualification from the upstream release's different 262K/C2
 configuration. A checkpoint and runtime change is a bundle comparison, not an
