@@ -71,10 +71,22 @@ fi
 # Gate 4 -- memory preflight (reads /proc/meminfo MemAvailable; NEVER
 # nvidia-smi on this unified-memory box). Non-zero return = refuse/fail-closed.
 # shellcheck source=../experiments/exp008_qat_eval/preflight_mem.sh
+if "$PYTHON" -m orchestrator.flash_resident selected; then
+  if ! "$PYTHON" -m orchestrator.flash_resident check-ready; then
+    log "REFUSE: selected Flash resident is not ready or lacks its 20 GiB reserve"
+    exit 0
+  fi
+else
+selection=$?
+if [ "$selection" -ne 1 ]; then
+  log "REFUSE: model deployment selection is invalid"
+  exit 1
+fi
 source "$MEM_GUARD"
 if ! preflight_mem_guard "$MEM_NEED_GIB"; then
   log "REFUSE: preflight_mem_guard rejected need=${MEM_NEED_GIB}GiB (+30 OS margin) -- a skeptic load now could starve the OS. Exit 0."
   exit 0
+fi
 fi
 
 # Secrets seam (P0, LOOP_V1 2026-08-14): cron does NOT inherit the user's

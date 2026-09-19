@@ -291,7 +291,7 @@ def test_restated_with_in_set_doc_id_returned(no_mock, monkeypatch):
     assert out["restate_verdict"] == "restated"
     assert out["restating_doc_id"] == "a1"
     # default backend resolves from NARA_SKEPTIC_BACKEND (vllm-qwen)
-    assert out["backend"] == "vllm-qwen"
+    assert out["backend"] == "sglang-flash"
     assert isinstance(out["model"], str) and out["model"]
 
 
@@ -348,4 +348,4 @@ def test_explicit_backend_kwarg_overrides_env(no_mock, monkeypatch):
     out = rs_mod.restate_attack("h", backend="vllm-gemma")
     assert cap["restate_canonicalize"][0]["backend"] == "vllm-gemma"
     assert cap["restate_judge"][0]["backend"] == "vllm-gemma"
-    assert out["backend"] == "vllm-gemma"
+    assert out["backend"] == "sglang-flash"

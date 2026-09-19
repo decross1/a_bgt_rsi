@@ -14,8 +14,36 @@
 set -u
 ts() { date -u +%FT%TZ; }
 
+# Owner selected Flash as the permanent resident (2026-09-19). Its user
+# service owns startup and fault handling; never revive rollback models.
+REPO="/home/decross1/projects/a_bgt_rsi"
+if [ -f "$REPO/config/model_deployment.json" ]; then
+  (cd "$REPO" && "$REPO/.venv-chroma/bin/python" -m orchestrator.flash_resident selected)
+  selection=$?
+  if [ "$selection" -eq 0 ]; then
+    echo "[$(ts)] Flash resident selected; lifecycle belongs to flash-resident.service"
+    exit 0
+  elif [ "$selection" -ne 1 ]; then
+    echo "[$(ts)] Deployment selection invalid; refusing legacy model restart"
+    exit 1
+  fi
+fi
+
 if docker ps -a --format '{{.Names}}' | grep -q '^vllm-qwen-ab'; then
   echo "[$(ts)] A/B window open (vllm-qwen-ab present) — standing down"
+  exit 0
+fi
+
+# A manifest edit must not start the rollback pair alongside an owned Flash
+# engine that has not yet been stopped.
+flash_service_state=$(systemctl --user show flash-resident.service -p ActiveState --value 2>/dev/null || true)
+case "$flash_service_state" in
+  active|activating|deactivating)
+    echo "[$(ts)] Flash service owns the runtime transition; rollback remains stopped"
+    exit 0 ;;
+esac
+if docker ps --format '{{.Names}}' | grep -q '^qwen38fn-'; then
+  echo "[$(ts)] Flash container is running; refusing concurrent rollback startup"
   exit 0
 fi
 

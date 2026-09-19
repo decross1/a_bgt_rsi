@@ -340,6 +340,7 @@ def test_async_wrapper_receives_existing_record_contract(monkeypatch, tmp_path):
 
     record = asyncio.run(W.call_async(
         MESSAGES,
+        backend="resident-vllm-gemma",
         model=MODEL,
         profile="scientist",
         max_tokens=16,
@@ -541,6 +542,7 @@ def test_tool_loop_receives_reconstructed_turns(monkeypatch, tmp_path):
     records = W.call_with_tools(
         MESSAGES,
         tools,
+        backend="resident-vllm-gemma",
         model=MODEL,
         max_depth=1,
         log_path=None,

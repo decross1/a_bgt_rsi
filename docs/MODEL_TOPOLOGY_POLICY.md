@@ -1,5 +1,30 @@
 # Model topology policy — owner amendment, 2026-09-15
 
+## Permanent resident decision — 2026-09-19
+
+The owner explicitly selected Flash as the permanent local model, ended further
+benchmarking, and requested migration of other projects' Gemma consumers. The
+selected deployment is recorded in `config/model_deployment.json`: NVIDIA
+Flash-Next NVFP4 on the reviewed SGLang image, 32K total context, one running
+request, FP32 recurrent state, BF16 KV, native NEXTN three-step speculation,
+and a 4 GiB resident cache for NVMe-backed PLE. The host reserve is 20 GiB.
+
+This changes the production topology. Historical pair-restoration rules below
+remain evidence about prior experiments; they do not undo this decision.
+Gemma and Qwen 27B containers are retained as stopped, manual rollback options.
+Generator and critic role calls route to Flash with truthful model/runtime
+provenance. Their shared weights do not provide model-family independence.
+
+Selection is distinct from availability: `run_state/flash_resident.json` and
+live endpoint identity determine whether Flash is actually serving. The
+`flash-resident.service` unit starts it at login/boot with user lingering,
+keeps resource guards running, and prevents automatic same-boot retries after
+a serving fault. Research callers wait for readiness; no benchmark or model
+promotion is inferred from starting the service. See
+[`FLASH_RESIDENT.md`](FLASH_RESIDENT.md) for operation and reboot follow-up.
+
+## Earlier topology amendment
+
 The owner instructed:
 
 > if there are any rules about running two models concurrently, scratch those, we have other ways to vary critic model and such.

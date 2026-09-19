@@ -1,9 +1,10 @@
-"""Strict, model-aware generation policies for local vLLM calls.
+"""Strict, model-aware generation policies for local model calls.
 
-The resolver is deliberately inert for legacy calls: when a caller supplies
-neither a profile nor a new policy control, it returns the same three sampling
-kwargs the wrapper historically sent.  Named profiles are experimental arms;
-they do not change any call site's default policy by themselves.
+The resolver remains inert for explicit historical-resident calls: without a
+profile or new policy control it returns the same three sampling kwargs the
+wrapper historically sent. The permanent Flash route supplies an explicit
+generator or critic role so the template cannot fall into an accidental
+reasoning default. Named profiles are explicit model-qualified policies.
 """
 
 from __future__ import annotations
@@ -12,8 +13,9 @@ import copy
 import json
 import math
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 
 class _Unset:
@@ -25,10 +27,21 @@ UNSET = _Unset()
 
 _GEMMA_BACKEND = "vllm-gemma"
 _QWEN_BACKEND = "vllm-qwen"
-_LOCAL_BACKENDS = frozenset({_GEMMA_BACKEND, _QWEN_BACKEND})
+_FLASH_BACKEND = "sglang-flash"
+_RESIDENT_GEMMA_BACKEND = "resident-vllm-gemma"
+_RESIDENT_QWEN_BACKEND = "resident-vllm-qwen"
+_BACKEND_FAMILY = {
+    _GEMMA_BACKEND: _GEMMA_BACKEND,
+    _QWEN_BACKEND: _QWEN_BACKEND,
+    _FLASH_BACKEND: _FLASH_BACKEND,
+    _RESIDENT_GEMMA_BACKEND: _GEMMA_BACKEND,
+    _RESIDENT_QWEN_BACKEND: _QWEN_BACKEND,
+}
+_LOCAL_BACKENDS = frozenset({_GEMMA_BACKEND, _QWEN_BACKEND, _FLASH_BACKEND})
 _SUPPORTED_MODELS = {
     _GEMMA_BACKEND: frozenset({"gemma-4-26b-a4b"}),
     _QWEN_BACKEND: frozenset({"qwen3.8-27b-nvfp4-mtp"}),
+    _FLASH_BACKEND: frozenset({"nvidia/Qwen3.8-Flash-Next-NVFP4"}),
 }
 _QWEN_EFFORTS = frozenset({"low", "medium", "xhigh"})
 _QWEN_STRUCTURED_OUTPUT_TRAPS = frozenset({
@@ -47,6 +60,26 @@ _ALLOWED_EXTRA_BODY = frozenset({
     "repetition_penalty",
     "chat_template_kwargs",
 })
+_FLASH_ROLE_EXTRA = {
+    "generator": {
+        "top_k": 20,
+        "min_p": 0,
+        "presence_penalty": 1.5,
+        "repetition_penalty": 1,
+        "chat_template_kwargs": {"enable_thinking": False},
+    },
+    "critic": {
+        "top_k": 20,
+        "min_p": 0,
+        "presence_penalty": 0,
+        "repetition_penalty": 1,
+        "chat_template_kwargs": {"enable_thinking": True},
+    },
+}
+_FLASH_ROLE_SAMPLING = {
+    "generator": (0.7, 0.8),
+    "critic": (1.0, 0.95),
+}
 
 
 @dataclass(frozen=True)
@@ -69,18 +102,18 @@ PROFILES: Mapping[str, _Profile] = {
     # profiles above. They differ intentionally and must be named explicitly.
     "coding_precise": _Profile(0.2, 0.9, qwen_reasoning_effort="medium"),
     "dialog": _Profile(0.3, 0.9),
-    "scientist": _Profile(0.7, 0.95),
+    "scientist": _Profile(0.7, 0.95, qwen_reasoning_effort="medium"),
     "critic_current": _Profile(
-        0.2, 0.95, frozenset({_QWEN_BACKEND}), "xhigh"),
+        0.2, 0.95, frozenset({_QWEN_BACKEND, _FLASH_BACKEND}), "xhigh"),
     "critic_medium": _Profile(
-        0.2, 0.95, frozenset({_QWEN_BACKEND}), "medium"),
+        0.2, 0.95, frozenset({_QWEN_BACKEND, _FLASH_BACKEND}), "medium"),
     "critic_low": _Profile(
-        0.2, 0.95, frozenset({_QWEN_BACKEND}), "low"),
+        0.2, 0.95, frozenset({_QWEN_BACKEND, _FLASH_BACKEND}), "low"),
     "critic": _Profile(0.7, 0.95, qwen_reasoning_effort="medium"),
     "qwen_card_thinking": _Profile(
         1.0,
         0.95,
-        frozenset({_QWEN_BACKEND}),
+        frozenset({_QWEN_BACKEND, _FLASH_BACKEND}),
         "xhigh",
         {
             "top_k": 20,
@@ -92,14 +125,14 @@ PROFILES: Mapping[str, _Profile] = {
     "qwen_card_coding": _Profile(
         0.6,
         0.95,
-        frozenset({_QWEN_BACKEND}),
+        frozenset({_QWEN_BACKEND, _FLASH_BACKEND}),
         "medium",
         {"top_k": 20},
     ),
     "qwen_card_instruct": _Profile(
         0.7,
         0.8,
-        frozenset({_QWEN_BACKEND}),
+        frozenset({_QWEN_BACKEND, _FLASH_BACKEND}),
         extra_body={
             "top_k": 20,
             "min_p": 0,
@@ -159,7 +192,7 @@ def _profile_override(caller_tag: str | None) -> str | None:
 
 def _validate_number(name: str, value: Any, low: float, high: float) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{name} must be a number in [{low}, {high}]")
+        raise TypeError(f"{name} must be a number in [{low}, {high}]")
     if not math.isfinite(float(value)) or not low <= float(value) <= high:
         raise ValueError(f"{name} must be a finite number in [{low}, {high}]")
 
@@ -177,10 +210,11 @@ def _merge_extra(base: Mapping[str, Any], override: Mapping[str, Any]) -> dict[s
 
 
 def _validate_extra_body(backend_name: str, value: Any) -> dict[str, Any]:
+    backend_family = _BACKEND_FAMILY.get(backend_name, backend_name)
     if not isinstance(value, Mapping):
-        raise ValueError("extra_body must be an object")
+        raise TypeError("extra_body must be an object")
     extra = copy.deepcopy(dict(value))
-    if backend_name == _QWEN_BACKEND:
+    if backend_family in {_QWEN_BACKEND, _FLASH_BACKEND}:
         trapped = sorted(_QWEN_STRUCTURED_OUTPUT_TRAPS.intersection(extra))
         if trapped:
             raise ValueError(
@@ -206,7 +240,7 @@ def _validate_extra_body(backend_name: str, value: Any) -> dict[str, Any]:
         if not isinstance(template, Mapping):
             raise ValueError("extra_body.chat_template_kwargs must be an object")
         template = dict(template)
-        if backend_name == _QWEN_BACKEND:
+        if backend_family in {_QWEN_BACKEND, _FLASH_BACKEND}:
             if "reasoning_effort" in template:
                 raise ValueError(
                     "put Qwen reasoning_effort in the top-level request field")
@@ -218,7 +252,7 @@ def _validate_extra_body(backend_name: str, value: Any) -> dict[str, Any]:
             if ("enable_thinking" in template
                     and not isinstance(template["enable_thinking"], bool)):
                 raise ValueError("Qwen enable_thinking must be boolean")
-        elif backend_name == _GEMMA_BACKEND:
+        elif backend_family == _GEMMA_BACKEND:
             unknown_template = sorted(set(template) - {"enable_thinking"})
             if unknown_template:
                 raise ValueError(
@@ -247,6 +281,7 @@ def resolve_generation_policy(
     seed: Any = UNSET,
     reasoning_effort: Any = UNSET,
     extra_body: Any = UNSET,
+    default_role: str | None = None,
 ) -> ResolvedGenerationPolicy:
     """Resolve one policy with explicit-call values taking precedence.
 
@@ -255,6 +290,9 @@ def resolve_generation_policy(
     all pre-policy backend and model behavior for calls that do not opt in.
     """
 
+    backend_family = _BACKEND_FAMILY.get(backend_name, backend_name)
+    if default_role not in {None, "generator", "critic"}:
+        raise ValueError("default_role must be generator, critic, or null")
     selected = profile if profile is not None else _profile_override(caller_tag)
     spec = None
     if selected is not None:
@@ -263,18 +301,23 @@ def resolve_generation_policy(
                 f"unknown generation profile {selected!r}; "
                 f"known profiles: {sorted(PROFILES)}")
         spec = PROFILES[selected]
-        if backend_name not in spec.backends:
+        if backend_family not in spec.backends:
             raise ValueError(
                 f"profile {selected!r} is not supported on backend "
                 f"{backend_name!r}")
 
+    flash_role = (
+        default_role
+        if backend_family == _FLASH_BACKEND and selected is None
+        else None
+    )
     new_controls = reasoning_effort is not UNSET or extra_body is not UNSET
-    metadata_enabled = spec is not None or new_controls
+    metadata_enabled = spec is not None or new_controls or flash_role is not None
     if metadata_enabled:
-        if backend_name not in _LOCAL_BACKENDS:
+        if backend_family not in _LOCAL_BACKENDS:
             raise ValueError(
                 f"generation profiles are not supported on backend {backend_name!r}")
-        supported = _SUPPORTED_MODELS[backend_name]
+        supported = _SUPPORTED_MODELS[backend_family]
         if model_name not in supported:
             raise ValueError(
                 f"unsupported model {model_name!r} for backend {backend_name!r}; "
@@ -283,10 +326,12 @@ def resolve_generation_policy(
     resolved_temperature = (
         temperature if temperature is not UNSET
         else spec.temperature if spec is not None
+        else _FLASH_ROLE_SAMPLING[flash_role][0] if flash_role is not None
         else 0.0)
     resolved_top_p = (
         top_p if top_p is not UNSET
         else spec.top_p if spec is not None
+        else _FLASH_ROLE_SAMPLING[flash_role][1] if flash_role is not None
         else 1.0)
     resolved_seed = None if seed is UNSET else seed
     _validate_number("temperature", resolved_temperature, 0, 2)
@@ -297,11 +342,14 @@ def resolve_generation_policy(
         raise ValueError("seed must be an integer or null")
 
     profile_effort = None
-    if spec is not None and backend_name == _QWEN_BACKEND:
+    if (spec is not None
+            and backend_family in {_QWEN_BACKEND, _FLASH_BACKEND}):
         profile_effort = spec.qwen_reasoning_effort
+    if flash_role == "critic":
+        profile_effort = "medium"
     resolved_effort = reasoning_effort if reasoning_effort is not UNSET else profile_effort
     if reasoning_effort is not UNSET:
-        if backend_name != _QWEN_BACKEND:
+        if backend_family not in {_QWEN_BACKEND, _FLASH_BACKEND}:
             raise ValueError(
                 f"backend {backend_name!r} does not support reasoning_effort")
         if resolved_effort not in _QWEN_EFFORTS:
@@ -315,22 +363,48 @@ def resolve_generation_policy(
             "Qwen reasoning_effort must be one of low, medium, xhigh; "
             f"got {resolved_effort!r}")
 
-    profile_extra = spec.extra_body if spec is not None else {}
+    profile_extra = (
+        spec.extra_body if spec is not None
+        else _FLASH_ROLE_EXTRA[flash_role] if flash_role is not None
+        else {}
+    )
     explicit_extra = {} if extra_body is UNSET else extra_body
     if not isinstance(explicit_extra, Mapping):
-        raise ValueError("extra_body must be an object")
+        raise TypeError("extra_body must be an object")
     merged_extra = _merge_extra(profile_extra, explicit_extra)
+    # An explicit effort is an explicit request to think. Conversely, an
+    # explicit nonthinking template on the critic role suppresses its implicit
+    # medium effort so the server is never sent a knowingly ignored control.
+    if flash_role is not None and reasoning_effort is not UNSET:
+        template = dict(merged_extra.get("chat_template_kwargs", {}))
+        template["enable_thinking"] = True
+        merged_extra["chat_template_kwargs"] = template
+    if (flash_role == "critic" and reasoning_effort is UNSET
+            and merged_extra.get("chat_template_kwargs", {}).get(
+                "enable_thinking") is False):
+        resolved_effort = None
     if merged_extra:
-        if backend_name not in _LOCAL_BACKENDS:
+        if backend_family not in _LOCAL_BACKENDS:
             raise ValueError(
                 f"extra_body is not supported on backend {backend_name!r}")
         merged_extra = _validate_extra_body(backend_name, merged_extra)
 
+    # The permanent Flash resident defaults named non-reasoning profiles to
+    # explicit instruct mode. Profiles carrying an effort are explicit
+    # reasoning requests. This prevents the Qwen template's xhigh default from
+    # silently turning planner/precise/deterministic calls into long thinkers.
+    if spec is not None and backend_family == _FLASH_BACKEND:
+        template = dict(merged_extra.get("chat_template_kwargs", {}))
+        template.setdefault("enable_thinking", resolved_effort is not None)
+        merged_extra["chat_template_kwargs"] = template
+        merged_extra = _validate_extra_body(backend_name, merged_extra)
+
     qwen_thinking = bool(
-        backend_name == _QWEN_BACKEND
+        backend_family in {_QWEN_BACKEND, _FLASH_BACKEND}
         and merged_extra.get("chat_template_kwargs", {}).get(
             "enable_thinking", True))
-    if backend_name == _QWEN_BACKEND and not qwen_thinking and resolved_effort is not None:
+    if (backend_family in {_QWEN_BACKEND, _FLASH_BACKEND}
+            and not qwen_thinking and resolved_effort is not None):
         raise ValueError(
             "reasoning_effort is ignored when Qwen thinking is disabled; "
             "omit it instead")
@@ -346,7 +420,7 @@ def resolve_generation_policy(
         request_kwargs["extra_body"] = copy.deepcopy(merged_extra)
 
     gemma_thinking = bool(
-        backend_name == _GEMMA_BACKEND
+        backend_family == _GEMMA_BACKEND
         and merged_extra.get("chat_template_kwargs", {}).get("enable_thinking"))
     # Qwen3.8 preserves thought history while thinking is enabled. Gemma's
     # pinned template enters its thinking/tool format whenever tools are
@@ -354,9 +428,10 @@ def resolve_generation_policy(
     # Gemma tool loop must retain a server-supplied reasoning field.
     preserve_tool_reasoning = bool(
         metadata_enabled
-        and (qwen_thinking or backend_name == _GEMMA_BACKEND))
+        and (qwen_thinking or backend_family == _GEMMA_BACKEND))
     effective_effort = resolved_effort
-    if (metadata_enabled and backend_name == _QWEN_BACKEND
+    if (metadata_enabled
+            and backend_family in {_QWEN_BACKEND, _FLASH_BACKEND}
             and qwen_thinking and effective_effort is None):
         effective_effort = "xhigh"  # exact pinned template default
 

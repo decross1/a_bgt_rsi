@@ -19,7 +19,8 @@ from .vllm_streaming import (
 
 
 class VLLMBackend:
-    name = "vllm-gemma"
+    def __init__(self, *, name: str = "vllm-gemma") -> None:
+        self.name = name
 
     def _w(self):
         from agent_wrapper import wrapper as W

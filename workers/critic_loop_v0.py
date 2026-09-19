@@ -31,9 +31,8 @@ import os
 import time
 from typing import Any
 
-from agent_wrapper.backends import get_backend
 from agent_wrapper.cleanup import strip_channel_markup
-from agent_wrapper.wrapper import DEFAULT_BACKEND
+from agent_wrapper.wrapper import resolve_backend_route
 from orchestrator import empirical_context, iteration_cache
 from orchestrator.chroma_query import query_top_k
 from orchestrator.subagent import (
@@ -313,9 +312,9 @@ def _run_single_attack(
     result["skeptic_verdict"] = attack_verdict
     # D-065: the SKEPTIC's own provenance. `subagent_backend`/`_model`
     # above describe the CRITIC sub-agent (gemma by default), so without
-    # these fields a record cannot show whether the independent Qwen or
-    # the same-weights Gemma judged the claim — the D-041/D-044
-    # independence claim was unverifiable from the record. attack() has
+    # these fields a record cannot show which actual serving backend judged
+    # the claim. Under single Flash the legacy labels are policy roles, not
+    # evidence of model independence. attack() has
     # always returned backend/model; only the carry-through was missing.
     result["skeptic_backend"] = out.get("backend") or _configured_skeptic_backend()
     result["skeptic_model"] = out.get("model") or None
@@ -357,8 +356,8 @@ def _run_debate_exchange(
     """The NARA_DEBATE=1 variant of the skeptic exchange (D-065).
 
     Replaces the single-shot attack with workers.debate's bounded
-    multi-turn exchange (challenger on the independent backend, defender
-    on the apparatus's own). The terminal verdict keeps riding on
+    multi-turn exchange (challenger and defender use distinct policy roles;
+    under single Flash they share weights). The terminal verdict keeps riding on
     `skeptic_verdict` for backward compatibility; the model-tagged
     transcript lands additively under `debate`. Same (ran, reason,
     disposition) contract as _run_single_attack; here the D-075 R3b
@@ -784,8 +783,9 @@ def critic_loop_v0(
     # The Co-Scientist insight (D-035) — having the critic on a different
     # model than the generator — is implemented as an operational env var
     # so flipping back is also free.
-    critic_backend = os.environ.get("CRITIC_BACKEND") or None
-    resolved_be = get_backend(critic_backend or DEFAULT_BACKEND)
+    critic_backend = os.environ.get("CRITIC_BACKEND") or "vllm-qwen"
+    route = resolve_backend_route(critic_backend)
+    resolved_be = route.backend
 
     sa_result: SubAgentResult = run_subagent(
         name="critic_loop_v0",

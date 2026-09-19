@@ -12,9 +12,9 @@ from agent_wrapper.generation_policy import (
     resolve_generation_policy,
 )
 
-
 GEMMA_MODEL = "gemma-4-26b-a4b"
 QWEN_MODEL = "qwen3.8-27b-nvfp4-mtp"
+FLASH_MODEL = "nvidia/Qwen3.8-Flash-Next-NVFP4"
 
 
 def _resolve(profile=None, backend="vllm-gemma", model=GEMMA_MODEL, **kwargs):
@@ -58,6 +58,93 @@ def test_original_coding_and_critic_arms_remain_explicit_experiments():
             coding.request_kwargs["reasoning_effort"]) == (0.2, 0.9, "medium")
     assert (critic.request_kwargs["temperature"], critic.request_kwargs["top_p"],
             critic.request_kwargs["reasoning_effort"]) == (0.7, 0.95, "medium")
+
+
+def test_flash_generator_role_has_explicit_nonthinking_card_policy():
+    resolved = _resolve(
+        backend="sglang-flash",
+        model=FLASH_MODEL,
+        default_role="generator",
+    )
+    assert resolved.request_kwargs == {
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "seed": None,
+        "extra_body": {
+            "top_k": 20,
+            "min_p": 0,
+            "presence_penalty": 1.5,
+            "repetition_penalty": 1,
+            "chat_template_kwargs": {"enable_thinking": False},
+        },
+    }
+    assert resolved.reasoning_effort is None
+    assert resolved.preserve_tool_reasoning is False
+    assert resolved.metadata_enabled is True
+
+
+def test_flash_critic_role_has_explicit_medium_thinking_card_policy():
+    resolved = _resolve(
+        backend="sglang-flash",
+        model=FLASH_MODEL,
+        default_role="critic",
+    )
+    assert resolved.request_kwargs == {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "seed": None,
+        "reasoning_effort": "medium",
+        "extra_body": {
+            "top_k": 20,
+            "min_p": 0,
+            "presence_penalty": 0,
+            "repetition_penalty": 1,
+            "chat_template_kwargs": {"enable_thinking": True},
+        },
+    }
+    assert resolved.reasoning_effort == "medium"
+    assert resolved.preserve_tool_reasoning is True
+
+
+@pytest.mark.parametrize("profile", ["scientist", "critic", "critic_medium"])
+def test_named_flash_science_and_critic_profiles_use_medium_reasoning(profile):
+    resolved = _resolve(
+        profile,
+        backend="sglang-flash",
+        model=FLASH_MODEL,
+    )
+    assert resolved.request_kwargs["reasoning_effort"] == "medium"
+    assert resolved.request_kwargs["extra_body"]["chat_template_kwargs"] == {
+        "enable_thinking": True,
+    }
+
+
+def test_named_flash_nonreasoning_and_explicit_xhigh_profiles_are_unambiguous():
+    planner = _resolve(
+        "planner", backend="sglang-flash", model=FLASH_MODEL)
+    critic = _resolve(
+        "critic_current", backend="sglang-flash", model=FLASH_MODEL)
+    assert "reasoning_effort" not in planner.request_kwargs
+    assert planner.request_kwargs["extra_body"]["chat_template_kwargs"] == {
+        "enable_thinking": False,
+    }
+    assert critic.request_kwargs["reasoning_effort"] == "xhigh"
+    assert critic.request_kwargs["extra_body"]["chat_template_kwargs"] == {
+        "enable_thinking": True,
+    }
+
+
+def test_explicit_effort_overrides_flash_generator_role_to_thinking():
+    resolved = _resolve(
+        backend="sglang-flash",
+        model=FLASH_MODEL,
+        default_role="generator",
+        reasoning_effort="low",
+    )
+    assert resolved.request_kwargs["reasoning_effort"] == "low"
+    assert resolved.request_kwargs["extra_body"]["chat_template_kwargs"] == {
+        "enable_thinking": True,
+    }
 
 
 def test_explicit_zero_beats_profile_via_unset_sentinel():

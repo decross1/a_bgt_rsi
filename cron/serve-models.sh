@@ -1,4 +1,32 @@
 #!/usr/bin/env bash
+
+# Explicit resident selection supersedes the historical pair. Starting a
+# rollback model alongside Flash would exceed the intended memory envelope.
+_serve_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -f "$_serve_root/config/model_deployment.json" ]; then
+  if (cd "$_serve_root" && "$_serve_root/.venv-chroma/bin/python" -m orchestrator.flash_resident selected); then
+    case "${1:-flash}" in
+      flash|both) exec systemctl --user start flash-resident.service ;;
+      *) echo "Flash is the selected resident. Change the deployment manifest before a deliberate rollback." >&2; exit 1 ;;
+    esac
+  else
+    _serve_selection=$?
+    if [ "$_serve_selection" -ne 1 ]; then
+      echo "Invalid deployment selection; refusing to launch legacy models." >&2
+      exit 1
+    fi
+  fi
+fi
+_flash_service_state=$(systemctl --user show flash-resident.service -p ActiveState --value 2>/dev/null || true)
+case "$_flash_service_state" in
+  active|activating|deactivating)
+    echo "Stop the Flash resident service before launching rollback models." >&2
+    exit 1 ;;
+esac
+if docker ps --format '{{.Names}}' | grep -q '^qwen38fn-'; then
+  echo "Stop the owned Flash service before launching rollback models." >&2
+  exit 1
+fi
 # serve-models.sh -- canonical launcher for the two resident vLLM servers on the
 # GB10 unified-memory box. Captures the EXACT production `docker run` for each so
 # the config (incl. --gpu-memory-utilization and --restart) survives a container
