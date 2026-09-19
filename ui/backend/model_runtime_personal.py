@@ -1,8 +1,8 @@
-"""Read-only projection of the two fixed personal Flash serving sessions.
+"""Read-only projection of the bounded personal Flash serving sessions.
 
 This is an operational overlay, not qualification or promotion evidence.  It
-only admits the code-owned Mia and SGLang session roots and binds an active
-state to a fresh heartbeat plus the exact live controller process identity.
+only admits code-owned Mia and SGLang session families and binds an active state
+to a fresh heartbeat plus the exact live controller process identity.
 """
 from __future__ import annotations
 
@@ -21,8 +21,9 @@ BASE = Path(
     "flash-personal-recovery"
 )
 MIA_SESSION_ROOT = BASE / "session-a"  # historical receipt; production discovers peers
+SGLANG_RUNTIME_ROOT = BASE / "sglang-fallback-prep/runtime"
 SGLANG_SESSION_ROOT = (
-    BASE / "sglang-fallback-prep/runtime/session-s3-readiness-v5-001"
+    SGLANG_RUNTIME_ROOT / "session-s3-readiness-v5-001"
 )
 PROC_ROOT = Path("/proc")
 
@@ -30,8 +31,10 @@ SCHEMA_VERSION = "model-runtime/v1"
 MODE_SOURCE = "personal_session_state"
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 RUN_ID = re.compile(r"session-[a-z0-9][a-z0-9-]{0,63}\Z")
+SGLANG_RUN_ID = re.compile(r"session-s3-readiness-v5-[0-9]{3}\Z")
 MAX_FILE_BYTES = 512 * 1024
 MAX_MIA_SESSIONS = 32
+MAX_SGLANG_SESSIONS = 32
 MAX_BASE_ENTRIES = 256
 MAX_CLOCK_SKEW_SECONDS = 5.0
 SG_HEARTBEAT_MAX_AGE_SECONDS = 15.0
@@ -80,6 +83,40 @@ def _discover_mia_sessions(base: Path) -> tuple[list[Path], str | None]:
         names.sort()
         if len(names) > MAX_MIA_SESSIONS:
             raise PersonalRuntimeError("too many fixed-root Mia session receipts")
+        return [base / name for name in names], None
+    except FileNotFoundError:
+        return [], None
+    except (OSError, PersonalRuntimeError) as exc:
+        return [], str(exc)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _discover_sglang_sessions(base: Path) -> tuple[list[Path], str | None]:
+    """List only the exact numbered v5 session family under its fixed root."""
+    descriptor = None
+    try:
+        descriptor = os.open(
+            base,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_DIRECTORY
+            | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        names = []
+        with os.scandir(descriptor) as entries:
+            for count, entry in enumerate(entries, start=1):
+                if count > MAX_BASE_ENTRIES:
+                    raise PersonalRuntimeError("SGLang runtime root exceeds scan cap")
+                if not SGLANG_RUN_ID.fullmatch(entry.name):
+                    continue
+                if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
+                    raise PersonalRuntimeError(
+                        "SGLang session entry is not a regular directory"
+                    )
+                names.append(entry.name)
+        names.sort()
+        if len(names) > MAX_SGLANG_SESSIONS:
+            raise PersonalRuntimeError("too many fixed-root SGLang session receipts")
         return [base / name for name in names], None
     except FileNotFoundError:
         return [], None
@@ -458,24 +495,33 @@ def maybe_project_personal(
     *,
     mia_root: Path | None = None,
     mia_base: Path = BASE,
-    sglang_root: Path = SGLANG_SESSION_ROOT,
+    sglang_root: Path | None = None,
+    sglang_base: Path = SGLANG_RUNTIME_ROOT,
     proc_root: Path = PROC_ROOT,
     observed: datetime | None = None,
 ) -> dict[str, Any] | None:
     """Return an active/invalid personal overlay, or ``None`` when restored/absent."""
     current = (observed or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    discovery_error = None
     if mia_root is None:
-        mia_roots, discovery_error = _discover_mia_sessions(mia_base)
+        mia_roots, mia_discovery_error = _discover_mia_sessions(mia_base)
     else:
         mia_roots = [mia_root]
+        mia_discovery_error = None
+    if sglang_root is None:
+        sglang_roots, sglang_discovery_error = _discover_sglang_sessions(sglang_base)
+    else:
+        sglang_roots = [sglang_root]
+        sglang_discovery_error = None
     results = [*(_mia(root, proc_root, current) for root in mia_roots)]
-    results.append(_sglang(sglang_root, proc_root, current))
+    results.extend(_sglang(root, proc_root, current) for root in sglang_roots)
     active = [row.projection for row in results if row.status == "active"]
     invalid = [row.error for row in results if row.status == "invalid"]
     terminal_invalid = [row.error for row in results if row.status == "terminal_invalid"]
-    if discovery_error is not None:
-        invalid.append(discovery_error)
+    invalid.extend(
+        error
+        for error in (mia_discovery_error, sglang_discovery_error)
+        if error is not None
+    )
     if len(active) > 1:
         return _unknown(current, "multiple fixed personal sessions claim the runtime")
     if invalid:
@@ -489,6 +535,7 @@ def maybe_project_personal(
 
 __all__ = [
     "MIA_SESSION_ROOT",
+    "SGLANG_RUNTIME_ROOT",
     "SGLANG_SESSION_ROOT",
     "maybe_project_personal",
 ]
