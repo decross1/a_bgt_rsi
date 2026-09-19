@@ -157,11 +157,41 @@ short prompt, that token's logprob was -0.00143 with MTP3 and -0.00799 with
 MTP0. This is a reproducible numerical difference between bundles, not evidence
 of within-profile instability, semantic loss, or lossless logprob parity.
 
+## Recurrent-state comparison
+
+The parent-image BF16 arm completed all 18 controls with byte-identical requests
+to the FP32 arm. The launch arguments differ only in recurrent-state precision.
+Median wall rates were 27.83 tok/s prose, 31.52 science, 33.12 code, and 24.50
+tool output: changes of +0.9%, -3.1%, -0.2%, and -2.5%, respectively. Three
+repeats and these mixed differences do not establish a speed improvement.
+
+Reported cache-token capacity increased from 41,391 to 54,038 under the fixed
+2 GiB allocation. Configured context remained 32,768; this is not a tested
+54K or 64K context lane. The repeated first-token probes remained stable within
+each arm, but changing recurrent precision changed logits and some secondary
+rankings. It does not establish numerical equivalence.
+
+The BF16 paper continuation completed all three turns in 48.3, 14.0, and 26.7
+seconds. These calls included optional dashboard trace observation, and later
+turns naturally contained different generated history, so their timing is not
+a clean speed comparison. The source audit identified a substantive wording
+error: a bound on unilateral deviation gain was described as distance from
+an optimal payoff. Completion therefore does not mean all three answers were
+scientifically correct.
+
+The audit also found that the Mia chat-tokenization endpoint undercounted
+retained reasoning in continuation history: the BF16 second and third calls
+reported 862 more input tokens in generation usage than in preflight. The
+earlier FP32 continuation has the same issue. All recorded requests still fit
+comfortably within 32K, but those preflight counts are not exact. Future
+continuation budgeting must account for the retained reasoning before using
+this approach close to the context limit.
+
 ## Remaining comparisons and use
 
-BF16 recurrent state and the separate FP8-KV-capable child still require their
-live comparisons. An independently reviewed NVIDIA/SGLang recipe is
-being prepared as a fallback; it has no local quality result yet. A checkpoint
+The separate FP8-KV-capable child still requires its live comparison. An
+independently reviewed NVIDIA/SGLang recipe and checkpoint are acquired and
+prepared as a fallback; it has no local quality result yet. A checkpoint
 and runtime change would be a bundle comparison, not an isolated weight effect.
 
 See [personal session instructions](FLASH_PERSONAL_RESEARCH.md) for the client,
