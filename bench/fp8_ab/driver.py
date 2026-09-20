@@ -46,13 +46,55 @@ if str(REPO_ROOT) not in sys.path:
 
 from agent_wrapper.cleanup import strip_channel_markup  # noqa: E402
 from orchestrator.novelty_skeptic import (  # noqa: E402
-    ALLOWED_ATTACK_VERDICTS, ATTACK_RETRIEVAL_K, QWEN_ATTACK_PERSONA)
+    ALLOWED_ATTACK_VERDICTS, ATTACK_RETRIEVAL_K)
 from ui.sampler.sources.vllm_metrics import parse_prometheus  # noqa: E402
 from workers.novelty_skeptic import (  # noqa: E402
     _extract_json_object, _format_neighbors)
 
 CASES_PATH = REPO_ROOT / "experiments/lit_falsification_battery/cases.jsonl"
 RUNS_DIR = Path(__file__).resolve().parent / "runs"
+
+# D-072's A/B definition froze the exact skeptic prompt at commit 6542e77.
+# Do not import the production persona here: that prompt is allowed to evolve,
+# while changing it silently changes the benchmark treatment.  This copy is
+# intentionally local and its canonical prompt hash is pinned in the tests.
+FROZEN_QWEN_ATTACK_PERSONA = (
+    "You are the INDEPENDENT SKEPTIC in the a_bgt_rsi research apparatus —\n"
+    "a different model from the one that generated and scored the\n"
+    "hypothesis below. The apparatus's own model judged this hypothesis\n"
+    "novel-and-surviving; your job is to attack that judgment with fresh\n"
+    "evidence it never saw.\n\n"
+    "You are given a hypothesis and the top-K most semantically similar\n"
+    "chunks retrieved FRESH from the apparatus's knowledge base (curated\n"
+    "foundational texts and live papers). This retrieval is YOURS — the\n"
+    "model that scored the hypothesis never saw this exact set, so do not\n"
+    "assume anything has already been checked.\n"
+    "\n"
+    "Your single job is to try to REFUTE the hypothesis:\n"
+    "  - find a retrieved chunk that CONTRADICTS the claim, or\n"
+    "  - find a retrieved chunk the claim merely RESTATES (prior art).\n"
+    "\n"
+    "Verdicts:\n"
+    '  - "refuted"         — you found a contradiction or a restatement.\n'
+    "                        You MUST cite the doc_id of the chunk that\n"
+    "                        kills the claim.\n"
+    '  - "survives_attack" — you genuinely tried and the retrieved set\n'
+    "                        contains neither a contradiction nor a\n"
+    "                        restatement. Do NOT award this as a default.\n"
+    '  - "inconclusive"    — the evidence does not decide it, or the\n'
+    "                        claim is too vague to attack.\n"
+    "\n"
+    "Output STRICT JSON, nothing else — no prose, no markdown fences:\n"
+    "{\n"
+    '  "attack_verdict": "refuted" | "survives_attack" | "inconclusive",\n'
+    '  "rationale": "<1-3 sentences grounded in specific retrieved chunks>",\n'
+    '  "contradicting_doc_id": "<doc_id from the list>" | null\n'
+    "}\n"
+    "\n"
+    '`contradicting_doc_id` is REQUIRED (non-null) for "refuted" and MUST\n'
+    "be one of the doc_id strings from the retrieved list (string\n"
+    "equality). For the other verdicts it is null."
+)
 
 # The six pinned sentinels, IN THE PLAN'S ORDER (qwen_fp8_windows_plan.md
 # Window B step 1), resolved to exact cases.jsonl ids at build time
@@ -148,7 +190,7 @@ def prompt_messages(case: dict, neighbors: list[dict]) -> list[dict]:
         f"Your retrieved neighbors ({len(neighbors)}):\n"
         f"{_format_neighbors(neighbors)}\n"
     )
-    return [{"role": "system", "content": QWEN_ATTACK_PERSONA},
+    return [{"role": "system", "content": FROZEN_QWEN_ATTACK_PERSONA},
             {"role": "user", "content": user_content}]
 
 

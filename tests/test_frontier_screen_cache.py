@@ -460,8 +460,10 @@ def test_promotion_integration_reports_exact_veto_cache_hit(
                                 "sha256": ("a" if vendor == "claude" else "b") * 64},
     )
     monkeypatch.setattr(
-        fp, "get_backend",
-        lambda name: SimpleNamespace(name=name, default_model="qwen-test"),
+        fp, "resolve_backend_route",
+        lambda name: SimpleNamespace(
+            backend=SimpleNamespace(name=name, default_model="qwen-test")
+        ),
     )
     calls, invoke = _invoke_counter()
     monkeypatch.setattr(frontier_cli, "invoke_frontier", invoke)
