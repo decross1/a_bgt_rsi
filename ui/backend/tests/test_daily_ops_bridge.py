@@ -324,6 +324,7 @@ def test_route_decision_queues_exact_revision_advice_and_is_idempotent(relay):
     assert "Request a corrected draft" in envelope["text"]
     assert "do not treat it as approval" in envelope["text"]
     assert "sealed replacement" in envelope["text"]
+    assert "future agenda signoff or agenda execution" in envelope["text"]
 
 
 def test_maximum_decision_note_fits_existing_message_and_envelope_bounds(relay):

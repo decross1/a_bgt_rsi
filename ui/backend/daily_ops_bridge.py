@@ -539,8 +539,9 @@ class DailyOpsBridge:
             "Only the explicitly scoped read/write tools are available for this request. "
             "If more evidence is needed, say what is missing; do not invent it or attempt other tools. "
             "For change requests, draft the proposed revision and explain its effects. "
-            "This mailbox cannot approve or execute an agenda. Any future signoff or "
-            "execution requires a separately implemented and authenticated workflow.\n"
+            "This mailbox cannot approve or execute an agenda. Any future agenda "
+            "signoff or agenda execution requires a separately implemented and "
+            "authenticated workflow.\n"
             "<owner_message>\n" + payload["text"].replace("</owner_message>", "&lt;/owner_message&gt;")
             + "\n</owner_message>"
         )

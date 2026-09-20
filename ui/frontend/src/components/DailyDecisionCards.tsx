@@ -180,7 +180,9 @@ function AgendaCard({ agenda, requestAvailable, openEditor }: {
       This agenda cannot be approved. You can request a corrected draft or ask Oracle to skip it. Neither action executes work.
     </p>
     <details className="mt-2 text-xs text-[var(--fg-muted)]">
-      <summary className="cursor-pointer text-[var(--accent)]">Revision, superseded proposal titles, and source</summary>
+      <summary className="cursor-pointer text-[var(--accent)]">Revision, {agenda.disposition === "amend_required"
+        ? "superseded proposal titles"
+        : "sealed proposal titles"}, and source</summary>
       <p className="mt-2 font-mono">revision {agenda.revision}</p>
       {agenda.taskTitles.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5">
         {agenda.taskTitles.map(title => <li key={title}>{title}</li>)}
