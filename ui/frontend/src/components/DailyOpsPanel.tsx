@@ -70,9 +70,9 @@ type Summary = {
 function workItems(value: unknown, kind: "goal" | "accomplishment" | "improvement"): WorkItem[] {
   if (!Array.isArray(value)) return [];
   const allowed = kind === "goal" ? STATUS : kind === "improvement" ? IMPROVEMENT_STATUS : new Set(["complete"]);
-  return value.slice(0, 8).flatMap((item): WorkItem[] => {
+  return value.slice(0, 16).flatMap((item): WorkItem[] => {
     if (!record(item) || !bounded(item.id, 160) || !bounded(item.title, 240) ||
-        !bounded(item.detail, 1200) || !bounded(item.status, 40) || !allowed.has(item.status) ||
+        !bounded(item.detail, 4096) || !bounded(item.status, 40) || !allowed.has(item.status) ||
         !timestamp(item.observed_at)) return [];
     const owner = kind === "goal" && bounded(item.owner, 32) ? item.owner : undefined;
     return [{ id: item.id, title: item.title, detail: item.detail, status: item.status,
@@ -206,9 +206,8 @@ function Status({ value }: { value: string }) {
   return <span className="rounded-full px-2 py-0.5 text-[11px] font-medium" style={statusStyle(value)}>{phrase(value)}</span>;
 }
 
-function ItemList({ items, empty }: { items: WorkItem[]; empty: string }) {
-  return items.length === 0 ? <p className="mt-2 text-sm text-[var(--fg-muted)]">{empty}</p> :
-    <ul className="mt-2 space-y-3">{items.slice(0, 4).map(item => <li key={item.id} className="border-l-2 border-[var(--border-2)] pl-3">
+function ItemRows({ items }: { items: WorkItem[] }) {
+  return <>{items.map(item => <li key={item.id} className="border-l-2 border-[var(--border-2)] pl-3">
       <div className="flex flex-wrap items-center gap-2"><span className="font-medium">{item.title}</span><Status value={item.status} /></div>
       <p className="mt-1 text-sm text-[var(--fg-muted)]">{preview(item.detail)}</p>
       {item.detail.length > 280 && <details className="mt-1 text-xs text-[var(--fg-muted)]">
@@ -216,7 +215,20 @@ function ItemList({ items, empty }: { items: WorkItem[]; empty: string }) {
         <p className="mt-1 whitespace-pre-wrap">{item.detail}</p>
       </details>}
       <p className="mt-1 text-xs text-[var(--fg-muted)]">{item.owner ? `${phrase(item.owner)} · ` : ""}{timeLabel(item.observedAt)}</p>
-    </li>)}</ul>;
+    </li>)}</>;
+}
+
+function ItemList({ items, empty }: { items: WorkItem[]; empty: string }) {
+  if (items.length === 0) return <p className="mt-2 text-sm text-[var(--fg-muted)]">{empty}</p>;
+  const visible = items.slice(0, 4);
+  const remaining = items.slice(4);
+  return <>
+    <ul className="mt-2 space-y-3"><ItemRows items={visible} /></ul>
+    {remaining.length > 0 && <details className="mt-3 rounded border border-[var(--border-1)] p-3">
+      <summary className="cursor-pointer text-sm text-[var(--accent)]">Show {remaining.length} more recorded item{remaining.length === 1 ? "" : "s"}</summary>
+      <ul className="mt-3 space-y-3"><ItemRows items={remaining} /></ul>
+    </details>}
+  </>;
 }
 
 function AgentStrip({ agents }: { agents: NonNullable<Summary["agents"]> }) {
@@ -295,9 +307,11 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   const earlierRows = sortedRows.slice(0, -5);
   const routerConfigured = summary?.writeAvailable === true;
   const writeAvailable = routerConfigured && accessKey.length > 0 && messages?.writable === true;
+  const oracleReady = summary?.agents != null &&
+    !["offline", "degraded", "unknown"].includes(summary.agents.oracle.status);
   const changeBound = intent !== "change_request" || Boolean(summary?.currentPlanRevision);
   const canSubmit = writeAvailable && accessKey.length > 0 && text.trim().length > 0 &&
-    text.trim().length <= 4096 && changeBound && submit.kind !== "submitting";
+    text.trim().length <= 4096 && changeBound && oracleReady && submit.kind !== "submitting";
 
   function saveAccessKey() {
     const next = keyDraft.trim();
@@ -507,6 +521,9 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
             {summary.currentPlanRevision ? `Bound to plan ${shortRevision(summary.currentPlanRevision)}` : "No current plan revision is available; change requests stay disabled."}
           </span>}
         </div>
+        {!oracleReady && <p role="status" className="mt-2 text-sm text-[var(--status-warn)]">
+          Oracle is unavailable; your draft is kept here. Sending resumes after a healthy mailbox observation.
+        </p>}
         <div aria-live="polite" className="mt-2 min-h-5 text-sm">
           {submit.kind === "queued" && <p className="text-[var(--status-info)]">{submit.duplicate ? "Existing request found" : "Request queued"} · {submit.requestId}{submit.revision ? ` · plan ${shortRevision(submit.revision)}` : ""}. No acknowledgment or execution is implied.</p>}
         </div>

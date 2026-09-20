@@ -92,6 +92,29 @@ describe("DailyOpsPanel", () => {
     expect(screen.getByText(/queued request is not approval/i)).toBeInTheDocument();
   });
 
+  it("keeps daily goals beyond the first four available inline", () => {
+    D.summary = summary({
+      goals: Array.from({ length: 6 }, (_, index) => ({
+        id: `goal-${index + 1}`,
+        title: `Daily goal ${index + 1}`,
+        detail: `Source-bound detail ${index + 1}.`,
+        source: "verified planner projection",
+        observed_at: now,
+        status: index > 2 ? "awaiting_owner" : "in_progress",
+        owner: "oracle",
+      })),
+    });
+    show();
+
+    expect(screen.getByText("Daily goal 4")).toBeInTheDocument();
+    const more = screen.getByText("Show 2 more recorded items");
+    expect(more.closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(more);
+    expect(more.closest("details")).toHaveAttribute("open");
+    expect(screen.getByText("Daily goal 5")).toBeInTheDocument();
+    expect(screen.getByText("Daily goal 6")).toBeInTheDocument();
+  });
+
   it("queues a revision-bound plan change without claiming delivery", async () => {
     show();
     fireEvent.change(screen.getByLabelText(/Owner access key/), { target: { value: "owner-secret" } });
@@ -211,6 +234,23 @@ describe("DailyOpsPanel", () => {
     show();
     expect(screen.getByTestId("daily-ops-readonly")).toHaveTextContent("authenticated Oracle router is not available");
     expect(screen.queryByTestId("daily-ops-composer")).toBeNull();
+  });
+
+  it("keeps history and a draft available but disables sending while Oracle is degraded", () => {
+    const degraded = summary();
+    degraded.agents.oracle.status = "degraded";
+    degraded.agents.oracle.detail = "Mailbox review scope is not ready.";
+    D.summary = degraded;
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    show();
+
+    expect(screen.getByText("What is blocking the study?")).toBeInTheDocument();
+    const textarea = screen.getByLabelText("Message to Oracle");
+    fireEvent.change(textarea, { target: { value: "Keep this question as a draft." } });
+    expect(textarea).toHaveValue("Keep this question as a draft.");
+    expect(screen.getByRole("button", { name: "Queue for Oracle" })).toBeDisabled();
+    expect(screen.getByText(/Oracle is unavailable; your draft is kept here/i)).toBeInTheDocument();
+    expect(D.post).not.toHaveBeenCalled();
   });
 
   it("clears a rejected owner key and keeps history locked", async () => {
