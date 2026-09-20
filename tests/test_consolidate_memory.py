@@ -221,7 +221,14 @@ def test_evidence_level_from_elite_member(tmp_path):
 
 def test_fatal_flaw_kills_cluster_programmatically(tmp_path):
     report = _run(tmp_path, execute=True)
-    assert report["killed"] == 1
+    # Both the fatal flaw and the separate rediscovery produce kill events.
+    # This assertion pins the fatal cluster itself rather than assuming it is
+    # the only closed cluster in the batch.
+    fatal_fact = next(
+        fact for fact in report["cluster_facts"]
+        if fact["cluster_id"] == "cl-iter-003"
+    )
+    assert fatal_fact["status"] == "killed"
     killed = [e for e in _events(tmp_path) if e["event_type"] == "cluster_killed"
               and e["kill_reason"]["code"] == "redteam_fatal_flaw"]
     assert len(killed) == 1
@@ -233,6 +240,12 @@ def test_fatal_flaw_kills_cluster_programmatically(tmp_path):
 def test_rediscovery_seeds_paper_niche(tmp_path):
     report = _run(tmp_path, execute=True)
     assert report["paper_niches"] == 1
+    assert report["killed"] == 2
+    rediscovery_fact = next(
+        fact for fact in report["cluster_facts"]
+        if fact["cluster_id"] == "cl-iter-004"
+    )
+    assert rediscovery_fact["status"] == "killed"
     niche = [e for e in _events(tmp_path) if e["event_type"] == "cluster_killed"
              and e["kill_reason"]["code"] == "paper_prior_exists"]
     assert len(niche) == 1

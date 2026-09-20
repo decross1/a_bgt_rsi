@@ -874,6 +874,7 @@ def _plan_cluster(cluster: dict, feedback_by_iter: dict, derive_level_fn: Callab
         # A rediscovery closes THIS cluster with the paper-prior kill code
         # (niche_seeded creates a NEW paper niche and would collide with the
         # cluster_created above — the reducer forbids duplicate creates).
+        status = "killed"
         niche = True
         iid = elite_row.get("iteration_id") or elite["id"]
         rationale = (elite_row.get("novelty") or {}).get("rationale") or ""
@@ -902,7 +903,7 @@ def _print_summary(report: dict) -> None:
         f"  clusters            {report['clusters']}",
         f"  merged into existing {report['merged_into_existing']}",
         f"  rungs               {rungs}",
-        f"  killed (fatal_flaw) {report['killed']}",
+        f"  killed (planned)    {report['killed']}",
         f"  paper niches        {report['paper_niches']}",
         (
             f"  archive rows        "

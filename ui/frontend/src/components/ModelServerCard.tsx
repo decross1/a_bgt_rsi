@@ -540,7 +540,9 @@ function ModelServerCard({
       {body === "offline" && (
         <div className="mt-3 text-sm text-zinc-500">
           {serviceExpectation === "expected_offline"
-            ? "This production resident is intentionally stopped for the controller-bound research window. Live metrics were not observed."
+            ? inventory?.deployment_role === "rollback_available"
+              ? "This rollback endpoint is intentionally offline while another model is the production resident. Live metrics were not observed."
+              : "This production resident is intentionally stopped for the controller-bound research window. Live metrics were not observed."
             : serviceExpectation === "starting"
               ? "The research candidate is starting; its model endpoint was not ready at the last probe. Live metrics were not observed."
               : serviceExpectation === "standby"
