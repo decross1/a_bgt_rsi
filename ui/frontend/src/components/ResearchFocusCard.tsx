@@ -198,7 +198,7 @@ export function ResearchFocusCard({ focus, className = "" }: {
             {phrase(view.stage)} · {view.sourceEvidenceLevel === null
               ? "no source rung"
               : `${view.sourceEvidenceLevel} historical derived source only`}
-            {rawHypothesis ? " · raw hypothesis needs cleanup" : ""}
+            {rawHypothesis ? " · historical seed unverified; no credit inherited" : ""}
           </p>
         </div>
         <span className="rounded border border-[var(--border-2)] px-2 py-1 text-xs text-[var(--fg-muted)]">

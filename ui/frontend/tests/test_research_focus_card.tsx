@@ -50,7 +50,8 @@ describe("ResearchFocusCard", () => {
     expect(card).toHaveTextContent("needs clean refinement · no source rung");
     expect(card).toHaveTextContent("research seed → study ready");
     expect(card).toHaveTextContent("Produce: clean hypothesis + preregistration");
-    expect(card).toHaveTextContent("raw hypothesis needs cleanup");
+    expect(card).toHaveTextContent("historical seed unverified; no credit inherited");
+    expect(card).not.toHaveTextContent("raw hypothesis needs cleanup");
     expect(card).toHaveTextContent("source record #127");
     expect(card).toHaveTextContent("Claim refinement");
     expect(card).toHaveTextContent("Selecting a focus does not advance evidence or inherit source credit.");
