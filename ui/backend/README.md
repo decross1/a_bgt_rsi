@@ -40,6 +40,71 @@ The application includes explicit human-action routes under `/api/attest`,
 projection authority to execute a model, accept a finding, schedule a study,
 or deploy a model. See [the human writeback contract](../../docs/human_writeback_contract.md).
 
+## Temporary bounded Oracle responder
+
+The existing daily-operations route can be pointed temporarily at a separately
+contained, summary-only Pi worker. This is a route identity, not a second
+permanent Oracle. Canonical behavior remains the default when the optional
+fields below are absent.
+
+```json
+{
+  "instance_kind": "bounded_ui_responder",
+  "responder_label": "Oracle bounded UI responder",
+  "client_label": "Headless Pi client",
+  "availability_ends_at": "2026-09-20T16:02:48Z",
+  "worker_status_path": "/home/decross1/.local/state/oracle-pi-review-isolated-INSTANCE/controller/ui-worker-status.json",
+  "max_owner_turns": 12,
+  "legacy_recipient": {
+    "mailbox_root": "/home/decross1/.local/state/oracle-pi-oversight/mailbox",
+    "session_id": "CANONICAL-ORACLE-SESSION-UUID",
+    "instance_kind": "canonical_oracle",
+    "responder_label": "Oracle",
+    "client_label": "Pi client"
+  }
+}
+```
+
+These fields augment the existing private root, mailbox root, session ID,
+allowed origins, and planner pointer. The relay accepts a new owner request only
+when both the mailbox heartbeat and the separate controller status are fresh,
+the controller advertises `ready` with admission open, its configured deadline
+leaves enough time for a 600-second turn plus 30-second cleanup reserve, and the
+mailbox has no active or pending turn. The controller status publishes
+`admission_ends_at`, exactly 630 seconds before `availability_ends_at`; for this
+temporary run those times are **15:52:18 UTC** and **16:02:48 UTC**. A turn
+already admitted before the cutoff may finish within its bound. The worker
+controller owns the configured owner-request cap (12 for this window) and
+closes admission at that limit; the relay checks the same advertised cap but
+does not extend it.
+
+`legacy_recipient` is required during the temporary switch. It explicitly
+binds request records created before recipient metadata existed to canonical
+Oracle, preventing old history from being relabeled or searched in the
+temporary mailbox. New request records carry their own immutable binding.
+
+Each accepted request records the exact mailbox, session, instance kind, and
+display labels that received it. Receipt projection continues to use that
+immutable binding after the live route returns to canonical Oracle. Keep the
+private temporary mailbox after shutdown while its receipts remain in the owner
+thread.
+
+For a bounded responder, the relay writes the exact envelope bytes first to
+the private `admission/` archive and then to `inbox/`. This durable admission
+copy lets the one-shot controller observe the accepted turn even if the Pi
+extension claims the inbox entry before its next poll. An idempotent retry must
+match the archived bytes exactly. Atomic-publication temporary files remain in
+the private sibling `.relay-staging/` directory so strict queue readers never
+mistake a partially published file for an owner request. The archive alone is
+not a delivery receipt: only the same current, healthy responder may republish
+an archive-only request to `inbox/`; an inactive historical route is never
+revived by a retry.
+
+The bounded responder can read only `daily_ops_summary.json` and may write only
+its request-specific private response draft. Its replies are advisory. Queueing
+a question or plan-change request is never approval or execution, and this
+configuration must not be promoted into a timer or permanent parallel service.
+
 ## Sources and provenance
 
 Operational logs and mutable research state normally live in the canonical
