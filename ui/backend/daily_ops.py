@@ -263,7 +263,7 @@ def _message_row(value: object) -> bool:
         "request_id", "created_at", "actor", "intent", "status", "text",
         "target", "plan_revision",
     }
-    optional = {"in_reply_to"}
+    optional = {"in_reply_to", "responder_label"}
     if not required.issubset(value) or not set(value).issubset(required | optional):
         return False
     try:
@@ -287,6 +287,10 @@ def _message_row(value: object) -> bool:
         and (
             value.get("plan_revision") is None
             or _identifier(value.get("plan_revision"))
+        )
+        and (
+            value.get("responder_label") is None
+            or _text(value.get("responder_label"), MAX_SHORT_TEXT)
         )
         and _json_safe(value)
     )

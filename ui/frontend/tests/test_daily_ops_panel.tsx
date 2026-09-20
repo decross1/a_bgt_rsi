@@ -100,6 +100,88 @@ describe("DailyOpsPanel", () => {
     expect(screen.queryByTestId("daily-notes-stale")).toBeNull();
   });
 
+  it("identifies the temporary bounded responder without implying full Oracle authority", () => {
+    D.summary = summary({
+      agents: {
+        oracle: {
+          label: "Oracle bounded UI responder", status: "idle",
+          detail: "Temporary summary-only responder; canonical interactive Oracle remains paused. It can read only the bounded daily summary and write its private response draft; it cannot approve or execute work. Configured availability ends Sep 20, 04:02 PM UTC.",
+          observed_at: now, source: "Oracle bounded UI responder mailbox heartbeat",
+        },
+        pi_client: {
+          label: "Headless Pi client", status: "idle", detail: "Bounded responder client.",
+          observed_at: now, source: "Oracle bounded UI responder mailbox heartbeat",
+        },
+        nara: { label: "Nara", status: "idle", detail: "Awaiting registered work.", observed_at: now, source: "service" },
+      },
+    });
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    show();
+
+    expect(screen.getByTestId("daily-ops-bounded-responder")).toHaveTextContent(
+      "canonical interactive Oracle remains paused",
+    );
+    expect(screen.getByTestId("daily-ops-bounded-responder")).toHaveTextContent(
+      "cannot approve or execute work",
+    );
+    expect(screen.getByRole("heading", { name: "Ask Oracle bounded UI responder or request an agenda change" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Message to Oracle bounded UI responder"), {
+      target: { value: "What is the next gate?" },
+    });
+    expect(screen.getByRole("button", { name: "Queue for Oracle bounded UI responder" })).toBeEnabled();
+    expect(screen.queryByText("Oracle is the owner-facing steward. Pi is its client; Nara is observed through Oracle.")).toBeNull();
+  });
+
+  it("keeps a bounded responder reply attributed after the live route returns to Oracle", () => {
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    D.messages = messages({
+      rows: [
+        {
+          request_id: "11111111-1111-4111-8111-111111111111", created_at: now,
+          actor: "owner", intent: "question", status: "queued",
+          text: "What is the next gate?", target: "oracle", plan_revision: null,
+          responder_label: "Oracle bounded UI responder",
+        },
+        {
+          request_id: "22222222-2222-4222-8222-222222222222",
+          created_at: "2026-09-20T08:01:00Z", actor: "oracle", intent: "reply",
+          status: "acknowledged", text: "Run the bounded replay.", target: "oracle",
+          plan_revision: null, in_reply_to: "11111111-1111-4111-8111-111111111111",
+          responder_label: "Oracle bounded UI responder",
+        },
+      ],
+    });
+    show();
+
+    expect(screen.getByRole("heading", { name: "Ask Oracle or request an agenda change" })).toBeInTheDocument();
+    expect(screen.getByText("to Oracle bounded UI responder")).toBeInTheDocument();
+    expect(screen.getByText("Oracle bounded UI responder", { selector: "span.font-semibold" })).toBeInTheDocument();
+    expect(screen.getByText("Run the bounded replay.")).toBeInTheDocument();
+    expect(screen.queryByTestId("daily-ops-bounded-responder")).toBeNull();
+  });
+
+  it("keeps the bounded composer closed while its single turn is working", () => {
+    const bounded = summary();
+    bounded.agents.oracle = {
+      label: "Oracle bounded UI responder", status: "working",
+      detail: "Temporary summary-only responder; a bounded owner turn is in progress.",
+      observed_at: now, source: "Oracle bounded UI responder mailbox heartbeat",
+    };
+    bounded.agents.pi_client = {
+      label: "Headless Pi client", status: "working", detail: "One turn is active.",
+      observed_at: now, source: "Oracle bounded UI responder mailbox heartbeat",
+    };
+    D.summary = bounded;
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    show();
+
+    fireEvent.change(screen.getByLabelText("Message to Oracle bounded UI responder"), {
+      target: { value: "Queue another question." },
+    });
+    expect(screen.getByRole("button", { name: "Queue for Oracle bounded UI responder" })).toBeDisabled();
+    expect(screen.getByText(/Oracle bounded UI responder is unavailable; your draft is kept here/i)).toBeInTheDocument();
+  });
+
   it("dates authored notes while retaining a fresh agenda task after rollover", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-21T00:01:00Z"));

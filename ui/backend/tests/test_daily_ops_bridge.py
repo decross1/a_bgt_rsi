@@ -14,8 +14,10 @@ from backend.daily_ops_bridge import DailyOpsBridge
 
 
 SESSION = "01a0bbce-8fe5-7290-8ea6-2f247da2115e"
+WORKER_SESSION = "4143e484-35c9-497c-8edf-c01be99fb373"
 NOW = datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc)
 REVISION = "b" * 64
+WORKER_DEADLINE = datetime(2026, 9, 20, 16, 2, 48, tzinfo=timezone.utc)
 
 
 def _iso(value=NOW):
@@ -126,12 +128,55 @@ def _payload(*, request_id=None, text="What blocks the next gate?",
     return value
 
 
-def _receipt(relay, request_id, *, status, text=None):
+def _receipt(relay, request_id, *, status, text=None, mailbox=None, session_id=SESSION):
     value = {"schema_version": 1, "id": "owner-ui-" + request_id,
-             "session_id": SESSION, "status": status, "updated_at": _iso()}
+             "session_id": session_id, "status": status, "updated_at": _iso()}
     if text is not None:
         value["visible_final_text"] = text
-    _json(relay["mailbox"] / "outbox" / ("owner-ui-" + request_id + ".json"), value)
+    target = mailbox or relay["mailbox"]
+    _json(target / "outbox" / ("owner-ui-" + request_id + ".json"), value)
+
+
+def _bounded_relay(relay):
+    mailbox = _private(relay["private"].parent / "bounded-mailbox")
+    for name in ("inbox", "processing", "processed", "failed", "outbox", "review-drafts"):
+        _private(mailbox / name)
+    _json(mailbox / "latest-status.json", {
+        "schema_version": 1, "status": "active", "session_id": WORKER_SESSION,
+        "pending_count": 0, "updated_at": _iso(),
+        "capabilities": {"review_scope": True, "durable_review_scope": True},
+    })
+    controller = _private(relay["private"].parent / "bounded-controller")
+    status_path = controller / "ui-worker-status.json"
+    _json(status_path, {
+        "schema_version": "oracle-bounded-ui-worker-status/v1",
+        "status": "ready", "admission_open": True, "updated_at": _iso(),
+        "availability_ends_at": _iso(WORKER_DEADLINE),
+        "session_id": WORKER_SESSION, "mailbox_root": str(mailbox),
+        "summary_read_path": str(relay["state"] / "daily_ops_summary.json"),
+        "instance_kind": "bounded_ui_responder",
+        "responder_label": "Oracle bounded UI responder",
+        "client_label": "Headless Pi client", "max_owner_turns": 12,
+        "owner_turns_seen": 0, "turns_remaining": 12,
+        "active_envelope_id": None, "reason": None,
+    })
+    config = {
+        **relay["config"], "mailbox_root": str(mailbox), "session_id": WORKER_SESSION,
+        "instance_kind": "bounded_ui_responder",
+        "responder_label": "Oracle bounded UI responder",
+        "client_label": "Headless Pi client",
+        "availability_ends_at": _iso(WORKER_DEADLINE),
+        "worker_status_path": str(status_path),
+        "legacy_recipient": {
+            "mailbox_root": str(relay["mailbox"]), "session_id": SESSION,
+            "instance_kind": "canonical_oracle", "responder_label": "Oracle",
+            "client_label": "Pi client",
+        },
+    }
+    return {
+        **relay, "bridge": DailyOpsBridge(relay["state"], config),
+        "mailbox": mailbox, "worker_status": status_path, "config": config,
+    }
 
 
 def _force_refresh(relay):
@@ -171,6 +216,191 @@ def test_route_writes_one_advisory_envelope_and_idempotent_duplicate(relay):
         "draft_path": str(relay["mailbox"] / "review-drafts" / ("owner-ui-" + payload["request_id"] + ".md")),
     }
     assert len(list((relay["mailbox"] / "inbox").glob("*.json"))) == 1
+
+
+def test_bounded_responder_requires_ready_empty_worker_and_projects_honest_identity(relay):
+    bounded = _bounded_relay(relay)
+    bounded["bridge"].refresh()
+    summary = json.loads((bounded["state"] / "daily_ops_summary.json").read_text())
+
+    assert summary["agents"]["oracle"]["label"] == "Oracle bounded UI responder"
+    assert summary["agents"]["pi_client"]["label"] == "Headless Pi client"
+    assert summary["agents"]["oracle"]["source"] == (
+        "Oracle bounded UI responder mailbox heartbeat"
+    )
+    assert "Temporary summary-only responder" in summary["agents"]["oracle"]["detail"]
+    assert _iso(WORKER_DEADLINE) in summary["agents"]["oracle"]["detail"]
+
+    worker_status = json.loads(bounded["worker_status"].read_text())
+    worker_status.update(status="working", admission_open=False,
+                         active_envelope_id="owner-ui-in-flight")
+    _json(bounded["worker_status"], worker_status)
+    bounded["bridge"]._last_refresh = 0.0
+    bounded["bridge"].refresh()
+    working_summary = json.loads((bounded["state"] / "daily_ops_summary.json").read_text())
+    assert working_summary["agents"]["oracle"]["status"] == "working"
+    assert "new requests are paused" in working_summary["agents"]["oracle"]["detail"]
+    with pytest.raises(HTTPException) as caught:
+        bounded["bridge"].route(_payload())
+    assert caught.value.status_code == 503
+    assert not list(bounded["bridge"].requests.glob("*.json"))
+
+    worker_status.update(status="ready", admission_open=True,
+                         active_envelope_id=None)
+    _json(bounded["worker_status"], worker_status)
+    heartbeat = json.loads((bounded["mailbox"] / "latest-status.json").read_text())
+    heartbeat["pending_count"] = 1
+    _json(bounded["mailbox"] / "latest-status.json", heartbeat)
+    with pytest.raises(HTTPException) as caught:
+        bounded["bridge"].route(_payload())
+    assert caught.value.status_code == 503
+    assert not list(bounded["bridge"].requests.glob("*.json"))
+
+
+def test_bounded_responder_requires_explicit_canonical_legacy_binding(relay):
+    bounded = _bounded_relay(relay)
+    config = dict(bounded["config"])
+    config.pop("legacy_recipient")
+
+    with pytest.raises(ValueError, match="identity and availability"):
+        DailyOpsBridge(relay["state"], config)
+
+
+def test_bounded_responder_binds_history_to_accepting_mailbox_across_route_switch(relay):
+    bounded = _bounded_relay(relay)
+    payload = _payload()
+    bounded["bridge"].route(payload)
+    envelope = bounded["mailbox"] / "inbox" / ("owner-ui-" + payload["request_id"] + ".json")
+    admission = bounded["mailbox"] / "admission" / envelope.name
+    assert admission.read_bytes() == envelope.read_bytes()
+    assert admission.stat().st_mode & 0o777 == 0o600
+    envelope_value = json.loads(envelope.read_text())
+    assert "You are the temporary Oracle bounded UI responder" in envelope_value["text"]
+    assert "summary-only context" in envelope_value["text"]
+    assert "no more than 200 words" in envelope_value["text"]
+    assert "do not claim the memory or authority of canonical" in envelope_value["text"]
+    record = json.loads((bounded["bridge"].requests / (payload["request_id"] + ".json")).read_text())
+    assert record["recipient"] == {
+        "mailbox_root": str(bounded["mailbox"]),
+        "session_id": WORKER_SESSION,
+        "instance_kind": "bounded_ui_responder",
+        "responder_label": "Oracle bounded UI responder",
+        "client_label": "Headless Pi client",
+    }
+    _receipt(bounded, payload["request_id"], status="completed",
+             text="The bounded summary identifies the next gate.",
+             mailbox=bounded["mailbox"], session_id=WORKER_SESSION)
+
+    canonical = DailyOpsBridge(relay["state"], relay["config"])
+    canonical.refresh()
+    summary = json.loads((relay["state"] / "daily_ops_summary.json").read_text())
+    rows = [json.loads(line) for line in
+            (relay["state"] / "daily_ops_messages.jsonl").read_text().splitlines()]
+    reply = next(row for row in rows if row.get("in_reply_to") == payload["request_id"])
+
+    assert summary["agents"]["oracle"]["label"] == "Oracle"
+    assert reply["actor"] == "oracle"
+    assert reply["responder_label"] == "Oracle bounded UI responder"
+    assert reply["text"] == "The bounded summary identifies the next gate."
+
+
+def test_bounded_duplicate_requires_exact_immutable_admission_envelope(relay):
+    bounded = _bounded_relay(relay)
+    payload = _payload()
+    bounded["bridge"].route(payload)
+    admission = (bounded["mailbox"] / "admission" /
+                 ("owner-ui-" + payload["request_id"] + ".json"))
+    admission.write_bytes(admission.read_bytes() + b" ")
+
+    with pytest.raises(HTTPException) as caught:
+        bounded["bridge"].route(payload)
+    assert caught.value.status_code == 503
+    assert "admission does not match" in caught.value.detail
+
+
+def test_bounded_publication_never_exposes_temp_files_in_scanned_queues(relay, monkeypatch):
+    bounded = _bounded_relay(relay)
+    observed = []
+    real_fsync = bridge_module.os.fsync
+
+    def observe_fsync(fd):
+        observed.append({
+            directory: sorted(path.name for path in (bounded["mailbox"] / directory).iterdir())
+            for directory in ("admission", "inbox")
+        })
+        return real_fsync(fd)
+
+    monkeypatch.setattr(bridge_module.os, "fsync", observe_fsync)
+    payload = _payload()
+    bounded["bridge"].route(payload)
+
+    assert observed
+    assert all(
+        not any(name.startswith(".") for name in snapshot[directory])
+        for snapshot in observed for directory in ("admission", "inbox")
+    )
+    assert not list((bounded["mailbox"] / ".relay-staging").iterdir())
+
+
+def test_duplicate_retry_after_route_switch_stays_with_original_recipient(relay):
+    bounded = _bounded_relay(relay)
+    payload = _payload()
+    bounded["bridge"].route(payload)
+    worker_envelope = bounded["mailbox"] / "inbox" / ("owner-ui-" + payload["request_id"] + ".json")
+    original = worker_envelope.read_bytes()
+    worker_envelope.unlink()
+
+    canonical = DailyOpsBridge(relay["state"], relay["config"])
+    duplicate = canonical.route(payload)
+
+    assert duplicate["duplicate"] is True
+    assert worker_envelope.read_bytes() == original
+    assert not (relay["mailbox"] / "inbox" / worker_envelope.name).exists()
+
+
+def test_bounded_responder_rejects_stale_or_expired_controller_status(relay, monkeypatch):
+    bounded = _bounded_relay(relay)
+    worker_status = json.loads(bounded["worker_status"].read_text())
+    worker_status["updated_at"] = _iso(NOW - timedelta(seconds=31))
+    _json(bounded["worker_status"], worker_status)
+    with pytest.raises(HTTPException) as stale:
+        bounded["bridge"].route(_payload())
+    assert stale.value.status_code == 503
+
+    worker_status["updated_at"] = _iso()
+    _json(bounded["worker_status"], worker_status)
+    monkeypatch.setattr(bridge_module, "_now", lambda: WORKER_DEADLINE)
+    with pytest.raises(HTTPException) as expired:
+        bounded["bridge"].route(_payload())
+    assert expired.value.status_code == 503
+
+
+def test_bounded_responder_closes_double_post_race_until_terminal_receipt(relay):
+    bounded = _bounded_relay(relay)
+    first = _payload()
+    second = _payload()
+
+    accepted = bounded["bridge"].route(first)
+    assert accepted["duplicate"] is False
+
+    # The controller and extension status files have intentionally not moved
+    # yet.  The bridge's own durable request record closes this observation
+    # gap so another request cannot enter the one-active-turn worker.
+    with pytest.raises(HTTPException) as caught:
+        bounded["bridge"].route(second)
+    assert caught.value.status_code == 503
+    assert "unresolved owner request" in caught.value.detail
+    assert not (bounded["bridge"].requests / (second["request_id"] + ".json")).exists()
+    assert not (bounded["mailbox"] / "inbox" /
+                ("owner-ui-" + second["request_id"] + ".json")).exists()
+
+    retry = bounded["bridge"].route(first)
+    assert retry["duplicate"] is True
+
+    _receipt(bounded, first["request_id"], status="completed",
+             text="The first bounded turn is complete.",
+             mailbox=bounded["mailbox"], session_id=WORKER_SESSION)
+    assert bounded["bridge"].route(second)["status"] == "queued"
 
 
 @pytest.mark.parametrize("capabilities", [
@@ -297,6 +527,42 @@ def test_completed_turn_without_visible_answer_is_delivery_only(relay):
     assert (receipt["actor"], receipt["intent"], receipt["status"]) == (
         "system", "receipt", "delivered")
     assert "No task completion is inferred" in receipt["text"]
+
+
+def test_legacy_request_without_recipient_binding_uses_configured_target(relay):
+    ident = str(uuid.uuid4())
+    record = {
+        "payload": _payload(request_id=ident), "accepted_at": _iso(),
+        "expires_at": _iso(NOW + timedelta(hours=6)),
+        "envelope_id": "owner-ui-" + ident,
+    }
+    _json(relay["bridge"].requests / (ident + ".json"), record)
+    _receipt(relay, ident, status="completed", text="Legacy reply remains visible.")
+
+    rows = _force_refresh(relay)
+    reply = next(row for row in rows if row.get("in_reply_to") == ident)
+    assert reply["responder_label"] == "Oracle"
+    assert reply["text"] == "Legacy reply remains visible."
+
+
+def test_bounded_route_keeps_legacy_history_bound_to_canonical_oracle(relay):
+    ident = str(uuid.uuid4())
+    record = {
+        "payload": _payload(request_id=ident), "accepted_at": _iso(),
+        "expires_at": _iso(NOW + timedelta(hours=6)),
+        "envelope_id": "owner-ui-" + ident,
+    }
+    _json(relay["bridge"].requests / (ident + ".json"), record)
+    _receipt(relay, ident, status="completed", text="Canonical history remains visible.")
+
+    bounded = _bounded_relay(relay)
+    rows = _force_refresh(bounded)
+    owner = next(row for row in rows if row["request_id"] == ident)
+    reply = next(row for row in rows if row.get("in_reply_to") == ident)
+
+    assert owner["responder_label"] == "Oracle"
+    assert reply["responder_label"] == "Oracle"
+    assert reply["text"] == "Canonical history remains visible."
 
 
 @pytest.mark.parametrize(

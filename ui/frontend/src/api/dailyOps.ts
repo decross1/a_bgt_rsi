@@ -13,6 +13,7 @@ export interface DailyOpsMessageRow {
   target: "oracle";
   in_reply_to?: string;
   plan_revision: string | null;
+  responder_label?: string;
 }
 
 export interface DailyOpsMessages {
