@@ -42,6 +42,7 @@ BOUNDED_TURN_SECONDS = 600
 BOUNDED_SHUTDOWN_RESERVE_SECONDS = 30
 MAX_ENVELOPE_TEXT_BYTES = 8_192
 MAX_ENVELOPE_BYTES = 16_384
+MAX_PROCESSING_ENTRIES = 128
 TERMINAL_MAILBOX_STATUSES = {
     "completed", "processing_failed", "dispatch_error", "rejected",
     "failed", "expired", "quarantined",
@@ -281,9 +282,10 @@ class DailyOpsBridge:
                 fcntl.flock(fd, fcntl.LOCK_UN)
                 os.close(fd)
 
-    def _bounded_worker_status(self) -> dict | None:
+    def _bounded_worker_status(self, *, observed_at: datetime | None = None) -> dict | None:
         if self.instance_kind != BOUNDED_INSTANCE or self.worker_status_path is None:
             return None
+        now = observed_at or _now()
         try:
             value = _read(self.worker_status_path, 16_384)
             expected = {
@@ -327,38 +329,40 @@ class DailyOpsBridge:
                 or deadline - admission_deadline != timedelta(
                     seconds=BOUNDED_TURN_SECONDS + BOUNDED_SHUTDOWN_RESERVE_SECONDS,
                 )
-                or not -5 <= (_now() - stamp).total_seconds() <= 30
-                or _now() >= deadline
+                or not -5 <= (now - stamp).total_seconds() <= 30
+                or now >= deadline
             ):
                 return None
             return value
         except (OSError, ValueError, KeyError, TypeError):
             return None
 
-    def _mailbox_status(self) -> dict | None:
+    def _mailbox_status(self, *, observed_at: datetime | None = None) -> dict | None:
+        now = observed_at or _now()
         try:
             value = _read(self.mailbox / "latest-status.json", 16_384)
             stamp = datetime.fromisoformat(value["updated_at"].replace("Z", "+00:00"))
             if (value.get("session_id") != self.session_id or value.get("status") not in {"active", "running", "processing_blocked"}
-                    or not -5 <= (_now() - stamp).total_seconds() <= 30):
+                    or not -5 <= (now - stamp).total_seconds() <= 30):
                 return None
-            if self.instance_kind == BOUNDED_INSTANCE and self._bounded_worker_status() is None:
+            if (self.instance_kind == BOUNDED_INSTANCE
+                    and self._bounded_worker_status(observed_at=now) is None):
                 return None
             return value
         except (OSError, ValueError, KeyError, TypeError):
             return None
 
-    def _bounded_admission_ready(self, mailbox_status: dict) -> bool:
+    def _bounded_admission_ready(self, mailbox_status: dict, *, observed_at: datetime) -> bool:
         if self.instance_kind != BOUNDED_INSTANCE:
             return True
-        worker = self._bounded_worker_status()
+        worker = self._bounded_worker_status(observed_at=observed_at)
         return bool(
             worker is not None
             and worker.get("status") == "ready"
             and worker.get("admission_open") is True
             and worker.get("active_envelope_id") is None
             and worker["owner_turns_seen"] < worker["max_owner_turns"]
-            and _now() < _utc_timestamp(worker["admission_ends_at"])
+            and observed_at < _utc_timestamp(worker["admission_ends_at"])
             and mailbox_status.get("status") == "active"
             and mailbox_status.get("pending_count") == 0
         )
@@ -400,15 +404,17 @@ class DailyOpsBridge:
             return None
         return read_pending_agenda(self.planner, None)["revision"]
 
-    def _require_route_ready(self, *, exclude_request_id: str | None = None) -> dict:
-        status = self._mailbox_status()
+    def _require_route_ready(
+        self, *, observed_at: datetime, exclude_request_id: str | None = None,
+    ) -> dict:
+        status = self._mailbox_status(observed_at=observed_at)
         if status is None:
             raise HTTPException(503, "Oracle mailbox is offline or its session changed")
         if status.get("status") == "processing_blocked":
             raise HTTPException(503, "Oracle needs context recovery before accepting another request")
         if not _owner_message_scope_ready(status):
             raise HTTPException(503, "Oracle mailbox update must be loaded before owner messages can be sent")
-        if not self._bounded_admission_ready(status):
+        if not self._bounded_admission_ready(status, observed_at=observed_at):
             raise HTTPException(503, "Temporary Oracle responder lacks a full turn and cleanup window")
         if self._bounded_request_unresolved(exclude_request_id=exclude_request_id):
             raise HTTPException(503, "Temporary Oracle responder already has an unresolved owner request")
@@ -469,7 +475,72 @@ class DailyOpsBridge:
     def _delivery_evidence(record: dict, recipient: dict) -> bool:
         mailbox = Path(recipient["mailbox_root"])
         name = record["envelope_id"] + ".json"
-        directories = ["inbox", "processing", "processed", "failed", "outbox"]
+        directories = ["inbox", "processed", "failed", "outbox"]
+        if any((mailbox / directory / name).exists() for directory in directories):
+            return True
+
+        # The Pi extension atomically claims inbox entries as
+        # ``<id>.json.<pid>.<uuid>.claim``.  Recognize only that exact bounded,
+        # private regular-file form so a retry during the rename→marker window
+        # cannot publish a second inbox copy.
+        processing = mailbox / "processing"
+        try:
+            _private_directory(processing)
+        except FileNotFoundError:
+            return False
+        prefix = name + "."
+        for ordinal, path in enumerate(processing.iterdir(), start=1):
+            if ordinal > MAX_PROCESSING_ENTRIES:
+                raise HTTPException(503, "Oracle processing queue needs maintenance")
+            if not path.name.startswith(prefix):
+                continue
+            suffix = path.name[len(prefix):].split(".")
+            if len(suffix) != 3 or suffix[2] != "claim":
+                continue
+            pid_text, claim_id = suffix[:2]
+            try:
+                canonical_claim_id = str(uuid.UUID(claim_id))
+            except ValueError:
+                continue
+            if (not pid_text.isascii() or not pid_text.isdigit()
+                    or str(int(pid_text)) != pid_text or int(pid_text) <= 0
+                    or canonical_claim_id != claim_id):
+                continue
+            try:
+                st = path.lstat()
+                if (not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid()
+                        or st.st_mode & 0o077 or not 0 < st.st_size <= MAX_ENVELOPE_BYTES):
+                    raise HTTPException(503, "Oracle processing claim is not a private envelope")
+                claimed = _read(path, MAX_ENVELOPE_BYTES)
+            except FileNotFoundError:
+                # A precisely named claim observed in the private directory
+                # may disappear as the extension publishes its active marker.
+                return True
+            if (claimed.get("id") != record["envelope_id"]
+                    or claimed.get("session_id") != recipient["session_id"]):
+                raise HTTPException(503, "Oracle processing claim identity is invalid")
+            return True
+
+        marker_path = mailbox / "active-review-scope.json"
+        try:
+            marker = _read(marker_path, MAX_ENVELOPE_BYTES)
+        except FileNotFoundError:
+            marker = None
+        if marker is not None:
+            expected_kind = (
+                "agenda_review"
+                if record["payload"]["intent"] == "change_request" else "advice"
+            )
+            if (marker.get("schema_version") == 1
+                    and marker.get("session_id") == recipient["session_id"]
+                    and marker.get("envelope_id") == record["envelope_id"]
+                    and marker.get("kind") == expected_kind
+                    and marker.get("phase") in {"dispatched", "active"}):
+                return True
+            raise HTTPException(503, "Oracle active review marker does not match this request")
+
+        # Recheck terminal/exact locations after scanning the two transient
+        # handoff forms so a claim→marker→receipt transition stays evidence.
         return any((mailbox / directory / name).exists() for directory in directories)
 
     def route(self, payload: dict) -> dict:
@@ -479,6 +550,7 @@ class DailyOpsBridge:
         ident = payload["request_id"]
         record_path = self.requests / (ident + ".json")
         with self._locked():
+            admission_time = _now()
             duplicate = record_path.exists()
             if duplicate:
                 record = _read(record_path, 32_768)
@@ -496,25 +568,34 @@ class DailyOpsBridge:
                             "Existing request belongs to an inactive responder and was not requeued",
                         )
                     expires_at = _utc_timestamp(record.get("expires_at"))
-                    if _now() >= expires_at:
+                    if admission_time >= expires_at:
                         raise HTTPException(409, "Existing request expired and was not requeued")
-                    self._require_route_ready(exclude_request_id=ident)
+                    self._require_route_ready(
+                        observed_at=admission_time, exclude_request_id=ident,
+                    )
             else:
                 if payload["intent"] == "change_request" and payload["expected_plan_revision"] != self._plan_revision():
                     raise HTTPException(409, "agenda revision changed or expired; refresh before requesting changes")
-                self._require_route_ready()
+                self._require_route_ready(observed_at=admission_time)
                 if len(list(self.requests.iterdir())) >= 2048:
                     raise HTTPException(503, "owner conversation archive needs maintenance")
-                now = _now()
                 recipient = self._current_recipient()
-                record = {"payload": payload, "accepted_at": _iso(now),
-                          "expires_at": _iso(now + timedelta(hours=6)),
+                record = {"payload": payload, "accepted_at": _iso(admission_time),
+                          "expires_at": _iso(admission_time + timedelta(hours=6)),
                           "envelope_id": "owner-ui-" + ident,
                           "recipient": recipient}
                 publish = True
             envelope_id = record["envelope_id"]
             recipient_mailbox = Path(recipient["mailbox_root"])
             raw = self._envelope_bytes(record, recipient)
+            if publish:
+                # Recheck immediately before the first durable publication.
+                # This closes a cutoff crossing while the exact envelope was
+                # being serialized and validated.
+                self._require_route_ready(
+                    observed_at=_now(),
+                    exclude_request_id=ident if duplicate else None,
+                )
             if not duplicate:
                 # The exact envelope limits are part of the controller
                 # contract.  Validate them before this durable record can

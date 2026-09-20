@@ -424,6 +424,46 @@ def test_archive_only_duplicate_republishes_inbox_for_current_ready_responder(re
     )
 
 
+def test_claim_window_duplicate_does_not_publish_second_inbox_copy(relay):
+    bounded = _bounded_relay(relay)
+    payload = _payload()
+    bounded["bridge"].route(payload)
+    name = "owner-ui-" + payload["request_id"] + ".json"
+    inbox = bounded["mailbox"] / "inbox" / name
+    claim = bounded["mailbox"] / "processing" / (
+        name + ".1234.aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.claim"
+    )
+    inbox.rename(claim)
+    original = claim.read_bytes()
+
+    duplicate = bounded["bridge"].route(payload)
+
+    assert duplicate["duplicate"] is True
+    assert claim.read_bytes() == original
+    assert not inbox.exists()
+
+
+@pytest.mark.parametrize("phase", ["dispatched", "active"])
+def test_marker_only_duplicate_does_not_publish_second_inbox_copy(relay, phase):
+    bounded = _bounded_relay(relay)
+    payload = _payload()
+    bounded["bridge"].route(payload)
+    name = "owner-ui-" + payload["request_id"] + ".json"
+    inbox = bounded["mailbox"] / "inbox" / name
+    envelope = json.loads(inbox.read_text())
+    inbox.unlink()
+    _json(bounded["mailbox"] / "active-review-scope.json", {
+        "schema_version": 1, "session_id": WORKER_SESSION,
+        "envelope_id": envelope["id"], "kind": envelope["kind"],
+        "phase": phase, "review_scope": envelope["review_scope"],
+    })
+
+    duplicate = bounded["bridge"].route(payload)
+
+    assert duplicate["duplicate"] is True
+    assert not inbox.exists()
+
+
 def test_duplicate_without_evidence_requeues_only_to_current_ready_bounded_route(relay):
     bounded = _bounded_relay(relay)
     payload = _payload()
@@ -506,6 +546,58 @@ def test_bounded_duplicate_replay_requires_full_turn_budget(relay, monkeypatch):
     assert "full turn and cleanup" in caught.value.detail
     assert not (bounded["mailbox"] / "admission" / name).exists()
     assert not (bounded["mailbox"] / "inbox" / name).exists()
+
+
+def test_fresh_admission_rechecks_cutoff_before_first_durable_write(relay, monkeypatch):
+    bounded = _bounded_relay(relay)
+    before_cutoff = WORKER_ADMISSION_DEADLINE - timedelta(microseconds=1)
+    worker_status = json.loads(bounded["worker_status"].read_text())
+    worker_status["updated_at"] = _iso(before_cutoff - timedelta(seconds=1))
+    _json(bounded["worker_status"], worker_status)
+    heartbeat = json.loads((bounded["mailbox"] / "latest-status.json").read_text())
+    heartbeat["updated_at"] = _iso(before_cutoff - timedelta(seconds=1))
+    _json(bounded["mailbox"] / "latest-status.json", heartbeat)
+    clock = iter((before_cutoff, WORKER_ADMISSION_DEADLINE))
+    monkeypatch.setattr(bridge_module, "_now", lambda: next(clock))
+    payload = _payload()
+
+    with pytest.raises(HTTPException) as caught:
+        bounded["bridge"].route(payload)
+    assert caught.value.status_code == 503
+    assert "full turn and cleanup" in caught.value.detail
+    name = "owner-ui-" + payload["request_id"] + ".json"
+    assert not (bounded["bridge"].requests / (payload["request_id"] + ".json")).exists()
+    assert not (bounded["mailbox"] / "admission" / name).exists()
+    assert not (bounded["mailbox"] / "inbox" / name).exists()
+
+
+def test_archive_replay_rechecks_cutoff_before_inbox_publication(relay, monkeypatch):
+    bounded = _bounded_relay(relay)
+    payload = _payload()
+    bounded["bridge"].route(payload)
+    name = "owner-ui-" + payload["request_id"] + ".json"
+    inbox = bounded["mailbox"] / "inbox" / name
+    inbox.unlink()
+    record_path = bounded["bridge"].requests / (payload["request_id"] + ".json")
+    record = json.loads(record_path.read_text())
+    record["expires_at"] = _iso(WORKER_DEADLINE)
+    _json(record_path, record)
+
+    before_cutoff = WORKER_ADMISSION_DEADLINE - timedelta(microseconds=1)
+    worker_status = json.loads(bounded["worker_status"].read_text())
+    worker_status["updated_at"] = _iso(before_cutoff - timedelta(seconds=1))
+    _json(bounded["worker_status"], worker_status)
+    heartbeat = json.loads((bounded["mailbox"] / "latest-status.json").read_text())
+    heartbeat["updated_at"] = _iso(before_cutoff - timedelta(seconds=1))
+    _json(bounded["mailbox"] / "latest-status.json", heartbeat)
+    clock = iter((before_cutoff, WORKER_ADMISSION_DEADLINE))
+    monkeypatch.setattr(bridge_module, "_now", lambda: next(clock))
+
+    with pytest.raises(HTTPException) as caught:
+        bounded["bridge"].route(payload)
+    assert caught.value.status_code == 503
+    assert "full turn and cleanup" in caught.value.detail
+    assert not inbox.exists()
 
 
 def test_bounded_responder_closes_double_post_race_until_terminal_receipt(relay):
