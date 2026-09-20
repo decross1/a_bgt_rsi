@@ -69,10 +69,14 @@ These fields augment the existing private root, mailbox root, session ID,
 allowed origins, and planner pointer. The relay accepts a new owner request only
 when both the mailbox heartbeat and the separate controller status are fresh,
 the controller advertises `ready` with admission open, its configured deadline
-has not passed, and the mailbox has no active or pending turn. The temporary
-2026-09-20 availability window ends at **16:02:48 UTC**. The worker controller
-owns the configured owner-request cap (12 for this window) and closes admission
-at that limit; the relay checks the same advertised cap but does not extend it.
+leaves enough time for a 600-second turn plus 30-second cleanup reserve, and the
+mailbox has no active or pending turn. The controller status publishes
+`admission_ends_at`, exactly 630 seconds before `availability_ends_at`; for this
+temporary run those times are **15:52:18 UTC** and **16:02:48 UTC**. A turn
+already admitted before the cutoff may finish within its bound. The worker
+controller owns the configured owner-request cap (12 for this window) and
+closes admission at that limit; the relay checks the same advertised cap but
+does not extend it.
 
 `legacy_recipient` is required during the temporary switch. It explicitly
 binds request records created before recipient metadata existed to canonical
@@ -91,7 +95,10 @@ copy lets the one-shot controller observe the accepted turn even if the Pi
 extension claims the inbox entry before its next poll. An idempotent retry must
 match the archived bytes exactly. Atomic-publication temporary files remain in
 the private sibling `.relay-staging/` directory so strict queue readers never
-mistake a partially published file for an owner request.
+mistake a partially published file for an owner request. The archive alone is
+not a delivery receipt: only the same current, healthy responder may republish
+an archive-only request to `inbox/`; an inactive historical route is never
+revived by a retry.
 
 The bounded responder can read only `daily_ops_summary.json` and may write only
 its request-specific private response draft. Its replies are advisory. Queueing
