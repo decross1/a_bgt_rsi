@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -216,7 +216,9 @@ describe("DailyOpsPanel", () => {
     await waitFor(() => expect(editor).toHaveFocus());
     const submit = within(editor).getByRole("button", { name: "Queue modification request" });
     expect(submit).toBeDisabled();
-    fireEvent.change(within(editor).getByLabelText("Required change"), {
+    const note = within(editor).getByLabelText("Required change");
+    expect(note).toHaveAttribute("maxlength", "3000");
+    fireEvent.change(note, {
       target: { value: "Keep the runner bounded to the accepted replay contract." },
     });
     expect(submit).toBeEnabled();
@@ -236,6 +238,48 @@ describe("DailyOpsPanel", () => {
     fireEvent.click(submit);
     expect(D.postDecision).toHaveBeenCalledTimes(1);
     expect(D.post).not.toHaveBeenCalled();
+  });
+
+  it("does not apply a late request result to a different card editor", async () => {
+    D.summary = v2Summary();
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    let resolveRequest: ((value: Record<string, unknown>) => void) | undefined;
+    D.postDecision.mockReturnValueOnce(new Promise(resolve => { resolveRequest = resolve; }));
+    show();
+
+    const first = screen.getByTestId("daily-work-card-build-v2-runner");
+    fireEvent.click(within(first).getByRole("button", { name: "Ask to modify" }));
+    let editor = screen.getByTestId("daily-decision-editor");
+    fireEvent.change(within(editor).getByLabelText("Required change"), {
+      target: { value: "Change the first card." },
+    });
+    fireEvent.click(within(editor).getByRole("button", { name: "Queue modification request" }));
+    expect(within(editor).getByRole("button", { name: "Sending…" })).toBeDisabled();
+    fireEvent.submit(editor.querySelector("form") as HTMLFormElement);
+    expect(D.postDecision).toHaveBeenCalledTimes(1);
+
+    const second = screen.getByTestId("daily-work-card-verify-v2-replay");
+    fireEvent.click(within(second).getByRole("button", { name: "Ask to skip" }));
+    editor = screen.getByTestId("daily-decision-editor");
+    expect(within(editor).getByRole("heading", {
+      name: "Ask to skip · Check that results can be reproduced",
+    })).toBeInTheDocument();
+    expect(within(editor).getByRole("button", { name: "Queue skip request" })).toBeEnabled();
+
+    await act(async () => {
+      resolveRequest?.({
+        request_id: "11111111-1111-4111-8111-111111111111", status: "queued",
+        accepted_at: now, duplicate: false, target_kind: "work_card",
+        target_id: "build-v2-runner", action: "modify",
+        expected_plan_revision: "1044a9c5ff6b617a7f7fce104019202fd77d38bdb2294ff8749100ed331e9621",
+        execution_available: false,
+      });
+      await Promise.resolve();
+    });
+
+    expect(within(editor).queryByText(/Request queued/)).toBeNull();
+    expect(within(editor).getByRole("button", { name: "Queue skip request" })).toBeEnabled();
+    expect(D.postDecision).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a request local and focuses owner access until the tab is unlocked", async () => {
