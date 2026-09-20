@@ -7,7 +7,6 @@ import pytest
 
 from backend.daily_ops_agenda import read_pending_agenda
 
-
 CREATED = "2098-09-20T06:16:10.891526Z"
 EXPIRES = "2098-09-21T06:16:10.891526Z"
 FOCUS_BEFORE = "2098-09-20T05:00:00Z"
@@ -118,43 +117,45 @@ def _write_state(tmp_path: Path, *, payload=None, created=CREATED, expires=EXPIR
     return latest, database, revision
 
 
-def test_projects_exact_hash_verified_pending_tasks(tmp_path):
+def test_projects_one_exact_hash_verified_non_executable_decision(tmp_path):
     latest, _database, revision = _write_state(tmp_path)
 
     result = read_pending_agenda(latest, FOCUS_BEFORE)
 
     assert result["revision"] == revision
     assert result["warnings"] == []
-    assert len(result["goals"]) == 3
-    first = result["goals"][0]
-    assert first == {
-        "id": f"pending-agenda-{revision[:12]}-task-1",
-        "title": "Review task 1",
-        "detail": (
-            "Pending owner review; no approval or execution is implied. "
-            "Why now: Reason 1 is source-bound. Artifact: Artifact 1 "
-            "Validation: Validation 1"
+    assert result["agenda_id"] == AGENDA_ID
+    assert result["decision"] == {
+        "id": f"agenda-{revision[:16]}",
+        "agenda_id": AGENDA_ID,
+        "revision": revision,
+        "title": "Review the proposed research agenda",
+        "what": "Review a bounded proposal for the selected research thesis.",
+        "reason": (
+            "The sealed proposal has not received an exact-revision semantic review. "
+            "Review or request an amendment; no execution is available from this card."
         ),
+        "disposition": "review_required",
+        "approval_required": False,
+        "approve_enabled": False,
+        "execution_available": False,
+        "actions": ["modify", "skip"],
+        "task_titles": ["Review task 1", "Review task 2", "Review task 3"],
         "source": f"Oracle proposal {AGENDA_ID}; sealed revision {revision}",
         "observed_at": CREATED,
-        "status": "awaiting_owner",
-        "owner": "oracle",
     }
-    assert result["goals"][1]["owner"] == "codex"
 
 
-def test_marks_proposal_created_before_focus_as_stale_not_approved_work(tmp_path):
+def test_marks_proposal_created_before_focus_as_amend_required(tmp_path):
     latest, _database, revision = _write_state(tmp_path)
 
     result = read_pending_agenda(latest, FOCUS_AFTER)
 
     assert result["revision"] == revision
-    assert result["warnings"] == [
-        "Pending Oracle agenda predates the current research focus and is stale; "
-        "it is awaiting owner review, not approved daily work."
-    ]
-    assert all(goal["status"] == "awaiting_owner" for goal in result["goals"])
-    assert all(goal["detail"].startswith("Stale pending proposal") for goal in result["goals"])
+    assert result["warnings"] == []
+    assert result["decision"]["disposition"] == "amend_required"
+    assert result["decision"]["approve_enabled"] is False
+    assert "predates the selected research focus" in result["decision"]["reason"]
 
 
 def test_expired_proposal_has_no_revision_or_task_binding(tmp_path):
@@ -167,10 +168,12 @@ def test_expired_proposal_has_no_revision_or_task_binding(tmp_path):
     result = read_pending_agenda(latest, "2020-09-20T06:50:57Z")
 
     assert result["revision"] is None
-    assert result["goals"] == []
+    assert result["decision"] is None
     assert result["warnings"] == [
-        "Pending Oracle agenda expired at 2020-09-21T06:16:10Z; "
-        "no plan revision or tasks are active."
+        (
+            "Pending Oracle agenda expired at 2020-09-21T06:16:10Z; "
+            "no plan revision or decision is active."
+        )
     ]
 
 
@@ -193,10 +196,13 @@ def test_tampered_payload_fails_closed_without_touching_database(tmp_path):
 
     assert result == {
         "revision": None,
-        "goals": [],
+        "agenda_id": None,
+        "decision": None,
         "warnings": [
-            "Pending Oracle agenda could not be verified; no plan revision or "
-            "action binding is available."
+            (
+                "Pending Oracle agenda could not be verified; no plan revision or "
+                "action binding is available."
+            )
         ],
     }
     assert hashlib.sha256(database.read_bytes()).hexdigest() == before
@@ -222,7 +228,7 @@ def test_unknown_schema_fails_closed(tmp_path, mutation):
     result = read_pending_agenda(latest, FOCUS_BEFORE)
 
     assert result["revision"] is None
-    assert result["goals"] == []
+    assert result["decision"] is None
     assert result["warnings"] and "could not be verified" in result["warnings"][0]
 
 
@@ -242,7 +248,7 @@ def test_valid_seal_remains_readable_when_runtime_policy_fields_change(tmp_path)
     result = read_pending_agenda(latest, FOCUS_BEFORE)
 
     assert result["revision"] == revision
-    assert len(result["goals"]) == 3
+    assert len(result["decision"]["task_titles"]) == 3
     assert result["warnings"] == []
 
 
@@ -251,22 +257,23 @@ def test_sqlite_source_and_projection_are_bounded(tmp_path):
 
     projected = read_pending_agenda(latest, FOCUS_BEFORE)
 
-    assert len(projected["goals"]) == 3
+    assert len(projected["decision"]["task_titles"]) == 3
     assert projected["warnings"] == [
-        "Pending Oracle agenda contains 5 tasks; only the first 3 are shown."
+        "Pending Oracle agenda contains 5 tasks; only the first 3 task titles are shown."
     ]
 
     with database.open("r+b") as stream:
         stream.truncate(8 * 1024 * 1024 + 1)
     rejected = read_pending_agenda(latest, FOCUS_BEFORE)
     assert rejected["revision"] is None
-    assert rejected["goals"] == []
+    assert rejected["decision"] is None
     assert "could not be verified" in rejected["warnings"][0]
 
 
 def test_missing_latest_means_no_pending_agenda(tmp_path):
     assert read_pending_agenda(tmp_path / "missing.json", FOCUS_BEFORE) == {
+        "agenda_id": None,
         "revision": None,
-        "goals": [],
+        "decision": None,
         "warnings": [],
     }

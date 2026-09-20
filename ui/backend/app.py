@@ -140,6 +140,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                coordinator_memory=DEFAULT_COORDINATOR_MEMORY,
                daily_ops_authorizer=None,
                daily_ops_router=None,
+               daily_ops_decision_router=None,
                daily_ops_refresher=None):
     app = FastAPI(title="UI backend — orchestrator dashboard", version=_GIT_SHA)
     # Permissive CORS for local dev (Vite serves the SPA on another port).
@@ -281,6 +282,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         state_dir=Path(coordinator_run_state),
         owner_authorizer=daily_ops_authorizer,
         message_router=daily_ops_router,
+        decision_router=daily_ops_decision_router,
         projection_refresher=daily_ops_refresher,
     )
 
@@ -410,5 +412,6 @@ app = create_app(
     coordinator_memory=_env_path("UI_COORDINATOR_MEMORY", DEFAULT_COORDINATOR_MEMORY),
     daily_ops_authorizer=_daily_bridge.authorize if _daily_bridge else None,
     daily_ops_router=_daily_bridge.route if _daily_bridge else None,
+    daily_ops_decision_router=_daily_bridge.route_decision if _daily_bridge else None,
     daily_ops_refresher=_daily_bridge.refresh if _daily_bridge else None,
 )

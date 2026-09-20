@@ -1,5 +1,5 @@
-import hashlib
 import asyncio
+import hashlib
 import json
 import uuid
 from pathlib import Path
@@ -10,9 +10,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from backend.daily_ops import (
-    MESSAGES_SCHEMA, SUMMARY_SCHEMA, _private_cache_headers, register,
+    LEGACY_SUMMARY_SCHEMA,
+    MESSAGES_SCHEMA,
+    SUMMARY_SCHEMA,
+    _private_cache_headers,
+    register,
 )
-
 
 NOW = "2026-09-20T08:30:00Z"
 REVISION = "agenda-20260920-r3"
@@ -23,6 +26,21 @@ def _summary():
         "detail": "Bounded, source-linked operator summary.",
         "source": "verified runtime projection",
         "observed_at": NOW,
+    }
+    card = {
+        "id": "runner", "title": "Complete the v2 runner",
+        "what": "Build the versioned runner and deterministic replay path.",
+        "benefit": "Makes a fresh shakedown technically possible and auditable.",
+        "cost": {"summary": "4–8 engineering hours; 0 model/GPU hours.",
+                 "kind": "estimate", "basis": "Reviewer planning estimate."},
+        "conviction": {"score": 9, "kind": "estimate",
+                       "basis": "Worth-doing judgment, not a scientific probability."},
+        "worth_time": {"recommendation": "do_now",
+                       "basis": "Closes the selected thesis's missing runner seam."},
+        "status": "authorized", "owner": "codex", "depends_on": [],
+        "source": "exact-revision semantic review", "observed_at": NOW,
+        "approval_required": False,
+        "actions": ["modify", "skip", "reprioritize"],
     }
     return {
         "schema_version": SUMMARY_SCHEMA,
@@ -73,6 +91,18 @@ def _summary():
             },
         },
         "warnings": [],
+        "work_cards": [card],
+        "agenda_decision": {
+            "id": "agenda-20260920-r3", "agenda_id": "oracle-agenda-r3",
+            "revision": REVISION, "title": "Request a corrected draft",
+            "what": "Replace two stale tasks while preserving the selected thesis.",
+            "reason": "Exact-revision semantic review found stale task content.",
+            "disposition": "amend_required", "approval_required": False,
+            "approve_enabled": False, "execution_available": False,
+            "actions": ["modify", "skip"],
+            "task_titles": ["Complete the v2 runner"],
+            "source": "exact-revision semantic review", "observed_at": NOW,
+        },
     }
 
 
@@ -92,10 +122,11 @@ def _message(*, request_id=None, actor="owner", intent="question",
     return row
 
 
-def _endpoints(state_dir: Path, *, authorizer=None, router=None):
+def _endpoints(state_dir: Path, *, authorizer=None, router=None,
+               decision_router=None):
     app = FastAPI()
     register(app, state_dir=state_dir, owner_authorizer=authorizer,
-             message_router=router)
+             message_router=router, decision_router=decision_router)
     result = {}
     for route in app.routes:
         if not route.path.startswith("/api/daily-ops"):
@@ -148,6 +179,8 @@ def test_missing_sources_are_honest_and_write_is_fail_closed(tmp_path):
         "auth_required": True, "write_available": False,
         "targets": ["oracle"], "intents": ["question", "change_request"],
         "nara_interaction": "ask_oracle_about_nara",
+        "decision_write_available": False,
+        "decision_actions": ["modify", "skip", "reprioritize"],
     }
     assert messages == {
         "schema_version": MESSAGES_SCHEMA, "available": False,
@@ -158,6 +191,11 @@ def test_missing_sources_are_honest_and_write_is_fail_closed(tmp_path):
             "request_id": str(uuid.uuid4()), "target": "oracle",
             "intent": "question", "text": "Where are we stuck?",
         })
+    assert caught.value.status_code == 503
+    with pytest.raises(HTTPException, match="decision routing is not configured") as caught:
+        _endpoint(routes, "/api/daily-ops/decisions", "POST")(
+            _request(), _owner_decision(),
+        )
     assert caught.value.status_code == 503
 
 
@@ -186,8 +224,9 @@ def test_private_path_middleware_marks_success_and_failure_but_not_summary(tmp_p
 
     success = asyncio.run(exercise("/api/daily-ops/messages", 200))
     failure = asyncio.run(exercise("/api/daily-ops/messages", 403))
+    decision = asyncio.run(exercise("/api/daily-ops/decisions", 409))
     summary = asyncio.run(exercise("/api/daily-ops/summary", 200))
-    for response in (success, failure):
+    for response in (success, failure, decision):
         assert response.headers["Cache-Control"] == "no-store"
         assert response.headers["Vary"] == "Authorization, Origin"
     assert "Cache-Control" not in summary.headers
@@ -204,6 +243,22 @@ def test_valid_summary_is_source_linked_and_explicit_about_agents(tmp_path):
     assert body["current_plan_revision"] == REVISION
     assert body["agents"]["pi_client"]["label"] == "Pi client for Oracle"
     assert body["capabilities"]["write_available"] is True
+    assert body["work_cards"][0]["conviction"]["score"] == 9
+    assert body["agenda_decision"]["approve_enabled"] is False
+
+
+def test_legacy_v1_summary_remains_readable_during_atomic_rollout(tmp_path):
+    value = _summary()
+    value["schema_version"] = LEGACY_SUMMARY_SCHEMA
+    value.pop("work_cards")
+    value.pop("agenda_decision")
+    _write_summary(tmp_path, value)
+
+    body = _endpoint(_endpoints(tmp_path), "/api/daily-ops/summary", "GET")()
+
+    assert body["schema_version"] == LEGACY_SUMMARY_SCHEMA
+    assert "work_cards" not in body
+    assert "agenda_decision" not in body
 
 
 @pytest.mark.parametrize("mutate", [
@@ -211,6 +266,9 @@ def test_valid_summary_is_source_linked_and_explicit_about_agents(tmp_path):
     lambda value: value.update({"current_plan_revision": " bad "}),
     lambda value: value["agents"]["nara"].update(status="speaking_for_itself"),
     lambda value: value["research_focus"].update(source_receipt_sha256="not-a-hash"),
+    lambda value: value["work_cards"][0]["conviction"].update(score=90),
+    lambda value: value["agenda_decision"].update(revision="different-revision"),
+    lambda value: value["agenda_decision"].update(approve_enabled=True),
 ])
 def test_invalid_summary_is_explicit_503(tmp_path, mutate):
     value = _summary()
@@ -419,4 +477,113 @@ def test_router_cannot_claim_delivery_as_immediate_success(tmp_path):
     with pytest.raises(HTTPException, match="invalid receipt") as caught:
         endpoint(_request(), {"request_id": request_id, "target": "oracle",
                               "intent": "question", "text": "What happened?"})
+    assert caught.value.status_code == 502
+
+
+def _owner_decision(*, action="modify", target_kind="agenda", note="Draft the correction."):
+    value = {
+        "request_id": str(uuid.uuid4()),
+        "target_kind": target_kind,
+        "target_id": "agenda-20260920-r3" if target_kind == "agenda" else "runner",
+        "action": action,
+        "expected_plan_revision": REVISION,
+    }
+    if note is not None:
+        value["note"] = note
+    if action == "reprioritize":
+        value["priority"] = "now"
+    return value
+
+
+def test_decision_request_is_authenticated_and_returns_queued_only_receipt(tmp_path):
+    calls = []
+    payload = _owner_decision()
+
+    def route(value):
+        calls.append(value)
+        return {
+            "request_id": value["request_id"], "status": "queued",
+            "accepted_at": NOW, "duplicate": False,
+            "target_kind": value["target_kind"], "target_id": value["target_id"],
+            "action": value["action"],
+            "expected_plan_revision": value["expected_plan_revision"],
+            "execution_available": False,
+        }
+
+    routes = _endpoints(
+        tmp_path, authorizer=lambda request: request.headers.get("authorization") == "Bearer key",
+        router=lambda _value: {}, decision_router=route,
+    )
+    endpoint = _endpoint(routes, "/api/daily-ops/decisions", "POST")
+    with pytest.raises(HTTPException) as caught:
+        endpoint(_request(), payload)
+    assert caught.value.status_code == 403 and calls == []
+
+    receipt = endpoint(_request("key"), payload)
+    assert receipt == {
+        "request_id": payload["request_id"], "status": "queued",
+        "accepted_at": NOW, "duplicate": False,
+        "target_kind": "agenda", "target_id": "agenda-20260920-r3",
+        "action": "modify", "expected_plan_revision": REVISION,
+        "execution_available": False,
+    }
+    assert calls == [payload]
+
+
+def test_message_and_decision_write_capabilities_are_independent(tmp_path):
+    summary_only_message = _endpoint(_endpoints(
+        tmp_path, authorizer=lambda _request: True, router=lambda _value: {},
+    ), "/api/daily-ops/summary", "GET")()
+    assert summary_only_message["capabilities"]["write_available"] is True
+    assert summary_only_message["capabilities"]["decision_write_available"] is False
+
+    decision_only = _endpoint(_endpoints(
+        tmp_path, authorizer=lambda _request: True,
+        decision_router=lambda _value: {},
+    ), "/api/daily-ops/summary", "GET")()
+    assert decision_only["capabilities"]["write_available"] is False
+    assert decision_only["capabilities"]["decision_write_available"] is True
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda value: value.update(action="approve"),
+    lambda value: value.pop("expected_plan_revision"),
+    lambda value: value.update(target_kind="nara"),
+    lambda value: value.update(action="modify", note=None),
+    lambda value: value.update(action="reprioritize", target_kind="agenda", priority="now"),
+    lambda value: value.update(action="skip", priority="now"),
+    lambda value: value.update(action="modify", note="x" * 3001),
+    lambda value: value.update(action="modify", note="🧠" * 1000),
+])
+def test_invalid_or_authority_claiming_decisions_are_rejected_before_routing(
+    tmp_path, mutation,
+):
+    routed = []
+    payload = _owner_decision(target_kind="work_card")
+    mutation(payload)
+    endpoint = _endpoint(_endpoints(
+        tmp_path, authorizer=lambda _request: True,
+        decision_router=lambda value: routed.append(value),
+    ), "/api/daily-ops/decisions", "POST")
+    with pytest.raises(HTTPException) as caught:
+        endpoint(_request(), payload)
+    assert caught.value.status_code == 422
+    assert routed == []
+
+
+def test_decision_router_cannot_claim_execution_or_immediate_completion(tmp_path):
+    payload = _owner_decision(action="skip", target_kind="work_card", note=None)
+    endpoint = _endpoint(_endpoints(
+        tmp_path, authorizer=lambda _request: True,
+        decision_router=lambda value: {
+            "request_id": value["request_id"], "status": "approved",
+            "accepted_at": NOW, "duplicate": False,
+            "target_kind": value["target_kind"], "target_id": value["target_id"],
+            "action": value["action"],
+            "expected_plan_revision": value["expected_plan_revision"],
+            "execution_available": True,
+        },
+    ), "/api/daily-ops/decisions", "POST")
+    with pytest.raises(HTTPException, match="invalid receipt") as caught:
+        endpoint(_request(), payload)
     assert caught.value.status_code == 502
