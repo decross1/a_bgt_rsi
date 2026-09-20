@@ -517,6 +517,34 @@ def test_paused_gate_is_amber_and_named(tmp_path):
     assert "loop_gated:paused" in payload["reasons"]
 
 
+def test_selected_research_focus_is_amber_gate_not_red_stall(tmp_path):
+    """A selected thesis intentionally holds discovery while its next
+    validation artifact is prepared. Only the exact empty focus_pending shape
+    earns this carve-out; focus_invalid remains on the red path."""
+    sigs, payload, health = _emit(
+        tmp_path,
+        _refusal("focus_pending", gate_reason="research_focus"),
+    )
+    assert [signal["signal"] for signal in sigs] == [
+        "loop_gated:research_focus"
+    ]
+    assert payload["level"] == "amber"
+    assert payload["gate"]["reason"] == "research_focus"
+    assert "loop_stalled" not in payload["reasons"]
+    rows = [json.loads(line) for line in health.read_text().splitlines()]
+    assert rows[0]["cycle_status"] == "focus_pending"
+
+
+def test_invalid_research_focus_does_not_buy_gate_exemption(tmp_path):
+    _, payload, _ = _emit(
+        tmp_path,
+        _refusal("focus_invalid", gate_reason="research_focus"),
+    )
+    assert payload["level"] == "red"
+    assert "loop_stalled" in payload["reasons"]
+    assert "gate" not in payload
+
+
 def test_gated_cycle_still_reports_a_real_degraded_signal_as_amber(tmp_path):
     """Being held does not make a broken component healthy: a dead frontier
     vendor still wins amber over the gate's own "ok"."""

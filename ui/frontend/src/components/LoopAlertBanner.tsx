@@ -66,6 +66,9 @@ function frontierVendorReason(reason: string): string | null {
 }
 
 function displayReason(reason: string): string {
+  if (reason === "loop_gated:research_focus") {
+    return "New-topic intake is held while the selected research focus awaits its next validation artifact.";
+  }
   const vendor = frontierVendorReason(reason);
   return vendor === null ? reason :
     `Last recorded ${vendor} CLI calls failed; this alert does not establish current availability.`;
@@ -173,7 +176,9 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
     reasons[0] === "loop_stalled";
   // A held loop is IDLE, not stalled. Saying "LOOP STALLED" over a gate the
   // producer named would be the same unexplained red the owner objected to.
-  const headline = gate ? `LOOP IDLE — ${gate.reason}` : showRed ? "LOOP STALLED"
+  const focusGate = gate?.reason === "research_focus";
+  const headline = focusGate ? "Research focus awaiting next validation artifact"
+    : gate ? `LOOP IDLE — ${gate.reason}` : showRed ? "LOOP STALLED"
     : vendorOnlyAmber ? "Recorded frontier failures" : "loop degraded";
 
   // A completed cycle with no substantive activity is a real progress warning.
@@ -210,7 +215,7 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
     <div
       data-testid="loop-alert-banner"
       data-level={showRed ? "red" : "amber"}
-      role="alert"
+      role={focusGate && !showRed ? "status" : "alert"}
       className={`border-b px-6 py-2 text-xs ${tone}`}
     >
       <div className="flex flex-wrap items-baseline gap-2">
@@ -218,13 +223,17 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
         <span className={showRed ? "text-red-400/70" : "text-amber-400/70"}>
           run_state/loop_alert.json
         </span>
-        {reasons.includes("loop_stalled") && (
+        {focusGate ? (
+          <a className="ml-auto underline" href="/ladder?research_scope=active">
+            View research focus
+          </a>
+        ) : reasons.includes("loop_stalled") && (
           <a className="ml-auto underline" href="/cycles">View cycle details</a>
         )}
       </div>
       {gate !== null && (
         <div className="mt-1" data-testid="loop-alert-gate">
-          idle: {gate.reason}
+          {focusGate ? "new-topic intake held for selected focus" : `idle: ${gate.reason}`}
           {gate.firstGatedAt !== null ? ` for ${ageLabel(gate.firstGatedAt, now)}` : ""}
           {gate.detail !== null ? ` — ${gate.detail}` : ""}
         </div>
@@ -235,7 +244,8 @@ export default function LoopAlertBanner({ initial, pollMs = 60_000, nowMs }: Pro
             <li key={i} title={vendorOnlyAmber || r === "loop_stalled" ? r : undefined}>
               {r === "loop_stalled"
                 ? "The last coordinator cycle advanced no research records."
-                : vendorOnlyAmber ? displayReason(r) : r}
+                : vendorOnlyAmber || r === "loop_gated:research_focus"
+                  ? displayReason(r) : r}
             </li>
           ))}
         </ul>
