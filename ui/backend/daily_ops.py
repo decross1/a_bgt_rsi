@@ -6,6 +6,8 @@ The dashboard is a consumer of two small runtime projections:
     Human-readable goals, recent outcomes, the selected research focus and
     observed agent health.  A separate producer owns the projection; this
     module never infers completion from prose or mutates scientific state.
+    Its ``generated_at`` value is the curated daily-notes update time, not the
+    time a live health projection happened to be read.
 
 ``daily_ops_messages.jsonl``
     An append-only projection of owner requests and *observed* delivery/reply
