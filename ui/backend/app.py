@@ -22,6 +22,7 @@ from .chain import LogStore, build_chain_by_request_id
 from .chat_seam import register as register_chat_seam
 from .coordinator import register as register_coordinator
 from .daily_ops import register as register_daily_ops
+from .daily_ops_bridge import configured_bridge
 from .doc_titles import register as register_doc_titles
 from .experiments import register as register_experiments
 from .finding_detail import register as register_finding_detail
@@ -138,7 +139,8 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                coordinator_run_state=DEFAULT_COORDINATOR_RUN_STATE,
                coordinator_memory=DEFAULT_COORDINATOR_MEMORY,
                daily_ops_authorizer=None,
-               daily_ops_router=None):
+               daily_ops_router=None,
+               daily_ops_refresher=None):
     app = FastAPI(title="UI backend — orchestrator dashboard", version=_GIT_SHA)
     # Permissive CORS for local dev (Vite serves the SPA on another port).
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
@@ -279,6 +281,7 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         state_dir=Path(coordinator_run_state),
         owner_authorizer=daily_ops_authorizer,
         message_router=daily_ops_router,
+        projection_refresher=daily_ops_refresher,
     )
 
     # 2026-08-14 work order A+C: loop-alert flag + ideas-board read seams.
@@ -389,6 +392,10 @@ def _env_path(var, default):
 
 # Module-level app for uvicorn. Paths overridable via env vars so the
 # backend can be pointed at fixture logs without code changes.
+_daily_bridge = configured_bridge(
+    _env_path("UI_COORDINATOR_RUN_STATE", DEFAULT_COORDINATOR_RUN_STATE),
+    os.environ.get("ORACLE_DAILY_OPS_CONFIG"),
+)
 app = create_app(
     logs_dir=_env_path("UI_LOGS_DIR", DEFAULT_LOGS_DIR),
     telemetry_file=_env_path("UI_TELEMETRY_FILE", DEFAULT_TELEMETRY),
@@ -401,4 +408,7 @@ app = create_app(
     loop_v0_memory=_env_path("UI_LOOP_V0_MEMORY", DEFAULT_LOOP_V0_MEMORY),
     coordinator_run_state=_env_path("UI_COORDINATOR_RUN_STATE", DEFAULT_COORDINATOR_RUN_STATE),
     coordinator_memory=_env_path("UI_COORDINATOR_MEMORY", DEFAULT_COORDINATOR_MEMORY),
+    daily_ops_authorizer=_daily_bridge.authorize if _daily_bridge else None,
+    daily_ops_router=_daily_bridge.route if _daily_bridge else None,
+    daily_ops_refresher=_daily_bridge.refresh if _daily_bridge else None,
 )

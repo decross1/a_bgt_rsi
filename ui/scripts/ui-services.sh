@@ -32,6 +32,8 @@ BACKEND_PY="$UI/../.venv-chroma/bin/python"
 LOGDIR="$UI/logs/services"           # gitignored (logs/*)
 BACKEND_PORT=8700
 FRONTEND_PORT=5173
+DAILY_OPS_CONFIG="${ORACLE_DAILY_OPS_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/oracle-lab/daily-ops.json}"
+if [ ! -f "$DAILY_OPS_CONFIG" ]; then DAILY_OPS_CONFIG=""; fi
 mkdir -p "$LOGDIR"
 
 _ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -42,7 +44,7 @@ _proc_up()    { pgrep -f "$1" >/dev/null 2>&1; }
 # _launch <logfile> <workdir> <cmd...> — setsid-detached so it outlives this shell.
 _launch() { local log=$1 wd=$2; shift 2; ( cd "$wd" && setsid "$@" > "$log" 2>&1 < /dev/null & disown ); }
 
-_start_backend()  { _launch "$LOGDIR/backend.log" "$UI"          env -u MOCK_LLM "$BACKEND_PY" -m uvicorn backend.app:app --host 0.0.0.0 --port "$BACKEND_PORT"; }
+_start_backend()  { _launch "$LOGDIR/backend.log" "$UI"          env -u MOCK_LLM ORACLE_DAILY_OPS_CONFIG="$DAILY_OPS_CONFIG" "$BACKEND_PY" -m uvicorn backend.app:app --host 0.0.0.0 --port "$BACKEND_PORT"; }
 _start_sampler()  { _launch "$LOGDIR/sampler.log" "$UI"          "$PY" -m sampler.sampler; }
 _start_frontend() { _launch "$LOGDIR/vite.log"    "$UI/frontend" npm run dev; }
 
