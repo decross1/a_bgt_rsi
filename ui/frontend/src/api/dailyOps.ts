@@ -31,6 +31,22 @@ export interface DailyOpsReceipt {
   expected_plan_revision: string | null;
 }
 
+export type DailyOpsDecisionTarget = "agenda" | "work_card";
+export type DailyOpsDecisionAction = "modify" | "skip" | "reprioritize";
+export type DailyOpsDecisionPriority = "now" | "next" | "later";
+
+export interface DailyOpsDecisionReceipt {
+  request_id: string;
+  status: "queued";
+  accepted_at: string;
+  duplicate: boolean;
+  target_kind: DailyOpsDecisionTarget;
+  target_id: string;
+  action: DailyOpsDecisionAction;
+  expected_plan_revision: string;
+  execution_available: false;
+}
+
 export class DailyOpsError extends Error {
   readonly status: number;
   readonly detail: string;
@@ -104,4 +120,41 @@ export async function postDailyOpsMessage(input: {
     throw new DailyOpsError(response.status, detail || "request failed");
   }
   return body as DailyOpsReceipt;
+}
+
+export async function postDailyOpsDecision(input: {
+  accessKey: string;
+  requestId: string;
+  targetKind: DailyOpsDecisionTarget;
+  targetId: string;
+  action: DailyOpsDecisionAction;
+  expectedPlanRevision: string;
+  note?: string;
+  priority?: DailyOpsDecisionPriority;
+}): Promise<DailyOpsDecisionReceipt> {
+  const response = await fetch(`${API_BASE}/api/daily-ops/decisions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${input.accessKey}`,
+    },
+    body: JSON.stringify({
+      request_id: input.requestId,
+      target_kind: input.targetKind,
+      target_id: input.targetId,
+      action: input.action,
+      expected_plan_revision: input.expectedPlanRevision,
+      ...(input.note ? { note: input.note } : {}),
+      ...(input.priority ? { priority: input.priority } : {}),
+    }),
+  });
+  const body = await bodyOrNull(response);
+  if (!response.ok) {
+    const detail = body && typeof body === "object" && !Array.isArray(body) &&
+      typeof (body as Record<string, unknown>).detail === "string"
+      ? String((body as Record<string, unknown>).detail)
+      : response.statusText;
+    throw new DailyOpsError(response.status, detail || "request failed");
+  }
+  return body as DailyOpsDecisionReceipt;
 }

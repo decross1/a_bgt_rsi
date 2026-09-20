@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getDailyOpsMessages, postDailyOpsMessage } from "../src/api/dailyOps";
+import { getDailyOpsMessages, postDailyOpsDecision, postDailyOpsMessage } from "../src/api/dailyOps";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -45,6 +45,41 @@ describe("daily operations owner authentication", () => {
       intent: "change_request",
       text: "Review the revised gate order.",
       expected_plan_revision: "agenda-r3",
+    });
+  });
+
+  it("sends a decision as an authenticated revision-bound advisory request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      request_id: "22222222-2222-4222-8222-222222222222", status: "queued",
+      accepted_at: "2026-09-20T08:00:00Z", duplicate: false,
+      target_kind: "work_card", target_id: "runner", action: "reprioritize",
+      expected_plan_revision: "agenda-r4", execution_available: false,
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await postDailyOpsDecision({
+      accessKey: "owner-key",
+      requestId: "22222222-2222-4222-8222-222222222222",
+      targetKind: "work_card",
+      targetId: "runner",
+      action: "reprioritize",
+      expectedPlanRevision: "agenda-r4",
+      note: "Move behind the replay check.",
+      priority: "next",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toContain("/api/daily-ops/decisions");
+    expect(String(url)).not.toContain("owner-key");
+    expect(init.headers).toEqual({ "Content-Type": "application/json", Authorization: "Bearer owner-key" });
+    expect(JSON.parse(init.body)).toEqual({
+      request_id: "22222222-2222-4222-8222-222222222222",
+      target_kind: "work_card",
+      target_id: "runner",
+      action: "reprioritize",
+      expected_plan_revision: "agenda-r4",
+      note: "Move behind the replay check.",
+      priority: "next",
     });
   });
 });
