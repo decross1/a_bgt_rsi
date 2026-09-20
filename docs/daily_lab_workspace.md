@@ -38,8 +38,11 @@ that this enforcement is loaded.
 
 - `run_state/daily_ops_brief.json` is the curated, source-dated brief. The
   supervisor updates it after verified changes; it is not model-generated
-  scientific evidence. An updated projection timestamp does not refresh the
-  underlying claims' observation dates.
+  scientific evidence. Its `generated_at` field remains the daily notes'
+  last-updated time when live state is projected. The UI labels that time
+  explicitly. After a UTC day rollover it dates the authored notes and their
+  statuses, while labeling the combined goal section “Recorded goals and
+  current agenda” because sealed proposal tasks continue to update separately.
 - `run_state/active_research_focus.json` selects a hash-verified focus receipt.
   Selection does not inherit a historical evidence rung or authorize execution.
 - The mailbox heartbeat observes Oracle/Pi connectivity and processing state.
@@ -87,7 +90,8 @@ than being replaced with a new model pretending to be Oracle.
 Focused backend tests cover authentication and exact browser origins, bounded
 projection reads, message lifecycle validation, real mailbox receipt states,
 idempotency and crash replay, stale agenda revisions, missing/invalid sources,
-and focus digest verification. Frontend checks cover the locked and unlocked
-states, request submission, honest delivery labels, responsive layout and the
-single thesis placement. A release should additionally verify one real message
-and visible reply through the bound Pi session.
+focus digest verification, and preservation of the curated notes timestamp.
+Frontend checks cover the locked and unlocked states, request submission,
+honest delivery labels, UTC day rollover, responsive layout and the single
+thesis placement. A release should additionally verify one real message and
+visible reply through the bound Pi session.

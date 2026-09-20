@@ -316,6 +316,20 @@ def test_live_mailbox_states_are_observed_without_calling_work_offline(relay, st
     assert summary["agents"]["pi_client"]["status"] == expected
 
 
+def test_refresh_preserves_curated_notes_timestamp_across_day_rollover(relay):
+    brief = _brief()
+    prior_day = _iso(NOW - timedelta(days=1))
+    brief["generated_at"] = prior_day
+    _json(relay["state"] / "daily_ops_brief.json", brief)
+
+    _force_refresh(relay)
+    summary = json.loads((relay["state"] / "daily_ops_summary.json").read_text())
+
+    assert summary["generated_at"] == prior_day
+    assert summary["goals"][0]["status"] == "in_progress"
+    assert summary["agents"]["nara"]["observed_at"] == _iso()
+
+
 def test_running_mailbox_can_queue_but_processing_block_refuses(relay):
     _json(relay["mailbox"] / "latest-status.json", {
         "schema_version": 1, "status": "running", "session_id": SESSION,
