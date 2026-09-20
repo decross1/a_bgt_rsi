@@ -1,4 +1,5 @@
 import hashlib
+import asyncio
 import json
 import uuid
 from pathlib import Path
@@ -6,8 +7,11 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI, HTTPException
 from starlette.requests import Request
+from starlette.responses import JSONResponse
 
-from backend.daily_ops import MESSAGES_SCHEMA, SUMMARY_SCHEMA, register
+from backend.daily_ops import (
+    MESSAGES_SCHEMA, SUMMARY_SCHEMA, _private_cache_headers, register,
+)
 
 
 NOW = "2026-09-20T08:30:00Z"
@@ -112,6 +116,12 @@ def _request(token=None):
     })
 
 
+def _get_request(path):
+    return Request({"type": "http", "method": "GET", "path": path,
+                    "headers": [], "query_string": b"", "server": ("test", 80),
+                    "client": ("127.0.0.1", 1), "scheme": "http"})
+
+
 def _write_summary(tmp_path: Path, value=None):
     raw = json.dumps(value or _summary(), separators=(",", ":")).encode()
     (tmp_path / "daily_ops_summary.json").write_bytes(raw)
@@ -147,6 +157,39 @@ def test_missing_sources_are_honest_and_write_is_fail_closed(tmp_path):
             "intent": "question", "text": "Where are we stuck?",
         })
     assert caught.value.status_code == 503
+
+
+def test_private_thread_cache_headers_preserve_existing_vary():
+    response = JSONResponse({"rows": []})
+    response.headers["Vary"] = "Accept-Encoding, origin"
+    assert _private_cache_headers(response) is response
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["Vary"] == "Accept-Encoding, origin, Authorization"
+
+
+def test_private_path_middleware_marks_success_and_failure_but_not_summary(tmp_path):
+    app = FastAPI()
+    register(app, state_dir=tmp_path)
+    dispatch = next(
+        middleware.kwargs["dispatch"]
+        for middleware in app.user_middleware
+        if middleware.kwargs.get("dispatch", None)
+        and middleware.kwargs["dispatch"].__name__ == "_daily_ops_private_response_headers"
+    )
+
+    async def exercise(path, status):
+        async def call_next(_request):
+            return JSONResponse({"detail": "test"}, status_code=status)
+        return await dispatch(_get_request(path), call_next)
+
+    success = asyncio.run(exercise("/api/daily-ops/messages", 200))
+    failure = asyncio.run(exercise("/api/daily-ops/messages", 403))
+    summary = asyncio.run(exercise("/api/daily-ops/summary", 200))
+    for response in (success, failure):
+        assert response.headers["Cache-Control"] == "no-store"
+        assert response.headers["Vary"] == "Authorization, Origin"
+    assert "Cache-Control" not in summary.headers
+    assert "Vary" not in summary.headers
 
 
 def test_valid_summary_is_source_linked_and_explicit_about_agents(tmp_path):

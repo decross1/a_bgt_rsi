@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Callable
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
+from starlette.responses import Response
 
 
 SUMMARY_SCHEMA = "daily-ops-summary/v1"
@@ -66,6 +67,7 @@ _ACTORS = {"owner", "oracle", "system"}
 _INTENTS = {"question", "change_request", "reply", "receipt"}
 _REQUEST_INTENTS = {"question", "change_request"}
 _MESSAGE_STATUSES = {"queued", "delivered", "acknowledged", "failed"}
+_PRIVATE_PATH = "/api/daily-ops/messages"
 
 
 def _unique_object(pairs):
@@ -119,6 +121,20 @@ def _json_safe(value: object) -> bool:
         elif isinstance(node, list):
             stack.extend((item, depth + 1) for item in node)
     return True
+
+
+def _private_cache_headers(response: Response) -> Response:
+    """Keep the authenticated owner thread and queue receipts out of caches."""
+    response.headers["Cache-Control"] = "no-store"
+    vary = [item.strip() for item in response.headers.get("Vary", "").split(",")
+            if item.strip()]
+    existing = {item.lower() for item in vary}
+    for item in ("Authorization", "Origin"):
+        if item.lower() not in existing:
+            vary.append(item)
+            existing.add(item.lower())
+    response.headers["Vary"] = ", ".join(vary)
+    return response
 
 
 def _read_regular(path: Path, maximum: int) -> bytes:
@@ -401,6 +417,13 @@ def register(
         "nara_interaction": "ask_oracle_about_nara",
     }
     router = APIRouter(prefix="/api/daily-ops", tags=["daily-ops"])
+
+    @app.middleware("http")
+    async def _daily_ops_private_response_headers(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.rstrip("/") == _PRIVATE_PATH:
+            _private_cache_headers(response)
+        return response
 
     def _refresh_projection() -> None:
         if projection_refresher is None:
