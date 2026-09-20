@@ -19,13 +19,20 @@ It does not change or regrade any v1 file or result.
 - Valid intended `reasoning_content` is recorded separately and is not treated
   as visible reasoning leakage. Invalid type or encoding is an integrity
   failure.
+- An unavailable transport or receipt leaves downstream call, argument, and
+  content-validity facets `unassessed`. Raw partial counts and text remain
+  diagnostic evidence; they are not credited as protocol observations.
+- Tool-call strings require strict UTF-8. Argument text is capped at 8,192
+  bytes and 16 JSON container levels before parsing, so corrupt Unicode and
+  adversarial nesting become classified failures instead of escaping.
 - `strict_v1_comparable` is true only for an otherwise eligible turn whose
   visible content is `None` or `""`.
 - Tool classification is pure. It parses and validates but never calls the
   calculator or another executor.
-- `execute_once()` consumes the classifier's parsed arguments, invokes one
-  supplied local executor once, canonicalizes the returned finite JSON once,
-  and retains those exact bytes. The execution receipt is bound to the exact
+- Each call to `execute_once()` consumes the classifier's parsed arguments and
+  invokes the supplied local executor at most once, then canonicalizes the
+  returned finite JSON once and retains those exact bytes. The execution
+  receipt is bound to the exact
   classified call and arguments so it cannot be paired with another eligible
   call. Eligibility is not an execution receipt.
 - The continuation inserts the retained result bytes. It never recomputes a
@@ -63,20 +70,26 @@ does not perform another live tool execution. A future replay validator may
 independently recompute expected payoffs, but must label that as replay
 verification rather than a second execution.
 
+The core has no process-global idempotency store. A future runner must call
+`execute_once()` at most once for each classified turn and persist that receipt;
+repeated calls to the function are separate requested executions.
+
 ## Fixture coverage
 
 `test_contract.py` parameterizes the material boundaries from the accepted
 development decision:
 
 - timeout, cancellation, transport error, missing receipt, and a true no-call
-  bypass while retaining independent call facets;
+  bypass, including unassessed downstream facets with raw diagnostic evidence;
 - wrong containers/counts/shapes/names;
-- malformed JSON, duplicate keys, non-finite values, wrong shape/range, valid
-  but wrong arguments, and exact arguments;
+- malformed JSON, invalid UTF-8 call text, bounded size/depth, duplicate keys,
+  non-finite values, wrong shape/range, valid but wrong arguments, and exact
+  arguments;
 - null, empty, whitespace, ordinary prose, exact 512/513-byte ASCII and
   multibyte boundaries, invalid type, and unencodable strings;
-- separate intended reasoning, executor exception, invalid result, exact
-  one-call behavior, detached arguments, and retained-result identity;
+- separate intended reasoning, executor exception, invalid and boolean-aliased
+  results, exact one-call behavior, detached arguments, and retained-result
+  identity;
 - forced-empty continuation despite retained raw prose; and
 - final transport/tool-call errors, malformed/fenced/leaked content labels,
   correct finals, and contract-valid but substantively wrong finals.

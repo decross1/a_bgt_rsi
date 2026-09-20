@@ -37,6 +37,8 @@ UNASSESSED: Assessment = "unassessed"
 CONTRACT_VERSION = "payoff-action-native-tool-core/v2"
 CONTINUATION_POLICY = "empty-pretool-content/v2"
 PRETOOL_CONTENT_LIMIT_BYTES = 512
+TOOL_ARGUMENTS_LIMIT_BYTES = 8_192
+TOOL_ARGUMENTS_MAX_DEPTH = 16
 
 
 class ContractError(ValueError):
@@ -81,6 +83,9 @@ class ToolTurnClassification:
     pretool_content: TextEvidence
     reasoning_content: TextEvidence
     call_count: int | None
+    call_text_encoding_valid: Assessment
+    arguments_text_within_bound: Assessment
+    arguments_depth_within_bound: Assessment
     _parsed_arguments_json_utf8: bytes | None
     _accepted_call_json_utf8: bytes | None
     _execution_binding_sha256: str | None
@@ -175,16 +180,23 @@ class FinalContentAssessment:
     failure_codes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if type(self.contract_valid) is not bool or type(self.substantive_correct) is not bool:
+        if (
+            type(self.contract_valid) is not bool
+            or type(self.substantive_correct) is not bool
+        ):
             raise ContractError("final content assessment flags must be exact booleans")
         if not self.contract_valid and self.substantive_correct:
-            raise ContractError("substantive correctness requires a valid terminal contract")
+            raise ContractError(
+                "substantive correctness requires a valid terminal contract"
+            )
         if any(not isinstance(code, str) or not code for code in self.failure_codes):
             raise ContractError("final content failure codes must be nonempty strings")
         if len(set(self.failure_codes)) != len(self.failure_codes):
             raise ContractError("final content failure codes must be unique")
         if self.substantive_correct and self.failure_codes:
-            raise ContractError("a substantively correct final cannot carry failure codes")
+            raise ContractError(
+                "a substantively correct final cannot carry failure codes"
+            )
 
 
 @dataclass(frozen=True)
@@ -220,6 +232,30 @@ def _canonical_json(value: Any) -> bytes:
         ensure_ascii=False,
         allow_nan=False,
     ).encode("utf-8", errors="strict")
+
+
+def _json_depth_within_limit(value: str, limit: int) -> bool:
+    depth = 0
+    in_string = False
+    escaped = False
+    for character in value:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+        elif character in "[{":
+            depth += 1
+            if depth > limit:
+                return False
+        elif character in "]}":
+            depth = max(0, depth - 1)
+    return True
 
 
 def _strict_json(value: str) -> Any:
@@ -261,21 +297,23 @@ def _execution_binding(arguments_json: bytes, call_json: bytes) -> str:
     return hashlib.sha256(material).hexdigest()
 
 
-def _text_evidence(value: Any, *, byte_limit: int | None) -> TextEvidence:
+def _text_evidence(
+    value: Any, *, byte_limit: int | None, assess: bool = True
+) -> TextEvidence:
     if value is None:
         return TextEvidence(
             raw=None,
             state="null",
-            type_valid=PASS,
-            encoding_valid=PASS,
+            type_valid=PASS if assess else UNASSESSED,
+            encoding_valid=PASS if assess else UNASSESSED,
             utf8_bytes=0,
-            within_bound=PASS,
+            within_bound=PASS if assess else UNASSESSED,
         )
     if not isinstance(value, str):
         return TextEvidence(
             raw=None,
             state="invalid_type",
-            type_valid=FAIL,
+            type_valid=FAIL if assess else UNASSESSED,
             encoding_valid=UNASSESSED,
             utf8_bytes=None,
             within_bound=UNASSESSED,
@@ -293,18 +331,22 @@ def _text_evidence(value: Any, *, byte_limit: int | None) -> TextEvidence:
         return TextEvidence(
             raw=value,
             state="unencodable",
-            type_valid=PASS,
-            encoding_valid=FAIL,
+            type_valid=PASS if assess else UNASSESSED,
+            encoding_valid=FAIL if assess else UNASSESSED,
             utf8_bytes=None,
             within_bound=UNASSESSED,
         )
     return TextEvidence(
         raw=value,
         state=state,
-        type_valid=PASS,
-        encoding_valid=PASS,
+        type_valid=PASS if assess else UNASSESSED,
+        encoding_valid=PASS if assess else UNASSESSED,
         utf8_bytes=len(encoded),
-        within_bound=(PASS if byte_limit is None or len(encoded) <= byte_limit else FAIL),
+        within_bound=(
+            (PASS if byte_limit is None or len(encoded) <= byte_limit else FAIL)
+            if assess
+            else UNASSESSED
+        ),
     )
 
 
@@ -366,7 +408,9 @@ def classify_tool_turn(
     try:
         expected_arguments = copy.deepcopy(dict(expectation.expected_arguments))
     except (TypeError, ValueError) as error:
-        raise ContractError("expected arguments must be an object-like mapping") from error
+        raise ContractError(
+            "expected arguments must be an object-like mapping"
+        ) from error
     if not _argument_contract_valid(expected_arguments, expectation.argument_contract):
         raise ContractError("expected arguments do not satisfy their declared contract")
 
@@ -381,84 +425,134 @@ def classify_tool_turn(
         transport_returned = FAIL
         failures.append("transport_status_invalid")
 
-    if type(receipt) is dict and isinstance(receipt.get("finish_reason"), str):
+    if transport_returned != PASS:
+        receipt_complete = UNASSESSED
+        finish_reason_tool_calls = UNASSESSED
+    elif type(receipt) is dict and isinstance(receipt.get("finish_reason"), str):
         receipt_complete = PASS
-        finish_reason_tool_calls = PASS if receipt["finish_reason"] == "tool_calls" else FAIL
+        finish_reason_tool_calls = (
+            PASS if receipt["finish_reason"] == "tool_calls" else FAIL
+        )
         if finish_reason_tool_calls == FAIL:
             failures.append("finish_reason_not_tool_calls")
     else:
         receipt_complete = FAIL
         finish_reason_tool_calls = UNASSESSED
         failures.append("receipt_incomplete")
+    observation_available = transport_returned == PASS and receipt_complete == PASS
 
-    call_count: int | None = None
+    call_count = len(tool_calls) if isinstance(tool_calls, (list, tuple)) else None
     parsed_arguments: dict[str, Any] | None = None
     accepted_call: dict[str, Any] | None = None
-    tool_calls_container: Assessment
-    single_tool_call: Assessment
+    tool_calls_container: Assessment = UNASSESSED
+    single_tool_call: Assessment = UNASSESSED
     call_shape_valid: Assessment = UNASSESSED
+    call_text_encoding_valid: Assessment = UNASSESSED
     tool_name_valid: Assessment = UNASSESSED
+    arguments_text_within_bound: Assessment = UNASSESSED
+    arguments_depth_within_bound: Assessment = UNASSESSED
     arguments_json_valid: Assessment = UNASSESSED
     arguments_contract_valid: Assessment = UNASSESSED
     arguments_exact: Assessment = UNASSESSED
 
-    if not isinstance(tool_calls, (list, tuple)):
-        tool_calls_container = FAIL
-        single_tool_call = UNASSESSED
-        failures.append("tool_calls_container_invalid")
-    else:
-        tool_calls_container = PASS
-        call_count = len(tool_calls)
-        single_tool_call = PASS if call_count == 1 else FAIL
-        if single_tool_call == FAIL:
-            failures.append("single_tool_call_required")
-            if (
-                transport_returned == PASS
-                and receipt_complete == PASS
-                and receipt.get("finish_reason") == "stop"
-                and call_count == 0
-            ):
-                failures.append("no_call_bypass")
+    if observation_available:
+        if not isinstance(tool_calls, (list, tuple)):
+            tool_calls_container = FAIL
+            failures.append("tool_calls_container_invalid")
         else:
-            call = tool_calls[0]
-            shape_ok = (
-                type(call) is dict
-                and set(call) == {"id", "type", "function"}
-                and call.get("type") == "function"
-                and isinstance(call.get("id"), str)
-                and bool(call["id"])
-                and type(call.get("function")) is dict
-                and set(call["function"]) == {"name", "arguments"}
-                and isinstance(call["function"].get("name"), str)
-                and bool(call["function"]["name"])
-                and isinstance(call["function"].get("arguments"), str)
-            )
-            call_shape_valid = PASS if shape_ok else FAIL
-            if not shape_ok:
-                failures.append("tool_call_shape_invalid")
+            tool_calls_container = PASS
+            single_tool_call = PASS if call_count == 1 else FAIL
+            if single_tool_call == FAIL:
+                failures.append("single_tool_call_required")
+                if receipt.get("finish_reason") == "stop" and call_count == 0:
+                    failures.append("no_call_bypass")
             else:
-                function = call["function"]
-                tool_name_valid = PASS if function["name"] == expectation.name else FAIL
-                if tool_name_valid == FAIL:
-                    failures.append("tool_name_wrong")
-                try:
-                    parsed = _strict_json(function["arguments"])
-                except (TypeError, ValueError, json.JSONDecodeError, UnicodeError):
-                    arguments_json_valid = FAIL
-                    failures.append("arguments_json_invalid")
+                call = tool_calls[0]
+                shape_ok = (
+                    type(call) is dict
+                    and set(call) == {"id", "type", "function"}
+                    and call.get("type") == "function"
+                    and isinstance(call.get("id"), str)
+                    and bool(call["id"])
+                    and type(call.get("function")) is dict
+                    and set(call["function"]) == {"name", "arguments"}
+                    and isinstance(call["function"].get("name"), str)
+                    and bool(call["function"]["name"])
+                    and isinstance(call["function"].get("arguments"), str)
+                )
+                call_shape_valid = PASS if shape_ok else FAIL
+                if not shape_ok:
+                    failures.append("tool_call_shape_invalid")
                 else:
-                    arguments_json_valid = PASS
-                    contract_ok = _argument_contract_valid(parsed, expectation.argument_contract)
-                    arguments_contract_valid = PASS if contract_ok else FAIL
-                    if not contract_ok:
-                        failures.append("arguments_contract_invalid")
+                    function = call["function"]
+                    try:
+                        call["id"].encode("utf-8", errors="strict")
+                        function["name"].encode("utf-8", errors="strict")
+                        arguments_utf8 = function["arguments"].encode(
+                            "utf-8", errors="strict"
+                        )
+                    except UnicodeEncodeError:
+                        call_text_encoding_valid = FAIL
+                        failures.append("tool_call_text_encoding_invalid")
                     else:
-                        parsed_arguments = copy.deepcopy(parsed)
-                        arguments_exact = PASS if parsed == expected_arguments else FAIL
-                        if arguments_exact == FAIL:
-                            failures.append("arguments_wrong")
+                        call_text_encoding_valid = PASS
+                        tool_name_valid = (
+                            PASS if function["name"] == expectation.name else FAIL
+                        )
+                        if tool_name_valid == FAIL:
+                            failures.append("tool_name_wrong")
+                        arguments_text_within_bound = (
+                            PASS
+                            if len(arguments_utf8) <= TOOL_ARGUMENTS_LIMIT_BYTES
+                            else FAIL
+                        )
+                        if arguments_text_within_bound == FAIL:
+                            failures.append("arguments_text_too_large")
+                        arguments_depth_within_bound = (
+                            PASS
+                            if _json_depth_within_limit(
+                                function["arguments"], TOOL_ARGUMENTS_MAX_DEPTH
+                            )
+                            else FAIL
+                        )
+                        if arguments_depth_within_bound == FAIL:
+                            failures.append("arguments_json_too_deep")
+                        if (
+                            arguments_text_within_bound == PASS
+                            and arguments_depth_within_bound == PASS
+                        ):
+                            try:
+                                parsed = _strict_json(function["arguments"])
+                            except (
+                                TypeError,
+                                ValueError,
+                                json.JSONDecodeError,
+                                UnicodeError,
+                                RecursionError,
+                            ):
+                                arguments_json_valid = FAIL
+                                failures.append("arguments_json_invalid")
+                            else:
+                                arguments_json_valid = PASS
+                                contract_ok = _argument_contract_valid(
+                                    parsed, expectation.argument_contract
+                                )
+                                arguments_contract_valid = PASS if contract_ok else FAIL
+                                if not contract_ok:
+                                    failures.append("arguments_contract_invalid")
+                                else:
+                                    parsed_arguments = copy.deepcopy(parsed)
+                                    arguments_exact = (
+                                        PASS if parsed == expected_arguments else FAIL
+                                    )
+                                    if arguments_exact == FAIL:
+                                        failures.append("arguments_wrong")
 
-    pretool = _text_evidence(content, byte_limit=PRETOOL_CONTENT_LIMIT_BYTES)
+    pretool = _text_evidence(
+        content,
+        byte_limit=PRETOOL_CONTENT_LIMIT_BYTES,
+        assess=observation_available,
+    )
     if pretool.type_valid == FAIL:
         failures.append("pretool_content_type_invalid")
     elif pretool.encoding_valid == FAIL:
@@ -466,7 +560,11 @@ def classify_tool_turn(
     elif pretool.within_bound == FAIL:
         failures.append("pretool_content_too_large")
 
-    reasoning = _text_evidence(reasoning_content, byte_limit=None)
+    reasoning = _text_evidence(
+        reasoning_content,
+        byte_limit=None,
+        assess=observation_available,
+    )
     if reasoning.type_valid == FAIL:
         failures.append("reasoning_content_type_invalid")
     elif reasoning.encoding_valid == FAIL:
@@ -479,7 +577,10 @@ def classify_tool_turn(
         tool_calls_container,
         single_tool_call,
         call_shape_valid,
+        call_text_encoding_valid,
         tool_name_valid,
+        arguments_text_within_bound,
+        arguments_depth_within_bound,
         arguments_json_valid,
         arguments_contract_valid,
         arguments_exact,
@@ -500,7 +601,9 @@ def classify_tool_turn(
     parsed_arguments_json = (
         _canonical_json(parsed_arguments) if parsed_arguments is not None else None
     )
-    accepted_call_json = _canonical_json(accepted_call) if accepted_call is not None else None
+    accepted_call_json = (
+        _canonical_json(accepted_call) if accepted_call is not None else None
+    )
     execution_binding = (
         _execution_binding(parsed_arguments_json, accepted_call_json)
         if execution_eligible
@@ -525,6 +628,9 @@ def classify_tool_turn(
         pretool_content=pretool,
         reasoning_content=reasoning,
         call_count=call_count,
+        call_text_encoding_valid=call_text_encoding_valid,
+        arguments_text_within_bound=arguments_text_within_bound,
+        arguments_depth_within_bound=arguments_depth_within_bound,
         _parsed_arguments_json_utf8=parsed_arguments_json,
         _accepted_call_json_utf8=accepted_call_json,
         _execution_binding_sha256=execution_binding,
@@ -535,7 +641,11 @@ def classify_tool_turn(
 
 
 def _exact_fraction(value: Any) -> Fraction | None:
-    if type(value) is not dict or set(value) != {"numerator", "denominator", "canonical"}:
+    if type(value) is not dict or set(value) != {
+        "numerator",
+        "denominator",
+        "canonical",
+    }:
         return None
     numerator = value["numerator"]
     denominator = value["denominator"]
@@ -560,7 +670,10 @@ def _exact_fraction(value: Any) -> Fraction | None:
 def calculator_result_contract_valid(result: Any, arguments: Mapping[str, Any]) -> bool:
     """Validate result structure and internal consistency without re-executing the tool."""
 
-    if not _argument_contract_valid(arguments, "calculator") or type(result) is not dict:
+    if (
+        not _argument_contract_valid(arguments, "calculator")
+        or type(result) is not dict
+    ):
         return False
     required = {
         "formula_version",
@@ -574,13 +687,24 @@ def calculator_result_contract_valid(result: Any, arguments: Mapping[str, Any]) 
         "total_payoff",
         "strategy_advice_included",
     }
-    if set(result) != required or result["formula_version"] != calculator.FORMULA_VERSION:
+    if (
+        set(result) != required
+        or result["formula_version"] != calculator.FORMULA_VERSION
+    ):
         return False
     actions = arguments["joint_action"]
     seat = arguments["focal_seat"]
     count = sum(actions)
+    evaluated_actions = result["evaluated_joint_action"]
     if (
-        result["evaluated_joint_action"] != actions
+        type(evaluated_actions) is not list
+        or len(evaluated_actions) != calculator.PLAYERS
+        or any(
+            type(action) is not int or action not in (0, 1)
+            for action in evaluated_actions
+        )
+        or evaluated_actions != actions
+        or type(result["focal_seat"]) is not int
         or result["focal_seat"] != seat
         or type(result["contributor_count"]) is not int
         or result["contributor_count"] != count
@@ -726,7 +850,9 @@ def build_empty_content_continuation(
         classification.execution_binding_sha256 is None
         or execution.source_binding_sha256 != classification.execution_binding_sha256
     ):
-        raise ContractError("continuation execution does not belong to the classified call")
+        raise ContractError(
+            "continuation execution does not belong to the classified call"
+        )
     if (
         execution.execution_attempted is not True
         or execution.execution_succeeded != PASS
@@ -734,7 +860,9 @@ def build_empty_content_continuation(
         or execution.retained_result_json_utf8 is None
         or execution.retained_result_sha256 is None
     ):
-        raise ContractError("continuation requires one successful retained execution result")
+        raise ContractError(
+            "continuation requires one successful retained execution result"
+        )
     if hashlib.sha256(execution.retained_result_json_utf8).hexdigest() != (
         execution.retained_result_sha256
     ):
@@ -771,7 +899,10 @@ def grade_final_turn(
         transport_returned = FAIL
         failures.append("transport_status_invalid")
 
-    if type(receipt) is dict and isinstance(receipt.get("finish_reason"), str):
+    if transport_returned != PASS:
+        receipt_complete = UNASSESSED
+        finish_reason_stop = UNASSESSED
+    elif type(receipt) is dict and isinstance(receipt.get("finish_reason"), str):
         receipt_complete = PASS
         finish_reason_stop = PASS if receipt["finish_reason"] == "stop" else FAIL
         if finish_reason_stop == FAIL:
@@ -780,32 +911,42 @@ def grade_final_turn(
         receipt_complete = FAIL
         finish_reason_stop = UNASSESSED
         failures.append("final_receipt_incomplete")
+    observation_available = transport_returned == PASS and receipt_complete == PASS
 
-    if tool_calls is None or (isinstance(tool_calls, (list, tuple)) and len(tool_calls) == 0):
-        no_final_tool_calls = PASS
-    elif isinstance(tool_calls, (list, tuple)):
-        no_final_tool_calls = FAIL
-        failures.append("final_tool_call_present")
-    else:
-        no_final_tool_calls = FAIL
-        failures.append("final_tool_calls_container_invalid")
+    no_final_tool_calls: Assessment = UNASSESSED
+    content_type_valid: Assessment = UNASSESSED
+    content_encoding_valid: Assessment = UNASSESSED
+    content_sha256 = None
+    if observation_available:
+        if tool_calls is None or (
+            isinstance(tool_calls, (list, tuple)) and len(tool_calls) == 0
+        ):
+            no_final_tool_calls = PASS
+        elif isinstance(tool_calls, (list, tuple)):
+            no_final_tool_calls = FAIL
+            failures.append("final_tool_call_present")
+        else:
+            no_final_tool_calls = FAIL
+            failures.append("final_tool_calls_container_invalid")
 
     if not isinstance(content, str):
-        content_type_valid = FAIL
+        if observation_available:
+            content_type_valid = FAIL
+            failures.append("final_content_type_invalid")
         content_encoding_valid = UNASSESSED
-        content_sha256 = None
-        failures.append("final_content_type_invalid")
     else:
-        content_type_valid = PASS
         try:
             encoded = content.encode("utf-8", errors="strict")
         except UnicodeEncodeError:
-            content_encoding_valid = FAIL
-            content_sha256 = None
-            failures.append("final_content_encoding_invalid")
+            if observation_available:
+                content_type_valid = PASS
+                content_encoding_valid = FAIL
+                failures.append("final_content_encoding_invalid")
         else:
-            content_encoding_valid = PASS
             content_sha256 = hashlib.sha256(encoded).hexdigest()
+            if observation_available:
+                content_type_valid = PASS
+                content_encoding_valid = PASS
 
     terminal_protocol_valid = all(
         item == PASS
@@ -854,7 +995,8 @@ def grade_final_turn(
         terminal_protocol_valid=terminal_protocol_valid,
         terminal_contract_valid=terminal_contract_valid,
         substantive_correct=substantive_correct,
-        final_contract_accepted=terminal_protocol_valid and terminal_contract_valid == PASS,
+        final_contract_accepted=terminal_protocol_valid
+        and terminal_contract_valid == PASS,
         content_sha256=content_sha256,
         failure_codes=tuple(failures),
     )
@@ -864,6 +1006,8 @@ __all__ = [
     "CONTINUATION_POLICY",
     "CONTRACT_VERSION",
     "PRETOOL_CONTENT_LIMIT_BYTES",
+    "TOOL_ARGUMENTS_LIMIT_BYTES",
+    "TOOL_ARGUMENTS_MAX_DEPTH",
     "ContinuationScaffold",
     "ContractError",
     "ExecutionOutcome",

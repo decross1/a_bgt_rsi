@@ -9,6 +9,8 @@ from experiments.payoff_action_calculator import calculator
 from experiments.payoff_action_calibration_v2.contract import (
     CONTINUATION_POLICY,
     PRETOOL_CONTENT_LIMIT_BYTES,
+    TOOL_ARGUMENTS_LIMIT_BYTES,
+    TOOL_ARGUMENTS_MAX_DEPTH,
     ContractError,
     FinalContentAssessment,
     ToolExpectation,
@@ -90,23 +92,35 @@ def test_classification_is_pure_and_never_calls_the_calculator(monkeypatch):
 @pytest.mark.parametrize(
     ("status", "receipt", "expected_code", "receipt_state"),
     [
-        ("timeout", {"finish_reason": "tool_calls"}, "transport_timeout", "pass"),
-        ("cancelled", {"finish_reason": "tool_calls"}, "transport_cancelled", "pass"),
-        ("transport_error", {"finish_reason": "tool_calls"}, "transport_error", "pass"),
+        ("timeout", {"finish_reason": "tool_calls"}, "transport_timeout", "unassessed"),
+        (
+            "cancelled",
+            {"finish_reason": "tool_calls"},
+            "transport_cancelled",
+            "unassessed",
+        ),
+        (
+            "transport_error",
+            {"finish_reason": "tool_calls"},
+            "transport_error",
+            "unassessed",
+        ),
         ("returned", None, "receipt_incomplete", "fail"),
         ("returned", {}, "receipt_incomplete", "fail"),
     ],
 )
-def test_transport_and_receipt_failures_do_not_hide_apparent_call_structure(
+def test_unavailable_transport_or_receipt_leaves_downstream_facets_unassessed(
     status, receipt, expected_code, receipt_state
 ):
     result = classify(status=status, receipt=receipt)
     assert result.execution_eligible is False
     assert expected_code in result.failure_codes
     assert result.receipt_complete == receipt_state
-    assert result.single_tool_call == "pass"
-    assert result.call_shape_valid == "pass"
-    assert result.arguments_exact == "pass"
+    assert result.call_count == 1, "raw partial count remains diagnostic evidence"
+    assert result.single_tool_call == "unassessed"
+    assert result.call_shape_valid == "unassessed"
+    assert result.arguments_exact == "unassessed"
+    assert result.pretool_content.type_valid == "unassessed"
 
 
 def test_true_no_call_bypass_is_distinct():
@@ -127,7 +141,12 @@ def test_true_no_call_bypass_is_distinct():
     [
         ({}, "tool_calls_container_invalid", "tool_calls_container", "fail"),
         ([], "single_tool_call_required", "single_tool_call", "fail"),
-        ([native_call(), native_call()], "single_tool_call_required", "single_tool_call", "fail"),
+        (
+            [native_call(), native_call()],
+            "single_tool_call_required",
+            "single_tool_call",
+            "fail",
+        ),
         (
             [{**native_call(), "extra": True}],
             "tool_call_shape_invalid",
@@ -172,6 +191,54 @@ def test_wrong_tool_name_remains_separate_from_valid_arguments():
 
 
 @pytest.mark.parametrize(
+    "tool_calls",
+    [
+        [{**native_call(), "id": "\ud800"}],
+        [native_call(arguments="\ud800")],
+    ],
+)
+def test_unencodable_call_identity_or_arguments_are_classified(tool_calls):
+    result = classify(tool_calls=tool_calls)
+    assert result.execution_eligible is False
+    assert result.call_shape_valid == "pass"
+    assert result.call_text_encoding_valid == "fail"
+    assert result.arguments_json_valid == "unassessed"
+    assert result.failure_codes == ("tool_call_text_encoding_invalid",)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "field", "code"),
+    [
+        (
+            "[" * (TOOL_ARGUMENTS_MAX_DEPTH + 1)
+            + "0"
+            + "]" * (TOOL_ARGUMENTS_MAX_DEPTH + 1),
+            "arguments_depth_within_bound",
+            "arguments_json_too_deep",
+        ),
+        (
+            " " * (TOOL_ARGUMENTS_LIMIT_BYTES + 1),
+            "arguments_text_within_bound",
+            "arguments_text_too_large",
+        ),
+        (
+            "[" * 1_100 + "0" + "]" * 1_100,
+            "arguments_depth_within_bound",
+            "arguments_json_too_deep",
+        ),
+    ],
+)
+def test_argument_resource_bounds_are_classified_without_parser_escape(
+    arguments, field, code
+):
+    result = classify(tool_calls=[native_call(arguments=arguments)])
+    assert result.execution_eligible is False
+    assert getattr(result, field) == "fail"
+    assert result.arguments_json_valid == "unassessed"
+    assert code in result.failure_codes
+
+
+@pytest.mark.parametrize(
     ("arguments", "code", "json_state", "contract_state", "exact_state"),
     [
         ("{", "arguments_json_invalid", "fail", "unassessed", "unassessed"),
@@ -197,7 +264,9 @@ def test_wrong_tool_name_remains_separate_from_valid_arguments():
             "unassessed",
         ),
         (
-            json.dumps({key: value for key, value in ARGS.items() if key != "focal_seat"}),
+            json.dumps(
+                {key: value for key, value in ARGS.items() if key != "focal_seat"}
+            ),
             "arguments_contract_invalid",
             "pass",
             "fail",
@@ -247,7 +316,14 @@ def test_argument_boundaries(arguments, code, json_state, contract_state, exact_
         ("界" * 170, "nonempty", 510, True, False, None),
         ("界" * 171, "nonempty", 513, False, False, "pretool_content_too_large"),
         (7, "invalid_type", None, False, False, "pretool_content_type_invalid"),
-        ("\ud800", "unencodable", None, False, False, "pretool_content_encoding_invalid"),
+        (
+            "\ud800",
+            "unencodable",
+            None,
+            False,
+            False,
+            "pretool_content_encoding_invalid",
+        ),
     ],
 )
 def test_pretool_content_uses_strict_utf8_byte_boundary(
@@ -293,7 +369,11 @@ def test_table_argument_contract_is_supported_without_running_a_tool():
     result = classify_tool_turn(
         status="returned",
         receipt={"finish_reason": "tool_calls"},
-        tool_calls=[native_call(arguments=json.dumps(expected), name="public_goods_payoff_table")],
+        tool_calls=[
+            native_call(
+                arguments=json.dumps(expected), name="public_goods_payoff_table"
+            )
+        ],
         content=None,
         reasoning_content=None,
         expectation=ToolExpectation(
@@ -383,18 +463,32 @@ def test_retained_call_and_arguments_are_returned_as_detached_copies():
         ),
         (
             calculator.calculate,
-            lambda _result, _arguments: (_ for _ in ()).throw(ValueError("bad validator")),
+            lambda _result, _arguments: (_ for _ in ()).throw(
+                ValueError("bad validator")
+            ),
             "tool_result_validator_error",
             "fail",
         ),
     ],
 )
-def test_execution_failures_are_not_model_performance(executor, validator, code, contract_state):
+def test_execution_failures_are_not_model_performance(
+    executor, validator, code, contract_state
+):
     outcome = execute_once(classify(), executor=executor, result_validator=validator)
     assert outcome.execution_attempted is True
     assert outcome.execution_succeeded == "fail"
     assert outcome.result_contract_valid == contract_state
     assert outcome.failure_code == code
+
+
+@pytest.mark.parametrize("field", ["focal_seat", "evaluated_joint_action"])
+def test_calculator_result_contract_rejects_boolean_integer_aliases(field):
+    result = calculator.calculate(ARGS)
+    if field == "focal_seat":
+        result[field] = False
+    else:
+        result[field] = [True, False, True, False]
+    assert calculator_result_contract_valid(result, ARGS) is False
 
 
 def test_scaffold_uses_empty_assistant_content_and_exact_retained_result_bytes():
@@ -447,7 +541,14 @@ def test_unsuccessful_execution_cannot_construct_a_continuation():
 @pytest.mark.parametrize(
     ("status", "receipt", "tool_calls", "content", "code", "field"),
     [
-        ("timeout", {"finish_reason": "stop"}, [], "{}", "transport_timeout", "transport_returned"),
+        (
+            "timeout",
+            {"finish_reason": "stop"},
+            [],
+            "{}",
+            "transport_timeout",
+            "transport_returned",
+        ),
         ("returned", None, [], "{}", "final_receipt_incomplete", "receipt_complete"),
         (
             "returned",
@@ -475,20 +576,33 @@ def test_unsuccessful_execution_cannot_construct_a_continuation():
         ),
     ],
 )
-def test_final_protocol_failures_are_orthogonal(status, receipt, tool_calls, content, code, field):
+def test_final_protocol_failures_are_orthogonal(
+    status, receipt, tool_calls, content, code, field
+):
     grader_calls = []
     grade = grade_final_turn(
         status=status,
         receipt=receipt,
         tool_calls=tool_calls,
         content=content,
-        content_grader=lambda text: grader_calls.append(text) or FinalContentAssessment(True, True),
+        content_grader=lambda text: (
+            grader_calls.append(text) or FinalContentAssessment(True, True)
+        ),
     )
     assert grade.terminal_protocol_valid is False
     assert grade.terminal_contract_valid == "unassessed"
     assert grade.substantive_correct == "unassessed"
     assert code in grade.failure_codes
     assert getattr(grade, field) == "fail"
+    if (
+        status != "returned"
+        or not isinstance(receipt, dict)
+        or not isinstance(receipt.get("finish_reason"), str)
+    ):
+        assert grade.finish_reason_stop == "unassessed"
+        assert grade.no_final_tool_calls == "unassessed"
+        assert grade.content_type_valid == "unassessed"
+        assert grade.content_encoding_valid == "unassessed"
     assert grader_calls == []
 
 
@@ -572,7 +686,9 @@ def test_final_grader_failure_is_unassessed_not_a_wrong_model_answer():
         receipt={"finish_reason": "stop"},
         tool_calls=[],
         content="{}",
-        content_grader=lambda _text: (_ for _ in ()).throw(RuntimeError("grader broke")),
+        content_grader=lambda _text: (_ for _ in ()).throw(
+            RuntimeError("grader broke")
+        ),
     )
     assert grade.terminal_protocol_valid is True
     assert grade.terminal_contract_valid == "unassessed"
