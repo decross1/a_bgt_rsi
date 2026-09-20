@@ -27,6 +27,7 @@ from .daily_ops import (
     MAX_SUMMARY_BYTES, _read_regular, _request_payload, _unique_object,
     _validate_summary,
 )
+from .daily_ops_agenda import read_pending_agenda
 
 
 def _now() -> datetime:
@@ -147,19 +148,7 @@ class DailyOpsBridge:
     def _plan_revision(self) -> str | None:
         if self.planner is None:
             return None
-        try:
-            value = _read(self.planner)
-            revision = value["revision_sha256"]
-            expiry = datetime.fromisoformat(value["expires_at"].replace("Z", "+00:00"))
-            if (value.get("schema_version") != "oracle-daily-proposal-cycle/v1"
-                    or value.get("execution_enabled") is not False
-                    or not isinstance(revision, str) or len(revision) != 64
-                    or any(c not in "0123456789abcdef" for c in revision)
-                    or expiry <= _now()):
-                return None
-            return revision
-        except (OSError, ValueError, KeyError, TypeError):
-            return None
+        return read_pending_agenda(self.planner, None)["revision"]
 
     def route(self, payload: dict) -> dict:
         payload = _request_payload(payload)
@@ -327,12 +316,17 @@ class DailyOpsBridge:
             summary = _read(self.state / "daily_ops_brief.json", MAX_SUMMARY_BYTES)
             _validate_summary(summary)
             summary["generated_at"] = _iso(_now())
-            summary["current_plan_revision"] = self._plan_revision()
             try:
                 summary["research_focus"] = self._focus()
             except (OSError, ValueError, KeyError, TypeError):
                 summary["research_focus"] = None
                 summary["warnings"] = (summary["warnings"] + ["Current research focus could not be verified."])[-16:]
+            agenda = read_pending_agenda(
+                self.planner, (summary["research_focus"] or {}).get("observed_at"),
+            ) if self.planner is not None else {"revision": None, "goals": [], "warnings": []}
+            summary["current_plan_revision"] = agenda["revision"]
+            summary["goals"] = (summary["goals"] + agenda["goals"])[:16]
+            summary["warnings"] = (summary["warnings"] + agenda["warnings"])[-16:]
             status = self._mailbox_status()
             observation = _iso(_now()) if status is None else status["updated_at"]
             agent_status = "offline" if status is None else (

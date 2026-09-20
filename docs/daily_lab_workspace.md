@@ -44,8 +44,11 @@ that this enforcement is loaded.
   Selection does not inherit a historical evidence rung or authorize execution.
 - The mailbox heartbeat observes Oracle/Pi connectivity and processing state.
   A fixed read-only service query observes `nara-daemon.service` every 30 seconds.
-- The current unexpired proposal revision comes from the installed daily
-  proposal service. The service continues to own its schedule and approval gate.
+- The current unexpired proposal comes from the installed daily service. Its
+  sealed envelope is hash-verified against the read-only proposal store before
+  exposing a revision or its tasks. Tasks remain awaiting owner review; a
+  proposal older than the current focus update is explicitly marked stale.
+  The service continues to own its schedule and approval gate.
 - `run_state/daily_ops_summary.json` and `daily_ops_messages.jsonl` are disposable
   bounded projections. Refresh performs no model call or research execution.
 

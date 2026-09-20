@@ -67,6 +67,12 @@ def _brief():
 @pytest.fixture()
 def relay(tmp_path, monkeypatch):
     monkeypatch.setattr(bridge_module, "_now", lambda: NOW)
+    # The sealed SQLite reader has its own integration/tamper suite. Relay
+    # tests isolate its validated projection interface from mailbox behavior.
+    monkeypatch.setattr(bridge_module, "read_pending_agenda", lambda latest, focus: {
+        "revision": json.loads(Path(latest).read_text())["revision_sha256"],
+        "goals": [], "warnings": [],
+    })
     state = _private(tmp_path / "state")
     private = _private(tmp_path / "private")
     mailbox = _private(tmp_path / "mailbox")
