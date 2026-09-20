@@ -198,6 +198,8 @@ def test_wrong_or_unparseable_probe_does_not_erase_valid_action_vector():
         _response(wrong, actions), expected_input=_payload(), expected_horizon=12
     )
     assert wrong_grade["exact_arithmetic"] is False
+    assert wrong_grade["assessment_status"]["arithmetic"] == "failed"
+    assert "arithmetic_wrong" in wrong_grade["failure_codes"]
     assert wrong_grade["action_scoreable"] is True
     assert wrong_grade["actions"] == actions
 
@@ -207,6 +209,8 @@ def test_wrong_or_unparseable_probe_does_not_erase_valid_action_vector():
         _response(malformed, actions), expected_input=_payload(), expected_horizon=12
     )
     assert malformed_grade["numeric_values_parseable"] is False
+    assert malformed_grade["assessment_status"]["arithmetic"] == "unassessed"
+    assert "arithmetic_wrong" not in malformed_grade["failure_codes"]
     assert malformed_grade["action_scoreable"] is True
     assert malformed_grade["actions"] == actions
 
@@ -222,6 +226,9 @@ def test_structurally_invalid_probe_does_not_erase_valid_action_vector():
     assert grade["action_array_valid"] is True
     assert grade["action_scoreable"] is True
     assert grade["actions"] == actions
+    assert grade["failure_codes"] == ["response_fields_invalid"]
+    assert grade["assessment_status"]["numeric_values"] == "unassessed"
+    assert grade["assessment_status"]["arithmetic"] == "unassessed"
 
 
 def test_wrong_row_binding_is_separate_from_exact_numeric_representation():
@@ -306,12 +313,16 @@ def test_binary_action_of_wrong_horizon_is_valid_but_not_scoreable():
     assert grade["action_scoreable"] is False
     assert "action_array_invalid" not in grade["failure_codes"]
     assert "action_horizon_mismatch" in grade["failure_codes"]
+    assert grade["assessment_status"]["action_array"] == "passed"
+    assert grade["assessment_status"]["action_scoreability"] == "failed"
 
     empty_grade = calculator.score_response(
         _response(expected, []), expected_input=_payload(), expected_horizon=8
     )
     assert empty_grade["action_array_valid"] is False
     assert empty_grade["action_scoreable"] is False
+    assert "action_array_invalid" in empty_grade["failure_codes"]
+    assert "action_horizon_mismatch" not in empty_grade["failure_codes"]
 
 
 @pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
@@ -331,6 +342,9 @@ def test_nonfinite_json_and_duplicate_keys_are_rejected(constant):
     )
     assert grade["json_valid"] is False
     assert grade["action_scoreable"] is False
+    assert grade["failure_codes"] == ["json_invalid"]
+    assert grade["assessment_status"]["arithmetic"] == "unassessed"
+    assert grade["assessment_status"]["action_array"] == "unassessed"
 
     duplicate = (
         '{"probe":' + json.dumps(expected) + ',"actions":[0,1,0,1],"actions":[1,1,1,1]}'
@@ -340,6 +354,18 @@ def test_nonfinite_json_and_duplicate_keys_are_rejected(constant):
     )
     assert duplicate_grade["json_valid"] is False
     assert duplicate_grade["action_scoreable"] is False
+    assert duplicate_grade["failure_codes"] == ["json_invalid"]
+
+
+def test_deeply_nested_json_is_a_bounded_parse_failure_not_an_exception():
+    expected_input = _payload()
+    deeply_nested = "[" * 10_000 + "0" + "]" * 10_000
+    grade = calculator.score_response(
+        deeply_nested, expected_input=expected_input, expected_horizon=4
+    )
+    assert grade["json_valid"] is False
+    assert grade["failure_codes"] == ["json_invalid"]
+    assert set(grade["assessment_status"].values()) == {"failed", "unassessed"}
 
 
 def test_numeric_tokens_and_response_size_are_bounded_before_fraction_work():
