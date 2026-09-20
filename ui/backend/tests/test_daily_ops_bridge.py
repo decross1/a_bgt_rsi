@@ -78,7 +78,7 @@ def relay(tmp_path, monkeypatch):
     (private / "owner.key").chmod(0o600)
     _json(mailbox / "latest-status.json", {
         "schema_version": 1, "status": "active", "session_id": SESSION,
-        "pending_count": 0, "updated_at": _iso(),
+        "pending_count": 0, "updated_at": _iso(), "capabilities": {"review_scope": True},
     })
     planner = private / "planner.json"
     _json(planner, {
@@ -159,7 +159,24 @@ def test_route_writes_one_advisory_envelope_and_idempotent_duplicate(relay):
     assert envelope["approval_required"] is False
     assert envelope["session_id"] == SESSION
     assert payload["text"] in envelope["text"]
+    assert envelope["review_scope"] == {
+        "read_paths": [str(relay["state"] / "daily_ops_summary.json")],
+        "draft_path": str(relay["mailbox"] / "review-drafts" / ("owner-ui-" + payload["request_id"] + ".md")),
+    }
     assert len(list((relay["mailbox"] / "inbox").glob("*.json"))) == 1
+
+
+def test_old_mailbox_without_scope_enforcement_cannot_receive_owner_request(relay):
+    status_path = relay["mailbox"] / "latest-status.json"
+    value = json.loads(status_path.read_text())
+    value.pop("capabilities")
+    _json(status_path, value)
+    with pytest.raises(HTTPException) as caught:
+        relay["bridge"].route(_payload())
+    assert caught.value.status_code == 503
+    assert "update must be loaded" in caught.value.detail
+    assert list(relay["bridge"].requests.iterdir()) == []
+    assert list((relay["mailbox"] / "inbox").iterdir()) == []
 
 
 def test_same_request_id_with_changed_payload_conflicts(relay):
@@ -265,7 +282,7 @@ def test_completed_turn_without_visible_answer_is_delivery_only(relay):
 def test_live_mailbox_states_are_observed_without_calling_work_offline(relay, status, expected):
     _json(relay["mailbox"] / "latest-status.json", {
         "schema_version": 1, "status": status, "session_id": SESSION,
-        "pending_count": 1 if status != "active" else 0, "updated_at": _iso(),
+        "pending_count": 1 if status != "active" else 0, "updated_at": _iso(), "capabilities": {"review_scope": True},
     })
     relay["bridge"]._last_refresh = 0.0
     relay["bridge"].refresh()
@@ -277,14 +294,14 @@ def test_live_mailbox_states_are_observed_without_calling_work_offline(relay, st
 def test_running_mailbox_can_queue_but_processing_block_refuses(relay):
     _json(relay["mailbox"] / "latest-status.json", {
         "schema_version": 1, "status": "running", "session_id": SESSION,
-        "pending_count": 1, "updated_at": _iso(),
+        "pending_count": 1, "updated_at": _iso(), "capabilities": {"review_scope": True},
     })
     queued = _payload()
     assert relay["bridge"].route(queued)["status"] == "queued"
 
     _json(relay["mailbox"] / "latest-status.json", {
         "schema_version": 1, "status": "processing_blocked", "session_id": SESSION,
-        "pending_count": 1, "updated_at": _iso(),
+        "pending_count": 1, "updated_at": _iso(), "capabilities": {"review_scope": True},
     })
     blocked = _payload()
     with pytest.raises(HTTPException) as caught:

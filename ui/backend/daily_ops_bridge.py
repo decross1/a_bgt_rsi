@@ -181,6 +181,8 @@ class DailyOpsBridge:
                     raise HTTPException(503, "Oracle mailbox is offline or its session changed")
                 if status.get("status") == "processing_blocked":
                     raise HTTPException(503, "Oracle needs context recovery before accepting another request")
+                if not isinstance(status.get("capabilities"), dict) or status["capabilities"].get("review_scope") is not True:
+                    raise HTTPException(503, "Oracle mailbox update must be loaded before owner messages can be sent")
                 count = status.get("pending_count")
                 if type(count) is not int or not 0 <= count < 32:
                     raise HTTPException(503, "Oracle mailbox is full; wait for the current turn")
@@ -205,6 +207,9 @@ class DailyOpsBridge:
                     "Respond concisely to the owner in your final visible answer; do not substitute a log-only acknowledgment.\n"
                     f"Request: {ident}\nIntent: {payload['intent']}\n"
                     f"Expected plan revision: {payload.get('expected_plan_revision') or 'none'}\n"
+                    f"Read the current bounded lab snapshot at {self.state / 'daily_ops_summary.json'} before answering. "
+                    "Only the explicitly scoped read/write tools are available for this request. "
+                    "If more evidence is needed, say what is missing; do not invent it or attempt other tools. "
                     "For change requests, draft the proposed revision and explain its effects. "
                     "Keep execution pending the owner's exact-revision approval through the existing approval workflow.\n"
                     "<owner_message>\n" + payload["text"].replace("</owner_message>", "&lt;/owner_message&gt;")
@@ -214,7 +219,11 @@ class DailyOpsBridge:
                             "created_at": record["accepted_at"], "expires_at": record["expires_at"],
                             "source": "codex-oversight", "authority": "advisory_only",
                             "kind": "agenda_review" if payload["intent"] == "change_request" else "advice",
-                            "approval_required": False, "text": text}
+                            "approval_required": False, "text": text,
+                            "review_scope": {
+                                "read_paths": [str(self.state / "daily_ops_summary.json")],
+                                "draft_path": str(self.mailbox / "review-drafts" / (envelope_id + ".md")),
+                            }}
                 raw = _json_bytes(envelope)
                 if len(raw) > 16_384:
                     raise HTTPException(422, "message exceeds the Oracle mailbox byte limit")
@@ -329,10 +338,14 @@ class DailyOpsBridge:
             agent_status = "offline" if status is None else (
                 "degraded" if status.get("status") == "processing_blocked" else
                 "working" if status.get("pending_count") or status.get("status") == "running" else "idle")
+            scope_ready = status is not None and isinstance(status.get("capabilities"), dict) and status["capabilities"].get("review_scope") is True
+            if status is not None and not scope_ready:
+                agent_status = "degraded"
             for key, label in (("oracle", "Oracle"), ("pi_client", "Pi client")):
                 summary["agents"][key] = {
                     "label": label, "status": agent_status,
                     "detail": "Mailbox is unavailable or stale." if status is None else
+                              "Mailbox update must be loaded before owner messages can be sent." if not scope_ready else
                               "Oracle needs context recovery; new requests are paused." if agent_status == "degraded" else
                               "Live mailbox connected. Receipt delivery does not imply task completion.",
                     "observed_at": observation, "source": "Oracle oversight mailbox heartbeat",

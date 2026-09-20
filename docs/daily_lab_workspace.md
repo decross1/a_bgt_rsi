@@ -27,6 +27,13 @@ message. An Oracle reply means a visible assistant turn completed. These states
 do not certify the answer's correctness or completion of the requested work.
 The existing lab event channel is a separate history.
 
+Owner questions and proposed changes use the mailbox's enforced review scope:
+Pi may read the named bounded lab snapshot and write one named proposal draft.
+Other tools, shell commands, repository changes and ledger appends are blocked
+for that request. If more context is needed, Oracle should identify the missing
+evidence. The bridge refuses new owner requests until the live mailbox reports
+that this enforcement is loaded.
+
 ## Sources and operation
 
 - `run_state/daily_ops_brief.json` is the curated, source-dated brief. The
