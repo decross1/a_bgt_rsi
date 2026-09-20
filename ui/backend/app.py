@@ -21,6 +21,7 @@ from .benchmark_program import register as register_benchmark_program
 from .chain import LogStore, build_chain_by_request_id
 from .chat_seam import register as register_chat_seam
 from .coordinator import register as register_coordinator
+from .daily_ops import register as register_daily_ops
 from .doc_titles import register as register_doc_titles
 from .experiments import register as register_experiments
 from .finding_detail import register as register_finding_detail
@@ -135,7 +136,9 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
                loop_v0_memory=DEFAULT_LOOP_V0_MEMORY,
                loop_v0_popen=subprocess.Popen,
                coordinator_run_state=DEFAULT_COORDINATOR_RUN_STATE,
-               coordinator_memory=DEFAULT_COORDINATOR_MEMORY):
+               coordinator_memory=DEFAULT_COORDINATOR_MEMORY,
+               daily_ops_authorizer=None,
+               daily_ops_router=None):
     app = FastAPI(title="UI backend — orchestrator dashboard", version=_GIT_SHA)
     # Permissive CORS for local dev (Vite serves the SPA on another port).
     app.add_middleware(CORSMiddleware, allow_origins=["*"],
@@ -266,6 +269,16 @@ def create_app(logs_dir=DEFAULT_LOGS_DIR, telemetry_file=DEFAULT_TELEMETRY,
         app,
         run_state_dir=Path(coordinator_run_state),
         memory_dir=Path(coordinator_memory),
+    )
+
+    # Daily workspace: bounded read model plus an inert-by-default owner
+    # message seam.  The process launcher must inject BOTH trusted owner
+    # authentication and the real Oracle-mailbox router before writes exist.
+    register_daily_ops(
+        app,
+        state_dir=Path(coordinator_run_state),
+        owner_authorizer=daily_ops_authorizer,
+        message_router=daily_ops_router,
     )
 
     # 2026-08-14 work order A+C: loop-alert flag + ideas-board read seams.
