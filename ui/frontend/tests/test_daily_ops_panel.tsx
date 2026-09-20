@@ -363,6 +363,19 @@ describe("DailyOpsPanel", () => {
     expect(screen.queryByText(/ready for review/i)).toBeNull();
   });
 
+  it("does not call unreviewed sealed tasks superseded", () => {
+    const candidate = v2Summary() as Record<string, unknown>;
+    candidate.agenda_decision = {
+      ...(candidate.agenda_decision as Record<string, unknown>),
+      disposition: "review_required",
+    };
+    D.summary = candidate;
+    show();
+
+    expect(screen.getByText("Revision, sealed proposal titles, and source")).toBeInTheDocument();
+    expect(screen.queryByText("Revision, superseded proposal titles, and source")).toBeNull();
+  });
+
   it("summarizes the day and shows the main thesis exactly once", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-20T12:00:00Z"));
