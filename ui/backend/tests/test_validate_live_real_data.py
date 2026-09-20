@@ -135,6 +135,7 @@ def test_live_cycle_provenance_snapshot(client):
     post-purge state, never a fabricated expectation of failure."""
     known_topic_sources = {
         "campaign_preregistered",  # V2 exact immutable campaign topic
+        "campaign_registered",  # source-bound topic registry receipt
         "agenda",  # D-060 agenda-first (idea-ledger agenda items lead)
         "finding_followup",  # queued human follow-up topics
         "coordinator_propose",  # P4 machine-mined rows (never human-masked)
@@ -183,10 +184,17 @@ def test_live_cycle_provenance_snapshot(client):
                                if step.get("action") == outcome["action"])
             continue
         assert c["topic_source"] in known_topic_sources
-        if c["topic_source"] == "campaign_preregistered":
+        if c["topic_source"] in {"campaign_preregistered", "campaign_registered"}:
             from orchestrator.research_campaign import load_campaign, record_matches
             assert isinstance(c.get("campaign"), dict)
-            assert record_matches(c, load_campaign(c["campaign"]["campaign_id"]))
+            # The endpoint reads the canonical live ledger, so registered
+            # topics must be joined against that checkout's private registry,
+            # not this source worktree's empty run_state directory.
+            campaign = load_campaign(
+                c["campaign"]["campaign_id"],
+                repo_root=_CYCLES_PATH.parent.parent,
+            )
+            assert record_matches(c, campaign)
     errored = [
         o for c in cycles for o in c["outcomes"] if o.get("status") == "errored"
     ]

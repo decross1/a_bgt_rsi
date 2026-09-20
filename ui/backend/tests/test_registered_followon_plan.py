@@ -21,6 +21,7 @@ RESEARCH_ROOT = Path(
     "qwen-flash-next-research"
 )
 WINDOW_ID = "qfn-followon-c0-pilot-20260915-a"
+CAPTURED_RUNTIME_FIXTURE = Path("/tmp/flash-resident-runtime-20260915")
 
 
 def _source(cohort: str) -> Path:
@@ -126,11 +127,15 @@ def test_registered_worker_rejects_bundle_drift_before_cache_lookup(monkeypatch)
         )
 
 
+@pytest.mark.skipif(
+    not (CAPTURED_RUNTIME_FIXTURE / "flash-active-state.snapshot.json").is_file(),
+    reason="captured Flash runtime fixture is not installed on this host",
+)
 def test_canonical_backend_projects_captured_flash_evaluation_with_exact_bind(
     monkeypatch, tmp_path,
 ):
     """A real sample → bind event → armed sample admits the live Mia viewport."""
-    fixture = Path("/tmp/flash-resident-runtime-20260915")
+    fixture = CAPTURED_RUNTIME_FIXTURE
     run_path = _output("flash")
     run_id = run_path.name
     state_raw = (fixture / "flash-active-state.snapshot.json").read_bytes()
