@@ -130,3 +130,8 @@ run_state/weekly_upgrade_enabled
 run_state/flash_resident.json
 run_state/flash_resident.tmp
 run_state/maintenance_todos.json
+# Private daily workspace projections and owner conversation. Never publish.
+run_state/daily_ops_brief.json
+run_state/daily_ops_summary.json
+run_state/daily_ops_messages.jsonl
+run_state/daily_ops_agent_context.md
