@@ -97,6 +97,10 @@ FRONTIER_DOWN_STREAK = 3
 #   "topic_source" — no current verified/unused literature source can be
 #              registered. Honored only on one of the exact empty source-hold
 #              statuses emitted before the planner runs.
+#   "research_focus" — an operator-selected thesis deliberately holds new
+#              topic intake until its next validation artifact exists. Honored
+#              only for the exact empty focus_pending report; a broken focus
+#              source remains on the ordinary red stall/error path.
 #
 # DELETED here, deliberately: "lock" and "active_run". Neither had a producer
 # anywhere in the repo — flock contention is resolved in bash
@@ -105,7 +109,13 @@ FRONTIER_DOWN_STREAK = 3
 # report object exists. A reason that cannot fire cannot be given tests that
 # pretend it does; if a future path ever constructs such a report, it lands
 # here WITH its producer.
-_GATE_REASONS = ("budget", "paused", "daily_topics", "topic_source")
+_GATE_REASONS = (
+    "budget",
+    "paused",
+    "daily_topics",
+    "topic_source",
+    "research_focus",
+)
 
 _STRICT_EMPTY_GATE_STATUSES = {
     "daily_topics": frozenset({"daily_topic_limit"}),
@@ -114,6 +124,7 @@ _STRICT_EMPTY_GATE_STATUSES = {
         "topic_source_unavailable",
         "topic_registration_refused",
     }),
+    "research_focus": frozenset({"focus_pending"}),
 }
 
 # Which gate held it, keyed off the refusal report's `status` (the
@@ -127,6 +138,7 @@ _GATE_REASON_BY_STATUS = {
     "queue_starved": "topic_source",
     "topic_source_unavailable": "topic_source",
     "topic_registration_refused": "topic_source",
+    "focus_pending": "research_focus",
 }
 
 # The BASE alert level a held cycle deserves, BY REASON — they are not the
@@ -142,6 +154,7 @@ _GATE_LEVEL = {
     "paused": "amber",
     "daily_topics": "ok",
     "topic_source": "amber",
+    "research_focus": "amber",
 }
 
 _GATE_DETAIL = {
@@ -153,6 +166,9 @@ _GATE_DETAIL = {
                      "registration cap — intake resumes after the daily reset"),
     "topic_source": ("the exploratory campaign has no currently usable "
                      "verified literature source — the planner was not called"),
+    "research_focus": ("the selected research focus is holding new-topic "
+                       "intake while its next validation artifact is prepared "
+                       "— no study execution or evidence advancement is implied"),
 }
 
 # ── gate AGE escalation (2026-08-19 review, B1) ──────────────────────────

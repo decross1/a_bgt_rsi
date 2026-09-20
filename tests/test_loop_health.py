@@ -201,6 +201,7 @@ def _refusal(status, *, gate_reason=None, run_id="coordinator_9f92accc"):
     ("queue_starved", "topic_source"),
     ("topic_source_unavailable", "topic_source"),
     ("topic_registration_refused", "topic_source"),
+    ("focus_pending", "research_focus"),
 ])
 def test_gate_reason_from_status(status, reason):
     assert lh.gate_reason(_refusal(status)) == reason
@@ -211,12 +212,13 @@ def test_gate_reason_enum_is_frozen_to_reasons_with_producers():
     have a live producer that REACHES emit_health_signals:
       budget -> coordinator.py's daily-budget gate,
       paused -> coordinator.py's pause-file kill switch,
-      daily_topics/topic_source -> coordinator.py's bounded queue holds.
+      daily_topics/topic_source -> coordinator.py's bounded queue holds,
+      research_focus -> coordinator.py's exact empty focus_pending hold.
     "lock"/"active_run" were deleted: flock contention is resolved in bash
     (cron Gate 1 -> exit 0, no Python) and in nara_daemon._run_pass (Gate 1
     -> "skipped:flock"), both of which return BEFORE any report exists."""
     assert set(lh._GATE_REASONS) == {
-        "budget", "paused", "daily_topics", "topic_source",
+        "budget", "paused", "daily_topics", "topic_source", "research_focus",
     }
     assert set(lh._GATE_REASON_BY_STATUS.values()) <= set(lh._GATE_REASONS)
     assert set(lh._GATE_LEVEL) == set(lh._GATE_REASONS)
@@ -259,8 +261,9 @@ def test_unrecognized_gate_reason_still_falls_back_to_a_known_status():
      "plan": [{"name": "noop"}]},
     {**_refusal("topic_source_unavailable", gate_reason="topic_source"),
      "executed": [{"action": "noop", "status": "passed"}]},
+    _refusal("focus_invalid", gate_reason="research_focus"),
 ])
-def test_recognized_daily_gate_requires_matching_empty_hold_shape(report, capsys):
+def test_recognized_bounded_gate_requires_matching_empty_hold_shape(report, capsys):
     """A known label alone cannot buy exemption from the stall detector."""
     assert lh.gate_reason(report) is None
     assert "do not match that gate's refusal shape" in capsys.readouterr().err
@@ -270,7 +273,7 @@ def test_recognized_daily_gate_requires_matching_empty_hold_shape(report, capsys
 
 @pytest.mark.parametrize("status", [
     "daily_topic_limit", "queue_starved", "topic_source_unavailable",
-    "topic_registration_refused",
+    "topic_registration_refused", "focus_pending",
 ])
 def test_daily_gate_status_fallback_also_requires_empty_hold_shape(status):
     report = {**_refusal(status),
@@ -287,7 +290,7 @@ def test_gate_reason_none_for_a_real_cycle():
 @pytest.mark.parametrize("status", [
     "daily_budget_paced", "daily_budget_exhausted", "paused",
     "daily_topic_limit", "queue_starved", "topic_source_unavailable",
-    "topic_registration_refused",
+    "topic_registration_refused", "focus_pending",
 ])
 def test_gated_cycle_never_emits_loop_stalled(status):
     """THE regression pin. 2026-08-19T03:32:39Z: the daemon's heartbeat wake
@@ -307,6 +310,7 @@ def test_gated_cycle_never_emits_loop_stalled(status):
     ("queue_starved", "topic_source", "amber"),
     ("topic_source_unavailable", "topic_source", "amber"),
     ("topic_registration_refused", "topic_source", "amber"),
+    ("focus_pending", "research_focus", "amber"),
 ])
 def test_detect_gated_signal_reason_and_level(status, reason, level):
     out = lh.detect_gated(_refusal(status))
