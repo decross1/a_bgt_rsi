@@ -26,7 +26,7 @@ vi.mock("../src/api/pollhub", () => ({
   refreshPoll: vi.fn(),
 }));
 
-import DailyOpsPanel from "../src/components/DailyOpsPanel";
+import DailyOpsPanel, { makeRequestId } from "../src/components/DailyOpsPanel";
 
 const now = "2026-09-20T08:00:00Z";
 
@@ -108,6 +108,90 @@ describe("DailyOpsPanel", () => {
     }));
     expect(await screen.findByText(/Request queued/)).toHaveTextContent("No acknowledgment or execution is implied");
     expect(screen.queryByText(/delivered/i)).toBeNull();
+  });
+
+  it("builds an RFC 4122 v4 request id when randomUUID is unavailable", () => {
+    vi.stubGlobal("crypto", {
+      getRandomValues: (target: Uint8Array) => {
+        target.set(Array.from({ length: 16 }, (_, index) => index));
+        return target;
+      },
+    });
+
+    expect(makeRequestId()).toBe("00010203-0405-4607-8809-0a0b0c0d0e0f");
+  });
+
+  it("retries an unconfirmed delivery with the same request id", async () => {
+    let uuidCall = 0;
+    vi.stubGlobal("crypto", {
+      randomUUID: () => uuidCall++ === 0
+        ? "11111111-1111-4111-8111-111111111111"
+        : "22222222-2222-4222-8222-222222222222",
+    });
+    D.post
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce({ request_id: "11111111-1111-4111-8111-111111111111", status: "queued", accepted_at: now, duplicate: true, expected_plan_revision: null });
+    show();
+    fireEvent.change(screen.getByLabelText(/Owner access key/), { target: { value: "owner-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Unlock for this tab" }));
+    fireEvent.change(screen.getByLabelText("Message to Oracle"), { target: { value: "What is the next gate?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Queue for Oracle" }));
+    expect(await screen.findByText(/Delivery unconfirmed; retry safely with the same request ID/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Queue for Oracle" }));
+    await waitFor(() => expect(D.post).toHaveBeenCalledTimes(2));
+    expect(D.post.mock.calls[0][0].requestId).toBe("11111111-1111-4111-8111-111111111111");
+    expect(D.post.mock.calls[1][0].requestId).toBe("11111111-1111-4111-8111-111111111111");
+    expect(await screen.findByText(/Existing request found/)).toBeInTheDocument();
+  });
+
+  it("uses a new request id when the payload changes after uncertain delivery", async () => {
+    let uuidCall = 0;
+    vi.stubGlobal("crypto", {
+      randomUUID: () => uuidCall++ === 0
+        ? "11111111-1111-4111-8111-111111111111"
+        : "22222222-2222-4222-8222-222222222222",
+    });
+    D.post.mockRejectedValue(new TypeError("Failed to fetch"));
+    show();
+    fireEvent.change(screen.getByLabelText(/Owner access key/), { target: { value: "owner-secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Unlock for this tab" }));
+    const textarea = screen.getByLabelText("Message to Oracle");
+    fireEvent.change(textarea, { target: { value: "What is the next gate?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Queue for Oracle" }));
+    await screen.findByText(/Delivery unconfirmed/i);
+
+    fireEvent.change(textarea, { target: { value: "What is blocking the next gate?" } });
+    fireEvent.click(screen.getByRole("button", { name: "Queue for Oracle" }));
+    await waitFor(() => expect(D.post).toHaveBeenCalledTimes(2));
+    expect(D.post.mock.calls[0][0].requestId).toBe("11111111-1111-4111-8111-111111111111");
+    expect(D.post.mock.calls[1][0].requestId).toBe("22222222-2222-4222-8222-222222222222");
+  });
+
+  it("keeps earlier Oracle mailbox events inline and labels the event channel as separate", () => {
+    sessionStorage.setItem("oracle-lab-owner-access-key", "owner-secret");
+    D.messages = messages({
+      rows: Array.from({ length: 7 }, (_, index) => ({
+        request_id: `request-${index}`,
+        created_at: `2026-09-20T08:0${index}:00Z`,
+        actor: "owner",
+        intent: "question",
+        status: "queued",
+        text: `Question ${index}`,
+        target: "oracle",
+        plan_revision: null,
+      })),
+    });
+    show();
+
+    expect(screen.getByText("Lab event channel (separate) →")).toBeInTheDocument();
+    expect(screen.getByText("Show 2 earlier mailbox events (7 fetched)")).toBeInTheDocument();
+    const setupSummary = screen.getByText("Where to get the local owner key");
+    const setupDetail = setupSummary.closest("details");
+    expect(setupDetail).not.toHaveAttribute("open");
+    fireEvent.click(setupSummary);
+    expect(setupDetail).toHaveAttribute("open");
+    expect(screen.getByText("cat ~/.local/state/oracle-lab-ui/owner.key")).toBeInTheDocument();
   });
 
   it("keeps plan changes disabled when no revision can be bound", () => {

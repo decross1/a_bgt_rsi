@@ -182,6 +182,16 @@ function preview(value: string, limit = 280): string {
   return `${head || value.slice(0, limit)}…`;
 }
 
+export function makeRequestId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0"));
+  return `${hex.slice(0, 4).join("")}-${hex.slice(4, 6).join("")}-${hex.slice(6, 8).join("")}-${hex.slice(8, 10).join("")}-${hex.slice(10).join("")}`;
+}
+
 function statusStyle(status: string): React.CSSProperties {
   if (["done", "complete", "verified", "online", "acknowledged"].includes(status))
     return { color: "var(--status-ok)", background: "var(--status-ok-bg)" };
@@ -224,11 +234,29 @@ function AgentStrip({ agents }: { agents: NonNullable<Summary["agents"]> }) {
   </div>;
 }
 
+function MessageRows({ rows }: { rows: DailyOpsMessageRow[] }) {
+  return <>{rows.map(row => <li key={`${row.request_id}:${row.created_at}:${row.actor}`} className="rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+      <span className="font-semibold">{row.actor === "owner" ? "Owner" : row.actor === "oracle" ? "Oracle" : "System"}</span>
+      <span className="text-[var(--fg-muted)]">{phrase(row.intent)}</span>
+      <Status value={row.status} />
+      <time className="ml-auto text-[var(--fg-muted)]">{timeLabel(row.created_at)}</time>
+    </div>
+    <p className="mt-2 whitespace-pre-wrap text-sm">{row.text}</p>
+    {row.plan_revision && <p className="mt-1 font-mono text-xs text-[var(--fg-muted)]">plan {shortRevision(row.plan_revision)}</p>}
+  </li>)}</>;
+}
+
 type SubmitState =
   | { kind: "idle" }
   | { kind: "submitting" }
   | { kind: "queued"; requestId: string; revision: string | null; duplicate: boolean }
   | { kind: "failed"; message: string };
+
+type RetryableRequest = {
+  fingerprint: string;
+  requestId: string;
+};
 
 export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   legacyResearchOps: unknown;
@@ -247,6 +275,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   const [text, setText] = useState("");
   const [keyDraft, setKeyDraft] = useState(accessKey);
   const [submit, setSubmit] = useState<SubmitState>({ kind: "idle" });
+  const [retryableRequest, setRetryableRequest] = useState<RetryableRequest | null>(null);
 
   useEffect(() => {
     if (accessKey && messagesPoll.error instanceof DailyOpsError &&
@@ -254,14 +283,16 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       sessionStorage.removeItem(OWNER_KEY);
       setAccessKey("");
       setKeyDraft("");
+      setRetryableRequest(null);
       setSubmit({ kind: "failed", message: "Owner access key rejected. Message history remains locked and no request was queued." });
     }
   }, [accessKey, messagesPoll.error]);
 
-  const recentRows = useMemo(() => messages?.rows
+  const sortedRows = useMemo(() => messages?.rows
     .slice()
-    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
-    .slice(-5) ?? [], [messages]);
+    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)) ?? [], [messages]);
+  const recentRows = sortedRows.slice(-5);
+  const earlierRows = sortedRows.slice(0, -5);
   const routerConfigured = summary?.writeAvailable === true;
   const writeAvailable = routerConfigured && accessKey.length > 0 && messages?.writable === true;
   const changeBound = intent !== "change_request" || Boolean(summary?.currentPlanRevision);
@@ -288,17 +319,24 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
   async function send(event: React.FormEvent) {
     event.preventDefault();
     if (!canSubmit || !summary) return;
+    const normalizedText = text.trim();
+    const revision = intent === "change_request" ? summary.currentPlanRevision : null;
+    const fingerprint = JSON.stringify([intent, normalizedText, revision]);
+    const requestId = retryableRequest?.fingerprint === fingerprint
+      ? retryableRequest.requestId
+      : makeRequestId();
     setSubmit({ kind: "submitting" });
     try {
       const receipt = await postDailyOpsMessage({
         accessKey,
-        requestId: crypto.randomUUID(),
+        requestId,
         intent,
-        text: text.trim(),
-        ...(intent === "change_request" && summary.currentPlanRevision
-          ? { expectedPlanRevision: summary.currentPlanRevision }
+        text: normalizedText,
+        ...(revision
+          ? { expectedPlanRevision: revision }
           : {}),
       });
+      setRetryableRequest(null);
       setSubmit({ kind: "queued", requestId: receipt.request_id,
         revision: receipt.expected_plan_revision, duplicate: receipt.duplicate });
       setText("");
@@ -306,7 +344,14 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       refreshPoll(SUMMARY_KEY);
     } catch (error) {
       const detail = error instanceof DailyOpsError ? error.detail : String(error);
-      setSubmit({ kind: "failed", message: `Request not queued: ${detail}` });
+      const deliveryUnconfirmed = !(error instanceof DailyOpsError) || error.status >= 500;
+      if (deliveryUnconfirmed) {
+        setRetryableRequest({ fingerprint, requestId });
+        setSubmit({ kind: "failed", message: `Delivery unconfirmed; retry safely with the same request ID. ${detail}` });
+      } else {
+        setRetryableRequest(null);
+        setSubmit({ kind: "failed", message: `Oracle router rejected the request: ${detail}` });
+      }
     }
   }
 
@@ -399,7 +444,7 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><h3 id="daily-owner-heading" className="text-base font-semibold">Ask Oracle or request an agenda change</h3>
           <p className="mt-1 text-sm text-[var(--fg-muted)]">Requests enter the Oracle mailbox. A queued request is not approval, execution, or a scientific verdict.</p></div>
-        <Link to="/channel" className="text-sm text-[var(--accent)]">Full recorded channel →</Link>
+        <Link to="/channel" className="text-sm text-[var(--accent)]">Lab event channel (separate) →</Link>
       </div>
 
       {routerConfigured && <div className="mt-4">
@@ -413,6 +458,11 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
           </button>
         </div>
         <p className="mt-1 text-xs text-[var(--fg-muted)]">The key is sent only in the Authorization header. It is not placed in the URL, timeline, or request text.</p>
+        <details className="mt-2 text-xs text-[var(--fg-muted)]">
+          <summary className="cursor-pointer text-[var(--accent)]">Where to get the local owner key</summary>
+          <p className="mt-1">On the Spark host, read the local credential:</p>
+          <code className="mt-1 inline-block rounded bg-[var(--surface-1)] px-2 py-1">cat ~/.local/state/oracle-lab-ui/owner.key</code>
+        </details>
       </div>}
 
       {submit.kind === "failed" && <p aria-live="polite" className="mt-3 text-sm text-[var(--status-bad)]">{submit.message}</p>}
@@ -421,18 +471,11 @@ export function DailyOpsPanel({ legacyResearchOps, legacyFailing = false }: {
       </p>}
       {routerConfigured && accessKey && messages === null && messagesPoll.error == null && <p className="mt-3 text-sm text-[var(--fg-muted)]">Checking owner access and loading the bounded message history…</p>}
 
-      {accessKey && recentRows.length > 0 && <ol className="mt-4 space-y-2" aria-label="Recent Oracle requests and replies">
-        {recentRows.map(row => <li key={`${row.request_id}:${row.created_at}:${row.actor}`} className="rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-semibold">{row.actor === "owner" ? "Owner" : row.actor === "oracle" ? "Oracle" : "System"}</span>
-            <span className="text-[var(--fg-muted)]">{phrase(row.intent)}</span>
-            <Status value={row.status} />
-            <time className="ml-auto text-[var(--fg-muted)]">{timeLabel(row.created_at)}</time>
-          </div>
-          <p className="mt-2 whitespace-pre-wrap text-sm">{row.text}</p>
-          {row.plan_revision && <p className="mt-1 font-mono text-xs text-[var(--fg-muted)]">plan {shortRevision(row.plan_revision)}</p>}
-        </li>)}
-      </ol>}
+      {accessKey && recentRows.length > 0 && <ol className="mt-4 space-y-2" aria-label="Recent Oracle requests and replies"><MessageRows rows={recentRows} /></ol>}
+      {accessKey && earlierRows.length > 0 && <details className="mt-3 rounded border border-[var(--border-1)] bg-[var(--surface-1)] p-3">
+        <summary className="cursor-pointer text-sm text-[var(--accent)]">Show {earlierRows.length} earlier mailbox event{earlierRows.length === 1 ? "" : "s"} ({sortedRows.length} fetched)</summary>
+        <ol className="mt-3 space-y-2" aria-label="Earlier Oracle requests and replies"><MessageRows rows={earlierRows} /></ol>
+      </details>}
       {accessKey && messages?.available === true && recentRows.length === 0 && <p className="mt-3 text-sm text-[var(--fg-muted)]">No owner-to-Oracle requests are recorded yet.</p>}
       {accessKey && messagesPoll.error != null && !(messagesPoll.error instanceof DailyOpsError && [401, 403].includes(messagesPoll.error.status)) &&
         <p role="status" className="mt-3 text-sm text-[var(--status-warn)]">Recent request status could not be refreshed; no delivery state was inferred.</p>}
