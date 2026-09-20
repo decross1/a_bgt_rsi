@@ -115,6 +115,28 @@ describe("DailyOpsPanel", () => {
     expect(screen.getByText("Daily goal 6")).toBeInTheDocument();
   });
 
+  it("retains a valid backend-boundary agenda goal behind a compact detail disclosure", () => {
+    const boundaryTitle = "T".repeat(512);
+    const boundaryDetail = "D".repeat(4096);
+    D.summary = summary({
+      goals: [{
+        id: `g${"a".repeat(199)}`,
+        title: boundaryTitle,
+        detail: boundaryDetail,
+        source: "sealed pending agenda",
+        observed_at: now,
+        status: "awaiting_owner",
+        owner: "oracle",
+      }],
+    });
+    show();
+
+    expect(screen.getByText(boundaryTitle)).toBeInTheDocument();
+    const disclosure = screen.getByText("Full recorded detail").closest("details");
+    expect(disclosure).not.toHaveAttribute("open");
+    expect(screen.getByText(boundaryDetail)).toBeInTheDocument();
+  });
+
   it("queues a revision-bound plan change without claiming delivery", async () => {
     show();
     fireEvent.change(screen.getByLabelText(/Owner access key/), { target: { value: "owner-secret" } });

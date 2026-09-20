@@ -71,7 +71,7 @@ function workItems(value: unknown, kind: "goal" | "accomplishment" | "improvemen
   if (!Array.isArray(value)) return [];
   const allowed = kind === "goal" ? STATUS : kind === "improvement" ? IMPROVEMENT_STATUS : new Set(["complete"]);
   return value.slice(0, 16).flatMap((item): WorkItem[] => {
-    if (!record(item) || !bounded(item.id, 160) || !bounded(item.title, 240) ||
+    if (!record(item) || !bounded(item.id, 200) || !bounded(item.title, 512) ||
         !bounded(item.detail, 4096) || !bounded(item.status, 40) || !allowed.has(item.status) ||
         !timestamp(item.observed_at)) return [];
     const owner = kind === "goal" && bounded(item.owner, 32) ? item.owner : undefined;
@@ -81,12 +81,12 @@ function workItems(value: unknown, kind: "goal" | "accomplishment" | "improvemen
 }
 
 function focus(value: unknown): Focus | null {
-  if (!record(value) || !record(value.next_gate) || !bounded(value.focus_id, 160) ||
-      !bounded(value.title, 300) || !bounded(value.status, 32) || !bounded(value.stage, 120) ||
-      !bounded(value.next_action, 1600) || !timestamp(value.observed_at) ||
-      !bounded(value.next_gate.from, 120) || !bounded(value.next_gate.to, 120) ||
-      !bounded(value.next_gate.artifact, 800) || !bounded(value.next_gate.status, 32) ||
-      !bounded(value.next_gate.owner, 240)) return null;
+  if (!record(value) || !record(value.next_gate) || !bounded(value.focus_id, 200) ||
+      !bounded(value.title, 512) || !bounded(value.status, 32) || !bounded(value.stage, 512) ||
+      !bounded(value.next_action, 4096) || !timestamp(value.observed_at) ||
+      !bounded(value.next_gate.from, 512) || !bounded(value.next_gate.to, 512) ||
+      !bounded(value.next_gate.artifact, 512) || !bounded(value.next_gate.status, 32) ||
+      !bounded(value.next_gate.owner, 512)) return null;
   return {
     focusId: value.focus_id,
     title: value.title,
@@ -101,15 +101,15 @@ function focus(value: unknown): Focus | null {
       owner: value.next_gate.owner,
     },
     blockers: Array.isArray(value.blockers)
-      ? value.blockers.filter((item): item is string => bounded(item, 600)).slice(0, 8)
+      ? value.blockers.filter((item): item is string => bounded(item, 512)).slice(0, 16)
       : [],
     observedAt: value.observed_at,
   };
 }
 
 function agent(value: unknown): AgentState | null {
-  if (!record(value) || !bounded(value.label, 120) || !bounded(value.status, 32) ||
-      !AGENT_STATUS.has(value.status) || !bounded(value.detail, 800) || !timestamp(value.observed_at)) return null;
+  if (!record(value) || !bounded(value.label, 512) || !bounded(value.status, 32) ||
+      !AGENT_STATUS.has(value.status) || !bounded(value.detail, 4096) || !timestamp(value.observed_at)) return null;
   return { label: value.label, status: value.status, detail: value.detail, observedAt: value.observed_at };
 }
 
@@ -138,11 +138,11 @@ export function admitDailyOpsSummary(value: unknown): Summary | null {
     focus: focus(value.research_focus),
     agents: completeAgents,
     warnings: Array.isArray(value.warnings)
-      ? value.warnings.filter((item): item is string => bounded(item, 600)).slice(0, 8)
+      ? value.warnings.filter((item): item is string => bounded(item, 512)).slice(0, 16)
       : [],
     authRequired: true,
     writeAvailable: value.capabilities.write_available,
-    currentPlanRevision: value.current_plan_revision === null || bounded(value.current_plan_revision, 256)
+    currentPlanRevision: value.current_plan_revision === null || bounded(value.current_plan_revision, 200)
       ? value.current_plan_revision as string | null
       : null,
   };
@@ -156,7 +156,7 @@ function admitMessages(value: unknown): { available: boolean; writable: boolean;
         !["owner", "oracle", "system"].includes(String(item.actor)) ||
         !["question", "change_request", "reply", "receipt"].includes(String(item.intent)) ||
         !MESSAGE_STATUS.has(String(item.status)) || !bounded(item.text, 4096) || item.target !== "oracle" ||
-        !(item.plan_revision === null || bounded(item.plan_revision, 256))) return [];
+        !(item.plan_revision === null || bounded(item.plan_revision, 200))) return [];
     return [item as unknown as DailyOpsMessageRow];
   });
   return { available: value.available, writable: value.writable, rows };
@@ -240,7 +240,11 @@ function AgentStrip({ agents }: { agents: NonNullable<Summary["agents"]> }) {
     ] as const).map(([key, state, role]) => <div key={key} className="rounded border border-[var(--border-1)] p-3">
       <div className="flex flex-wrap items-center gap-2"><span className="font-semibold">{state.label}</span><Status value={state.status} /></div>
       <p className="mt-1 text-xs uppercase tracking-wide text-[var(--fg-muted)]">{role}</p>
-      <p className="mt-2 text-sm text-[var(--fg-muted)]">{state.detail}</p>
+      <p className="mt-2 text-sm text-[var(--fg-muted)]">{preview(state.detail, 240)}</p>
+      {state.detail.length > 240 && <details className="mt-1 text-xs text-[var(--fg-muted)]">
+        <summary className="cursor-pointer text-[var(--accent)]">Full recorded detail</summary>
+        <p className="mt-1 whitespace-pre-wrap">{state.detail}</p>
+      </details>}
       <p className="mt-1 text-xs text-[var(--fg-muted)]">Observed {timeLabel(state.observedAt)}</p>
     </div>)}
   </div>;
