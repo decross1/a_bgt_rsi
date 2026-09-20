@@ -445,6 +445,12 @@ describe("ModelServerCard dynamic endpoint inventory", () => {
       note: /intentionally stopped for the controller-bound research window/,
     },
     {
+      expectation: "expected_offline" as const,
+      role: "rollback_available" as const,
+      status: "offline · expected during research",
+      note: /rollback endpoint is intentionally offline while another model is the production resident/,
+    },
+    {
       expectation: "starting" as const,
       role: "research_candidate" as const,
       status: "starting",
